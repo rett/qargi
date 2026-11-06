@@ -329,7 +329,7 @@ COMMANDS = {
                          opt("--status", "planned, active, blocked or verifying", "STATE", ("planned", "active", "blocked", "verifying"))]),
             "check": verb("Before starting work or changing a plan: is the feature free for you, is anything else in its way (exit 1: refuse; warnings go to stderr)", [("[NAME]", "none")],
                           [PROJECT_OPT, AS_OPT, opt("--no-fetch", "read the cache of the shared refs only, do not fetch (the session hook uses it)")],
-                          desc="This verb only reads; it renews no lease. The commands of the flow that ask the marshal first (feature merge, sync, verify, finish; local prepare) renew the lease of their own lead as they ask."),
+                          desc="This verb only reads; it renews no lease. The commands of the flow that ask the marshal first (feature merge, sync, status, verify and finish; local prepare, verify and clean; review check and apply) renew the lease of their own lead as they ask."),
             "renew": verb("Renew your lease on a feature (long verbs and the lead's other commands on the feature do this themselves)", [("NAME", "none")], [PROJECT_OPT, AS_OPT]),
             "release": verb("Give the feature up, leaving a handoff note; it has no lead until someone takes it", [("NAME", "none")],
                             [PROJECT_OPT, AS_OPT, opt("--note", "what the next lead must know", "TEXT")],
@@ -497,8 +497,8 @@ COMMANDS = {
                                "While the release branch exists and the repository has an origin it shows the checks of the branch's pull request (gh pr checks, through QARGI_GH): "
                                "a verdict and one line per check with its state, pass, fail or pending; a missing gh, no pull request or no checks is a warning. "
                                "For a tag that exists it ends with a checklist of what is left after the release: whether origin has the tag, whether the GitHub release is published or missing, "
-                               "for each file of the answer release.assets whether the release has it, for each file of release.sign.files whether its .sig is attached (UNSIGNED when not), "
-                               "and the project's own after-steps, the optional answer release.after_steps (a list of words, {version} replaced), which qargi lists but does not record as done.")),
+                               "for each entry of the answer release.assets ({version} replaced; a glob by its base name) whether the release has it, for each file of release.sign.files whether its .sig is attached (UNSIGNED when not), "
+                               "and the project's own after-steps: the ones release finish recorded, else the optional answer release.after_steps (a list of words, {version} replaced); qargi lists them but does not track that they were done.")),
             "verify": verb("Run the project's whole test suite on the release branch (develop's head before it starts) and record the result", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT],
                            desc=TAG_NOTE + " The exit status stays the suite's result. The command is release.test_command when the project sets one, else test_command. " + OTHER_RUNS_NOTE + " " + SUITE_FAIL_NOTE),
             "fix": verb("Make a worktree on the release branch to commit a fix in, and push the fix again with --push", [("VERSION", "none")],
@@ -557,7 +557,7 @@ COMMANDS = {
                                   "the notes (the VERSION section of CHANGELOG.md at the tag, found by release.changelog.released, or the notes file), the sha256 of every asset and the command: gh release create VERSION "
                                   "--verify-tag --title \"PROJECT VERSION\" --notes-file FILE ASSET... (gh is run through QARGI_GH, default gh, and must be logged in); the token covers "
                                   "the notes and the assets. The assets are --asset, the files of --asset-dir and release.assets (names or globs, {version} replaced; a glob that matches nothing refuses), regular files inside the asset worktree "
-                                  "of qargi release assets, the repository or another worktree of it (a symbolic link that leaves them is refused), attached by the same call that creates the release. "
+                                  "of qargi release assets, the repository or another worktree of it (a symbolic link that leaves them, a path with a .git component and two files of one base name are refused), attached by the same call that creates the release. "
                                   "It refuses when GitHub has the release already, when the tag is missing, when the notes are empty, and, when the answer release.sign is set, until "
                                   "qargi release sign recorded an ok for VERSION and none of the signed files or signatures changed since (without release.sign, which is the default, there is no such wait); --verify-tag makes gh refuse a tag that is not on origin. "
                                   "Needs the plan token and an approval; a member run cannot publish.")),

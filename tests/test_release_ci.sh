@@ -150,6 +150,16 @@ grep -q "signature app.tar.gz.sig: attached" <<<"$out" && ok "an attached signat
 : > "$T/assets.out"
 out=$($REL status 0.2.0 2>&1)
 grep -q "asset app.tar.gz: MISSING from the release" <<<"$out" && ok "an asset that is not on the release is missing" || no "checklist asset missing: $out"
+# a glob and a {version} entry are matched by their base name against the release's assets
+setans '.release.assets=["dist/*.tar.gz","dist/app-{version}.zip","out/none-*.txt"]'
+printf 'app.tar.gz\napp-0.2.0.zip\n' > "$T/assets.out"
+out=$($REL status 0.2.0 2>&1)
+grep -q "asset \*.tar.gz: present (app.tar.gz)" <<<"$out" && grep -q "asset app-0.2.0.zip: present" <<<"$out" && grep -q "asset none-\*.txt: MISSING from the release" <<<"$out" && ! grep -q "asset app-{version}" <<<"$out" \
+  && ok "a glob and a {version} entry of release.assets are matched against the assets of the release" || no "glob assets: $out"
+: > "$T/assets.out"
+out=$($REL status 0.2.0 2>&1)
+grep -q "asset \*.tar.gz: MISSING from the release" <<<"$out" && grep -q "asset app-0.2.0.zip: MISSING from the release" <<<"$out" && ok "and are missing when no asset matches" || no "glob assets missing: $out"
+setans '.release.assets=["dist/app.tar.gz"]'
 git -C "$R" push -q origin :refs/tags/0.2.0 2>/dev/null || git -C "$T/origin.git" tag -d 0.2.0 >/dev/null
 out=$($REL status 0.2.0 2>&1)
 grep -q "tag 0.2.0: NOT on origin" <<<"$out" && ok "a tag that origin does not have is said so" || no "checklist tag: $out"
@@ -157,5 +167,16 @@ setans 'del(.release.after_steps)'
 out=$($REL status 0.2.0 2>&1)
 ! grep -q "after-steps" <<<"$out" && ok "no after_steps, no such lines" || no "after steps without the answer: $out"
 git -C "$R" checkout -q parked 2>/dev/null
+# --ignore-checks over checks that passed: nothing was ignored, so the audit log and the output do not say so
+setans 'del(.release)'; git -C "$R" push -q origin develop 2>/dev/null
+$REL verify 0.2.1 >/dev/null 2>&1; $REL start 0.2.1 --allow-empty-notes >/dev/null 2>&1 || no "release 0.2.1 could not start"
+t=$($REL push 0.2.1 | tok); $REL push 0.2.1 --plan "$t" --approved go >/dev/null 2>&1
+setchecks 0 "build${tab}pass${tab}1m${tab}https://example.net/1
+"
+out=$($REL finish 0.2.1 --ignore-checks "just in case" 2>&1); t=$(tok <<<"$out")
+grep -q "the checks passed, so --ignore-checks changes nothing" <<<"$out" && ! grep -q "your words are recorded" <<<"$out" && ok "the plan says --ignore-checks changes nothing when the checks passed" || no "ignore on pass plan: $out"
+out=$($REL finish 0.2.1 --ignore-checks "just in case" --plan "$t" --approved go 2>&1); rc=$?
+[ $rc = 0 ] && git -C "$R" rev-parse -q --verify refs/tags/0.2.1 >/dev/null && ! grep -q "checks ignored" <<<"$out" && ! grep -q "just in case" "$T/s/audit.log" && grep -q 'release:finish.*relci 0.2.1' "$T/s/audit.log" \
+  && ok "the words are not recorded when the checks passed" || no "ignore on pass apply: rc=$rc $out $(tail -3 "$T/s/audit.log")"
 rm -rf "$T"
 exit $fail

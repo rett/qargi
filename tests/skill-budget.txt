@@ -9,9 +9,9 @@ lib/providers/claude-code.json:notes 262
 lib/providers/claude-code/local-run.md 33
 lib/providers/claude-platform.json:notes 2
 lib/providers/claude-platform/cloud-run.md 61
-packs/skills/docs-site-member/SKILL.md 176 # raised: two rules: no line starts with <, and run the render check before reporting; for the lead's review
-packs/skills/gitflow-member/SKILL.md 285 # raised: one line: parallel tasks use unnumbered bullets and the lead renumbers at merge; for the lead's review
-packs/skills/keep-a-changelog/SKILL.md 355 # raised: one line on numbered items (unnumbered bullet, the lead renumbers); for the lead's review
+packs/skills/docs-site-member/SKILL.md 163 # raised: two rules: no line starts with <, and run the render check before reporting; for the lead's review
+packs/skills/gitflow-member/SKILL.md 267
+packs/skills/keep-a-changelog/SKILL.md 344 # raised: one rule on numbered items (unnumbered bullet, the lead renumbers), kept here only; for the lead's review
 packs/skills/qargi-contributing/SKILL.md 115
 packs/skills/review-findings/SKILL.md 136
 packs/skills/secrets-scan/SKILL.md 93
@@ -22,7 +22,7 @@ roles/build/ROLE.md 144
 roles/review/ROLE.md 170
 roles/test/ROLE.md 169
 roles/write/ROLE.md 186 # raised: the line that documentation follows the code and a disagreement is reported; for the lead's review
-skills/qargi-flow/SKILL.md 1023 # raised: advisor brief clause (no suite run beside a feature verify); release fix, the checks the finish plan lists and --ignore-checks; for the lead's review
+skills/qargi-flow/SKILL.md 999 # raised: advisor brief clause (no suite run beside a feature verify); release fix, the checks the finish plan lists and --ignore-checks; for the lead's review
 skills/qargi-flow/marshal.md 449 # raised: says to raise marshal.lease_minutes before a run longer than the lease
 skills/qargi-instances/SKILL.md 898
 skills/qargi-memory/SKILL.md 933
@@ -41,4 +41,4 @@ skills/qargi-task/SKILL.md 832
 skills/qargi-task/cloud.md 760
 skills/qargi-task/local-run.md 197
 skills/qargi-team/SKILL.md 894
-skills/qargi-verify/SKILL.md 674 # raised: two sentences on local runs (no clean needed before the next feature finish; before a reboot apply verified runs or use the saved copy)
+skills/qargi-verify/SKILL.md 674 # raised: two sentences on local runs (feature finish refuses an open run, local close for one applied by hand; before a reboot apply verified runs or use the saved copy)

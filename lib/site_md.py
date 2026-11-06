@@ -106,7 +106,7 @@ _FENCE = re.compile(r"^```(.*)$")
 # HTML block and shows the rest of the page as plain text
 _LINE_PREFIX = re.compile(r"^(?:[> \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)?)+")
 _HTML_START = re.compile(r"^<(?:/?([A-Za-z][A-Za-z0-9-]*)|(!--)|[/!])")
-INLINE_TAGS = ("a", "br", "code", "kbd", "details", "summary", "sup", "sub")
+INLINE_TAGS = ("a", "br", "code", "kbd", "sup", "sub")   # not details or summary: Kramdown reads them as block HTML
 HTML_START_FIX = ("keep a code span that holds a placeholder on one line, or put the placeholder after other text, "
                   "so that no wrapped line begins with <")
 _HEADING = re.compile(r"^(#{1,6})([ ]+(.*?))?([ ]+#+)?[ ]*$")

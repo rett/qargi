@@ -30,7 +30,7 @@
 #                                           and refuses while one fails or is pending, unless --ignore-checks gives, in the person's words, why (recorded).
 #                                           Then it prints the steps of the answer release.after_steps ({version} replaced) as "after the release: STEP"
 #                                           lines, never runs them, and records them in STATE/release/PROJECT-VERSION.after.json ({steps: [...]}) for
-#                                           `status` (after_steps_show prints them).
+#                                           `status`, which shows the recorded steps (the answer as it is now when there is no record).
 #
 #   release.sh assets VERSION [--recreate]  build the release files of the tag VERSION: a clean detached worktree of the tag under STATE/release-assets/,
 #                                           the project's answer release.assets_command run in it (a command line, or a list of words with {version}
@@ -81,7 +81,7 @@
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
-VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY='' NOTES_OPT='' FIXPUSH='' IGNORE_CHECKS='' IGNORE_SET='' RECREATE=''; ASSETS=() ASSET_DIRS=()
+VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY='' NOTES_OPT='' FIXPUSH='' IGNORE_CHECKS='' IGNORE_SET='' IGNORED='' RECREATE=''; ASSETS=() ASSET_DIRS=()
 while [ $# -gt 0 ]; do
   case $1 in
     --project) need_val "$1" $#; PROJ=$2; shift 2;; --date) need_val "$1" $#; DATE=$2; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
@@ -189,7 +189,7 @@ asset_wt() {
 # sign_root: the directory the release files are signed and published from: the asset worktree when there is one, else the repository
 sign_root() { asset_wt; printf '%s' "${AWT:-$REPO}"; }
 # after_steps_record: the answer release.after_steps ({version} replaced) as "after the release: STEP" lines, kept in AFTERREC (one JSON file under
-# the state, {steps: [...]}) for `release status`. They are shown, never run. after_steps_show prints the recorded ones again as the same lines.
+# the state, {steps: [...]}) for `release status`. They are shown, never run. after_steps_list gives them back to `status`.
 AFTERREC=$DA_STATE/release/$PROJ-$VER.after.json
 after_steps_record() {
   local st=()
@@ -199,7 +199,13 @@ after_steps_record() {
   printf '%s\n' "${st[@]}" | jq -R . | jq -s --arg p "$PROJ" --arg v "$VER" --arg t "$(now)" '{schema:1, project:$p, version:$v, at:$t, steps:.}' > "$AFTERREC"
   printf 'after the release: %s\n' "${st[@]}"
 }
-after_steps_show() { [ -f "$AFTERREC" ] && jq -r '.steps[] | "after the release: " + .' "$AFTERREC" 2>/dev/null; return 0; }
+# after_steps_list: the steps for `release status`, one per line: those `finish` recorded in AFTERREC; when there is no (readable) record, the answer as it is now
+after_steps_list() {
+  local s
+  if [ -f "$AFTERREC" ] && s=$(jq -r '.steps[] | strings' "$AFTERREC" 2>/dev/null) && [ -n "$s" ]; then printf '%s\n' "$s"; return 0; fi
+  s=$(jq -r '(.release? // {}) | (.after_steps // []) | if type == "array" then .[] | strings else empty end' "$af" 2>/dev/null) || return 0
+  [ -z "$s" ] || printf '%s\n' "${s//\{version\}/$VER}"
+}
 # sign_status: for a tag that exists in a project that signs its releases (and has no GitHub release yet), whether the signature of VER is recorded
 # and still true; if not, "awaiting signature" and either that the release is ready for signing or what stands in the way. Read-only.
 sign_status() {
@@ -383,11 +389,8 @@ post_release() {
       names=$("$GH" -R "$(repo_slug)" release view "$VER" --json assets --jq '.assets[].name' 2>/dev/null </dev/null) || names='?'
       if [ "$names" = '?' ]; then echo "  assets: not checked (the asset list could not be read)"
       else
-        while IFS= read -r a; do
-          [ -n "$a" ] || continue
-          base=${a##*/}
-          if grep -qxF -- "$base" <<<"$names"; then echo "  asset $base: present"; else echo "  asset $base: MISSING from the release"; fi
-        done < <(jq -r '(.release? // {}) | (.assets // [])[]' "$af" 2>/dev/null)
+        # release.assets entries: {version} replaced, a glob matched by its base name against the names the release has
+        python3 -I "$RS" asset-status "$af" "$VER" <<<"$names" 2>/dev/null | sed 's/^/  /' || true
         if sign_configured; then
           while IFS= read -r a; do
             [ -n "$a" ] || continue
@@ -401,8 +404,8 @@ post_release() {
   while IFS= read -r step; do
     [ -n "$step" ] || continue
     [ "$n" -gt 0 ] || echo "  after-steps (release.after_steps; qargi does not record that they were done):"
-    n=$((n + 1)); echo "    - ${step//\{version\}/$VER}"
-  done < <(jq -r '(.release? // {}) | (.after_steps // []) | if type == "array" then .[] | strings else empty end' "$af" 2>/dev/null)
+    n=$((n + 1)); echo "    - $step"
+  done < <(after_steps_list)
   return 0
 }
 
@@ -580,7 +583,7 @@ case $verb in
         failing|pending)
           if [ -n "$IGNORE_SET" ]; then echo "the checks are $PRC_STATE; ignored on your word: $IGNORE_CHECKS"
           else die "the checks of the pull request of $BR are $PRC_STATE: wait for them, or fix and push again (qargi release fix $VER${HOTFIX:+ --hotfix}); to finish anyway, in your own words: --ignore-checks \"...\""; fi;;
-        pass) [ -z "$IGNORE_SET" ] || echo "note: the checks passed, so --ignore-checks changes nothing (your words are recorded: $IGNORE_CHECKS)";;
+        pass) [ -z "$IGNORE_SET" ] || echo "note: the checks passed, so --ignore-checks changes nothing (nothing is ignored, so the words are not recorded unless the checks fail by the apply)";;
         *) [ -z "$IGNORE_SET" ] || echo "the checks could not be read; ignored on your word: $IGNORE_CHECKS";;
       esac
     fi
@@ -597,7 +600,7 @@ case $verb in
       done
       pr_checks "$BR"   # read again: they may have changed since the plan
       if [ "$PRC_STATE" != pass ]; then
-        if [ -n "$IGNORE_SET" ]; then echo "checks ${PRC_STATE}, ignored on your word: $IGNORE_CHECKS"
+        if [ -n "$IGNORE_SET" ]; then echo "checks ${PRC_STATE}, ignored on your word: $IGNORE_CHECKS"; IGNORED=1
         elif [ "$PRC_STATE" = nogh ]; then die "gh is needed to read the pull request's checks (or --ignore-checks \"...\" in your own words)"
         else die "the pull request's checks have not all passed (${PRC_STATE}; or there is no pull request for $BR): nothing was merged or pushed. Fix and push again (qargi release fix $VER${HOTFIX:+ --hotfix}), or --ignore-checks \"...\" in your own words"; fi
       fi
@@ -629,8 +632,8 @@ case $verb in
     journal_ref "$REPO" "refs/heads/$second" "$s0" "$ns" "$KIND:finish"
     merge_forget "$k1" "$k2"
     if [ -z "$KEEP" ]; then wt_drop "$BR"; g update-ref -d "refs/heads/$BR" "$h"; journal_ref "$REPO" "refs/heads/$BR" "$h" "" "$KIND:finish"; fi
-    audit_log "release:finish" "$PROJ $VER${IGNORE_SET:+ checks ignored: $IGNORE_CHECKS}"
-    [ -z "$IGNORE_SET" ] || echo "checks ignored on your word: $IGNORE_CHECKS"
+    audit_log "release:finish" "$PROJ $VER${IGNORED:+ checks ignored: $IGNORE_CHECKS}"
+    [ -z "$IGNORED" ] || echo "checks ignored on your word: $IGNORE_CHECKS"
     echo "merged $BR into master (tagged $VER) and into $second${KEEP:+; kept $BR}$([ -n "$KEEP" ] || echo "; deleted $BR")"
     [ "$second" != develop ] || parking_follow
     if g remote get-url origin >/dev/null 2>&1; then

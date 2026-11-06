@@ -26,6 +26,32 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   blocks and table elements as tables. With or without `--pages` it refuses Markdown marks left in the text outside code (a backtick, `**`, `](`, `~~~`,
   a line starting with `#` or `|`; a backtick is accepted in the command reference). `build` runs the same check on its output and removes a build that
   does not show its pages.
+- The answer `branches.push_develop` (`true`, the default, or `false`; set it with `qargi project set PROJECT branches.push_develop
+  false`) decides whether `qargi feature finish` pushes develop to origin. The first line of the finish plan now says "will push
+  develop to origin" or "local only, will not push" with the reason (no origin, or the answer), and the plan token covers it.
+- `qargi feature verify` and `qargi release verify` warn on standard error, and go on, when another suite may be running: a
+  whole-suite run of the project in progress, a local run of the repository with a file changed in the last 10 minutes
+  (`QARGI_ACTIVE_MINUTES` changes that), or a `tests/run.sh` process in the repository (Linux).
+- `qargi release fix VERSION` makes a worktree on the release branch under the worktree root and prints its path; after the
+  fix is committed there, `release fix VERSION --push` (the same as `release push`) pushes it to the open pull request.
+  `release finish` removes that worktree with the branch.
+- `qargi release status` shows the checks of the release branch's pull request (name and pass, fail or pending), and for a tag a
+  checklist of what is left after the release: the tag on origin, the GitHub release published or missing, the assets of
+  `release.assets` present, the signatures of `release.sign.files` attached or unsigned, and the optional `release.after_steps`.
+- `qargi release finish` lists the pull request's checks in its plan and refuses, without a token, while one fails or is
+  pending, unless `--ignore-checks "<your words>"` is given (recorded in the output and the audit log when a check was actually ignored); a missing gh or
+  pull request is a warning in the plan, and the apply refuses then unless the words are given.
+- `qargi release assets VERSION` builds the release files from the tag: it makes a clean detached worktree of the tag under the
+  state directory, runs the project answer `release.assets_command` (a command line, or a list of words with `{version}` replaced)
+  in it, records the worktree, and prints where the files are and the next command (`qargi release sign`). `--recreate` builds
+  again. `release sign` and `release publish` take the files from that worktree, so the repository's own checkout is not used.
+- `release publish --asset-dir DIR` attaches every regular file of a directory; `--asset` also takes a full path inside any
+  worktree of the repository; the answer `release.assets` may list globs (and `{version}`), taken in the asset worktree when
+  there is one, else in the repository. A glob that matches nothing, a symbolic link that leaves the worktrees, a path with a `.git` component and two files of one base
+  name refuse.
+- The project answer `release.after_steps`: a list of commands or reminders (`{version}` replaced) that `qargi release finish`
+  prints as `after the release: STEP` lines and records under the state (`release/PROJECT-VERSION.after.json`) so `release status`
+  can show them. qargi never runs them.
 
 ### Changed
 - `qargi feature finish` is refused first (exit 1, nothing changed) while a run prepared against the feature is open, with each open run listed and the way to
@@ -48,9 +74,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `qargi review check RUN_DIR` checks `RUN_DIR/out` when it is given a run directory (no patches or manifest.json in it, an `out`
   directory in it) and says so in a note, so naming the run instead of its output directory is harmless. The `qargi-verify`
   skill names `RUN_DIR/out`.
-- The `gitflow-member` and `keep-a-changelog` packs tell a member to add an unnumbered bullet (or the next free number, said in its
-  report) instead of numbering a changelog item itself, so parallel tasks do not conflict on the same number; the lead renumbers at
-  merge with `qargi changelog renumber` (a member may only run it with `--check`), which `/qargi-verify` now names.
+- The `keep-a-changelog` pack tells a member to add an unnumbered bullet instead of numbering a changelog item itself, so parallel
+  tasks do not conflict on the same number; the lead renumbers at merge with `qargi changelog renumber` (a member may only run it with
+  `--check`), which `/qargi-verify` now names.
 - The write role's text says that documentation follows the code: when the brief and the code disagree, the member follows the code and
   reports the disagreement.
 - The `docs-site-member` pack tells a member that no line may start with a less-than sign (keep a code span that holds a placeholder on one line, or put the
@@ -62,34 +88,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   directory `bridge-NAME` under a `worktrees` directory (or gone) is left out, and a branch of that name that no such worktree holds is still found.
 - `qargi local verify` fails first, with exit 1 and "OUT is empty: the member did not collect", when the clone holds commits past BASE_SHA and OUT has no
   patches and no report, instead of leaving the lead to read the refs and the empty directory. `local clean --discard` is not affected.
-- The answer `branches.push_develop` (`true`, the default, or `false`; set it with `qargi project set PROJECT branches.push_develop
-  false`) decides whether `qargi feature finish` pushes develop to origin. The first line of the finish plan now says "will push
-  develop to origin" or "local only, will not push" with the reason (no origin, or the answer), and the plan token covers it.
-- `qargi feature verify` and `qargi release verify` warn on standard error, and go on, when another suite may be running: a
-  whole-suite run of the project in progress, a local run of the repository with a file changed in the last 10 minutes
-  (`QARGI_ACTIVE_MINUTES` changes that), or a `tests/run.sh` process in the repository (Linux).
 - The advisor sign-off in the `qargi-flow` skill tells the lead to put "do not run the test suite while a feature verify is
   running" in the brief it writes for the advisor.
-- `qargi release fix VERSION` makes a worktree on the release branch under the worktree root and prints its path; after the
-  fix is committed there, `release fix VERSION --push` (the same as `release push`) pushes it to the open pull request.
-  `release finish` removes that worktree with the branch.
-- `qargi release status` shows the checks of the release branch's pull request (name and pass, fail or pending), and for a tag a
-  checklist of what is left after the release: the tag on origin, the GitHub release published or missing, the assets of
-  `release.assets` present, the signatures of `release.sign.files` attached or unsigned, and the optional `release.after_steps`.
-- `qargi release finish` lists the pull request's checks in its plan and refuses, without a token, while one fails or is
-  pending, unless `--ignore-checks "<your words>"` is given (recorded in the output and the audit log); a missing gh or
-  pull request is a warning in the plan, and the apply refuses then unless the words are given.
 - `qargi release push` for a branch whose pull request is open says `updated PR #N` instead of failing with `gh pr create failed`.
-- `qargi release assets VERSION` builds the release files from the tag: it makes a clean detached worktree of the tag under the
-  state directory, runs the project answer `release.assets_command` (a command line, or a list of words with `{version}` replaced)
-  in it, records the worktree, and prints where the files are and the next command (`qargi release sign`). `--recreate` builds
-  again. `release sign` and `release publish` take the files from that worktree, so the repository's own checkout is not used.
-- `release publish --asset-dir DIR` attaches every regular file of a directory; `--asset` also takes a full path inside any
-  worktree of the repository; the answer `release.assets` may list globs (and `{version}`), taken in the asset worktree when
-  there is one, else in the repository. A glob that matches nothing and a symbolic link that leaves the worktrees refuse.
-- The project answer `release.after_steps`: a list of commands or reminders (`{version}` replaced) that `qargi release finish`
-  prints as `after the release: STEP` lines and records under the state (`release/PROJECT-VERSION.after.json`) so `release status`
-  can show them. qargi never runs them.
 - `qargi release site` no longer commits the built `_site/` on the site branch: a Pages build of the branch needs `_site/` empty.
   The build still runs, so a page that does not build refuses; the commit now records the release in `site.json` and removes a
   `_site/` that an earlier build committed.

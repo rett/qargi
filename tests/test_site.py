@@ -156,7 +156,7 @@ class Converter(unittest.TestCase):
             "<!-- a comment -->",             # 9 allowed
             "<a href=\"x\">link</a>",           # 10 allowed
             "<kbd>Ctrl</kbd> and <br>",       # 11 allowed
-            "<details><summary>s</summary>",  # 12 allowed
+            "<details><summary>s</summary>",  # 12 found: block HTML for Kramdown
             "```bash",                        # 13
             "<name> in a fence",              # 14 not found
             "- <name> in a fence",            # 15 not found
@@ -167,7 +167,8 @@ class Converter(unittest.TestCase):
             "</ x",                           # 20 found
         ])
         got = MD.html_starts(text)
-        self.assertEqual([ln for ln, _ in got], [2, 4, 6, 7, 8, 18, 19, 20])
+        self.assertEqual([ln for ln, _ in got], [2, 4, 6, 7, 8, 12, 18, 19, 20])
+        self.assertEqual([ln for ln, _ in MD.html_starts("<summary>s</summary>\n- <sup>x</sup>\n<sub>y</sub>")], [1])
         self.assertIn('starts with "<name"', got[0][1])
         self.assertIn("raw HTML block", got[0][1])
         self.assertIn("keep a code span that holds a placeholder on one line, or put the placeholder after other text", got[0][1])
