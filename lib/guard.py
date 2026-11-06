@@ -31,7 +31,7 @@ reflog expire and delete, hash-object -w, unpack-objects and git lfs included).
 
 Skills: only a person, through qargi's own skills, changes a skill, so the guard refuses a member
   - the lead's runs and agents: qargi local run|prepare|verify|close|clean (`local clean --discard` removes another run with no token), agent remove, project new,
-    team run and task;
+    review apply, team run and task;
   - the verbs that change one: qargi skill|tool new|import|seal|remove|unlink|link|enable|disable, qargi skill accept|unaccept
     (they record which skills the owner accepts, in <packs>/accepted.json), qargi discover
     install, qargi packs apply|seed|link|unlink, qargi project link|unlink (they link the project's skills, agents and memory into the
@@ -44,7 +44,7 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     the last two have names a project may use for its own scripts, so only the files in the lib directory of the tool or of the installed
     copy count, found from the directory the command runs in);
   - qargi project init (it stores a whole answers file, so it is a way to models.extensions and models.accept_no_barrier, which have gated verbs;
-    found like the skill verbs), and qargi project set of any models answer, of release.*, of test_command, of env.*, of site.* (the commands, environment and site the lead later runs or builds), of packs.* (the opt-out of the render check) and of
+    found like the skill verbs), and qargi project set of any models answer, of release.*, of test_command, of env.*, of site.* (the commands, environment and site the lead later runs or builds), of packs.* (the opt-out of the render check), of git.* and review.* (the identity and the author rule qargi review apply gives the commits it applies), of runs.* (the refs that verify and clean accept as a runtime's own) and of
     roles.<role>.tools, a whole role or roles (the tools env apply installs and local prepare checks out; the other answers stay open). A project verb the guard cannot read is
     refused: set with a path that is missing or built by xargs, a variable, a substitution, a brace or a glob; and any command with the word project,
     link, unlink, set or init after it and a shell expansion or xargs in the segment (found again inside `sh -c` and `eval` strings with the quotes
@@ -206,6 +206,7 @@ AUDIT_SUBST = re.compile(r"packs_audit\.py[\"']*")   # `packs_audit.py ... $(...
 UNREADABLE = "$`{}*?[]"                                     # in a word: a variable, a substitution, a brace or a glob builds it, so the guard cannot read what it is
 EXECUTED_ANSWERS = ("release", "test_command", "env", "upstream", "site")   # the answers the lead later runs, passes to a process, fetches from or builds from (release site): a member may not set them (project set)
 ROLE_TOOLS_PATH = re.compile(r"roles|roles\.[^.]+|roles\.[^.]+\.tools(?:\..*)?")   # roles.<role>.tools: what env apply installs and local prepare checks out; a whole role, or all of them, holds it
+IDENTITY_ANSWERS = ("git", "review")   # git.author (the author review apply gives the applied commits) and review.keep_author (keep the member's instead): the lead's, a member may not set them (project set)
 PROJECT_VERBS = ("set", "init", "link", "unlink")           # the project verbs a member may not run (set: the models answers; init: the whole file; link, unlink: what a session loads)
 XARGS_VALUE_OPTS = {"-I", "-a", "-d", "-E", "-L", "-n", "-P", "-s", "--arg-file", "--delimiter", "--max-lines", "--max-args", "--max-procs", "--max-chars", "--process-slot-var"}   # take the next word
 WRAP = {"sudo", "env", "command", "builtin", "exec", "nohup", "time", "timeout", "setsid", "xargs", "nice", "parallel"}
@@ -240,7 +241,7 @@ MEMORY_READ = ("tiers", "check", "get", "lint")
 PROVIDER_READ = ("", "list", "show", "effective", "require-barrier", "skills-dirs", "of", "layout", "require-skills", "launch", "addenda", "notes", "model")   # the provider verbs that only read; the rest, and any verb added later, change the definitions or run code (check, adapter-run)
 BUILT_VERB_AREAS = {"skill", "tool", "packs", "discover", "project", "local", "cloud", "memory"}   # a verb the shell builds in these is refused: one of the verbs that change something may be what it builds
 ENV_LEAD = ("plan", "apply")                                   # the verbs of qargi env that run a project's commands (lib/env_apply.py)
-LEAD_VERBS = {("local", "clean"), ("local", "close"), ("local", "prepare"), ("local", "verify"), ("agent", "remove"), ("project", "new"), ("team", "run")}   # the lead's runs and agents: `local clean --discard` removes another run with no token
+LEAD_VERBS = {("local", "clean"), ("local", "close"), ("local", "prepare"), ("local", "verify"), ("agent", "remove"), ("project", "new"), ("review", "apply"), ("team", "run")}   # the lead's runs and agents: `local clean --discard` removes another run with no token
 MEMORY_NOTE = "propose it in your report"
 MARSHAL_READ = ("status", "check", "handoff")                # handoff only reads; with --write it makes a file and is refused (skill_verb)
 MARSHAL_SIGNING = {"key": "manages the marshal's signing key", "signers": "manages the marshal's allowed signers",
@@ -2709,8 +2710,12 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
             return "qargi project set of %s changes which runtime the project uses or what counts as its barrier and is not available to an agent (qargi provider enable and qargi provider accept have a plan token)" % path
         if path in EXECUTED_ANSWERS or path.startswith(tuple(a + "." for a in EXECUTED_ANSWERS)):
             return "qargi project set of %s changes a command or an environment the lead later runs, the remote it fetches from or the site it builds (the release answers, test_command, env, upstream, the site answers qargi release site builds from) and is not available to an agent: propose the value in your report" % path
+        if path == "runs" or path.startswith("runs."):
+            return "qargi project set of %s declares which refs verify and clean accept as created by a runtime (runs.owned_refs), a way round the ref check of a run, and is not available to an agent: propose the pattern in your report" % path
         if path == "packs" or path.startswith("packs."):
             return "qargi project set of %s opts the project out of the packs render check (packs.none) and is not available to an agent: propose the value in your report" % path
+        if path in IDENTITY_ANSWERS or path.startswith(tuple(a + "." for a in IDENTITY_ANSWERS)):
+            return "qargi project set of %s changes whose name the commits qargi review apply puts on a member's work (git.author, review.keep_author) and is not available to an agent: propose the value in your report" % path
         if ROLE_TOOLS_PATH.fullmatch(path):
             return "qargi project set of %s changes the tools the lead later installs and checks out (roles.<role>.tools: go install, a downloaded binary, a submodule) and is not available to an agent: propose the entry in your report" % path
     if area == "provider" and verb == "accept":

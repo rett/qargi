@@ -90,7 +90,7 @@ marshal_touch_run() { # RUN: renew the lease of the feature that the local run R
   local base proj
   base=$( reg_load; reg_get "$1" base ) || return 0
   case $base in feature/?*) ;; *) return 0;; esac
-  proj=$( reg_load; project_of "$(reg_get "$1" repo)" "$(reg_get "$1" url)" ) || return 0
+  proj=$( reg_load; run_project "$1" ) || return 0
   [ -z "$proj" ] || marshal_touch "$proj" "${base#feature/}"
 }
 marshal_finish() { marshal_py "$1" finish "$2" --lenient >/dev/null; }

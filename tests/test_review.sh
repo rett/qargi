@@ -177,4 +177,88 @@ RS3=$(newrun saved3); IS3=$(basename "$RS3"); $DA local verify "$RS3" >/dev/null
 rm -f "$T/s/runs/$IS3/out/manifest.json"
 out=$($DA review apply --from-saved "$IS3" 2>&1); rc=$?
 [ $rc != 0 ] && grep -q "review check refuses" <<<"$out" && ! git -C "$A" rev-parse -q --verify agent/saved3 >/dev/null && ok "--from-saved runs review check on the saved OUT" || no "from-saved, check: rc=$rc $out"
+# --- the author of the applied commits: the lead's (answer git.author, else the repository's identity), the member's with review.keep_author or with no identity
+AF=$T/c/projects/app.json; AF0=$T/af0.json; cp "$AF" "$AF0"
+authors() { git -C "$A" log --format='%an <%ae>' "$dev..$1" | sort -u; }
+names_tip=$(git -C "$A" rev-parse agent/names)
+# default: no git.author, so the repository's user.name and user.email; the committer, the dates and the message are the patch's; the member is in the journal
+R20=$(newrun auth1); ad1=$(git -C "$R20/clone" log -1 --format=%aI HEAD~1)
+out=$($DA review apply "$R20" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(authors agent/auth1)" = "lead <lead@example.net>" ] && [ "$(git -C "$A" log --format=%cn "$dev..agent/auth1" | sort -u)" = lead ] \
+  && [ "$(git -C "$A" log --reverse --format=%aI "$dev..agent/auth1" | head -1)" = "$ad1" ] && [ "$(git -C "$A" log -1 --format=%B agent/auth1 | grep -c .)" = 2 ]; } \
+  && ok "apply resets the author to the repository's identity (no git.author), keeps the committer, the dates and the message" || no "default reset: rc=$rc $(authors agent/auth1) $out"
+grep -q "^author reset to lead <lead@example.net> (the repository's user.name and user.email; no answer git.author); member author recorded in the ref journal: agent <agent@example.invalid>$" <<<"$out" \
+  && ok "and says so in its output" || no "reset line: $out"
+jq -e -s 'map(select(.verb == "review:apply" and .ref == "refs/heads/agent/auth1")) | length == 1 and (.[0].why | contains("agent <agent@example.invalid>"))' "$T/s/ref-journal.jsonl" >/dev/null \
+  && grep -q '"verb":"review:apply".*agent <agent@example.invalid>' "$T/s/audit.log" && ok "the member's author is in the ref journal and the audit log, and not in the commit" || no "journal: $(tail -2 "$T/s/ref-journal.jsonl")"
+[ -z "$(git -C "$A" log --format=%B "$dev..agent/auth1" | grep -i 'agent@example.invalid\|co-authored\|signed-off')" ] && ok "no trailer or member name in the commit messages" || no "trailers"
+# a commit.cleanup=strip in the repository does not drop the message lines that start with #: the amend that resets the author keeps the message as it is
+R26=$(newrun hashmsg)
+( cd "$R26/clone" || exit 1; export GIT_AUTHOR_NAME=agent GIT_AUTHOR_EMAIL=agent@example.invalid GIT_COMMITTER_NAME=agent GIT_COMMITTER_EMAIL=agent@example.invalid
+  echo d >> internal/a.go; git add -A; git commit -q -m "keep the heading" -m "# Heading line stays
+plain line stays"
+  BASE=$(git rev-parse origin/develop); rm -f "$R26"/out/patches/*; git format-patch -q -o "$R26/out/patches" "$BASE..HEAD"; manifest "$R26/out" )
+git -C "$A" config commit.cleanup strip
+out=$($DA review apply "$R26" 2>&1); rc=$?
+git -C "$A" config --unset commit.cleanup
+{ [ $rc = 0 ] && [ "$(authors agent/hashmsg)" = "lead <lead@example.net>" ] && git -C "$A" log -1 --format=%B agent/hashmsg | grep -qx '# Heading line stays'; } \
+  && ok "the author reset keeps a message line that starts with # (commit.cleanup=strip in the repository)" || no "cleanup: rc=$rc $(git -C "$A" log -1 --format=%B agent/hashmsg 2>&1) $out"
+# an identity read from the repository is checked as git.author is: no < > or control character
+for bad in 'Evil <evil@example.com>' $'Ab\tcd'; do
+  git -C "$A" config user.name "$bad"
+  R27=$(newrun badid)
+  out=$($DA review apply "$R27" 2>&1); rc=$?
+  { [ $rc != 0 ] && grep -q "user.name and user.email .* are not a plain 'Name <email>'" <<<"$out" && grep -q "nothing was applied" <<<"$out" && ! git -C "$A" rev-parse -q --verify agent/badid >/dev/null && [ "$(git -C "$A" worktree list | wc -l)" = 1 ]; } \
+    && ok "a repository user.name that is not a plain name is refused before anything is applied" || no "bad identity: rc=$rc $out"
+  $DA local clean "$R27" --discard >/dev/null 2>&1 || rm -rf "$R27"
+done
+git -C "$A" config user.name lead
+# git.author set with project set: it wins over the repository's identity
+jq '.git.author = "Example Author <author@example.com>"' "$AF0" > "$AF"   # (project set stores it the same way; tests/test_project.sh covers the verb)
+R21=$(newrun auth2)
+out=$($DA review apply "$R21" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(authors agent/auth2)" = "Example Author <author@example.com>" ] && [ "$(git -C "$A" log --format=%cn "$dev..agent/auth2" | sort -u)" = lead ] \
+  && grep -q "^author reset to Example Author <author@example.com> (answer git.author); member author recorded in the ref journal: agent <agent@example.invalid>$" <<<"$out"; } \
+  && ok "the answer git.author is the author of the applied commits, the committer stays the repository's" || no "git.author: rc=$rc $(authors agent/auth2) $out"
+[ "$(git -C "$A" rev-parse agent/names)" = "$names_tip" ] && [ "$(authors agent/names)" = "lead <lead@example.net>" ] && ok "history applied before is not rewritten" || no "old history rewritten"
+# the answers are the run's own (the lead's registry holds the copy taken at prepare): an answer changed after prepare, or a decoy project file for the same
+# repository, changes neither the author nor keep_author of this run
+R25=$(newrun decoy)
+jq '.git.author = "Evil Author <evil@example.com>" | .review.keep_author = true' "$AF" > "$T/c/projects/aaa.json"
+jq '.git.author = "Late Author <late@example.com>"' "$AF" > "$T/af.late" && mv "$T/af.late" "$AF"
+out=$($DA review apply "$R25" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(authors agent/decoy)" = "Example Author <author@example.com>" ] && grep -q "^author reset to Example Author <author@example.com> (answer git.author)" <<<"$out"; } \
+  && ok "a decoy projects/aaa.json and a later change of git.author do not change the author a prepared run gets" || no "decoy author: rc=$rc $(authors agent/decoy) $out"
+rm -f "$T/c/projects/aaa.json"; jq '.git.author = "Example Author <author@example.com>"' "$AF0" > "$AF"
+# --from-saved uses the same rule
+RS4=$(newrun savedauth); IS4=$(basename "$RS4"); $DA local verify "$RS4" >/dev/null 2>&1; rm -rf "$RS4"
+out=$($DA review apply --from-saved "$IS4" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(authors agent/savedauth)" = "Example Author <author@example.com>" ] && grep -q "^author reset to Example Author <author@example.com> (answer git.author)" <<<"$out"; } \
+  && ok "--from-saved resets the author the same way" || no "from-saved author: rc=$rc $(authors agent/savedauth) $out"
+# review.keep_author true: the member's author stays and the output says so
+jq '.review.keep_author = true' "$AF" > "$AF.new" && mv "$AF.new" "$AF"
+R22=$(newrun keep)
+out=$($DA review apply "$R22" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(authors agent/keep)" = "agent <agent@example.invalid>" ] && grep -q "^author kept as the member's (answer review.keep_author): agent <agent@example.invalid>$" <<<"$out"; } \
+  && ok "review.keep_author true keeps the member's author and says so" || no "keep_author: rc=$rc $(authors agent/keep) $out"
+RS5=$(newrun savedkeep); IS5=$(basename "$RS5"); $DA local verify "$RS5" >/dev/null 2>&1; rm -rf "$RS5"
+out=$($DA review apply --from-saved "$IS5" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(authors agent/savedkeep)" = "agent <agent@example.invalid>" ]; } && ok "--from-saved keeps the member's author with review.keep_author" || no "from-saved keep: rc=$rc $out"
+cp "$AF0" "$AF"
+# neither git.author nor a repository identity: the member's author stays, and the output says so
+git -C "$A" config --unset user.name; git -C "$A" config --unset user.email
+R23=$(newrun noid)
+out=$($DA review apply "$R23" 2>&1); rc=$?
+git -C "$A" config user.name lead; git -C "$A" config user.email lead@example.net
+{ [ $rc = 0 ] && [ "$(authors agent/noid)" = "agent <agent@example.invalid>" ] && grep -q "^author kept as the member's (no answer git.author and no user.name and user.email in the repository): agent <agent@example.invalid>$" <<<"$out"; } \
+  && ok "with no git.author and no repository identity the member's author stays and the output says so" || no "no identity: rc=$rc $(authors agent/noid) $out"
+# a hand-edited answers file that breaks the answers is refused before anything is applied
+for bad in '.git={author:"no email"}' '.git={author:3}' '.review={keep_author:"yes"}' '.review=5'; do
+  jq "$bad" "$AF0" > "$AF"; R24=$(newrun badans)
+  out=$($DA review apply "$R24" 2>&1); rc=$?
+  { [ $rc != 0 ] && grep -q "nothing was applied" <<<"$out" && ! git -C "$A" rev-parse -q --verify agent/badans >/dev/null && [ "$(git -C "$A" worktree list | wc -l)" = 1 ]; } \
+    && ok "answers $bad are refused before anything is applied" || no "bad answers $bad: rc=$rc $out"
+  $DA local clean "$R24" --discard >/dev/null 2>&1 || rm -rf "$R24"
+done
+cp "$AF0" "$AF"
 exit $fail

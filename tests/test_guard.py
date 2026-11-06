@@ -503,6 +503,20 @@ class Skills(HookCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
+    def test_refuses_project_set_of_runs_to_a_member(self):
+        """runs.owned_refs lists the refs that local verify and clean accept as created by a runtime, so a member that could set it would make its own
+        ref changes pass the ref check: project set refuses runs and runs.*. Look-alikes stay open."""
+        for path in ("runs", "runs.owned_refs"):
+            for form in ("qargi project set p %s v", "sudo qargi project set p %s v", "cd src && qargi project set p %s v",
+                         "bash -c 'qargi project set p %s v'", "./lib/project.sh set p %s v", "echo $(qargi project set p %s v)"):
+                c = form % path
+                r = self.bash(c)
+                self.assertEqual(r.returncode, 2, c)
+                self.assertIn("qargi project set of %s declares which refs verify and clean accept as created by a runtime" % path, r.stderr, c)
+        for c in ("qargi project set p runs_owned_refs v", "qargi project set p running x", "qargi project show p", "echo qargi project set p runs.owned_refs v"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
     def test_project_profile_check_is_open_to_a_member(self):
         """qargi project profile check reads a profile and the repository's CLAUDE.md, AGENTS.md and Makefile and writes nothing: a member may run it."""
         for c in ("qargi project profile check", "qargi project profile check p", "qargi project profile check p --profile ./profile.md",
@@ -547,6 +561,23 @@ class Skills(HookCase):
         for c in ("qargi project set p test_commands x", "qargi project set p releases.x y", "qargi project set p environment x", "qargi project set p budget_cents 500",
                   "qargi project set p upstreams.x y", "qargi project set p sites.x y", "qargi project set p website x",
                   "qargi project show p", "echo qargi project set p release.preflight x", "echo qargi project set p site.enabled true"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_refuses_project_set_of_the_author_answers_to_a_member(self):
+        """git.author and review.keep_author decide whose name qargi review apply puts on a member's commits: they are the lead's, so project set
+        refuses them, whole or by a dotted path, in the forms the other lead-only answers are refused in. Look-alikes (gitx, reviews, review_x)
+        stay open."""
+        for path in ("git", "git.author", "review", "review.keep_author"):
+            for form in ("qargi project set p %s v", "/opt/q/bin/qargi project set p %s v", "sudo qargi project set p %s v", "cd src && qargi project set p %s v",
+                         "bash -c 'qargi project set p %s v'", "env FOO=1 qargi project set p %s v", "echo $(qargi project set p %s v)",
+                         "./lib/project.sh set p %s v", "bash lib/project.sh set p %s v"):
+                c = form % path
+                r = self.bash(c)
+                self.assertEqual(r.returncode, 2, c)
+                self.assertIn("qargi project set of %s changes whose name the commits qargi review apply puts" % path, r.stderr, c)
+        for c in ("qargi project set p gitx v", "qargi project set p reviews.x v", "qargi project set p review_x true", "qargi project set p budget_cents 500",
+                  "qargi project show p", "echo qargi project set p git.author x"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
@@ -612,6 +643,21 @@ class Skills(HookCase):
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("qargi local run starts the runtime's command", r.stderr, c)
         for c in ("qargi local list /tmp/r", "cat lib/local_run.py", "grep -n argv lib/local_run.py"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_refuses_review_apply_to_a_member(self):
+        """qargi review apply creates a branch in the lead's repository from a run's patches and records it in the lead's ref journal: the lead's,
+        in every spelling, however the run is named. Reading the reviews (review check, review list) and talking about it stays allowed."""
+        for form in ("qargi review apply %s", "/opt/q/bin/qargi review apply %s", "sudo qargi review apply %s", "bash -c 'qargi review apply %s'", "env FOO=1 qargi review apply %s",
+                     "cd src && qargi review apply %s", "echo $(qargi review apply %s)", "true && qargi review apply %s", "eval 'qargi review apply %s'",
+                     "qargi 'review' 'apply' %s", "xargs qargi review apply %s"):
+            for tail in ("/tmp/r", "--from-saved 2026-11-06-x", "/tmp/r --branch agent/x"):
+                c = form % tail
+                r = self.bash(c)
+                self.assertEqual(r.returncode, 2, c)
+                self.assertIn("qargi review apply is the lead's", r.stderr, c)
+        for c in ("echo qargi review apply", "grep -n 'review apply' lib/commands.py", "qargi review check /tmp/r", "git log --grep 'review apply'"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 

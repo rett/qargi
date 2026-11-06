@@ -34,7 +34,7 @@ members_shape_ok() { # -> 0 when agents.json is in the current shape: {} or {"sc
     and (.projects | all(.[]; type == "object" and all(.[]; type == "object")))))' "$MEMBERS_FILE" >/dev/null 2>&1
 }
 
-# Naming convention (see README): <project>-<component>[-<role>]. Project and role
+# Naming convention (see docs/flow/README.md): <project>-<component>[-<role>]. Project and role
 # are single lower-case tokens (no dashes) so a name parses unambiguously; the
 # role comes from a fixed list. The environment and the memory stores belong to the
 # project: <project>-environment, <project>-memory, <project>-reference; the agent
@@ -84,9 +84,24 @@ class_abilities() { # BASE [PROJECT_JSON] -> a JSON array: the abilities of a ba
   jq -nc --arg b "$1" --slurpfile d "$_QARGI_DEFAULTS" --argjson p "$([ -n "$f" ] && cat "$f" || echo '{}')" \
     '(($d[0].bases[$b].abilities // []) + [($p.profiles // {})[] | select(.base == $b) | (.abilities // [])[]]) | unique' 2>/dev/null || echo '[]'
 }
-run_class() { # RUN_DIR -> the class of a local run (RUN/class, which prepare writes); a directory with none counts as read-only
-  local c; c=$(cat "$1/class" 2>/dev/null) && [ -n "$c" ] && { echo "$c"; return 0; }
-  echo read-only
+# run_class RUN [FILE_DIR] -> the class of a local run: write or read-only. The lead's registry says (prepare records it: the run directory is a member's to
+# write, and a class file there would let a write run pass for a read-only one); only a record that has none (a run prepared by an earlier version) falls
+# back to FILE_DIR/class (default RUN/class), and a run with neither counts as write, never as read-only.
+run_class() {
+  local c
+  reg_has "$1" || reg_load
+  c=$(reg_get "$1" class)
+  case $c in write|read-only) echo "$c"; return 0;; esac
+  c=$(cat -- "${2:-$1}/class" 2>/dev/null) || c=''
+  case $c in write|read-only) echo "$c"; return 0;; esac
+  echo write
+}
+# out_has_report OUT -> 0 when OUT holds a report: a regular file (not a link) named report.md or *-report.md directly in it. The one test local.sh and
+# lib/lead_usage.py (has_report) share.
+out_has_report() {
+  local f
+  for f in "$1"/report.md "$1"/*-report.md; do [ -f "$f" ] && [ ! -L "$f" ] && return 0; done
+  return 1
 }
 # The lead's registry of local runs ($DA_STATE/local-runs.jsonl, one JSON line per run, written by `local prepare`, mode 600) is what decides what a run is
 # and where it came from: its directory, slug, base, temporary directory and the repository (repo: a real path; or url and cred: a repository URL and the path
@@ -94,9 +109,13 @@ run_class() { # RUN_DIR -> the class of a local run (RUN/class, which prepare wr
 #   reg_load            fills LRUNS (real path of each run directory the registry names -> its last line) and LRUNS_ORDER (those paths, first seen first)
 #   reg_has DIR         0 when the registry names the directory DIR (compared by real path)
 #   reg_get DIR FIELD   the text of FIELD in the registry's line for DIR (empty when absent or not a string)
+#   reg_json DIR FILTER the compact JSON a jq FILTER makes of the registry's line for DIR (nothing when the run is not in it)
 #   reg_record DIR      run_record from the registry alone, for a run whose directory is gone (its saved copy: local verify --saved)
 #   reg_id ID           the run directory of the registry whose name is ID (qargi.XXXXXX), when exactly one has it
 #   reg_edit DIR drop|cleaned   rewrites the registry under its lock: drops the lines of DIR, or marks them cleaned (a time), mode 600
+# The line also holds what prepare took from the lead's answers, the one copy that verify, clean and review apply believe: the class of the run (class:
+# write or read-only), the stored project of its repository (project) and answers, an object with the answers that decide what verification accepts (runs.owned_refs, repo.long_lived,
+# repo.parking_branch, git.author, review.keep_author). A record without answers is an older run (see run_answers).
 # A path is compared by its real path; the run directory of a line may be gone (a reboot that emptied a tmpfs, a clean), and the path is then
 # taken as written, resolved as far as it exists (readlink -m).
 declare -gA LRUNS=()   # -g: lib.sh is sourced from inside a function by some callers
@@ -124,6 +143,11 @@ reg_get() {
 # prepare appends under), mode 600 kept; a run the registry does not name is left alone, and a failure is not the caller's (the mark is a
 # record, the run's own files stay what verify and clean decide on). verify marks a run verified, clean marks it cleaned: the run keeps its
 # one line, and the readers (marshal status, handoff, report) see the truth after the run directory is gone.
+reg_json() {
+  local rr; rr=$(readlink -m -- "$1" 2>/dev/null) || return 0
+  [ -n "${LRUNS[$rr]+x}" ] || return 0
+  jq -c "$2" <<<"${LRUNS[$rr]}" 2>/dev/null || true
+}
 reg_mark() {
   local f=$DA_STATE/local-runs.jsonl rr
   rr=$(readlink -f -- "$1" 2>/dev/null) || rr=$1
@@ -134,9 +158,10 @@ reg_mark() {
   ) 9> "$f.lock" 2>/dev/null || true
 }
 reg_record() {
-  RUN_REPO='' RUN_URL='' RUN_CRED=''
+  RUN_REPO='' RUN_URL='' RUN_CRED='' RUN_PROJ='' RUN_ANS=''
   reg_has "$1" || { echo "qargi: $1 is not in the lead's registry ($DA_STATE/local-runs.jsonl): only a run made by qargi local prepare on this machine is trusted" >&2; return 1; }
   RUN_REPO=$(reg_get "$1" repo); RUN_URL=$(reg_get "$1" url); RUN_CRED=$(reg_get "$1" cred)
+  RUN_PROJ=$(reg_get "$1" project); RUN_ANS=$(reg_json "$1" 'if (.answers | type) == "object" then .answers else empty end')
   [ -n "$RUN_REPO" ] || [ -n "$RUN_URL" ] || { echo "qargi: the lead's registry names no repository for $1 (a run prepared by an earlier version): it cannot be verified" >&2; return 1; }
 }
 reg_id() {
@@ -162,7 +187,7 @@ reg_edit() {
     done < "$f" > "$tmp" && chmod 600 "$tmp" && mv -f -- "$tmp" "$f" || { rm -f "$tmp"; exit 1; }
   ) 9> "$f.lock"
 }
-# run_record RUN -> 0 and sets RUN_REPO, RUN_URL and RUN_CRED from the registry (reg_load first); 1 with the reason on stderr when the registry does not
+# run_record RUN -> 0 and sets RUN_REPO, RUN_URL, RUN_CRED, RUN_PROJ and RUN_ANS from the registry (reg_load first); 1 with the reason on stderr when the registry does not
 # name the run, names no repository for it, or the run directory's own repo.path, repo.url or cred.path (which a member can write) differ from it or are not
 # plain files. verify, clean, run and review apply take the repository, the URL and the credential path from these variables and from nothing else: git run
 # in a repository a member chose reads its configuration (core.sshCommand, credential.helper ...), and a URL and a credential path chosen by a member send
@@ -192,6 +217,21 @@ project_of() {
     basename "$f" .json; return 0
   done
   return 0
+}
+# run_answers -> prints (JSON) the answers that decide what verification accepts for the run reg_record/run_record just read: the snapshot prepare took into
+# the lead's registry (RUN_ANS), never the stored project's file, which anything running as the lead's user can write or add a decoy of. An older record
+# has no snapshot: the stored project of its repository is read as before (the record's project when it names one, else the first project whose repo.path is it).
+run_answers() {
+  local pj
+  if [ -n "${RUN_ANS:-}" ]; then printf '%s\n' "$RUN_ANS"; return 0; fi
+  pj=${RUN_PROJ:-}; [ -n "$pj" ] || pj=$(project_of "${RUN_REPO:-}" "${RUN_URL:-}")
+  if valid_project "$pj"; then cat -- "$DA_CONF/projects/$pj.json" 2>/dev/null || true; fi
+  return 0
+}
+# run_project RUN -> the stored project a registered run was made for (reg_load first): the one prepare recorded; an older record is looked up by its repository
+run_project() {
+  if [ -n "$(reg_json "$1" 'if (.answers | type) == "object" then 1 else empty end')" ]; then reg_get "$1" project
+  else project_of "$(reg_get "$1" repo)" "$(reg_get "$1" url)"; fi
 }
 DA_ROLES=${QARGI_ROLES:-$(role_names | tr '\n' ' ' | sed 's/ $//')}
 valid_project() { printf '%s' "$1" | grep -Eq '^[a-z][a-z0-9]{0,23}$'; }

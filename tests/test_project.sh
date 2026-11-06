@@ -35,6 +35,20 @@ chk "branches.push_develop: string" 1 '.branches={push_develop:"false"}'
 chk "branches.push_develop: null"   1 '.branches={push_develop:null}'
 chk "branches: unknown key"         1 '.branches={keep:true}'
 chk "branches: not an object"       1 '.branches="local"'
+chk "git.author: Name <email>"      0 '.git={author:"Example Author <author@example.com>"}'
+chk "git.author: null (unset)"      0 '.git={author:null}'
+chk "git.author: no email"          1 '.git={author:"Example Author"}'
+chk "git.author: no name"           1 '.git={author:"<author@example.com>"}'
+chk "git.author: empty"             1 '.git={author:""}'
+chk "git.author: bad email"         1 '.git={author:"Example Author <author>"}'
+chk "git.author: not a string"      1 '.git={author:3}'
+chk "git.author: a newline"         1 '.git={author:"Example\nAuthor <author@example.com>"}'
+chk "git: unknown key"              1 '.git={name:"x"}'
+chk "git: not an object"            1 '.git="x"'
+chk "review.keep_author: true"      0 '.review={keep_author:true}'
+chk "review.keep_author: false"     0 '.review={keep_author:false}'
+chk "review.keep_author: string"    1 '.review={keep_author:"true"}'
+chk "review: unknown key"           1 '.review={keep:true}'
 chk "worktrees.root: absolute"      0 '.worktrees={root:"/srv/worktrees"}'
 chk "worktrees.root: relative"      1 '.worktrees={root:"worktrees"}'
 chk "worktrees.root: empty"         1 '.worktrees={root:""}'
@@ -43,6 +57,31 @@ chk "worktrees.root: in the repo"   1 '.repo.path="/srv/qrepo" | .worktrees={roo
 chk "packs.none: true"              0 '.packs={none:true}'
 chk "packs.none: false"             0 '.packs={none:false}'
 chk "packs.none: not a boolean"     1 '.packs={none:"yes"}'
+chk "runs.owned_refs: a pattern"    0 '.runs={owned_refs:["refs/heads/foo-*"]}'
+chk "runs.owned_refs: several kinds" 0 '.runs={owned_refs:["refs/heads/foo-*","refs/notes/rt-?-*","refs/stash-keep/abc*"]}'
+chk "runs.owned_refs: empty list"   0 '.runs={owned_refs:[]}'
+chk "runs.owned_refs: not a list"   1 '.runs={owned_refs:"refs/heads/foo-*"}'
+chk "runs.owned_refs: a bare glob"  1 '.runs={owned_refs:["refs/heads/*"]}'
+chk "runs.owned_refs: short prefix" 1 '.runs={owned_refs:["refs/heads/fo*"]}'
+chk "runs.owned_refs: glob namespace" 1 '.runs={owned_refs:["refs/*/foo-x"]}'
+chk "runs.owned_refs: not a full ref" 1 '.runs={owned_refs:["foo-*"]}'
+chk "runs.owned_refs: matches develop" 1 '.runs={owned_refs:["refs/heads/dev*"]}'
+chk "runs.owned_refs: matches master" 1 '.runs={owned_refs:["refs/heads/mast?r"]}'
+chk "runs.owned_refs: matches a long-lived branch" 1 '.repo.long_lived=["master","develop","stable"] | .runs={owned_refs:["refs/heads/sta*"]}'
+chk "runs.owned_refs: git-flow branches" 1 '.runs={owned_refs:["refs/heads/feature/*"]}'
+chk "runs.owned_refs: matches the flow prefix" 1 '.runs={owned_refs:["refs/heads/fea*"]}'
+chk "runs.owned_refs: release glob in the middle" 1 '.runs={owned_refs:["refs/heads/rel*/0*"]}'
+chk "runs.owned_refs: feature glob in the middle" 1 '.runs={owned_refs:["refs/heads/fea*/x-*"]}'
+chk "runs.owned_refs: agent glob in the middle" 1 '.runs={owned_refs:["refs/heads/age*t/foo-*"]}'
+chk "runs.owned_refs: hotfix glob in the middle" 1 '.runs={owned_refs:["refs/heads/hot*/0*"]}'
+chk "runs.owned_refs: a ? inside the flow prefix" 1 '.runs={owned_refs:["refs/heads/releas?/*"]}'
+chk "runs.owned_refs: tags"         1 '.runs={owned_refs:["refs/tags/v0.*"]}'
+chk "runs.owned_refs: all tags"     1 '.runs={owned_refs:["refs/tags/*"]}'
+chk "runs.owned_refs: close to a flow name, but not in it" 0 '.runs={owned_refs:["refs/heads/feature-*","refs/heads/releases-*","refs/heads/worktree-*"]}'
+chk "runs.owned_refs: a space"      1 '.runs={owned_refs:["refs/heads/foo *"]}'
+chk "runs.owned_refs: a duplicate"  1 '.runs={owned_refs:["refs/heads/foo-*","refs/heads/foo-*"]}'
+chk "runs.owned_refs: not a string" 1 '.runs={owned_refs:[3]}'
+chk "runs: an unknown key"          1 '.runs={owned:["refs/heads/foo-*"]}'
 chk "packs: unknown key"            1 '.packs={off:true}'
 chk "packs: not an object"          1 '.packs=true'
 GO='{kind:"go",name:"github.com/acme/lint/cmd/acme-lint",version:"v1.2.0"}'
@@ -127,6 +166,15 @@ chkm() { # name jq-filter expected-message-prefix
   out=$($DA project validate "$f" 2>&1); local rc=$?
   if [ "$rc" != 0 ] && grep -qF -- "$3" <<<"$out"; then echo "ok   $1"; else echo "FAIL $1 (exit $rc, wanted message $3; got: $out)"; fail=1; fi
 }
+# roles: no roles is the one finding and no crash; the tools_off and skills checks run for every role, not only the last
+chkm "roles: none enabled"          '.roles={}' 'roles: enable at least one role'
+chkm "roles: key missing"           'del(.roles)' 'roles: enable at least one role'
+jq '.roles={}' <<<"$base" > "$T/a.json"
+if $DA project validate "$T/a.json" 2>&1 | grep -q 'Traceback\|NameError'; then echo "FAIL roles: none crashes"; fail=1; else echo "ok   roles: none does not crash"; fi
+chkm "roles: first role, bad tools_off" '.roles.build.tools_off=["nope"]' 'roles.build.tools_off: '
+chkm "roles: first role, bad skills"    '.roles.build.skills=["nope"]' 'roles.build.skills: '
+chkm "roles: last role, bad tools_off"  '.roles.write.tools_off=["nope"]' 'roles.write.tools_off: '
+chk  "roles: both roles good tools_off and skills" 0 '.roles.build.tools_off=["bash"] | .roles.write.skills=["pdf","docx"]'
 chk  "valid project profile"        0 '.profiles.tiny={base:"reviewer",tier:"fast",model:"haiku",effort:"low",purpose:"small checks",abilities:["review"]}'
 chk  "shipped profile, only tier"   0 '.profiles.build={tier:"deep"}'
 chk  "profiles absent is fine"      0 'del(.profiles)'
@@ -168,6 +216,13 @@ chkm "accept_no_barrier empty reason" ".models.accept_no_barrier.cloud=($ACC | .
 # line and still exits 0, so storing and every flow after it work as before
 jq -e '.models.provider == ""' <<<"$base" >/dev/null && echo "ok   the template has models.provider as an empty string" || { echo "FAIL template models.provider"; fail=1; }
 jq -e '.roles | all(.[]; has("model") and .model == null)' <<<"$base" >/dev/null && echo "ok   the template names no model for a role (the provider's tier applies once one is set)" || { echo "FAIL template role models"; fail=1; }
+# lead.context_window: the template carries it as null (the window is derived from the model of the session); a number of tokens fixes it
+jq -e '.lead | has("context_window") and .context_window == null' <<<"$base" >/dev/null && echo "ok   the template has lead.context_window as null (derive from the model)" || { echo "FAIL template lead.context_window"; fail=1; }
+chk "lead.context_window: a number" 0 '.lead.context_window=1000000'
+chk "lead.context_window: null"     0 '.lead.context_window=null'
+chk "lead.context_window: too small" 1 '.lead.context_window=500'
+chk "lead.context_window: a text"   1 '.lead.context_window="big"'
+chk "lead.context_window: a boolean" 1 '.lead.context_window=true'
 $DA project template demo | grep -qi claude && { echo "FAIL the template names a vendor"; fail=1; } || echo "ok   the template names no vendor"
 fnd() { # name jq-filter wanted(yes|no): does validate print the models.provider finding, with exit 0?
   local f=$T/a.json out rc; jq "$2" <<<"$base" > "$f"
@@ -196,9 +251,16 @@ out=$($DA project validate "$T/a.json" 2>&1); [ "$?" = 0 ] && ! grep -q '^WARN:'
 rm -rf "$T/c/packs"
 echo "$base" > $T/ok.json; $DA project init demo --answers $T/ok.json >/dev/null 2>&1 || { echo "FAIL init"; fail=1; }
 out=$($DA project init demo --answers $T/ok.json --force 2>&1); grep -q '^finding: models.provider is not set' <<<"$out" && echo "ok   init tells that no provider is set" || { echo "FAIL init finding: $out"; fail=1; }
+grep -q '^lead context window: derived from the model of the session (qargi project set demo lead.context_window TOKENS' <<<"$out" && echo "ok   init says the lead's context window is derived from the model" || { echo "FAIL init context window: $out"; fail=1; }
+echo "$base" | jq '.lead.context_window=1000000' > $T/ok2.json; out=$($DA project init demo --answers $T/ok2.json --force 2>&1); grep -qx 'lead context window: 1000000 tokens' <<<"$out" && echo "ok   init says a fixed context window" || { echo "FAIL init fixed window: $out"; fail=1; }
+echo "$base" > $T/ok.json; $DA project init demo --answers $T/ok.json --force >/dev/null 2>&1
 grep -q 'role build: .*, provider tier/high' <<<"$out" && echo "ok   init says a role without a model takes its provider's tier" || { echo "FAIL init role line: $out"; fail=1; }
 out=$($DA project validate demo 2>&1); [ "$?" = 0 ] && grep -q '^finding: models.provider is not set' <<<"$out" && echo "ok   validate NAME reads the stored answers and reports the finding" || { echo "FAIL validate NAME: $out"; fail=1; }
 $DA project set demo models.provider.local claude-code >/dev/null 2>&1 && $DA project set demo models.provider.cloud claude-platform >/dev/null 2>&1 && out=$($DA project validate demo 2>&1) && ! grep -q '^finding:' <<<"$out" && echo "ok   project set models.provider clears the finding" || { echo "FAIL set provider: $out"; fail=1; }
+msg=$($DA project set demo git.author 'Example Author <author@example.com>' 2>&1); [ "$msg" = 'demo: git.author = "Example Author <author@example.com>"' ] && [ "$(jq -r .git.author $T/c/projects/demo.json)" = "Example Author <author@example.com>" ] && echo "ok   set git.author (a plain string, no provision note)" || { echo "FAIL set git.author: $msg"; fail=1; }
+msg=$($DA project set demo git.author 'no email here' 2>&1); rc=$?; [ $rc != 0 ] && grep -q "git.author: a name and an email" <<<"$msg" && [ "$(jq -r .git.author $T/c/projects/demo.json)" = "Example Author <author@example.com>" ] && echo "ok   set refuses a git.author that is not Name <email>, nothing changed" || { echo "FAIL set bad git.author: rc=$rc $msg"; fail=1; }
+$DA project set demo review.keep_author true >/dev/null 2>&1 && [ "$(jq .review.keep_author $T/c/projects/demo.json)" = true ] && echo "ok   set review.keep_author true" || { echo "FAIL set review.keep_author"; fail=1; }
+msg=$($DA project set demo review.keep_author maybe 2>&1); rc=$?; [ $rc != 0 ] && grep -q "review.keep_author: true" <<<"$msg" && [ "$(jq .review.keep_author $T/c/projects/demo.json)" = true ] && echo "ok   set refuses a review.keep_author that is not true or false" || { echo "FAIL set bad keep_author: rc=$rc $msg"; fail=1; }
 $DA project set demo budget_cents 2500 >/dev/null 2>&1 && [ "$(jq .budget_cents $T/c/projects/demo.json)" = 2500 ] && echo "ok   set budget" || { echo "FAIL set budget"; fail=1; }
 # the message follows the key: the provision note belongs to answers a provision reads; a deployment option of the methodology
 # (github-release, none) is not one, so only what was set is said; a deployment value that is no option keeps the note

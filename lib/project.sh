@@ -61,6 +61,7 @@ set_note() { # project path json-value -> what `set` adds to its line: the provi
   # `deployment` is the methodology's deployment option (github-release, none): nothing is provisioned from it, so the note would mislead;
   # a value that is no option of the project's methodology is taken to name a cloud deployment and keeps the note
   local n=$1 path=$2 val=$3 meth
+  case $path in git|git.*|review|review.*) return 0;; esac   # read by qargi review apply, never by a provision
   if [ "$path" = deployment ]; then
     meth=$(jq -r '.methodology // "gitflow"' "$PROJ_DIR/$n.json")
     python3 -I - "$(dirname "$0")" "$meth" "$val" <<'PY' && return 0
@@ -162,6 +163,18 @@ if isinstance(brs, dict):
     need(isinstance(brs.get("push_develop", True), bool), "branches.push_develop: true (default: feature finish pushes develop when the repository has an origin) or false (develop stays local)")
     need(brs.get("delete_merged", "local") in ("local", "local+remote"), "branches.delete_merged: local (default) or local+remote (feature finish also deletes the branch on origin)")
     need(brs.get("push_features", "never") in ("never", "when-shared", "always"), "branches.push_features: never (default), when-shared (only a branch origin already has) or always")
+# git.author: the identity qargi review apply gives the applied commits (a string 'Name <email>'; unset: the repository's user.name and user.email)
+# review.keep_author: true keeps the member's author on the applied commits instead (default false)
+gt = c.get("git", {})
+need(isinstance(gt, dict) and set(gt) <= {"author"}, "git: an object like {author: \"Example Author <author@example.com>\"} (unknown key: only author)")
+if isinstance(gt, dict) and gt.get("author") is not None:
+    ga = gt["author"]
+    need(isinstance(ga, str) and re.fullmatch(r"[^<>]*[^<>\s] <[^<>\s@]+@[^<>\s@]+>", ga) and not any(ord(ch) < 32 or ord(ch) == 127 for ch in ga),
+         "git.author: a name and an email as 'Name <email>' (for example Example Author <author@example.com>), no control characters")
+rvw = c.get("review", {})
+need(isinstance(rvw, dict) and set(rvw) <= {"keep_author"}, "review: an object like {keep_author: false} (unknown key: only keep_author)")
+if isinstance(rvw, dict):
+    need(isinstance(rvw.get("keep_author", False), bool), "review.keep_author: true (qargi review apply keeps the member's author on the applied commits) or false (default: the author is reset to git.author)")
 # worktrees.root: where qargi makes worktrees (ROOT/<branch>); an absolute path (or ~/...), not inside the repository
 wts = c.get("worktrees", {})
 need(isinstance(wts, dict) and set(wts) <= {"root"}, "worktrees: an object like {root: \"/path\"}")
@@ -237,13 +250,13 @@ for name, cfg in (r.items() if isinstance(r, dict) else []):
         bad.append("%s.go: no such answer; a Go tool is an entry of %s.tools: {kind: go, name: PACKAGE, version: vX.Y.Z}" % (p, p))
     import tools as _tools   # lib/tools.py: the pinned tools of a role (go, binary, submodule) and what each entry needs
     bad.extend(_tools.problems(p, cfg.get("tools")))
-if isinstance(r, dict):
-    import tools as _tools
-    bad.extend(_tools.conflicts(r))
     off = cfg.get("tools_off", [])
     need(isinstance(off, list) and all(x in ("web_search", "web_fetch", "edit", "write", "read", "bash", "glob", "grep") for x in off), "%s.tools_off: built-in tools to disable (web_search, web_fetch, edit, ...)" % p)
     sk = cfg.get("skills", [])
     need(isinstance(sk, list) and all(x in ("pdf", "docx", "pptx", "xlsx") for x in sk), "%s.skills: any of pdf, docx, pptx, xlsx" % p)
+if isinstance(r, dict):
+    import tools as _tools
+    bad.extend(_tools.conflicts(r))
 prof = c.get("profiles")
 if prof is not None:
     import os
@@ -299,6 +312,12 @@ pk_ = c.get("packs")
 if pk_ is not None:
     need(isinstance(pk_, dict) and set(pk_) <= {"none"} and isinstance(pk_.get("none", False), bool),
          "packs: an object like {none: true} (none: the project uses no project packs, so packs check passes without a render)")
+rn = c.get("runs")
+if rn is not None:
+    need(isinstance(rn, dict) and set(rn) <= {"owned_refs"}, "runs: an object like {owned_refs: [\"refs/heads/foo-*\"]} (owned_refs: the refs a runtime or harness creates in the repository; verify and clean accept them)")
+    if isinstance(rn, dict) and "owned_refs" in rn:
+        import owned_refs as _owned   # lib/owned_refs.py: what a pattern may be (a literal prefix, never develop, master, a long-lived or git-flow branch)
+        bad.extend(_owned.problems(rn["owned_refs"], ll if isinstance(ll, list) else []))
 need(isinstance(c.get("budget_cents", 0), int) and c.get("budget_cents", 0) > 0, "budget_cents: a positive whole number (set on the deployment)")
 if "env" in c:
     import env as _env   # lib/env.py: the keys of the environment overrides and what each takes
@@ -329,6 +348,9 @@ if isinstance(teams, dict) and teams:
         sc = t.get("scopes", {})
         need(isinstance(sc, dict) and all(k in mem and isinstance(v, list) and all(isinstance(x, str) and x and not x.startswith("/") and ".." not in x for x in v) for k, v in sc.items()),
              "%s.scopes: {member role: [paths it may change]}" % p)
+cw = (c.get("lead") or {}).get("context_window") if isinstance(c.get("lead"), dict) else None
+need(cw is None or (isinstance(cw, int) and not isinstance(cw, bool) and cw >= 1000),
+     "lead.context_window: a number of tokens (at least 1000), or null to derive the window from the model of the session (its runtime's table); set it when your session's window is known, for example 1000000")
 lp = (c.get("lead") or {}).get("push", {})
 if lp:
     need(isinstance(lp, dict), "lead.push: an object")
@@ -475,6 +497,7 @@ case $verb in
         build: {base: "@dispatcher", push: {mode: "none"}, model: null, effort: $t.build.effort, apt: [], tools: [], skills: []},
         write: {base: "gh-pages", push: {mode: "none"}, model: null, effort: $t.write.effort, apt: [], tools: [], skills: ["pdf"]}
       },
+      lead: {context_window: null},
       models: {provider: ""},
       memory: {memory_store: "", reference_store: "", tiers: {}},
       budget_cents: 500}';;
@@ -491,6 +514,7 @@ case $verb in
     jq . "$ans" > "$PROJ_DIR/$n.json.tmp" && chmod 600 "$PROJ_DIR/$n.json.tmp" && mv "$PROJ_DIR/$n.json.tmp" "$PROJ_DIR/$n.json"
     echo "project $n stored in $PROJ_DIR/$n.json"
     no_provider "$PROJ_DIR/$n.json" || true
+    jq -r '"lead context window: " + (if (.lead.context_window // null) == null then "derived from the model of the session (qargi project set \($n) lead.context_window TOKENS to fix it)" else "\(.lead.context_window) tokens" end)' --arg n "$n" "$PROJ_DIR/$n.json"
     jq -r '.roles | to_entries[] | "  role \(.key): base \(.value.base), push \(.value.push.mode)" + (if .value.push.branch_pattern then " (\(.value.push.branch_pattern))" else "" end) + ", \(.value.model // "provider tier")/\(.value.effort)"' "$PROJ_DIR/$n.json";;
   new)
     # a new project: its directory, a git repository on the methodology's branches and the generic files; the plan first

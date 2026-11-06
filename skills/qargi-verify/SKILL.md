@@ -6,32 +6,32 @@ argument-hint: <run directory with patches/ and manifest.json>
 
 # /qargi-verify (you are the coordinator)
 
-Take in one run or several. Gates come from the repository's profile alone (`~/.qargi/config/profiles/<repo>.md`); without one, use the repository's own documented checks. An **open** run is a local run made by `qargi local prepare` that `qargi local verify` has not yet passed; a cloud collect is never open.
+Gates come from the repository's profile alone (`~/.qargi/config/profiles/<repo>.md`), else its own documented checks. An **open** run is a local run made by `qargi local prepare` that `qargi local verify` has not passed; a cloud collect is never open.
 
 ## 1. Verify every open run before applying any
 
 For each run:
 
-1. `qargi local verify RUN_DIR` (a cloud collect has none). A change in the real repository's refs means the agent pushed or wrote there: stop, tell the user, review nothing further. A pass arms the run for your merges.
+1. `qargi local verify RUN_DIR` (a cloud collect has none). A change in the real repository's refs means the agent pushed or wrote there: stop and tell the user. A pass arms the run for your merges.
 2. `qargi review check RUN_DIR/out` (OUT; or a cloud collect directory): one numbered patch per commit, a matching manifest and `series.md`. A FAIL goes back to the agent.
 3. `manifest.json`: base SHA equals the current base; `done.exit_code`; gate verdict lines; touched paths inside SCOPE; status DONE.
-4. Read each commit's diff on its own, with the agent's commit advice: one logical change, its tests, docs and changelog entry. Run the profile's private-name or secret scrub on the patches and grep commit messages for private names and trailers (`git interpret-trailers`). Refuse on a hit.
+4. Read each commit's diff on its own, with the agent's commit advice: one logical change with its tests, docs and changelog entry. Run the profile's private-name or secret scrub on the patches and grep commit messages for private names and trailers (`git interpret-trailers`). Refuse on a hit.
 
 ## 2. Apply and check
 
 - Local: `qargi review apply RUN_DIR` makes `agent/<slug>` (the slug it prints) in a temporary worktree at the run's base. Cloud: `git am --3way` the `*.patch` files in name order on a scratch base checkout.
-- Rebuild the generated files the profile names, run its gates yourself (trust only their verdict lines), then the DONE command verbatim. Check that each commit builds.
+- Rebuild the generated files the profile names, run its gates yourself (trust only their verdict lines), then the DONE command verbatim. Check each commit builds.
 - Anything the profile marks for a second-model review gets one first.
 
 ## 3. Report, then merge
 
-Report DONE or BLOCKED, evidence, deviations and the agent's `noticed_not_acted_on` notes (`qargi noticed list`, then `qargi noticed resolve`). Ask before any push; merge to a long-lived branch only when told.
+Report DONE or BLOCKED, evidence, deviations and the agent's `noticed_not_acted_on` notes (`qargi noticed list`, then `resolve`). Ask before any push; merge to a long-lived branch only when told.
 
 On approval, for each run in turn, with an open feature: `qargi feature merge NAME agent/<slug>` (the run's slug). For a cloud collect or a project with no open feature, apply the series with `git am` onto the branch the user names (authors reset to the user), or split a mixed commit by file yourself. Apply the profile's coordinator steps and strip trailers. Colliding changelog numbers: `qargi changelog renumber`, then commit. **Never squash**: keep the agent's separate commits; send one that mixes changes back to be split.
 
 ## 4. Clean up, after the merge
 
-Once the merge is confirmed, `qargi local clean RUN_DIR` removes the run. It refuses an unmerged run (`--discard` drops it on purpose), changed refs, and a run with no collected manifest. `qargi local clean --applied --scratch DIR` removes the applied and merged runs and keeps the rest (`qargi local list --scratch DIR` shows them). Then `qargi branch prune`. `qargi feature finish` refuses while a run is open (unverified, unapplied, or applied and not merged); close one you applied by hand with `git am`: `qargi local close RUN --applied-by-am`. Before a reboot, apply verified runs or rely on their saved copy (`qargi review apply --from-saved ID`). Never delete in /dev/shm by pattern; only a run's own TMP is yours. Cloud: `qargi mark SID applied|rejected [--why CODE]` (ask the user for the reason code on a rejection or rework; `qargi mark --help` lists codes), then `qargi close SID`.
+Once the merge is confirmed, `qargi local clean RUN_DIR` removes the run. It refuses an unmerged run (`--discard` drops it on purpose), changed refs, and a run with no collected manifest, except a read-only run (advisor or review) with a `report.md` and no changed ref, which closes with a plain `qargi local clean RUN`. `qargi local clean --applied --scratch DIR` removes the applied and merged runs (`qargi local list --scratch DIR` shows them). Then `qargi branch prune`. `qargi feature finish` refuses while a run is open (unverified, unapplied, or applied and not merged); close one applied by hand (`git am`) with `qargi local close RUN --applied-by-am`. Before a reboot, apply verified runs or rely on their saved copy (`qargi review apply --from-saved ID`). Never delete in /dev/shm by pattern; only a run's own TMP. Cloud: `qargi mark SID applied|rejected [--why CODE]` (ask the user for the reason code on a rejection or rework; `--help` lists codes), then `qargi close SID`.
 
 ## Never
 
