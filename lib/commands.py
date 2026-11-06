@@ -495,8 +495,8 @@ COMMANDS = {
                                "While the release branch exists and the repository has an origin it shows the checks of the branch's pull request (gh pr checks, through QARGI_GH): "
                                "a verdict and one line per check with its state, pass, fail or pending; a missing gh, no pull request or no checks is a warning. "
                                "For a tag that exists it ends with a checklist of what is left after the release: whether origin has the tag, whether the GitHub release is published or missing, "
-                               "for each file of the answer release.assets whether the release has it, for each file of release.sign.files whether its .sig is attached (UNSIGNED when not), "
-                               "and the project's own after-steps, the optional answer release.after_steps (a list of words, {version} replaced), which qargi lists but does not record as done.")),
+                               "for each entry of the answer release.assets ({version} replaced; a glob by its base name) whether the release has it, for each file of release.sign.files whether its .sig is attached (UNSIGNED when not), "
+                               "and the project's own after-steps: the ones release finish recorded, else the optional answer release.after_steps (a list of words, {version} replaced); qargi lists them but does not track that they were done.")),
             "verify": verb("Run the project's whole test suite on the release branch (develop's head before it starts) and record the result", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT],
                            desc=TAG_NOTE + " The exit status stays the suite's result. The command is release.test_command when the project sets one, else test_command. " + OTHER_RUNS_NOTE + " " + SUITE_FAIL_NOTE),
             "fix": verb("Make a worktree on the release branch to commit a fix in, and push the fix again with --push", [("VERSION", "none")],

@@ -53,6 +53,11 @@ exp=$(printf 'after the release: announce 0.2.0 to the list\nafter the release: 
 rec=$T/s/release/relaf-0.2.0.after.json
 [ "$(jq -r '.steps | length' "$rec")" = 3 ] && [ "$(jq -r '.steps[0]' "$rec")" = "announce 0.2.0 to the list" ] && [ "$(jq -r '.version' "$rec")" = 0.2.0 ] \
   && ok "the steps are recorded under the state (release/PROJECT-VERSION.after.json) for release status" || no "record: $(cat "$rec" 2>&1)"
+out=$($REL status 0.2.0 2>&1)
+[ "$(grep -c '^    - ' <<<"$out")" = 3 ] && grep -qxF -- "    - announce 0.2.0 to the list" <<<"$out" && ok "release status shows the recorded steps" || no "status steps: $out"
+jq '.steps[1]="the recorded second step"' "$rec" > "$T/x.json" && mv "$T/x.json" "$rec"
+out=$($REL status 0.2.0 2>&1)
+grep -qxF -- "    - the recorded second step" <<<"$out" && ! grep -q "ran-by-qargi" <<<"$out" && ok "status shows what was recorded, not the answer as it is now" || no "status record: $out"
 
 # --- no steps: nothing is printed and nothing recorded
 jq 'del(.release)' "$T/c/projects/relaf.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/relaf.json"

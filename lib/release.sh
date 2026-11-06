@@ -30,7 +30,7 @@
 #                                           and refuses while one fails or is pending, unless --ignore-checks gives, in the person's words, why (recorded).
 #                                           Then it prints the steps of the answer release.after_steps ({version} replaced) as "after the release: STEP"
 #                                           lines, never runs them, and records them in STATE/release/PROJECT-VERSION.after.json ({steps: [...]}) for
-#                                           `status` (after_steps_show prints them).
+#                                           `status`, which shows the recorded steps (the answer as it is now when there is no record).
 #
 #   release.sh assets VERSION [--recreate]  build the release files of the tag VERSION: a clean detached worktree of the tag under STATE/release-assets/,
 #                                           the project's answer release.assets_command run in it (a command line, or a list of words with {version}
@@ -189,7 +189,7 @@ asset_wt() {
 # sign_root: the directory the release files are signed and published from: the asset worktree when there is one, else the repository
 sign_root() { asset_wt; printf '%s' "${AWT:-$REPO}"; }
 # after_steps_record: the answer release.after_steps ({version} replaced) as "after the release: STEP" lines, kept in AFTERREC (one JSON file under
-# the state, {steps: [...]}) for `release status`. They are shown, never run. after_steps_show prints the recorded ones again as the same lines.
+# the state, {steps: [...]}) for `release status`. They are shown, never run. after_steps_list gives them back to `status`.
 AFTERREC=$DA_STATE/release/$PROJ-$VER.after.json
 after_steps_record() {
   local st=()
@@ -199,7 +199,13 @@ after_steps_record() {
   printf '%s\n' "${st[@]}" | jq -R . | jq -s --arg p "$PROJ" --arg v "$VER" --arg t "$(now)" '{schema:1, project:$p, version:$v, at:$t, steps:.}' > "$AFTERREC"
   printf 'after the release: %s\n' "${st[@]}"
 }
-after_steps_show() { [ -f "$AFTERREC" ] && jq -r '.steps[] | "after the release: " + .' "$AFTERREC" 2>/dev/null; return 0; }
+# after_steps_list: the steps for `release status`, one per line: those `finish` recorded in AFTERREC; when there is no (readable) record, the answer as it is now
+after_steps_list() {
+  local s
+  if [ -f "$AFTERREC" ] && s=$(jq -r '.steps[] | strings' "$AFTERREC" 2>/dev/null) && [ -n "$s" ]; then printf '%s\n' "$s"; return 0; fi
+  s=$(jq -r '(.release? // {}) | (.after_steps // []) | if type == "array" then .[] | strings else empty end' "$af" 2>/dev/null) || return 0
+  [ -z "$s" ] || printf '%s\n' "${s//\{version\}/$VER}"
+}
 # sign_status: for a tag that exists in a project that signs its releases (and has no GitHub release yet), whether the signature of VER is recorded
 # and still true; if not, "awaiting signature" and either that the release is ready for signing or what stands in the way. Read-only.
 sign_status() {
@@ -401,8 +407,8 @@ post_release() {
   while IFS= read -r step; do
     [ -n "$step" ] || continue
     [ "$n" -gt 0 ] || echo "  after-steps (release.after_steps; qargi does not record that they were done):"
-    n=$((n + 1)); echo "    - ${step//\{version\}/$VER}"
-  done < <(jq -r '(.release? // {}) | (.after_steps // []) | if type == "array" then .[] | strings else empty end' "$af" 2>/dev/null)
+    n=$((n + 1)); echo "    - $step"
+  done < <(after_steps_list)
   return 0
 }
 
