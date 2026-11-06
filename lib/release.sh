@@ -81,7 +81,7 @@
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
-VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY='' NOTES_OPT='' FIXPUSH='' IGNORE_CHECKS='' IGNORE_SET='' RECREATE=''; ASSETS=() ASSET_DIRS=()
+VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY='' NOTES_OPT='' FIXPUSH='' IGNORE_CHECKS='' IGNORE_SET='' IGNORED='' RECREATE=''; ASSETS=() ASSET_DIRS=()
 while [ $# -gt 0 ]; do
   case $1 in
     --project) need_val "$1" $#; PROJ=$2; shift 2;; --date) need_val "$1" $#; DATE=$2; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
@@ -583,7 +583,7 @@ case $verb in
         failing|pending)
           if [ -n "$IGNORE_SET" ]; then echo "the checks are $PRC_STATE; ignored on your word: $IGNORE_CHECKS"
           else die "the checks of the pull request of $BR are $PRC_STATE: wait for them, or fix and push again (qargi release fix $VER${HOTFIX:+ --hotfix}); to finish anyway, in your own words: --ignore-checks \"...\""; fi;;
-        pass) [ -z "$IGNORE_SET" ] || echo "note: the checks passed, so --ignore-checks changes nothing (your words are recorded: $IGNORE_CHECKS)";;
+        pass) [ -z "$IGNORE_SET" ] || echo "note: the checks passed, so --ignore-checks changes nothing (nothing is ignored, so the words are not recorded unless the checks fail by the apply)";;
         *) [ -z "$IGNORE_SET" ] || echo "the checks could not be read; ignored on your word: $IGNORE_CHECKS";;
       esac
     fi
@@ -600,7 +600,7 @@ case $verb in
       done
       pr_checks "$BR"   # read again: they may have changed since the plan
       if [ "$PRC_STATE" != pass ]; then
-        if [ -n "$IGNORE_SET" ]; then echo "checks ${PRC_STATE}, ignored on your word: $IGNORE_CHECKS"
+        if [ -n "$IGNORE_SET" ]; then echo "checks ${PRC_STATE}, ignored on your word: $IGNORE_CHECKS"; IGNORED=1
         elif [ "$PRC_STATE" = nogh ]; then die "gh is needed to read the pull request's checks (or --ignore-checks \"...\" in your own words)"
         else die "the pull request's checks have not all passed (${PRC_STATE}; or there is no pull request for $BR): nothing was merged or pushed. Fix and push again (qargi release fix $VER${HOTFIX:+ --hotfix}), or --ignore-checks \"...\" in your own words"; fi
       fi
@@ -632,8 +632,8 @@ case $verb in
     journal_ref "$REPO" "refs/heads/$second" "$s0" "$ns" "$KIND:finish"
     merge_forget "$k1" "$k2"
     if [ -z "$KEEP" ]; then wt_drop "$BR"; g update-ref -d "refs/heads/$BR" "$h"; journal_ref "$REPO" "refs/heads/$BR" "$h" "" "$KIND:finish"; fi
-    audit_log "release:finish" "$PROJ $VER${IGNORE_SET:+ checks ignored: $IGNORE_CHECKS}"
-    [ -z "$IGNORE_SET" ] || echo "checks ignored on your word: $IGNORE_CHECKS"
+    audit_log "release:finish" "$PROJ $VER${IGNORED:+ checks ignored: $IGNORE_CHECKS}"
+    [ -z "$IGNORED" ] || echo "checks ignored on your word: $IGNORE_CHECKS"
     echo "merged $BR into master (tagged $VER) and into $second${KEEP:+; kept $BR}$([ -n "$KEEP" ] || echo "; deleted $BR")"
     [ "$second" != develop ] || parking_follow
     if g remote get-url origin >/dev/null 2>&1; then
