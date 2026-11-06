@@ -10,6 +10,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `qargi project adopt` names, among what is left for you, long-lived branches that share no history (a master made as a snapshot of the code has no merge
   base with develop): it changes no existing branch, so it does not join them, and the line says that `qargi release push` joins the history of master into
   the release branch. The branches adopt creates start at the tip of the default branch, so they are related to it and to each other.
+- The `gitflow` methodology says what a master created as a snapshot of the code means: it has no merge base with develop, and the release branch is joined
+  to it before the push by a merge of master that keeps the release tree. The release steps of `methodology.json` say that `qargi release push` does it, and
+  the `CONTRIBUTING.md` scaffold (which never names qargi) describes the same merge for a person doing it by hand.
 
 ### Fixed
 - `qargi release` works with a master that shares no history with the release branch (for example one parentless snapshot commit). `release start` and
