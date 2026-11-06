@@ -2038,7 +2038,7 @@ planned, active, blocked or verifying.
 .BI "check " "[NAME]"
 Before starting work or changing a plan: is the feature free for you, is anything else in its way (exit 1: refuse; warnings go to stderr).
 .br
-This verb only reads; it renews no lease. The commands of the flow that ask the marshal first (feature merge, sync, verify, finish; local prepare) renew the lease of their own lead as they ask.
+This verb only reads; it renews no lease. The commands of the flow that ask the marshal first (feature merge, sync, status, verify and finish; local prepare, verify and clean; review check and apply) renew the lease of their own lead as they ask.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"

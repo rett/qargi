@@ -329,7 +329,7 @@ COMMANDS = {
                          opt("--status", "planned, active, blocked or verifying", "STATE", ("planned", "active", "blocked", "verifying"))]),
             "check": verb("Before starting work or changing a plan: is the feature free for you, is anything else in its way (exit 1: refuse; warnings go to stderr)", [("[NAME]", "none")],
                           [PROJECT_OPT, AS_OPT, opt("--no-fetch", "read the cache of the shared refs only, do not fetch (the session hook uses it)")],
-                          desc="This verb only reads; it renews no lease. The commands of the flow that ask the marshal first (feature merge, sync, verify, finish; local prepare) renew the lease of their own lead as they ask."),
+                          desc="This verb only reads; it renews no lease. The commands of the flow that ask the marshal first (feature merge, sync, status, verify and finish; local prepare, verify and clean; review check and apply) renew the lease of their own lead as they ask."),
             "renew": verb("Renew your lease on a feature (long verbs and the lead's other commands on the feature do this themselves)", [("NAME", "none")], [PROJECT_OPT, AS_OPT]),
             "release": verb("Give the feature up, leaving a handoff note; it has no lead until someone takes it", [("NAME", "none")],
                             [PROJECT_OPT, AS_OPT, opt("--note", "what the next lead must know", "TEXT")],
