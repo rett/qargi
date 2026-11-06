@@ -48,9 +48,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   local clean RUN`; a run of work: the step it is waiting for), and `lead compact-check` does the same for a read-only run.
 
 ### Fixed
-- `qargi lead usage` and `lead compact-check --advise` no longer divide the context in use by a fixed 200000 window: the window is the answer
-  `lead.context_window`, else the one the runtime's definition gives for the model id of the session's last assistant turn, else the definition's single
-  `window`. A session on a 1,000,000 window no longer reads as 96% full.
+- `qargi lead usage` and `lead compact-check --advise` no longer divide the context in use by a fixed 200000 window. The window is the answer
+  `lead.context_window`, else the one the runtime's table gives for the model id of the session's last assistant turn (the entries `claude-code` ships
+  match ids that end in `[1m]` or `-1m`), else an assumed 200,000 that the output labels as assumed, with the way to set the answer. A plain model id with no
+  such suffix (for example `claude-sonnet-5-5`) matches no entry and gets the assumed window.
 - `qargi release` works with a master that shares no history with the release branch (for example one parentless snapshot commit). `release start` and
   `release status` say that master and the branch have no merge base, and `release finish` refuses with the fix instead of printing
   `fatal: ... no merge base` and stopping at `refusing to merge unrelated histories` with nothing to resolve. `release push` joins the histories first: its plan
