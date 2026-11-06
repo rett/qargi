@@ -451,11 +451,13 @@ COMMANDS = {
                          [opt("--why", "a reason, journaled with a local branch", "TEXT"), PROJECT_OPT],
                          desc=("REF (give several) is a branch NAME, or origin/NAME for the branch NAME of origin, whose live value is asked (git ls-remote); the branch must exist now. "
                                "The journal line (verb ref:note) goes from the ref being absent to the value it has now, or, when you noted that ref before, from where the earlier note left it "
-                               "(pushing the same branch again). Nothing is created, moved or pushed. A run prepared before it then verifies with the branch named as one you noted. "
+                               "(pushing the same branch again); a second note is refused when the earlier note's value is not an ancestor of the current one (the ref was rewritten: inspect it; "
+                               "qargi ref record --rewrite records a rewrite of an agent branch that keeps its tree). The note prints the author and subject of the tip, and REF@SHA "
+                               "(7 to 40 hex digits) notes REF only while it is at SHA, so the lead notes what it looked at. Nothing is created, moved or pushed. A run prepared before it then verifies with the branch named as one you noted. "
                                "Only a ref that did not exist when the run was prepared (or that you noted before) is accepted this way: a ref that existed then and has moved, "
                                "a deletion, and any ref you did not note stay offending, so a branch the run's agent made or moved is still found. Note only what you made. "
-                               "Not available in a member run. The harness's own worktree branches (worktree-bridge-NAME, held by a worktree directory bridge-NAME) need no note: verify leaves them out."),
-                         examples=["qargi ref note feature/search origin/feature/search"]),
+                               "Not available in a member run. The harness's own worktree branches (worktree-bridge-NAME, held by the locked worktree bridge-NAME of the harness) need no note: verify leaves them out."),
+                         examples=["qargi ref note feature/search origin/feature/search", "qargi ref note feature/search@1a2b3c4d"]),
         },
     },
     "release": {
@@ -1011,7 +1013,7 @@ COMMANDS = {
                                  "the parking branch following develop, a rewrite recorded with qargi ref record --rewrite), a remote-tracking ref of origin that says what origin has "
                                  "(a fetch), the parking branch (repo.parking_branch, default scratch) fast-forwarded to develop's tip, by hand too, and the branches and branches of origin you noted "
                                  "(qargi ref note: a ref that did not exist when the run was prepared; one the run's agent could have made or moved and you did not note still fails). "
-                                 "It also leaves out the harness's own bridge branches: a branch worktree-bridge-NAME while a worktree directory bridge-NAME holds it (or once it is gone). "
+                                 "It also leaves out the harness's own bridge branches: a branch worktree-bridge-NAME while the locked worktree bridge-NAME of the harness (in its worktrees directory under the main checkout) holds it and its moves are fast-forwards (or once the worktree and the branch are gone). "
                                  "After a passing verify the run records RUN/verified and its line in the registry is marked verified (what marshal status and handoff list the task as, also after clean); later verify and clean compare with that and also accept "
                                  "your fast-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there. Anything else (a push, a tag, "
                                  "a deletion or a rewrite nobody journaled) fails. Run it on every run before merging any of them. "

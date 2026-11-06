@@ -143,6 +143,19 @@ out=$(verify "$R"); rc=$?
 [ $rc = 0 ] && ok "and the run, prepared before both pushes, verifies" || no "second noted: rc=$rc $out"
 out=$($DA ref note feature/mine 2>&1); rc=$?
 [ $rc = 0 ] && grep -q "nothing to note" <<<"$out" && ok "noting a ref that has not moved since the last note changes nothing" || no "renote: rc=$rc $out"
+# the tip is named when noting, a rewrite between two notes is refused, and NAME@SHA pins what the lead made
+M0=$(git -C "$A" rev-parse feature/mine)
+git -C "$A" update-ref refs/heads/feature/mine "$(git -C "$A" commit-tree -m rewritten "$M0^{tree}")"
+out=$($DA ref note feature/mine 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "not a fast-forward of your last note" <<<"$out" && grep -q "ref record --rewrite" <<<"$out" && ok "a second note refuses a ref that was rewritten since the first, and points to ref record --rewrite" || no "rewritten note: rc=$rc $out"
+[ "$(tail -1 "$J" | jq -r .new)" = "$M0" ] && ok "and journals nothing for it" || no "rewritten note journaled: $(tail -1 "$J")"
+git -C "$A" update-ref refs/heads/feature/mine "$M0"
+M1=$(hand feature/mine)
+git -C "$A" update-ref refs/heads/feature/mine "$M1"
+out=$($DA ref note "feature/mine@deadbee" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "not at deadbee" <<<"$out" && ok "NAME@SHA refuses a ref that is not at SHA" || no "pin mismatch: rc=$rc $out"
+out=$($DA ref note "feature/mine@${M1:0:9}" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "after your earlier note) (tip by lead: by hand)" <<<"$out" && ok "NAME@SHA notes a ref that is at SHA, and the note names the tip's author and subject" || no "pin match: rc=$rc $out"
 # the barrier: what is not noted, and what existed before, is still found
 git -C "$A" branch feature/pre develop
 R=$(mkrun barrier)
