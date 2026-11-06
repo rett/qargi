@@ -11,8 +11,8 @@ T=$(mktemp -d); fail=0
 trap 'rm -rf "$T" "$HERMETIC"' EXIT
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 
-# top-level directories a copy of the tool does not need (the tests, the sample projects, generated completions and the manual page)
-NOT_COPIED="tests examples completions man"
+# top-level directories a copy of the tool does not need (the tests, the sample projects, generated completions, the manual page and the docs)
+NOT_COPIED="tests examples completions man docs"
 
 # 1. no test spells the list out: neither as the word pair the list begins with, nor as a copy line (cp, rsync, copytree, copy2) of three or more of
 # the tool's top-level directories, which is a hand-written list that leaves the others out (hermetic.* and this test are the lists themselves)
