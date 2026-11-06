@@ -93,6 +93,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `qargi release site` no longer commits the built `_site/` on the site branch: a Pages build of the branch needs `_site/` empty.
   The build still runs, so a page that does not build refuses; the commit now records the release in `site.json` and removes a
   `_site/` that an earlier build committed.
+- The verify rule of `local verify` and `local clean` accepts a `worktree-bridge-NAME` branch as the harness's own only when the worktree that holds it is
+  the real path `<main worktree>/.claude/worktrees/bridge-NAME` and is locked, and a move of it is a fast-forward; a rewrite of the branch, a worktree of
+  that name added elsewhere or left unlocked, and a deletion while a worktree of that name is still there are found.
 
 ## [0.2.2] - 2026-11-05
 

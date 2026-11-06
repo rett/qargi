@@ -77,6 +77,40 @@ git -C "$A" worktree add -q -b worktree-bridge-other "$A/.claude/worktrees/elsew
 out=$(verify "$R"); rc=$?
 [ $rc = 2 ] && grep -q "worktree-bridge-other" <<<"$out" && ok "nor is one whose worktree is not .claude/worktrees/bridge-NAME" || no "other worktree: rc=$rc $out"
 git -C "$A" worktree remove --force "$A/.claude/worktrees/elsewhere-other"; git -C "$A" branch -D worktree-bridge-other worktree-bridge-lonely >/dev/null
+R=$(mkrun bridge4)
+mkdir -p "$T/outside/worktrees"
+git -C "$A" worktree add -q -b worktree-bridge-y "$T/outside/worktrees/bridge-y" develop
+git -C "$A" worktree lock --reason "member" "$T/outside/worktrees/bridge-y"
+out=$(verify "$R"); rc=$?
+[ $rc = 2 ] && grep -q "worktree-bridge-y" <<<"$out" && ok "nor is a locked worktree bridge-NAME outside <main worktree>/.claude/worktrees" || no "outside worktree: rc=$rc $out"
+git -C "$A" worktree unlock "$T/outside/worktrees/bridge-y"; git -C "$A" worktree remove --force "$T/outside/worktrees/bridge-y"; git -C "$A" branch -D worktree-bridge-y >/dev/null
+R=$(mkrun bridge5)
+git -C "$A" worktree add -q -b worktree-bridge-open "$A/.claude/worktrees/bridge-open" develop
+out=$(verify "$R"); rc=$?
+[ $rc = 2 ] && grep -q "worktree-bridge-open" <<<"$out" && ok "nor is a worktree bridge-NAME that is not locked" || no "unlocked worktree: rc=$rc $out"
+git -C "$A" worktree remove --force "$A/.claude/worktrees/bridge-open"; git -C "$A" branch -D worktree-bridge-open >/dev/null
+B0=$(git -C "$A" rev-parse worktree-bridge-cse_x1)
+R=$(mkrun bridge6)
+git -C "$A" update-ref refs/heads/worktree-bridge-cse_x1 "$(git -C "$A" commit-tree -m rewritten "$B0^{tree}")"
+out=$(verify "$R"); rc=$?
+[ $rc = 2 ] && grep -q "worktree-bridge-cse_x1" <<<"$out" && ok "a rewrite of the bridge branch (not a fast-forward) is found, though its worktree holds it" || no "bridge rewrite: rc=$rc $out"
+git -C "$A" update-ref refs/heads/worktree-bridge-cse_x1 "$B0"
+R=$(mkrun bridge7)
+git -C "$A" update-ref refs/heads/worktree-bridge-cse_x1 "$(git -C "$A" commit-tree -p "$B0" -m ahead "$B0^{tree}")"
+out=$(verify "$R"); rc=$?
+[ $rc = 0 ] && grep -q "worktree-bridge-cse_x1 moved" <<<"$out" && ok "a fast-forward of the bridge branch is the harness's" || no "bridge fast-forward: rc=$rc $out"
+git -C "$A" update-ref refs/heads/worktree-bridge-cse_x1 "$B0"
+R=$(mkrun bridge8)
+git -C "$A" update-ref -d refs/heads/worktree-bridge-cse_x1
+out=$(verify "$R"); rc=$?
+[ $rc = 2 ] && grep -q "worktree-bridge-cse_x1" <<<"$out" && ok "a deletion of the bridge branch while its worktree is still there is found" || no "bridge deletion: rc=$rc $out"
+git -C "$A" update-ref refs/heads/worktree-bridge-cse_x1 "$B0"
+git -C "$A" worktree add -q -b worktree-bridge-gone "$A/.claude/worktrees/bridge-gone" develop
+git -C "$A" worktree lock --reason "claude agent bridge-gone" "$A/.claude/worktrees/bridge-gone"
+R=$(mkrun bridge9)
+git -C "$A" worktree unlock "$A/.claude/worktrees/bridge-gone"; git -C "$A" worktree remove --force "$A/.claude/worktrees/bridge-gone"; git -C "$A" branch -D worktree-bridge-gone >/dev/null
+out=$(verify "$R"); rc=$?
+[ $rc = 0 ] && grep -q "worktree-bridge-gone deleted" <<<"$out" && ok "the deletion of a bridge branch whose worktree is gone is the harness's" || no "bridge removed: rc=$rc $out"
 
 # --- 1b. a branch the lead made or pushed
 R=$(mkrun lead-branch)

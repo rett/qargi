@@ -149,14 +149,23 @@ parking_of() {
   echo "${p:-scratch}"
 }
 
-# bridge_ref REPO NAME NEW -> 0 when the change of the local branch NAME (refs/heads/worktree-bridge-S) is the harness's own: NEW is empty (the
-# branch is gone), or a worktree whose directory is named bridge-S of REPO holds it now (git worktree list). A branch of that name that no such worktree
-# holds is not the harness's.
+# bridge_ref REPO NAME OLD NEW -> 0 when the change of the local branch NAME (refs/heads/worktree-bridge-S) is the harness's own. A branch that exists now
+# (NEW) is the harness's when the worktree that holds it is the real path <main worktree>/<the harness directory>/worktrees/bridge-S, is locked (the harness locks it), and
+# the move (OLD, when there was one) is a fast-forward. A branch that is gone (NEW empty) is the harness's only when no worktree named bridge-S is left
+# and none holds the branch. Anything else, a rewrite of the lead's own bridge branch or a worktree a member added elsewhere, is not.
 bridge_ref() {
-  [ -n "$3" ] || return 0
-  git -C "$1" worktree list --porcelain 2>/dev/null | awk -v ref="$2" -v tail="/worktrees/bridge-${2#refs/heads/worktree-bridge-}" '
-    function chk() { if (br == ref && length(p) > length(tail) && substr(p, length(p) - length(tail) + 1) == tail) ok = 1; br = ""; p = "" }
-    /^worktree / { chk(); p = substr($0, 10) } /^branch / { br = $2 } /^$/ { chk() } END { chk(); exit ok ? 0 : 1 }'
+  local repo=$1 ref=$2 old=$3 new=$4 s main='' held=0 k p l
+  s=${ref#refs/heads/worktree-bridge-}
+  while IFS=$'\t' read -r k p l; do
+    case $k in M) main=$(readlink -f -- "$p");; H) held=1; [ -n "$new" ] || return 1
+      [ -n "$main" ] && [ "$(readlink -f -- "$p")" = "$main/.claude/worktrees/bridge-$s" ] && [ "$l" = locked ] && held=2;; esac
+  done < <(git -C "$repo" worktree list --porcelain 2>/dev/null | awk -v ref="$ref" -v tail="/worktrees/bridge-$s" '
+    function chk() { if (n++ == 0) printf "M\t%s\t\n", p; else if (br == ref || (length(p) > length(tail) && substr(p, length(p) - length(tail) + 1) == tail)) printf "H\t%s\t%s\n", p, (lk ? "locked" : "-")
+      p = ""; br = ""; lk = 0; open = 0 }
+    /^worktree / { if (open) chk(); p = substr($0, 10); open = 1; next } /^branch / { br = $2 } /^locked/ { lk = 1 } /^$/ { if (open) chk() } END { if (open) chk() }')
+  [ -n "$new" ] || return 0                       # gone: no worktree of that name is left
+  [ "$held" = 2 ] || return 1
+  [ -z "$old" ] || git -C "$repo" merge-base --is-ancestor "$old" "$new" 2>/dev/null
 }
 
 # compare REPO REF AFTER [strict] [ACCEPTED] -> prints each offending change, returns 1 if there is one; each change it accepts is named in
@@ -167,7 +176,7 @@ bridge_ref() {
 #   - a remote-tracking ref refs/remotes/origin/X now says what origin has (a fetch or a push did that; origin's own ref is compared
 #     on its own line), or a tag of the repository is now origin's tag of the same name (fetched);
 #   - the parking branch (answers repo.parking_branch, default scratch) was fast-forwarded to develop's tip, by hand or by qargi;
-#   - a branch worktree-bridge-S of the harness's bridge worktree, a directory worktrees/bridge-S (bridge_ref: while that worktree holds it, or when it is gone).
+#   - a branch worktree-bridge-S of the harness's bridge worktree, a directory worktrees/bridge-S (bridge_ref: while that worktree, locked, at <main worktree>/<the harness directory>/worktrees/bridge-S, holds it and the move is a fast-forward, or when no such worktree is left).
 # A branch, or a branch of origin, that the lead made and noted (qargi ref note) is the journal's case above: its line starts where the ref was absent.
 # Without strict (after the run's first passing verify, against RUN/verified) also: a fast-forward of develop, master or an
 # agent|feature|release|hotfix/* branch, and a new agent|feature|release|hotfix/* branch: the lead's own merges. Everything else, a rewrite
@@ -197,7 +206,7 @@ compare() {
       refs/heads/?*|refs/tags/?*)
         if steps=$(journal_steps "$kind" "$name" "${old:-$zero}" "${new:-$zero}"); then ACC[$k]=1; echo "$short $a by $steps" >> "$acc"; continue; fi;;
     esac
-    if [ "$kind" = local ] && [[ $name == refs/heads/worktree-bridge-?* ]] && bridge_ref "$repo" "$name" "$new"; then
+    if [ "$kind" = local ] && [[ $name == refs/heads/worktree-bridge-?* ]] && bridge_ref "$repo" "$name" "$old" "$new"; then
       ACC[$k]=1; echo "$short $a (the harness's bridge branch of a worktree bridge-NAME)" >> "$acc"; continue
     fi
     if [ "$kind" = local ]; then
