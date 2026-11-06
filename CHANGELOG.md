@@ -48,6 +48,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   local clean RUN`; a run of work: the step it is waiting for), and `lead compact-check` does the same for a read-only run.
 
 ### Fixed
+- `qargi project validate` no longer crashes (`NameError`) on answers with no roles: it reports the finding `roles: enable at least one role`. Its
+  `tools_off` and `skills` checks ran only for the last role listed; they now run for every role.
 - `qargi lead usage` and `lead compact-check --advise` no longer divide the context in use by a fixed 200000 window. The window is the answer
   `lead.context_window`, else the one the runtime's table gives for the model id of the session's last assistant turn (the entries `claude-code` ships
   match ids that end in `[1m]` or `-1m`), else an assumed 200,000 that the output labels as assumed, with the way to set the answer. A plain model id with no

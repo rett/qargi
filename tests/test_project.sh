@@ -166,6 +166,15 @@ chkm() { # name jq-filter expected-message-prefix
   out=$($DA project validate "$f" 2>&1); local rc=$?
   if [ "$rc" != 0 ] && grep -qF -- "$3" <<<"$out"; then echo "ok   $1"; else echo "FAIL $1 (exit $rc, wanted message $3; got: $out)"; fail=1; fi
 }
+# roles: no roles is the one finding and no crash; the tools_off and skills checks run for every role, not only the last
+chkm "roles: none enabled"          '.roles={}' 'roles: enable at least one role'
+chkm "roles: key missing"           'del(.roles)' 'roles: enable at least one role'
+jq '.roles={}' <<<"$base" > "$T/a.json"
+if $DA project validate "$T/a.json" 2>&1 | grep -q 'Traceback\|NameError'; then echo "FAIL roles: none crashes"; fail=1; else echo "ok   roles: none does not crash"; fi
+chkm "roles: first role, bad tools_off" '.roles.build.tools_off=["nope"]' 'roles.build.tools_off: '
+chkm "roles: first role, bad skills"    '.roles.build.skills=["nope"]' 'roles.build.skills: '
+chkm "roles: last role, bad tools_off"  '.roles.write.tools_off=["nope"]' 'roles.write.tools_off: '
+chk  "roles: both roles good tools_off and skills" 0 '.roles.build.tools_off=["bash"] | .roles.write.skills=["pdf","docx"]'
 chk  "valid project profile"        0 '.profiles.tiny={base:"reviewer",tier:"fast",model:"haiku",effort:"low",purpose:"small checks",abilities:["review"]}'
 chk  "shipped profile, only tier"   0 '.profiles.build={tier:"deep"}'
 chk  "profiles absent is fine"      0 'del(.profiles)'
