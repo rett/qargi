@@ -190,6 +190,8 @@ git -C "$A" branch -f scratch develop; git -C "$A" branch zz2 develop~1
 R=$(fresh r-park3); git -C "$A" branch -f zz2 develop
 refused "$R" "a hand fast-forward to develop of a branch that is not the parking branch"
 jq '.repo.parking_branch = "zz2"' "$T/c/projects/app.json" > "$T/app.json" && mv "$T/app.json" "$T/c/projects/app.json"
+git -C "$A" branch -f zz2 develop~1
+R=$(fresh r-park4); git -C "$A" branch -f zz2 develop   # the answers of a run are the ones at its prepare, so the run is made after the change
 out=$($DA local verify "$R" 2>&1); rc=$?
 [ $rc = 0 ] && grep -q "zz2 (the parking branch)" <<<"$out" && ok "the parking branch is the one the answers name (repo.parking_branch)" || no "answers parking: rc=$rc $out"
 jq 'del(.repo.parking_branch)' "$T/c/projects/app.json" > "$T/app.json" && mv "$T/app.json" "$T/c/projects/app.json"
