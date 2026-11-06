@@ -1,0 +1,26 @@
+# Choosing models
+
+qargi ships one table (`lib/model-defaults.json`) with two **bases**, one per guard class, and a set of **profiles**. The bases are members: `worker` (roles build, write and test; write class) and `reviewer` (review; read-only). A profile is not a member; it is `{base, tier, effort, purpose}`, resolved at dispatch:
+
+| Profile | Base | Tier | Effort | Purpose |
+|---|---|---|---|---|
+| `build` | worker | balanced | high | changes the code |
+| `write` | worker | balanced | medium | writes the documentation |
+| `test` | worker | balanced | low | writes and repairs tests |
+| `review` | reviewer | deep | high | judges a change, read-only |
+| `auditor` | reviewer | fast | low | checks a diff or a feature in a clone of its own |
+| `advisor` | reviewer | deep | high | reviews the lead's synthesized diff before sign-off |
+| `researcher` | reviewer | frontier | high | research and design judgment on a hard question; opt-in only |
+| `lead` | none | balanced | medium | the lead's own session; never dispatched |
+
+A **tier** (`fast`, `balanced`, `deep`, `frontier`) is mapped by the model catalog of the runtime's family (`lib/providers/catalogs/claude.json` for `claude`) to a full model id for cloud (`claude-haiku-5-5`, `claude-sonnet-5-5`, `claude-opus-5-5`, `claude-fable-5-1`) and to an alias for local dispatch (`haiku`, `sonnet`, `opus`, `fable`); a runtime with a single model writes it once for every tier. A project picks the runtime of each surface with `models.provider.local` and `models.provider.cloud` in its answers; there is no default, so a verb that needs a surface (`agent`, `provision`, a read-only `local prepare`, a cloud session, `packs apply --target`) refuses a project that leaves it out (exit 2, naming `qargi project set PROJECT models.provider.SURFACE NAME`), and a name with no definition is refused. `qargi project attach` and `qargi project new` store them with `--provider-local` and `--provider-cloud` (or `--provider NAME` for one name), and nothing without. The `frontier` tier is an opt-in escalation: no default profile except `researcher` uses it, and `researcher` is used only when you or the lead name it for the task.
+
+A project adds or overrides profiles in its answers as `profiles.<name>` (`base`, `tier`, `model`, `effort`, `purpose`, `abilities`, the roles it may serve). A profile whose base class conflicts with its `abilities`, or with the role being dispatched, is refused.
+
+`qargi agent for ROLE [--profile NAME] [--project P] [--json]` prints one line, `MEMBER MODEL EFFORT PROFILE`; MODEL is the alias, or `-` when there is none. The lead spawns the Agent tool with `subagent_type` MEMBER, `model` MODEL (omitted when `-`) and `effort` EFFORT: the call's model and effort override the member definition. `qargi local prepare ... --role R [--profile P]` resolves the profile before it clones anything, records it in `RUN/profile` and prints `PROFILE=`, `MEMBER=`, `MODEL=` and `EFFORT=` (`PROFILE=<role>` without `--profile`). Advisor sign-off uses `--profile advisor` on review, a per-task diff check `--profile auditor`, and `researcher` only when the owner or the lead names it. `qargi agent models [--project P] [--json]` shows the bases, the profiles (the project's merged over the shipped ones) and the members of that project (`--project`, else the project in effect; with neither, exit 2); a member that is not a base is flagged.
+
+Search is not a role: mapping the repository and finding call sites is done by a read-only exploration subagent on a small model inside the lead's context. The lead's own session model is chosen in Claude Code (`/model` or settings), not by qargi; the `lead` profile is the recommendation and the cloud lead's default `lead.model`.
+
+The earlier suggested members auditor, advisor and researcher are profiles now; `qargi agent remove` them if you added them.
+
+Cloud: the four role agents (`<project>-build`, `-write`, `-review`, `-test`) keep working with explicit model ids from the runtime's catalog and the project's answers (`roles.<role>.model` and `effort`). A project can also provision the two bases, `<project>-worker` and `<project>-reviewer`, and start a session of a role and profile on one with `qargi start|send <project>-worker --role build --profile build --asked ...`: the model and effort are overridden for that session (always as a full model object), the role's prompt is rendered for it, and the tools stay those of the base. `qargi agent for ROLE --surface cloud --project P` prints the base it would use; it exits 1 when the base is not registered and 2 when the provider's cloud override capabilities are not verified (a role agent is never chosen for you: start a session on it by its name). A reviewer base needs the project's `qargi provider accept NAME --surface cloud --no-barrier --asked ...` first, because the cloud has no read-only barrier.

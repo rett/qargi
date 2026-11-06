@@ -34,7 +34,7 @@ members_shape_ok() { # -> 0 when agents.json is in the current shape: {} or {"sc
     and (.projects | all(.[]; type == "object" and all(.[]; type == "object")))))' "$MEMBERS_FILE" >/dev/null 2>&1
 }
 
-# Naming convention (see README): <project>-<component>[-<role>]. Project and role
+# Naming convention (see docs/flow/README.md): <project>-<component>[-<role>]. Project and role
 # are single lower-case tokens (no dashes) so a name parses unambiguously; the
 # role comes from a fixed list. The environment and the memory stores belong to the
 # project: <project>-environment, <project>-memory, <project>-reference; the agent

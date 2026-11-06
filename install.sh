@@ -33,7 +33,7 @@
 #
 # --user also records the tool it installed in <live config>/install.json (~/.qargi/config, or QARGI_CONF /
 # QARGI_HOME when set; --uninstall removes it). A checkout run from any other place is then a dev run that keeps its data
-# in its own .qargi directory (see README, Running a branch checkout).
+# in its own .qargi directory (see docs/install-and-upgrade/README.md, Running a branch checkout).
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd -P)

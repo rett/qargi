@@ -110,4 +110,5 @@ fast | par | 300 | 3 | bash tests/test_hermetic.sh | tests/hermetic.sh tests/her
 fast | par | 300 | 11 | bash tests/test_gitflow_detached.sh
 fast | par | 300 | 17 | bash tests/test_runner.sh | tests/run.sh tests/suite.txt
 fast | par | 300 | 10 | python3 tests/test_ci.py | .github/* tests/run.sh tests/suite.txt tests/durations.txt
+fast | par | 300 | 3 | python3 tests/test_docs_links.py | README.md CONTRIBUTING.md docs/*
 full | serial | 300 | 150 | shellcheck -x -S warning lib/*.sh lib/conformance/*.sh bin/qargi install.sh tests/*.sh
