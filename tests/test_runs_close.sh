@@ -48,6 +48,12 @@ commits "$R" a1.go; rm -f "$R/verified"
 out=$(verify "$R"); rc=$?
 [ $rc = 1 ] && grep -q "OUT is empty: the member did not collect" <<<"$out" && grep -q "ls OUT/patches" <<<"$out" && ok "verify fails fast, naming the missing collect, when the clone has commits and OUT is empty" || no "uncollected: rc=$rc $out"
 [ ! -f "$R/verified" ] && ok "and records nothing" || no "verified written for an uncollected run"
+grep -q "refs: unchanged by the run" <<<"$out" && grep -q "clean RUN --discard" <<<"$out" && ok "it still compares the refs, says so next to the message, and keeps verify required" || no "uncollected refs line: $out"
+git -C "$A" branch stray-by-run develop
+out=$(verify "$R"); rc=$?
+[ $rc = 2 ] && grep -q "branch created: refs/heads/stray-by-run" <<<"$out" && grep -q "OUT is empty: the member did not collect" <<<"$out" && ok "a run that changed a ref and did not collect gets the ref verdict (exit 2) and the empty-OUT message" || no "uncollected and refs: rc=$rc $out"
+[ ! -f "$R/verified" ] && ok "and still records nothing" || no "verified written for an uncollected run with a ref change"
+git -C "$A" branch -D stray-by-run >/dev/null
 collect "$R"
 out=$(verify "$R"); rc=$?
 [ $rc = 0 ] && ok "after the member collects, verify passes" || no "collected: rc=$rc $out"
@@ -77,6 +83,40 @@ git -C "$A" worktree add -q -b worktree-bridge-other "$A/.claude/worktrees/elsew
 out=$(verify "$R"); rc=$?
 [ $rc = 2 ] && grep -q "worktree-bridge-other" <<<"$out" && ok "nor is one whose worktree is not .claude/worktrees/bridge-NAME" || no "other worktree: rc=$rc $out"
 git -C "$A" worktree remove --force "$A/.claude/worktrees/elsewhere-other"; git -C "$A" branch -D worktree-bridge-other worktree-bridge-lonely >/dev/null
+R=$(mkrun bridge4)
+mkdir -p "$T/outside/worktrees"
+git -C "$A" worktree add -q -b worktree-bridge-y "$T/outside/worktrees/bridge-y" develop
+git -C "$A" worktree lock --reason "member" "$T/outside/worktrees/bridge-y"
+out=$(verify "$R"); rc=$?
+[ $rc = 2 ] && grep -q "worktree-bridge-y" <<<"$out" && ok "nor is a locked worktree bridge-NAME outside <main worktree>/.claude/worktrees" || no "outside worktree: rc=$rc $out"
+git -C "$A" worktree unlock "$T/outside/worktrees/bridge-y"; git -C "$A" worktree remove --force "$T/outside/worktrees/bridge-y"; git -C "$A" branch -D worktree-bridge-y >/dev/null
+R=$(mkrun bridge5)
+git -C "$A" worktree add -q -b worktree-bridge-open "$A/.claude/worktrees/bridge-open" develop
+out=$(verify "$R"); rc=$?
+[ $rc = 2 ] && grep -q "worktree-bridge-open" <<<"$out" && ok "nor is a worktree bridge-NAME that is not locked" || no "unlocked worktree: rc=$rc $out"
+git -C "$A" worktree remove --force "$A/.claude/worktrees/bridge-open"; git -C "$A" branch -D worktree-bridge-open >/dev/null
+B0=$(git -C "$A" rev-parse worktree-bridge-cse_x1)
+R=$(mkrun bridge6)
+git -C "$A" update-ref refs/heads/worktree-bridge-cse_x1 "$(git -C "$A" commit-tree -m rewritten "$B0^{tree}")"
+out=$(verify "$R"); rc=$?
+[ $rc = 2 ] && grep -q "worktree-bridge-cse_x1" <<<"$out" && ok "a rewrite of the bridge branch (not a fast-forward) is found, though its worktree holds it" || no "bridge rewrite: rc=$rc $out"
+git -C "$A" update-ref refs/heads/worktree-bridge-cse_x1 "$B0"
+R=$(mkrun bridge7)
+git -C "$A" update-ref refs/heads/worktree-bridge-cse_x1 "$(git -C "$A" commit-tree -p "$B0" -m ahead "$B0^{tree}")"
+out=$(verify "$R"); rc=$?
+[ $rc = 0 ] && grep -q "worktree-bridge-cse_x1 moved" <<<"$out" && ok "a fast-forward of the bridge branch is the harness's" || no "bridge fast-forward: rc=$rc $out"
+git -C "$A" update-ref refs/heads/worktree-bridge-cse_x1 "$B0"
+R=$(mkrun bridge8)
+git -C "$A" update-ref -d refs/heads/worktree-bridge-cse_x1
+out=$(verify "$R"); rc=$?
+[ $rc = 2 ] && grep -q "worktree-bridge-cse_x1" <<<"$out" && ok "a deletion of the bridge branch while its worktree is still there is found" || no "bridge deletion: rc=$rc $out"
+git -C "$A" update-ref refs/heads/worktree-bridge-cse_x1 "$B0"
+git -C "$A" worktree add -q -b worktree-bridge-gone "$A/.claude/worktrees/bridge-gone" develop
+git -C "$A" worktree lock --reason "claude agent bridge-gone" "$A/.claude/worktrees/bridge-gone"
+R=$(mkrun bridge9)
+git -C "$A" worktree unlock "$A/.claude/worktrees/bridge-gone"; git -C "$A" worktree remove --force "$A/.claude/worktrees/bridge-gone"; git -C "$A" branch -D worktree-bridge-gone >/dev/null
+out=$(verify "$R"); rc=$?
+[ $rc = 0 ] && grep -q "worktree-bridge-gone deleted" <<<"$out" && ok "the deletion of a bridge branch whose worktree is gone is the harness's" || no "bridge removed: rc=$rc $out"
 
 # --- 1b. a branch the lead made or pushed
 R=$(mkrun lead-branch)
@@ -109,6 +149,19 @@ out=$(verify "$R"); rc=$?
 [ $rc = 0 ] && ok "and the run, prepared before both pushes, verifies" || no "second noted: rc=$rc $out"
 out=$($DA ref note feature/mine 2>&1); rc=$?
 [ $rc = 0 ] && grep -q "nothing to note" <<<"$out" && ok "noting a ref that has not moved since the last note changes nothing" || no "renote: rc=$rc $out"
+# the tip is named when noting, a rewrite between two notes is refused, and NAME@SHA pins what the lead made
+M0=$(git -C "$A" rev-parse feature/mine)
+git -C "$A" update-ref refs/heads/feature/mine "$(git -C "$A" commit-tree -m rewritten "$M0^{tree}")"
+out=$($DA ref note feature/mine 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "not a fast-forward of your last note" <<<"$out" && grep -q "ref record --rewrite" <<<"$out" && ok "a second note refuses a ref that was rewritten since the first, and points to ref record --rewrite" || no "rewritten note: rc=$rc $out"
+[ "$(tail -1 "$J" | jq -r .new)" = "$M0" ] && ok "and journals nothing for it" || no "rewritten note journaled: $(tail -1 "$J")"
+git -C "$A" update-ref refs/heads/feature/mine "$M0"
+M1=$(hand feature/mine)
+git -C "$A" update-ref refs/heads/feature/mine "$M1"
+out=$($DA ref note "feature/mine@deadbee" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "not at deadbee" <<<"$out" && ok "NAME@SHA refuses a ref that is not at SHA" || no "pin mismatch: rc=$rc $out"
+out=$($DA ref note "feature/mine@${M1:0:9}" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "after your earlier note) (tip by lead: by hand)" <<<"$out" && ok "NAME@SHA notes a ref that is at SHA, and the note names the tip's author and subject" || no "pin match: rc=$rc $out"
 # the barrier: what is not noted, and what existed before, is still found
 git -C "$A" branch feature/pre develop
 R=$(mkrun barrier)
@@ -141,6 +194,10 @@ out=$($DA lead compact-check --project app 2>&1); rc=$?
 git -C "$A" checkout -q parked 2>/dev/null
 w=$(mktemp -d "$T/w.XXXXXX"); git -C "$A" worktree add -q --detach "$w" feature/cl
 git -C "$w" am -q "$R"/out/patches/*.patch && git -C "$A" update-ref refs/heads/feature/cl "$(git -C "$w" rev-parse HEAD)"; git -C "$A" worktree remove --force "$w"
+git -C "$A" branch rogue-after-verify develop
+out=$($DA local close "$R" --applied-by-am 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "refs of the repository changed" <<<"$out" && [ -z "$(jq -r --arg r "$R" 'select(.run == $r) | .closed // empty' "$T/s/local-runs.jsonl")" ] && ok "close checks the refs again: a ref changed after the first verify keeps the run open" || no "close after a ref change: rc=$rc $out"
+git -C "$A" branch -D rogue-after-verify >/dev/null
 out=$($DA local close "$R" --applied-by-am 2>&1); rc=$?
 [ $rc = 0 ] && grep -q "closed $R" <<<"$out" && [ -d "$R/clone" ] && [ -d "$R/out" ] && ok "close marks the run and keeps its files" || no "close: rc=$rc $out"
 reg=$T/s/local-runs.jsonl

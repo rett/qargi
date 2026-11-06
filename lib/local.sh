@@ -149,14 +149,23 @@ parking_of() {
   echo "${p:-scratch}"
 }
 
-# bridge_ref REPO NAME NEW -> 0 when the change of the local branch NAME (refs/heads/worktree-bridge-S) is the harness's own: NEW is empty (the
-# branch is gone), or a worktree whose directory is named bridge-S of REPO holds it now (git worktree list). A branch of that name that no such worktree
-# holds is not the harness's.
+# bridge_ref REPO NAME OLD NEW -> 0 when the change of the local branch NAME (refs/heads/worktree-bridge-S) is the harness's own. A branch that exists now
+# (NEW) is the harness's when the worktree that holds it is the real path <main worktree>/<the harness directory>/worktrees/bridge-S, is locked (the harness locks it), and
+# the move (OLD, when there was one) is a fast-forward. A branch that is gone (NEW empty) is the harness's only when no worktree named bridge-S is left
+# and none holds the branch. Anything else, a rewrite of the lead's own bridge branch or a worktree a member added elsewhere, is not.
 bridge_ref() {
-  [ -n "$3" ] || return 0
-  git -C "$1" worktree list --porcelain 2>/dev/null | awk -v ref="$2" -v tail="/worktrees/bridge-${2#refs/heads/worktree-bridge-}" '
-    function chk() { if (br == ref && length(p) > length(tail) && substr(p, length(p) - length(tail) + 1) == tail) ok = 1; br = ""; p = "" }
-    /^worktree / { chk(); p = substr($0, 10) } /^branch / { br = $2 } /^$/ { chk() } END { chk(); exit ok ? 0 : 1 }'
+  local repo=$1 ref=$2 old=$3 new=$4 s main='' held=0 k p l
+  s=${ref#refs/heads/worktree-bridge-}
+  while IFS=$'\t' read -r k p l; do
+    case $k in M) main=$(readlink -f -- "$p");; H) held=1; [ -n "$new" ] || return 1
+      [ -n "$main" ] && [ "$(readlink -f -- "$p")" = "$main/.claude/worktrees/bridge-$s" ] && [ "$l" = locked ] && held=2;; esac
+  done < <(git -C "$repo" worktree list --porcelain 2>/dev/null | awk -v ref="$ref" -v tail="/worktrees/bridge-$s" '
+    function chk() { if (n++ == 0) printf "M\t%s\t\n", p; else if (br == ref || (length(p) > length(tail) && substr(p, length(p) - length(tail) + 1) == tail)) printf "H\t%s\t%s\n", p, (lk ? "locked" : "-")
+      p = ""; br = ""; lk = 0; open = 0 }
+    /^worktree / { if (open) chk(); p = substr($0, 10); open = 1; next } /^branch / { br = $2 } /^locked/ { lk = 1 } /^$/ { if (open) chk() } END { if (open) chk() }')
+  [ -n "$new" ] || return 0                       # gone: no worktree of that name is left
+  [ "$held" = 2 ] || return 1
+  [ -z "$old" ] || git -C "$repo" merge-base --is-ancestor "$old" "$new" 2>/dev/null
 }
 
 # compare REPO REF AFTER [strict] [ACCEPTED] -> prints each offending change, returns 1 if there is one; each change it accepts is named in
@@ -167,7 +176,7 @@ bridge_ref() {
 #   - a remote-tracking ref refs/remotes/origin/X now says what origin has (a fetch or a push did that; origin's own ref is compared
 #     on its own line), or a tag of the repository is now origin's tag of the same name (fetched);
 #   - the parking branch (answers repo.parking_branch, default scratch) was fast-forwarded to develop's tip, by hand or by qargi;
-#   - a branch worktree-bridge-S of the harness's bridge worktree, a directory worktrees/bridge-S (bridge_ref: while that worktree holds it, or when it is gone).
+#   - a branch worktree-bridge-S of the harness's bridge worktree, a directory worktrees/bridge-S (bridge_ref: while that worktree, locked, at <main worktree>/<the harness directory>/worktrees/bridge-S, holds it and the move is a fast-forward, or when no such worktree is left).
 # A branch, or a branch of origin, that the lead made and noted (qargi ref note) is the journal's case above: its line starts where the ref was absent.
 # Without strict (after the run's first passing verify, against RUN/verified) also: a fast-forward of develop, master or an
 # agent|feature|release|hotfix/* branch, and a new agent|feature|release|hotfix/* branch: the lead's own merges. Everything else, a rewrite
@@ -197,7 +206,7 @@ compare() {
       refs/heads/?*|refs/tags/?*)
         if steps=$(journal_steps "$kind" "$name" "${old:-$zero}" "${new:-$zero}"); then ACC[$k]=1; echo "$short $a by $steps" >> "$acc"; continue; fi;;
     esac
-    if [ "$kind" = local ] && [[ $name == refs/heads/worktree-bridge-?* ]] && bridge_ref "$repo" "$name" "$new"; then
+    if [ "$kind" = local ] && [[ $name == refs/heads/worktree-bridge-?* ]] && bridge_ref "$repo" "$name" "$old" "$new"; then
       ACC[$k]=1; echo "$short $a (the harness's bridge branch of a worktree bridge-NAME)" >> "$acc"; continue
     fi
     if [ "$kind" = local ]; then
@@ -267,6 +276,7 @@ check_run() {
   fi
   : > "$dir/refs.accepted"
   if compare "$RUN_REPO" "$ref" "$dir/refs.after" "$strict" "$dir/refs.accepted" > "$dir/refs.diff"; then
+    [ -z "${NOREC:-}" ] || return 0   # NOREC: a verify that cannot pass (the member did not collect) compares the refs but records nothing
     cp "$dir/refs.after" "$dir/verified"
     return 0
   fi
@@ -490,18 +500,30 @@ WRAP
       exit 2
     fi
     marshal_touch_run "$RUN"   # the lead's verify keeps its lease on the feature the run is based on
-    # the member did not collect: the clone holds commits past BASE_SHA and OUT holds neither patches nor a report. Said first and plainly, before the refs
-    # are compared (clean asks verify for the refs alone, QARGI_VERIFY_REFS_ONLY: it has its own check for the manifest). Not for a saved copy, which exists only for a passed run.
+    # the member did not collect: the clone holds commits past BASE_SHA and OUT holds neither patches nor a report. The refs are compared all the same (a run
+    # that broke out and did not collect still gets its ref verdict) and said next to the message, but nothing is recorded: the run is not verified, and apply
+    # and close need a passing verify. (clean asks verify for the refs alone, QARGI_VERIFY_REFS_ONLY: it has its own check for the manifest.) Not for a saved
+    # copy, which exists only for a passed run.
+    NOREC='' EMPTY=''
     if [ -z "$SAVED" ] && [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ]; then
       ncm=$(git -C "$RUN/clone" rev-list --count --branches HEAD --not --remotes=origin 2>/dev/null || echo 0)
       if [ "${ncm:-0}" -gt 0 ] && [ -z "$(find "$RUN/out" -maxdepth 2 \( -name '*.patch' -o -name '*report.md' \) 2>/dev/null | head -1)" ]; then
-        echo "qargi: OUT is empty: the member did not collect. $RUN/clone holds $ncm commit(s) past BASE_SHA, but $RUN/out holds no patches and no report. The member's DONE needs \`ls OUT/patches\` to list the patches (git format-patch --binary BASE_SHA..HEAD into OUT/patches, then the manifest and report): send it back to collect, or take the commits from the clone yourself. Nothing was compared." >&2
-        exit 1
+        EMPTY="qargi: OUT is empty: the member did not collect. $RUN/clone holds $ncm commit(s) past BASE_SHA, but $RUN/out holds no patches and no report. The member's DONE needs \`ls OUT/patches\` to list the patches (git format-patch --binary BASE_SHA..HEAD into OUT/patches, then the manifest and report). This run is not verified, and apply and close need a passing verify: send it back to collect and verify again, or take the commits from the clone yourself and drop the run with qargi local clean RUN --discard."
+        NOREC=1
       fi
     fi
-    reg_load; crc=0; check_run "$RUN" "$SRC" || crc=$?
+    reg_load; crc=0; NOREC=$NOREC check_run "$RUN" "$SRC" || crc=$?
     if [ "$crc" = 3 ]; then
       exit 3   # run_record said why: the registry does not vouch for this run directory, so no repository was asked
+    elif [ -n "$EMPTY" ]; then
+      if [ "$crc" = 0 ]; then echo "refs: unchanged by the run (compared all the same; nothing was recorded)" >&2
+      else
+        echo "REFS CHANGED during the run (the agent must not have pushed):" >&2
+        cat "$SRC/refs.diff" >&2
+        if [ -s "$SRC/refs.accepted" ]; then echo "accepted as the lead's own moves:" >&2; sed 's/^/  /' "$SRC/refs.accepted" >&2; fi
+      fi
+      echo "$EMPTY" >&2
+      exit $((crc == 0 ? 1 : 2))
     elif [ "$crc" = 0 ]; then
       reg_mark "$RUN" verified "$(now)"   # the registry says so after the run directory is gone (marshal status, handoff: "verified", never "not verified")
       if [ -s "$SRC/refs.accepted" ]; then
@@ -701,6 +723,10 @@ WRAP
     [ "$(run_class "$RUN")" != read-only ] || die "$RUN is a read-only run: it has no patches to apply. qargi local clean $RUN removes it"
     [ ! -f "$RUN/applied" ] || die "$RUN was applied with qargi review apply ($(cut -d' ' -f1 "$RUN/applied")): merge that branch (qargi feature merge), then qargi local clean $RUN"
     [ -n "$(reg_get "$RUN" verified)" ] || [ -f "$RUN/verified" ] || die "$RUN has no passing verify: qargi local verify $RUN first (the refs of the repository must be checked before the run is closed)"
+    # the refs are checked again now (a ref may have changed since the first verify): changed refs are evidence, the run stays open
+    vrc=0; vout=$(QARGI_VERIFY_REFS_ONLY=1 "$0" verify "$RUN" 2>&1 </dev/null) || vrc=$?
+    [ "$vrc" = 0 ] || die "the refs of the repository changed, or could not be checked, since the run's passing verify: keep $RUN as evidence and look at it (qargi local verify $RUN)${vout:+
+$vout}"
     reg_mark "$RUN" closed "$(now)"; reg_mark "$RUN" closed_by "$HOW"
     reg_load; [ -n "$(reg_get "$RUN" closed)" ] || die "could not mark $RUN closed in $DA_STATE/local-runs.jsonl"
     audit_log "local:close" "$HOW $RUN"

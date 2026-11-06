@@ -40,6 +40,15 @@ at $LATE $F status l1; rc=$?
 QARGI_LEAD=bob at $((LATE + 600)) "$DA" marshal check l1; rc=$?
 [ $rc = 1 ] && grep -q "is led by alice" "$T/e" && ok "after the renewal another identity is refused (the lead is live)" || no "SPEC refusal after renewal: rc=$rc $(out)"
 
+# a member that left its run directory is told by the environment mark (QARGI_MEMBER_RUN): the lead's identity renews nothing for it
+mkfeat lm
+QARGI_MEMBER_RUN=$T/some-run at $LATE $F status lm; rc=$?
+[ $rc = 0 ] && [ "$(j lm .renewed_at)" = "$(iso $t0)" ] && ok "feature status with the member mark renews nothing, whatever the working directory" || no "SPEC member mark: rc=$rc $(out) $(j lm .renewed_at)"
+QARGI_MEMBER_RUN=$T/some-run at $LATE "$DA" marshal check lm --renew; rc=$?
+[ "$(j lm .renewed_at)" = "$(iso $t0)" ] && ok "marshal check --renew with the member mark renews nothing" || no "SPEC member mark check: rc=$rc $(out) $(j lm .renewed_at)"
+at $LATE $F status lm; rc=$?
+[ $rc = 0 ] && [ "$(j lm .renewed_at)" = "$(iso $LATE)" ] && ok "the same command without the mark renews (the mark is what made the difference)" || no "SPEC member mark absent: rc=$rc $(out) $(j lm .renewed_at)"
+
 git -C "$R" branch agent/t1 develop; commit_on agent/t1 t1.txt
 now=$LATE
 for step in "merge l1 agent/t1" "sync l1" "verify l1"; do
@@ -64,6 +73,8 @@ prep $((t0 + 10)) rt1; rc=$?
 RUN=$(sed -n 's/^RUN=//p' "$T/o")
 [ $rc = 0 ] && [ -d "$RUN" ] && ok "prepare: a run based on the feature" || no "prepare: rc=$rc $(out)"
 printf '# Report\n\n## Findings\n\nnone\n' > "$RUN/out/report.md"
+at $((t0 + 500)) "$DA" review check "$RUN"; rc=$?
+[ $rc = 0 ] && [ "$(j r1 .renewed_at)" = "$(iso $((t0 + 500)))" ] && ok "review check given the run directory (not its out) renews the lease of that run's feature" || no "SPEC review check RUN_DIR renews: rc=$rc $(out) $(j r1 .renewed_at)"
 at $((t0 + 1000)) "$DA" review check "$RUN/out"; rc=$?
 [ $rc = 0 ] && [ "$(j r1 .renewed_at)" = "$(iso $((t0 + 1000)))" ] && ok "review check on the run's output renews the lease" || no "SPEC review check renews: rc=$rc $(out) $(j r1 .renewed_at)"
 at $((t0 + 2500)) "$DA" local verify "$RUN"; rc=$?
@@ -87,7 +98,7 @@ at $((LATE + 2)) "$DA" marshal release f1 --note "done"; rc=$?
 at $((LATE + 3)) "$DA" marshal release f1; rc=$?
 [ $rc = 0 ] && grep -q "nothing to release" "$T/o" && ok "release after finish needs no note" || no "SPEC release after finish without note: rc=$rc $(out)"
 at $((LATE + 4)) "$DA" marshal release never-existed --note n; rc=$?
-[ $rc = 0 ] && grep -q "nothing to release" "$T/o" && ok "release of a name with no record and no branch: nothing to release" || no "SPEC release unknown: rc=$rc $(out)"
+[ $rc = 1 ] && grep -q "no feature never-existed" "$T/e" && ! grep -q "nothing to release" "$T/o" && ok "release of a name with no record and no branch (a typo) fails: no feature NAME" || no "SPEC release unknown: rc=$rc $(out)"
 mkfeat h1
 QARGI_LEAD=bob at $((t0 + 100)) "$DA" marshal release h1 --note n; rc=$?
 [ $rc = 1 ] && [ "$(j h1 .lead.id)" = alice ] && ok "release of a feature another live lead holds is still refused" || no "SPEC release by non-lead: rc=$rc $(out)"

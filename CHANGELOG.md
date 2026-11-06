@@ -93,6 +93,28 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `qargi release site` no longer commits the built `_site/` on the site branch: a Pages build of the branch needs `_site/` empty.
   The build still runs, so a page that does not build refuses; the commit now records the release in `site.json` and removes a
   `_site/` that an earlier build committed.
+- The verify rule of `local verify` and `local clean` accepts a `worktree-bridge-NAME` branch as the harness's own only when the worktree that holds it is
+  the real path `<main worktree>/.claude/worktrees/bridge-NAME` and is locked, and a move of it is a fast-forward; a rewrite of the branch, a worktree of
+  that name added elsewhere or left unlocked, and a deletion while a worktree of that name is still there are found.
+- The guard refuses `qargi release assets` (it runs the project's `release.assets_command` with the lead's rights) and `qargi release fix` (it makes a
+  worktree on the release branch and pushes it with `--push`) to a member, as it does `release publish`, `sign` and `site`; the guard's docstring, `qargi help
+  guard` and the manual page list them.
+- `qargi ref note` refuses a second note of a ref whose earlier noted value is not an ancestor of its current one (the ref was rewritten between the notes),
+  says so and points to `ref record --rewrite` for an agent branch that keeps its tree, prints the author and subject of the tip it notes, and takes
+  `NAME@SHA` to note a ref only while it is at SHA.
+- `qargi local verify` of a run whose clone has commits and whose OUT is empty now also compares the refs and prints the verdict (exit 2 when they changed,
+  else 1) next to "OUT is empty: the member did not collect", so a run that both broke out and did not collect is not told only the second; nothing is
+  recorded, and the message says the run is not verified and that apply and close need a passing verify.
+- `qargi local close RUN --applied-by-am` runs the refs check again (the refs-only verify that `local clean` runs) before it marks the run closed, so a ref
+  that changed after the run's passing verify keeps the run open instead of being hidden by the close.
+- `qargi review check RUN_DIR`, given the run directory instead of its `out`, renews the lease of the feature the run is based on (it looked for the run in
+  the scratch directory before); the usage text and the header of `lib/review.sh` list `check`.
+- `qargi marshal release NAME` for a name with no record and no branch (a typo) now fails with "no feature NAME in PROJECT"; the quiet success ("nothing to
+  release", exit 0) stays for a feature that was finished, abandoned or released.
+- A member run no longer renews the lead's lease from another directory: `qargi local run` puts `QARGI_MEMBER_RUN` (the run directory) in the member's
+  environment, the marshal treats a process that has it as a member run as well as one working below a run directory (so `feature status|merge|sync` and
+  `review check` renew nothing for it), and the guard refuses a command that sets or unsets it. A member started some other way is still told by its working
+  directory alone. The comment on the guard's open `feature` verbs now says that status, merge and sync renew a lease.
 
 ## [0.2.2] - 2026-11-05
 

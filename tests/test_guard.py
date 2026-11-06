@@ -682,6 +682,22 @@ class Skills(HookCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
+    def test_refuses_release_assets_and_fix_to_a_member(self):
+        """release assets runs the project's release.assets_command (project code) and release fix makes a worktree on the release branch and pushes
+        it with --push; both verbs, and the script run directly, are refused, each with its own reason. The other release verbs and words in a quoted
+        string stay allowed."""
+        for verb, why in (("assets", "qargi release assets runs the project's release.assets_command"), ("fix", "qargi release fix makes a worktree on the release branch")):
+            for form in ("qargi release %s 0.2.0", "qargi release %s 0.2.0 --recreate --project p", "/opt/q/bin/qargi release %s 0.2.0", "sudo qargi release %s 0.2.0",
+                         "bash -c 'qargi release %s 0.2.0'", "cd src && qargi release %s 0.2.0", "qargi release --project p %s 0.2.0", "eval 'qargi release %s 0.2.0'",
+                         "bash lib/release.sh %s 0.2.0", "./lib/release.sh %s 0.2.0 --push"):
+                r = self.bash(form % verb)
+                self.assertEqual(r.returncode, 2, form % verb)
+                self.assertIn(why, r.stderr)
+        for c in ("qargi release status 0.2.0", "qargi release push 0.2.0", "echo qargi release assets", "grep -n 'release fix' lib/commands.py",
+                  "qargi help release assets", "qargi help release fix"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
     def test_refuses_env_plan_and_apply_to_a_member(self):
         """env plan runs the project's dry-run command and env apply its bootstrap: project code. Both verbs, a verb held in a variable, and the
         scripts run directly are refused; env show (it only reads) and words in a quoted string stay allowed."""
@@ -1371,6 +1387,16 @@ class Marshal(HookCase):
                       "bash -c 'export QARGI_LEAD=me'", "sh -c 'QARGI_LEAD=me qargi marshal status'", "eval 'QARGI_LEAD=me ls'", "echo $(QARGI_LEAD=me ls)",
                       "export 'QARGI_LEAD'=me", "export QARGI_LEAD\\\n=me", "sudo env QARGI_LEAD=me ls", "export A=1 QARGI_LEAD=me", "QARGI_LEAD+=x ls",
                       "command export QARGI_LEAD=me", "unset A QARGI_LEAD"])
+
+    def test_the_member_mark_cannot_be_set_or_unset(self):
+        """QARGI_MEMBER_RUN tells the marshal a member is running, wherever it changes to; a member that sets or unsets it would renew the lead's lease."""
+        self.refused(["unset QARGI_MEMBER_RUN", "export QARGI_MEMBER_RUN=", "QARGI_MEMBER_RUN= qargi feature status x", "env -u QARGI_MEMBER_RUN qargi feature status x",
+                      "env -uQARGI_MEMBER_RUN qargi feature status x", "env --unset=QARGI_MEMBER_RUN ls", "declare +x QARGI_MEMBER_RUN", "printf -v QARGI_MEMBER_RUN x",
+                      "bash -c 'unset QARGI_MEMBER_RUN; qargi feature status x'", "cd / && QARGI_MEMBER_RUN= qargi review check out", "readonly QARGI_MEMBER_RUN=",
+                      "sudo env -u QARGI_MEMBER_RUN ls"])
+        for c in ("echo $QARGI_MEMBER_RUN", "export QARGI_MEMBER_RUNNER=1", "env | grep QARGI_MEMBER_RUN", "unset QARGI_MEMBER_RUN_X", "echo QARGI_MEMBER_RUN=1"):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
 
     def test_the_lead_identity_is_found_as_env_names_finds_a_name(self):
         """lead_refusal reads the names a segment sets through env_names(), as the QARGI_NESTED check does: printf -v with the name glued to the option,
