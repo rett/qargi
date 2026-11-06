@@ -107,6 +107,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   recorded, and the message says the run is not verified and that apply and close need a passing verify.
 - `qargi local close RUN --applied-by-am` runs the refs check again (the refs-only verify that `local clean` runs) before it marks the run closed, so a ref
   that changed after the run's passing verify keeps the run open instead of being hidden by the close.
+- `qargi review check RUN_DIR`, given the run directory instead of its `out`, renews the lease of the feature the run is based on (it looked for the run in
+  the scratch directory before); the usage text and the header of `lib/review.sh` list `check`.
 
 ## [0.2.2] - 2026-11-05
 
