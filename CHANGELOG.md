@@ -13,12 +13,6 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The `gitflow` methodology says what a master created as a snapshot of the code means: it has no merge base with develop, and the release branch is joined
   to it before the push by a merge of master that keeps the release tree. The release steps of `methodology.json` say that `qargi release push` does it, and
   the `CONTRIBUTING.md` scaffold (which never names qargi) describes the same merge for a person doing it by hand.
-
-### Changed
-- `README.md` is a front page: a short description, a quick start, a table of the documentation and the license. Its detail moved, text unchanged,
-  into `docs/` by topic (`docs/install-and-upgrade/`, `flow/`, `members-and-providers/`, `skills-tools-and-memory/`, `reference/` and
-  `development/`, each with a `README.md`, and `docs/README.md` for the overview). The comments and the help line that pointed at README sections
-  point at the new pages.
 - `tests/test_docs_links.py` checks that every relative link of `README.md`, `CONTRIBUTING.md` and `docs/` resolves (to a heading, when it has a fragment), that
   the Documentation table of `README.md` lists each `docs/<topic>/README.md`, that `README.md` stays short, and that the `qargi` commands of its quick start exist.
 - `qargi review apply` resets the author of every commit it applies to the lead's identity: the answer `git.author` (a string `Name <email>`, checked by
@@ -26,11 +20,28 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `user.email`; with neither, the member's author stays and the output says so. The committer and the dates are unchanged, history already applied is not
   rewritten, and the member's author is recorded in the ref journal and the audit log, not in the commit. The answer `review.keep_author` (`true`;
   default `false`) keeps the member's author instead. The guard refuses `git.*` and `review.*` in `project set` to a member.
-- The line the stage verbs print and the verdict of `lead compact-check --advise` show the token count beside the percentage, for example
-  `lead: 90%, 180k tokens of context; compact is safe now: run /compact`.
 - `qargi project template` carries `lead.context_window` as `null` (derive the window from the model of the session) and `project init` says
   which window the lead gets; `project validate` refuses a value that is not a number of tokens of at least 1000 (or null). The
   `qargi-project` skill lists the question.
+- The runtime definition takes `resources.transcripts.windows`, a first-match list of `{model, tokens}` where `*` in the pattern stands for any run of
+  characters (`claude-code` ships `*[1m]` and `*-1m` as 1000000). `lead usage --json` keeps its keys and adds `window_source`: `answer`, `model` or `assumed`.
+- When the window is only the runtime's single `window` (no answer, no model in its table), `lead usage`, `lead compact-check --advise` (also its
+  `--json` advice) and the line the stage verbs print say `(window assumed 200,000; set lead.context_window)`, so the percentage is not presented
+  as fact; with the answer or a recognised model there is no such note.
+- The project answer `runs.owned_refs` (a list of glob patterns for full ref names, such as `refs/heads/foo-*`; only the lead sets it, the guard refuses
+  `project set` of it to a member) declares the refs a runtime or harness creates in the repository. `qargi local verify` and `local clean` accept a local
+  ref that matches one, in either phase, and name it (`foo-x created; accepted: refs/heads/foo-* (owned by the runtime, per runs.owned_refs)`). A pattern
+  needs a literal prefix of at least 3 characters after `refs/NAMESPACE/` and may not match `develop`, `master`, a `repo.long_lived` branch or the git-flow
+  branches (`project validate` says so); a ref is never taken as owned when it is the base of a run that is not cleaned or closed, and a ref that matches
+  no valid pattern is checked as before, in the strict phase too. The built-in rule for the harness's `worktree-bridge-*` branches stays.
+
+### Changed
+- `README.md` is a front page: a short description, a quick start, a table of the documentation and the license. Its detail moved, text unchanged,
+  into `docs/` by topic (`docs/install-and-upgrade/`, `flow/`, `members-and-providers/`, `skills-tools-and-memory/`, `reference/` and
+  `development/`, each with a `README.md`, and `docs/README.md` for the overview). The comments and the help line that pointed at README sections
+  point at the new pages.
+- The line the stage verbs print and the verdict of `lead compact-check --advise` show the token count beside the percentage, for example
+  `lead: 90%, 180k tokens of context; compact is safe now: run /compact`.
 - A read-only run (an advisor or a review: a report, no patches) closes with a plain `qargi local clean RUN` once its output holds a `report.md`, its
   refs are unchanged and its clone holds no commit; `--discard` is no longer needed and no manifest is asked for. A run of work still needs its manifest.
 - `feature finish`, refused while a run of the feature is open, now names each open run with the exact command that closes it (a read-only run: `qargi
@@ -38,13 +49,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 - `qargi lead usage` and `lead compact-check --advise` no longer divide the context in use by a fixed 200000 window: the window is the answer
-  `lead.context_window`, else the one the runtime's definition gives for the model id of the session's last assistant turn
-  (`resources.transcripts.windows`, a first-match list of `{model, tokens}` where `*` in the pattern stands for any run of characters; `claude-code`
-  ships `*[1m]` and `*-1m` as 1000000), else the definition's single `window`. A session on a 1,000,000 window no longer reads as 96% full.
-  `lead usage --json` keeps its keys and adds `window_source`: `answer`, `model` or `assumed`.
-- When the window is only the runtime's single `window` (no answer, no model in its table), `lead usage`, `lead compact-check --advise` (also its
-  `--json` advice) and the line the stage verbs print say `(window assumed 200,000; set lead.context_window)`, so the percentage is not presented
-  as fact; with the answer or a recognised model there is no such note.
+  `lead.context_window`, else the one the runtime's definition gives for the model id of the session's last assistant turn, else the definition's single
+  `window`. A session on a 1,000,000 window no longer reads as 96% full.
 - `qargi release` works with a master that shares no history with the release branch (for example one parentless snapshot commit). `release start` and
   `release status` say that master and the branch have no merge base, and `release finish` refuses with the fix instead of printing
   `fatal: ... no merge base` and stopping at `refusing to merge unrelated histories` with nothing to resolve. `release push` joins the histories first: its plan
@@ -52,12 +58,6 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   plan token; once approved it makes that merge as a commit of its own on the branch, before the push, so CI runs on the joined head and the finish is an
   ordinary `--no-ff` merge. The tree of the branch must be the same before and after, and the commit must merge exactly the branch and master; otherwise the
   branch does not move and nothing is pushed. A repository whose histories are related gets no extra commit.
-- The project answer `runs.owned_refs` (a list of glob patterns for full ref names, such as `refs/heads/foo-*`; only the lead sets it, the guard refuses
-  `project set` of it to a member) declares the refs a runtime or harness creates in the repository. `qargi local verify` and `local clean` accept a local
-  ref that matches one, in either phase, and name it (`foo-x created; accepted: refs/heads/foo-* (owned by the runtime, per runs.owned_refs)`). A pattern
-  needs a literal prefix of at least 3 characters after `refs/NAMESPACE/` and may not match `develop`, `master`, a `repo.long_lived` branch or the git-flow
-  branches (`project validate` says so); a ref is never taken as owned when it is the base of a run that is not cleaned or closed, and a ref that matches
-  no valid pattern is checked as before, in the strict phase too. The built-in rule for the harness's `worktree-bridge-*` branches stays.
 - `lead compact-check` and `feature finish` settle a run as merged by the same test as `local list` and `local clean` (`lib/merged.py`, one function
   for the three). A run whose applied tip the lead rewrote with `qargi ref record --rewrite` counts as merged when the commit it was rewritten to is on
   a branch other than `agent/*`, so a long-merged run in an old scratch directory is no longer listed as applied and not merged.
