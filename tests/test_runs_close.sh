@@ -194,6 +194,10 @@ out=$($DA lead compact-check --project app 2>&1); rc=$?
 git -C "$A" checkout -q parked 2>/dev/null
 w=$(mktemp -d "$T/w.XXXXXX"); git -C "$A" worktree add -q --detach "$w" feature/cl
 git -C "$w" am -q "$R"/out/patches/*.patch && git -C "$A" update-ref refs/heads/feature/cl "$(git -C "$w" rev-parse HEAD)"; git -C "$A" worktree remove --force "$w"
+git -C "$A" branch rogue-after-verify develop
+out=$($DA local close "$R" --applied-by-am 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "refs of the repository changed" <<<"$out" && [ -z "$(jq -r --arg r "$R" 'select(.run == $r) | .closed // empty' "$T/s/local-runs.jsonl")" ] && ok "close checks the refs again: a ref changed after the first verify keeps the run open" || no "close after a ref change: rc=$rc $out"
+git -C "$A" branch -D rogue-after-verify >/dev/null
 out=$($DA local close "$R" --applied-by-am 2>&1); rc=$?
 [ $rc = 0 ] && grep -q "closed $R" <<<"$out" && [ -d "$R/clone" ] && [ -d "$R/out" ] && ok "close marks the run and keeps its files" || no "close: rc=$rc $out"
 reg=$T/s/local-runs.jsonl

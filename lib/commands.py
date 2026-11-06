@@ -1025,7 +1025,7 @@ COMMANDS = {
                                 "A closed run is no longer listed as open or counted as applied and not merged by qargi lead compact-check and the compaction advice, no longer blocks "
                                 "qargi feature finish and is listed by marshal status as closed; qargi local list shows closed in the APPLIED column. qargi local clean then removes it "
                                 "without asking for an applied tip (its commits are taken as applied by hand); clean --applied removes it too. Refused for a run that has no passing "
-                                "local verify (verify it first: close must not hide changed refs), a read-only run, one applied with qargi review apply (merge that branch), "
+                                "local verify (verify it first: close must not hide changed refs), a run whose refs changed since that verify (close runs the refs check again), a read-only run, one applied with qargi review apply (merge that branch), "
                                 "a run already closed or cleaned. Not available in a member run."),
                           examples=["qargi local close ./run --applied-by-am"]),
             "clean": verb("Remove a collected, verified run and its temporary directory", [("RUN_DIR", "dir", True)],

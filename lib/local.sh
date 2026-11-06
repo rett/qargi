@@ -723,6 +723,10 @@ WRAP
     [ "$(run_class "$RUN")" != read-only ] || die "$RUN is a read-only run: it has no patches to apply. qargi local clean $RUN removes it"
     [ ! -f "$RUN/applied" ] || die "$RUN was applied with qargi review apply ($(cut -d' ' -f1 "$RUN/applied")): merge that branch (qargi feature merge), then qargi local clean $RUN"
     [ -n "$(reg_get "$RUN" verified)" ] || [ -f "$RUN/verified" ] || die "$RUN has no passing verify: qargi local verify $RUN first (the refs of the repository must be checked before the run is closed)"
+    # the refs are checked again now (a ref may have changed since the first verify): changed refs are evidence, the run stays open
+    vrc=0; vout=$(QARGI_VERIFY_REFS_ONLY=1 "$0" verify "$RUN" 2>&1 </dev/null) || vrc=$?
+    [ "$vrc" = 0 ] || die "the refs of the repository changed, or could not be checked, since the run's passing verify: keep $RUN as evidence and look at it (qargi local verify $RUN)${vout:+
+$vout}"
     reg_mark "$RUN" closed "$(now)"; reg_mark "$RUN" closed_by "$HOW"
     reg_load; [ -n "$(reg_get "$RUN" closed)" ] || die "could not mark $RUN closed in $DA_STATE/local-runs.jsonl"
     audit_log "local:close" "$HOW $RUN"
