@@ -550,6 +550,23 @@ class Skills(HookCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
+    def test_refuses_project_set_of_the_author_answers_to_a_member(self):
+        """git.author and review.keep_author decide whose name qargi review apply puts on a member's commits: they are the lead's, so project set
+        refuses them, whole or by a dotted path, in the forms the other lead-only answers are refused in. Look-alikes (gitx, reviews, review_x)
+        stay open."""
+        for path in ("git", "git.author", "review", "review.keep_author"):
+            for form in ("qargi project set p %s v", "/opt/q/bin/qargi project set p %s v", "sudo qargi project set p %s v", "cd src && qargi project set p %s v",
+                         "bash -c 'qargi project set p %s v'", "env FOO=1 qargi project set p %s v", "echo $(qargi project set p %s v)",
+                         "./lib/project.sh set p %s v", "bash lib/project.sh set p %s v"):
+                c = form % path
+                r = self.bash(c)
+                self.assertEqual(r.returncode, 2, c)
+                self.assertIn("qargi project set of %s changes whose name the commits qargi review apply puts" % path, r.stderr, c)
+        for c in ("qargi project set p gitx v", "qargi project set p reviews.x v", "qargi project set p review_x true", "qargi project set p budget_cents 500",
+                  "qargi project show p", "echo qargi project set p git.author x"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
     def test_refuses_project_init_to_a_member(self):
         """qargi project init --answers FILE --force stores a whole answers file, models.extensions and models.accept_no_barrier included, with no
         plan token: a member may not run it (nor the script, nor with a verb it cannot read)."""

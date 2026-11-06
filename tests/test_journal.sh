@@ -76,7 +76,7 @@ out=$(verify "$RB"); rc=$?
 $DA review apply "$RB" >/dev/null 2>&1 && $F merge fa agent/b >/dev/null 2>&1 && $DA local verify "$RB" >/dev/null 2>&1 && ok "and B itself can then be applied and merged, and still verifies" || no "B after A: $(verify "$RB")"
 
 # the journal's shape: one JSON line per move with every field
-bad=$(jq -c 'select((keys | sort) != ["at","by","epoch","new","old","project","ref","repo","verb"] or (.old|test("^[0-9a-f]{40}$")|not) or (.new|test("^[0-9a-f]{40}$")|not) or (.epoch|type) != "number" or .project != "app" or (.by|length) == 0 or (.verb|length) == 0)' "$J" 2>&1 | head -3)
+bad=$(jq -c 'select((keys - ["why"] | sort) != ["at","by","epoch","new","old","project","ref","repo","verb"] or (.old|test("^[0-9a-f]{40}$")|not) or (.new|test("^[0-9a-f]{40}$")|not) or (.epoch|type) != "number" or .project != "app" or (.by|length) == 0 or (.verb|length) == 0)' "$J" 2>&1 | head -3)
 [ -f "$J" ] && [ -z "$bad" ] && ok "every journal line has at, epoch, verb, project, repo, ref, old, new and by" || no "journal lines: $bad"
 [ "$(jq -r '.repo' "$J" | sort -u | wc -l)" = 1 ] && ok "every line names the same repository" || no "repo field"
 jq -e 'select(.verb | test("merge"))' "$J" >/dev/null && ok "the verb of a merge says so" || no "verb"

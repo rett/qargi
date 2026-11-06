@@ -61,6 +61,7 @@ set_note() { # project path json-value -> what `set` adds to its line: the provi
   # `deployment` is the methodology's deployment option (github-release, none): nothing is provisioned from it, so the note would mislead;
   # a value that is no option of the project's methodology is taken to name a cloud deployment and keeps the note
   local n=$1 path=$2 val=$3 meth
+  case $path in git|git.*|review|review.*) return 0;; esac   # read by qargi review apply, never by a provision
   if [ "$path" = deployment ]; then
     meth=$(jq -r '.methodology // "gitflow"' "$PROJ_DIR/$n.json")
     python3 -I - "$(dirname "$0")" "$meth" "$val" <<'PY' && return 0
@@ -162,6 +163,18 @@ if isinstance(brs, dict):
     need(isinstance(brs.get("push_develop", True), bool), "branches.push_develop: true (default: feature finish pushes develop when the repository has an origin) or false (develop stays local)")
     need(brs.get("delete_merged", "local") in ("local", "local+remote"), "branches.delete_merged: local (default) or local+remote (feature finish also deletes the branch on origin)")
     need(brs.get("push_features", "never") in ("never", "when-shared", "always"), "branches.push_features: never (default), when-shared (only a branch origin already has) or always")
+# git.author: the identity qargi review apply gives the applied commits (a string 'Name <email>'; unset: the repository's user.name and user.email)
+# review.keep_author: true keeps the member's author on the applied commits instead (default false)
+gt = c.get("git", {})
+need(isinstance(gt, dict) and set(gt) <= {"author"}, "git: an object like {author: \"Example Author <author@example.com>\"} (unknown key: only author)")
+if isinstance(gt, dict) and gt.get("author") is not None:
+    ga = gt["author"]
+    need(isinstance(ga, str) and re.fullmatch(r"[^<>]*[^<>\s] <[^<>\s@]+@[^<>\s@]+>", ga) and not any(ord(ch) < 32 or ord(ch) == 127 for ch in ga),
+         "git.author: a name and an email as 'Name <email>' (for example Example Author <author@example.com>), no control characters")
+rvw = c.get("review", {})
+need(isinstance(rvw, dict) and set(rvw) <= {"keep_author"}, "review: an object like {keep_author: false} (unknown key: only keep_author)")
+if isinstance(rvw, dict):
+    need(isinstance(rvw.get("keep_author", False), bool), "review.keep_author: true (qargi review apply keeps the member's author on the applied commits) or false (default: the author is reset to git.author)")
 # worktrees.root: where qargi makes worktrees (ROOT/<branch>); an absolute path (or ~/...), not inside the repository
 wts = c.get("worktrees", {})
 need(isinstance(wts, dict) and set(wts) <= {"root"}, "worktrees: an object like {root: \"/path\"}")

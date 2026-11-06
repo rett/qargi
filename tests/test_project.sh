@@ -35,6 +35,20 @@ chk "branches.push_develop: string" 1 '.branches={push_develop:"false"}'
 chk "branches.push_develop: null"   1 '.branches={push_develop:null}'
 chk "branches: unknown key"         1 '.branches={keep:true}'
 chk "branches: not an object"       1 '.branches="local"'
+chk "git.author: Name <email>"      0 '.git={author:"Example Author <author@example.com>"}'
+chk "git.author: null (unset)"      0 '.git={author:null}'
+chk "git.author: no email"          1 '.git={author:"Example Author"}'
+chk "git.author: no name"           1 '.git={author:"<author@example.com>"}'
+chk "git.author: empty"             1 '.git={author:""}'
+chk "git.author: bad email"         1 '.git={author:"Example Author <author>"}'
+chk "git.author: not a string"      1 '.git={author:3}'
+chk "git.author: a newline"         1 '.git={author:"Example\nAuthor <author@example.com>"}'
+chk "git: unknown key"              1 '.git={name:"x"}'
+chk "git: not an object"            1 '.git="x"'
+chk "review.keep_author: true"      0 '.review={keep_author:true}'
+chk "review.keep_author: false"     0 '.review={keep_author:false}'
+chk "review.keep_author: string"    1 '.review={keep_author:"true"}'
+chk "review: unknown key"           1 '.review={keep:true}'
 chk "worktrees.root: absolute"      0 '.worktrees={root:"/srv/worktrees"}'
 chk "worktrees.root: relative"      1 '.worktrees={root:"worktrees"}'
 chk "worktrees.root: empty"         1 '.worktrees={root:""}'
@@ -199,6 +213,10 @@ out=$($DA project init demo --answers $T/ok.json --force 2>&1); grep -q '^findin
 grep -q 'role build: .*, provider tier/high' <<<"$out" && echo "ok   init says a role without a model takes its provider's tier" || { echo "FAIL init role line: $out"; fail=1; }
 out=$($DA project validate demo 2>&1); [ "$?" = 0 ] && grep -q '^finding: models.provider is not set' <<<"$out" && echo "ok   validate NAME reads the stored answers and reports the finding" || { echo "FAIL validate NAME: $out"; fail=1; }
 $DA project set demo models.provider.local claude-code >/dev/null 2>&1 && $DA project set demo models.provider.cloud claude-platform >/dev/null 2>&1 && out=$($DA project validate demo 2>&1) && ! grep -q '^finding:' <<<"$out" && echo "ok   project set models.provider clears the finding" || { echo "FAIL set provider: $out"; fail=1; }
+msg=$($DA project set demo git.author 'Example Author <author@example.com>' 2>&1); [ "$msg" = 'demo: git.author = "Example Author <author@example.com>"' ] && [ "$(jq -r .git.author $T/c/projects/demo.json)" = "Example Author <author@example.com>" ] && echo "ok   set git.author (a plain string, no provision note)" || { echo "FAIL set git.author: $msg"; fail=1; }
+msg=$($DA project set demo git.author 'no email here' 2>&1); rc=$?; [ $rc != 0 ] && grep -q "git.author: a name and an email" <<<"$msg" && [ "$(jq -r .git.author $T/c/projects/demo.json)" = "Example Author <author@example.com>" ] && echo "ok   set refuses a git.author that is not Name <email>, nothing changed" || { echo "FAIL set bad git.author: rc=$rc $msg"; fail=1; }
+$DA project set demo review.keep_author true >/dev/null 2>&1 && [ "$(jq .review.keep_author $T/c/projects/demo.json)" = true ] && echo "ok   set review.keep_author true" || { echo "FAIL set review.keep_author"; fail=1; }
+msg=$($DA project set demo review.keep_author maybe 2>&1); rc=$?; [ $rc != 0 ] && grep -q "review.keep_author: true" <<<"$msg" && [ "$(jq .review.keep_author $T/c/projects/demo.json)" = true ] && echo "ok   set refuses a review.keep_author that is not true or false" || { echo "FAIL set bad keep_author: rc=$rc $msg"; fail=1; }
 $DA project set demo budget_cents 2500 >/dev/null 2>&1 && [ "$(jq .budget_cents $T/c/projects/demo.json)" = 2500 ] && echo "ok   set budget" || { echo "FAIL set budget"; fail=1; }
 # the message follows the key: the provision note belongs to answers a provision reads; a deployment option of the methodology
 # (github-release, none) is not one, so only what was set is said; a deployment value that is no option keeps the note
