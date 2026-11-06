@@ -73,6 +73,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   branch and a ref the run's answers declare owned (`runs.owned_refs`) no longer count, so a member cannot create one at the applied tip and have the run
   closed as merged. The applied tip is the one the lead's ref journal records for the `review:apply` of the run's branch; `RUN/applied`, which a member can
   write, is read only for a run with no such line.
+- The join of `release push` is made against the master its plan showed: it is refused when master moved between the plan and the join (a preflight, say), where
+  it read master again. The merge no longer runs the lead's hooks or signs (`core.hooksPath=/dev/null`, `--no-gpg-sign`, as `review apply` makes its commits),
+  and the plan warns when the release branch is checked out where the join would be refused (the main checkout, a worktree outside qargi's root, uncommitted changes).
+  A hotfix whose develop shares no history with master and with no release open is told so, instead of being told to finish a release that does not exist.
 
 ## [0.2.3] - 2026-11-05
 
