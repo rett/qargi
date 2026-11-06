@@ -536,7 +536,7 @@ COMMANDS = {
                                  "worktree exists already (--recreate removes it and builds again; its files may be signed) and in a member run or when QARGI_NESTED is set (exit 2). "
                                  "A command that fails leaves the worktree for you to look at and records nothing. It changes no branch and needs no plan token: it runs the command "
                                  "the lead put in the answers."),
-                           examples=["qargi release assets 0.2.2", "qargi release assets 0.2.2 --recreate"]),
+                           examples=["qargi release assets 0.2.3", "qargi release assets 0.2.3 --recreate"]),
             "sign": verb("Sign the release files from the tag with your own key, on your own terminal, and record that they verify", [("VERSION", "none")], [PROJECT_OPT],
                          desc=("Signing is optional and off by default: it applies only to a project whose answers hold release.sign (otherwise this exits 2 and nothing else changes). "
                                "Run it in your terminal, in the project's repository checked out at the tag (git checkout --detach VERSION, with the release files built from it), or after qargi release assets VERSION, "
@@ -572,7 +572,7 @@ COMMANDS = {
                                "the apply commits it as 'Site: built from release VERSION' and moves the branch, touching no working tree, and prints the git push "
                                "command for you to run. Nothing is committed when the build is already there. Refused when the branch is checked out somewhere, "
                                "when the tag is missing and when the build reports an error; refused (exit 2) in a member run and when QARGI_NESTED is set."),
-                         examples=["qargi release site 0.2.2", "qargi release site 0.2.2 --plan TOKEN --approved \"yes, commit the site\""]),
+                         examples=["qargi release site 0.2.3", "qargi release site 0.2.3 --plan TOKEN --approved \"yes, commit the site\""]),
         },
     },
     "env": {
