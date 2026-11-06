@@ -27,7 +27,8 @@ roles are not skills: each role's text is `roles/<role>/ROLE.md`, which a member
 gets with its task block); `agents/member.json` and `agents/member.body.md` are the one neutral
 member definition `qargi agent add` renders, through the project's runtime, under the names users
 choose; `lib/providers/` holds the shipped runtime definitions and model catalogs; `provision/` the resource and memory
-templates; `examples/` sample repository profiles; `packs/` the baseline packs shipped
+templates; `examples/` sample repository profiles; `docs/` the documentation by topic (`README.md` links to each topic's `README.md`, and
+`tests/test_docs_links.py` checks every relative link); `packs/` the baseline packs shipped
 with qargi (`baseline.json` and `skills/<name>/SKILL.md`).
 
 To add a baseline pack, write `packs/skills/<name>/SKILL.md` with front matter of

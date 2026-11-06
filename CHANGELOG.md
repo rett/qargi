@@ -11,6 +11,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   into `docs/` by topic (`docs/install-and-upgrade/`, `flow/`, `members-and-providers/`, `skills-tools-and-memory/`, `reference/` and
   `development/`, each with a `README.md`, and `docs/README.md` for the overview). The comments and the help line that pointed at README sections
   point at the new pages.
+- `tests/test_docs_links.py` checks that every relative link of `README.md`, `CONTRIBUTING.md` and `docs/` resolves (to a heading, when it has a fragment), that
+  the Documentation table of `README.md` lists each `docs/<topic>/README.md`, that `README.md` stays short, and that the `qargi` commands of its quick start exist.
 
 ## [0.2.3] - 2026-11-05
 
