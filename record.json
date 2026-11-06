@@ -4,19 +4,13 @@
  "goal": "Small 0.2.4 additions: project validate roles, context window note, guard verb lists",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "rett@arc",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-06T17:48:33Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-06T18:24:12Z",
- "finished_at": null,
+ "finished_at": "2026-11-06T18:25:02Z",
  "updated_by": "rett@arc",
- "rev": 5,
- "updated_at": "2026-11-06T18:24:12Z",
+ "rev": 6,
+ "updated_at": "2026-11-06T18:25:02Z",
  "feature": "hotfixes024",
  "project": "qargi"
 }
