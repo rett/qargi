@@ -63,13 +63,17 @@ snapshot() { # repo -> sorted refs of the repository and of its remote
   fi
 }
 
-# merged_tip REPO TIP -> 0 when the commit TIP (the second word of a run's applied file, which a member can write) is on a local branch
-# other than agent/*, 1 when it is not, 2 when TIP is not a full hex object name. A tip the lead rewrote (qargi ref record --rewrite: the same
+# merged_tip REPO TIP [BRANCH [RUN]] -> 0 when the commit TIP (the second word of a run's applied file, which a member can write) is on a local branch
+# other than agent/*, a worktree-bridge-* branch or a ref the run's answers declare owned, 1 when it is not, 2 when there is no tip that is a full hex object name;
+# the tip of BRANCH's review:apply line in the lead's ref journal replaces TIP when there is one. A tip the lead rewrote (qargi ref record --rewrite: the same
 # tree, journaled as ref:rewrite) counts as merged when the commit it was rewritten to is. The test is lib/merged.py, the one place that knows
 # it: lead compact-check and feature finish (lib/lead_usage.py) ask the same function, so a run is settled for list, clean and compact-check alike.
 merged_tip() {
-  local rc=0
-  python3 -I "$(dirname "$0")/merged.py" "$1" "$2" --state "$DA_STATE" || rc=$?
+  local rc=0 ans=''
+  # BRANCH (the first word of the applied file) and RUN: the lead's journal names the tip of that branch's review:apply, and the run's answers in the lead's registry
+  # (reg_load first) name the refs that are the runtime's own; neither is read from the run directory
+  [ -z "${4:-}" ] || ans=$(reg_json "$4" '.answers // empty')
+  python3 -I "$(dirname "$0")/merged.py" "$1" "$2" --state "$DA_STATE" ${3:+--branch "$3"} ${ans:+--answers "$ans"} || rc=$?
   case $rc in 0|2) return "$rc";; *) return 1;; esac
 }
 
@@ -658,7 +662,7 @@ WRAP
         [ -f "$sv/applied" ] || die "$RUN is gone (directory gone), and its saved copy $sv holds work that was never applied: qargi review apply --from-saved ${RUN##*/}, then qargi feature merge (--discard drops the record and the copy on purpose)"
         read -r _ab atip _ < "$sv/applied"; rp=$(reg_get "$RUN" repo)
         [ -n "$rp" ] || die "$RUN is gone and was made from a repository URL, so whether its work is merged cannot be checked: --discard drops it on purpose"
-        mrc=0; merged_tip "$rp" "${atip:-}" || mrc=$?
+        mrc=0; merged_tip "$rp" "${atip:-}" "${_ab:-}" "$RUN" || mrc=$?
         [ "$mrc" = 0 ] || die "$RUN's work (${atip:0:12}) is not merged into any branch yet: qargi feature merge NAME $_ab, then clean (--discard drops it on purpose)"
       fi
       [ -z "$sv" ] || rm -rf --one-file-system -- "$sv"
@@ -698,7 +702,7 @@ WRAP
         read -r _ab atip _ < "$RUN/applied"
         rp=$(reg_get "$RUN" repo)   # the lead's registry, never RUN/repo.path
         if [ -n "$rp" ]; then
-          mrc=0; merged_tip "$rp" "${atip:-}" || mrc=$?
+          mrc=0; merged_tip "$rp" "${atip:-}" "${_ab:-}" "$RUN" || mrc=$?
           [ "$mrc" != 2 ] || die "$RUN/applied does not hold a commit name as its second word, so whether the work is merged cannot be checked: look at it, or --discard drops the run on purpose"
           [ "$mrc" = 0 ] || die "$RUN's work (${atip:0:12}) is not merged into any branch yet: qargi feature merge NAME $_ab, then clean (--discard drops it on purpose)"
         fi
@@ -794,7 +798,7 @@ $vout}"
       if [ -f "$d/applied" ]; then
         ap=yes; read -r _ab atip _ < "$d/applied"; rp=$(reg_get "$d" repo)
         if [ -z "$rp" ]; then mg='?'
-        else mrc=0; merged_tip "$rp" "${atip:-}" || mrc=$?; case $mrc in 0) mg=yes;; 2) mg='?';; esac; fi
+        else mrc=0; merged_tip "$rp" "${atip:-}" "${_ab:-}" "$d" || mrc=$?; case $mrc in 0) mg=yes;; 2) mg='?';; esac; fi
       elif [ -n "$(reg_get "$d" closed)" ]; then ap=closed; mg=-   # local close --applied-by-am: applied by hand, no tip to follow
       fi
       printf '%-10s %-18s %-10s %-6s %-8s %s\n' "$( (cat "$d/ability" 2>/dev/null || echo '?') | plain)" "$(printf '%s' "${sl:--}" | plain)" "$ag" "$ap" "$mg" "$(printf '%s' "$d" | plain)"
@@ -810,7 +814,7 @@ $vout}"
       if [ -n "$sv" ] && [ -f "$sv/applied" ]; then
         ap=yes; read -r _ab atip _ < "$sv/applied"; rp=$(reg_get "$d" repo)
         if [ -z "$rp" ]; then mg='?'
-        else mrc=0; merged_tip "$rp" "${atip:-}" || mrc=$?; case $mrc in 0) mg=yes;; 2) mg='?';; esac; fi
+        else mrc=0; merged_tip "$rp" "${atip:-}" "${_ab:-}" "$d" || mrc=$?; case $mrc in 0) mg=yes;; 2) mg='?';; esac; fi
       elif [ -n "$(reg_get "$d" closed)" ]; then ap=closed; mg=-
       fi
       printf '%-10s %-18s %-10s %-6s %-8s %s\n' "$(printf '%s' "$(reg_get "$d" ability)" | plain)" "$(printf '%s' "${sl:--}" | plain)" "$ag" "$ap" "$mg" \

@@ -132,6 +132,11 @@ def answers(path):
                 d = json.load(f)
     except (OSError, ValueError):
         return [], []
+    return from_answers(d)
+
+
+def from_answers(d):
+    """(runs.owned_refs, repo.long_lived) of an answers object."""
     d = d if isinstance(d, dict) else {}
     runs = d.get("runs") if isinstance(d.get("runs"), dict) else {}
     repo = d.get("repo") if isinstance(d.get("repo"), dict) else {}

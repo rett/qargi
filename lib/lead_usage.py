@@ -289,9 +289,10 @@ def registry(state):
     return out
 
 
-def merged(repo, tip, state):
-    """True when the run's applied tip is merged: lib/merged.py, the test local list and local clean use too (a tip the lead rewrote counts by its new commit)."""
-    return (sys.modules.get("merged") or load("merged")).merged(repo, tip, state)
+def merged(repo, tip, state, branch=None, answers=None):
+    """True when the run's applied tip is merged: lib/merged.py, the test local list and local clean use too (a tip the lead rewrote counts by its new commit; the tip
+    the lead's journal records for BRANCH's review:apply replaces the file's; a bridge branch and a ref the run's answers declare owned settle nothing)."""
+    return (sys.modules.get("merged") or load("merged")).merged(repo, tip, state, branch, answers)
 
 
 def open_runs(state, repo, url):
@@ -308,10 +309,11 @@ def open_runs(state, repo, url):
         base, slug, role = clean(str(r.get("base") or "")), clean(str(r.get("slug") or "")), clean(str(r.get("ability") or r.get("role") or ""))
         if os.path.exists(os.path.join(d, "applied")):
             try:
-                tip = open(os.path.join(d, "applied"), errors="replace").read().split()[1]
-            except (OSError, IndexError):
-                tip = ""
-            if not merged(repo, tip, state):
+                words = open(os.path.join(d, "applied"), errors="replace").read().split()
+            except OSError:
+                words = []
+            tip, branch = (words[1] if len(words) > 1 else ""), (words[0] if words else None)
+            if not merged(repo, tip, state, branch, r.get("answers") if isinstance(r.get("answers"), dict) else None):
                 res.append((d, slug, role, base, "applied, not merged"))
         elif os.path.exists(os.path.join(d, "verified")):
             res.append((d, slug, role, base, "verified, not applied"))

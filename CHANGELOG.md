@@ -69,6 +69,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   read them from there. They used to read the first `projects/*.json` whose `repo.path` was the repository, and `<conf>/projects` is not protected, so a member
   could add a `projects/aaa.json` naming the real repository with its own `runs.owned_refs` or `git.author`. A change of those answers now takes effect on
   the runs prepared after it; a run recorded by an earlier version, which has no copy, is read as before.
+- A run is settled as merged (`local list`, `local clean`, `lead compact-check`, `feature finish`) only by a branch that settles it: a `worktree-bridge-*`
+  branch and a ref the run's answers declare owned (`runs.owned_refs`) no longer count, so a member cannot create one at the applied tip and have the run
+  closed as merged. The applied tip is the one the lead's ref journal records for the `review:apply` of the run's branch; `RUN/applied`, which a member can
+  write, is read only for a run with no such line.
 
 ## [0.2.3] - 2026-11-05
 

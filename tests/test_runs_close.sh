@@ -370,14 +370,29 @@ out=$($F finish fn 2>&1); rc=$?
 $DA local clean "$R2" --discard >/dev/null 2>&1
 out=$($F finish fn 2>&1)
 grep -q "open run" <<<"$out" && no "a discarded run still blocks finish: $out" || ok "a discarded run does not block finish"
+own '["refs/heads/rt-*"]'
 R3=$(mkrun applied-run feature/fn); commits "$R3" c2.go; collect "$R3"; verify "$R3" >/dev/null
 $DA review apply "$R3" >/dev/null 2>&1
 out=$($F finish fn 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "applied, not merged" <<<"$out" && ok "an applied run whose branch is not merged is open" || no "applied not merged: rc=$rc $out"
+# a branch a member can make at the applied tip settles nothing: a worktree-bridge-* branch, a branch the run's answers declare owned
+R3T=$(git -C "$A" rev-parse agent/applied-run)
+git -C "$A" branch worktree-bridge-settle "$R3T"; git -C "$A" branch rt-settle "$R3T"
+out=$($F finish fn 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "applied, not merged" <<<"$out" && ok "a bridge branch and an owned-ref branch at the applied tip do not settle the run as merged" || no "settled by bridge/owned: rc=$rc $out"
+out=$($DA local list --scratch "$T/scr" 2>&1)
+grep -E "applied-run +[0-9a-z?]+ +yes +no +$R3" <<<"$out" >/dev/null && ok "local list agrees (merged: no)" || no "list merged: $out"
+git -C "$A" branch -D worktree-bridge-settle rt-settle >/dev/null
+# RUN/applied is a member's to write: a forged tip that is on develop does not settle it, the lead's journal says what review apply made
+printf 'agent/applied-run %s now\n' "$(git -C "$A" rev-parse develop)" > "$R3/applied"
+out=$($F finish fn 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "applied, not merged" <<<"$out" && ok "a tip forged into RUN/applied is not believed: the tip of the journaled review:apply is tested" || no "forged applied: rc=$rc $out"
+printf 'agent/applied-run %s now\n' "$R3T" > "$R3/applied"
 $F merge fn agent/applied-run >/dev/null 2>&1
 out=$($F finish fn 2>&1)
 grep -q "open run" <<<"$out" && no "an applied and merged run blocks finish: $out" || ok "an applied and merged run does not block finish"
 $DA local clean "$R3" >/dev/null 2>&1
+jq 'del(.runs)' "$T/c/projects/app.json" > "$T/app.new" && mv "$T/app.new" "$T/c/projects/app.json"
 out=$($DA local clean "$R" 2>&1)
 $F verify fn >/dev/null 2>&1; out=$($F finish fn 2>&1)
 grep -q "^plan token:" <<<"$out" && ok "with no run open, feature finish goes on to its plan" || no "finish plan: $out"
