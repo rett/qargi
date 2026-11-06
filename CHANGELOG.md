@@ -36,6 +36,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   no valid pattern is checked as before, in the strict phase too. The built-in rule for the harness's `worktree-bridge-*` branches stays.
 
 ### Changed
+- When the window of `lead usage` is only assumed and the tokens in use exceed it, the real window is larger, so no percentage is printed as fact: the text,
+  the `lead compact-check --advise` advice and the stage-verb line say `tokens exceed the assumed window 200,000; set lead.context_window`. `lead usage --json`
+  keeps `percent` and adds `window_exceeded` (`true` only in that case; `false` otherwise). The `(window assumed N; ...)` label is unchanged for the rest.
 - `README.md` is a front page: a short description, a quick start, a table of the documentation and the license. Its detail moved, text unchanged,
   into `docs/` by topic (`docs/install-and-upgrade/`, `flow/`, `members-and-providers/`, `skills-tools-and-memory/`, `reference/` and
   `development/`, each with a `README.md`, and `docs/README.md` for the overview). The comments and the help line that pointed at README sections
@@ -48,6 +51,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   local clean RUN`; a run of work: the step it is waiting for), and `lead compact-check` does the same for a read-only run.
 
 ### Fixed
+- `qargi project validate` no longer crashes (`NameError`) on answers with no roles: it reports the finding `roles: enable at least one role`. Its
+  `tools_off` and `skills` checks ran only for the last role listed; they now run for every role.
 - `qargi lead usage` and `lead compact-check --advise` no longer divide the context in use by a fixed 200000 window. The window is the answer
   `lead.context_window`, else the one the runtime's table gives for the model id of the session's last assistant turn (the entries `claude-code` ships
   match ids that end in `[1m]` or `-1m`), else an assumed 200,000 that the output labels as assumed, with the way to set the answer. A plain model id with no
@@ -86,6 +91,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with none as read-only, so a write run could be closed with a plain clean and a fake report. Only a record of an earlier version, which has no class, falls back
   to the file, and a run with neither is a run of work. `local clean` and `lead compact-check` agree on what a report is: a regular file (not a link) named
   `report.md` or `NAME-report.md` directly in OUT.
+
+### Security
+- A member's guard refuses `qargi review apply`: it creates a branch in the lead's repository from a run's patches, with the lead's identity, and records it in the
+  lead's ref journal, so it is the lead's like `local verify` and `local close`. (`qargi ref record` and `qargi branch prune` were already refused.)
 
 ## [0.2.3] - 2026-11-05
 

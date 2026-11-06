@@ -250,13 +250,13 @@ for name, cfg in (r.items() if isinstance(r, dict) else []):
         bad.append("%s.go: no such answer; a Go tool is an entry of %s.tools: {kind: go, name: PACKAGE, version: vX.Y.Z}" % (p, p))
     import tools as _tools   # lib/tools.py: the pinned tools of a role (go, binary, submodule) and what each entry needs
     bad.extend(_tools.problems(p, cfg.get("tools")))
-if isinstance(r, dict):
-    import tools as _tools
-    bad.extend(_tools.conflicts(r))
     off = cfg.get("tools_off", [])
     need(isinstance(off, list) and all(x in ("web_search", "web_fetch", "edit", "write", "read", "bash", "glob", "grep") for x in off), "%s.tools_off: built-in tools to disable (web_search, web_fetch, edit, ...)" % p)
     sk = cfg.get("skills", [])
     need(isinstance(sk, list) and all(x in ("pdf", "docx", "pptx", "xlsx") for x in sk), "%s.skills: any of pdf, docx, pptx, xlsx" % p)
+if isinstance(r, dict):
+    import tools as _tools
+    bad.extend(_tools.conflicts(r))
 prof = c.get("profiles")
 if prof is not None:
     import os
