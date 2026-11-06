@@ -20,7 +20,7 @@ description: Record every user-visible change in CHANGELOG.md under Unreleased, 
 - Write for the user: what changed, and what they must do about it.
 - Say "breaking" when it breaks existing use, and give the replacement.
 - Match the file: same bullet style, same line width, continuation lines indented under the text.
-- Numbered items collide when parallel tasks merge: write an unnumbered `- ` bullet, or the next free number and say so in your report. The lead renumbers (`qargi changelog renumber`; you may only run it with `--check`).
+- Numbered items collide when parallel tasks merge: write an unnumbered `- ` bullet. The lead renumbers (`qargi changelog renumber`; you may only run it with `--check`).
 
 Example, under `### Changed`:
 

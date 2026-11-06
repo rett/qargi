@@ -40,10 +40,9 @@ review; `qargi methodology show gitflow` prints the model.
    whole suite; the first commit bumps VERSION and dates the changelog; bump any other file that carries the version; only minor
    fixes belong here), `qargi release push VERSION` (opens the pull request into master, so CI runs on the commit that will be
    released), wait for its checks, then `qargi release finish VERSION`: master `--no-ff`, an annotated tag, develop `--no-ff`,
-   branch deleted, master, develop and the tag pushed together. The plan lists the pull request's checks and refuses while one
-   fails or is pending (`--ignore-checks "<the user's words>"` goes past it, on the user's own words only). To fix one:
-   `qargi release fix VERSION` prints a worktree on `release/VERSION`; commit there, then `release fix VERSION --push`
-   (plan, approval) updates the pull request. `release status` shows the checks, and after the finish a checklist.
+   branch deleted, master, develop and the tag pushed together. `release finish` refuses while a pull request
+   check fails or is pending; `--ignore-checks "<the user's words>"` overrides, on the user's words only. To fix: `qargi release fix VERSION`
+   (a worktree on the release branch), commit, then `release fix VERSION --push`.
 6. **Hotfix** a critical bug in production: `qargi release start VERSION --hotfix` (from master), fix, `release push`,
    `release finish --hotfix` (merges into the open release branch instead of develop when one exists).
 

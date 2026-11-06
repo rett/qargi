@@ -174,9 +174,10 @@ if [ -d "$PK/skills" ] && [ -f "$PK/baseline.json" ]; then
   { [ "$rc" = 0 ] && [ "$(ls "$LIB/skills" | wc -l)" = "$(jq '.packs|length' "$PK/baseline.json")" ] \
     && [ -z "$(for f in "$LIB"/skills/*/.pack.json; do jq -e '.compatible_providers == ["any"]' "$f" >/dev/null || echo bad; done)" ]; } \
     && ok "the shipped baseline seeds into a library, every record declaring [\"any\"]" || { no "seeding the shipped baseline (rc=$rc)"; echo "$out" | sed 's/^/       | /'; }
-  # the numbering rule travels with the member packs, and a seeded shipped pack has its own content hash as both the record and the shipped hash
+  # the numbering rule lives in keep-a-changelog alone, and a seeded shipped pack has its own content hash as both the record and the shipped hash
+  grep -q "unnumbered" "$LIB/skills/keep-a-changelog/SKILL.md" && grep -q "renumber" "$LIB/skills/keep-a-changelog/SKILL.md" && ! grep -q "unnumbered" "$LIB/skills/gitflow-member/SKILL.md" \
+    && ok "shipped pack keep-a-changelog tells a member to use unnumbered items and that the lead renumbers (gitflow-member leaves it there)" || no "the numbering rule is not in keep-a-changelog alone"
   for n in gitflow-member keep-a-changelog; do
-    grep -q "unnumbered" "$LIB/skills/$n/SKILL.md" && grep -q "renumber" "$LIB/skills/$n/SKILL.md" && ok "shipped pack $n tells a member to use unnumbered items and that the lead renumbers" || no "shipped pack $n lacks the numbering rule"
     [ "$(jq -r .sha256 "$LIB/skills/$n/.pack.json")" = "$(jq -r .shipped "$LIB/skills/$n/.pack.json")" ] && [ "$(jq -r .sha256 "$LIB/skills/$n/.pack.json")" = "$(hash_of "$PK/skills/$n")" ] && ok "shipped pack $n is recorded with the content hash of packs/skills/$n" || no "shipped pack $n hash"
   done
   listed=$(jq -r '.packs[].name' "$PK/baseline.json" | sort); present=$(ls "$PK/skills" | sort)
