@@ -12,7 +12,9 @@ hook can run it) is safe. Where the transcripts are and how to read the context 
 JSON pointers that pick the last assistant turn and add up its input, cache-read and cache-creation tokens. The window is the answer
 lead.context_window, else the one the runtime's definition (resources.transcripts.windows) gives for the model id of that turn, else the
 definition's single window, which is only assumed: then every line that shows a percentage adds "(window assumed N; set lead.context_window)".
---json says which in window_source: "answer", "model" or "assumed". Nothing is written; a transcript that cannot be found or read is "unknown" (exit 0).
+When the tokens in use exceed that assumed window the real window is larger, so no line shows a percentage: it says "tokens exceed the assumed
+window N; set lead.context_window". --json says which in window_source: "answer", "model" or "assumed", keeps percent, and sets window_exceeded
+to true in that case. Nothing is written; a transcript that cannot be found or read is "unknown" (exit 0).
 
 compact-check exits 0 when a compact is safe and 1 when it is not, naming every reason: a local run prepared and not verified, a run
 verified and not applied (or applied and not merged: lib/merged.py, the test local list and local clean use, so a tip rewritten with a recorded rewrite counts by its new commit), a merge waiting in the conflicts directory, a whole-suite run in progress
@@ -202,7 +204,7 @@ def find_transcript(a, answers, tr_for):
 
 def measure(a, conf):
     """-> the usage as a dict; known is False with why when it cannot be read."""
-    out = {"known": False, "tokens": None, "window": None, "window_source": "", "percent": None, "model": "", "session": "", "transcript": "", "bytes": None, "why": ""}
+    out = {"known": False, "tokens": None, "window": None, "window_source": "", "window_exceeded": False, "percent": None, "model": "", "session": "", "transcript": "", "bytes": None, "why": ""}
     try:
         project = a.project
         if not project:
@@ -232,6 +234,7 @@ def measure(a, conf):
         if not out["window"]:
             out["window"], out["window_source"] = P.transcript_window(tr0, out["model"])
         out["percent"] = round(t[0] * 100.0 / out["window"], 1)
+        out["window_exceeded"] = out["window_source"] == "assumed" and t[0] > out["window"]
         out["known"] = True
     except Soft as e:
         out["why"] = str(e)
@@ -252,6 +255,11 @@ def assumed(u):
     return " (window assumed %s; set lead.context_window)" % format(u["window"], ",") if u.get("window_source") == "assumed" else ""
 
 
+def exceeded_note(u):
+    """What replaces a percentage when the tokens in use are more than the window that was only assumed: the real window is larger."""
+    return "tokens exceed the assumed window %s; set lead.context_window" % format(u["window"], ",")
+
+
 def short(n):
     """A token count in a few characters: 950, 180k, 1.2M."""
     if n >= 1000000:
@@ -265,7 +273,10 @@ def show_usage(u):
         if u["transcript"]:
             print("transcript: %s" % clean(u["transcript"]))
         return
-    print("context: %s of %s tokens in use (%s%%)%s" % (format(u["tokens"], ","), format(u["window"], ","), ("%.1f" % u["percent"]).rstrip("0").rstrip("."), assumed(u)))
+    if u.get("window_exceeded"):
+        print("context: %s tokens in use; %s" % (format(u["tokens"], ","), exceeded_note(u)))
+    else:
+        print("context: %s of %s tokens in use (%s%%)%s" % (format(u["tokens"], ","), format(u["window"], ","), ("%.1f" % u["percent"]).rstrip("0").rstrip("."), assumed(u)))
     print("transcript: %s (%s)" % (clean(u["transcript"]), human_bytes(u["bytes"])))
     if u["model"]:
         print("model: %s" % u["model"])
@@ -512,6 +523,8 @@ def verdict(u, safe, pct_advised=ADVISED, pct_strong=STRONG, note=True):
     if not u["known"]:
         return "context unknown (%s): no advice on compacting" % u["why"]
     p = u["percent"]
+    if u.get("window_exceeded"):
+        return "context window larger than assumed (%s tokens: %s)%s" % (short(u["tokens"]), exceeded_note(u), "" if safe else "; compact is not safe yet: clear the reasons above first")
     if p >= pct_strong:
         word = "compact strongly advised"
     elif p >= pct_advised:
@@ -585,7 +598,10 @@ def cmd_advice(a, conf, state):
         if not u["known"] or u["percent"] < pct:
             return 0
         c = check(ns, conf, state)
-        p = "%.0f%%, %s tokens of context%s" % (u["percent"], short(u["tokens"]), assumed(u))
+        if u.get("window_exceeded"):
+            p = "%s tokens of context, %s" % (short(u["tokens"]), exceeded_note(u))
+        else:
+            p = "%.0f%%, %s tokens of context%s" % (u["percent"], short(u["tokens"]), assumed(u))
         if c["safe"]:
             print("lead: %s; compact is safe now: run /compact" % p)
         else:

@@ -172,6 +172,27 @@ class Usage(Base):
         self.write_answers()
         self.assertNotIn("assumed", self.run_cli("lead", "usage")[1])
 
+    def test_tokens_beyond_an_assumed_window_say_the_window_is_larger_and_show_no_percentage(self):
+        self.transcript("s1", [turn(1, 249999, 0, model="model-a")])
+        rc, out, _ = self.run_cli("lead", "usage")
+        self.assertEqual(rc, 0)
+        self.assertIn("context: 250,000 tokens in use; tokens exceed the assumed window 200,000; set lead.context_window\n", out)
+        self.assertNotIn("%", out)
+        d = json.loads(self.run_cli("lead", "usage", "--json")[1])
+        self.assertEqual((d["window"], d["window_source"], d["percent"], d["window_exceeded"]), (200000, "assumed", 125.0, True))
+        self.transcript("s1", [turn(1, 199999, 0, model="model-a")])                                   # exactly the window: not beyond it
+        d = json.loads(self.run_cli("lead", "usage", "--json")[1])
+        self.assertIs(d["window_exceeded"], False)
+        self.assertIn("(100%)" + NOTE, self.run_cli("lead", "usage")[1])
+        self.transcript("s1", [turn(1, 249999, 0, model="model-b[1m]")])                               # a window from the model: never flagged
+        self.assertIs(json.loads(self.run_cli("lead", "usage", "--json")[1])["window_exceeded"], False)
+        self.transcript("s1", [turn(1, 249999, 0, model="model-a")])
+        self.answers["lead"] = {"context_window": 200000}                                              # the answer: the owner's number, not flagged
+        self.write_answers()
+        d = json.loads(self.run_cli("lead", "usage", "--json")[1])
+        self.assertIs(d["window_exceeded"], False)
+        self.assertIn("(125%)", self.run_cli("lead", "usage")[1])
+
     def test_the_answer_wins_over_the_model(self):
         self.transcript("s1", [turn(1, 99999, 0, model="model-b[1m]")])
         self.answers["lead"] = {"context_window": 400000}
@@ -505,6 +526,17 @@ class Check(Base):
         self.assertIn("no compact needed (14%, 140k tokens of the context)", out)
         self.assertNotIn("assumed", json.loads(self.check("--advise", "--json")[1])["advice"])
 
+    def test_advice_beyond_an_assumed_window_says_so_without_a_percentage(self):
+        self.pct(250000)
+        rc, out, _ = self.check("--advise")
+        self.assertIn("context window larger than assumed (250k tokens: tokens exceed the assumed window 200,000; set lead.context_window)", out)
+        self.assertNotIn("%", out.split("context window larger")[1].split("\n")[0])
+        self.assertNotIn("window assumed", out)
+        d = json.loads(self.check("--advise", "--json")[1])
+        self.assertIs(d["usage"]["window_exceeded"], True)
+        self.assertIn("exceed the assumed window 200,000", d["advice"])
+        self.assertNotIn("%", d["advice"])
+
     def test_json_carries_the_reasons_and_the_restart_block(self):
         self.pct(100000)
         self.run_dir("r1")
@@ -549,6 +581,11 @@ class Advice(Base):
     def test_a_known_window_has_no_label_in_the_line(self):
         self.transcript("s1", [turn(1, 499999, 0, model="model-b[1m]")])                                    # 50% of 1,000,000
         self.assertEqual(self.advice(), "lead: 50%, 500k tokens of context; compact is safe now: run /compact\n")
+
+    def test_the_stage_line_beyond_an_assumed_window_names_no_percentage(self):
+        self.pct(250000)
+        out = self.advice()
+        self.assertEqual(out, "lead: 250k tokens of context, tokens exceed the assumed window 200,000; set lead.context_window; compact is safe now: run /compact\n")
 
     def test_the_threshold_is_an_answer_and_zero_turns_it_off(self):
         self.pct(100000)
