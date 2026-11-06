@@ -430,6 +430,11 @@ def default_branch_tip(d):
     return cur, git(d, "rev-parse", "HEAD^{commit}")
 
 
+def no_merge_base(d, a, b):
+    """True when the commits A and B share no history (git merge-base exits 1: for example a master that is one parentless snapshot commit)."""
+    return subprocess.run(["git", "-C", d, "merge-base", a, b], capture_output=True).returncode == 1
+
+
 def adopt_plan(project, answers_file, methodology=None):
     answers, d = adopt_checks(answers_file, project)
     methodology = methodology or answers.get("methodology") or "gitflow"
@@ -489,6 +494,16 @@ def adopt_plan(project, answers_file, methodology=None):
     left = [g for g in det["gaps"] if g["kind"] in ("format", "tags", "ci")]
     left += [dict(g, why="not written: " + g["why"]) for g in ev["gaps"]]
     left += [{"kind": "file", "what": x["what"], "why": "not written: " + x["why"]} for x in skipped]
+    # The branches adopt creates start at the tip of the default branch, so they share history with it and with each other. A long-lived branch
+    # that exists already and shares none with another (a master made as a snapshot of the code, say) is not changed here: no existing branch is
+    # touched. It is named, because a release cannot be merged into it; `qargi release push` joins its history into the release branch.
+    tips = {b: sha_of(b) or base_sha for b in long_lived}
+    for i, a in enumerate(long_lived):
+        for b in long_lived[i + 1:]:
+            if tips[a] and tips[b] and no_merge_base(d, tips[a], tips[b]):
+                left.append({"kind": "history", "what": "%s and %s share no history (no merge base)" % (a, b),
+                             "why": "adopt changes no existing branch, so it does not join them; git would refuse to merge one into the other (unrelated histories). "
+                                    "qargi release push joins the history of %s into the release branch, keeping the release tree, before CI runs" % a})
     if any(f["dest"] == ci.get("file") for f in files):   # the template replaces the "no CI" gap; its content is still the owner's to judge
         left = [g for g in left if g["kind"] != "ci"] + [{"kind": "ci", "what": ci["file"], "why": "written from the template: check that its steps fit this project"}]
     basis = {

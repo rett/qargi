@@ -29,7 +29,7 @@ git init -q --bare "$T/a.git"; git -C "$A" remote add origin "$T/a.git"
 attach alpha "$A"
 head0=$(git -C "$A" rev-parse main); st0=$(state "$A")
 out=$($DA project adopt alpha 2>&1); tok=$(tokof "$out")
-[ -n "$tok" ] && grep -q "^    develop$" <<<"$out" && ! grep -q "^    master$" <<<"$out" && ok "the plan lists the branch to create (develop; main stands for master)" || no "plan branches: $out"
+[ -n "$tok" ] && grep -q "^    develop$" <<<"$out" && ! grep -q "^    master$" <<<"$out" && ! grep -q "share no history" <<<"$out" && ok "the plan lists the branch to create (develop; main stands for master), and no history gap in a normal repository" || no "plan branches: $out"
 grep -q "agent/adopt-gitflow" <<<"$out" && grep -q "^    CHANGELOG.md$" <<<"$out" && grep -q "^    CONTRIBUTING.md$" <<<"$out" && grep -q "^    .github/workflows/test.yml$" <<<"$out" && ! grep -q "^    README.md$" <<<"$out" \
   && ok "the plan lists exactly the missing files, on a new agent branch" || no "plan files: $out"
 [ "$st0" = "$(state "$A")" ] && ! git -C "$A" rev-parse -q --verify develop >/dev/null && ok "showing the plan changes nothing" || no "plan changed the repository"
@@ -153,6 +153,20 @@ J=$T/j; git init -q -b main "$J"; printf '# Jot\n' > "$J/AGENTS.md"; printf 'doc
 attach jot "$J"
 out=$($DA project adopt jot 2>&1)
 grep -q "env: Development environment section (not written" <<<"$out" && grep -q "env: bootstrap target (not written" <<<"$out" && ! grep -q "env: doctor target" <<<"$out" && ok "an AGENTS.md without the section and a Makefile without bootstrap are listed, not edited" || no "adopt jot: $out"
+
+# --- K: a master made as a snapshot has no merge base with develop: adopt names it, joins nothing and changes no branch ---
+K=$T/k; git init -q -b develop "$K"; printf '# Kappa\n' > "$K/README.md"; git -C "$K" add -A; git -C "$K" commit -q -m first
+git -C "$K" branch master "$(git -C "$K" commit-tree "$(git -C "$K" write-tree)" -m snapshot)"
+git -C "$K" merge-base master develop >/dev/null 2>&1 && no "the snapshot master shares history" || ok "K: master is a snapshot with no merge base to develop"
+attach kappa "$K"
+st0=$(state "$K")
+out=$($DA project adopt kappa 2>&1); tok=$(tokof "$out")
+grep -q "^    - history: master and develop share no history (no merge base) (adopt changes no existing branch, so it does not join them" <<<"$out" && grep -q "qargi release push joins the history of master" <<<"$out" \
+  && ok "K: the plan names the missing merge base as left for the owner, and what joins it" || no "K plan: $out"
+[ "$st0" = "$(state "$K")" ] && ok "K: showing the plan changes nothing" || no "K: the plan changed the repository"
+$DA project adopt kappa --plan "$tok" --approved go >/dev/null 2>&1 || no "K: apply"
+git -C "$K" merge-base master develop >/dev/null 2>&1 && no "K: apply joined the histories" || ok "K: applying does not join the histories or move master and develop"
+out=$($DA project adopt kappa 2>&1); grep -q "share no history" <<<"$out" && ok "K: it is still named after the apply" || no "K: second plan: $out"
 
 # the audit line, and a bad methodology
 grep -q '"verb":"project:adopt"' "$T/s/audit.log" && ok "applying leaves an audit line" || no "audit"

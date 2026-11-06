@@ -6,6 +6,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `qargi project adopt` names, among what is left for you, long-lived branches that share no history (a master made as a snapshot of the code has no merge
+  base with develop): it changes no existing branch, so it does not join them, and the line says that `qargi release push` joins the history of master into
+  the release branch. The branches adopt creates start at the tip of the default branch, so they are related to it and to each other.
+
 ### Fixed
 - `qargi release` works with a master that shares no history with the release branch (for example one parentless snapshot commit). `release start` and
   `release status` say that master and the branch have no merge base, and `release finish` refuses with the fix instead of printing
