@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-11-05
+
 ### Added
 - `site.json` takes an optional `copyright` (one line of plain text, at most 200 characters, no markup; the forbidden words apply) that every page of the
   site shows, escaped, in its footer, the 404 page included, and an optional `license_url` (an `https://` address) that the words "MIT licensed" in it link

@@ -689,7 +689,7 @@ class Build(unittest.TestCase):
 
     def test_copyright_unset_leaves_the_pages_as_they_were(self):
         for rel in self.PAGES_WITH_FOOTER:
-            self.assertNotIn("copyright", self.page(rel).lower(), rel)
+            self.assertNotIn('class="copyright"', self.page(rel), rel)   # the element, not the word: the releases page quotes the changelog
         rc, o, msg = self.built_with(copyright="(c) 2026 Example Author. MIT licensed.")
         self.assertEqual(rc, 0, msg)
         for rel in self.PAGES_WITH_FOOTER:
