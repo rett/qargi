@@ -41,4 +41,4 @@ skills/qargi-task/SKILL.md 832
 skills/qargi-task/cloud.md 760
 skills/qargi-task/local-run.md 197
 skills/qargi-team/SKILL.md 894
-skills/qargi-verify/SKILL.md 674 # raised: two sentences on local runs (no clean needed before the next feature finish; before a reboot apply verified runs or use the saved copy)
+skills/qargi-verify/SKILL.md 674 # raised: two sentences on local runs (feature finish refuses an open run, local close for one applied by hand; before a reboot apply verified runs or use the saved copy)
