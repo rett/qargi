@@ -13,6 +13,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   point at the new pages.
 - `tests/test_docs_links.py` checks that every relative link of `README.md`, `CONTRIBUTING.md` and `docs/` resolves (to a heading, when it has a fragment), that
   the Documentation table of `README.md` lists each `docs/<topic>/README.md`, that `README.md` stays short, and that the `qargi` commands of its quick start exist.
+- `qargi review apply` resets the author of every commit it applies to the lead's identity: the answer `git.author` (a string `Name <email>`, checked by
+  `project validate` and set with `qargi project set PROJECT git.author 'Example Author <author@example.com>'`), else the repository's `user.name` and
+  `user.email`; with neither, the member's author stays and the output says so. The committer and the dates are unchanged, history already applied is not
+  rewritten, and the member's author is recorded in the ref journal and the audit log, not in the commit. The answer `review.keep_author` (`true`;
+  default `false`) keeps the member's author instead. The guard refuses `git.*` and `review.*` in `project set` to a member.
 
 ## [0.2.3] - 2026-11-05
 

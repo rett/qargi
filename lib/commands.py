@@ -152,8 +152,9 @@ COMMANDS = {
                               "roles.ROLE.tools is the list of the tools a role needs beyond its apt packages, each {kind, name, ...}: kind go (name a package path, version a tag: go install NAME@VERSION), "
                               "kind binary (name the file name, version, url of the file itself, sha256 of it: downloaded to ~/.local/bin and kept only when the hash matches) and kind submodule "
                               "(name as in .gitmodules, path: checked out in each member clone by qargi local prepare). env plan lists them, env apply installs them and env check reports one that is "
-                              "missing or wrong; a member's guard refuses setting them (and a whole role), as it refuses release.*, test_command, env.* and site.*."),
-                        examples=["qargi project set acme roles.write.effort high", "qargi project set acme packs.none true",
+                              "missing or wrong; a member's guard refuses setting them (and a whole role), as it refuses release.*, test_command, env.* and site.*. "
+                              "git.author ('Name <email>') is the author qargi review apply gives the commits it applies, and review.keep_author true keeps the member's author instead; a member's guard refuses setting them."),
+                        examples=["qargi project set acme roles.write.effort high", "qargi project set acme packs.none true", "qargi project set acme git.author 'Example Author <author@example.com>'",
                                   "qargi project set acme roles.test.tools '[{\"kind\":\"go\",\"name\":\"acme.test/ci\",\"version\":\"v1.2.0\"}]'"]),
             "show": verb("Print the stored answers and what they mean", [("NAME", "project")]),
             "list": verb("List the stored projects"),
@@ -1075,7 +1076,10 @@ COMMANDS = {
                           desc=("Refuses a run applied already or closed (local close --applied-by-am), and unless review check passes for RUN_DIR/out (warnings allowed) and local verify accepts the run (a refs-changed result "
                                 "prints the diff). Creates the branch at the commit the run's base branch had when the run was prepared and applies every patch "
                                 "of out/patches in order with git am, in a temporary worktree of the project's repository: your checkout is never touched and no "
-                                "other ref changes. The committer is the one the repository has configured, else the author of the patches. It refuses a "
+                                "other ref changes. The committer is the one the repository has configured, else the author of the patches. "
+                                "The author of every applied commit is reset to the lead's: the answer git.author ('Name <email>'), else the repository's user.name and user.email "
+                                "(with neither, the member's author stays and the output says so); the answer review.keep_author true keeps the member's author instead. The date "
+                                "stays, history already applied is not rewritten, and the member's author is recorded in the ref journal and the audit log, not in the commit. It refuses a "
                                 "branch that exists; a patch that does not apply removes the worktree and the branch and names the patch. On success it prints "
                                 "the commits and the next commands, and records branch and tip in RUN_DIR/applied and the branch in the run's ref snapshot, so "
                                 "local clean still accepts the run. --from-saved ID applies from <state>/runs/ID instead (refused while the run directory exists): review check "
@@ -1407,7 +1411,7 @@ TOPICS = {
     "guard": ("What a member's guard refuses", [
         "The guard hooks a member's calls: a barrier, not a wall; qargi local verify is its backstop.",
         "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
-        "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env, site, packs, upstream, roles.ROLE.tools, a whole role), init, new, link and unlink; "
+        "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env, site, packs, upstream, git, review, roles.ROLE.tools, a whole role), init, new, link and unlink; "
         "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (the rest "
         "read); release publish, sign, site, assets and fix; marshal claim, set, renew, release, take, "
         "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish, verify and park; branch prune; changelog renumber without --check; "
