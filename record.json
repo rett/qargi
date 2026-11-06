@@ -4,19 +4,13 @@
  "goal": "Integration of the six 0.2.3 groups (runs, marshal, relci, assets, fverify, docs); one whole-suite run",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "rett@arc",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-05T22:54:44Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-06T01:02:07Z",
- "finished_at": null,
+ "finished_at": "2026-11-06T01:07:27Z",
  "updated_by": "rett@arc",
- "rev": 5,
- "updated_at": "2026-11-06T01:02:07Z",
+ "rev": 6,
+ "updated_at": "2026-11-06T01:07:27Z",
  "feature": "rel-0-2-3",
  "project": "qargi"
 }
