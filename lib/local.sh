@@ -61,20 +61,13 @@ snapshot() { # repo -> sorted refs of the repository and of its remote
 }
 
 # merged_tip REPO TIP -> 0 when the commit TIP (the second word of a run's applied file, which a member can write) is on a local branch
-# other than agent/*, 1 when it is not, 2 when TIP is not a full hex object name. A word that is not one never reaches git, so an
-# option-like text cannot become an option of for-each-ref; the value is given in the --contains=VALUE form and the ref patterns after --.
-# A tip the lead rewrote (qargi ref record --rewrite: the same tree, journaled as ref:rewrite) counts as merged when the commit it was
-# rewritten to is: the lead's ref journal is followed from TIP, line by line, to the last rewrite of it.
+# other than agent/*, 1 when it is not, 2 when TIP is not a full hex object name. A tip the lead rewrote (qargi ref record --rewrite: the same
+# tree, journaled as ref:rewrite) counts as merged when the commit it was rewritten to is. The test is lib/merged.py, the one place that knows
+# it: lead compact-check and feature finish (lib/lead_usage.py) ask the same function, so a run is settled for list, clean and compact-check alike.
 merged_tip() {
-  local tip=$2 rp nx n=0
-  case $tip in ''|*[!0-9a-f]*) return 2;; esac
-  [ "${#tip}" = 40 ] || [ "${#tip}" = 64 ] || return 2
-  if [ -f "$DA_STATE/ref-journal.jsonl" ]; then
-    rp=$(readlink -f "$1" 2>/dev/null) || rp=$1
-    while [ $n -lt 50 ] && nx=$(jq -sr --arg r "$rp" --arg o "$tip" '[ .[] | select(type == "object" and .verb == "ref:rewrite" and .repo == $r and .old == $o) | .new ] | last // empty' \
-          "$DA_STATE/ref-journal.jsonl" 2>/dev/null) && [[ $nx =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]]; do tip=$nx; n=$((n + 1)); done
-  fi
-  [ -n "$(git -C "$1" for-each-ref --contains="$tip" --format='%(refname)' -- refs/heads 2>/dev/null | grep -v '^refs/heads/agent/' | head -1)" ]
+  local rc=0
+  python3 -I "$(dirname "$0")/merged.py" "$1" "$2" --state "$DA_STATE" || rc=$?
+  case $rc in 0|2) return "$rc";; *) return 1;; esac
 }
 
 # journal_steps SIDE NAME OLD NEW -> 0 and the verbs, in order, of the lead's ref journal ($DA_STATE/ref-journal.jsonl) that explain the change
@@ -168,6 +161,26 @@ bridge_ref() {
   [ -z "$old" ] || git -C "$repo" merge-base --is-ancestor "$old" "$new" 2>/dev/null
 }
 
+# owned_answers REPO -> prints the project's answers file when it declares runtime-owned refs (runs.owned_refs, a list of glob patterns the lead set), and
+# nothing when it does not (or the project is not stored); owned_bases -> one --base BRANCH pair per line for the base of every run of the registry that
+# is not cleaned or closed: the ref a run is based on is never taken as owned, whatever a pattern says. lib/owned_refs.py decides what a pattern may be
+# and whether a ref matches (hardened: a literal prefix of 3 characters, never develop, master, a long-lived branch or the git-flow branches).
+owned_answers() {
+  local pj f
+  pj=$(project_of "$1" "${RUN_URL:-}"); [ -n "$pj" ] || return 0
+  f=$DA_CONF/projects/$pj.json
+  jq -e '((.runs // {}).owned_refs // []) | type == "array" and length > 0' "$f" >/dev/null 2>&1 && printf '%s\n' "$f"
+  return 0
+}
+owned_bases() {
+  local d b
+  for d in ${LRUNS_ORDER[@]+"${LRUNS_ORDER[@]}"}; do
+    [ -z "$(reg_get "$d" cleaned)" ] && [ -z "$(reg_get "$d" closed)" ] || continue
+    b=$(reg_get "$d" base); [ -z "$b" ] || printf '%s\n%s\n' --base "$b"
+  done
+  return 0
+}
+
 # compare REPO REF AFTER [strict] [ACCEPTED] -> prints each offending change, returns 1 if there is one; each change it accepts is named in
 # the file ACCEPTED, one line each. Refs under refs/qargi/ are not compared (see drop_qargi_refs). A change is accepted, in either phase, when
 #   - the lead's ref journal explains it (journal_steps): a branch or a tag of the repository, or a branch or tag of its origin, moved,
@@ -178,6 +191,9 @@ bridge_ref() {
 #   - the parking branch (answers repo.parking_branch, default scratch) was fast-forwarded to develop's tip, by hand or by qargi;
 #   - a branch worktree-bridge-S of the harness's bridge worktree, a directory worktrees/bridge-S (bridge_ref: while that worktree, locked, at <main worktree>/<the harness directory>/worktrees/bridge-S, holds it and the move is a fast-forward, or when no such worktree is left).
 # A branch, or a branch of origin, that the lead made and noted (qargi ref note) is the journal's case above: its line starts where the ref was absent.
+#   - a local ref that matches a pattern of the answer runs.owned_refs (refs a runtime or harness creates in the repository, set by the lead, validated by
+#     project validate; lib/owned_refs.py: a literal prefix of 3 characters, never develop, master, a long-lived or git-flow branch or the base of a run):
+#     accepted in either phase and named with the pattern. A ref that matches none is checked as before, in the strict phase too.
 # Without strict (after the run's first passing verify, against RUN/verified) also: a fast-forward of develop, master or an
 # agent|feature|release|hotfix/* branch, and a new agent|feature|release|hotfix/* branch: the lead's own merges. Everything else, a rewrite
 # or a deletion nobody journaled, a tag or a push made by hand, any other ref, is offending.
@@ -185,6 +201,7 @@ compare() {
   local repo=$1 ref=$2 aft=$3 strict=${4:-} acc=${5:-/dev/null} bad=0 k kind name old new steps park='' dev tgt short a b c uo='' un='' hasr=''
   local zero=0000000000000000000000000000000000000000 why=" (not in the lead's ref journal)"
   local -A O=() N=() ACC=()
+  local ownf='' pat='' obase=()
   while read -r a b c; do case $a in local) O["local $b"]=$c;; remote) if [ "$b" = unavailable ] && [ -z "$c" ]; then uo=1; else O["remote $c"]=$b; fi;; esac; done < <(drop_qargi_refs < "$ref")
   while read -r a b c; do case $a in local) N["local $b"]=$c;; remote) if [ "$b" = unavailable ] && [ -z "$c" ]; then un=1; else N["remote $c"]=$b; fi;; esac; done < <(drop_qargi_refs < "$aft")
   if [ "$uo" != "$un" ]; then
@@ -192,6 +209,7 @@ compare() {
   fi
   [ -z "$repo" ] || ! git -C "$repo" remote get-url origin >/dev/null 2>&1 || [ -n "$un" ] || hasr=1
   dev=${N["local refs/heads/develop"]:-}
+  ownf=$(owned_answers "$repo"); [ -z "$ownf" ] || mapfile -t obase < <(owned_bases)
   allowed() { case $1 in refs/heads/develop|refs/heads/master|refs/heads/agent/*|refs/heads/feature/*|refs/heads/release/*|refs/heads/hotfix/*) return 0;; esac; return 1; }
   shortref() { case $1 in refs/heads/*) echo "${1#refs/heads/}";; refs/tags/*) echo "tag ${1#refs/tags/}";; *) echo "$1";; esac; }
   while read -r k; do
@@ -208,6 +226,9 @@ compare() {
     esac
     if [ "$kind" = local ] && [[ $name == refs/heads/worktree-bridge-?* ]] && bridge_ref "$repo" "$name" "$old" "$new"; then
       ACC[$k]=1; echo "$short $a (the harness's bridge branch of a worktree bridge-NAME)" >> "$acc"; continue
+    fi
+    if [ "$kind" = local ] && [ -n "$ownf" ] && pat=$(python3 -I "$(dirname "$0")/owned_refs.py" match "$ownf" "$name" ${obase[@]+"${obase[@]}"}); then
+      ACC[$k]=1; echo "$short $a; accepted: $pat (owned by the runtime, per runs.owned_refs)" >> "$acc"; continue
     fi
     if [ "$kind" = local ]; then
       # a remote-tracking ref of origin that says what origin has now, and a tag fetched from origin
@@ -527,7 +548,8 @@ WRAP
     elif [ "$crc" = 0 ]; then
       reg_mark "$RUN" verified "$(now)"   # the registry says so after the run directory is gone (marshal status, handoff: "verified", never "not verified")
       if [ -s "$SRC/refs.accepted" ]; then
-        echo "refs differ from the snapshot only by the lead's own moves; nothing was pushed by the run:"
+        if grep -q 'per runs\.owned_refs)$' "$SRC/refs.accepted"; then echo "refs differ from the snapshot only by the lead's own moves and the refs the project declares the runtime's own (runs.owned_refs); nothing was pushed by the run:"
+        else echo "refs differ from the snapshot only by the lead's own moves; nothing was pushed by the run:"; fi
         sed 's/^/  /' "$SRC/refs.accepted"
       else echo "refs unchanged: nothing was pushed to the repository or its remote"; fi
       [ -n "$SAVED" ] || save_run "$RUN"   # what the run returned outlives its directory (a reboot that empties a tmpfs)
@@ -638,8 +660,11 @@ WRAP
     [ ! -L "$RUN" ] || die "clean: $RUN is a link, not a directory prepare made"
     [ -f "$RUN/refs.before" ] && [ -f "$RUN/ability" ] && case $(basename "$RUN") in qargi.??????) ;; *) false;; esac \
       || usage_die "clean needs a RUN dir made by prepare"
+    # a read-only run (RUN/class: an advisor, a review) returns a report and no manifest: its OUT holds a report.md and it closes with a plain clean, when
+    # its refs are unchanged (the check below) and its clone holds no commit (the check after that; a member that wrote the class file changes neither)
     [ -n "$DISCARD" ] || [ -f "$RUN/out/manifest.json" ] || [ -n "$(find "$RUN/out" -name '*manifest.json' 2>/dev/null | head -1)" ] \
-      || die "$RUN/out holds no manifest: collect the work first, or --discard to drop a run that produced none"
+      || { [ "$(run_class "$RUN")" = read-only ] && [ -n "$(find "$RUN/out" -maxdepth 2 -name '*report.md' 2>/dev/null | head -1)" ]; } \
+      || die "$RUN/out holds no manifest: collect the work first, or --discard to drop a run that produced none$([ "$(run_class "$RUN")" != read-only ] || echo " (a read-only run closes with a plain clean once its OUT holds report.md)")"
     # changed refs are evidence: kept, unless the run is dropped on purpose (--discard), which says so and goes on
     vrc=0; vout=$(QARGI_VERIFY_REFS_ONLY=1 "$0" verify "$RUN" 2>&1 </dev/null) || vrc=$?
     if [ "$vrc" = 3 ]; then   # the registry does not vouch for the run directory: nothing was asked of any repository
@@ -651,7 +676,7 @@ WRAP
       echo "qargi: warning: the refs of the repository changed during this run; dropped on purpose:" >&2
       sed 's/^/  /' <<<"$vout" >&2
     fi
-    acc=''; [ "$vrc" != 0 ] || acc=$(sed -n 's/^  /accepted, the lead'"'"'s own move: /p' <<<"$vout")   # what verify accepted, named again when the run is cleaned
+    acc=''; [ "$vrc" != 0 ] || acc=$(sed -n -e '/per runs\.owned_refs)$/s/^  //p' -e '/per runs\.owned_refs)$/!s/^  /accepted, the lead'"'"'s own move: /p' <<<"$vout")   # what verify accepted, named again when the run is cleaned
     # finished work is never dropped before it is merged: commits in the clone must be applied (review apply) and the applied tip must
     # be on a branch other than agent/*, in the real repository. --discard is the deliberate way to drop them.
     nc=$(git -C "$RUN/clone" rev-list --count HEAD --not --remotes=origin 2>/dev/null || echo 0)

@@ -31,6 +31,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `qargi project template` carries `lead.context_window` as `null` (derive the window from the model of the session) and `project init` says
   which window the lead gets; `project validate` refuses a value that is not a number of tokens of at least 1000 (or null). The
   `qargi-project` skill lists the question.
+- A read-only run (an advisor or a review: a report, no patches) closes with a plain `qargi local clean RUN` once its output holds a `report.md`, its
+  refs are unchanged and its clone holds no commit; `--discard` is no longer needed and no manifest is asked for. A run of work still needs its manifest.
+- `feature finish`, refused while a run of the feature is open, now names each open run with the exact command that closes it (a read-only run: `qargi
+  local clean RUN`; a run of work: the step it is waiting for), and `lead compact-check` does the same for a read-only run.
 
 ### Fixed
 - `qargi lead usage` and `lead compact-check --advise` no longer divide the context in use by a fixed 200000 window: the window is the answer
@@ -48,6 +52,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   plan token; once approved it makes that merge as a commit of its own on the branch, before the push, so CI runs on the joined head and the finish is an
   ordinary `--no-ff` merge. The tree of the branch must be the same before and after, and the commit must merge exactly the branch and master; otherwise the
   branch does not move and nothing is pushed. A repository whose histories are related gets no extra commit.
+- The project answer `runs.owned_refs` (a list of glob patterns for full ref names, such as `refs/heads/foo-*`; only the lead sets it, the guard refuses
+  `project set` of it to a member) declares the refs a runtime or harness creates in the repository. `qargi local verify` and `local clean` accept a local
+  ref that matches one, in either phase, and name it (`foo-x created; accepted: refs/heads/foo-* (owned by the runtime, per runs.owned_refs)`). A pattern
+  needs a literal prefix of at least 3 characters after `refs/NAMESPACE/` and may not match `develop`, `master`, a `repo.long_lived` branch or the git-flow
+  branches (`project validate` says so); a ref is never taken as owned when it is the base of a run that is not cleaned or closed, and a ref that matches
+  no valid pattern is checked as before, in the strict phase too. The built-in rule for the harness's `worktree-bridge-*` branches stays.
+- `lead compact-check` and `feature finish` settle a run as merged by the same test as `local list` and `local clean` (`lib/merged.py`, one function
+  for the three). A run whose applied tip the lead rewrote with `qargi ref record --rewrite` counts as merged when the commit it was rewritten to is on
+  a branch other than `agent/*`, so a long-merged run in an old scratch directory is no longer listed as applied and not merged.
 
 ## [0.2.3] - 2026-11-05
 

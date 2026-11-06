@@ -312,6 +312,12 @@ pk_ = c.get("packs")
 if pk_ is not None:
     need(isinstance(pk_, dict) and set(pk_) <= {"none"} and isinstance(pk_.get("none", False), bool),
          "packs: an object like {none: true} (none: the project uses no project packs, so packs check passes without a render)")
+rn = c.get("runs")
+if rn is not None:
+    need(isinstance(rn, dict) and set(rn) <= {"owned_refs"}, "runs: an object like {owned_refs: [\"refs/heads/foo-*\"]} (owned_refs: the refs a runtime or harness creates in the repository; verify and clean accept them)")
+    if isinstance(rn, dict) and "owned_refs" in rn:
+        import owned_refs as _owned   # lib/owned_refs.py: what a pattern may be (a literal prefix, never develop, master, a long-lived or git-flow branch)
+        bad.extend(_owned.problems(rn["owned_refs"], ll if isinstance(ll, list) else []))
 need(isinstance(c.get("budget_cents", 0), int) and c.get("budget_cents", 0) > 0, "budget_cents: a positive whole number (set on the deployment)")
 if "env" in c:
     import env as _env   # lib/env.py: the keys of the environment overrides and what each takes

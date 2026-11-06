@@ -7,7 +7,7 @@
 #       it holds: REF (agent/NAME or refs/heads/agent/NAME) moves from OLD to NEW only when the trees of OLD and NEW are identical
 #       (git rev-parse OLD^{tree}) and REF is at OLD now (the move is a compare-and-swap: update-ref REF NEW OLD). The move is
 #       journaled with the reason (verb ref:rewrite, why TEXT), so `qargi local verify` and `local clean` of a run prepared before
-#       it accept it and name it as a rewrite, and `local clean` and `local list` follow a recorded run's applied tip to NEW.
+#       it accept it and name it as a rewrite, and `local clean`, `local list`, `lead compact-check` and `feature finish` follow a recorded run's applied tip to NEW (lib/merged.py).
 #       Nothing else changes: no working tree (the trees are the same), no other ref, nothing on origin. The lead's verb: the guard
 #       refuses it to a member.
 #

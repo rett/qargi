@@ -179,6 +179,65 @@ out=$($DA ref note 2>&1); rc=$?
 [ $rc = 2 ] && ok "ref note without a REF is a usage error" || no "no ref: rc=$rc $out"
 git -C "$A" branch -D agent-made >/dev/null; git -C "$A" push -q origin :agent-made
 
+# --- 1c. refs a runtime creates in the repository, declared by the lead (answers runs.owned_refs)
+own() { jq --argjson p "$1" '.runs = {owned_refs: $p}' "$T/c/projects/app.json" > "$T/app.new" && mv "$T/app.new" "$T/c/projects/app.json"; }
+OWNED="accepted: refs/heads/rt-* (owned by the runtime, per runs.owned_refs)"
+R=$(mkrun owned1)
+git -C "$A" branch rt-one develop
+out=$(verify "$R"); rc=$?
+[ $rc = 2 ] && grep -q "branch created: refs/heads/rt-one" <<<"$out" && ok "(setup) a branch a runtime made is found while no pattern declares it" || no "undeclared: rc=$rc $out"
+own '["refs/heads/rt-*"]'
+out=$(verify "$R"); rc=$?
+[ $rc = 0 ] && grep -qF "rt-one created; $OWNED" <<<"$out" && grep -q "the refs the project declares the runtime's own" <<<"$out" && [ -f "$R/verified" ] && ok "a declared pattern accepts the ref in the strict phase and verify names the pattern and the answer" || no "declared: rc=$rc $out"
+git -C "$A" update-ref refs/heads/rt-one "$(hand rt-one)"
+git -C "$A" branch rt-two develop
+out=$(verify "$R"); rc=$?
+[ $rc = 0 ] && grep -qF "rt-one moved; $OWNED" <<<"$out" && grep -qF "rt-two created; $OWNED" <<<"$out" && ok "and after the passing verify too: moves and new refs of the pattern are named" || no "declared lenient: rc=$rc $out"
+git -C "$A" branch -D rt-two >/dev/null
+out=$(verify "$R"); rc=$?
+[ $rc = 0 ] && grep -qF "rt-two deleted; $OWNED" <<<"$out" && ok "a deletion of a declared ref is accepted and named too" || no "declared deletion: rc=$rc $out"
+git -C "$A" branch other-made develop
+out=$(verify "$R"); rc=$?
+[ $rc = 2 ] && grep -q "refs/heads/other-made" <<<"$out" && ! grep -q "other-made.*owned by the runtime" <<<"$out" && ok "a ref the pattern does not match is still found" || no "other ref: rc=$rc $out"
+git -C "$A" branch -D other-made >/dev/null
+# clean names it as well
+git -C "$A" update-ref refs/heads/rt-one "$(hand rt-one)"
+echo '{}' > "$R/out/manifest.json"
+out=$($DA local clean "$R" 2>&1); rc=$?
+[ $rc = 0 ] && grep -qF "rt-one moved; $OWNED" <<<"$out" && ! grep -q "the lead's own move: rt-one" <<<"$out" && ok "local clean accepts the declared ref and names the pattern" || no "clean owned: rc=$rc $out"
+# a member rewriting develop is still caught: the strict phase, a rewrite, a pattern that would reach it
+own '["refs/heads/rt-*"]'
+R=$(mkrun owned2)
+dv=$(git -C "$A" rev-parse develop)
+git -C "$A" update-ref refs/heads/develop "$(git -C "$A" commit-tree -m rewritten "$dv^{tree}")"
+out=$(verify "$R"); rc=$?
+[ $rc = 2 ] && grep -q "branch moved: refs/heads/develop" <<<"$out" && ok "a rewrite of develop is found though a pattern is declared" || no "develop rewrite: rc=$rc $out"
+own '["refs/heads/dev*"]'
+out=$(verify "$R"); rc=$?
+[ $rc = 2 ] && grep -q "branch moved: refs/heads/develop" <<<"$out" && ! grep -q "owned by the runtime" <<<"$out" && ok "a pattern that would match develop (hand-edited answers) is ignored" || no "develop pattern: rc=$rc $out"
+own '["refs/heads/*","refs/heads/ab*"]'
+git -C "$A" branch abc-made "$dv"
+out=$(verify "$R"); rc=$?
+[ $rc = 2 ] && grep -q "branch created: refs/heads/abc-made" <<<"$out" && ! grep -q "owned by the runtime" <<<"$out" && ok "a bare glob and a pattern with a short literal prefix are ignored" || no "short pattern: rc=$rc $out"
+git -C "$A" branch -D abc-made >/dev/null
+git -C "$A" update-ref refs/heads/develop "$dv"
+# the base of an open run is never owned
+git -C "$A" branch rt-base develop
+own '["refs/heads/rt-*"]'
+R=$(mkrun owned3 rt-base)
+git -C "$A" update-ref refs/heads/rt-base "$(git -C "$A" commit-tree -m rewritten "$dv^{tree}")"
+out=$(verify "$R"); rc=$?
+[ $rc = 2 ] && grep -q "branch moved: refs/heads/rt-base" <<<"$out" && ok "the base of an open run is not accepted as owned, whatever the pattern says" || no "base owned: rc=$rc $out"
+git -C "$A" update-ref refs/heads/rt-base "$dv"
+out=$(verify "$R"); [ $? = 0 ] || no "(setup) base restored: $out"
+# the answer is checked by project validate
+$DA project template demo | jq '.repo.url = "https://github.com/example/demo" | .runs = {owned_refs: ["refs/heads/dev*"]}' > "$T/bad.json"
+out=$($DA project validate "$T/bad.json" 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "runs.owned_refs\[0\]: would match refs/heads/develop" <<<"$out" && ok "project validate refuses a pattern that would match develop" || no "validate: rc=$rc $out"
+jq 'del(.runs)' "$T/c/projects/app.json" > "$T/app.new" && mv "$T/app.new" "$T/c/projects/app.json"
+git -C "$A" branch -D rt-one rt-base >/dev/null 2>&1
+for r in "$T"/scr/qargi.*; do $DA local clean "$r" --discard >/dev/null 2>&1; done
+
 # --- 2. local close --applied-by-am
 for r in "$T"/scr/qargi.*; do $DA local clean "$r" --discard >/dev/null 2>&1; done
 $F start cl >/dev/null 2>&1
@@ -220,6 +279,38 @@ R2=$(mkrun ro-run feature/cl); echo "# report" > "$R2/out/report.md"; echo read-
 out=$($DA local close "$R2" --applied-by-am 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "read-only run" <<<"$out" && ok "close refuses a read-only run" || no "close read-only: rc=$rc $out"
 $DA local clean "$R2" --discard >/dev/null 2>&1
+
+# --- 3b. a read-only run (a report, no patches) closes with a plain clean
+$F start ro >/dev/null 2>&1
+R=$(mkrun ro-ok feature/ro); echo read-only > "$R/class"; echo "# report" > "$R/out/report.md"
+out=$($DA lead compact-check --project app 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "a read-only local run is open: $R" <<<"$out" && grep -q "close it: qargi local clean $R\$" <<<"$out" && ok "compact-check names an open read-only run and its closing command" || no "compact-check read-only: rc=$rc $out"
+out=$($F finish ro 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "feature ro has 1 open run(s)" <<<"$out" && grep -q "$R (build ro-ok): prepared, not verified" <<<"$out" && grep -q "close it: qargi local clean $R\$" <<<"$out" \
+  && ok "feature finish names the open read-only run and the exact command that closes it" || no "finish read-only: rc=$rc $out"
+out=$($DA local clean "$R" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "cleaned $R" <<<"$out" && [ ! -e "$R" ] && ok "a read-only run with a report and unchanged refs closes with a plain clean (no manifest, no --discard)" || no "clean read-only: rc=$rc $out"
+out=$($F finish ro 2>&1); grep -q "open run" <<<"$out" && no "a cleaned read-only run still blocks finish: $out" || ok "and no longer blocks feature finish"
+R=$(mkrun ro-noreport feature/ro); echo read-only > "$R/class"
+out=$($DA local clean "$R" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "holds no manifest" <<<"$out" && grep -q "report.md" <<<"$out" && [ -d "$R" ] && ok "a read-only run with no report is still refused, and the message says what closes it" || no "read-only no report: rc=$rc $out"
+out=$($DA lead compact-check --project app 2>&1)
+grep -q "close it: qargi local clean $R (once the member has written OUT/report.md" <<<"$out" && ok "its closing command waits for the report" || no "closing without report: $out"
+echo "# report" > "$R/out/report.md"; git -C "$A" branch ro-stray develop
+out=$($DA local clean "$R" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "refs of the repository changed" <<<"$out" && [ -d "$R" ] && ok "a read-only run whose refs changed is kept as evidence" || no "read-only changed refs: rc=$rc $out"
+git -C "$A" branch -D ro-stray >/dev/null
+commits "$R" ro1.go
+out=$($DA local clean "$R" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "never applied" <<<"$out" && [ -d "$R" ] && ok "a read-only run whose clone holds commits is not dropped by a plain clean" || no "read-only with commits: rc=$rc $out"
+$DA local clean "$R" --discard >/dev/null 2>&1
+R=$(mkrun wr-report feature/ro); echo "# report" > "$R/out/report.md"
+out=$($DA local clean "$R" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "holds no manifest" <<<"$out" && [ -d "$R" ] && ok "a run of work (class write) with only a report still needs its manifest" || no "write with report: rc=$rc $out"
+$DA local clean "$R" --discard >/dev/null 2>&1
+R=$(mkrun ro-ok2 feature/ro); echo read-only > "$R/class"; echo "# report" > "$R/out/report.md"; verify "$R" >/dev/null
+out=$($DA local clean "$R" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "cleaned $R" <<<"$out" && ok "a verified read-only run closes with a plain clean as well" || no "clean verified read-only: rc=$rc $out"
 
 # --- 4. feature finish is refused while a run of the feature is open
 $F start fn >/dev/null 2>&1

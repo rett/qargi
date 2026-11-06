@@ -68,7 +68,7 @@ full | par | 300 | 12 | bash tests/test_release_assets.sh | lib/release*.sh lib/
 full | par | 300 | 19 | bash tests/test_release_site.sh | lib/release*.sh lib/release*.py
 full | par | 300 | 24 | python3 tests/test_home.py
 full | par | 300 | 25 | bash tests/test_install.sh
-full | par | 408 | 68 | bash tests/test_project.sh | lib/project.sh
+full | par | 408 | 68 | bash tests/test_project.sh | lib/project.sh lib/owned_refs.py
 fast | par | 300 | 4 | bash tests/test_project_profile.sh | lib/project_profile.py
 full | par | 564 | 94 | bash tests/test_local.sh | lib/local.sh
 full | par | 300 | 20 | bash tests/test_local_concurrency.sh | lib/local.sh lib/lib.sh
@@ -91,13 +91,13 @@ full | par | 1842 | 307 | bash tests/test_marshal_sign.sh | lib/marshal*.sh lib/
 fast | par | 300 | 3 | python3 tests/test_marshal_sign_unit.py | lib/marshal*.sh lib/marshal*.py
 full | par | 300 | 15 | bash tests/test_marshal_forget.sh | lib/marshal*.sh lib/marshal*.py
 fast | par | 300 | 8 | bash tests/test_marshal_hook.sh | lib/marshal*.sh lib/marshal*.py
-full | par | 300 | 43 | bash tests/test_journal.sh
-full | par | 300 | 21 | bash tests/test_runs_close.sh | lib/local.sh lib/ref.sh lib/feature.sh lib/review.sh lib/lead_usage.py
+full | par | 300 | 43 | bash tests/test_journal.sh | lib/merged.py
+full | par | 300 | 21 | bash tests/test_runs_close.sh | lib/local.sh lib/ref.sh lib/feature.sh lib/review.sh lib/lead_usage.py lib/merged.py lib/owned_refs.py
 fast | par | 300 | 12 | bash tests/test_upstream.sh | lib/upstream.sh
 fast | par | 300 | 12 | bash tests/test_team.sh | lib/team.sh
 fast | par | 300 | 4 | bash tests/test_leadcred.sh
 fast | par | 300 | 16 | bash tests/test_lead.sh | lib/lead.sh
-full | par | 300 | 18 | python3 tests/test_lead_usage.py | lib/lead*.sh lib/lead*.py
+full | par | 300 | 18 | python3 tests/test_lead_usage.py | lib/lead*.sh lib/lead*.py lib/merged.py
 fast | par | 300 | 3 | python3 tests/role_seed_sim.py shared
 fast | par | 300 | 3 | python3 tests/role_seed_sim.py build
 fast | par | 300 | 3 | python3 tests/role_seed_sim.py write

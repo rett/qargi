@@ -503,6 +503,20 @@ class Skills(HookCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
+    def test_refuses_project_set_of_runs_to_a_member(self):
+        """runs.owned_refs lists the refs that local verify and clean accept as created by a runtime, so a member that could set it would make its own
+        ref changes pass the ref check: project set refuses runs and runs.*. Look-alikes stay open."""
+        for path in ("runs", "runs.owned_refs"):
+            for form in ("qargi project set p %s v", "sudo qargi project set p %s v", "cd src && qargi project set p %s v",
+                         "bash -c 'qargi project set p %s v'", "./lib/project.sh set p %s v", "echo $(qargi project set p %s v)"):
+                c = form % path
+                r = self.bash(c)
+                self.assertEqual(r.returncode, 2, c)
+                self.assertIn("qargi project set of %s declares which refs verify and clean accept as created by a runtime" % path, r.stderr, c)
+        for c in ("qargi project set p runs_owned_refs v", "qargi project set p running x", "qargi project show p", "echo qargi project set p runs.owned_refs v"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
     def test_project_profile_check_is_open_to_a_member(self):
         """qargi project profile check reads a profile and the repository's CLAUDE.md, AGENTS.md and Makefile and writes nothing: a member may run it."""
         for c in ("qargi project profile check", "qargi project profile check p", "qargi project profile check p --profile ./profile.md",

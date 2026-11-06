@@ -154,7 +154,9 @@ COMMANDS = {
                               "kind binary (name the file name, version, url of the file itself, sha256 of it: downloaded to ~/.local/bin and kept only when the hash matches) and kind submodule "
                               "(name as in .gitmodules, path: checked out in each member clone by qargi local prepare). env plan lists them, env apply installs them and env check reports one that is "
                               "missing or wrong; a member's guard refuses setting them (and a whole role), as it refuses release.*, test_command, env.* and site.*. "
-                              "git.author ('Name <email>') is the author qargi review apply gives the commits it applies, and review.keep_author true keeps the member's author instead; a member's guard refuses setting them."),
+                              "git.author ('Name <email>') is the author qargi review apply gives the commits it applies, and review.keep_author true keeps the member's author instead; a member's guard refuses setting them. "
+                              "runs.owned_refs is a list of glob patterns for the refs a runtime or harness creates in the repository, which local verify and clean accept and name (see local verify); "
+                              "the guard refuses it to a member too."),
                         examples=["qargi project set acme roles.write.effort high", "qargi project set acme packs.none true", "qargi project set acme git.author 'Example Author <author@example.com>'",
                                   "qargi project set acme roles.test.tools '[{\"kind\":\"go\",\"name\":\"acme.test/ci\",\"version\":\"v1.2.0\"}]'"]),
             "show": verb("Print the stored answers and what they mean", [("NAME", "project")]),
@@ -447,7 +449,7 @@ COMMANDS = {
                            desc=("REF is an agent/* branch (agent/NAME or refs/heads/agent/NAME). It refuses NEW unless git rev-parse OLD^{tree} and NEW^{tree} are the same, "
                                  "and REF unless it is at OLD now; the move is then a compare-and-swap (git update-ref REF NEW OLD), so nothing moves when REF changed meanwhile. "
                                  "The journal line has verb ref:rewrite and the reason, and a run prepared before the move verifies and is cleaned with it named as a rewrite; "
-                                 "local clean and local list follow the applied tip of a run to NEW. No working tree, other ref or origin is touched. Not available in a member run."),
+                                 "local clean, local list, lead compact-check and feature finish follow the applied tip of a run to NEW (one test, lib/merged.py). No working tree, other ref or origin is touched. Not available in a member run."),
                            examples=["qargi ref record --rewrite agent/fix-names 1a2b3c4 5d6e7f8 --why \"reworded two messages\""]),
             "note": verb("Journal a branch you made by hand, or pushed to origin, so that local verify accepts it", [("REF", "none")],
                          [opt("--why", "a reason, journaled with a local branch", "TEXT"), PROJECT_OPT],
@@ -1024,6 +1026,11 @@ COMMANDS = {
                                  "(a fetch), the parking branch (repo.parking_branch, default scratch) fast-forwarded to develop's tip, by hand too, and the branches and branches of origin you noted "
                                  "(qargi ref note: a ref that did not exist when the run was prepared; one the run's agent could have made or moved and you did not note still fails). "
                                  "It also leaves out the harness's own bridge branches: a branch worktree-bridge-NAME while the locked worktree bridge-NAME of the harness (in its worktrees directory under the main checkout) holds it and its moves are fast-forwards (or once the worktree and the branch are gone). "
+                                 "The refs a runtime or harness creates in the repository can be declared in the project answer runs.owned_refs, a list of glob patterns for full ref names "
+                                 "(qargi project set PROJECT runs.owned_refs '[\"refs/heads/foo-*\"]'; only the lead sets it, and project validate checks it): a local ref that matches one is accepted in either phase and "
+                                 "named (\"foo-x created; accepted: refs/heads/foo-* (owned by the runtime, per runs.owned_refs)\"). A pattern needs a literal prefix of at least 3 characters after refs/NAMESPACE/, "
+                                 "may not match develop, master, a repo.long_lived branch or the git-flow branches (agent/, feature/, release/, hotfix/), and a ref is never taken as owned when it is the base of a run "
+                                 "that is not cleaned or closed; a ref that matches no valid pattern is checked as before, in the strict phase too. "
                                  "After a passing verify the run records RUN/verified and its line in the registry is marked verified (what marshal status and handoff list the task as, also after clean); later verify and clean compare with that and also accept "
                                  "your fast-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there. Anything else (a push, a tag, "
                                  "a deletion or a rewrite nobody journaled) fails. Run it on every run before merging any of them. "
@@ -1046,7 +1053,8 @@ COMMANDS = {
                            opt("--scratch", "with --applied or --stale: the directory the runs were prepared in; only the run directories directly under it are looked at", "DIR", "dir")],
                           desc=("Prepare makes a private temporary directory for the run (TMP, on /dev/shm when it exists) that the agent puts its test "
                                 "sandboxes in; clean removes it with the clone, the bare copy and the output (only when it is a qargi-run.XXXXXX directory under /dev/shm or QARGI_RUN_TMP, or inside the run). "
-                                "It refuses a run whose output has no manifest (collect first) and one whose repository refs changed (that is evidence); the lead's own moves that verify accepts "
+                                "It refuses a run whose output has no manifest (collect first), except a read-only run (an advisor or a review: its product is a report, never patches) whose output holds a report.md, "
+                                "which closes with a plain clean when its refs are unchanged and its clone holds no commit; and one whose repository refs changed (that is evidence); the lead's own moves that verify accepts "
                                 "(a feature finish since the run was prepared, for one) are no change and are named in its output. It also refuses a run whose clone holds commits that were "
                                 "never applied (review apply) or whose applied tip is on no branch but agent/* in the repository (feature merge first), so "
                                 "finished work is not deleted by mistake. --discard is the deliberate way past all of these; it still refuses anything that prepare did not make. "
@@ -1273,7 +1281,7 @@ COMMANDS = {
                                   [PROJECT_OPT, opt("--advise", "also say whether a compact is advised: from 50% of the window, strongly from 70%"), opt("--json", "machine-readable")],
                                   desc=("Not safe while a local run is prepared and not verified, verified and not applied, or applied and not merged; a merge waits for its "
                                         "resolution; a whole-suite run (feature verify, release verify) is running; the handoff note written by marshal handoff --write is older "
-                                        "than the last merge; or a release or hotfix branch is open. It prints the restart block: the handoff note, qargi marshal status, "
+                                        "than the last merge; or a release or hotfix branch is open. An applied run counts as merged by the test local list and local clean use: its applied tip is on a branch other than agent/*, or the commit the tip was rewritten to (ref record --rewrite) is, wherever the run directory lies. It prints the restart block: the handoff note, qargi marshal status, "
                                         "qargi feature status and the open runs, so the lead resumes from stored state. Read only. qargi cannot run /compact itself: the "
                                         "lead (or the person) does. feature finish, the last feature merge of a feature's runs, release finish and marshal handoff print "
                                         "one line when the context is at or above the project answer lead.compact_advice_pct (default 40; 0 turns it off)."),
@@ -1422,7 +1430,7 @@ TOPICS = {
     "guard": ("What a member's guard refuses", [
         "The guard hooks a member's calls: a barrier, not a wall; qargi local verify is its backstop.",
         "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
-        "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env, site, packs, upstream, git, review, roles.ROLE.tools, a whole role), init, new, link and unlink; "
+        "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env, site, packs, runs, upstream, git, review, roles.ROLE.tools, a whole role), init, new, link and unlink; "
         "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (the rest "
         "read); release publish, sign, site, assets and fix; marshal claim, set, renew, release, take, "
         "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish, verify and park; branch prune; changelog renumber without --check; "
