@@ -48,6 +48,12 @@ commits "$R" a1.go; rm -f "$R/verified"
 out=$(verify "$R"); rc=$?
 [ $rc = 1 ] && grep -q "OUT is empty: the member did not collect" <<<"$out" && grep -q "ls OUT/patches" <<<"$out" && ok "verify fails fast, naming the missing collect, when the clone has commits and OUT is empty" || no "uncollected: rc=$rc $out"
 [ ! -f "$R/verified" ] && ok "and records nothing" || no "verified written for an uncollected run"
+grep -q "refs: unchanged by the run" <<<"$out" && grep -q "clean RUN --discard" <<<"$out" && ok "it still compares the refs, says so next to the message, and keeps verify required" || no "uncollected refs line: $out"
+git -C "$A" branch stray-by-run develop
+out=$(verify "$R"); rc=$?
+[ $rc = 2 ] && grep -q "branch created: refs/heads/stray-by-run" <<<"$out" && grep -q "OUT is empty: the member did not collect" <<<"$out" && ok "a run that changed a ref and did not collect gets the ref verdict (exit 2) and the empty-OUT message" || no "uncollected and refs: rc=$rc $out"
+[ ! -f "$R/verified" ] && ok "and still records nothing" || no "verified written for an uncollected run with a ref change"
+git -C "$A" branch -D stray-by-run >/dev/null
 collect "$R"
 out=$(verify "$R"); rc=$?
 [ $rc = 0 ] && ok "after the member collects, verify passes" || no "collected: rc=$rc $out"

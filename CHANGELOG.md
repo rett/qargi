@@ -102,6 +102,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `qargi ref note` refuses a second note of a ref whose earlier noted value is not an ancestor of its current one (the ref was rewritten between the notes),
   says so and points to `ref record --rewrite` for an agent branch that keeps its tree, prints the author and subject of the tip it notes, and takes
   `NAME@SHA` to note a ref only while it is at SHA.
+- `qargi local verify` of a run whose clone has commits and whose OUT is empty now also compares the refs and prints the verdict (exit 2 when they changed,
+  else 1) next to "OUT is empty: the member did not collect", so a run that both broke out and did not collect is not told only the second; nothing is
+  recorded, and the message says the run is not verified and that apply and close need a passing verify.
 
 ## [0.2.2] - 2026-11-05
 

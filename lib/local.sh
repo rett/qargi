@@ -276,6 +276,7 @@ check_run() {
   fi
   : > "$dir/refs.accepted"
   if compare "$RUN_REPO" "$ref" "$dir/refs.after" "$strict" "$dir/refs.accepted" > "$dir/refs.diff"; then
+    [ -z "${NOREC:-}" ] || return 0   # NOREC: a verify that cannot pass (the member did not collect) compares the refs but records nothing
     cp "$dir/refs.after" "$dir/verified"
     return 0
   fi
@@ -499,18 +500,30 @@ WRAP
       exit 2
     fi
     marshal_touch_run "$RUN"   # the lead's verify keeps its lease on the feature the run is based on
-    # the member did not collect: the clone holds commits past BASE_SHA and OUT holds neither patches nor a report. Said first and plainly, before the refs
-    # are compared (clean asks verify for the refs alone, QARGI_VERIFY_REFS_ONLY: it has its own check for the manifest). Not for a saved copy, which exists only for a passed run.
+    # the member did not collect: the clone holds commits past BASE_SHA and OUT holds neither patches nor a report. The refs are compared all the same (a run
+    # that broke out and did not collect still gets its ref verdict) and said next to the message, but nothing is recorded: the run is not verified, and apply
+    # and close need a passing verify. (clean asks verify for the refs alone, QARGI_VERIFY_REFS_ONLY: it has its own check for the manifest.) Not for a saved
+    # copy, which exists only for a passed run.
+    NOREC='' EMPTY=''
     if [ -z "$SAVED" ] && [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ]; then
       ncm=$(git -C "$RUN/clone" rev-list --count --branches HEAD --not --remotes=origin 2>/dev/null || echo 0)
       if [ "${ncm:-0}" -gt 0 ] && [ -z "$(find "$RUN/out" -maxdepth 2 \( -name '*.patch' -o -name '*report.md' \) 2>/dev/null | head -1)" ]; then
-        echo "qargi: OUT is empty: the member did not collect. $RUN/clone holds $ncm commit(s) past BASE_SHA, but $RUN/out holds no patches and no report. The member's DONE needs \`ls OUT/patches\` to list the patches (git format-patch --binary BASE_SHA..HEAD into OUT/patches, then the manifest and report): send it back to collect, or take the commits from the clone yourself. Nothing was compared." >&2
-        exit 1
+        EMPTY="qargi: OUT is empty: the member did not collect. $RUN/clone holds $ncm commit(s) past BASE_SHA, but $RUN/out holds no patches and no report. The member's DONE needs \`ls OUT/patches\` to list the patches (git format-patch --binary BASE_SHA..HEAD into OUT/patches, then the manifest and report). This run is not verified, and apply and close need a passing verify: send it back to collect and verify again, or take the commits from the clone yourself and drop the run with qargi local clean RUN --discard."
+        NOREC=1
       fi
     fi
-    reg_load; crc=0; check_run "$RUN" "$SRC" || crc=$?
+    reg_load; crc=0; NOREC=$NOREC check_run "$RUN" "$SRC" || crc=$?
     if [ "$crc" = 3 ]; then
       exit 3   # run_record said why: the registry does not vouch for this run directory, so no repository was asked
+    elif [ -n "$EMPTY" ]; then
+      if [ "$crc" = 0 ]; then echo "refs: unchanged by the run (compared all the same; nothing was recorded)" >&2
+      else
+        echo "REFS CHANGED during the run (the agent must not have pushed):" >&2
+        cat "$SRC/refs.diff" >&2
+        if [ -s "$SRC/refs.accepted" ]; then echo "accepted as the lead's own moves:" >&2; sed 's/^/  /' "$SRC/refs.accepted" >&2; fi
+      fi
+      echo "$EMPTY" >&2
+      exit $((crc == 0 ? 1 : 2))
     elif [ "$crc" = 0 ]; then
       reg_mark "$RUN" verified "$(now)"   # the registry says so after the run directory is gone (marshal status, handoff: "verified", never "not verified")
       if [ -s "$SRC/refs.accepted" ]; then
