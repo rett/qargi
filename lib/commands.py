@@ -1073,7 +1073,8 @@ COMMANDS = {
                                 "qargi feature finish and is listed by marshal status as closed; qargi local list shows closed in the APPLIED column. qargi local clean then removes it "
                                 "without asking for an applied tip (its commits are taken as applied by hand); clean --applied removes it too. Refused for a run that has no passing "
                                 "local verify (verify it first: close must not hide changed refs), a run whose refs changed since that verify (close runs the refs check again), a read-only run, one applied with qargi review apply (merge that branch), "
-                                "a run already closed or cleaned. Not available in a member run."),
+                                "a run already closed or cleaned. When the applied branch was rewritten by hand (its tip is not the review:apply tip in your ref journal, the trees are the same and no rewrite is recorded), "
+                                "the refusal for an applied run also names the fix: qargi ref record --rewrite BRANCH OLD NEW --why ..., with the branch and both tips filled in. Not available in a member run."),
                           examples=["qargi local close ./run --applied-by-am"]),
             "clean": verb("Remove a collected, verified run and its temporary directory", [("RUN_DIR", "dir", True)],
                           [opt("--discard", "drop the run on purpose: also a run whose output holds no manifest, whose commits were never merged or whose repository refs changed (verify's outcome is printed as a warning)"),
@@ -1096,6 +1097,8 @@ COMMANDS = {
                                 "A run whose directory is gone (a reboot, or removed by hand) is the registry's record and the saved copy alone: clean RUN drops both once "
                                 "the saved work is applied and merged, and refuses otherwise; clean RUN --discard drops them whatever they hold. --stale counts such a run by "
                                 "the start time of its record, and with --yes drops it unless its saved copy holds work that was never applied (kept and named). "
+                                "When the applied branch is not merged because you rewrote it by hand (its tip is not the review:apply tip in your ref journal, the trees are the same and no rewrite is recorded), "
+                                "the refusal also names the fix, with the branch and both tips filled in: git branch -f BRANCH OLD, then qargi ref record --rewrite BRANCH OLD NEW --why ...; clean then follows the rewrite. "
                                 "A clean marks the run's record cleaned and removes its saved copy."),
                           examples=["qargi local clean --applied --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch --yes"]),
             "list": verb("List the local runs: role, slug, age, whether applied and merged", [],

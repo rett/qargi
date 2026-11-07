@@ -6,6 +6,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- `qargi local clean` and `qargi local close --applied-by-am`, when they refuse a run whose applied branch the lead rewrote by hand (the branch is not at the tip that
+  `review apply` journaled, the two trees are the same and no rewrite is recorded), also name the fix with the real branch and tips: `git branch -f BRANCH OLD`, then
+  `qargi ref record --rewrite BRANCH OLD NEW --why ...`. The other refusals keep their text.
+
 ## [0.2.5] - 2026-11-06
 
 ### Added

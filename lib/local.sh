@@ -77,6 +77,26 @@ merged_tip() {
   case $rc in 0|2) return "$rc";; *) return 1;; esac
 }
 
+# rewrite_hint REPO BRANCH -> nothing, or the sentence that names the fix when the lead rewrote the applied branch by hand: BRANCH is at a commit other than the
+# tip of its review:apply line in the lead's ref journal (the tip merged_tip tests), the two commits have the same tree (what qargi ref record --rewrite
+# records), and no rewrite of the journaled tip is recorded yet. The branch and the tips are checked before they reach git or the terminal: BRANCH is the
+# first word of the member's applied file, the journal is the lead's.
+rewrite_hint() {
+  local jt cur rp
+  [ -n "${1:-}" ] && [ -n "${2:-}" ] && [ -f "$DA_STATE/ref-journal.jsonl" ] || return 0
+  git check-ref-format "refs/heads/$2" 2>/dev/null || return 0
+  case $2 in agent/?*) ;; *) return 0;; esac   # the one kind of branch qargi ref record --rewrite moves
+  rp=$(readlink -f -- "$1" 2>/dev/null) || rp=$1
+  jt=$(jq -r --arg r "$rp" --arg b "refs/heads/$2" 'select(type == "object" and .verb == "review:apply" and .repo == $r and .ref == $b and (has("remote") | not) and (.new | type) == "string") | .new' \
+    "$DA_STATE/ref-journal.jsonl" 2>/dev/null | tail -n 1)
+  [[ $jt =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] || return 0
+  cur=$(git -C "$1" rev-parse -q --verify "refs/heads/$2^{commit}" 2>/dev/null) || return 0
+  [ "$cur" != "$jt" ] || return 0
+  jq -e --arg r "$rp" --arg o "$jt" 'select(type == "object" and .verb == "ref:rewrite" and .repo == $r and .old == $o)' "$DA_STATE/ref-journal.jsonl" >/dev/null 2>&1 && return 0   # recorded already
+  [ "$(git -C "$1" rev-parse -q --verify "$jt^{tree}" 2>/dev/null)" = "$(git -C "$1" rev-parse -q --verify "$cur^{tree}" 2>/dev/null)" ] || return 0
+  printf '%s' "$2 is at $cur, not at the tip $jt that review apply journaled: it was rewritten by hand (the same tree). Put it back and record the rewrite, so that clean follows it: git branch -f $2 $jt, then qargi ref record --rewrite $2 $jt $cur --why \"...\""
+}
+
 # journal_steps SIDE NAME OLD NEW -> 0 and the verbs, in order, of the lead's ref journal ($DA_STATE/ref-journal.jsonl) that explain the change
 # of the ref NAME from OLD to NEW (a sha, or 40 zeros for absent) since the run began (JSTART, an epoch); SIDE is local (a branch or tag of
 # the repository CREPO) or remote (a ref of its origin; for the run of a repository URL, the lines of that URL, CURLK). NEW must be reachable
@@ -663,7 +683,7 @@ WRAP
         read -r _ab atip _ < "$sv/applied"; rp=$(reg_get "$RUN" repo)
         [ -n "$rp" ] || die "$RUN is gone and was made from a repository URL, so whether its work is merged cannot be checked: --discard drops it on purpose"
         mrc=0; merged_tip "$rp" "${atip:-}" "${_ab:-}" "$RUN" || mrc=$?
-        [ "$mrc" = 0 ] || die "$RUN's work (${atip:0:12}) is not merged into any branch yet: qargi feature merge NAME $_ab, then clean (--discard drops it on purpose)"
+        [ "$mrc" = 0 ] || die "$RUN's work (${atip:0:12}) is not merged into any branch yet: qargi feature merge NAME $_ab, then clean (--discard drops it on purpose)$(rwh=$(rewrite_hint "$rp" "$_ab"); [ -z "$rwh" ] || printf '\n%s' "$rwh")"
       fi
       [ -z "$sv" ] || rm -rf --one-file-system -- "$sv"
       reg_edit "$RUN" drop || die "could not drop the record of $RUN from $DA_STATE/local-runs.jsonl"
@@ -704,7 +724,7 @@ WRAP
         if [ -n "$rp" ]; then
           mrc=0; merged_tip "$rp" "${atip:-}" "${_ab:-}" "$RUN" || mrc=$?
           [ "$mrc" != 2 ] || die "$RUN/applied does not hold a commit name as its second word, so whether the work is merged cannot be checked: look at it, or --discard drops the run on purpose"
-          [ "$mrc" = 0 ] || die "$RUN's work (${atip:0:12}) is not merged into any branch yet: qargi feature merge NAME $_ab, then clean (--discard drops it on purpose)"
+          [ "$mrc" = 0 ] || die "$RUN's work (${atip:0:12}) is not merged into any branch yet: qargi feature merge NAME $_ab, then clean (--discard drops it on purpose)$(rwh=$(rewrite_hint "$rp" "$_ab"); [ -z "$rwh" ] || printf '\n%s' "$rwh")"
         fi
       fi
     fi
@@ -759,7 +779,10 @@ WRAP
     [ -z "$(reg_get "$RUN" cleaned)" ] || die "$RUN was cleaned already"
     [ -z "$(reg_get "$RUN" closed)" ] || die "$RUN is closed already ($(reg_get "$RUN" closed_by)): qargi local clean $RUN removes its files"
     [ "$(run_class "$RUN")" != read-only ] || die "$RUN is a read-only run: it has no patches to apply. qargi local clean $RUN removes it"
-    [ ! -f "$RUN/applied" ] || die "$RUN was applied with qargi review apply ($(cut -d' ' -f1 "$RUN/applied")): merge that branch (qargi feature merge), then qargi local clean $RUN"
+    if [ -f "$RUN/applied" ]; then
+      read -r _ab _ < "$RUN/applied"
+      die "$RUN was applied with qargi review apply ($(cut -d' ' -f1 "$RUN/applied")): merge that branch (qargi feature merge), then qargi local clean $RUN$(rwh=$(rewrite_hint "$(reg_get "$RUN" repo)" "${_ab:-}"); [ -z "$rwh" ] || printf '\n%s' "$rwh")"
+    fi
     [ -n "$(reg_get "$RUN" verified)" ] || [ -f "$RUN/verified" ] || die "$RUN has no passing verify: qargi local verify $RUN first (the refs of the repository must be checked before the run is closed)"
     # the refs are checked again now (a ref may have changed since the first verify): changed refs are evidence, the run stays open
     vrc=0; vout=$(QARGI_VERIFY_REFS_ONLY=1 "$0" verify "$RUN" 2>&1 </dev/null) || vrc=$?

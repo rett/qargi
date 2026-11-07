@@ -235,6 +235,40 @@ $REF agent/rwc "$at" "$at2" --why "reworded" >/dev/null 2>&1 && $F merge rwf age
 out=$($DA local clean "$RW" 2>&1); rc=$?
 [ $rc = 0 ] && [ ! -e "$RW" ] && ok "clean counts a run as merged when the commit its applied tip was rewritten to is merged" || no "clean after rewrite: rc=$rc $out"
 
+# the lead rewrote an applied branch by hand: the refusals of clean and close name the fix, with the branch and both tips filled in
+RH=$(seriesrun rwh rwh.go feature/rwf); $DA review apply "$RH" >/dev/null 2>&1 || no "(setup) apply rwh"
+ht=$(sha agent/rwh); ht2=$(same "$ht" "names: change rwh, reworded by hand")
+git -C "$A" branch -f agent/rwh "$ht2"
+out=$($DA local clean "$RH" 2>&1); rc=$?
+if [ $rc = 1 ] && grep -q "not merged into any branch yet" <<<"$out" && grep -qF "qargi ref record --rewrite agent/rwh $ht $ht2 --why" <<<"$out" && grep -qF "git branch -f agent/rwh $ht" <<<"$out"; then
+  ok "clean of a run whose applied branch was rewritten by hand names qargi ref record --rewrite with the branch and both tips"
+else no "clean hint: rc=$rc $out"; fi
+out=$($DA local close "$RH" --applied-by-am 2>&1); rc=$?
+if [ $rc = 1 ] && grep -q "merge that branch" <<<"$out" && grep -qF "qargi ref record --rewrite agent/rwh $ht $ht2 --why" <<<"$out"; then
+  ok "close --applied-by-am names the same fix"
+else no "close hint: rc=$rc $out"; fi
+# the sentence is the fix in full: do what it says, and clean follows the rewrite once the branch is merged
+git -C "$A" branch -f agent/rwh "$ht" && $REF agent/rwh "$ht" "$ht2" --why "reworded by hand" >/dev/null 2>&1 || no "(setup) record the rewrite of rwh"
+out=$($DA local clean "$RH" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "not merged into any branch yet" <<<"$out" && ! grep -q "ref record --rewrite" <<<"$out" && ok "once the rewrite is recorded the hint is gone (the branch is not merged yet)" || no "recorded hint: rc=$rc $out"
+$F merge rwf agent/rwh >/dev/null 2>&1 || no "(setup) merge rwh"
+out=$($DA local clean "$RH" 2>&1); rc=$?
+[ $rc = 0 ] && [ ! -e "$RH" ] && ok "after the recorded rewrite is merged, clean removes the run" || no "clean after record: rc=$rc $out"
+# a run whose directory is gone (the saved copy holds the applied record): the refusal names the fix as well
+RV=$(seriesrun rwv rwv.go feature/rwf); $DA review apply "$RV" >/dev/null 2>&1 || no "(setup) apply rwv"
+vt=$(sha agent/rwv); vt2=$(same "$vt" "names: change rwv, reworded by hand"); git -C "$A" branch -f agent/rwv "$vt2"
+SVV=$T/s/runs/$(basename "$RV"); printf 'agent/rwv %s now\n' "$vt" > "$SVV/applied" && rm -rf "$RV" || no "(setup) vanish rwv"
+out=$($DA local clean "$RV" 2>&1); rc=$?
+[ $rc = 1 ] && [ ! -e "$RV" ] && grep -q "not merged into any branch yet" <<<"$out" && grep -qF "qargi ref record --rewrite agent/rwv $vt $vt2 --why" <<<"$out" \
+  && ok "the refusal for a run whose directory is gone names the fix too" || no "gone hint: rc=$rc $out"
+git -C "$A" branch -f agent/rwv "$vt"
+# the other cases keep their text and name no rewrite: the tip is the journaled one
+RN=$(seriesrun rwn rwn.go feature/rwf); $DA review apply "$RN" >/dev/null 2>&1 || no "(setup) apply rwn"
+out=$($DA local clean "$RN" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "not merged into any branch yet: qargi feature merge NAME agent/rwn" <<<"$out" && ! grep -q "rewrite" <<<"$out" && ok "an unmerged branch at its journaled tip: the refusal is as before, no rewrite is named" || no "plain refusal: rc=$rc $out"
+out=$($DA local close "$RN" --applied-by-am 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "merge that branch" <<<"$out" && ! grep -q "rewrite" <<<"$out" && ok "close of an applied run at its journaled tip: as before" || no "plain close refusal: rc=$rc $out"
+
 # --- the guard protects the journal from a member; reading stays allowed
 RG=$(mkrun guard-run); cd "$RG/clone" || exit 1
 g() { # tool, json input -> exit status of the guard run in the clone, as a member would
