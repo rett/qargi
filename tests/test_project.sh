@@ -278,13 +278,25 @@ msg=$($DA project set demo git.author 'no email here' 2>&1); rc=$?; [ $rc != 0 ]
 $DA project set demo review.keep_author true >/dev/null 2>&1 && [ "$(jq .review.keep_author $T/c/projects/demo.json)" = true ] && echo "ok   set review.keep_author true" || { echo "FAIL set review.keep_author"; fail=1; }
 msg=$($DA project set demo review.keep_author maybe 2>&1); rc=$?; [ $rc != 0 ] && grep -q "review.keep_author: true" <<<"$msg" && [ "$(jq .review.keep_author $T/c/projects/demo.json)" = true ] && echo "ok   set refuses a review.keep_author that is not true or false" || { echo "FAIL set bad keep_author: rc=$rc $msg"; fail=1; }
 $DA project set demo budget_cents 2500 >/dev/null 2>&1 && [ "$(jq .budget_cents $T/c/projects/demo.json)" = 2500 ] && echo "ok   set budget" || { echo "FAIL set budget"; fail=1; }
-# the message follows the key: the provision note belongs to answers a provision reads; a deployment option of the methodology
-# (github-release, none) is not one, so only what was set is said; a deployment value that is no option keeps the note
-msg=$($DA project set demo budget_cents 2600 2>&1); grep -q "applies to the next provision" <<<"$msg" && echo "ok   set budget_cents keeps the provision note" || { echo "FAIL set budget note: $msg"; fail=1; }
-for v in github-release none; do
-  msg=$($DA project set demo deployment "$v" 2>&1); [ "$msg" = "demo: deployment = \"$v\"" ] && echo "ok   set deployment $v says only what was set" || { echo "FAIL set deployment $v: $msg"; fail=1; }
-done
-msg=$($DA project set demo deployment dep_0123 2>&1); grep -q "applies to the next provision" <<<"$msg" && echo "ok   set deployment to a cloud deployment keeps the provision note" || { echo "FAIL set cloud deployment note: $msg"; fail=1; }
+# the message follows the key: the provision note belongs to the answers a provision reads (provision_reads in lib/project.sh) and to no
+# other; `deployment` (a methodology option, or the id of a cloud deployment) is read by no provision
+pnote() { # KEY VALUE: ok when `project set` shows the provision note, FAIL when it should not have
+  local msg; msg=$($DA project set demo "$1" "$2" 2>&1)
+  case $msg in *"applies to the next provision"*) [ "$3" = note ] && echo "ok   set $1 (a provision reads it) shows the provision note" || { echo "FAIL set $1 shows the provision note: $msg"; fail=1; };;
+    "demo: $1 = "*) [ "$3" = quiet ] && echo "ok   set $1 (no provision reads it) says only what was set" || { echo "FAIL set $1 has no provision note: $msg"; fail=1; };;
+    *) echo "FAIL set $1: $msg"; fail=1;; esac
+}
+pnote budget_cents 2600 note
+pnote roles.build.effort high note
+pnote roles.build.apt '["jq"]' note
+pnote models.provider.cloud claude-platform note
+pnote lead '{"model":"claude-opus-4-7","effort":"high"}' note
+for v in github-release none dep_0123; do pnote deployment "$v" quiet; done
+pnote lead.context_window 200000 quiet
+pnote runs.owned_refs '["refs/heads/foo-*"]' quiet
+pnote release.after_steps '["publish"]' quiet
+pnote review.scrub scripts/scrub quiet
+pnote test_command true quiet
 # repo.detached and site.* are read where they are used (the branch guards, the release), not by a provision: no provision note
 msg=$($DA project set demo repo.detached '["gh-pages"]' 2>&1); [ "$msg" = 'demo: repo.detached = ["gh-pages"]' ] && echo "ok   set repo.detached says only what was set" || { echo "FAIL set repo.detached: $msg"; fail=1; }
 msg=$($DA project set demo site.enabled true 2>&1); [ "$msg" = 'demo: site.enabled = true' ] && echo "ok   set site.enabled says only what was set" || { echo "FAIL set site.enabled: $msg"; fail=1; }

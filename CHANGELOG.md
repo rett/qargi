@@ -8,6 +8,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 - `qargi lead grant` and `qargi lead revoke` read each step's plan text and token from the step's `--json` output (the `plan` and `token` fields) and no longer parse the token out of text with sed. The steps run through `bin/qargi`; what is shown and applied is as before.
+- `qargi project set` adds "(applies to the next provision ...)" only for the answers a provision reads (the list is `provision_reads` in `lib/project.sh`: repo.url and repo.long_lived, teams, roles, profiles, budget_cents, memory stores, models.provider, lead model, effort and push, packs, cloud). Every other answer (`runs.owned_refs`, `lead.context_window`, `release.*`, `review.*`, `deployment`, `test_command`, ...) prints only what was set. `deployment` no longer keeps the note for a value that names a cloud deployment: no provision reads it.
 
 ## [0.2.5] - 2026-11-06
 
