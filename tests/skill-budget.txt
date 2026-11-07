@@ -5,8 +5,8 @@ agents/member.body.md 118
 agents/member.md 183
 contract/contract.md 730 # raised: one sentence, a refused write tool is replaced by the shell for OUT files (a member's report never reached OUT), for review
 contract/output-format.md 276
-lib/providers/claude-code.json:notes 301 # raised: the member-out topic, the runtime refuses a subagent's Write of a report file, for review
-lib/providers/claude-code/local-run.md 49 # raised: one line, a refused Write of a report file is done with Bash, for review
+lib/providers/claude-code.json:notes 303 # raised: the member-out topic, the runtime refuses a subagent's Write of a report file; two words more mark it observed, not verified; for review
+lib/providers/claude-code/local-run.md 52 # raised: one line, a refused Write of a report file is done with Bash; three words more mark it observed, not verified; for review
 lib/providers/claude-platform.json:notes 2
 lib/providers/claude-platform/cloud-run.md 61
 packs/skills/docs-site-member/SKILL.md 163 # raised: two rules: no line starts with <, and run the render check before reporting; for the lead's review
