@@ -6,6 +6,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `qargi branch prune` now treats an `agent/*` branch merged (`--no-ff`) into a branch of `repo.detached` or `repo.long_lived` as merged, so a task branch
+  merged into a detached branch such as `gh-pages` is pruned like one merged into develop. Unmerged branches, branches at a tip, protected branches and
+  branches held by a worktree qargi did not make are kept as before.
+
 ## [0.2.4] - 2026-11-06
 
 ### Added
