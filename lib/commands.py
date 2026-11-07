@@ -159,7 +159,7 @@ COMMANDS = {
                               "(name as in .gitmodules, path: checked out in each member clone by qargi local prepare). env plan lists them, env apply installs them and env check reports one that is "
                               "missing or wrong; a member's guard refuses setting them (and a whole role), as it refuses release.*, test_command, env.* and site.*. "
                               "git.author ('Name <email>') is the author qargi review apply gives the commits it applies, and review.keep_author true keeps the member's author instead; "
-                              "review.scrub (a command line or a list of words) is run by qargi review check on the applied series with the range in QARGI_SCRUB_BASE and QARGI_SCRUB_TIP, and review.trailer_policy reject fails a commit with a "
+                              "review.scrub (a command line or a list of words) is run by qargi review check (and by qargi review apply, unless a passing check recorded the same series) on the applied series with the range in QARGI_SCRUB_BASE and QARGI_SCRUB_TIP, and review.trailer_policy reject fails a commit with a "
                               "Co-Authored-By or Generated-with trailer (none is the default); a member's guard refuses setting them. "
                               "runs.owned_refs is a list of glob patterns for the refs a runtime or harness creates in the repository, which local verify and clean accept and name (see local verify); "
                               "the guard refuses it to a member too."),
@@ -1135,7 +1135,11 @@ COMMANDS = {
                                 "branch that exists; a patch that does not apply removes the worktree and the branch and names the patch. On success it prints "
                                 "the commits and the next commands, and records branch and tip in RUN_DIR/applied and the branch in the run's ref snapshot, so "
                                 "local clean still accepts the run. --from-saved ID applies from <state>/runs/ID instead (refused while the run directory exists): review check "
-                                "of the saved OUT, local verify --saved ID, the registry's repository, slug and base, and the record in the saved copy, so it is applied once."),
+                                "of the saved OUT, local verify --saved ID, the registry's repository, slug and base, and the record in the saved copy, so it is applied once. "
+                                "When the run's project declared a take-in scrub (review.scrub, review.trailer_policy), apply runs it too, before anything is made, unless a passing review check recorded the same "
+                                "series (the patches in order and the declared scrub): then it prints the one line scrub: skipped (review check passed it for this series). A series changed after the check is scrubbed "
+                                "again; a failing scrub (scrub: FAIL and the first lines of the output) refuses the apply and nothing is applied. The record is the lead's, in its state directory. "
+                                "A member's apply does not run the scrub (scrub: not run), as its check does not."),
                           examples=["qargi review apply ./run", "qargi feature merge search agent/fix-names", "qargi local clean ./run"]),
         },
     },
