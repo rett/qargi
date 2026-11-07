@@ -576,7 +576,9 @@ out=$(./bin/qargi local list --scratch "$T/rb" 2>&1); rcl=$?
 
 # clean --orphans: the qargi-run.* directories of the temporary parent that no registry names. A fake parent (QARGI_RUN_TMP), never /dev/shm: the real one is only
 # listed before and after, to show it was not touched.
-SHM0=$(ls -d /dev/shm/qargi-run.* 2>/dev/null | sort | sha256sum)
+# hermetic: allow tmp (the real parent of the run directories: only listed, never written or removed)
+real_runs() { ls -d /dev/shm/qargi-run.* 2>/dev/null | sort | sha256sum; }
+SHM0=$(real_runs)
 OS=$T/shm-o; mkdir -p "$OS" "$T/os-scr"
 mkorph() { # NAME DAYS_OLD -> $OS/qargi-run.NAME, with a file in it, both that old
   mkdir -p "$OS/qargi-run.$1" && echo x > "$OS/qargi-run.$1/f" && touch -d "$2 days ago" "$OS/qargi-run.$1/f" "$OS/qargi-run.$1"
@@ -623,6 +625,6 @@ for bad in "--orphans --scratch $T/os-scr" "--orphans $OL" "--orphans --discard"
   out=$(QARGI_RUN_TMP=$OS ./bin/qargi local clean $bad 2>&1); rcs=$?
   [ $rcs = 2 ] && [ -d "$OLT" ] && ok "clean $bad is a usage error" || no "clean $bad (rc=$rcs): $out"
 done
-[ "$SHM0" = "$(ls -d /dev/shm/qargi-run.* 2>/dev/null | sort | sha256sum)" ] && ok "the tests listed and removed only in the fake parent: /dev/shm is as it was" || no "/dev/shm changed"
+[ "$SHM0" = "$(real_runs)" ] && ok "the tests listed and removed only in the fake parent: the real parent is as it was" || no "the real parent changed"
 ./bin/qargi local clean "$OL" --discard >/dev/null 2>&1; rm -rf "$OS"
 exit $fail
