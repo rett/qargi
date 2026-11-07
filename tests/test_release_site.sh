@@ -56,7 +56,9 @@ cd "$T" || exit 1   # the lead works outside any run directory
 
 # --- release finish ends with the next step, from the methodology's after_release data
 tok() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
-$REL verify 0.6.0 >/dev/null 2>&1 && $REL start 0.6.0 --date 2026-04-01 >/dev/null 2>&1 && $REL verify 0.6.0 >/dev/null 2>&1 || no "release 0.6.0 could not start: $($REL status 0.6.0 2>&1)"
+# rstart ARGS: release start through its plan (a token) and the approval; a refusal of the plan is printed and fails
+rstart() { local p t; p=$($REL start "$@" 2>&1); t=$(tok <<<"$p"); [ -n "$t" ] || { printf '%s\n' "$p"; return 1; }; $REL start "$@" --plan "$t" --approved go; }
+$REL verify 0.6.0 >/dev/null 2>&1 && rstart 0.6.0 --date 2026-04-01 >/dev/null 2>&1 && $REL verify 0.6.0 >/dev/null 2>&1 || no "release 0.6.0 could not start: $($REL status 0.6.0 2>&1)"
 t=$($REL finish 0.6.0 2>&1 | tok)
 out=$($REL finish 0.6.0 --plan "$t" --approved go 2>&1); rc=$?
 [ $rc = 0 ] && git -C "$R" rev-parse -q --verify refs/tags/0.6.0 >/dev/null && [ "$(tail -n 1 <<<"$out")" = "next: qargi release site 0.6.0" ] \

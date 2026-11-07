@@ -32,7 +32,9 @@ refusal changes nothing.
    current (when it is not, it says which merge or sync moved the head). `verify` warns when another suite may be running, and a
    failed one ends with the failing tests and the path of the log.
 4. `qargi release start VERSION` cuts `release/VERSION` from develop (only from a head that passed the
-   suite) and bumps `VERSION` and the changelog date. `qargi release push VERSION` opens the pull
+   suite) and bumps `VERSION` and the changelog date. Like the pushes and merges it prints a plan (the branch, the base, the files
+   the bump commit changes) and a token first, and applies with `--plan TOKEN --approved "<your words>"`, which also writes the
+   audit log line. `qargi release push VERSION` opens the pull
    request into master so CI runs on the commit to be released; `qargi release finish VERSION`
    merges into master, tags, merges back into develop and pushes. `release status` and `release
    verify` work as for features. `release status` shows the checks of the pull request and, after the finish, what
@@ -66,7 +68,7 @@ refusal changes nothing.
    `release push` and `release finish --hotfix` (into the open release branch instead of develop,
    if there is one).
 
-Merging into develop or master, pushing and tagging each print a plan and a token first; apply it
+Merging into develop or master, starting a release, pushing and tagging each print a plan and a token first; apply it
 with `--plan TOKEN --approved "<your words>"`. A merge that conflicts changes nothing and exits 3,
 naming a worktree with the merge in progress: resolve and commit there, then run the same command
 with `--resolved`.

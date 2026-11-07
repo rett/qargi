@@ -19,6 +19,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   stderr). Input that decodes but is not JSON is still no call to judge and is allowed, as before.
 - `qargi lead grant` and `qargi lead revoke` read each step's plan text and token from the step's `--json` output (the `plan` and `token` fields) and no longer parse the token out of text with sed. The steps run through `bin/qargi`; what is shown and applied is as before.
 - `qargi project set` adds "(applies to the next provision ...)" only for the answers a provision reads (the list is `provision_reads` in `lib/project.sh`: repo.url and repo.long_lived, teams, roles, profiles, budget_cents, memory stores, models.provider, lead model, effort and push, packs, cloud). Every other answer (`runs.owned_refs`, `lead.context_window`, `release.*`, `review.*`, `deployment`, `test_command`, ...) prints only what was set. `deployment` no longer keeps the note for a value that names a cloud deployment: no provision reads it.
+- `qargi release start VERSION [--hotfix]` is behind a plan token like `release push`, `finish`, `fix`, `publish` and `step`. Without `--approved` it changes nothing:
+  it prints the plan (the branch, the base it is cut from and that base's head, the one commit that bumps the version, the files the commit changes, the date)
+  and a token. `--plan TOKEN --approved "..."` creates the branch and writes the `release:start` line of the audit log, which `start` never wrote. The checks
+  (the suite verdict, the preflight, the changelog and man page) run for the plan too, so a refusal comes before a token does; the token covers the head of
+  the base and the date. The apply line it prints repeats `--date` and `--allow-empty-notes`. The tests, the skill, the manual page and the docs that start a release pass a plan.
+- Two `qargi release step` calls at the same moment (or a step and `release finish`) no longer lose a step: the after-steps record was written through one
+  fixed temporary file with no lock, so the slower call overwrote the other. The record is now read, changed and replaced under a lock (the one the registry of
+  local runs uses) through a temporary file of its own name; a step another call marked done in the meantime is refused unless `--again`.
 
 ## [0.2.5] - 2026-11-06
 

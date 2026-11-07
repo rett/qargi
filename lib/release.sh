@@ -9,6 +9,8 @@
 #
 #   release.sh start VERSION [--hotfix]     branch from develop (master for a hotfix); the first commit bumps VERSION and dates
 #                                           the changelog and man page. A release starts only from a develop whose head passed `verify`.
+#                                           Without --plan and --approved it prints the plan (branch, base, files bumped) and a token; with them it applies
+#                                           and writes a line of the audit log.
 #                                           Preflight: a man page's .TH date and version are set too, and a CHANGELOG.md needs
 #                                           content under '## [Unreleased]' (--allow-empty-notes waives that); otherwise it refuses.
 #                                           A release (not a hotfix) then lists the features merged into develop since the previous tag.
@@ -289,12 +291,24 @@ after_steps_new() {
   [ -n "$st" ] || st='[]'
   echo "$st"
 }
+# after_rec_write JQ-ARGS...: the output of jq over those arguments becomes AFTERREC, under the record's lock (the flock pattern of reg_mark) and
+# through a temporary file of its own name, so two `step` calls (or a `step` and `finish`) never share a temporary file, and the one that comes
+# second reads what the first wrote (the file named among the arguments is read inside the lock). Fails when jq does.
+after_rec_write() {
+  mkdir -p "$(dirname "$AFTERREC")"
+  (
+    local tmp
+    flock 9 || exit 1
+    tmp=$(mktemp "$AFTERREC.XXXXXX") || exit 1
+    if jq "$@" > "$tmp" && mv "$tmp" "$AFTERREC"; then exit 0; fi
+    rm -f "$tmp"; exit 1
+  ) 9> "$AFTERREC.lock"
+}
 after_steps_record() {
   local st
   st=$(after_steps_new)
   [ "$(jq 'length' <<<"$st")" -gt 0 ] || return 0
-  mkdir -p "$DA_STATE/release"
-  jq -n --argjson s "$st" --arg p "$PROJ" --arg v "$VER" --arg t "$(now)" '{schema:2, project:$p, version:$v, at:$t, steps:$s}' > "$AFTERREC.tmp" && mv "$AFTERREC.tmp" "$AFTERREC"
+  after_rec_write -n --argjson s "$st" --arg p "$PROJ" --arg v "$VER" --arg t "$(now)" '{schema:2, project:$p, version:$v, at:$t, steps:$s}' || echo "note: could not write $AFTERREC" >&2
   jq -r "$AFTER_LINES" <<<"$st" | sed 's/^/after the release: /'
 }
 # after_steps_list: the steps for `release status`, one line each: those `finish` recorded in AFTERREC, with what `step` marked; when there is no (readable) record, the answer as it is now
@@ -516,7 +530,7 @@ case $verb in
       v=$(verified "$BASE")
       [ "$v" = "$(sha_of develop) pass" ] || die "the whole suite has no passing run at the head of develop (qargi release verify $VER); run it at the checkpoint, then start"
     fi
-    [ -n "$DATE" ] || DATE=$(date +%F)
+    date_given=$DATE; [ -n "$DATE" ] || DATE=$(date +%F)
     printf '%s' "$DATE" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' || die "--date YYYY-MM-DD"
     b0=$(sha_of "$BASE")
     worktree "$BASE"
@@ -539,8 +553,22 @@ case $verb in
       python3 -I "$RL" changelog "$WT/CHANGELOG.md" "$VER" "$DATE" "$ALLOW_EMPTY" "$af" || exit 1
       git -C "$WT" add CHANGELOG.md
     fi
+    # the plan: the branch, where it is cut from, the bump commit and the files it changes (all made in the temporary worktree above, so a refusal comes
+    # before a token does); the token covers them, the date and the head of the base
+    bumped=$(git -C "$WT" diff --cached --name-only)
+    tok=$({ printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$KIND" "$BR" "$BASE" "$b0" "$VER" "$DATE"; printf '%s\n' "$bumped"; } | plan_token)
+    echo "start $KIND $VER of $PROJ: create $BR from $BASE (at ${b0:0:7}), as one commit \"Bumped version number to $VER\" on top of it; nothing is pushed"
+    bl='none (an empty commit)'; [ -z "$bumped" ] || bl=$(printf '%s' "$bumped" | paste -sd, - | sed 's/,/, /g')
+    echo "files the commit changes: $bl"
+    echo "the version becomes $VER${oldver:+ (was $oldver)} and the changelog (and a man page) is dated $DATE"
+    if [ -z "$APPROVED" ]; then
+      echo "plan token: $tok   (apply with: qargi release start $VER${HOTFIX:+ --hotfix}${date_given:+ --date $date_given}${ALLOW_EMPTY:+ --allow-empty-notes} --plan $tok --approved \"...\")"
+      exit 0
+    fi
+    need_plan "$tok"
     wcommit --allow-empty -m "Bumped version number to $VER"
     g update-ref "refs/heads/$BR" "$(git -C "$WT" rev-parse HEAD)" "" || die "could not create $BR"
+    audit_log "release:start" "$PROJ $BR"
     journal_ref "$REPO" "refs/heads/$BR" "" "$(sha_of "$BR")" "$KIND:start"
     echo "created $BR from $BASE ($(g rev-parse --short "$BR")): the version is $VER and the changelog (and a man page) is dated $DATE"
     if [ "$KIND" = release ]; then   # what the release contains: the features merged into develop since the previous tag (--no-ff merges "Merge branch 'feature/...'")
@@ -788,8 +816,10 @@ case $verb in
     hint=$(jq -r '.evidence_hint' <<<"$cur")
     if [ -n "$hint" ] && [ -z "$EVIDENCE_SET" ]; then die "the step '$STEPNAME' needs evidence ($hint): qargi release step $VER '$STEPNAME' --evidence \"...\""; fi
     tm=$(now)
-    jq --arg n "$STEPNAME" --arg t "$tm" --arg e "$EVIDENCE" '(.steps[] | select(.name == $n)) |= (.state = "done" | .done_at = $t | .evidence = $e)' "$AFTERREC" > "$AFTERREC.tmp" \
-      && mv "$AFTERREC.tmp" "$AFTERREC" || die "could not write $AFTERREC"
+    # read, changed and written back under the lock: a step marked at the same moment is kept; the check that it is not done yet is made again inside
+    after_rec_write --arg n "$STEPNAME" --arg t "$tm" --arg e "$EVIDENCE" --arg a "$AGAIN" \
+      'if $a == "" and any(.steps[]; .name == $n and .state == "done") then error("the step was marked done meanwhile (--again records it again)") else (.steps[] | select(.name == $n)) |= (.state = "done" | .done_at = $t | .evidence = $e) end' "$AFTERREC" \
+      || die "could not write $AFTERREC"
     audit_log "release:step" "$PROJ $VER $STEPNAME"
     echo "marked done: $STEPNAME (release $VER, $tm${EVIDENCE:+, evidence: $EVIDENCE}); only the record changed, the command was not run"
     left=$(jq -r '[.steps[] | select(.state != "done")] | length' "$AFTERREC")

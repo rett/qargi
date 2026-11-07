@@ -161,7 +161,7 @@ B lead compact-check --project beta --advise 2>&1 | grep -q "compact advised (50
 # a release in progress, and its finish
 jq 'del(.test_command)' "$T/c/projects/beta.json" > "$T/c/p.tmp" && jq '.test_command = "true"' "$T/c/p.tmp" > "$T/c/projects/beta.json"
 git -C "$RB" checkout -q parked 2>/dev/null; rm -f "$S/ref-journal.jsonl"; rm -rf "$S/handoff"
-B release verify 0.2.0 --project beta >/dev/null 2>&1; B release start 0.2.0 --project beta --date 2026-01-02 >/dev/null 2>&1
+B release verify 0.2.0 --project beta >/dev/null 2>&1; tk=$(B release start 0.2.0 --project beta --date 2026-01-02 | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'); B release start 0.2.0 --project beta --date 2026-01-02 --plan "$tk" --approved go >/dev/null 2>&1
 out=$(B lead compact-check --project beta 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "a release is in progress (release/0.2.0)" <<<"$out" && ok "compact-check: an open release branch is not safe" || no "release open: rc=$rc $out"
 B release verify 0.2.0 --project beta >/dev/null 2>&1
