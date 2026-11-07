@@ -6,6 +6,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- The answer `release.version_files` (a list of paths relative to the repository) names other files that carry the version. `qargi release start`, once it has
+  bumped VERSION, warns of the listed files that do not contain it (as a whole version: `0.2.1` is not found in `0.2.10`) and says to bump them on the release
+  branch; `release status` and `release verify` show the same check on the branch. A warning, not a refusal; without the answer nothing is checked.
+- `qargi release push` checks the answer `release.notes_file` (the notes file `release publish` already uses): its plan warns of the items of the version's
+  `CHANGELOG.md` section that the file does not mention. An item is mentioned when its leading `` `backticked term` ``, else its first three words, occurs in the
+  file, ignoring case and spacing. A warning only: the plan keeps its token. Without the answer nothing is checked.
+
 ## [0.2.4] - 2026-11-06
 
 ### Added
