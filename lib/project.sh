@@ -234,6 +234,8 @@ efforts = {"low", "medium", "high", "xhigh", "max"}
 for name, cfg in (r.items() if isinstance(r, dict) else []):
     p = "roles.%s" % name
     need(name in roles or name in base_names, "%s: not a known role (%s) or base (%s)" % (p, ", ".join(roles), ", ".join(base_names)))
+    if not isinstance(cfg, dict):   # roles.NAME = "x" or null: nothing below can be read from it
+        bad.append("%s: an object" % p); continue
     need(isinstance(cfg.get("base"), str) and cfg["base"], "%s.base: base branch, or @dispatcher for the dispatching session's branch" % p)
     push = cfg.get("push", {})
     mode = push.get("mode")

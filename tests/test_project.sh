@@ -171,6 +171,12 @@ chkm "roles: none enabled"          '.roles={}' 'roles: enable at least one role
 chkm "roles: key missing"           'del(.roles)' 'roles: enable at least one role'
 jq '.roles={}' <<<"$base" > "$T/a.json"
 if $DA project validate "$T/a.json" 2>&1 | grep -q 'Traceback\|NameError'; then echo "FAIL roles: none crashes"; fail=1; else echo "ok   roles: none does not crash"; fi
+# a role whose value is no object is one finding, not a crash, and the other roles are still checked
+for v in '"x"' null 3 '[]'; do
+  jq --argjson v "$v" '.roles.build=$v | .roles.write.effort="nope"' <<<"$base" > "$T/a.json"
+  out=$($DA project validate "$T/a.json" 2>&1); rc=$?
+  if [ "$rc" != 0 ] && grep -qF 'roles.build: an object' <<<"$out" && grep -qF 'roles.write.effort: ' <<<"$out" && ! grep -q 'Traceback' <<<"$out"; then echo "ok   roles: build = $v is a finding, the other roles are still checked"; else echo "FAIL roles: build = $v (exit $rc): $out"; fail=1; fi
+done
 chkm "roles: first role, bad tools_off" '.roles.build.tools_off=["nope"]' 'roles.build.tools_off: '
 chkm "roles: first role, bad skills"    '.roles.build.skills=["nope"]' 'roles.build.skills: '
 chkm "roles: last role, bad tools_off"  '.roles.write.tools_off=["nope"]' 'roles.write.tools_off: '
