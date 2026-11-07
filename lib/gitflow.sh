@@ -217,10 +217,6 @@ detached_mix() {
     done
   fi
 }
-run_clean() { # DIR COMMAND...: runs a command in DIR without the project's cloud binding: a suite or a release check must not see it
-  local dir=$1; shift
-  (cd "$dir" && env -u ANTHROPIC_PROFILE -u QARGI_CLOUD_WORKSPACE -u QARGI_CLOUD_PROJECT "$@")
-}
 run_suite() { run_clean "$WT" bash -c "$TESTCMD"; }   # the project's test command in the worktree WT
 # run_suite_logged NAME -> run_suite with its output (both streams, on stdout) shown as it comes and kept in
 # $DA_STATE/suite-logs/PROJECT.NAME.log (SUITE_LOG; mode 600; the last run of that name). The status is the suite's.
