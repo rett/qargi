@@ -4,19 +4,13 @@
  "goal": "0.2.6 small fixes from the backlog review",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "rett@arc",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-07T06:30:35Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-07T17:49:17Z",
- "finished_at": null,
+ "finished_at": "2026-11-07T17:49:30Z",
  "updated_by": "rett@arc",
- "rev": 20,
- "updated_at": "2026-11-07T17:49:17Z",
+ "rev": 21,
+ "updated_at": "2026-11-07T17:49:30Z",
  "feature": "rel026",
  "project": "qargi"
 }
