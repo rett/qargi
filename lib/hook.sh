@@ -11,8 +11,8 @@
 # terminal it reads the hook's JSON (at most 64 KiB), takes `session_id`, and, if $CLAUDE_ENV_FILE is set, the id matches
 # ^[A-Za-z0-9._-]{1,128}$ and QARGI_LEAD is not already set, appends the one line `export QARGI_LEAD='<id>'` to that file
 # (append only, created if missing), so later Bash calls of the session know their lead identity; and (2) adds a block
-# `Open features of PROJECT (qargi marshal; ...)` to the context from `qargi marshal status --all --brief --no-fetch` (the cache of the shared refs only, no network; 5 s timeout,
-# at most 4000 characters, omitted when the verb fails or is absent). Invalid input never blocks the session.
+# `Open features of PROJECT (qargi marshal; ...)` to the context from `qargi marshal status --all --brief --no-fetch` (the cache of the shared refs only, no network; 5 s timeout, or QARGI_HOOK_MARSHAL_SECS when
+# that is a positive whole number of seconds (at most four digits), at most 4000 characters, omitted when the verb fails or is absent). Invalid input never blocks the session.
 # Opt-in note: $CLAUDE_ENV_FILE support is assumed from Claude Code's hook documentation; it was not verified against a
 # real session when this was written.
 # The run-event handlers (subagent-start|subagent-stop|tool-use|tool-failure|notification|stop-failure|pre-compact) read the
@@ -54,7 +54,9 @@ fi
 # the open features of the project, from the marshal (omitted when the verb is absent or fails)
 MBLOCK=''
 mroot=$(dirname "$(dirname "$(readlink -f "$0")")")
-mout=$(timeout 5 "$mroot/bin/qargi" marshal status --all --brief --no-fetch --project "$PRJ" 2>/dev/null </dev/null) || mout=''
+msecs=5   # the read budget; QARGI_HOOK_MARSHAL_SECS replaces it (a test on a loaded machine; the hook itself stays bounded)
+[[ ${QARGI_HOOK_MARSHAL_SECS:-} =~ ^[1-9][0-9]{0,3}$ ]] && msecs=$QARGI_HOOK_MARSHAL_SECS
+mout=$(timeout "$msecs" "$mroot/bin/qargi" marshal status --all --brief --no-fetch --project "$PRJ" 2>/dev/null </dev/null) || mout=''
 mout=$(printf '%s' "$mout" | tr -d '\000-\010\013-\037')
 if [ -n "$mout" ] && ! printf '%s' "$mout" | head -1 | grep -qiE 'unknown|not implemented'; then
   MBLOCK=$(MOUT=$mout python3 -I -c '

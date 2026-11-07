@@ -1583,6 +1583,8 @@ ENVIRONMENT = [
     ("QARGI_ROLES", "the list of work roles (default: build review write test)"),
     ("QARGI_DRY_RUN", "print a session request, with secrets masked, instead of sending it; qargi env apply stops before it runs the bootstrap"),
     ("QARGI_ENV_TIMEOUT", "seconds the dry run of qargi env plan and apply may take (default 120)"),
+    ("QARGI_HOOK_MARSHAL_SECS", "seconds the session-start hook gives the read of the open features (qargi marshal status --all --brief --no-fetch) before it leaves the block out "
+                                "(default 5; a whole number from 1 to 9999, anything else is ignored); a test on a loaded machine raises it"),
     ("NO_COLOR", "turn off bold in the terminal help"),
 ]
 

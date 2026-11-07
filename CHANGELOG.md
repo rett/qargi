@@ -38,6 +38,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a heredoc.
 
 ### Fixed
+- The session-start hook's read of the open features (`qargi marshal status --all --brief --no-fetch`, 5 s) takes `QARGI_HOOK_MARSHAL_SECS`, a whole number of seconds from 1
+  to 9999 (anything else is ignored; the default stays 5 and the hook stays bounded). `tests/test_marshal_refs.sh` failed once in a parallel suite run because that call,
+  which takes 1.3 s alone on its hostile-records fixture, took 4 to 6 s under load: the read was cut off, the marshal block was empty, and with no tier files so was the
+  context. The test now gives the hook 60 s and, when the hook's output is wrong, prints how long the status call took.
 - The guard refuses input it cannot decode. A hook input that is not valid UTF-8 was taken for "not JSON" and let through; it is now refused (exit 2, one line on
   stderr). Input that decodes but is not JSON is still no call to judge and is allowed, as before.
 - `qargi lead grant` and `qargi lead revoke` read each step's plan text and token from the step's `--json` output (the `plan` and `token` fields) and no longer parse the token out of text with sed. The steps run through `bin/qargi`; what is shown and applied is as before.
