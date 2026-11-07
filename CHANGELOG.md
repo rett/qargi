@@ -6,6 +6,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- A declared take-in scrub: the project answer `review.scrub` (a command line or a list of words, as `release.test_command`) is run by `qargi review check` in a throw-away
+  checkout of the applied series, with the range in `QARGI_SCRUB_BASE` and `QARGI_SCRUB_TIP`, and `review.trailer_policy` (`none` by default, or `reject`) fails any commit
+  with a `Co-Authored-By` or `Generated with` style trailer. The check prints one line, `scrub: ok` or `scrub: FAIL` and the first lines of the output, leaves no
+  branch, tag or worktree entry in the repository, and a failing scrub fails the check. Both answers are the run's own copy taken at `local prepare` and a member's guard
+  refuses setting them; with neither set nothing changes. A member's own `review check` (the member mark set) does not run it and says so; the lead's check does.
+
 ## [0.2.4] - 2026-11-06
 
 ### Added
