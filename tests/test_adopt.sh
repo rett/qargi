@@ -161,8 +161,9 @@ git -C "$K" merge-base master develop >/dev/null 2>&1 && no "the snapshot master
 attach kappa "$K"
 st0=$(state "$K")
 out=$($DA project adopt kappa 2>&1); tok=$(tokof "$out")
-grep -q "^    - history: master and develop share no history (no merge base) (adopt changes no existing branch, so it does not join them" <<<"$out" && grep -q "qargi release push joins the history of master" <<<"$out" \
-  && ok "K: the plan names the missing merge base as left for the owner, and what joins it" || no "K plan: $out"
+grep -q "^    - history: master and develop share no history (no merge base) (adopt changes no existing branch, so it does not join them" <<<"$out" && grep -q "Next step: the first release joins them (qargi release start VERSION, then qargi release push VERSION, whose plan joins the history of master" <<<"$out" \
+  && grep -q "git switch develop && git merge -s ours --allow-unrelated-histories master (keeps the tree of develop)" <<<"$out" \
+  && ok "K: the plan names the missing merge base as left for the owner, and the next step (the release verbs, or the git merge)" || no "K plan: $out"
 [ "$st0" = "$(state "$K")" ] && ok "K: showing the plan changes nothing" || no "K: the plan changed the repository"
 $DA project adopt kappa --plan "$tok" --approved go >/dev/null 2>&1 || no "K: apply"
 git -C "$K" merge-base master develop >/dev/null 2>&1 && no "K: apply joined the histories" || ok "K: applying does not join the histories or move master and develop"

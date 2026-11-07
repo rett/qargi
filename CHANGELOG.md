@@ -13,6 +13,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   just before it goes, and logs the removal. The existing `--stale DAYS --scratch DIR` (finished runs) is unchanged.
 
 ### Changed
+- `qargi project adopt` names the next step when two long-lived branches share no history (a master made as a snapshot, say), not only the problem: the first release
+  joins them (`qargi release start VERSION`, then `release push VERSION`, whose plan joins the history of the first branch into the release branch, then `release finish
+  VERSION`), or one merge by hand (`git switch develop && git merge -s ours --allow-unrelated-histories master`, which keeps develop's tree). Adopt still changes no branch.
 - `qargi release start --hotfix` (its plan, and `release status`) and the refusal of `release finish --hotfix` say what to do when develop shares no history with master
   and no release is open: the hotfix could not be merged into develop. The line names the way out, the next release (`qargi release start VERSION`, `push` and
   `finish`: the push joins the history of master) or one merge on develop by hand (`git switch develop && git merge -s ours --allow-unrelated-histories master`), then
