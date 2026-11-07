@@ -154,7 +154,9 @@ COMMANDS = {
                               "kind binary (name the file name, version, url of the file itself, sha256 of it: downloaded to ~/.local/bin and kept only when the hash matches) and kind submodule "
                               "(name as in .gitmodules, path: checked out in each member clone by qargi local prepare). env plan lists them, env apply installs them and env check reports one that is "
                               "missing or wrong; a member's guard refuses setting them (and a whole role), as it refuses release.*, test_command, env.* and site.*. "
-                              "git.author ('Name <email>') is the author qargi review apply gives the commits it applies, and review.keep_author true keeps the member's author instead; a member's guard refuses setting them. "
+                              "git.author ('Name <email>') is the author qargi review apply gives the commits it applies, and review.keep_author true keeps the member's author instead; "
+                              "review.scrub (a command line or a list of words) is run by qargi review check on the applied series with the range in QARGI_SCRUB_BASE and QARGI_SCRUB_TIP, and review.trailer_policy reject fails a commit with a "
+                              "Co-Authored-By or Generated-with trailer (none is the default); a member's guard refuses setting them. "
                               "runs.owned_refs is a list of glob patterns for the refs a runtime or harness creates in the repository, which local verify and clean accept and name (see local verify); "
                               "the guard refuses it to a member too."),
                         examples=["qargi project set acme roles.write.effort high", "qargi project set acme packs.none true", "qargi project set acme git.author 'Example Author <author@example.com>'",
@@ -1088,7 +1090,12 @@ COMMANDS = {
                                 "Given a run directory instead (no patches or manifest.json in it, an out directory in it), it checks RUN_DIR/out and notes that it did. "
                                 "Refuses a monolithic patch, a commit without a message body and a manifest that does not match the patches. "
                                 "A review run passes with a report.md (or PREFIXreport.md, as in a team run) that has a Findings section instead of patches. "
-                                "Prints OK, WARN or FAIL lines and a summary; exit 1 when any line is FAIL (warnings alone exit 0).")),
+                                "Prints OK, WARN or FAIL lines and a summary; exit 1 when any line is FAIL (warnings alone exit 0). "
+                                "When the run is in the lead's registry and the project declared a take-in scrub, a series that passes is then scrubbed: the answer review.scrub (a command line or a list of words) "
+                                "runs in a throw-away checkout of the applied series (the run's base commit, then every patch with git am), with the range in QARGI_SCRUB_BASE and QARGI_SCRUB_TIP, and the answer "
+                                "review.trailer_policy reject fails any commit whose message has a Co-Authored-By or Generated-with trailer (none, the default, checks nothing). One more line says scrub: ok, or "
+                                "scrub: FAIL and the first lines of the output (scrub: not run when the series check failed), and a failing scrub exits 1. The checkout is a shared clone, so no branch, tag or worktree entry "
+                                "is made in the repository. Both answers are the run's own copy taken by local prepare; with neither set nothing changes. A member's guard refuses setting them, and a member's own check (the member mark that local run sets is in its environment) does not run the scrub: it says scrub: not run (a member's check; the lead's check runs it) and does not fail.")),
             "apply": verb("Apply a collected, checked run to a task branch of the repository", [("RUN_DIR", "dir", True)],
                           [PROJECT_OPT, opt("--branch", "the branch to create (default agent/<slug> of the run)", "BRANCH", "branch"),
                            opt("--from-saved", "apply the copy local verify saved of a passed run whose directory is gone (ID: qargi.XXXXXX), with the same checks", "ID")],
