@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- `qargi lead grant` and `qargi lead revoke` read each step's plan text and token from the step's `--json` output (the `plan` and `token` fields) and no longer parse the token out of text with sed. The steps run through `bin/qargi`; what is shown and applied is as before.
+
 ## [0.2.5] - 2026-11-06
 
 ### Added
