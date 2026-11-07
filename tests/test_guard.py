@@ -70,15 +70,22 @@ class _Judge:
                 return "exception %s: %s" % (type(e).__name__, e)
         return self.run(go)
 
+    @staticmethod
+    def stdin_of(payload):
+        """The standard input of a hook process: a text stream over bytes (the guard reads the bytes). A string is encoded as is, bytes are kept, anything else is JSON."""
+        if not isinstance(payload, (str, bytes)):
+            payload = json.dumps(payload)
+        return io.TextIOWrapper(io.BytesIO(payload.encode() if isinstance(payload, str) else payload), encoding="utf-8")
+
     def main(self, args, payload, env=None):
-        """main() of guard.py as a hook process runs it: args is the rest of the hook command line, payload the standard input (a string as is, anything
+        """main() of guard.py as a hook process runs it: args is the rest of the hook command line, payload the standard input (a string as is, bytes as is, anything
         else as JSON), env the process environment (this one when None); both streams are captured. The caches are cleared first, as a process starts
         with none, and an exception main() does not catch ends in status 1 with the traceback on stderr, as the interpreter would end."""
         def go():
             self.m.clear_caches()
             out, err = io.StringIO(), io.StringIO()
             saved = (sys.argv, sys.stdin, dict(os.environ))
-            sys.argv, sys.stdin = ["guard.py", *args], io.StringIO(payload if isinstance(payload, str) else json.dumps(payload))
+            sys.argv, sys.stdin = ["guard.py", *args], self.stdin_of(payload)
             if env is not None:
                 environ(env)
             try:
@@ -1758,7 +1765,7 @@ class FailsClosed(HookCase):
         if patch:
             setattr(mod, patch[0], patch[1])
         err, old = io.StringIO(), sys.stdin
-        sys.stdin = io.StringIO(payload)
+        sys.stdin = io.TextIOWrapper(io.BytesIO(payload.encode()), encoding="utf-8")
         try:
             with contextlib.redirect_stderr(err):
                 rc = mod.main()
