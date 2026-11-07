@@ -39,6 +39,14 @@ refusal changes nothing.
    from the tag without touching your checkout: `qargi release assets VERSION` runs the project's `release.assets_command` in a clean
    worktree of the tag, `release sign` signs there, and `release publish` attaches `release.assets` (globs), `--asset FILE` and
    `--asset-dir DIR` from it.
+   Two optional answers add generic checks, both warnings and neither a refusal. `release.version_files` is a list of paths
+   (relative to the repository) of other files that carry the version, a manifest say: `release start` prints a warning naming the
+   ones that do not yet contain the new version (as a whole version, so `0.2.1` is not found in `0.2.10`) and says to bump them on
+   the release branch, and `release status` and `release verify` show the same check there; qargi never bumps them. `release.notes_file`
+   (a file relative to the repository, `{version}` replaced, the notes `release publish` uses): the plan of `release push` warns of
+   the items of the version's changelog section that the file does not mention. An item is a line at the margin that starts with
+   `-`, `*`, `+` or a number and a dot; it is mentioned when its leading `` `backticked term` ``, else its first three words, occurs
+   in the file, ignoring case and spacing. Without the answer nothing is checked.
 5. A hotfix is the same with `--hotfix`: `qargi release start VERSION --hotfix` (from master), then
    `release push` and `release finish --hotfix` (into the open release branch instead of develop,
    if there is one).
