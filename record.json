@@ -1,0 +1,22 @@
+{
+ "purpose": "0.2.6 small fixes from the backlog review",
+ "started": "2026-11-07T06:30:35Z",
+ "goal": "0.2.6 small fixes from the backlog review",
+ "plan": "",
+ "note": "",
+ "status": "active",
+ "lead": {
+  "id": "rett@arc",
+  "user": "rett",
+  "host": "arc",
+  "since": "2026-11-07T06:30:35Z",
+  "worktree": "94b9af1305afafc4"
+ },
+ "renewed_at": "2026-11-07T06:30:35Z",
+ "finished_at": null,
+ "updated_by": "rett@arc",
+ "rev": 1,
+ "updated_at": "2026-11-07T06:30:35Z",
+ "feature": "rel026",
+ "project": "qargi"
+}
