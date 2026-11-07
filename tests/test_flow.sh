@@ -360,12 +360,15 @@ $F start f1 --worktree >/dev/null 2>&1; task8 ta; task8 tb; $F merge f1 agent/ta
 t=$($F finish f1 --keep | tok); $F finish f1 --keep --plan "$t" --approved go >/dev/null 2>&1
 task8 open; git -C "$R8" branch agent/fresh develop; $F start f2 >/dev/null 2>&1; $F start f3 >/dev/null 2>&1; task8 tc feature/f3; $F merge f3 agent/tc >/dev/null 2>&1
 mkdir -p "$R8/.claude/worktrees"; git -C "$R8" worktree add -q "$R8/.claude/worktrees/rt" agent/tb; git -C "$R8" checkout -q parked 2>/dev/null
+task8 site docs; task8 sitex docs; t=$($F merge docs agent/site 2>&1 | tok); $F merge docs agent/site --plan "$t" --approved go >/dev/null 2>&1   # task branches of the detached branch docs, one merged into it
 git -C "$R8" push -q origin feature/f1 agent/ta agent/open
 WT8=$T/s/worktrees/app8/feature/f1
 [ -d "$WT8" ] && ok "(setup) feature f1 is finished and kept, with its worktree; ta, tb are in it; tc is in the open f3" || no "setup: $(git -C "$R8" worktree list)"
 heads8=$(git -C "$R8" for-each-ref --format='%(refname)' refs/heads | sort | md5sum)
 out=$($B prune 2>&1); t=$(tok <<<"$out")
 grep -q "delete local feature/f1 (.*merged into develop); remove its worktree $WT8" <<<"$out" && grep -q "delete local agent/ta (.*merged into develop)" <<<"$out" && grep -q "delete local agent/tc (.*merged into feature/f3)" <<<"$out" && ok "the plan lists merged feature and agent branches and the worktree qargi made" || no "plan: $out"
+grep -q "delete local agent/site (.*merged into docs)" <<<"$out" && ok "an agent branch merged into a detached branch is in the plan" || no "detached merge: $out"
+! grep -q "agent/sitex" <<<"$out" && ok "and one cut from it but not merged is not" || no "unmerged detached task: $out"
 ! grep -E "delete .*(agent/open|agent/fresh|feature/f2|feature/f3|scratch|docs|master|develop)( |\$)" <<<"$out" >/dev/null && ok "and not an unmerged branch, a branch at a tip, an open feature, the parking, detached or long-lived branches" || no "over-pruned: $out"
 grep -q "kept agent/tb: checked out in .*/.claude/worktrees/rt, which qargi did not make" <<<"$out" && ok "a branch held by a worktree qargi did not make is kept, with the reason" || no "kept: $out"
 [ "$(git -C "$R8" for-each-ref --format='%(refname)' refs/heads | sort | md5sum)" = "$heads8" ] && [ -d "$WT8" ] && ok "the plan changes nothing" || no "plan changed something"
@@ -373,7 +376,8 @@ $B prune --plan 000000000000 --approved go >/dev/null 2>&1 && no "a wrong token 
 $B prune --remote --plan "$t" --approved go >/dev/null 2>&1 && no "a token of the local plan applied the remote one" || ok "the token covers --remote"
 out=$($B prune --plan "$t" --approved "prune them" 2>&1); rc=$?
 [ $rc = 0 ] && ! git -C "$R8" rev-parse -q --verify refs/heads/feature/f1 >/dev/null && ! git -C "$R8" rev-parse -q --verify refs/heads/agent/ta >/dev/null && ! git -C "$R8" rev-parse -q --verify refs/heads/agent/tc >/dev/null && [ ! -e "$WT8" ] && ok "with the token it deletes the branches and removes the worktree" || no "apply rc=$rc: $out"
-for b in agent/open agent/fresh agent/tb feature/f2 feature/f3 scratch docs master develop; do git -C "$R8" rev-parse -q --verify "refs/heads/$b" >/dev/null || no "$b was deleted"; done; ok "every other branch is still there"
+! git -C "$R8" rev-parse -q --verify refs/heads/agent/site >/dev/null && ok "and the apply deleted the branch merged into docs" || no "agent/site is still there"
+for b in agent/sitex agent/open agent/fresh agent/tb feature/f2 feature/f3 scratch docs master develop; do git -C "$R8" rev-parse -q --verify "refs/heads/$b" >/dev/null || no "$b was deleted"; done; ok "every other branch is still there"
 [ -n "$(git -C "$O8" for-each-ref refs/heads/agent/ta)" ] && ok "without --remote origin is not touched" || no "origin changed"
 git -C "$R8" worktree remove --force "$R8/.claude/worktrees/rt"
 out=$($B prune --remote 2>&1); t=$(tok <<<"$out")
