@@ -7,6 +7,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- A test (`tests/test_release_snapshot_cycle.sh`) runs a whole release through plan tokens on a repository whose master is an unrelated snapshot commit, with a local bare
+  origin that refuses non-fast-forward pushes: `release start`, `push` (which joins the history of master) and `finish` merge and tag master, merge develop, push
+  by fast-forward only, and leave every earlier commit reachable. It found no bug.
 - `qargi local clean --orphans [--days N]` lists the `qargi-run.XXXXXX` directories under `/dev/shm` (or `QARGI_RUN_TMP`) that no run of the lead's registry names, each
   with its age and whether it is named (a run's own directory, live or gone, is named; a link and a file are named and left). It prints a plan and a token and removes
   nothing; `--plan TOKEN --approved WORDS` removes only the unnamed directories older than N days (default 2, at least 1) with nothing newer inside, each checked again
