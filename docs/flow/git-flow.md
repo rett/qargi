@@ -9,6 +9,12 @@ refusal changes nothing.
    theme; `qargi feature list` shows the open ones and the files two of them both change.
 2. Tasks run on `agent/<slug>` (`/qargi-task ... --base feature/NAME`) with targeted checks only.
    Per task: `qargi review check RUN/out` and `qargi review apply RUN` (puts the series on `agent/<slug>`; the author of each commit is reset to yours: the answer `git.author`, a string `Name <email>`, else the repository's `user.name` and `user.email`; `review.keep_author` `true` keeps the member's; the member's author is recorded in the ref journal and the audit log),
+   A project can declare a take-in scrub that `qargi review check` runs after the series check passes: the answer `review.scrub` names a command (one command line, or a list of words),
+   run with the lead's rights in a throw-away checkout of the applied series (`BASE..tip`, the commit the run's base branch had when it was prepared, then the patches with `git am`), with the range in
+   `QARGI_SCRUB_BASE` and `QARGI_SCRUB_TIP`; `review.trailer_policy` is `none` (default) or `reject`, which fails any commit whose message carries a `Co-Authored-By` or `Generated with` style trailer. The
+   output gains one line, `scrub: ok` or `scrub: FAIL` with the first lines of what the command (or the policy) said, and a failing scrub fails the check (exit 1). Nothing is made in your repository: no
+   branch, tag or worktree entry is left behind. With neither answer set, nothing changes. Both answers are the run's own copy taken at `local prepare`, as `git.author` is, so a change applies to the runs
+   prepared after it; a series that fails the check itself is not scrubbed (the output says so), and a report-only run has no series to scrub. A member's guard refuses `project set` of both, as the command is the lead's. A member's own `review check` (the member mark that `qargi local run` sets is in its environment) does not run the scrub or make the checkout and prints `scrub: not run (a member's check; the lead's check runs it)`; that does not fail the check.
    `qargi feature merge NAME BRANCH`, `qargi local clean RUN`, then `qargi branch prune` to
    delete merged `agent/*` branches. Run `qargi local verify RUN` on every returned run before
    merging any of them; verify and clean accept and name qargi's own moves (`develop moved by qargi feature finish`, a fetch, the

@@ -172,10 +172,18 @@ if isinstance(gt, dict) and gt.get("author") is not None:
     ga = gt["author"]
     need(isinstance(ga, str) and re.fullmatch(r"[^<>]*[^<>\s] <[^<>\s@]+@[^<>\s@]+>", ga) and not any(ord(ch) < 32 or ord(ch) == 127 for ch in ga),
          "git.author: a name and an email as 'Name <email>' (for example Example Author <author@example.com>), no control characters")
+# review.scrub: the command qargi review check runs in a temporary checkout of the applied series (a command line, or a list of words), with the range in
+# QARGI_SCRUB_BASE and QARGI_SCRUB_TIP; review.trailer_policy: none (default) or reject (a commit with a co-author or generated-with trailer fails the check)
 rvw = c.get("review", {})
-need(isinstance(rvw, dict) and set(rvw) <= {"keep_author"}, "review: an object like {keep_author: false} (unknown key: only keep_author)")
+need(isinstance(rvw, dict) and set(rvw) <= {"keep_author", "scrub", "trailer_policy"}, "review: an object like {keep_author: false, scrub: \"scripts/scrub\", trailer_policy: \"none\"} (unknown key: only keep_author, scrub, trailer_policy)")
 if isinstance(rvw, dict):
     need(isinstance(rvw.get("keep_author", False), bool), "review.keep_author: true (qargi review apply keeps the member's author on the applied commits) or false (default: the author is reset to git.author)")
+    if "scrub" in rvw:
+        sc = rvw["scrub"]
+        ctl = lambda t: any(ord(ch) < 32 or ord(ch) == 127 for ch in t)
+        need((isinstance(sc, str) and sc.strip() and not ctl(sc)) or (isinstance(sc, list) and sc and all(isinstance(x, str) and x and "\x00" not in x for x in sc)),
+             "review.scrub: the command qargi review check runs on the applied series, one command line or a list of words (for example [\"scripts/scrub\"]); it gets the range in QARGI_SCRUB_BASE and QARGI_SCRUB_TIP")
+    need(rvw.get("trailer_policy", "none") in ("none", "reject"), "review.trailer_policy: none (default) or reject (a commit with a Co-Authored-By or Generated-with trailer fails qargi review check)")
 # worktrees.root: where qargi makes worktrees (ROOT/<branch>); an absolute path (or ~/...), not inside the repository
 wts = c.get("worktrees", {})
 need(isinstance(wts, dict) and set(wts) <= {"root"}, "worktrees: an object like {root: \"/path\"}")

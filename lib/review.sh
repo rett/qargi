@@ -15,21 +15,93 @@
 # no ref other than the new branch changes. A patch that does not apply removes the worktree and the branch again.
 . "$(dirname "$0")/lib.sh"
 
+# scrub_declared RUN -> 0 when the lead's registry holds, for the run, a take-in scrub (review.scrub) or a trailer policy (review.trailer_policy reject).
+# The answers are the copy `local prepare` took into the registry, never the stored project's file; a run with no copy (an older record) has none.
+# SCRUB_CMD gets the command (a JSON string or list of words), SCRUB_TRAILERS the policy.
+scrub_declared() {
+  local a
+  SCRUB_CMD='' SCRUB_TRAILERS=none
+  reg_load; reg_has "$1" || return 1
+  a=$(reg_json "$1" 'if (.answers | type) == "object" then .answers else empty end'); [ -n "$a" ] || return 1
+  SCRUB_CMD=$(jq -c '(.review? // {}) | objects | .scrub // empty' <<<"$a" 2>/dev/null) || SCRUB_CMD=''
+  SCRUB_TRAILERS=$(jq -r '(.review? // {}) | objects | .trailer_policy // "none"' <<<"$a" 2>/dev/null) || SCRUB_TRAILERS=none
+  [ -n "$SCRUB_CMD" ] || [ "$SCRUB_TRAILERS" = reject ]
+}
+# scrub_first_lines TEXT -> the first three non-empty lines of TEXT on one line, joined with ' | ', control characters dropped, at most 300 characters
+scrub_first_lines() {
+  printf '%s\n' "$1" | LC_ALL=C tr -d '\000-\010\013-\037\177' | sed -e '/^[[:space:]]*$/d' | head -n 3 | awk 'NR > 1 {printf " | "} {printf "%s", $0}' | cut -c1-300
+}
+# scrub_run RUN OUT -> prints the one verdict line and returns 0 (ok) or 1 (FAIL). The series (OUT/patches, applied with git am on the commit the run's base
+# branch had at prepare, as review apply applies it) is made in a throw-away shared clone of the run's repository (the registry's, never the run directory's):
+# no worktree entry, branch or tag is made in the repository itself, so no temporary ref is left behind. The policy is checked on the applied commits first;
+# then the command runs in the clone, checked out at the tip, with QARGI_SCRUB_BASE and QARGI_SCRUB_TIP set to the range.
+scrub_run() {
+  local tmp rc=0
+  tmp=$(mktemp -d "$DA_STATE/scrub-wt.XXXXXX") || { echo "scrub: FAIL could not make a temporary directory"; return 1; }
+  scrub_in "$1" "$2" "$tmp" || rc=$?
+  rm -rf -- "$tmp"
+  return "$rc"
+}
+scrub_in() {
+  local run=$1 out=$2 tmp=$3 repo base sha tip c hit text rc=0 p
+  local -a patches=() cmd
+  repo=$(reg_get "$run" repo); base=$(reg_get "$run" base)
+  [ -n "$repo" ] || { echo "scrub: FAIL the registry names no local repository for the run"; return 1; }
+  sha=$(awk -v b="refs/heads/$base" '$1=="local" && $2==b {print $3}' "$run/refs.before" 2>/dev/null || true)
+  [ -n "$sha" ] || sha=$(git -C "$run/bare.git" rev-parse -q --verify "refs/heads/$base" 2>/dev/null || true)
+  if [ -z "$sha" ] || ! git -C "$repo" cat-file -e "$sha^{commit}" 2>/dev/null; then echo "scrub: FAIL cannot tell the run's base commit (branch '$base')"; return 1; fi
+  while IFS= read -r -d '' p; do patches+=("$p"); done < <(find "$out/patches" -maxdepth 1 -name '*.patch' -type f -print0 2>/dev/null | sort -z)
+  if ! { git clone -q --shared --no-checkout -- "$repo" "$tmp/t" && git -C "$tmp/t" -c advice.detachedHead=false checkout -q --detach "$sha"; } >/dev/null 2>&1; then
+    echo "scrub: FAIL could not make a temporary checkout of ${sha:0:12}"; return 1
+  fi
+  for p in "${patches[@]}"; do
+    # the lead's hooks and signing do not run on a throw-away commit; the committer is a fixed one (the author is the patch's)
+    if ! git -C "$tmp/t" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=qargi-scrub -c user.email=scrub@localhost am -q --3way "$p" >/dev/null 2>&1; then
+      echo "scrub: FAIL $(basename "$p") does not apply on ${sha:0:12}"; return 1
+    fi
+  done
+  tip=$(git -C "$tmp/t" rev-parse HEAD)
+  if [ "$SCRUB_TRAILERS" = reject ]; then
+    while IFS= read -r c; do
+      hit=$(git -C "$tmp/t" log -1 --format=%B "$c" | grep -iE -m1 '^[^[:alnum:]]*(co-authored-by[[:space:]]*:|generated[ -](with|by)([^[:alnum:]]|$))' || true)
+      if [ -n "$hit" ]; then echo "scrub: FAIL review.trailer_policy is reject: ${c:0:12} carries \"$(scrub_first_lines "$hit")\""; return 1; fi
+    done < <(git -C "$tmp/t" rev-list --reverse "$sha..$tip")
+  fi
+  if [ -n "$SCRUB_CMD" ]; then
+    if [ "$(jq -r 'type' <<<"$SCRUB_CMD")" = array ]; then mapfile -d '' -t cmd < <(jq -j '.[], "\u0000"' <<<"$SCRUB_CMD")
+    else cmd=(bash -c "$(jq -r '.' <<<"$SCRUB_CMD")"); fi
+    text=$(cd "$tmp/t" && env -u ANTHROPIC_PROFILE -u QARGI_CLOUD_WORKSPACE -u QARGI_CLOUD_PROJECT QARGI_SCRUB_BASE="$sha" QARGI_SCRUB_TIP="$tip" "${cmd[@]}" </dev/null 2>&1) || rc=$?
+    if [ "$rc" != 0 ]; then text=$(scrub_first_lines "$text"); echo "scrub: FAIL ${text:-exit $rc, no output}"; return 1; fi
+  fi
+  echo "scrub: ok"
+}
+
 verb=${1:-}; shift || true
 if [ "$verb" = check ]; then
   # qargi review check OUT [--allow-empty]: review_check.py reads one output directory; the lead's registry knows the run it belongs to, so the
   # lead's lease on the feature that run is based on is renewed first (no project is needed, none is loaded)
   . "$(dirname "$0")/marshal.sh"
   # the argument is a run's OUT (the run is its parent directory) or the run directory itself, which review_check.py also takes (RUN/out)
+  SRUN='' SOUT=''
   for a in "$@"; do
     case $a in -*) ;; *)
       if o=$(readlink -f -- "$a" 2>/dev/null); then
-        if [ -d "$o/out" ] && [ ! -d "$o/patches" ] && [ ! -e "$o/manifest.json" ]; then marshal_touch_run "$o"; else marshal_touch_run "$(dirname "$o")"; fi
+        if [ -d "$o/out" ] && [ ! -d "$o/patches" ] && [ ! -e "$o/manifest.json" ]; then SRUN=$o SOUT=$o/out; else SRUN=$(dirname "$o") SOUT=$o; fi
+        marshal_touch_run "$SRUN"
       fi
       break;;
     esac
   done
-  exec python3 -I "$(dirname "$0")/review_check.py" "$@"
+  rc=0; python3 -I "$(dirname "$0")/review_check.py" "$@" || rc=$?
+  # The project's declared take-in scrub (answers review.scrub and review.trailer_policy; neither set: nothing more is checked or printed) runs on a series
+  # that has patches, after the check above; a failing scrub fails the check
+  if [ "$rc" != 2 ] && [ -n "$SRUN" ] && compgen -G "$SOUT/patches/*.patch" >/dev/null && scrub_declared "$SRUN"; then
+    # a member's check (the mark `qargi local run` sets in a member's environment) never runs the lead's command or makes the checkout: the lead's check runs it
+    if [ -n "${QARGI_MEMBER_RUN:-}" ]; then echo "scrub: not run (a member's check; the lead's check runs it)"
+    elif [ "$rc" != 0 ]; then echo "scrub: not run (the series check failed)"
+    else scrub_run "$SRUN" "$SOUT" || rc=1; fi
+  fi
+  exit "$rc"
 fi
 # pick_author: AUTH_MODE (reset | keep), AUTH ("Name <email>") and AUTH_SRC (where it comes from, or why the member's author stays) from the stored answers.
 # review.keep_author true keeps the member's author; else git.author, else the repository's user.name/user.email; with none of them the member's stays.
