@@ -267,9 +267,21 @@ rm -rf "$CS"; mkdir -p "$CS"; mk "$CS" fine
 mk "$CS" 'evil $(touch PWNED)'; mk "$CS" 'bt `touch PWNED`'; mk "$CS" "$(printf 'nl\nline')"; mk "$CS" "$(printf 'esc\033[31mred')"; mk "$US" 'user $(touch PWNED)'
 out=$(chk)
 [ "$(grep -c 'skipped: unusual name' <<<"$out")" = 5 ] && ok "an unusual name is marked 'skipped: unusual name', in the checkout and in the user directory" || no "skipped count: $out"
-! grep -E 'qargi skill (import|link|accept) ' <<<"$out" | grep -qE 'evil|PWNED|bt |nl|esc|user \$' && grep -qE "qargi skill accept alpha fine\$" <<<"$out" && ok "no offer carries an unusual name; the usual one keeps its offers" || no "offers: $out"
+# the names the offers carry: the last element of the path of an import, the name after `skill link` and after `skill accept PROJECT`. The
+# unusual names are matched by what they add (the control characters are printed as nothing), and only in these names: the paths of the offers
+# come from mktemp, and any short word (nl, esc, "bt ") can be in ten random characters
+offered() { grep -E 'qargi skill (import|link|accept) ' <<<"$1" | sed -E 's#.*qargi skill import (.*/)?##; s#.*qargi skill (link|accept [^ ]+) ##'; }
+clean_offers() { ! offered "$1" | grep -qE 'PWNED|nlline|esc.?\[31m|user \$\(' && grep -qE "qargi skill accept ${2:-alpha} fine\$" <<<"$1"; }
+clean_offers "$out" && ok "no offer carries an unusual name; the usual one keeps its offers" || no "offers: $out"
 ! LC_ALL=C tr -d '\n' <<<"$out" | grep -q '[[:cntrl:]]' && ok "the section prints no control character" || no "control characters in the section"
 [ ! -e "$T/PWNED" ] && [ ! -e PWNED ] && ok "(nothing was run)" || no "a name was executed"
+# the same, in a checkout whose own path holds the short words the names are told apart by: the offers still keep the usual name, and the loose
+# test this one replaced (any 'nl', 'esc' or 'bt ' anywhere in an offer) does match them, which is how it failed on a random mktemp path
+P="$T/nl-esc-bt x/repo"; mkdir -p "$P"; proj pathy "$P"; mk "$P/.claude/skills" fine; mk "$P/.claude/skills" 'evil $(touch PWNED)'
+out2=$(chk pathy)
+grep -E 'qargi skill (import|link|accept) ' <<<"$out2" | grep -qE 'evil|PWNED|bt |nl|esc|user \$' && ok "(the loose test does match a path with nl, esc and 'bt ' in it)" || no "loose test on a path: $out2"
+clean_offers "$out2" pathy && ok "a checkout path with nl, esc and 'bt ' in it does not look like an unusual name" || no "path words: $out2"
+rm -rf "$T/nl-esc-bt x" "$T/c/projects/pathy.json"
 mkdir -p "$T/it's a repo"; proj quoted "$T/it's a repo"; mk "$T/it's a repo/.claude/skills" mine2
 line=$($DA packs check --target claude-code quoted 2>&1 | sed -n 's/^ *to keep it in the library: qargi skill import //p')
 eval "set -- $line"; [ "$#" = 1 ] && [ "$1" = "$T/it's a repo/.claude/skills/mine2" ] && ok "a checkout path with a quote and a space is shell-quoted in the offer" || no "path quoting: $line"
