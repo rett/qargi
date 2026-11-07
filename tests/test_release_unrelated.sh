@@ -132,9 +132,15 @@ git -C "$U" checkout -q parked
 
 # --- a hotfix whose develop shares no history with master, with no release open: no release is named that does not exist
 mk hf unrelated; export QARGI_PROJECT=hf
+# the start plan already says what to do first, naming the commands (a release whose push joins, or one merge on develop), before any token
+out=$($REL start 0.1.1 --hotfix --allow-empty-notes 2>&1)
+grep -q "^warning: develop and master share no history (no merge base) and no release is open, so finish could not merge hotfix/0.1.1 into develop" <<<"$out" && grep -q "qargi release start VERSION, qargi release push VERSION, qargi release finish VERSION" <<<"$out" \
+  && grep -q "git switch develop && git merge -s ours --allow-unrelated-histories master" <<<"$out" && grep -q "^plan token: " <<<"$out" && ok "hotfix start plan: develop is unrelated to master, no release open: the line names the release verbs and the git merge" || no "hotfix start plan: $out"
 rstart 0.1.1 --hotfix --allow-empty-notes >/dev/null 2>&1 || no "start hotfix: $(rstart 0.1.1 --hotfix --allow-empty-notes 2>&1)"
+out=$($REL status 0.1.1 --hotfix 2>&1)
+grep -q "^warning: develop and master share no history" <<<"$out" && ok "hotfix status carries the same line" || no "hotfix status: $out"
 out=$($REL finish 0.1.1 --hotfix 2>&1); rc=$?
-[ $rc = 1 ] && grep -q "develop and hotfix/0.1.1 share no history" <<<"$out" && grep -q "no release is open" <<<"$out" && ! grep -q "finish that release first" <<<"$out" && ok "a hotfix with an unrelated develop and no open release does not tell the lead to finish a release" || no "hotfix unrelated develop: rc=$rc $out"
+[ $rc = 1 ] && grep -q "develop and master share no history" <<<"$out" && grep -q "no release is open" <<<"$out" && ! grep -q "finish that release first" <<<"$out" && ok "a hotfix with an unrelated develop and no open release does not tell the lead to finish a release" || no "hotfix unrelated develop: rc=$rc $out"
 
 # --- a repository with related histories is unchanged: no extra commit, no join in the plan, no note
 export QARGI_PROJECT=rel

@@ -207,6 +207,13 @@ tag_checks() {
 # git refuses "unrelated histories". `push` joins them first, in its plan: master is merged into the release branch keeping the release's tree,
 # so the later `finish` is an ordinary --no-ff merge. unrelated_note says so in `start` and `status`; join_history does it.
 unrelated_note() { echo "master and $BR share no history (no merge base; master may be one snapshot commit): qargi release push $VER${HOTFIX:+ --hotfix} joins the history of master first (a merge of master that keeps the release tree, in its plan), before CI runs, so that finish is an ordinary --no-ff merge"; }
+# hotfix_develop_note -> prints, and returns 0, when a hotfix's second target would be develop (no release branch is open) and develop shares no history with
+# master: finish could not merge the hotfix into develop, and no qargi verb joins develop to master by itself. The way out is a release (its push joins the
+# history of master, its finish merges into master and develop), or one merge on develop by hand; either makes the hotfix finish an ordinary merge.
+hotfix_develop_note() {
+  [ "$KIND" = hotfix ] && branch_exists develop && branch_exists master && no_merge_base develop master && [ -z "$(open_release)" ] || return 1
+  echo "develop and master share no history (no merge base) and no release is open, so finish could not merge $BR into develop (git refuses unrelated histories). Join them first: either the next release (qargi release start VERSION, qargi release push VERSION, qargi release finish VERSION: its push joins the history of master, its finish merges into master and develop), or by hand on develop: git switch develop && git merge -s ours --allow-unrelated-histories master (keeps develop's tree). Then finish the hotfix: qargi release finish $VER --hotfix"
+}
 # join_history SHA MASTER_SHA -> JOINED: a merge commit of master into the branch BR at SHA, made in a temporary worktree with -s ours
 # --allow-unrelated-histories, and BR moved to it only when its tree is the tree of SHA and its parents are SHA and master. Otherwise nothing moved.
 # MASTER_SHA is the master the plan showed (and its token covers): the join is refused when master is anywhere else now. The merge is mechanical: the
@@ -561,6 +568,7 @@ case $verb in
     bl='none (an empty commit)'; [ -z "$bumped" ] || bl=$(printf '%s' "$bumped" | paste -sd, - | sed 's/,/, /g')
     echo "files the commit changes: $bl"
     echo "the version becomes $VER${oldver:+ (was $oldver)} and the changelog (and a man page) is dated $DATE"
+    hn=$(hotfix_develop_note) && echo "warning: $hn"
     if [ -z "$APPROVED" ]; then
       echo "plan token: $tok   (apply with: qargi release start $VER${HOTFIX:+ --hotfix}${date_given:+ --date $date_given}${ALLOW_EMPTY:+ --allow-empty-notes} --plan $tok --approved \"...\")"
       exit 0
@@ -597,6 +605,7 @@ case $verb in
     echo "$KIND $VER of $PROJ on $BR at $(g rev-parse --short "$BR"), $(g rev-list --count "$BASE..$BR") commit(s) ahead of $BASE"
     g log --format='  %h %s' "$BASE..$BR" | head -20
     if branch_exists master && no_merge_base master "$BR"; then echo "warning: $(unrelated_note)"; fi
+    hn=$(hotfix_develop_note) && echo "warning: $hn"
     suite_verdict "$BR"
     echo "full suite: ${SV_TEXT:-not run on this branch}"
     [ -z "$SV_NOTE" ] || echo "$SV_NOTE"
@@ -720,7 +729,7 @@ case $verb in
     fi
     if no_merge_base "$second" "$BR"; then
       if [ "$second" = develop ] && [ "$KIND" = hotfix ]; then   # no release is open: the second target is develop itself, and there is no release to finish first
-        die "develop and $BR share no history (no merge base) and no release is open, so there is no release to finish first: git would refuse to merge them (unrelated histories). Join the history of develop and master by hand (a merge of master into develop that keeps develop's tree), then finish the hotfix again. Nothing was changed"
+        die "$(hotfix_develop_note). Nothing was changed"
       fi
       die "$second and $BR share no history (no merge base): git would refuse to merge them (unrelated histories). Usually the first release is not finished yet, and its push joins the history of master (qargi release push VERSION): finish that release first, or join them by hand. Nothing was changed"
     fi

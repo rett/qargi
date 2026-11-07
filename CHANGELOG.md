@@ -7,12 +7,22 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- A test (`tests/test_release_snapshot_cycle.sh`) runs a whole release through plan tokens on a repository whose master is an unrelated snapshot commit, with a local bare
+  origin that refuses non-fast-forward pushes: `release start`, `push` (which joins the history of master) and `finish` merge and tag master, merge develop, push
+  by fast-forward only, and leave every earlier commit reachable. It found no bug.
 - `qargi local clean --orphans [--days N]` lists the `qargi-run.XXXXXX` directories under `/dev/shm` (or `QARGI_RUN_TMP`) that no run of the lead's registry names, each
   with its age and whether it is named (a run's own directory, live or gone, is named; a link and a file are named and left). It prints a plan and a token and removes
   nothing; `--plan TOKEN --approved WORDS` removes only the unnamed directories older than N days (default 2, at least 1) with nothing newer inside, each checked again
   just before it goes, and logs the removal. The existing `--stale DAYS --scratch DIR` (finished runs) is unchanged.
 
 ### Changed
+- `qargi project adopt` names the next step when two long-lived branches share no history (a master made as a snapshot, say), not only the problem: the first release
+  joins them (`qargi release start VERSION`, then `release push VERSION`, whose plan joins the history of the first branch into the release branch, then `release finish
+  VERSION`), or one merge by hand (`git switch develop && git merge -s ours --allow-unrelated-histories master`, which keeps develop's tree). Adopt still changes no branch.
+- `qargi release start --hotfix` (its plan, and `release status`) and the refusal of `release finish --hotfix` say what to do when develop shares no history with master
+  and no release is open: the hotfix could not be merged into develop. The line names the way out, the next release (`qargi release start VERSION`, `push` and
+  `finish`: the push joins the history of master) or one merge on develop by hand (`git switch develop && git merge -s ours --allow-unrelated-histories master`), then
+  `qargi release finish VERSION --hotfix`. It was a refusal at `finish` that only said to join by hand.
 - `qargi review apply` runs the declared take-in scrub (the answers `review.scrub` and `review.trailer_policy`) before it makes anything, as `review check` does, so a lead
   cannot apply a series the scrub refuses: a failing scrub prints `scrub: FAIL ...`, refuses the apply and changes nothing. It skips the scrub, with the one line
   `scrub: skipped (review check passed it for this series)`, when a passing `review check` recorded the same series: `review check` writes, in the lead's state directory
