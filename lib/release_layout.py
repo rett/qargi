@@ -9,6 +9,8 @@ Answers, under `release` in the project's answers file (every one optional; the 
   release.changelog.released   the heading of a released section (default "## [{version}] - {date}"); {version} is required, {date} is optional
   release.changelog.numbered   true when the items under the unreleased heading are numbered ("12. text" or "- 12. text"; default false): feature sync and
                                feature finish then check them for duplicates (lib/changelog_numbers.py, qargi changelog renumber)
+  release.version_files        other files that carry the version (a list of paths relative to the repository; default none): `release start` lists the
+                               ones that do not yet contain VERSION, `release status` and `release verify` show the same check on the release branch
   release.man_pages            the manual pages whose .TH date and version the release sets (default: the man/*.1 files of the repository)
   release.test_command         the command of `release verify` (a command line, or a list of words; default: the answer test_command)
   release.preflight            a command as a list of words, {version} replaced, run by `release start` and `release push` before they change
@@ -19,6 +21,7 @@ Answers, under `release` in the project's answers file (every one optional; the 
   release_layout.py manpage FILE NAME VER DATE OLD     set the .TH date and version of a manual page; exit 1 with the reason
   release_layout.py th-empty FILE...                   print each manual page whose .TH line has no date or no version (exit 1 if any)
   release_layout.py has-section FILE VER AF            exit 0 when the changelog has a released section for VER
+  release_layout.py has-version FILE|- VER             exit 0 when FILE (or stdin) contains VER as a whole version (0.2.1 is not found in 0.2.10 or 10.2.1)
 """
 import json
 import os
@@ -27,7 +30,7 @@ import sys
 
 DEFAULT_UNRELEASED = "## [Unreleased]"
 DEFAULT_RELEASED = "## [{version}] - {date}"
-LAYOUT_KEYS = ("version_file", "changelog", "man_pages", "test_command", "preflight")
+LAYOUT_KEYS = ("version_file", "version_files", "changelog", "man_pages", "test_command", "preflight")
 CHANGELOG_KEYS = ("unreleased", "released", "numbered")
 CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
 PLACEHOLDER_RE = re.compile(r"\{([^{}]*)\}")
@@ -62,6 +65,10 @@ def problems(rel):
         v = rel["version_file"]
         if not (v == "none" or rel_name_ok(v)):
             out.append("release.version_file: a file name relative to the repository (default VERSION), or none when the project has no such file")
+    if "version_files" in rel:
+        v = rel["version_files"]
+        if not (isinstance(v, list) and all(rel_name_ok(x) for x in v) and len(set(v)) == len(v)):
+            out.append("release.version_files: a list of distinct files relative to the repository that carry the version (no .., no #, not starting with - or /)")
     if "changelog" in rel:
         c = rel["changelog"]
         if not isinstance(c, dict):
@@ -171,6 +178,20 @@ def cmd_has_section(argv):
     return 0 if re.search(r"^" + heading_re(rel, ver), t, re.M) else 1
 
 
+def has_version(text, ver):
+    """True when text holds ver as a whole version: not inside a longer number (0.2.1 is not in 0.2.10, 10.2.1 or 0.2.1.4)."""
+    return re.search(r"(?<![0-9])(?<![0-9]\.)" + re.escape(ver) + r"(?![0-9]|\.[0-9])", text) is not None
+
+
+def cmd_has_version(argv):
+    path, ver = argv[:2]
+    try:
+        text = sys.stdin.read() if path == "-" else open(path, encoding="utf-8", errors="replace").read()
+    except OSError:
+        return 1
+    return 0 if has_version(text, ver) else 1
+
+
 def refuse(name, why):
     sys.exit("qargi: %s: %s. Fix: make its .TH line read .TH NAME SECTION \"DATE\" \"NAME VERSION\", then start the release again." % (name, why))
 
@@ -246,6 +267,8 @@ def main(argv):
         return cmd_th_empty(rest)
     if cmd == "has-section" and len(rest) == 3:
         return cmd_has_section(rest)
+    if cmd == "has-version" and len(rest) == 2:
+        return cmd_has_version(rest)
     print("qargi: release_layout.py: unknown command or wrong arguments: %s" % cmd, file=sys.stderr)
     return 2
 
