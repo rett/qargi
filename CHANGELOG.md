@@ -12,6 +12,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Setting `repo.detached` or a `site` answer with `qargi project` prints only what was set; it no longer says the answer "applies to the next provision",
   which a provision does not read.
 - `tests/test_local_run.sh` prints a failing `dispatch.json` check on one line (the file compacted, with the expected argv), so a parallel CI log shows it.
+- `qargi branch prune` now treats an `agent/*` branch merged (`--no-ff`) into a branch of `repo.detached` or `repo.long_lived` as merged, so a task branch
+  merged into a detached branch such as `gh-pages` is pruned like one merged into develop. Unmerged branches, branches at a tip, protected branches and
+  branches held by a worktree qargi did not make are kept as before.
 
 ## [0.2.4] - 2026-11-06
 
