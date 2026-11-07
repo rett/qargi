@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# The answer release.after_steps: a list of commands or reminders that `release finish` prints as "after the release:" lines and records
-# under the state for `release status`; qargi never runs them. gh is a stub (QARGI_GH); GitHub is never contacted.
+# The answer release.after_steps: a list of steps (a string, or an object {name, command, who, evidence}) that `release finish` prints as
+# "after the release: [pending] NAME (WHO): COMMAND" lines and records as pending under the state for `release status`; `release step` marks
+# one done. qargi never runs them. gh is a stub (QARGI_GH); GitHub is never contacted.
 # Run: tests/test_release_after_steps.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -30,6 +31,19 @@ chk "after_steps a string"              1 '.release={after_steps:"announce"}'
 chk "after_steps an empty step"         1 '.release={after_steps:[""]}'
 chk "after_steps a step with a newline" 1 '.release={after_steps:["a\nb"]}'
 chk "after_steps a number"              1 '.release={after_steps:[3]}'
+chk "after_steps objects"               0 '.release={after_steps:[{name:"a"},{name:"b",command:"c {version}",who:"owner",evidence:"a line"},"c"]}'
+chk "after_steps a step without a name" 1 '.release={after_steps:[{command:"c"}]}'
+chk "after_steps an empty name"         1 '.release={after_steps:[{name:""}]}'
+chk "after_steps a name with a newline" 1 '.release={after_steps:[{name:"a\nb"}]}'
+chk "after_steps who is neither"        1 '.release={after_steps:[{name:"a",who:"member"}]}'
+chk "after_steps who is not a string"   1 '.release={after_steps:[{name:"a",who:1}]}'
+chk "after_steps an unknown key"        1 '.release={after_steps:[{name:"a",run:"x"}]}'
+chk "after_steps command not a string"  1 '.release={after_steps:[{name:"a",command:["x"]}]}'
+chk "after_steps evidence not a string" 1 '.release={after_steps:[{name:"a",evidence:true}]}'
+chk "after_steps the same name twice"   1 '.release={after_steps:[{name:"a"},{name:"a",who:"owner"}]}'
+chk "after_steps a string and an object of one name" 1 '.release={after_steps:["a",{name:"a"}]}'
+jq '.release={after_steps:[{name:"a"},{name:"a"}]}' <<<"$base" > "$T/a.json"
+$DA project validate "$T/a.json" 2>&1 | grep -q "used twice" && ok "answers: a repeated name is named" || no "answers: repeated name message"
 
 # --- a repository with an origin, and a release through push and finish
 R=$T/relaf; git init -q -b master "$R"
@@ -38,7 +52,9 @@ git -C "$R" add -A && git -C "$R" commit -q -m one && git -C "$R" branch develop
 git clone -q --bare "$R" "$T/origin.git" && git -C "$R" remote add origin "$T/origin.git" && git -C "$R" fetch -q origin
 git -C "$R" checkout -q -b parked
 jq --arg p "$R" --arg t "$T" '.repo={url:"https://github.com/acme/relaf", path:$p, long_lived:["master","develop"]} | .test_command="true"
-  | .release={after_steps:["announce {version} to the list", ("touch " + $t + "/ran-by-qargi"), "tag the docs repository for {version}"]}' <<<"$base" > "$T/c/projects/relaf.json"
+  | .release={after_steps:["announce {version} to the list",
+      {name:"post the notes", command:("touch " + $t + "/ran-by-qargi"), who:"lead", evidence:"the address of the post"},
+      {name:"tag the docs repository", command:"git tag {version}", who:"owner"}]}' <<<"$base" > "$T/c/projects/relaf.json"
 export QARGI_PROJECT=relaf
 cd "$T" || exit 1
 $REL verify 0.2.0 >/dev/null 2>&1 && $REL start 0.2.0 --date 2026-01-02 >/dev/null 2>&1 || no "release 0.2.0 could not start"
@@ -47,17 +63,53 @@ t=$($REL finish 0.2.0 | tok)
 ! grep -q "after the release" <<<"$($REL finish 0.2.0)" && ok "the finish plan does not show the steps yet (nothing is finished)" || no "plan shows steps"
 out=$($REL finish 0.2.0 --plan "$t" --approved go 2>&1); rc=$?
 [ $rc = 0 ] && git -C "$R" rev-parse -q --verify refs/tags/0.2.0 >/dev/null && ok "the release finishes" || no "finish: rc=$rc $out"
-exp=$(printf 'after the release: announce 0.2.0 to the list\nafter the release: touch %s/ran-by-qargi\nafter the release: tag the docs repository for 0.2.0\n' "$T")
-[ "$(grep '^after the release:' <<<"$out")" = "$exp" ] && ok "finish prints each step as an 'after the release:' line, {version} replaced, in order" || no "lines: $out"
+exp=$(printf 'after the release: [pending] announce 0.2.0 to the list (lead)\nafter the release: [pending] post the notes (lead): touch %s/ran-by-qargi [evidence needed: the address of the post]\nafter the release: [pending] tag the docs repository (owner): waits for the owner: run git tag 0.2.0\n' "$T")
+[ "$(grep '^after the release:' <<<"$out")" = "$exp" ] && ok "finish prints each step as an 'after the release: [pending] NAME (WHO): COMMAND' line, {version} replaced, in order" || no "lines: $out"
 [ ! -e "$T/ran-by-qargi" ] && ok "a step is never run" || no "a step was run"
 rec=$T/s/release/relaf-0.2.0.after.json
-[ "$(jq -r '.steps | length' "$rec")" = 3 ] && [ "$(jq -r '.steps[0]' "$rec")" = "announce 0.2.0 to the list" ] && [ "$(jq -r '.version' "$rec")" = 0.2.0 ] \
-  && ok "the steps are recorded under the state (release/PROJECT-VERSION.after.json) for release status" || no "record: $(cat "$rec" 2>&1)"
+[ "$(jq -r '.steps | length' "$rec")" = 3 ] && [ "$(jq -r '.steps[0].name' "$rec")" = "announce 0.2.0 to the list" ] && [ "$(jq -r '.version' "$rec")" = 0.2.0 ] \
+  && [ "$(jq -r '[.steps[] | select(.state == "pending")] | length' "$rec")" = 3 ] && [ "$(jq -r '.steps[0].who' "$rec")" = lead ] && [ "$(jq -r '.steps[2].who' "$rec")" = owner ] \
+  && ok "the steps are recorded as pending under the state (release/PROJECT-VERSION.after.json) for release status" || no "record: $(cat "$rec" 2>&1)"
 out=$($REL status 0.2.0 2>&1)
-[ "$(grep -c '^    - ' <<<"$out")" = 3 ] && grep -qxF -- "    - announce 0.2.0 to the list" <<<"$out" && ok "release status shows the recorded steps" || no "status steps: $out"
-jq '.steps[1]="the recorded second step"' "$rec" > "$T/x.json" && mv "$T/x.json" "$rec"
+[ "$(grep -c '^    \[pending\] ' <<<"$out")" = 3 ] && grep -qxF -- "    [pending] announce 0.2.0 to the list (lead)" <<<"$out" && ok "release status shows the recorded steps as pending" || no "status steps: $out"
+grep -qxF -- "    [pending] tag the docs repository (owner): waits for the owner: run git tag 0.2.0" <<<"$out" && ok "an owner's step waits for the owner: run COMMAND" || no "owner line: $out"
+
+# --- release step
+sf() { $REL step "$@"; }
+out=$(sf 0.2.0 "announce 0.2.0 to the list" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "only the record changed" <<<"$out" && ok "release step marks a step done (the record changes, the command is not run)" || no "step: rc=$rc $out"
+[ "$(jq -r '.steps[0].state' "$rec")" = "done" ] && [ -n "$(jq -r '.steps[0].done_at' "$rec")" ] && ok "the record keeps the state and the time" || no "step record: $(cat "$rec")"
+out=$(sf 0.2.0 "announce 0.2.0 to the list" 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "marked done already" <<<"$out" && grep -q -- "--again" <<<"$out" && ok "a step marked done is refused a second time" || no "again: rc=$rc $out"
+out=$(sf 0.2.0 "announce 0.2.0 to the list" --again --evidence "second try" 2>&1); rc=$?
+[ $rc = 0 ] && [ "$(jq -r '.steps[0].evidence' "$rec")" = "second try" ] && ok "--again records it again" || no "--again: rc=$rc $out"
+out=$(sf 0.2.0 "post the notes" 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "needs evidence (the address of the post)" <<<"$out" && [ "$(jq -r '.steps[1].state' "$rec")" = pending ] && ok "a step with an evidence is refused without --evidence" || no "evidence: rc=$rc $out"
+out=$(sf 0.2.0 "post the notes" --evidence "   " 2>&1); rc=$?
+[ $rc != 0 ] && [ "$(jq -r '.steps[1].state' "$rec")" = pending ] && ok "a blank --evidence is refused" || no "blank evidence: rc=$rc $out"
+out=$(sf 0.2.0 "post the notes" --evidence $'two\nlines' 2>&1); rc=$?
+[ $rc != 0 ] && [ "$(jq -r '.steps[1].state' "$rec")" = pending ] && ok "a multi-line --evidence is refused" || no "multiline evidence: rc=$rc $out"
+out=$(sf 0.2.0 "no such step" 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "no after-step named 'no such step'" <<<"$out" && grep -q "post the notes" <<<"$out" && ok "an unknown name is refused and the names are listed" || no "unknown name: rc=$rc $out"
+out=$(sf 0.9.9 "post the notes" 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "no record of the after-steps of 0.9.9" <<<"$out" && ok "a version with no record is refused" || no "unknown version: rc=$rc $out"
+out=$(sf 0.2.0 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "usage: qargi release step" <<<"$out" && ok "release step without a name is refused" || no "no name: rc=$rc $out"
+out=$($REL status 0.2.0 --evidence x 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "belong to release step" <<<"$out" && ok "--evidence belongs to release step" || no "stray option: rc=$rc $out"
+out=$(sf 0.2.0 "post the notes" --evidence "https://example.net/p/1" 2>&1); rc=$?
+[ $rc = 0 ] && [ "$(jq -r '.steps[1].evidence' "$rec")" = "https://example.net/p/1" ] && ok "an evidence-required step is marked done with its evidence" || no "evidence done: rc=$rc $out"
+[ ! -e "$T/ran-by-qargi" ] && ok "release step never runs the command" || no "release step ran the command"
 out=$($REL status 0.2.0 2>&1)
-grep -qxF -- "    - the recorded second step" <<<"$out" && ! grep -q "ran-by-qargi" <<<"$out" && ok "status shows what was recorded, not the answer as it is now" || no "status record: $out"
+sect=$(sed -n '/after-steps/,$p' <<<"$out")
+[ "$(grep -c '^    \[done\] ' <<<"$sect")" = 2 ] && grep -qE '^    \[done\] post the notes \(lead, [0-9T:Z-]+, evidence: https://example.net/p/1\)$' <<<"$sect" \
+  && [ "$(grep -c '^    \[pending\] ' <<<"$sect")" = 1 ] && ok "release status shows [done] name (evidence) from the record" || no "status done: $sect"
+[ "$(sed -n '$p' <<<"$sect")" = "    [pending] tag the docs repository (owner): waits for the owner: run git tag 0.2.0" ] && ok "pending steps are listed last" || no "pending last: $sect"
+# kept across restarts: it is a file; a fresh process reads the same
+out=$($REL status 0.2.0 2>&1) && grep -q '^    \[done\] announce 0.2.0 to the list' <<<"$out" && ok "the state is a file in the state directory, read again by a later status" || no "restart: $out"
+jq '.steps[2].name="the recorded third step"' "$rec" > "$T/x.json" && mv "$T/x.json" "$rec"
+out=$($REL status 0.2.0 2>&1)
+grep -q "^    \[pending\] the recorded third step" <<<"$out" && ! grep -q "tag the docs repository" <<<"$out" && ok "status shows what was recorded, not the answer as it is now" || no "status record: $out"
 
 # --- no steps: nothing is printed and nothing recorded
 jq 'del(.release)' "$T/c/projects/relaf.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/relaf.json"

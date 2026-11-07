@@ -89,4 +89,8 @@ prints one, and `check [NAME]` validates one or all. These verbs only read.
   It never overwrites a file or pushes; changelog format, tag format and CI content stay yours.
 
 Each prints a plan and a token; they write only when you apply it with `--plan TOKEN --approved "<your
-words>"` (`qargi help approvals`).
+words>"` (`qargi help approvals`). With `--json` on any of these (or any other gated verb) the plan comes as one JSON object,
+`{"verb", "plan", "token", "apply", "exit"}`, so a lead reads the token and the command that applies it instead of scraping the text; `apply`
+holds the call without `--json` plus `--plan TOKEN --approved "<the user's go-ahead>"`, and the words are the person's to fill in. A call with
+no plan token (it ran, or refused) gives `plan` and `token` as `null` and the text in `output`; the exit status is the verb's. `--json` never
+supplies `--plan` or `--approved`.

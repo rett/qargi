@@ -7,6 +7,18 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Tracked post-release steps. An entry of the answer `release.after_steps` may now be an object `{name, command, who, evidence}` (`who` is `lead` or `owner`;
+  `evidence` says what shows the step was done), besides a plain string, which stays valid and is a step named by its text, for the lead, with no evidence required.
+  `qargi release finish` records the steps as pending and shows each as `[pending] NAME (WHO): COMMAND`; the new `qargi release step VERSION NAME [--evidence TEXT] [--again]`
+  marks one done with the time and the evidence (a step that needs evidence refuses without it; an unknown name or version, and a step done already unless `--again`,
+  are refused), changing only the record and never running the command; `qargi release status` shows `[done] ...` and, last, the pending steps, an owner's marked
+  "waits for the owner: run COMMAND". A member's guard refuses `release step`.
+- `--json` on any verb (`qargi AREA VERB ... --json`) prints the result as one JSON object, so a lead does not read a plan token out of text. When the verb printed a plan
+  token: `{"verb", "plan", "token", "apply", "exit"}`, where `plan` is the text without the token line and `apply` is the call without `--json` plus `--plan TOKEN --approved
+  "<the user's go-ahead>"` (the words are the person's to fill in). When it printed none (it ran or refused): `{"verb", "plan": null, "token": null, "output", "exit"}`. The
+  exit status is the verb's and its errors stay on stderr. `--json` never supplies `--plan` or `--approved`; a call that carries them runs as before with a null token. It
+  is one global option, handled in `bin/qargi` (`lib/jsonplan.py`) and described in `qargi help`, the manual page and completion; a verb with a `--json` of its own keeps it,
+  and a member's guard treats the verb exactly as without it.
 - The answer `release.version_files` (a list of paths relative to the repository) names other files that carry the version. `qargi release start`, once it has
   bumped VERSION, warns of the listed files that do not contain it (as a whole version: `0.2.1` is not found in `0.2.10`) and says to bump them on the release
   branch; `release status` and `release verify` show the same check on the branch. A warning, not a refusal; without the answer nothing is checked.

@@ -70,6 +70,10 @@ KIND = opt("--kind", "which store: memory or reference (default: both)", "KIND",
 
 REASONS = ("wrong-scope", "broke-check", "style", "too-slow", "too-costly", "skill-ignored", "skill-wrong", "brief-unclear", "gate-noise", "other")
 
+# Options every verb takes, handled once by bin/qargi (lib/jsonplan.py), not by the verb. A verb that documents an option of the same name keeps it.
+GLOBAL_OPTS = [opt("--json", "print the result as one JSON object with the verb, the plan, the token, the command that applies it and the exit status "
+                             "(the output instead, when the verb printed no plan token); never supplies --plan or --approved")]
+
 PROJECT_OPT = opt("--project", "the project, instead of the one inferred from here", "PROJECT", "project")
 MEMBER_PROJECT_OPT = opt("--project", "the project the member belongs to (default: the one in effect when it has the member, else the only project that has it)", "PROJECT", "project")
 AS_OPT = opt("--as", "act as this lead identity (default: the session id in QARGI_LEAD, else user@host)", "ID")
@@ -480,7 +484,9 @@ COMMANDS = {
                  "and release.preflight (a command as a list of words, {version} replaced, run by start and push before they change anything; a non-zero exit refuses and shows the tail of its output). "
                  "The release files are the project's too: release.assets_command (the command that builds them, a command line or a list of words with {version} replaced), which "
                  "release assets runs in a clean worktree of the tag, and release.assets (files or globs to attach, {version} replaced), taken in that worktree by release publish. "
-                 "release.after_steps is a list of commands or reminders ({version} replaced) that release finish prints as 'after the release:' lines; qargi never runs them. "
+                 "release.after_steps is a list of steps ({version} replaced), each a one-line string (a command or a reminder: its text is its name) or an object "
+                 "{name, command, who (lead or owner), evidence (what shows it was done)}; the names are distinct. release finish prints them as 'after the release:' lines and records them as pending; "
+                 "release step marks one done; qargi never runs them. "
                  "release.notes_file (a file relative to the repository, {version} replaced; default none) is the text release publish uses for the notes, and release push warns when it leaves out an item of the version's changelog section. "
                  "A member may not set them: the lead runs them. "
                  "A project with a documentation site on a detached branch sets site.enabled to true, and optionally site.branch (default gh-pages when repo.detached "
@@ -512,7 +518,9 @@ COMMANDS = {
                                "A branch that shares no history with master (no merge base) gets a warning that release push joins it. "
                                "For a tag that exists it ends with a checklist of what is left after the release: whether origin has the tag, whether the GitHub release is published or missing, "
                                "for each entry of the answer release.assets ({version} replaced; a glob by its base name) whether the release has it, for each file of release.sign.files whether its .sig is attached (UNSIGNED when not), "
-                               "and the project's own after-steps: the ones release finish recorded, else the optional answer release.after_steps (a list of words, {version} replaced); qargi lists them but does not track that they were done.")),
+                               "and the project's own after-steps: the ones release finish recorded, else the optional answer release.after_steps ({version} replaced). Each is shown "
+                               "as '[done] NAME (WHO, TIME, evidence: TEXT)' or '[pending] NAME (WHO): COMMAND', the done ones first and the pending ones last; a pending step of the owner reads "
+                               "'waits for the owner: run COMMAND', and a step that needs evidence says so. qargi release step marks one done; the list is kept in a file under the state directory.")),
             "verify": verb("Run the project's whole test suite on the release branch (develop's head before it starts) and record the result", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT],
                            desc=TAG_NOTE + " The exit status stays the suite's result. The command is release.test_command when the project sets one, else test_command. "
                                  "On the release branch, with release.version_files set, it also shows whether every listed file contains VERSION (a warning for the ones that do not). " + OTHER_RUNS_NOTE + " " + SUITE_FAIL_NOTE),
@@ -545,10 +553,19 @@ COMMANDS = {
                                  "the message names, commit, and run the same command with --resolved. It refuses a branch whose manual page has an empty .TH date or version, "
                                  "and, when release.version_file is none, one whose changelog has no section for VERSION. It also refuses, with the fix, a branch that shares no history with master (no merge base): "
                                  "run release push first, whose plan joins the history of master. " + REMOTE_NOTE + " "
-                                 "When the answer release.after_steps lists steps (commands or reminders, {version} replaced), it prints each as an 'after the release: STEP' line, never runs them, and "
-                                 "records them under the state's release directory (PROJECT-VERSION.after.json) for release status. "
+                                 "When the answer release.after_steps lists steps (a string, or an object {name, command, who, evidence}; {version} replaced), it prints each as an 'after the release: [pending] NAME (WHO): COMMAND' line, never runs them, and "
+                                 "records them as pending under the state's release directory (PROJECT-VERSION.after.json) for release status and release step. "
                                  "It ends with a 'next: ...' line for each after_release step of the methodology whose answer is true: with site.enabled, "
                                  "'next: qargi release site VERSION'.")),
+            "step": verb("Mark an after-release step of VERSION done, with the evidence", [("VERSION", "none"), ("NAME", "none")],
+                         [PROJECT_OPT, opt("--evidence", "what shows the step was done, one line (a line to quote); required when the step's answer has an evidence", "TEXT"),
+                          opt("--again", "record a step that is marked done already once more")],
+                         desc=("NAME is the name of a step of the answer release.after_steps as release finish recorded it for VERSION (a string step is named by its text; {version} replaced). "
+                               "It records the time and the evidence text in the record under the state's release directory (PROJECT-VERSION.after.json), which release status shows as "
+                               "'[done] NAME (WHO, TIME, evidence: TEXT)'. It changes only that record: it never runs the step's command, which is the lead's or the owner's to do first. "
+                               "Refused: a step that needs evidence (its answer has an evidence) without --evidence; a NAME or VERSION the record does not have (the message lists the names); "
+                               "a step already marked done, unless --again. A lead's verb: a member's guard refuses it."),
+                         examples=["qargi release step 0.2.3 'announce 0.2.3 to the list'", "qargi release step 0.2.3 'post the notes' --evidence 'the address of the post'"]),
             "assets": verb("Build the release files of the tag VERSION in a clean worktree of it, with the project's release.assets_command", [("VERSION", "none")],
                            [PROJECT_OPT, opt("--recreate", "remove the existing asset worktree of VERSION and build again from the tag")],
                            desc=("Makes a clean detached worktree of the tag VERSION under the state directory (release-assets/PROJECT-VERSION), runs the answer release.assets_command in it "
@@ -1439,6 +1456,11 @@ TOPICS = {
         "A command that changes something shared prints a plan first. The plan ends with a plan token, a hash of what would be done.",
         "To apply, run the same command with --plan TOKEN --approved \"your words\". If the plan changed in between, the token no longer "
         "matches and nothing happens.",
+        "Add --json to any verb to get the plan as one JSON object instead of text: {verb, plan, token, apply, exit}, where apply is the command "
+        "line to run once the person has agreed (the call as given, without --json, plus --plan TOKEN and --approved with a placeholder for the person's own words). "
+        "A verb that printed no plan token (it ran, or refused) gives {verb, plan: null, token: null, output, exit}; the exit status is the verb's and its error "
+        "messages stay on stderr. --json never supplies --plan or --approved, and a call that carries them runs as it would without --json, wrapped the same way "
+        "with a null token. A verb that describes a --json option of its own keeps it.",
         "--asked \"your request\" is required by every cloud verb: it records that you asked for the cloud. Both are written to an "
         "append-only audit log in the state directory.",
         "qargi lead grant and revoke are interactive instead: you confirm each step at the terminal, and that is the approval.",
