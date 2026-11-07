@@ -6,6 +6,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `qargi project validate` reports a role whose value is not an object (`roles.build = "x"`, `null`) as the finding `roles.NAME: an object`, and goes on to
+  check the other roles, instead of failing with a traceback.
+- Setting `repo.detached` or a `site` answer with `qargi project` prints only what was set; it no longer says the answer "applies to the next provision",
+  which a provision does not read.
+- `tests/test_local_run.sh` prints a failing `dispatch.json` check on one line (the file compacted, with the expected argv), so a parallel CI log shows it.
+
 ## [0.2.4] - 2026-11-06
 
 ### Added
