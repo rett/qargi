@@ -245,9 +245,19 @@ mkskilldir() { mkdir -p "$S/$1"; printf -- '---\nname: x\ndescription: Use for x
 mkskilldir fine; mkskilldir 'evil $(touch PWNED)'; mkskilldir 'bt `touch PWNED`'; mkskilldir 'semi;rm -rf x'; mkskilldir "$(printf 'nl\nline')"; mkskilldir "$(printf 'esc\033[31mred')"; mkskilldir "sp ace"
 out=$(lk 2>&1)
 [ "$(grep -c 'skipped: unusual name' <<<"$out")" = 12 ] && ok "link plan: each unusual name is marked 'skipped: unusual name' (in the plan and in the section after it)" || no "skipped count: $out"
-! grep -E 'qargi skill (import|link) ' <<<"$out" | grep -qE 'evil|PWNED|semi|nl|esc|sp ace' && grep -qE "qargi skill import .*/fine\$" <<<"$out" && ok "link plan: no offer for an unusual name, the offer for a usual one stays" || no "offers: $out"
+# the names the offers carry (the last element of the path of an import, the name after `skill link`), matched by what an unusual name adds and
+# only there: the paths of the offers come from mktemp, and any short word (nl, esc) can be in ten random characters
+offered() { grep -E 'qargi skill (import|link) ' <<<"$1" | sed -E 's#.*qargi skill import (.*/)?##; s#.*qargi skill link ##'; }
+clean_offers() { ! offered "$1" | grep -qE 'PWNED|semi|nlline|esc.?\[31m|sp ace' && grep -qE "qargi skill import .*/fine'?\$" <<<"$1"; }
+clean_offers "$out" && ok "link plan: no offer for an unusual name, the offer for a usual one stays" || no "offers: $out"
 ! LC_ALL=C tr -d '\n' <<<"$out" | grep -q '[[:cntrl:]]' && ok "link plan: no control character is printed" || no "control characters in the link plan"
 [ ! -e PWNED ] && ok "(nothing was run)" || no "a name was executed"
+# the same in a checkout whose own path holds the short words: the loose test this one replaced does match them
+P="$T/nl-esc-bt x"; git init -q -b main "$P"; proj alpha "$P"; mkdir -p "$P/.claude/skills/fine"; printf -- '---\nname: x\ndescription: Use for x.\n---\n' > "$P/.claude/skills/fine/SKILL.md"
+out2=$(lk 2>&1)
+grep -E 'qargi skill (import|link) ' <<<"$out2" | grep -qE 'evil|PWNED|semi|nl|esc|sp ace' && ok "(the loose test does match a path with nl and esc in it)" || no "loose test on a path: $out2"
+clean_offers "$out2" && ok "link plan: a checkout path with nl, esc and a space in it does not look like an unusual name" || no "path words: $out2"
+rm -rf "$P"; proj alpha "$R"
 rm -rf "$S"; mkdir -p "$T/it's a repo with space"; git init -q -b main "$T/it's a repo with space"; proj alpha "$T/it's a repo with space"
 S2=$T/it\'s\ a\ repo\ with\ space/.claude/skills; mkdir -p "$S2/mine"; printf -- '---\nname: x\ndescription: Use for x.\n---\n' > "$S2/mine/SKILL.md"
 out=$(lk 2>&1); line=$(sed -n 's/^ *to keep it: qargi skill import //p' <<<"$out")
