@@ -139,7 +139,7 @@ grep -q '^KEY=k1$' "$tr" && grep -q '^OTHER=unset$' "$tr" && ok "only env_pass n
 grep -q "^HOME=$RUN/home\$" "$tr" && grep -q '^GITCFG=/dev/null$' "$tr" && grep -q "^GITWRAP=$RUN/git\$" "$tr" && ok "it has the git wrapper's environment (no home, no global git configuration)" || no "git env: $(grep -E 'HOME|GIT' "$tr")"
 grep -q "^MEMBERMARK=$RUN\$" "$tr" && ok "it carries the member mark QARGI_MEMBER_RUN (the run directory), so the marshal knows it from any directory" || no "member mark: $(grep MEMBERMARK "$tr")"
 [ "$(jq -r .outcome "$RUN/dispatch.json")" = ok ] && [ "$(jq -r '.argv | join(" ")' "$RUN/dispatch.json")" = "fakellm run --model fake-m-1 --clone $CLONE --out $OUT" ] && ! grep -q 'k1' "$RUN/dispatch.json" \
-  && ok "dispatch.json records the argv and the outcome, not an environment value" || no "dispatch.json: $(cat "$RUN/dispatch.json")"
+  && ok "dispatch.json records the argv and the outcome, not an environment value" || no "dispatch.json: $(jq -c . "$RUN/dispatch.json" 2>&1) (wanted outcome ok, argv: fakellm run --model fake-m-1 --clone $CLONE --out $OUT)"
 $DA local verify "$RUN" >/dev/null 2>&1 && ok "verify passes after the run" || no "verify after run"
 out=$($DA local run "$RUN" 2>&1); rc=$?; [ "$rc" = 2 ] && grep -q 'has been run already' <<<"$out" && ok "a second run is refused" || no "second run: rc=$rc $out"
 out=$(FAKE_KEY=k2 $DA local run "$RUN" --again 2>&1); rc=$?; [ "$rc" = 0 ] && grep -q '^KEY=k2$' "$tr" && ok "--again runs it again and replaces the transcript" || no "again: rc=$rc $out"
