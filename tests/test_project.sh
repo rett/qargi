@@ -171,6 +171,12 @@ chkm "roles: none enabled"          '.roles={}' 'roles: enable at least one role
 chkm "roles: key missing"           'del(.roles)' 'roles: enable at least one role'
 jq '.roles={}' <<<"$base" > "$T/a.json"
 if $DA project validate "$T/a.json" 2>&1 | grep -q 'Traceback\|NameError'; then echo "FAIL roles: none crashes"; fail=1; else echo "ok   roles: none does not crash"; fi
+# a role whose value is no object is one finding, not a crash, and the other roles are still checked
+for v in '"x"' null 3 '[]'; do
+  jq --argjson v "$v" '.roles.build=$v | .roles.write.effort="nope"' <<<"$base" > "$T/a.json"
+  out=$($DA project validate "$T/a.json" 2>&1); rc=$?
+  if [ "$rc" != 0 ] && grep -qF 'roles.build: an object' <<<"$out" && grep -qF 'roles.write.effort: ' <<<"$out" && ! grep -q 'Traceback' <<<"$out"; then echo "ok   roles: build = $v is a finding, the other roles are still checked"; else echo "FAIL roles: build = $v (exit $rc): $out"; fail=1; fi
+done
 chkm "roles: first role, bad tools_off" '.roles.build.tools_off=["nope"]' 'roles.build.tools_off: '
 chkm "roles: first role, bad skills"    '.roles.build.skills=["nope"]' 'roles.build.skills: '
 chkm "roles: last role, bad tools_off"  '.roles.write.tools_off=["nope"]' 'roles.write.tools_off: '
@@ -269,6 +275,9 @@ for v in github-release none; do
   msg=$($DA project set demo deployment "$v" 2>&1); [ "$msg" = "demo: deployment = \"$v\"" ] && echo "ok   set deployment $v says only what was set" || { echo "FAIL set deployment $v: $msg"; fail=1; }
 done
 msg=$($DA project set demo deployment dep_0123 2>&1); grep -q "applies to the next provision" <<<"$msg" && echo "ok   set deployment to a cloud deployment keeps the provision note" || { echo "FAIL set cloud deployment note: $msg"; fail=1; }
+# repo.detached and site.* are read where they are used (the branch guards, the release), not by a provision: no provision note
+msg=$($DA project set demo repo.detached '["gh-pages"]' 2>&1); [ "$msg" = 'demo: repo.detached = ["gh-pages"]' ] && echo "ok   set repo.detached says only what was set" || { echo "FAIL set repo.detached: $msg"; fail=1; }
+msg=$($DA project set demo site.enabled true 2>&1); [ "$msg" = 'demo: site.enabled = true' ] && echo "ok   set site.enabled says only what was set" || { echo "FAIL set site.enabled: $msg"; fail=1; }
 $DA project set demo roles.build.effort turbo >/dev/null 2>&1 && { echo "FAIL set invalid accepted"; fail=1; } || echo "ok   set refuses an invalid value"
 [ "$(jq -r .roles.build.effort $T/c/projects/demo.json)" = high ] && echo "ok   refused set changed nothing" || { echo "FAIL set changed the file"; fail=1; }
 # marshal.lease_minutes is a project answer; the backend switch is not (it is set with a plan and an audit line by the marshal verbs)

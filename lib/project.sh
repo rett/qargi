@@ -62,6 +62,7 @@ set_note() { # project path json-value -> what `set` adds to its line: the provi
   # a value that is no option of the project's methodology is taken to name a cloud deployment and keeps the note
   local n=$1 path=$2 val=$3 meth
   case $path in git|git.*|review|review.*) return 0;; esac   # read by qargi review apply, never by a provision
+  case $path in repo.detached|site|site.*) return 0;; esac   # read where it is used (the branch guards, the release), never by a provision
   if [ "$path" = deployment ]; then
     meth=$(jq -r '.methodology // "gitflow"' "$PROJ_DIR/$n.json")
     python3 -I - "$(dirname "$0")" "$meth" "$val" <<'PY' && return 0
@@ -234,6 +235,8 @@ efforts = {"low", "medium", "high", "xhigh", "max"}
 for name, cfg in (r.items() if isinstance(r, dict) else []):
     p = "roles.%s" % name
     need(name in roles or name in base_names, "%s: not a known role (%s) or base (%s)" % (p, ", ".join(roles), ", ".join(base_names)))
+    if not isinstance(cfg, dict):   # roles.NAME = "x" or null: nothing below can be read from it
+        bad.append("%s: an object" % p); continue
     need(isinstance(cfg.get("base"), str) and cfg["base"], "%s.base: base branch, or @dispatcher for the dispatching session's branch" % p)
     push = cfg.get("push", {})
     mode = push.get("mode")
