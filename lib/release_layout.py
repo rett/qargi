@@ -21,6 +21,7 @@ Answers, under `release` in the project's answers file (every one optional; the 
   release_layout.py manpage FILE NAME VER DATE OLD     set the .TH date and version of a manual page; exit 1 with the reason
   release_layout.py th-empty FILE...                   print each manual page whose .TH line has no date or no version (exit 1 if any)
   release_layout.py has-section FILE VER AF            exit 0 when the changelog has a released section for VER
+  release_layout.py notes-missing SECTION NOTES        print the items of the changelog section SECTION that the file NOTES does not mention (exit 1 if any)
   release_layout.py has-version FILE|- VER             exit 0 when FILE (or stdin) contains VER as a whole version (0.2.1 is not found in 0.2.10 or 10.2.1)
 """
 import json
@@ -192,6 +193,39 @@ def cmd_has_version(argv):
     return 0 if has_version(text, ver) else 1
 
 
+BULLET_RE = re.compile(r"^(?:[-*+]|[0-9]+\.) +(.*\S)")
+
+
+def item_key(text):
+    """What a notes file has to mention of a changelog item: the leading `backticked term` when the item starts with one, else its first
+    three words (leading ** and trailing punctuation dropped)."""
+    m = re.match(r"`([^`]+)`", text)
+    if m:
+        return m.group(1).strip()
+    words = text.replace("**", "").split()[:3]
+    return re.sub(r"[\s.,;:!?)]+$", "", " ".join(words))
+
+
+def norm(text):
+    return " ".join(text.lower().split())
+
+
+def cmd_notes_missing(argv):
+    """The items of a changelog section (its lines that start at the margin with -, *, + or N.) whose key the notes do not mention,
+    compared without case and with the white space collapsed."""
+    section, notes = argv[:2]
+    sec = open(section, encoding="utf-8", errors="replace").read()
+    have = norm(open(notes, encoding="utf-8", errors="replace").read())
+    missing = []
+    for line in sec.split("\n"):
+        m = BULLET_RE.match(line)
+        key = item_key(m.group(1)) if m else ""
+        if key and norm(key) not in have and key not in missing:
+            missing.append(key)
+    print("\n".join(missing))
+    return 1 if missing else 0
+
+
 def refuse(name, why):
     sys.exit("qargi: %s: %s. Fix: make its .TH line read .TH NAME SECTION \"DATE\" \"NAME VERSION\", then start the release again." % (name, why))
 
@@ -267,6 +301,8 @@ def main(argv):
         return cmd_th_empty(rest)
     if cmd == "has-section" and len(rest) == 3:
         return cmd_has_section(rest)
+    if cmd == "notes-missing" and len(rest) == 2:
+        return cmd_notes_missing(rest)
     if cmd == "has-version" and len(rest) == 2:
         return cmd_has_version(rest)
     print("qargi: release_layout.py: unknown command or wrong arguments: %s" % cmd, file=sys.stderr)

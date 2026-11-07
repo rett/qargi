@@ -58,5 +58,34 @@ mk vfself '{"version_files":["VERSION"]}'; seal vfself
 out=$($REL start 0.2.0 2>&1)
 grep -q "^version files (release.version_files): all 1 contain 0.2.0" <<<"$out" && ok "the version file itself is already bumped by start" || no "self: $out"
 
+# --- notes_file: the plan of push warns of the changelog items the notes do not mention
+chk "notes_file a file name with {version}" 0 '.release={notes_file:"dist/NOTES-{version}.md"}'
+mk nf '{"notes_file":"NOTES-{version}.md"}'
+printf '# Changelog\n\n## [Unreleased]\n\n### Added\n- `qargi widget` lists the widgets,\n  over two lines.\n- The **frobnicator** now remembers its last setting.\n- Quick fix of the gizmo.\n- `qargi gadget` is new.\n\n### Fixed\n- Parser: no longer loops.\n\n## [0.1.0] - 2026-01-01\n- `old thing` of an older release\n' > "$R/CHANGELOG.md"
+seal nf
+$REL start 0.2.0 --date 2026-03-04 >/dev/null 2>&1 || no "notes: start: $($REL start 0.2.0 2>&1)"
+wt=$($REL fix 0.2.0 | sed -n 's/^worktree: //p')
+out=$($REL push 0.2.0 2>&1)
+grep -q "^warning: release.notes_file: NOTES-0.2.0.md is not a file on release/0.2.0" <<<"$out" && grep -q "^plan token: " <<<"$out" && ok "a notes file that is not on the branch is a warning, not a refusal" || no "notes missing file: $out"
+printf '# 0.2.0\n\nThe qargi widget command lists them.\nPARSER: no  longer loops.\n' > "$wt/NOTES-0.2.0.md"
+git -C "$wt" add -A && git -C "$wt" commit -q -m "notes"
+out=$($REL push 0.2.0 2>&1)
+exp=$(printf '  - The frobnicator now\n  - Quick fix of\n  - qargi gadget\n')
+grep -q "^warning: NOTES-0.2.0.md on release/0.2.0 does not mention these items of the 0.2.0 section of CHANGELOG.md" <<<"$out" \
+  && [ "$(grep '^  - ' <<<"$out")" = "$exp" ] && ! grep -q "old thing" <<<"$out" && grep -q "^plan token: " <<<"$out" \
+  && ok "the plan lists the items the notes lack (backticked term or first three words; case and spacing ignored; only the version's section) and still gives a token" || no "notes warning: $out"
+printf 'The qargi widget, the qargi gadget, quick fix of the gizmo; the frobnicator now; Parser: no longer.\n' > "$wt/NOTES-0.2.0.md"
+git -C "$wt" commit -q -am "notes complete"
+out=$($REL push 0.2.0 2>&1)
+grep -q "^notes (release.notes_file): NOTES-0.2.0.md mentions every item of the 0.2.0 section" <<<"$out" && ! grep -q "^warning: NOTES" <<<"$out" && ok "a notes file that mentions every item gets no warning" || no "notes complete: $out"
+t=$(sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' <<<"$out")
+out=$($REL push 0.2.0 --plan "$t" --approved go 2>&1)
+[ -n "$(git -C "$T/nf.git" for-each-ref refs/heads/release)" ] && ok "the warning never stood in the way of the push" || no "push after notes: $out"
+
+mk nfnone; seal nfnone
+$REL start 0.2.0 >/dev/null 2>&1
+out=$($REL push 0.2.0 2>&1)
+! grep -q "notes" <<<"$out" && ok "no notes_file, no check" || no "no notes answer: $out"
+
 shellcheck -x -S warning tests/test_release_checks.sh >/dev/null 2>&1 && ok "shellcheck clean" || no "shellcheck"
 rm -rf "$T"; exit $fail

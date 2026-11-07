@@ -27,6 +27,9 @@
 #   release.sh fix VERSION [--hotfix] [--push [--plan T --approved W]]
 #                                           a worktree on the release branch under the worktree root (prints its path), to commit a fix in; --push is `push`
 #   release.sh push VERSION [--hotfix] [--plan T --approved W]     push the branch, open the pull request into master (or say "updated PR #N" when it is open)
+#                                           With the answer release.notes_file the plan warns of the items of the VERSION section of CHANGELOG.md that the file
+#                                           does not mention (an item is mentioned when its leading `backticked term`, else its first three words, is in the file,
+#                                           whatever the case); a warning only. No answer, no check.
 #                                           When master and the branch have no merge base (master is one snapshot commit, say) the plan has the line "join the history
 #                                           of master": once approved, master is merged into the branch with -s ours --allow-unrelated-histories, in a temporary
 #                                           worktree, as a commit of its own before the push, and only if the tree is unchanged; `start`, `status` and `finish` say so.
@@ -152,6 +155,25 @@ version_files_report() {
   [ "$n" -gt 0 ] || return 0
   if [ -n "$bad" ]; then echo "warning: release.version_files: $bad on $ref do not contain $VER: bump these on the release branch (qargi release fix $VER${HOTFIX:+ --hotfix} makes a worktree for it)"
   else echo "version files (release.version_files): all $n contain $VER"; fi
+}
+# notes_report: the answer release.notes_file ({version} replaced), when set: the file at the head of BR must mention every item of the VER section
+# of the CHANGELOG.md there (the key of an item: its leading `backticked term`, else its first three words; release_layout.py notes-missing). The plan of
+# `push` prints the ones it does not mention as a warning; it never refuses. No answer, no check.
+notes_report() {
+  local nfile ntmp stmp sect miss rc
+  nfile=$(jq -r '(.release? // {}).notes_file // empty' "$af"); [ -n "$nfile" ] || return 0
+  nfile=${nfile//\{version\}/$VER}
+  ntmp=$(mktemp "$DA_STATE/.release-notes-chk.XXXXXX"); stmp=$(mktemp "$DA_STATE/.release-notes-chk.XXXXXX")
+  if ! g show "$BR:$nfile" > "$ntmp" 2>/dev/null; then echo "warning: release.notes_file: $nfile is not a file on $BR, so the changelog items cannot be checked against it"
+  elif g show "$BR:CHANGELOG.md" > "$stmp" 2>/dev/null && sect=$(bash "$(dirname "$0")/changelog_section.sh" "$VER" "$stmp" "$(jq -r '(.release? // {}).changelog.released // ""' "$af")" 2>/dev/null); then
+    printf '%s\n' "$sect" > "$stmp"
+    miss=$(python3 -I "$RL" notes-missing "$stmp" "$ntmp") && rc=0 || rc=$?
+    if [ "$rc" = 1 ]; then
+      echo "warning: $nfile on $BR does not mention these items of the $VER section of CHANGELOG.md (release.notes_file):"
+      printf '%s\n' "$miss" | sed 's/^/  - /'
+    else echo "notes (release.notes_file): $nfile mentions every item of the $VER section of CHANGELOG.md"; fi
+  fi
+  rm -f "$ntmp" "$stmp"
 }
 # tag_checks: for a tag VER that exists, warnings (never a failure) about what stops it from being a published release:
 # a tag workflow starts only if the tagged commit holds it, and a release must exist on GitHub for the tag
@@ -583,6 +605,7 @@ case $verb in
       jb=$(join_blocker "$BR"); [ -z "$jb" ] || echo "warning: $jb"
     fi
     jq -e '(.release? // {}) | has("preflight")' "$af" >/dev/null 2>&1 && echo "preflight (release.preflight, run in a copy of $BR before the push): $(jq -r '.release.preflight | join(" ")' "$af")"
+    notes_report
     remote_report "$BR"
     pw=$(wt_of "$BR"); [ -z "$pw" ] || [ -z "$(git -C "$pw" status --porcelain 2>/dev/null)" ] || echo "warning: $pw has uncommitted changes: only what is committed on $BR is pushed"
     pr_find "$BR"; [ -z "$PR_NUM" ] || echo "the pull request #$PR_NUM of $BR is open already: the push updates it${PR_URL:+ ($PR_URL)}"
