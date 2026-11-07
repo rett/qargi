@@ -289,12 +289,24 @@ after_steps_new() {
   [ -n "$st" ] || st='[]'
   echo "$st"
 }
+# after_rec_write JQ-ARGS...: the output of jq over those arguments becomes AFTERREC, under the record's lock (the flock pattern of reg_mark) and
+# through a temporary file of its own name, so two `step` calls (or a `step` and `finish`) never share a temporary file, and the one that comes
+# second reads what the first wrote (the file named among the arguments is read inside the lock). Fails when jq does.
+after_rec_write() {
+  mkdir -p "$(dirname "$AFTERREC")"
+  (
+    local tmp
+    flock 9 || exit 1
+    tmp=$(mktemp "$AFTERREC.XXXXXX") || exit 1
+    if jq "$@" > "$tmp" && mv "$tmp" "$AFTERREC"; then exit 0; fi
+    rm -f "$tmp"; exit 1
+  ) 9> "$AFTERREC.lock"
+}
 after_steps_record() {
   local st
   st=$(after_steps_new)
   [ "$(jq 'length' <<<"$st")" -gt 0 ] || return 0
-  mkdir -p "$DA_STATE/release"
-  jq -n --argjson s "$st" --arg p "$PROJ" --arg v "$VER" --arg t "$(now)" '{schema:2, project:$p, version:$v, at:$t, steps:$s}' > "$AFTERREC.tmp" && mv "$AFTERREC.tmp" "$AFTERREC"
+  after_rec_write -n --argjson s "$st" --arg p "$PROJ" --arg v "$VER" --arg t "$(now)" '{schema:2, project:$p, version:$v, at:$t, steps:$s}' || echo "note: could not write $AFTERREC" >&2
   jq -r "$AFTER_LINES" <<<"$st" | sed 's/^/after the release: /'
 }
 # after_steps_list: the steps for `release status`, one line each: those `finish` recorded in AFTERREC, with what `step` marked; when there is no (readable) record, the answer as it is now
@@ -788,8 +800,10 @@ case $verb in
     hint=$(jq -r '.evidence_hint' <<<"$cur")
     if [ -n "$hint" ] && [ -z "$EVIDENCE_SET" ]; then die "the step '$STEPNAME' needs evidence ($hint): qargi release step $VER '$STEPNAME' --evidence \"...\""; fi
     tm=$(now)
-    jq --arg n "$STEPNAME" --arg t "$tm" --arg e "$EVIDENCE" '(.steps[] | select(.name == $n)) |= (.state = "done" | .done_at = $t | .evidence = $e)' "$AFTERREC" > "$AFTERREC.tmp" \
-      && mv "$AFTERREC.tmp" "$AFTERREC" || die "could not write $AFTERREC"
+    # read, changed and written back under the lock: a step marked at the same moment is kept; the check that it is not done yet is made again inside
+    after_rec_write --arg n "$STEPNAME" --arg t "$tm" --arg e "$EVIDENCE" --arg a "$AGAIN" \
+      'if $a == "" and any(.steps[]; .name == $n and .state == "done") then error("the step was marked done meanwhile (--again records it again)") else (.steps[] | select(.name == $n)) |= (.state = "done" | .done_at = $t | .evidence = $e) end' "$AFTERREC" \
+      || die "could not write $AFTERREC"
     audit_log "release:step" "$PROJ $VER $STEPNAME"
     echo "marked done: $STEPNAME (release $VER, $tm${EVIDENCE:+, evidence: $EVIDENCE}); only the record changed, the command was not run"
     left=$(jq -r '[.steps[] | select(.state != "done")] | length' "$AFTERREC")

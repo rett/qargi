@@ -6,6 +6,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- Two `qargi release step` calls at the same moment (or a step and `release finish`) no longer lose a step: the after-steps record was written through one
+  fixed temporary file with no lock, so the slower call overwrote the other. The record is now read, changed and replaced under a lock (the one the registry of
+  local runs uses) through a temporary file of its own name; a step another call marked done in the meantime is refused unless `--again`.
+
 ## [0.2.5] - 2026-11-06
 
 ### Added
