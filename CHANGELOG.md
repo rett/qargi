@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-11-06
+
 ### Added
 - Tracked post-release steps. An entry of the answer `release.after_steps` may now be an object `{name, command, who, evidence}` (`who` is `lead` or `owner`;
   `evidence` says what shows the step was done), besides a plain string, which stays valid and is a step named by its text, for the lead, with no evidence required.
