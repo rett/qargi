@@ -6,6 +6,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- `qargi review apply` runs the declared take-in scrub (the answers `review.scrub` and `review.trailer_policy`) before it makes anything, as `review check` does, so a lead
+  cannot apply a series the scrub refuses: a failing scrub prints `scrub: FAIL ...`, refuses the apply and changes nothing. It skips the scrub, with the one line
+  `scrub: skipped (review check passed it for this series)`, when a passing `review check` recorded the same series: `review check` writes, in the lead's state directory
+  (`scrub_ok/RUN-ID`, not in the member's run directory), a hash of the patches in order and of the declared scrub, and apply compares it; a series (or a scrub answer)
+  changed since the check is scrubbed again, and a check that failed leaves no record. `--from-saved` follows the same rule. A member's apply does not run the scrub
+  (`scrub: not run`), as its check does not.
+
 ### Fixed
 - The guard refuses input it cannot decode. A hook input that is not valid UTF-8 was taken for "not JSON" and let through; it is now refused (exit 2, one line on
   stderr). Input that decodes but is not JSON is still no call to judge and is allowed, as before.

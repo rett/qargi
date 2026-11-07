@@ -31,24 +31,25 @@ scrub_declared() {
 scrub_first_lines() {
   printf '%s\n' "$1" | LC_ALL=C tr -d '\000-\010\013-\037\177' | sed -e '/^[[:space:]]*$/d' | head -n 3 | awk 'NR > 1 {printf " | "} {printf "%s", $0}' | cut -c1-300
 }
-# scrub_run RUN OUT -> prints the one verdict line and returns 0 (ok) or 1 (FAIL). The series (OUT/patches, applied with git am on the commit the run's base
+# scrub_run RUN OUT [FILES] -> prints the one verdict line and returns 0 (ok) or 1 (FAIL). The series (OUT/patches, applied with git am on the commit the run's base
 # branch had at prepare, as review apply applies it) is made in a throw-away shared clone of the run's repository (the registry's, never the run directory's):
 # no worktree entry, branch or tag is made in the repository itself, so no temporary ref is left behind. The policy is checked on the applied commits first;
-# then the command runs in the clone, checked out at the tip, with QARGI_SCRUB_BASE and QARGI_SCRUB_TIP set to the range.
+# then the command runs in the clone, checked out at the tip, with QARGI_SCRUB_BASE and QARGI_SCRUB_TIP set to the range. FILES is where the run's refs.before and
+# bare.git are (default RUN; the saved copy for a run applied with --from-saved, whose directory is gone).
 scrub_run() {
   local tmp rc=0
   tmp=$(mktemp -d "$DA_STATE/scrub-wt.XXXXXX") || { echo "scrub: FAIL could not make a temporary directory"; return 1; }
-  scrub_in "$1" "$2" "$tmp" || rc=$?
+  scrub_in "$1" "$2" "$tmp" "${3:-$1}" || rc=$?
   rm -rf -- "$tmp"
   return "$rc"
 }
 scrub_in() {
-  local run=$1 out=$2 tmp=$3 repo base sha tip c hit text rc=0 p
+  local run=$1 out=$2 tmp=$3 files=$4 repo base sha tip c hit text rc=0 p
   local -a patches=() cmd
   repo=$(reg_get "$run" repo); base=$(reg_get "$run" base)
   [ -n "$repo" ] || { echo "scrub: FAIL the registry names no local repository for the run"; return 1; }
-  sha=$(awk -v b="refs/heads/$base" '$1=="local" && $2==b {print $3}' "$run/refs.before" 2>/dev/null || true)
-  [ -n "$sha" ] || sha=$(git -C "$run/bare.git" rev-parse -q --verify "refs/heads/$base" 2>/dev/null || true)
+  sha=$(awk -v b="refs/heads/$base" '$1=="local" && $2==b {print $3}' "$files/refs.before" 2>/dev/null || true)
+  [ -n "$sha" ] || sha=$(git -C "$files/bare.git" rev-parse -q --verify "refs/heads/$base" 2>/dev/null || true)
   if [ -z "$sha" ] || ! git -C "$repo" cat-file -e "$sha^{commit}" 2>/dev/null; then echo "scrub: FAIL cannot tell the run's base commit (branch '$base')"; return 1; fi
   while IFS= read -r -d '' p; do patches+=("$p"); done < <(find "$out/patches" -maxdepth 1 -name '*.patch' -type f -print0 2>/dev/null | sort -z)
   if ! { git clone -q --shared --no-checkout -- "$repo" "$tmp/t" && git -C "$tmp/t" -c advice.detachedHead=false checkout -q --detach "$sha"; } >/dev/null 2>&1; then
@@ -75,6 +76,24 @@ scrub_in() {
   fi
   echo "scrub: ok"
 }
+# The verdict of a passing scrub is recorded for the series it passed. scrub_series_hash OUT -> the sha256 of the names and contents of OUT/patches/*.patch in order,
+# then of the declared scrub (SCRUB_CMD and SCRUB_TRAILERS, so a changed command is never taken as passed). The record is the lead's, in its state directory (the run
+# directory is a member's to write, and the saved copy of a run has none): scrub_ok/RUN-ID holds that hash. `review check` writes it when the scrub passes and removes
+# it when the scrub or the check fails; `review apply` skips the scrub when the record names the series it is about to apply, and runs it otherwise.
+scrub_series_hash() {
+  { ( cd "$1/patches" 2>/dev/null && find . -maxdepth 1 -name '*.patch' -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum ); printf '%s\n%s\n' "$SCRUB_CMD" "$SCRUB_TRAILERS"; } \
+    | sha256sum | cut -d' ' -f1
+}
+scrub_ok_file() { printf '%s/scrub_ok/%s' "$DA_STATE" "${1##*/}"; }
+scrub_ok_set() { # RUN OUT
+  local f rec; f=$(scrub_ok_file "$1"); mkdir -p "$(dirname "$f")" 2>/dev/null || return 0
+  rec=$(mktemp "$f.XXXXXX") || return 0
+  scrub_series_hash "$2" > "$rec" && mv -T -- "$rec" "$f" || rm -f "$rec"
+}
+scrub_ok_clear() { rm -f -- "$(scrub_ok_file "$1")"; }
+scrub_ok_has() { # RUN OUT -> 0 when the record names this series
+  local f; f=$(scrub_ok_file "$1"); [ -f "$f" ] && [ ! -L "$f" ] && [ "$(head -n 1 -- "$f" 2>/dev/null)" = "$(scrub_series_hash "$2")" ]
+}
 
 verb=${1:-}; shift || true
 if [ "$verb" = check ]; then
@@ -99,7 +118,9 @@ if [ "$verb" = check ]; then
     # a member's check (the mark `qargi local run` sets in a member's environment) never runs the lead's command or makes the checkout: the lead's check runs it
     if [ -n "${QARGI_MEMBER_RUN:-}" ]; then echo "scrub: not run (a member's check; the lead's check runs it)"
     elif [ "$rc" != 0 ]; then echo "scrub: not run (the series check failed)"
-    else scrub_run "$SRUN" "$SOUT" || rc=1; fi
+    elif scrub_run "$SRUN" "$SOUT"; then scrub_ok_set "$SRUN" "$SOUT"   # review apply skips the scrub it has just seen pass for this series
+    else rc=1; fi
+    [ "$rc" = 0 ] || scrub_ok_clear "$SRUN"
   fi
   exit "$rc"
 fi
@@ -209,6 +230,16 @@ case $verb in
     patches=()
     while IFS= read -r -d '' p; do patches+=("$p"); done < <(find "$SRC/out/patches" -maxdepth 1 -name '*.patch' -type f -print0 2>/dev/null | sort -z)
     [ ${#patches[@]} -gt 0 ] || die "$SRC/out/patches holds no patches: nothing to apply"
+    # The declared take-in scrub (review.scrub, review.trailer_policy) is the lead's: it runs here, before anything is made, unless a passing `review check` recorded
+    # the same series (the record is over the patches and the declared scrub; a change to either runs it again). A member's apply never runs it, as its check does not.
+    if scrub_declared "$RUN"; then
+      if [ -n "${QARGI_MEMBER_RUN:-}" ]; then echo "scrub: not run (a member's apply; the lead's apply runs it)"
+      elif scrub_ok_has "$RUN" "$SRC/out"; then echo "scrub: skipped (review check passed it for this series)"
+      else
+        text=$(scrub_run "$RUN" "$SRC/out" "$SRC") || { echo "$text"; die "the declared scrub refuses the series: nothing was applied"; }
+        echo "$text"
+      fi
+    fi
     # the committer: what the repository has configured, else the author of the patches
     if [ -z "$(g config user.name || true)" ] || [ -z "$(g config user.email || true)" ]; then
       first=${patches[0]}
@@ -237,6 +268,7 @@ case $verb in
     echo "applied ${#patches[@]} patch(es) on $BRANCH, from ${sha:0:12} to ${tip:0:12}:"
     g log --reverse --format='  %h %s' "$sha..$tip"
     echo "$AUTH_LINE"
+    scrub_ok_clear "$RUN"
     # The run directory is a member's to write: what is recorded there is written in the lead's state directory and renamed into place (mv -T replaces a link
     # that stands in the name, it never writes through it).
     rec=$(mktemp "$DA_STATE/apply-rec.XXXXXX") || die "could not record the application in $SRC: $BRANCH was made at ${tip:0:12}; write 'agent/... TIP NOW' to $SRC/applied by hand"
