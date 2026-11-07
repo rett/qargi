@@ -123,9 +123,20 @@ def show_overview():
     for title, lines in C.WORKFLOW:
         out.append("  " + title)
         out += ["    " + l for l in lines]
+    out += ["", b("Global options") + "  (every verb)"] + opts_block(C.GLOBAL_OPTS, 2)
     out += ["", "A cloud verb needs --asked \"<your request>\"; a change to shared resources prints a plan and needs --plan and --approved (qargi help approvals).",
             "Manual page: qargi help --man | man -l -        Completion: see docs/reference/README.md."]
     return "\n".join(out)
+
+
+def global_opts(own):
+    """The options of every verb that the verb (or command) does not describe itself."""
+    return [o for o in C.GLOBAL_OPTS if o["flag"] not in [x["flag"] for x in own]]
+
+
+def global_opts_block(own):
+    g = global_opts(own)
+    return (["", "Global options:"] + opts_block(g, 2)) if g else []
 
 
 def show_command(cmd, verb=None):
@@ -143,6 +154,7 @@ def show_command(cmd, verb=None):
             out += ["", wrap("PROJECT can be left out inside the project's repository, or set QARGI_PROJECT.")]
         if v["opts"]:
             out += ["", "Options:"] + opts_block(v["opts"], 2)
+        out += global_opts_block(v["opts"])
         if v["examples"]:
             out += ["", "Examples:"] + ["  " + e for e in v["examples"]]
         return "\n".join(out)
@@ -167,6 +179,7 @@ def show_command(cmd, verb=None):
         ex = spec.get("examples", [])
         if allopts:
             out += ["", "Options:"] + opts_block(allopts, 2)
+    out += global_opts_block(allopts if vs else spec.get("opts", []))
     if ex:
         out += ["", "Examples:"] + ["  " + e for e in ex]
     return "\n".join(out)
@@ -252,6 +265,11 @@ def man(date_from=None):
     w(".PP")
     w("Every command takes \\fB\\-\\-help\\fR. A command that changes shared resources prints a plan and applies it only with "
       "\\fB\\-\\-plan\\fR and \\fB\\-\\-approved\\fR; a cloud command needs \\fB\\-\\-asked\\fR. See APPROVALS.")
+    w(".SH GLOBAL OPTIONS")
+    for op in C.GLOBAL_OPTS:
+        w(".TP")
+        w('.BI "%s " "%s"' % (esc(op["flag"]), esc(op["arg"])) if op["arg"] else ".B " + esc(op["flag"]))
+        w(esc(op["help"] + "."))
     for t in ("concepts", "approvals", "guard", "naming", "memory", "push"):
         title, paras = C.TOPICS[t]
         w(".SH " + t.upper())
@@ -639,7 +657,7 @@ def _candidates(cur, prev):
     else:
         args = [tuple(a) for a in spec.get("usage", [])]
         opts, rest = spec.get("opts", []), prev[1:]
-    flags = {o["flag"]: o for o in opts}
+    flags = {o["flag"]: o for o in list(opts) + global_opts(opts)}
     pos, used, i = 0, set(), 0
     while i < len(rest):
         t = rest[i]
