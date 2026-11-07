@@ -62,6 +62,7 @@ set_note() { # project path json-value -> what `set` adds to its line: the provi
   # a value that is no option of the project's methodology is taken to name a cloud deployment and keeps the note
   local n=$1 path=$2 val=$3 meth
   case $path in git|git.*|review|review.*) return 0;; esac   # read by qargi review apply, never by a provision
+  case $path in repo.detached|site|site.*) return 0;; esac   # read where it is used (the branch guards, the release), never by a provision
   if [ "$path" = deployment ]; then
     meth=$(jq -r '.methodology // "gitflow"' "$PROJ_DIR/$n.json")
     python3 -I - "$(dirname "$0")" "$meth" "$val" <<'PY' && return 0

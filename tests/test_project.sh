@@ -275,6 +275,9 @@ for v in github-release none; do
   msg=$($DA project set demo deployment "$v" 2>&1); [ "$msg" = "demo: deployment = \"$v\"" ] && echo "ok   set deployment $v says only what was set" || { echo "FAIL set deployment $v: $msg"; fail=1; }
 done
 msg=$($DA project set demo deployment dep_0123 2>&1); grep -q "applies to the next provision" <<<"$msg" && echo "ok   set deployment to a cloud deployment keeps the provision note" || { echo "FAIL set cloud deployment note: $msg"; fail=1; }
+# repo.detached and site.* are read where they are used (the branch guards, the release), not by a provision: no provision note
+msg=$($DA project set demo repo.detached '["gh-pages"]' 2>&1); [ "$msg" = 'demo: repo.detached = ["gh-pages"]' ] && echo "ok   set repo.detached says only what was set" || { echo "FAIL set repo.detached: $msg"; fail=1; }
+msg=$($DA project set demo site.enabled true 2>&1); [ "$msg" = 'demo: site.enabled = true' ] && echo "ok   set site.enabled says only what was set" || { echo "FAIL set site.enabled: $msg"; fail=1; }
 $DA project set demo roles.build.effort turbo >/dev/null 2>&1 && { echo "FAIL set invalid accepted"; fail=1; } || echo "ok   set refuses an invalid value"
 [ "$(jq -r .roles.build.effort $T/c/projects/demo.json)" = high ] && echo "ok   refused set changed nothing" || { echo "FAIL set changed the file"; fail=1; }
 # marshal.lease_minutes is a project answer; the backend switch is not (it is set with a plan and an audit line by the marshal verbs)
