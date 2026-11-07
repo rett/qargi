@@ -1,0 +1,22 @@
+{
+ "purpose": "0.2.5: --json plan output for gated verbs (E), tracked post-release steps (C)",
+ "started": "2026-11-07T01:25:12Z",
+ "goal": "0.2.5: --json plan output for gated verbs (E), tracked post-release steps (C)",
+ "plan": "",
+ "note": "",
+ "status": "active",
+ "lead": {
+  "id": "rett@arc",
+  "user": "rett",
+  "host": "arc",
+  "since": "2026-11-07T01:25:12Z",
+  "worktree": "94b9af1305afafc4"
+ },
+ "renewed_at": "2026-11-07T01:25:12Z",
+ "finished_at": null,
+ "updated_by": "rett@arc",
+ "rev": 1,
+ "updated_at": "2026-11-07T01:25:12Z",
+ "feature": "flow025",
+ "project": "qargi"
+}
