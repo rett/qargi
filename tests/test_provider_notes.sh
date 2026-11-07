@@ -98,6 +98,7 @@ run --project onclaude
 { [ $rc = 0 ] && [ "$out" = "commands
 exploration
 identity
+member-out
 session-model
 skills-dir
 spawn" ]; } && ok "the shipped claude-code lists its topics" || no "claude-code topics: rc=$rc out=$out err=$err"

@@ -71,7 +71,7 @@ provision_reads() {
     models|models.provider|models.provider.*|models.extensions|models.extensions.*|models.accept_no_barrier|models.accept_no_barrier.*) return 0;;   # the runtime, its extensions, the read-only barrier
     lead|lead.model|lead.effort|lead.push|lead.push.*) return 0;;               # the lead agent, and the push rules in its prompt and tools
     packs|packs.none) return 0;;                                                # skills and tools render by what is linked
-    cloud|cloud.*) return 0;;                                                   # the ant profile and workspace every cloud call runs under
+    cloud|cloud.*) return 0;;                                                   # the cloud profile and workspace every cloud call runs under
   esac
   return 1
 }
