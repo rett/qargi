@@ -730,10 +730,11 @@ class Skills(HookCase):
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
     def test_refuses_release_assets_and_fix_to_a_member(self):
-        """release assets runs the project's release.assets_command (project code) and release fix makes a worktree on the release branch and pushes
-        it with --push; both verbs, and the script run directly, are refused, each with its own reason. The other release verbs and words in a quoted
+        """release assets runs the project's release.assets_command (project code), release fix makes a worktree on the release branch and pushes
+        it with --push, and release step marks an after-release step done in the lead's record; all three verbs, and the script run directly, are refused, each with its own reason. The other release verbs and words in a quoted
         string stay allowed."""
-        for verb, why in (("assets", "qargi release assets runs the project's release.assets_command"), ("fix", "qargi release fix makes a worktree on the release branch")):
+        for verb, why in (("assets", "qargi release assets runs the project's release.assets_command"), ("fix", "qargi release fix makes a worktree on the release branch"),
+                         ("step", "qargi release step marks an after-release step done in the lead's record")):
             for form in ("qargi release %s 0.2.0", "qargi release %s 0.2.0 --recreate --project p", "/opt/q/bin/qargi release %s 0.2.0", "sudo qargi release %s 0.2.0",
                          "bash -c 'qargi release %s 0.2.0'", "cd src && qargi release %s 0.2.0", "qargi release --project p %s 0.2.0", "eval 'qargi release %s 0.2.0'",
                          "bash lib/release.sh %s 0.2.0", "./lib/release.sh %s 0.2.0 --push"):
@@ -741,7 +742,7 @@ class Skills(HookCase):
                 self.assertEqual(r.returncode, 2, form % verb)
                 self.assertIn(why, r.stderr)
         for c in ("qargi release status 0.2.0", "qargi release push 0.2.0", "echo qargi release assets", "grep -n 'release fix' lib/commands.py",
-                  "qargi help release assets", "qargi help release fix"):
+                  "qargi help release assets", "qargi help release fix", "qargi help release step", "echo qargi release step"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 

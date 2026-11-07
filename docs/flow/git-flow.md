@@ -53,6 +53,15 @@ refusal changes nothing.
    the items of the version's changelog section that the file does not mention. An item is a line at the margin that starts with
    `-`, `*`, `+` or a number and a dot; it is mentioned when its leading `` `backticked term` ``, else its first three words, occurs
    in the file, ignoring case and spacing. Without the answer nothing is checked.
+   `release.after_steps` lists the project's own steps after a release, and qargi tracks them without running them. A step is a
+   one-line string (its text is its name; the lead does it; no evidence is asked) or an object `{"name": "...", "command": "...",
+   "who": "lead" | "owner", "evidence": "what shows it was done"}`; `{version}` is replaced and the names are distinct. `release
+   finish` records the steps as pending (a file under the state directory) and shows each as `[pending] NAME (WHO): COMMAND`.
+   `qargi release step VERSION NAME [--evidence TEXT]` marks one done once it was: it records the time and the evidence text,
+   wants `--evidence` when the step's answer has an `evidence`, refuses a name or version the record does not have and a step
+   marked done already (unless `--again`), and changes only the record, never running the command. It is the lead's verb: a
+   member's guard refuses it. `release status VERSION` then shows `[done] NAME (WHO, TIME, evidence: TEXT)` and, last, the
+   pending steps; the owner's read `waits for the owner: run COMMAND`. The record is kept across sessions.
 5. A hotfix is the same with `--hotfix`: `qargi release start VERSION --hotfix` (from master), then
    `release push` and `release finish --hotfix` (into the open release branch instead of develop,
    if there is one).
