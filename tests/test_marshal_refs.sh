@@ -341,6 +341,19 @@ else
 fi
 
 # ============================================================ (16) hostile remote records
+# hookrun MACHINE SID: the session hook as that machine, in $hk, its wall time in $HK_SECS. The hook reads the marshal with a 5 s budget and drops
+# the block when the read is cut off, which a loaded machine (the suite's parallel shards) makes happen; the test gives it 60 s so it checks the output, not the clock.
+hookrun() {
+  local t0=$EPOCHREALTIME
+  hk=$(printf '{"session_id":"%s"}' "$2" | env HOME="$T/m/$1/home" QARGI_CONF="$T/m/$1/c" QARGI_STATE="$T/m/$1/s" QARGI_HOOK_MARSHAL_SECS=60 bash "$TOOL/lib/hook.sh" session-start --project app 2>/dev/null)
+  HK_SECS=$(awk -v a="$t0" -v b="$EPOCHREALTIME" 'BEGIN { printf "%.1f", b - a }')
+}
+# hookwhy MACHINE: what to print when a hook assertion fails: how long the hook took and how long the status call it makes takes now
+hookwhy() {
+  local t0=$EPOCHREALTIME
+  XE "$1" marshal status --all --brief --no-fetch >/dev/null
+  echo "hook ${HK_SECS}s; its status call now $(awk -v a="$t0" -v b="$EPOCHREALTIME" 'BEGIN { printf "%.1f", b - a }')s (the hook gives it 5 s unless QARGI_HOOK_MARSHAL_SECS, which this test sets to 60)"
+}
 VALID() { jq -nc --arg f "$1" '{feature:$f, project:"app", status:"active", goal:"hostile", rev:1, lead:{id:"mallory", user:"m", host:"h", since:"2026-01-01T00:00:00Z"}, renewed_at:"2026-01-01T00:00:00Z", updated_at:"2026-01-01T00:00:00Z"}'; }
 blob() { printf '%s' "$1" | OG hash-object -w --stdin; }
 tree() { while [ $# -gt 0 ]; do printf '%s %s %s\t%s\n' "$1" "$2" "$3" "$4"; shift 4; done | OG mktree; }
@@ -373,9 +386,9 @@ for r in $HOSTILE; do grep -qi "warn" "$T/e" && grep -qF -e "${r##*/}" "$T/e" ||
 [ -z "$miss" ] && ok "hostile: every ignored ref is named in a stderr warning" || no "SPEC hostile: ignored with a warning; no warning names:$miss (stderr: $(head -c 800 "$T/e"))"
 XE b marshal status hnorec; [ $? != 0 ] && ! grep -q Traceback "$T/e" && ok "hostile: asking for an ignored feature by name is a plain refusal, no crash" || no "SPEC hostile status NAME: $(out)"
 XE b marshal check hjson --as bob; [ $? != 70 ] && ! grep -q Traceback "$T/e" && ok "hostile: check on an ignored feature does not crash" || no "SPEC hostile check: $(out)"
-hk=$(printf '{"session_id":"s1"}' | env HOME="$T/m/b/home" QARGI_CONF="$T/m/b/c" QARGI_STATE="$T/m/b/s" bash "$TOOL/lib/hook.sh" session-start --project app 2>/dev/null)
+hookrun b s1
 printf '%s' "$hk" | jq -e '.hookSpecificOutput.additionalContext | strings' >/dev/null 2>&1 && ! printf '%s' "$hk" | grep -q mallory \
-  && ok "hostile: the session hook still prints valid JSON, without the hostile records" || no "SPEC hostile: hook JSON: ${hk:0:300}"
+  && ok "hostile: the session hook still prints valid JSON, without the hostile records" || no "SPEC hostile: hook JSON: ${hk:0:300} ($(hookwhy b))"
 for r in $HOSTILE refs/qargi/features/hgood; do OG update-ref -d "$r"; done
 
 # ============================================================ (17) read verbs never push
@@ -396,9 +409,9 @@ done
 nf=$(nsub fetch)
 XE a marshal status --all --brief --no-fetch; rc=$?
 [ $rc = 0 ] && [ "$(nsub fetch)" = "$nf" ] && ok "read verbs: --no-fetch runs no fetch (the session hook's mode)" || no "SPEC status --no-fetch (rc=$rc, fetches +$(( $(nsub fetch) - nf ))): $(out)"
-hk=$(printf '{"session_id":"s2"}' | env HOME="$T/m/a/home" QARGI_CONF="$T/m/a/c" QARGI_STATE="$T/m/a/s" bash "$TOOL/lib/hook.sh" session-start --project app 2>/dev/null)
+hookrun a s2
 printf '%s' "$hk" | jq -e . >/dev/null 2>&1 && [ "$(nsub fetch)" = "$nf" ] && [ "$(nsub push)" = "$np" ] \
-  && ok "read verbs: the session hook runs no fetch or push and prints valid JSON" || no "SPEC hook uses status --no-fetch: fetches +$(( $(nsub fetch) - nf )), pushes +$(( $(nsub push) - np )), json: ${hk:0:120}"
+  && ok "read verbs: the session hook runs no fetch or push and prints valid JSON" || no "SPEC hook uses status --no-fetch: fetches +$(( $(nsub fetch) - nf )), pushes +$(( $(nsub push) - np )), json: ${hk:0:120} ($(hookwhy a))"
 
 # ============================================================ (19) a finished feature is not resurrected by a provisional claim
 # alice claims rz1 offline (provisional); bob claims it and finishes it meanwhile; alice's next verb must drop her claim, not push it
@@ -429,11 +442,11 @@ XE b marshal status --all --brief; rc1=$?; cp "$T/o" "$T/o.brief"; cp "$T/e" "$T
 XE b marshal status --all --json; rc2=$?; jq -e . "$T/o" >/dev/null 2>&1; js=$?
 XE b marshal check --as bob; rc3=$?
 cat "$T/e.brief" "$T/e" > "$T/e.all"
-hk=$(printf '{"session_id":"s3"}' | env HOME="$T/m/b/home" QARGI_CONF="$T/m/b/c" QARGI_STATE="$T/m/b/s" bash "$TOOL/lib/hook.sh" session-start --project app 2>/dev/null)
+hookrun b s3
 if [ $rc1 = 0 ] && [ $rc2 = 0 ] && [ $js = 0 ] && [ $rc3 = 0 ] && ! grep -q Traceback "$T/e.all" && grep -q '^wgood ' "$T/o.brief" && ! grep -q mallory "$T/o.brief" \
    && printf '%s' "$hk" | jq -e '.hookSpecificOutput.additionalContext | strings' >/dev/null 2>&1; then
   ok "wrong types: status --brief/--json, check and the session hook still work (exit 0, no traceback), the valid record is listed"
-else no "SPEC no read verb may exit 70 on remote data: brief rc=$rc1, json rc=$rc2 (valid json: $js), check rc=$rc3, hook: ${hk:0:120}: $(head -c 600 "$T/e.all")"; fi
+else no "SPEC no read verb may exit 70 on remote data: brief rc=$rc1, json rc=$rc2 (valid json: $js), check rc=$rc3, hook: ${hk:0:120} ($(hookwhy b)): $(head -c 600 "$T/e.all")"; fi
 miss=''
 for n in tnull tnum tlist pnum rnum fnum; do
   grep -qi warn "$T/e.all" && grep -qF -e "refs/qargi/features/$n" "$T/e.all" && ! grep -q "^$n " "$T/o.brief" || miss="$miss $n"
