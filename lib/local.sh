@@ -12,6 +12,8 @@
 #   local.sh clean RUN_DIR [--discard]   remove a collected, verified run and its temporary directory (--discard: whatever verify says)
 #   local.sh clean --applied --scratch DIR   remove every run under DIR whose work is applied and merged; keep and name the others
 #   local.sh clean --stale DAYS --scratch DIR [--yes]   list the finished runs (verified or applied) under DIR older than DAYS; with --yes clean them
+#   local.sh clean --orphans [--days N] [--plan TOKEN --approved WORDS]   list the qargi-run.* directories of the run temporary parent (/dev/shm, or QARGI_RUN_TMP)
+#                                        that no run of the registry names, each with its age; a plan and token first, then only the ones older than N days (2) are removed
 #   local.sh list [--scratch DIR]        read-only: each run (under DIR, else the registry's) with role, slug, age, applied and merged; a run whose
 #                                        directory is gone (and that clean did not remove) says "directory gone", and names its saved copy
 #   local.sh run RUN_DIR [--task FILE] [--model TIER|ID] [--effort LEVEL] [--timeout SECONDS] [--again] [--dry-run]
@@ -607,18 +609,83 @@ WRAP
     #   clean RUN [--discard]            one run; --discard drops it on purpose, whatever verify says and whatever it holds
     #   clean --applied --scratch DIR    every run directly under DIR whose work is recorded applied (RUN/applied) and merged
     #   clean --stale DAYS --scratch DIR [--yes]   the finished runs (RUN/verified or RUN/applied) older than DAYS: a plan, removed only with --yes
-    CLEAN_RUN='' DISCARD='' ALL='' SCR='' STALE='' YES=''
+    CLEAN_RUN='' DISCARD='' ALL='' SCR='' STALE='' YES='' ORPH='' DAYS='' PLAN_ARG='' APPROVED=''
     while [ $# -gt 0 ]; do
       case $1 in
         --discard) DISCARD=1; shift;;
         --applied) ALL=1; shift;;
         --stale) need_val "$1" $#; STALE=${2:-}; shift 2;;
         --yes) YES=1; shift;;
+        --orphans) ORPH=1; shift;;
+        --days) need_val "$1" $#; DAYS=${2:-}; shift 2;;
+        --plan) need_val "$1" $#; PLAN_ARG=${2:-}; shift 2;;
+        --approved) need_val "$1" $#; APPROVED=${2:-}; shift 2;;
         --scratch) need_val "$1" $#; SCR=${2:-}; shift 2;;
         -*) usage_die "clean: unknown option $1";;
         *) [ -z "$CLEAN_RUN" ] || usage_die "clean takes one RUN dir"; CLEAN_RUN=$1; shift;;
       esac
     done
+    [ -n "$ORPH" ] || [ -z "$DAYS$PLAN_ARG$APPROVED" ] || usage_die "clean: --days, --plan and --approved are for --orphans"
+    if [ -n "$ORPH" ]; then
+      # the private temporary directories prepare makes (qargi-run.XXXXXX under /dev/shm, or QARGI_RUN_TMP) that no run of the lead's registry names: a prepare that
+      # failed after making one, a registry line that was dropped, a state directory that was replaced. Each is listed with its age and whether the registry names it.
+      # Only an unnamed one that is older than N days (default 2) and has nothing in it newer than that is ever removed, and only behind a plan token and the lead's
+      # words. A named directory is never removed here, live or not: clean RUN removes it with its run.
+      [ -z "$ALL$CLEAN_RUN$DISCARD$STALE$YES$SCR" ] || usage_die "clean --orphans takes no RUN dir, no --applied, --discard, --stale, --yes and no --scratch"
+      DAYS=${DAYS:-2}
+      case $DAYS in ''|*[!0-9]*|0) usage_die "clean --orphans --days needs a whole number of days, at least 1 (a directory prepare made a moment ago is not yet named), got '$DAYS'";; esac
+      oroot=${QARGI_RUN_TMP:-/dev/shm}
+      while [ "${oroot%/}" != "$oroot" ] && [ "$oroot" != / ]; do oroot=${oroot%/}; done
+      [ -d "$oroot" ] && [ ! -L "$oroot" ] || die "clean --orphans: $oroot is not a directory"
+      oroot=$(readlink -f -- "$oroot")
+      nowe=$(date +%s); cutoff=$((nowe - DAYS * 86400))
+      reg_load
+      declare -A ONAMED=()
+      for d in ${LRUNS_ORDER[@]+"${LRUNS_ORDER[@]}"}; do
+        t=$(reg_get "$d" tmpdir); [ -n "$t" ] || continue
+        ONAMED[$(readlink -m -- "$t")]=$d
+      done
+      orph=(); okept=0; ototal=0
+      for e in "$oroot"/qargi-run.??????; do
+        [ -e "$e" ] || [ -L "$e" ] || continue
+        ototal=$((ototal + 1))
+        if [ -L "$e" ] || [ ! -d "$e" ]; then echo "kept $e: not a directory prepare makes (a link or a file)"; okept=$((okept + 1)); continue; fi
+        mt=$(stat -c %Y -- "$e" 2>/dev/null) || mt=''
+        [[ $mt =~ ^[0-9]{1,12}$ ]] || { echo "kept $e: its age cannot be read"; okept=$((okept + 1)); continue; }
+        age=$(( (nowe - mt) / 86400 ))
+        if [ -n "${ONAMED[$e]+x}" ]; then
+          rd=${ONAMED[$e]}; if [ -d "$rd" ]; then rst="its run directory $rd exists"; else rst="the run directory $rd is gone"; fi
+          echo "kept $e (${age}d old): named by the registry ($rst)"; okept=$((okept + 1)); continue
+        fi
+        if [ ! -O "$e" ]; then echo "kept $e (${age}d old): not owned by this user"; okept=$((okept + 1)); continue; fi
+        if [ "$mt" -gt "$cutoff" ] || [ -n "$(find "$e" -xdev -newermt "@$cutoff" -print -quit 2>/dev/null)" ]; then
+          echo "kept $e (${age}d old): named by no registry, but it or something in it changed within ${DAYS} day(s)"; okept=$((okept + 1)); continue
+        fi
+        echo "orphan $e (${age}d old, named by no registry)"; orph+=("$e $mt")
+      done
+      echo "$ototal qargi-run.* director(ies) under $oroot: ${#orph[@]} orphaned for more than $DAYS day(s), $okept kept"
+      if [ "${#orph[@]}" = 0 ]; then echo "plan: nothing to remove under $oroot"; exit 0; fi
+      otok=$({ printf '%s\n%s\n' "$oroot" "$DAYS"; printf '%s\n' "${orph[@]}"; } | plan_token)
+      if [ -z "$APPROVED" ]; then
+        echo "plan: remove ${#orph[@]} orphaned director(ies) under $oroot (the ones marked orphan above); nothing changed"
+        echo "plan token: $otok   (apply with: qargi local clean --orphans --days $DAYS --plan $otok --approved \"...\")"
+        exit 0
+      fi
+      need_plan "$otok"
+      rm_n=0; rk_n=0
+      for ent in "${orph[@]}"; do
+        e=${ent% *}; reg_load
+        # checked again at the moment of removal: still a real directory directly under the parent, still named by no registry
+        rp=$(realpath -- "$e" 2>/dev/null) || rp=''
+        named=''; for d in ${LRUNS_ORDER[@]+"${LRUNS_ORDER[@]}"}; do t=$(reg_get "$d" tmpdir); if [ -n "$t" ] && [ "$(readlink -m -- "$t")" = "$e" ]; then named=$d; fi; done
+        if [ -L "$e" ] || [ "$rp" != "$e" ] || [ "$(dirname -- "$rp")" != "$oroot" ] || [ -n "$named" ]; then echo "kept $e: it changed since the plan"; rk_n=$((rk_n + 1)); continue; fi
+        if rm -rf --one-file-system -- "$rp"; then echo "removed $e"; rm_n=$((rm_n + 1)); else echo "kept $e: it could not be removed"; rk_n=$((rk_n + 1)); fi
+      done
+      audit_log "local:clean-orphans" "$oroot $rm_n removed $rk_n kept (older than $DAYS day(s))"
+      echo "removed $rm_n orphaned director(ies), kept $rk_n"
+      [ "$rk_n" = 0 ] || exit 1
+      exit 0
+    fi
     if [ -n "$STALE" ]; then
       [ -z "$ALL$CLEAN_RUN$DISCARD" ] || usage_die "clean --stale takes no RUN dir, no --applied and no --discard: it cleans only finished runs, and each by the rules of clean"
       case $STALE in ''|*[!0-9]*) usage_die "clean --stale needs a whole number of days, got '$STALE'";; esac

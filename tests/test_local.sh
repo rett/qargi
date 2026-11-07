@@ -573,4 +573,56 @@ rm -rf "$T/rb"
 out=$(./bin/qargi local list --scratch "$T/rb" 2>&1); rcl=$?
 [ $rcl = 0 ] && grep -q "$RB4  directory gone" <<<"$out" && ok "a scratch directory that is gone itself is still listed from the registry" || no "list of a gone scratch (rc=$rcl): $out"
 ./bin/qargi local clean "$RB4" --discard >/dev/null 2>&1
+
+# clean --orphans: the qargi-run.* directories of the temporary parent that no registry names. A fake parent (QARGI_RUN_TMP), never /dev/shm: the real one is only
+# listed before and after, to show it was not touched.
+SHM0=$(ls -d /dev/shm/qargi-run.* 2>/dev/null | sort | sha256sum)
+OS=$T/shm-o; mkdir -p "$OS" "$T/os-scr"
+mkorph() { # NAME DAYS_OLD -> $OS/qargi-run.NAME, with a file in it, both that old
+  mkdir -p "$OS/qargi-run.$1" && echo x > "$OS/qargi-run.$1/f" && touch -d "$2 days ago" "$OS/qargi-run.$1/f" "$OS/qargi-run.$1"
+}
+OL=$(QARGI_RUN_TMP=$OS ./bin/qargi local prepare --repo "$T/r6" --base main --slug orlive --scratch "$T/os-scr" | sed -n '1,/^$/s/^RUN=//p')
+OLT=$(cat "$OL/tmpdir"); touch -d "10 days ago" "$OLT"                       # a live run's directory, old
+OG=$(QARGI_RUN_TMP=$OS ./bin/qargi local prepare --repo "$T/r6" --base main --slug orgone --scratch "$T/os-scr" | sed -n '1,/^$/s/^RUN=//p')
+OGT=$(cat "$OG/tmpdir"); rm -rf "$OG"; touch -d "10 days ago" "$OGT"          # its run directory is gone, the registry still names the temporary one
+mkorph AAAAAA 5; mkorph BBBBBB 3; mkorph NEWNEW 0; mkorph FRESHF 5; echo y > "$OS/qargi-run.FRESHF/g"; touch -d "5 days ago" "$OS/qargi-run.FRESHF"   # an old directory with a file that is new
+mkdir -p "$T/victim" && echo v > "$T/victim/keep"; ln -s "$T/victim" "$OS/qargi-run.LINKED"; echo f > "$OS/qargi-run.AFILES"
+orph() { QARGI_RUN_TMP=$OS ./bin/qargi local clean --orphans "$@" 2>&1; }
+out=$(orph); rcs=$?
+tok=$(sed -n 's/^plan token: \([0-9a-f]*\) .*/\1/p' <<<"$out")
+{ [ $rcs = 0 ] && [ -n "$tok" ] && grep -q "^orphan $OS/qargi-run.AAAAAA (5d old, named by no registry)" <<<"$out" && grep -q "^orphan $OS/qargi-run.BBBBBB (3d old" <<<"$out" \
+  && grep -q "^kept $OLT (10d old): named by the registry (its run directory $OL exists)" <<<"$out" && grep -q "^kept $OGT (10d old): named by the registry (the run directory $OG is gone)" <<<"$out" \
+  && grep -q "^kept $OS/qargi-run.NEWNEW (0d old): named by no registry, but it or something in it changed within 2 day" <<<"$out" && grep -q "^kept $OS/qargi-run.FRESHF (5d old): named by no registry, but" <<<"$out" \
+  && grep -q "^kept $OS/qargi-run.LINKED: not a directory" <<<"$out" && grep -q "^kept $OS/qargi-run.AFILES: not a directory" <<<"$out" && grep -q " 2 orphaned for more than 2 day" <<<"$out" \
+  && ! grep -q "^orphan .*\(NEWNEW\|FRESHF\|LINKED\|AFILES\|$(basename "$OLT")\|$(basename "$OGT")\)" <<<"$out" \
+  && [ -d "$OS/qargi-run.AAAAAA" ] && [ -d "$OS/qargi-run.BBBBBB" ] && [ -f "$T/victim/keep" ]; } \
+  && ok "clean --orphans lists each directory with its age and whether the registry names it, prints a plan and a token, and removes nothing" || no "orphans plan (rc=$rcs): $out"
+out=$(orph --approved "go"); rcs=$?
+{ [ $rcs != 0 ] && grep -q "the plan changed or --plan is missing" <<<"$out" && [ -d "$OS/qargi-run.AAAAAA" ]; } && ok "--approved without the plan token removes nothing" || no "approved without plan (rc=$rcs): $out"
+out=$(orph --plan 000000000000 --approved "go"); rcs=$?
+{ [ $rcs != 0 ] && [ -d "$OS/qargi-run.AAAAAA" ] && [ -d "$OS/qargi-run.BBBBBB" ]; } && ok "a wrong token removes nothing" || no "wrong token (rc=$rcs): $out"
+out=$(orph --days 4); tok4=$(sed -n 's/^plan token: \([0-9a-f]*\) .*/\1/p' <<<"$out")
+{ grep -q "^orphan $OS/qargi-run.AAAAAA" <<<"$out" && ! grep -q "^orphan $OS/qargi-run.BBBBBB" <<<"$out" && grep -q "^kept $OS/qargi-run.BBBBBB (3d old): named by no registry, but" <<<"$out" && [ "$tok4" != "$tok" ]; } \
+  && ok "--days 4 lists only what is older than 4 days, with its own token" || no "days 4: $out"
+out=$(orph --days 4 --plan "$tok" --approved "go"); rcs=$?
+{ [ $rcs != 0 ] && [ -d "$OS/qargi-run.AAAAAA" ]; } && ok "the token of another plan is refused" || no "token of another plan (rc=$rcs): $out"
+mkorph CCCCCC 9                                                                # a new orphan after the plan: the plan changed
+out=$(orph --plan "$tok" --approved "go"); rcs=$?
+{ [ $rcs != 0 ] && grep -q "the plan changed" <<<"$out" && [ -d "$OS/qargi-run.AAAAAA" ] && [ -d "$OS/qargi-run.CCCCCC" ]; } && ok "a directory that appeared since the plan changes it: nothing is removed" || no "plan changed (rc=$rcs): $out"
+out=$(orph); tok=$(sed -n 's/^plan token: \([0-9a-f]*\) .*/\1/p' <<<"$out")
+out=$(orph --plan "$tok" --approved "the owner said go"); rcs=$?
+{ [ $rcs = 0 ] && grep -q "^removed $OS/qargi-run.AAAAAA\$" <<<"$out" && grep -q "^removed $OS/qargi-run.BBBBBB\$" <<<"$out" && grep -q "^removed $OS/qargi-run.CCCCCC\$" <<<"$out" \
+  && grep -q "removed 3 orphaned director" <<<"$out" && [ ! -e "$OS/qargi-run.AAAAAA" ] && [ ! -e "$OS/qargi-run.BBBBBB" ] && [ ! -e "$OS/qargi-run.CCCCCC" ]; } \
+  && ok "with the token and the words, the orphans older than the limit are removed" || no "orphans apply (rc=$rcs): $out"
+{ [ -d "$OLT" ] && [ -d "$OS/qargi-run.NEWNEW" ] && [ -d "$OS/qargi-run.FRESHF" ] && [ -L "$OS/qargi-run.LINKED" ] && [ -f "$T/victim/keep" ] && [ -f "$OS/qargi-run.AFILES" ] && [ -d "$OGT" ] && [ -d "$OL" ]; } \
+  && ok "a live run's directory, a named one, a recent one, a link and a file are left alone" || no "orphans left alone: $(ls -A "$OS")"
+jq -e 'select(.verb == "local:clean-orphans" and .approved == "the owner said go")' "$T/s/audit.log" >/dev/null 2>&1 && ok "the removal is in the audit log with the words" || no "audit: $(tail -2 "$T/s/audit.log" 2>&1)"
+out=$(orph); grep -q "plan: nothing to remove" <<<"$out" && ok "and the next plan is empty" || no "second plan: $out"
+for bad in "--orphans --scratch $T/os-scr" "--orphans $OL" "--orphans --discard" "--orphans --applied" "--orphans --stale 5" "--orphans --yes" "--orphans --days 0" "--orphans --days x" "--days 3" "--plan abc" "--approved go"; do
+  # shellcheck disable=SC2086
+  out=$(QARGI_RUN_TMP=$OS ./bin/qargi local clean $bad 2>&1); rcs=$?
+  [ $rcs = 2 ] && [ -d "$OLT" ] && ok "clean $bad is a usage error" || no "clean $bad (rc=$rcs): $out"
+done
+[ "$SHM0" = "$(ls -d /dev/shm/qargi-run.* 2>/dev/null | sort | sha256sum)" ] && ok "the tests listed and removed only in the fake parent: /dev/shm is as it was" || no "/dev/shm changed"
+./bin/qargi local clean "$OL" --discard >/dev/null 2>&1; rm -rf "$OS"
 exit $fail
