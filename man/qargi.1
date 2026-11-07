@@ -12,6 +12,10 @@ qargi \- A gathering place for agent work: dispatch, review, remember
 qargi dispatches one\-off, task\-scoped development tasks to sandboxed agents and takes the work back as reviewable patches. An agent is a member on this machine (local, the default) or a cloud agent (only when you ask for it in that request). Agents work in their own clone and never push. A team adds a lead that coordinates members for build, write and review on one task. Everything qargi stores about you and your projects lives outside every repository. Inside a project's repository you can leave out its name.
 .PP
 Every command takes \fB\-\-help\fR. A command that changes shared resources prints a plan and applies it only with \fB\-\-plan\fR and \fB\-\-approved\fR; a cloud command needs \fB\-\-asked\fR. See APPROVALS.
+.SH GLOBAL OPTIONS
+.TP
+.B \-\-json
+print the result as one JSON object with the verb, the plan, the token, the command that applies it and the exit status (the output instead, when the verb printed no plan token); never supplies \-\-plan or \-\-approved.
 .SH CONCEPTS
 Task: you describe one task and an executable check that decides it is done. An agent works on it in its own clone and hands back numbered patches, one per commit, with a manifest. Nothing is pushed.
 .PP
@@ -24,6 +28,8 @@ You decide: the coordinator re\-verifies everything an agent returns (qargi revi
 A command that changes something shared prints a plan first. The plan ends with a plan token, a hash of what would be done.
 .PP
 To apply, run the same command with \-\-plan TOKEN \-\-approved "your words". If the plan changed in between, the token no longer matches and nothing happens.
+.PP
+Add \-\-json to any verb to get the plan as one JSON object instead of text: {verb, plan, token, apply, exit}, where apply is the command line to run once the person has agreed (the call as given, without \-\-json, plus \-\-plan TOKEN and \-\-approved with a placeholder for the person's own words). A verb that printed no plan token (it ran, or refused) gives {verb, plan: null, token: null, output, exit}; the exit status is the verb's and its error messages stay on stderr. \-\-json never supplies \-\-plan or \-\-approved, and a call that carries them runs as it would without \-\-json, wrapped the same way with a null token. A verb that describes a \-\-json option of its own keeps it.
 .PP
 \-\-asked "your request" is required by every cloud verb: it records that you asked for the cloud. Both are written to an append\-only audit log in the state directory.
 .PP

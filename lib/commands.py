@@ -70,6 +70,10 @@ KIND = opt("--kind", "which store: memory or reference (default: both)", "KIND",
 
 REASONS = ("wrong-scope", "broke-check", "style", "too-slow", "too-costly", "skill-ignored", "skill-wrong", "brief-unclear", "gate-noise", "other")
 
+# Options every verb takes, handled once by bin/qargi (lib/jsonplan.py), not by the verb. A verb that documents an option of the same name keeps it.
+GLOBAL_OPTS = [opt("--json", "print the result as one JSON object with the verb, the plan, the token, the command that applies it and the exit status "
+                             "(the output instead, when the verb printed no plan token); never supplies --plan or --approved")]
+
 PROJECT_OPT = opt("--project", "the project, instead of the one inferred from here", "PROJECT", "project")
 MEMBER_PROJECT_OPT = opt("--project", "the project the member belongs to (default: the one in effect when it has the member, else the only project that has it)", "PROJECT", "project")
 AS_OPT = opt("--as", "act as this lead identity (default: the session id in QARGI_LEAD, else user@host)", "ID")
@@ -1439,6 +1443,11 @@ TOPICS = {
         "A command that changes something shared prints a plan first. The plan ends with a plan token, a hash of what would be done.",
         "To apply, run the same command with --plan TOKEN --approved \"your words\". If the plan changed in between, the token no longer "
         "matches and nothing happens.",
+        "Add --json to any verb to get the plan as one JSON object instead of text: {verb, plan, token, apply, exit}, where apply is the command "
+        "line to run once the person has agreed (the call as given, without --json, plus --plan TOKEN and --approved with a placeholder for the person's own words). "
+        "A verb that printed no plan token (it ran, or refused) gives {verb, plan: null, token: null, output, exit}; the exit status is the verb's and its error "
+        "messages stay on stderr. --json never supplies --plan or --approved, and a call that carries them runs as it would without --json, wrapped the same way "
+        "with a null token. A verb that describes a --json option of its own keeps it.",
         "--asked \"your request\" is required by every cloud verb: it records that you asked for the cloud. Both are written to an "
         "append-only audit log in the state directory.",
         "qargi lead grant and revoke are interactive instead: you confirm each step at the terminal, and that is the approval.",
