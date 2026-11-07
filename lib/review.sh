@@ -226,17 +226,26 @@ case $verb in
     [ -n "$sha" ] || die "cannot tell the run's base commit (branch '$base')"
     g cat-file -e "$sha^{commit}" 2>/dev/null || die "the base commit $sha is not in $REPO"
     branch_exists "$BRANCH" && die "$BRANCH exists already: choose another with --branch, or delete it first"
-    # the patches are the files of out/patches: read as a list, so a name with a space or a newline in it stays one name
+    # The patches are the files of out/patches, copied once into a directory of the lead's own (the run directory is a member's to write, and a member's process
+    # may still be alive): the hash of the series, the scrub and git am all read that copy, so what was scrubbed is what is applied. A link that took the place of a
+    # file in the meantime is copied as a link and refused. Read as a list, so a name with a space or a newline in it stays one name.
+    AP=$(mktemp -d "$DA_STATE/apply-in.XXXXXX") || die "could not make a temporary directory in $DA_STATE for the patches"
+    trap 'on_exit; [ -z "${AP:-}" ] || rm -rf -- "$AP"' EXIT
+    mkdir "$AP/patches" || die "could not make a directory for the patches in $AP"
+    n=0
+    while IFS= read -r -d '' p; do cp -P -- "$p" "$AP/patches/" 2>/dev/null || die "could not copy $p: nothing was applied"; n=$((n + 1)); done \
+      < <(find "$SRC/out/patches" -maxdepth 1 -name '*.patch' -type f -print0 2>/dev/null | sort -z)
     patches=()
-    while IFS= read -r -d '' p; do patches+=("$p"); done < <(find "$SRC/out/patches" -maxdepth 1 -name '*.patch' -type f -print0 2>/dev/null | sort -z)
+    while IFS= read -r -d '' p; do patches+=("$p"); done < <(find "$AP/patches" -maxdepth 1 -name '*.patch' -type f -print0 | sort -z)
     [ ${#patches[@]} -gt 0 ] || die "$SRC/out/patches holds no patches: nothing to apply"
+    [ ${#patches[@]} = "$n" ] || die "a patch of $SRC/out/patches changed while it was copied (not a regular file): nothing was applied"
     # The declared take-in scrub (review.scrub, review.trailer_policy) is the lead's: it runs here, before anything is made, unless a passing `review check` recorded
     # the same series (the record is over the patches and the declared scrub; a change to either runs it again). A member's apply never runs it, as its check does not.
     if scrub_declared "$RUN"; then
       if [ -n "${QARGI_MEMBER_RUN:-}" ]; then echo "scrub: not run (a member's apply; the lead's apply runs it)"
-      elif scrub_ok_has "$RUN" "$SRC/out"; then echo "scrub: skipped (review check passed it for this series)"
+      elif scrub_ok_has "$RUN" "$AP"; then echo "scrub: skipped (review check passed it for this series)"
       else
-        text=$(scrub_run "$RUN" "$SRC/out" "$SRC") || { echo "$text"; die "the declared scrub refuses the series: nothing was applied"; }
+        text=$(scrub_run "$RUN" "$AP" "$SRC") || { echo "$text"; die "the declared scrub refuses the series: nothing was applied"; }
         echo "$text"
       fi
     fi

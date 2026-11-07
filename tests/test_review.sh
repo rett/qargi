@@ -384,6 +384,19 @@ out=$($DA review apply "$R54" 2>&1); rc=$?
 out=$(QARGI_MEMBER_RUN=$R55 $DA review apply "$R55" 2>&1); rc=$?
 { [ $rc = 0 ] && [ "$(runs)" = 0 ] && grep -qx "scrub: not run (a member's apply; the lead's apply runs it)" <<<"$out"; } \
   && ok "a member's apply does not run the scrub and says so" || no "member apply: rc=$rc runs=$(runs) $out"
+# The patches are copied once: a member process that changes a patch while the scrub runs (here the scrub command does it, as it runs after the copy) changes what the
+# run directory holds, not what was scrubbed and applied; no copy is left behind.
+SWAP=$T/swap-target
+printf '%s\n' 'echo ran >> "$1"' 'sed -i "s/^+b\$/+poison/" "$(cat "$2")"/out/patches/0001-*.patch' > "$T/swap.sh"
+setans '.review.scrub = "sh '"$T"'/swap.sh '"$CNT"' '"$SWAP"'"'; : > "$CNT"
+R58=$(newrun applyswap); printf '%s\n' "$R58" > "$SWAP"
+out=$($DA review apply "$R58" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(runs)" = 1 ] && grep -q '^+poison$' "$R58"/out/patches/0001-*.patch \
+  && [ "$(git -C "$A" show agent/applyswap~1:internal/a.go | wc -l)" = 2 ] && ! git -C "$A" show agent/applyswap~1:internal/a.go | grep -q poison \
+  && [ -z "$(find "$T/s" -maxdepth 1 -name 'apply-in.*')" ]; } \
+  && ok "apply scrubs and applies one copy of the patches: a patch changed in the run directory meanwhile is not what is applied, and no copy is left" \
+  || no "apply copy: rc=$rc runs=$(runs) $out | $(git -C "$A" show agent/applyswap~1:internal/a.go 2>&1)"
+setans '.review.scrub = "echo ran >> '"$CNT"'; exit 0"'
 # --from-saved: the same rule, from the saved copy (the check's record is the lead's, not the run directory's)
 : > "$CNT"; RS6=$(newrun savedskip); IS6=$(basename "$RS6")
 $DA review check "$RS6/out" >/dev/null 2>&1; $DA local verify "$RS6" >/dev/null 2>&1; rm -rf "$RS6"

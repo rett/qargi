@@ -57,6 +57,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The guard protects `scrub_ok/` of the state directory like `features/`, `runs/` and `handoff/`: a write, redirect, heredoc, `cp`, `mv`, `tee` or `ln` into it is refused,
   reading stays allowed. The record `review check` keeps there (the hash of a series that passed its declared scrub, which `review apply` takes as the scrub done) was
   writable by a member running as the same user, who could compute the hash and make the apply skip the scrub.
+- `qargi review apply` copies `OUT/patches/*.patch` once into a directory of its own in the lead's state directory and hashes, scrubs and applies (`git am`) that copy.
+  It read the patches three times from the run directory, so a member process still alive could change a patch after it was scrubbed and before it was applied. A
+  patch that stops being a regular file while it is copied refuses the apply; the copy is removed however the verb ends.
 
 ## [0.2.5] - 2026-11-06
 
