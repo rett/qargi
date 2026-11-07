@@ -6,6 +6,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- `qargi release start VERSION [--hotfix]` is behind a plan token like `release push`, `finish`, `fix`, `publish` and `step`. Without `--approved` it changes nothing:
+  it prints the plan (the branch, the base it is cut from and that base's head, the one commit that bumps the version, the files the commit changes, the date)
+  and a token. `--plan TOKEN --approved "..."` creates the branch and writes the `release:start` line of the audit log, which `start` never wrote. The checks
+  (the suite verdict, the preflight, the changelog and man page) run for the plan too, so a refusal comes before a token does; the token covers the head of
+  the base and the date. The apply line it prints repeats `--date` and `--allow-empty-notes`. The tests, the skill, the manual page and the docs that start a release pass a plan.
+
 ### Fixed
 - Two `qargi release step` calls at the same moment (or a step and `release finish`) no longer lose a step: the after-steps record was written through one
   fixed temporary file with no lock, so the slower call overwrote the other. The record is now read, changed and replaced under a lock (the one the registry of
