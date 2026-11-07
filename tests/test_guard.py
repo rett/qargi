@@ -771,6 +771,30 @@ class Skills(HookCase):
             self.assertIn("changes a skill and is not available to an agent", r.stderr)
         self.assertEqual(self.bash("./lib/packs.sh packs seed").returncode, 2)
 
+    def test_json_changes_nothing_about_what_the_guard_refuses(self):
+        """--json (the plan as one JSON object, lib/jsonplan.py) is no way past the guard: a gated verb is refused with it, in every place the flag
+        can stand, as it is without; a read-only verb stays open; and the wrapper script is not a way in by itself."""
+        gated = ("packs seed", "skill import x", "feature finish f", "release publish 0.2.3", "upgrade", "marshal enable", "project new p", "branch prune")
+        for v in gated:
+            words = v.split()
+            for spelling in (words + ["--json"], [words[0], "--json"] + words[1:], words + ["--json", "--plan", "0123456789ab", "--approved", "go"],
+                             words + ["--json=1"]):
+                for form in ("qargi %s", "/opt/q/bin/qargi %s", "cd src && qargi %s", "bash -c 'qargi %s'", "timeout 5 qargi %s"):
+                    c = form % " ".join(spelling)
+                    self.assertEqual(self.bash(form % v).returncode, 2, form % v)
+                    r = self.bash(c)
+                    self.assertEqual(r.returncode, 2, c)
+                    self.assertTrue(r.stderr.startswith("qargi guard:"), c)
+        for c in ("qargi packs seed --json", "qargi packs --json seed"):
+            self.assertIn("changes a skill and is not available to an agent", self.bash(c).stderr, c)
+        for c in ("qargi skill list --json", "qargi env show --json", "qargi agent models --json", "qargi feature status --json", "qargi help approvals",
+                  "echo qargi packs seed --json", "grep -n 'seed --json' lib/jsonplan.py"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+        for c in ("python3 -I lib/jsonplan.py packs seed --json", "python3 lib/jsonplan.py feature finish f --json",
+                  "QARGI_NO_JSON_WRAP=1 qargi packs seed --json"):
+            self.assertEqual(self.bash(c).returncode, 2, c)
+
     def test_lets_the_read_only_verbs_through(self):
         for c in ("qargi skill list", "qargi skill show x", "qargi tool check p build", "qargi skill effective p build", "qargi discover search pdf",
                   "qargi packs render p build /tmp/o", "qargi packs load style --role build", "qargi packs check --target claude-code p",

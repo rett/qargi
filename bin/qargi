@@ -16,6 +16,14 @@ case $area in
   __guard) exec python3 -I "$lib/guard.py" "$@";;
   version) cat "$root/VERSION"; exit 0;;
 esac
+# --json on any verb: the plan (or the output) as one JSON object (lib/jsonplan.py runs the call again without it). The marker says this
+# call is that run; it is taken out here so that nothing the verb starts sees it. help, the guard, completion and the run-event hooks never wrap.
+if [ -n "${QARGI_NO_JSON_WRAP:-}" ]; then unset QARGI_NO_JSON_WRAP
+elif [ "$area" != hook ]; then
+  for _a in "$@"; do
+    [ "$_a" != --json ] || exec python3 -I "$lib/jsonplan.py" "$area" "$@"
+  done
+fi
 # qargi COMMAND --help and qargi COMMAND VERB --help
 case ${1:-} in -h|--help) exec python3 -I "$help" show "$area";; esac
 case ${2:-} in -h|--help) exec python3 -I "$help" show "$area" "${1:-}";; esac
