@@ -867,6 +867,19 @@ class Skills(HookCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
+    def test_a_build_member_writes_its_out_files_with_a_heredoc(self):
+        """Where the runtime refuses the member's write tool for a report file, the member writes OUT with the shell: the guard lets that through for the
+        write role (the run directory says build), by the absolute path of OUT, by a path relative to the clone, with cat or tee, a quoted or an unquoted
+        delimiter, and for the three kinds of file OUT holds (a report, a manifest of JSON, series.md), and so is git format-patch into OUT/patches."""
+        o = os.path.join(self.t, "run/out")
+        for c in ("cat > %s/report.md <<'EOF'\n# Report\nDONE\nThe change is in lib/local.sh.\nEOF" % o,
+                  "cat > %s/series.md <<EOF\n# series\n- 0001: subject, why: x\nEOF" % o,
+                  "cat > %s/manifest.json <<'EOF'\n{\"status\": \"DONE\", \"commits\": [], \"scope\": [\"a\", \"b\"]}\nEOF" % o,
+                  "cat > ../out/report.md <<'EOF'\nDONE\nEOF", "tee %s/build--report.md <<'EOF'\nDONE\nEOF" % o,
+                  "cat >> %s/report.md <<'EOF'\nDONE; gates: pass && ok | fine\nEOF" % o, "git format-patch --binary -o %s/patches f1ce6ed..HEAD" % o):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
     def test_the_protected_roots_follow_the_environment(self):
         other = os.path.join(self.t, "xdg")
         os.makedirs(os.path.join(other, "qargi/packs"))

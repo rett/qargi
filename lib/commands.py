@@ -1044,7 +1044,9 @@ COMMANDS = {
                                   "and output); prefer a directory on disk, such as ~/.cache/qargi-runs.")),
             "verify": verb("Compare the repository's refs with the snapshot taken by prepare", [("RUN_DIR", "dir", True)],
                            [opt("--saved", "verify the lead's saved copy of a passed run whose directory is gone (ID: the name of the run directory, qargi.XXXXXX)", "ID")],
-                           desc=("Fails first, with exit 1 and \"OUT is empty: the member did not collect\", when the clone holds commits past BASE_SHA and RUN/out holds neither patches nor a report: "
+                           desc=("OUT without a report, for an uncollected run or a read-only run, is said with its likely cause: a runtime can refuse the member's write tool for a report file, so the file never reached OUT; "
+                                 "the member is told to write its OUT files with the shell (a heredoc) and to collect again (for a read-only run it is a note, and the exit status stays the refs verdict). "
+                                 "Fails first, with exit 1 and \"OUT is empty: the member did not collect\", when the clone holds commits past BASE_SHA and RUN/out holds neither patches nor a report: "
                                  "the refs are compared all the same and their verdict is printed next to that message (exit 2 when they changed), but nothing is recorded: the run is not verified, and the member must collect (its DONE needs ls OUT/patches to list the patches) before apply or close. "
                                  "Exits 2 when refs changed (1 before), 3 when the lead's registry does not vouch for the run: it is not in it, names no repository for it, or RUN/repo.path, repo.url or cred.path differ "
                                  "from it (the repository and the credential come from the registry; a member can write the run directory). "
@@ -1099,6 +1101,8 @@ COMMANDS = {
                                 "the start time of its record, and with --yes drops it unless its saved copy holds work that was never applied (kept and named). "
                                 "When the applied branch is not merged because you rewrote it by hand (its tip is not the review:apply tip in your ref journal, the trees are the same and no rewrite is recorded), "
                                 "the refusal also names the fix, with the branch and both tips filled in: git branch -f BRANCH OLD, then qargi ref record --rewrite BRANCH OLD NEW --why ...; clean then follows the rewrite. "
+                                "When the refusal for an OUT with no manifest finds no report either, it names the likely cause too: a runtime can refuse the member's write tool for a report file, "
+                                "so the files never reached OUT; the member writes them with the shell (a heredoc). "
                                 "A clean marks the run's record cleaned and removes its saved copy."),
                           examples=["qargi local clean --applied --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch --yes"]),
             "list": verb("List the local runs: role, slug, age, whether applied and merged", [],

@@ -10,6 +10,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `qargi local clean` and `qargi local close --applied-by-am`, when they refuse a run whose applied branch the lead rewrote by hand (the branch is not at the tip that
   `review apply` journaled, the two trees are the same and no rewrite is recorded), also name the fix with the real branch and tips: `git branch -f BRANCH OLD`, then
   `qargi ref record --rewrite BRANCH OLD NEW --why ...`. The other refusals keep their text.
+- Where the runtime refuses a member's write tool for a report file, OUT never gets the report. The contract and the runtime's addendum now say to write OUT files
+  with the shell (a heredoc) then, the runtime's notes have a `member-out` topic, and `qargi local verify` (an uncollected run, or a read-only run whose OUT has no
+  report, as a note) and `qargi local clean` (an OUT with no manifest and no report) name that cause. A test shows the guard lets a build member write OUT files with
+  a heredoc.
 
 ## [0.2.5] - 2026-11-06
 

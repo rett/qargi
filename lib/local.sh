@@ -41,6 +41,10 @@
 . "$(dirname "$0")/lib.sh"
 . "$(dirname "$0")/marshal.sh"
 
+# NOREPORT_CAUSE: the likely reason OUT holds no report. A runtime can refuse a member's write tool for a report file (the member is told to return findings as
+# text), and the file then never reaches OUT: the member is not late, it is blocked. verify and clean name it where they find OUT without a report.
+NOREPORT_CAUSE="A runtime can refuse a member's write tool for a report file, so the file never reaches OUT: tell the member to write its OUT files (report, manifest, series) with the shell, a heredoc, and to collect again."
+
 # drop_qargi_refs -> stdin without the refs under refs/qargi/ (lines "local REF SHA" and "remote SHA REF"). The marshal refs backend
 # keeps its records there and the lead's renewer fetches and pushes them during a run; that is not an agent push. Only that
 # namespace: refs/qargi-x/ and every other ref stay compared.
@@ -562,9 +566,13 @@ WRAP
     if [ -z "$SAVED" ] && [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ]; then
       ncm=$(git -C "$RUN/clone" rev-list --count --branches HEAD --not --remotes=origin 2>/dev/null || echo 0)
       if [ "${ncm:-0}" -gt 0 ] && [ -z "$(find "$RUN/out" -maxdepth 2 -name '*.patch' 2>/dev/null | head -1)" ] && ! out_has_report "$RUN/out"; then
-        EMPTY="qargi: OUT is empty: the member did not collect. $RUN/clone holds $ncm commit(s) past BASE_SHA, but $RUN/out holds no patches and no report. The member's DONE needs \`ls OUT/patches\` to list the patches (git format-patch --binary BASE_SHA..HEAD into OUT/patches, then the manifest and report). This run is not verified, and apply and close need a passing verify: send it back to collect and verify again, or take the commits from the clone yourself and drop the run with qargi local clean RUN --discard."
+        EMPTY="qargi: OUT is empty: the member did not collect. $RUN/clone holds $ncm commit(s) past BASE_SHA, but $RUN/out holds no patches and no report. The member's DONE needs \`ls OUT/patches\` to list the patches (git format-patch --binary BASE_SHA..HEAD into OUT/patches, then the manifest and report). This run is not verified, and apply and close need a passing verify: send it back to collect and verify again, or take the commits from the clone yourself and drop the run with qargi local clean RUN --discard. $NOREPORT_CAUSE"
         NOREC=1
       fi
+    fi
+    # a read-only run's product is its report: none in OUT is said (a note; the refs verdict below is the exit status), with the likely cause
+    if [ -z "$SAVED" ] && [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ] && [ "$(run_class "$RUN" "$SRC")" = read-only ] && ! out_has_report "$RUN/out"; then
+      echo "qargi: note: OUT of the read-only run $RUN holds no report (report.md or NAME-report.md). $NOREPORT_CAUSE" >&2
     fi
     reg_load; crc=0; NOREC=$NOREC check_run "$RUN" "$SRC" || crc=$?
     if [ "$crc" = 3 ]; then
@@ -697,7 +705,7 @@ WRAP
     # regular file) and it closes with a plain clean, when its refs are unchanged (the check below) and its clone holds no commit (the check after that)
     [ -n "$DISCARD" ] || [ -f "$RUN/out/manifest.json" ] || [ -n "$(find "$RUN/out" -name '*manifest.json' 2>/dev/null | head -1)" ] \
       || { [ "$(run_class "$RUN")" = read-only ] && out_has_report "$RUN/out"; } \
-      || die "$RUN/out holds no manifest: collect the work first, or --discard to drop a run that produced none$([ "$(run_class "$RUN")" != read-only ] || echo " (a read-only run closes with a plain clean once its OUT holds report.md)")"
+      || die "$RUN/out holds no manifest: collect the work first, or --discard to drop a run that produced none$([ "$(run_class "$RUN")" != read-only ] || echo " (a read-only run closes with a plain clean once its OUT holds report.md)")$(out_has_report "$RUN/out" || printf '\n%s' "$NOREPORT_CAUSE")"
     # changed refs are evidence: kept, unless the run is dropped on purpose (--discard), which says so and goes on
     vrc=0; vout=$(QARGI_VERIFY_REFS_ONLY=1 "$0" verify "$RUN" 2>&1 </dev/null) || vrc=$?
     if [ "$vrc" = 3 ]; then   # the registry does not vouch for the run directory: nothing was asked of any repository
