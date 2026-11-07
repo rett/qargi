@@ -6,6 +6,65 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- A test (`tests/test_release_snapshot_cycle.sh`) runs a whole release through plan tokens on a repository whose master is an unrelated snapshot commit, with a local bare
+  origin that refuses non-fast-forward pushes: `release start`, `push` (which joins the history of master) and `finish` merge and tag master, merge develop, push
+  by fast-forward only, and leave every earlier commit reachable. It found no bug.
+- `qargi local clean --orphans [--days N]` lists the `qargi-run.XXXXXX` directories under `/dev/shm` (or `QARGI_RUN_TMP`) that no run of the lead's registry names, each
+  with its age and whether it is named (a run's own directory, live or gone, is named; a link and a file are named and left). It prints a plan and a token and removes
+  nothing; `--plan TOKEN --approved WORDS` removes only the unnamed directories older than N days (default 2, at least 1) with nothing newer inside, each checked again
+  just before it goes, and logs the removal. The existing `--stale DAYS --scratch DIR` (finished runs) is unchanged.
+
+### Changed
+- `qargi project adopt` names the next step when two long-lived branches share no history (a master made as a snapshot, say), not only the problem: the first release
+  joins them (`qargi release start VERSION`, then `release push VERSION`, whose plan joins the history of the first branch into the release branch, then `release finish
+  VERSION`), or one merge by hand (`git switch develop && git merge -s ours --allow-unrelated-histories master`, which keeps develop's tree). Adopt still changes no branch.
+- `qargi release start --hotfix` (its plan, and `release status`) and the refusal of `release finish --hotfix` say what to do when develop shares no history with master
+  and no release is open: the hotfix could not be merged into develop. The line names the way out, the next release (`qargi release start VERSION`, `push` and
+  `finish`: the push joins the history of master) or one merge on develop by hand (`git switch develop && git merge -s ours --allow-unrelated-histories master`), then
+  `qargi release finish VERSION --hotfix`. It was a refusal at `finish` that only said to join by hand.
+- `qargi review apply` runs the declared take-in scrub (the answers `review.scrub` and `review.trailer_policy`) before it makes anything, as `review check` does, so a lead
+  cannot apply a series the scrub refuses: a failing scrub prints `scrub: FAIL ...`, refuses the apply and changes nothing. It skips the scrub, with the one line
+  `scrub: skipped (review check passed it for this series)`, when a passing `review check` recorded the same series: `review check` writes, in the lead's state directory
+  (`scrub_ok/RUN-ID`, not in the member's run directory), a hash of the patches in order and of the declared scrub, and apply compares it; a series (or a scrub answer)
+  changed since the check is scrubbed again, and a check that failed leaves no record. `--from-saved` follows the same rule. A member's apply does not run the scrub
+  (`scrub: not run`), as its check does not.
+- `qargi local clean` and `qargi local close --applied-by-am`, when they refuse a run whose applied branch the lead rewrote by hand (the branch is not at the tip that
+  `review apply` journaled, the two trees are the same and no rewrite is recorded), also name the fix with the real branch and tips: `git branch -f BRANCH OLD`, then
+  `qargi ref record --rewrite BRANCH OLD NEW --why ...`. The other refusals keep their text.
+- Where the runtime refuses a member's write tool for a report file, OUT never gets the report. The contract and the runtime's addendum now say to write OUT files
+  with the shell (a heredoc) then, the runtime's notes have a `member-out` topic, and `qargi local verify` (an uncollected run, or a read-only run whose OUT has no
+  report, as a note) and `qargi local clean` (an OUT with no manifest and no report) name that cause. A test shows the guard lets a build member write OUT files with
+  a heredoc.
+
+### Fixed
+- The session-start hook's read of the open features (`qargi marshal status --all --brief --no-fetch`, 5 s) takes `QARGI_HOOK_MARSHAL_SECS`, a whole number of seconds from 1
+  to 9999 (anything else is ignored; the default stays 5 and the hook stays bounded). `tests/test_marshal_refs.sh` failed once in a parallel suite run because that call,
+  which takes 1.3 s alone on its hostile-records fixture, took 4 to 6 s under load: the read was cut off, the marshal block was empty, and with no tier files so was the
+  context. The test now gives the hook 60 s and, when the hook's output is wrong, prints how long the status call took.
+- The guard refuses input it cannot decode. A hook input that is not valid UTF-8 was taken for "not JSON" and let through; it is now refused (exit 2, one line on
+  stderr). Input that decodes but is not JSON is still no call to judge and is allowed, as before.
+- `qargi lead grant` and `qargi lead revoke` read each step's plan text and token from the step's `--json` output (the `plan` and `token` fields) and no longer parse the token out of text with sed. The steps run through `bin/qargi`; what is shown and applied is as before.
+- `qargi project set` adds "(applies to the next provision ...)" only for the answers a provision reads (the list is `provision_reads` in `lib/project.sh`: repo.url and repo.long_lived, teams, roles, profiles, budget_cents, memory stores, models.provider, lead model, effort and push, packs, cloud). Every other answer (`runs.owned_refs`, `lead.context_window`, `release.*`, `review.*`, `deployment`, `test_command`, ...) prints only what was set. `deployment` no longer keeps the note for a value that names a cloud deployment: no provision reads it.
+- `qargi release start VERSION [--hotfix]` is behind a plan token like `release push`, `finish`, `fix`, `publish` and `step`. Without `--approved` it changes nothing:
+  it prints the plan (the branch, the base it is cut from and that base's head, the one commit that bumps the version, the files the commit changes, the date)
+  and a token. `--plan TOKEN --approved "..."` creates the branch and writes the `release:start` line of the audit log, which `start` never wrote. The checks
+  (the suite verdict, the preflight, the changelog and man page) run for the plan too, so a refusal comes before a token does; the token covers the head of
+  the base and the date. The apply line it prints repeats `--date` and `--allow-empty-notes`. The tests, the skill, the manual page and the docs that start a release pass a plan.
+- Two `qargi release step` calls at the same moment (or a step and `release finish`) no longer lose a step: the after-steps record was written through one
+  fixed temporary file with no lock, so the slower call overwrote the other. The record is now read, changed and replaced under a lock (the one the registry of
+  local runs uses) through a temporary file of its own name; a step another call marked done in the meantime is refused unless `--again`.
+- The guard protects `scrub_ok/` of the state directory like `features/`, `runs/` and `handoff/`: a write, redirect, heredoc, `cp`, `mv`, `tee` or `ln` into it is refused,
+  reading stays allowed. The record `review check` keeps there (the hash of a series that passed its declared scrub, which `review apply` takes as the scrub done) was
+  writable by a member running as the same user, who could compute the hash and make the apply skip the scrub.
+- `qargi review apply` copies `OUT/patches/*.patch` once into a directory of its own in the lead's state directory and hashes, scrubs and applies (`git am`) that copy.
+  It read the patches three times from the run directory, so a member process still alive could change a patch after it was scrubbed and before it was applied. A
+  patch that stops being a regular file while it is copied refuses the apply; the copy is removed however the verb ends.
+- `qargi release start|push|finish|publish|site ... --approved WORDS` and `qargi local clean --orphans --approved WORDS` need the plan token even when `QARGI_NESTED` is
+  set. `need_plan` returns without a check when that variable is set, so `release start 1.2.3 --approved x` created the branch, and `local clean --orphans --days 2
+  --approved x` removed the directories it listed, with no token. A caller that is itself approved has not approved this plan; the packs, memory and tier-write verbs
+  already refused to honour it. The lead-only verbs (`assets`, `sign`, `site`) still refuse a nested call as before.
+
 ## [0.2.5] - 2026-11-06
 
 ### Added

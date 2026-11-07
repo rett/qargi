@@ -12,6 +12,8 @@ ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
 mkdir -p "$HOME" "$T/c/projects"
 REL="$DA release"; tok() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
+# rstart ARGS: release start through its plan (a token) and the approval; a refusal of the plan is printed and fails
+rstart() { local p t; p=$($REL start "$@" 2>&1); t=$(tok <<<"$p"); [ -n "$t" ] || { printf '%s\n' "$p"; return 1; }; $REL start "$@" --plan "$t" --approved go; }
 cat > "$T/gh" <<G
 #!/usr/bin/env bash
 echo "\$*" >> "$T/gh.log"
@@ -57,7 +59,7 @@ jq --arg p "$R" --arg t "$T" '.repo={url:"https://github.com/acme/relaf", path:$
       {name:"tag the docs repository", command:"git tag {version}", who:"owner"}]}' <<<"$base" > "$T/c/projects/relaf.json"
 export QARGI_PROJECT=relaf
 cd "$T" || exit 1
-$REL verify 0.2.0 >/dev/null 2>&1 && $REL start 0.2.0 --date 2026-01-02 >/dev/null 2>&1 || no "release 0.2.0 could not start"
+$REL verify 0.2.0 >/dev/null 2>&1 && rstart 0.2.0 --date 2026-01-02 >/dev/null 2>&1 || no "release 0.2.0 could not start"
 t=$($REL push 0.2.0 | tok); $REL push 0.2.0 --plan "$t" --approved go >/dev/null 2>&1
 t=$($REL finish 0.2.0 | tok)
 ! grep -q "after the release" <<<"$($REL finish 0.2.0)" && ok "the finish plan does not show the steps yet (nothing is finished)" || no "plan shows steps"
@@ -111,11 +113,30 @@ jq '.steps[2].name="the recorded third step"' "$rec" > "$T/x.json" && mv "$T/x.j
 out=$($REL status 0.2.0 2>&1)
 grep -q "^    \[pending\] the recorded third step" <<<"$out" && ! grep -q "tag the docs repository" <<<"$out" && ok "status shows what was recorded, not the answer as it is now" || no "status record: $out"
 
+# --- steps recorded at the same moment: the record is changed under a lock and through a temporary file of its own, so none is lost
+jq '.steps |= map(.state = "pending" | .done_at = "" | .evidence = "")' "$rec" > "$T/x.json" && mv "$T/x.json" "$rec"
+exec 8> "$rec.lock"; flock 8   # the test holds the lock: the three steps below queue behind it, and the waiters are read from /proc/locks
+sf 0.2.0 "the recorded third step" >/dev/null 2>&1 8>&- & p1=$!
+sf 0.2.0 "post the notes" --evidence "https://example.net/p/2" >/dev/null 2>&1 8>&- & p2=$!
+sf 0.2.0 "announce 0.2.0 to the list" >/dev/null 2>&1 8>&- & p3=$!
+ino=$(stat -c %i "$rec.lock")
+if [ -r /proc/locks ]; then
+  w=0; for _ in $(seq 400); do [ "$(grep -c -- "-> FLOCK.* [0-9a-f]*:[0-9a-f]*:$ino " /proc/locks)" -ge 3 ] && { w=1; break; }; sleep 0.05; done
+  [ $w = 1 ] && ok "three steps wait for the record's lock while it is held" || no "the steps did not wait for the lock: $(cat /proc/locks)"
+fi
+[ "$(jq -r '[.steps[] | select(.state == "done")] | length' "$rec")" = 0 ] && ok "the record is not touched while the lock is held" || no "a step wrote without the lock"
+flock -u 8; exec 8>&-
+wait "$p1" && wait "$p2" && wait "$p3" && ok "the queued steps all finish" || no "a queued step failed"
+[ "$(jq -r '[.steps[] | select(.state == "done")] | length' "$rec")" = 3 ] && [ "$(jq -r '.steps[1].evidence' "$rec")" = "https://example.net/p/2" ] && ok "three steps recorded at the same moment are all in the record" || no "a step was lost: $(jq -c .steps "$rec")"
+[ "$(find "$T/s/release" -name 'relaf-0.2.0.after.json.*' ! -name '*.lock' | wc -l)" = 0 ] && ok "no temporary file of the record is left" || no "a temporary file is left: $(ls "$T/s/release")"
+for i in 1 2 3 4 5 6; do sf 0.2.0 "announce 0.2.0 to the list" --again --evidence "r$i" >/dev/null 2>&1 & done; wait
+[ "$(jq -r '[.steps[] | select(.state == "done")] | length' "$rec")" = 3 ] && jq -e '.schema == 2' "$rec" >/dev/null && ok "steps repeated at once leave a whole record" || no "the record is damaged: $(cat "$rec")"
+
 # --- no steps: nothing is printed and nothing recorded
 jq 'del(.release)' "$T/c/projects/relaf.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/relaf.json"
 git -C "$R" checkout -q develop 2>/dev/null; echo "- b" >> "$R/CHANGELOG.md"; git -C "$R" commit -q -am b; git -C "$R" checkout -q parked
 git -C "$R" push -q origin develop 2>/dev/null
-$REL verify 0.3.0 >/dev/null 2>&1; $REL start 0.3.0 --allow-empty-notes >/dev/null 2>&1 || no "release 0.3.0 could not start"
+$REL verify 0.3.0 >/dev/null 2>&1; rstart 0.3.0 --allow-empty-notes >/dev/null 2>&1 || no "release 0.3.0 could not start"
 t=$($REL push 0.3.0 | tok); $REL push 0.3.0 --plan "$t" --approved go >/dev/null 2>&1
 t=$($REL finish 0.3.0 | tok); out=$($REL finish 0.3.0 --plan "$t" --approved go 2>&1); rc=$?
 [ $rc = 0 ] && ! grep -q "after the release" <<<"$out" && [ ! -e "$T/s/release/relaf-0.3.0.after.json" ] && ok "without release.after_steps finish prints and records nothing of the kind" || no "no steps: rc=$rc $out"

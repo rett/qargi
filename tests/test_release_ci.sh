@@ -12,6 +12,8 @@ ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s TMPDIR=$T/tmp GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
 mkdir -p "$HOME" "$T/c/projects" "$T/s" "$T/tmp"
 REL="$DA release"; tok() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
+# rstart ARGS: release start through its plan (a token) and the approval; a refusal of the plan is printed and fails
+rstart() { local p t; p=$($REL start "$@" 2>&1); t=$(tok <<<"$p"); [ -n "$t" ] || { printf '%s\n' "$p"; return 1; }; $REL start "$@" --plan "$t" --approved go; }
 # the stub: files beside it say what GitHub answers. pr.num: an open pull request; checks.out and checks.rc: what `pr checks` prints and exits
 # with; release.state: found or missing; assets.out: the names of the release's assets
 cat > "$T/gh" <<G
@@ -39,7 +41,7 @@ jq -n --arg p "$R" '{schema:1, project:"relci", methodology:"gitflow", repo:{url
 export QARGI_PROJECT=relci
 setans() { jq "$1" "$T/c/projects/relci.json" > "$T/ans.tmp" && mv "$T/ans.tmp" "$T/c/projects/relci.json"; }
 
-$REL verify 0.2.0 >/dev/null 2>&1 && $REL start 0.2.0 --date 2026-01-02 >/dev/null 2>&1 && ok "a release starts" || no "start 0.2.0"
+$REL verify 0.2.0 >/dev/null 2>&1 && rstart 0.2.0 --date 2026-01-02 >/dev/null 2>&1 && ok "a release starts" || no "start 0.2.0"
 
 # --- fix: a worktree under the state directory, a clear next step, the same worktree on a second run
 out=$($REL fix 0.2.0 2>&1); rc=$?
@@ -50,7 +52,7 @@ out=$($REL fix 0.2.0 2>&1); rc=$?
 [ $rc = 0 ] && grep -qx "worktree: $WTP" <<<"$out" && grep -q "checked out in $WTP already" <<<"$out" && ok "a second fix names the same worktree" || no "fix again: rc=$rc $out"
 out=$($REL fix 9.9.9 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "no branch release/9.9.9" <<<"$out" && ok "fix of a branch that does not exist is refused" || no "fix nothing: rc=$rc $out"
-out=$($REL start 0.2.0 --push 2>&1); rc=$?
+out=$(rstart 0.2.0 --push 2>&1); rc=$?
 [ $rc = 1 ] && grep -q -- "--push belongs to release fix" <<<"$out" && ok "--push belongs to fix alone" || no "start --push: rc=$rc $out"
 
 # --- push opens the pull request the first time, and updates it when it is open
@@ -101,7 +103,7 @@ out=$($REL finish 0.2.0 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "are pending" <<<"$out" && grep -q -- "--ignore-checks" <<<"$out" && ok "a pending check refuses the plan and names the way past" || no "finish pending: rc=$rc $out"
 out=$($REL finish 0.2.0 --ignore-checks "" 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "needs the reason" <<<"$out" && ok "--ignore-checks needs words" || no "ignore empty: rc=$rc $out"
-out=$($REL start 0.2.0 --ignore-checks x 2>&1); rc=$?
+out=$(rstart 0.2.0 --ignore-checks x 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "belongs to release finish" <<<"$out" && ok "--ignore-checks belongs to finish alone" || no "start ignore: rc=$rc $out"
 out=$($REL finish 0.2.0 --ignore-checks "the docs job is known to be slow" 2>&1); rc=$?
 t=$(tok <<<"$out")
@@ -169,7 +171,7 @@ out=$($REL status 0.2.0 2>&1)
 git -C "$R" checkout -q parked 2>/dev/null
 # --ignore-checks over checks that passed: nothing was ignored, so the audit log and the output do not say so
 setans 'del(.release)'; git -C "$R" push -q origin develop 2>/dev/null
-$REL verify 0.2.1 >/dev/null 2>&1; $REL start 0.2.1 --allow-empty-notes >/dev/null 2>&1 || no "release 0.2.1 could not start"
+$REL verify 0.2.1 >/dev/null 2>&1; rstart 0.2.1 --allow-empty-notes >/dev/null 2>&1 || no "release 0.2.1 could not start"
 t=$($REL push 0.2.1 | tok); $REL push 0.2.1 --plan "$t" --approved go >/dev/null 2>&1
 setchecks 0 "build${tab}pass${tab}1m${tab}https://example.net/1
 "

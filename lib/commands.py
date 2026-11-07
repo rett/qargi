@@ -159,7 +159,7 @@ COMMANDS = {
                               "(name as in .gitmodules, path: checked out in each member clone by qargi local prepare). env plan lists them, env apply installs them and env check reports one that is "
                               "missing or wrong; a member's guard refuses setting them (and a whole role), as it refuses release.*, test_command, env.* and site.*. "
                               "git.author ('Name <email>') is the author qargi review apply gives the commits it applies, and review.keep_author true keeps the member's author instead; "
-                              "review.scrub (a command line or a list of words) is run by qargi review check on the applied series with the range in QARGI_SCRUB_BASE and QARGI_SCRUB_TIP, and review.trailer_policy reject fails a commit with a "
+                              "review.scrub (a command line or a list of words) is run by qargi review check (and by qargi review apply, unless a passing check recorded the same series) on the applied series with the range in QARGI_SCRUB_BASE and QARGI_SCRUB_TIP, and review.trailer_policy reject fails a commit with a "
                               "Co-Authored-By or Generated-with trailer (none is the default); a member's guard refuses setting them. "
                               "runs.owned_refs is a list of glob patterns for the refs a runtime or harness creates in the repository, which local verify and clean accept and name (see local verify); "
                               "the guard refuses it to a member too."),
@@ -475,7 +475,7 @@ COMMANDS = {
         "desc": ("release/<version> is cut from develop (a hotfix/<version> from master); its first commit bumps VERSION and dates the changelog and the man page. "
                  "It is pushed and a pull request into master runs CI on the commit that will be released. Finishing merges it into master with --no-ff, "
                  "tags it, merges it into develop (a hotfix: into the open release branch, if there is one) with --no-ff and deletes it. A release starts only from "
-                 "a develop whose head passed the whole suite. Pushing, merging, tagging and publishing need the plan token and an approval; signing needs your terminal. "
+                 "a develop whose head passed the whole suite. Starting, pushing, merging, tagging and publishing need the plan token and an approval; signing needs your terminal. "
                  "The layout of what a release updates is the project's, set in its answers (all optional): release.version_file (the file that holds only the version; default VERSION; "
                  "none when there is no such file, and the version is then the changelog heading and the tag), release.changelog.unreleased (the heading of the changes to come, default "
                  "'## [Unreleased]'; it may carry the version, as in '## {version} (unreleased)', and is then renamed) and release.changelog.released (default '## [{version}] - {date}'), "
@@ -495,8 +495,12 @@ COMMANDS = {
         "scripts": ["release.sh"],
         "verbs": {
             "start": verb("Cut release/VERSION from develop (hotfix/VERSION from master) and bump the version", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT, opt("--date", "the changelog and man page date (default today)", "YYYY-MM-DD"),
-                                                                                                    opt("--allow-empty-notes", "release although the unreleased section of CHANGELOG.md ('## [Unreleased]' by default) is empty")],
-                          desc=("Before anything changes it checks what a release must update and refuses, naming the file and the fix: a man page (man/*.1) needs a .TH line "
+                                                                                                    opt("--allow-empty-notes", "release although the unreleased section of CHANGELOG.md ('## [Unreleased]' by default) is empty"), PLAN, APPROVED],
+                          desc=("Without --approved it changes nothing: it prints the plan (the branch, the base it is cut from and that base's head, the one commit that bumps the version, the files "
+                                "the commit changes, the date) and a plan token. Apply it with the same command and --plan TOKEN --approved \"<your go-ahead>\" (the token covers the head of the base "
+                                "and the date, so a plan that went stale is refused); the apply creates the branch and writes a line of the audit log. Nothing is pushed. "
+                                "The checks below run for the plan too, so a refusal comes before a token does. "
+                                "Before anything changes it checks what a release must update and refuses, naming the file and the fix: a man page (man/*.1) needs a .TH line "
                                 "with a date and a version field, which the first commit sets to the date and VERSION (the pages are release.man_pages, else man/*.1); a CHANGELOG.md needs content under "
                                 "its unreleased heading ('## [Unreleased]', or release.changelog.unreleased). The version file is release.version_file (default VERSION; none: no file is bumped). "
                                 "release.preflight runs before anything changes. A project without a man page or changelog is not checked for that part. A release (not a hotfix) ends by listing what it contains: "
@@ -1044,7 +1048,9 @@ COMMANDS = {
                                   "and output); prefer a directory on disk, such as ~/.cache/qargi-runs.")),
             "verify": verb("Compare the repository's refs with the snapshot taken by prepare", [("RUN_DIR", "dir", True)],
                            [opt("--saved", "verify the lead's saved copy of a passed run whose directory is gone (ID: the name of the run directory, qargi.XXXXXX)", "ID")],
-                           desc=("Fails first, with exit 1 and \"OUT is empty: the member did not collect\", when the clone holds commits past BASE_SHA and RUN/out holds neither patches nor a report: "
+                           desc=("OUT without a report, for an uncollected run or a read-only run, is said with its likely cause: a runtime can refuse the member's write tool for a report file, so the file never reached OUT; "
+                                 "the member is told to write its OUT files with the shell (a heredoc) and to collect again (for a read-only run it is a note, and the exit status stays the refs verdict). "
+                                 "Fails first, with exit 1 and \"OUT is empty: the member did not collect\", when the clone holds commits past BASE_SHA and RUN/out holds neither patches nor a report: "
                                  "the refs are compared all the same and their verdict is printed next to that message (exit 2 when they changed), but nothing is recorded: the run is not verified, and the member must collect (its DONE needs ls OUT/patches to list the patches) before apply or close. "
                                  "Exits 2 when refs changed (1 before), 3 when the lead's registry does not vouch for the run: it is not in it, names no repository for it, or RUN/repo.path, repo.url or cred.path differ "
                                  "from it (the repository and the credential come from the registry; a member can write the run directory). "
@@ -1073,13 +1079,18 @@ COMMANDS = {
                                 "qargi feature finish and is listed by marshal status as closed; qargi local list shows closed in the APPLIED column. qargi local clean then removes it "
                                 "without asking for an applied tip (its commits are taken as applied by hand); clean --applied removes it too. Refused for a run that has no passing "
                                 "local verify (verify it first: close must not hide changed refs), a run whose refs changed since that verify (close runs the refs check again), a read-only run, one applied with qargi review apply (merge that branch), "
-                                "a run already closed or cleaned. Not available in a member run."),
+                                "a run already closed or cleaned. When the applied branch was rewritten by hand (its tip is not the review:apply tip in your ref journal, the trees are the same and no rewrite is recorded), "
+                                "the refusal for an applied run also names the fix: qargi ref record --rewrite BRANCH OLD NEW --why ..., with the branch and both tips filled in. Not available in a member run."),
                           examples=["qargi local close ./run --applied-by-am"]),
             "clean": verb("Remove a collected, verified run and its temporary directory", [("RUN_DIR", "dir", True)],
                           [opt("--discard", "drop the run on purpose: also a run whose output holds no manifest, whose commits were never merged or whose repository refs changed (verify's outcome is printed as a warning)"),
                            opt("--applied", "clean every run under --scratch whose work is recorded applied (review apply) and merged into a branch other than agent/*; the others are kept and named, and the exit status is 1 when an applied run was kept"),
                            opt("--stale", "list the finished runs (RUN/verified or RUN/applied exists) under --scratch that are at least DAYS days old, from the run's start (a run with no start time is named as skipped); with --yes clean each of them by the rules below, and keep and name those clean refuses; a run still in progress is never listed", "DAYS"),
                            opt("--yes", "with --stale: clean the runs it lists (without it nothing changes)"),
+                           opt("--orphans", "list the qargi-run.XXXXXX directories under /dev/shm (or QARGI_RUN_TMP) that no run of your registry names, each with its age and whether it is named; a plan and a token, nothing removed"),
+                           opt("--days", "with --orphans: remove only the orphans older than DAYS days, and with nothing in them newer (default 2, at least 1)", "DAYS"),
+                           opt("--plan", "with --orphans: the plan token printed by the same command without --approved", "TOKEN"),
+                           opt("--approved", "with --orphans and --plan: your go-ahead for exactly that plan, in your words; recorded in the audit log", "WORDS"),
                            opt("--scratch", "with --applied or --stale: the directory the runs were prepared in; only the run directories directly under it are looked at", "DIR", "dir")],
                           desc=("Prepare makes a private temporary directory for the run (TMP, on /dev/shm when it exists) that the agent puts its test "
                                 "sandboxes in; clean removes it with the clone, the bare copy and the output (only when it is a qargi-run.XXXXXX directory under /dev/shm or QARGI_RUN_TMP, or inside the run). "
@@ -1096,8 +1107,20 @@ COMMANDS = {
                                 "A run whose directory is gone (a reboot, or removed by hand) is the registry's record and the saved copy alone: clean RUN drops both once "
                                 "the saved work is applied and merged, and refuses otherwise; clean RUN --discard drops them whatever they hold. --stale counts such a run by "
                                 "the start time of its record, and with --yes drops it unless its saved copy holds work that was never applied (kept and named). "
+                                "When the applied branch is not merged because you rewrote it by hand (its tip is not the review:apply tip in your ref journal, the trees are the same and no rewrite is recorded), "
+                                "the refusal also names the fix, with the branch and both tips filled in: git branch -f BRANCH OLD, then qargi ref record --rewrite BRANCH OLD NEW --why ...; clean then follows the rewrite. "
+                                "When the refusal for an OUT with no manifest finds no report either, it names the likely cause too: a runtime can refuse the member's write tool for a report file, "
+                                "so the files never reached OUT; the member writes them with the shell (a heredoc). "
+                                "--orphans is for what no run owns: prepare makes a qargi-run.XXXXXX directory under /dev/shm (QARGI_RUN_TMP moves it) for each run, and clean RUN removes only the one your registry names for that run, "
+                                "so a prepare that failed halfway, a dropped record or a replaced state directory leaves one behind. --orphans lists every such directory with its age (from its modification time) and says whether a run of "
+                                "the registry names it, live or not; a link and a file are named and left. Only the registry of this state directory is consulted: the runs of another state directory "
+                                "on the host (another QARGI_STATE or QARGI_HOME) are not, so their directories look orphaned once they are older than --days; check the age and the directory before you approve. Without --approved it prints the plan and its token and removes nothing. "
+                                "With --plan TOKEN --approved WORDS it removes only the directories that no registry names, that are older than --days (default 2, at least 1) and have nothing in them newer; "
+                                "each is checked again at the moment of removal, a directory that appeared or changed since the plan makes the token stale, and the removal is in the audit log with your words. "
+                                "A named directory is never removed by it, whatever its age. It takes no RUN_DIR, --applied, --discard, --stale, --yes or --scratch; --days, --plan and --approved are for it only. "
                                 "A clean marks the run's record cleaned and removes its saved copy."),
-                          examples=["qargi local clean --applied --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch --yes"]),
+                          examples=["qargi local clean --applied --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch --yes",
+                                    "qargi local clean --orphans --days 3", "qargi local clean --orphans --days 3 --plan TOKEN --approved \"remove them\""]),
             "list": verb("List the local runs: role, slug, age, whether applied and merged", [],
                          [opt("--scratch", "the directory the runs were prepared in (default: the runs of the registry that still exist)", "DIR", "dir")],
                          desc=("Read-only. One row per run: ROLE, SLUG, AGE, APPLIED (RUN/applied exists: review apply ran; closed for a run closed with close --applied-by-am), MERGED (the applied tip is on a branch other than agent/*; ? for a run of a repository URL) and RUN. "
@@ -1135,7 +1158,11 @@ COMMANDS = {
                                 "branch that exists; a patch that does not apply removes the worktree and the branch and names the patch. On success it prints "
                                 "the commits and the next commands, and records branch and tip in RUN_DIR/applied and the branch in the run's ref snapshot, so "
                                 "local clean still accepts the run. --from-saved ID applies from <state>/runs/ID instead (refused while the run directory exists): review check "
-                                "of the saved OUT, local verify --saved ID, the registry's repository, slug and base, and the record in the saved copy, so it is applied once."),
+                                "of the saved OUT, local verify --saved ID, the registry's repository, slug and base, and the record in the saved copy, so it is applied once. "
+                                "When the run's project declared a take-in scrub (review.scrub, review.trailer_policy), apply runs it too, before anything is made, unless a passing review check recorded the same "
+                                "series (the patches in order and the declared scrub): then it prints the one line scrub: skipped (review check passed it for this series). A series changed after the check is scrubbed "
+                                "again; a failing scrub (scrub: FAIL and the first lines of the output) refuses the apply and nothing is applied. The record is the lead's, in its state directory. "
+                                "A member's apply does not run the scrub (scrub: not run), as its check does not."),
                           examples=["qargi review apply ./run", "qargi feature merge search agent/fix-names", "qargi local clean ./run"]),
         },
     },
@@ -1557,6 +1584,8 @@ ENVIRONMENT = [
     ("QARGI_ROLES", "the list of work roles (default: build review write test)"),
     ("QARGI_DRY_RUN", "print a session request, with secrets masked, instead of sending it; qargi env apply stops before it runs the bootstrap"),
     ("QARGI_ENV_TIMEOUT", "seconds the dry run of qargi env plan and apply may take (default 120)"),
+    ("QARGI_HOOK_MARSHAL_SECS", "seconds the session-start hook gives the read of the open features (qargi marshal status --all --brief --no-fetch) before it leaves the block out "
+                                "(default 5; a whole number from 1 to 9999, anything else is ignored); a test on a loaded machine raises it"),
     ("NO_COLOR", "turn off bold in the terminal help"),
 ]
 

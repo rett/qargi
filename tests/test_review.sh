@@ -339,5 +339,81 @@ out=$(QARGI_MEMBER_RUN=$R42 $DA review check "$R42/out" 2>&1); rc=$?
   && ok "and neither does a member's check make the checkout for a trailer policy" || no "member check, policy: rc=$rc $out"
 out=$($DA review check "$R42/out" 2>&1); rc=$?
 { [ $rc = 1 ] && grep -q '^scrub: FAIL' <<<"$out" && [ -e "$MK" ]; } && ok "the lead's check of the same run does run the scrub" || no "lead check: rc=$rc $out"
+# --- review apply re-runs the declared scrub unless a passing `review check` recorded the same series; a failing scrub refuses before anything is made
+CNT=$T/scrub-count; : > "$CNT"; runs() { wc -l < "$CNT" | tr -d ' '; }
+setans '.review.scrub = "echo ran >> '"$CNT"'; echo stray debug line; exit 3"'
+R50=$(newrun applyfail); h1=$(heads); w1=$(git -C "$A" worktree list)
+out=$($DA review apply "$R50" 2>&1); rc=$?
+{ [ $rc != 0 ] && grep -qx 'scrub: FAIL stray debug line' <<<"$out" && grep -q 'nothing was applied' <<<"$out" && [ "$(runs)" = 1 ]; } \
+  && ok "apply runs the declared scrub, and a failing scrub refuses it" || no "apply scrub fail: rc=$rc $out"
+{ [ "$(heads)" = "$h1" ] && [ "$(git -C "$A" worktree list)" = "$w1" ] && [ ! -e "$R50/applied" ] && [ -z "$(find "$T/s" -maxdepth 1 \( -name 'apply-wt.*' -o -name 'scrub-wt.*' \))" ]; } \
+  && ok "and nothing changed: no branch, worktree or record of an application" || no "apply scrub fail left: $(heads) | $(git -C "$A" worktree list)"
+# a check that failed the scrub left no pass: the apply runs it again and refuses again
+$DA review check "$R50/out" >/dev/null 2>&1; n=$(runs)
+out=$($DA review apply "$R50" 2>&1); rc=$?
+{ [ $rc != 0 ] && [ "$(runs)" = $((n + 1)) ] && ! grep -q 'scrub: skipped' <<<"$out"; } && ok "a scrub that failed at check is run again by apply, and refuses again" || no "failed check, apply: rc=$rc $out"
+$DA local clean "$R50" --discard >/dev/null 2>&1 || rm -rf "$R50"
+# a scrub that passes at apply with no check before it: it ran, and the branch is made
+setans '.review.scrub = "echo ran >> '"$CNT"'; exit 0"'; : > "$CNT"
+R51=$(newrun applypass)
+out=$($DA review apply "$R51" 2>&1); rc=$?
+{ [ $rc = 0 ] && grep -qx 'scrub: ok' <<<"$out" && [ "$(runs)" = 1 ] && git -C "$A" rev-parse -q --verify agent/applypass >/dev/null; } \
+  && ok "a scrub that passes at apply (no check before) runs once and the series is applied" || no "apply scrub pass: rc=$rc $out"
+# a passing check for the same series: the apply does not run the scrub again, and says so on one line
+: > "$CNT"; R52=$(newrun applyskip)
+$DA review check "$R52/out" >/dev/null 2>&1; rc=$?
+out=$($DA review apply "$R52" 2>&1); rc2=$?
+{ [ $rc = 0 ] && [ $rc2 = 0 ] && [ "$(runs)" = 1 ] && [ "$(grep -c '^scrub:' <<<"$out")" = 1 ] && grep -qx 'scrub: skipped (review check passed it for this series)' <<<"$out" && git -C "$A" rev-parse -q --verify agent/applyskip >/dev/null; } \
+  && ok "a passing check for the same series: apply does not run the scrub again and says so on one line" || no "apply skip: rc=$rc/$rc2 runs=$(runs) $out"
+# the series changed after the check (a patch message edited): apply runs the scrub again
+: > "$CNT"; R53=$(newrun applychanged)
+$DA review check "$R53/out" >/dev/null 2>&1
+sed -i 's/^The manual and docs say what a name may hold\.$/&\n\nAn added line./' "$R53"/out/patches/0002-*.patch
+out=$($DA review apply "$R53" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(runs)" = 2 ] && grep -qx 'scrub: ok' <<<"$out" && ! grep -q 'scrub: skipped' <<<"$out"; } \
+  && ok "a series changed after the check is scrubbed again by apply" || no "apply changed: rc=$rc runs=$(runs) $out"
+# a series changed after a passing check into one the scrub refuses: apply refuses and changes nothing
+setans '.review.scrub = "echo ran >> '"$CNT"'; ! grep -q poison internal/a.go docs/a.md"'; : > "$CNT"
+R54=$(newrun applypoison); $DA review check "$R54/out" >/dev/null 2>&1; h1=$(heads)
+sed -i 's/^+b$/+poison/' "$R54"/out/patches/0001-*.patch
+out=$($DA review apply "$R54" 2>&1); rc=$?
+{ [ $rc != 0 ] && grep -q '^scrub: FAIL' <<<"$out" && [ "$(runs)" = 2 ] && [ "$(heads)" = "$h1" ] && [ ! -e "$R54/applied" ]; } \
+  && ok "a series changed after a passing check into one the scrub refuses: apply refuses, nothing changed" || no "apply poison: rc=$rc runs=$(runs) $out"
+# a member's apply never runs the lead's scrub
+: > "$CNT"; R55=$(newrun applymember)
+out=$(QARGI_MEMBER_RUN=$R55 $DA review apply "$R55" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(runs)" = 0 ] && grep -qx "scrub: not run (a member's apply; the lead's apply runs it)" <<<"$out"; } \
+  && ok "a member's apply does not run the scrub and says so" || no "member apply: rc=$rc runs=$(runs) $out"
+# The patches are copied once: a member process that changes a patch while the scrub runs (here the scrub command does it, as it runs after the copy) changes what the
+# run directory holds, not what was scrubbed and applied; no copy is left behind.
+SWAP=$T/swap-target
+printf '%s\n' 'echo ran >> "$1"' 'sed -i "s/^+b\$/+poison/" "$(cat "$2")"/out/patches/0001-*.patch' > "$T/swap.sh"
+setans '.review.scrub = "sh '"$T"'/swap.sh '"$CNT"' '"$SWAP"'"'; : > "$CNT"
+R58=$(newrun applyswap); printf '%s\n' "$R58" > "$SWAP"
+out=$($DA review apply "$R58" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(runs)" = 1 ] && grep -q '^+poison$' "$R58"/out/patches/0001-*.patch \
+  && [ "$(git -C "$A" show agent/applyswap~1:internal/a.go | wc -l)" = 2 ] && ! git -C "$A" show agent/applyswap~1:internal/a.go | grep -q poison \
+  && [ -z "$(find "$T/s" -maxdepth 1 -name 'apply-in.*')" ]; } \
+  && ok "apply scrubs and applies one copy of the patches: a patch changed in the run directory meanwhile is not what is applied, and no copy is left" \
+  || no "apply copy: rc=$rc runs=$(runs) $out | $(git -C "$A" show agent/applyswap~1:internal/a.go 2>&1)"
+setans '.review.scrub = "echo ran >> '"$CNT"'; exit 0"'
+# --from-saved: the same rule, from the saved copy (the check's record is the lead's, not the run directory's)
+: > "$CNT"; RS6=$(newrun savedskip); IS6=$(basename "$RS6")
+$DA review check "$RS6/out" >/dev/null 2>&1; $DA local verify "$RS6" >/dev/null 2>&1; rm -rf "$RS6"
+out=$($DA review apply --from-saved "$IS6" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(runs)" = 1 ] && grep -qx 'scrub: skipped (review check passed it for this series)' <<<"$out" && git -C "$A" rev-parse -q --verify agent/savedskip >/dev/null; } \
+  && ok "--from-saved skips the scrub a passing check recorded for the saved series" || no "from-saved skip: rc=$rc runs=$(runs) $out"
+RS7=$(newrun savedrun); IS7=$(basename "$RS7"); $DA local verify "$RS7" >/dev/null 2>&1; rm -rf "$RS7"; n=$(runs)
+out=$($DA review apply --from-saved "$IS7" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(runs)" = $((n + 1)) ] && grep -qx 'scrub: ok' <<<"$out"; } && ok "--from-saved with no check before it runs the scrub from the saved copy" || no "from-saved run: rc=$rc $out"
+# a trailer policy is part of the scrub: apply refuses a series with the trailer
+setans '.review.trailer_policy = "reject"'; R56=$(newrun applytrailer); h1=$(heads)
+sed -i 's/^The manual and docs say what a name may hold\.$/&\n\nCo-Authored-By: Someone <someone@example.net>/' "$R56"/out/patches/0002-*.patch
+out=$($DA review apply "$R56" 2>&1); rc=$?
+{ [ $rc != 0 ] && grep -q '^scrub: FAIL review.trailer_policy is reject' <<<"$out" && [ "$(heads)" = "$h1" ]; } && ok "apply refuses a series that the trailer policy rejects" || no "apply trailer: rc=$rc $out"
+# no declared scrub: apply prints no scrub line
+cp "$AF0" "$AF"; R57=$(newrun applynone)
+out=$($DA review apply "$R57" 2>&1); rc=$?
+{ [ $rc = 0 ] && ! grep -q '^scrub:' <<<"$out"; } && ok "with no declared scrub apply prints no scrub line" || no "apply none: rc=$rc $out"
 cp "$AF0" "$AF"
 exit $fail

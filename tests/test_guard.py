@@ -70,15 +70,22 @@ class _Judge:
                 return "exception %s: %s" % (type(e).__name__, e)
         return self.run(go)
 
+    @staticmethod
+    def stdin_of(payload):
+        """The standard input of a hook process: a text stream over bytes (the guard reads the bytes). A string is encoded as is, bytes are kept, anything else is JSON."""
+        if not isinstance(payload, (str, bytes)):
+            payload = json.dumps(payload)
+        return io.TextIOWrapper(io.BytesIO(payload.encode() if isinstance(payload, str) else payload), encoding="utf-8")
+
     def main(self, args, payload, env=None):
-        """main() of guard.py as a hook process runs it: args is the rest of the hook command line, payload the standard input (a string as is, anything
+        """main() of guard.py as a hook process runs it: args is the rest of the hook command line, payload the standard input (a string as is, bytes as is, anything
         else as JSON), env the process environment (this one when None); both streams are captured. The caches are cleared first, as a process starts
         with none, and an exception main() does not catch ends in status 1 with the traceback on stderr, as the interpreter would end."""
         def go():
             self.m.clear_caches()
             out, err = io.StringIO(), io.StringIO()
             saved = (sys.argv, sys.stdin, dict(os.environ))
-            sys.argv, sys.stdin = ["guard.py", *args], io.StringIO(payload if isinstance(payload, str) else json.dumps(payload))
+            sys.argv, sys.stdin = ["guard.py", *args], self.stdin_of(payload)
             if env is not None:
                 environ(env)
             try:
@@ -195,6 +202,19 @@ class Guard(HookCase):
         r = self.hook([], "not json")
         self.assertEqual(r.returncode, 0)
         self.assertEqual(self.guard("").returncode, 0)
+
+    def test_input_that_cannot_be_decoded_is_refused_and_text_that_is_no_json_is_not(self):
+        for payload in (b"\xff\xfe\x80", b'{"tool_input": {"command": "ls \xff"}}', b'{"tool_input": {"command": "ls"}}\xc3'):
+            r = self.hook([], payload)
+            self.assertEqual(r.returncode, 2, payload)
+            self.assertEqual(r.stdout, "", payload)
+            self.assertEqual(r.stderr.count("\n"), 1, r.stderr)
+            self.assertIn("not valid UTF-8", r.stderr, payload)
+        for payload in ("plain text", b"plain text", "\u00e9 not json".encode(), ""):
+            self.assertEqual(self.hook([], payload), Verdict(0, "", ""), payload)
+        self.assertEqual(self.guard("ls"), Verdict(0, "", ""))
+        self.assertEqual(self.hook([], {"tool_input": {"command": "caf\u00e9"}}), Verdict(0, "", ""))
+        self.assertEqual(self.guard("git push").returncode, 2)
 
     def test_the_member_definition_guards_bash_edits_and_key_reads(self):
         d = os.path.join(os.path.dirname(BIN), "..", "agents")
@@ -867,6 +887,19 @@ class Skills(HookCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
+    def test_a_build_member_writes_its_out_files_with_a_heredoc(self):
+        """Where the runtime refuses the member's write tool for a report file, the member writes OUT with the shell: the guard lets that through for the
+        write role (the run directory says build), by the absolute path of OUT, by a path relative to the clone, with cat or tee, a quoted or an unquoted
+        delimiter, and for the three kinds of file OUT holds (a report, a manifest of JSON, series.md), and so is git format-patch into OUT/patches."""
+        o = os.path.join(self.t, "run/out")
+        for c in ("cat > %s/report.md <<'EOF'\n# Report\nDONE\nThe change is in lib/local.sh.\nEOF" % o,
+                  "cat > %s/series.md <<EOF\n# series\n- 0001: subject, why: x\nEOF" % o,
+                  "cat > %s/manifest.json <<'EOF'\n{\"status\": \"DONE\", \"commits\": [], \"scope\": [\"a\", \"b\"]}\nEOF" % o,
+                  "cat > ../out/report.md <<'EOF'\nDONE\nEOF", "tee %s/build--report.md <<'EOF'\nDONE\nEOF" % o,
+                  "cat >> %s/report.md <<'EOF'\nDONE; gates: pass && ok | fine\nEOF" % o, "git format-patch --binary -o %s/patches f1ce6ed..HEAD" % o):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
     def test_the_protected_roots_follow_the_environment(self):
         other = os.path.join(self.t, "xdg")
         os.makedirs(os.path.join(other, "qargi/packs"))
@@ -1408,6 +1441,30 @@ class Marshal(HookCase):
             res = self.bash(c)
             self.assertEqual(res.returncode, 0, (c, res.stderr))
 
+    def test_the_scrub_record_directory_is_protected_and_readable(self):
+        """$STATE/scrub_ok/<run> is the lead's record that a series passed its declared scrub; a member who could write it would make the apply skip the scrub."""
+        p = os.path.join(self.state, "scrub_ok")
+        os.makedirs(p)
+        with open(os.path.join(p, "qargi.abcdef"), "w") as f:
+            f.write("0" * 64 + "\n")
+        os.symlink(p, os.path.join(self.clone, "to-scrub"))
+        for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path")):
+            for cls in ((), ("--class", "read-only")):
+                for f in (p + "/qargi.abcdef", p + "/qargi.new", "to-scrub/qargi.new"):
+                    res = self.hook(list(cls), {"tool_name": tool, "tool_input": {key: f}, "cwd": self.clone}, self.env())
+                    self.assertEqual(res.returncode, 2, (tool, f, cls, res.stderr))
+                    self.assertIn("declared scrub passed", res.stderr)
+        for c in ["echo h > %s/qargi.abcdef" % p, "echo h >> $QARGI_STATE/scrub_ok/qargi.abcdef", "printf h | tee %s/qargi.x" % p, "cp a.txt %s/qargi.x" % p,
+                  "mv a.txt %s/qargi.x" % p, "ln -s /x %s/qargi.x" % p, "rm -f %s/qargi.abcdef" % p, "echo h > to-scrub/qargi.x",
+                  "cd %s && echo h > qargi.x" % p, "bash -c 'echo h > %s/qargi.x'" % p,
+                  "cat > %s/qargi.x <<EOF\nh\nEOF" % p]:
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 2, (c, res.stderr))
+            self.assertIn("declared scrub passed", res.stderr, c)
+        for c in ("cat %s/qargi.abcdef" % p, "ls %s" % p, "echo x > %s/scrub_ok-notes.md" % self.state, "echo x > %s/unrelated.txt" % self.state):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+
     def test_the_handoff_and_busy_directories_are_protected_and_the_context_verbs_are_reads(self):
         """$STATE/handoff and $STATE/busy tell `qargi lead compact-check` when the note was written and what is running: a member does not write
         them. The verbs lead usage and lead compact-check only read, so a member may run them; claiming by succession writes the marshal."""
@@ -1758,7 +1815,7 @@ class FailsClosed(HookCase):
         if patch:
             setattr(mod, patch[0], patch[1])
         err, old = io.StringIO(), sys.stdin
-        sys.stdin = io.StringIO(payload)
+        sys.stdin = io.TextIOWrapper(io.BytesIO(payload.encode()), encoding="utf-8")
         try:
             with contextlib.redirect_stderr(err):
                 rc = mod.main()

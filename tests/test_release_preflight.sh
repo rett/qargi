@@ -11,6 +11,9 @@ ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
 mkdir -p "$HOME" "$T/c/projects"
 REL="$DA release"
+tok() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
+# rstart ARGS: release start through its plan (a token) and the approval; a refusal of the plan is printed and fails
+rstart() { local p t; p=$($REL start "$@" 2>&1); t=$(tok <<<"$p"); [ -n "$t" ] || { printf '%s\n' "$p"; return 1; }; $REL start "$@" --plan "$t" --approved go; }
 mk() { # name: a repository with develop only (master too), man page and changelog set by the caller afterwards
   R=$T/$1; git init -q -b master "$R"; echo 0.1.0 > "$R/VERSION"
   jq -n --arg p "$R" --arg n "$1" '{schema:1, project:$n, methodology:"gitflow", repo:{url:"https://github.com/acme/x", path:$p, long_lived:["master","develop"]}, test_command:"true"}' > "$T/c/projects/$1.json"
@@ -19,17 +22,17 @@ mk() { # name: a repository with develop only (master too), man page and changel
 seal() { git -C "$R" add -A && git -C "$R" commit -q -m one && git -C "$R" branch -f develop && $REL verify 0.2.0 >/dev/null 2>&1; }
 refuses() { # label expected-text-in-message
   local before out; before=$(git -C "$R" for-each-ref | md5sum)
-  out=$($REL start 0.2.0 --date 2026-03-04 2>&1) && { no "$1: started"; return; }
+  out=$(rstart 0.2.0 --date 2026-03-04 2>&1) && { no "$1: started"; return; }
   grep -q "$2" <<<"$out" && [ "$before" = "$(git -C "$R" for-each-ref | md5sum)" ] && ok "$1" || no "$1: $out"
 }
 
 mk good; mkdir "$R/man"; printf '.TH APP 1 "2026-01-01" "app 0.1.0"\n.SH NAME\napp\n' > "$R/man/app.1"
 printf '# Changelog\n\n## [Unreleased]\n\n### Added\n- a thing\n' > "$R/CHANGELOG.md"; seal
-$REL start 0.2.0 --date 2026-03-04 >/dev/null 2>&1 && ok "a good project starts" || no "good start: $($REL start 0.2.0 2>&1)"
+rstart 0.2.0 --date 2026-03-04 >/dev/null 2>&1 && ok "a good project starts" || no "good start: $(rstart 0.2.0 2>&1)"
 [ "$(git -C "$R" show release/0.2.0:man/app.1 | head -1)" = '.TH APP 1 "2026-03-04" "app 0.2.0"' ] && [ "$(git -C "$R" rev-list --count develop..release/0.2.0)" = 1 ] && git -C "$R" show release/0.2.0:CHANGELOG.md | grep -q '^## \[0.2.0\] - 2026-03-04' && ok "the first commit sets the .TH date and version, with VERSION and the changelog" || no "th: $(git -C "$R" show release/0.2.0:man/app.1 | head -1)"
 
 mk empthdr; mkdir "$R/man"; printf '.TH APP 1 "" "app 0.1.0"\n' > "$R/man/app.1"; printf '## [Unreleased]\n- x\n' > "$R/CHANGELOG.md"; seal
-$REL start 0.2.0 --date 2026-03-04 >/dev/null 2>&1 && [ "$(git -C "$R" show release/0.2.0:man/app.1)" = '.TH APP 1 "2026-03-04" "app 0.2.0"' ] && ok "an empty date field is filled" || no "empty date"
+rstart 0.2.0 --date 2026-03-04 >/dev/null 2>&1 && [ "$(git -C "$R" show release/0.2.0:man/app.1)" = '.TH APP 1 "2026-03-04" "app 0.2.0"' ] && ok "an empty date field is filled" || no "empty date"
 
 mk noth; mkdir "$R/man"; printf '.SH NAME\napp\n' > "$R/man/app.1"; seal
 refuses "a man page without a .TH line refuses" "man/app.1: it has no .TH line"
@@ -40,18 +43,18 @@ refuses "a source field without a version refuses" "carries no version"
 
 mk emptycl; printf '# Changelog\n\n## [Unreleased]\n\n### Added\n\n## [0.1.0] - 2026-01-01\n- old\n' > "$R/CHANGELOG.md"; seal
 refuses "an empty Unreleased refuses" "nothing under '## \[Unreleased\]'"
-$REL start 0.2.0 --allow-empty-notes >/dev/null 2>&1 && ok "--allow-empty-notes waives it" || no "allow-empty"
+rstart 0.2.0 --allow-empty-notes >/dev/null 2>&1 && ok "--allow-empty-notes waives it" || no "allow-empty"
 mk nosect; printf '# Changelog\n\n## [0.1.0] - 2026-01-01\n- old\n' > "$R/CHANGELOG.md"; seal
 refuses "a changelog without an Unreleased section refuses" "no '## \[Unreleased\]' section"
 
 mk plain; seal
-$REL start 0.2.0 >/dev/null 2>&1 && ok "a project with neither man page nor changelog is not checked" || no "plain: $($REL start 0.2.0 2>&1)"
+rstart 0.2.0 >/dev/null 2>&1 && ok "a project with neither man page nor changelog is not checked" || no "plain: $(rstart 0.2.0 2>&1)"
 # the generated manual page keeps the date `release start` set: regenerating it after the start must not empty the date again
 mk regen; cp -r "$SRC/lib" "$SRC/skills" "$R/"; mkdir "$R/man"; printf '# Changelog\n\n## [Unreleased]\n- x\n' > "$R/CHANGELOG.md"
 (cd "$R" && python3 lib/help.py man > man/qargi.1)
 [ "$(head -1 "$R/man/qargi.1")" = '.TH QARGI 1 "" "qargi 0.1.0"' ] && ok "a first generation (no page yet) writes an empty date" || no "first generation: $(head -1 "$R/man/qargi.1")"
 seal
-$REL start 0.2.0 --date 2026-03-04 >/dev/null 2>&1 || no "regen start: $($REL start 0.2.0 2>&1)"
+rstart 0.2.0 --date 2026-03-04 >/dev/null 2>&1 || no "regen start: $(rstart 0.2.0 2>&1)"
 git -C "$R" checkout -q release/0.2.0
 (cd "$R" && python3 lib/help.py man > man/qargi.1)
 [ "$(head -1 "$R/man/qargi.1")" = '.TH QARGI 1 "2026-03-04" "qargi 0.2.0"' ] && git -C "$R" diff --quiet && ok "regenerating the page after release start keeps its date (python3 lib/help.py man > man/qargi.1)" || no "regenerated: $(head -1 "$R/man/qargi.1")"
@@ -69,23 +72,23 @@ CL='# Changelog\n\n## [Unreleased]\n\n### Added\n- a thing\n'
 
 # no version file: the version is the changelog heading and the tag
 mk nofile; rm "$R/VERSION"; printf "$CL" > "$R/CHANGELOG.md"; rel '{"version_file":"none"}'; seal; git -C "$R" checkout -q -b parked
-$REL start 0.2.0 --date 2026-03-04 >/dev/null 2>&1 && ! git -C "$R" cat-file -e release/0.2.0:VERSION 2>/dev/null && git -C "$R" show release/0.2.0:CHANGELOG.md | grep -q '^## \[0.2.0\] - 2026-03-04' && ok "version_file none: a project with no VERSION file starts, and the changelog carries the version" || no "version_file none: $($REL start 0.2.0 2>&1)"
+rstart 0.2.0 --date 2026-03-04 >/dev/null 2>&1 && ! git -C "$R" cat-file -e release/0.2.0:VERSION 2>/dev/null && git -C "$R" show release/0.2.0:CHANGELOG.md | grep -q '^## \[0.2.0\] - 2026-03-04' && ok "version_file none: a project with no VERSION file starts, and the changelog carries the version" || no "version_file none: $(rstart 0.2.0 2>&1)"
 $REL verify 0.2.0 >/dev/null 2>&1; t=$(finish_plan 0.2.0)
 $REL finish 0.2.0 --plan "$t" --approved go >/dev/null 2>&1 && git -C "$R" rev-parse -q --verify refs/tags/0.2.0 >/dev/null && ok "version_file none: finish tags the release from the changelog heading" || no "none finish: $($REL finish 0.2.0 --plan "$t" --approved go 2>&1)"
 mk nofile2; rm "$R/VERSION"; printf "$CL" > "$R/CHANGELOG.md"; rel '{"version_file":"none"}'; seal
-$REL start 0.2.0 --date 2026-03-04 >/dev/null 2>&1; onbranch release/0.2.0 "sed -i 's/^## \[0.2.0\]/## [0.2.1]/' CHANGELOG.md"; $REL verify 0.2.0 >/dev/null 2>&1
+rstart 0.2.0 --date 2026-03-04 >/dev/null 2>&1; onbranch release/0.2.0 "sed -i 's/^## \[0.2.0\]/## [0.2.1]/' CHANGELOG.md"; $REL verify 0.2.0 >/dev/null 2>&1
 out=$($REL finish 0.2.0 2>&1) && no "version_file none: finish without a heading for the version" || { grep -q "no released section for 0.2.0" <<<"$out" && ok "version_file none: finish refuses a changelog with no section for the version" || no "none finish heading: $out"; }
 mk othfile; mkdir "$R/conf"; echo 0.1.0 > "$R/conf/version.txt"; printf "$CL" > "$R/CHANGELOG.md"; rel '{"version_file":"conf/version.txt"}'; seal
-$REL start 0.2.0 --date 2026-03-04 >/dev/null 2>&1 && [ "$(git -C "$R" show release/0.2.0:conf/version.txt)" = 0.2.0 ] && [ "$(git -C "$R" show release/0.2.0:VERSION)" = 0.1.0 ] && ok "version_file: a named file is bumped, VERSION is left alone" || no "named version file"
+rstart 0.2.0 --date 2026-03-04 >/dev/null 2>&1 && [ "$(git -C "$R" show release/0.2.0:conf/version.txt)" = 0.2.0 ] && [ "$(git -C "$R" show release/0.2.0:VERSION)" = 0.1.0 ] && ok "version_file: a named file is bumped, VERSION is left alone" || no "named version file"
 mk misfile; printf "$CL" > "$R/CHANGELOG.md"; rel '{"version_file":"conf/version.txt"}'; seal
 refuses "a version_file that is not in the repository refuses" "release.version_file: conf/version.txt is not a file"
 
 # changelog heading templates
 mk tplver; printf '# Changelog\n\n## 0.2.0 (unreleased)\n\n- a thing\n\n## 0.1.0 (2026-01-01)\n- old\n' > "$R/CHANGELOG.md"; rel '{"changelog":{"unreleased":"## {version} (unreleased)","released":"## {version} ({date})"}}'; seal
-$REL start 0.2.1 --date 2026-03-04 >/dev/null 2>&1; c=$(git -C "$R" show release/0.2.1:CHANGELOG.md)
+rstart 0.2.1 --date 2026-03-04 >/dev/null 2>&1; c=$(git -C "$R" show release/0.2.1:CHANGELOG.md)
 grep -qx '## 0.2.1 (2026-03-04)' <<<"$c" && ! grep -q unreleased <<<"$c" && [ "$(grep -c '^## ' <<<"$c")" = 2 ] && ok "an unreleased heading that carries the version is renamed to the released heading" || no "template with version: $c"
 mk tplplain; printf '# Changelog\n\n# Next\n\n- a thing\n\n# v0.1.0 on 2026-01-01\n- old\n' > "$R/CHANGELOG.md"; rel '{"changelog":{"unreleased":"# Next","released":"# v{version} on {date}"}}'; seal
-$REL start 0.2.0 --date 2026-03-04 >/dev/null 2>&1; c=$(git -C "$R" show release/0.2.0:CHANGELOG.md)
+rstart 0.2.0 --date 2026-03-04 >/dev/null 2>&1; c=$(git -C "$R" show release/0.2.0:CHANGELOG.md)
 grep -qx '# Next' <<<"$c" && grep -qx '# v0.2.0 on 2026-03-04' <<<"$c" && ok "custom headings: the unreleased heading stays and the released one is written after it" || no "custom headings: $c"
 mk tplmiss; printf '# Changelog\n\n## [Unreleased]\n- x\n' > "$R/CHANGELOG.md"; rel '{"changelog":{"unreleased":"# Next"}}'; seal
 refuses "an unreleased template the changelog lacks refuses, naming it" "no '# Next' section"
@@ -95,11 +98,11 @@ rel '{"changelog":{"released":"## {version} {when}"}}'; refuses "a template with
 
 # manual pages: release.man_pages names them; the date and the version are always set, and finish refuses a page that lost them
 mk manl; mkdir "$R/man" "$R/docs"; printf '.TH APP 1 "" "app 0.1.0"\n' > "$R/docs/app.1"; printf '.TH OTHER 1 "x" "other 0.1.0"\n' > "$R/man/other.1"; printf "$CL" > "$R/CHANGELOG.md"; rel '{"man_pages":["docs/app.1"]}'; seal
-$REL start 0.2.0 --date 2026-03-04 >/dev/null 2>&1; [ "$(git -C "$R" show release/0.2.0:docs/app.1)" = '.TH APP 1 "2026-03-04" "app 0.2.0"' ] && [ "$(git -C "$R" show release/0.2.0:man/other.1)" = '.TH OTHER 1 "x" "other 0.1.0"' ] && ok "man_pages: only the listed pages are dated, with an empty date filled" || no "man_pages: $(git -C "$R" show release/0.2.0:docs/app.1)"
+rstart 0.2.0 --date 2026-03-04 >/dev/null 2>&1; [ "$(git -C "$R" show release/0.2.0:docs/app.1)" = '.TH APP 1 "2026-03-04" "app 0.2.0"' ] && [ "$(git -C "$R" show release/0.2.0:man/other.1)" = '.TH OTHER 1 "x" "other 0.1.0"' ] && ok "man_pages: only the listed pages are dated, with an empty date filled" || no "man_pages: $(git -C "$R" show release/0.2.0:docs/app.1)"
 mk manmiss; printf "$CL" > "$R/CHANGELOG.md"; rel '{"man_pages":["docs/gone.1"]}'; seal
 refuses "a listed man page that does not exist refuses" "release.man_pages: docs/gone.1 is not a file"
 mk manempty; mkdir "$R/man"; printf '.TH APP 1 "2026-01-01" "app 0.1.0"\n' > "$R/man/app.1"; printf "$CL" > "$R/CHANGELOG.md"; seal; git -C "$R" checkout -q -b parked
-$REL start 0.2.0 --date 2026-03-04 >/dev/null 2>&1; onbranch release/0.2.0 "printf '.TH APP 1 \"\" \"app 0.2.0\"\\n' > man/app.1"; $REL verify 0.2.0 >/dev/null 2>&1
+rstart 0.2.0 --date 2026-03-04 >/dev/null 2>&1; onbranch release/0.2.0 "printf '.TH APP 1 \"\" \"app 0.2.0\"\\n' > man/app.1"; $REL verify 0.2.0 >/dev/null 2>&1
 out=$($REL finish 0.2.0 2>&1) && no "finish with an empty .TH date" || { grep -q "man/app.1 on release/0.2.0 has no date or no version" <<<"$out" && ! git -C "$R" rev-parse -q --verify refs/tags/0.2.0 >/dev/null && ok "finish refuses a man page whose .TH date is empty (no release with an undated page)" || no "empty .TH finish: $out"; }
 onbranch release/0.2.0 "printf '.TH APP 1 \"2026-03-04\" \"app 0.2.0\"\\n' > man/app.1"; $REL verify 0.2.0 >/dev/null 2>&1; t=$(finish_plan 0.2.0)
 $REL finish 0.2.0 --plan "$t" --approved go >/dev/null 2>&1 && [ "$(git -C "$R" show 0.2.0:man/app.1)" = '.TH APP 1 "2026-03-04" "app 0.2.0"' ] && ok "the tagged man page carries the date and the version" || no "tagged man page: $(git -C "$R" show 0.2.0:man/app.1 2>&1)"
@@ -118,7 +121,7 @@ out=$($REL status 0.2.0 2>&1)
 grep -Eq '^no release/0.2.0 yet. develop is at [0-9a-f]+, full suite: pass at this head \(command: true; ran [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z; took [0-9]+s\)$' <<<"$out" && ! grep -q "note:" <<<"$out" && ok "status names the command, the time and the duration of the suite record, and says nothing more when release.test_command is not set" || no "status verdict: $out"
 rel '{"test_command":"echo gate"}'; out=$($REL status 0.2.0 2>&1)
 grep -q 'full suite: pass at this head (command: true; ran ' <<<"$out" && grep -qx '  note: release.test_command is "echo gate", not the command of that run: it is not the release gate (qargi release verify 0.2.0 runs it)' <<<"$out" && ok "a release.test_command that differs from the recorded command is named on its own line" || no "status note: $out"
-$REL verify 0.2.0 >/dev/null 2>&1; $REL start 0.2.0 --date 2026-03-04 >/dev/null 2>&1; $REL verify 0.2.0 >/dev/null 2>&1; out=$($REL status 0.2.0 2>&1)
+$REL verify 0.2.0 >/dev/null 2>&1; rstart 0.2.0 --date 2026-03-04 >/dev/null 2>&1; $REL verify 0.2.0 >/dev/null 2>&1; out=$($REL status 0.2.0 2>&1)
 grep -q '^full suite: pass at this head (command: echo gate; ran ' <<<"$out" && ! grep -q "note:" <<<"$out" && ok "after the release's own verify the branch status shows that command and no note" || no "branch status: $out"
 rel '{"test_command":"echo gate2"}'; out=$($REL status 0.2.0 2>&1)
 grep -q '^full suite: pass at this head (command: echo gate; ran ' <<<"$out" && grep -qx '  note: release.test_command is "echo gate2", not the command of that run: it is not the release gate (qargi release verify 0.2.0 runs it)' <<<"$out" && ok "the note shows on the release branch status too" || no "branch note: $out"
@@ -140,11 +143,11 @@ mk feats; printf "$CL" > "$R/CHANGELOG.md"; git -C "$R" add -A; git -C "$R" comm
 git -C "$R" branch feature/old develop; onbranch feature/old "echo x > old.txt"; mergedev feature/old
 git -C "$R" tag 0.1.0 develop
 for n in feature/alpha feature/beta agent/task; do git -C "$R" branch "$n" develop; onbranch "$n" "echo x > $(basename "$n").txt"; mergedev "$n"; done
-$REL verify 0.2.0 >/dev/null 2>&1; out=$($REL start 0.2.0 --date 2026-03-04 2>&1)
+$REL verify 0.2.0 >/dev/null 2>&1; out=$(rstart 0.2.0 --date 2026-03-04 2>&1)
 a=$(git -C "$R" log -1 --format=%h --grep "Merge branch 'feature/alpha'" develop); b=$(git -C "$R" log -1 --format=%h --grep "Merge branch 'feature/beta'" develop)
 grep -qx 'features merged into develop since 0.1.0 (2):' <<<"$out" && grep -qx "  $a feature/alpha" <<<"$out" && grep -qx "  $b feature/beta" <<<"$out" && ! grep -q "feature/old\|agent/task" <<<"$out" && ok "release start lists the features merged since the previous tag, one per line with the short sha, and not older features or task merges" || no "feature list: $out"
 mk nofeats; printf "$CL" > "$R/CHANGELOG.md"; git -C "$R" add -A; git -C "$R" commit -q -m one; git -C "$R" branch -f develop; git -C "$R" tag 0.1.0 develop
-$REL verify 0.2.0 >/dev/null 2>&1; out=$($REL start 0.2.0 --date 2026-03-04 2>&1)
+$REL verify 0.2.0 >/dev/null 2>&1; out=$(rstart 0.2.0 --date 2026-03-04 2>&1)
 grep -qx 'no feature was merged into develop since 0.1.0' <<<"$out" && ok "and says so when there is none" || no "no features: $out"
 
 # release.preflight: run by start and by push before anything changes; a non-zero exit refuses with the tail of its output
@@ -153,9 +156,9 @@ mk pre; printf "$CL" > "$R/CHANGELOG.md"; rel "$(jq -nc --arg s "$T/pre.sh" '{pr
 git init -q --bare "$T/pre-origin.git"; git -C "$R" remote add origin "$T/pre-origin.git"
 touch "$T/pre.fail"; : > "$T/pre.log"
 refuses "a failing preflight refuses the start, leaving no branch" "release.preflight failed (exit 3)"
-out=$($REL start 0.2.0 2>&1); grep -q "preflight boom" <<<"$out" && grep -q "nothing was changed" <<<"$out" && ok "the refusal carries the tail of the preflight's output" || no "preflight tail: $out"
+out=$(rstart 0.2.0 2>&1); grep -q "preflight boom" <<<"$out" && grep -q "nothing was changed" <<<"$out" && ok "the refusal carries the tail of the preflight's output" || no "preflight tail: $out"
 rm "$T/pre.fail"; : > "$T/pre.log"
-$REL start 0.2.0 --date 2026-03-04 >/dev/null 2>&1 && [ "$(cat "$T/pre.log")" = 0.2.0 ] && ok "a passing preflight lets the start go on, and {version} is replaced in its arguments" || no "preflight start: $(cat "$T/pre.log")"
+rstart 0.2.0 --date 2026-03-04 >/dev/null 2>&1 && [ "$(sort -u "$T/pre.log")" = 0.2.0 ] && [ "$(wc -l < "$T/pre.log")" = 2 ] && ok "a passing preflight lets the start go on (it runs for the plan and for the apply), and {version} is replaced in its arguments" || no "preflight start: $(cat "$T/pre.log")"
 touch "$T/pre.fail"; t=$($REL push 0.2.0 | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p')
 out=$(QARGI_GH=true $REL push 0.2.0 --plan "$t" --approved go 2>&1) && no "push with a failing preflight" || { grep -q "release.preflight failed (exit 3)" <<<"$out" && [ -z "$(git -C "$T/pre-origin.git" for-each-ref refs/heads/release)" ] && ok "a failing preflight refuses the push before anything is pushed" || no "push preflight: $out"; }
 rm "$T/pre.fail"; QARGI_GH=true $REL push 0.2.0 --plan "$t" --approved go >/dev/null 2>&1 && [ -n "$(git -C "$T/pre-origin.git" for-each-ref refs/heads/release)" ] && ok "a passing preflight lets the push go on" || no "push passing preflight"

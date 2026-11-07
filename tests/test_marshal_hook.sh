@@ -25,6 +25,7 @@ case \$(cat "$T/mode" 2>/dev/null) in
   fail) exit 3;;
   unknown) echo "qargi: unknown command marshal"; exit 0;;
   slow) sleep 30;;
+  nap) sleep 2;;
 esac
 cat "$T/marshal.out"
 EOS
@@ -73,6 +74,18 @@ done
 echo slow > "$T/mode"; s=$SECONDS
 out=$(run "$sid"); rc=$?
 [ "$rc" = 0 ] && ! printf '%s' "$out" | grep -q "Open features" && ok "a marshal that hangs is cut off after 5 s" || no "slow marshal: rc $rc, $((SECONDS - s)) s"
+# QARGI_HOOK_MARSHAL_SECS replaces the 5 s: a read that takes 2 s is cut off by 1, and anything that is not a whole number from 1 to 9999 is ignored
+# (the default 5 applies; an unvalidated "abc" or "-1" would make timeout fail and the block vanish)
+echo nap > "$T/mode"
+out=$(run "$sid" QARGI_HOOK_MARSHAL_SECS=1); rc=$?
+[ "$rc" = 0 ] && ! printf '%s' "$out" | grep -q "Open features" && printf '%s' "$out" | jq -e . >/dev/null && ok "QARGI_HOOK_MARSHAL_SECS=1 cuts a read that takes 2 s" || no "SECS=1: rc $rc $out"
+echo > "$T/mode"; printf 'feat-a  build\n' > "$T/marshal.out"
+i=0; badv=(abc 0 -1 1.5 05 99999 "1 2" "")
+for v in "${badv[@]}"; do i=$((i + 1)); run "$sid" QARGI_HOOK_MARSHAL_SECS="$v" > "$T/nap.$i" & done   # in parallel
+wait
+for i in "${!badv[@]}"; do
+  grep -q "Open features" "$T/nap.$((i + 1))" && ok "QARGI_HOOK_MARSHAL_SECS='${badv[$i]}' is ignored (the block is still read)" || no "SECS='${badv[$i]}': $(cat "$T/nap.$((i + 1))")"
+done
 echo > "$T/mode"; mv "$T/root/bin/qargi" "$T/root/bin/qargi.off"
 out=$(run "$sid"); rc=$?
 [ "$rc" = 0 ] && ! printf '%s' "$out" | grep -q "Open features" && printf '%s' "$out" | jq -e .systemMessage >/dev/null && ok "no qargi binary: the block is omitted, the hook still answers" || no "absent: rc $rc $out"

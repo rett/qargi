@@ -42,7 +42,8 @@ removes TMP. Start long commands through your runtime's background facility (no 
 waiting) and finish them before the report.
 
 # Output
-Write outputs only to OUT (`output-format.md`: the files, the manifest, what a read-only role returns). Run
+Write outputs only to OUT (`output-format.md`: the files, the manifest, what a read-only role returns). If your
+write tool is refused there, use the shell (a heredoc). Run
 `qargi review check OUT` until it reports no failure (`0 fail, 0 warn`, or `OK report-only run`).
 
 # Final report (your last message)
