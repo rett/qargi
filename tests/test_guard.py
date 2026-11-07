@@ -203,6 +203,19 @@ class Guard(HookCase):
         self.assertEqual(r.returncode, 0)
         self.assertEqual(self.guard("").returncode, 0)
 
+    def test_input_that_cannot_be_decoded_is_refused_and_text_that_is_no_json_is_not(self):
+        for payload in (b"\xff\xfe\x80", b'{"tool_input": {"command": "ls \xff"}}', b'{"tool_input": {"command": "ls"}}\xc3'):
+            r = self.hook([], payload)
+            self.assertEqual(r.returncode, 2, payload)
+            self.assertEqual(r.stdout, "", payload)
+            self.assertEqual(r.stderr.count("\n"), 1, r.stderr)
+            self.assertIn("not valid UTF-8", r.stderr, payload)
+        for payload in ("plain text", b"plain text", "\u00e9 not json".encode(), ""):
+            self.assertEqual(self.hook([], payload), Verdict(0, "", ""), payload)
+        self.assertEqual(self.guard("ls"), Verdict(0, "", ""))
+        self.assertEqual(self.hook([], {"tool_input": {"command": "caf\u00e9"}}), Verdict(0, "", ""))
+        self.assertEqual(self.guard("git push").returncode, 2)
+
     def test_the_member_definition_guards_bash_edits_and_key_reads(self):
         d = os.path.join(os.path.dirname(BIN), "..", "agents")
         self.assertEqual(sorted(os.listdir(d)), ["member.body.md", "member.json", "member.md"],

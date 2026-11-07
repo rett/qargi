@@ -3133,10 +3133,15 @@ def decide_call(call):
 
 
 def decide(hook):
+    raw = sys.stdin.buffer.read()                         # bytes, so that text the guard cannot decode is told from text that is no JSON
     try:
-        data = json.load(sys.stdin)
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return refuse(hook, "qargi guard: the input is not valid UTF-8, so the guard cannot read the call; refusing it.")
+    try:
+        data = json.loads(text)
     except ValueError:
-        return hook["allow"]["exit"]                      # not JSON: not a call to judge (as before)
+        return hook["allow"]["exit"]                      # decodes but is no JSON: not a call to judge (as before)
     why = judge(parse_call(hook, data))
     return refuse(hook, why) if why else hook["allow"]["exit"]
 
