@@ -88,7 +88,7 @@ merged_tip() {
 # records), and no rewrite of the journaled tip is recorded yet. The branch and the tips are checked before they reach git or the terminal: BRANCH is the
 # first word of the member's applied file, the journal is the lead's.
 rewrite_hint() {
-  local jt cur rp
+  local jt cur rp qb
   [ -n "${1:-}" ] && [ -n "${2:-}" ] && [ -f "$DA_STATE/ref-journal.jsonl" ] || return 0
   git check-ref-format "refs/heads/$2" 2>/dev/null || return 0
   case $2 in agent/?*) ;; *) return 0;; esac   # the one kind of branch qargi ref record --rewrite moves
@@ -100,7 +100,8 @@ rewrite_hint() {
   [ "$cur" != "$jt" ] || return 0
   jq -e --arg r "$rp" --arg o "$jt" 'select(type == "object" and .verb == "ref:rewrite" and .repo == $r and .old == $o)' "$DA_STATE/ref-journal.jsonl" >/dev/null 2>&1 && return 0   # recorded already
   [ "$(git -C "$1" rev-parse -q --verify "$jt^{tree}" 2>/dev/null)" = "$(git -C "$1" rev-parse -q --verify "$cur^{tree}" 2>/dev/null)" ] || return 0
-  printf '%s' "$2 is at $cur, not at the tip $jt that review apply journaled: it was rewritten by hand (the same tree). Put it back and record the rewrite, so that clean follows it: git branch -f $2 $jt, then qargi ref record --rewrite $2 $jt $cur --why \"...\""
+  qb=$(printf '%q' "$2")   # the two commands are meant to be pasted: a name with a $ or a ; in it (git allows both) stays one word
+  printf '%s' "$2 is at $cur, not at the tip $jt that review apply journaled: it was rewritten by hand (the same tree). Put it back and record the rewrite, so that clean follows it: git branch -f $qb $jt, then qargi ref record --rewrite $qb $jt $cur --why \"...\""
 }
 
 # journal_steps SIDE NAME OLD NEW -> 0 and the verbs, in order, of the lead's ref journal ($DA_STATE/ref-journal.jsonl) that explain the change
