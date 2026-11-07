@@ -1048,7 +1048,9 @@ COMMANDS = {
                                   "and output); prefer a directory on disk, such as ~/.cache/qargi-runs.")),
             "verify": verb("Compare the repository's refs with the snapshot taken by prepare", [("RUN_DIR", "dir", True)],
                            [opt("--saved", "verify the lead's saved copy of a passed run whose directory is gone (ID: the name of the run directory, qargi.XXXXXX)", "ID")],
-                           desc=("Fails first, with exit 1 and \"OUT is empty: the member did not collect\", when the clone holds commits past BASE_SHA and RUN/out holds neither patches nor a report: "
+                           desc=("OUT without a report, for an uncollected run or a read-only run, is said with its likely cause: a runtime can refuse the member's write tool for a report file, so the file never reached OUT; "
+                                 "the member is told to write its OUT files with the shell (a heredoc) and to collect again (for a read-only run it is a note, and the exit status stays the refs verdict). "
+                                 "Fails first, with exit 1 and \"OUT is empty: the member did not collect\", when the clone holds commits past BASE_SHA and RUN/out holds neither patches nor a report: "
                                  "the refs are compared all the same and their verdict is printed next to that message (exit 2 when they changed), but nothing is recorded: the run is not verified, and the member must collect (its DONE needs ls OUT/patches to list the patches) before apply or close. "
                                  "Exits 2 when refs changed (1 before), 3 when the lead's registry does not vouch for the run: it is not in it, names no repository for it, or RUN/repo.path, repo.url or cred.path differ "
                                  "from it (the repository and the credential come from the registry; a member can write the run directory). "
@@ -1077,13 +1079,18 @@ COMMANDS = {
                                 "qargi feature finish and is listed by marshal status as closed; qargi local list shows closed in the APPLIED column. qargi local clean then removes it "
                                 "without asking for an applied tip (its commits are taken as applied by hand); clean --applied removes it too. Refused for a run that has no passing "
                                 "local verify (verify it first: close must not hide changed refs), a run whose refs changed since that verify (close runs the refs check again), a read-only run, one applied with qargi review apply (merge that branch), "
-                                "a run already closed or cleaned. Not available in a member run."),
+                                "a run already closed or cleaned. When the applied branch was rewritten by hand (its tip is not the review:apply tip in your ref journal, the trees are the same and no rewrite is recorded), "
+                                "the refusal for an applied run also names the fix: qargi ref record --rewrite BRANCH OLD NEW --why ..., with the branch and both tips filled in. Not available in a member run."),
                           examples=["qargi local close ./run --applied-by-am"]),
             "clean": verb("Remove a collected, verified run and its temporary directory", [("RUN_DIR", "dir", True)],
                           [opt("--discard", "drop the run on purpose: also a run whose output holds no manifest, whose commits were never merged or whose repository refs changed (verify's outcome is printed as a warning)"),
                            opt("--applied", "clean every run under --scratch whose work is recorded applied (review apply) and merged into a branch other than agent/*; the others are kept and named, and the exit status is 1 when an applied run was kept"),
                            opt("--stale", "list the finished runs (RUN/verified or RUN/applied exists) under --scratch that are at least DAYS days old, from the run's start (a run with no start time is named as skipped); with --yes clean each of them by the rules below, and keep and name those clean refuses; a run still in progress is never listed", "DAYS"),
                            opt("--yes", "with --stale: clean the runs it lists (without it nothing changes)"),
+                           opt("--orphans", "list the qargi-run.XXXXXX directories under /dev/shm (or QARGI_RUN_TMP) that no run of your registry names, each with its age and whether it is named; a plan and a token, nothing removed"),
+                           opt("--days", "with --orphans: remove only the orphans older than DAYS days, and with nothing in them newer (default 2, at least 1)", "DAYS"),
+                           opt("--plan", "with --orphans: the plan token printed by the same command without --approved", "TOKEN"),
+                           opt("--approved", "with --orphans and --plan: your go-ahead for exactly that plan, in your words; recorded in the audit log", "WORDS"),
                            opt("--scratch", "with --applied or --stale: the directory the runs were prepared in; only the run directories directly under it are looked at", "DIR", "dir")],
                           desc=("Prepare makes a private temporary directory for the run (TMP, on /dev/shm when it exists) that the agent puts its test "
                                 "sandboxes in; clean removes it with the clone, the bare copy and the output (only when it is a qargi-run.XXXXXX directory under /dev/shm or QARGI_RUN_TMP, or inside the run). "
@@ -1100,8 +1107,19 @@ COMMANDS = {
                                 "A run whose directory is gone (a reboot, or removed by hand) is the registry's record and the saved copy alone: clean RUN drops both once "
                                 "the saved work is applied and merged, and refuses otherwise; clean RUN --discard drops them whatever they hold. --stale counts such a run by "
                                 "the start time of its record, and with --yes drops it unless its saved copy holds work that was never applied (kept and named). "
+                                "When the applied branch is not merged because you rewrote it by hand (its tip is not the review:apply tip in your ref journal, the trees are the same and no rewrite is recorded), "
+                                "the refusal also names the fix, with the branch and both tips filled in: git branch -f BRANCH OLD, then qargi ref record --rewrite BRANCH OLD NEW --why ...; clean then follows the rewrite. "
+                                "When the refusal for an OUT with no manifest finds no report either, it names the likely cause too: a runtime can refuse the member's write tool for a report file, "
+                                "so the files never reached OUT; the member writes them with the shell (a heredoc). "
+                                "--orphans is for what no run owns: prepare makes a qargi-run.XXXXXX directory under /dev/shm (QARGI_RUN_TMP moves it) for each run, and clean RUN removes only the one your registry names for that run, "
+                                "so a prepare that failed halfway, a dropped record or a replaced state directory leaves one behind. --orphans lists every such directory with its age (from its own change time) and says whether a run of "
+                                "the registry (this state directory) names it, live or not; a link and a file are named and left. Without --approved it prints the plan and its token and removes nothing. "
+                                "With --plan TOKEN --approved WORDS it removes only the directories that no registry names, that are older than --days (default 2, at least 1) and have nothing in them newer; "
+                                "each is checked again at the moment of removal, a directory that appeared or changed since the plan makes the token stale, and the removal is in the audit log with your words. "
+                                "A named directory is never removed by it, whatever its age. It takes no RUN_DIR, --applied, --discard, --stale, --yes or --scratch; --days, --plan and --approved are for it only. "
                                 "A clean marks the run's record cleaned and removes its saved copy."),
-                          examples=["qargi local clean --applied --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch --yes"]),
+                          examples=["qargi local clean --applied --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch --yes",
+                                    "qargi local clean --orphans --days 3", "qargi local clean --orphans --days 3 --plan TOKEN --approved \"remove them\""]),
             "list": verb("List the local runs: role, slug, age, whether applied and merged", [],
                          [opt("--scratch", "the directory the runs were prepared in (default: the runs of the registry that still exist)", "DIR", "dir")],
                          desc=("Read-only. One row per run: ROLE, SLUG, AGE, APPLIED (RUN/applied exists: review apply ran; closed for a run closed with close --applied-by-am), MERGED (the applied tip is on a branch other than agent/*; ? for a run of a repository URL) and RUN. "

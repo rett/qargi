@@ -6,6 +6,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `qargi local clean --orphans [--days N]` lists the `qargi-run.XXXXXX` directories under `/dev/shm` (or `QARGI_RUN_TMP`) that no run of the lead's registry names, each
+  with its age and whether it is named (a run's own directory, live or gone, is named; a link and a file are named and left). It prints a plan and a token and removes
+  nothing; `--plan TOKEN --approved WORDS` removes only the unnamed directories older than N days (default 2, at least 1) with nothing newer inside, each checked again
+  just before it goes, and logs the removal. The existing `--stale DAYS --scratch DIR` (finished runs) is unchanged.
+
 ### Changed
 - `qargi review apply` runs the declared take-in scrub (the answers `review.scrub` and `review.trailer_policy`) before it makes anything, as `review check` does, so a lead
   cannot apply a series the scrub refuses: a failing scrub prints `scrub: FAIL ...`, refuses the apply and changes nothing. It skips the scrub, with the one line
@@ -13,6 +19,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`scrub_ok/RUN-ID`, not in the member's run directory), a hash of the patches in order and of the declared scrub, and apply compares it; a series (or a scrub answer)
   changed since the check is scrubbed again, and a check that failed leaves no record. `--from-saved` follows the same rule. A member's apply does not run the scrub
   (`scrub: not run`), as its check does not.
+- `qargi local clean` and `qargi local close --applied-by-am`, when they refuse a run whose applied branch the lead rewrote by hand (the branch is not at the tip that
+  `review apply` journaled, the two trees are the same and no rewrite is recorded), also name the fix with the real branch and tips: `git branch -f BRANCH OLD`, then
+  `qargi ref record --rewrite BRANCH OLD NEW --why ...`. The other refusals keep their text.
+- Where the runtime refuses a member's write tool for a report file, OUT never gets the report. The contract and the runtime's addendum now say to write OUT files
+  with the shell (a heredoc) then, the runtime's notes have a `member-out` topic, and `qargi local verify` (an uncollected run, or a read-only run whose OUT has no
+  report, as a note) and `qargi local clean` (an OUT with no manifest and no report) name that cause. A test shows the guard lets a build member write OUT files with
+  a heredoc.
 
 ### Fixed
 - The guard refuses input it cannot decode. A hook input that is not valid UTF-8 was taken for "not JSON" and let through; it is now refused (exit 2, one line on

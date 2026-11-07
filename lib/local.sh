@@ -12,6 +12,8 @@
 #   local.sh clean RUN_DIR [--discard]   remove a collected, verified run and its temporary directory (--discard: whatever verify says)
 #   local.sh clean --applied --scratch DIR   remove every run under DIR whose work is applied and merged; keep and name the others
 #   local.sh clean --stale DAYS --scratch DIR [--yes]   list the finished runs (verified or applied) under DIR older than DAYS; with --yes clean them
+#   local.sh clean --orphans [--days N] [--plan TOKEN --approved WORDS]   list the qargi-run.* directories of the run temporary parent (/dev/shm, or QARGI_RUN_TMP)
+#                                        that no run of the registry names, each with its age; a plan and token first, then only the ones older than N days (2) are removed
 #   local.sh list [--scratch DIR]        read-only: each run (under DIR, else the registry's) with role, slug, age, applied and merged; a run whose
 #                                        directory is gone (and that clean did not remove) says "directory gone", and names its saved copy
 #   local.sh run RUN_DIR [--task FILE] [--model TIER|ID] [--effort LEVEL] [--timeout SECONDS] [--again] [--dry-run]
@@ -40,6 +42,10 @@
 # indexes and the no-write rule; the repo tier is the clone's committed copy) when the repository belongs to a stored project.
 . "$(dirname "$0")/lib.sh"
 . "$(dirname "$0")/marshal.sh"
+
+# NOREPORT_CAUSE: the likely reason OUT holds no report. A runtime can refuse a member's write tool for a report file (the member is told to return findings as
+# text), and the file then never reaches OUT: the member is not late, it is blocked. verify and clean name it where they find OUT without a report.
+NOREPORT_CAUSE="A runtime can refuse a member's write tool for a report file, so the file never reaches OUT: tell the member to write its OUT files (report, manifest, series) with the shell, a heredoc, and to collect again."
 
 # drop_qargi_refs -> stdin without the refs under refs/qargi/ (lines "local REF SHA" and "remote SHA REF"). The marshal refs backend
 # keeps its records there and the lead's renewer fetches and pushes them during a run; that is not an agent push. Only that
@@ -75,6 +81,26 @@ merged_tip() {
   [ -z "${4:-}" ] || ans=$(reg_json "$4" '.answers // empty')
   python3 -I "$(dirname "$0")/merged.py" "$1" "$2" --state "$DA_STATE" ${3:+--branch "$3"} ${ans:+--answers "$ans"} || rc=$?
   case $rc in 0|2) return "$rc";; *) return 1;; esac
+}
+
+# rewrite_hint REPO BRANCH -> nothing, or the sentence that names the fix when the lead rewrote the applied branch by hand: BRANCH is at a commit other than the
+# tip of its review:apply line in the lead's ref journal (the tip merged_tip tests), the two commits have the same tree (what qargi ref record --rewrite
+# records), and no rewrite of the journaled tip is recorded yet. The branch and the tips are checked before they reach git or the terminal: BRANCH is the
+# first word of the member's applied file, the journal is the lead's.
+rewrite_hint() {
+  local jt cur rp
+  [ -n "${1:-}" ] && [ -n "${2:-}" ] && [ -f "$DA_STATE/ref-journal.jsonl" ] || return 0
+  git check-ref-format "refs/heads/$2" 2>/dev/null || return 0
+  case $2 in agent/?*) ;; *) return 0;; esac   # the one kind of branch qargi ref record --rewrite moves
+  rp=$(readlink -f -- "$1" 2>/dev/null) || rp=$1
+  jt=$(jq -r --arg r "$rp" --arg b "refs/heads/$2" 'select(type == "object" and .verb == "review:apply" and .repo == $r and .ref == $b and (has("remote") | not) and (.new | type) == "string") | .new' \
+    "$DA_STATE/ref-journal.jsonl" 2>/dev/null | tail -n 1)
+  [[ $jt =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] || return 0
+  cur=$(git -C "$1" rev-parse -q --verify "refs/heads/$2^{commit}" 2>/dev/null) || return 0
+  [ "$cur" != "$jt" ] || return 0
+  jq -e --arg r "$rp" --arg o "$jt" 'select(type == "object" and .verb == "ref:rewrite" and .repo == $r and .old == $o)' "$DA_STATE/ref-journal.jsonl" >/dev/null 2>&1 && return 0   # recorded already
+  [ "$(git -C "$1" rev-parse -q --verify "$jt^{tree}" 2>/dev/null)" = "$(git -C "$1" rev-parse -q --verify "$cur^{tree}" 2>/dev/null)" ] || return 0
+  printf '%s' "$2 is at $cur, not at the tip $jt that review apply journaled: it was rewritten by hand (the same tree). Put it back and record the rewrite, so that clean follows it: git branch -f $2 $jt, then qargi ref record --rewrite $2 $jt $cur --why \"...\""
 }
 
 # journal_steps SIDE NAME OLD NEW -> 0 and the verbs, in order, of the lead's ref journal ($DA_STATE/ref-journal.jsonl) that explain the change
@@ -542,9 +568,13 @@ WRAP
     if [ -z "$SAVED" ] && [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ]; then
       ncm=$(git -C "$RUN/clone" rev-list --count --branches HEAD --not --remotes=origin 2>/dev/null || echo 0)
       if [ "${ncm:-0}" -gt 0 ] && [ -z "$(find "$RUN/out" -maxdepth 2 -name '*.patch' 2>/dev/null | head -1)" ] && ! out_has_report "$RUN/out"; then
-        EMPTY="qargi: OUT is empty: the member did not collect. $RUN/clone holds $ncm commit(s) past BASE_SHA, but $RUN/out holds no patches and no report. The member's DONE needs \`ls OUT/patches\` to list the patches (git format-patch --binary BASE_SHA..HEAD into OUT/patches, then the manifest and report). This run is not verified, and apply and close need a passing verify: send it back to collect and verify again, or take the commits from the clone yourself and drop the run with qargi local clean RUN --discard."
+        EMPTY="qargi: OUT is empty: the member did not collect. $RUN/clone holds $ncm commit(s) past BASE_SHA, but $RUN/out holds no patches and no report. The member's DONE needs \`ls OUT/patches\` to list the patches (git format-patch --binary BASE_SHA..HEAD into OUT/patches, then the manifest and report). This run is not verified, and apply and close need a passing verify: send it back to collect and verify again, or take the commits from the clone yourself and drop the run with qargi local clean RUN --discard. $NOREPORT_CAUSE"
         NOREC=1
       fi
+    fi
+    # a read-only run's product is its report: none in OUT is said (a note; the refs verdict below is the exit status), with the likely cause
+    if [ -z "$SAVED" ] && [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ] && [ "$(run_class "$RUN" "$SRC")" = read-only ] && ! out_has_report "$RUN/out"; then
+      echo "qargi: note: OUT of the read-only run $RUN holds no report (report.md or NAME-report.md). $NOREPORT_CAUSE" >&2
     fi
     reg_load; crc=0; NOREC=$NOREC check_run "$RUN" "$SRC" || crc=$?
     if [ "$crc" = 3 ]; then
@@ -579,18 +609,83 @@ WRAP
     #   clean RUN [--discard]            one run; --discard drops it on purpose, whatever verify says and whatever it holds
     #   clean --applied --scratch DIR    every run directly under DIR whose work is recorded applied (RUN/applied) and merged
     #   clean --stale DAYS --scratch DIR [--yes]   the finished runs (RUN/verified or RUN/applied) older than DAYS: a plan, removed only with --yes
-    CLEAN_RUN='' DISCARD='' ALL='' SCR='' STALE='' YES=''
+    CLEAN_RUN='' DISCARD='' ALL='' SCR='' STALE='' YES='' ORPH='' DAYS='' PLAN_ARG='' APPROVED=''
     while [ $# -gt 0 ]; do
       case $1 in
         --discard) DISCARD=1; shift;;
         --applied) ALL=1; shift;;
         --stale) need_val "$1" $#; STALE=${2:-}; shift 2;;
         --yes) YES=1; shift;;
+        --orphans) ORPH=1; shift;;
+        --days) need_val "$1" $#; DAYS=${2:-}; shift 2;;
+        --plan) need_val "$1" $#; PLAN_ARG=${2:-}; shift 2;;
+        --approved) need_val "$1" $#; APPROVED=${2:-}; shift 2;;
         --scratch) need_val "$1" $#; SCR=${2:-}; shift 2;;
         -*) usage_die "clean: unknown option $1";;
         *) [ -z "$CLEAN_RUN" ] || usage_die "clean takes one RUN dir"; CLEAN_RUN=$1; shift;;
       esac
     done
+    [ -n "$ORPH" ] || [ -z "$DAYS$PLAN_ARG$APPROVED" ] || usage_die "clean: --days, --plan and --approved are for --orphans"
+    if [ -n "$ORPH" ]; then
+      # the private temporary directories prepare makes (qargi-run.XXXXXX under /dev/shm, or QARGI_RUN_TMP) that no run of the lead's registry names: a prepare that
+      # failed after making one, a registry line that was dropped, a state directory that was replaced. Each is listed with its age and whether the registry names it.
+      # Only an unnamed one that is older than N days (default 2) and has nothing in it newer than that is ever removed, and only behind a plan token and the lead's
+      # words. A named directory is never removed here, live or not: clean RUN removes it with its run.
+      [ -z "$ALL$CLEAN_RUN$DISCARD$STALE$YES$SCR" ] || usage_die "clean --orphans takes no RUN dir, no --applied, --discard, --stale, --yes and no --scratch"
+      DAYS=${DAYS:-2}
+      case $DAYS in ''|*[!0-9]*|0) usage_die "clean --orphans --days needs a whole number of days, at least 1 (a directory prepare made a moment ago is not yet named), got '$DAYS'";; esac
+      oroot=${QARGI_RUN_TMP:-/dev/shm}
+      while [ "${oroot%/}" != "$oroot" ] && [ "$oroot" != / ]; do oroot=${oroot%/}; done
+      [ -d "$oroot" ] && [ ! -L "$oroot" ] || die "clean --orphans: $oroot is not a directory"
+      oroot=$(readlink -f -- "$oroot")
+      nowe=$(date +%s); cutoff=$((nowe - DAYS * 86400))
+      reg_load
+      declare -A ONAMED=()
+      for d in ${LRUNS_ORDER[@]+"${LRUNS_ORDER[@]}"}; do
+        t=$(reg_get "$d" tmpdir); [ -n "$t" ] || continue
+        ONAMED[$(readlink -m -- "$t")]=$d
+      done
+      orph=(); okept=0; ototal=0
+      for e in "$oroot"/qargi-run.??????; do
+        [ -e "$e" ] || [ -L "$e" ] || continue
+        ototal=$((ototal + 1))
+        if [ -L "$e" ] || [ ! -d "$e" ]; then echo "kept $e: not a directory prepare makes (a link or a file)"; okept=$((okept + 1)); continue; fi
+        mt=$(stat -c %Y -- "$e" 2>/dev/null) || mt=''
+        [[ $mt =~ ^[0-9]{1,12}$ ]] || { echo "kept $e: its age cannot be read"; okept=$((okept + 1)); continue; }
+        age=$(( (nowe - mt) / 86400 ))
+        if [ -n "${ONAMED[$e]+x}" ]; then
+          rd=${ONAMED[$e]}; if [ -d "$rd" ]; then rst="its run directory $rd exists"; else rst="the run directory $rd is gone"; fi
+          echo "kept $e (${age}d old): named by the registry ($rst)"; okept=$((okept + 1)); continue
+        fi
+        if [ ! -O "$e" ]; then echo "kept $e (${age}d old): not owned by this user"; okept=$((okept + 1)); continue; fi
+        if [ "$mt" -gt "$cutoff" ] || [ -n "$(find "$e" -xdev -newermt "@$cutoff" -print -quit 2>/dev/null)" ]; then
+          echo "kept $e (${age}d old): named by no registry, but it or something in it changed within ${DAYS} day(s)"; okept=$((okept + 1)); continue
+        fi
+        echo "orphan $e (${age}d old, named by no registry)"; orph+=("$e $mt")
+      done
+      echo "$ototal qargi-run.* director(ies) under $oroot: ${#orph[@]} orphaned for more than $DAYS day(s), $okept kept"
+      if [ "${#orph[@]}" = 0 ]; then echo "plan: nothing to remove under $oroot"; exit 0; fi
+      otok=$({ printf '%s\n%s\n' "$oroot" "$DAYS"; printf '%s\n' "${orph[@]}"; } | plan_token)
+      if [ -z "$APPROVED" ]; then
+        echo "plan: remove ${#orph[@]} orphaned director(ies) under $oroot (the ones marked orphan above); nothing changed"
+        echo "plan token: $otok   (apply with: qargi local clean --orphans --days $DAYS --plan $otok --approved \"...\")"
+        exit 0
+      fi
+      need_plan "$otok"
+      rm_n=0; rk_n=0
+      for ent in "${orph[@]}"; do
+        e=${ent% *}; reg_load
+        # checked again at the moment of removal: still a real directory directly under the parent, still named by no registry
+        rp=$(realpath -- "$e" 2>/dev/null) || rp=''
+        named=''; for d in ${LRUNS_ORDER[@]+"${LRUNS_ORDER[@]}"}; do t=$(reg_get "$d" tmpdir); if [ -n "$t" ] && [ "$(readlink -m -- "$t")" = "$e" ]; then named=$d; fi; done
+        if [ -L "$e" ] || [ "$rp" != "$e" ] || [ "$(dirname -- "$rp")" != "$oroot" ] || [ -n "$named" ]; then echo "kept $e: it changed since the plan"; rk_n=$((rk_n + 1)); continue; fi
+        if rm -rf --one-file-system -- "$rp"; then echo "removed $e"; rm_n=$((rm_n + 1)); else echo "kept $e: it could not be removed"; rk_n=$((rk_n + 1)); fi
+      done
+      audit_log "local:clean-orphans" "$oroot $rm_n removed $rk_n kept (older than $DAYS day(s))"
+      echo "removed $rm_n orphaned director(ies), kept $rk_n"
+      [ "$rk_n" = 0 ] || exit 1
+      exit 0
+    fi
     if [ -n "$STALE" ]; then
       [ -z "$ALL$CLEAN_RUN$DISCARD" ] || usage_die "clean --stale takes no RUN dir, no --applied and no --discard: it cleans only finished runs, and each by the rules of clean"
       case $STALE in ''|*[!0-9]*) usage_die "clean --stale needs a whole number of days, got '$STALE'";; esac
@@ -663,7 +758,7 @@ WRAP
         read -r _ab atip _ < "$sv/applied"; rp=$(reg_get "$RUN" repo)
         [ -n "$rp" ] || die "$RUN is gone and was made from a repository URL, so whether its work is merged cannot be checked: --discard drops it on purpose"
         mrc=0; merged_tip "$rp" "${atip:-}" "${_ab:-}" "$RUN" || mrc=$?
-        [ "$mrc" = 0 ] || die "$RUN's work (${atip:0:12}) is not merged into any branch yet: qargi feature merge NAME $_ab, then clean (--discard drops it on purpose)"
+        [ "$mrc" = 0 ] || die "$RUN's work (${atip:0:12}) is not merged into any branch yet: qargi feature merge NAME $_ab, then clean (--discard drops it on purpose)$(rwh=$(rewrite_hint "$rp" "$_ab"); [ -z "$rwh" ] || printf '\n%s' "$rwh")"
       fi
       [ -z "$sv" ] || rm -rf --one-file-system -- "$sv"
       reg_edit "$RUN" drop || die "could not drop the record of $RUN from $DA_STATE/local-runs.jsonl"
@@ -677,7 +772,7 @@ WRAP
     # regular file) and it closes with a plain clean, when its refs are unchanged (the check below) and its clone holds no commit (the check after that)
     [ -n "$DISCARD" ] || [ -f "$RUN/out/manifest.json" ] || [ -n "$(find "$RUN/out" -name '*manifest.json' 2>/dev/null | head -1)" ] \
       || { [ "$(run_class "$RUN")" = read-only ] && out_has_report "$RUN/out"; } \
-      || die "$RUN/out holds no manifest: collect the work first, or --discard to drop a run that produced none$([ "$(run_class "$RUN")" != read-only ] || echo " (a read-only run closes with a plain clean once its OUT holds report.md)")"
+      || die "$RUN/out holds no manifest: collect the work first, or --discard to drop a run that produced none$([ "$(run_class "$RUN")" != read-only ] || echo " (a read-only run closes with a plain clean once its OUT holds report.md)")$(out_has_report "$RUN/out" || printf '\n%s' "$NOREPORT_CAUSE")"
     # changed refs are evidence: kept, unless the run is dropped on purpose (--discard), which says so and goes on
     vrc=0; vout=$(QARGI_VERIFY_REFS_ONLY=1 "$0" verify "$RUN" 2>&1 </dev/null) || vrc=$?
     if [ "$vrc" = 3 ]; then   # the registry does not vouch for the run directory: nothing was asked of any repository
@@ -704,7 +799,7 @@ WRAP
         if [ -n "$rp" ]; then
           mrc=0; merged_tip "$rp" "${atip:-}" "${_ab:-}" "$RUN" || mrc=$?
           [ "$mrc" != 2 ] || die "$RUN/applied does not hold a commit name as its second word, so whether the work is merged cannot be checked: look at it, or --discard drops the run on purpose"
-          [ "$mrc" = 0 ] || die "$RUN's work (${atip:0:12}) is not merged into any branch yet: qargi feature merge NAME $_ab, then clean (--discard drops it on purpose)"
+          [ "$mrc" = 0 ] || die "$RUN's work (${atip:0:12}) is not merged into any branch yet: qargi feature merge NAME $_ab, then clean (--discard drops it on purpose)$(rwh=$(rewrite_hint "$rp" "$_ab"); [ -z "$rwh" ] || printf '\n%s' "$rwh")"
         fi
       fi
     fi
@@ -759,7 +854,10 @@ WRAP
     [ -z "$(reg_get "$RUN" cleaned)" ] || die "$RUN was cleaned already"
     [ -z "$(reg_get "$RUN" closed)" ] || die "$RUN is closed already ($(reg_get "$RUN" closed_by)): qargi local clean $RUN removes its files"
     [ "$(run_class "$RUN")" != read-only ] || die "$RUN is a read-only run: it has no patches to apply. qargi local clean $RUN removes it"
-    [ ! -f "$RUN/applied" ] || die "$RUN was applied with qargi review apply ($(cut -d' ' -f1 "$RUN/applied")): merge that branch (qargi feature merge), then qargi local clean $RUN"
+    if [ -f "$RUN/applied" ]; then
+      read -r _ab _ < "$RUN/applied"
+      die "$RUN was applied with qargi review apply ($(cut -d' ' -f1 "$RUN/applied")): merge that branch (qargi feature merge), then qargi local clean $RUN$(rwh=$(rewrite_hint "$(reg_get "$RUN" repo)" "${_ab:-}"); [ -z "$rwh" ] || printf '\n%s' "$rwh")"
+    fi
     [ -n "$(reg_get "$RUN" verified)" ] || [ -f "$RUN/verified" ] || die "$RUN has no passing verify: qargi local verify $RUN first (the refs of the repository must be checked before the run is closed)"
     # the refs are checked again now (a ref may have changed since the first verify): changed refs are evidence, the run stays open
     vrc=0; vout=$(QARGI_VERIFY_REFS_ONLY=1 "$0" verify "$RUN" 2>&1 </dev/null) || vrc=$?

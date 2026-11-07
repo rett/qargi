@@ -228,6 +228,7 @@
     "exploration": "To map a repository and find call sites, use a read-only exploration subagent on a small model (Haiku) inside your own context, then act on the result.",
     "skills-dir": "Claude Code loads a checkout's skills from `.claude/skills` and the user's from `~/.claude/skills`; a session started with the launch line that qargi prints (`claude --add-dir DIR`) loads those of DIR too. To hide a skill without removing it, set {\"skillOverrides\": {\"NAME\": \"off\"}} in a settings file (user, project or project-local); qargi only reads those files.",
     "identity": "The SessionStart hook (`qargi hook session-start`) appends `export QARGI_LEAD='ID'`, ID being the session id, to the file named by `CLAUDE_ENV_FILE`, so the later commands of the session know their lead identity. Checked by qargi's own tests: the line is written when `CLAUDE_ENV_FILE` is set, the id is a plain token and `QARGI_LEAD` is not already set. Not verified: that Claude Code reads that file in a real session (assumed from its hook documentation). Without it pass `--as ID`; the anonymous identity user@host works but only warns.",
+    "member-out": "Claude Code refuses a subagent's Write of a report file, so a member's OUT files can be missing; its contract says to write them with Bash, a heredoc. A run with no report in OUT is that case first.",
     "commands": "In Claude Code a line that starts with `!` runs as a shell command in the session; use it for a command the person must run, such as one that needs their terminal."
   },
   "adapter": "adapter",
