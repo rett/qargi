@@ -54,6 +54,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Two `qargi release step` calls at the same moment (or a step and `release finish`) no longer lose a step: the after-steps record was written through one
   fixed temporary file with no lock, so the slower call overwrote the other. The record is now read, changed and replaced under a lock (the one the registry of
   local runs uses) through a temporary file of its own name; a step another call marked done in the meantime is refused unless `--again`.
+- The guard protects `scrub_ok/` of the state directory like `features/`, `runs/` and `handoff/`: a write, redirect, heredoc, `cp`, `mv`, `tee` or `ln` into it is refused,
+  reading stays allowed. The record `review check` keeps there (the hash of a series that passed its declared scrub, which `review apply` takes as the scrub done) was
+  writable by a member running as the same user, who could compute the hash and make the apply skip the scrub.
 
 ## [0.2.5] - 2026-11-06
 
