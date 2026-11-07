@@ -7,6 +7,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Tracked post-release steps. An entry of the answer `release.after_steps` may now be an object `{name, command, who, evidence}` (`who` is `lead` or `owner`;
+  `evidence` says what shows the step was done), besides a plain string, which stays valid and is a step named by its text, for the lead, with no evidence required.
+  `qargi release finish` records the steps as pending and shows each as `[pending] NAME (WHO): COMMAND`; the new `qargi release step VERSION NAME [--evidence TEXT] [--again]`
+  marks one done with the time and the evidence (a step that needs evidence refuses without it; an unknown name or version, and a step done already unless `--again`,
+  are refused), changing only the record and never running the command; `qargi release status` shows `[done] ...` and, last, the pending steps, an owner's marked
+  "waits for the owner: run COMMAND". A member's guard refuses `release step`.
 - The answer `release.version_files` (a list of paths relative to the repository) names other files that carry the version. `qargi release start`, once it has
   bumped VERSION, warns of the listed files that do not contain it (as a whole version: `0.2.1` is not found in `0.2.10`) and says to bump them on the release
   branch; `release status` and `release verify` show the same check on the branch. A warning, not a refusal; without the answer nothing is checked.
