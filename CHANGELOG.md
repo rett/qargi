@@ -6,6 +6,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- The guard refuses input it cannot decode. A hook input that is not valid UTF-8 was taken for "not JSON" and let through; it is now refused (exit 2, one line on
+  stderr). Input that decodes but is not JSON is still no call to judge and is allowed, as before.
+
 ## [0.2.5] - 2026-11-06
 
 ### Added
