@@ -70,15 +70,22 @@ class _Judge:
                 return "exception %s: %s" % (type(e).__name__, e)
         return self.run(go)
 
+    @staticmethod
+    def stdin_of(payload):
+        """The standard input of a hook process: a text stream over bytes (the guard reads the bytes). A string is encoded as is, bytes are kept, anything else is JSON."""
+        if not isinstance(payload, (str, bytes)):
+            payload = json.dumps(payload)
+        return io.TextIOWrapper(io.BytesIO(payload.encode() if isinstance(payload, str) else payload), encoding="utf-8")
+
     def main(self, args, payload, env=None):
-        """main() of guard.py as a hook process runs it: args is the rest of the hook command line, payload the standard input (a string as is, anything
+        """main() of guard.py as a hook process runs it: args is the rest of the hook command line, payload the standard input (a string as is, bytes as is, anything
         else as JSON), env the process environment (this one when None); both streams are captured. The caches are cleared first, as a process starts
         with none, and an exception main() does not catch ends in status 1 with the traceback on stderr, as the interpreter would end."""
         def go():
             self.m.clear_caches()
             out, err = io.StringIO(), io.StringIO()
             saved = (sys.argv, sys.stdin, dict(os.environ))
-            sys.argv, sys.stdin = ["guard.py", *args], io.StringIO(payload if isinstance(payload, str) else json.dumps(payload))
+            sys.argv, sys.stdin = ["guard.py", *args], self.stdin_of(payload)
             if env is not None:
                 environ(env)
             try:
@@ -195,6 +202,19 @@ class Guard(HookCase):
         r = self.hook([], "not json")
         self.assertEqual(r.returncode, 0)
         self.assertEqual(self.guard("").returncode, 0)
+
+    def test_input_that_cannot_be_decoded_is_refused_and_text_that_is_no_json_is_not(self):
+        for payload in (b"\xff\xfe\x80", b'{"tool_input": {"command": "ls \xff"}}', b'{"tool_input": {"command": "ls"}}\xc3'):
+            r = self.hook([], payload)
+            self.assertEqual(r.returncode, 2, payload)
+            self.assertEqual(r.stdout, "", payload)
+            self.assertEqual(r.stderr.count("\n"), 1, r.stderr)
+            self.assertIn("not valid UTF-8", r.stderr, payload)
+        for payload in ("plain text", b"plain text", "\u00e9 not json".encode(), ""):
+            self.assertEqual(self.hook([], payload), Verdict(0, "", ""), payload)
+        self.assertEqual(self.guard("ls"), Verdict(0, "", ""))
+        self.assertEqual(self.hook([], {"tool_input": {"command": "caf\u00e9"}}), Verdict(0, "", ""))
+        self.assertEqual(self.guard("git push").returncode, 2)
 
     def test_the_member_definition_guards_bash_edits_and_key_reads(self):
         d = os.path.join(os.path.dirname(BIN), "..", "agents")
@@ -1758,7 +1778,7 @@ class FailsClosed(HookCase):
         if patch:
             setattr(mod, patch[0], patch[1])
         err, old = io.StringIO(), sys.stdin
-        sys.stdin = io.StringIO(payload)
+        sys.stdin = io.TextIOWrapper(io.BytesIO(payload.encode()), encoding="utf-8")
         try:
             with contextlib.redirect_stderr(err):
                 rc = mod.main()
