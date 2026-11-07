@@ -44,7 +44,7 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     the last two have names a project may use for its own scripts, so only the files in the lib directory of the tool or of the installed
     copy count, found from the directory the command runs in);
   - qargi project init (it stores a whole answers file, so it is a way to models.extensions and models.accept_no_barrier, which have gated verbs;
-    found like the skill verbs), and qargi project set of any models answer, of release.*, of test_command, of env.*, of site.* (the commands, environment and site the lead later runs or builds), of packs.* (the opt-out of the render check), of git.* and review.* (the identity and the author rule qargi review apply gives the commits it applies), of runs.* (the refs that verify and clean accept as a runtime's own) and of
+    found like the skill verbs), and qargi project set of any models answer, of release.*, of test_command, of env.*, of site.* (the commands, environment and site the lead later runs or builds), of packs.* (the opt-out of the render check), of git.* and review.* (the identity and the author rule qargi review apply gives the commits it applies, and the scrub command and trailer policy qargi review check runs), of runs.* (the refs that verify and clean accept as a runtime's own) and of
     roles.<role>.tools, a whole role or roles (the tools env apply installs and local prepare checks out; the other answers stay open). A project verb the guard cannot read is
     refused: set with a path that is missing or built by xargs, a variable, a substitution, a brace or a glob; and any command with the word project,
     link, unlink, set or init after it and a shell expansion or xargs in the segment (found again inside `sh -c` and `eval` strings with the quotes
@@ -2715,7 +2715,7 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         if path == "packs" or path.startswith("packs."):
             return "qargi project set of %s opts the project out of the packs render check (packs.none) and is not available to an agent: propose the value in your report" % path
         if path in IDENTITY_ANSWERS or path.startswith(tuple(a + "." for a in IDENTITY_ANSWERS)):
-            return "qargi project set of %s changes whose name the commits qargi review apply puts on a member's work (git.author, review.keep_author) and is not available to an agent: propose the value in your report" % path
+            return "qargi project set of %s changes whose name the commits qargi review apply puts on a member's work (git.author, review.keep_author), or the scrub command and trailer policy qargi review check runs on a returned series (review.scrub, review.trailer_policy: the command is the lead's, run with its rights), and is not available to an agent: propose the value in your report" % path
         if ROLE_TOOLS_PATH.fullmatch(path):
             return "qargi project set of %s changes the tools the lead later installs and checks out (roles.<role>.tools: go install, a downloaded binary, a submodule) and is not available to an agent: propose the entry in your report" % path
     if area == "provider" and verb == "accept":

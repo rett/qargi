@@ -6,6 +6,29 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- The answer `release.version_files` (a list of paths relative to the repository) names other files that carry the version. `qargi release start`, once it has
+  bumped VERSION, warns of the listed files that do not contain it (as a whole version: `0.2.1` is not found in `0.2.10`) and says to bump them on the release
+  branch; `release status` and `release verify` show the same check on the branch. A warning, not a refusal; without the answer nothing is checked.
+- `qargi release push` checks the answer `release.notes_file` (the notes file `release publish` already uses): its plan warns of the items of the version's
+  `CHANGELOG.md` section that the file does not mention. An item is mentioned when its leading `` `backticked term` ``, else its first three words, occurs in the
+  file, ignoring case and spacing. A warning only: the plan keeps its token. Without the answer nothing is checked.
+
+### Fixed
+- `qargi project validate` reports a role whose value is not an object (`roles.build = "x"`, `null`) as the finding `roles.NAME: an object`, and goes on to
+  check the other roles, instead of failing with a traceback.
+- Setting `repo.detached` or a `site` answer with `qargi project` prints only what was set; it no longer says the answer "applies to the next provision",
+  which a provision does not read.
+- `tests/test_local_run.sh` prints a failing `dispatch.json` check on one line (the file compacted, with the expected argv), so a parallel CI log shows it.
+- `qargi branch prune` now treats an `agent/*` branch merged (`--no-ff`) into a branch of `repo.detached` or `repo.long_lived` as merged, so a task branch
+  merged into a detached branch such as `gh-pages` is pruned like one merged into develop. Unmerged branches, branches at a tip, protected branches and
+  branches held by a worktree qargi did not make are kept as before.
+- A declared take-in scrub: the project answer `review.scrub` (a command line or a list of words, as `release.test_command`) is run by `qargi review check` in a throw-away
+  checkout of the applied series, with the range in `QARGI_SCRUB_BASE` and `QARGI_SCRUB_TIP`, and `review.trailer_policy` (`none` by default, or `reject`) fails any commit
+  with a `Co-Authored-By` or `Generated with` style trailer. The check prints one line, `scrub: ok` or `scrub: FAIL` and the first lines of the output, leaves no
+  branch, tag or worktree entry in the repository, and a failing scrub fails the check. Both answers are the run's own copy taken at `local prepare` and a member's guard
+  refuses setting them; with neither set nothing changes. A member's own `review check` (the member mark set) does not run it and says so; the lead's check does.
+
 ## [0.2.4] - 2026-11-06
 
 ### Added

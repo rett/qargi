@@ -62,6 +62,7 @@ full | par | 300 | 31 | bash tests/test_release_preflight.sh | lib/release*.sh l
 full | par | 300 | 20 | bash tests/test_release_publish.sh | lib/release*.sh lib/release*.py
 fast | par | 300 | 12 | bash tests/test_release_gh.sh | lib/release*.sh lib/release*.py
 full | par | 300 | 12 | bash tests/test_release_ci.sh | lib/release*.sh lib/release*.py lib/gitflow.sh
+full | par | 300 | 15 | bash tests/test_release_checks.sh | lib/release*.sh lib/release*.py
 full | par | 300 | 12 | bash tests/test_release_unrelated.sh | lib/release*.sh lib/release*.py lib/gitflow.sh
 full | par | 300 | 7 | bash tests/test_release_after_steps.sh | lib/release*.sh lib/release*.py
 full | par | 300 | 12 | bash tests/test_release_assets.sh | lib/release*.sh lib/release*.py

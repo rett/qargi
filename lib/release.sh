@@ -22,9 +22,14 @@
 #                                           checklist after the release: tag on origin, GitHub release, the assets of release.assets, the signatures of
 #                                           release.sign.files, and the project's release.after_steps (an optional list of words; not tracked).
 #   release.sh verify VERSION [--hotfix]    run the whole suite on the branch head (develop's head before a release starts); same warnings
+#                                           With the answer release.version_files (a list of paths) start, status and verify check that each file contains
+#                                           VERSION at the release branch and warn of the ones that do not: "bump these on the release branch". No answer, no check.
 #   release.sh fix VERSION [--hotfix] [--push [--plan T --approved W]]
 #                                           a worktree on the release branch under the worktree root (prints its path), to commit a fix in; --push is `push`
 #   release.sh push VERSION [--hotfix] [--plan T --approved W]     push the branch, open the pull request into master (or say "updated PR #N" when it is open)
+#                                           With the answer release.notes_file the plan warns of the items of the VERSION section of CHANGELOG.md that the file
+#                                           does not mention (an item is mentioned when its leading `backticked term`, else its first three words, is in the file,
+#                                           whatever the case); a warning only. No answer, no check.
 #                                           When master and the branch have no merge base (master is one snapshot commit, say) the plan has the line "join the history
 #                                           of master": once approved, master is merged into the branch with -s ours --allow-unrelated-histories, in a temporary
 #                                           worktree, as a commit of its own before the push, and only if the tree is unchanged; `start`, `status` and `finish` say so.
@@ -77,7 +82,7 @@
 #
 # The layout of what a release updates is the project's: the answers release.version_file (default VERSION; none: the project has no such file),
 # release.changelog.unreleased and .released (heading templates; default '## [Unreleased]' and '## [{version}] - {date}'), release.man_pages (default
-# man/*.1), release.test_command (what `verify` runs; default test_command) and release.preflight (an argv list, {version} replaced, run by `start` and
+# man/*.1), release.version_files (other files that carry the version; checked, never bumped), release.test_command (what `verify` runs; default test_command) and release.preflight (an argv list, {version} replaced, run by `start` and
 # `push` before they change anything; a non-zero exit refuses). lib/release_layout.py checks and applies them.
 #
 # Options for all: --project P, --date D. Pushing, merging and tagging need the plan token and an approval.
@@ -135,6 +140,40 @@ gh_release_state() {
   elif grep -qi 'release not found' <<<"$out"; then GHS=missing
   else GHS=unchecked; GHWHY=$(printf '%s' "$out" | grep -v '^[[:space:]]*$' | head -1 | cut -c1-120); fi
   return 0
+}
+# version_files_report REF: the answer release.version_files (other files that carry the version), checked at REF: each must contain VER as a whole
+# version (release_layout.py has-version, the file on stdin). Prints nothing when the answer is not set (no answer, no check); otherwise one line, a
+# warning naming the files that lack VER (a missing file lacks it too) and the fix, or that all carry it. Never a failure: `start` cannot refuse,
+# because the files are bumped on the release branch it creates.
+version_files_report() {
+  local ref=$1 f bad='' n=0
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    n=$((n + 1))
+    if g show "$ref:$f" 2>/dev/null | python3 -I "$RL" has-version - "$VER"; then :; else bad+="${bad:+, }$f"; fi
+  done < <(jq -r '(.release? // {}).version_files // [] | .[]' "$af")
+  [ "$n" -gt 0 ] || return 0
+  if [ -n "$bad" ]; then echo "warning: release.version_files: $bad on $ref do not contain $VER: bump these on the release branch (qargi release fix $VER${HOTFIX:+ --hotfix} makes a worktree for it)"
+  else echo "version files (release.version_files): all $n contain $VER"; fi
+}
+# notes_report: the answer release.notes_file ({version} replaced), when set: the file at the head of BR must mention every item of the VER section
+# of the CHANGELOG.md there (the key of an item: its leading `backticked term`, else its first three words; release_layout.py notes-missing). The plan of
+# `push` prints the ones it does not mention as a warning; it never refuses. No answer, no check.
+notes_report() {
+  local nfile ntmp stmp sect miss rc
+  nfile=$(jq -r '(.release? // {}).notes_file // empty' "$af"); [ -n "$nfile" ] || return 0
+  nfile=${nfile//\{version\}/$VER}
+  ntmp=$(mktemp "$DA_STATE/.release-notes-chk.XXXXXX"); stmp=$(mktemp "$DA_STATE/.release-notes-chk.XXXXXX")
+  if ! g show "$BR:$nfile" > "$ntmp" 2>/dev/null; then echo "warning: release.notes_file: $nfile is not a file on $BR, so the changelog items cannot be checked against it"
+  elif g show "$BR:CHANGELOG.md" > "$stmp" 2>/dev/null && sect=$(bash "$(dirname "$0")/changelog_section.sh" "$VER" "$stmp" "$(jq -r '(.release? // {}).changelog.released // ""' "$af")" 2>/dev/null); then
+    printf '%s\n' "$sect" > "$stmp"
+    miss=$(python3 -I "$RL" notes-missing "$stmp" "$ntmp") && rc=0 || rc=$?
+    if [ "$rc" = 1 ]; then
+      echo "warning: $nfile on $BR does not mention these items of the $VER section of CHANGELOG.md (release.notes_file):"
+      printf '%s\n' "$miss" | sed 's/^/  - /'
+    else echo "notes (release.notes_file): $nfile mentions every item of the $VER section of CHANGELOG.md"; fi
+  fi
+  rm -f "$ntmp" "$stmp"
 }
 # tag_checks: for a tag VER that exists, warnings (never a failure) about what stops it from being a published release:
 # a tag workflow starts only if the tagged commit holds it, and a release must exist on GitHub for the tag
@@ -489,7 +528,8 @@ case $verb in
       else echo "no feature was merged into develop since ${prev:-the first commit}"; fi
     fi
     if branch_exists master && no_merge_base master "$BR"; then echo "note: $(unrelated_note)"; fi
-    echo "other files that carry the version (a manifest) are yours to bump on this branch"
+    if jq -e '(.release? // {}) | (.version_files // []) | length > 0' "$af" >/dev/null 2>&1; then version_files_report "$BR"
+    else echo "other files that carry the version (a manifest) are yours to bump on this branch"; fi
     echo "only minor fixes belong here; new features wait for the next release. Then: qargi release push $VER${HOTFIX:+ --hotfix}";;
   status)
     h=$(sha_of "$BR")
@@ -510,6 +550,7 @@ case $verb in
     suite_verdict "$BR"
     echo "full suite: ${SV_TEXT:-not run on this branch}"
     [ -z "$SV_NOTE" ] || echo "$SV_NOTE"
+    version_files_report "$BR"
     remote_report "$BR"; remote_report "$BASE"
     g rev-parse -q --verify "refs/tags/$VER" >/dev/null && echo "tag $VER exists" || true
     if g remote get-url origin >/dev/null 2>&1; then pr_checks_print "$BR"; fi
@@ -531,6 +572,7 @@ case $verb in
     busy_end
     record_suite "$on" "$h" "$res" "$((SECONDS - t0))"
     echo "full suite: $res at $(g rev-parse --short "$on")"
+    if [ "$on" = "$BR" ]; then version_files_report "$BR"; fi
     tag_checks
     [ "$res" = pass ] || suite_failure_report
     [ "$res" = pass ];;
@@ -563,6 +605,7 @@ case $verb in
       jb=$(join_blocker "$BR"); [ -z "$jb" ] || echo "warning: $jb"
     fi
     jq -e '(.release? // {}) | has("preflight")' "$af" >/dev/null 2>&1 && echo "preflight (release.preflight, run in a copy of $BR before the push): $(jq -r '.release.preflight | join(" ")' "$af")"
+    notes_report
     remote_report "$BR"
     pw=$(wt_of "$BR"); [ -z "$pw" ] || [ -z "$(git -C "$pw" status --porcelain 2>/dev/null)" ] || echo "warning: $pw has uncommitted changes: only what is committed on $BR is pushed"
     pr_find "$BR"; [ -z "$PR_NUM" ] || echo "the pull request #$PR_NUM of $BR is open already: the push updates it${PR_URL:+ ($PR_URL)}"

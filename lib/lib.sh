@@ -115,7 +115,7 @@ out_has_report() {
 #   reg_edit DIR drop|cleaned   rewrites the registry under its lock: drops the lines of DIR, or marks them cleaned (a time), mode 600
 # The line also holds what prepare took from the lead's answers, the one copy that verify, clean and review apply believe: the class of the run (class:
 # write or read-only), the stored project of its repository (project) and answers, an object with the answers that decide what verification accepts (runs.owned_refs, repo.long_lived,
-# repo.parking_branch, git.author, review.keep_author). A record without answers is an older run (see run_answers).
+# repo.parking_branch, git.author, review.keep_author, review.scrub, review.trailer_policy). A record without answers is an older run (see run_answers).
 # A path is compared by its real path; the run directory of a line may be gone (a reboot that emptied a tmpfs, a clean), and the path is then
 # taken as written, resolved as far as it exists (readlink -m).
 declare -gA LRUNS=()   # -g: lib.sh is sourced from inside a function by some callers
@@ -344,6 +344,10 @@ die() { echo "qargi: $*" >&2; exit 1; }
 usage_die() { echo "qargi: $*" >&2; exit 2; }   # a usage error (unknown option, missing argument, a usage line): exit 2, as the manual page promises
 need_val() { # OPTION "$#" -> exit 2 when a valued option is the last word: call it first in each valued branch of an option loop
   [ "$2" -ge 2 ] || { echo "qargi: $1 needs a value" >&2; exit 2; }
+}
+run_clean() { # DIR COMMAND...: runs a command in DIR without the project's cloud binding: a suite, a release check or a scrub must not see it
+  local dir=$1; shift
+  (cd "$dir" && env -u ANTHROPIC_PROFILE -u QARGI_CLOUD_WORKSPACE -u QARGI_CLOUD_PROJECT "$@")
 }
 
 # Cloud verbs that create or drive a session need --asked "<what the user

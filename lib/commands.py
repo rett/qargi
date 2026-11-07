@@ -154,7 +154,9 @@ COMMANDS = {
                               "kind binary (name the file name, version, url of the file itself, sha256 of it: downloaded to ~/.local/bin and kept only when the hash matches) and kind submodule "
                               "(name as in .gitmodules, path: checked out in each member clone by qargi local prepare). env plan lists them, env apply installs them and env check reports one that is "
                               "missing or wrong; a member's guard refuses setting them (and a whole role), as it refuses release.*, test_command, env.* and site.*. "
-                              "git.author ('Name <email>') is the author qargi review apply gives the commits it applies, and review.keep_author true keeps the member's author instead; a member's guard refuses setting them. "
+                              "git.author ('Name <email>') is the author qargi review apply gives the commits it applies, and review.keep_author true keeps the member's author instead; "
+                              "review.scrub (a command line or a list of words) is run by qargi review check on the applied series with the range in QARGI_SCRUB_BASE and QARGI_SCRUB_TIP, and review.trailer_policy reject fails a commit with a "
+                              "Co-Authored-By or Generated-with trailer (none is the default); a member's guard refuses setting them. "
                               "runs.owned_refs is a list of glob patterns for the refs a runtime or harness creates in the repository, which local verify and clean accept and name (see local verify); "
                               "the guard refuses it to a member too."),
                         examples=["qargi project set acme roles.write.effort high", "qargi project set acme packs.none true", "qargi project set acme git.author 'Example Author <author@example.com>'",
@@ -383,7 +385,7 @@ COMMANDS = {
         "summary": "Branch housekeeping: delete the merged agent and feature branches and their worktrees",
         "desc": ("Prune prints the merged agent/* and feature/* branches of the project (and with --remote the same branches on origin, asked live) and the worktrees "
                  "qargi made for them, with a token; with --plan and --approved it deletes them. A branch is merged when it was merged with --no-ff into develop, "
-                 "or, for an agent branch, into an open feature, and is still in that branch's history; a branch that merely sits at the tip of develop or of a feature "
+                 "into a branch of repo.long_lived or repo.detached, or, for an agent branch, into an open feature, and is still in that branch's history; a branch that merely sits at the tip of one of them "
                  "was never merged and is kept. It never deletes master, develop, the branches of repo.long_lived and repo.detached, the parking branch, an unmerged branch, "
                  "or a branch checked out in a worktree qargi did not make (the main checkout, the runtime's own worktrees) or in a dirty one; each kept branch is listed with "
                  "the reason. A remote branch is deleted as a lease on the tip the plan showed."),
@@ -473,11 +475,13 @@ COMMANDS = {
                  "The layout of what a release updates is the project's, set in its answers (all optional): release.version_file (the file that holds only the version; default VERSION; "
                  "none when there is no such file, and the version is then the changelog heading and the tag), release.changelog.unreleased (the heading of the changes to come, default "
                  "'## [Unreleased]'; it may carry the version, as in '## {version} (unreleased)', and is then renamed) and release.changelog.released (default '## [{version}] - {date}'), "
+                 "release.version_files (other files that carry the version, a list of paths; default none: start, status and verify warn of the ones that do not contain the version, never bump them), "
                  "release.man_pages (a list of paths; default the man/*.1 files), release.test_command (what release verify runs, a command line or a list of words; default test_command) "
                  "and release.preflight (a command as a list of words, {version} replaced, run by start and push before they change anything; a non-zero exit refuses and shows the tail of its output). "
                  "The release files are the project's too: release.assets_command (the command that builds them, a command line or a list of words with {version} replaced), which "
                  "release assets runs in a clean worktree of the tag, and release.assets (files or globs to attach, {version} replaced), taken in that worktree by release publish. "
                  "release.after_steps is a list of commands or reminders ({version} replaced) that release finish prints as 'after the release:' lines; qargi never runs them. "
+                 "release.notes_file (a file relative to the repository, {version} replaced; default none) is the text release publish uses for the notes, and release push warns when it leaves out an item of the version's changelog section. "
                  "A member may not set them: the lead runs them. "
                  "A project with a documentation site on a detached branch sets site.enabled to true, and optionally site.branch (default gh-pages when repo.detached "
                  "lists it) and site.config (the site.json on that branch, default site/site.json, with the hand pages in the folder pages/ beside it): then "
@@ -491,7 +495,10 @@ COMMANDS = {
                                 "its unreleased heading ('## [Unreleased]', or release.changelog.unreleased). The version file is release.version_file (default VERSION; none: no file is bumped). "
                                 "release.preflight runs before anything changes. A project without a man page or changelog is not checked for that part. A release (not a hotfix) ends by listing what it contains: "
                                 "the features merged into develop since the previous tag, the --no-ff merges whose message is \"Merge branch 'feature/...'\", one per line with the short sha. "
-                                "When master and the new branch share no history (no merge base: master is one snapshot commit, say) it says so and that release push joins them.")),
+                                "When master and the new branch share no history (no merge base: master is one snapshot commit, say) it says so and that release push joins them. "
+                                "With the answer release.version_files (a list of paths relative to the repository) it checks, once VERSION is bumped, that each listed file on the new branch "
+                                "contains the version (as a whole version: 0.2.1 is not found in 0.2.10) and prints a warning naming the ones that do not: bump these on the release branch "
+                                "(release fix makes the worktree). It is a warning, not a refusal, because the files are bumped on the branch start creates; without the answer nothing is checked.")),
             "status": verb("Show the branch, its commits and whether the whole suite passed at its head", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT],
                          desc=("The full-suite verdict names the command that produced it, when it ran, how long it took and the mode the command names (-j N, shard I/K), from the suite record (a record made before the duration was kept shows the command and the time only). When release.test_command is set and is not that command, "
                                "a line of its own says so: the pass is then not the release gate (release verify runs release.test_command). " + REMOTE_NOTE + " " + TAG_NOTE + " Only when the optional answer release.sign is set (the default is not) and the tag has no GitHub release, it also says 'awaiting signature' "
@@ -501,12 +508,14 @@ COMMANDS = {
                                "(the commit of qargi release site on the site branch, and whether the live origin has it). "
                                "While the release branch exists and the repository has an origin it shows the checks of the branch's pull request (gh pr checks, through QARGI_GH): "
                                "a verdict and one line per check with its state, pass, fail or pending; a missing gh, no pull request or no checks is a warning. "
+                               "With release.version_files set, a line says that every listed file contains VERSION on the branch, or warns of the ones that do not (bump these on the release branch). "
                                "A branch that shares no history with master (no merge base) gets a warning that release push joins it. "
                                "For a tag that exists it ends with a checklist of what is left after the release: whether origin has the tag, whether the GitHub release is published or missing, "
                                "for each entry of the answer release.assets ({version} replaced; a glob by its base name) whether the release has it, for each file of release.sign.files whether its .sig is attached (UNSIGNED when not), "
                                "and the project's own after-steps: the ones release finish recorded, else the optional answer release.after_steps (a list of words, {version} replaced); qargi lists them but does not track that they were done.")),
             "verify": verb("Run the project's whole test suite on the release branch (develop's head before it starts) and record the result", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT],
-                           desc=TAG_NOTE + " The exit status stays the suite's result. The command is release.test_command when the project sets one, else test_command. " + OTHER_RUNS_NOTE + " " + SUITE_FAIL_NOTE),
+                           desc=TAG_NOTE + " The exit status stays the suite's result. The command is release.test_command when the project sets one, else test_command. "
+                                 "On the release branch, with release.version_files set, it also shows whether every listed file contains VERSION (a warning for the ones that do not). " + OTHER_RUNS_NOTE + " " + SUITE_FAIL_NOTE),
             "fix": verb("Make a worktree on the release branch to commit a fix in, and push the fix again with --push", [("VERSION", "none")],
                         [PROJECT_OPT, HOTFIX_OPT, opt("--push", "push the committed fix: the same as release push (the plan token and approval below)"), PLAN, APPROVED],
                         desc=("For the pull request whose checks failed, or a change review asked for. Without --push it creates the worktree of release/VERSION (hotfix/VERSION with --hotfix) "
@@ -515,7 +524,9 @@ COMMANDS = {
                               "pushes the branch and updates the open pull request, whose checks run again. Refused when the branch does not exist or the tag VERSION does (then it is a hotfix). "
                               "release finish removes the worktree with the branch when it is clean.")),
             "push": verb("Push the branch and open the pull request into master", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT, PLAN, APPROVED],
-                         desc=REMOTE_NOTE + " When release.preflight is set it runs in a copy of the branch once the plan is approved, before anything is pushed; a non-zero exit refuses. "
+                         desc=REMOTE_NOTE + " When release.notes_file is set the plan reads that file and the VERSION section of CHANGELOG.md at the head of the branch and warns of the items of the section that the file "
+                              "does not mention (never a refusal; the plan still has its token). An item is a line at the margin that starts with -, *, + or a number and a dot; it is mentioned when its leading `backticked term`, "
+                              "else its first three words, occurs in the file, ignoring case and spacing. A notes file that is not on the branch is a warning. When release.preflight is set it runs in a copy of the branch once the plan is approved, before anything is pushed; a non-zero exit refuses. "
                               "When a pull request for the branch is open already (found with gh pr list; a gh that cannot list it is caught by the refusal of gh pr create) the plan says so, "
                               "nothing is opened and the result reads 'updated PR #N'; a worktree of the branch with uncommitted changes is a warning, only what is committed is pushed. "
                               "When master and the branch share no history (no merge base: git would refuse to merge unrelated histories, as with a master that is one parentless snapshot commit) "
@@ -1088,7 +1099,12 @@ COMMANDS = {
                                 "Given a run directory instead (no patches or manifest.json in it, an out directory in it), it checks RUN_DIR/out and notes that it did. "
                                 "Refuses a monolithic patch, a commit without a message body and a manifest that does not match the patches. "
                                 "A review run passes with a report.md (or PREFIXreport.md, as in a team run) that has a Findings section instead of patches. "
-                                "Prints OK, WARN or FAIL lines and a summary; exit 1 when any line is FAIL (warnings alone exit 0).")),
+                                "Prints OK, WARN or FAIL lines and a summary; exit 1 when any line is FAIL (warnings alone exit 0). "
+                                "When the run is in the lead's registry and the project declared a take-in scrub, a series that passes is then scrubbed: the answer review.scrub (a command line or a list of words) "
+                                "runs in a throw-away checkout of the applied series (the run's base commit, then every patch with git am), with the range in QARGI_SCRUB_BASE and QARGI_SCRUB_TIP, and the answer "
+                                "review.trailer_policy reject fails any commit whose message has a Co-Authored-By or Generated-with trailer (none, the default, checks nothing). One more line says scrub: ok, or "
+                                "scrub: FAIL and the first lines of the output (scrub: not run when the series check failed), and a failing scrub exits 1. The checkout is a shared clone, so no branch, tag or worktree entry "
+                                "is made in the repository. Both answers are the run's own copy taken by local prepare; with neither set nothing changes. A member's guard refuses setting them, and a member's own check (the member mark that local run sets is in its environment) does not run the scrub: it says scrub: not run (a member's check; the lead's check runs it) and does not fail.")),
             "apply": verb("Apply a collected, checked run to a task branch of the repository", [("RUN_DIR", "dir", True)],
                           [PROJECT_OPT, opt("--branch", "the branch to create (default agent/<slug> of the run)", "BRANCH", "branch"),
                            opt("--from-saved", "apply the copy local verify saved of a passed run whose directory is gone (ID: qargi.XXXXXX), with the same checks", "ID")],
