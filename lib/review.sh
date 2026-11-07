@@ -70,7 +70,7 @@ scrub_in() {
   if [ -n "$SCRUB_CMD" ]; then
     if [ "$(jq -r 'type' <<<"$SCRUB_CMD")" = array ]; then mapfile -d '' -t cmd < <(jq -j '.[], "\u0000"' <<<"$SCRUB_CMD")
     else cmd=(bash -c "$(jq -r '.' <<<"$SCRUB_CMD")"); fi
-    text=$(cd "$tmp/t" && env -u ANTHROPIC_PROFILE -u QARGI_CLOUD_WORKSPACE -u QARGI_CLOUD_PROJECT QARGI_SCRUB_BASE="$sha" QARGI_SCRUB_TIP="$tip" "${cmd[@]}" </dev/null 2>&1) || rc=$?
+    text=$(run_clean "$tmp/t" env QARGI_SCRUB_BASE="$sha" QARGI_SCRUB_TIP="$tip" "${cmd[@]}" </dev/null 2>&1) || rc=$?
     if [ "$rc" != 0 ]; then text=$(scrub_first_lines "$text"); echo "scrub: FAIL ${text:-exit $rc, no output}"; return 1; fi
   fi
   echo "scrub: ok"

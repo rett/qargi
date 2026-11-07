@@ -345,6 +345,10 @@ usage_die() { echo "qargi: $*" >&2; exit 2; }   # a usage error (unknown option,
 need_val() { # OPTION "$#" -> exit 2 when a valued option is the last word: call it first in each valued branch of an option loop
   [ "$2" -ge 2 ] || { echo "qargi: $1 needs a value" >&2; exit 2; }
 }
+run_clean() { # DIR COMMAND...: runs a command in DIR without the project's cloud binding: a suite, a release check or a scrub must not see it
+  local dir=$1; shift
+  (cd "$dir" && env -u ANTHROPIC_PROFILE -u QARGI_CLOUD_WORKSPACE -u QARGI_CLOUD_PROJECT "$@")
+}
 
 # Cloud verbs that create or drive a session need --asked "<what the user
 # said>": the quote is stored in the tracker so the choice is auditable.
