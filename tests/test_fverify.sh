@@ -157,6 +157,11 @@ if [ -d /proc/$$ ]; then
   kill "$opid" "$rpid" 2>/dev/null; wait "$opid" "$rpid" 2>/dev/null
   out=$($F verify wn 2>&1)
   [ "$(warns "$out")" = 0 ] && ok "and nothing once it has ended" || no "after: $out"
+  # a process that exits between the listing and the read: the function says no and prints nothing (the shell opens a redirection before
+  # a 2>/dev/null written after it applies, so the "no such file" of the open has to be silenced by a group)
+  gone=4194305   # above the largest pid_max of Linux, so no such process
+  bash -c '. "$1/lib/gitflow.sh"; suite_cmdline "$2"' _ "${DA%/bin/qargi}" "$gone" 2>"$T/gone.err"; rc=$?
+  [ $rc = 1 ] && [ ! -s "$T/gone.err" ] && ok "suite_cmdline of a pid that is gone: status 1, nothing on standard error" || no "gone pid rc=$rc: $(cat "$T/gone.err")"
 fi
 
 [ "$fail" = 0 ] && echo "all fverify tests passed"

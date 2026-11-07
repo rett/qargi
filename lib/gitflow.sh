@@ -253,7 +253,9 @@ git_common() {
 }
 # suite_cmdline PID -> 0 when the process is a shell running a tests/run.sh
 suite_cmdline() {
-  local cl; cl=$(tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null) || return 1
+  # the shell opens a redirection before it applies a 2>/dev/null written after it, so the "no such file" of a process that has
+  # exited would reach the real standard error; the group silences the open too
+  local cl; cl=$({ tr '\0' ' ' < "/proc/$1/cmdline"; } 2>/dev/null) || return 1
   [[ $cl =~ ^(([^\ ]*/)?(bash|sh|dash|zsh)\ +(-[^\ ]+\ +)*)?([^\ ]*/)?tests/run\.sh(\ |$) ]]
 }
 # other_runs_warning -> warnings on stderr (the verb goes on) when something else of this project may be running a suite: a whole-suite
