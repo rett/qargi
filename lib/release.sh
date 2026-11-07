@@ -729,7 +729,8 @@ case $verb in
     fi
     if no_merge_base "$second" "$BR"; then
       if [ "$second" = develop ] && [ "$KIND" = hotfix ]; then   # no release is open: the second target is develop itself, and there is no release to finish first
-        die "$(hotfix_develop_note). Nothing was changed"
+        hn=$(hotfix_develop_note) || hn="develop and $BR share no history (no merge base) and no release is open, so finish could not merge $BR into develop (git refuses unrelated histories)"   # the note is empty when develop and master are related and only $BR is not
+        die "$hn. Nothing was changed"
       fi
       die "$second and $BR share no history (no merge base): git would refuse to merge them (unrelated histories). Usually the first release is not finished yet, and its push joins the history of master (qargi release push VERSION): finish that release first, or join them by hand. Nothing was changed"
     fi
