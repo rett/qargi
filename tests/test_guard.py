@@ -1441,6 +1441,30 @@ class Marshal(HookCase):
             res = self.bash(c)
             self.assertEqual(res.returncode, 0, (c, res.stderr))
 
+    def test_the_scrub_record_directory_is_protected_and_readable(self):
+        """$STATE/scrub_ok/<run> is the lead's record that a series passed its declared scrub; a member who could write it would make the apply skip the scrub."""
+        p = os.path.join(self.state, "scrub_ok")
+        os.makedirs(p)
+        with open(os.path.join(p, "qargi.abcdef"), "w") as f:
+            f.write("0" * 64 + "\n")
+        os.symlink(p, os.path.join(self.clone, "to-scrub"))
+        for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path")):
+            for cls in ((), ("--class", "read-only")):
+                for f in (p + "/qargi.abcdef", p + "/qargi.new", "to-scrub/qargi.new"):
+                    res = self.hook(list(cls), {"tool_name": tool, "tool_input": {key: f}, "cwd": self.clone}, self.env())
+                    self.assertEqual(res.returncode, 2, (tool, f, cls, res.stderr))
+                    self.assertIn("declared scrub passed", res.stderr)
+        for c in ["echo h > %s/qargi.abcdef" % p, "echo h >> $QARGI_STATE/scrub_ok/qargi.abcdef", "printf h | tee %s/qargi.x" % p, "cp a.txt %s/qargi.x" % p,
+                  "mv a.txt %s/qargi.x" % p, "ln -s /x %s/qargi.x" % p, "rm -f %s/qargi.abcdef" % p, "echo h > to-scrub/qargi.x",
+                  "cd %s && echo h > qargi.x" % p, "bash -c 'echo h > %s/qargi.x'" % p,
+                  "cat > %s/qargi.x <<EOF\nh\nEOF" % p]:
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 2, (c, res.stderr))
+            self.assertIn("declared scrub passed", res.stderr, c)
+        for c in ("cat %s/qargi.abcdef" % p, "ls %s" % p, "echo x > %s/scrub_ok-notes.md" % self.state, "echo x > %s/unrelated.txt" % self.state):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+
     def test_the_handoff_and_busy_directories_are_protected_and_the_context_verbs_are_reads(self):
         """$STATE/handoff and $STATE/busy tell `qargi lead compact-check` when the note was written and what is running: a member does not write
         them. The verbs lead usage and lead compact-check only read, so a member may run them; claiming by succession writes the marshal."""

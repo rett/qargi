@@ -256,6 +256,15 @@ out=$($DA local clean "$RH" 2>&1); rc=$?
 $F merge rwf agent/rwh >/dev/null 2>&1 || no "(setup) merge rwh"
 out=$($DA local clean "$RH" 2>&1); rc=$?
 [ $rc = 0 ] && [ ! -e "$RH" ] && ok "after the recorded rewrite is merged, clean removes the run" || no "clean after record: rc=$rc $out"
+# the two commands are meant to be pasted: a branch name that git allows and the shell reads (a $ and a ;) is printed quoted
+RQ=$(seriesrun rwq rwq.go feature/rwf); QB='agent/q$x;y'; $DA review apply "$RQ" --branch "$QB" >/dev/null 2>&1 || no "(setup) apply rwq"
+qt=$(sha "$QB"); qt2=$(same "$qt" "names: change rwq, reworded by hand"); git -C "$A" branch -f "$QB" "$qt2"
+out=$($DA local clean "$RQ" 2>&1); rc=$?
+QQ=$(printf '%q' "$QB")
+if [ $rc = 1 ] && grep -qF "git branch -f $QQ $qt," <<<"$out" && grep -qF "qargi ref record --rewrite $QQ $qt $qt2 --why" <<<"$out" && [ "$QQ" != "$QB" ]; then
+  ok "the hint prints a branch name with a \$ and a ; quoted for the shell"
+else no "quoted hint: rc=$rc $out"; fi
+git -C "$A" branch -f "$QB" "$qt"
 # a run whose directory is gone (the saved copy holds the applied record): the refusal names the fix as well
 RV=$(seriesrun rwv rwv.go feature/rwf); $DA review apply "$RV" >/dev/null 2>&1 || no "(setup) apply rwv"
 vt=$(sha agent/rwv); vt2=$(same "$vt" "names: change rwv, reworded by hand"); git -C "$A" branch -f agent/rwv "$vt2"
