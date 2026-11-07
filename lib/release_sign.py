@@ -12,8 +12,8 @@ Answers, under `release` in the project's answers file:
                                (run by bash -c) or a list of words ({version} replaced, no shell)
   release.after_steps          a list of commands or reminders, {version} replaced, that the release finish verb prints as "after the release:" lines
                                and records for the release status verb; qargi never runs them
-  release.notes_file           a file with the release notes, relative to the repository; {version} is replaced
-  release.version_file, release.changelog.unreleased|released, release.man_pages, release.test_command, release.preflight
+  release.notes_file           a file with the release notes, relative to the repository; {version} is replaced (release push warns of the changelog items it does not mention)
+  release.version_file, release.version_files, release.changelog.unreleased|released, release.man_pages, release.test_command, release.preflight
                                the layout of what a release updates and runs; lib/release_layout.py describes and checks them
 
 The record is $STATE/release/PROJECT-VERSION.sign.json: the tag's commit, the sha256 of every signed file and of its signature, and the
@@ -58,7 +58,7 @@ def problems(rel):
     if rel is None:
         return out
     if not isinstance(rel, dict):
-        return ["release: an object like {sign, assets, notes_file, assets_command, after_steps, version_file, changelog, man_pages, test_command, preflight}"]
+        return ["release: an object like {sign, assets, notes_file, assets_command, after_steps, version_file, version_files, changelog, man_pages, test_command, preflight}"]
     for k in rel:
         if k not in RELEASE_KEYS:
             out.append("release.%s: unknown key (%s)" % (k, ", ".join(RELEASE_KEYS)))
