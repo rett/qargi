@@ -671,7 +671,7 @@ WRAP
         echo "plan token: $otok   (apply with: qargi local clean --orphans --days $DAYS --plan $otok --approved \"...\")"
         exit 0
       fi
-      need_plan "$otok"
+      QARGI_NESTED='' need_plan "$otok"   # a caller that is itself approved (QARGI_NESTED) has not approved this removal: the token is always needed
       rm_n=0; rk_n=0
       for ent in "${orph[@]}"; do
         e=${ent% *}; reg_load

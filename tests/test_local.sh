@@ -603,6 +603,10 @@ out=$(orph --approved "go"); rcs=$?
 { [ $rcs != 0 ] && grep -q "the plan changed or --plan is missing" <<<"$out" && [ -d "$OS/qargi-run.AAAAAA" ]; } && ok "--approved without the plan token removes nothing" || no "approved without plan (rc=$rcs): $out"
 out=$(orph --plan 000000000000 --approved "go"); rcs=$?
 { [ $rcs != 0 ] && [ -d "$OS/qargi-run.AAAAAA" ] && [ -d "$OS/qargi-run.BBBBBB" ]; } && ok "a wrong token removes nothing" || no "wrong token (rc=$rcs): $out"
+out=$(QARGI_NESTED=1 orph --approved "go"); rcs=$?
+{ [ $rcs != 0 ] && grep -q "the plan changed or --plan is missing" <<<"$out" && [ -d "$OS/qargi-run.AAAAAA" ]; } && ok "QARGI_NESTED does not stand in for the token: --approved alone removes nothing" || no "nested, no token (rc=$rcs): $out"
+out=$(QARGI_NESTED=1 orph --plan 000000000000 --approved "go"); rcs=$?
+{ [ $rcs != 0 ] && [ -d "$OS/qargi-run.AAAAAA" ] && [ -d "$OS/qargi-run.BBBBBB" ]; } && ok "and a wrong token removes nothing under QARGI_NESTED either" || no "nested, wrong token (rc=$rcs): $out"
 out=$(orph --days 4); tok4=$(sed -n 's/^plan token: \([0-9a-f]*\) .*/\1/p' <<<"$out")
 { grep -q "^orphan $OS/qargi-run.AAAAAA" <<<"$out" && ! grep -q "^orphan $OS/qargi-run.BBBBBB" <<<"$out" && grep -q "^kept $OS/qargi-run.BBBBBB (3d old): named by no registry, but" <<<"$out" && [ "$tok4" != "$tok" ]; } \
   && ok "--days 4 lists only what is older than 4 days, with its own token" || no "days 4: $out"

@@ -60,6 +60,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `qargi review apply` copies `OUT/patches/*.patch` once into a directory of its own in the lead's state directory and hashes, scrubs and applies (`git am`) that copy.
   It read the patches three times from the run directory, so a member process still alive could change a patch after it was scrubbed and before it was applied. A
   patch that stops being a regular file while it is copied refuses the apply; the copy is removed however the verb ends.
+- `qargi release start|push|finish|publish|site ... --approved WORDS` and `qargi local clean --orphans --approved WORDS` need the plan token even when `QARGI_NESTED` is
+  set. `need_plan` returns without a check when that variable is set, so `release start 1.2.3 --approved x` created the branch, and `local clean --orphans --days 2
+  --approved x` removed the directories it listed, with no token. A caller that is itself approved has not approved this plan; the packs, memory and tier-write verbs
+  already refused to honour it. The lead-only verbs (`assets`, `sign`, `site`) still refuse a nested call as before.
 
 ## [0.2.5] - 2026-11-06
 
