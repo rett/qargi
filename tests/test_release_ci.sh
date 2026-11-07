@@ -140,7 +140,7 @@ setans '.release.assets=["dist/app.tar.gz"] | .release.sign={key:"/nowhere", nam
 echo missing > "$T/release.state"; : > "$T/assets.out"
 out=$($REL status 0.2.0 2>&1)
 grep -q "after the release 0.2.0" <<<"$out" && grep -q "tag 0.2.0: pushed to origin" <<<"$out" && grep -q "GitHub release: MISSING (qargi release publish 0.2.0)" <<<"$out" && grep -q "after-steps (release.after_steps" <<<"$out" \
-  && grep -q -- "- update the website for 0.2.0" <<<"$out" && grep -q -- "- announce it" <<<"$out" && ok "status after the release: tag pushed, release missing, the after-steps" || no "checklist missing: $out"
+  && grep -qF -- "[pending] update the website for 0.2.0 (lead)" <<<"$out" && grep -qF -- "[pending] announce it (lead)" <<<"$out" && ok "status after the release: tag pushed, release missing, the after-steps" || no "checklist missing: $out"
 echo found > "$T/release.state"; echo "app.tar.gz" > "$T/assets.out"
 out=$($REL status 0.2.0 2>&1)
 grep -q "GitHub release: published" <<<"$out" && grep -q "asset app.tar.gz: present" <<<"$out" && grep -q "signature app.tar.gz.sig: UNSIGNED" <<<"$out" && ok "a published release: the asset is present, its signature is not" || no "checklist found: $out"

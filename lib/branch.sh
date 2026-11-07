@@ -5,8 +5,9 @@
 #   branch.sh prune [--project P] [--remote] [--plan T --approved W]
 #       The merged agent/* and feature/* branches of the project, and the worktrees of the ones qargi made, as a plan and a token;
 #       with --plan and --approved they are deleted. --remote adds the same branches on origin (asked live). A branch is merged when
-#       it was merged with --no-ff into develop (a feature or an agent branch), or into an open feature/* (an agent branch), and is
-#       still in that branch's history; a branch that only sits at the tip of develop or of a feature was never merged and is kept.
+#       it was merged with --no-ff into develop, into a branch of repo.long_lived or repo.detached (a feature or an agent branch), or into
+#       an open feature/* (an agent branch), and is still in that branch's history; a branch that only sits at the tip of one of them
+#       was never merged and is kept.
 #       Never touched: master, develop, the branches of repo.long_lived and repo.detached, the parking branch, an unmerged branch, a
 #       branch checked out in a worktree that qargi did not make (the main checkout, the runtime's own worktrees) or in a dirty one.
 #       Nothing is pushed except the deletions on origin, each as a lease on the tip the plan showed.
@@ -33,11 +34,15 @@ protected() { # BRANCH -> 0 for a branch prune never touches
   case $1 in master|develop) return 0;; esac
   printf '%s\n%s\n%s\n' "$LL" "$DETACHED" "$PARK" | grep -Fxq -- "$1"
 }
-# the tips of everything merged with --no-ff into develop or into an open feature: the second parents of their merge commits
+# the tips of everything merged with --no-ff into develop, into a branch of repo.long_lived or repo.detached that exists, or into an open
+# feature: the second parents of their merge commits
 mapfile -t feats < <(g for-each-ref --format='%(refname)' 'refs/heads/feature/*')
-TIPS=$(g rev-list --merges --parents develop "${feats[@]}" | awk 'NF > 2 {for (i = 3; i <= NF; i++) print $i}' | sort -u)
+longs=()
+while IFS= read -r l; do [ -z "$l" ] || [ "$l" = develop ] || ! branch_exists "$l" || longs+=("$l"); done < <(printf '%s\n%s\n' "$LL" "$DETACHED" | sort -u)
+TIPS=$(g rev-list --merges --parents develop ${longs[@]+"${longs[@]}"} "${feats[@]}" | awk 'NF > 2 {for (i = 3; i <= NF; i++) print $i}' | sort -u)
 merged_into() { # SHA KIND(agent|feature) -> the branch it is merged into, else nothing
   local sha=$1 t tt targets=develop f
+  [ "${#longs[@]}" = 0 ] || targets="$targets ${longs[*]}"
   if [ "$2" = agent ]; then for f in "${feats[@]}"; do targets="$targets ${f#refs/heads/}"; done; fi
   printf '%s\n' "$TIPS" | grep -Fxq -- "$sha" || return 0
   for t in $targets; do

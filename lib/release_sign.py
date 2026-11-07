@@ -10,10 +10,12 @@ Answers, under `release` in the project's answers file:
                                that the release assets verb made, else to the repository
   release.assets_command       the command the release assets verb runs in a clean worktree of the tag to build the release files: a command line
                                (run by bash -c) or a list of words ({version} replaced, no shell)
-  release.after_steps          a list of commands or reminders, {version} replaced, that the release finish verb prints as "after the release:" lines
-                               and records for the release status verb; qargi never runs them
-  release.notes_file           a file with the release notes, relative to the repository; {version} is replaced
-  release.version_file, release.changelog.unreleased|released, release.man_pages, release.test_command, release.preflight
+  release.after_steps          a list of the project's steps after a release, {version} replaced, that the release finish verb prints as "after the release:" lines
+                               and records as pending for the release status verb; qargi never runs them. A step is a one-line string (its name is
+                               its text, who is the lead, no evidence is required) or an object {name, command, who, evidence}: who is lead or owner,
+                               evidence says what shows the step was done (when it is set, the release step verb wants --evidence)
+  release.notes_file           a file with the release notes, relative to the repository; {version} is replaced (release push warns of the changelog items it does not mention)
+  release.version_file, release.version_files, release.changelog.unreleased|released, release.man_pages, release.test_command, release.preflight
                                the layout of what a release updates and runs; lib/release_layout.py describes and checks them
 
 The record is $STATE/release/PROJECT-VERSION.sign.json: the tag's commit, the sha256 of every signed file and of its signature, and the
@@ -29,7 +31,7 @@ result of the signing and of verify_command. Nothing the person types (the passp
                                                  with no .git component in its name or where a symbolic link leads, and no two files may have the same base name
   release_sign.py asset-status AF VERSION        read the names of the assets of a GitHub release on stdin; print a line per entry of release.assets
                                                  ({version} replaced; a glob matched by its base name, with fnmatch): "asset X: present" or "asset X: MISSING from the release"
-  release_sign.py after-steps AF VERSION         print the steps of release.after_steps, {version} replaced, one per line
+  release_sign.py after-steps AF VERSION         print the steps of release.after_steps, {version} replaced, as a JSON list of {name, command, who, evidence}
   release_sign.py resolve REPO FILE...           print "sha256<TAB>absolute path<TAB>path in the repository" per file; exit 1 if one is no regular
                                                  file inside the repository
   release_sign.py record --state F --repo R --af AF --project P --version V --commit C --sign-rc N --verify-rc N|none
@@ -43,6 +45,8 @@ import release_layout   # the layout answers of a release (version_file, changel
 NS_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._@:+-]{0,63}")
 CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
 RELEASE_KEYS = ("sign", "assets", "notes_file", "assets_command", "after_steps") + release_layout.LAYOUT_KEYS
+STEP_KEYS = ("name", "command", "who", "evidence")
+STEP_WHO = ("lead", "owner")
 SIGN_KEYS = ("key", "namespace", "files", "verify_command")
 
 
@@ -52,13 +56,63 @@ def rel_ok(p):
             and os.path.normpath(p) == p and not p.startswith("../") and p != "..")
 
 
+def line_ok(x, limit=500):
+    """A non-empty one-line string of at most `limit` characters."""
+    return isinstance(x, str) and bool(x.strip()) and len(x) <= limit and not CTRL_RE.search(x)
+
+
+def step_problems(a):
+    """The problems of release.after_steps: a list of one-line strings, or of objects {name, command, who, evidence}; the names are distinct."""
+    shape = ("release.after_steps: a list of steps, each a one-line string (a command or a reminder, its text is its name) or an object "
+             "{name, command, who (lead|owner), evidence}; {version} replaced; printed by release finish and never run")
+    if not isinstance(a, list):
+        return [shape]
+    out, names = [], []
+    for i, x in enumerate(a):
+        where = "release.after_steps[%d]" % i
+        if isinstance(x, str):
+            if not line_ok(x):
+                out.append("%s: a non-empty one-line string of at most 500 characters" % where)
+            names.append(x)
+        elif isinstance(x, dict):
+            for k in x:
+                if k not in STEP_KEYS:
+                    out.append("%s.%s: unknown key (%s)" % (where, k, ", ".join(STEP_KEYS)))
+            if not line_ok(x.get("name"), 200):
+                out.append("%s.name: a non-empty one-line string of at most 200 characters" % where)
+            else:
+                names.append(x["name"])
+            for k in ("command", "evidence"):
+                if k in x and not line_ok(x[k]):
+                    out.append("%s.%s: a non-empty one-line string of at most 500 characters" % (where, k))
+            if "who" in x and x["who"] not in STEP_WHO:
+                out.append("%s.who: %s" % (where, " or ".join(STEP_WHO)))
+        else:
+            out.append("%s: a one-line string or an object {name, command, who, evidence}" % where)
+    for n in sorted({n for n in names if names.count(n) > 1}):
+        out.append("release.after_steps: the name %r is used twice (the names are what release step is given)" % n)
+    return out
+
+
+def steps(rel, version):
+    """The steps of release.after_steps as objects {name, command, who, evidence}, {version} replaced; a string is a step of that name, who lead."""
+    out = []
+    given = rel.get("after_steps") if isinstance(rel, dict) else None
+    for x in (given if isinstance(given, list) else []):
+        if not isinstance(x, (str, dict)):
+            continue
+        d = {"name": x} if isinstance(x, str) else dict(x)
+        out.append({k: str(d.get(k) or ("lead" if k == "who" else "")).replace("{version}", version) for k in STEP_KEYS})
+    return out
+
+
 def problems(rel):
     """The problems of the `release` answers (a value, or None when the answers have none)."""
     out = []
     if rel is None:
         return out
     if not isinstance(rel, dict):
-        return ["release: an object like {sign, assets, notes_file, assets_command, after_steps, version_file, changelog, man_pages, test_command, preflight}"]
+        return ["release: an object like {sign, assets, notes_file, assets_command, after_steps, version_file, version_files, changelog, man_pages, test_command, preflight}"]
     for k in rel:
         if k not in RELEASE_KEYS:
             out.append("release.%s: unknown key (%s)" % (k, ", ".join(RELEASE_KEYS)))
@@ -72,9 +126,7 @@ def problems(rel):
                 or (isinstance(c, list) and c and all(isinstance(x, str) and x and "\x00" not in x for x in c))):
             out.append("release.assets_command: the command that builds the release files, a command line or a list of words ({version} replaced in a list), run in a clean worktree of the tag (for example [\"make\", \"dist\"])")
     if "after_steps" in rel:
-        a = rel["after_steps"]
-        if not (isinstance(a, list) and all(isinstance(x, str) and x.strip() and len(x) <= 500 and not CTRL_RE.search(x) for x in a)):
-            out.append("release.after_steps: a list of one-line strings (a command or a reminder, {version} replaced), printed by release finish and never run")
+        out.extend(step_problems(rel["after_steps"]))
     if "notes_file" in rel:
         n = rel["notes_file"]
         if not (isinstance(n, str) and rel_ok(n.replace("{version}", "0.0.0"))):
@@ -320,8 +372,7 @@ def main(argv):
     if cmd == "after-steps":
         if len(rest) != 2:
             return 2
-        for step in ((load_release(rest[0]) or {}).get("after_steps") or []):
-            print(step.replace("{version}", rest[1]))
+        print(json.dumps(steps(load_release(rest[0]), rest[1])))
         return 0
     if cmd == "asset-status":
         if len(rest) != 2:

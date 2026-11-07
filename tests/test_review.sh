@@ -261,4 +261,83 @@ for bad in '.git={author:"no email"}' '.git={author:3}' '.review={keep_author:"y
   $DA local clean "$R24" --discard >/dev/null 2>&1 || rm -rf "$R24"
 done
 cp "$AF0" "$AF"
+# --- the declared take-in scrub: review.scrub (a command run in a temporary checkout of the applied series, with the range in QARGI_SCRUB_BASE and
+# QARGI_SCRUB_TIP) and review.trailer_policy reject; both are the run's own copy (taken at prepare); no answer, no change
+refs_all() { git -C "$A" for-each-ref --format='%(refname) %(objectname)'; git -C "$A" worktree list; find "$T/s" -maxdepth 1 -name 'scrub-wt.*' | wc -l; }
+scrubs() { grep -c '^scrub:' <<<"$1" || true; }
+setans() { jq "$1" "$AF0" > "$AF.new" && mv "$AF.new" "$AF"; }   # the stored answers: the original with one change
+R30=$(newrun noscrub); out=$($DA review check "$R30/out" 2>&1); rc=$?
+{ [ $rc = 0 ] && ! grep -q '^scrub:' <<<"$out"; } && ok "no review.scrub and no trailer policy: nothing more is checked or printed" || no "no scrub: rc=$rc $out"
+R31=$(newrun scrubnone)
+# the answer is taken at prepare: this one is set before, a different one after is not believed
+SC='test "$QARGI_SCRUB_BASE" = "'$dev'" && test "$(git rev-list --count "$QARGI_SCRUB_BASE..$QARGI_SCRUB_TIP")" = 2 && test "$(git rev-parse HEAD)" = "$QARGI_SCRUB_TIP" && test "$(wc -l < internal/a.go)" = 2 && test "$(git -C "'$A'" rev-parse -q --verify refs/heads/agent/scrubok || echo none)" = none'
+jq --arg c "$SC" '.review.scrub = $c' "$AF0" > "$AF.new" && mv "$AF.new" "$AF"
+R32=$(newrun scrubok); r0=$(refs_all)
+setans '.review.scrub = "echo late scrub; exit 1"'
+out=$($DA review check "$R32/out" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(scrubs "$out")" = 1 ] && grep -qx 'scrub: ok' <<<"$out"; } && ok "review.scrub runs in a checkout at the applied series with the range in its environment, and passes: scrub: ok" || no "scrub ok: rc=$rc $out"
+out=$($DA review check "$R32" 2>&1); rc=$?
+{ [ $rc = 0 ] && grep -qx 'scrub: ok' <<<"$out"; } && ok "the scrub runs when the run directory is given instead of OUT" || no "scrub run dir: rc=$rc $out"
+[ "$(refs_all)" = "$r0" ] && [ -z "$(git -C "$A" tag)" ] && ok "no ref, worktree or temporary directory is left behind" || no "left behind: $(refs_all)"
+# the registry's copy, not the stored file, decides: a run prepared with no scrub is not scrubbed by a later answer
+out=$($DA review check "$R31/out" 2>&1); rc=$?
+{ [ $rc = 0 ] && ! grep -q '^scrub:' <<<"$out"; } && ok "an answer set after prepare does not change the scrub of a run already out" || no "late answer: rc=$rc $out"
+# a failing scrub: one FAIL line with its first lines, the check fails
+setans '.review.scrub = "echo found a stray debug line; echo second; echo third; echo fourth; exit 3"'
+R33=$(newrun scrubfail); r0=$(refs_all)
+out=$($DA review check "$R33/out" 2>&1); rc=$?
+{ [ $rc = 1 ] && [ "$(scrubs "$out")" = 1 ] && grep -qx 'scrub: FAIL found a stray debug line | second | third' <<<"$out" && grep -q '^0 fail' <<<"$out"; } \
+  && ok "a failing scrub prints one 'scrub: FAIL' line with its first lines and fails the check" || no "scrub fail: rc=$rc $out"
+[ "$(refs_all)" = "$r0" ] && ok "a failing scrub leaves nothing behind either" || no "left behind after fail: $(refs_all)"
+setans '.review.scrub = "exit 4"'; R34=$(newrun scrubsilent)
+out=$($DA review check "$R34/out" 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -qx 'scrub: FAIL exit 4, no output' <<<"$out"; } && ok "a failing scrub with no output still says why" || no "silent scrub: rc=$rc $out"
+# a list of words is run without a shell; the range is in the environment
+setans '.review.scrub = ["sh", "-c", "test -n \"$QARGI_SCRUB_BASE\" && test -n \"$QARGI_SCRUB_TIP\" && test \"$0\" = \"a b\"", "a b"]'; R35=$(newrun scrublist)
+out=$($DA review check "$R35/out" 2>&1); rc=$?
+{ [ $rc = 0 ] && grep -qx 'scrub: ok' <<<"$out"; } && ok "review.scrub as a list of words runs too" || no "scrub list: rc=$rc $out"
+# a series that fails the check is not scrubbed, and the line says so
+setans '.review.scrub = "exit 0"'; R36=$(newrun scrubskip); rm -f "$R36/out/manifest.json"
+out=$($DA review check "$R36/out" 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -qx 'scrub: not run (the series check failed)' <<<"$out"; } && ok "a series that fails the check is not scrubbed, and the output says so" || no "scrub skip: rc=$rc $out"
+# a series that does not apply on the base fails the scrub
+R37=$(newrun scrubnoapply); sed -i 's/^ a$/ zzz/' "$R37"/out/patches/0002-*.patch
+out=$($DA review check "$R37/out" 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q '^scrub: FAIL 0002-.* does not apply on ' <<<"$out"; } && ok "a series that does not apply fails the scrub and names the patch" || no "scrub noapply: rc=$rc $out"
+# review.trailer_policy reject: a co-author or generated-with trailer in any commit fails; none (the default) lets it pass
+setans '.review.trailer_policy = "reject"'
+R38=$(newrun trailok)
+out=$($DA review check "$R38/out" 2>&1); rc=$?
+{ [ $rc = 0 ] && grep -qx 'scrub: ok' <<<"$out"; } && ok "trailer_policy reject passes a series with no such trailer" || no "trailer ok: rc=$rc $out"
+for tr in 'Co-Authored-By: Someone <someone@example.net>' 'co-authored-by: Someone <someone@example.net>' 'Generated with Some Tool' 'Generated-with: some tool'; do
+  R39=$(newrun trailbad); r0=$(refs_all)
+  sed -i "s/^The manual and docs say what a name may hold\.\$/&\n\n$tr/" "$R39"/out/patches/0002-*.patch
+  out=$($DA review check "$R39/out" 2>&1); rc=$?
+  { [ $rc = 1 ] && [ "$(scrubs "$out")" = 1 ] && grep -q "^scrub: FAIL review.trailer_policy is reject: [0-9a-f]* carries \"$tr\"\$" <<<"$out"; } \
+    && ok "trailer_policy reject fails a commit with the trailer '$tr'" || no "trailer '$tr': rc=$rc $out"
+  [ "$(refs_all)" = "$r0" ] || no "left behind after a trailer: $(refs_all)"
+  $DA local clean "$R39" --discard >/dev/null 2>&1 || rm -rf "$R39"
+done
+setans '.review.trailer_policy = "none"'; R40=$(newrun trailnone)
+sed -i 's/^The manual and docs say what a name may hold\.$/&\n\nCo-Authored-By: Someone <someone@example.net>/' "$R40"/out/patches/0002-*.patch
+out=$($DA review check "$R40/out" 2>&1); rc=$?
+{ [ $rc = 0 ] && ! grep -q '^scrub:' <<<"$out"; } && ok "trailer_policy none (the default) lets the trailer pass and prints nothing more" || no "trailer none: rc=$rc $out"
+# a report-only run (no patches) is not scrubbed
+setans '.review.scrub = "exit 1"'; mkdir -p "$T/rep2"; printf '# R\n\n## Findings\n\nnone\n' > "$T/rep2/report.md"
+out=$($DA review check "$T/rep2" 2>&1); rc=$?
+{ [ $rc = 0 ] && ! grep -q '^scrub:' <<<"$out"; } && ok "a report-only run is not scrubbed" || no "report scrub: rc=$rc $out"
+# a member's own check (the member mark in its environment) neither runs the command nor makes the checkout, and does not fail for it
+MK=$T/scrub-ran; setans '.review.scrub = "touch '"$MK"'; exit 1"'
+R41=$(newrun membercheck)
+out=$(QARGI_MEMBER_RUN=$R41 $DA review check "$R41/out" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(scrubs "$out")" = 1 ] && grep -qx "scrub: not run (a member's check; the lead's check runs it)" <<<"$out" && [ ! -e "$MK" ]; } \
+  && ok "a member's check does not run the scrub, says so and does not fail" || no "member check: rc=$rc $out"
+setans '.review.scrub = "touch '"$MK"'; exit 1" | .review.trailer_policy = "reject"'
+R42=$(newrun membertrail); r0=$(refs_all)
+out=$(QARGI_MEMBER_RUN=$R42 $DA review check "$R42/out" 2>&1); rc=$?
+{ [ $rc = 0 ] && grep -qx "scrub: not run (a member's check; the lead's check runs it)" <<<"$out" && [ ! -e "$MK" ] && [ "$(refs_all)" = "$r0" ]; } \
+  && ok "and neither does a member's check make the checkout for a trailer policy" || no "member check, policy: rc=$rc $out"
+out=$($DA review check "$R42/out" 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q '^scrub: FAIL' <<<"$out" && [ -e "$MK" ]; } && ok "the lead's check of the same run does run the scrub" || no "lead check: rc=$rc $out"
+cp "$AF0" "$AF"
 exit $fail

@@ -20,20 +20,30 @@
 #                                           one that still holds, and "VERSION is ready for signing" when the repository is in the state sign needs
 #                                           With a branch: the pull request's checks (gh pr checks: name and pass/fail/pending). With a tag: the
 #                                           checklist after the release: tag on origin, GitHub release, the assets of release.assets, the signatures of
-#                                           release.sign.files, and the project's release.after_steps (an optional list of words; not tracked).
+#                                           release.sign.files, and the project's release.after_steps (steps recorded by `finish`; `step` marks one done).
 #   release.sh verify VERSION [--hotfix]    run the whole suite on the branch head (develop's head before a release starts); same warnings
+#                                           With the answer release.version_files (a list of paths) start, status and verify check that each file contains
+#                                           VERSION at the release branch and warn of the ones that do not: "bump these on the release branch". No answer, no check.
 #   release.sh fix VERSION [--hotfix] [--push [--plan T --approved W]]
 #                                           a worktree on the release branch under the worktree root (prints its path), to commit a fix in; --push is `push`
 #   release.sh push VERSION [--hotfix] [--plan T --approved W]     push the branch, open the pull request into master (or say "updated PR #N" when it is open)
+#                                           With the answer release.notes_file the plan warns of the items of the VERSION section of CHANGELOG.md that the file
+#                                           does not mention (an item is mentioned when its leading `backticked term`, else its first three words, is in the file,
+#                                           whatever the case); a warning only. No answer, no check.
 #                                           When master and the branch have no merge base (master is one snapshot commit, say) the plan has the line "join the history
 #                                           of master": once approved, master is merged into the branch with -s ours --allow-unrelated-histories, in a temporary
 #                                           worktree, as a commit of its own before the push, and only if the tree is unchanged; `start`, `status` and `finish` say so.
 #   release.sh finish VERSION [--hotfix] [--keep] [--ignore-checks WORDS] [--plan T --approved W]
 #                                           after the checks pass: merge, tag, back-merge, delete the branch, push. The plan lists the pull request's checks
 #                                           and refuses while one fails or is pending, unless --ignore-checks gives, in the person's words, why (recorded).
-#                                           Then it prints the steps of the answer release.after_steps ({version} replaced) as "after the release: STEP"
-#                                           lines, never runs them, and records them in STATE/release/PROJECT-VERSION.after.json ({steps: [...]}) for
-#                                           `status`, which shows the recorded steps (the answer as it is now when there is no record).
+#                                           Then it prints the steps of the answer release.after_steps ({version} replaced) as "after the release: [pending]
+#                                           NAME (WHO): COMMAND" lines, never runs them, and records them as pending in STATE/release/PROJECT-VERSION.after.json
+#                                           ({schema: 2, steps: [{name, command, who, evidence_hint, state, done_at, evidence}]}) for `status`, which shows
+#                                           the recorded steps, the done ones first (the answer as it is now when there is no record).
+#   release.sh step VERSION NAME [--evidence TEXT] [--again]
+#                                           marks the recorded after-step NAME of VERSION done, with the time and the evidence text; a step whose answer has an
+#                                           evidence needs --evidence; an unknown name or version is refused; a step already done is refused unless --again.
+#                                           Lead only (the guard refuses it to a member). It changes only the record: the command is never run.
 #
 #   release.sh assets VERSION [--recreate]  build the release files of the tag VERSION: a clean detached worktree of the tag under STATE/release-assets/,
 #                                           the project's answer release.assets_command run in it (a command line, or a list of words with {version}
@@ -77,14 +87,14 @@
 #
 # The layout of what a release updates is the project's: the answers release.version_file (default VERSION; none: the project has no such file),
 # release.changelog.unreleased and .released (heading templates; default '## [Unreleased]' and '## [{version}] - {date}'), release.man_pages (default
-# man/*.1), release.test_command (what `verify` runs; default test_command) and release.preflight (an argv list, {version} replaced, run by `start` and
+# man/*.1), release.version_files (other files that carry the version; checked, never bumped), release.test_command (what `verify` runs; default test_command) and release.preflight (an argv list, {version} replaced, run by `start` and
 # `push` before they change anything; a non-zero exit refuses). lib/release_layout.py checks and applies them.
 #
 # Options for all: --project P, --date D. Pushing, merging and tagging need the plan token and an approval.
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
-VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY='' NOTES_OPT='' FIXPUSH='' IGNORE_CHECKS='' IGNORE_SET='' IGNORED='' RECREATE=''; ASSETS=() ASSET_DIRS=()
+VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY='' NOTES_OPT='' FIXPUSH='' IGNORE_CHECKS='' IGNORE_SET='' IGNORED='' RECREATE='' STEPNAME='' EVIDENCE='' EVIDENCE_SET='' AGAIN=''; ASSETS=() ASSET_DIRS=()
 while [ $# -gt 0 ]; do
   case $1 in
     --project) need_val "$1" $#; PROJ=$2; shift 2;; --date) need_val "$1" $#; DATE=$2; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
@@ -92,18 +102,21 @@ while [ $# -gt 0 ]; do
     --asset) need_val "$1" $#; ASSETS+=("$2"); shift 2;; --asset-dir) need_val "$1" $#; ASSET_DIRS+=("$2"); shift 2;; --recreate) RECREATE=1; shift;; --notes-file) need_val "$1" $#; NOTES_OPT=$2; shift 2;;
     --push) FIXPUSH=1; shift;; --ignore-checks) need_val "$1" $#; IGNORE_CHECKS=$2; IGNORE_SET=1; shift 2;;
     --hotfix) HOTFIX=1; shift;; --keep) KEEP=1; shift;; --resolved) RESOLVED=1; shift;; --allow-empty-notes) ALLOW_EMPTY=1; shift;;
-    -*) die "unknown option $1";; *) VER=$1; shift;;
+    --evidence) need_val "$1" $#; EVIDENCE=$2; EVIDENCE_SET=1; shift 2;; --again) AGAIN=1; shift;;
+    -*) die "unknown option $1";;
+    *) if [ "$verb" = step ] && [ -n "$VER" ] && [ -z "$STEPNAME" ]; then STEPNAME=$1; else VER=$1; fi; shift;;
   esac
 done
 [ "$verb" = publish ] || { [ ${#ASSETS[@]} -eq 0 ] && [ ${#ASSET_DIRS[@]} -eq 0 ] && [ -z "$NOTES_OPT" ]; } || die "--asset, --asset-dir and --notes-file belong to release publish"
 [ "$verb" = assets ] || [ -z "$RECREATE" ] || die "--recreate belongs to release assets"
+[ "$verb" = step ] || { [ -z "$EVIDENCE_SET" ] && [ -z "$AGAIN" ]; } || die "--evidence and --again belong to release step"
 [ "$verb" = fix ] || [ -z "$FIXPUSH" ] || die "--push belongs to release fix"
 [ "$verb" = finish ] || [ -z "$IGNORE_SET" ] || die "--ignore-checks belongs to release finish"
 [ -z "$IGNORE_SET" ] || printf '%s' "$IGNORE_CHECKS" | grep -q '[^[:space:]]' || die "--ignore-checks needs the reason, in the words you gave: --ignore-checks \"...\""
 [ "$verb" != fix ] || [ -z "$FIXPUSH" ] || verb=push   # fix --push is push
 export PLAN_ARG RESOLVED   # need_plan reads PLAN_ARG; merge_step reads RESOLVED
 
-[ -n "$VER" ] || die "usage: qargi release start|status|verify|fix|push|finish|assets|sign|publish|site VERSION [--hotfix] [--project P]"
+[ -n "$VER" ] || die "usage: qargi release start|status|verify|fix|push|finish|step|assets|sign|publish|site VERSION [--hotfix] [--project P]"
 printf '%s' "$VER" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || die "'$VER' is not a version like 0.1.1"
 . "$(dirname "$0")/gitflow.sh"
 project_load
@@ -135,6 +148,40 @@ gh_release_state() {
   elif grep -qi 'release not found' <<<"$out"; then GHS=missing
   else GHS=unchecked; GHWHY=$(printf '%s' "$out" | grep -v '^[[:space:]]*$' | head -1 | cut -c1-120); fi
   return 0
+}
+# version_files_report REF: the answer release.version_files (other files that carry the version), checked at REF: each must contain VER as a whole
+# version (release_layout.py has-version, the file on stdin). Prints nothing when the answer is not set (no answer, no check); otherwise one line, a
+# warning naming the files that lack VER (a missing file lacks it too) and the fix, or that all carry it. Never a failure: `start` cannot refuse,
+# because the files are bumped on the release branch it creates.
+version_files_report() {
+  local ref=$1 f bad='' n=0
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    n=$((n + 1))
+    if g show "$ref:$f" 2>/dev/null | python3 -I "$RL" has-version - "$VER"; then :; else bad+="${bad:+, }$f"; fi
+  done < <(jq -r '(.release? // {}).version_files // [] | .[]' "$af")
+  [ "$n" -gt 0 ] || return 0
+  if [ -n "$bad" ]; then echo "warning: release.version_files: $bad on $ref do not contain $VER: bump these on the release branch (qargi release fix $VER${HOTFIX:+ --hotfix} makes a worktree for it)"
+  else echo "version files (release.version_files): all $n contain $VER"; fi
+}
+# notes_report: the answer release.notes_file ({version} replaced), when set: the file at the head of BR must mention every item of the VER section
+# of the CHANGELOG.md there (the key of an item: its leading `backticked term`, else its first three words; release_layout.py notes-missing). The plan of
+# `push` prints the ones it does not mention as a warning; it never refuses. No answer, no check.
+notes_report() {
+  local nfile ntmp stmp sect miss rc
+  nfile=$(jq -r '(.release? // {}).notes_file // empty' "$af"); [ -n "$nfile" ] || return 0
+  nfile=${nfile//\{version\}/$VER}
+  ntmp=$(mktemp "$DA_STATE/.release-notes-chk.XXXXXX"); stmp=$(mktemp "$DA_STATE/.release-notes-chk.XXXXXX")
+  if ! g show "$BR:$nfile" > "$ntmp" 2>/dev/null; then echo "warning: release.notes_file: $nfile is not a file on $BR, so the changelog items cannot be checked against it"
+  elif g show "$BR:CHANGELOG.md" > "$stmp" 2>/dev/null && sect=$(bash "$(dirname "$0")/changelog_section.sh" "$VER" "$stmp" "$(jq -r '(.release? // {}).changelog.released // ""' "$af")" 2>/dev/null); then
+    printf '%s\n' "$sect" > "$stmp"
+    miss=$(python3 -I "$RL" notes-missing "$stmp" "$ntmp") && rc=0 || rc=$?
+    if [ "$rc" = 1 ]; then
+      echo "warning: $nfile on $BR does not mention these items of the $VER section of CHANGELOG.md (release.notes_file):"
+      printf '%s\n' "$miss" | sed 's/^/  - /'
+    else echo "notes (release.notes_file): $nfile mentions every item of the $VER section of CHANGELOG.md"; fi
+  fi
+  rm -f "$ntmp" "$stmp"
 }
 # tag_checks: for a tag VER that exists, warnings (never a failure) about what stops it from being a published release:
 # a tag workflow starts only if the tagged commit holds it, and a release must exist on GitHub for the tag
@@ -224,23 +271,37 @@ asset_wt() {
 }
 # sign_root: the directory the release files are signed and published from: the asset worktree when there is one, else the repository
 sign_root() { asset_wt; printf '%s' "${AWT:-$REPO}"; }
-# after_steps_record: the answer release.after_steps ({version} replaced) as "after the release: STEP" lines, kept in AFTERREC (one JSON file under
-# the state, {steps: [...]}) for `release status`. They are shown, never run. after_steps_list gives them back to `status`.
+# The after-steps (release.after_steps; the answer lets a step be a string or an object, release_sign.py normalizes both): `finish` records them as pending
+# in AFTERREC (one JSON file under the state, {schema: 2, steps: [{name, command, who, evidence_hint, state: pending|done, done_at, evidence}]}), prints them,
+# and `step` marks one done. They are shown, never run. AFTER_LINES renders a list of steps as lines, the done ones first, the pending ones last.
 AFTERREC=$DA_STATE/release/$PROJ-$VER.after.json
-after_steps_record() {
-  local st=()
-  mapfile -t st < <(python3 -I "$RS" after-steps "$af" "$VER" 2>/dev/null)
-  [ "${#st[@]}" -gt 0 ] || return 0
-  mkdir -p "$DA_STATE/release"
-  printf '%s\n' "${st[@]}" | jq -R . | jq -s --arg p "$PROJ" --arg v "$VER" --arg t "$(now)" '{schema:1, project:$p, version:$v, at:$t, steps:.}' > "$AFTERREC"
-  printf 'after the release: %s\n' "${st[@]}"
+# shellcheck disable=SC2016  # a jq program
+AFTER_LINES='def tail: (if .evidence_hint != "" then " [evidence needed: " + .evidence_hint + "]" else "" end);
+  def line: if .state == "done" then "[done] " + .name + " (" + .who + ", " + .done_at + (if .evidence != "" then ", evidence: " + .evidence else "" end) + ")"
+    elif .who == "owner" then "[pending] " + .name + " (owner): waits for the owner" + (if .command != "" then ": run " + .command else "" end) + tail
+    else "[pending] " + .name + " (" + .who + ")" + (if .command != "" then ": " + .command else "" end) + tail end;
+  (map(select(.state == "done")) + map(select(.state != "done")))[] | line'
+# after_steps_new: the answer's steps as pending record steps, a JSON list on one line ([] when there are none)
+after_steps_new() {
+  local st
+  # shellcheck disable=SC2016
+  st=$(python3 -I "$RS" after-steps "$af" "$VER" 2>/dev/null | jq -c 'map({name, command, who, evidence_hint: .evidence, state: "pending", done_at: "", evidence: ""})' 2>/dev/null) || st=''
+  [ -n "$st" ] || st='[]'
+  echo "$st"
 }
-# after_steps_list: the steps for `release status`, one per line: those `finish` recorded in AFTERREC; when there is no (readable) record, the answer as it is now
+after_steps_record() {
+  local st
+  st=$(after_steps_new)
+  [ "$(jq 'length' <<<"$st")" -gt 0 ] || return 0
+  mkdir -p "$DA_STATE/release"
+  jq -n --argjson s "$st" --arg p "$PROJ" --arg v "$VER" --arg t "$(now)" '{schema:2, project:$p, version:$v, at:$t, steps:$s}' > "$AFTERREC.tmp" && mv "$AFTERREC.tmp" "$AFTERREC"
+  jq -r "$AFTER_LINES" <<<"$st" | sed 's/^/after the release: /'
+}
+# after_steps_list: the steps for `release status`, one line each: those `finish` recorded in AFTERREC, with what `step` marked; when there is no (readable) record, the answer as it is now
 after_steps_list() {
-  local s
-  if [ -f "$AFTERREC" ] && s=$(jq -r '.steps[] | strings' "$AFTERREC" 2>/dev/null) && [ -n "$s" ]; then printf '%s\n' "$s"; return 0; fi
-  s=$(jq -r '(.release? // {}) | (.after_steps // []) | if type == "array" then .[] | strings else empty end' "$af" 2>/dev/null) || return 0
-  [ -z "$s" ] || printf '%s\n' "${s//\{version\}/$VER}"
+  local st
+  if [ -f "$AFTERREC" ] && st=$(jq -c 'select(.schema == 2) | .steps' "$AFTERREC" 2>/dev/null) && [ -n "$st" ]; then :; else st=$(after_steps_new); fi
+  jq -r "$AFTER_LINES" <<<"$st" 2>/dev/null || true
 }
 # sign_status: for a tag that exists in a project that signs its releases (and has no GitHub release yet), whether the signature of VER is recorded
 # and still true; if not, "awaiting signature" and either that the release is ready for signing or what stands in the way. Read-only.
@@ -399,8 +460,8 @@ remote_tag_state() {
   if [ -n "$out" ]; then RTAG=pushed; else RTAG=absent; fi
 }
 # post_release: for a tag VER that exists, the checklist of what is left after `finish`: the tag on origin, the GitHub release, the assets the
-# project records (release.assets; the signatures of release.sign.files) and the project's own after-steps (release.after_steps, a list of
-# words; qargi does not record that they were done). Read-only; what cannot be asked is said, not guessed.
+# project records (release.assets; the signatures of release.sign.files) and the project's own after-steps (release.after_steps: the recorded
+# ones, each done or pending). Read-only; what cannot be asked is said, not guessed.
 post_release() {
   local tc a base names='' step n=0
   tc=$(g rev-parse -q --verify "refs/tags/$VER^{commit}") || return 0
@@ -439,8 +500,8 @@ post_release() {
   fi
   while IFS= read -r step; do
     [ -n "$step" ] || continue
-    [ "$n" -gt 0 ] || echo "  after-steps (release.after_steps; qargi does not record that they were done):"
-    n=$((n + 1)); echo "    - $step"
+    [ "$n" -gt 0 ] || echo "  after-steps (release.after_steps; qargi release step $VER NAME marks one done and never runs it):"
+    n=$((n + 1)); echo "    $step"
   done < <(after_steps_list)
   return 0
 }
@@ -489,7 +550,8 @@ case $verb in
       else echo "no feature was merged into develop since ${prev:-the first commit}"; fi
     fi
     if branch_exists master && no_merge_base master "$BR"; then echo "note: $(unrelated_note)"; fi
-    echo "other files that carry the version (a manifest) are yours to bump on this branch"
+    if jq -e '(.release? // {}) | (.version_files // []) | length > 0' "$af" >/dev/null 2>&1; then version_files_report "$BR"
+    else echo "other files that carry the version (a manifest) are yours to bump on this branch"; fi
     echo "only minor fixes belong here; new features wait for the next release. Then: qargi release push $VER${HOTFIX:+ --hotfix}";;
   status)
     h=$(sha_of "$BR")
@@ -510,6 +572,7 @@ case $verb in
     suite_verdict "$BR"
     echo "full suite: ${SV_TEXT:-not run on this branch}"
     [ -z "$SV_NOTE" ] || echo "$SV_NOTE"
+    version_files_report "$BR"
     remote_report "$BR"; remote_report "$BASE"
     g rev-parse -q --verify "refs/tags/$VER" >/dev/null && echo "tag $VER exists" || true
     if g remote get-url origin >/dev/null 2>&1; then pr_checks_print "$BR"; fi
@@ -531,6 +594,7 @@ case $verb in
     busy_end
     record_suite "$on" "$h" "$res" "$((SECONDS - t0))"
     echo "full suite: $res at $(g rev-parse --short "$on")"
+    if [ "$on" = "$BR" ]; then version_files_report "$BR"; fi
     tag_checks
     [ "$res" = pass ] || suite_failure_report
     [ "$res" = pass ];;
@@ -563,6 +627,7 @@ case $verb in
       jb=$(join_blocker "$BR"); [ -z "$jb" ] || echo "warning: $jb"
     fi
     jq -e '(.release? // {}) | has("preflight")' "$af" >/dev/null 2>&1 && echo "preflight (release.preflight, run in a copy of $BR before the push): $(jq -r '.release.preflight | join(" ")' "$af")"
+    notes_report
     remote_report "$BR"
     pw=$(wt_of "$BR"); [ -z "$pw" ] || [ -z "$(git -C "$pw" status --porcelain 2>/dev/null)" ] || echo "warning: $pw has uncommitted changes: only what is committed on $BR is pushed"
     pr_find "$BR"; [ -z "$PR_NUM" ] || echo "the pull request #$PR_NUM of $BR is open already: the push updates it${PR_URL:+ ($PR_URL)}"
@@ -706,6 +771,29 @@ case $verb in
     lead_advice
     after_steps_record
     after_release;;
+  step)
+    [ -n "$STEPNAME" ] || die "usage: qargi release step VERSION NAME [--evidence TEXT] [--again]"
+    case $EVIDENCE in *[[:cntrl:]]*) die "--evidence is one line of text";; esac
+    [ "${#EVIDENCE}" -le 500 ] || die "--evidence is at most 500 characters"
+    [ -z "$EVIDENCE_SET" ] || printf '%s' "$EVIDENCE" | grep -q '[^[:space:]]' || die "--evidence needs the text that shows the step was done"
+    [ -f "$AFTERREC" ] && jq -e '.schema == 2 and (.steps | type == "array")' "$AFTERREC" >/dev/null 2>&1 \
+      || die "no record of the after-steps of $VER for $PROJ (qargi release finish $VER records the steps of release.after_steps)"
+    cur=$(jq -c --arg n "$STEPNAME" '[.steps[] | select(.name == $n)] | first // empty' "$AFTERREC")
+    if [ -z "$cur" ]; then
+      die "no after-step named '$STEPNAME' in the record of $VER; the steps: $(jq -r '[.steps[].name] | join("; ")' "$AFTERREC")"
+    fi
+    if [ "$(jq -r '.state' <<<"$cur")" = "done" ] && [ -z "$AGAIN" ]; then
+      die "the step '$STEPNAME' of $VER is marked done already ($(jq -r '.done_at' <<<"$cur")); to record it again: qargi release step $VER '$STEPNAME' --again${EVIDENCE_SET:+ --evidence ...}"
+    fi
+    hint=$(jq -r '.evidence_hint' <<<"$cur")
+    if [ -n "$hint" ] && [ -z "$EVIDENCE_SET" ]; then die "the step '$STEPNAME' needs evidence ($hint): qargi release step $VER '$STEPNAME' --evidence \"...\""; fi
+    tm=$(now)
+    jq --arg n "$STEPNAME" --arg t "$tm" --arg e "$EVIDENCE" '(.steps[] | select(.name == $n)) |= (.state = "done" | .done_at = $t | .evidence = $e)' "$AFTERREC" > "$AFTERREC.tmp" \
+      && mv "$AFTERREC.tmp" "$AFTERREC" || die "could not write $AFTERREC"
+    audit_log "release:step" "$PROJ $VER $STEPNAME"
+    echo "marked done: $STEPNAME (release $VER, $tm${EVIDENCE:+, evidence: $EVIDENCE}); only the record changed, the command was not run"
+    left=$(jq -r '[.steps[] | select(.state != "done")] | length' "$AFTERREC")
+    echo "$left step(s) still pending (qargi release status $VER)";;
   assets)
     python3 -I "$RS" lead-only assets || exit $?
     rel_valid
@@ -896,5 +984,5 @@ case $verb in
     echo "preview it before you push: build the site locally and serve it (the site branch's build script, for example tools/build-local.sh REPO OUT, then python3 -m http.server --directory OUT)"
     if g remote get-url origin >/dev/null 2>&1; then echo "push it with: git -C $REPO push origin $SITE_BR"
     else echo "the repository has no origin remote: push $SITE_BR where the site is deployed from"; fi;;
-  *) die "usage: qargi release start|status|verify|fix|push|finish|assets|sign|publish|site VERSION [--hotfix] [--project P]";;
+  *) die "usage: qargi release start|status|verify|fix|push|finish|step|assets|sign|publish|site VERSION [--hotfix] [--project P]";;
 esac

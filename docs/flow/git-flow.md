@@ -9,6 +9,12 @@ refusal changes nothing.
    theme; `qargi feature list` shows the open ones and the files two of them both change.
 2. Tasks run on `agent/<slug>` (`/qargi-task ... --base feature/NAME`) with targeted checks only.
    Per task: `qargi review check RUN/out` and `qargi review apply RUN` (puts the series on `agent/<slug>`; the author of each commit is reset to yours: the answer `git.author`, a string `Name <email>`, else the repository's `user.name` and `user.email`; `review.keep_author` `true` keeps the member's; the member's author is recorded in the ref journal and the audit log),
+   A project can declare a take-in scrub that `qargi review check` runs after the series check passes: the answer `review.scrub` names a command (one command line, or a list of words),
+   run with the lead's rights in a throw-away checkout of the applied series (`BASE..tip`, the commit the run's base branch had when it was prepared, then the patches with `git am`), with the range in
+   `QARGI_SCRUB_BASE` and `QARGI_SCRUB_TIP`; `review.trailer_policy` is `none` (default) or `reject`, which fails any commit whose message carries a `Co-Authored-By` or `Generated with` style trailer. The
+   output gains one line, `scrub: ok` or `scrub: FAIL` with the first lines of what the command (or the policy) said, and a failing scrub fails the check (exit 1). Nothing is made in your repository: no
+   branch, tag or worktree entry is left behind. With neither answer set, nothing changes. Both answers are the run's own copy taken at `local prepare`, as `git.author` is, so a change applies to the runs
+   prepared after it; a series that fails the check itself is not scrubbed (the output says so), and a report-only run has no series to scrub. A member's guard refuses `project set` of both, as the command is the lead's. A member's own `review check` (the member mark that `qargi local run` sets is in its environment) does not run the scrub or make the checkout and prints `scrub: not run (a member's check; the lead's check runs it)`; that does not fail the check.
    `qargi feature merge NAME BRANCH`, `qargi local clean RUN`, then `qargi branch prune` to
    delete merged `agent/*` branches. Run `qargi local verify RUN` on every returned run before
    merging any of them; verify and clean accept and name qargi's own moves (`develop moved by qargi feature finish`, a fetch, the
@@ -39,6 +45,23 @@ refusal changes nothing.
    from the tag without touching your checkout: `qargi release assets VERSION` runs the project's `release.assets_command` in a clean
    worktree of the tag, `release sign` signs there, and `release publish` attaches `release.assets` (globs), `--asset FILE` and
    `--asset-dir DIR` from it.
+   Two optional answers add generic checks, both warnings and neither a refusal. `release.version_files` is a list of paths
+   (relative to the repository) of other files that carry the version, a manifest say: `release start` prints a warning naming the
+   ones that do not yet contain the new version (as a whole version, so `0.2.1` is not found in `0.2.10`) and says to bump them on
+   the release branch, and `release status` and `release verify` show the same check there; qargi never bumps them. `release.notes_file`
+   (a file relative to the repository, `{version}` replaced, the notes `release publish` uses): the plan of `release push` warns of
+   the items of the version's changelog section that the file does not mention. An item is a line at the margin that starts with
+   `-`, `*`, `+` or a number and a dot; it is mentioned when its leading `` `backticked term` ``, else its first three words, occurs
+   in the file, ignoring case and spacing. Without the answer nothing is checked.
+   `release.after_steps` lists the project's own steps after a release, and qargi tracks them without running them. A step is a
+   one-line string (its text is its name; the lead does it; no evidence is asked) or an object `{"name": "...", "command": "...",
+   "who": "lead" | "owner", "evidence": "what shows it was done"}`; `{version}` is replaced and the names are distinct. `release
+   finish` records the steps as pending (a file under the state directory) and shows each as `[pending] NAME (WHO): COMMAND`.
+   `qargi release step VERSION NAME [--evidence TEXT]` marks one done once it was: it records the time and the evidence text,
+   wants `--evidence` when the step's answer has an `evidence`, refuses a name or version the record does not have and a step
+   marked done already (unless `--again`), and changes only the record, never running the command. It is the lead's verb: a
+   member's guard refuses it. `release status VERSION` then shows `[done] NAME (WHO, TIME, evidence: TEXT)` and, last, the
+   pending steps; the owner's read `waits for the owner: run COMMAND`. The record is kept across sessions.
 5. A hotfix is the same with `--hotfix`: `qargi release start VERSION --hotfix` (from master), then
    `release push` and `release finish --hotfix` (into the open release branch instead of develop,
    if there is one).

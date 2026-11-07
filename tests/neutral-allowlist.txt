@@ -30,6 +30,7 @@ lib/lib.sh:ant beta:
 lib/lib.sh:ant auth status
 lib/lib.sh:workspace "\$\{ANTHROPIC_PROFILE
 lib/lib.sh:die "ant profile
+lib/lib.sh:env -u ANTHROPIC_PROFILE
 
 # lib/lead.sh and lib/cred.sh: the lead's vault and credentials, and the agent and deployment it is attached to
 lib/lead.sh:ant beta:
@@ -45,10 +46,9 @@ lib/supervise.sh:ant beta:sessions:events
 lib/watch.sh:ant beta:sessions retrieve
 lib/watch.sh:ant auth status
 
-# lib/tierwrite.sh, lib/hook.sh, lib/gitflow.sh: the cloud tier is reached with ant, and the binding's profile variable is dropped for a test
+# lib/tierwrite.sh, lib/hook.sh: the cloud tier is reached with ant
 lib/tierwrite.sh:reached with ant
 lib/hook.sh:command -v ant
-lib/gitflow.sh:env -u ANTHROPIC_PROFILE
 
 # lib/packs.sh: updating an existing cloud agent with its skills and tools
 lib/packs.sh:ant beta:

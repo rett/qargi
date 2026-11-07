@@ -6,6 +6,43 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-11-06
+
+### Added
+- Tracked post-release steps. An entry of the answer `release.after_steps` may now be an object `{name, command, who, evidence}` (`who` is `lead` or `owner`;
+  `evidence` says what shows the step was done), besides a plain string, which stays valid and is a step named by its text, for the lead, with no evidence required.
+  `qargi release finish` records the steps as pending and shows each as `[pending] NAME (WHO): COMMAND`; the new `qargi release step VERSION NAME [--evidence TEXT] [--again]`
+  marks one done with the time and the evidence (a step that needs evidence refuses without it; an unknown name or version, and a step done already unless `--again`,
+  are refused), changing only the record and never running the command; `qargi release status` shows `[done] ...` and, last, the pending steps, an owner's marked
+  "waits for the owner: run COMMAND". A member's guard refuses `release step`.
+- `--json` on any verb (`qargi AREA VERB ... --json`) prints the result as one JSON object, so a lead does not read a plan token out of text. When the verb printed a plan
+  token: `{"verb", "plan", "token", "apply", "exit"}`, where `plan` is the text without the token line and `apply` is the call without `--json` plus `--plan TOKEN --approved
+  "<the user's go-ahead>"` (the words are the person's to fill in). When it printed none (it ran or refused): `{"verb", "plan": null, "token": null, "output", "exit"}`. The
+  exit status is the verb's and its errors stay on stderr. `--json` never supplies `--plan` or `--approved`; a call that carries them runs as before with a null token. It
+  is one global option, handled in `bin/qargi` (`lib/jsonplan.py`) and described in `qargi help`, the manual page and completion; a verb with a `--json` of its own keeps it,
+  and a member's guard treats the verb exactly as without it.
+- The answer `release.version_files` (a list of paths relative to the repository) names other files that carry the version. `qargi release start`, once it has
+  bumped VERSION, warns of the listed files that do not contain it (as a whole version: `0.2.1` is not found in `0.2.10`) and says to bump them on the release
+  branch; `release status` and `release verify` show the same check on the branch. A warning, not a refusal; without the answer nothing is checked.
+- `qargi release push` checks the answer `release.notes_file` (the notes file `release publish` already uses): its plan warns of the items of the version's
+  `CHANGELOG.md` section that the file does not mention. An item is mentioned when its leading `` `backticked term` ``, else its first three words, occurs in the
+  file, ignoring case and spacing. A warning only: the plan keeps its token. Without the answer nothing is checked.
+
+### Fixed
+- `qargi project validate` reports a role whose value is not an object (`roles.build = "x"`, `null`) as the finding `roles.NAME: an object`, and goes on to
+  check the other roles, instead of failing with a traceback.
+- Setting `repo.detached` or a `site` answer with `qargi project` prints only what was set; it no longer says the answer "applies to the next provision",
+  which a provision does not read.
+- `tests/test_local_run.sh` prints a failing `dispatch.json` check on one line (the file compacted, with the expected argv), so a parallel CI log shows it.
+- `qargi branch prune` now treats an `agent/*` branch merged (`--no-ff`) into a branch of `repo.detached` or `repo.long_lived` as merged, so a task branch
+  merged into a detached branch such as `gh-pages` is pruned like one merged into develop. Unmerged branches, branches at a tip, protected branches and
+  branches held by a worktree qargi did not make are kept as before.
+- A declared take-in scrub: the project answer `review.scrub` (a command line or a list of words, as `release.test_command`) is run by `qargi review check` in a throw-away
+  checkout of the applied series, with the range in `QARGI_SCRUB_BASE` and `QARGI_SCRUB_TIP`, and `review.trailer_policy` (`none` by default, or `reject`) fails any commit
+  with a `Co-Authored-By` or `Generated with` style trailer. The check prints one line, `scrub: ok` or `scrub: FAIL` and the first lines of the output, leaves no
+  branch, tag or worktree entry in the repository, and a failing scrub fails the check. Both answers are the run's own copy taken at `local prepare` and a member's guard
+  refuses setting them; with neither set nothing changes. A member's own `review check` (the member mark set) does not run it and says so; the lead's check does.
+
 ## [0.2.4] - 2026-11-06
 
 ### Added

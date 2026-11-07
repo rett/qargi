@@ -39,12 +39,12 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     Read-only verbs (list, show, check, effective, search, render, export) stay allowed. The verb is found after wrappers, inside `sh|bash -c STRING` and
     `eval STRING`, in the program a shell reads on its standard input (below), inside $(...) and backticks, and when the script is named directly (packs.sh, discover.py, and the scripts the shell
     verbs call: env_apply.py is env apply in any use (qargi env plan and apply run the project's dry-run and bootstrap commands: project code; env.py is env,
-    found like linker.py, so env show stays open), packs_link.py is packs link|unlink and project_link.py is project link|unlink in any use, packs_audit.py store is skill accept|unaccept, marshal_handoff.py is marshal handoff,
+    found like linker.py, so env show stays open), jsonplan.py (the --json wrapper) is the verb it is given, packs_link.py is packs link|unlink and project_link.py is project link|unlink in any use, packs_audit.py store is skill accept|unaccept, marshal_handoff.py is marshal handoff,
     linker.py (the link engine) is packs link in any use, and render.py (it can run the command a definition names) is refused in any use;
     the last two have names a project may use for its own scripts, so only the files in the lib directory of the tool or of the installed
     copy count, found from the directory the command runs in);
   - qargi project init (it stores a whole answers file, so it is a way to models.extensions and models.accept_no_barrier, which have gated verbs;
-    found like the skill verbs), and qargi project set of any models answer, of release.*, of test_command, of env.*, of site.* (the commands, environment and site the lead later runs or builds), of packs.* (the opt-out of the render check), of git.* and review.* (the identity and the author rule qargi review apply gives the commits it applies), of runs.* (the refs that verify and clean accept as a runtime's own) and of
+    found like the skill verbs), and qargi project set of any models answer, of release.*, of test_command, of env.*, of site.* (the commands, environment and site the lead later runs or builds), of packs.* (the opt-out of the render check), of git.* and review.* (the identity and the author rule qargi review apply gives the commits it applies, and the scrub command and trailer policy qargi review check runs), of runs.* (the refs that verify and clean accept as a runtime's own) and of
     roles.<role>.tools, a whole role or roles (the tools env apply installs and local prepare checks out; the other answers stay open). A project verb the guard cannot read is
     refused: set with a path that is missing or built by xargs, a variable, a substitution, a brace or a glob; and any command with the word project,
     link, unlink, set or init after it and a shell expansion or xargs in the segment (found again inside `sh -c` and `eval` strings with the quotes
@@ -83,8 +83,8 @@ PROVIDER_READ, list, show, effective, require-barrier, skills-dirs, of, layout, 
 check records what it verified and may run a pack's code, and adapter-run runs the adapter, so both are refused with their own reasons).
 Release: `qargi release publish` (it creates the GitHub release of a tag), `qargi release sign` (it signs the release files with the
 lead's key), `qargi release site` (it commits the built documentation site on the lead's site branch), `qargi release assets` (it runs the
-project's release.assets_command, project code, in a worktree of the tag) and `qargi release fix` (it makes a worktree on the release branch
-and, with --push, pushes it) are refused to a member, found like the skill verbs, also as a verb held in a variable and through
+project's release.assets_command, project code, in a worktree of the tag), `qargi release fix` (it makes a worktree on the release branch
+and, with --push, pushes it) and `qargi release step` (it marks a project's after-release step done in the lead's record) are refused to a member, found like the skill verbs, also as a verb held in a variable and through
 lib/release.sh and lib/release_sign.py; the other release verbs stay allowed (they need a plan token and approval of their own).
 Changelog: `qargi changelog renumber` without --check (it rewrites the changelog of a work tree) is the lead's, found like the skill verbs, also through
 lib/changelog.sh and lib/changelog_numbers.py and when a word is held in a variable; `renumber --check` only reads and stays allowed.
@@ -225,7 +225,7 @@ GIT_OUTPUT_DIRS = {"format-patch", "archive"}                    # git subcomman
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
 SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
            "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "project_link.py", "gated_answers.py", "project.sh", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py", "local_run.py", "local.sh", "release.sh", "release_sign.py",
-           "agent.sh", "team.sh", "env.py", "env_apply.py", "branch.sh", "changelog.sh", "changelog_numbers.py", "upstream.sh", "ref.sh")
+           "agent.sh", "team.sh", "env.py", "env_apply.py", "branch.sh", "changelog.sh", "changelog_numbers.py", "upstream.sh", "ref.sh", "jsonplan.py")
 # the command and the scripts behind the refused verbs (packs_link.py is packs link|unlink, packs_audit.py store is skill accept|unaccept,
 # marshal_handoff.py is marshal handoff: the shell verbs call them, and a member could call them directly with a hand-made inputs file;
 # linker.py, the link engine packs_link.py calls, is packs link, and render.py renders member definitions and runs the command a definition names)
@@ -2644,6 +2644,8 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         words = ["packs", "unlink" if "unlink" in words[:2] else "link"]
     if name == "project_link.py":                        # plan, apply and members-dir alike: any use of the script is the verb (the shell checks the plan token)
         words = ["project", "unlink" if "unlink" in words[:2] else "link"]
+    if name == "jsonplan.py":                            # the --json wrapper: AREA VERB ... (it runs the bin/qargi beside it); the verb it runs is judged as if it were called by name
+        words = [w for w in words if w != "--json"]
     if name == "local_run.py":                           # any use of the script is `local run`
         words = ["local", "run"]
     if name == "local.sh":
@@ -2715,7 +2717,7 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         if path == "packs" or path.startswith("packs."):
             return "qargi project set of %s opts the project out of the packs render check (packs.none) and is not available to an agent: propose the value in your report" % path
         if path in IDENTITY_ANSWERS or path.startswith(tuple(a + "." for a in IDENTITY_ANSWERS)):
-            return "qargi project set of %s changes whose name the commits qargi review apply puts on a member's work (git.author, review.keep_author) and is not available to an agent: propose the value in your report" % path
+            return "qargi project set of %s changes whose name the commits qargi review apply puts on a member's work (git.author, review.keep_author), or the scrub command and trailer policy qargi review check runs on a returned series (review.scrub, review.trailer_policy: the command is the lead's, run with its rights), and is not available to an agent: propose the value in your report" % path
         if ROLE_TOOLS_PATH.fullmatch(path):
             return "qargi project set of %s changes the tools the lead later installs and checks out (roles.<role>.tools: go install, a downloaded binary, a submodule) and is not available to an agent: propose the entry in your report" % path
     if area == "provider" and verb == "accept":
@@ -2734,6 +2736,8 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         return "qargi release assets runs the project's release.assets_command, which is project code, with the lead's rights, and is not available to an agent; report that the release files need building"
     if area == "release" and any(w == "fix" for w in words[1:4]):
         return "qargi release fix makes a worktree on the release branch and can push it with the lead's credentials, and is not available to an agent; report the fix the release branch needs"
+    if area == "release" and any(w == "step" for w in words[1:4]):
+        return "qargi release step marks an after-release step done in the lead's record of the release and is not available to an agent; report in your task output that the step needs recording"
     # qargi env: show only reads files, so a member may run it. plan runs the project's dry-run command (make -n still runs $(shell ...) and + lines) and
     # apply runs its bootstrap: both run project code, with the lead's rights and terminal, and are the lead's. A verb held in a variable could be either
     if area == "env" and (verb in ENV_LEAD or builds_word(verb)):
