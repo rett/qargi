@@ -28,6 +28,8 @@ task() { # name: a task branch with one commit, cut from develop (as an applied,
   echo "$1" > "$w/$1.txt"; git -C "$w" add -A; git -C "$w" commit -q -m "task $1"; git -C "$R" worktree remove --force "$w"
 }
 tok() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
+# rstart ARGS: release start through its plan (a token) and the approval; a refusal of the plan is printed and fails
+rstart() { local p t; p=$($REL start "$@" 2>&1); t=$(tok <<<"$p"); [ -n "$t" ] || { printf '%s\n' "$p"; return 1; }; $REL start "$@" --plan "$t" --approved go; }
 dev0=$(git -C "$R" rev-parse develop)
 
 # --- features: broad, merged into develop once
@@ -101,12 +103,26 @@ git -C "$R" branch -D feature/g2 >/dev/null 2>&1
 
 # --- a release
 w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R" worktree add -q --detach "$w" develop; echo late > "$w/late.txt"; git -C "$w" add -A; git -C "$w" commit -q -m "a commit straight on develop"; git -C "$R" update-ref refs/heads/develop "$(git -C "$w" rev-parse HEAD)"; git -C "$R" worktree remove --force "$w"
-$REL start 0.2.0 >/dev/null 2>&1 && no "a release started from an unverified develop" || ok "a release does not start before develop's head passed the whole suite"
+rstart 0.2.0 >/dev/null 2>&1 && no "a release started from an unverified develop" || ok "a release does not start before develop's head passed the whole suite"
 $REL verify 0.2.0 >/dev/null 2>&1 && ok "verify runs on develop's head before the release exists" || no "verify develop"
 echo 'false' > "$T/cmd"; jq '.test_command = "true # changed"' "$T/c/projects/app.json" > "$T/c/projects/app.new" && mv "$T/c/projects/app.new" "$T/c/projects/app.json"
-$REL start 0.2.0 >/dev/null 2>&1 && no "a run made with another test command was accepted" || ok "a run made with a different test command no longer counts"
+rstart 0.2.0 >/dev/null 2>&1 && no "a run made with another test command was accepted" || ok "a run made with a different test command no longer counts"
 jq '.test_command = "true"' "$T/c/projects/app.json" > "$T/c/projects/app.new" && mv "$T/c/projects/app.new" "$T/c/projects/app.json"
-$REL start 0.2.0 --date 2026-01-02 >/dev/null 2>&1 && [ "$(git -C "$R" show release/0.2.0:VERSION)" = 0.2.0 ] && git -C "$R" show release/0.2.0:CHANGELOG.md | grep -q '^## \[0.2.0\] - 2026-01-02' && ok "start cuts release/VERSION; the first commit bumps VERSION and dates the changelog" || no "start: $($REL status 0.2.0 2>&1)"
+# the plan gate: no token, no branch; the plan names the branch, its base, the commit and the files; a token and the words apply it and leave an audit line
+out=$($REL start 0.2.0 --date 2026-01-02 2>&1); t=$(tok <<<"$out")
+[ -n "$t" ] && grep -q "create release/0.2.0 from develop (at $(git -C "$R" rev-parse --short develop))" <<<"$out" && grep -q 'one commit "Bumped version number to 0.2.0"' <<<"$out" \
+  && grep -q "^files the commit changes: CHANGELOG.md, VERSION$" <<<"$out" && grep -q -- "--date 2026-01-02 --plan $t --approved" <<<"$out" \
+  && ! git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && ok "release start without a token prints the plan and a token and creates nothing" || no "start plan: $out"
+! grep -q '"release:start"' "$T/s/audit.log" 2>/dev/null && ok "the plan writes no audit line" || no "audit line before the apply"
+out=$($REL start 0.2.0 --date 2026-01-02 --plan "$t" 2>&1); rc=$?
+[ -n "$(tok <<<"$out")" ] && ! git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && ok "a token without the approval is the plan again and creates nothing" || no "token alone: rc=$rc $out"
+out=$($REL start 0.2.0 --date 2026-01-02 --plan 000000000000 --approved go 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "the plan changed or --plan is missing" <<<"$out" && ! git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && ok "a wrong token is refused and creates nothing" || no "wrong token: rc=$rc $out"
+out=$($REL start 0.2.0 --date 2026-01-03 --plan "$t" --approved go 2>&1); rc=$?
+[ $rc != 0 ] && ! git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && ok "the token is of the plan: another date is another plan" || no "date changed: rc=$rc $out"
+$REL start 0.2.0 --date 2026-01-02 --plan "$t" --approved "go on with 0.2.0" >/dev/null 2>&1; rc=$?
+[ "$(jq -rs '[.[] | select(.verb == "release:start")] | map(.detail + "|" + .approved) | join(",")' "$T/s/audit.log")" = "app release/0.2.0|go on with 0.2.0" ] && ok "the apply writes the audit line (verb, project and branch, the words)" || no "audit: $(cat "$T/s/audit.log")"
+[ $rc = 0 ] && [ "$(git -C "$R" show release/0.2.0:VERSION)" = 0.2.0 ] && git -C "$R" show release/0.2.0:CHANGELOG.md | grep -q '^## \[0.2.0\] - 2026-01-02' && ok "start cuts release/VERSION; the first commit bumps VERSION and dates the changelog" || no "start: $($REL status 0.2.0 2>&1)"
 [ "$(git -C "$R" log -1 --format=%s release/0.2.0)" = "Bumped version number to 0.2.0" ] && [ "$(git -C "$R" rev-parse release/0.2.0~1)" = "$(git -C "$R" rev-parse develop)" ] && ok "it is one commit on develop's head" || no "bump commit"
 out=$($REL push 0.2.0); t=$(tok <<<"$out")
 ! git -C "$T/origin.git" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && ok "the push plan pushes nothing" || no "pushed on plan"
@@ -126,11 +142,13 @@ git -C "$R" merge-base --is-ancestor "$rs" develop && git -C "$R" merge-base --i
 [ "$(git -C "$R" show master:VERSION)" = 0.2.0 ] && ok "master carries the released version" || no "master VERSION"
 ! git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && ! git -C "$T/origin.git" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && ok "the release branch is deleted locally and on origin" || no "branch kept"
 [ "$(git -C "$T/origin.git" rev-parse master)" = "$(git -C "$R" rev-parse master)" ] && git -C "$T/origin.git" rev-parse -q --verify refs/tags/0.2.0 >/dev/null && ok "master, develop and the tag are pushed" || no "push all"
-$REL start 0.2.0 >/dev/null 2>&1 && no "a tag that exists was reused" || ok "a released version cannot be started again"
+rstart 0.2.0 >/dev/null 2>&1 && no "a tag that exists was reused" || ok "a released version cannot be started again"
 
 # --- a hotfix goes into the open release branch when there is one; the version conflict the model warns about is resolved
-$REL verify 0.3.0 >/dev/null 2>&1; $REL start 0.3.0 --allow-empty-notes >/dev/null 2>&1
-$REL start 0.2.1 --hotfix --allow-empty-notes >/dev/null 2>&1 && [ "$(git -C "$R" rev-parse hotfix/0.2.1~1)" = "$(git -C "$R" rev-parse master)" ] && ok "a hotfix is cut from master" || no "hotfix start"
+$REL verify 0.3.0 >/dev/null 2>&1; rstart 0.3.0 --allow-empty-notes >/dev/null 2>&1
+out=$($REL start 0.2.1 --hotfix --allow-empty-notes 2>&1)
+grep -q "create hotfix/0.2.1 from master" <<<"$out" && grep -q -- "qargi release start 0.2.1 --hotfix --allow-empty-notes --plan $(tok <<<"$out") --approved" <<<"$out" && ! git -C "$R" rev-parse -q --verify refs/heads/hotfix/0.2.1 >/dev/null && ok "a hotfix start prints its plan from master and its apply line too" || no "hotfix plan: $out"
+rstart 0.2.1 --hotfix --allow-empty-notes >/dev/null 2>&1 && [ "$(git -C "$R" rev-parse hotfix/0.2.1~1)" = "$(git -C "$R" rev-parse master)" ] && ok "a hotfix is cut from master" || no "hotfix start"
 w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R" worktree add -q "$w" hotfix/0.2.1; echo fix > "$w/fix.txt"; git -C "$w" add -A; git -C "$w" commit -q -m "the fix"; git -C "$R" worktree remove --force "$w"
 t=$($REL push 0.2.1 --hotfix | tok); $REL push 0.2.1 --hotfix --plan "$t" --approved go >/dev/null 2>&1
 d2=$(git -C "$R" rev-parse develop); r2=$(git -C "$R" rev-parse release/0.3.0); m2=$(git -C "$R" rev-parse master)
@@ -144,7 +162,7 @@ hout=$($REL finish 0.2.1 --hotfix --resolved --plan "$t" --approved go 2>&1); rc
 git -C "$R" show master:fix.txt >/dev/null 2>&1 && git -C "$R" rev-parse -q --verify refs/tags/0.2.1 >/dev/null && ok "and in master, tagged" || no "hotfix master"
 
 # --- two conflicting merges in one finish are each resolved once; a forgotten --resolved does not destroy a resolution
-$REL verify 0.4.0 >/dev/null 2>&1; $REL start 0.4.0 --allow-empty-notes >/dev/null 2>&1
+$REL verify 0.4.0 >/dev/null 2>&1; rstart 0.4.0 --allow-empty-notes >/dev/null 2>&1
 t=$($REL push 0.4.0 | tok); $REL push 0.4.0 --plan "$t" --approved go >/dev/null 2>&1
 side() { w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R" worktree add -q --detach "$w" "$1"; echo "$2" > "$w/VERSION"; git -C "$w" add -A; git -C "$w" commit -q -m "$2"; git -C "$R" update-ref "refs/heads/$1" "$(git -C "$w" rev-parse HEAD)"; git -C "$R" worktree remove --force "$w"; }
 side master master-side; side develop develop-side
@@ -169,7 +187,7 @@ git -C "$R2" add -A && git -C "$R2" commit -q -m one && git -C "$R2" branch deve
 git -C "$R2" checkout -q -b parked
 jq -n --arg p "$R2" '{schema:1, project:"app2", methodology:"gitflow", repo:{url:"https://github.com/acme/app2", path:$p, long_lived:["master","develop"]}, test_command:"true"}' > "$T/c/projects/app2.json"
 export QARGI_PROJECT=app2
-$REL verify 0.5.0 >/dev/null 2>&1; $REL start 0.5.0 >/dev/null 2>&1; t=$($REL push 0.5.0 | tok); $REL push 0.5.0 --plan "$t" --approved go >/dev/null 2>&1
+$REL verify 0.5.0 >/dev/null 2>&1; rstart 0.5.0 >/dev/null 2>&1; t=$($REL push 0.5.0 | tok); $REL push 0.5.0 --plan "$t" --approved go >/dev/null 2>&1
 printf '#!/bin/sh\necho rejected >&2\nexit 1\n' > "$T/origin2.git/hooks/pre-receive"; chmod +x "$T/origin2.git/hooks/pre-receive"
 m5=$(git -C "$R2" rev-parse master); t=$($REL finish 0.5.0 | tok)
 fout=$($REL finish 0.5.0 --plan "$t" --approved go 2>&1) && no "finished with a rejected push" || ok "a rejected push fails the finish"
@@ -209,7 +227,7 @@ git -C "$R3" update-ref refs/heads/feature/v1 "$(git -C "$R3" rev-parse develop~
 out=$($F status v1 2>&1)
 grep -q "origin feature/v1: remote $d3, local .* (local is 0 ahead, 1 behind)" <<<"$out" && ok "a branch that differs shows both tips and the distance" || no "feature status differs: $out"
 $REL verify 0.1.1 >/dev/null 2>&1
-out=$($REL start 0.1.1 --allow-empty-notes 2>&1; $REL push 0.1.1 2>&1)
+out=$(rstart 0.1.1 --allow-empty-notes 2>&1; $REL push 0.1.1 2>&1)
 grep -q "origin release/0.1.1: not on origin" <<<"$out" && ok "the release push plan says where the branch is on origin" || no "release push plan: $out"
 git -C "$R3" push -q "$U3" release/0.1.1; r3=$(git -C "$R3" rev-parse --short release/0.1.1)
 out=$($REL status 0.1.1 2>&1)

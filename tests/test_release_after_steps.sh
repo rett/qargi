@@ -12,6 +12,8 @@ ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
 mkdir -p "$HOME" "$T/c/projects"
 REL="$DA release"; tok() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
+# rstart ARGS: release start through its plan (a token) and the approval; a refusal of the plan is printed and fails
+rstart() { local p t; p=$($REL start "$@" 2>&1); t=$(tok <<<"$p"); [ -n "$t" ] || { printf '%s\n' "$p"; return 1; }; $REL start "$@" --plan "$t" --approved go; }
 cat > "$T/gh" <<G
 #!/usr/bin/env bash
 echo "\$*" >> "$T/gh.log"
@@ -57,7 +59,7 @@ jq --arg p "$R" --arg t "$T" '.repo={url:"https://github.com/acme/relaf", path:$
       {name:"tag the docs repository", command:"git tag {version}", who:"owner"}]}' <<<"$base" > "$T/c/projects/relaf.json"
 export QARGI_PROJECT=relaf
 cd "$T" || exit 1
-$REL verify 0.2.0 >/dev/null 2>&1 && $REL start 0.2.0 --date 2026-01-02 >/dev/null 2>&1 || no "release 0.2.0 could not start"
+$REL verify 0.2.0 >/dev/null 2>&1 && rstart 0.2.0 --date 2026-01-02 >/dev/null 2>&1 || no "release 0.2.0 could not start"
 t=$($REL push 0.2.0 | tok); $REL push 0.2.0 --plan "$t" --approved go >/dev/null 2>&1
 t=$($REL finish 0.2.0 | tok)
 ! grep -q "after the release" <<<"$($REL finish 0.2.0)" && ok "the finish plan does not show the steps yet (nothing is finished)" || no "plan shows steps"
@@ -134,7 +136,7 @@ for i in 1 2 3 4 5 6; do sf 0.2.0 "announce 0.2.0 to the list" --again --evidenc
 jq 'del(.release)' "$T/c/projects/relaf.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/relaf.json"
 git -C "$R" checkout -q develop 2>/dev/null; echo "- b" >> "$R/CHANGELOG.md"; git -C "$R" commit -q -am b; git -C "$R" checkout -q parked
 git -C "$R" push -q origin develop 2>/dev/null
-$REL verify 0.3.0 >/dev/null 2>&1; $REL start 0.3.0 --allow-empty-notes >/dev/null 2>&1 || no "release 0.3.0 could not start"
+$REL verify 0.3.0 >/dev/null 2>&1; rstart 0.3.0 --allow-empty-notes >/dev/null 2>&1 || no "release 0.3.0 could not start"
 t=$($REL push 0.3.0 | tok); $REL push 0.3.0 --plan "$t" --approved go >/dev/null 2>&1
 t=$($REL finish 0.3.0 | tok); out=$($REL finish 0.3.0 --plan "$t" --approved go 2>&1); rc=$?
 [ $rc = 0 ] && ! grep -q "after the release" <<<"$out" && [ ! -e "$T/s/release/relaf-0.3.0.after.json" ] && ok "without release.after_steps finish prints and records nothing of the kind" || no "no steps: rc=$rc $out"

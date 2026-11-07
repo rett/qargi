@@ -9,6 +9,8 @@
 #
 #   release.sh start VERSION [--hotfix]     branch from develop (master for a hotfix); the first commit bumps VERSION and dates
 #                                           the changelog and man page. A release starts only from a develop whose head passed `verify`.
+#                                           Without --plan and --approved it prints the plan (branch, base, files bumped) and a token; with them it applies
+#                                           and writes a line of the audit log.
 #                                           Preflight: a man page's .TH date and version are set too, and a CHANGELOG.md needs
 #                                           content under '## [Unreleased]' (--allow-empty-notes waives that); otherwise it refuses.
 #                                           A release (not a hotfix) then lists the features merged into develop since the previous tag.
@@ -528,7 +530,7 @@ case $verb in
       v=$(verified "$BASE")
       [ "$v" = "$(sha_of develop) pass" ] || die "the whole suite has no passing run at the head of develop (qargi release verify $VER); run it at the checkpoint, then start"
     fi
-    [ -n "$DATE" ] || DATE=$(date +%F)
+    date_given=$DATE; [ -n "$DATE" ] || DATE=$(date +%F)
     printf '%s' "$DATE" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' || die "--date YYYY-MM-DD"
     b0=$(sha_of "$BASE")
     worktree "$BASE"
@@ -551,8 +553,22 @@ case $verb in
       python3 -I "$RL" changelog "$WT/CHANGELOG.md" "$VER" "$DATE" "$ALLOW_EMPTY" "$af" || exit 1
       git -C "$WT" add CHANGELOG.md
     fi
+    # the plan: the branch, where it is cut from, the bump commit and the files it changes (all made in the temporary worktree above, so a refusal comes
+    # before a token does); the token covers them, the date and the head of the base
+    bumped=$(git -C "$WT" diff --cached --name-only)
+    tok=$({ printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$KIND" "$BR" "$BASE" "$b0" "$VER" "$DATE"; printf '%s\n' "$bumped"; } | plan_token)
+    echo "start $KIND $VER of $PROJ: create $BR from $BASE (at ${b0:0:7}), as one commit \"Bumped version number to $VER\" on top of it; nothing is pushed"
+    bl='none (an empty commit)'; [ -z "$bumped" ] || bl=$(printf '%s' "$bumped" | paste -sd, - | sed 's/,/, /g')
+    echo "files the commit changes: $bl"
+    echo "the version becomes $VER${oldver:+ (was $oldver)} and the changelog (and a man page) is dated $DATE"
+    if [ -z "$APPROVED" ]; then
+      echo "plan token: $tok   (apply with: qargi release start $VER${HOTFIX:+ --hotfix}${date_given:+ --date $date_given}${ALLOW_EMPTY:+ --allow-empty-notes} --plan $tok --approved \"...\")"
+      exit 0
+    fi
+    need_plan "$tok"
     wcommit --allow-empty -m "Bumped version number to $VER"
     g update-ref "refs/heads/$BR" "$(git -C "$WT" rev-parse HEAD)" "" || die "could not create $BR"
+    audit_log "release:start" "$PROJ $BR"
     journal_ref "$REPO" "refs/heads/$BR" "" "$(sha_of "$BR")" "$KIND:start"
     echo "created $BR from $BASE ($(g rev-parse --short "$BR")): the version is $VER and the changelog (and a man page) is dated $DATE"
     if [ "$KIND" = release ]; then   # what the release contains: the features merged into develop since the previous tag (--no-ff merges "Merge branch 'feature/...'")
