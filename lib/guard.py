@@ -137,7 +137,9 @@ Signing key: the one credential a member may not even read is the lead's signing
   globs and symbolic links are resolved, in a `<` redirection (also one before the program, `exec 3<key`, or with no program at all), an `--opt=path` and in the text of a `-c` program. A directory that holds the key
   is refused as a source to the recursive readers (cp, rsync, tar, zip, ln, mv), not as the place they write to (`cp src ~/`, `tar -C ~ -x`); grep, rg, ag, find
   with an action and Grep are refused on the credentials directory itself only (a search that starts above it, `grep -r TODO ~`, is no read of the key; one that
-  names the key is). ls, stat and test only look at it and stay allowed; the other credentials stay readable.
+  names the key is). ls, stat and test only look at it and stay allowed; the other credentials stay readable. The subscript and the operator of a parameter expansion
+  (${arr[@]}, ${PIPESTATUS[0]}, ${#a[@]}, ${!a[@]}, ${X:-...}) are no glob, so a loop over an array is no read of the key; a default word with a glob (${X:-*}), a name
+  that starts with marshal_ and a recursive reader of a braced word still are refused.
   pushd and popd are followed like cd (a directory stack), a text scan reads `dir//key` and `dir/./key` as `dir/key`, and ln, mv and cp -s|-l
   are refused on a credentials directory (or a directory above one) as the recursive readers are, since a link made in the same command
   is a name the guard cannot resolve yet.
@@ -2049,6 +2051,7 @@ def brace_expand(word, limit=MAX_BRACE):
 
 
 TRIMMED = re.compile(r"\$\{\w+(?:%%?|##?)[^{}]*\}")       # ${NAME%PATTERN}, ${NAME%%PATTERN}, ${NAME#PATTERN}, ${NAME##PATTERN}: a part of the variable's own value
+PARAM_HEAD = re.compile(r"\$\{[!#]?(?:\w+|[@*#?!$-])(?:\[[^\]]*\])?(?::?[-+=?])?")   # the start of a parameter expansion: ${NAME}, ${NAME[@]}, ${PIPESTATUS[0]}, ${!NAME[@]}, ${#NAME[@]}, ${NAME:-, ${NAME[@]+, ${NAME:?; its subscript and operator are no glob
 
 
 @functools.cache                                     # the files do not change while one command is judged
@@ -2066,7 +2069,7 @@ def key_named(word, here, recursive):
         for b in brace_expand(expand_path(c)):
             if "${" in b:
                 base = os.path.basename(TRIMMED.sub("x", b))      # ${f%%:*}, ${f%/*}, ${f##*/}: the * and the / belong to the pattern, not to the path
-                if bool(recursive) or base.startswith(KEY_PREFIX) or re.search(r"[*?\[]", base):
+                if bool(recursive) or base.startswith(KEY_PREFIX) or re.search(r"[*?\[]", PARAM_HEAD.sub("${x", base)):   # ${PIPESTATUS[0]} and ${arr[@]+x} are parameters, not globs; a default word after an operator still is one
                     return b                                  # ${X:-dir}/marshal_*: a directory the guard cannot read could be the credentials directory
             plain = re.sub(r"/(?:\./)+", "/", re.sub(r"/{2,}", "/", b))        # dir//key and dir/./key are the path dir/key
             if any(d + os.sep + KEY_PREFIX in plain for d in key_dirs()):     # a path inside text, e.g. python -c "open('...')"

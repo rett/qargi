@@ -33,6 +33,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 - `QARGI_NESTED` no longer skips the plan token of `qargi feature finish`, `qargi feature merge` into a detached branch and `qargi upstream sync`: as for the release verbs and
   `local clean --orphans`, a caller that is itself approved has not approved this plan, so the token is always needed. Tests cover all three.
+- The member guard no longer reads a parameter expansion with a subscript or an operator as a glob on the signing key: `${PIPESTATUS[0]}`, `${arr[@]+...}`,
+  `"${files[@]}"`, `${!a[@]}` and `${#a[@]}` (so a loop over an array next to the word `marshal`, which was refused as a read of `credentials/marshal_*`) are allowed.
+  A name that starts with `marshal_`, a glob in a default word (`${X:-*}`) and a recursive reader still are refused.
 
 ## [0.2.6] - 2026-11-07
 

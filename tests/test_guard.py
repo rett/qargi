@@ -2776,6 +2776,29 @@ class TrimmedExpansions(HookCase):
             self.assertIn("signing key", r.stderr, c)
 
 
+    def test_a_subscript_or_an_operator_of_a_parameter_is_no_glob_on_the_key(self):
+        """${PIPESTATUS[0]}, ${arr[@]+...}, "${files[@]}", ${!a[@]}, ${#a[@]}: the [ @ * ? of the parameter's own syntax are no glob, so a loop over an array next
+        to the word marshal is no read of credentials/marshal_*. The default word after an operator (${X:-*}) and a name that starts with marshal_ still are."""
+        for c in ('false | true; echo ${PIPESTATUS[0]}', 'echo ${arr[@]+"${arr[@]}"}', 'echo ${arr[@]+x}', 'for f in "${files[@]}"; do echo $f; done; echo marshal',
+                  'for f in "${files[@]}"; do qargi marshal status; done', 'for f in "${!files[@]}"; do echo marshal $f; done', 'for ((i=0;i<${#a[@]};i++)); do echo marshal; done',
+                  'echo "${@}" "${*}" ${#} ${?}', 'echo "${a[0]:-x}" "${b[*]}" "${c[i+1]}"', 'false | true; echo ${PIPESTATUS[0]} > out.txt', 'x=${arr[@]+${#arr[@]}}; echo $x'):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_a_parameter_that_could_name_the_key_is_still_refused(self):
+        cred = os.path.join(self.conf, "credentials")
+        os.makedirs(cred)
+        k = os.path.join(cred, "marshal_ed25519")
+        with open(k, "w") as f:
+            f.write("x\n")
+        for c in ("cat ${X:-*}", "cat ${X:-dir}/marshal_*", "cat ${arr[0]}/marshal_x", "cat ${d}/marshal_*", "cat ${arr[@]}/marshal_?", "cat marshal_${m}", "cat marshal_${arr[0]}",
+                  "cat ${X:-d}/${arr[0]}*", "cat ${arr[0]}${X:-*}", 'for f in "${files[@]}"; do cat %s; done' % k, 'for f in "${files[@]}"; do cat "${QARGI_CONF}/credentials/marshal_ed25519"; done',
+                  'false | true; echo ${PIPESTATUS[0]}; cat %s' % k, "cp -r ${arr[@]} out"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("signing key", r.stderr, c)
+
+
 class InPlaceScripts(HookCase):
     """In sed -i -e SCRIPT FILE the script is no file: a glob, a $ or a -S in it does not name a file the guard cannot read. The file still is judged."""
     setUp, tearDown, bash, call = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
