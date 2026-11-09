@@ -22,6 +22,7 @@ The branching model is git-flow, as its author described it.
 {{#gate}}
   - `{{gate_name}}` ({{gate_tier}}): `{{gate_command}}`
 {{/gate}}
+- In CI each gate is its own job and the jobs run in parallel, not in order; a job of a release-tier gate runs only on a pull request from a `release/` or `hotfix/` branch (or when started by hand).
 {{/gates}}
 
 ## Changes

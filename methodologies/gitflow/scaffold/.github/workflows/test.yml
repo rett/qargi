@@ -29,10 +29,12 @@ jobs:
         run: {{test_command}}
 {{/gates}}
 {{#gates}}
-  # one job for each declared gate, named after it
+  # one job for each declared gate, named after it; the jobs run in parallel. A feature-tier gate runs on every pull request, a
+  # release-tier gate only on a pull request from a release or hotfix branch (and when started by hand), as only a release runs it
 {{#gate}}
   {{gate_id}}:
     name: {{gate_name_quoted}}
+    if: ${{ '{{gate_tier}}' == 'feature' || startsWith(github.head_ref, 'release/') || startsWith(github.head_ref, 'hotfix/') || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-24.04
     timeout-minutes: {{ci_timeout_minutes}}
     steps:

@@ -41,6 +41,9 @@ refusal changes nothing.
    it; otherwise `verify` notes that it is not run). The verdict line is the same, `full suite: pass|fail at SHA`, so `feature finish`
    and the release steps work as before; the run record lists each gate with its result (`pass`, `fail`, or `not run` after a failure) and
    `feature status` and `release status` show a `gates:` line. A failed run names the failing gate. Absent, nothing changes.
+   `verify` runs the gates in order; the CI workflow of the scaffold makes each gate its own job and the jobs run in parallel. A feature-tier
+   gate's job runs on every pull request; a release-tier gate's job runs only on a pull request from a `release/` or `hotfix/` branch (and
+   when the workflow is started by hand), as only `release verify` runs that gate.
 4. `qargi release start VERSION` cuts `release/VERSION` from develop (only from a head that passed the
    suite) and bumps `VERSION` and the changelog date. Like the pushes and merges it prints a plan (the branch, the base, the files
    the bump commit changes) and a token first, and applies with `--plan TOKEN --approved "<your words>"`, which also writes the

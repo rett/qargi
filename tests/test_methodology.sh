@@ -43,6 +43,21 @@ done
 wfg=$(doc "$gout" .github/workflows/test.yml)
 [ "$(grep -c '^    name: ' <<<"$wfg")" = 3 ] && grep -qx '    name: "unit: fast"' <<<"$wfg" && grep -qx '  gate1:' <<<"$wfg" && grep -qx '  gate3:' <<<"$wfg" && grep -qx "          make 'pack it'" <<<"$wfg" && ! grep -q 'run: make check' <<<"$wfg" && ! grep -qx '  test:' <<<"$wfg" \
   && ok "gates: the workflow has a job for each gate, named after it (a name with a colon is quoted)" || no "gates workflow: $wfg"
+# a feature-tier gate runs on every pull request; a release-tier gate only on release and hotfix branches (and by hand), as only a release runs it
+[ "$(grep -c '^    if: ' <<<"$wfg")" = 3 ] && [ "$(grep -c "^    if: \${{ 'feature' == 'feature' || startsWith(github.head_ref, 'release/') || startsWith(github.head_ref, 'hotfix/') || github.event_name == 'workflow_dispatch' }}\$" <<<"$wfg")" = 2 ] \
+  && [ "$(grep -c "^    if: \${{ 'release' == 'feature' || startsWith(github.head_ref, 'release/') || startsWith(github.head_ref, 'hotfix/') || github.event_name == 'workflow_dispatch' }}\$" <<<"$wfg")" = 1 ] \
+  && ok "gates: each job has a condition by tier (release tier only on release and hotfix branches)" || no "gates workflow conditions: $(grep -n 'if:' <<<"$wfg")"
+if python3 -c 'import yaml' 2>/dev/null; then
+  python3 -I -c 'import sys, yaml
+d = yaml.safe_load(sys.stdin.read())
+j = d["jobs"]
+sys.exit(0 if len(j) == 3 and all(isinstance(v["if"], str) and v["if"].startswith("${{") for v in j.values()) else 1)' <<<"$wfg" \
+    && ok "gates: the rendered workflow is valid YAML and every job has its condition" || no "gates workflow does not parse as expected"
+fi
+doc "$gout" CONTRIBUTING.md | grep -q 'run in parallel, not in order; a job of a release-tier gate runs only on a pull request from' && ! doc "$($DA methodology files gitflow --param project=acme --param test_command='make suite' 2>&1)" CONTRIBUTING.md | grep -q 'in parallel' \
+  && ok "gates: CONTRIBUTING says CI runs the gates in parallel and the release tier only on release branches" || no "gates CONTRIBUTING lacks the CI clause"
+mkdir -p "$T/ci/.github/workflows"; doc "$gout" .github/workflows/test.yml > "$T/ci/.github/workflows/test.yml"; jq -n --argjson g "$GJ" '{gates: $g}' > "$T/ci/answers.json"
+[ -z "$(python3 lib/gates.py scan "$T/ci/answers.json" "$T/ci")" ] && ok "gates: the CI scan of release verify matches every job of the rendered workflow" || no "gates scan: $(python3 lib/gates.py scan "$T/ci/answers.json" "$T/ci")"
 grep -qF '${{ github.ref }}' <<<"$wfg" && ! grep -q '{{#\|{{/\|{{^\|{{gate' <<<"$gout" && ok "gates: no template marker is left and the file's own {{ }} syntax stays" || no "gates markers: $(grep -n '{{' <<<"$gout")"
 [ "$gout" = "$($DA methodology files gitflow --param project=acme --param test_command="make suite" --param "gates=$GJ" 2>&1)" ] && ok "gates: the output is deterministic" || no "gates: output differs between runs"
 nog=$($DA methodology files gitflow --param project=acme --param test_command="make suite" 2>&1)
