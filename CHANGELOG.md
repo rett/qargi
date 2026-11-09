@@ -7,6 +7,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `qargi doctor [PROJECT] [--json] [--strict]`: a read-only check of the host, first slice. One line per check, `ok|warn|unknown  name: detail`, and under a warning the lines that say
+  what you can do (nothing is run for you). The exit status is 0 whatever it finds, or 1 with `--strict` when a check warns. Four checks: `remove-ipc` warns when logind has
+  `RemoveIPC` on (read with `busctl`, `QARGI_BUSCTL`) and the user has no linger (`loginctl`, `QARGI_LOGINCTL`), because logind then removes what lives in `/dev/shm` when the last
+  session ends, and prints the drop-in `/etc/systemd/logind.conf.d/remove-ipc.conf` or `loginctl enable-linger`; `guard` warns when `qargi __guard` is not on `PATH` or does not
+  answer as the guard (and when a member of the project is missing, stale or edited); `shm` warns on less than 10% free under `/dev/shm` (`QARGI_RUN_TMP`) or on an orphaned `qargi-run.*`
+  directory; `window-source` names where the context-window table of the project's runtime comes from and warns on a model id of the project's roles that is not in it. Without
+  systemd or a tool a check says `unknown`. A member may run it. The orphan listing of `qargi local clean --orphans` moved to `lib/orphans.sh` so both read the same code; `clean --orphans` prints what it printed.
 - `qargi backlog`: a generic backlog kept in a markdown file that the new project answer `backlog.file` names (a path, `~/...`, or relative to the repository; it may be outside the
   repository, a memory store for instance; `project set` and `project validate` check it). An item is a top-level list line `- [ID] text` (ID a lowercase slug of two characters or
   more) with its indented lines; any other top-level list line is listed as unnumbered. `qargi backlog list [--json]` shows the open items and flags a duplicated id.
