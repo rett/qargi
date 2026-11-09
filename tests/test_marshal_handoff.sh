@@ -124,6 +124,18 @@ jq '.test_command = "false"' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c
 H f1
 grep -q "another test command" "$T/o" && ok "suite: a run of another test command does not count" || no "SPEC suite other command: $(sed -n '/== features/,/== marshal/p' "$T/o")"
 jq '.test_command = "true"' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"
+# with declared gates the run's command is `gates: NAME=COMMAND; ...`: a feature verified at the tip reads as at-tip, a changed gate does not count
+jq '.gates = [{name:"lint",command:"true",tier:"feature"},{name:"unit",command:["true"],tier:"feature"},{name:"pack",command:"true",tier:"release"}]' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"
+H f1
+grep -q "another test command" "$T/o" && ok "gates: the run of test_command is not the run of the gates" || no "SPEC gates, old record: $(sed -n '/== features/,/== marshal/p' "$T/o")"
+run "$DA" feature verify f1; rc=$?
+[ $rc = 0 ] && jq -e '.command == "gates: lint=true; unit=true"' "$S/releases/app-feature_f1.json" >/dev/null && ok "setup: feature verify f1 with gates records their identity" || no "setup: gated verify rc=$rc $(out)"
+H f1
+grep -q "whole suite: pass at this tip" "$T/o" && ok "gates: a feature verified at the tip reads as at-tip" || no "SPEC gates at tip: $(sed -n '/== features/,/== marshal/p' "$T/o")"
+jq '.gates[0].command = "true && true"' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"
+H f1
+grep -q "another test command" "$T/o" && ok "gates: a changed gate command does not count" || no "SPEC gates changed: $(sed -n '/== features/,/== marshal/p' "$T/o")"
+jq 'del(.gates)' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"
 
 # --- every open feature without NAME
 H; rc=$?

@@ -228,7 +228,7 @@ gates_load() {
   [ "$rc" = 0 ] || die "$out"
   [ -n "$out" ] || return 0
   GATES=$out
-  TESTCMD=$(jq -r 'if length == 0 then "gates: none" else "gates: " + (map("\(.name)=\(.command)") | join("; ")) end' <<<"$GATES")
+  TESTCMD=$(python3 -I "$(dirname "$0")/gates.py" identity "$af" "$@") || die "the gates of the answers cannot be read"   # the one place the identity is built (lib/gates.py)
 }
 # gates_need TIERS -> refuses when gates are declared and none has those tiers (a verify of nothing would pass)
 gates_need() { [ "${GATES:-}" != "[]" ] || die "the answer gates declares no gate of tier $1: add one (qargi project set $PROJ gates '[...]'); there is nothing to run"; }
