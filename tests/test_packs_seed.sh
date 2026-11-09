@@ -177,6 +177,10 @@ if [ -d "$PK/skills" ] && [ -f "$PK/baseline.json" ]; then
   # the numbering rule lives in keep-a-changelog alone, and a seeded shipped pack has its own content hash as both the record and the shipped hash
   grep -q "unnumbered" "$LIB/skills/keep-a-changelog/SKILL.md" && grep -q "renumber" "$LIB/skills/keep-a-changelog/SKILL.md" && ! grep -q "unnumbered" "$LIB/skills/gitflow-member/SKILL.md" \
     && ok "shipped pack keep-a-changelog tells a member to use unnumbered items and that the lead renumbers (gitflow-member leaves it there)" || no "the numbering rule is not in keep-a-changelog alone"
+  # declared gates: the member pack and the lead's flow skill say that verify runs them in order, stopping at the first failure
+  grep -qi "declare gates" "$PK/skills/gitflow-member/SKILL.md" && grep -q "stopping at the first failure" "$PK/skills/gitflow-member/SKILL.md" && grep -q '`feature verify` and `release verify`' "$PK/skills/gitflow-member/SKILL.md" \
+    && grep -q 'declare `gates`' "$ROOT/skills/qargi-flow/SKILL.md" && grep -q "stop at the first failure" "$ROOT/skills/qargi-flow/SKILL.md" && grep -q "only the checks of its own change" "$ROOT/skills/qargi-flow/SKILL.md" \
+    && ok "gitflow-member and qargi-flow tell that declared gates run in order and stop at the first failure, and that a member runs only its own checks" || no "the declared gates are not in gitflow-member and qargi-flow"
   for n in gitflow-member keep-a-changelog; do
     [ "$(jq -r .sha256 "$LIB/skills/$n/.pack.json")" = "$(jq -r .shipped "$LIB/skills/$n/.pack.json")" ] && [ "$(jq -r .sha256 "$LIB/skills/$n/.pack.json")" = "$(hash_of "$PK/skills/$n")" ] && ok "shipped pack $n is recorded with the content hash of packs/skills/$n" || no "shipped pack $n hash"
   done
