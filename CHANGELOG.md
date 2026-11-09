@@ -6,6 +6,17 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Declared gates: the project answer `gates` is an ordered list of `{name, command, tier}` (`command` a command line or a list of words, as `test_command`; `tier` `feature` or
+  `release`; names unique and non-empty). `qargi project set` and `project validate` check it and name the entry that is wrong. `qargi feature verify` then runs the gates of tier
+  `feature` in order and stops at the first failure; `qargi release verify` runs the feature gates, then the release gates. Declared gates replace `test_command` and
+  `release.test_command` (a note says when one of them is not the command of a gate); the verdict line is still `full suite: pass|fail at SHA`, so `feature finish` and the
+  release steps work as before. The run record lists each gate with its result (`pass`, `fail`, `not run`), `feature status` and `release status` show a `gates:` line, and a failed
+  run names the failing gate. Without the answer nothing changes. A member's `project set` of `gates` is refused by the guard, as it is for `test_command`.
+- `qargi release verify` reads `.github/workflows/*.yml` and `*.yaml` of the tree it verifies (standard library only, no YAML dependency) and warns on standard error, naming each
+  CI job whose name and id match no declared gate name; a job whose name cannot be read (an expression, a block scalar, a flow mapping) is a note and never a failure.
+  `release verify --strict` refuses, before anything runs, on any such job. With no workflow it prints nothing new; with workflows and no gate declared every job is named.
+
 ## [0.2.6] - 2026-11-07
 
 ### Added
