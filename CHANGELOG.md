@@ -10,6 +10,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `qargi local clean RUN` also removes the saved scrub record of the run (`scrub_ok/RUN-ID` in the state, written by `qargi review check`), so a run that was checked and never applied leaves no record behind.
 - `qargi release step` tells a failed write of the step record in plain words (the record is being written by another command; run it again, or with `--again` when the other command marked the step first) instead of printing raw `jq` text. The exit status is unchanged.
 
+### Changed
+- Every plan-token check now ignores `QARGI_NESTED`: the checks of branch prune, credential setup lead-push, the marshal owner verbs, project new, attach and adopt, provider accept and the cloud instances verbs (agent update, normalize, refresh-prompt) are written `QARGI_NESTED='' need_plan`, as those of release, local, feature, upstream and backlog already were, so a nested environment can no longer apply a plan without its token. The verbs that clear the variable themselves (memory, tier writes, packs, project link) are unchanged, and canon apply still honours it because provisioning runs it that way. A new test, `tests/test_nested_plan.sh`, covers one verb of each file.
+
 ## [0.2.7] - 2026-11-09
 
 ### Added
