@@ -2266,6 +2266,13 @@ def key_named(word, here, recursive, assigned=None):
     return None
 
 
+def key_unsure_text(prog, word):
+    """The refusal of a word the guard cannot read to the end: a variable, a substitution or an extglob pattern where the name could lead into a credentials directory."""
+    return MarshalReason("%s on %s: the guard cannot tell what the variable, substitution or pattern in this word names, so it cannot rule out the lead's signing key "
+                         "(credentials/%s*); write the name out in the command (a literal path such as credentials/other.token, no variable or substitution in or after the "
+                         "directory), or report what you need in your task output" % (prog or "a redirection", word, KEY_PREFIX))
+
+
 def key_refusal_text(prog, word, tool=None):
     return MarshalReason("%s on %s would read the marshal's signing key (credentials/%s*); %s" % (tool or prog or "a redirection", word, KEY_PREFIX, KEY_NOTE))
 
@@ -2329,7 +2336,7 @@ def key_read(toks, i, here, assigned=None):
             continue
         named = key_named(t, here, mode, assigned)
         if named:
-            return key_refusal_text(prog, named)
+            return key_unsure_text(prog, named) if UNREAD.search(named) else key_refusal_text(prog, named)
     return None
 
 

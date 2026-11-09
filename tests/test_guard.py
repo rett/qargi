@@ -2837,6 +2837,23 @@ class TrimmedExpansions(HookCase):
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("signing key", r.stderr, c)
 
+    def test_a_word_the_guard_cannot_read_is_not_said_to_read_the_key(self):
+        """A variable, a substitution or an extglob pattern after a path in the credentials directory is refused because the guard cannot tell what it names: the reason
+        says so and how to write the command (a literal name), not that the command would read the key. A glob or a plain name that does reach the key says it would."""
+        cred = self.credentials()
+        for c in ("cat %s/$NAME.token", "cat %s/${X:-ma}rshal_ed25519", "cd %s; cat $X", "cat %s/`printf m`arshal_ed25519", "cat %s/!(other.token)", "cat %s/../cred*/${X:-m}*"):
+            r = self.bash(c % cred if "%s" in c else c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("the guard cannot tell what the variable, substitution or pattern in this word names", r.stderr, c)
+            self.assertIn("cannot rule out the lead's signing key", r.stderr, c)
+            self.assertIn("write the name out in the command (a literal path", r.stderr, c)
+            self.assertNotIn("would read the marshal's signing key", r.stderr, c)
+        for c in ("cat %s/marshal_ed25519", "cat %s/m*", "d=%s; cat $d/marshal_ed25519", "cp -r %s /tmp/o"):
+            r = self.bash(c % cred)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("would read the marshal's signing key", r.stderr, c)
+            self.assertNotIn("cannot tell", r.stderr, c)
+
     def test_a_variable_the_line_sets_to_something_else_stays_allowed(self):
         cred = self.credentials()
         for c in ("d=src; cat $d/marshal_ed25519", "d=%s; cat $d/other.token", 'd=%s; cat "$d"/other.token', "d=%s; ls $d", "d=%s; echo $d", "d=%s; stat $d/marshal_ed25519",

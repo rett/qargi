@@ -77,6 +77,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with or without `shopt -s extglob` in the line: the pattern is read as `*`) are refused when they lead into the credentials directory. A name whose value the guard
   cannot read (`d=$(cmd)`, a variable the line does not set) is still refused after a path in that directory only. Tests cover each form and the nearest allowed ones
   (`d=DIR; cat $d/other.token`, `d=src; cat $d/marshal_x`, a loop over other directories).
+- The reason the member guard gives for a variable, a substitution or an extglob pattern after a path in the credentials directory no longer says the command "would read the
+  signing key": it says the guard cannot tell what the word names, so it cannot rule the key out, and asks for the name written out (a literal path such as `credentials/other.token`).
+  A glob or a name that does reach the key keeps the old wording. What is refused does not change.
 - A heredoc body written in a line that also runs `install` is read whole again: `install --strip-program=PROG` runs PROG, so `install` is no longer one of the commands that
   run nothing (`chmod`, `mkdir`, `ls` ...). `coproc` starts the command after it, so a body line that starts with it is read as the lead-only verb it starts.
 
