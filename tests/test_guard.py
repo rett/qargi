@@ -4491,6 +4491,27 @@ class FifthReview(HookCase):
               'cd "$HOME" && echo x > f', "cd $d && echo x > $HOME/f", "env -C sub touch f", "builtin cd sub && touch f"]
         self.assertEqual(self.not_allowed(ok, self.clone, None), [])
 
+    def test_a_cd_through_a_variable_the_line_assigns_keeps_the_directory_unknown(self):
+        """d=src; cd $d: bash can give d a value the guard does not follow (read, printf -v, a nameref, case conversion, select, `for d` with no `in`) or split it into an
+        option and a directory, so the value the line gives is a guess: the directory stays unknown and a relative write after it is refused, as it was before the line's
+        assignments were read."""
+        cred, s = os.path.dirname(self.key), os.path.dirname(self.skill)
+        bad = ["d=src; read d < list; cd $d; echo x > a", "d=src; read -r d < list; cd $d; echo x > a", "d=src; read d <<< $HOME/.claude/skills; cd $d; echo x > a",
+               "d=src; printf -v d %s ~/.claude/skills; cd $d; echo x > a", "src=~/.claude/skills; declare -n d=src; cd $d; echo x > a", "declare -l d=SRC; cd $d; echo x > a",
+               "d=src; while read d; do cd $d; echo x > SKILL.md; done < list", "d=src; select d in ~/.claude/skills; do cd $d; echo x > a; done",
+               "d=src; set -- ~/.claude/skills; for d; do cd $d; echo x > a; done", 'd="-L %s"; cd $d; echo x > other.token' % cred, "d=src; cd $d; echo x > a",
+               "d=src; cd ${d}; echo x > a", "d=src; cd $d && echo x > a", "d=src; pushd $d; echo x > a", "d=%s; cd $d; echo x > a" % s]
+        for cls in (None, "read-only"):
+            self.assertEqual(self.not_refused(bad, self.clone, cls), [], cls)
+        ro = ["d=%s; read d < list; cd $d; echo x > r.md" % self.out, "d=%s; cd $d; echo x > r.md" % self.out]
+        self.assertEqual(self.not_refused(ro, self.clone, "read-only"), [])
+        # the documented trade-off: a directory reached through a variable the line sets is unknown even when it is plain, so this ordinary command is refused too
+        # (the way out is the directory written out: cd DIR/src)
+        self.assertEqual(self.not_refused(["base=%s; cd $base/src; cp a.py b.py" % self.clone], self.clone, None), [])
+        self.assertEqual(self.not_allowed(["cd %s/src; cp a.py b.py" % self.clone], self.clone, None), [])
+        # a variable that is only read, a literal cd and an absolute write stay allowed
+        self.assertEqual(self.not_allowed(["d=src; cat $d/a.py", "d=src; cd sub; echo x > f", "d=src; cd $d; cat a.py", "d=src; cd $d; echo x > /tmp/ok"], self.clone, None), [])
+
     # --- G8: ${NAME:-x}, ${NAME%/} and the like are read by the value of NAME, or refused
     def test_a_braced_expansion_with_an_operator_is_read_by_its_variable_or_refused(self):
         h, cred = os.path.join(self.t, "home"), os.path.join(self.conf, "credentials")

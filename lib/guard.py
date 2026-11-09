@@ -1093,13 +1093,13 @@ def join_assignments(outer, inner):
 def moved(dirs, args, certain, visited, cdpath=False, assigned=None):
     """The directories the shell may be in after `cd ARGS` from any of dirs. certain: the cd is a plain command of the top level, so it changes the
     directory when the directory is there (a directory that is not there yet may be made by a command before it: both are kept). Anything else keeps
-    the directory it was in as well. `cd -` is any directory the line has been in. assigned: the variables the line sets (a `cd $d` goes to each value)."""
+    the directory it was in as well. `cd -` is any directory the line has been in. assigned: the variables the line sets (a `cd $d` goes to each value, and the directory stays unknown too: bash may give the name another value or split it)."""
     ops = [t for t in args if t not in CD_FLAGS]
     if ops == ["-"]:
         return list(dict.fromkeys(dirs + visited))
     target = ops[0] if ops else "~"
     targets = with_assigned(target, assigned, assigned.loops if assigned else ())
-    unknown = any(UNKNOWN.search(expand_path(t)) for t in targets) or cdpath
+    unknown = any(UNKNOWN.search(expand_path(t)) for t in targets) or cdpath or targets != [target]      # a value the line gave is a guess (read, printf -v, declare -n, select or word splitting can change it), so the unknown directory stays
     certain = certain and len(ops) <= 1 and not target.startswith("-") and not unknown and len(targets) == 1
     new = [UNKNOWN_DIR] if unknown else []                    # the shell is in a directory the guard cannot name: relative writes are refused there (unknown_dir_refusal)
     for d in dirs:

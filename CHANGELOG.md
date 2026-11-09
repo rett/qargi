@@ -88,6 +88,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`d=src; d=$(cmd)`) is no longer taken for its other value, and `d=$(cmd)` is no longer read as an empty string. `$LIB/marshal_refs.py` is refused, as `${LIB}/marshal_refs.py`
   already was. A variable before a name that does not start with `marshal_` (`$X/other.token`) is allowed. Still not seen: an unresolved directory followed by a glob or
   another name (`$X/m*`, `cd $X; cat *`), a bare `$d` that stands for the credentials directory, and a script written and run.
+- A `cd` to a word with a variable keeps the directory unknown for a relative write after it, also when the line assigns the variable in plain words (a write after
+  `d=src; cd $d` is refused, as it was before the assignments of the line were read): bash can give the name another value the guard does not follow (`read`, `printf -v`,
+  a nameref, `declare -l`, `select`, `for d` with no `in`) or split the value into an option and a directory (`d="-L DIR"; cd $d`). The directories the values name are
+  still judged for a read of the key (`d=DIR; cd $d; cat *`). The one ordinary command this refuses is a relative write after `base=DIR; cd $base/src`; write the
+  directory out (`cd DIR/src`).
 - The member guard judges a line of a thousand dependent assignments (`x1=$x0/b; x2=$x1/b; ... x1000=$x999/b`) in under a second; it refused it as too slow after 5 seconds, the time
   growing with the cube of the chain. The real path of a long name is now walked one name at a time and, from the first name that is not there, taken as written, so a path
   under a directory that does not exist costs the names that exist (it is the same path `os.path.realpath` gives, tested on links, `.` and `..`). The values of the assignments
