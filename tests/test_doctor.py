@@ -48,6 +48,21 @@ def tree(path):
     return out
 
 
+def snapshot(*paths):
+    """Everything below each path (and the path itself, or its absence) with type, mode, size and modification time: what must be the same after a read."""
+    out = {}
+    for top in paths:
+        if not os.path.lexists(top):
+            out[top] = None
+            continue
+        for d, ds, fs in os.walk(top):
+            for n in [""] + ds + fs:
+                p = os.path.join(d, n) if n else d
+                st = os.lstat(p)
+                out[p] = (stat.S_IFMT(st.st_mode), stat.S_IMODE(st.st_mode), st.st_size, st.st_mtime_ns)
+    return out
+
+
 class Base(unittest.TestCase):
     def setUp(self):
         self.t = tempfile.mkdtemp(prefix="doctor.")
@@ -320,6 +335,64 @@ class Command(Base):
         self.doctor("--json")
         self.assertEqual(tree(self.shm), before)
         self.assertFalse(os.path.exists(os.path.join(os.environ["QARGI_STATE"], "audit.log")))
+
+    def test_nothing_is_created_or_changed_on_a_host_that_never_ran_qargi(self):
+        """The data directories of qargi are absent (as on a new host): doctor makes none of them, nor their files, and does not change the mode of anything."""
+        home = os.path.join(self.t, "home")
+        os.makedirs(home)
+        conf, state = os.path.join(self.t, "d", "conf"), os.path.join(self.t, "d", "state")
+        self.orphan("AAAAAA", 5)                                  # the orphan scan reads the registry of the state directory, which is not there
+        for args in ((), ("--json",)):
+            before = snapshot(home, conf, state, os.path.join(self.t, "d"))
+            rc, out, err = self.doctor(*args, HOME=home, QARGI_CONF=conf, QARGI_STATE=state)
+            self.assertEqual(rc, 0, out + err)
+            self.assertIn("qargi-run", out)                           # the scan did run
+            self.assertEqual(snapshot(home, conf, state, os.path.join(self.t, "d")), before, args)
+        self.assertFalse(os.path.lexists(conf) or os.path.lexists(state))
+
+    def test_nothing_is_created_in_the_home_when_no_location_is_named(self):
+        """Without QARGI_CONF, QARGI_STATE and QARGI_HOME the data is under HOME/.qargi: doctor leaves HOME as it was (no .qargi, no chmod of it)."""
+        home = os.path.join(self.t, "home")
+        os.makedirs(home)
+        env = {k: v for k, v in self.env.items() if k not in ("QARGI_CONF", "QARGI_STATE", "QARGI_HOME")}
+        env["HOME"] = home
+        self.orphan("AAAAAA", 5)
+        before = snapshot(home)
+        r = subprocess.run([BIN, "doctor"], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("qargi-run", r.stdout)
+        self.assertEqual(snapshot(home), before)
+        self.assertFalse(os.path.lexists(os.path.join(home, ".qargi")))
+
+    def test_the_conf_and_state_directories_are_left_as_they_are_with_a_project(self):
+        """A project is named and the directories exist with modes qargi would not set (755), with a members file but no registry: nothing is created, no mode changes."""
+        conf, state = os.environ["QARGI_CONF"], os.environ["QARGI_STATE"]
+        os.makedirs(state, exist_ok=True)
+        for d in (conf, state):
+            os.chmod(d, 0o755)
+        self.project()
+        with open(os.path.join(conf, "agents.json"), "w") as f:
+            json.dump({"schema": 2, "projects": {"app": {}}}, f)
+        os.chmod(os.path.join(conf, "agents.json"), 0o644)
+        self.orphan("AAAAAA", 5)
+        before = snapshot(conf, state, os.environ["HOME"])
+        for args in (("app",), ("app", "--json")):
+            rc, out, err = self.doctor(*args)
+            self.assertEqual(rc, 0, out + err)
+            if "--json" not in args:
+                self.assertEqual(self.lines(out)["guard"][0], "ok", out)    # the members were read (none)
+            self.assertEqual(snapshot(conf, state, os.environ["HOME"]), before, args)
+
+    def test_a_project_on_a_host_with_no_members_file_makes_none(self):
+        """No agents.json: the member check says it cannot read the members (unknown), and the file is not made by asking."""
+        self.project()
+        conf = os.environ["QARGI_CONF"]
+        self.assertFalse(os.path.exists(os.path.join(conf, "agents.json")))
+        rc, out, err = self.doctor("app")
+        self.assertEqual(rc, 0, out + err)
+        self.assertEqual(self.lines(out)["guard"][0], "unknown", out)
+        self.assertFalse(os.path.exists(os.path.join(conf, "agents.json")))
+        self.assertFalse(os.path.exists(os.path.join(conf, "instances.json")))
 
     def test_help_describes_it(self):
         r = subprocess.run([BIN, "doctor", "--help"], capture_output=True, text=True, env=self.env)
