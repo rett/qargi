@@ -5,7 +5,8 @@
 #   orphan_scan ROOT DAYS    ROOT is the parent, already checked to be a real directory and made absolute; DAYS a whole number, at least 1.
 #                            Prints one line per entry (kept ... or orphan ...) and sets ORPH_LIST (the orphans, each "PATH MTIME"), ORPH_KEPT and ORPH_TOTAL.
 #   orphans.sh ROOT DAYS     the same from the command line: the lines, then "total N orphan M kept K"; exit 2 when ROOT is no directory.
-type reg_load >/dev/null 2>&1 || . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# Run as a program (qargi doctor does) it only reads: lib.sh is loaded without its setup, so a host that never ran qargi gets no directory or file from it.
+type reg_load >/dev/null 2>&1 || DA_NOSETUP=1 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 orphan_scan() {
   local oroot=$1 days=$2 nowe cutoff d t e mt age rd rst

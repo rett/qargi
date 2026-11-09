@@ -101,6 +101,10 @@ jq -e '.verb == "backlog done" and (.token | test("^[0-9a-f]+$")) and (.plan | c
 out=$(bldone add-cache --evidence "merged in feature/cache, suite green" --plan "$t" 2>&1); [ -n "$(tok <<<"$out")" ] && [ "$(sum "$MEM")" = "$before" ] && ok "a token without the approval is the plan again" || no "token alone: $out"
 out=$(bldone add-cache --evidence "merged in feature/cache, suite green" --plan 000000000000 --approved go 2>&1); rc=$?
 [ $rc != 0 ] && grep -q 'the plan changed or --plan is missing' <<<"$out" && [ "$(sum "$MEM")" = "$before" ] && [ ! -e "$ARCH" ] && ok "a wrong token is refused and nothing changes" || no "wrong token rc=$rc: $out"
+out=$(QARGI_NESTED=1 bldone add-cache --evidence "merged in feature/cache, suite green" --approved go 2>&1); rc=$?
+[ $rc != 0 ] && grep -q 'the plan changed or --plan is missing' <<<"$out" && [ "$(sum "$MEM")" = "$before" ] && [ ! -e "$ARCH" ] && ok "done with no token under the nested variable is refused, the backlog and archive did not change" || no "nested done, no token rc=$rc: $out"
+out=$(QARGI_NESTED=1 bldone add-cache --evidence "merged in feature/cache, suite green" --plan 000000000000 --approved go 2>&1); rc=$?
+[ $rc != 0 ] && grep -q 'the plan changed or --plan is missing' <<<"$out" && [ "$(sum "$MEM")" = "$before" ] && [ ! -e "$ARCH" ] && ok "and a wrong token is refused under the nested variable too" || no "nested done, wrong token rc=$rc: $out"
 out=$(bldone add-cache --evidence "another set of words" --plan "$t" --approved go 2>&1); rc=$?
 [ $rc != 0 ] && [ "$(sum "$MEM")" = "$before" ] && ok "the token is of the evidence too" || no "other evidence rc=$rc: $out"
 out=$(bldone nope-x --evidence e 2>&1); rc=$?

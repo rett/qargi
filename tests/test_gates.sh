@@ -113,6 +113,18 @@ $F verify gt >/dev/null 2>&1
 fc=$(jq -r .command "$rec"); $REL verify 0.9.0 >/dev/null 2>&1; rc_=$(jq -r .command "$rrec")
 [ "$fc" = "$rc_" ] && ok "with no release gate the two runs have one identity" || no "identities differ: $fc / $rc_"
 
+# --- 6b. two verifies at once keep their own gate results (the results are kept per run, as the log is)
+$F start gt2 >/dev/null 2>&1; task g2; $F merge gt2 agent/g2 >/dev/null 2>&1
+setgates "[$(gate lint 'sleep 1' feature),$(gate unit 'sleep 1' feature)]"
+$F verify gt >/dev/null 2>&1 & p1=$!
+$F verify gt2 >/dev/null 2>&1 & p2=$!
+wait "$p1" "$p2"
+want='["lint:pass","unit:pass"]'
+jq -e --argjson w "$want" '.result == "pass" and (.gates | map(.name + ":" + .result) == $w)' "$rec" >/dev/null && jq -e --argjson w "$want" '.result == "pass" and (.gates | map(.name + ":" + .result) == $w)' "$T/s/releases/app-feature_gt2.json" >/dev/null \
+  && ok "two verifies at once: each record lists its own gates once, in order" || no "overlapping verifies: $(jq -c .gates "$rec") / $(jq -c .gates "$T/s/releases/app-feature_gt2.json")"
+[ -f "$T/s/suite-logs/app.feature-gt.gates.jsonl" ] && [ -f "$T/s/suite-logs/app.feature-gt2.gates.jsonl" ] && [ ! -e "$T/s/suite-logs/app.gates.json" ] && ok "the gate results are kept per run, beside its log" || no "gate result files: $(ls "$T/s/suite-logs")"
+setgates "[$(gate lint "$(g lint)" feature)]"
+
 # --- 7. the CI job scan of release verify
 unset_gates() { jq 'del(.gates)' "$P" > "$P.new" && mv "$P.new" "$P"; }
 out=$($REL verify 0.9.0 2>&1); [ "$(grep -c 'CI ' <<<"$out")" = 0 ] && ok "no workflow: nothing new is printed" || no "no workflow: $out"

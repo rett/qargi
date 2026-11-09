@@ -36,11 +36,11 @@ def check(name, status, detail, fix=()):
     return {"name": name, "status": status, "detail": detail, "fix": list(fix)}
 
 
-def run(argv, stdin=None, cwd=None):
-    """(returncode, stdout, stderr) of a program, or (None, '', reason) when it is not there or does not answer. The environment is the caller's."""
+def run(argv, stdin=None, cwd=None, env=None):
+    """(returncode, stdout, stderr) of a program, or (None, '', reason) when it is not there or does not answer. The environment is the caller's, plus env."""
     try:
         r = subprocess.run(argv, input=stdin, capture_output=True, text=True, timeout=PROBE_SECS, cwd=cwd,
-                           stdin=None if stdin is not None else subprocess.DEVNULL)
+                           env=dict(os.environ, **env) if env else None, stdin=None if stdin is not None else subprocess.DEVNULL)
     except FileNotFoundError:
         return None, "", "%s not found" % argv[0]
     except PermissionError:
@@ -113,8 +113,11 @@ PROBES = (("a harmless call", "true", 0), ("git push", "git push origin HEAD", 2
 
 
 def member_states(project):
-    """[(member, state)] of the project's members whose file is missing, stale or edited (qargi agent list: the one place that knows), or None when that cannot be read."""
-    rc, out, _ = run([os.path.join(os.path.dirname(HERE), "bin", "qargi"), "agent", "list", "--project", project])
+    """[(member, state)] of the project's members whose file is missing, stale or edited (qargi agent list: the one place that knows), or None when that cannot be read
+    (also when the host has no members file: agent list runs here without its setup, which would have made it)."""
+    if not os.path.isfile(os.path.join(PA.conf(), "agents.json")):
+        return None    # no member was ever added on this host; agent list would make the file, and doctor makes nothing
+    rc, out, _ = run([os.path.join(os.path.dirname(HERE), "bin", "qargi"), "agent", "list", "--project", project], env={"DA_NOSETUP": "1"})
     if rc != 0:
         return None
     found = []

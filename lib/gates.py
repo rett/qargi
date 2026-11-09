@@ -10,6 +10,9 @@
                                       with the command as one line (a list of words is shell-quoted); exit 1 and the problem
                                       on standard error when the answers' gates are not valid. Nothing is printed when the
                                       answers declare no gate.
+  gates.py identity ANSWERS TIER...   the identity of those gates, the text a run record keeps as its command: "gates: NAME=COMMAND; ..." in the order
+                                      of select, or "gates: none" when no declared gate has those tiers; nothing is printed when the answers
+                                      declare no gate (test_command stands then). Exit 1 as select when the gates are not valid.
   gates.py scan ANSWERS TREE          reads TREE/.github/workflows/*.yml and *.yaml and compares the jobs with the declared
                                       gate names; one tab-separated line per finding: KIND, FILE, JOB ID, NAME. KIND is
                                       unmatched (a job that matches no gate name; NAME is its name: text, empty when it has
@@ -94,6 +97,15 @@ def declared(af):
 def select(gates, tiers):
     """The gates of the tiers, the tiers in the order named (feature gates, then release gates), each in the order declared."""
     return [{"name": g["name"], "tier": g["tier"], "command": command_line(g["command"])} for t in tiers for g in gates if g["tier"] == t]
+
+
+def identity(gates, tiers):
+    """The identity of the gates of those tiers (what the run record keeps as `command`, and what a later run is compared with):
+    "gates: NAME=COMMAND; ..." or "gates: none". None when no gate is declared: test_command is the identity then."""
+    if not gates:
+        return None
+    sel = select(gates, tiers)
+    return "gates: " + "; ".join("%s=%s" % (g["name"], g["command"]) for g in sel) if sel else "gates: none"
 
 
 # ---- the CI scan
@@ -214,7 +226,7 @@ def scan(gates, tree):
 
 
 def main(argv):
-    if len(argv) < 3 or argv[1] not in ("select", "scan"):
+    if len(argv) < 3 or argv[1] not in ("select", "identity", "scan"):
         print(__doc__.strip().split("\n\n")[0], file=sys.stderr)
         return 2
     try:
@@ -222,13 +234,13 @@ def main(argv):
     except ValueError as e:
         print(e, file=sys.stderr)
         return 1
-    if argv[1] == "select":
+    if argv[1] in ("select", "identity"):
         if gates:
             bad = [t for t in argv[3:] if t not in TIERS]
             if bad:
                 print("not a tier: %s" % ", ".join(bad), file=sys.stderr)
                 return 2
-            print(json.dumps(select(gates, argv[3:])))
+            print(json.dumps(select(gates, argv[3:])) if argv[1] == "select" else identity(gates, argv[3:]))
         return 0
     if len(argv) != 4:
         return 2

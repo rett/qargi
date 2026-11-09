@@ -49,6 +49,18 @@ class Selection(unittest.TestCase):
         self.assertEqual(gates.select(gs, ["feature"])[1]["command"], "make 'two words'")
 
 
+class Identity(unittest.TestCase):
+    def test_the_identity_of_the_gates_of_the_tiers(self):
+        gs = [G("a"), G("b", tier="release"), G("c", ["make", "two words"])]
+        self.assertEqual(gates.identity(gs, ["feature"]), "gates: a=make test; c=make 'two words'")
+        self.assertEqual(gates.identity(gs, ["feature", "release"]), "gates: a=make test; c=make 'two words'; b=make test")
+
+    def test_none_when_no_declared_gate_has_the_tiers_and_nothing_when_none_is_declared(self):
+        self.assertEqual(gates.identity([G(tier="release")], ["feature"]), "gates: none")
+        self.assertIsNone(gates.identity([], ["feature"]))
+        self.assertIsNone(gates.identity(None, ["feature"]))
+
+
 class Parsing(unittest.TestCase):
     def jobs(self, text):
         return gates.parse_jobs(text)
@@ -131,6 +143,16 @@ class Cli(unittest.TestCase):
         p = self.run_cli({"gates": [G(), G("r", tier="release")]}, "select", "release")
         self.assertEqual(p.returncode, 0)
         self.assertEqual(json.loads(p.stdout), [{"name": "r", "tier": "release", "command": "make test"}])
+
+    def test_identity_prints_the_text_a_run_record_keeps(self):
+        p = self.run_cli({"gates": [G(), G("r", tier="release")]}, "identity", "feature")
+        self.assertEqual((p.returncode, p.stdout), (0, "gates: test=make test\n"))
+        p = self.run_cli({"gates": [G(tier="release")]}, "identity", "feature")
+        self.assertEqual(p.stdout, "gates: none\n")
+        p = self.run_cli({"test_command": "true"}, "identity", "feature")
+        self.assertEqual((p.returncode, p.stdout), (0, ""))
+        p = self.run_cli({"gates": [G(), G()]}, "identity", "feature")
+        self.assertEqual(p.returncode, 1)
 
     def test_select_refuses_invalid_gates(self):
         p = self.run_cli({"gates": [G(), G()]}, "select", "feature")
