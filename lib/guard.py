@@ -44,7 +44,7 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     the last two have names a project may use for its own scripts, so only the files in the lib directory of the tool or of the installed
     copy count, found from the directory the command runs in);
   - qargi project init (it stores a whole answers file, so it is a way to models.extensions and models.accept_no_barrier, which have gated verbs;
-    found like the skill verbs), and qargi project set of any models answer, of release.*, of test_command, of env.*, of site.* (the commands, environment and site the lead later runs or builds), of packs.* (the opt-out of the render check), of git.* and review.* (the identity and the author rule qargi review apply gives the commits it applies, and the scrub command and trailer policy qargi review check runs), of runs.* (the refs that verify and clean accept as a runtime's own) and of
+    found like the skill verbs), and qargi project set of any models answer, of release.*, of test_command, of gates, of env.*, of site.* (the commands, environment and site the lead later runs or builds), of packs.* (the opt-out of the render check), of git.* and review.* (the identity and the author rule qargi review apply gives the commits it applies, and the scrub command and trailer policy qargi review check runs), of runs.* (the refs that verify and clean accept as a runtime's own) and of
     roles.<role>.tools, a whole role or roles (the tools env apply installs and local prepare checks out; the other answers stay open). A project verb the guard cannot read is
     refused: set with a path that is missing or built by xargs, a variable, a substitution, a brace or a glob; and any command with the word project,
     link, unlink, set or init after it and a shell expansion or xargs in the segment (found again inside `sh -c` and `eval` strings with the quotes
@@ -106,6 +106,8 @@ Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The 
     the remote-tracking refs that `qargi local verify` compares against a run's snapshot) and `qargi upstream sync` (it fast-forwards the branch
     that carries the upstream line and journals the move, from a plan and a token), also through lib/upstream.sh and as a verb held in a
     variable; `qargi upstream review` only reads the last fetch and stays allowed, and so is `qargi ref` (record --rewrite moves an agent branch and journals it, note journals a branch the lead made; any verb, also through lib/ref.sh);
+    `qargi backlog done` (it moves an item out of the backlog file into the dated archive beside it and rewrites the file, from a plan and a token; any verb but list, also through lib/backlog.sh,
+    lib/backlog.py and a verb held in a variable) is the lead's too, and `qargi backlog list` only reads and stays allowed; qargi project set of backlog.file is refused with the answers the lead later runs;
   - a write under the features/ directory of the state ($QARGI_STATE, else <root>/state, and ~/.qargi/state), where the
     marshal keeps one record per open feature (and, beside them, the `.observed-<project>.json` clock cache of the shared-refs
     backend): decided like the other protected roots, reading stays allowed;
@@ -135,7 +137,27 @@ Signing key: the one credential a member may not even read is the lead's signing
   globs and symbolic links are resolved, in a `<` redirection (also one before the program, `exec 3<key`, or with no program at all), an `--opt=path` and in the text of a `-c` program. A directory that holds the key
   is refused as a source to the recursive readers (cp, rsync, tar, zip, ln, mv), not as the place they write to (`cp src ~/`, `tar -C ~ -x`); grep, rg, ag, find
   with an action and Grep are refused on the credentials directory itself only (a search that starts above it, `grep -r TODO ~`, is no read of the key; one that
-  names the key is). ls, stat and test only look at it and stay allowed; the other credentials stay readable.
+  names the key is). ls, stat and test only look at it and stay allowed; the other credentials stay readable. The subscript and the operator of a parameter expansion
+  (${arr[@]}, ${PIPESTATUS[0]}, ${#a[@]}, ${!a[@]}, ${X:-...}) are no glob, so a loop over an array is no read of the key; a default word with a glob (${X:-*}), a name
+  that starts with marshal_ and a recursive reader of a braced word still are refused. The elements of an array literal (`a=(DIR/*)`, `a+=(...)`, `declare -a a=(...)`,
+  `a=([k]=DIR/*)`) are judged as the words of `for x in WORDS` are. The plain assignments of the line (`d=DIR`, also after export, declare, typeset, local and readonly, `d+=...`,
+  `for d in WORDS`, and a value built from another variable) are read before a later word is judged: `$d` and `${d}` stand for each value the line gives d, in the words, in a
+  cd and in a string handed to eval or a shell (assignments by `read`, `printf -v`, a substitution or an array are not followed). They are resolved once each, in the order
+  of the line, so a long chain of them (`x2=$x1/b; x3=$x2/b; ...`) is judged in time in proportion to its length; a value built from other names longer than 16384 characters, or a
+  word read through variables as more than 256 words, is refused as a brace expression of more than 256 words is; a name given more than 32 values (a loop over more words
+  than that, the same name set many times) is unknown from then on, like a variable the guard cannot read, so a path through it before a name that starts with marshal_ is refused. A word that holds a variable, a backtick or
+  $(..) substitution, or an extglob pattern after a path in a credentials directory (`DIR/${X:-ma}rshal_x`, `DIR/m$X`, `DIR/`cmd`x`, `DIR/@(m)x`, or `$X` after a cd into
+  it) is refused whatever it stands for, because the name it builds could be the key; the path before it may hold a glob (`cred*/${X:-m}x`). An extglob pattern is read as
+  the glob `*`. Its reason says the guard cannot tell what the word names (a literal name is the way out); the others say the command would read the key.
+  A word whose last component starts with marshal_ (the key's name prefix) and whose earlier components hold a variable, a command substitution or a backtick that
+  is left unresolved (`$X/marshal_x`, `$(cmd)/marshal_x`, `DIR/../$X/marshal_x`, `d=$(cmd); cat $d/marshal_x`, a variable the member's shell has and the hook's environment
+  lacks, `$LIB/marshal_refs.py`) is refused with the same reason: the directory could be the credentials directory, so the way out is a literal path. A variable the line
+  assigns in plain words is resolved first and the real path is judged (`d=src; cat $d/marshal_x` stays allowed); a name the line also gives a value the guard cannot read
+  (`d=src; d=$(cmd)`) stays unresolved. A `)` or `}` with no `(` or `{` before it in the directory part counts, as the end of a substitution whose text has spaces
+  (`$(echo DIR)/marshal_x` reaches the guard cut at the space).
+  This is best-effort: the guard reads text and cannot resolve every shell construct. A directory the line only reaches through a name it cannot resolve and a name that
+  does not start with marshal_ (`$X/m*`, `$X/*`, `cd $X; cat *`, a bare `$d` that stands for the credentials directory), a script written and run, or code that reads a
+  file itself are not seen.
   pushd and popd are followed like cd (a directory stack), a text scan reads `dir//key` and `dir/./key` as `dir/key`, and ln, mv and cp -s|-l
   are refused on a credentials directory (or a directory above one) as the recursive readers are, since a link made in the same command
   is a name the guard cannot resolve yet.
@@ -143,9 +165,12 @@ Residual for marshal handoff: xargs in front of it is refused (its arguments com
 guard does not parse (a shell loop that reads a file, `parallel`, a script written earlier) are not seen; the redirect form `... < args` into a
 loop is accepted as residual, and `qargi local verify` and the lead's review of the output are what catch a note written by a member.
 Not covered: code that writes or reads a file itself (python -c, perl -e, node -e, a script written earlier and run) unless it
-names the key by its full path, a glob that expands to a protected path (for a write), a path built from a variable the guard cannot see
-(a directory assigned to a variable earlier in the command, d=...; cat $d/marshal_ed25519; a name produced by a command substitution,
-cat $(echo ...), or by an echo piped to xargs).
+names the key by its full path, a glob that expands to a protected path (for a write), a write to a path built from a variable (`p=DIR; echo x > $p/f`: the plain
+assignments of the line are followed for the reads of the key and for a change of directory, not for the target of a write), a read of a path built from a variable the guard cannot see
+(a variable the line does not assign in plain words and the hook's environment lacks, or one set from a command substitution, d=$(...), when the name after it does not
+start with marshal_ or the variable is the whole word; a name the line gives more than 32 values, a loop over more words than that, is unknown in the same way; a name produced by a command substitution, cat $(echo ...), or by an echo piped to xargs).
+A name the line assigns in plain words is taken for those values only as far as the line's own text goes: read, printf -v, a nameref, declare -l, select and word splitting can change it, which is why a cd through it
+leaves the directory unknown. The guard is best-effort and cannot resolve every shell construct.
 Reading a Bash command (passes(), segments()): a word quoted $'...' (ANSI-C) or $"..." is read as the plain string it stands for (ansi_c); then the plain, conservative split. The line is cut at every ; && || | & and newline whatever the quotes, a comment
 or a heredoc body, so a refused verb is found wherever a command could start, and it is refused as text too: `git commit -m "Docs; qargi packs seed" && make` is
 refused, and a member writes a message to a file with its file tool and commits with `git commit -F FILE`. The one narrowing (mask_data(), for the verbs that change
@@ -154,7 +179,13 @@ a skill or the marshal; push, gh and ssh are read in the whole text): when EVERY
 `git commit -m "Docs; qargi packs seed"` and a message written with `cat > msg <<'E'` are data. Another program in the line (a shell, make, a script, a
 function, an assignment, a keyword, a group), a comment, a backslash, a substitution, $'..', ${..}, a quote or heredoc never closed, or a heredoc
 delimiter that starts with # keeps the plain split; a file named in quotes (in a word with < or > or the word after one, or a file of tee) is never
-blanked. As the plain split never sees such a name whole, a word that still holds a ; | & or newline after quote removal and resolves into a protected
+blanked. A line that does hold another command still has the heredoc bodies cut out that a plain writer (echo, cat, tee, grep, git commit ...) receives and does
+not pipe on, so a script written with `cat > run.sh <<'E'` and then made executable is not read as the commands its text mentions; that holds only while every
+other command of the line looks at files, makes, moves or removes them (HARMLESS: chmod, mkdir, ls, mv ...), so a shell, make, source, a script, an alias or an export
+keeps the plain split (the file could be run there). The lines of such a body that
+start a lead-only verb (qargi or one of its scripts, also behind sudo, env, a shell, a keyword, a redirection or a continuation; the word project; QARGI_LEAD,
+QARGI_NESTED, QARGI_MEMBER_RUN; marshal_; $'..') stay, and with an unquoted delimiter so do the lines the outer shell expands (a substitution, ${..}, a backslash); a body that a shell reads
+(`bash <<E`) or a pipe carries on is read whole. As the plain split never sees such a name whole, a word that still holds a ; | & or newline after quote removal and resolves into a protected
 location (or names the signing key) is refused as a path (separator_path_refusal). A $( ), <( ), >( ) or backtick substitution, also
 inside double quotes, is a command of its own (the line is cut at it, and the text inside it is cut again on its own, so `cat <<<"$(qargi upgrade) x"` is read);
 a line continuation is read both ways; `>|` is a redirection and is not cut; the keywords and groupings that a command follows (if, then, do, !, {, (, case
@@ -197,7 +228,7 @@ JSON is still let through (exit 0), as before. Known limits outside this file: a
 JSON is a non-blocking error for the runtime and the action goes ahead, so agents/member.md sets `onFailure: "block"` and a `timeout` (a runtime that does not
 enforce `onFailure` lets such a failure through), and the frontmatter hooks of a project-level agent file run only after the workspace is trusted: until then the
 member runs without this guard."""
-import collections, fnmatch, functools, json, os, re, shlex, sys, time
+import collections, fnmatch, functools, json, os, re, shlex, stat, sys, time
 
 SEPARATOR = re.compile(r"(&&|\|\||;|\||\n|(?<![<>&])&(?![>&]))")           # the separators, kept (re.split hands them back between the pieces); no \s* around them: a long run of blanks made that quadratic
 NOCLOBBER_SEPARATOR = re.compile(r"(&&|\|\||;|(?<!>)\||\n|(?<![<>&])&(?![>&]))")
@@ -206,7 +237,7 @@ HANDOFF_SUBST = re.compile(r"(?:marshal(?:\.sh)?[\"']*\s+[\"']*handoff|marshal_h
 PROJECT_SET_SUBST = re.compile(r"project(?:\.sh)?[\"']*\s+[\"']*set[\"']*\s")   # `project set ... $(...)`: the substitution may produce a models path, and splitting it off hides that
 AUDIT_SUBST = re.compile(r"packs_audit\.py[\"']*")   # `packs_audit.py ... $(...)`: the substitution may produce `store`, and splitting it off hides that
 UNREADABLE = "$`{}*?[]"                                     # in a word: a variable, a substitution, a brace or a glob builds it, so the guard cannot read what it is
-EXECUTED_ANSWERS = ("release", "test_command", "env", "upstream", "site")   # the answers the lead later runs, passes to a process, fetches from or builds from (release site): a member may not set them (project set)
+EXECUTED_ANSWERS = ("release", "test_command", "gates", "env", "upstream", "site", "backlog")   # the answers the lead later runs, passes to a process, fetches from or builds from (release site): a member may not set them (project set)
 ROLE_TOOLS_PATH = re.compile(r"roles|roles\.[^.]+|roles\.[^.]+\.tools(?:\..*)?")   # roles.<role>.tools: what env apply installs and local prepare checks out; a whole role, or all of them, holds it
 IDENTITY_ANSWERS = ("git", "review")   # git.author (the author review apply gives the applied commits) and review.keep_author (keep the member's instead): the lead's, a member may not set them (project set)
 PROJECT_VERBS = ("set", "init", "link", "unlink")           # the project verbs a member may not run (set: the models answers; init: the whole file; link, unlink: what a session loads)
@@ -227,7 +258,7 @@ GIT_OUTPUT_DIRS = {"format-patch", "archive"}                    # git subcomman
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
 SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
            "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "project_link.py", "gated_answers.py", "project.sh", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py", "local_run.py", "local.sh", "release.sh", "release_sign.py",
-           "agent.sh", "team.sh", "env.py", "env_apply.py", "branch.sh", "changelog.sh", "changelog_numbers.py", "upstream.sh", "ref.sh", "jsonplan.py")
+           "agent.sh", "team.sh", "env.py", "env_apply.py", "branch.sh", "changelog.sh", "changelog_numbers.py", "upstream.sh", "backlog.sh", "backlog.py", "ref.sh", "jsonplan.py")
 # the command and the scripts behind the refused verbs (packs_link.py is packs link|unlink, packs_audit.py store is skill accept|unaccept,
 # marshal_handoff.py is marshal handoff: the shell verbs call them, and a member could call them directly with a hand-made inputs file;
 # linker.py, the link engine packs_link.py calls, is packs link, and render.py renders member definitions and runs the command a definition names)
@@ -250,6 +281,7 @@ MARSHAL_SIGNING = {"key": "manages the marshal's signing key", "signers": "manag
                    "resign": "signs a marshal record with the lead's key"}      # the verbs of the signed records, each refused with its own reason
 MEMBER_MARK = "QARGI_MEMBER_RUN"                             # the variable `qargi local run` puts in a member's environment (marshal_refs.in_member_run reads it): setting or unsetting it is refused
 FEATURE_OPEN = ("", "list", "status", "merge", "sync")       # the feature verbs that start, finish or verify nothing; status, merge and sync still renew the lead's own lease (check --renew), so what keeps a member from renewing it is the member mark (QARGI_MEMBER_RUN) and the run directory it works in, not this list (the rest writes, or is unknown)
+BACKLOG_OPEN = ("", "list")                                 # the backlog verbs that only read: done moves an item out of the backlog file into the archive (the rest is unknown)
 UPSTREAM_OPEN = ("", "review")                               # the upstream verbs that only read: status fetches into the lead's repository and sync moves a branch (the rest is unknown)
 LEAD_BUILTINS = {"export", "declare", "typeset", "readonly", "local", "unset", "env", "read", "printf", "set", "let"}
 MARSHAL_NOTE = "the lead changes the marshal; report it in your task output"
@@ -280,6 +312,11 @@ class TooSlow(Exception):
 
 class TooManyBraces(TooSlow):
     """A brace expression that stands for more than MAX_BRACE words, or braces that together stand for more than MAX_BRACE_WORK: the call is refused."""
+
+
+class TooManyValues(TooSlow):
+    """The assignments of a line build a value from other variables longer than MAX_VALUE_LEN, or a word more than MAX_BRACE readings through the variables
+    it holds (a chain that doubles the values at every step): the call is refused, as the words past a cut would be unchecked. (A name given more than MAX_VALUES values is no refusal: it is unknown.)"""
 
 
 class TooNested(TooSlow):
@@ -777,11 +814,55 @@ MASK_TOKEN = re.compile(r"""'|"|<<<|<<-?|[;|&\n()]|[ \t]+|#|[^'"<;|&\n()# \t]+|.
 HEREDOC_WORD = re.compile(r"""[ \t]*(?:'([^'\n]*)'|"([^"\n]*)"|([^\s;&|<>()'"]+))(?=[ \t\n;&|)<>]|$)""")
 MASK_SEPARATORS = re.compile(r"[;|&\n]")
 REDIRECT_END = re.compile(r"[<>][|&]?$")                    # a word that is a redirection whose file is the next word (>, &>, 2>>, {fd}>, >|, >&)
+HARMLESS = {"chmod", "mkdir", "ls", "touch", "mv", "cp", "rm", "rmdir", "ln", "pwd", "cd", "true", "false", ":", "test", "[", "wc", "head", "tail", "stat", "date", "sleep",
+            "basename", "dirname", "realpath", "readlink", "mktemp", "du", "file", "diff", "cmp"}   # commands that run no file and no program they are given (not sort, sed, awk, find, make, env, a shell, an alias ...)
+EXPANDED_LINE = re.compile(r"\$[({\[]|`|\\")               # in the body of a heredoc whose delimiter is not quoted: what the outer shell expands (it runs a substitution) or joins to the next line
+BODY_CUT = re.compile(r"\$\(|[;&|()`\n]")
+BODY_WORDS = re.compile(r"[\s,{}]+")                         # a brace word ({qargi,x}) is read as its alternatives
+ANSI_QUOTED = re.compile(r"\$['\"]")                         # $'..' and $".." spell words the plain split reads as the string they stand for (ansi_c)
+PROSE_WORD = re.compile(r"^[A-Za-z]+[,.:;!?]?$")
+BODY_NAMES = frozenset(SCRIPTS) | {"project"}               # a line of a body that starts a command with one of these names is a lead-only verb the receiver could run later
+BODY_MARKS = ("QARGI_LEAD", "QARGI_NESTED", MEMBER_MARK, KEY_PREFIX)   # and so is a line that sets one of the lead's variables or names the signing key
+BODY_LEADS = WRAP | SHELLS | {"eval", "source", ".", "if", "then", "do", "else", "elif", "while", "until", "!", "python", "python3", "perl", "ruby", "node", "make", "doas", "coproc"}   # words that put a command after them
 
 
 def inert_command(words):
     """True when the command whose words are given does nothing with the text of its arguments or its input (see mask_data)."""
     return bool(words) and (words[0] in INERT or (words[0] == "git" and len(words) > 1 and words[1] in INERT_GIT))   # a quoted word carries \x01: it is no name here
+
+
+def runs_something(words):
+    """True when a command (given as its words) could run the file that a heredoc wrote in the same line, or change what a later command name stands for (an
+    assignment alone, alias, export, eval ...): any command but those of HARMLESS, which look at files, make them, move them or remove them and run nothing."""
+    return bool(words) and words[0] not in HARMLESS
+
+
+def starts_lead_verb(line):
+    """True when a line of a heredoc body starts a command that the guard refuses, or sets a variable it protects: a command with the name of qargi or of one of its
+    scripts (also behind sudo, env, a shell, a keyword, a redirection, a brace word: `then qargi upgrade`, `bash -c qargi upgrade`, `{qargi,x} upgrade`), the word
+    project, QARGI_LEAD, QARGI_NESTED, QARGI_MEMBER_RUN, marshal_ (the signing key), and a $'..' or $".." that could spell any of them. A name in the middle of a
+    sentence (`the project set of answers`) is no command."""
+    if ANSI_QUOTED.search(line):
+        return True
+    text = re.sub(r"[\\'\"]", "", line)
+    if any(m in text for m in BODY_MARKS):
+        return True
+    for seg in BODY_CUT.split(text):
+        led, prev = False, ""
+        for w in BODY_WORDS.split(seg):
+            if os.path.basename(w) in BODY_NAMES and (not prev or led or not PROSE_WORD.match(prev)):
+                return True
+            led = led or w in BODY_LEADS or "<" in w or ">" in w
+            prev = w
+    return False
+
+
+def readable_lines(body, quoted):
+    """The lines of a heredoc body that the plain split must still read: those that start a lead-only verb (starts_lead_verb) and, when the delimiter is not
+    quoted and the outer shell expands the body, those with an expansion or a backslash. A line continuation joins the lines first, as the plain split reads it."""
+    lines = body.replace("\\\n", "").split("\n")[:-1]
+    tick()
+    return "".join(ln + "\n" for ln in lines if (not quoted and EXPANDED_LINE.search(ln)) or starts_lead_verb(ln))
 
 
 def mask_data(command):
@@ -794,12 +875,24 @@ def mask_data(command):
     make, find, a script, a function, an assignment, a keyword, a group), a comment, a backslash, a substitution, $'..', ${..}, a quote or heredoc that
     is never closed, a heredoc delimiter that starts with # (bash reads it as a comment): the command is returned as it is, and the plain split reads all of it. A quoted string that names a file is not blanked: one in a
     word that holds a < or > (`>"a;b"`, `&>"a;b"`, `&>>"a;b"`, `x>"a;b"`, `{fd}>"a;b"`) or in the word after one (`> "a;b"`), and the command is returned
-    as it is when a quoted string with a separator is among the words of tee (the files it writes). Used for the verbs that change a skill or the
-    marshal, not for push/gh/ssh (blocked() reads the whole text); separator_path_refusal() judges such a name as a path."""
-    if not QUOTED.search(command) or MASK_BAIL.search(command):
+    as it is when a quoted string with a separator is among the words of tee (the files it writes). A line with another command in it still has its heredoc
+    bodies cut out, when the command that receives the body is one of those (and does not pipe it on: `cat <<E | sh` runs it) and every other command of the
+    line only looks at files, makes them, moves them or removes them (HARMLESS: chmod, mkdir, ls ...; not a shell, make, a script, an alias, an export, an
+    assignment alone: runs_something), so that the file cannot be run in the line: a script a member writes with a heredoc and then makes executable is not read as
+    the commands its text mentions. The lines of such a body that start a lead-only verb stay (readable_lines), so a file
+    written with `qargi upgrade` in it is refused as before; a body whose delimiter is not quoted keeps the lines the outer shell expands. Used for the verbs
+    that change a skill or the marshal, not for push/gh/ssh (blocked() reads the whole text); separator_path_refusal() judges such a name as a path."""
+    out = mask_scan(command, True)
+    return out if out != command or "<<" not in command else mask_scan(command, False)
+
+
+def mask_scan(command, strict):
+    """mask_data's reading of the command, strict (every command of the line is inert, so quotes and every body are data) or not (only the bodies that an inert
+    command receives are cut, and only their lines that cannot be a lead-only verb)."""
+    if strict and (not QUOTED.search(command) or MASK_BAIL.search(command)):
         return command
     n, pos, count = len(command), 0, 0
-    words, cur, spans, pending = [], [], [], []                 # cur: the pieces of the word being read, joined when it ends (one long word stays linear)
+    words, cur, spans, pending, docs = [], [], [], [], []      # docs: the heredocs of the command being read, pending: those of the line, waiting for its newline
     redir = False                                               # the word being read holds a < or >
     quotes = []                                                 # (start, end) of the quoted strings that hold a separator
 
@@ -824,7 +917,7 @@ def mask_data(command):
             if MASK_SEPARATORS.search(command, end, j):
                 if words and words[0] == "tee":
                     return command                          # a file tee writes: the plain split reads it, and separator_path_refusal the name
-                if not target:
+                if strict and not target:
                     quotes.append((end, j))
             cur.append("\x01")
             end = j + 1
@@ -836,7 +929,7 @@ def mask_data(command):
             m = HEREDOC_WORD.match(command, end)
             if not m or (m.group(3) or "").startswith("#"):
                 return command                              # no delimiter, or one bash reads as a comment (`cat <<#E`)
-            pending.append((next(g for g in m.groups() if g is not None), t == "<<-"))
+            docs.append((next(g for g in m.groups() if g is not None), t == "<<-", m.group(3) is None))
             end = m.end()
         elif t == "(" or t == ")":
             return command
@@ -850,12 +943,14 @@ def mask_data(command):
             cur.append(t)                                   # >| file
         elif t in (";", "|", "&", "\n"):
             end_word()
-            if words and not inert_command(words):
+            inert = inert_command(words)
+            if words and not inert and (strict or runs_something(words)):
                 return command
-            words = []
+            pending += [d + (inert and t != "|",) for d in docs]     # the receiver of a body: a command that only prints or writes, and does not pipe it on
+            docs, words = [], []
             if t == "\n" and pending:
                 s = end
-                for delim, tabs in pending:
+                for delim, tabs, quoted, receiver in pending:
                     body = s
                     while True:
                         nl = command.find("\n", s)
@@ -868,7 +963,7 @@ def mask_data(command):
                         count += 1
                         if not count & 255:
                             tick()
-                    spans.append((body, s))
+                    spans.append((body, s, quoted, receiver))
                     s = n if nl < 0 else nl + 1
                 pending = []
                 end = s
@@ -879,19 +974,22 @@ def mask_data(command):
             redir = redir or "<" in t or ">" in t
         pos = end
     end_word()
-    if pending or (words and not inert_command(words)):
+    if pending or docs or (words and not inert_command(words) and (strict or runs_something(words))):
         return command
-    cuts = sorted([(a, b, False) for a, b in quotes] + [(a, b, True) for a, b in spans])
+    if strict:
+        cuts = sorted([(a, b, None) for a, b in quotes] + [(a, b, "") for a, b, _, _ in spans], key=lambda c: c[:2])
+    else:
+        cuts = [(a, b, readable_lines(command[a:b], quoted)) for a, b, quoted, receiver in spans if receiver]
     if not cuts:
         return command
     out, last = [], 0
-    for a, b, body in cuts:
+    for a, b, keep in cuts:
         out.append(command[last:a])
-        if not body:
-            out.append(MASK_SEPARATORS.sub(" ", command[a:b]))
+        out.append(MASK_SEPARATORS.sub(" ", command[a:b]) if keep is None else keep)
         last = b
     out.append(command[last:])
-    return "".join(out)
+    text = "".join(out)
+    return command if not strict and MASK_BAIL.search(text) else text
 
 
 UNKNOWN_DIR = "\0unknown"                                   # in the directories the shell may be in: a directory the guard cannot name (`cd $(dirname $PWD)`, `cd "$d"`, `env -C $d`)
@@ -905,25 +1003,128 @@ class TooManyDirs(TooSlow):
     command may run in): the call is refused, not judged from some of them."""
 
 
-def moved(dirs, args, certain, visited, cdpath=False):
+class Assigned(dict):
+    """The plain assignments of one command line: name -> the values the line gives it (in any order: a name assigned twice has both). It is an argument of the
+    cached checks, so it is hashed by identity; line_assignments() returns the same object for the same text. loops: the names that only a `for` sets (the
+    walk of directories does not follow them: a cd in a loop runs again from the directory the last turn left)."""
+    __hash__ = object.__hash__
+    loops = frozenset()
+
+
+ASSIGN_WORD = re.compile(r"([A-Za-z_]\w*)(\+?)=(.*)\Z", re.S)
+VARIABLE = re.compile(r"\$(?:\{(\w+)[^{}]*\}|(\w+))")
+ASSIGN_BUILTINS = ("export", "declare", "typeset", "local", "readonly")
+MAX_VALUES = 32                                              # the values the line gives one name, at most (a name it gives more is unknown from then on, as a variable the guard cannot read is)
+MAX_VALUE_LEN = 16384                                        # the length of a value built from other variables, at most (no path is longer than 4096): a chain of assignments that builds on the one before then costs a bounded text at each step, so the whole line costs time in proportion to its length
+
+
+def with_assigned(word, assigned, skip=()):
+    """The words word stands for when every $NAME and ${NAME...} the line assigns is replaced by each value it gives (a ~ at the start of a value is the home directory,
+    as at the assignment); [word] when it names none. The names the line does not assign stay as written, for expand_path and the callers."""
+    if not assigned or "$" not in word:
+        return [word]
+    out, pos = [""], 0
+    for m in VARIABLE.finditer(word):
+        vals = assigned.get(m.group(1) or m.group(2))
+        if not vals or (m.group(1) or m.group(2)) in skip:
+            continue
+        out = [o + word[pos:m.start()] + (os.path.expanduser(v) if v.startswith("~") else v) for o in out for v in vals]
+        pos = m.end()
+        if len(out) > MAX_BRACE:
+            raise TooManyValues()
+    return [o + word[pos:] for o in out]
+
+
+@functools.lru_cache(maxsize=64)
+def line_assignments(command):
+    """The variables a command line sets in plain words, for the checks that read a name through a variable: NAME=VALUE in front of a command or after export, declare,
+    typeset, local and readonly, NAME+=VALUE, and the variable of `for NAME in WORDS`. A value that holds a substitution or is an array is left out (the name stays
+    unresolved, and key_named refuses a path it is placed in). The order is not followed: a name used before the line assigns it still stands for the value, which
+    refuses a little more and misses nothing.
+    The values are resolved once, in the order of the line: the table holds, for each name, the values it stands for with the names in them already replaced, so a chain
+    (`x2=$x1/b; x3=$x2/b ...`) costs one step per assignment and not one per link behind it. A name has at most MAX_VALUES values (a name the line gives more, a loop over
+    more than that many words or the same name set many times, is dropped from the table: it is unresolved from then on, as a name with a substitution is) and a value built from
+    other names is at most MAX_VALUE_LEN long (a literal text is any length); a line that goes past the length is refused (TooManyValues) and not cut. A name an earlier line of the chain has not
+    set when its value is read stays as written (`a=$b/x; b=DIR`), which key_named does not resolve: it refuses it before a name that starts with marshal_."""
+    table, looped, plain, opaque = Assigned(), set(), set(), set()
+
+    def add(name, plus, value, loop=False):
+        (looped if loop else plain).add(name)
+        if name in opaque:
+            return                                            # a name that is unresolved stays so (its other values are not taken for it)
+        if value.startswith("(") or "$(" in value or "`" in value or "<(" in value or ">(" in value:
+            opaque.add(name)                                  # the cut of the line without its substitutions reads `d=$(cmd)` as `d=`: a value the guard cannot know, not an empty one
+            table.pop(name, None)
+            return
+        vals = with_assigned(value, table)
+        cur = table.get(name, ())
+        if plus and cur:
+            vals = [c + v for c in cur for v in vals]         # an append goes on from the values the line gave, and the earlier values stay too, so the count still doubles at each append (2, 4, 8, 16, 32 after 1 to 5; the sixth passes the cap and the name is unknown)
+        merged = tuple(dict.fromkeys(cur + tuple(vals)))
+        if "$" in value and any(len(v) > MAX_VALUE_LEN for v in vals):      # a literal text is any length; a value built from others grows with each step of a chain
+            raise TooManyValues()
+        if len(merged) > MAX_VALUES:                          # past the cap the name is unknown from then on, as a variable the guard cannot read is (a loop over many words, a name set many times)
+            opaque.add(name)
+            table.pop(name, None)
+            return
+        table[name] = merged
+
+    for _kind, ps in passes(command):
+        for piece in ps:
+            tick()
+            toks, i = parsed(piece.text)
+            prog = os.path.basename(toks[i]) if i < len(toks) else ""
+            for t in list(toks[:i]) + (toks[i + 1:] if prog in ASSIGN_BUILTINS else []):
+                m = ASSIGN_WORD.match(t)
+                if m:
+                    add(m.group(1), bool(m.group(2)), m.group(3))
+            if prog == "for" and len(toks) > i + 2 and toks[i + 2] == "in" and re.fullmatch(r"[A-Za-z_]\w*", toks[i + 1]):
+                for t in toks[i + 3:]:
+                    add(toks[i + 1], False, t, True)
+    for name in opaque:                                       # a name any assignment gives a value it cannot read stays unresolved (d=src; d=$(cmd); cat $d/marshal_x)
+        table.pop(name, None)
+    table.loops = frozenset(looped - plain)
+    return table
+
+
+def join_assignments(outer, inner):
+    """The assignments of an outer line and of the text it hands to eval or a shell (which sees them when they are exported, and the guard does not tell)."""
+    if not outer:
+        return inner
+    if not inner:
+        return outer
+    both, many = Assigned(), set()
+    for t in (outer, inner):
+        for k, v in t.items():
+            both[k] = tuple(dict.fromkeys(both.get(k, ()) + v))
+            if len(both[k]) > MAX_VALUES:
+                many.add(k)                                   # more values than the cap: the name is unknown, as in line_assignments
+    for k in many:
+        del both[k]
+    return both
+
+
+def moved(dirs, args, certain, visited, cdpath=False, assigned=None):
     """The directories the shell may be in after `cd ARGS` from any of dirs. certain: the cd is a plain command of the top level, so it changes the
     directory when the directory is there (a directory that is not there yet may be made by a command before it: both are kept). Anything else keeps
-    the directory it was in as well. `cd -` is any directory the line has been in."""
+    the directory it was in as well. `cd -` is any directory the line has been in. assigned: the variables the line sets (a `cd $d` goes to each value, and the directory stays unknown too: bash may give the name another value or split it)."""
     ops = [t for t in args if t not in CD_FLAGS]
     if ops == ["-"]:
         return list(dict.fromkeys(dirs + visited))
     target = ops[0] if ops else "~"
-    unknown = bool(UNKNOWN.search(expand_path(target))) or cdpath
-    certain = certain and len(ops) <= 1 and not target.startswith("-") and not unknown
+    targets = with_assigned(target, assigned, assigned.loops if assigned else ())
+    unknown = any(UNKNOWN.search(expand_path(t)) for t in targets) or cdpath or targets != [target]      # a value the line gave is a guess (read, printf -v, declare -n, select or word splitting can change it), so the unknown directory stays
+    certain = certain and len(ops) <= 1 and not target.startswith("-") and not unknown and len(targets) == 1
     new = [UNKNOWN_DIR] if unknown else []                    # the shell is in a directory the guard cannot name: relative writes are refused there (unknown_dir_refusal)
     for d in dirs:
         tick()
-        if d == UNKNOWN_DIR:
-            r = resolve("/", target) if target.startswith(("/", "~")) else None
-            new += [r] if r and certain else [d] + ([r] if r else [])
-            continue
-        r = resolve(d, target)
-        new += [r] if certain and os.path.isdir(r) else [d, r]
+        for target in targets:
+            if d == UNKNOWN_DIR:
+                r = resolve("/", target) if target.startswith(("/", "~")) else None
+                new += [r] if r and certain else [d] + ([r] if r else [])
+                continue
+            r = resolve(d, target)
+            new += [r] if certain and os.path.isdir(r) else [d, r]
     new = list(dict.fromkeys(new))
     if len(new) > MAX_DIRS:
         raise TooManyDirs()
@@ -944,15 +1145,17 @@ def env_chdir(toks, i):
     return None
 
 
-def walk(command, here):
+def walk(command, here, assigned=None):
     """Every piece of every cut of the command, with the directories the shell may be in when it runs it: (n, ps, text, dirs). ps: the pieces of the
     cut and n the place of this one in it. here: the directory the call runs in (or a list of them). A plain `cd` at the top level of the line changes
     them for what follows (after an && only if the commands before it in the chain are plain cds too: `pushd d && popd && cmd`); a cd anywhere else (a
     subshell, a substitution, an if, after || or `cmd &&`, before a pipe, with an option or two directories ...)
     leaves the directory it was in among them, and every command is judged from each. pushd and popd are followed like cd. Each cut starts in the
-    directory of the call, and a substitution's own text in any directory the line has been in, so a cd is never applied twice to one command."""
+    directory of the call, and a substitution's own text in any directory the line has been in, so a cd is never applied twice to one command. A cd to a word
+    that holds a variable the line assigns (assigned, else line_assignments) goes to each value."""
     start = list(dict.fromkeys([here] if isinstance(here, str) else here))
     visited = list(start)
+    assigned = line_assignments(command) if assigned is None else assigned
     cdpath = "CDPATH" in command or bool(os.environ.get("CDPATH"))      # a CDPATH can send any cd to another directory than the one it names
     for kind, ps in passes(command):
         dirs = list(start) if kind == "main" else list(visited)
@@ -963,7 +1166,7 @@ def walk(command, here):
             tick()
             toks, i = parsed(piece.text)
             chdir = env_chdir(toks, i)
-            yield n, ps, piece.text, (moved(dirs, [chdir], False, visited, cdpath) if chdir else dirs)     # env -C DIR PROGRAM runs PROGRAM in DIR, once
+            yield n, ps, piece.text, (moved(dirs, [chdir], False, visited, cdpath, assigned) if chdir else dirs)     # env -C DIR PROGRAM runs PROGRAM in DIR, once
             prog = os.path.basename(toks[i]) if i < len(toks) else ""
             if prog not in ("cd", "pushd", "popd"):
                 ran = False
@@ -971,12 +1174,12 @@ def walk(command, here):
             certain, rest = piece.top and bool(PLAIN_CD.match(piece.text)) and (ran or not piece.chained), toks[i + 1:]    # after &&, only when everything before it in the chain is such a cd
             ran = certain
             if prog == "cd":
-                dirs = moved(dirs, rest, certain, visited, cdpath)
+                dirs = moved(dirs, rest, certain, visited, cdpath, assigned)
             elif prog == "pushd":
                 named = [t for t in rest if not t.startswith(("-", "+"))]
                 if named and "-n" not in rest:
                     stack.append(dirs)
-                    dirs = moved(dirs, named[:1], certain, visited, cdpath)
+                    dirs = moved(dirs, named[:1], certain, visited, cdpath, assigned)
                 elif not named:
                     dirs = list(dict.fromkeys(dirs + visited))
             elif stack and "-n" not in rest:
@@ -1171,7 +1374,23 @@ def expand_path(p):
 
 @functools.cache
 def real_dir(d):
-    return os.path.realpath(d)
+    """os.path.realpath(d). A path of plain names (absolute, no empty, . or .. component) is walked from the root one name at a time: a name that is a link is followed,
+    and from the first name that is not there no later name can be a link, so the rest is taken as written. A long path under a directory that does not exist
+    (the value of a variable built from another, `x2=$x1/b; x3=$x2/b ...`) so costs the names that exist, not all of them. Any other path is resolved as a whole."""
+    if not d.startswith("/") or "//" in d or "/./" in d or "/../" in d or d.endswith(("/", "/.", "/..")):      # an empty, . or .. component
+        return os.path.realpath(d)
+    got, pos = "", 0
+    while pos < len(d):
+        tick()
+        end = d.find("/", pos + 1)
+        end = len(d) if end < 0 else end
+        full = got + d[pos:end]
+        try:
+            link = stat.S_ISLNK(os.lstat(full).st_mode)
+        except OSError:
+            return got + d[pos:]
+        got, pos = (os.path.realpath(full) if link else full).rstrip("/"), end
+    return got or "/"
 
 
 @functools.cache                                     # the files do not change while one command is judged
@@ -2046,33 +2265,91 @@ def brace_expand(word, limit=MAX_BRACE):
 
 
 TRIMMED = re.compile(r"\$\{\w+(?:%%?|##?)[^{}]*\}")       # ${NAME%PATTERN}, ${NAME%%PATTERN}, ${NAME#PATTERN}, ${NAME##PATTERN}: a part of the variable's own value
+PARAM_HEAD = re.compile(r"\$\{[!#]?(?:\w+|[@*#?!$-])(?:\[[^\]]*\])?(?::?[-+=?])?")   # the start of a parameter expansion: ${NAME}, ${NAME[@]}, ${PIPESTATUS[0]}, ${!NAME[@]}, ${#NAME[@]}, ${NAME:-, ${NAME[@]+, ${NAME:?; its subscript and operator are no glob
+
+
+UNREAD = re.compile(r"[$`]|[?*+@!]\(")                    # in a word: a variable, a substitution (both forms) or an extglob pattern, which makes a name the guard does not know
+EXTGLOB = re.compile(r"[?*+@!]\([^()]*\)")                # an extglob pattern (?(a|b) *(..) +(..) @(..) !(..)), read as the glob * that holds every name it could stand for
+
+
+def has_glob(s):
+    """True when s has a glob character (the same as re.search(r"[*?\\[]", s), which reads a long word slowly)."""
+    return "*" in s or "?" in s or "[" in s
+
+
+def extglob_as_glob(b):
+    """b with every extglob pattern replaced by *: a name it could match is then found by the glob, whether or not the line turns extglob on (nested patterns, innermost first)."""
+    if "(" not in b:
+        return b
+    for _ in range(8):
+        c = EXTGLOB.sub("*", b)
+        if c == b:
+            break
+        b = c
+    return b
+
+
+def unresolved_directory(b):
+    """True when the final component of the word b starts with the key's name prefix and an earlier component holds a variable, a command substitution or a backtick:
+    the directory it names is not known (`$X/marshal_x`, `$(cmd)/marshal_x`, `d=$(cmd); $d/marshal_x`), so it could be a credentials directory. Variables the
+    environment has were expanded and those the line assigns were replaced before, so what is left is what the guard cannot read. A ) or } in the head with no ( or { before it is the end of
+    a substitution or an expansion whose text has spaces (`$(echo DIR)/marshal_x` is cut into the words `$(echo` and `DIR)/marshal_x`)."""
+    head, sep, base = b.rpartition("/")
+    return bool(sep) and base.startswith(KEY_PREFIX) and ("$" in head or "`" in head or head.count(")") > head.count("(") or head.count("}") > head.count("{"))
 
 
 @functools.cache                                     # the files do not change while one command is judged
-def key_named(word, here, recursive):
+def key_named(word, here, recursive, assigned=None):
     """The signing key (or, for a recursive reader, a directory holding it) that one shell word stands for, else None. The word
-    is read with ~ and variables expanded, braces and globs expanded, symbolic links followed; `--opt=path`, `-Opath` and a
-    `<path` redirection are read as their path too."""
+    is read with ~ and variables expanded (the environment's, and the plain assignments the line makes: assigned), braces and globs expanded, symbolic
+    links followed; `--opt=path`, `-Opath` and a `<path` redirection are read as their path too. A word with a variable, a substitution or an extglob
+    pattern that follows a path in a credentials directory (the path itself may hold a glob) names something the guard cannot tell, and is returned."""
     tick()
     cands = {word, word.lstrip("<"), re.sub(r"^(?:\d+|&)?[<>]+[&|]?", "", word), word.split("=", 1)[-1]}     # 3<key, <key, <>key, <&key
     if word.startswith("-") and not word.startswith("--"):
         cands.add(word[2:])
+    for c in list(cands):                                     # NAME=(a b*), NAME+=(...), declare -A NAME=([k]=v): the elements of an array literal are words to glob, as in `for x in WORDS`
+        inner = c.strip("()")
+        if inner != c:
+            cands |= {inner, re.sub(r"^\[[^\]]*\]=", "", inner), inner.rsplit("=", 1)[-1]}
+    if assigned:                                             # d=CRED; cat $d/marshal_x: the word is read as each value the line gives the variable too
+        cands |= {v for c in cands for v in with_assigned(c, assigned)}
     for c in cands:
         if not c or c.startswith("-"):
             continue
+        followed = bool(assigned) and with_assigned(c, assigned) != [c]     # a variable of the line stands in c: the values it gives are candidates themselves, and are judged as the real path
         for b in brace_expand(expand_path(c)):
+            if not followed and unresolved_directory(b):
+                return b                                      # $X/marshal_x, $(cmd)/marshal_x, DIR/../$X/marshal_x: a name that starts with marshal_ after a directory the guard cannot name
+            m = UNREAD.search(b)
+            if m:                                            # CRED/${X:-ma}rshal_x, CRED/m$a, CRED/`cmd`x, CRED/@(m)x, or in the directory itself: what it stands for is not known, and a name there could be the key
+                head = b[:m.start()].rpartition("/")[0]
+                if has_glob(head):                          # cred*/${X:-ma}rshal_x: the directory part is a glob; any directory it matches could be the credentials directory
+                    dirs = [os.path.realpath(x) for x in glob_paths(os.path.join(here, head))]
+                else:
+                    dirs = [resolve(here, head + "/" if head or b.startswith("/") else ".")]
+                if any(below_key_dir(x) for x in dirs):
+                    return b
+            b = extglob_as_glob(b)
             if "${" in b:
                 base = os.path.basename(TRIMMED.sub("x", b))      # ${f%%:*}, ${f%/*}, ${f##*/}: the * and the / belong to the pattern, not to the path
-                if bool(recursive) or base.startswith(KEY_PREFIX) or re.search(r"[*?\[]", base):
+                if bool(recursive) or base.startswith(KEY_PREFIX) or re.search(r"[*?\[]", PARAM_HEAD.sub("${x", base)):   # ${PIPESTATUS[0]} and ${arr[@]+x} are parameters, not globs; a default word after an operator still is one
                     return b                                  # ${X:-dir}/marshal_*: a directory the guard cannot read could be the credentials directory
-            plain = re.sub(r"/(?:\./)+", "/", re.sub(r"/{2,}", "/", b))        # dir//key and dir/./key are the path dir/key
+            plain = re.sub(r"/(?:\./)+", "/", re.sub(r"/{2,}", "/", b)) if "//" in b or "/./" in b else b        # dir//key and dir/./key are the path dir/key
             if any(d + os.sep + KEY_PREFIX in plain for d in key_dirs()):     # a path inside text, e.g. python -c "open('...')"
                 return b
-            paths = glob_paths(os.path.join(here, b)) if re.search(r"[*?\[]", b) else []
+            paths = glob_paths(os.path.join(here, b)) if has_glob(b) else []
             for full in [resolve(here, b)] + [os.path.realpath(x) for x in paths]:
                 if is_key(full) or (recursive == "tree" and holds_key(full)) or (recursive == "below" and below_key_dir(full)):
                     return b
     return None
+
+
+def key_unsure_text(prog, word):
+    """The refusal of a word the guard cannot read to the end: a variable, a substitution or an extglob pattern where the name could lead into a credentials directory."""
+    return MarshalReason("%s on %s: the guard cannot tell what the variable, substitution or pattern in this word names, so it cannot rule out the lead's signing key "
+                         "(credentials/%s*); write the name out in the command (a literal path such as credentials/other.token, no variable or substitution in or after the "
+                         "directory), or report what you need in your task output" % (prog or "a redirection", word, KEY_PREFIX))
 
 
 def key_refusal_text(prog, word, tool=None):
@@ -2120,7 +2397,7 @@ def key_destinations(prog, toks, i):
     return out
 
 
-def key_read(toks, i, here):
+def key_read(toks, i, here, assigned=None):
     """The reason a Bash segment reads the lead's signing key, or None: any word of it that names the key, whatever the program, the words before the program
     (`<key cat`, `exec 3<key`) and a segment with no program at all. ls, stat and test only look at a file: their own operands are not read, a redirection
     in front of them is. A recursive reader (cp, rsync, tar, zip ...) also reads a directory that holds the key, but not the one it only writes into
@@ -2136,9 +2413,9 @@ def key_read(toks, i, here):
         tick()
         if k in skip:
             continue
-        named = key_named(t, here, mode)
+        named = key_named(t, here, mode, assigned)
         if named:
-            return key_refusal_text(prog, named)
+            return key_unsure_text(prog, named) if UNREAD.search(named) or unresolved_directory(named) else key_refusal_text(prog, named)
     return None
 
 
@@ -2238,7 +2515,7 @@ def lead_refusal(toks, i):
     return None
 
 
-def bash_skill_refusal(command, here, depth):
+def bash_skill_refusal(command, here, depth, outer=None):
     joined = ansi_c(command.replace("\\\n", ""))        # a line continuation joins the lines (segments() does the same, and reads an escaped backslash right)
     if word_then_subst(HANDOFF_SUBST, joined):
         return MarshalReason("qargi marshal handoff with a command substitution in its arguments could be given --write, which writes a file and is not available to an agent; %s"
@@ -2248,7 +2525,8 @@ def bash_skill_refusal(command, here, depth):
     if word_then_subst(AUDIT_SUBST, joined):
         return "qargi skill accept (packs_audit.py with a command substitution in its arguments could be `store`) changes a skill and is not available to an agent"
     seen = set()                                         # the (text, directory) pairs judged
-    for n, ps, seg, dirs in walk(command, here):
+    assigned = join_assignments(outer, line_assignments(command))     # the variables the line sets (and the line that handed it this text)
+    for n, ps, seg, dirs in walk(command, here, assigned):
         toks, i = parsed(seg)
         if any(t.startswith("QARGI_NESTED=") for t in toks[:i]):
             return "setting QARGI_NESTED skips a plan-token check and is not available to an agent"
@@ -2274,7 +2552,7 @@ def bash_skill_refusal(command, here, depth):
                 inner = shell_string(prog, rest) if depth < 3 else None
                 if inner is not None:
                     inner += " ; " + " ; ".join(p.text for p in ps[n + 1:n + 201]).replace('"', " ").replace("'", " ")      # a `;` inside the quoted string split it: read the pieces that follow as part of it
-                    why = bash_skill_refusal(inner, [at], depth + 1)
+                    why = bash_skill_refusal(inner, [at], depth + 1, assigned)
                     if why:
                         return why
                 if prog in SHELLS or prog in SOURCES:            # its program on its standard input, or in a file this line writes: read again what the line shows of it
@@ -2282,10 +2560,10 @@ def bash_skill_refusal(command, here, depth):
                     if unread or (fed and depth >= 3):
                         return fed_refusal(prog, unread or "a program nested more than three shells deep")
                     for text in fed:
-                        why = bash_skill_refusal(as_program(text), [at], depth + 1)
+                        why = bash_skill_refusal(as_program(text), [at], depth + 1, assigned)
                         if why:
                             return why
-            why = protected_write(toks, i, at) or key_read(toks, i, at)       # redirections alone, or in front of a program, write and read too
+            why = protected_write(toks, i, at) or key_read(toks, i, at, assigned)       # redirections alone, or in front of a program, write and read too
             if why:
                 return why
     return unreadable_project_verb(command)
@@ -2646,6 +2924,10 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         words = ["changelog"] + words
     if name == "upstream.sh":
         words = ["upstream"] + words
+    if name == "backlog.sh":
+        words = ["backlog"] + words
+    if name == "backlog.py":                             # the library of backlog list and done: a direct call can apply a done with no plan, so any use of it is the verb
+        words = ["backlog", "done"]
     if name == "ref.sh":
         words = ["ref"] + words
     if name == "release.sh":
@@ -2698,6 +2980,9 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
                 or (verb == "" and any(t in ("-h", "--help") for t in rest))):
             return OwnReason("qargi changelog %s rewrites the changelog of a work tree and is the lead's to run; only qargi changelog renumber --check (it writes nothing) is available to an agent; "
                              "report the duplicate item numbers in your task output" % (verb or "(no verb)"))
+    if area == "backlog" and verb not in BACKLOG_OPEN:
+        return OwnReason("qargi backlog %s moves an item out of the backlog file into the dated archive and rewrites the file (from a plan and a token) and is the lead's to run "
+                         "(qargi backlog list only reads and is allowed); report in your task output which backlog items your change finishes, with the evidence" % (verb or "(no verb)"))
     if area == "upstream" and verb not in UPSTREAM_OPEN:
         return OwnReason("qargi upstream %s %s and is the lead's to run (qargi upstream review only reads the last fetch and is allowed); "
                          "report in your task output that the upstream line needs looking at"
@@ -2723,7 +3008,7 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         if path == "models" or path.startswith("models."):
             return "qargi project set of %s changes which runtime the project uses or what counts as its barrier and is not available to an agent (qargi provider enable and qargi provider accept have a plan token)" % path
         if path in EXECUTED_ANSWERS or path.startswith(tuple(a + "." for a in EXECUTED_ANSWERS)):
-            return "qargi project set of %s changes a command or an environment the lead later runs, the remote it fetches from or the site it builds (the release answers, test_command, env, upstream, the site answers qargi release site builds from) and is not available to an agent: propose the value in your report" % path
+            return "qargi project set of %s changes a command or an environment the lead later runs, the remote it fetches from or the site it builds (the release answers, test_command, gates, env, upstream, the site answers qargi release site builds from) or the file that qargi backlog done rewrites (backlog.file) and is not available to an agent: propose the value in your report" % path
         if path == "runs" or path.startswith("runs."):
             return "qargi project set of %s declares which refs verify and clean accept as created by a runtime (runs.owned_refs), a way round the ref check of a run, and is not available to an agent: propose the pattern in your report" % path
         if path == "packs" or path.startswith("packs."):
@@ -3085,7 +3370,7 @@ def clear_caches():
     _BRACE_WORK[0] = 0
     for cache in (_RESOURCE_DIRS, _ROOTS, _KEY_DIRS, _STATE):          # read from the library, the environment and the state: a judge that outlives one call must not keep them
         cache.clear()
-    for f in (real_dir, resolve, run_like, in_a_clone, run_dir, protected, key_named, ability_of, run_class, brace_expand, run_tmps, pass_writes):
+    for f in (line_assignments, real_dir, resolve, run_like, in_a_clone, run_dir, protected, key_named, ability_of, run_class, brace_expand, run_tmps, pass_writes):
         f.cache_clear()
 
 
@@ -3110,6 +3395,10 @@ def judge(call):
     except TooManyBraces:
         return ("qargi guard: a brace expression in this command stands for more than %d words (or the braces of the command for more than %d), which cannot be checked one by one "
                 "in the time the hook has, so it is not available to an agent. Write the paths out or run it in parts." % (MAX_BRACE, MAX_BRACE_WORK))
+    except TooManyValues:
+        return ("qargi guard: a value of this command built from other variables is longer than %d characters, or a word built from variables stands for more than %d words, "
+                "which cannot be followed one by one in the time the hook has, so it is not available to an agent. Write the paths out or run it in parts."
+                % (MAX_VALUE_LEN, MAX_BRACE))
     except TooManyDirs:
         return ("qargi guard: this command changes directory in more than %d ways the guard cannot tell apart (a cd inside ( ), a substitution, a condition or a pipe may "
                 "or may not change where the next command runs), so it is not available to an agent. Write it in parts." % MAX_DIRS)

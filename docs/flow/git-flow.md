@@ -9,7 +9,7 @@ refusal changes nothing.
    theme; `qargi feature list` shows the open ones and the files two of them both change.
 2. Tasks run on `agent/<slug>` (`/qargi-task ... --base feature/NAME`) with targeted checks only.
    Per task: `qargi review check RUN/out` and `qargi review apply RUN` (puts the series on `agent/<slug>`; the author of each commit is reset to yours: the answer `git.author`, a string `Name <email>`, else the repository's `user.name` and `user.email`; `review.keep_author` `true` keeps the member's; the member's author is recorded in the ref journal and the audit log),
-   A project can declare a take-in scrub that `qargi review check` runs after the series check passes: the answer `review.scrub` names a command (one command line, or a list of words),
+   A project can declare a take-in scrub that `qargi review check` runs after the series check passes, and that `qargi review apply` runs again before it applies anything unless a passing check recorded the same series (the record, in your state directory, holds a hash of the patches and of the declared scrub; when it matches, apply prints `scrub: skipped (review check passed it for this series)`, and a changed patch, `review.scrub` or `review.trailer_policy` runs the scrub again; a failing scrub refuses the apply with nothing applied): the answer `review.scrub` names a command (one command line, or a list of words),
    run with the lead's rights in a throw-away checkout of the applied series (`BASE..tip`, the commit the run's base branch had when it was prepared, then the patches with `git am`), with the range in
    `QARGI_SCRUB_BASE` and `QARGI_SCRUB_TIP`; `review.trailer_policy` is `none` (default) or `reject`, which fails any commit whose message carries a `Co-Authored-By` or `Generated with` style trailer. The
    output gains one line, `scrub: ok` or `scrub: FAIL` with the first lines of what the command (or the policy) said, and a failing scrub fails the check (exit 1). Nothing is made in your repository: no
@@ -26,11 +26,20 @@ refusal changes nothing.
    `qargi review apply --from-saved ID` applies it when the run directory is gone (`local list` shows such a run as directory gone). `qargi local list --scratch DIR` shows each run's role, slug, age and whether it is
    applied and merged; `qargi local clean --applied --scratch DIR` cleans those that are both and keeps the rest.
    `qargi local clean --stale DAYS --scratch DIR` lists the finished runs older than DAYS days, and `--yes` cleans them (a run whose work is not applied and merged is kept).
+   `qargi local clean --orphans [--days N]` lists the `qargi-run.XXXXXX` directories under `/dev/shm` (or `QARGI_RUN_TMP`) that no run of your registry names, with their age; it prints a plan and a token and removes nothing until `--plan TOKEN --approved WORDS`, and then only the unnamed directories older than N days (default 2).
 3. When the feature is complete: `qargi feature sync NAME` (merges develop in), `qargi feature verify
    NAME` (the one whole-suite run per feature), then `qargi feature finish NAME`, the only merge into
    develop. `qargi feature status NAME` shows commits ahead and whether the whole-suite run is
    current (when it is not, it says which merge or sync moved the head). `verify` warns when another suite may be running, and a
    failed one ends with the failing tests and the path of the log.
+   The command `verify` runs is the project's `test_command` (for a release, `release.test_command` when set). A project may instead declare
+   **gates**, the answer `gates`: an ordered list of `{"name": "...", "command": "...", "tier": "feature" | "release"}` (the command is a
+   command line or a list of words, as `test_command`; names are unique and non-empty; `qargi project set` and `project validate` check
+   the list). `feature verify` then runs the gates of tier `feature` in order and stops at the first failure; `release verify` runs the
+   feature gates, then the release gates. Declared gates replace `test_command` and `release.test_command` (a gate with the same command runs
+   it; otherwise `verify` notes that it is not run). The verdict line is the same, `full suite: pass|fail at SHA`, so `feature finish`
+   and the release steps work as before; the run record lists each gate with its result (`pass`, `fail`, or `not run` after a failure) and
+   `feature status` and `release status` show a `gates:` line. A failed run names the failing gate. Absent, nothing changes.
 4. `qargi release start VERSION` cuts `release/VERSION` from develop (only from a head that passed the
    suite) and bumps `VERSION` and the changelog date. Like the pushes and merges it prints a plan (the branch, the base, the files
    the bump commit changes) and a token first, and applies with `--plan TOKEN --approved "<your words>"`, which also writes the
@@ -47,6 +56,11 @@ refusal changes nothing.
    from the tag without touching your checkout: `qargi release assets VERSION` runs the project's `release.assets_command` in a clean
    worktree of the tag, `release sign` signs there, and `release publish` attaches `release.assets` (globs), `--asset FILE` and
    `--asset-dir DIR` from it.
+   `release verify` also reads the workflow files of the tree it verifies (`.github/workflows/*.yml` and `*.yaml`, with no YAML library:
+   the job ids under `jobs:` and the `name:` line of each job) and warns, on standard error, naming each job whose name and id match no
+   declared gate name; a job whose name cannot be read (an expression, a block scalar, a flow mapping) is reported as unknown, a note and
+   never a failure. `release verify --strict` refuses, before anything runs, when any job matches no gate name. With no workflow nothing new
+   is printed; with workflows and no gates declared every job is named.
    Two optional answers add generic checks, both warnings and neither a refusal. `release.version_files` is a list of paths
    (relative to the repository) of other files that carry the version, a manifest say: `release start` prints a warning naming the
    ones that do not yet contain the new version (as a whole version, so `0.2.1` is not found in `0.2.10`) and says to bump them on
@@ -127,6 +141,25 @@ fast-forwards the branch to the fetched tip from a plan and a token, refuses a b
 never merges into develop: the upstream line meets develop only through a feature (`qargi feature start upstream-X`, then
 `qargi feature merge upstream-X upstream`), where the overlay is fixed and the feature lands as any other. With
 `upstream.overlay_check` set, sync then runs it on a trial merge of the branch into develop in a temporary worktree.
+
+## The backlog
+
+A project can keep its backlog in a markdown file that the answer `backlog.file` names (`qargi project set PROJECT backlog.file PATH`: an
+absolute path, `~/...`, or a path relative to the repository). The file may live outside the repository, in a memory store for
+instance. An item is a top-level list line written `- [ID] text` (or `* [ID] text`), where ID is a lowercase slug of letters, digits
+and hyphens, two characters or more (a task-list box such as `- [x] text` is no id), with the indented lines after it. Any other
+top-level list line is an item without an id; headings, paragraphs and fenced code blocks are not items.
+
+`qargi backlog list [--json]` shows the open items with their ids, an item without an id as unnumbered (`-`) and a duplicated id
+flagged. `qargi backlog done ID --evidence "<text>"` prints a plan with a token: the item as written and the archive file it goes
+to. With `--plan TOKEN --approved "<your words>"` it appends the item, the date and the evidence to `NAME-archive-YYYY-MM.md` in the
+directory of the backlog file (`NAME` is the file's name without `.md`; the archive is created when absent), then removes the item
+from the backlog, and writes an audit log line. Nothing is deleted without the plan, and an id that is missing or used by more than
+one item is refused. `done` is the lead's: a member's guard refuses it, and `list` only reads.
+
+`feature finish` and `release finish` add a line to their plans, `backlog items named in these commits: ID, ...`, for the open items
+whose id appears (as a whole slug) in the messages of the commits being merged. It is information: it is not part of the token and
+nothing is done with it. With `backlog.file` unset, or its file missing, nothing is printed.
 
 ## The worktree root
 

@@ -50,6 +50,17 @@ DO_NOT_ASSUME = (
 _MS = None
 _PV = None
 _RN = None
+_GT = None
+
+
+def gt():
+    """lib/gates.py (the declared gates and their identity), loaded by path."""
+    global _GT
+    if _GT is None:
+        spec = importlib.util.spec_from_file_location("gates", os.path.join(HERE, "gates.py"))
+        _GT = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_GT)
+    return _GT
 
 
 def ms():
@@ -324,6 +335,9 @@ def collect(a, argv_name):
     present = os.path.isfile(answers_file)
     prov = pv().provider_of(answers, "local", a.project) if present else None    # the render is the local surface's; no default: NoProvider ends the verb (exit 2)
     test_cmd = answers.get("test_command") or ""
+    gates = answers.get("gates")
+    if gates and not gt().problems(gates):
+        test_cmd = gt().identity(gates, ["feature"])    # with declared gates the record's command is their identity, as `feature verify` writes it (lib/gates.py)
     repo = a.repo if a.repo and os.path.isdir(a.repo) else ""
     if not present:
         notes.append("the answers of %s are not on this host: the repository, the packs and the memory tiers cannot be described from here" % a.project)

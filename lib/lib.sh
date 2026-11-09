@@ -22,13 +22,17 @@ TRK=$DA_STATE/sessions.json
 MEMBERS_FILE=$DA_CONF/agents.json   # the members you named (qargi agent add): {"schema": 2, "projects": {PROJECT: {NAME: {roles, file, model, effort, ...}}}}
 export BETA=managed-agents-2026-04-01
 
-mkdir -p "$DA_CONF" "$DA_STATE"
-chmod 700 "$DA_CONF" "$DA_STATE"
-[ -n "${QARGI_CONF:-}${QARGI_STATE:-}" ] || chmod 700 "$DA_ROOT"
-for f in "$REG" "$TRK"; do
-  [ -f "$f" ] || { echo '{}' > "$f"; chmod 600 "$f"; }
-done
-[ -f "$MEMBERS_FILE" ] || { echo '{"schema":2,"projects":{}}' > "$MEMBERS_FILE"; chmod 600 "$MEMBERS_FILE"; }
+# The first load makes the directories (mode 700) and the three files. DA_NOSETUP, set in the environment of a read-only caller (qargi doctor and the
+# scripts it runs), skips all of it: nothing is created or changed, and a file that is not there stays not there.
+if [ -z "${DA_NOSETUP:-}" ]; then
+  mkdir -p "$DA_CONF" "$DA_STATE"
+  chmod 700 "$DA_CONF" "$DA_STATE"
+  [ -n "${QARGI_CONF:-}${QARGI_STATE:-}" ] || chmod 700 "$DA_ROOT"
+  for f in "$REG" "$TRK"; do
+    [ -f "$f" ] || { echo '{}' > "$f"; chmod 600 "$f"; }
+  done
+  [ -f "$MEMBERS_FILE" ] || { echo '{"schema":2,"projects":{}}' > "$MEMBERS_FILE"; chmod 600 "$MEMBERS_FILE"; }
+fi
 members_shape_ok() { # -> 0 when agents.json is in the current shape: {} or {"schema": 2, "projects": {P: {NAME: record}}} (qargi agent and qargi upgrade ask)
   jq -e 'type == "object" and (length == 0 or (.schema == 2 and ((keys - ["schema", "projects"]) | length) == 0 and (.projects | type) == "object"
     and (.projects | all(.[]; type == "object" and all(.[]; type == "object")))))' "$MEMBERS_FILE" >/dev/null 2>&1

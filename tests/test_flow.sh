@@ -51,6 +51,11 @@ out=$($F finish search 2>&1); t=$(tok <<<"$out")
 grep -q "brings 6 commit(s) into develop" <<<"$out" && grep -q "task t1" <<<"$out" && grep -q "files changed: 3 files changed" <<<"$out" && grep -q "    t3.txt" <<<"$out" && ok "the finish plan lists the commits and files being merged" || no "plan content: $out"
 [ -n "$t" ] && [ "$(git -C "$R" rev-parse develop)" = "$dev0" ] && ok "the finish plan changes nothing" || no "plan: $out"
 $F finish search --plan 000000000000 --approved go >/dev/null 2>&1 && no "a wrong token was accepted" || ok "a wrong plan token is refused"
+# a caller that is itself approved (QARGI_NESTED) has not approved this plan: no token and a wrong token are refused all the same, and develop does not move
+out=$(QARGI_NESTED=1 $F finish search --approved go 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "the plan changed or --plan is missing" <<<"$out" && [ "$(git -C "$R" rev-parse develop)" = "$dev0" ] && ok "feature finish with no token under QARGI_NESTED is refused, develop did not move" || no "nested finish, no token: rc=$rc $out"
+out=$(QARGI_NESTED=1 $F finish search --plan 000000000000 --approved go 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "the plan changed or --plan is missing" <<<"$out" && [ "$(git -C "$R" rev-parse develop)" = "$dev0" ] && ok "and a wrong token is refused under QARGI_NESTED too" || no "nested finish, wrong token: rc=$rc $out"
 git -C "$R" checkout -q develop
 $F finish search --plan "$t" --approved go >/dev/null 2>&1 && no "develop was moved under a working tree" || ok "a branch checked out in the main checkout is not moved"
 git -C "$R" checkout -q parked
