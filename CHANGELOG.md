@@ -40,6 +40,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 - `QARGI_NESTED` no longer skips the plan token of `qargi feature finish`, `qargi feature merge` into a detached branch and `qargi upstream sync`: as for the release verbs and
   `local clean --orphans`, a caller that is itself approved has not approved this plan, so the token is always needed. Tests cover all three.
+- `qargi backlog done` needs its plan token under `QARGI_NESTED` too, as the verbs above: with the variable set it archived and removed the item with no `--plan` or with a wrong
+  one. Tests cover both and check that the backlog and the archive stay as they were.
 - The member guard no longer refuses a script written with a heredoc because of what its text mentions. A body that `cat`, `tee`, `grep` or `git commit` receives is
   now data in a line with other commands too (`cat > run.sh <<'E' ... E` then `chmod +x run.sh`), as it already was when every command of the line was one of those: a body
   with `project set $X` in a sentence was refused as the `project` verb with an expansion. The other commands of the line must only look at files, make, move or remove

@@ -44,7 +44,7 @@ case $verb in
     tok=$(python3 -I "$BL" token "$BF" "$ID" "$EVIDENCE") || exit 1
     printf '%s\n' "$plan"
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi backlog done $ID --evidence \"...\" --plan $tok --approved \"...\")"; exit 0; fi
-    need_plan "$tok"
+    QARGI_NESTED='' need_plan "$tok"   # a caller that is itself approved has not approved this plan: the token is always needed
     python3 -I "$BL" apply "$BF" "$ID" "$EVIDENCE" || exit 1
     audit_log "backlog:done" "$PROJ $ID";;
 esac
