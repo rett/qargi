@@ -96,7 +96,7 @@
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
-VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY='' NOTES_OPT='' FIXPUSH='' IGNORE_CHECKS='' IGNORE_SET='' IGNORED='' RECREATE='' STEPNAME='' EVIDENCE='' EVIDENCE_SET='' AGAIN=''; ASSETS=() ASSET_DIRS=()
+STRICT=''; VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY='' NOTES_OPT='' FIXPUSH='' IGNORE_CHECKS='' IGNORE_SET='' IGNORED='' RECREATE='' STEPNAME='' EVIDENCE='' EVIDENCE_SET='' AGAIN=''; ASSETS=() ASSET_DIRS=()
 while [ $# -gt 0 ]; do
   case $1 in
     --project) need_val "$1" $#; PROJ=$2; shift 2;; --date) need_val "$1" $#; DATE=$2; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
@@ -104,6 +104,7 @@ while [ $# -gt 0 ]; do
     --asset) need_val "$1" $#; ASSETS+=("$2"); shift 2;; --asset-dir) need_val "$1" $#; ASSET_DIRS+=("$2"); shift 2;; --recreate) RECREATE=1; shift;; --notes-file) need_val "$1" $#; NOTES_OPT=$2; shift 2;;
     --push) FIXPUSH=1; shift;; --ignore-checks) need_val "$1" $#; IGNORE_CHECKS=$2; IGNORE_SET=1; shift 2;;
     --hotfix) HOTFIX=1; shift;; --keep) KEEP=1; shift;; --resolved) RESOLVED=1; shift;; --allow-empty-notes) ALLOW_EMPTY=1; shift;;
+    --strict) STRICT=1; shift;;
     --evidence) need_val "$1" $#; EVIDENCE=$2; EVIDENCE_SET=1; shift 2;; --again) AGAIN=1; shift;;
     -*) die "unknown option $1";;
     *) if [ "$verb" = step ] && [ -n "$VER" ] && [ -z "$STEPNAME" ]; then STEPNAME=$1; else VER=$1; fi; shift;;
@@ -112,6 +113,7 @@ done
 [ "$verb" = publish ] || { [ ${#ASSETS[@]} -eq 0 ] && [ ${#ASSET_DIRS[@]} -eq 0 ] && [ -z "$NOTES_OPT" ]; } || die "--asset, --asset-dir and --notes-file belong to release publish"
 [ "$verb" = assets ] || [ -z "$RECREATE" ] || die "--recreate belongs to release assets"
 [ "$verb" = step ] || { [ -z "$EVIDENCE_SET" ] && [ -z "$AGAIN" ]; } || die "--evidence and --again belong to release step"
+[ "$verb" = verify ] || [ -z "$STRICT" ] || die "--strict belongs to release verify"
 [ "$verb" = fix ] || [ -z "$FIXPUSH" ] || die "--push belongs to release fix"
 [ "$verb" = finish ] || [ -z "$IGNORE_SET" ] || die "--ignore-checks belongs to release finish"
 [ -z "$IGNORE_SET" ] || printf '%s' "$IGNORE_CHECKS" | grep -q '[^[:space:]]' || die "--ignore-checks needs the reason, in the words you gave: --ignore-checks \"...\""
@@ -134,6 +136,21 @@ RL=$(dirname "$0")/release_layout.py
 # the layout answers (see the head of this file): the version file, the manual pages, the test command of `verify`
 VFILE=$(jq -r '(.release? // {}) | .version_file // "VERSION"' "$af"); VFILE_SET=$(jq -r '(.release? // {}) | has("version_file")' "$af")
 RTC=$(jq -r '(.release? // {}) | .test_command // empty | if type == "array" then map(@sh) | join(" ") else . end' "$af"); [ -z "$RTC" ] || TESTCMD=$RTC
+# the declared gates (the answer gates; lib/gates.py) replace test_command and release.test_command: a release runs the feature-tier gates, then the release-tier gates
+case $verb in start|status|verify|push|finish) gates_load feature release; [ -z "$GATES" ] || RTC='';; esac
+# ci_scan DIR -> compares the jobs of DIR/.github/workflows with the declared gate names (lib/gates.py scan): a warning for each job that matches no gate
+# name, a note for each job whose name cannot be read (never a failure), and CI_UNMATCHED, how many jobs matched no name. Nothing is printed without workflows.
+ci_scan() {
+  local kind file job name
+  CI_UNMATCHED=0
+  while IFS=$'\t' read -r kind file job name; do
+    case $kind in
+      unmatched) CI_UNMATCHED=$((CI_UNMATCHED + 1)); echo "qargi: warning: CI job $job${name:+ ($name)} in $file matches no declared gate name${GATES:+ (declared: $(jq -r 'map(.name) | join(", ")' <<<"$GATES"))}" >&2;;
+      unknown) if [ -n "$job" ]; then echo "qargi: note: CI job $job in $file: its name cannot be read, so it is not compared with the gates" >&2
+               else echo "qargi: note: CI workflow $file: its jobs cannot be read, so they are not compared with the gates" >&2; fi;;
+    esac
+  done < <(python3 -I "$(dirname "$0")/gates.py" scan "$af" "$1" || true)
+}
 GH=${QARGI_GH:-gh}   # the one way this script talks to GitHub; tests put a stub here
 repo_slug() { jq -r '.repo.url' "$af" | sed 's|^https://[^/]*/||; s|\.git$||'; }
 notes='' SITESRC=''   # the temporary file of `publish`, the extracted tag of `site`
@@ -594,6 +611,7 @@ case $verb in
     if [ -z "$h" ]; then
       suite_verdict "$BASE"
       echo "no $BR yet. develop is at $(g rev-parse --short develop 2>/dev/null || echo '?'), full suite: ${SV_TEXT:-not run}"
+      gates_line "$BASE"
       [ -z "$SV_NOTE" ] || echo "$SV_NOTE"
       remote_report "$BASE"
       tag_checks
@@ -608,6 +626,7 @@ case $verb in
     hn=$(hotfix_develop_note) && echo "warning: $hn"
     suite_verdict "$BR"
     echo "full suite: ${SV_TEXT:-not run on this branch}"
+    gates_line "$BR"
     [ -z "$SV_NOTE" ] || echo "$SV_NOTE"
     version_files_report "$BR"
     remote_report "$BR"; remote_report "$BASE"
@@ -619,11 +638,15 @@ case $verb in
     post_release;;
   verify)
     rel_valid
-    [ -n "$TESTCMD" ] || die "no test_command (or release.test_command) in the answers for $PROJ: qargi project set $PROJ test_command '...'"
+    if [ -n "$GATES" ]; then gates_need "feature or release"; else [ -n "$TESTCMD" ] || die "no test_command (or release.test_command) in the answers for $PROJ: qargi project set $PROJ test_command '...'"; fi
     on=$BR; branch_exists "$BR" || on=$BASE
     h=$(sha_of "$on"); [ -n "$h" ] || die "no branch $on"
     worktree "$h"
+    # the CI jobs of the tree being verified against the gate names: a warning each, a refusal with --strict (before the gates run)
+    ci_scan "$WT"
+    [ -z "$STRICT" ] || [ "$CI_UNMATCHED" = 0 ] || die "--strict: $CI_UNMATCHED CI job(s) match no declared gate name (named above); nothing was run. Declare a gate of the job's name or id, or run it without --strict"
     echo "running the whole suite on $on at $(g rev-parse --short "$on"): $TESTCMD"
+    gates_note
     other_runs_warning
     busy_begin release-verify "$VER"
     t0=$SECONDS

@@ -47,6 +47,8 @@ export RESOLVED
 . "$(dirname "$0")/gitflow.sh"
 # shellcheck disable=SC2154  # PROJ and TESTCMD come from project_load
 project_load
+# the declared gates (the answer gates; lib/gates.py) replace test_command in the verbs that read or make the whole-suite record: the feature tier
+case $verb in status|verify|finish) gates_load feature;; esac
 # NAME is a feature, or (feature merge only) a detached long-lived branch of the answers (repo.detached): the target of a merge, no feature
 DET=''
 if [ "$verb" != list ] && [ "$verb" != park ]; then
@@ -233,7 +235,7 @@ case $verb in
     g log --format='  %h %s' "develop..$BR" | head -20
     v=$(verified "$BR"); ran=${v%% *}
     if [ -z "$v" ]; then echo "full suite: not run on this branch"; echo "  next: qargi feature verify $NAME_ARG"
-    elif [ "$ran" = "$h" ]; then echo "full suite: ${v##* } at this head"
+    elif [ "$ran" = "$h" ]; then echo "full suite: ${v##* } at this head"; gates_line "$BR"
     else echo "full suite: ${v##* } at an older head ($(g rev-parse --short "$ran" 2>/dev/null || echo "$ran"))"; stale_why "$BR" "$ran"; echo "  next: qargi feature verify $NAME_ARG"; fi
     remote_report "$BR"; remote_report develop
     wt_outside_report
@@ -241,9 +243,10 @@ case $verb in
   verify)
     marshal_gate "$NAME_ARG"
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi feature start $NAME_ARG)"
-    [ -n "$TESTCMD" ] || die "no test_command in the answers for $PROJ: qargi project set $PROJ test_command '...'"
+    if [ -n "$GATES" ]; then gates_need feature; else [ -n "$TESTCMD" ] || die "no test_command in the answers for $PROJ: qargi project set $PROJ test_command '...'"; fi
     worktree "$h"
     echo "running the whole suite on $BR at $(g rev-parse --short "$BR"): $TESTCMD"
+    gates_note
     other_runs_warning
     hold_begin "$NAME_ARG"; busy_begin verify "$NAME_ARG"
     t0=$SECONDS
