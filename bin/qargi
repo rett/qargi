@@ -76,6 +76,7 @@ case $area in
   noticed) exec python3 -I "$lib/noticed.py" "$@";;
   provider) exec python3 -I "$lib/provider.py" "$@";;
   env) exec python3 -I "$lib/env.py" "$@";;
+  doctor) exec python3 -I "$lib/doctor.py" "$@";;
   upgrade) exec "$lib/upgrade.sh" "$@";;
   watch) exec "$lib/watch.sh" "$@";;
   collect) exec "$lib/collect.sh" "$@";;
