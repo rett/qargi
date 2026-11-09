@@ -1,0 +1,22 @@
+{
+ "purpose": "0.2.7: declared gates with tiers, the release CI job scan, doctor, backlog verb and the 0.2.6 follow-ups",
+ "started": "2026-11-09T07:09:08Z",
+ "goal": "0.2.7: declared gates with tiers, the release CI job scan, doctor, backlog verb and the 0.2.6 follow-ups",
+ "plan": "",
+ "note": "",
+ "status": "active",
+ "lead": {
+  "id": "arc-qargi",
+  "user": "rett",
+  "host": "arc",
+  "since": "2026-11-09T07:09:08Z",
+  "worktree": "94b9af1305afafc4"
+ },
+ "renewed_at": "2026-11-09T07:09:08Z",
+ "finished_at": null,
+ "updated_by": "arc-qargi",
+ "rev": 1,
+ "updated_at": "2026-11-09T07:09:08Z",
+ "feature": "rel027",
+ "project": "qargi"
+}
