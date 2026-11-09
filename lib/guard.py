@@ -106,6 +106,8 @@ Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The 
     the remote-tracking refs that `qargi local verify` compares against a run's snapshot) and `qargi upstream sync` (it fast-forwards the branch
     that carries the upstream line and journals the move, from a plan and a token), also through lib/upstream.sh and as a verb held in a
     variable; `qargi upstream review` only reads the last fetch and stays allowed, and so is `qargi ref` (record --rewrite moves an agent branch and journals it, note journals a branch the lead made; any verb, also through lib/ref.sh);
+    `qargi backlog done` (it moves an item out of the backlog file into the dated archive beside it and rewrites the file, from a plan and a token; any verb but list, also through lib/backlog.sh,
+    lib/backlog.py and a verb held in a variable) is the lead's too, and `qargi backlog list` only reads and stays allowed; qargi project set of backlog.file is refused with the answers the lead later runs;
   - a write under the features/ directory of the state ($QARGI_STATE, else <root>/state, and ~/.qargi/state), where the
     marshal keeps one record per open feature (and, beside them, the `.observed-<project>.json` clock cache of the shared-refs
     backend): decided like the other protected roots, reading stays allowed;
@@ -206,7 +208,7 @@ HANDOFF_SUBST = re.compile(r"(?:marshal(?:\.sh)?[\"']*\s+[\"']*handoff|marshal_h
 PROJECT_SET_SUBST = re.compile(r"project(?:\.sh)?[\"']*\s+[\"']*set[\"']*\s")   # `project set ... $(...)`: the substitution may produce a models path, and splitting it off hides that
 AUDIT_SUBST = re.compile(r"packs_audit\.py[\"']*")   # `packs_audit.py ... $(...)`: the substitution may produce `store`, and splitting it off hides that
 UNREADABLE = "$`{}*?[]"                                     # in a word: a variable, a substitution, a brace or a glob builds it, so the guard cannot read what it is
-EXECUTED_ANSWERS = ("release", "test_command", "gates", "env", "upstream", "site")   # the answers the lead later runs, passes to a process, fetches from or builds from (release site): a member may not set them (project set)
+EXECUTED_ANSWERS = ("release", "test_command", "gates", "env", "upstream", "site", "backlog")   # the answers the lead later runs, passes to a process, fetches from or builds from (release site): a member may not set them (project set)
 ROLE_TOOLS_PATH = re.compile(r"roles|roles\.[^.]+|roles\.[^.]+\.tools(?:\..*)?")   # roles.<role>.tools: what env apply installs and local prepare checks out; a whole role, or all of them, holds it
 IDENTITY_ANSWERS = ("git", "review")   # git.author (the author review apply gives the applied commits) and review.keep_author (keep the member's instead): the lead's, a member may not set them (project set)
 PROJECT_VERBS = ("set", "init", "link", "unlink")           # the project verbs a member may not run (set: the models answers; init: the whole file; link, unlink: what a session loads)
@@ -227,7 +229,7 @@ GIT_OUTPUT_DIRS = {"format-patch", "archive"}                    # git subcomman
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
 SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
            "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "project_link.py", "gated_answers.py", "project.sh", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py", "local_run.py", "local.sh", "release.sh", "release_sign.py",
-           "agent.sh", "team.sh", "env.py", "env_apply.py", "branch.sh", "changelog.sh", "changelog_numbers.py", "upstream.sh", "ref.sh", "jsonplan.py")
+           "agent.sh", "team.sh", "env.py", "env_apply.py", "branch.sh", "changelog.sh", "changelog_numbers.py", "upstream.sh", "backlog.sh", "backlog.py", "ref.sh", "jsonplan.py")
 # the command and the scripts behind the refused verbs (packs_link.py is packs link|unlink, packs_audit.py store is skill accept|unaccept,
 # marshal_handoff.py is marshal handoff: the shell verbs call them, and a member could call them directly with a hand-made inputs file;
 # linker.py, the link engine packs_link.py calls, is packs link, and render.py renders member definitions and runs the command a definition names)
@@ -250,6 +252,7 @@ MARSHAL_SIGNING = {"key": "manages the marshal's signing key", "signers": "manag
                    "resign": "signs a marshal record with the lead's key"}      # the verbs of the signed records, each refused with its own reason
 MEMBER_MARK = "QARGI_MEMBER_RUN"                             # the variable `qargi local run` puts in a member's environment (marshal_refs.in_member_run reads it): setting or unsetting it is refused
 FEATURE_OPEN = ("", "list", "status", "merge", "sync")       # the feature verbs that start, finish or verify nothing; status, merge and sync still renew the lead's own lease (check --renew), so what keeps a member from renewing it is the member mark (QARGI_MEMBER_RUN) and the run directory it works in, not this list (the rest writes, or is unknown)
+BACKLOG_OPEN = ("", "list")                                 # the backlog verbs that only read: done moves an item out of the backlog file into the archive (the rest is unknown)
 UPSTREAM_OPEN = ("", "review")                               # the upstream verbs that only read: status fetches into the lead's repository and sync moves a branch (the rest is unknown)
 LEAD_BUILTINS = {"export", "declare", "typeset", "readonly", "local", "unset", "env", "read", "printf", "set", "let"}
 MARSHAL_NOTE = "the lead changes the marshal; report it in your task output"
@@ -2646,6 +2649,10 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         words = ["changelog"] + words
     if name == "upstream.sh":
         words = ["upstream"] + words
+    if name == "backlog.sh":
+        words = ["backlog"] + words
+    if name == "backlog.py":                             # the library of backlog list and done: a direct call can apply a done with no plan, so any use of it is the verb
+        words = ["backlog", "done"]
     if name == "ref.sh":
         words = ["ref"] + words
     if name == "release.sh":
@@ -2698,6 +2705,9 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
                 or (verb == "" and any(t in ("-h", "--help") for t in rest))):
             return OwnReason("qargi changelog %s rewrites the changelog of a work tree and is the lead's to run; only qargi changelog renumber --check (it writes nothing) is available to an agent; "
                              "report the duplicate item numbers in your task output" % (verb or "(no verb)"))
+    if area == "backlog" and verb not in BACKLOG_OPEN:
+        return OwnReason("qargi backlog %s moves an item out of the backlog file into the dated archive and rewrites the file (from a plan and a token) and is the lead's to run "
+                         "(qargi backlog list only reads and is allowed); report in your task output which backlog items your change finishes, with the evidence" % (verb or "(no verb)"))
     if area == "upstream" and verb not in UPSTREAM_OPEN:
         return OwnReason("qargi upstream %s %s and is the lead's to run (qargi upstream review only reads the last fetch and is allowed); "
                          "report in your task output that the upstream line needs looking at"
@@ -2723,7 +2733,7 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         if path == "models" or path.startswith("models."):
             return "qargi project set of %s changes which runtime the project uses or what counts as its barrier and is not available to an agent (qargi provider enable and qargi provider accept have a plan token)" % path
         if path in EXECUTED_ANSWERS or path.startswith(tuple(a + "." for a in EXECUTED_ANSWERS)):
-            return "qargi project set of %s changes a command or an environment the lead later runs, the remote it fetches from or the site it builds (the release answers, test_command, gates, env, upstream, the site answers qargi release site builds from) and is not available to an agent: propose the value in your report" % path
+            return "qargi project set of %s changes a command or an environment the lead later runs, the remote it fetches from or the site it builds (the release answers, test_command, gates, env, upstream, the site answers qargi release site builds from) or the file that qargi backlog done rewrites (backlog.file) and is not available to an agent: propose the value in your report" % path
         if path == "runs" or path.startswith("runs."):
             return "qargi project set of %s declares which refs verify and clean accept as created by a runtime (runs.owned_refs), a way round the ref check of a run, and is not available to an agent: propose the pattern in your report" % path
         if path == "packs" or path.startswith("packs."):

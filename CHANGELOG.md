@@ -7,6 +7,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `qargi backlog`: a generic backlog kept in a markdown file that the new project answer `backlog.file` names (a path, `~/...`, or relative to the repository; it may be outside the
+  repository, a memory store for instance; `project set` and `project validate` check it). An item is a top-level list line `- [ID] text` (ID a lowercase slug of two characters or
+  more) with its indented lines; any other top-level list line is listed as unnumbered. `qargi backlog list [--json]` shows the open items and flags a duplicated id.
+  `qargi backlog done ID --evidence TEXT` prints a plan with a token, and with `--plan` and `--approved` appends the item, the date and the evidence to `NAME-archive-YYYY-MM.md`
+  beside the backlog file (created when absent) and removes it from the backlog, with an audit log line. The plans of `feature finish` and `release finish` add the line
+  `backlog items named in these commits: ID, ...` for the open items whose id the merged commit messages name (information only, outside the token; nothing when the answer is
+  unset or the file is missing). A member's guard refuses `backlog done` and `project set` of `backlog.file`; `backlog list` only reads.
 - Declared gates: the project answer `gates` is an ordered list of `{name, command, tier}` (`command` a command line or a list of words, as `test_command`; `tier` `feature` or
   `release`; names unique and non-empty). `qargi project set` and `project validate` check it and name the entry that is wrong. `qargi feature verify` then runs the gates of tier
   `feature` in order and stops at the first failure; `qargi release verify` runs the feature gates, then the release gates. Declared gates replace `test_command` and

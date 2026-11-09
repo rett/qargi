@@ -296,7 +296,7 @@ case $verb in
     echo "finish feature $NAME_ARG of $PROJ: merge $BR into develop with --no-ff${KEEP:+, keep the branch}$([ -n "$KEEP" ] || echo ", delete the branch")${rdel:+, delete origin/$BR (${rdel:0:7})}${pushd:+, push develop}"
     [ -z "$rnote" ] || echo "  note: $rnote"
     remote_report develop; remote_report "$BR"
-    show_incoming develop "$BR"
+    show_incoming develop "$BR"; backlog_note develop "$BR"
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi feature finish $NAME_ARG${KEEP:+ --keep} --plan $tok --approved \"...\")"; exit 0; fi
     QARGI_NESTED='' need_plan "$tok"
     need_free develop

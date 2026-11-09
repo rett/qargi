@@ -142,6 +142,25 @@ never merges into develop: the upstream line meets develop only through a featur
 `qargi feature merge upstream-X upstream`), where the overlay is fixed and the feature lands as any other. With
 `upstream.overlay_check` set, sync then runs it on a trial merge of the branch into develop in a temporary worktree.
 
+## The backlog
+
+A project can keep its backlog in a markdown file that the answer `backlog.file` names (`qargi project set PROJECT backlog.file PATH`: an
+absolute path, `~/...`, or a path relative to the repository). The file may live outside the repository, in a memory store for
+instance. An item is a top-level list line written `- [ID] text` (or `* [ID] text`), where ID is a lowercase slug of letters, digits
+and hyphens, two characters or more (a task-list box such as `- [x] text` is no id), with the indented lines after it. Any other
+top-level list line is an item without an id; headings, paragraphs and fenced code blocks are not items.
+
+`qargi backlog list [--json]` shows the open items with their ids, an item without an id as unnumbered (`-`) and a duplicated id
+flagged. `qargi backlog done ID --evidence "<text>"` prints a plan with a token: the item as written and the archive file it goes
+to. With `--plan TOKEN --approved "<your words>"` it appends the item, the date and the evidence to `NAME-archive-YYYY-MM.md` in the
+directory of the backlog file (`NAME` is the file's name without `.md`; the archive is created when absent), then removes the item
+from the backlog, and writes an audit log line. Nothing is deleted without the plan, and an id that is missing or used by more than
+one item is refused. `done` is the lead's: a member's guard refuses it, and `list` only reads.
+
+`feature finish` and `release finish` add a line to their plans, `backlog items named in these commits: ID, ...`, for the open items
+whose id appears (as a whole slug) in the messages of the commits being merged. It is information: it is not part of the token and
+nothing is done with it. With `backlog.file` unset, or its file missing, nothing is printed.
+
 ## The worktree root
 
 qargi makes the worktrees it creates under one root, `worktrees.root` in the answers (default `<state>/worktrees/PROJECT`), one
