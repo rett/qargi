@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-11-09
+
 ### Added
 - `qargi doctor [PROJECT] [--json] [--strict]`: a read-only check of the host, first slice. One line per check, `ok|warn|unknown  name: detail`, and under a warning the lines that say
   what you can do (nothing is run for you). The exit status is 0 whatever it finds, or 1 with `--strict` when a check warns. Four checks: `remove-ipc` warns when logind has
