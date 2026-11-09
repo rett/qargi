@@ -158,7 +158,13 @@ a skill or the marshal; push, gh and ssh are read in the whole text): when EVERY
 `git commit -m "Docs; qargi packs seed"` and a message written with `cat > msg <<'E'` are data. Another program in the line (a shell, make, a script, a
 function, an assignment, a keyword, a group), a comment, a backslash, a substitution, $'..', ${..}, a quote or heredoc never closed, or a heredoc
 delimiter that starts with # keeps the plain split; a file named in quotes (in a word with < or > or the word after one, or a file of tee) is never
-blanked. As the plain split never sees such a name whole, a word that still holds a ; | & or newline after quote removal and resolves into a protected
+blanked. A line that does hold another command still has the heredoc bodies cut out that a plain writer (echo, cat, tee, grep, git commit ...) receives and does
+not pipe on, so a script written with `cat > run.sh <<'E'` and then made executable is not read as the commands its text mentions; that holds only while every
+other command of the line looks at files, makes, moves or removes them (HARMLESS: chmod, mkdir, ls, mv ...), so a shell, make, source, a script, an alias or an export
+keeps the plain split (the file could be run there). The lines of such a body that
+start a lead-only verb (qargi or one of its scripts, also behind sudo, env, a shell, a keyword, a redirection or a continuation; the word project; QARGI_LEAD,
+QARGI_NESTED, QARGI_MEMBER_RUN; marshal_; $'..') stay, and with an unquoted delimiter so do the lines the outer shell expands (a substitution, ${..}, a backslash); a body that a shell reads
+(`bash <<E`) or a pipe carries on is read whole. As the plain split never sees such a name whole, a word that still holds a ; | & or newline after quote removal and resolves into a protected
 location (or names the signing key) is refused as a path (separator_path_refusal). A $( ), <( ), >( ) or backtick substitution, also
 inside double quotes, is a command of its own (the line is cut at it, and the text inside it is cut again on its own, so `cat <<<"$(qargi upgrade) x"` is read);
 a line continuation is read both ways; `>|` is a redirection and is not cut; the keywords and groupings that a command follows (if, then, do, !, {, (, case
@@ -782,11 +788,55 @@ MASK_TOKEN = re.compile(r"""'|"|<<<|<<-?|[;|&\n()]|[ \t]+|#|[^'"<;|&\n()# \t]+|.
 HEREDOC_WORD = re.compile(r"""[ \t]*(?:'([^'\n]*)'|"([^"\n]*)"|([^\s;&|<>()'"]+))(?=[ \t\n;&|)<>]|$)""")
 MASK_SEPARATORS = re.compile(r"[;|&\n]")
 REDIRECT_END = re.compile(r"[<>][|&]?$")                    # a word that is a redirection whose file is the next word (>, &>, 2>>, {fd}>, >|, >&)
+HARMLESS = {"chmod", "mkdir", "ls", "touch", "mv", "cp", "rm", "rmdir", "ln", "pwd", "cd", "true", "false", ":", "test", "[", "wc", "head", "tail", "stat", "date", "sleep",
+            "basename", "dirname", "realpath", "readlink", "mktemp", "install", "du", "file", "diff", "cmp"}   # commands that run no file and no program they are given (not sort, sed, awk, find, make, env, a shell, an alias ...)
+EXPANDED_LINE = re.compile(r"\$[({\[]|`|\\")               # in the body of a heredoc whose delimiter is not quoted: what the outer shell expands (it runs a substitution) or joins to the next line
+BODY_CUT = re.compile(r"\$\(|[;&|()`\n]")
+BODY_WORDS = re.compile(r"[\s,{}]+")                         # a brace word ({qargi,x}) is read as its alternatives
+ANSI_QUOTED = re.compile(r"\$['\"]")                         # $'..' and $".." spell words the plain split reads as the string they stand for (ansi_c)
+PROSE_WORD = re.compile(r"^[A-Za-z]+[,.:;!?]?$")
+BODY_NAMES = frozenset(SCRIPTS) | {"project"}               # a line of a body that starts a command with one of these names is a lead-only verb the receiver could run later
+BODY_MARKS = ("QARGI_LEAD", "QARGI_NESTED", MEMBER_MARK, KEY_PREFIX)   # and so is a line that sets one of the lead's variables or names the signing key
+BODY_LEADS = WRAP | SHELLS | {"eval", "source", ".", "if", "then", "do", "else", "elif", "while", "until", "!", "python", "python3", "perl", "ruby", "node", "make", "doas"}   # words that put a command after them
 
 
 def inert_command(words):
     """True when the command whose words are given does nothing with the text of its arguments or its input (see mask_data)."""
     return bool(words) and (words[0] in INERT or (words[0] == "git" and len(words) > 1 and words[1] in INERT_GIT))   # a quoted word carries \x01: it is no name here
+
+
+def runs_something(words):
+    """True when a command (given as its words) could run the file that a heredoc wrote in the same line, or change what a later command name stands for (an
+    assignment alone, alias, export, eval ...): any command but those of HARMLESS, which look at files, make them, move them or remove them and run nothing."""
+    return bool(words) and words[0] not in HARMLESS
+
+
+def starts_lead_verb(line):
+    """True when a line of a heredoc body starts a command that the guard refuses, or sets a variable it protects: a command with the name of qargi or of one of its
+    scripts (also behind sudo, env, a shell, a keyword, a redirection, a brace word: `then qargi upgrade`, `bash -c qargi upgrade`, `{qargi,x} upgrade`), the word
+    project, QARGI_LEAD, QARGI_NESTED, QARGI_MEMBER_RUN, marshal_ (the signing key), and a $'..' or $".." that could spell any of them. A name in the middle of a
+    sentence (`the project set of answers`) is no command."""
+    if ANSI_QUOTED.search(line):
+        return True
+    text = re.sub(r"[\\'\"]", "", line)
+    if any(m in text for m in BODY_MARKS):
+        return True
+    for seg in BODY_CUT.split(text):
+        led, prev = False, ""
+        for w in BODY_WORDS.split(seg):
+            if os.path.basename(w) in BODY_NAMES and (not prev or led or not PROSE_WORD.match(prev)):
+                return True
+            led = led or w in BODY_LEADS or "<" in w or ">" in w
+            prev = w
+    return False
+
+
+def readable_lines(body, quoted):
+    """The lines of a heredoc body that the plain split must still read: those that start a lead-only verb (starts_lead_verb) and, when the delimiter is not
+    quoted and the outer shell expands the body, those with an expansion or a backslash. A line continuation joins the lines first, as the plain split reads it."""
+    lines = body.replace("\\\n", "").split("\n")[:-1]
+    tick()
+    return "".join(ln + "\n" for ln in lines if (not quoted and EXPANDED_LINE.search(ln)) or starts_lead_verb(ln))
 
 
 def mask_data(command):
@@ -799,12 +849,24 @@ def mask_data(command):
     make, find, a script, a function, an assignment, a keyword, a group), a comment, a backslash, a substitution, $'..', ${..}, a quote or heredoc that
     is never closed, a heredoc delimiter that starts with # (bash reads it as a comment): the command is returned as it is, and the plain split reads all of it. A quoted string that names a file is not blanked: one in a
     word that holds a < or > (`>"a;b"`, `&>"a;b"`, `&>>"a;b"`, `x>"a;b"`, `{fd}>"a;b"`) or in the word after one (`> "a;b"`), and the command is returned
-    as it is when a quoted string with a separator is among the words of tee (the files it writes). Used for the verbs that change a skill or the
-    marshal, not for push/gh/ssh (blocked() reads the whole text); separator_path_refusal() judges such a name as a path."""
-    if not QUOTED.search(command) or MASK_BAIL.search(command):
+    as it is when a quoted string with a separator is among the words of tee (the files it writes). A line with another command in it still has its heredoc
+    bodies cut out, when the command that receives the body is one of those (and does not pipe it on: `cat <<E | sh` runs it) and every other command of the
+    line only looks at files, makes them, moves them or removes them (HARMLESS: chmod, mkdir, ls ...; not a shell, make, a script, an alias, an export, an
+    assignment alone: runs_something), so that the file cannot be run in the line: a script a member writes with a heredoc and then makes executable is not read as
+    the commands its text mentions. The lines of such a body that start a lead-only verb stay (readable_lines), so a file
+    written with `qargi upgrade` in it is refused as before; a body whose delimiter is not quoted keeps the lines the outer shell expands. Used for the verbs
+    that change a skill or the marshal, not for push/gh/ssh (blocked() reads the whole text); separator_path_refusal() judges such a name as a path."""
+    out = mask_scan(command, True)
+    return out if out != command or "<<" not in command else mask_scan(command, False)
+
+
+def mask_scan(command, strict):
+    """mask_data's reading of the command, strict (every command of the line is inert, so quotes and every body are data) or not (only the bodies that an inert
+    command receives are cut, and only their lines that cannot be a lead-only verb)."""
+    if strict and (not QUOTED.search(command) or MASK_BAIL.search(command)):
         return command
     n, pos, count = len(command), 0, 0
-    words, cur, spans, pending = [], [], [], []                 # cur: the pieces of the word being read, joined when it ends (one long word stays linear)
+    words, cur, spans, pending, docs = [], [], [], [], []      # docs: the heredocs of the command being read, pending: those of the line, waiting for its newline
     redir = False                                               # the word being read holds a < or >
     quotes = []                                                 # (start, end) of the quoted strings that hold a separator
 
@@ -829,7 +891,7 @@ def mask_data(command):
             if MASK_SEPARATORS.search(command, end, j):
                 if words and words[0] == "tee":
                     return command                          # a file tee writes: the plain split reads it, and separator_path_refusal the name
-                if not target:
+                if strict and not target:
                     quotes.append((end, j))
             cur.append("\x01")
             end = j + 1
@@ -841,7 +903,7 @@ def mask_data(command):
             m = HEREDOC_WORD.match(command, end)
             if not m or (m.group(3) or "").startswith("#"):
                 return command                              # no delimiter, or one bash reads as a comment (`cat <<#E`)
-            pending.append((next(g for g in m.groups() if g is not None), t == "<<-"))
+            docs.append((next(g for g in m.groups() if g is not None), t == "<<-", m.group(3) is None))
             end = m.end()
         elif t == "(" or t == ")":
             return command
@@ -855,12 +917,14 @@ def mask_data(command):
             cur.append(t)                                   # >| file
         elif t in (";", "|", "&", "\n"):
             end_word()
-            if words and not inert_command(words):
+            inert = inert_command(words)
+            if words and not inert and (strict or runs_something(words)):
                 return command
-            words = []
+            pending += [d + (inert and t != "|",) for d in docs]     # the receiver of a body: a command that only prints or writes, and does not pipe it on
+            docs, words = [], []
             if t == "\n" and pending:
                 s = end
-                for delim, tabs in pending:
+                for delim, tabs, quoted, receiver in pending:
                     body = s
                     while True:
                         nl = command.find("\n", s)
@@ -873,7 +937,7 @@ def mask_data(command):
                         count += 1
                         if not count & 255:
                             tick()
-                    spans.append((body, s))
+                    spans.append((body, s, quoted, receiver))
                     s = n if nl < 0 else nl + 1
                 pending = []
                 end = s
@@ -884,19 +948,22 @@ def mask_data(command):
             redir = redir or "<" in t or ">" in t
         pos = end
     end_word()
-    if pending or (words and not inert_command(words)):
+    if pending or docs or (words and not inert_command(words) and (strict or runs_something(words))):
         return command
-    cuts = sorted([(a, b, False) for a, b in quotes] + [(a, b, True) for a, b in spans])
+    if strict:
+        cuts = sorted([(a, b, None) for a, b in quotes] + [(a, b, "") for a, b, _, _ in spans], key=lambda c: c[:2])
+    else:
+        cuts = [(a, b, readable_lines(command[a:b], quoted)) for a, b, quoted, receiver in spans if receiver]
     if not cuts:
         return command
     out, last = [], 0
-    for a, b, body in cuts:
+    for a, b, keep in cuts:
         out.append(command[last:a])
-        if not body:
-            out.append(MASK_SEPARATORS.sub(" ", command[a:b]))
+        out.append(MASK_SEPARATORS.sub(" ", command[a:b]) if keep is None else keep)
         last = b
     out.append(command[last:])
-    return "".join(out)
+    text = "".join(out)
+    return command if not strict and MASK_BAIL.search(text) else text
 
 
 UNKNOWN_DIR = "\0unknown"                                   # in the directories the shell may be in: a directory the guard cannot name (`cd $(dirname $PWD)`, `cd "$d"`, `env -C $d`)

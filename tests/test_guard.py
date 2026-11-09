@@ -2775,7 +2775,6 @@ class TrimmedExpansions(HookCase):
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("signing key", r.stderr, c)
 
-
     def test_a_subscript_or_an_operator_of_a_parameter_is_no_glob_on_the_key(self):
         """${PIPESTATUS[0]}, ${arr[@]+...}, "${files[@]}", ${!a[@]}, ${#a[@]}: the [ @ * ? of the parameter's own syntax are no glob, so a loop over an array next
         to the word marshal is no read of credentials/marshal_*. The default word after an operator (${X:-*}) and a name that starts with marshal_ still are."""
@@ -2947,6 +2946,116 @@ class TextIsData(HookCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("Agents never push", r.stderr, c)
+
+    # a script a member writes with a heredoc and then makes executable, adds or runs: its body mentions words the guard reads in a command (project set, with a
+    # variable or a substitution), and a body of text is not a command
+    BODY_DATA = (
+        "cat > run.sh <<'E'\n#!/bin/sh\nnote: project set $X\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\n#!/bin/sh\nthe project set of answers is $(date)\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nthe project set of $answers\nE\nls",
+        "mkdir -p out && cat > out/run.sh <<'E'\nthe project set of ${answers[@]}\nE\nchmod +x out/run.sh",
+        "cat >> run.sh <<'E'\nthe project set of $X\nE\nchmod +x run.sh && ls -l",
+        "tee run.sh <<'E'\nthe project set of $X\nE\nmkdir -p out",
+        "cat <<'E' > run.sh\nthe project set of $X\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nfalse | true; echo ${PIPESTATUS[0]} ${arr[@]+x}\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nfor f in \"${files[@]}\"; do echo marshal $f; done\nE\nchmod +x run.sh",
+        "cat > a.sh <<'A'\nthe project set of $X\nA\ncat > b.sh <<'B'\nthe project init of $(date)\nB\nchmod +x a.sh b.sh",
+        "cat > run.sh <<E\nthe project set of $X\nE\nchmod +x run.sh",
+        "git commit -F - <<'E'\nthe project set of $X\nE\nls",
+        "cat <<'A' | cat <<'B'\nx\nA\nthe project set of $X\nB\nls",
+    )
+    # the nearest real violations: the receiver runs the body, the line could run the file it writes, the body is expanded by the outer shell, or a line of it starts
+    # a lead-only verb (also hidden by a continuation, a quote, a redirection)
+    BODY_STILL = (
+        "cat > run.sh <<'E'\nqargi project set x\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nthe project set of $X\nE\nbash run.sh",
+        "cat > run.sh <<'E'\nthe project set of $X\nE\nchmod +x run.sh; ./run.sh",
+        "cat > run.sh <<'E'\nthe project set of $X\nE\nsh run.sh",
+        "cat > run.sh <<'E'\nthe project set of $X\nE\nsource run.sh",
+        "cat > run.sh <<'E'\nthe project set of $X\nE\n. ./run.sh",
+        "cat > run.sh <<'E'\nthe project set of $X\nE\nmake gate",
+        "cat > run.sh <<'E'\nthe project set of $X\nE\npython3 run.sh",
+        "cat > run.sh <<'E'\nthe project set of $X\nE\nxargs sh -c < run.sh",
+        "cat > run.sh <<'E'\nthe project set of $X\nE\nenv sh run.sh",
+        "cat > run.sh <<'E'\necho x > ~/.bashrc\nE\nbash run.sh",
+        "cat > run.sh <<'E'\nqar\\\ngi upgrade\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nqargi \\\nupgrade\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\n$'qargi' upgrade\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\n$'\\x71argi' upgrade\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\n> out qargi upgrade\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nq\"\"argi upgrade\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nnice -n 5 qargi upgrade\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nfind . -exec qargi upgrade {} \\;\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nx=$(qargi upgrade)\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nfoo | qargi upgrade\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\npython3 -I lib/packs_link.py apply link in.json x\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nQARGI_NESTED=1 qargi feature finish\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\ngit push origin main\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\n#!/bin/sh\nqargi upgrade\nE\nbash run.sh",
+        "cat > run.sh <<'E'\nthe project set of $X\nqargi upgrade\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\n  qargi packs seed\nE\nmkdir -p out",
+        "cat > run.sh <<'E'\nif true; then qargi upgrade; fi\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nsudo qargi upgrade\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nenv A=1 /opt/q/bin/qargi upgrade\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nbash -c 'qargi upgrade'\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nx=1; qargi upgrade\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nbash lib/packs.sh packs seed\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nexport QARGI_LEAD=me\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nQARGI_MEMBER_RUN= qargi status\nE\nchmod +x run.sh",
+        "cat > run.sh <<E\nthe project set of $(date)\nE\nchmod +x run.sh",
+        "cat > run.sh <<E\n$(qargi upgrade)\nE\nchmod +x run.sh",
+        "cat > run.sh <<E\n`qargi upgrade`\nE\nchmod +x run.sh",
+        "cat > run.sh <<E\n$\\\n(qargi upgrade)\nE\nchmod +x run.sh",
+        "bash <<'E'\nthe project set of $X\nE\nchmod +x run.sh",
+        "sh <<'E'\nqargi project set x\nE",
+        "bash -s <<'E'\nthe project set of $X\nE\nls",
+        "source /dev/stdin <<'E'\nthe project set of $X\nE\nls",
+        "xargs sh -c <<'E'\nqargi upgrade\nE\nls",
+        "cat <<'E' | sh\nthe project set of $X\nE\nls",
+        "cat <<'E' | bash -s\nqargi upgrade\nE\nls",
+        "cat <<'E' |& tee run.sh | sh\nqargi upgrade\nE\nls",
+        "alias cat=sh\ncat <<'E'\nthe project set of $X\nE\nls",
+        "export PATH=.:$PATH\ncat <<'E'\nthe project set of $X\nE\nls",
+        "PATH=.:$PATH\ncat <<'E'\nthe project set of $X\nE\nls",
+        "function cat { sh; }\ncat <<'E'\nthe project set of $X\nE\nls",
+        "printf -v PATH %s .:$PATH\ncat <<'E'\nthe project set of $X\nE\nls",
+        "FOO=1 cat <<'E'\nthe project set of $X\nE\nls",
+        "./cat <<'E'\nthe project set of $X\nE\nls",
+        "'cat' <<'E'\nthe project set of $X\nE\nls",
+        "cat <<'E' # note\nthe project set of $X\nE\nls",
+        "cat <<'E'\nthe project set of $X",
+        "eval \"$(cat <<'E'\nthe project set of $X\nE\n)\"",
+    )
+
+    def test_a_heredoc_body_is_data_when_a_plain_writer_receives_it(self):
+        wrong = [(c, r.stderr[:100]) for c, r in self.verdicts(self.BODY_DATA) if r.returncode != 0]
+        self.assertEqual(wrong, [], "refused, but only text for cat or tee")
+
+    def test_a_heredoc_body_is_still_read_when_it_could_run_or_starts_a_lead_only_verb(self):
+        wrong = [c for c, r in self.verdicts(self.BODY_STILL) if r.returncode != 2]
+        self.assertEqual(wrong, [], "allowed, but the body could run")
+
+    def test_the_body_that_a_plain_writer_receives_is_cut_but_for_the_lines_that_start_a_lead_only_verb(self):
+        sys.path.insert(0, LIBDIR)
+        import guard as G
+        self.assertEqual(G.mask_data("cat > f <<'E'\nthe project set of $X\nE\nchmod +x f"), "cat > f <<'E'\nE\nchmod +x f")
+        self.assertEqual(G.mask_data("cat > f <<'E'\nthe project set of $X\nqargi upgrade\nsee project set\nE\nchmod +x f"), "cat > f <<'E'\nqargi upgrade\nE\nchmod +x f")
+        self.assertEqual(G.mask_data("cat > f <<E\nthe project set of $X\nE\nchmod +x f"), "cat > f <<E\nE\nchmod +x f")
+        for c in ("bash <<'E'\nx\nE\nchmod +x f", "cat > f <<'E'\nthe project set of $X\nE\nbash f", "cat > f <<'E'\nx\nE\nmake","cat <<'E' | sh\nx\nE\nls", "alias cat=sh\ncat <<'E'\nx\nE\nls", "cat <<'E' > f\nx\nE\nexport PATH=.\nls",
+                  "cat > f <<E\nthe project set of $(date)\nE\nchmod +x f", "cat > f <<E\nthe project set of ${X}\nE\nchmod +x f"):
+            self.assertEqual(G.mask_data(c), c, c)
+
+    def test_heredoc_bodies_beside_other_commands_are_cut_in_linear_time(self):
+        shapes = (("many heredocs and a command", "".join("cat > f%d <<'E%d'\nthe project set of $X\nE%d\n" % (i, i, i) for i in range(3000)) + "chmod +x f1"),
+                  ("a big body and a command", "cat > f <<'E'\n" + "the project set of $X\n" * 15000 + "E\nchmod +x f"),
+                  ("a big body of lead verbs and a command", "cat > f <<'E'\n" + "qargi upgrade\n" * 15000 + "E\nchmod +x f"),
+                  ("a long line of project words", "cat > f <<'E'\n" + "a project " * 40000 + "\nE\nchmod +x f"),
+                  ("many heredoc starts and a command", "cat " + "<<E " * 20000 + "\nE\nchmod +x f"))
+        with self.budget(READINGS):
+            got = in_parallel(self.bash, [c for _, c in shapes])
+        for (name, _), r in zip(shapes, got):
+            self.assertNotIn(BUDGET_REFUSAL, r.stderr, name)
+            self.assertIn(r.returncode, (0, 2), name)
 
     def test_data_is_cut_in_linear_time(self):
         shapes = (("many strings", "".join("echo 'a;b;c'\n" for _ in range(8000))), ("one big string", "echo '" + "a;b " * 60000 + "'"),
