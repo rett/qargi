@@ -165,9 +165,12 @@ Residual for marshal handoff: xargs in front of it is refused (its arguments com
 guard does not parse (a shell loop that reads a file, `parallel`, a script written earlier) are not seen; the redirect form `... < args` into a
 loop is accepted as residual, and `qargi local verify` and the lead's review of the output are what catch a note written by a member.
 Not covered: code that writes or reads a file itself (python -c, perl -e, node -e, a script written earlier and run) unless it
-names the key by its full path, a glob that expands to a protected path (for a write), a path built from a variable the guard cannot see
+names the key by its full path, a glob that expands to a protected path (for a write), a write to a path built from a variable (`p=DIR; echo x > $p/f`: the plain
+assignments of the line are followed for the reads of the key and for a change of directory, not for the target of a write), a read of a path built from a variable the guard cannot see
 (a variable the line does not assign in plain words and the hook's environment lacks, or one set from a command substitution, d=$(...), when the name after it does not
-start with marshal_ or the variable is the whole word; a name produced by a command substitution, cat $(echo ...), or by an echo piped to xargs). The guard is best-effort and cannot resolve every shell construct.
+start with marshal_ or the variable is the whole word; a name the line gives more than 32 values, a loop over more words than that, is unknown in the same way; a name produced by a command substitution, cat $(echo ...), or by an echo piped to xargs).
+A name the line assigns in plain words is taken for those values only as far as the line's own text goes: read, printf -v, a nameref, declare -l, select and word splitting can change it, which is why a cd through it
+leaves the directory unknown. The guard is best-effort and cannot resolve every shell construct.
 Reading a Bash command (passes(), segments()): a word quoted $'...' (ANSI-C) or $"..." is read as the plain string it stands for (ansi_c); then the plain, conservative split. The line is cut at every ; && || | & and newline whatever the quotes, a comment
 or a heredoc body, so a refused verb is found wherever a command could start, and it is refused as text too: `git commit -m "Docs; qargi packs seed" && make` is
 refused, and a member writes a message to a file with its file tool and commits with `git commit -F FILE`. The one narrowing (mask_data(), for the verbs that change

@@ -87,7 +87,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   in plain words is resolved first and the real path is judged, so `d=src; cat $d/marshal_ed25519` stays allowed; a name the line also gives a value the guard cannot read
   (`d=src; d=$(cmd)`) is no longer taken for its other value, and `d=$(cmd)` is no longer read as an empty string. `$LIB/marshal_refs.py` is refused, as `${LIB}/marshal_refs.py`
   already was. A variable before a name that does not start with `marshal_` (`$X/other.token`) is allowed. Still not seen: an unresolved directory followed by a glob or
-  another name (`$X/m*`, `cd $X; cat *`), a bare `$d` that stands for the credentials directory, and a script written and run.
+  another name (`$X/m*`, `cd $X; cat *`), a bare `$d` that stands for the credentials directory, and a script written and run. The assignments of the line are followed
+  for the reads of the key and for a change of directory only; the target of a write is not read through them (`p=DIR; echo x > $p/f`), as before.
 - A `cd` to a word with a variable keeps the directory unknown for a relative write after it, also when the line assigns the variable in plain words (a write after
   `d=src; cd $d` is refused, as it was before the assignments of the line were read): bash can give the name another value the guard does not follow (`read`, `printf -v`,
   a nameref, `declare -l`, `select`, `for d` with no `in`) or split the value into an option and a directory (`d="-L DIR"; cd $d`). The directories the values name are
