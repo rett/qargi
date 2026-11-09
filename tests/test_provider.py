@@ -1721,7 +1721,7 @@ class ShippedClaude(unittest.TestCase):
 
     def test_claude_code_has_the_notes_the_skills_point_at_and_claude_platform_the_two_directories(self):
         notes = P.definition("claude-code")["notes"]
-        self.assertEqual(sorted(notes), ["commands", "exploration", "identity", "session-model", "skills-dir", "spawn"])
+        self.assertEqual(sorted(notes), ["commands", "exploration", "identity", "member-out", "session-model", "skills-dir", "spawn"])
         self.assertIn("subagent_type", notes["spawn"])
         self.assertIn('{"skillOverrides": {"NAME": "off"}}', notes["skills-dir"])
         self.assertIn("Not verified", notes["identity"])                         # it says plainly what is not verified

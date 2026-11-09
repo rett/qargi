@@ -26,6 +26,8 @@ git -C "$A" checkout -q -b parked   # the main checkout is on neither long-lived
 jq -n --arg p "$A" '{schema:1, project:"app", methodology:"gitflow", repo:{url:"https://github.com/acme/app", path:$p, long_lived:["master","develop"]}, test_command:"true"}' > "$T/c/projects/app.json"
 F="$DA feature"; REL="$DA release"
 tok() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
+# rstart ARGS: release start through its plan (a token) and the approval; a refusal of the plan is printed and fails
+rstart() { local p t; p=$($REL start "$@" 2>&1); t=$(tok <<<"$p"); [ -n "$t" ] || { printf '%s\n' "$p"; return 1; }; $REL start "$@" --plan "$t" --approved go; }
 sha() { git -C "$A" rev-parse -q --verify "$1" 2>/dev/null || echo "$Z"; }
 jn() { if [ -f "$J" ]; then wc -l < "$J"; else echo 0; fi; }
 # jhas REF-SUFFIX OLD NEW: the journal holds a line for that ref (a branch name ending as given) going from OLD to NEW
@@ -159,7 +161,7 @@ echo '{}' > "$RF3/out/manifest.json"; out=$($DA local clean "$RF3" 2>&1); rc=$?
 
 # --- a release
 $REL verify 0.2.0 >/dev/null 2>&1; d0=$(sha develop)
-$REL start 0.2.0 --date 2026-01-02 >/dev/null 2>&1; rb=$(sha release/0.2.0)
+rstart 0.2.0 --date 2026-01-02 >/dev/null 2>&1; rb=$(sha release/0.2.0)
 jhas release/0.2.0 "$Z" "$rb" && [ "$rb" != "$Z" ] && ok "release start journals the new release branch" || no "release start left no journal line"
 RR=$(fresh r-release)
 t=$($REL push 0.2.0 | tok); $REL push 0.2.0 --plan "$t" --approved go >/dev/null 2>&1
@@ -234,6 +236,49 @@ at=$(sha agent/rwc); at2=$(same "$at" "names: change rwc, reworded")
 $REF agent/rwc "$at" "$at2" --why "reworded" >/dev/null 2>&1 && $F merge rwf agent/rwc >/dev/null 2>&1 || no "(setup) rewrite and merge rwc"
 out=$($DA local clean "$RW" 2>&1); rc=$?
 [ $rc = 0 ] && [ ! -e "$RW" ] && ok "clean counts a run as merged when the commit its applied tip was rewritten to is merged" || no "clean after rewrite: rc=$rc $out"
+
+# the lead rewrote an applied branch by hand: the refusals of clean and close name the fix, with the branch and both tips filled in
+RH=$(seriesrun rwh rwh.go feature/rwf); $DA review apply "$RH" >/dev/null 2>&1 || no "(setup) apply rwh"
+ht=$(sha agent/rwh); ht2=$(same "$ht" "names: change rwh, reworded by hand")
+git -C "$A" branch -f agent/rwh "$ht2"
+out=$($DA local clean "$RH" 2>&1); rc=$?
+if [ $rc = 1 ] && grep -q "not merged into any branch yet" <<<"$out" && grep -qF "qargi ref record --rewrite agent/rwh $ht $ht2 --why" <<<"$out" && grep -qF "git branch -f agent/rwh $ht" <<<"$out"; then
+  ok "clean of a run whose applied branch was rewritten by hand names qargi ref record --rewrite with the branch and both tips"
+else no "clean hint: rc=$rc $out"; fi
+out=$($DA local close "$RH" --applied-by-am 2>&1); rc=$?
+if [ $rc = 1 ] && grep -q "merge that branch" <<<"$out" && grep -qF "qargi ref record --rewrite agent/rwh $ht $ht2 --why" <<<"$out"; then
+  ok "close --applied-by-am names the same fix"
+else no "close hint: rc=$rc $out"; fi
+# the sentence is the fix in full: do what it says, and clean follows the rewrite once the branch is merged
+git -C "$A" branch -f agent/rwh "$ht" && $REF agent/rwh "$ht" "$ht2" --why "reworded by hand" >/dev/null 2>&1 || no "(setup) record the rewrite of rwh"
+out=$($DA local clean "$RH" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "not merged into any branch yet" <<<"$out" && ! grep -q "ref record --rewrite" <<<"$out" && ok "once the rewrite is recorded the hint is gone (the branch is not merged yet)" || no "recorded hint: rc=$rc $out"
+$F merge rwf agent/rwh >/dev/null 2>&1 || no "(setup) merge rwh"
+out=$($DA local clean "$RH" 2>&1); rc=$?
+[ $rc = 0 ] && [ ! -e "$RH" ] && ok "after the recorded rewrite is merged, clean removes the run" || no "clean after record: rc=$rc $out"
+# the two commands are meant to be pasted: a branch name that git allows and the shell reads (a $ and a ;) is printed quoted
+RQ=$(seriesrun rwq rwq.go feature/rwf); QB='agent/q$x;y'; $DA review apply "$RQ" --branch "$QB" >/dev/null 2>&1 || no "(setup) apply rwq"
+qt=$(sha "$QB"); qt2=$(same "$qt" "names: change rwq, reworded by hand"); git -C "$A" branch -f "$QB" "$qt2"
+out=$($DA local clean "$RQ" 2>&1); rc=$?
+QQ=$(printf '%q' "$QB")
+if [ $rc = 1 ] && grep -qF "git branch -f $QQ $qt," <<<"$out" && grep -qF "qargi ref record --rewrite $QQ $qt $qt2 --why" <<<"$out" && [ "$QQ" != "$QB" ]; then
+  ok "the hint prints a branch name with a \$ and a ; quoted for the shell"
+else no "quoted hint: rc=$rc $out"; fi
+git -C "$A" branch -f "$QB" "$qt"
+# a run whose directory is gone (the saved copy holds the applied record): the refusal names the fix as well
+RV=$(seriesrun rwv rwv.go feature/rwf); $DA review apply "$RV" >/dev/null 2>&1 || no "(setup) apply rwv"
+vt=$(sha agent/rwv); vt2=$(same "$vt" "names: change rwv, reworded by hand"); git -C "$A" branch -f agent/rwv "$vt2"
+SVV=$T/s/runs/$(basename "$RV"); printf 'agent/rwv %s now\n' "$vt" > "$SVV/applied" && rm -rf "$RV" || no "(setup) vanish rwv"
+out=$($DA local clean "$RV" 2>&1); rc=$?
+[ $rc = 1 ] && [ ! -e "$RV" ] && grep -q "not merged into any branch yet" <<<"$out" && grep -qF "qargi ref record --rewrite agent/rwv $vt $vt2 --why" <<<"$out" \
+  && ok "the refusal for a run whose directory is gone names the fix too" || no "gone hint: rc=$rc $out"
+git -C "$A" branch -f agent/rwv "$vt"
+# the other cases keep their text and name no rewrite: the tip is the journaled one
+RN=$(seriesrun rwn rwn.go feature/rwf); $DA review apply "$RN" >/dev/null 2>&1 || no "(setup) apply rwn"
+out=$($DA local clean "$RN" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "not merged into any branch yet: qargi feature merge NAME agent/rwn" <<<"$out" && ! grep -q "rewrite" <<<"$out" && ok "an unmerged branch at its journaled tip: the refusal is as before, no rewrite is named" || no "plain refusal: rc=$rc $out"
+out=$($DA local close "$RN" --applied-by-am 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "merge that branch" <<<"$out" && ! grep -q "rewrite" <<<"$out" && ok "close of an applied run at its journaled tip: as before" || no "plain close refusal: rc=$rc $out"
 
 # --- the guard protects the journal from a member; reading stays allowed
 RG=$(mkrun guard-run); cd "$RG/clone" || exit 1

@@ -67,6 +67,16 @@ echo "$out" | grep -q "this session.*may push agent branches" && echo "$out" | g
 # the flow needs a terminal
 QARGI_TTY_IN=/nonexistent $DA lead grant alpha --from-file "$T/tokfile" >/dev/null 2>&1 && no "grant ran without a terminal" || ok "grant refuses to run without a terminal"
 
+# a step reads its plan token from the call's --json output: the plan is shown without the token line, the answer no applies nothing,
+# and a plan that fails stops the flow with the call's own message
+echo n > "$T/no0"
+out=$(QARGI_TTY_IN=$T/no0 $DA lead grant alpha --from-file "$T/tokfile" 2>&1); rc=$?
+[ $rc != 0 ] && echo "$out" | grep -q "== 1/3" && echo "$out" | grep -q "skipped: 1/3" && ! echo "$out" | grep -q "plan token:" && ok "a step shows its plan without the token line, and no applies nothing" || no "step no: rc=$rc $out"
+jq -e '.lead.push.cloud != "branches"' "$T/c/projects/alpha.json" >/dev/null && [ ! -f "$FAKE/agent_tool" ] && ok "answering no to the first step records no grant" || no "step no changed something"
+echo ghp_classic > "$T/classic"
+out=$($DA lead grant alpha --from-file "$T/classic" 2>&1); rc=$?
+[ $rc != 0 ] && echo "$out" | grep -q "not a fine-grained token" && echo "$out" | grep -q "could not plan: 1/3" && ok "a plan that fails stops the flow with the call's own message" || no "step plan failure: rc=$rc $out"
+
 # grant: three steps, each approved at the terminal
 out=$($DA lead grant alpha --from-file "$T/tokfile" 2>&1); rc=$?
 [ $rc = 0 ] && ok "grant completes" || no "grant rc=$rc: $out"
@@ -151,7 +161,7 @@ B lead compact-check --project beta --advise 2>&1 | grep -q "compact advised (50
 # a release in progress, and its finish
 jq 'del(.test_command)' "$T/c/projects/beta.json" > "$T/c/p.tmp" && jq '.test_command = "true"' "$T/c/p.tmp" > "$T/c/projects/beta.json"
 git -C "$RB" checkout -q parked 2>/dev/null; rm -f "$S/ref-journal.jsonl"; rm -rf "$S/handoff"
-B release verify 0.2.0 --project beta >/dev/null 2>&1; B release start 0.2.0 --project beta --date 2026-01-02 >/dev/null 2>&1
+B release verify 0.2.0 --project beta >/dev/null 2>&1; tk=$(B release start 0.2.0 --project beta --date 2026-01-02 | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'); B release start 0.2.0 --project beta --date 2026-01-02 --plan "$tk" --approved go >/dev/null 2>&1
 out=$(B lead compact-check --project beta 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "a release is in progress (release/0.2.0)" <<<"$out" && ok "compact-check: an open release branch is not safe" || no "release open: rc=$rc $out"
 B release verify 0.2.0 --project beta >/dev/null 2>&1

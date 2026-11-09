@@ -113,6 +113,8 @@ Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The 
     shared-refs backend: found and decided like features/, reading stays allowed;
   - a write under the runs/ directory of the state, where `qargi local verify` saves a copy of each passed run (OUT, the snapshots, the
     record) that `qargi review apply --from-saved` applies: decided like features/, reading stays allowed;
+  - a write under the scrub_ok/ directory of the state, where `qargi review check` records the series whose declared take-in scrub passed and
+    `qargi review apply` skips the scrub for a series recorded there: found and decided like features/, reading stays allowed;
   - a write under the handoff/ and busy/ directories of the state, where `marshal handoff --write` records when the note was written and
     feature verify and release verify record the whole-suite run in progress: `qargi lead compact-check` reads them. Found and decided
     like features/, reading stays allowed. `qargi lead usage` and `compact-check` only read and stay allowed;
@@ -1782,6 +1784,7 @@ def _protected_roots():
     roots.update(switch_roots(P, home))
     roots.update(lead_state_roots(P, home))
     roots.update(saved_runs_roots(P, home))
+    roots.update(scrub_ok_roots(P, home))
     roots.update(journal_roots(P, home))
     roots.update(memory_roots(P, home))
     roots.update(lead_roots(home) | lead_files(home))
@@ -1846,6 +1849,12 @@ def saved_runs_roots(P=None, home=None):
     """The runs/ directory of the state: the copies `qargi local verify` saves of a passed run (its OUT, its snapshots, its record), which
     `qargi review apply --from-saved` applies after the run directory is lost. A member must not plant or change one."""
     return state_sub("runs", P, home)
+
+
+def scrub_ok_roots(P=None, home=None):
+    """The scrub_ok/ directory of the state: the record `qargi review check` writes for the series whose declared scrub passed, which `qargi review apply` takes
+    as the scrub done. A member must not write one (it could name a series that never passed)."""
+    return state_sub("scrub_ok", P, home)
 
 
 def switch_roots(P=None, home=None):
@@ -1918,6 +1927,9 @@ def refusal_text(what, dest, root):
     if root in saved_runs_roots():
         return OwnReason("%s on %s would change %s, the lead's saved copies of passed local runs (review apply --from-saved applies them); "
                          "a member writes only its own OUT" % (what, dest, root))
+    if root in scrub_ok_roots():
+        return OwnReason("%s on %s would change %s, the lead's record of the series whose declared scrub passed (review apply skips the scrub for a series "
+                         "recorded there); a member does not write it" % (what, dest, root))
     if root in switch_roots() and name.endswith(".signers"):
         return MarshalReason("%s on %s would change %s, the marshal's allowed signers (the keys whose records are accepted); %s"
                              % (what, dest, root, MARSHAL_NOTE))
@@ -3133,10 +3145,15 @@ def decide_call(call):
 
 
 def decide(hook):
+    raw = sys.stdin.buffer.read()                         # bytes, so that text the guard cannot decode is told from text that is no JSON
     try:
-        data = json.load(sys.stdin)
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return refuse(hook, "qargi guard: the input is not valid UTF-8, so the guard cannot read the call; refusing it.")
+    try:
+        data = json.loads(text)
     except ValueError:
-        return hook["allow"]["exit"]                      # not JSON: not a call to judge (as before)
+        return hook["allow"]["exit"]                      # decodes but is no JSON: not a call to judge (as before)
     why = judge(parse_call(hook, data))
     return refuse(hook, why) if why else hook["allow"]["exit"]
 

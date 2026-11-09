@@ -9,6 +9,8 @@
 #
 #   release.sh start VERSION [--hotfix]     branch from develop (master for a hotfix); the first commit bumps VERSION and dates
 #                                           the changelog and man page. A release starts only from a develop whose head passed `verify`.
+#                                           Without --plan and --approved it prints the plan (branch, base, files bumped) and a token; with them it applies
+#                                           and writes a line of the audit log.
 #                                           Preflight: a man page's .TH date and version are set too, and a CHANGELOG.md needs
 #                                           content under '## [Unreleased]' (--allow-empty-notes waives that); otherwise it refuses.
 #                                           A release (not a hotfix) then lists the features merged into develop since the previous tag.
@@ -205,6 +207,13 @@ tag_checks() {
 # git refuses "unrelated histories". `push` joins them first, in its plan: master is merged into the release branch keeping the release's tree,
 # so the later `finish` is an ordinary --no-ff merge. unrelated_note says so in `start` and `status`; join_history does it.
 unrelated_note() { echo "master and $BR share no history (no merge base; master may be one snapshot commit): qargi release push $VER${HOTFIX:+ --hotfix} joins the history of master first (a merge of master that keeps the release tree, in its plan), before CI runs, so that finish is an ordinary --no-ff merge"; }
+# hotfix_develop_note -> prints, and returns 0, when a hotfix's second target would be develop (no release branch is open) and develop shares no history with
+# master: finish could not merge the hotfix into develop, and no qargi verb joins develop to master by itself. The way out is a release (its push joins the
+# history of master, its finish merges into master and develop), or one merge on develop by hand; either makes the hotfix finish an ordinary merge.
+hotfix_develop_note() {
+  [ "$KIND" = hotfix ] && branch_exists develop && branch_exists master && no_merge_base develop master && [ -z "$(open_release)" ] || return 1
+  echo "develop and master share no history (no merge base) and no release is open, so finish could not merge $BR into develop (git refuses unrelated histories). Join them first: either the next release (qargi release start VERSION, qargi release push VERSION, qargi release finish VERSION: its push joins the history of master, its finish merges into master and develop), or by hand on develop: git switch develop && git merge -s ours --allow-unrelated-histories master (keeps develop's tree). Then finish the hotfix: qargi release finish $VER --hotfix"
+}
 # join_history SHA MASTER_SHA -> JOINED: a merge commit of master into the branch BR at SHA, made in a temporary worktree with -s ours
 # --allow-unrelated-histories, and BR moved to it only when its tree is the tree of SHA and its parents are SHA and master. Otherwise nothing moved.
 # MASTER_SHA is the master the plan showed (and its token covers): the join is refused when master is anywhere else now. The merge is mechanical: the
@@ -289,12 +298,24 @@ after_steps_new() {
   [ -n "$st" ] || st='[]'
   echo "$st"
 }
+# after_rec_write JQ-ARGS...: the output of jq over those arguments becomes AFTERREC, under the record's lock (the flock pattern of reg_mark) and
+# through a temporary file of its own name, so two `step` calls (or a `step` and `finish`) never share a temporary file, and the one that comes
+# second reads what the first wrote (the file named among the arguments is read inside the lock). Fails when jq does.
+after_rec_write() {
+  mkdir -p "$(dirname "$AFTERREC")"
+  (
+    local tmp
+    flock 9 || exit 1
+    tmp=$(mktemp "$AFTERREC.XXXXXX") || exit 1
+    if jq "$@" > "$tmp" && mv "$tmp" "$AFTERREC"; then exit 0; fi
+    rm -f "$tmp"; exit 1
+  ) 9> "$AFTERREC.lock"
+}
 after_steps_record() {
   local st
   st=$(after_steps_new)
   [ "$(jq 'length' <<<"$st")" -gt 0 ] || return 0
-  mkdir -p "$DA_STATE/release"
-  jq -n --argjson s "$st" --arg p "$PROJ" --arg v "$VER" --arg t "$(now)" '{schema:2, project:$p, version:$v, at:$t, steps:$s}' > "$AFTERREC.tmp" && mv "$AFTERREC.tmp" "$AFTERREC"
+  after_rec_write -n --argjson s "$st" --arg p "$PROJ" --arg v "$VER" --arg t "$(now)" '{schema:2, project:$p, version:$v, at:$t, steps:$s}' || echo "note: could not write $AFTERREC" >&2
   jq -r "$AFTER_LINES" <<<"$st" | sed 's/^/after the release: /'
 }
 # after_steps_list: the steps for `release status`, one line each: those `finish` recorded in AFTERREC, with what `step` marked; when there is no (readable) record, the answer as it is now
@@ -516,7 +537,7 @@ case $verb in
       v=$(verified "$BASE")
       [ "$v" = "$(sha_of develop) pass" ] || die "the whole suite has no passing run at the head of develop (qargi release verify $VER); run it at the checkpoint, then start"
     fi
-    [ -n "$DATE" ] || DATE=$(date +%F)
+    date_given=$DATE; [ -n "$DATE" ] || DATE=$(date +%F)
     printf '%s' "$DATE" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' || die "--date YYYY-MM-DD"
     b0=$(sha_of "$BASE")
     worktree "$BASE"
@@ -539,8 +560,23 @@ case $verb in
       python3 -I "$RL" changelog "$WT/CHANGELOG.md" "$VER" "$DATE" "$ALLOW_EMPTY" "$af" || exit 1
       git -C "$WT" add CHANGELOG.md
     fi
+    # the plan: the branch, where it is cut from, the bump commit and the files it changes (all made in the temporary worktree above, so a refusal comes
+    # before a token does); the token covers them, the date and the head of the base
+    bumped=$(git -C "$WT" diff --cached --name-only)
+    tok=$({ printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$KIND" "$BR" "$BASE" "$b0" "$VER" "$DATE"; printf '%s\n' "$bumped"; } | plan_token)
+    echo "start $KIND $VER of $PROJ: create $BR from $BASE (at ${b0:0:7}), as one commit \"Bumped version number to $VER\" on top of it; nothing is pushed"
+    bl='none (an empty commit)'; [ -z "$bumped" ] || bl=$(printf '%s' "$bumped" | paste -sd, - | sed 's/,/, /g')
+    echo "files the commit changes: $bl"
+    echo "the version becomes $VER${oldver:+ (was $oldver)} and the changelog (and a man page) is dated $DATE"
+    hn=$(hotfix_develop_note) && echo "warning: $hn"
+    if [ -z "$APPROVED" ]; then
+      echo "plan token: $tok   (apply with: qargi release start $VER${HOTFIX:+ --hotfix}${date_given:+ --date $date_given}${ALLOW_EMPTY:+ --allow-empty-notes} --plan $tok --approved \"...\")"
+      exit 0
+    fi
+    QARGI_NESTED='' need_plan "$tok"   # a caller that is itself approved (QARGI_NESTED) has not approved this plan: the token is always needed, here and below
     wcommit --allow-empty -m "Bumped version number to $VER"
     g update-ref "refs/heads/$BR" "$(git -C "$WT" rev-parse HEAD)" "" || die "could not create $BR"
+    audit_log "release:start" "$PROJ $BR"
     journal_ref "$REPO" "refs/heads/$BR" "" "$(sha_of "$BR")" "$KIND:start"
     echo "created $BR from $BASE ($(g rev-parse --short "$BR")): the version is $VER and the changelog (and a man page) is dated $DATE"
     if [ "$KIND" = release ]; then   # what the release contains: the features merged into develop since the previous tag (--no-ff merges "Merge branch 'feature/...'")
@@ -569,6 +605,7 @@ case $verb in
     echo "$KIND $VER of $PROJ on $BR at $(g rev-parse --short "$BR"), $(g rev-list --count "$BASE..$BR") commit(s) ahead of $BASE"
     g log --format='  %h %s' "$BASE..$BR" | head -20
     if branch_exists master && no_merge_base master "$BR"; then echo "warning: $(unrelated_note)"; fi
+    hn=$(hotfix_develop_note) && echo "warning: $hn"
     suite_verdict "$BR"
     echo "full suite: ${SV_TEXT:-not run on this branch}"
     [ -z "$SV_NOTE" ] || echo "$SV_NOTE"
@@ -632,7 +669,7 @@ case $verb in
     pw=$(wt_of "$BR"); [ -z "$pw" ] || [ -z "$(git -C "$pw" status --porcelain 2>/dev/null)" ] || echo "warning: $pw has uncommitted changes: only what is committed on $BR is pushed"
     pr_find "$BR"; [ -z "$PR_NUM" ] || echo "the pull request #$PR_NUM of $BR is open already: the push updates it${PR_URL:+ ($PR_URL)}"
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release push $VER${HOTFIX:+ --hotfix} --plan $tok --approved \"...\")"; exit 0; fi
-    need_plan "$tok"
+    QARGI_NESTED='' need_plan "$tok"
     worktree "$h"; run_preflight "$WT"; cleanup
     if [ -n "$join" ]; then
       need_free_wt "$BR"
@@ -692,7 +729,8 @@ case $verb in
     fi
     if no_merge_base "$second" "$BR"; then
       if [ "$second" = develop ] && [ "$KIND" = hotfix ]; then   # no release is open: the second target is develop itself, and there is no release to finish first
-        die "develop and $BR share no history (no merge base) and no release is open, so there is no release to finish first: git would refuse to merge them (unrelated histories). Join the history of develop and master by hand (a merge of master into develop that keeps develop's tree), then finish the hotfix again. Nothing was changed"
+        hn=$(hotfix_develop_note) || hn="develop and $BR share no history (no merge base) and no release is open, so finish could not merge $BR into develop (git refuses unrelated histories)"   # the note is empty when develop and master are related and only $BR is not
+        die "$hn. Nothing was changed"
       fi
       die "$second and $BR share no history (no merge base): git would refuse to merge them (unrelated histories). Usually the first release is not finished yet, and its push joins the history of master (qargi release push VERSION): finish that release first, or join them by hand. Nothing was changed"
     fi
@@ -712,7 +750,7 @@ case $verb in
       esac
     fi
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release finish $VER${HOTFIX:+ --hotfix}${KEEP:+ --keep}${IGNORE_SET:+ --ignore-checks \"$IGNORE_CHECKS\"} --plan $tok --approved \"...\")"; exit 0; fi
-    need_plan "$tok"
+    QARGI_NESTED='' need_plan "$tok"
     if g remote get-url origin >/dev/null 2>&1; then
       g fetch -q origin || die "fetch failed"
       g rev-parse -q --verify "refs/remotes/origin/$BR" >/dev/null || die "$BR is not on origin: qargi release push $VER${HOTFIX:+ --hotfix} (CI must see what is released)"
@@ -788,8 +826,10 @@ case $verb in
     hint=$(jq -r '.evidence_hint' <<<"$cur")
     if [ -n "$hint" ] && [ -z "$EVIDENCE_SET" ]; then die "the step '$STEPNAME' needs evidence ($hint): qargi release step $VER '$STEPNAME' --evidence \"...\""; fi
     tm=$(now)
-    jq --arg n "$STEPNAME" --arg t "$tm" --arg e "$EVIDENCE" '(.steps[] | select(.name == $n)) |= (.state = "done" | .done_at = $t | .evidence = $e)' "$AFTERREC" > "$AFTERREC.tmp" \
-      && mv "$AFTERREC.tmp" "$AFTERREC" || die "could not write $AFTERREC"
+    # read, changed and written back under the lock: a step marked at the same moment is kept; the check that it is not done yet is made again inside
+    after_rec_write --arg n "$STEPNAME" --arg t "$tm" --arg e "$EVIDENCE" --arg a "$AGAIN" \
+      'if $a == "" and any(.steps[]; .name == $n and .state == "done") then error("the step was marked done meanwhile (--again records it again)") else (.steps[] | select(.name == $n)) |= (.state = "done" | .done_at = $t | .evidence = $e) end' "$AFTERREC" \
+      || die "could not write $AFTERREC"
     audit_log "release:step" "$PROJ $VER $STEPNAME"
     echo "marked done: $STEPNAME (release $VER, $tm${EVIDENCE:+, evidence: $EVIDENCE}); only the record changed, the command was not run"
     left=$(jq -r '[.steps[] | select(.state != "done")] | length' "$AFTERREC")
@@ -927,7 +967,7 @@ case $verb in
     echo "run: $GH -R $(repo_slug) release create $VER --verify-tag --title \"$title\" --notes-file NOTES$([ "${#assets[@]}" -eq 0 ] || printf ' %s' "${assets[@]}")"
     echo "(--verify-tag: the tag must already be on origin; NOTES holds the text above)"
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release publish $VER --plan $tok --approved \"...\")"; exit 0; fi
-    need_plan "$tok"
+    QARGI_NESTED='' need_plan "$tok"
     case $GHS in
       missing) ;;
       nogh) die "gh is not installed: create the release by hand, or run the release workflow by hand with this tag";;
@@ -974,7 +1014,7 @@ case $verb in
     echo "  changes: $(git -C "$WT" diff --cached --shortstat | sed 's/^ *//')"
     remote_report "$SITE_BR"
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release site $VER --plan $tok --approved \"...\")"; exit 0; fi
-    need_plan "$tok"
+    QARGI_NESTED='' need_plan "$tok"
     wcommit -m "$SITE_SUBJECT $VER" -m "Built by qargi release site from tag $VER (${tc:0:12}) with the hand pages of $SITE_BR at ${s0:0:12}: $SITE_CONF records release $VER; _site/ is not committed."
     new=$(git -C "$WT" rev-parse HEAD)
     g update-ref "refs/heads/$SITE_BR" "$new" "$s0" || die "$SITE_BR moved meanwhile; nothing was changed (run it again)"

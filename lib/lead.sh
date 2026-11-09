@@ -58,16 +58,18 @@ ASKED="interactive: qargi lead $verb $PROJECT"
 APPROVAL="interactive: confirmed at the terminal by $(id -un) at $(now)"
 ok() { printf '  %-9s %s\n' "$1" "$2"; }
 
-# step TITLE COMMAND...: print the command's plan, ask, then apply exactly that plan.
+# step TITLE QARGI-ARGUMENTS...: print the call's plan, ask, then apply exactly that plan. The plan is the call's --json
+# output (lib/jsonplan.py): its text and its token are read from the fields, not out of text. Error output follows the plan.
 step() {
-  local title=$1 out tok; shift
+  local title=$1 doc err tok qargi=$here/../bin/qargi; shift
   echo; echo "== $title"
-  out=$("$@" 2>&1) || { echo "$out"; die "could not plan: $title"; }
-  sed '/^plan token:/d' <<<"$out"
-  tok=$(sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' <<<"$out" | head -1)
+  err=$(mktemp)
+  doc=$("$qargi" "$@" --json 2>"$err") || { jq -r '.plan // .output // empty' <<<"$doc" 2>/dev/null; cat "$err"; rm -f "$err"; die "could not plan: $title"; }
+  jq -r '.plan // .output // empty' <<<"$doc"; cat "$err"; rm -f "$err"
+  tok=$(jq -r '.token // empty' <<<"$doc")
   [ -n "$tok" ] || return 0
   confirm "Apply this?" || { echo "skipped: $title"; return 1; }
-  QARGI_NESTED='' "$@" --plan "$tok" --approved "$APPROVAL" 2>&1 | tail -4
+  QARGI_NESTED='' "$qargi" "$@" --plan "$tok" --approved "$APPROVAL" 2>&1 | tail -4
 }
 
 lead_state() { # sets: INST AGENT AVER HAS_TOOL HAS_PUSH HAS_MEMBERS VAULT DEPVAULTS
@@ -144,14 +146,14 @@ EOF
   fi
   [ -s "$tf" ] || die "no token given"
   step "1/3 Check the token, store it, create the vault and record the grant" \
-    "$here/cred.sh" setup lead-push "$PROJECT" --from-file "$tf" --asked "$ASKED" || return 1
+    credential setup lead-push "$PROJECT" --from-file "$tf" --asked "$ASKED" || return 1
   lead_state
   if [ "$HAS_TOOL" = true ]; then echo; echo "== 2/3 GitHub tool: already attached to the lead"; else
-    step "2/3 Give the lead the GitHub tool" "$here/packs.sh" packs apply "$LEAD" --asked "$ASKED" || return 1
+    step "2/3 Give the lead the GitHub tool" packs apply "$LEAD" --asked "$ASKED" || return 1
   fi
   lead_state
   if [ "$HAS_PUSH" = true ]; then echo; echo "== 3/3 Push rules: already in the lead's prompt"; else
-    step "3/3 Give the lead its Push rules" "$here/registry.sh" refresh-prompt "$LEAD" --asked "$ASKED" || return 1
+    step "3/3 Give the lead its Push rules" instances refresh-prompt "$LEAD" --asked "$ASKED" || return 1
   fi
   audit_log lead-grant "$PROJECT"
   echo; status
@@ -168,8 +170,8 @@ revoke() {
   echo "  - detach and archive the vault credential ($vid) and delete the token file ($tf)"
   confirm "Revoke?" || { echo "Nothing changed."; return 1; }
   "$here/project.sh" set "$PROJECT" lead.push "$(jq -c '.cloud = "none" | del(.credential_file, .vault_id)' <<<"$lp")" >/dev/null || die "could not update the project answers"
-  step "1/2 Remove the GitHub tool from the lead" "$here/packs.sh" packs apply "$LEAD" --asked "$ASKED" || true
-  step "2/2 Rebuild the lead's prompt without the Push rules" "$here/registry.sh" refresh-prompt "$LEAD" --asked "$ASKED" || true
+  step "1/2 Remove the GitHub tool from the lead" packs apply "$LEAD" --asked "$ASKED" || true
+  step "2/2 Rebuild the lead's prompt without the Push rules" instances refresh-prompt "$LEAD" --asked "$ASKED" || true
   local li did c
   li=$(jq -c --arg n "$LEAD" '.[$n] // empty' "$REG")
   if [ -n "$li" ] && [ -n "$vid" ]; then

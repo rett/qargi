@@ -48,6 +48,8 @@ commits "$R" a1.go; rm -f "$R/verified"
 out=$(verify "$R"); rc=$?
 [ $rc = 1 ] && grep -q "OUT is empty: the member did not collect" <<<"$out" && grep -q "ls OUT/patches" <<<"$out" && ok "verify fails fast, naming the missing collect, when the clone has commits and OUT is empty" || no "uncollected: rc=$rc $out"
 [ ! -f "$R/verified" ] && ok "and records nothing" || no "verified written for an uncollected run"
+grep -q "refuse a member's write tool for a report file" <<<"$out" && grep -q "write its OUT files (report, manifest, series) with the shell, a heredoc" <<<"$out" \
+  && ok "verify of an OUT with no report names the likely cause: a refused write tool, and the shell as the way round" || no "verify cause: $out"
 grep -q "refs: unchanged by the run" <<<"$out" && grep -q "clean RUN --discard" <<<"$out" && ok "it still compares the refs, says so next to the message, and keeps verify required" || no "uncollected refs line: $out"
 git -C "$A" branch stray-by-run develop
 out=$(verify "$R"); rc=$?
@@ -330,6 +332,9 @@ out=$($F finish ro 2>&1); grep -q "open run" <<<"$out" && no "a cleaned read-onl
 R=$(mkrun ro-noreport feature/ro review)
 out=$($DA local clean "$R" 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "holds no manifest" <<<"$out" && grep -q "report.md" <<<"$out" && [ -d "$R" ] && ok "a read-only run with no report is still refused, and the message says what closes it" || no "read-only no report: rc=$rc $out"
+grep -q "refuse a member's write tool for a report file" <<<"$out" && grep -q "with the shell, a heredoc" <<<"$out" && ok "clean of an OUT with no report names the cause too" || no "clean cause: $out"
+out=$(verify "$R"); rc=$?
+grep -q "qargi: note: OUT of the read-only run $R holds no report" <<<"$out" && grep -q "with the shell, a heredoc" <<<"$out" && ok "verify of a read-only run whose OUT holds no report says so, with the cause (a note: the exit status is the refs verdict)" || no "verify read-only no report: rc=$rc $out"
 out=$($DA lead compact-check --project app 2>&1)
 grep -q "close it: qargi local clean $R (once the member has written OUT/report.md" <<<"$out" && ok "its closing command waits for the report" || no "closing without report: $out"
 echo "# report" > "$R/out/report.md"; git -C "$A" branch ro-stray develop
@@ -343,6 +348,7 @@ $DA local clean "$R" --discard >/dev/null 2>&1
 R=$(mkrun wr-report feature/ro); echo "# report" > "$R/out/report.md"
 out=$($DA local clean "$R" 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "holds no manifest" <<<"$out" && [ -d "$R" ] && ok "a run of work (class write) with only a report still needs its manifest" || no "write with report: rc=$rc $out"
+! grep -q "refuse a member's write tool" <<<"$out" && ok "an OUT that holds a report is not blamed on a refused write tool" || no "cause named with a report present: $out"
 $DA local clean "$R" --discard >/dev/null 2>&1
 R=$(mkrun ro-ok2 feature/ro review); echo "# report" > "$R/out/report.md"; verify "$R" >/dev/null
 out=$($DA local clean "$R" 2>&1); rc=$?

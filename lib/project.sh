@@ -57,24 +57,27 @@
 PROJ_DIR=$DA_CONF/projects
 verb=${1:-}; shift || true
 
-set_note() { # project path json-value -> what `set` adds to its line: the provision note, for the answers a provision reads
-  # `deployment` is the methodology's deployment option (github-release, none): nothing is provisioned from it, so the note would mislead;
-  # a value that is no option of the project's methodology is taken to name a cloud deployment and keeps the note
-  local n=$1 path=$2 val=$3 meth
-  case $path in git|git.*|review|review.*) return 0;; esac   # read by qargi review apply, never by a provision
-  case $path in repo.detached|site|site.*) return 0;; esac   # read where it is used (the branch guards, the release), never by a provision
-  if [ "$path" = deployment ]; then
-    meth=$(jq -r '.methodology // "gitflow"' "$PROJ_DIR/$n.json")
-    python3 -I - "$(dirname "$0")" "$meth" "$val" <<'PY' && return 0
-import json, sys
-sys.path.insert(0, sys.argv[1]); import methodology as M
-try:
-    ids = [o.get("id") for o in (M.load(sys.argv[2])[2].get("deployment") or {}).get("options", [])]
-except SystemExit:
-    ids = []
-sys.exit(0 if json.loads(sys.argv[3]) in ids else 1)
-PY
-  fi
+# provision_reads PATH: succeeds when a provision reads the answer at PATH (or an answer below it: setting an object sets what it holds). The one
+# list of them, taken from where provision reads the answers (lib/provision.sh, the helpers in lib/lib.sh it calls, lib/provider.py and lib/packs.sh
+# render); a key that is not here is read where it is used (the branch guards, the release, review apply, the lead's context, ...), never by a provision.
+provision_reads() {
+  case $1 in
+    roles.*.push|roles.*.push.*) return 1;;                                     # the push policy is validated, not read: only "none" is implemented
+    profiles.*.tier|profiles.*.model|profiles.*.effort|profiles.*.purpose) return 1;;   # a profile is read for its base and abilities (class_abilities)
+    memory.tiers|memory.tiers.*) return 1;;                                     # the memory tiers are read by the memory verbs
+    repo|repo.url|repo.long_lived) return 0;;                                   # the lead's teams block names the repository and its branches
+    teams|teams.*|roles|roles.*|profiles|profiles.*) return 0;;                 # members, their model, effort, packages, skills, tools, packs, base branch
+    budget_cents|memory|memory.memory_store|memory.reference_store) return 0;;  # the budget and the stores to attach
+    models|models.provider|models.provider.*|models.extensions|models.extensions.*|models.accept_no_barrier|models.accept_no_barrier.*) return 0;;   # the runtime, its extensions, the read-only barrier
+    lead|lead.model|lead.effort|lead.push|lead.push.*) return 0;;               # the lead agent, and the push rules in its prompt and tools
+    packs|packs.none) return 0;;                                                # skills and tools render by what is linked
+    cloud|cloud.*) return 0;;                                                   # the cloud profile and workspace every cloud call runs under
+  esac
+  return 1
+}
+
+set_note() { # project path json-value -> what `set` adds to its line: the provision note, for the answers a provision reads (provision_reads)
+  provision_reads "$2" || return 0
   printf " (applies to the next provision; use 'instances budget' for a live deployment)"
 }
 
