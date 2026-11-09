@@ -132,10 +132,17 @@ run "$DA" feature verify f1; rc=$?
 [ $rc = 0 ] && jq -e '.command == "gates: lint=true; unit=true"' "$S/releases/app-feature_f1.json" >/dev/null && ok "setup: feature verify f1 with gates records their identity" || no "setup: gated verify rc=$rc $(out)"
 H f1
 grep -q "whole suite: pass at this tip" "$T/o" && ok "gates: a feature verified at the tip reads as at-tip" || no "SPEC gates at tip: $(sed -n '/== features/,/== marshal/p' "$T/o")"
+gl=$(secno "== gates"); fl=$(secno "== features"); ml=$(secno "== marshal record")
+{ [ -n "$gl" ] && [ "$gl" -gt "$fl" ] && [ "$gl" -lt "$ml" ] && grep -q "^== gates (declared by the project; they replace test_command)" "$T/o" \
+  && grep -qx "  feature  lint  true" "$T/o" && grep -qx "  feature  unit  true" "$T/o" && grep -qx "  release  pack  true" "$T/o" \
+  && grep -q "stops at the first failure" "$T/o"; } && ok "gates: the note lists the declared gates (tier, name, command) between the features and the record" || no "SPEC gates section: $(sed -n '/== features/,/== marshal/p' "$T/o")"
+H f1 --json; jq -e '.gates == [{tier:"feature",name:"lint",command:"true"},{tier:"feature",name:"unit",command:"true"},{tier:"release",name:"pack",command:"true"}]' "$T/o" >/dev/null && ok "gates: --json carries the same gates (a command given as words as one line)" || no "SPEC gates json: $(jq -c .gates "$T/o")"
 jq '.gates[0].command = "true && true"' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"
 H f1
 grep -q "another test command" "$T/o" && ok "gates: a changed gate command does not count" || no "SPEC gates changed: $(sed -n '/== features/,/== marshal/p' "$T/o")"
 jq 'del(.gates)' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"
+H f1; ! grep -q "== gates" "$T/o" && ok "gates: without gates the note has no gates section" || no "SPEC gates section without gates"
+H f1 --json; jq -e '.gates == []' "$T/o" >/dev/null && ok "gates: --json has an empty list without gates" || no "SPEC gates json without gates: $(jq -c .gates "$T/o")"
 
 # --- every open feature without NAME
 H; rc=$?

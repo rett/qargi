@@ -7,7 +7,7 @@ A lead that ends a session (after /compact, after a change a running session can
 this verb; the next session, in a new session or worktree and possibly on an older base, starts from the note and
 not from the lead's memory. The note has these sections: where (repository, HEAD, develop, host, whether the qargi data is on
 this host), the feature(s) (tip, whether the whole-suite result applies to the tip, the agent/* branches merged into it since it was
-cut and the unmerged ones prepared against it, with the agent branches of no open feature said once after them, commits ahead of develop), the marshal record, the packs (check summary and the launch line), the environment (the last
+cut and the unmerged ones prepared against it, with the agent branches of no open feature said once after them, commits ahead of develop), the declared gates when the project has any (tier, name, command; they replace test_command), the marshal record, the packs (check summary and the launch line), the environment (the last
 `qargi env check` and `env apply` of the project, read from state/env/PROJECT.json and compared with HEAD), what to read first, and a
 fixed list of things a new session must not assume.
 
@@ -335,9 +335,10 @@ def collect(a, argv_name):
     present = os.path.isfile(answers_file)
     prov = pv().provider_of(answers, "local", a.project) if present else None    # the render is the local surface's; no default: NoProvider ends the verb (exit 2)
     test_cmd = answers.get("test_command") or ""
-    gates = answers.get("gates")
+    gates, gate_rows = answers.get("gates"), []
     if gates and not gt().problems(gates):
         test_cmd = gt().identity(gates, ["feature"])    # with declared gates the record's command is their identity, as `feature verify` writes it (lib/gates.py)
+        gate_rows = [{"tier": g["tier"], "name": line(g["name"], 80), "command": line(g["command"], 200)} for g in gt().select(gates, ["feature", "release"])]
     repo = a.repo if a.repo and os.path.isdir(a.repo) else ""
     if not present:
         notes.append("the answers of %s are not on this host: the repository, the packs and the memory tiers cannot be described from here" % a.project)
@@ -394,7 +395,7 @@ def collect(a, argv_name):
             notes.append("feature %s has no marshal record (started before the marshal, or by hand): no lead, goal or plan is stored" % f["name"])
 
     return {"schema": 1, "kind": "qargi-handoff", "project": clean(a.project), "generated_at": M.iso(ctx.t), "generated_by": clean(ctx.id),
-            "where": where, "features": feats, "agent_unattributed": unattributed, "backend": "refs" if ctx.be.refs else "local", "integrity": ctx.be.integrity,
+            "where": where, "gates": gate_rows, "features": feats, "agent_unattributed": unattributed, "backend": "refs" if ctx.be.refs else "local", "integrity": ctx.be.integrity,
             "packs": packs_facts(a.state, a.project, repo or a.repo, os.path.join(os.path.dirname(HERE), "bin", "qargi"), prov) if present else None,
             "environment": environment_facts(a.state, a.project, (where["head"] or {}).get("sha", "")),
             "read_first": {"memory": memory_facts(answers, a.project, repo) if present else [],
@@ -487,6 +488,12 @@ def render_body(F):
     if u:
         A(ms().unattributed_line([(x["branch"], x["base"]) for x in u]) + (" (and %d more)" % um if um else ""))
     A("")
+    if F.get("gates"):
+        A("== gates (declared by the project; they replace test_command)")
+        A("feature verify runs the feature tier in order and stops at the first failure; release verify runs the feature tier, then the release tier.")
+        for g in F["gates"]:
+            A("  %s  %s  %s" % (g["tier"], g["name"], g["command"]))
+        A("")
     A("== marshal record")
     A("records: %s%s" % ("shared refs (read from the local cache, not fetched)" if F["backend"] == "refs" else "local to this host",
                          "; integrity %s" % F["integrity"] if F["integrity"] != "off" else ""))
