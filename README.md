@@ -23,7 +23,8 @@ qargi feature start dots --purpose "..."        # cuts feature/dots from develop
 qargi review apply RUN                          # puts the checked patches on agent/<slug>
 qargi feature merge dots agent/<slug>
 qargi feature verify dots                       # the one whole-suite run (test_command, or the declared gates of tier feature)
-qargi feature finish dots                       # the only merge into develop
+qargi feature finish dots                       # the only merge into develop; names the open backlog items its commits mention
+qargi backlog list                              # the open items of the backlog file (the answer backlog.file)
 ```
 
 ## Documentation
