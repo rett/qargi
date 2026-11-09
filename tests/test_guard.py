@@ -2947,21 +2947,42 @@ class TrimmedExpansions(HookCase):
         self.assertEqual(self.judged_in_time(c).returncode, 0)
 
     def test_a_chain_that_multiplies_the_values_is_refused_at_once(self):
-        """Every variable keeps at most 32 values and a word at most 256 readings through them: a chain that squares the values at each step ends in a refusal that
-        says so, in no time, and not in a search that takes minutes."""
+        """A word has at most 256 readings through the variables and a value built from them at most 16384 characters: a chain that squares the values at each step
+        ends in a refusal that says so, in no time, and not in a search that takes minutes. (A name given more than 32 values is unknown, not a refusal: the next test.)"""
         doubling = "x1=a; x1=b; " + "; ".join("x%d=$x%d/$x%d" % (i + 1, i, i) for i in range(1, 40)) + "; echo $x40"
         wide = "a=1; a=2; a=3; b=$a/$a/$a; c=$b/$b; echo $c"
         loop = "for x in a b c d e f g h; do for y in $x $x $x; do echo $y; done; done; z=$x/$x/$x; w=$z/$z; echo $w"
-        many = "".join("x=%d; " % i for i in range(40)) + "cat $x/marshal_x"
-        for c in (doubling, wide, many):
+        for c in (doubling, wide):
             r = self.judged_in_time(c, 2.0)
             self.assertEqual(r.returncode, 2, c)
-            self.assertIn("is given more than 32 values", r.stderr, c)
+            self.assertIn("cannot be followed one by one", r.stderr, c)
         self.assertEqual(self.judged_in_time(loop, 2.0).returncode, 2)
         self.assertEqual(self.judged_in_time("x=" + "a" * 50000 + "; echo $x").returncode, 0)            # a long text is no chain
         r = self.judged_in_time("x=" + "a" * 20000 + "; y=$x; echo $y")
         self.assertEqual(r.returncode, 2)
         self.assertIn("longer than", r.stderr)
+
+    def test_a_name_given_more_than_32_values_is_unknown_not_a_refusal(self):
+        """An ordinary loop over 33 words, two loops that reuse a name, five appends to one name and a name set 33 times are allowed as they were before the assignments
+        of the line were read: the name is unknown from then on, as a variable the guard cannot read is. The key is not opened by it: an unknown name before a name that
+        starts with marshal_, a name that stands for the credentials directory, and a relative write after a cd to it are still refused."""
+        cred = self.credentials()
+        words = " ".join(str(i) for i in range(1, 34))
+        names = " ".join("test_%s" % c for c in "abcdefghijklmnopqrstuvwxyzABCDEFG")
+        ok = ["for n in %s; do echo $n; done" % words, "for t in %s; do bash tests/$t.sh; done" % names,
+              "for f in %s; do echo $f; done; for f in %s; do echo $f; done" % (" ".join("a%d" % i for i in range(17)), " ".join("b%d" % i for i in range(16))),
+              "opts=-v; opts+=' -x'; opts+=' -y'; opts+=' -z'; opts+=' -w'; opts+=' -q'; cmd $opts", "x=a; " + "x+=b; " * 16 + "echo $x",
+              "".join("d=v%d; " % i for i in range(33)) + "ls", "".join("d=v%d; " % i for i in range(40)) + "cat $d/other.token"]
+        for c in ok:
+            r = self.judged_in_time(c, 2.0)
+            self.assertEqual(r.returncode, 0, (c[:60], r.stderr))
+        sets = "".join("d=v%d; " % i for i in range(33))
+        bad = [sets + "cat $d/marshal_ed25519", sets + "d=%s; cat $d/marshal_ed25519" % cred, sets + "cd $d; echo x > a",
+               "for n in %s; do cat $n/marshal_ed25519; done" % words, "for d in %s %s; do cat $d/marshal_ed25519; done" % (words, cred)]
+        for c in bad:
+            r = self.judged_in_time(c, 2.0)
+            self.assertEqual(r.returncode, 2, c[:80])
+            self.assertNotIn("more than 32 values", r.stderr, c[:80])
 
     def test_the_real_path_of_a_directory_is_the_same_walked_name_by_name(self):
         """real_dir follows a link in the middle of a path and takes what comes after the first name that is not there as written; any other path is os.path.realpath."""

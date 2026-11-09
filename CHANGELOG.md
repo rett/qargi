@@ -96,9 +96,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The member guard judges a line of a thousand dependent assignments (`x1=$x0/b; x2=$x1/b; ... x1000=$x999/b`) in under a second; it refused it as too slow after 5 seconds, the time
   growing with the cube of the chain. The real path of a long name is now walked one name at a time and, from the first name that is not there, taken as written, so a path
   under a directory that does not exist costs the names that exist (it is the same path `os.path.realpath` gives, tested on links, `.` and `..`). The values of the assignments
-  are resolved once, in the order of the line. A name given more than 32 values, a word read through variables as more than 256 words, and a value built from other names longer
+  are resolved once, in the order of the line. A word read through variables as more than 256 words and a value built from other names longer
   than 16384 characters (no path is longer than 4096) are refused with a reason that says so, as a brace expression of more than 256 words is, and are not cut: a chain that
-  squares its values at every step is refused at once and no longer searches. A long literal text (`x=<50000 characters>`) is no chain and is judged as before. A name used in
+  squares its values at every step is refused at once and no longer searches. A name given more than 32 values (a loop over more words than that, the same name set many
+  times, five `opts+=' -x'`) is unknown from then on, like a variable the guard cannot read: the command is judged as before, but a path through that name before a name that
+  starts with `marshal_` is refused, and so is a relative write after a `cd` to it. An append (`opts+=...`) goes on from the values the line gave the name, and no longer
+  doubles them. A long literal text (`x=<50000 characters>`) is no chain and is judged as before. A name used in
   one assignment before the chain assigns it (`a=$b/x; b=DIR`) stays as written there.
 - The reason the member guard gives for a variable, a substitution or an extglob pattern after a path in the credentials directory no longer says the command "would read the
   signing key": it says the guard cannot tell what the word names, so it cannot rule the key out, and asks for the name written out (a literal path such as `credentials/other.token`).
