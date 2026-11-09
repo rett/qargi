@@ -83,6 +83,10 @@ REMOTE_NOTE = ("It asks the live origin with git ls-remote (QARGI_REMOTE_TIMEOUT
 SUITE_FAIL_NOTE = ("The output of the suite is kept in STATE/suite-logs/PROJECT.feature-NAME.log (PROJECT.release-VERSION.log for a release; the last run of each). When "
                    "the suite fails, the last lines of the output are the failing steps and tests that its report names (the FAILED: and FAIL lines of tests/run.sh; "
                    "a test command that is no runner shows its last lines instead), where the runner kept the logs of the failed steps, and the path of that log.")
+GATES_NOTE = ("Declared gates: the project answer gates is an ordered list of {name, command, tier} (command: a command line or a list of words, as test_command; tier: feature or release; names unique). "
+              "Absent, test_command (release.test_command for a release) is run, as before. Declared, the gates run instead and test_command is not also run (a gate whose command is the same runs it): "
+              "feature verify runs the gates of tier feature in order and release verify the feature tier, then the release tier, each stopping at the first failure (the rest are listed as not run). "
+              "The verdict line is still 'full suite: pass|fail at SHA', and the run record and the status lines list each gate with its result.")
 OTHER_RUNS_NOTE = ("Before it starts it warns on standard error, and goes on, when another suite may be running: a whole-suite run of the project in progress, a local run "
                    "of the repository with a file changed in the last QARGI_ACTIVE_MINUTES minutes (default 10), or a tests/run.sh process in the repository (Linux).")
 TAG_NOTE = ("When the tag VERSION exists it also warns about a tag that has no GitHub release (asked with a read-only gh release view, through QARGI_GH, default gh; "
@@ -91,8 +95,8 @@ TAG_NOTE = ("When the tag VERSION exists it also warns about a tag that has no G
 HOTFIX_OPT = opt("--hotfix", "a hotfix: branch from master, finish into master and the open release branch (or develop)")
 
 GROUPS = [
-    ("Set up", ["project", "methodology", "cloud", "agent", "role", "provider", "provision", "env", "instances", "skill", "tool", "packs", "discover"]),
-    ("Run a task", ["feature", "marshal", "release", "branch", "changelog", "upstream", "ref", "start", "send", "status", "report", "noticed", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
+    ("Set up", ["project", "methodology", "cloud", "agent", "role", "provider", "provision", "env", "doctor", "instances", "skill", "tool", "packs", "discover"]),
+    ("Run a task", ["feature", "marshal", "release", "branch", "changelog", "upstream", "backlog", "ref", "start", "send", "status", "report", "noticed", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
     ("Lead and credentials", ["lead", "credential", "hook"]),
@@ -157,7 +161,8 @@ COMMANDS = {
                               "roles.ROLE.tools is the list of the tools a role needs beyond its apt packages, each {kind, name, ...}: kind go (name a package path, version a tag: go install NAME@VERSION), "
                               "kind binary (name the file name, version, url of the file itself, sha256 of it: downloaded to ~/.local/bin and kept only when the hash matches) and kind submodule "
                               "(name as in .gitmodules, path: checked out in each member clone by qargi local prepare). env plan lists them, env apply installs them and env check reports one that is "
-                              "missing or wrong; a member's guard refuses setting them (and a whole role), as it refuses release.*, test_command, env.* and site.*. "
+                              "missing or wrong; a member's guard refuses setting them (and a whole role), as it refuses release.*, test_command, gates, env.*, site.* and backlog.*. "
+                              "backlog.file is the markdown file of the project's backlog (qargi backlog); a path outside the repository is fine. "
                               "git.author ('Name <email>') is the author qargi review apply gives the commits it applies, and review.keep_author true keeps the member's author instead; "
                               "review.scrub (a command line or a list of words) is run by qargi review check (and by qargi review apply, unless a passing check recorded the same series) on the applied series with the range in QARGI_SCRUB_BASE and QARGI_SCRUB_TIP, and review.trailer_policy reject fails a commit with a "
                               "Co-Authored-By or Generated-with trailer (none is the default); a member's guard refuses setting them. "
@@ -285,9 +290,9 @@ COMMANDS = {
                                 "For a feature, --plan and --approved are not used. When the registry of local runs names a run of BRANCH (its slug) that still exists and has no passing "
                                 "local verify, a warning names the run; the merge goes on.")),
             "status": verb("Show the feature: commits ahead of develop and whether the whole suite passed at its head", [("NAME", "none")], [PROJECT_OPT],
-                           desc=REMOTE_NOTE + " Flags worktrees outside the worktree root like list. When the whole-suite result is for an older head it says why (the commits on the branch since the run, a merge of a task branch or of develop named as such) and that the next step is qargi feature verify NAME."),
+                           desc=REMOTE_NOTE + " With declared gates a 'gates:' line lists each with its result at the last run. Flags worktrees outside the worktree root like list. When the whole-suite result is for an older head it says why (the commits on the branch since the run, a merge of a task branch or of develop named as such) and that the next step is qargi feature verify NAME."),
             "verify": verb("Run the project's whole test suite on the feature's head and record the result", [("NAME", "none")], [PROJECT_OPT],
-                           desc=OTHER_RUNS_NOTE + " " + SUITE_FAIL_NOTE),
+                           desc=GATES_NOTE + " " + OTHER_RUNS_NOTE + " " + SUITE_FAIL_NOTE),
             "finish": verb("Merge the feature into develop with --no-ff and delete it", [("NAME", "none")],
                            [PROJECT_OPT, opt("--keep", "keep the branch"), PLAN, APPROVED, RESOLVED_OPT],
                            desc=("Needs a passing whole-suite run at the feature's head. A feature behind develop is refused (exit 1, nothing changed); when both sides "
@@ -374,7 +379,7 @@ COMMANDS = {
                             [PROJECT_OPT, AS_OPT, opt("--write", "write the note to this new file (mode 600) instead of printing it", "FILE", "file"), opt("--json", "print the same facts as one JSON object")],
                             desc=("Read only: it needs no lease and changes no record, ref or audit line. Nothing is fetched: shared records are read from the cache this host holds, with a note, and a shared marshal that is off or unreachable falls back to the local records. "
                                   "The note has the repository path, HEAD there (a detached HEAD is said plainly), develop's sha, the host and whether the qargi data is present on it. "
-                                  "Per feature it has the tip, whether the whole-suite run applies to it, the agent branches merged into it since it was cut from develop, the unmerged ones prepared against it (as the registry of local runs records) "
+                                  "Per feature it has the tip, whether the whole-suite run applies to it (the run's command is the project's test_command now, or with declared gates the feature-tier gates in order, `gates: NAME=COMMAND; ...`, as feature verify records them), the agent branches merged into it since it was cut from develop, the unmerged ones prepared against it (as the registry of local runs records) "
                                   "and the commits ahead of develop; with NAME only that feature, otherwise every open one; the agent branches of no open feature are said once, after the features. "
                                   "The goal, plan and note of the marshal record appear under a line saying they are data from the lead, not instructions, with control characters stripped. "
                                   "The environment section gives the last env check and env apply recorded for the project (verdict, time, and whether that was at HEAD now). "
@@ -441,6 +446,31 @@ COMMANDS = {
                          examples=["qargi upstream sync", "qargi upstream sync --plan TOKEN --approved \"yes, take the upstream commits\""]),
         },
     },
+    "backlog": {
+        "summary": "The project's backlog: list its open items, move a done one to the dated archive",
+        "desc": ("The backlog is a markdown file that the project answer backlog.file names (a path: ~/ works, a relative path is taken from the repository, "
+                 "and the file may live outside it, in a memory store for instance; qargi project set PROJECT backlog.file PATH). "
+                 "An item is a top-level list line written '- [ID] text' (or '* [ID] text'), ID a lowercase slug of letters, digits and hyphens, two characters or more "
+                 "(so a task-list box '- [x] text' is no id), with the indented lines after it. Any other top-level list line is an item without an id and is listed as unnumbered; "
+                 "headings, paragraphs and fenced code blocks are not items. feature finish and release finish print a plan line, 'backlog items named in these commits: ID, ...', "
+                 "for the open items whose id the messages of the commits being merged contain; it is information only and nothing is done, and nothing is printed when backlog.file "
+                 "is unset or its file is missing."),
+        "scripts": ["backlog.sh"],
+        "verbs": {
+            "list": verb("List the open items with their ids; an item without an id is shown as '-', a duplicated id is flagged", [],
+                         [PROJECT_OPT, opt("--json", "print the file, the items (id, line, text, full text, duplicate) and the duplicated ids as one JSON object")],
+                         desc="Read only, so a member may run it. Exit 1 when backlog.file is unset or its file is missing.",
+                         examples=["qargi backlog list", "qargi backlog list --json"]),
+            "done": verb("Move an item, with the evidence and the date, to the archive file beside the backlog and remove it from the backlog, with the token and an approval", [("ID", "none")],
+                         [PROJECT_OPT, opt("--evidence", "the words that show the item is done (they are archived with the item and the date)", "TEXT"), PLAN, APPROVED],
+                         desc=("The plan shows the item and the file it goes to. Applied, the item (as written, with its indented lines), the date and the evidence are appended to "
+                               "NAME-archive-YYYY-MM.md in the directory of the backlog file (NAME is the backlog file's name without .md; the archive is created when absent), "
+                               "and then the item is removed from the backlog. Nothing is deleted without the plan. Refused when the id is not there, or is used by more than one item "
+                               "(make the ids unique first). Not available in a member run."),
+                         examples=["qargi backlog done fix-names --evidence \"merged, suite green\"",
+                                   "qargi backlog done fix-names --evidence \"merged, suite green\" --plan TOKEN --approved \"yes\""]),
+        },
+    },
     "ref": {
         "summary": "Record in the lead's ref journal a branch move or a branch that no flow verb made",
         "desc": ("The ref journal ($QARGI_STATE/ref-journal.jsonl) is the lead's record of the branch and tag moves qargi's verbs make (feature, release, branch prune, "
@@ -482,6 +512,7 @@ COMMANDS = {
                  "release.version_files (other files that carry the version, a list of paths; default none: start, status and verify warn of the ones that do not contain the version, never bump them), "
                  "release.man_pages (a list of paths; default the man/*.1 files), release.test_command (what release verify runs, a command line or a list of words; default test_command) "
                  "and release.preflight (a command as a list of words, {version} replaced, run by start and push before they change anything; a non-zero exit refuses and shows the tail of its output). "
+                 "The project answer gates (an ordered list of {name, command, tier}) replaces test_command and release.test_command when declared: release verify runs the feature-tier gates, then the release-tier gates. "
                  "The release files are the project's too: release.assets_command (the command that builds them, a command line or a list of words with {version} replaced), which "
                  "release assets runs in a clean worktree of the tag, and release.assets (files or globs to attach, {version} replaced), taken in that worktree by release publish. "
                  "release.after_steps is a list of steps ({version} replaced), each a one-line string (a command or a reminder: its text is its name) or an object "
@@ -511,7 +542,7 @@ COMMANDS = {
                                 "(release fix makes the worktree). It is a warning, not a refusal, because the files are bumped on the branch start creates; without the answer nothing is checked.")),
             "status": verb("Show the branch, its commits and whether the whole suite passed at its head", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT],
                          desc=("The full-suite verdict names the command that produced it, when it ran, how long it took and the mode the command names (-j N, shard I/K), from the suite record (a record made before the duration was kept shows the command and the time only). When release.test_command is set and is not that command, "
-                               "a line of its own says so: the pass is then not the release gate (release verify runs release.test_command). " + REMOTE_NOTE + " " + TAG_NOTE + " Only when the optional answer release.sign is set (the default is not) and the tag has no GitHub release, it also says 'awaiting signature' "
+                               "a line of its own says so: the pass is then not the release gate (release verify runs release.test_command). With declared gates a 'gates:' line lists each with its result at the last run. " + REMOTE_NOTE + " " + TAG_NOTE + " Only when the optional answer release.sign is set (the default is not) and the tag has no GitHub release, it also says 'awaiting signature' "
                                "until qargi release sign recorded a signature that still holds (no signed file or signature changed), and then 'VERSION is ready for signing: "
                                "qargi release sign VERSION' when the repository is at the tag with the files built, or what stands in the way. "
                                "When site.enabled is true a site line says 'site: not built for VERSION', 'site: built at SHA, not pushed' or 'site: pushed' "
@@ -525,8 +556,12 @@ COMMANDS = {
                                "and the project's own after-steps: the ones release finish recorded, else the optional answer release.after_steps ({version} replaced). Each is shown "
                                "as '[done] NAME (WHO, TIME, evidence: TEXT)' or '[pending] NAME (WHO): COMMAND', the done ones first and the pending ones last; a pending step of the owner reads "
                                "'waits for the owner: run COMMAND', and a step that needs evidence says so. qargi release step marks one done; the list is kept in a file under the state directory.")),
-            "verify": verb("Run the project's whole test suite on the release branch (develop's head before it starts) and record the result", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT],
-                           desc=TAG_NOTE + " The exit status stays the suite's result. The command is release.test_command when the project sets one, else test_command. "
+            "verify": verb("Run the project's whole test suite on the release branch (develop's head before it starts) and record the result", [("VERSION", "none")],
+                           [PROJECT_OPT, HOTFIX_OPT, opt("--strict", "refuse, before anything runs, when a CI job matches no declared gate name")],
+                           desc=TAG_NOTE + " The exit status stays the suite's result. The command is release.test_command when the project sets one, else test_command. " + GATES_NOTE + " "
+                                 "Before it runs, it reads the workflow files of the tree it verifies (.github/workflows/*.yml and *.yaml; standard library only, no YAML library: the job ids under jobs: and the name: line of each job) "
+                                 "and warns on standard error, naming each job whose name and id match no declared gate name (with no gate declared, every job). A job whose name cannot be read (an expression, a block scalar, a flow mapping) "
+                                 "is reported as unknown, a note and never a failure. --strict refuses (exit 1, nothing run) when any job matches no gate name. Without a workflow it prints nothing new. "
                                  "On the release branch, with release.version_files set, it also shows whether every listed file contains VERSION (a warning for the ones that do not). " + OTHER_RUNS_NOTE + " " + SUITE_FAIL_NOTE),
             "fix": verb("Make a worktree on the release branch to commit a fix in, and push the fix again with --push", [("VERSION", "none")],
                         [PROJECT_OPT, HOTFIX_OPT, opt("--push", "push the committed fix: the same as release push (the plan token and approval below)"), PLAN, APPROVED],
@@ -618,6 +653,27 @@ COMMANDS = {
                                "when the tag is missing and when the build reports an error; refused (exit 2) in a member run and when QARGI_NESTED is set."),
                          examples=["qargi release site 0.2.3", "qargi release site 0.2.3 --plan TOKEN --approved \"yes, commit the site\""]),
         },
+    },
+    "doctor": {
+        "summary": "Check this host for what makes qargi fail quietly: logind, the guard, /dev/shm, the window table",
+        "desc": ("Read-only, and a member may run it. It prints one line per check, `ok|warn|unknown  name: detail`, and after a warning the indented lines that say what you can do; "
+                 "it changes nothing and runs none of the fixes. It does not fail on a finding: the exit status is 0, or 1 with --strict when any check warns (2 for a usage error "
+                 "or a project that is not stored). A check that cannot be made (no logind, a tool that is missing, no project) says unknown, never warn. The project is the one "
+                 "named, else the one in effect; without one the checks that need it say unknown. The checks: "
+                 "remove-ipc: the logind setting RemoveIPC (busctl; QARGI_BUSCTL names another program) with the user's linger (loginctl; QARGI_LOGINCTL); with RemoveIPC on and "
+                 "no linger, logind removes the user's IPC objects, among them what lives in /dev/shm, when the last session ends, and the warning prints the drop-in "
+                 "/etc/systemd/logind.conf.d/remove-ipc.conf (`[Login]`, `RemoveIPC=no`) with `sudo systemctl reload systemd-logind`, or `loginctl enable-linger USER`. "
+                 "guard: `qargi` is found on PATH and `qargi __guard` answers as the guard does (it allows a harmless call and refuses git push), and with a project, no member is "
+                 "missing, stale or edited (the states of qargi agent list). "
+                 "shm: the free space under /dev/shm (QARGI_RUN_TMP moves it) and the orphaned qargi-run.* directories there, the listing of qargi local clean --orphans; it warns on "
+                 "an orphan or on less than 10% free (QARGI_DOCTOR_MIN_FREE moves the limit, in percent). "
+                 "window-source: where the context-window table of the project's local runtime comes from (its definition, or the answer lead.context_window, which overrides it) "
+                 "and whether each model id its roles name is in the table; an id that is not there warns, since its window is only assumed. "
+                 "--json prints {project, checks: [{name, status, detail, fix}], warnings, strict, exit}."),
+        "scripts": ["doctor.py", "orphans.sh"],
+        "usage": [("PROJECT", "project", True)],
+        "opts": [PROJECT_OPT, opt("--strict", "exit 1 when any check warns (the default exit status is 0)"), opt("--json", "print the checks as JSON")],
+        "examples": ["qargi doctor", "qargi doctor acme --strict", "QARGI_RUN_TMP=/dev/shm qargi doctor --json"],
     },
     "env": {
         "summary": "What a repository declares about its development environment",
@@ -1498,18 +1554,18 @@ TOPICS = {
     "guard": ("What a member's guard refuses", [
         "The guard hooks a member's calls: a barrier, not a wall; qargi local verify is its backstop.",
         "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
-        "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env, site, packs, runs, upstream, git, review, roles.ROLE.tools, a whole role), init, new, link and unlink; "
+        "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, gates, env, site, backlog, packs, runs, upstream, git, review, roles.ROLE.tools, a whole role), init, new, link and unlink; "
         "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (the rest "
         "read); release publish, sign, site, assets and fix; marshal claim, set, renew, release, take, "
         "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish, verify and park; branch prune; changelog renumber without --check; "
-        "upstream status, sync; ref record; memory init, "
+        "upstream status, sync; backlog done; ref record; memory init, "
         "move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; review apply; team run; env plan and apply; task.",
         "It refuses writes in the pack library, credentials, the install record, the runtime's skills, agents and plugin directories, the installed copy, "
         "the state's render, providers, marshal, feature and saved-run directories, its ref journal, the memory tiers, ~/.config/anthropic, and the "
         "lead's git configuration and session files. "
         "Reading stays allowed except the lead's signing key: copying, linking, archiving or searching its directory is refused. It refuses git push, git remote changes, git -c or config of keys that run programs (alias.*), gh, ssh, scp, sftp and rsync to a host.",
         "A command is cut at every ; && || | and newline, inside quotes and heredocs too, and a substitution is a command: no refused verb, push or tag in text, "
-        "unless every command is echo, cat, tee, grep or git commit and its kin (then text is data). "
+        "unless every command is echo, cat, tee, grep or git commit (then text is data, as is a heredoc body cat or tee gets, bar lines starting qargi). "
         "Commit with git commit -F FILE. Piped or here-string shell programs are read; curl | sh and bash < f are refused. A cd it cannot read refuses relative writes.",
         "The read-only class (review) writes only OUT and TMP: every change to the clone is refused, and a write through "
         "a name the guard cannot read. Nobody copies, extracts or links into the run directory.",
@@ -1586,6 +1642,9 @@ ENVIRONMENT = [
     ("QARGI_ENV_TIMEOUT", "seconds the dry run of qargi env plan and apply may take (default 120)"),
     ("QARGI_HOOK_MARSHAL_SECS", "seconds the session-start hook gives the read of the open features (qargi marshal status --all --brief --no-fetch) before it leaves the block out "
                                 "(default 5; a whole number from 1 to 9999, anything else is ignored); a test on a loaded machine raises it"),
+    ("QARGI_BUSCTL", "the program qargi doctor asks logind with (default busctl)"),
+    ("QARGI_DOCTOR_MIN_FREE", "the percent of free space under /dev/shm below which qargi doctor warns (default 10)"),
+    ("QARGI_LOGINCTL", "the program qargi doctor reads the user's linger with (default loginctl)"),
     ("NO_COLOR", "turn off bold in the terminal help"),
 ]
 

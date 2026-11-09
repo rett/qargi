@@ -42,6 +42,7 @@
 # indexes and the no-write rule; the repo tier is the clone's committed copy) when the repository belongs to a stored project.
 . "$(dirname "$0")/lib.sh"
 . "$(dirname "$0")/marshal.sh"
+. "$(dirname "$0")/orphans.sh"
 
 # NOREPORT_CAUSE: the likely reason OUT holds no report. A runtime can refuse a member's write tool for a report file (the member is told to return findings as
 # text), and the file then never reaches OUT: the member is not late, it is blocked. verify and clean name it where they find OUT without a report.
@@ -639,31 +640,8 @@ WRAP
       while [ "${oroot%/}" != "$oroot" ] && [ "$oroot" != / ]; do oroot=${oroot%/}; done
       [ -d "$oroot" ] && [ ! -L "$oroot" ] || die "clean --orphans: $oroot is not a directory"
       oroot=$(readlink -f -- "$oroot")
-      nowe=$(date +%s); cutoff=$((nowe - DAYS * 86400))
-      reg_load
-      declare -A ONAMED=()
-      for d in ${LRUNS_ORDER[@]+"${LRUNS_ORDER[@]}"}; do
-        t=$(reg_get "$d" tmpdir); [ -n "$t" ] || continue
-        ONAMED[$(readlink -m -- "$t")]=$d
-      done
-      orph=(); okept=0; ototal=0
-      for e in "$oroot"/qargi-run.??????; do
-        [ -e "$e" ] || [ -L "$e" ] || continue
-        ototal=$((ototal + 1))
-        if [ -L "$e" ] || [ ! -d "$e" ]; then echo "kept $e: not a directory prepare makes (a link or a file)"; okept=$((okept + 1)); continue; fi
-        mt=$(stat -c %Y -- "$e" 2>/dev/null) || mt=''
-        [[ $mt =~ ^[0-9]{1,12}$ ]] || { echo "kept $e: its age cannot be read"; okept=$((okept + 1)); continue; }
-        age=$(( (nowe - mt) / 86400 ))
-        if [ -n "${ONAMED[$e]+x}" ]; then
-          rd=${ONAMED[$e]}; if [ -d "$rd" ]; then rst="its run directory $rd exists"; else rst="the run directory $rd is gone"; fi
-          echo "kept $e (${age}d old): named by the registry ($rst)"; okept=$((okept + 1)); continue
-        fi
-        if [ ! -O "$e" ]; then echo "kept $e (${age}d old): not owned by this user"; okept=$((okept + 1)); continue; fi
-        if [ "$mt" -gt "$cutoff" ] || [ -n "$(find "$e" -xdev -newermt "@$cutoff" -print -quit 2>/dev/null)" ]; then
-          echo "kept $e (${age}d old): named by no registry, but it or something in it changed within ${DAYS} day(s)"; okept=$((okept + 1)); continue
-        fi
-        echo "orphan $e (${age}d old, named by no registry)"; orph+=("$e $mt")
-      done
+      orphan_scan "$oroot" "$DAYS"   # lib/orphans.sh: the listing, which qargi doctor reads too
+      orph=(${ORPH_LIST[@]+"${ORPH_LIST[@]}"}); okept=$ORPH_KEPT; ototal=$ORPH_TOTAL
       echo "$ototal qargi-run.* director(ies) under $oroot: ${#orph[@]} orphaned for more than $DAYS day(s), $okept kept"
       if [ "${#orph[@]}" = 0 ]; then echo "plan: nothing to remove under $oroot"; exit 0; fi
       otok=$({ printf '%s\n%s\n' "$oroot" "$DAYS"; printf '%s\n' "${orph[@]}"; } | plan_token)

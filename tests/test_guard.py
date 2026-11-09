@@ -566,7 +566,7 @@ class Skills(HookCase):
         its own command with the lead's rights: project set refuses them, whole or by a dotted path, in every form the models answers are refused
         in. Look-alikes (test_commands, releases.x, sites.x, website) stay open."""
         for path in ("release", "release.preflight", "release.test_command", "release.sign.verify_command", "release.changelog.released", "release.version_file",
-                     "test_command", "env", "env.PATH", "env.acme.x", "upstream", "upstream.overlay_check", "upstream.remote", "site", "site.enabled", "site.branch", "site.config"):
+                     "test_command", "env", "env.PATH", "env.acme.x", "upstream", "upstream.overlay_check", "upstream.remote", "site", "site.enabled", "site.branch", "site.config", "backlog", "backlog.file"):
             for form in ("qargi project set p %s v", "/opt/q/bin/qargi project set p %s v", "sudo qargi project set p %s v", "cd src && qargi project set p %s v",
                          "bash -c 'qargi project set p %s v'", "env FOO=1 qargi project set p %s v", "echo $(qargi project set p %s v)",
                          "./lib/project.sh set p %s v", "bash lib/project.sh set p %s v", "qargi project --x set p %s v"):
@@ -579,7 +579,7 @@ class Skills(HookCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 2, c)
         for c in ("qargi project set p test_commands x", "qargi project set p releases.x y", "qargi project set p environment x", "qargi project set p budget_cents 500",
-                  "qargi project set p upstreams.x y", "qargi project set p sites.x y", "qargi project set p website x",
+                  "qargi project set p upstreams.x y", "qargi project set p sites.x y", "qargi project set p website x", "qargi project set p backlogs.x y",
                   "qargi project show p", "echo qargi project set p release.preflight x", "echo qargi project set p site.enabled true"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
@@ -1380,6 +1380,31 @@ class Marshal(HookCase):
         for c in ("qargi upstream review", "qargi upstream review --limit 5 --project proj", "/opt/q/bin/qargi upstream review", "bash lib/upstream.sh review",
                   "qargi upstream", "echo qargi upstream sync", "git log --grep 'upstream sync'", "grep -n 'upstream status' lib/commands.py", "cat lib/upstream.sh",
                   "git fetch upstream", "git fetch origin main"):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+
+    def test_backlog_done_is_the_leads_and_list_stays_allowed(self):
+        """backlog done moves an item out of the backlog file into the dated archive beside it and rewrites the file: the lead's, however it is run (the script
+        and its library included), and so is a verb held in a variable or one nobody knows. list only reads."""
+        cmds = []
+        for v in ("done fix-names --evidence e", "done", "done fix-names --evidence e --plan abc --approved go"):
+            cmds += ["qargi backlog %s" % v, "qargi backlog %s --project proj" % v, "/opt/q/bin/qargi backlog %s" % v, "bin/qargi backlog %s" % v,
+                     "env FOO=1 qargi backlog %s" % v, "sudo qargi backlog %s" % v, "bash -c 'qargi backlog %s'" % v, "eval 'qargi backlog %s'" % v,
+                     "echo $(qargi backlog %s)" % v, "true && qargi backlog %s" % v, "ls; qargi backlog %s" % v, "bash lib/backlog.sh %s" % v,
+                     "lib/backlog.sh %s" % v, "nohup qargi backlog %s" % v]
+        cmds += ["qargi 'backlog' 'done'", "v=done; qargi backlog $v", "qargi backlog $v", "qargi backlog ${V:-list}", "qargi backlog frobnicate", "qargi backlog DONE",
+                 "xargs qargi backlog done", "python3 lib/backlog.py apply f.md fix-names e", "python3 -I lib/backlog.py plan f.md fix-names e", "python3 lib/backlog.py list f.md"]
+        for c in cmds:
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 2, (c, res.stderr))
+            self.assertIn("qargi guard:", res.stderr, c)
+            self.assertNotIn("writes the feature marshal", res.stderr, c)
+            self.assertNotIn("changes a skill", res.stderr, c)
+        self.assertIn("qargi backlog done moves an item out of the backlog file", self.bash("qargi backlog done x --evidence e").stderr)
+        self.assertIn("qargi backlog done moves an item out of the backlog file", self.bash("bash lib/backlog.sh done x").stderr)
+        for c in ("qargi backlog list", "qargi backlog list --json", "qargi backlog list --project proj", "/opt/q/bin/qargi backlog list", "bash lib/backlog.sh list",
+                  "qargi backlog", "echo qargi backlog done", "git log --grep 'backlog done'", "grep -n 'backlog done' lib/commands.py", "cat lib/backlog.sh",
+                  "cat lib/backlog.py"):
             res = self.bash(c)
             self.assertEqual(res.returncode, 0, (c, res.stderr))
 
@@ -2750,6 +2775,276 @@ class TrimmedExpansions(HookCase):
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("signing key", r.stderr, c)
 
+    def test_a_subscript_or_an_operator_of_a_parameter_is_no_glob_on_the_key(self):
+        """${PIPESTATUS[0]}, ${arr[@]+...}, "${files[@]}", ${!a[@]}, ${#a[@]}: the [ @ * ? of the parameter's own syntax are no glob, so a loop over an array next
+        to the word marshal is no read of credentials/marshal_*. The default word after an operator (${X:-*}) and a name that starts with marshal_ still are."""
+        for c in ('false | true; echo ${PIPESTATUS[0]}', 'echo ${arr[@]+"${arr[@]}"}', 'echo ${arr[@]+x}', 'for f in "${files[@]}"; do echo $f; done; echo marshal',
+                  'for f in "${files[@]}"; do qargi marshal status; done', 'for f in "${!files[@]}"; do echo marshal $f; done', 'for ((i=0;i<${#a[@]};i++)); do echo marshal; done',
+                  'echo "${@}" "${*}" ${#} ${?}', 'echo "${a[0]:-x}" "${b[*]}" "${c[i+1]}"', 'false | true; echo ${PIPESTATUS[0]} > out.txt', 'x=${arr[@]+${#arr[@]}}; echo $x'):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_a_parameter_that_could_name_the_key_is_still_refused(self):
+        cred = os.path.join(self.conf, "credentials")
+        os.makedirs(cred)
+        k = os.path.join(cred, "marshal_ed25519")
+        with open(k, "w") as f:
+            f.write("x\n")
+        for c in ("cat ${X:-*}", "cat ${X:-dir}/marshal_*", "cat ${arr[0]}/marshal_x", "cat ${d}/marshal_*", "cat ${arr[@]}/marshal_?", "cat marshal_${m}", "cat marshal_${arr[0]}",
+                  "cat ${X:-d}/${arr[0]}*", "cat ${arr[0]}${X:-*}", 'for f in "${files[@]}"; do cat %s; done' % k, 'for f in "${files[@]}"; do cat "${QARGI_CONF}/credentials/marshal_ed25519"; done',
+                  'false | true; echo ${PIPESTATUS[0]}; cat %s' % k, "cp -r ${arr[@]} out",
+                  'a=(%s/*); cat "${a[@]}"' % cred, 'a=(%s/m*); cat ${a[0]}' % cred, 'cd %s; a=(*); cat ${a[@]}' % cred, 'declare -a a=(%s/*); cat ${a[@]}' % cred,
+                  'a+=(%s/*); cat ${a[@]}' % cred, 'a=(%s/*); cat $a' % cred, 'a=(x %s/marshal_ed25519 y); cat ${a[1]}' % cred, 'local -a a=(%s/*); cat "${a[@]}"' % cred,
+                  'typeset a=(%s/?arshal*); cat ${a[@]}' % cred, 'readonly a=(%s/*); cat ${a[@]}' % cred, 'declare -A a=([k]=%s/*); cat ${a[k]}' % cred,
+                  'a=(${X:-%s}/*); cat ${a[@]}' % cred, 'cd %s; declare -a a=(m*); cat ${a[@]}' % cred, 'x=1 a=(%s/*); cat ${a[@]}' % cred,
+                  'a=(%s/*)&&cat ${a[@]}' % cred, 'a=(\n%s/*\n); cat ${a[@]}' % cred, 'a=( %s/* ) ; cat ${a[@]}' % cred,
+                  'cat %s/${X:-ma}rshal_ed25519' % cred, 'a=ma; cat %s/${a}rshal_ed25519' % cred, 'cat %s/m${X}shal_ed25519' % cred, 'cat %s/$Xrshal_ed25519' % cred,
+                  'f=${X:-ma}rshal_ed25519; cat %s/$f' % cred, 'cd %s; cat ${X:-ma}rshal_ed25519' % cred, 'a=(${X:-ma}rshal_ed25519); cat %s/${a[0]}' % cred):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("signing key", r.stderr, c)
+
+    def credentials(self):
+        """The credentials directory of the test's configuration, with the signing key and another credential beside it."""
+        cred = os.path.join(self.conf, "credentials")
+        os.makedirs(cred)
+        for name in ("marshal_ed25519", "other.token"):
+            with open(os.path.join(cred, name), "w") as f:
+                f.write("x\n")
+        return cred
+
+    def test_a_variable_the_line_sets_is_followed_to_the_key(self):
+        """d=DIR; cat $d/marshal_ed25519: the line's own plain assignments (also after export, declare, typeset, local and readonly, +=, the variable of a for loop, and one
+        value built from another) are read before a later word is judged; so are a cd to the variable, and a string handed to eval or a shell."""
+        cred = self.credentials()
+        os.makedirs(os.path.join(self.home, ".qargi", "config", "credentials"))
+        with open(os.path.join(self.home, ".qargi", "config", "credentials", "marshal_ed25519"), "w") as f:
+            f.write("x\n")
+        for c in ("d=%s; cat $d/marshal_ed25519", "d=%s; cat $d/m*", 'd=%s; cat "$d"/*', "d=%s; cat ${d}/marshal_ed25519", "d=%s; cd $d; cat *", "d=%s; cd $d && cat m*",
+                  "d=%s; pushd $d; cat *", "d=%s; cp -r $d /tmp/o", "d=%s; tar cf x.tar $d", "d=%s; grep -r . $d", "d=%s; cat <$d/marshal_ed25519", "d=%s; cat --opt=$d/marshal_ed25519 x",
+                  "d=%s; a=($d/*); cat ${a[@]}", "export d=%s; cat $d/m*", "declare -x d=%s; cat $d/marshal_ed25519", "local d=%s; cat $d/marshal_ed25519",
+                  "readonly d=%s; cat $d/marshal_ed25519", "d=%s e=$d; cat $e/marshal_ed25519", "d=%s/..; e=$d/credentials; cat $e/marshal_*", "d=%s; e=${d}; cat ${e}/marshal_ed25519",
+                  "d=%s; d2=$d/marshal_ed; cat ${d2}25519", "d=%s; d+=/marshal_ed25519; cat $d", "d=x; d=%s; cat $d/marshal_ed25519", "d=%s; eval 'cat $d/marshal_ed25519'",
+                  "d=%s; bash -c 'cat $d/marshal_ed25519'", "for d in %s; do cat $d/marshal_ed25519; done", "for d in %s/*; do cat $d; done",
+                  "for d in %s/../cred*; do cat $d/marshal_ed25519; done"):
+            c = c % cred
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("signing key", r.stderr, c)
+        for c in ("d=~/.qargi/config/credentials; cat $d/marshal_ed25519", "export d=~/.qargi/config/credentials; cat $d/m*", "d=~/.qargi/config/credentials; cd $d; cat *",
+                  "d=~/.qargi/config; cat $d/credentials/marshal_ed25519", "d=~/.qargi; e=$d/config/credentials; cat $e/m*"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("signing key", r.stderr, c)
+
+    def test_a_word_the_guard_cannot_read_is_not_said_to_read_the_key(self):
+        """A variable, a substitution or an extglob pattern after a path in the credentials directory is refused because the guard cannot tell what it names: the reason
+        says so and how to write the command (a literal name), not that the command would read the key. A glob or a plain name that does reach the key says it would."""
+        cred = self.credentials()
+        for c in ("cat %s/$NAME.token", "cat %s/${X:-ma}rshal_ed25519", "cd %s; cat $X", "cat %s/`printf m`arshal_ed25519", "cat %s/!(other.token)", "cat %s/../cred*/${X:-m}*"):
+            r = self.bash(c % cred if "%s" in c else c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("the guard cannot tell what the variable, substitution or pattern in this word names", r.stderr, c)
+            self.assertIn("cannot rule out the lead's signing key", r.stderr, c)
+            self.assertIn("write the name out in the command (a literal path", r.stderr, c)
+            self.assertNotIn("would read the marshal's signing key", r.stderr, c)
+        for c in ("cat %s/marshal_ed25519", "cat %s/m*", "d=%s; cat $d/marshal_ed25519", "cp -r %s /tmp/o"):
+            r = self.bash(c % cred)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("would read the marshal's signing key", r.stderr, c)
+            self.assertNotIn("cannot tell", r.stderr, c)
+
+    def test_a_variable_the_line_sets_to_something_else_stays_allowed(self):
+        cred = self.credentials()
+        for c in ("d=src; cat $d/marshal_ed25519", "d=%s; cat $d/other.token", 'd=%s; cat "$d"/other.token', "d=%s; ls $d", "d=%s; echo $d", "d=%s; stat $d/marshal_ed25519",
+                  "d=%s; cd $d; ls", "d=%s; test -e $d/marshal_ed25519", "d=src; cat $d/*.py", "d=docs; cd $d; cat *", "for f in *.txt; do cat $f; done", "x=a; x=$x$x; echo $x",
+                  "d=$(git rev-parse --show-toplevel); cat $d/README.md", "for d in src docs; do ls $d; done",
+                  "d=src e=$d/lib; cat $e/x.py", "d=src; d+=/lib; cat $d/x.py"):
+            c = c % cred if "%s" in c else c
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_a_directory_part_that_is_a_glob_does_not_hide_a_variable_after_it(self):
+        """cred*/${X:-ma}rshal_x: a glob in the directory part before the variable names the credentials directory as well as the plain path does."""
+        cred = self.credentials()
+        parent = os.path.dirname(cred)
+        for c in ("cat %s/../cred*/${X:-ma}rshal_ed25519", "X=ma; cat %s/../credential?/${X}rshal_ed25519", "X=ma; cat %s*/${X}rshal_ed25519", "cat %s/../cred*/$(printf ma)rshal_ed25519",
+                  "cat %s/../cred*/$Xrshal_ed25519", "cat %s/../c*/m$X", "cat %s/../[c]redentials/${X:-ma}rshal_ed25519", "cd %s/..; cat cred*/${X:-ma}rshal_ed25519"):
+            c = c % cred
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("signing key", r.stderr, c)
+        for c in ("cat %s/src*/${X:-a}.txt", "cat %s/s*/m$X", "cat %s/../other.token", "cat %s/../cred*/other.token"):
+            c = c % parent
+            self.assertEqual(self.bash(c).returncode, 0, c)
+
+    def test_a_directory_the_guard_cannot_name_before_the_keys_own_name_is_refused(self):
+        """A variable, a command substitution or a backtick as a directory component before a name that starts with marshal_ (`$X/marshal_x`, `$(cmd)/marshal_x`,
+        `d=$(cmd); $d/marshal_x`, `DIR/../$X/marshal_x`): the directory could be the credentials directory, so the word is refused and the reason asks for a literal path.
+        This includes `$LIB/marshal_refs.py`, as `${LIB}/marshal_refs.py` already was."""
+        cred = self.credentials()
+        for c in ("cat $X/marshal_ed25519", "cat $(cmd)/marshal_ed25519", "cat $(echo %s)/marshal_ed25519", "d=$(echo %s); cat $d/marshal_ed25519", "cat %s/../$X/marshal_ed25519",
+                  "cat `cmd`/marshal_ed25519", "cat `echo %s`/marshal_ed25519", "d=`echo %s`; cat $d/marshal_ed25519", 'd=$(cmd); cat "$d"/marshal_ed25519', "cat ${X}/marshal_ed25519",
+                  "cat $X/$Y/marshal_ed25519", "cat $X/y/marshal_ed25519", "cat $LIB/marshal_refs.py", 'cat "$(cmd)/marshal_ed25519"', 'cat "$(echo a b)"/marshal_ed25519',
+                  "cat $(echo a; echo b)/marshal_ed25519", "cat $(echo $(echo %s))/marshal_ed25519", "cat ${X:-a b}/marshal_ed25519", "for d in $(ls); do cat $d/marshal_ed25519; done",
+                  "d=src; d=$(cmd); cat $d/marshal_ed25519", "cat <$X/marshal_ed25519", "cat --opt=$X/marshal_ed25519 x", "cp $X/marshal_ed25519 /tmp/o", "cat $X/marshal_ed25519.pub",
+                  "d=%s/..; cat $d/$X/marshal_ed25519", "cd %s; cat $X/marshal_ed25519", "grep -r . $X/marshal_ed25519", 'python3 -c "open(\'$X/marshal_ed25519\')"'):
+            c = c.replace("%s", cred)
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("the guard cannot tell what the variable, substitution or pattern in this word names", r.stderr, c)
+            self.assertIn("write the name out in the command (a literal path", r.stderr, c)
+            self.assertNotIn("would read the marshal's signing key", r.stderr, c)
+
+    def test_a_variable_the_line_resolves_before_the_keys_own_name_is_judged_as_the_real_path(self):
+        cred = self.credentials()
+        for c in ("d=%s; cat $d/marshal_ed25519", "d=%s/..; e=$d/credentials; cat $e/marshal_ed25519", "for d in src %s; do cat $d/marshal_ed25519; done"):
+            r = self.bash(c % cred)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("would read the marshal's signing key", r.stderr, c)
+        for c in ("d=src; cat $d/marshal_ed25519", "d=%s; cat $d/other.token", "d=a; e=$d/b; cat $e/marshal_x", "for d in src docs; do cat $d/marshal_x; done"):
+            r = self.bash(c % cred if "%s" in c else c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_a_variable_before_a_name_that_is_not_the_keys_stays_allowed(self):
+        cred = self.credentials()
+        for c in ("cat $X/other.token", "cat $X/readme.md", "cat $(git rev-parse --show-toplevel)/README.md", "cat `pwd`/README.md", "cat $X/marshal.md", "cat $X/Marshal_x", "cat $X/x_marshal_x",
+                  "cat $HOME/notes.txt", "cat marshal_notes.md", "cat $X", "cat $X/", "echo $X/marshal", "ls $X/marshal_ed25519", "test -e $X/marshal_ed25519", "stat $X/marshal_ed25519",
+                  "d=$(cmd); cat $d/other.token", "cat ${X}/other.token $Y/notes", 'git commit -m "fix $X"', "make -C $X test", "cat %s/other.token", "cat src/marshal_notes.md",
+                  "cat $(echo a b)/readme.md", "cat ${X:-a b}/readme.md", "(cd src; cat x.py)", "echo $((1+2))/x", 'echo "f(x)/marshal_x"'):
+            r = self.bash(c.replace("%s", cred))
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    CHAIN = 1000
+
+    def judged_in_time(self, command, limit=3.0):
+        """The verdict of a command the real clock times (the budget of the hook is 5 s): it is judged, not refused for time, and well inside the budget."""
+        t0 = time.monotonic()
+        r = self.bash(command)
+        took = time.monotonic() - t0
+        self.assertNotIn(BUDGET_REFUSAL, r.stderr, command[:80])
+        self.assertLess(took, limit, command[:80])
+        return r
+
+    def test_a_thousand_dependent_assignments_are_judged_not_refused_as_too_slow(self):
+        """x1=$x0/b; x2=$x1/b ... x1000=$x999/b: each value is the one before and a step, so the text the guard reads grows with the chain; it is resolved once per
+        variable, a path under a directory that is not there is not walked name by name, and the line costs a second at most (it was refused after 5 s)."""
+        n = self.CHAIN
+        for c in ("; ".join("x%d=$x%d/b" % (i + 1, i) for i in range(n)) + "; echo $x%d" % n,
+                  "x0=a; x0=b; " + "; ".join("x%d=$x%d/c" % (i + 1, i) for i in range(n)) + "; cat $x%d" % n,
+                  "; ".join("export x%d=${x%d}/b" % (i + 1, i) for i in range(n)) + "; ls $x%d" % n):
+            r = self.judged_in_time(c)
+            self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_a_long_chain_still_ends_in_the_real_path_it_builds(self):
+        cred = self.credentials()
+        n = self.CHAIN
+        c = "x0=%s; " % cred + "; ".join("x%d=$x%d/." % (i + 1, i) for i in range(n)) + "; cat $x%d/marshal_ed25519" % n
+        r = self.judged_in_time(c)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("would read the marshal's signing key", r.stderr)
+        c = "x0=%s; " % cred + "; ".join("x%d=$x%d/." % (i + 1, i) for i in range(n)) + "; cat $x%d/other.token" % n
+        self.assertEqual(self.judged_in_time(c).returncode, 0)
+
+    def test_a_chain_that_multiplies_the_values_is_refused_at_once(self):
+        """A word has at most 256 readings through the variables and a value built from them at most 16384 characters: a chain that squares the values at each step
+        ends in a refusal that says so, in no time, and not in a search that takes minutes. (A name given more than 32 values is unknown, not a refusal: the next test.)"""
+        doubling = "x1=a; x1=b; " + "; ".join("x%d=$x%d/$x%d" % (i + 1, i, i) for i in range(1, 40)) + "; echo $x40"
+        wide = "a=1; a=2; a=3; b=$a/$a/$a; c=$b/$b; echo $c"
+        loop = "for x in a b c d e f g h; do for y in $x $x $x; do echo $y; done; done; z=$x/$x/$x; w=$z/$z; echo $w"
+        for c in (doubling, wide):
+            r = self.judged_in_time(c, 2.0)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("cannot be followed one by one", r.stderr, c)
+        self.assertEqual(self.judged_in_time(loop, 2.0).returncode, 2)
+        self.assertEqual(self.judged_in_time("x=" + "a" * 50000 + "; echo $x").returncode, 0)            # a long text is no chain
+        r = self.judged_in_time("x=" + "a" * 20000 + "; y=$x; echo $y")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("longer than", r.stderr)
+
+    def test_a_name_given_more_than_32_values_is_unknown_not_a_refusal(self):
+        """An ordinary loop over 33 words, two loops that reuse a name, five appends to one name and a name set 33 times are allowed as they were before the assignments
+        of the line were read: the name is unknown from then on, as a variable the guard cannot read is. The key is not opened by it: an unknown name before a name that
+        starts with marshal_, a name that stands for the credentials directory, and a relative write after a cd to it are still refused."""
+        cred = self.credentials()
+        words = " ".join(str(i) for i in range(1, 34))
+        names = " ".join("test_%s" % c for c in "abcdefghijklmnopqrstuvwxyzABCDEFG")
+        ok = ["for n in %s; do echo $n; done" % words, "for t in %s; do bash tests/$t.sh; done" % names,
+              "for f in %s; do echo $f; done; for f in %s; do echo $f; done" % (" ".join("a%d" % i for i in range(17)), " ".join("b%d" % i for i in range(16))),
+              "opts=-v; opts+=' -x'; opts+=' -y'; opts+=' -z'; opts+=' -w'; opts+=' -q'; cmd $opts", "x=a; " + "x+=b; " * 16 + "echo $x",
+              "".join("d=v%d; " % i for i in range(33)) + "ls", "".join("d=v%d; " % i for i in range(40)) + "cat $d/other.token"]
+        for c in ok:
+            r = self.judged_in_time(c, 2.0)
+            self.assertEqual(r.returncode, 0, (c[:60], r.stderr))
+        sets = "".join("d=v%d; " % i for i in range(33))
+        bad = [sets + "cat $d/marshal_ed25519", sets + "d=%s; cat $d/marshal_ed25519" % cred, sets + "cd $d; echo x > a",
+               "for n in %s; do cat $n/marshal_ed25519; done" % words, "for d in %s %s; do cat $d/marshal_ed25519; done" % (words, cred)]
+        for c in bad:
+            r = self.judged_in_time(c, 2.0)
+            self.assertEqual(r.returncode, 2, c[:80])
+            self.assertNotIn("more than 32 values", r.stderr, c[:80])
+
+    def test_the_real_path_of_a_directory_is_the_same_walked_name_by_name(self):
+        """real_dir follows a link in the middle of a path and takes what comes after the first name that is not there as written; any other path is os.path.realpath."""
+        top = os.path.realpath(tempfile.mkdtemp(dir=self.home))
+        for d in ("a/b/c", "d"):
+            os.makedirs(os.path.join(top, d))
+        open(os.path.join(top, "a", "f"), "w").close()
+        for target, link in ((os.path.join(top, "a/b"), "l1"), ("../d", "a/l2"), ("/", "rootl"), ("l1", "l3"), ("nowhere", "dang"), (os.path.join(top, "a/f"), "lf")):
+            os.symlink(target, os.path.join(top, link))
+        names = ["a", "b", "c", "d", "l1", "l2", "l3", "rootl", "dang", "lf", "f", "zz", ".", "..", ""]
+        paths = [top, top + "/", "/", "/."]
+        rnd = random.Random(7)
+        for _ in range(1500):
+            paths.append(top + "".join("/" + rnd.choice(names) for _ in range(rnd.randint(1, 6))))
+
+        def check():
+            G = self.J.m
+            G.real_dir.cache_clear()
+            return [(p, G.real_dir(p), os.path.realpath(p)) for p in paths]
+        for p, got, want in self.J.run(check):
+            self.assertEqual(got, want, p)
+
+    def test_the_values_of_a_line_are_forgotten_with_the_other_caches(self):
+        """line_assignments holds the home directory it read (a ~ in a value): a judge that outlives one call, with another HOME for the next, must not reuse them."""
+        def check():
+            G = self.J.m
+            G.line_assignments("d=~/x; cat $d")
+            before = G.line_assignments.cache_info().currsize
+            G.clear_caches()
+            return before, G.line_assignments.cache_info().currsize
+        before, after = self.J.run(check)
+        self.assertGreater(before, 0)
+        self.assertEqual(after, 0)
+
+    def test_a_backtick_substitution_in_the_name_is_refused_as_dollar_parenthesis_is(self):
+        cred = self.credentials()
+        for c in ("cat %s/`printf m`arshal_ed25519", "cat %s/`printf marshal_ed25519`", "cat %s/../cred*/`printf m`arshal_ed25519", "cat %s/m`printf a`rshal_ed25519",
+                  "cd %s; cat `printf marshal_ed25519`"):
+            c = c % cred
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("signing key", r.stderr, c)
+        for c in ("cat %s/other.token `printf x`", "cat src/`printf x`.txt", "echo `printf x` > out.txt", "cat `printf x`/readme.txt"):
+            c = c % cred if "%s" in c else c
+            self.assertEqual(self.bash(c).returncode, 0, c)
+
+    def test_an_extglob_pattern_in_the_name_is_refused(self):
+        """Once extglob is on (shopt -s extglob, shopt -O, a shell started with it), @(m)arshal_x and !(other.token) name the key; the pattern is read as the glob * whether the
+        line turns extglob on or not."""
+        cred = self.credentials()
+        for c in ("shopt -s extglob\ncat %s/@(m)arshal_ed25519", "shopt -s extglob\ncat %s/!(other.token)", 'shopt -s extglob\na=(%s/!(x)); cat "${a[@]}"', "shopt -s extglob; cat %s/+(m)arshal_ed25519",
+                  "bash -O extglob -c 'cat %s/@(m)arshal_ed25519'", "cat %s/?(m)arshal_ed25519", "cat %s/*(m)arshal_ed25519", "cat %s/@(marshal_ed25519|x)", "cat %s/@(@(m)arshal_ed25519|x)",
+                  "shopt -s extglob; cd %s; cat !(other.token)", "shopt -s extglob; cat %s/../@(credentials)/marshal_ed25519", "shopt -s extglob; cat %s/../@(credentials)/@(m)arshal_ed25519",
+                  "shopt -s extglob; cp -r %s/../@(credentials) /tmp/o"):
+            c = c % cred
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("signing key", r.stderr, c)
+        for c in ("shopt -s extglob\ncat src/@(a|b).py", "shopt -s extglob; echo !(x)", "grep -E 'a+(b)' f.txt", "echo 'a?(b)' | cat", "shopt -s extglob; ls %s/!(x)"):
+            c = c % cred if "%s" in c else c
+            self.assertEqual(self.bash(c).returncode, 0, c)
+
 
 class InPlaceScripts(HookCase):
     """In sed -i -e SCRIPT FILE the script is no file: a glob, a $ or a -S in it does not name a file the guard cannot read. The file still is judged."""
@@ -2899,6 +3194,123 @@ class TextIsData(HookCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("Agents never push", r.stderr, c)
+
+    # a script a member writes with a heredoc and then makes executable, adds or runs: its body mentions words the guard reads in a command (project set, with a
+    # variable or a substitution), and a body of text is not a command
+    BODY_DATA = (
+        "cat > run.sh <<'E'\n#!/bin/sh\nnote: project set $X\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\n#!/bin/sh\nthe project set of answers is $(date)\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nthe project set of $answers\nE\nls",
+        "mkdir -p out && cat > out/run.sh <<'E'\nthe project set of ${answers[@]}\nE\nchmod +x out/run.sh",
+        "cat >> run.sh <<'E'\nthe project set of $X\nE\nchmod +x run.sh && ls -l",
+        "tee run.sh <<'E'\nthe project set of $X\nE\nmkdir -p out",
+        "cat <<'E' > run.sh\nthe project set of $X\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nfalse | true; echo ${PIPESTATUS[0]} ${arr[@]+x}\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nfor f in \"${files[@]}\"; do echo marshal $f; done\nE\nchmod +x run.sh",
+        "cat > a.sh <<'A'\nthe project set of $X\nA\ncat > b.sh <<'B'\nthe project init of $(date)\nB\nchmod +x a.sh b.sh",
+        "cat > run.sh <<E\nthe project set of $X\nE\nchmod +x run.sh",
+        "git commit -F - <<'E'\nthe project set of $X\nE\nls",
+        "cat <<'A' | cat <<'B'\nx\nA\nthe project set of $X\nB\nls",
+    )
+    # the nearest real violations: the receiver runs the body, the line could run the file it writes, the body is expanded by the outer shell, or a line of it starts
+    # a lead-only verb (also hidden by a continuation, a quote, a redirection)
+    BODY_STILL = (
+        "cat > run.sh <<'E'\nqargi project set x\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nthe project set of $X\nE\nbash run.sh",
+        "cat > run.sh <<'E'\nthe project set of $X\nE\nchmod +x run.sh; ./run.sh",
+        "cat > run.sh <<'E'\nthe project set of $X\nE\nsh run.sh",
+        "cat > run.sh <<'E'\nthe project set of $X\nE\nsource run.sh",
+        "cat > run.sh <<'E'\nthe project set of $X\nE\n. ./run.sh",
+        "cat > run.sh <<'E'\nthe project set of $X\nE\nmake gate",
+        "cat > run.sh <<'E'\nthe project set of $X\nE\npython3 run.sh",
+        "cat > run.sh <<'E'\nthe project set of $X\nE\nxargs sh -c < run.sh",
+        "cat > run.sh <<'E'\nthe project set of $X\nE\nenv sh run.sh",
+        "cat > run.sh <<'E'\necho x > ~/.bashrc\nE\nbash run.sh",
+        "cat > run.sh <<'E'\nqar\\\ngi upgrade\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nqargi \\\nupgrade\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\n$'qargi' upgrade\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\n$'\\x71argi' upgrade\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\n> out qargi upgrade\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nq\"\"argi upgrade\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nnice -n 5 qargi upgrade\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nfind . -exec qargi upgrade {} \\;\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nx=$(qargi upgrade)\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nfoo | qargi upgrade\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\npython3 -I lib/packs_link.py apply link in.json x\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nQARGI_NESTED=1 qargi feature finish\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\ngit push origin main\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\n#!/bin/sh\nqargi upgrade\nE\nbash run.sh",
+        "cat > run.sh <<'E'\nthe project set of $X\nqargi upgrade\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\n  qargi packs seed\nE\nmkdir -p out",
+        "cat > run.sh <<'E'\nif true; then qargi upgrade; fi\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nsudo qargi upgrade\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nenv A=1 /opt/q/bin/qargi upgrade\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nbash -c 'qargi upgrade'\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nx=1; qargi upgrade\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nbash lib/packs.sh packs seed\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nexport QARGI_LEAD=me\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nQARGI_MEMBER_RUN= qargi status\nE\nchmod +x run.sh",
+        "cat > run.sh <<E\nthe project set of $(date)\nE\nchmod +x run.sh",
+        "cat > run.sh <<E\n$(qargi upgrade)\nE\nchmod +x run.sh",
+        "cat > run.sh <<E\n`qargi upgrade`\nE\nchmod +x run.sh",
+        "cat > run.sh <<E\n$\\\n(qargi upgrade)\nE\nchmod +x run.sh",
+        "bash <<'E'\nthe project set of $X\nE\nchmod +x run.sh",
+        "sh <<'E'\nqargi project set x\nE",
+        "bash -s <<'E'\nthe project set of $X\nE\nls",
+        "source /dev/stdin <<'E'\nthe project set of $X\nE\nls",
+        "xargs sh -c <<'E'\nqargi upgrade\nE\nls",
+        "cat <<'E' | sh\nthe project set of $X\nE\nls",
+        "cat <<'E' | bash -s\nqargi upgrade\nE\nls",
+        "cat <<'E' |& tee run.sh | sh\nqargi upgrade\nE\nls",
+        "alias cat=sh\ncat <<'E'\nthe project set of $X\nE\nls",
+        "export PATH=.:$PATH\ncat <<'E'\nthe project set of $X\nE\nls",
+        "PATH=.:$PATH\ncat <<'E'\nthe project set of $X\nE\nls",
+        "function cat { sh; }\ncat <<'E'\nthe project set of $X\nE\nls",
+        "printf -v PATH %s .:$PATH\ncat <<'E'\nthe project set of $X\nE\nls",
+        "FOO=1 cat <<'E'\nthe project set of $X\nE\nls",
+        "./cat <<'E'\nthe project set of $X\nE\nls",
+        "'cat' <<'E'\nthe project set of $X\nE\nls",
+        "cat <<'E' # note\nthe project set of $X\nE\nls",
+        "cat <<'E'\nthe project set of $X",
+        "eval \"$(cat <<'E'\nthe project set of $X\nE\n)\"",
+        # install runs the program of --strip-program, so it is no command that runs nothing; coproc starts the command that follows it
+        "cat > run.sh <<'E'\nrm -rf ~/.claude/skills/x\nE\nchmod +x run.sh; install -s --strip-program=./run.sh run.sh out.bin",
+        "cat > run.sh <<'E'\nmv ~/.qargi/state/features ~/x\nE\nchmod +x run.sh; install -s --strip-program=./run.sh run.sh out.bin",
+        "cat > run.sh <<'E'\ncp x ~/.claude/settings.json\nE\nchmod +x run.sh; install -s --strip-program run.sh run.sh out.bin",
+        "cat > run.sh <<'E'\nthe project set of $X\nE\ninstall -m 755 run.sh out/run.sh",
+        "cat > run.sh <<'E'\ncoproc qargi upgrade\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nthe project set of $X\nE\ncoproc ./run.sh",
+    )
+
+    def test_a_heredoc_body_is_data_when_a_plain_writer_receives_it(self):
+        wrong = [(c, r.stderr[:100]) for c, r in self.verdicts(self.BODY_DATA) if r.returncode != 0]
+        self.assertEqual(wrong, [], "refused, but only text for cat or tee")
+
+    def test_a_heredoc_body_is_still_read_when_it_could_run_or_starts_a_lead_only_verb(self):
+        wrong = [c for c, r in self.verdicts(self.BODY_STILL) if r.returncode != 2]
+        self.assertEqual(wrong, [], "allowed, but the body could run")
+
+    def test_the_body_that_a_plain_writer_receives_is_cut_but_for_the_lines_that_start_a_lead_only_verb(self):
+        sys.path.insert(0, LIBDIR)
+        import guard as G
+        self.assertEqual(G.mask_data("cat > f <<'E'\nthe project set of $X\nE\nchmod +x f"), "cat > f <<'E'\nE\nchmod +x f")
+        self.assertEqual(G.mask_data("cat > f <<'E'\nthe project set of $X\nqargi upgrade\nsee project set\nE\nchmod +x f"), "cat > f <<'E'\nqargi upgrade\nE\nchmod +x f")
+        self.assertEqual(G.mask_data("cat > f <<E\nthe project set of $X\nE\nchmod +x f"), "cat > f <<E\nE\nchmod +x f")
+        for c in ("bash <<'E'\nx\nE\nchmod +x f", "cat > f <<'E'\nthe project set of $X\nE\nbash f", "cat > f <<'E'\nx\nE\nmake","cat <<'E' | sh\nx\nE\nls", "alias cat=sh\ncat <<'E'\nx\nE\nls", "cat <<'E' > f\nx\nE\nexport PATH=.\nls",
+                  "cat > f <<E\nthe project set of $(date)\nE\nchmod +x f", "cat > f <<E\nthe project set of ${X}\nE\nchmod +x f"):
+            self.assertEqual(G.mask_data(c), c, c)
+
+    def test_heredoc_bodies_beside_other_commands_are_cut_in_linear_time(self):
+        shapes = (("many heredocs and a command", "".join("cat > f%d <<'E%d'\nthe project set of $X\nE%d\n" % (i, i, i) for i in range(3000)) + "chmod +x f1"),
+                  ("a big body and a command", "cat > f <<'E'\n" + "the project set of $X\n" * 15000 + "E\nchmod +x f"),
+                  ("a big body of lead verbs and a command", "cat > f <<'E'\n" + "qargi upgrade\n" * 15000 + "E\nchmod +x f"),
+                  ("a long line of project words", "cat > f <<'E'\n" + "a project " * 40000 + "\nE\nchmod +x f"),
+                  ("many heredoc starts and a command", "cat " + "<<E " * 20000 + "\nE\nchmod +x f"))
+        with self.budget(READINGS):
+            got = in_parallel(self.bash, [c for _, c in shapes])
+        for (name, _), r in zip(shapes, got):
+            self.assertNotIn(BUDGET_REFUSAL, r.stderr, name)
+            self.assertIn(r.returncode, (0, 2), name)
 
     def test_data_is_cut_in_linear_time(self):
         shapes = (("many strings", "".join("echo 'a;b;c'\n" for _ in range(8000))), ("one big string", "echo '" + "a;b " * 60000 + "'"),
@@ -4111,6 +4523,27 @@ class FifthReview(HookCase):
         ok = ["cd $(git rev-parse --show-toplevel) && git commit -m x", "cd $d && echo x > /tmp/ok", "cd $d && cat ability", "cd sub && echo x > f", "cd $d; cd %s; echo x > a.txt" % self.clone,
               'cd "$HOME" && echo x > f', "cd $d && echo x > $HOME/f", "env -C sub touch f", "builtin cd sub && touch f"]
         self.assertEqual(self.not_allowed(ok, self.clone, None), [])
+
+    def test_a_cd_through_a_variable_the_line_assigns_keeps_the_directory_unknown(self):
+        """d=src; cd $d: bash can give d a value the guard does not follow (read, printf -v, a nameref, case conversion, select, `for d` with no `in`) or split it into an
+        option and a directory, so the value the line gives is a guess: the directory stays unknown and a relative write after it is refused, as it was before the line's
+        assignments were read."""
+        cred, s = os.path.dirname(self.key), os.path.dirname(self.skill)
+        bad = ["d=src; read d < list; cd $d; echo x > a", "d=src; read -r d < list; cd $d; echo x > a", "d=src; read d <<< $HOME/.claude/skills; cd $d; echo x > a",
+               "d=src; printf -v d %s ~/.claude/skills; cd $d; echo x > a", "src=~/.claude/skills; declare -n d=src; cd $d; echo x > a", "declare -l d=SRC; cd $d; echo x > a",
+               "d=src; while read d; do cd $d; echo x > SKILL.md; done < list", "d=src; select d in ~/.claude/skills; do cd $d; echo x > a; done",
+               "d=src; set -- ~/.claude/skills; for d; do cd $d; echo x > a; done", 'd="-L %s"; cd $d; echo x > other.token' % cred, "d=src; cd $d; echo x > a",
+               "d=src; cd ${d}; echo x > a", "d=src; cd $d && echo x > a", "d=src; pushd $d; echo x > a", "d=%s; cd $d; echo x > a" % s]
+        for cls in (None, "read-only"):
+            self.assertEqual(self.not_refused(bad, self.clone, cls), [], cls)
+        ro = ["d=%s; read d < list; cd $d; echo x > r.md" % self.out, "d=%s; cd $d; echo x > r.md" % self.out]
+        self.assertEqual(self.not_refused(ro, self.clone, "read-only"), [])
+        # the documented trade-off: a directory reached through a variable the line sets is unknown even when it is plain, so this ordinary command is refused too
+        # (the way out is the directory written out: cd DIR/src)
+        self.assertEqual(self.not_refused(["base=%s; cd $base/src; cp a.py b.py" % self.clone], self.clone, None), [])
+        self.assertEqual(self.not_allowed(["cd %s/src; cp a.py b.py" % self.clone], self.clone, None), [])
+        # a variable that is only read, a literal cd and an absolute write stay allowed
+        self.assertEqual(self.not_allowed(["d=src; cat $d/a.py", "d=src; cd sub; echo x > f", "d=src; cd $d; cat a.py", "d=src; cd $d; echo x > /tmp/ok"], self.clone, None), [])
 
     # --- G8: ${NAME:-x}, ${NAME%/} and the like are read by the value of NAME, or refused
     def test_a_braced_expansion_with_an_operator_is_read_by_its_variable_or_refused(self):

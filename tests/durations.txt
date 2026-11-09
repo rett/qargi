@@ -99,3 +99,7 @@
 0 bash tests/test_tool_copy.sh
 57 shellcheck -x -S warning lib/*.sh lib/conformance/*.sh bin/qargi install.sh tests/*.sh
 10 python3 tests/test_ci.py
+1 python3 tests/test_gates.py
+19 bash tests/test_gates.sh
+1 python3 tests/test_backlog.py
+14 bash tests/test_backlog.sh

@@ -6,6 +6,112 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-11-09
+
+### Added
+- `qargi doctor [PROJECT] [--json] [--strict]`: a read-only check of the host, first slice. One line per check, `ok|warn|unknown  name: detail`, and under a warning the lines that say
+  what you can do (nothing is run for you). The exit status is 0 whatever it finds, or 1 with `--strict` when a check warns. Four checks: `remove-ipc` warns when logind has
+  `RemoveIPC` on (read with `busctl`, `QARGI_BUSCTL`) and the user has no linger (`loginctl`, `QARGI_LOGINCTL`), because logind then removes what lives in `/dev/shm` when the last
+  session ends, and prints the drop-in `/etc/systemd/logind.conf.d/remove-ipc.conf` or `loginctl enable-linger`; `guard` warns when `qargi __guard` is not on `PATH` or does not
+  answer as the guard (and when a member of the project is missing, stale or edited); `shm` warns on less than 10% free under `/dev/shm` (`QARGI_RUN_TMP`) or on an orphaned `qargi-run.*`
+  directory; `window-source` names where the context-window table of the project's runtime comes from and warns on a model id of the project's roles that is not in it. Without
+  systemd or a tool a check says `unknown`. A member may run it. The orphan listing of `qargi local clean --orphans` moved to `lib/orphans.sh` so both read the same code; `clean --orphans` prints what it printed.
+- `qargi backlog`: a generic backlog kept in a markdown file that the new project answer `backlog.file` names (a path, `~/...`, or relative to the repository; it may be outside the
+  repository, a memory store for instance; `project set` and `project validate` check it). An item is a top-level list line `- [ID] text` (ID a lowercase slug of two characters or
+  more) with its indented lines; any other top-level list line is listed as unnumbered. `qargi backlog list [--json]` shows the open items and flags a duplicated id.
+  `qargi backlog done ID --evidence TEXT` prints a plan with a token, and with `--plan` and `--approved` appends the item, the date and the evidence to `NAME-archive-YYYY-MM.md`
+  beside the backlog file (created when absent) and removes it from the backlog, with an audit log line. The plans of `feature finish` and `release finish` add the line
+  `backlog items named in these commits: ID, ...` for the open items whose id the merged commit messages name (information only, outside the token; nothing when the answer is
+  unset or the file is missing). A member's guard refuses `backlog done` and `project set` of `backlog.file`; `backlog list` only reads.
+- Declared gates: the project answer `gates` is an ordered list of `{name, command, tier}` (`command` a command line or a list of words, as `test_command`; `tier` `feature` or
+  `release`; names unique and non-empty). `qargi project set` and `project validate` check it and name the entry that is wrong. `qargi feature verify` then runs the gates of tier
+  `feature` in order and stops at the first failure; `qargi release verify` runs the feature gates, then the release gates. Declared gates replace `test_command` and
+  `release.test_command` (a note says when one of them is not the command of a gate); the verdict line is still `full suite: pass|fail at SHA`, so `feature finish` and the
+  release steps work as before. The run record lists each gate with its result (`pass`, `fail`, `not run`), `feature status` and `release status` show a `gates:` line, and a failed
+  run names the failing gate. Without the answer nothing changes. A member's `project set` of `gates` is refused by the guard, as it is for `test_command`.
+- `qargi release verify` reads `.github/workflows/*.yml` and `*.yaml` of the tree it verifies (standard library only, no YAML dependency) and warns on standard error, naming each
+  CI job whose name and id match no declared gate name; a job whose name cannot be read (an expression, a block scalar, a flow mapping) is a note and never a failure.
+  `release verify --strict` refuses, before anything runs, on any such job. With no workflow it prints nothing new; with workflows and no gate declared every job is named.
+- A test (`tests/test_release_unrelated.sh`) covers the fallback line of `release finish --hotfix` when the hotfix branch has no merge base with develop but develop and master are
+  related (master merges two histories): finish refuses with a line about the branch and develop only, without the advice for an unrelated develop and master.
+
+### Changed
+- `docs/flow/git-flow.md` says that `qargi review apply` runs the take-in scrub too, unless a passing `review check` recorded the same series (then it prints
+  `scrub: skipped (review check passed it for this series)`), and names `qargi local clean --orphans` beside the other `local clean` forms.
+
+### Fixed
+- `QARGI_NESTED` no longer skips the plan token of `qargi feature finish`, `qargi feature merge` into a detached branch and `qargi upstream sync`: as for the release verbs and
+  `local clean --orphans`, a caller that is itself approved has not approved this plan, so the token is always needed. Tests cover all three.
+- `qargi backlog done` needs its plan token under `QARGI_NESTED` too, as the verbs above: with the variable set it archived and removed the item with no `--plan` or with a wrong
+  one. Tests cover both and check that the backlog and the archive stay as they were.
+- `qargi marshal handoff` judges the whole-suite record of a project with declared gates by the gates: the record's command is then `gates: NAME=COMMAND; ...`, which the note compared
+  with `test_command`, so every feature showed as "another test command" even right after a passing `feature verify` at the tip. The identity is now built in one place,
+  `lib/gates.py` (`gates.py identity ANSWERS TIER...`, which `feature verify` and the note both use), and the help of `marshal handoff` says what makes a run apply. Tests cover a
+  gated project with a run at the tip and with a changed gate.
+- `qargi doctor` changes nothing on the host, as it says. It ran `lib/orphans.sh` and `qargi agent list`, and loading `lib/lib.sh` made the config and state directories, set them
+  to mode 700 (and `~/.qargi`), and created `instances.json`, `sessions.json` and `agents.json`: a host that had never run qargi got them from its first doctor. `lib/lib.sh` now skips
+  that setup when `DA_NOSETUP` is set; the orphan scan sets it when run as a program, and doctor sets it for `agent list` and skips the member check when `agents.json`
+  does not exist (see the next entry). The test starts with the data directories absent, and snapshots them, `HOME` and the directories of a host that has them (types, modes, sizes, times) before and
+  after.
+- `qargi doctor PROJECT` on a host with no members file says `ok ... no member is recorded on this host, so there is none to be stale` in its guard check. It said `unknown ... the members
+  of project PROJECT could not be read (qargi agent list)`, which read like a failure; `unknown` stays for a `qargi agent list` that fails.
+- The gate results of a whole-suite run are kept per run, beside its log (`STATE/suite-logs/PROJECT.feature-NAME.gates.jsonl`, `PROJECT.release-VERSION.gates.jsonl`), and not in one
+  file per project: two verifies at once truncated and appended to the same file, so a record could list a gate twice or the gates of the other run. The verdict line was never
+  affected. A test runs two verifies at once and checks each record. Two verifies of the same feature still share a log and a results file (the warning about other runs stays).
+- The member guard no longer refuses a script written with a heredoc because of what its text mentions. A body that `cat`, `tee`, `grep` or `git commit` receives is
+  now data in a line with other commands too (`cat > run.sh <<'E' ... E` then `chmod +x run.sh`), as it already was when every command of the line was one of those: a body
+  with `project set $X` in a sentence was refused as the `project` verb with an expansion. The other commands of the line must only look at files, make, move or remove
+  them (`chmod`, `mkdir`, `ls`, `mv`, `cp`, `rm` ...): a shell, `make`, `source`, a script, an alias or an `export` in the line keeps the plain reading, since the file could be
+  run there. The lines of such a body that start a lead-only verb (`qargi ...`, also behind `sudo`, `env`, a shell, a keyword, a redirection or a continuation, the word
+  `project`, `QARGI_LEAD`, `QARGI_NESTED`, `QARGI_MEMBER_RUN`, `marshal_`, `$'..'`) stay refused, and so do the lines an unquoted delimiter lets the shell expand. A body a
+  shell reads (`bash <<E`, `source /dev/stdin`) or a pipe carries on (`cat <<E | sh`) is read whole. Tests cover the data, the nearest real violations and the linear time.
+- The member guard no longer reads a parameter expansion with a subscript or an operator as a glob on the signing key: `${PIPESTATUS[0]}`, `${arr[@]+...}`,
+  `"${files[@]}"`, `${!a[@]}` and `${#a[@]}` (so a loop over an array next to the word `marshal`, which was refused as a read of `credentials/marshal_*`) are allowed.
+  A name that starts with `marshal_`, a glob in a default word (`${X:-*}`) and a recursive reader still are refused.
+- The member guard reads the elements of an array literal as it reads the words of `for x in WORDS`: a glob inside `NAME=(...)`, `NAME+=(...)` or
+  `declare|typeset|local|readonly [-aA] NAME=(...)` (also `[k]=` entries, and a relative glob after a `cd` into the credentials directory) that reaches
+  `credentials/marshal_*` is refused when the array literal names the credentials directory, in plain words or through a variable the line sets (the entry below). Trimming
+  the subscript off `${a[@]}` (the entry above) had let that through. A word with a variable after the path of the credentials directory (`credentials/${X:-ma}rshal_ed25519`,
+  `credentials/m${X}shal_ed25519`, `cd credentials; cat $X`) is refused too, as the name the variable builds could be the key; the entry below widens this to a glob in the path.
+- The member guard reads the signing key through a name it did not resolve before. It follows the plain assignments of the line (`NAME=VALUE`, also after `export`,
+  `declare`, `typeset`, `local` and `readonly`, `NAME+=VALUE`, the variable of `for NAME in WORDS`, one value built from another) and reads `$NAME` and `${NAME}` in the
+  later words, in `cd $NAME`, and in a string handed to `eval` or a shell, as each value the line gave: `d=~/.qargi/config/credentials; cat $d/marshal_ed25519`,
+  `d=DIR; a=($d/*); cat ${a[@]}` and `for d in DIR; do cat $d/marshal_ed25519; done` are refused. A glob in the directory part before a variable
+  (`cat DIR/../cred*/${X:-ma}rshal_ed25519`), a backtick substitution in the name (as `$(...)` already was) and an extglob pattern (`@(m)arshal_ed25519`, `!(other.token)`,
+  with or without `shopt -s extglob` in the line: the pattern is read as `*`) are refused when they lead into the credentials directory. A name whose value the guard
+  cannot read (`d=$(cmd)`, a variable the line does not set) is refused after a path in that directory, and also when it stands in the directory part before a name that
+  starts with `marshal_` (see the next entry). The guard is best-effort: it reads the text of a command and cannot resolve every
+  shell construct; the "Not covered" paragraph of its description in `lib/guard.py` names what it does not see. Tests cover each form and the nearest allowed ones
+  (`d=DIR; cat $d/other.token`, `d=src; cat $d/marshal_x`, a loop over other directories).
+- The member guard refuses a word whose last component starts with `marshal_` (the signing key's name) when an earlier component holds a variable, a command substitution or a
+  backtick it cannot resolve: `cat $X/marshal_ed25519`, `cat $(cmd)/marshal_ed25519`, `d=$(cmd); cat $d/marshal_ed25519`, `cat DIR/../$X/marshal_ed25519` and the backtick
+  forms, as the directory could be the credentials directory. The reason says the guard cannot tell what the word names and asks for a literal path. A variable the line assigns
+  in plain words is resolved first and the real path is judged, so `d=src; cat $d/marshal_ed25519` stays allowed; a name the line also gives a value the guard cannot read
+  (`d=src; d=$(cmd)`) is no longer taken for its other value, and `d=$(cmd)` is no longer read as an empty string. `$LIB/marshal_refs.py` is refused, as `${LIB}/marshal_refs.py`
+  already was. A variable before a name that does not start with `marshal_` (`$X/other.token`) is allowed. Still not seen: an unresolved directory followed by a glob or
+  another name (`$X/m*`, `cd $X; cat *`), a bare `$d` that stands for the credentials directory, and a script written and run. The assignments of the line are followed
+  for the reads of the key and for a change of directory only; the target of a write is not read through them (`p=DIR; echo x > $p/f`), as before.
+- A `cd` to a word with a variable keeps the directory unknown for a relative write after it, also when the line assigns the variable in plain words (a write after
+  `d=src; cd $d` is refused, as it was before the assignments of the line were read): bash can give the name another value the guard does not follow (`read`, `printf -v`,
+  a nameref, `declare -l`, `select`, `for d` with no `in`) or split the value into an option and a directory (`d="-L DIR"; cd $d`). The directories the values name are
+  still judged for a read of the key (`d=DIR; cd $d; cat *`). Any relative write after a cd through a variable the line sets is refused again (for example
+  `repo=DIR; cd $repo; echo x > a`); write the cd with a literal directory instead (`cd DIR/src`).
+- The member guard judges a line of a thousand dependent assignments (`x1=$x0/b; x2=$x1/b; ... x1000=$x999/b`) in under a second; it refused it as too slow after 5 seconds, the time
+  growing with the cube of the chain. The real path of a long name is now walked one name at a time and, from the first name that is not there, taken as written, so a path
+  under a directory that does not exist costs the names that exist (it is the same path `os.path.realpath` gives, tested on links, `.` and `..`). The values of the assignments
+  are resolved once, in the order of the line. A word read through variables as more than 256 words and a value built from other names longer
+  than 16384 characters (no path is longer than 4096) are refused with a reason that says so, as a brace expression of more than 256 words is, and are not cut: a chain that
+  squares its values at every step is refused at once and no longer searches. A name given more than 32 values (a loop over more words than that, the same name set many
+  times, six appends `opts+=' -x'`) is unknown from then on, like a variable the guard cannot read: the command is judged as before, but a path through that name before a name that
+  starts with `marshal_` is refused, and so is a relative write after a `cd` to it. An append (`opts+=...`) goes on from the values the line gave the name but still doubles them
+  (2, 4, 8, 16, 32 values after 1 to 5 appends); the sixth append makes the name unknown. A long literal text (`x=<50000 characters>`) is no chain and is judged as before. A name used in
+  one assignment before the chain assigns it (`a=$b/x; b=DIR`) stays as written there.
+- The reason the member guard gives for a variable, a substitution or an extglob pattern after a path in the credentials directory no longer says the command "would read the
+  signing key": it says the guard cannot tell what the word names, so it cannot rule the key out, and asks for the name written out (a literal path such as `credentials/other.token`).
+  A glob or a name that does reach the key keeps the old wording. What is refused does not change.
+- A heredoc body written in a line that also runs `install` is read whole again: `install --strip-program=PROG` runs PROG, so `install` is no longer one of the commands that
+  run nothing (`chmod`, `mkdir`, `ls` ...). `coproc` starts the command after it, so a body line that starts with it is read as the lead-only verb it starts.
+
 ## [0.2.6] - 2026-11-07
 
 ### Added

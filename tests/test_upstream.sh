@@ -86,6 +86,10 @@ out=$($UP sync 2>&1); rc=$?; t=$(tok <<<"$out")
   && grep -q "brings 2 commit(s) into upstream" <<<"$out" && ok "the sync plan shows the fast-forward and its commits with a token" || no "plan: rc=$rc $out"
 [ "$(sha upstream)" = "$base" ] && [ ! -f "$J" ] && ok "the plan changes nothing" || no "plan moved the branch"
 $UP sync --plan 000000000000 --approved go >/dev/null 2>&1 && no "a wrong token was accepted" || ok "a wrong plan token is refused"
+out=$(QARGI_NESTED=1 $UP sync --approved go 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "the plan changed or --plan is missing" <<<"$out" && [ "$(sha upstream)" = "$base" ] && ok "sync with no token under QARGI_NESTED is refused, the branch did not move" || no "nested sync, no token: rc=$rc $out"
+out=$(QARGI_NESTED=1 $UP sync --plan 000000000000 --approved go 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "the plan changed or --plan is missing" <<<"$out" && [ "$(sha upstream)" = "$base" ] && ok "and a wrong token is refused under QARGI_NESTED too" || no "nested sync, wrong token: rc=$rc $out"
 [ "$(sha upstream)" = "$base" ] && ok "and the branch did not move" || no "moved on a wrong token"
 git -C "$R" checkout -q upstream
 $UP sync --plan "$t" --approved go >/dev/null 2>&1 && no "the branch was moved under the main checkout" || ok "a branch checked out in the main checkout is not moved"
