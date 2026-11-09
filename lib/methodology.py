@@ -16,7 +16,8 @@ alone (it may belong to the file's own language), but a declared parameter with 
 The optional parameter gates is the project's declared gates (lib/gates.py) as one line of JSON, an array of {name, command, tier}. A template
 may hold, each marker alone on its line: {{#gates}} ... {{/gates}} (the lines between are kept when gates are declared), {{^gates}} ... {{/gates}}
 (kept when none are), and {{#gate}} ... {{/gate}} (repeated for each gate, the feature tier first, in the order declared, with {{gate_id}} (gate1,
-gate2, ...), {{gate_name}}, {{gate_name_quoted}} (a JSON string, which is also a YAML one), {{gate_tier}} and {{gate_command}} filled in). Without gates the
+gate2, ...), {{gate_name}}, {{gate_name_quoted}} (a YAML single-quoted scalar: the name in quotes, a quote doubled, no escape, so the CI scan of lib/gates.py reads it), {{gate_tier}}, {{gate_command}} and, for markdown, {{gate_name_code}} and {{gate_command_code}} (the text as an inline code span, in a
+fence of backticks longer than any run in it, so a backtick in a gate cannot end the span) filled in). Without gates the
 output is the template's {{^gates}} part, which is what it was before gates existed. A parameter may carry a
 "pattern" (a regular expression the whole value must match). A scaffold entry may say "env": "section" (the file holds the
 Development environment section) or "targets" (the file holds the bootstrap and doctor targets of a task runner): project attach
@@ -33,7 +34,7 @@ import gates as G  # noqa: E402
 NAME = re.compile(r"^[a-z][a-z0-9]{0,23}$")
 PLACEHOLDER = re.compile(r"\{\{([a-z_]+)\}\}")
 # the placeholders of a template's {{#gate}} loop, filled for each declared gate; they are not parameters
-GATE_VARS = ("gate_id", "gate_name", "gate_name_quoted", "gate_tier", "gate_command")
+GATE_VARS = ("gate_id", "gate_name", "gate_name_quoted", "gate_name_code", "gate_tier", "gate_command", "gate_command_code")
 GATES_IF = re.compile(r"^\{\{([#^])gates\}\}\n(.*?)^\{\{/gates\}\}(?:\n|\Z)", re.M | re.S)
 GATE_LOOP = re.compile(r"^\{\{#gate\}\}\n(.*?)^\{\{/gate\}\}(?:\n|\Z)", re.M | re.S)
 
@@ -183,7 +184,7 @@ def render(name, given):
     if not re.fullmatch(r"[a-z][a-z0-9]{0,23}", params.get("project", "")):
         raise SystemExit("qargi: project: one lower-case token (letters, digits)")
     for k, v in params.items():
-        if "\n" in v or "\r" in v:
+        if G.has_line_break(v):
             raise SystemExit("qargi: %s is one line" % k)
     gates = declared_gates(params.get("gates", ""))
     out = []
@@ -212,9 +213,17 @@ def declared_gates(value):
     return G.select(data or [], list(G.TIERS))
 
 
+def code_span(text):
+    """The text as a markdown inline code span: a fence of backticks one longer than the longest run of them in the text (CommonMark), with a
+    space inside it when the text starts or ends with a backtick."""
+    n = max([len(r) for r in re.findall(r"`+", text)] + [0]) + 1
+    pad = " " if text.startswith("`") or text.endswith("`") else ""
+    return "`" * n + pad + text + pad + "`" * n
+
+
 def gate_text(body, n, gate):
     """One pass of a {{#gate}} loop body for the gate."""
-    vals = {"gate_id": "gate%d" % n, "gate_name": gate["name"], "gate_name_quoted": json.dumps(gate["name"]), "gate_tier": gate["tier"], "gate_command": gate["command"]}
+    vals = {"gate_id": "gate%d" % n, "gate_name": gate["name"], "gate_name_quoted": "'" + gate["name"].replace("'", "''") + "'", "gate_name_code": code_span(gate["name"]), "gate_tier": gate["tier"], "gate_command": gate["command"], "gate_command_code": code_span(gate["command"])}
     return PLACEHOLDER.sub(lambda mo: vals.get(mo.group(1), mo.group(0)), body)
 
 

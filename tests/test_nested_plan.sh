@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # A caller that is itself approved (QARGI_NESTED set) has not approved this plan: need_plan skips its check when QARGI_NESTED is set, so every
 # call site of it is written `QARGI_NESTED='' need_plan ...`, and a nested environment never skips a plan token. One verb that needs a plan
-# for each file that calls it (branch, marshal, project, provider, registry, cred), each run with QARGI_NESTED=1 and no token, then a wrong one:
+# for each file that calls it (branch, marshal, project, provider, registry, provision, cred), each run with QARGI_NESTED=1 and no token, then a wrong one:
 # refused (exit not 0, "the plan changed or --plan is missing") and nothing changed. The sites of release, local, feature, upstream and backlog
 # are tested in their own tests; canon apply is the one verb that honours QARGI_NESTED (provisioning runs it that way) and is not tested here.
 # Offline (fake ant, curl, git). Run: tests/test_nested_plan.sh
@@ -18,6 +18,28 @@ mkdir -p "$HOME" "$T/c/projects" "$T/s" "$T/bin" "$FAKE"
 trap 'rm -rf "$T" "$HERMETIC"' EXIT
 cd "$T" || exit 1   # a verb that changes the marshal refuses to run inside a member run, which is where this checkout may be
 tok() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
+
+# --- static: every call of need_plan in lib/ and bin/ is written QARGI_NESTED='' need_plan, or is one of the few sites below, so a future call
+# that forgets the prefix is found here and not by a user. The sites that are not prefixed (the file, how many, why):
+#   canon.sh      1  canon apply honours the variable: provisioning runs it nested after its own plan check, and the guard refuses an agent that sets it
+#   memory.sh     1  the verb unsets QARGI_NESTED first
+#   tierwrite.sh  1  the script unsets QARGI_NESTED first
+#   packs.sh      1  the write verbs unset QARGI_NESTED first
+#   project.sh    1  project link unsets QARGI_NESTED first
+ALLOW="canon.sh:1 memory.sh:1 tierwrite.sh:1 packs.sh:1 project.sh:1"
+UNSETS="memory.sh tierwrite.sh packs.sh project.sh"
+bare=$(grep -nE '(^|[^_A-Za-z])need_plan "' "$SRC"/lib/*.sh "$SRC"/bin/* 2>/dev/null | grep -vE "^[^:]*:[0-9]+:[[:space:]]*#" | grep -v "QARGI_NESTED='' need_plan" | grep -v "lib/lib.sh:")
+n_all=$(grep -hE '(^|[^_A-Za-z])need_plan "' "$SRC"/lib/*.sh "$SRC"/bin/* 2>/dev/null | grep -cvE "^[[:space:]]*#")
+msg=''
+for f in $(sed -E 's#^.*/([^/:]*):[0-9]+:.*#\1#' <<<"$bare" | sort -u); do
+  case " $ALLOW " in *" $f:"*) ;; *) msg="$msg $f (not on the list)";; esac
+done
+for a in $ALLOW; do
+  f=${a%%:*}; want=${a##*:}
+  [ "$(grep -cE "/$f:" <<<"$bare")" = "$want" ] || msg="$msg $f (has $(grep -cE "/$f:" <<<"$bare") unprefixed, the list says $want)"
+done
+for f in $UNSETS; do grep -vE '^[[:space:]]*#' "$SRC/lib/$f" | grep -q 'unset QARGI_NESTED' || msg="$msg $f (no unset QARGI_NESTED)"; done
+[ "$n_all" -ge 30 ] && [ -z "$msg" ] && ok "static: every need_plan call in lib/ is prefixed QARGI_NESTED='' or is on the short list (canon apply, and the verbs that unset it first)" || no "static need_plan check: $msg (calls found: $n_all); unprefixed: $bare"
 MSG="the plan changed or --plan is missing"
 # refused CMD...: run the command, with its output in $out; true when it exited not 0 and asked for the token
 refused() { out=$("$@" 2>&1); rc=$?; [ $rc != 0 ] && grep -q "$MSG" <<<"$out"; }
@@ -95,6 +117,12 @@ t=$($DA instances refresh-prompt beta-build --asked "t" | tok)
 [ -n "$t" ] && ok "(setup) refresh-prompt plans the new prompt" || no "(setup) refresh-prompt plan: $($DA instances refresh-prompt beta-build --asked t 2>&1 | tail -3)"
 refused env QARGI_NESTED=1 $DA instances refresh-prompt beta-build --asked "t" --approved go && ! grep -q "beta:agents update" "$FAKE/ant.log" && ok "refresh-prompt with no token under QARGI_NESTED is refused, the agent is not updated" || no "registry, no token: rc=$rc $out"
 refused env QARGI_NESTED=1 $DA instances refresh-prompt beta-build --asked "t" --plan 000000000000 --approved go && ! grep -q "beta:agents update" "$FAKE/ant.log" && ok "and a wrong token is refused under QARGI_NESTED too" || no "registry, wrong token: rc=$rc $out"
+
+# --- provision apply: no cloud resource is created (ant apply is not run)
+t=$($DA provision plan beta-build 2>&1 | tok)
+[ -n "$t" ] && ok "(setup) provision plans" || no "(setup) provision plan: $($DA provision plan beta-build 2>&1 | tail -3)"
+refused env QARGI_NESTED=1 $DA provision apply beta-build --asked "t" --approved go && ! grep -q "apply --yes" "$FAKE/ant.log" && ok "provision apply with no token under QARGI_NESTED is refused, nothing is created" || no "provision, no token: rc=$rc $out"
+refused env QARGI_NESTED=1 $DA provision apply beta-build --asked "t" --plan 000000000000 --approved go && ! grep -q "apply --yes" "$FAKE/ant.log" && ok "and a wrong token is refused under QARGI_NESTED too" || no "provision, wrong token: rc=$rc $out"
 
 # --- credential setup lead-push: no vault credential is made, no token is stored
 jq -n '{schema:1,project:"alpha2",repo:{url:"https://github.com/example/x",path:"",long_lived:["main"]},

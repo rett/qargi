@@ -19,7 +19,7 @@ description: Your part of a git-flow project as a member: work on agent/<slug> f
 - Do not rebase or merge to catch up: report that BASE moved (old and new sha) or which files conflict.
 
 ## Checks
-- Run the DONE check and the gates for the paths you touched, nothing wider.
+- Run the DONE check and the PROFILE checks for paths you touched, nothing wider.
 - The whole-suite run per feature is the lead's, unless DONE is the suite. A project may declare gates, which `feature verify` and `release verify` run in order, stopping at the first failure; also the lead's.
 
 ## Commits

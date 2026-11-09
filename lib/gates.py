@@ -35,15 +35,25 @@ TIERS = ("feature", "release")
 KEYS = ("name", "command", "tier")
 
 
+LINE_BREAKS = "\n\r\x0b\x0c\x1c\x1d\x1e\x85  "   # what str.splitlines() and a YAML 1.1 reader end a line at
+
+
+def has_line_break(s):
+    """True when the text holds a character that ends a line: a newline, a carriage return, a vertical tab, a form feed, a separator
+    (U+001C to U+001E), U+0085, U+2028 or U+2029. A line of a rendered file must not hold one."""
+    return any(c in LINE_BREAKS for c in s)
+
+
 def _ctl(s):
-    return any(ord(c) < 32 or ord(c) == 127 for c in s)
+    """True when the text holds a control character (C0, DEL or C1; every line break is one, or is in LINE_BREAKS)."""
+    return any(ord(c) < 32 or 127 <= ord(c) < 160 for c in s) or has_line_break(s)
 
 
 def command_ok(c):
-    """A command line (one line, no control character) or a non-empty list of non-empty words."""
+    """A command line (one line, no control character) or a non-empty list of non-empty words (none with a line break)."""
     if isinstance(c, str):
         return bool(c.strip()) and not _ctl(c)
-    return isinstance(c, list) and bool(c) and all(isinstance(x, str) and x and "\x00" not in x for x in c)
+    return isinstance(c, list) and bool(c) and all(isinstance(x, str) and x and "\x00" not in x and not has_line_break(x) for x in c)
 
 
 def command_line(c):

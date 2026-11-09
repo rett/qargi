@@ -188,7 +188,7 @@ for f in AGENTS.md CLAUDE.md CONTRIBUTING.md; do
   sh_ "$f" | grep -qx '  - `lint` (feature): `make lint`' && sh_ "$f" | grep -qx '  - `unit` (feature): `make check`' && sh_ "$f" | grep -qx '  - `pack` (release): `make pack`' && ! sh_ "$f" | grep -q 'make test' && ok "gates: $f lists the declared gates in order" || no "gates $f: $(sh_ "$f" | grep -n 'gate\|make')"
 done
 wf=$(sh_ .github/workflows/test.yml)
-grep -qx '    name: "lint"' <<<"$wf" && grep -qx '    name: "unit"' <<<"$wf" && grep -qx '    name: "pack"' <<<"$wf" && grep -qx '          make check' <<<"$wf" && ! grep -qx '  test:' <<<"$wf" && [ "$(grep -c 'runs-on' <<<"$wf")" = 3 ] \
+grep -qx "    name: 'lint'" <<<"$wf" && grep -qx "    name: 'unit'" <<<"$wf" && grep -qx "    name: 'pack'" <<<"$wf" && grep -qx '          make check' <<<"$wf" && ! grep -qx '  test:' <<<"$wf" && [ "$(grep -c 'runs-on' <<<"$wf")" = 3 ] \
   && ok "gates: the CI workflow has one job for each gate, named after it" || no "gates workflow: $wf"
 mkdir -p "$T/tree/.github/workflows"; sh_ .github/workflows/test.yml > "$T/tree/.github/workflows/test.yml"
 python3 "${DA%/bin/qargi}/lib/gates.py" scan "$T/c/projects/gdemo.json" "$T/tree" >"$T/scan.out" 2>&1 && [ ! -s "$T/scan.out" ] && ok "gates: the scan of the written workflow finds every job matched by a gate" || no "gates scan: $(cat "$T/scan.out")"

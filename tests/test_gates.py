@@ -29,7 +29,11 @@ class Validation(unittest.TestCase):
     def test_each_problem_is_named(self):
         for bad, key in ((G(name=""), "name"), (G(name=" x"), "name"), (G(name=5), "name"), (G(command=""), "command"), (G(command=[]), "command"),
                          (G(command=["make", ""]), "command"), (G(command="a\nb"), "command"), (G(tier="nightly"), "tier"), (G(tier=None), "tier"),
-                         ({"name": "x", "command": "y", "tier": "feature", "extra": 1}, "extra"), ("make test", "an object")):
+                         ({"name": "x", "command": "y", "tier": "feature", "extra": 1}, "extra"), ("make test", "an object"),
+                         # a Unicode line break would split the rendered YAML block and markdown list item
+                         (G(name="a b"), "name"), (G(name="a b"), "name"), (G(name="a\x85b"), "name"), (G(name="a\x0bb"), "name"),
+                         (G(command="a b"), "command"), (G(command="a b"), "command"), (G(command="a\x85b"), "command"),
+                         (G(command="a\x0cb"), "command"), (G(command=["echo", "a b"]), "command"), (G(command=["echo", "a\nb"]), "command")):
             p = gates.problems([bad])
             self.assertTrue(p and key in p[0], (bad, p))
             self.assertIn("gates[0]", p[0])

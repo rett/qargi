@@ -46,5 +46,17 @@ out=$($DA project new widget --dir "$T/widget" --url https://github.com/acme/wid
 $DA project new widget --dir "$T/widget" --url https://github.com/acme/widget --plan "$tok" --approved go >/dev/null 2>&1 \
   && jq -e '.project == "widget" and .repo.url == "https://github.com/acme/widget" and (.repo.long_lived | index("develop"))' "$T/c/projects/widget.json" >/dev/null \
   && $DA project validate widget >/dev/null 2>&1 && ok "with --url the answers are stored and validate" || no "url store"
+jq -e 'has("gates") | not' "$T/c/projects/widget.json" >/dev/null && ok "without --param gates no gates are stored" || no "gates stored without being given"
+
+# --param gates=JSON: the files name the gates, so the stored answers declare them too (feature verify and the CI scan read the answers)
+GJ='[{"name":"lint","command":"make lint","tier":"feature"},{"name":"pack","command":["make","pack it"],"tier":"release"}]'
+out=$($DA project new gw --dir "$T/gw" --url https://github.com/acme/gw --param "gates=$GJ" 2>&1); tok=$(sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' <<<"$out")
+$DA project new gw --dir "$T/gw" --url https://github.com/acme/gw --param "gates=$GJ" --plan "$tok" --approved go >/dev/null 2>&1 \
+  && grep -qx '  gate2:' "$T/gw/.github/workflows/test.yml" \
+  && jq -e --argjson g "$GJ" '.gates == $g' "$T/c/projects/gw.json" >/dev/null && $DA project validate gw >/dev/null 2>&1 \
+  && ok "project new --param gates stores the gates in the answers, as the files name them" || no "gates not stored: $(jq -c .gates "$T/c/projects/gw.json" 2>&1)"
+[ -z "$(python3 lib/gates.py scan "$T/c/projects/gw.json" "$T/gw")" ] && ok "the CI scan reads the stored gates and finds every job of the new project matched" || no "scan: $(python3 lib/gates.py scan "$T/c/projects/gw.json" "$T/gw")"
+$DA project new gx --dir "$T/gx" --url https://github.com/acme/gx --param 'gates=[{"name":"a"}]' >/dev/null 2>&1 && no "invalid gates were accepted by project new" || ok "invalid gates are refused by project new before anything is created"
+[ ! -e "$T/gx" ] && [ ! -e "$T/c/projects/gx.json" ] && ok "and nothing is created or stored" || no "gx created"
 rm -rf "$T"
 exit $fail
