@@ -607,7 +607,10 @@ PY
     echo "created $dir (on $last, $(git -C "$dir" rev-parse --short HEAD))"
     if [ -n "$url" ]; then
       det=$(python3 -I "$lib/attach.py" detect "$dir" --name "$n" --methodology "$meth" "${PROVARGS[@]}") || exit 1
-      f=$(mktemp); jq --arg u "$url" --arg d "$dep" '.answers | .repo.url = $u | if $d == "" then . else .deployment = $d end' <<<"$det" > "$f"
+      # the gates given as --param gates=JSON are in the files just written, so they are stored too (the last --param gates= wins, as in the render,
+      # which has refused a value that is not valid; validate below checks the stored list the way project set does); none when empty or []
+      gv=''; for p in "${PARAMS[@]}"; do case $p in gates=*) gv=${p#gates=};; esac; done
+      f=$(mktemp); jq --arg u "$url" --arg d "$dep" --arg g "$gv" '.answers | .repo.url = $u | if $d == "" then . else .deployment = $d end | (($g | fromjson?) // []) as $gs | if ($gs | length) > 0 then .gates = $gs else . end' <<<"$det" > "$f"
       out=$(validate "$f") || { echo "$out" >&2; rm -f "$f"; die "the project was created but its answers are not valid; nothing stored (qargi project attach $dir --url URL)"; }
       gated_refuse "$f" || { rm -f "$f"; exit 1; }
       mkdir -p "$PROJ_DIR"; chmod 700 "$PROJ_DIR"; mv "$f" "$PROJ_DIR/$n.json"; chmod 600 "$PROJ_DIR/$n.json"
