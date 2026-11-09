@@ -217,11 +217,59 @@ detached_mix() {
     done
   fi
 }
-run_suite() { run_clean "$WT" bash -c "$TESTCMD"; }   # the project's test command in the worktree WT
+# gates_load TIER... -> sets GATES, the declared gates (the answer `gates`, lib/gates.py) of those tiers as a JSON array in the order declared, and
+# makes TESTCMD their identity ("gates: NAME=COMMAND; ..."), so the run record and `verified` compare the gates that ran, not a test command. With
+# no gate declared (the answer absent or empty) GATES is empty and nothing else changes: test_command (release.test_command) stands. Declared gates
+# replace both: test_command is not also run. A gate list that is not valid is a refusal.
+gates_load() {
+  local out rc=0
+  GATES=''
+  out=$(python3 -I "$(dirname "$0")/gates.py" select "$af" "$@" 2>&1) || rc=$?
+  [ "$rc" = 0 ] || die "$out"
+  [ -n "$out" ] || return 0
+  GATES=$out
+  TESTCMD=$(jq -r 'if length == 0 then "gates: none" else "gates: " + (map("\(.name)=\(.command)") | join("; ")) end' <<<"$GATES")
+}
+# gates_need TIERS -> refuses when gates are declared and none has those tiers (a verify of nothing would pass)
+gates_need() { [ "${GATES:-}" != "[]" ] || die "the answer gates declares no gate of tier $1: add one (qargi project set $PROJ gates '[...]'); there is nothing to run"; }
+# gates_note -> with declared gates, one line for each of test_command and release.test_command that is not the command of a gate: it is not run
+gates_note() {
+  local c
+  [ -n "${GATES:-}" ] || return 0
+  while IFS= read -r c; do
+    [ -n "$c" ] || continue
+    jq -e --arg c "$c" 'any(.[]; .command == $c)' <<<"$GATES" >/dev/null || echo "note: the answer gates is declared, so \"$c\" (a test command of the answers) is not run; make it a gate to run it"
+  done < <(jq -r '[.test_command, (.release? // {} | .test_command)] | .[] | select(. != null) | if type == "array" then map(@sh) | join(" ") else . end' "$af")
+}
+# run_gates -> runs the gates of GATES in order in the worktree WT, stops at the first failure (the rest are "not run") and writes one JSON line per
+# gate ({name, tier, result, seconds}) to the file GATES_FILE (set by run_suite_logged), which record_suite reads. The status is 1 when a gate failed.
+run_gates() {
+  local n i name tier cmd rc=0 t0 res
+  { mkdir -p "$DA_STATE/suite-logs" && : > "$GATES_FILE"; } 2>/dev/null || GATES_FILE=/dev/null
+  n=$(jq 'length' <<<"$GATES")
+  for ((i = 0; i < n; i++)); do
+    name=$(jq -r ".[$i].name" <<<"$GATES"); tier=$(jq -r ".[$i].tier" <<<"$GATES"); cmd=$(jq -r ".[$i].command" <<<"$GATES")
+    if [ "$rc" != 0 ]; then
+      echo "== gate $name ($tier): not run (an earlier gate failed)"
+      jq -nc --arg n "$name" --arg t "$tier" '{name:$n, tier:$t, result:"not run"}' >> "$GATES_FILE"
+      continue
+    fi
+    echo "== gate $name ($tier): $cmd"
+    t0=$SECONDS
+    if run_clean "$WT" bash -c "$cmd"; then res=pass; else res=fail; rc=1; fi
+    echo "== gate $name: $res ($((SECONDS - t0))s)"
+    jq -nc --arg n "$name" --arg t "$tier" --arg r "$res" --argjson d "$((SECONDS - t0))" '{name:$n, tier:$t, result:$r, seconds:$d}' >> "$GATES_FILE"
+  done
+  return "$rc"
+}
+run_suite() { # the project's test command in the worktree WT, or the declared gates (gates_load)
+  if [ -n "${GATES:-}" ]; then run_gates; else run_clean "$WT" bash -c "$TESTCMD"; fi
+}
 # run_suite_logged NAME -> run_suite with its output (both streams, on stdout) shown as it comes and kept in
 # $DA_STATE/suite-logs/PROJECT.NAME.log (SUITE_LOG; mode 600; the last run of that name). The status is the suite's.
 run_suite_logged() {
   local rc
+  GATES_FILE=$DA_STATE/suite-logs/$PROJ.gates.json   # set here, not in run_gates: that runs in the pipeline's subshell
   SUITE_LOG=$DA_STATE/suite-logs/$PROJ.${1//\//_}.log
   if ( umask 077; mkdir -p "$DA_STATE/suite-logs" && : > "$SUITE_LOG" ) 2>/dev/null; then
     run_suite 2>&1 | tee "$SUITE_LOG"
@@ -233,11 +281,13 @@ run_suite_logged() {
 # tests/run.sh) and failing tests (`FAIL name` lines) its report holds, where its own logs of the failed steps are, and the log of the
 # whole run. A test command that is no tests/run.sh has neither: its last lines stand in.
 suite_failure_report() {
-  local f=${SUITE_LOG:-} steps names dir
+  local f=${SUITE_LOG:-} steps names dir gate
   if [ -n "$f" ] && [ -s "$f" ]; then
     steps=$(sed -n 's/^FAILED: //p' "$f" | awk '!s[$0]++')
     names=$(grep -E '^FAIL( |:)' "$f" | awk '!s[$0]++')
     dir=$(sed -n 's/^logs of the failed steps: //p' "$f" | tail -1)
+    gate=$(sed -n 's/^== gate \(.*\): fail ([0-9]*s)$/\1/p' "$f" | head -1)
+    [ -z "$gate" ] || echo "failing gate: $gate"
     if [ -n "$steps" ]; then echo "failing steps:"; printf '%s\n' "$steps" | head -20 | sed 's/^/  /'; fi
     if [ -n "$names" ]; then echo "failing tests:"; printf '%s\n' "$names" | head -20 | sed 's/^/  /'; fi
     if [ -z "$steps$names" ]; then echo "no failing test name in the output; its last lines:"; tail -5 "$f" | sed 's/^/  /'; fi
@@ -307,8 +357,17 @@ suite_mode() {
 # record_suite BRANCH SHA RESULT SECONDS: the record of the last whole-suite run of BRANCH (the head, the verdict, when, the command, how
 # long it took and the mode the command names), which `release status` shows
 record_suite() {
-  jq -nc --arg s "$2" --arg r "$3" --arg t "$(now)" --arg c "$TESTCMD" --argjson d "$4" --arg m "$(suite_mode "$TESTCMD")" \
-    '{sha:$s, result:$r, at:$t, command:$c, seconds:$d, mode:$m}' > "$(rec "$1")"
+  local gj=null
+  # with declared gates the record also lists each gate's name, tier and result, in the order they ran
+  if [ -n "${GATES:-}" ]; then gj=$(jq -sc '.' "${GATES_FILE:-/dev/null}" 2>/dev/null) || gj='[]'; [ -n "$gj" ] || gj='[]'; fi
+  jq -nc --arg s "$2" --arg r "$3" --arg t "$(now)" --arg c "$TESTCMD" --argjson d "$4" --arg m "$(suite_mode "$TESTCMD")" --argjson g "$gj" \
+    '{sha:$s, result:$r, at:$t, command:$c, seconds:$d, mode:$m} + (if $g == null then {} else {gates:$g} end)' > "$(rec "$1")"
+}
+# gates_line BRANCH -> "  gates: NAME pass, NAME fail, NAME not run" from the last record of BRANCH; nothing when the record lists no gate
+gates_line() {
+  local f l; f=$(rec "$1"); [ -f "$f" ] || return 0
+  l=$(jq -r '(.gates // []) | if length == 0 then empty else map("\(.name) \(.result)") | join(", ") end' "$f" 2>/dev/null) || return 0
+  [ -z "$l" ] || echo "  gates: $l"
 }
 wcommit() { git -C "$WT" commit -q "$@" || die "the commit failed (is a git user.name and user.email set?)"; }
 

@@ -83,6 +83,10 @@ REMOTE_NOTE = ("It asks the live origin with git ls-remote (QARGI_REMOTE_TIMEOUT
 SUITE_FAIL_NOTE = ("The output of the suite is kept in STATE/suite-logs/PROJECT.feature-NAME.log (PROJECT.release-VERSION.log for a release; the last run of each). When "
                    "the suite fails, the last lines of the output are the failing steps and tests that its report names (the FAILED: and FAIL lines of tests/run.sh; "
                    "a test command that is no runner shows its last lines instead), where the runner kept the logs of the failed steps, and the path of that log.")
+GATES_NOTE = ("Declared gates: the project answer gates is an ordered list of {name, command, tier} (command: a command line or a list of words, as test_command; tier: feature or release; names unique). "
+              "Absent, test_command (release.test_command for a release) is run, as before. Declared, the gates run instead and test_command is not also run (a gate whose command is the same runs it): "
+              "feature verify runs the gates of tier feature in order and release verify the feature tier, then the release tier, each stopping at the first failure (the rest are listed as not run). "
+              "The verdict line is still 'full suite: pass|fail at SHA', and the run record and the status lines list each gate with its result.")
 OTHER_RUNS_NOTE = ("Before it starts it warns on standard error, and goes on, when another suite may be running: a whole-suite run of the project in progress, a local run "
                    "of the repository with a file changed in the last QARGI_ACTIVE_MINUTES minutes (default 10), or a tests/run.sh process in the repository (Linux).")
 TAG_NOTE = ("When the tag VERSION exists it also warns about a tag that has no GitHub release (asked with a read-only gh release view, through QARGI_GH, default gh; "
@@ -157,7 +161,7 @@ COMMANDS = {
                               "roles.ROLE.tools is the list of the tools a role needs beyond its apt packages, each {kind, name, ...}: kind go (name a package path, version a tag: go install NAME@VERSION), "
                               "kind binary (name the file name, version, url of the file itself, sha256 of it: downloaded to ~/.local/bin and kept only when the hash matches) and kind submodule "
                               "(name as in .gitmodules, path: checked out in each member clone by qargi local prepare). env plan lists them, env apply installs them and env check reports one that is "
-                              "missing or wrong; a member's guard refuses setting them (and a whole role), as it refuses release.*, test_command, env.* and site.*. "
+                              "missing or wrong; a member's guard refuses setting them (and a whole role), as it refuses release.*, test_command, gates, env.* and site.*."
                               "git.author ('Name <email>') is the author qargi review apply gives the commits it applies, and review.keep_author true keeps the member's author instead; "
                               "review.scrub (a command line or a list of words) is run by qargi review check (and by qargi review apply, unless a passing check recorded the same series) on the applied series with the range in QARGI_SCRUB_BASE and QARGI_SCRUB_TIP, and review.trailer_policy reject fails a commit with a "
                               "Co-Authored-By or Generated-with trailer (none is the default); a member's guard refuses setting them. "
@@ -285,9 +289,9 @@ COMMANDS = {
                                 "For a feature, --plan and --approved are not used. When the registry of local runs names a run of BRANCH (its slug) that still exists and has no passing "
                                 "local verify, a warning names the run; the merge goes on.")),
             "status": verb("Show the feature: commits ahead of develop and whether the whole suite passed at its head", [("NAME", "none")], [PROJECT_OPT],
-                           desc=REMOTE_NOTE + " Flags worktrees outside the worktree root like list. When the whole-suite result is for an older head it says why (the commits on the branch since the run, a merge of a task branch or of develop named as such) and that the next step is qargi feature verify NAME."),
+                           desc=REMOTE_NOTE + " With declared gates a 'gates:' line lists each with its result at the last run. Flags worktrees outside the worktree root like list. When the whole-suite result is for an older head it says why (the commits on the branch since the run, a merge of a task branch or of develop named as such) and that the next step is qargi feature verify NAME."),
             "verify": verb("Run the project's whole test suite on the feature's head and record the result", [("NAME", "none")], [PROJECT_OPT],
-                           desc=OTHER_RUNS_NOTE + " " + SUITE_FAIL_NOTE),
+                           desc=GATES_NOTE + " " + OTHER_RUNS_NOTE + " " + SUITE_FAIL_NOTE),
             "finish": verb("Merge the feature into develop with --no-ff and delete it", [("NAME", "none")],
                            [PROJECT_OPT, opt("--keep", "keep the branch"), PLAN, APPROVED, RESOLVED_OPT],
                            desc=("Needs a passing whole-suite run at the feature's head. A feature behind develop is refused (exit 1, nothing changed); when both sides "
@@ -482,6 +486,7 @@ COMMANDS = {
                  "release.version_files (other files that carry the version, a list of paths; default none: start, status and verify warn of the ones that do not contain the version, never bump them), "
                  "release.man_pages (a list of paths; default the man/*.1 files), release.test_command (what release verify runs, a command line or a list of words; default test_command) "
                  "and release.preflight (a command as a list of words, {version} replaced, run by start and push before they change anything; a non-zero exit refuses and shows the tail of its output). "
+                 "The project answer gates (an ordered list of {name, command, tier}) replaces test_command and release.test_command when declared: release verify runs the feature-tier gates, then the release-tier gates. "
                  "The release files are the project's too: release.assets_command (the command that builds them, a command line or a list of words with {version} replaced), which "
                  "release assets runs in a clean worktree of the tag, and release.assets (files or globs to attach, {version} replaced), taken in that worktree by release publish. "
                  "release.after_steps is a list of steps ({version} replaced), each a one-line string (a command or a reminder: its text is its name) or an object "
@@ -511,7 +516,7 @@ COMMANDS = {
                                 "(release fix makes the worktree). It is a warning, not a refusal, because the files are bumped on the branch start creates; without the answer nothing is checked.")),
             "status": verb("Show the branch, its commits and whether the whole suite passed at its head", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT],
                          desc=("The full-suite verdict names the command that produced it, when it ran, how long it took and the mode the command names (-j N, shard I/K), from the suite record (a record made before the duration was kept shows the command and the time only). When release.test_command is set and is not that command, "
-                               "a line of its own says so: the pass is then not the release gate (release verify runs release.test_command). " + REMOTE_NOTE + " " + TAG_NOTE + " Only when the optional answer release.sign is set (the default is not) and the tag has no GitHub release, it also says 'awaiting signature' "
+                               "a line of its own says so: the pass is then not the release gate (release verify runs release.test_command). With declared gates a 'gates:' line lists each with its result at the last run. " + REMOTE_NOTE + " " + TAG_NOTE + " Only when the optional answer release.sign is set (the default is not) and the tag has no GitHub release, it also says 'awaiting signature' "
                                "until qargi release sign recorded a signature that still holds (no signed file or signature changed), and then 'VERSION is ready for signing: "
                                "qargi release sign VERSION' when the repository is at the tag with the files built, or what stands in the way. "
                                "When site.enabled is true a site line says 'site: not built for VERSION', 'site: built at SHA, not pushed' or 'site: pushed' "
@@ -525,8 +530,12 @@ COMMANDS = {
                                "and the project's own after-steps: the ones release finish recorded, else the optional answer release.after_steps ({version} replaced). Each is shown "
                                "as '[done] NAME (WHO, TIME, evidence: TEXT)' or '[pending] NAME (WHO): COMMAND', the done ones first and the pending ones last; a pending step of the owner reads "
                                "'waits for the owner: run COMMAND', and a step that needs evidence says so. qargi release step marks one done; the list is kept in a file under the state directory.")),
-            "verify": verb("Run the project's whole test suite on the release branch (develop's head before it starts) and record the result", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT],
-                           desc=TAG_NOTE + " The exit status stays the suite's result. The command is release.test_command when the project sets one, else test_command. "
+            "verify": verb("Run the project's whole test suite on the release branch (develop's head before it starts) and record the result", [("VERSION", "none")],
+                           [PROJECT_OPT, HOTFIX_OPT, opt("--strict", "refuse, before anything runs, when a CI job matches no declared gate name")],
+                           desc=TAG_NOTE + " The exit status stays the suite's result. The command is release.test_command when the project sets one, else test_command. " + GATES_NOTE + " "
+                                 "Before it runs, it reads the workflow files of the tree it verifies (.github/workflows/*.yml and *.yaml; standard library only, no YAML library: the job ids under jobs: and the name: line of each job) "
+                                 "and warns on standard error, naming each job whose name and id match no declared gate name (with no gate declared, every job). A job whose name cannot be read (an expression, a block scalar, a flow mapping) "
+                                 "is reported as unknown, a note and never a failure. --strict refuses (exit 1, nothing run) when any job matches no gate name. Without a workflow it prints nothing new. "
                                  "On the release branch, with release.version_files set, it also shows whether every listed file contains VERSION (a warning for the ones that do not). " + OTHER_RUNS_NOTE + " " + SUITE_FAIL_NOTE),
             "fix": verb("Make a worktree on the release branch to commit a fix in, and push the fix again with --push", [("VERSION", "none")],
                         [PROJECT_OPT, HOTFIX_OPT, opt("--push", "push the committed fix: the same as release push (the plan token and approval below)"), PLAN, APPROVED],
@@ -1498,7 +1507,7 @@ TOPICS = {
     "guard": ("What a member's guard refuses", [
         "The guard hooks a member's calls: a barrier, not a wall; qargi local verify is its backstop.",
         "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
-        "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env, site, packs, runs, upstream, git, review, roles.ROLE.tools, a whole role), init, new, link and unlink; "
+        "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, gates, env, site, packs, runs, upstream, git, review, roles.ROLE.tools, a whole role), init, new, link and unlink; "
         "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (the rest "
         "read); release publish, sign, site, assets and fix; marshal claim, set, renew, release, take, "
         "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish, verify and park; branch prune; changelog renumber without --check; "

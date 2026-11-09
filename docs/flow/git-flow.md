@@ -31,6 +31,14 @@ refusal changes nothing.
    develop. `qargi feature status NAME` shows commits ahead and whether the whole-suite run is
    current (when it is not, it says which merge or sync moved the head). `verify` warns when another suite may be running, and a
    failed one ends with the failing tests and the path of the log.
+   The command `verify` runs is the project's `test_command` (for a release, `release.test_command` when set). A project may instead declare
+   **gates**, the answer `gates`: an ordered list of `{"name": "...", "command": "...", "tier": "feature" | "release"}` (the command is a
+   command line or a list of words, as `test_command`; names are unique and non-empty; `qargi project set` and `project validate` check
+   the list). `feature verify` then runs the gates of tier `feature` in order and stops at the first failure; `release verify` runs the
+   feature gates, then the release gates. Declared gates replace `test_command` and `release.test_command` (a gate with the same command runs
+   it; otherwise `verify` notes that it is not run). The verdict line is the same, `full suite: pass|fail at SHA`, so `feature finish`
+   and the release steps work as before; the run record lists each gate with its result (`pass`, `fail`, or `not run` after a failure) and
+   `feature status` and `release status` show a `gates:` line. A failed run names the failing gate. Absent, nothing changes.
 4. `qargi release start VERSION` cuts `release/VERSION` from develop (only from a head that passed the
    suite) and bumps `VERSION` and the changelog date. Like the pushes and merges it prints a plan (the branch, the base, the files
    the bump commit changes) and a token first, and applies with `--plan TOKEN --approved "<your words>"`, which also writes the
@@ -47,6 +55,11 @@ refusal changes nothing.
    from the tag without touching your checkout: `qargi release assets VERSION` runs the project's `release.assets_command` in a clean
    worktree of the tag, `release sign` signs there, and `release publish` attaches `release.assets` (globs), `--asset FILE` and
    `--asset-dir DIR` from it.
+   `release verify` also reads the workflow files of the tree it verifies (`.github/workflows/*.yml` and `*.yaml`, with no YAML library:
+   the job ids under `jobs:` and the `name:` line of each job) and warns, on standard error, naming each job whose name and id match no
+   declared gate name; a job whose name cannot be read (an expression, a block scalar, a flow mapping) is reported as unknown, a note and
+   never a failure. `release verify --strict` refuses, before anything runs, when any job matches no gate name. With no workflow nothing new
+   is printed; with workflows and no gates declared every job is named.
    Two optional answers add generic checks, both warnings and neither a refusal. `release.version_files` is a list of paths
    (relative to the repository) of other files that carry the version, a manifest say: `release start` prints a warning naming the
    ones that do not yet contain the new version (as a whole version, so `0.2.1` is not found in `0.2.10`) and says to bump them on
