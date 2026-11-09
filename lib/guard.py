@@ -139,7 +139,9 @@ Signing key: the one credential a member may not even read is the lead's signing
   with an action and Grep are refused on the credentials directory itself only (a search that starts above it, `grep -r TODO ~`, is no read of the key; one that
   names the key is). ls, stat and test only look at it and stay allowed; the other credentials stay readable. The subscript and the operator of a parameter expansion
   (${arr[@]}, ${PIPESTATUS[0]}, ${#a[@]}, ${!a[@]}, ${X:-...}) are no glob, so a loop over an array is no read of the key; a default word with a glob (${X:-*}), a name
-  that starts with marshal_ and a recursive reader of a braced word still are refused.
+  that starts with marshal_ and a recursive reader of a braced word still are refused. The elements of an array literal (`a=(DIR/*)`, `a+=(...)`, `declare -a a=(...)`,
+  `a=([k]=DIR/*)`) are judged as the words of `for x in WORDS` are, and a word that holds a variable after a path in a credentials directory (`DIR/${X:-ma}rshal_x`,
+  `DIR/m$X`, or `$X` after a cd into it) is refused: the name it builds could be the key.
   pushd and popd are followed like cd (a directory stack), a text scan reads `dir//key` and `dir/./key` as `dir/key`, and ln, mv and cp -s|-l
   are refused on a credentials directory (or a directory above one) as the recursive readers are, since a link made in the same command
   is a name the guard cannot resolve yet.
@@ -2130,10 +2132,18 @@ def key_named(word, here, recursive):
     cands = {word, word.lstrip("<"), re.sub(r"^(?:\d+|&)?[<>]+[&|]?", "", word), word.split("=", 1)[-1]}     # 3<key, <key, <>key, <&key
     if word.startswith("-") and not word.startswith("--"):
         cands.add(word[2:])
+    for c in list(cands):                                     # NAME=(a b*), NAME+=(...), declare -A NAME=([k]=v): the elements of an array literal are words to glob, as in `for x in WORDS`
+        inner = c.strip("()")
+        if inner != c:
+            cands |= {inner, re.sub(r"^\[[^\]]*\]=", "", inner), inner.rsplit("=", 1)[-1]}
     for c in cands:
         if not c or c.startswith("-"):
             continue
         for b in brace_expand(expand_path(c)):
+            if "$" in b:
+                head = b.partition("$")[0].rpartition("/")[0]     # CRED/${X:-ma}rshal_x, CRED/m$a, CRED/$a$b, or in the directory itself: what a variable stands for is not known, and a name there could be the key
+                if below_key_dir(resolve(here, head + "/" if head or b.startswith("/") else ".")):
+                    return b
             if "${" in b:
                 base = os.path.basename(TRIMMED.sub("x", b))      # ${f%%:*}, ${f%/*}, ${f##*/}: the * and the / belong to the pattern, not to the path
                 if bool(recursive) or base.startswith(KEY_PREFIX) or re.search(r"[*?\[]", PARAM_HEAD.sub("${x", base)):   # ${PIPESTATUS[0]} and ${arr[@]+x} are parameters, not globs; a default word after an operator still is one
