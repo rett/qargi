@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # A caller that is itself approved (QARGI_NESTED set) has not approved this plan: need_plan skips its check when QARGI_NESTED is set, so every
 # call site of it is written `QARGI_NESTED='' need_plan ...`, and a nested environment never skips a plan token. One verb that needs a plan
-# for each file that calls it (branch, marshal, project, provider, registry, cred), each run with QARGI_NESTED=1 and no token, then a wrong one:
+# for each file that calls it (branch, marshal, project, provider, registry, provision, cred), each run with QARGI_NESTED=1 and no token, then a wrong one:
 # refused (exit not 0, "the plan changed or --plan is missing") and nothing changed. The sites of release, local, feature, upstream and backlog
 # are tested in their own tests; canon apply is the one verb that honours QARGI_NESTED (provisioning runs it that way) and is not tested here.
 # Offline (fake ant, curl, git). Run: tests/test_nested_plan.sh
@@ -95,6 +95,12 @@ t=$($DA instances refresh-prompt beta-build --asked "t" | tok)
 [ -n "$t" ] && ok "(setup) refresh-prompt plans the new prompt" || no "(setup) refresh-prompt plan: $($DA instances refresh-prompt beta-build --asked t 2>&1 | tail -3)"
 refused env QARGI_NESTED=1 $DA instances refresh-prompt beta-build --asked "t" --approved go && ! grep -q "beta:agents update" "$FAKE/ant.log" && ok "refresh-prompt with no token under QARGI_NESTED is refused, the agent is not updated" || no "registry, no token: rc=$rc $out"
 refused env QARGI_NESTED=1 $DA instances refresh-prompt beta-build --asked "t" --plan 000000000000 --approved go && ! grep -q "beta:agents update" "$FAKE/ant.log" && ok "and a wrong token is refused under QARGI_NESTED too" || no "registry, wrong token: rc=$rc $out"
+
+# --- provision apply: no cloud resource is created (ant apply is not run)
+t=$($DA provision plan beta-build 2>&1 | tok)
+[ -n "$t" ] && ok "(setup) provision plans" || no "(setup) provision plan: $($DA provision plan beta-build 2>&1 | tail -3)"
+refused env QARGI_NESTED=1 $DA provision apply beta-build --asked "t" --approved go && ! grep -q "apply --yes" "$FAKE/ant.log" && ok "provision apply with no token under QARGI_NESTED is refused, nothing is created" || no "provision, no token: rc=$rc $out"
+refused env QARGI_NESTED=1 $DA provision apply beta-build --asked "t" --plan 000000000000 --approved go && ! grep -q "apply --yes" "$FAKE/ant.log" && ok "and a wrong token is refused under QARGI_NESTED too" || no "provision, wrong token: rc=$rc $out"
 
 # --- credential setup lead-push: no vault credential is made, no token is stored
 jq -n '{schema:1,project:"alpha2",repo:{url:"https://github.com/example/x",path:"",long_lived:["main"]},
