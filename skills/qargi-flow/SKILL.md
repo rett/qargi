@@ -68,5 +68,6 @@ After a resolution the whole-suite run is stale again; sync, verify, finish.
 - Keep the main checkout on the parking branch (`qargi feature park`). A `repo.detached` branch never merges with develop or a
   feature. `qargi branch prune` clears merged branches.
 - Run the whole suite only at a checkpoint (feature complete, release verify); tasks and merges use targeted checks.
+- A project may declare `gates`: `feature verify` and `release verify` run them in order, stop at the first failure and skip the test command. A member runs only the checks of its own change.
 - A tag, once pushed, is final. Say what will be tagged before the plan is applied.
 - Anything unexpected (a refusal you do not understand, a record that looks wrong): stop and tell the user.

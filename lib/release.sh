@@ -850,9 +850,21 @@ case $verb in
     if [ -n "$hint" ] && [ -z "$EVIDENCE_SET" ]; then die "the step '$STEPNAME' needs evidence ($hint): qargi release step $VER '$STEPNAME' --evidence \"...\""; fi
     tm=$(now)
     # read, changed and written back under the lock: a step marked at the same moment is kept; the check that it is not done yet is made again inside
-    after_rec_write --arg n "$STEPNAME" --arg t "$tm" --arg e "$EVIDENCE" --arg a "$AGAIN" \
-      'if $a == "" and any(.steps[]; .name == $n and .state == "done") then error("the step was marked done meanwhile (--again records it again)") else (.steps[] | select(.name == $n)) |= (.state = "done" | .done_at = $t | .evidence = $e) end' "$AFTERREC" \
-      || die "could not write $AFTERREC"
+    # a failure is told in qargi's words, not jq's
+    werr=$(mktemp) || die "could not make a temporary file"
+    if ! after_rec_write --arg n "$STEPNAME" --arg t "$tm" --arg e "$EVIDENCE" --arg a "$AGAIN" \
+      'if $a == "" and any(.steps[]; .name == $n and .state == "done") then error("the step was marked done meanwhile (--again records it again)") else (.steps[] | select(.name == $n)) |= (.state = "done" | .done_at = $t | .evidence = $e) end' "$AFTERREC" 2>"$werr"; then
+      if grep -q 'marked done meanwhile' "$werr" 2>/dev/null; then
+        rm -f "$werr"
+        die "the step '$STEPNAME' of $VER was marked done by another command that was writing the step record at the same moment; look with qargi release status $VER, and run this again with --again to record it again"
+      fi
+      # a lock serialises the commands that write the record, so another command never makes the write fail; what does is a record or a
+      # directory that cannot be written, a full disk, or a record that is not valid JSON; jq's own words are not shown
+      detail=$(head -n 1 "$werr" 2>/dev/null); rm -f "$werr"
+      case $detail in jq:*) detail='';; esac
+      die "could not write the step record $AFTERREC${detail:+ ($detail)}: check that the record and its directory can be written and that the record is valid JSON (qargi release status $VER shows the steps)"
+    fi
+    rm -f "$werr"
     audit_log "release:step" "$PROJ $VER $STEPNAME"
     echo "marked done: $STEPNAME (release $VER, $tm${EVIDENCE:+, evidence: $EVIDENCE}); only the record changed, the command was not run"
     left=$(jq -r '[.steps[] | select(.state != "done")] | length' "$AFTERREC")

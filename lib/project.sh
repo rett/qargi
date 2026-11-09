@@ -81,6 +81,14 @@ set_note() { # project path json-value -> what `set` adds to its line: the provi
   printf " (applies to the next provision; use 'instances budget' for a live deployment)"
 }
 
+gates_lines() { # ANSWERS_FILE -> with declared gates, a heading and one line each (tier, name, command); nothing when none is declared or they are not valid (validate says so)
+  local sel
+  sel=$(python3 -I "$(dirname "$(readlink -f "$0")")/gates.py" select "$1" feature release 2>/dev/null) || return 0
+  [ -n "$sel" ] || return 0
+  echo "declared gates (they replace the test command: feature verify and release verify run them in order and stop at the first failure):"
+  jq -r '.[] | "  \(.tier)  \(.name)  \(.command)"' <<<"$sel"
+}
+
 validate() { # file -> prints problems, exit 1 if any
   python3 -I - "$1" "$DA_ROLES" "$(dirname "$(readlink -f "$0")")" "$QARGI_TOOL" "$DA_CONF" <<'EOF'
 import json, os, re, sys
@@ -584,7 +592,7 @@ PY
       echo; echo "plan token: $tok   (create with: qargi project new $n --plan $tok --approved \"...\" plus the same options)"
       exit 0
     fi
-    need_plan "$tok"
+    QARGI_NESTED='' need_plan "$tok"
     mkdir -p "$dir"
     jq -r '.[] | [.dest, (.content | @base64)] | @tsv' <<<"$files" | while IFS=$'\t' read -r rel b64; do
       mkdir -p "$dir/$(dirname "$rel")"; printf '%s' "$b64" | base64 -d > "$dir/$rel"
@@ -599,7 +607,10 @@ PY
     echo "created $dir (on $last, $(git -C "$dir" rev-parse --short HEAD))"
     if [ -n "$url" ]; then
       det=$(python3 -I "$lib/attach.py" detect "$dir" --name "$n" --methodology "$meth" "${PROVARGS[@]}") || exit 1
-      f=$(mktemp); jq --arg u "$url" --arg d "$dep" '.answers | .repo.url = $u | if $d == "" then . else .deployment = $d end' <<<"$det" > "$f"
+      # the gates given as --param gates=JSON are in the files just written, so they are stored too (the last --param gates= wins, as in the render,
+      # which has refused a value that is not valid; validate below checks the stored list the way project set does); none when empty or []
+      gv=''; for p in "${PARAMS[@]}"; do case $p in gates=*) gv=${p#gates=};; esac; done
+      f=$(mktemp); jq --arg u "$url" --arg d "$dep" --arg g "$gv" '.answers | .repo.url = $u | if $d == "" then . else .deployment = $d end | (($g | fromjson?) // []) as $gs | if ($gs | length) > 0 then .gates = $gs else . end' <<<"$det" > "$f"
       out=$(validate "$f") || { echo "$out" >&2; rm -f "$f"; die "the project was created but its answers are not valid; nothing stored (qargi project attach $dir --url URL)"; }
       gated_refuse "$f" || { rm -f "$f"; exit 1; }
       mkdir -p "$PROJ_DIR"; chmod 700 "$PROJ_DIR"; mv "$f" "$PROJ_DIR/$n.json"; chmod 600 "$PROJ_DIR/$n.json"
@@ -662,6 +673,7 @@ PY
     fi
     tok=$(jq -S -c . <<<"$ans" | plan_token)
     jq -r '"project \(.answers.project) from \(.found.path)\nread from: \(.found.ref | if . == "" then "no commit" else . end) (\(.found.ref_why); the checked-out branch is \(.found.current_branch | if . == "" then "none" else . end), the working tree is not read)\nmethodology: \(.methodology)\nremote (origin as read): \(.found.remote // "none")" + (if (.found.remote // "") != "" and .found.url != .found.remote then "\nrepo.url (normalised to https, no .git, no credentials): \(.found.url)" else "" end) + "\nlong-lived branches: \(.answers.repo.long_lived | join(", "))\nversion: \(.found.version.file // "not found") \(.found.version.value // "")\ntags: \(.found.tags.count) (\(.found.tags.pattern | if . == "" then "no semantic pattern" else . end))\nchangelog: \(.found.changelog.file // "none")\ntest command: \(.found.test_command | if . == "" then "not found" else . end)\nCI workflows: \(.found.ci_workflows | if length == 0 then "none" else join(", ") end)"' <<<"$det"
+    [ -z "$stored" ] || gates_lines "$sf"   # the stored answers' gates: they replace the detected test command in the verify verbs
     if [ -n "$stored" ]; then
       echo
       echo "ALREADY STORED: the answers of project $n are in $sf; stored vs detected (only what is detected):"
@@ -701,7 +713,7 @@ PY
       echo "plan token: $tok   (store with: qargi project attach $dir --plan $tok --approved \"...\"${force:+ --force})"
       exit 0
     fi
-    need_plan "$tok"
+    QARGI_NESTED='' need_plan "$tok"
     f=$(mktemp); jq . <<<"$ans" > "$f"
     out=$(validate "$f") || { echo "$out" >&2; rm -f "$f"; die "the answers are not valid; nothing stored"; }
     gated_refuse "$f" "$sf" || { rm -f "$f"; exit 1; }
@@ -746,7 +758,7 @@ PY
       echo "plan token: $tok   (create with: qargi project adopt $n --plan $tok --approved \"...\"${meth:+ --methodology $meth})"
       exit 0
     fi
-    need_plan "$tok"
+    QARGI_NESTED='' need_plan "$tok"
     res=$(python3 -I "$lib/attach.py" adopt-apply "$n" "$PROJ_DIR/$n.json" <<<"$plan") || exit $?
     audit_log "project:adopt" "$n"
     jq -r '.branches[] | "created branch " + .' <<<"$res"
@@ -828,7 +840,9 @@ PY
     [ -n "$tok" ] && need_plan "$tok"
     audit_log "project:$verb" "$n ${res:-all} $tok"
     python3 -I "$PLK" apply "$verb" "$n" "$res" "$tok" || exit $?;;
-  show) n=${1:-}; [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"; jq . "$PROJ_DIR/$n.json";;
+  show) n=${1:-}; [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"; jq . "$PROJ_DIR/$n.json"
+    # the answers stay the JSON on standard output (it is piped); the declared gates, which replace test_command, are named on standard error
+    gates_lines "$PROJ_DIR/$n.json" >&2;;
   list) ls "$PROJ_DIR" 2>/dev/null | sed -n 's/\.json$//p';;
   validate) f=${1:-}; [ -f "$f" ] || f="$PROJ_DIR/$f.json"; [ -f "$f" ] || usage_die "validate needs a file or a project name"
     validate "$f" && { no_provider "$f" || true; pack_warn "$f" || true; python3 -I "$(dirname "$(readlink -f "$0")")/project_profile.py" warn "$DA_CONF" "$f" || true; };;

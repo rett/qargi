@@ -4,7 +4,16 @@ Describe what {{project}} is and how to run it.
 
 ## Tests
 
+{{^gates}}
 `{{test_command}}`
+{{/gates}}
+{{#gates}}
+The declared gates, run in order; stop at the first failure:
+
+{{#gate}}
+- {{gate_name_code}} ({{gate_tier}}): {{gate_command_code}}
+{{/gate}}
+{{/gates}}
 
 ## Releases
 
