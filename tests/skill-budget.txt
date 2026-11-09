@@ -10,7 +10,7 @@ lib/providers/claude-code/local-run.md 52 # raised: one line, a refused Write of
 lib/providers/claude-platform.json:notes 2
 lib/providers/claude-platform/cloud-run.md 61
 packs/skills/docs-site-member/SKILL.md 163 # raised: two rules: no line starts with <, and run the render check before reporting; for the lead's review
-packs/skills/gitflow-member/SKILL.md 267
+packs/skills/gitflow-member/SKILL.md 289 # raised: one sentence, a project may declare gates that feature verify and release verify run in order and the run is the lead's; for the lead's review
 packs/skills/keep-a-changelog/SKILL.md 344 # raised: one rule on numbered items (unnumbered bullet, the lead renumbers), kept here only; for the lead's review
 packs/skills/qargi-contributing/SKILL.md 115
 packs/skills/review-findings/SKILL.md 136
@@ -22,7 +22,7 @@ roles/build/ROLE.md 144
 roles/review/ROLE.md 170
 roles/test/ROLE.md 169
 roles/write/ROLE.md 186 # raised: the line that documentation follows the code and a disagreement is reported; for the lead's review
-skills/qargi-flow/SKILL.md 1062 # raised: advisor brief clause (no suite run beside a feature verify); release fix, the checks the finish plan lists and --ignore-checks; the history join of a snapshot master; for the lead's review; release step (tracked post-release steps)
+skills/qargi-flow/SKILL.md 1097 # raised: advisor brief clause (no suite run beside a feature verify); release fix, the checks the finish plan lists and --ignore-checks; the history join of a snapshot master; for the lead's review; release step (tracked post-release steps); the declared gates, one line (verify runs them in order, a member runs only its own change)
 skills/qargi-flow/marshal.md 449 # raised: says to raise marshal.lease_minutes before a run longer than the lease
 skills/qargi-instances/SKILL.md 898
 skills/qargi-memory/SKILL.md 933

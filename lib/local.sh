@@ -150,6 +150,9 @@ save_run() {
 }
 # saved_of RUN -> the lead's saved copy of RUN ($DA_STATE/runs/<run id>), when there is one (a directory, not a link)
 saved_of() { local d=$DA_STATE/runs/${1##*/}; case ${1##*/} in qargi.??????) ;; *) return 0;; esac; [ -d "$d" ] && [ ! -L "$d" ] && echo "$d"; return 0; }
+# scrub_ok_drop RUN: remove the record `review check` keeps for a run whose take-in scrub passed (scrub_ok/RUN-ID in the lead's state, the path rule of
+# scrub_ok_file in review.sh): a run that was checked and never applied leaves it, and clean removes the run
+scrub_ok_drop() { local id=${1##*/}; case $id in qargi.??????) rm -f -- "$DA_STATE/scrub_ok/$id";; esac; return 0; }
 # gone_runs SCR -> the runs of the registry (reg_load first) directly under SCR (a real path; every run of the registry when empty) whose directory is
 # gone and that clean did not remove: a reboot emptied a tmpfs, or the directory was removed by hand
 gone_runs() {
@@ -740,6 +743,7 @@ WRAP
         [ "$mrc" = 0 ] || die "$RUN's work (${atip:0:12}) is not merged into any branch yet: qargi feature merge NAME $_ab, then clean (--discard drops it on purpose)$(rwh=$(rewrite_hint "$rp" "$_ab"); [ -z "$rwh" ] || printf '\n%s' "$rwh")"
       fi
       [ -z "$sv" ] || rm -rf --one-file-system -- "$sv"
+      scrub_ok_drop "$RUN"
       reg_edit "$RUN" drop || die "could not drop the record of $RUN from $DA_STATE/local-runs.jsonl"
       echo "dropped the record of $RUN (directory gone)${sv:+ and its saved copy $sv}"
       exit 0
@@ -810,6 +814,7 @@ WRAP
     rrun=$(readlink -f -- "$RUN" 2>/dev/null) || rrun=$RUN   # the registry's name of the run, taken while the directory is there
     rm -rf --one-file-system -- "$RUN"
     sv=$(saved_of "$RUN"); [ -z "$sv" ] || rm -rf --one-file-system -- "$sv"   # the copy verify saved: the work is merged, or dropped on purpose
+    scrub_ok_drop "$RUN"   # the record of a passed scrub that review check kept for a run never applied
     reg_edit "$rrun" cleaned || echo "qargi: warning: could not mark $RUN cleaned in $DA_STATE/local-runs.jsonl (report and list may show it as directory gone)" >&2
     [ -z "$acc" ] || printf '%s\n' "$acc"
     echo "cleaned $RUN${rt:+ and $rt}";;

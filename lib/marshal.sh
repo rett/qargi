@@ -212,7 +212,7 @@ marshal_main() {
       exit 0
     fi
     [ -n "${APPROVED:-}" ] || die "key init needs --approved WORDS (the owner's words); run it without options for the plan"
-    need_plan "$ktok"
+    QARGI_NESTED='' need_plan "$ktok"
     kline=$(python3 -I "$MARSHAL_LIB/marshal_sign.py" keygen --key "$keyf" ${principal:+--principal "$principal"}) || exit $?
     audit_log "marshal:key-init" "${kline%% *}"
     echo "made $keyf (mode 600); keep it on this machine"
@@ -239,7 +239,7 @@ marshal_main() {
       exit 0
     fi
     [ -n "${APPROVED:-}" ] || die "enable needs --approved WORDS (the owner's words); run it without options for the plan"
-    need_plan "$tok"
+    QARGI_NESTED='' need_plan "$tok"
     python3 -I "$MARSHAL_LIB/marshal_refs.py" switch-write --state "$DA_STATE" --project "$PROJ" --remote "$remote" --words "$APPROVED" ${integ:+--integrity "$integ"} || exit $?
     audit_log "marshal:enable" "$PROJ $remote${integ:+ integrity=$integ}"
     # the mode in effect, not only the one asked for: an enable after a disable starts with integrity off and says so
@@ -274,7 +274,7 @@ marshal_main() {
       exit 0
     fi
     [ -n "${APPROVED:-}" ] || die "signers $sub needs --approved WORDS (the owner's words); run it without --plan for the plan"
-    need_plan "$stok"
+    QARGI_NESTED='' need_plan "$stok"
     if [ "$sub" = add ]; then
       python3 -I "$MARSHAL_LIB/marshal_sign.py" signers add --file "$sf" --line "$line" || exit $?
       audit_log "marshal:signers" "add $PROJ ${line%% *}"
@@ -301,7 +301,7 @@ marshal_main() {
       exit 0
     fi
     [ -n "${APPROVED:-}" ] || die "resign needs --approved WORDS (the owner's words): it signs the record of $name with this machine's key; run it without options for the plan"
-    need_plan "$rtok"
+    QARGI_NESTED='' need_plan "$rtok"
     marshal_py "$PROJ" resign "$name" --approved "$APPROVED" '--expect-head' "$rhead" || rrc=$?
     if [ "$rrc" = 0 ]; then audit_log "marshal:resign" "$PROJ $name"; fi
     exit "$rrc"
@@ -321,7 +321,7 @@ marshal_main() {
       exit 0
     fi
     [ -n "${APPROVED:-}" ] || die "forget needs --approved WORDS (the owner's words): it drops the accepted mark of $name on this machine; run it without options for the plan"
-    need_plan "$ftok"
+    QARGI_NESTED='' need_plan "$ftok"
     python3 -I "$MARSHAL_LIB/marshal_sign.py" hw drop --file "$fmk" --name "$name" --rev "$frev" --oid "$foid" --lock "$DA_STATE/features/.refs-$PROJ.lock" || frc=$?
     if [ "$frc" = 0 ]; then audit_log "marshal:forget" "$PROJ $name rev=$frev oid=$foid"; echo "marshal of $PROJ: forgot the accepted mark of $name (rev $frev)"; fi
     exit "$frc"
@@ -339,7 +339,7 @@ marshal_main() {
         exit 0
       fi
       [ -n "${APPROVED:-}" ] || die "disable needs --approved WORDS (the owner's words) while integrity is $cur; run it without options for the plan"
-      need_plan "$dtok"
+      QARGI_NESTED='' need_plan "$dtok"
     fi
     python3 -I "$MARSHAL_LIB/marshal_refs.py" switch-remove --state "$DA_STATE" --project "$PROJ" || exit $?
     audit_log "marshal:disable" "$PROJ"

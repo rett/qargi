@@ -12,6 +12,10 @@
       "default": "make test",
       "help": "the command that runs the whole test suite"
     },
+    "gates": {
+      "default": "",
+      "help": "the project's declared gates as one line of JSON, an array of {name, command, tier} (tier feature or release); when given, the scaffold names them where it would name the test command and the CI workflow has one job per gate, named after it (a release-tier gate's job runs only on release and hotfix branches)"
+    },
     "ci_timeout_minutes": {
       "default": "30",
       "pattern": "[1-9][0-9]*",

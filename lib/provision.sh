@@ -242,7 +242,7 @@ case $verb in
     need_asked
     [ -n "$APPROVED" ] || die "apply needs --approved \"<the user's go-ahead for the plan shown by: plan $NAME>\""
     render
-    need_plan "$(plan_hash)"; audit_log provision-apply "$NAME${FORCE:+ force}"
+    QARGI_NESTED='' need_plan "$(plan_hash)"; audit_log provision-apply "$NAME${FORCE:+ force}"
     if [ -n "$FORCE" ]; then
       (cd "$W" && ant apply --yes --force --lock-file "$LOCK" "${FILES[@]}") || die "ant apply failed"
     else

@@ -172,5 +172,25 @@ out=$($DA project adopt kappa 2>&1); grep -q "share no history" <<<"$out" && ok 
 # the audit line, and a bad methodology
 grep -q '"verb":"project:adopt"' "$T/s/audit.log" && ok "applying leaves an audit line" || no "audit"
 $DA project adopt alpha --methodology nosuch >/dev/null 2>&1 && no "an unknown methodology was accepted" || ok "an unknown methodology is refused"
+
+# --- declared gates: the files adopt writes name the gates where they would name the test command, test_command otherwise
+for f in AGENTS.md CLAUDE.md CONTRIBUTING.md .github/workflows/test.yml; do
+  git -C "$A" show "agent/adopt-gitflow:$f" | grep -q "declared gates" && no "gates: $f names gates in a project without any"
+done
+git -C "$A" show agent/adopt-gitflow:.github/workflows/test.yml | grep -qx "  test:" && git -C "$A" show agent/adopt-gitflow:CONTRIBUTING.md | grep -q 'merged into `develop`: `make test`\.$' && ok "gates: without gates the files name the test command and the CI has the one job test" || no "gates absent: the files changed"
+Gd=$T/gdemo; git init -q -b main "$Gd"; printf '# Gdemo\n' > "$Gd/README.md"; git -C "$Gd" add -A; git -C "$Gd" commit -q -m first
+attach gdemo "$Gd"
+jq '.gates = [{name:"lint",command:"make lint",tier:"feature"},{name:"unit",command:["make","check"],tier:"feature"},{name:"pack",command:"make pack",tier:"release"}]' "$T/c/projects/gdemo.json" > "$T/g.json" && cp "$T/g.json" "$T/c/projects/gdemo.json"
+out=$($DA project adopt gdemo 2>&1); tok=$(tokof "$out")
+$DA project adopt gdemo --plan "$tok" --approved go >/dev/null 2>&1 || no "gates: apply: $out"
+sh_() { git -C "$Gd" show "agent/adopt-gitflow:$1"; }
+for f in AGENTS.md CLAUDE.md CONTRIBUTING.md; do
+  sh_ "$f" | grep -qx '  - `lint` (feature): `make lint`' && sh_ "$f" | grep -qx '  - `unit` (feature): `make check`' && sh_ "$f" | grep -qx '  - `pack` (release): `make pack`' && ! sh_ "$f" | grep -q 'make test' && ok "gates: $f lists the declared gates in order" || no "gates $f: $(sh_ "$f" | grep -n 'gate\|make')"
+done
+wf=$(sh_ .github/workflows/test.yml)
+grep -qx "    name: 'lint'" <<<"$wf" && grep -qx "    name: 'unit'" <<<"$wf" && grep -qx "    name: 'pack'" <<<"$wf" && grep -qx '          make check' <<<"$wf" && ! grep -qx '  test:' <<<"$wf" && [ "$(grep -c 'runs-on' <<<"$wf")" = 3 ] \
+  && ok "gates: the CI workflow has one job for each gate, named after it" || no "gates workflow: $wf"
+mkdir -p "$T/tree/.github/workflows"; sh_ .github/workflows/test.yml > "$T/tree/.github/workflows/test.yml"
+python3 "${DA%/bin/qargi}/lib/gates.py" scan "$T/c/projects/gdemo.json" "$T/tree" >"$T/scan.out" 2>&1 && [ ! -s "$T/scan.out" ] && ok "gates: the scan of the written workflow finds every job matched by a gate" || no "gates scan: $(cat "$T/scan.out")"
 rm -rf "$T"
 exit $fail

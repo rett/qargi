@@ -27,6 +27,7 @@ refusal changes nothing.
    applied and merged; `qargi local clean --applied --scratch DIR` cleans those that are both and keeps the rest.
    `qargi local clean --stale DAYS --scratch DIR` lists the finished runs older than DAYS days, and `--yes` cleans them (a run whose work is not applied and merged is kept).
    `qargi local clean --orphans [--days N]` lists the `qargi-run.XXXXXX` directories under `/dev/shm` (or `QARGI_RUN_TMP`) that no run of your registry names, with their age; it prints a plan and a token and removes nothing until `--plan TOKEN --approved WORDS`, and then only the unnamed directories older than N days (default 2).
+   Every `qargi local clean RUN` (also by `--applied` and `--stale`) also removes the saved scrub record of the run that `qargi review check` keeps in the state, so a run that was checked and never applied leaves none behind.
 3. When the feature is complete: `qargi feature sync NAME` (merges develop in), `qargi feature verify
    NAME` (the one whole-suite run per feature), then `qargi feature finish NAME`, the only merge into
    develop. `qargi feature status NAME` shows commits ahead and whether the whole-suite run is
@@ -40,6 +41,9 @@ refusal changes nothing.
    it; otherwise `verify` notes that it is not run). The verdict line is the same, `full suite: pass|fail at SHA`, so `feature finish`
    and the release steps work as before; the run record lists each gate with its result (`pass`, `fail`, or `not run` after a failure) and
    `feature status` and `release status` show a `gates:` line. A failed run names the failing gate. Absent, nothing changes.
+   `verify` runs the gates in order; the CI workflow of the scaffold makes each gate its own job and the jobs run in parallel. A feature-tier
+   gate's job runs on every pull request; a release-tier gate's job runs only on a pull request from a `release/` or `hotfix/` branch (and
+   when the workflow is started by hand), as only `release verify` runs that gate.
 4. `qargi release start VERSION` cuts `release/VERSION` from develop (only from a head that passed the
    suite) and bumps `VERSION` and the changelog date. Like the pushes and merges it prints a plan (the branch, the base, the files
    the bump commit changes) and a token first, and applies with `--plan TOKEN --approved "<your words>"`, which also writes the

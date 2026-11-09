@@ -4,7 +4,15 @@
 
 ## Commands
 
+{{^gates}}
 - Whole test suite: `{{test_command}}`. Run it once after a set of related changes is merged, not after every edit.
+{{/gates}}
+{{#gates}}
+- Whole test suite: the declared gates, run in order, stopping at the first failure. Run them once after a set of related changes is merged, not after every edit.
+{{#gate}}
+  - {{gate_name_code}} ({{gate_tier}}): {{gate_command_code}}
+{{/gate}}
+{{/gates}}
 - While working on a task, run only the check that covers what you changed.
 
 ## Rules

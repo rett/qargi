@@ -43,6 +43,20 @@ rm -rf "$R/.claude"
 after=$(git -C "$R" status --porcelain; git -C "$R" for-each-ref; find "$R" -path "$R/.git" -prune -o -type f -print | sort | xargs cat | sha256sum)
 [ "$before" = "$after" ] && ok "the hint changed nothing in the repository" || no "repository changed by the hint"
 
+# declared gates are shown next to the test command: attach (stored project) and project show (standard error, so the JSON stays pipeable)
+out=$($DA project attach "$R" 2>&1); ! grep -q "declared gates" <<<"$out" && ok "gates: without gates attach prints no gates" || no "gates absent: $out"
+out=$($DA project show widgettool 2>&1 >/dev/null); [ -z "$out" ] && ok "gates: without gates project show prints only the JSON" || no "show absent: $out"
+jq '.gates = [{name:"lint",command:"make lint",tier:"feature"},{name:"unit",command:["make","check"],tier:"feature"},{name:"pack",command:"make pack",tier:"release"}]' "$T/c/projects/widgettool.json" > "$T/g.json" && cp "$T/g.json" "$T/c/projects/widgettool.json"
+out=$($DA project attach "$R" 2>&1)
+grep -q "^test command: make test" <<<"$out" && grep -q "^declared gates (they replace the test command: feature verify and release verify run them in order and stop at the first failure):" <<<"$out" \
+  && grep -qx "  feature  lint  make lint" <<<"$out" && grep -qx "  feature  unit  make check" <<<"$out" && grep -qx "  release  pack  make pack" <<<"$out" \
+  && [ "$(grep -n "^declared gates" <<<"$out" | cut -d: -f1)" -gt "$(grep -n "^test command:" <<<"$out" | cut -d: -f1)" ] && ok "gates: attach lists the declared gates after the test command (tier, name, command)" || no "gates attach: $out"
+[ "$(grep -c "^  [a-z]*  [a-z]*  " <<<"$out")" = 3 ] && ok "gates: one line per gate, feature tier first" || no "gates lines: $out"
+$DA project show widgettool 2>"$T/show.err" | jq -e '.gates | length == 3' >/dev/null && grep -qx "  release  pack  make pack" "$T/show.err" && grep -q "^declared gates (they replace the test command" "$T/show.err" && ok "gates: project show keeps the JSON on standard output and names the gates on standard error" || no "gates show: $(cat "$T/show.err")"
+jq '.gates[0].tier = "nope"' "$T/c/projects/widgettool.json" > "$T/g.json" && cp "$T/g.json" "$T/c/projects/widgettool.json"
+out=$($DA project attach "$R" 2>&1); ! grep -q "declared gates" <<<"$out" && ok "gates: gates that are not valid are not listed (validate reports them)" || no "gates invalid: $out"
+jq 'del(.gates)' "$T/c/projects/widgettool.json" > "$T/g.json" && cp "$T/g.json" "$T/c/projects/widgettool.json"
+
 # no remote, no tests: it asks instead of guessing
 N=$T/bare; git init -q -b trunk "$N"; $G -C "$N" commit -q --allow-empty -m x
 out=$($DA project attach "$N" --name plain 2>&1)

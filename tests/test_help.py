@@ -207,6 +207,15 @@ class Render(unittest.TestCase):
         self.assertIn("unknown command", r.stderr)
         self.assertEqual(run("version").returncode, 0)
 
+    def test_the_declared_gates_in_the_output_of_the_verbs_are_described(self):
+        # declared gates appear in the handoff note (== gates, and gates in --json), on standard error of project show and in project attach: the help says so
+        for cmd, verb, needles in (("marshal", "handoff", ("== gates", "`gates`")), ("project", "show", ("standard error", "gates")),
+                                   ("project", "attach", ("declare gates", "replace the detected test command")), ("project", "new", ("gates=JSON", "stored"))):
+            v = C.COMMANDS[cmd]["verbs"][verb]
+            text = v["summary"] + " " + v["desc"] + " " + " ".join(o["help"] for o in v["opts"])
+            for n in needles:
+                self.assertIn(n, text, "%s %s" % (cmd, verb))
+
     def test_man_page_is_current_and_lints(self):
         page = H.man()
         self.assertEqual(slurp(os.path.join(ROOT, "man", "qargi.1")), page, "regenerate: python3 lib/help.py man > man/qargi.1")

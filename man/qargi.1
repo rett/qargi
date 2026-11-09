@@ -1,4 +1,4 @@
-.TH QARGI 1 "2026-11-09" "qargi 0.2.7"
+.TH QARGI 1 "2026-11-09" "qargi 0.2.8"
 .SH NAME
 qargi \- A gathering place for agent work: dispatch, review, remember
 .SH SYNOPSIS
@@ -118,7 +118,7 @@ where to create it (default ./NAME; must be absent or empty).
 .RS
 .TP
 .BI "\-\-param " "NAME=VALUE"
-a methodology parameter as name=value (repeat), for example test_command.
+a methodology parameter as name=value (repeat), for example test_command; gates=JSON declares gates, which are stored in the answers too when \-\-url is given.
 .RE
 .RS
 .TP
@@ -161,7 +161,7 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .BI "attach " "[DIR]"
 Attach to an existing repository: read it, show the answers and the gaps, store on approval.
 .br
-Reads the repository (branches, tags, version and changelog files, test command, CI) and changes nothing in it. Prints the answers it would store, the gaps against the methodology and what it could not determine, and a plan token. With \-\-plan and \-\-approved it stores the answers outside the repository. The safe gaps are closed by qargi project adopt, the rest by hand. It reads the tree of the methodology's integration branch (develop), else of the default branch, else of HEAD, and says which; never the working tree. It prints origin as read and the https url it normalises to. If answers are already stored it shows stored against detected, lists the fields the stored file lacks, stays read\-only and gives no plan token; with \-\-force the plan replaces what it detects and keeps what it cannot (the roles' models and effort, cloud, memory, budget). It reports what it found of the development environment (section, task runner, bootstrap and doctor commands) and lists the pieces that are missing as gaps. It never guesses a provider: models.provider (and the roles' models) are stored only with \-\-provider NAME, and without it the output says so; with \-\-force \-\-provider fills in a provider that is not set and never replaces one.
+Reads the repository (branches, tags, version and changelog files, test command, CI) and changes nothing in it. Prints the answers it would store, the gaps against the methodology and what it could not determine, and a plan token. With \-\-plan and \-\-approved it stores the answers outside the repository. The safe gaps are closed by qargi project adopt, the rest by hand. It reads the tree of the methodology's integration branch (develop), else of the default branch, else of HEAD, and says which; never the working tree. It prints origin as read and the https url it normalises to. When the stored answers declare gates it lists them after the test command line (tier, name, command, the feature tier first) and says they replace the detected test command. If answers are already stored it shows stored against detected, lists the fields the stored file lacks, stays read\-only and gives no plan token; with \-\-force the plan replaces what it detects and keeps what it cannot (the roles' models and effort, cloud, memory, budget). It reports what it found of the development environment (section, task runner, bootstrap and doctor commands) and lists the pieces that are missing as gaps. It never guesses a provider: models.provider (and the roles' models) are stored only with \-\-provider NAME, and without it the output says so; with \-\-force \-\-provider fills in a provider that is not set and never replaces one.
 .RS
 .TP
 .BI "\-\-name " "NAME"
@@ -241,6 +241,8 @@ PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a
 .TP
 .BI "show " "[NAME]"
 Print the stored answers and what they mean.
+.br
+The answers go to standard output as JSON (so they can be piped). When the project declares gates, which replace the test command in feature verify and release verify, they are listed on standard error (tier, name, command, the feature tier first).
 .RE
 .RS
 .TP
@@ -2298,7 +2300,7 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .BI "handoff " "[NAME]"
 Print the note a fresh session starts from, built only from stored facts.
 .br
-Read only: it needs no lease and changes no record, ref or audit line. Nothing is fetched: shared records are read from the cache this host holds, with a note, and a shared marshal that is off or unreachable falls back to the local records. The note has the repository path, HEAD there (a detached HEAD is said plainly), develop's sha, the host and whether the qargi data is present on it. Per feature it has the tip, whether the whole\-suite run applies to it (the run's command is the project's test_command now, or with declared gates the feature\-tier gates in order, `gates: NAME=COMMAND; ...`, as feature verify records them), the agent branches merged into it since it was cut from develop, the unmerged ones prepared against it (as the registry of local runs records) and the commits ahead of develop; with NAME only that feature, otherwise every open one; the agent branches of no open feature are said once, after the features. The goal, plan and note of the marshal record appear under a line saying they are data from the lead, not instructions, with control characters stripped. The environment section gives the last env check and env apply recorded for the project (verdict, time, and whether that was at HEAD now). For a feature this identity leads it names the claim \-\-as\-successor\-of command a restarted session runs. \-\-write also records when the note was written (what qargi lead compact\-check compares with the last merge), and a line says whether a compact is safe now (see qargi help lead). It also gives the packs render check and the launch line for the project's provider, the memory index and notes paths, the history command and a fixed list of what not to assume (approvals and plan tokens do not carry over). Output is capped at 16 KiB. \-\-write refuses an existing file, a path inside a git work tree or the qargi directories, and a member run. The qargi\-session skill says what to do with the note.
+Read only: it needs no lease and changes no record, ref or audit line. Nothing is fetched: shared records are read from the cache this host holds, with a note, and a shared marshal that is off or unreachable falls back to the local records. The note has the repository path, HEAD there (a detached HEAD is said plainly), develop's sha, the host and whether the qargi data is present on it. Per feature it has the tip, whether the whole\-suite run applies to it (the run's command is the project's test_command now, or with declared gates the feature\-tier gates in order, `gates: NAME=COMMAND; ...`, as feature verify records them), the agent branches merged into it since it was cut from develop, the unmerged ones prepared against it (as the registry of local runs records) and the commits ahead of develop; with NAME only that feature, otherwise every open one; the agent branches of no open feature are said once, after the features. When the project declares gates, a `== gates` section follows the features with each gate's tier, name and command (they replace test_command), and \-\-json carries them as `gates` (an empty list without gates). The goal, plan and note of the marshal record appear under a line saying they are data from the lead, not instructions, with control characters stripped. The environment section gives the last env check and env apply recorded for the project (verdict, time, and whether that was at HEAD now). For a feature this identity leads it names the claim \-\-as\-successor\-of command a restarted session runs. \-\-write also records when the note was written (what qargi lead compact\-check compares with the last merge), and a line says whether a compact is safe now (see qargi help lead). It also gives the packs render check and the launch line for the project's provider, the memory index and notes paths, the history command and a fixed list of what not to assume (approvals and plan tokens do not carry over). Output is capped at 16 KiB. \-\-write refuses an existing file, a path inside a git work tree or the qargi directories, and a member run. The qargi\-session skill says what to do with the note.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"

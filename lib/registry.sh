@@ -73,7 +73,7 @@ init_cloud() {
     echo "PLAN: agent $aid v$aver: model $cur_m -> $new_m, effort $cur_e -> $new_e (creates a new agent version and re-points the deployment)"
     ptok=$(printf '%s' "$aid|$aver|$new_m|$new_e" | plan_token)
     [ -n "$APPROVED" ] || { echo "plan token: $ptok   (re-run with --plan $ptok --approved \"<the user's go-ahead>\" to apply; nothing changed)"; return 0; }
-    need_plan "$ptok"; audit_log agent-update "$aid $cur_m->$new_m $cur_e->$new_e"
+    QARGI_NESTED='' need_plan "$ptok"; audit_log agent-update "$aid $cur_m->$new_m $cur_e->$new_e"
     ant beta:agents update --agent-id "$aid" --version "$aver" --model "{id: $new_m$([ "$new_e" = default ] || printf ', effort: %s' "$new_e")}" >/dev/null 2>&1 || die "agent update failed"
     ant beta:deployments update --deployment-id "$DEP" --agent "$aid" >/dev/null 2>&1 || die "deployment re-point failed (agent was updated)"
     d=$(ant beta:deployments retrieve --deployment-id "$DEP" 2>/dev/null) || die "cannot re-read deployment"
@@ -215,7 +215,7 @@ normalize() {
   [ "$changes" = 1 ] || { echo "nothing to rename"; return 0; }
   local ntok; ntok=$(printf '%s|%s' "$n" "$plan_text" | plan_token)
   [ -n "$APPROVED" ] || { echo "plan token: $ntok   (re-run with --plan $ntok --approved \"<the user's go-ahead>\" to rename; nothing changed)"; return 0; }
-  need_plan "$ntok"; audit_log normalize "$n"
+  QARGI_NESTED='' need_plan "$ntok"; audit_log normalize "$n"
   if [ "$(jq -r .name <<<"$ag")" != "$(res_name agent)" ]; then
     ant beta:agents update --agent-id "$aid" --version "$aver" --name "$(res_name agent)" >/dev/null 2>&1 || die "agent rename failed"
     ant beta:deployments update --deployment-id "$did" --agent "$aid" >/dev/null 2>&1 || die "deployment re-point failed (agent was renamed)"
@@ -294,7 +294,7 @@ refresh_prompt() {
   fi
   ptok=$(printf '%s|%s|%s' "$aver" "$new" "$newm" | plan_token)
   [ -n "$APPROVED" ] || { echo "plan token: $ptok   (re-run with --plan $ptok --approved \"<the user's go-ahead>\" to apply; nothing changed)"; return 0; }
-  need_plan "$ptok"; audit_log refresh-prompt "$n $aid v$aver"
+  QARGI_NESTED='' need_plan "$ptok"; audit_log refresh-prompt "$n $aid v$aver"
   ant beta:agents update --agent-id "$aid" --version "$aver" --system "$new" ${mflag[@]+"${mflag[@]}"} </dev/null >/dev/null 2>&1 || die "agent update failed"
   ant beta:deployments update --deployment-id "$(jq -r .deployment_id <<<"$i")" --agent "$aid" </dev/null >/dev/null 2>&1 || die "agent updated but re-pointing the deployment failed"
   nv=$(ant beta:deployments retrieve --deployment-id "$(jq -r .deployment_id <<<"$i")" </dev/null 2>/dev/null | jq .agent.version)

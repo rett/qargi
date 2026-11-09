@@ -85,6 +85,39 @@ out=$(sf 0.2.0 "announce 0.2.0 to the list" 2>&1); rc=$?
 [ $rc != 0 ] && grep -q "marked done already" <<<"$out" && grep -q -- "--again" <<<"$out" && ok "a step marked done is refused a second time" || no "again: rc=$rc $out"
 out=$(sf 0.2.0 "announce 0.2.0 to the list" --again --evidence "second try" 2>&1); rc=$?
 [ $rc = 0 ] && [ "$(jq -r '.steps[0].evidence' "$rec")" = "second try" ] && ok "--again records it again" || no "--again: rc=$rc $out"
+# a write that fails is told in qargi's words (the record cannot be written; check it and its directory), not in jq's and without blaming another command
+# (a lock makes the commands wait for each other), and the exit status stays 1
+cp "$rec" "$T/rec.keep"
+if [ "$(id -u)" != 0 ]; then
+  chmod a-w "$(dirname "$rec")"
+  out=$(sf 0.2.0 "tag the docs repository" 2>&1); rc=$?
+  chmod u+w "$(dirname "$rec")"
+  [ $rc = 1 ] && grep -q "could not write the step record" <<<"$out" && grep -q "can be written and that the record is valid JSON" <<<"$out" && ! grep -q "another command" <<<"$out" && ! grep -q "jq:" <<<"$out" \
+    && cmp -s "$rec" "$T/rec.keep" && ok "a step record that cannot be written is refused in plain words, exit 1, and the record is unchanged" || no "write failure: rc=$rc $out"
+fi
+# the other command wins the race: a jq that marks the step done just before the locked write reads the record
+REALJQ=$(command -v jq); mkdir -p "$T/shim"
+cat > "$T/shim/jq" <<J
+#!/usr/bin/env bash
+case "\$*" in *"marked done meanwhile"*) "$REALJQ" '(.steps[] | select(.name == "tag the docs repository")) |= (.state = "done")' "$rec" > "$T/rec.other" && mv "$T/rec.other" "$rec";; esac
+exec "$REALJQ" "\$@"
+J
+chmod +x "$T/shim/jq"
+out=$(PATH="$T/shim:$PATH" sf 0.2.0 "tag the docs repository" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "was marked done by another command" <<<"$out" && grep -q "run this again with --again" <<<"$out" && ! grep -q "jq:" <<<"$out" \
+  && ok "two marks at the same moment: the second is told in plain words to run again with --again, exit 1" || no "race: rc=$rc $out"
+cp "$T/rec.keep" "$rec"
+# jq itself fails on the record (a record that is not what it was): no jq text, no blame on another command, exit 1, record unchanged
+mkdir -p "$T/shim2"
+cat > "$T/shim2/jq" <<J
+#!/usr/bin/env bash
+case "\$*" in *"marked done meanwhile"*) echo "jq: error (at \$2): Cannot iterate over null" >&2; exit 5;; esac
+exec "$REALJQ" "\$@"
+J
+chmod +x "$T/shim2/jq"
+out=$(PATH="$T/shim2:$PATH" sf 0.2.0 "tag the docs repository" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "could not write the step record" <<<"$out" && grep -q "valid JSON" <<<"$out" && ! grep -q "jq" <<<"$out" && ! grep -q "another command" <<<"$out" && cmp -s "$rec" "$T/rec.keep" \
+  && ok "a record jq cannot change is refused in plain words: no jq text, no other command blamed, exit 1, record unchanged" || no "jq failure: rc=$rc $out"
 out=$(sf 0.2.0 "post the notes" 2>&1); rc=$?
 [ $rc != 0 ] && grep -q "needs evidence (the address of the post)" <<<"$out" && [ "$(jq -r '.steps[1].state' "$rec")" = pending ] && ok "a step with an evidence is refused without --evidence" || no "evidence: rc=$rc $out"
 out=$(sf 0.2.0 "post the notes" --evidence "   " 2>&1); rc=$?

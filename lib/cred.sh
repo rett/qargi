@@ -103,7 +103,7 @@ case $verb in
     echo "plan: store the token in $dest (mode 600); create the vault $PROJECT-vault-lead with a bearer credential for the GitHub tool; attach it to the lead's deployment; record it in the project answers (lead.push)"
     tok_plan=$(printf '%s|%s|%s' "$PROJECT" "$slug" "$dest" | plan_token)
     if [ -z "$APPROVED" ]; then echo "plan token: $tok_plan   (apply with: --plan $tok_plan --approved \"<the user's go-ahead>\" --asked \"...\"; nothing was changed)"; exit 0; fi
-    need_asked; ant_ok; need_plan "$tok_plan"; audit_log credential-setup "$PROJECT lead-push $slug"
+    need_asked; ant_ok; QARGI_NESTED='' need_plan "$tok_plan"; audit_log credential-setup "$PROJECT lead-push $slug"
     mkdir -p "$(dirname "$dest")"; chmod 700 "$(dirname "$dest")"
     ( umask 077; printf '%s' "$tok" > "$dest" ); chmod 600 "$dest"
     vname=$PROJECT-vault-lead
