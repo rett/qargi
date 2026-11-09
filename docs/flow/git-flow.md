@@ -9,7 +9,7 @@ refusal changes nothing.
    theme; `qargi feature list` shows the open ones and the files two of them both change.
 2. Tasks run on `agent/<slug>` (`/qargi-task ... --base feature/NAME`) with targeted checks only.
    Per task: `qargi review check RUN/out` and `qargi review apply RUN` (puts the series on `agent/<slug>`; the author of each commit is reset to yours: the answer `git.author`, a string `Name <email>`, else the repository's `user.name` and `user.email`; `review.keep_author` `true` keeps the member's; the member's author is recorded in the ref journal and the audit log),
-   A project can declare a take-in scrub that `qargi review check` runs after the series check passes: the answer `review.scrub` names a command (one command line, or a list of words),
+   A project can declare a take-in scrub that `qargi review check` runs after the series check passes, and that `qargi review apply` runs again before it applies anything unless a passing check recorded the same series (the record, in your state directory, holds a hash of the patches and of the declared scrub; when it matches, apply prints `scrub: skipped (review check passed it for this series)`, and a changed patch, `review.scrub` or `review.trailer_policy` runs the scrub again; a failing scrub refuses the apply with nothing applied): the answer `review.scrub` names a command (one command line, or a list of words),
    run with the lead's rights in a throw-away checkout of the applied series (`BASE..tip`, the commit the run's base branch had when it was prepared, then the patches with `git am`), with the range in
    `QARGI_SCRUB_BASE` and `QARGI_SCRUB_TIP`; `review.trailer_policy` is `none` (default) or `reject`, which fails any commit whose message carries a `Co-Authored-By` or `Generated with` style trailer. The
    output gains one line, `scrub: ok` or `scrub: FAIL` with the first lines of what the command (or the policy) said, and a failing scrub fails the check (exit 1). Nothing is made in your repository: no
@@ -26,6 +26,7 @@ refusal changes nothing.
    `qargi review apply --from-saved ID` applies it when the run directory is gone (`local list` shows such a run as directory gone). `qargi local list --scratch DIR` shows each run's role, slug, age and whether it is
    applied and merged; `qargi local clean --applied --scratch DIR` cleans those that are both and keeps the rest.
    `qargi local clean --stale DAYS --scratch DIR` lists the finished runs older than DAYS days, and `--yes` cleans them (a run whose work is not applied and merged is kept).
+   `qargi local clean --orphans [--days N]` lists the `qargi-run.XXXXXX` directories under `/dev/shm` (or `QARGI_RUN_TMP`) that no run of your registry names, with their age; it prints a plan and a token and removes nothing until `--plan TOKEN --approved WORDS`, and then only the unnamed directories older than N days (default 2).
 3. When the feature is complete: `qargi feature sync NAME` (merges develop in), `qargi feature verify
    NAME` (the one whole-suite run per feature), then `qargi feature finish NAME`, the only merge into
    develop. `qargi feature status NAME` shows commits ahead and whether the whole-suite run is

@@ -38,6 +38,10 @@ d0=$(git -C "$R" rev-parse docs-site); dev0=$(git -C "$R" rev-parse develop); o0
 out=$($F merge docs-site agent/d1 2>&1); t=$(tok <<<"$out")
 [ -n "$t" ] && grep -q "brings 1 commit(s) into docs-site" <<<"$out" && [ "$(git -C "$R" rev-parse docs-site)" = "$d0" ] && ok "the merge into a detached branch prints a plan and changes nothing" || no "plan: $out"
 $F merge docs-site agent/d1 --plan 000000000000 --approved go >/dev/null 2>&1 && no "a wrong token was accepted" || ok "a wrong plan token is refused"
+out=$(QARGI_NESTED=1 $F merge docs-site agent/d1 --approved go 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "the plan changed or --plan is missing" <<<"$out" && [ "$(git -C "$R" rev-parse docs-site)" = "$d0" ] && ok "merge into a detached branch with no token under QARGI_NESTED is refused, the branch did not move" || no "nested merge, no token: rc=$rc $out"
+out=$(QARGI_NESTED=1 $F merge docs-site agent/d1 --plan 000000000000 --approved go 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "the plan changed or --plan is missing" <<<"$out" && [ "$(git -C "$R" rev-parse docs-site)" = "$d0" ] && ok "and a wrong token is refused under QARGI_NESTED too" || no "nested merge, wrong token: rc=$rc $out"
 out=$($F merge docs-site agent/d1 --plan "$t" --approved "go ahead" 2>&1); rc=$?
 [ $rc = 0 ] && [ "$(git -C "$R" rev-list --parents -n1 docs-site | wc -w)" = 3 ] && git -C "$R" show docs-site:page.md >/dev/null && ok "with the token it merges the task with --no-ff" || no "apply rc=$rc: $out"
 [ "$(git -C "$R" rev-parse develop)" = "$dev0" ] && [ "$(git -C "$T/origin.git" rev-parse docs-site)" = "$o0" ] && [ "$(git -C "$R" branch --show-current)" = parked ] && ok "develop, origin and the main checkout are untouched" || no "touched"

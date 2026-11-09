@@ -75,7 +75,7 @@ merge_detached() {
   echo "merge $EXTRA into the detached branch $d with --no-ff (local only: nothing is pushed)"
   show_incoming "$d" "$EXTRA"
   if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi feature merge $d $EXTRA --plan $tok --approved \"...\")"; return 0; fi
-  need_plan "$tok"
+  QARGI_NESTED='' need_plan "$tok"
   need_free "$d"
   merge_step "$h" "refs/heads/$EXTRA" "detached-${d//\//_}-merge-${EXTRA//\//_}" "Merge branch '$EXTRA' into $d"
   g update-ref "refs/heads/$d" "$MERGED" "$h" || die "could not move $d (it changed meanwhile)"
@@ -298,7 +298,7 @@ case $verb in
     remote_report develop; remote_report "$BR"
     show_incoming develop "$BR"
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi feature finish $NAME_ARG${KEEP:+ --keep} --plan $tok --approved \"...\")"; exit 0; fi
-    need_plan "$tok"
+    QARGI_NESTED='' need_plan "$tok"
     need_free develop
     need_free_wt "$BR"
     hold_begin "$NAME_ARG"
