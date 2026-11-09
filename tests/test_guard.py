@@ -2792,7 +2792,14 @@ class TrimmedExpansions(HookCase):
             f.write("x\n")
         for c in ("cat ${X:-*}", "cat ${X:-dir}/marshal_*", "cat ${arr[0]}/marshal_x", "cat ${d}/marshal_*", "cat ${arr[@]}/marshal_?", "cat marshal_${m}", "cat marshal_${arr[0]}",
                   "cat ${X:-d}/${arr[0]}*", "cat ${arr[0]}${X:-*}", 'for f in "${files[@]}"; do cat %s; done' % k, 'for f in "${files[@]}"; do cat "${QARGI_CONF}/credentials/marshal_ed25519"; done',
-                  'false | true; echo ${PIPESTATUS[0]}; cat %s' % k, "cp -r ${arr[@]} out"):
+                  'false | true; echo ${PIPESTATUS[0]}; cat %s' % k, "cp -r ${arr[@]} out",
+                  'a=(%s/*); cat "${a[@]}"' % cred, 'a=(%s/m*); cat ${a[0]}' % cred, 'cd %s; a=(*); cat ${a[@]}' % cred, 'declare -a a=(%s/*); cat ${a[@]}' % cred,
+                  'a+=(%s/*); cat ${a[@]}' % cred, 'a=(%s/*); cat $a' % cred, 'a=(x %s/marshal_ed25519 y); cat ${a[1]}' % cred, 'local -a a=(%s/*); cat "${a[@]}"' % cred,
+                  'typeset a=(%s/?arshal*); cat ${a[@]}' % cred, 'readonly a=(%s/*); cat ${a[@]}' % cred, 'declare -A a=([k]=%s/*); cat ${a[k]}' % cred,
+                  'a=(${X:-%s}/*); cat ${a[@]}' % cred, 'cd %s; declare -a a=(m*); cat ${a[@]}' % cred, 'x=1 a=(%s/*); cat ${a[@]}' % cred,
+                  'a=(%s/*)&&cat ${a[@]}' % cred, 'a=(\n%s/*\n); cat ${a[@]}' % cred, 'a=( %s/* ) ; cat ${a[@]}' % cred,
+                  'cat %s/${X:-ma}rshal_ed25519' % cred, 'a=ma; cat %s/${a}rshal_ed25519' % cred, 'cat %s/m${X}shal_ed25519' % cred, 'cat %s/$Xrshal_ed25519' % cred,
+                  'f=${X:-ma}rshal_ed25519; cat %s/$f' % cred, 'cd %s; cat ${X:-ma}rshal_ed25519' % cred, 'a=(${X:-ma}rshal_ed25519); cat %s/${a[0]}' % cred):
             r = self.bash(c)
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("signing key", r.stderr, c)
@@ -3025,6 +3032,13 @@ class TextIsData(HookCase):
         "cat <<'E' # note\nthe project set of $X\nE\nls",
         "cat <<'E'\nthe project set of $X",
         "eval \"$(cat <<'E'\nthe project set of $X\nE\n)\"",
+        # install runs the program of --strip-program, so it is no command that runs nothing; coproc starts the command that follows it
+        "cat > run.sh <<'E'\nrm -rf ~/.claude/skills/x\nE\nchmod +x run.sh; install -s --strip-program=./run.sh run.sh out.bin",
+        "cat > run.sh <<'E'\nmv ~/.qargi/state/features ~/x\nE\nchmod +x run.sh; install -s --strip-program=./run.sh run.sh out.bin",
+        "cat > run.sh <<'E'\ncp x ~/.claude/settings.json\nE\nchmod +x run.sh; install -s --strip-program run.sh run.sh out.bin",
+        "cat > run.sh <<'E'\nthe project set of $X\nE\ninstall -m 755 run.sh out/run.sh",
+        "cat > run.sh <<'E'\ncoproc qargi upgrade\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nthe project set of $X\nE\ncoproc ./run.sh",
     )
 
     def test_a_heredoc_body_is_data_when_a_plain_writer_receives_it(self):
