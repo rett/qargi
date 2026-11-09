@@ -183,7 +183,7 @@ def render(name, given):
     if not re.fullmatch(r"[a-z][a-z0-9]{0,23}", params.get("project", "")):
         raise SystemExit("qargi: project: one lower-case token (letters, digits)")
     for k, v in params.items():
-        if "\n" in v or "\r" in v:
+        if G.has_line_break(v):
             raise SystemExit("qargi: %s is one line" % k)
     gates = declared_gates(params.get("gates", ""))
     out = []

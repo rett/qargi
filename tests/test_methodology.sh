@@ -77,6 +77,14 @@ nog=$($DA methodology files gitflow --param project=acme --param test_command="m
 for bad in 'nope' '{"name":"x"}' '[{"name":"x","command":"c","tier":"later"}]' '[{"name":"x","command":"c","tier":"feature"},{"name":"x","command":"d","tier":"release"}]'; do
   $DA methodology files gitflow --param project=acme --param "gates=$bad" >/dev/null 2>&1 && no "gates=$bad was accepted" || ok "gates=$bad is refused"
 done
+# a Unicode line break (U+2028, U+2029, U+0085) ends a line in YAML and in the markdown: refused in a gate name or command and in a parameter
+for esc in 2028 2029 0085; do
+  lb=$(python3 -c "import sys; sys.stdout.write(chr(0x$esc))")
+  gn="[{\"name\":\"n\\u$esc\",\"command\":\"c\",\"tier\":\"feature\"}]"; gc="[{\"name\":\"n\",\"command\":\"c\\u$esc\",\"tier\":\"feature\"}]"
+  $DA methodology files gitflow --param project=acme --param "gates=$gn" >/dev/null 2>&1 && no "a gate name with U+$esc was accepted" || ok "a gate name with U+$esc is refused"
+  $DA methodology files gitflow --param project=acme --param "gates=$gc" >/dev/null 2>&1 && no "a gate command with U+$esc was accepted" || ok "a gate command with U+$esc is refused"
+  $DA methodology files gitflow --param project=acme --param "test_command=a${lb}b" >/dev/null 2>&1 && no "a test_command with U+$esc was accepted" || ok "a parameter with U+$esc is refused"
+done
 $DA methodology deployment gitflow | grep -q "^github-release .*can be done for you" && ok "deployment options are listed" || no "deployment list"
 $DA methodology deployment gitflow container-image | grep -q "Containerfile" && ok "an option's instructions are printed" || no "instructions"
 $DA methodology deployment gitflow nosuch >/dev/null 2>&1 && no "an unknown option answered" || ok "an unknown deployment option is refused"
