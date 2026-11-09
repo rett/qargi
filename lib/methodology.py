@@ -12,7 +12,12 @@ unique across both places. This module only reads: `qargi project new|adopt` wri
   methodology.py deployment NAME [ID]            the deployment options, or one option's instructions
 
 A template's {{name}} is replaced by the parameter of that name; a {{...}} that is not a declared parameter is left
-alone (it may belong to the file's own language), but a declared parameter with no value is an error. A parameter may carry a
+alone (it may belong to the file's own language), but a declared parameter with no value is an error.
+The optional parameter gates is the project's declared gates (lib/gates.py) as one line of JSON, an array of {name, command, tier}. A template
+may hold, each marker alone on its line: {{#gates}} ... {{/gates}} (the lines between are kept when gates are declared), {{^gates}} ... {{/gates}}
+(kept when none are), and {{#gate}} ... {{/gate}} (repeated for each gate, the feature tier first, in the order declared, with {{gate_id}} (gate1,
+gate2, ...), {{gate_name}}, {{gate_name_quoted}} (a JSON string, which is also a YAML one), {{gate_tier}} and {{gate_command}} filled in). Without gates the
+output is the template's {{^gates}} part, which is what it was before gates existed. A parameter may carry a
 "pattern" (a regular expression the whole value must match). A scaffold entry may say "env": "section" (the file holds the
 Development environment section) or "targets" (the file holds the bootstrap and doctor targets of a task runner): project attach
 and adopt then treat the entry as present when the repository already has the piece in another file.
@@ -23,9 +28,14 @@ import json, os, re, sys, datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import paths as P  # noqa: E402
+import gates as G  # noqa: E402
 
 NAME = re.compile(r"^[a-z][a-z0-9]{0,23}$")
 PLACEHOLDER = re.compile(r"\{\{([a-z_]+)\}\}")
+# the placeholders of a template's {{#gate}} loop, filled for each declared gate; they are not parameters
+GATE_VARS = ("gate_id", "gate_name", "gate_name_quoted", "gate_tier", "gate_command")
+GATES_IF = re.compile(r"^\{\{([#^])gates\}\}\n(.*?)^\{\{/gates\}\}(?:\n|\Z)", re.M | re.S)
+GATE_LOOP = re.compile(r"^\{\{#gate\}\}\n(.*?)^\{\{/gate\}\}(?:\n|\Z)", re.M | re.S)
 
 
 def usage_exit(msg):
@@ -121,7 +131,7 @@ def problems(name):
             bad.append("%s: scaffold/%s is missing" % (name, src))
             continue
         for ph in set(PLACEHOLDER.findall(open(p, encoding="utf-8").read())):
-            if ph not in params:
+            if ph not in params and ph not in GATE_VARS:
                 bad.append("%s: scaffold/%s uses {{%s}}, which params does not declare" % (name, src, ph))
     ar = m.get("after_release", [])
     if not isinstance(ar, list):
@@ -175,11 +185,37 @@ def render(name, given):
     for k, v in params.items():
         if "\n" in v or "\r" in v:
             raise SystemExit("qargi: %s is one line" % k)
+    gates = declared_gates(params.get("gates", ""))
     out = []
     for item in m.get("scaffold") or []:
         text = open(os.path.join(d, "scaffold", item["src"]), encoding="utf-8").read()
-        out.append({"dest": item["dest"], "content": PLACEHOLDER.sub(lambda mo: params[mo.group(1)] if mo.group(1) in params else mo.group(0), text)})
+        # the declared gates choose the template's parts first, then the parameters fill in, and the gates' own text goes in last and once
+        text = GATES_IF.sub(lambda mo: mo.group(2) if (mo.group(1) == "#") == bool(gates) else "", text)
+        text = PLACEHOLDER.sub(lambda mo: params[mo.group(1)] if mo.group(1) in params else mo.group(0), text)
+        text = GATE_LOOP.sub(lambda mo: "".join(gate_text(mo.group(1), i, g) for i, g in enumerate(gates, 1)), text)
+        out.append({"dest": item["dest"], "content": text})
     return out
+
+
+def declared_gates(value):
+    """The gates of the parameter gates (one line of JSON; empty or [] declares none) as [{name, tier, command}] with the command as one line,
+    the feature tier first and each tier in the order declared. Exits when the value is not a valid list of gates."""
+    if not value.strip():
+        return []
+    try:
+        data = json.loads(value)
+    except ValueError as e:
+        raise SystemExit("qargi: --param gates=...: not JSON (%s); an array of {name, command, tier}" % e)
+    bad = G.problems(data)
+    if bad:
+        raise SystemExit("qargi: --param gates=...: " + "; ".join(bad))
+    return G.select(data or [], list(G.TIERS))
+
+
+def gate_text(body, n, gate):
+    """One pass of a {{#gate}} loop body for the gate."""
+    vals = {"gate_id": "gate%d" % n, "gate_name": gate["name"], "gate_name_quoted": json.dumps(gate["name"]), "gate_tier": gate["tier"], "gate_command": gate["command"]}
+    return PLACEHOLDER.sub(lambda mo: vals.get(mo.group(1), mo.group(0)), body)
 
 
 def main(argv):

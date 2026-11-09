@@ -15,6 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+{{^gates}}
   test:
     runs-on: ubuntu-24.04
     timeout-minutes: {{ci_timeout_minutes}}
@@ -26,3 +27,22 @@ jobs:
           fetch-tags: true
       - name: Tests
         run: {{test_command}}
+{{/gates}}
+{{#gates}}
+  # one job for each declared gate, named after it
+{{#gate}}
+  {{gate_id}}:
+    name: {{gate_name_quoted}}
+    runs-on: ubuntu-24.04
+    timeout-minutes: {{ci_timeout_minutes}}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Run the gate
+        run: |
+          {{gate_command}}
+{{/gate}}
+{{/gates}}
