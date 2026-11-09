@@ -43,7 +43,7 @@ It refuses verbs that change shared state: skill and tool new, import, seal, rem
 .PP
 It refuses writes in the pack library, credentials, the install record, the runtime's skills, agents and plugin directories, the installed copy, the state's render, providers, marshal, feature and saved\-run directories, its ref journal, the memory tiers, ~/.config/anthropic, and the lead's git configuration and session files. Reading stays allowed except the lead's signing key: copying, linking, archiving or searching its directory is refused. It refuses git push, git remote changes, git \-c or config of keys that run programs (alias.*), gh, ssh, scp, sftp and rsync to a host.
 .PP
-A command is cut at every ; && || | and newline, inside quotes and heredocs too, and a substitution is a command: no refused verb, push or tag in text, unless every command is echo, cat, tee, grep or git commit and its kin (then text is data). Commit with git commit \-F FILE. Piped or here\-string shell programs are read; curl | sh and bash < f are refused. A cd it cannot read refuses relative writes.
+A command is cut at every ; && || | and newline, inside quotes and heredocs too, and a substitution is a command: no refused verb, push or tag in text, unless every command is echo, cat, tee, grep or git commit (then text is data, as is a heredoc body cat or tee gets, bar lines starting qargi). Commit with git commit \-F FILE. Piped or here\-string shell programs are read; curl | sh and bash < f are refused. A cd it cannot read refuses relative writes.
 .PP
 The read\-only class (review) writes only OUT and TMP: every change to the clone is refused, and a write through a name the guard cannot read. Nobody copies, extracts or links into the run directory.
 .PP
