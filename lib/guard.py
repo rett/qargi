@@ -146,9 +146,15 @@ Signing key: the one credential a member may not even read is the lead's signing
   $(..) substitution, or an extglob pattern after a path in a credentials directory (`DIR/${X:-ma}rshal_x`, `DIR/m$X`, `DIR/`cmd`x`, `DIR/@(m)x`, or `$X` after a cd into
   it) is refused whatever it stands for, because the name it builds could be the key; the path before it may hold a glob (`cred*/${X:-m}x`). An extglob pattern is read as
   the glob `*`. Its reason says the guard cannot tell what the word names (a literal name is the way out); the others say the command would read the key.
-  This is best-effort: the guard reads text and cannot resolve every shell construct. A directory the line only reaches through a name it cannot resolve (a variable or a
-  substitution as a directory component before the key's own name: `$X/marshal_x`, `$(cmd)/marshal_x`; `d=$(cmd)`; a variable the member's shell has and the hook's
-  environment lacks), a script written and run, or code that reads a file itself are not seen.
+  A word whose last component starts with marshal_ (the key's name prefix) and whose earlier components hold a variable, a command substitution or a backtick that
+  is left unresolved (`$X/marshal_x`, `$(cmd)/marshal_x`, `DIR/../$X/marshal_x`, `d=$(cmd); cat $d/marshal_x`, a variable the member's shell has and the hook's environment
+  lacks, `$LIB/marshal_refs.py`) is refused with the same reason: the directory could be the credentials directory, so the way out is a literal path. A variable the line
+  assigns in plain words is resolved first and the real path is judged (`d=src; cat $d/marshal_x` stays allowed); a name the line also gives a value the guard cannot read
+  (`d=src; d=$(cmd)`) stays unresolved. A `)` or `}` with no `(` or `{` before it in the directory part counts, as the end of a substitution whose text has spaces
+  (`$(echo DIR)/marshal_x` reaches the guard cut at the space).
+  This is best-effort: the guard reads text and cannot resolve every shell construct. A directory the line only reaches through a name it cannot resolve and a name that
+  does not start with marshal_ (`$X/m*`, `$X/*`, `cd $X; cat *`, a bare `$d` that stands for the credentials directory), a script written and run, or code that reads a
+  file itself are not seen.
   pushd and popd are followed like cd (a directory stack), a text scan reads `dir//key` and `dir/./key` as `dir/key`, and ln, mv and cp -s|-l
   are refused on a credentials directory (or a directory above one) as the recursive readers are, since a link made in the same command
   is a name the guard cannot resolve yet.
@@ -157,8 +163,8 @@ guard does not parse (a shell loop that reads a file, `parallel`, a script writt
 loop is accepted as residual, and `qargi local verify` and the lead's review of the output are what catch a note written by a member.
 Not covered: code that writes or reads a file itself (python -c, perl -e, node -e, a script written earlier and run) unless it
 names the key by its full path, a glob that expands to a protected path (for a write), a path built from a variable the guard cannot see
-(a variable the line does not assign in plain words and the hook's environment lacks, or one set from a command substitution, d=$(...); cat $d/marshal_ed25519; a name
-produced by a command substitution, cat $(echo ...), or by an echo piped to xargs). The guard is best-effort and cannot resolve every shell construct.
+(a variable the line does not assign in plain words and the hook's environment lacks, or one set from a command substitution, d=$(...), when the name after it does not
+start with marshal_ or the variable is the whole word; a name produced by a command substitution, cat $(echo ...), or by an echo piped to xargs). The guard is best-effort and cannot resolve every shell construct.
 Reading a Bash command (passes(), segments()): a word quoted $'...' (ANSI-C) or $"..." is read as the plain string it stands for (ansi_c); then the plain, conservative split. The line is cut at every ; && || | & and newline whatever the quotes, a comment
 or a heredoc body, so a refused verb is found wherever a command could start, and it is refused as text too: `git commit -m "Docs; qargi packs seed" && make` is
 refused, and a member writes a message to a file with its file tool and commits with `git commit -F FILE`. The one narrowing (mask_data(), for the verbs that change
@@ -1023,11 +1029,12 @@ def line_assignments(command):
     typeset, local and readonly, NAME+=VALUE, and the variable of `for NAME in WORDS`. A value that holds a substitution or is an array is left out (the name stays
     unresolved, and key_named refuses a path it is placed in). The order is not followed: a name used before the line assigns it still stands for the value, which
     refuses a little more and misses nothing."""
-    table, looped, plain = Assigned(), set(), set()
+    table, looped, plain, opaque = Assigned(), set(), set(), set()
 
     def add(name, plus, value, loop=False):
         (looped if loop else plain).add(name)
         if value.startswith("(") or "$(" in value or "`" in value or "<(" in value or ">(" in value:
+            opaque.add(name)                                  # the cut of the line without its substitutions reads `d=$(cmd)` as `d=`: a value the guard cannot know, not an empty one
             return
         vals = with_assigned(value, table)
         cur = table.get(name, ())
@@ -1050,6 +1057,8 @@ def line_assignments(command):
             if prog == "for" and len(toks) > i + 2 and toks[i + 2] == "in" and re.fullmatch(r"[A-Za-z_]\w*", toks[i + 1]):
                 for t in toks[i + 3:]:
                     add(toks[i + 1], False, t, True)
+    for name in opaque:                                       # a name any assignment gives a value it cannot read stays unresolved (d=src; d=$(cmd); cat $d/marshal_x)
+        table.pop(name, None)
     table.loops = frozenset(looped - plain)
     return table
 
@@ -2229,6 +2238,15 @@ def extglob_as_glob(b):
     return b
 
 
+def unresolved_directory(b):
+    """True when the final component of the word b starts with the key's name prefix and an earlier component holds a variable, a command substitution or a backtick:
+    the directory it names is not known (`$X/marshal_x`, `$(cmd)/marshal_x`, `d=$(cmd); $d/marshal_x`), so it could be a credentials directory. Variables the
+    environment has were expanded and those the line assigns were replaced before, so what is left is what the guard cannot read. A ) or } in the head with no ( or { before it is the end of
+    a substitution or an expansion whose text has spaces (`$(echo DIR)/marshal_x` is cut into the words `$(echo` and `DIR)/marshal_x`)."""
+    head, sep, base = b.rpartition("/")
+    return bool(sep) and base.startswith(KEY_PREFIX) and ("$" in head or "`" in head or head.count(")") > head.count("(") or head.count("}") > head.count("{"))
+
+
 @functools.cache                                     # the files do not change while one command is judged
 def key_named(word, here, recursive, assigned=None):
     """The signing key (or, for a recursive reader, a directory holding it) that one shell word stands for, else None. The word
@@ -2248,7 +2266,10 @@ def key_named(word, here, recursive, assigned=None):
     for c in cands:
         if not c or c.startswith("-"):
             continue
+        followed = bool(assigned) and with_assigned(c, assigned) != [c]     # a variable of the line stands in c: the values it gives are candidates themselves, and are judged as the real path
         for b in brace_expand(expand_path(c)):
+            if not followed and unresolved_directory(b):
+                return b                                      # $X/marshal_x, $(cmd)/marshal_x, DIR/../$X/marshal_x: a name that starts with marshal_ after a directory the guard cannot name
             m = UNREAD.search(b)
             if m:                                            # CRED/${X:-ma}rshal_x, CRED/m$a, CRED/`cmd`x, CRED/@(m)x, or in the directory itself: what it stands for is not known, and a name there could be the key
                 head = b[:m.start()].rpartition("/")[0]
@@ -2343,7 +2364,7 @@ def key_read(toks, i, here, assigned=None):
             continue
         named = key_named(t, here, mode, assigned)
         if named:
-            return key_unsure_text(prog, named) if UNREAD.search(named) else key_refusal_text(prog, named)
+            return key_unsure_text(prog, named) if UNREAD.search(named) or unresolved_directory(named) else key_refusal_text(prog, named)
     return None
 
 

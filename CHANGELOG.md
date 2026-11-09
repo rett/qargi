@@ -77,10 +77,17 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `d=DIR; a=($d/*); cat ${a[@]}` and `for d in DIR; do cat $d/marshal_ed25519; done` are refused. A glob in the directory part before a variable
   (`cat DIR/../cred*/${X:-ma}rshal_ed25519`), a backtick substitution in the name (as `$(...)` already was) and an extglob pattern (`@(m)arshal_ed25519`, `!(other.token)`,
   with or without `shopt -s extglob` in the line: the pattern is read as `*`) are refused when they lead into the credentials directory. A name whose value the guard
-  cannot read (`d=$(cmd)`, a variable the line does not set) is refused after a path in that directory only, not when it stands in the directory part (`$X/marshal_x`,
-  `$(cmd)/marshal_x`, a variable the member's shell has and the hook's environment lacks). The guard is best-effort: it reads the text of a command and cannot resolve every
+  cannot read (`d=$(cmd)`, a variable the line does not set) is refused after a path in that directory, and also when it stands in the directory part before a name that
+  starts with `marshal_` (see the next entry). The guard is best-effort: it reads the text of a command and cannot resolve every
   shell construct; the "Not covered" paragraph of its description in `lib/guard.py` names what it does not see. Tests cover each form and the nearest allowed ones
   (`d=DIR; cat $d/other.token`, `d=src; cat $d/marshal_x`, a loop over other directories).
+- The member guard refuses a word whose last component starts with `marshal_` (the signing key's name) when an earlier component holds a variable, a command substitution or a
+  backtick it cannot resolve: `cat $X/marshal_ed25519`, `cat $(cmd)/marshal_ed25519`, `d=$(cmd); cat $d/marshal_ed25519`, `cat DIR/../$X/marshal_ed25519` and the backtick
+  forms, as the directory could be the credentials directory. The reason says the guard cannot tell what the word names and asks for a literal path. A variable the line assigns
+  in plain words is resolved first and the real path is judged, so `d=src; cat $d/marshal_ed25519` stays allowed; a name the line also gives a value the guard cannot read
+  (`d=src; d=$(cmd)`) is no longer taken for its other value, and `d=$(cmd)` is no longer read as an empty string. `$LIB/marshal_refs.py` is refused, as `${LIB}/marshal_refs.py`
+  already was. A variable before a name that does not start with `marshal_` (`$X/other.token`) is allowed. Still not seen: an unresolved directory followed by a glob or
+  another name (`$X/m*`, `cd $X; cat *`), a bare `$d` that stands for the credentials directory, and a script written and run.
 - The reason the member guard gives for a variable, a substitution or an extglob pattern after a path in the credentials directory no longer says the command "would read the
   signing key": it says the guard cannot tell what the word names, so it cannot rule the key out, and asks for the name written out (a literal path such as `credentials/other.token`).
   A glob or a name that does reach the key keeps the old wording. What is refused does not change.

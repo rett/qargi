@@ -2878,6 +2878,43 @@ class TrimmedExpansions(HookCase):
             c = c % parent
             self.assertEqual(self.bash(c).returncode, 0, c)
 
+    def test_a_directory_the_guard_cannot_name_before_the_keys_own_name_is_refused(self):
+        """A variable, a command substitution or a backtick as a directory component before a name that starts with marshal_ (`$X/marshal_x`, `$(cmd)/marshal_x`,
+        `d=$(cmd); $d/marshal_x`, `DIR/../$X/marshal_x`): the directory could be the credentials directory, so the word is refused and the reason asks for a literal path.
+        This includes `$LIB/marshal_refs.py`, as `${LIB}/marshal_refs.py` already was."""
+        cred = self.credentials()
+        for c in ("cat $X/marshal_ed25519", "cat $(cmd)/marshal_ed25519", "cat $(echo %s)/marshal_ed25519", "d=$(echo %s); cat $d/marshal_ed25519", "cat %s/../$X/marshal_ed25519",
+                  "cat `cmd`/marshal_ed25519", "cat `echo %s`/marshal_ed25519", "d=`echo %s`; cat $d/marshal_ed25519", 'd=$(cmd); cat "$d"/marshal_ed25519', "cat ${X}/marshal_ed25519",
+                  "cat $X/$Y/marshal_ed25519", "cat $X/y/marshal_ed25519", "cat $LIB/marshal_refs.py", 'cat "$(cmd)/marshal_ed25519"', 'cat "$(echo a b)"/marshal_ed25519',
+                  "cat $(echo a; echo b)/marshal_ed25519", "cat $(echo $(echo %s))/marshal_ed25519", "cat ${X:-a b}/marshal_ed25519", "for d in $(ls); do cat $d/marshal_ed25519; done",
+                  "d=src; d=$(cmd); cat $d/marshal_ed25519", "cat <$X/marshal_ed25519", "cat --opt=$X/marshal_ed25519 x", "cp $X/marshal_ed25519 /tmp/o", "cat $X/marshal_ed25519.pub",
+                  "d=%s/..; cat $d/$X/marshal_ed25519", "cd %s; cat $X/marshal_ed25519", "grep -r . $X/marshal_ed25519", 'python3 -c "open(\'$X/marshal_ed25519\')"'):
+            c = c.replace("%s", cred)
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("the guard cannot tell what the variable, substitution or pattern in this word names", r.stderr, c)
+            self.assertIn("write the name out in the command (a literal path", r.stderr, c)
+            self.assertNotIn("would read the marshal's signing key", r.stderr, c)
+
+    def test_a_variable_the_line_resolves_before_the_keys_own_name_is_judged_as_the_real_path(self):
+        cred = self.credentials()
+        for c in ("d=%s; cat $d/marshal_ed25519", "d=%s/..; e=$d/credentials; cat $e/marshal_ed25519", "for d in src %s; do cat $d/marshal_ed25519; done"):
+            r = self.bash(c % cred)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("would read the marshal's signing key", r.stderr, c)
+        for c in ("d=src; cat $d/marshal_ed25519", "d=%s; cat $d/other.token", "d=a; e=$d/b; cat $e/marshal_x", "for d in src docs; do cat $d/marshal_x; done"):
+            r = self.bash(c % cred if "%s" in c else c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_a_variable_before_a_name_that_is_not_the_keys_stays_allowed(self):
+        cred = self.credentials()
+        for c in ("cat $X/other.token", "cat $X/readme.md", "cat $(git rev-parse --show-toplevel)/README.md", "cat `pwd`/README.md", "cat $X/marshal.md", "cat $X/Marshal_x", "cat $X/x_marshal_x",
+                  "cat $HOME/notes.txt", "cat marshal_notes.md", "cat $X", "cat $X/", "echo $X/marshal", "ls $X/marshal_ed25519", "test -e $X/marshal_ed25519", "stat $X/marshal_ed25519",
+                  "d=$(cmd); cat $d/other.token", "cat ${X}/other.token $Y/notes", 'git commit -m "fix $X"', "make -C $X test", "cat %s/other.token", "cat src/marshal_notes.md",
+                  "cat $(echo a b)/readme.md", "cat ${X:-a b}/readme.md", "(cd src; cat x.py)", "echo $((1+2))/x", 'echo "f(x)/marshal_x"'):
+            r = self.bash(c.replace("%s", cred))
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
     def test_a_backtick_substitution_in_the_name_is_refused_as_dollar_parenthesis_is(self):
         cred = self.credentials()
         for c in ("cat %s/`printf m`arshal_ed25519", "cat %s/`printf marshal_ed25519`", "cat %s/../cred*/`printf m`arshal_ed25519", "cat %s/m`printf a`rshal_ed25519",
