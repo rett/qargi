@@ -81,6 +81,14 @@ set_note() { # project path json-value -> what `set` adds to its line: the provi
   printf " (applies to the next provision; use 'instances budget' for a live deployment)"
 }
 
+gates_lines() { # ANSWERS_FILE -> with declared gates, a heading and one line each (tier, name, command); nothing when none is declared or they are not valid (validate says so)
+  local sel
+  sel=$(python3 -I "$(dirname "$(readlink -f "$0")")/gates.py" select "$1" feature release 2>/dev/null) || return 0
+  [ -n "$sel" ] || return 0
+  echo "declared gates (they replace the test command: feature verify and release verify run them in order and stop at the first failure):"
+  jq -r '.[] | "  \(.tier)  \(.name)  \(.command)"' <<<"$sel"
+}
+
 validate() { # file -> prints problems, exit 1 if any
   python3 -I - "$1" "$DA_ROLES" "$(dirname "$(readlink -f "$0")")" "$QARGI_TOOL" "$DA_CONF" <<'EOF'
 import json, os, re, sys
@@ -662,6 +670,7 @@ PY
     fi
     tok=$(jq -S -c . <<<"$ans" | plan_token)
     jq -r '"project \(.answers.project) from \(.found.path)\nread from: \(.found.ref | if . == "" then "no commit" else . end) (\(.found.ref_why); the checked-out branch is \(.found.current_branch | if . == "" then "none" else . end), the working tree is not read)\nmethodology: \(.methodology)\nremote (origin as read): \(.found.remote // "none")" + (if (.found.remote // "") != "" and .found.url != .found.remote then "\nrepo.url (normalised to https, no .git, no credentials): \(.found.url)" else "" end) + "\nlong-lived branches: \(.answers.repo.long_lived | join(", "))\nversion: \(.found.version.file // "not found") \(.found.version.value // "")\ntags: \(.found.tags.count) (\(.found.tags.pattern | if . == "" then "no semantic pattern" else . end))\nchangelog: \(.found.changelog.file // "none")\ntest command: \(.found.test_command | if . == "" then "not found" else . end)\nCI workflows: \(.found.ci_workflows | if length == 0 then "none" else join(", ") end)"' <<<"$det"
+    [ -z "$stored" ] || gates_lines "$sf"   # the stored answers' gates: they replace the detected test command in the verify verbs
     if [ -n "$stored" ]; then
       echo
       echo "ALREADY STORED: the answers of project $n are in $sf; stored vs detected (only what is detected):"
@@ -828,7 +837,9 @@ PY
     [ -n "$tok" ] && need_plan "$tok"
     audit_log "project:$verb" "$n ${res:-all} $tok"
     python3 -I "$PLK" apply "$verb" "$n" "$res" "$tok" || exit $?;;
-  show) n=${1:-}; [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"; jq . "$PROJ_DIR/$n.json";;
+  show) n=${1:-}; [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"; jq . "$PROJ_DIR/$n.json"
+    # the answers stay the JSON on standard output (it is piped); the declared gates, which replace test_command, are named on standard error
+    gates_lines "$PROJ_DIR/$n.json" >&2;;
   list) ls "$PROJ_DIR" 2>/dev/null | sed -n 's/\.json$//p';;
   validate) f=${1:-}; [ -f "$f" ] || f="$PROJ_DIR/$f.json"; [ -f "$f" ] || usage_die "validate needs a file or a project name"
     validate "$f" && { no_provider "$f" || true; pack_warn "$f" || true; python3 -I "$(dirname "$(readlink -f "$0")")/project_profile.py" warn "$DA_CONF" "$f" || true; };;
