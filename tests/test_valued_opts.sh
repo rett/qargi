@@ -47,6 +47,7 @@ declare -A SCRIPTS=(
   [branch.sh]="branch prune"
   [changelog.sh]="changelog renumber"
   [upstream.sh]="upstream status|upstream review|upstream sync"
+  [backlog.sh]="backlog list|backlog done x"
   [ref.sh]="ref record"
   [review.sh]="review apply x"
   [session.sh]="start x|send x|track x|status|stop x|close x"

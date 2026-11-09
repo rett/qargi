@@ -434,6 +434,29 @@ show_incoming() {
   # shellcheck disable=SC2086
   [ "$(g diff --name-only $range | wc -l)" -le 30 ] || echo "    ... (more files)"
 }
+# backlog_path -> the file the answer backlog.file names, as a path (~/ expanded, a relative path taken from the repository), or nothing when it is unset
+backlog_path() {
+  local f; f=$(jq -r '.backlog.file // ""' "$af" 2>/dev/null) || return 0
+  [ -n "$f" ] || return 0
+  f=${f/#\~/$HOME}
+  case $f in /*) ;; *) f=$REPO/$f;; esac
+  printf '%s\n' "$f"
+}
+# backlog_file -> the backlog file for a backlog verb: dies, naming the answer, when it is unset or the file is not there
+backlog_file() {
+  local f; f=$(backlog_path)
+  [ -n "$f" ] || die "no backlog answer for $PROJ: qargi project set $PROJ backlog.file PATH (a markdown file of items written '- [some-id] text'; it may be outside the repository)"
+  [ -f "$f" ] || die "the backlog file $f (backlog.file) does not exist"
+  printf '%s\n' "$f"
+}
+# backlog_note BASE BRANCH -> informational, for a finish plan: the open backlog items whose id the messages of the commits BRANCH brings into BASE
+# name. Prints nothing when backlog.file is unset or its file is missing or unreadable; it never fails and never acts.
+backlog_note() {
+  local f ids
+  f=$(backlog_path) && [ -n "$f" ] && [ -f "$f" ] || return 0
+  ids=$(g log --format='%B' "$1..$2" 2>/dev/null | python3 -I "$(dirname "$0")/backlog.py" named "$f" 2>/dev/null) || return 0
+  [ -z "$ids" ] || echo "  backlog items named in these commits: $ids"
+}
 project_load() { # PROJ (or inferred) -> af, REPO, TESTCMD, METH
   [ -n "$PROJ" ] || PROJ=$(python3 -I "$(dirname "$0")/help.py" infer)
   af=$DA_CONF/projects/$PROJ.json

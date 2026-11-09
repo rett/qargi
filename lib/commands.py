@@ -96,7 +96,7 @@ HOTFIX_OPT = opt("--hotfix", "a hotfix: branch from master, finish into master a
 
 GROUPS = [
     ("Set up", ["project", "methodology", "cloud", "agent", "role", "provider", "provision", "env", "instances", "skill", "tool", "packs", "discover"]),
-    ("Run a task", ["feature", "marshal", "release", "branch", "changelog", "upstream", "ref", "start", "send", "status", "report", "noticed", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
+    ("Run a task", ["feature", "marshal", "release", "branch", "changelog", "upstream", "backlog", "ref", "start", "send", "status", "report", "noticed", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
     ("Lead and credentials", ["lead", "credential", "hook"]),
@@ -161,7 +161,8 @@ COMMANDS = {
                               "roles.ROLE.tools is the list of the tools a role needs beyond its apt packages, each {kind, name, ...}: kind go (name a package path, version a tag: go install NAME@VERSION), "
                               "kind binary (name the file name, version, url of the file itself, sha256 of it: downloaded to ~/.local/bin and kept only when the hash matches) and kind submodule "
                               "(name as in .gitmodules, path: checked out in each member clone by qargi local prepare). env plan lists them, env apply installs them and env check reports one that is "
-                              "missing or wrong; a member's guard refuses setting them (and a whole role), as it refuses release.*, test_command, gates, env.* and site.*."
+                              "missing or wrong; a member's guard refuses setting them (and a whole role), as it refuses release.*, test_command, gates, env.*, site.* and backlog.*. "
+                              "backlog.file is the markdown file of the project's backlog (qargi backlog); a path outside the repository is fine. "
                               "git.author ('Name <email>') is the author qargi review apply gives the commits it applies, and review.keep_author true keeps the member's author instead; "
                               "review.scrub (a command line or a list of words) is run by qargi review check (and by qargi review apply, unless a passing check recorded the same series) on the applied series with the range in QARGI_SCRUB_BASE and QARGI_SCRUB_TIP, and review.trailer_policy reject fails a commit with a "
                               "Co-Authored-By or Generated-with trailer (none is the default); a member's guard refuses setting them. "
@@ -443,6 +444,31 @@ COMMANDS = {
                                "upstream.overlay_check set, the command then runs on a trial merge of the branch into develop in a temporary worktree (the fast-forward "
                                "stands either way; a failure or a merge conflict exits 1)."),
                          examples=["qargi upstream sync", "qargi upstream sync --plan TOKEN --approved \"yes, take the upstream commits\""]),
+        },
+    },
+    "backlog": {
+        "summary": "The project's backlog: list its open items, move a done one to the dated archive",
+        "desc": ("The backlog is a markdown file that the project answer backlog.file names (a path: ~/ works, a relative path is taken from the repository, "
+                 "and the file may live outside it, in a memory store for instance; qargi project set PROJECT backlog.file PATH). "
+                 "An item is a top-level list line written '- [ID] text' (or '* [ID] text'), ID a lowercase slug of letters, digits and hyphens, two characters or more "
+                 "(so a task-list box '- [x] text' is no id), with the indented lines after it. Any other top-level list line is an item without an id and is listed as unnumbered; "
+                 "headings, paragraphs and fenced code blocks are not items. feature finish and release finish print a plan line, 'backlog items named in these commits: ID, ...', "
+                 "for the open items whose id the messages of the commits being merged contain; it is information only and nothing is done, and nothing is printed when backlog.file "
+                 "is unset or its file is missing."),
+        "scripts": ["backlog.sh"],
+        "verbs": {
+            "list": verb("List the open items with their ids; an item without an id is shown as '-', a duplicated id is flagged", [],
+                         [PROJECT_OPT, opt("--json", "print the file, the items (id, line, text, full text, duplicate) and the duplicated ids as one JSON object")],
+                         desc="Read only, so a member may run it. Exit 1 when backlog.file is unset or its file is missing.",
+                         examples=["qargi backlog list", "qargi backlog list --json"]),
+            "done": verb("Move an item, with the evidence and the date, to the archive file beside the backlog and remove it from the backlog, with the token and an approval", [("ID", "none")],
+                         [PROJECT_OPT, opt("--evidence", "the words that show the item is done (they are archived with the item and the date)", "TEXT"), PLAN, APPROVED],
+                         desc=("The plan shows the item and the file it goes to. Applied, the item (as written, with its indented lines), the date and the evidence are appended to "
+                               "NAME-archive-YYYY-MM.md in the directory of the backlog file (NAME is the backlog file's name without .md; the archive is created when absent), "
+                               "and then the item is removed from the backlog. Nothing is deleted without the plan. Refused when the id is not there, or is used by more than one item "
+                               "(make the ids unique first). Not available in a member run."),
+                         examples=["qargi backlog done fix-names --evidence \"merged, suite green\"",
+                                   "qargi backlog done fix-names --evidence \"merged, suite green\" --plan TOKEN --approved \"yes\""]),
         },
     },
     "ref": {
@@ -1507,11 +1533,11 @@ TOPICS = {
     "guard": ("What a member's guard refuses", [
         "The guard hooks a member's calls: a barrier, not a wall; qargi local verify is its backstop.",
         "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
-        "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, gates, env, site, packs, runs, upstream, git, review, roles.ROLE.tools, a whole role), init, new, link and unlink; "
+        "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, gates, env, site, backlog, packs, runs, upstream, git, review, roles.ROLE.tools, a whole role), init, new, link and unlink; "
         "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (the rest "
         "read); release publish, sign, site, assets and fix; marshal claim, set, renew, release, take, "
         "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish, verify and park; branch prune; changelog renumber without --check; "
-        "upstream status, sync; ref record; memory init, "
+        "upstream status, sync; backlog done; ref record; memory init, "
         "move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; review apply; team run; env plan and apply; task.",
         "It refuses writes in the pack library, credentials, the install record, the runtime's skills, agents and plugin directories, the installed copy, "
         "the state's render, providers, marshal, feature and saved-run directories, its ref journal, the memory tiers, ~/.config/anthropic, and the "

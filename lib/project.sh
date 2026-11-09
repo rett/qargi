@@ -191,6 +191,13 @@ if isinstance(rvw, dict):
 # tier then the release tier, and the CI jobs of a release are compared with the names (lib/gates.py)
 import gates as _gates
 bad.extend(_gates.problems(c.get("gates")))
+# backlog.file: the markdown file of the project's backlog (optional; qargi backlog): a path, ~/... or relative to the repository; it may be outside it
+bkl = c.get("backlog", {})
+need(isinstance(bkl, dict) and set(bkl) <= {"file"}, "backlog: an object like {file: \"/path/backlog.md\"} (unknown key: only file)")
+if isinstance(bkl, dict) and "file" in bkl:
+    bf = bkl["file"]
+    need(isinstance(bf, str) and bf.strip() and not any(ord(ch) < 32 or ord(ch) == 127 for ch in bf),
+         "backlog.file: the path of a markdown file of items written '- [some-id] text', an absolute path, ~/... or a path relative to the repository; no control characters")
 # worktrees.root: where qargi makes worktrees (ROOT/<branch>); an absolute path (or ~/...), not inside the repository
 wts = c.get("worktrees", {})
 need(isinstance(wts, dict) and set(wts) <= {"root"}, "worktrees: an object like {root: \"/path\"}")
