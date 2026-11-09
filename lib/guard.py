@@ -143,8 +143,9 @@ Signing key: the one credential a member may not even read is the lead's signing
   `a=([k]=DIR/*)`) are judged as the words of `for x in WORDS` are. The plain assignments of the line (`d=DIR`, also after export, declare, typeset, local and readonly, `d+=...`,
   `for d in WORDS`, and a value built from another variable) are read before a later word is judged: `$d` and `${d}` stand for each value the line gives d, in the words, in a
   cd and in a string handed to eval or a shell (assignments by `read`, `printf -v`, a substitution or an array are not followed). They are resolved once each, in the order
-  of the line, so a long chain of them (`x2=$x1/b; x3=$x2/b; ...`) is judged in time in proportion to its length; a name given more than 32 values, or a value built from other
-  names longer than 16384 characters, is refused as a brace expression of more than 256 words is. A word that holds a variable, a backtick or
+  of the line, so a long chain of them (`x2=$x1/b; x3=$x2/b; ...`) is judged in time in proportion to its length; a value built from other names longer than 16384 characters, or a
+  word read through variables as more than 256 words, is refused as a brace expression of more than 256 words is; a name given more than 32 values (a loop over more words
+  than that, the same name set many times) is unknown from then on, like a variable the guard cannot read, so a path through it before a name that starts with marshal_ is refused. A word that holds a variable, a backtick or
   $(..) substitution, or an extglob pattern after a path in a credentials directory (`DIR/${X:-ma}rshal_x`, `DIR/m$X`, `DIR/`cmd`x`, `DIR/@(m)x`, or `$X` after a cd into
   it) is refused whatever it stands for, because the name it builds could be the key; the path before it may hold a glob (`cred*/${X:-m}x`). An extglob pattern is read as
   the glob `*`. Its reason says the guard cannot tell what the word names (a literal name is the way out); the others say the command would read the key.
@@ -164,9 +165,12 @@ Residual for marshal handoff: xargs in front of it is refused (its arguments com
 guard does not parse (a shell loop that reads a file, `parallel`, a script written earlier) are not seen; the redirect form `... < args` into a
 loop is accepted as residual, and `qargi local verify` and the lead's review of the output are what catch a note written by a member.
 Not covered: code that writes or reads a file itself (python -c, perl -e, node -e, a script written earlier and run) unless it
-names the key by its full path, a glob that expands to a protected path (for a write), a path built from a variable the guard cannot see
+names the key by its full path, a glob that expands to a protected path (for a write), a write to a path built from a variable (`p=DIR; echo x > $p/f`: the plain
+assignments of the line are followed for the reads of the key and for a change of directory, not for the target of a write), a read of a path built from a variable the guard cannot see
 (a variable the line does not assign in plain words and the hook's environment lacks, or one set from a command substitution, d=$(...), when the name after it does not
-start with marshal_ or the variable is the whole word; a name produced by a command substitution, cat $(echo ...), or by an echo piped to xargs). The guard is best-effort and cannot resolve every shell construct.
+start with marshal_ or the variable is the whole word; a name the line gives more than 32 values, a loop over more words than that, is unknown in the same way; a name produced by a command substitution, cat $(echo ...), or by an echo piped to xargs).
+A name the line assigns in plain words is taken for those values only as far as the line's own text goes: read, printf -v, a nameref, declare -l, select and word splitting can change it, which is why a cd through it
+leaves the directory unknown. The guard is best-effort and cannot resolve every shell construct.
 Reading a Bash command (passes(), segments()): a word quoted $'...' (ANSI-C) or $"..." is read as the plain string it stands for (ansi_c); then the plain, conservative split. The line is cut at every ; && || | & and newline whatever the quotes, a comment
 or a heredoc body, so a refused verb is found wherever a command could start, and it is refused as text too: `git commit -m "Docs; qargi packs seed" && make` is
 refused, and a member writes a message to a file with its file tool and commits with `git commit -F FILE`. The one narrowing (mask_data(), for the verbs that change
@@ -311,8 +315,8 @@ class TooManyBraces(TooSlow):
 
 
 class TooManyValues(TooSlow):
-    """The assignments of a line give a variable more than MAX_VALUES values, a value built from other variables longer than MAX_VALUE_LEN, or a word more than MAX_BRACE readings through the variables
-    it holds (a chain that doubles the values at every step): the call is refused, as the words past a cut would be unchecked."""
+    """The assignments of a line build a value from other variables longer than MAX_VALUE_LEN, or a word more than MAX_BRACE readings through the variables
+    it holds (a chain that doubles the values at every step): the call is refused, as the words past a cut would be unchecked. (A name given more than MAX_VALUES values is no refusal: it is unknown.)"""
 
 
 class TooNested(TooSlow):
@@ -1010,7 +1014,7 @@ class Assigned(dict):
 ASSIGN_WORD = re.compile(r"([A-Za-z_]\w*)(\+?)=(.*)\Z", re.S)
 VARIABLE = re.compile(r"\$(?:\{(\w+)[^{}]*\}|(\w+))")
 ASSIGN_BUILTINS = ("export", "declare", "typeset", "local", "readonly")
-MAX_VALUES = 32                                              # the values the line gives one name, at most (a line that gives it more is refused as a brace word is)
+MAX_VALUES = 32                                              # the values the line gives one name, at most (a name it gives more is unknown from then on, as a variable the guard cannot read is)
 MAX_VALUE_LEN = 16384                                        # the length of a value built from other variables, at most (no path is longer than 4096): a chain of assignments that builds on the one before then costs a bounded text at each step, so the whole line costs time in proportion to its length
 
 
@@ -1038,23 +1042,31 @@ def line_assignments(command):
     unresolved, and key_named refuses a path it is placed in). The order is not followed: a name used before the line assigns it still stands for the value, which
     refuses a little more and misses nothing.
     The values are resolved once, in the order of the line: the table holds, for each name, the values it stands for with the names in them already replaced, so a chain
-    (`x2=$x1/b; x3=$x2/b ...`) costs one step per assignment and not one per link behind it. A name has at most MAX_VALUES values and a value built from other names is at
-    most MAX_VALUE_LEN long (a literal text is any length); a line that goes past either is refused (TooManyValues) and not cut. A name an earlier line of the chain has not
+    (`x2=$x1/b; x3=$x2/b ...`) costs one step per assignment and not one per link behind it. A name has at most MAX_VALUES values (a name the line gives more, a loop over
+    more than that many words or the same name set many times, is dropped from the table: it is unresolved from then on, as a name with a substitution is) and a value built from
+    other names is at most MAX_VALUE_LEN long (a literal text is any length); a line that goes past the length is refused (TooManyValues) and not cut. A name an earlier line of the chain has not
     set when its value is read stays as written (`a=$b/x; b=DIR`), which key_named does not resolve: it refuses it before a name that starts with marshal_."""
     table, looped, plain, opaque = Assigned(), set(), set(), set()
 
     def add(name, plus, value, loop=False):
         (looped if loop else plain).add(name)
+        if name in opaque:
+            return                                            # a name that is unresolved stays so (its other values are not taken for it)
         if value.startswith("(") or "$(" in value or "`" in value or "<(" in value or ">(" in value:
             opaque.add(name)                                  # the cut of the line without its substitutions reads `d=$(cmd)` as `d=`: a value the guard cannot know, not an empty one
+            table.pop(name, None)
             return
         vals = with_assigned(value, table)
         cur = table.get(name, ())
-        if plus:
-            vals = [c + v for c in cur for v in vals] + vals
+        if plus and cur:
+            vals = [c + v for c in cur for v in vals]         # an append goes on from the values the line gave (the lone text would double the values at each append)
         merged = tuple(dict.fromkeys(cur + tuple(vals)))
-        if len(merged) > MAX_VALUES or ("$" in value and any(len(v) > MAX_VALUE_LEN for v in vals)):      # a literal text is any length; a value built from others grows with each step of a chain
+        if "$" in value and any(len(v) > MAX_VALUE_LEN for v in vals):      # a literal text is any length; a value built from others grows with each step of a chain
             raise TooManyValues()
+        if len(merged) > MAX_VALUES:                          # past the cap the name is unknown from then on, as a variable the guard cannot read is (a loop over many words, a name set many times)
+            opaque.add(name)
+            table.pop(name, None)
+            return
         table[name] = merged
 
     for _kind, ps in passes(command):
@@ -1081,25 +1093,27 @@ def join_assignments(outer, inner):
         return inner
     if not inner:
         return outer
-    both = Assigned()
+    both, many = Assigned(), set()
     for t in (outer, inner):
         for k, v in t.items():
             both[k] = tuple(dict.fromkeys(both.get(k, ()) + v))
             if len(both[k]) > MAX_VALUES:
-                raise TooManyValues()
+                many.add(k)                                   # more values than the cap: the name is unknown, as in line_assignments
+    for k in many:
+        del both[k]
     return both
 
 
 def moved(dirs, args, certain, visited, cdpath=False, assigned=None):
     """The directories the shell may be in after `cd ARGS` from any of dirs. certain: the cd is a plain command of the top level, so it changes the
     directory when the directory is there (a directory that is not there yet may be made by a command before it: both are kept). Anything else keeps
-    the directory it was in as well. `cd -` is any directory the line has been in. assigned: the variables the line sets (a `cd $d` goes to each value)."""
+    the directory it was in as well. `cd -` is any directory the line has been in. assigned: the variables the line sets (a `cd $d` goes to each value, and the directory stays unknown too: bash may give the name another value or split it)."""
     ops = [t for t in args if t not in CD_FLAGS]
     if ops == ["-"]:
         return list(dict.fromkeys(dirs + visited))
     target = ops[0] if ops else "~"
     targets = with_assigned(target, assigned, assigned.loops if assigned else ())
-    unknown = any(UNKNOWN.search(expand_path(t)) for t in targets) or cdpath
+    unknown = any(UNKNOWN.search(expand_path(t)) for t in targets) or cdpath or targets != [target]      # a value the line gave is a guess (read, printf -v, declare -n, select or word splitting can change it), so the unknown directory stays
     certain = certain and len(ops) <= 1 and not target.startswith("-") and not unknown and len(targets) == 1
     new = [UNKNOWN_DIR] if unknown else []                    # the shell is in a directory the guard cannot name: relative writes are refused there (unknown_dir_refusal)
     for d in dirs:
@@ -3356,7 +3370,7 @@ def clear_caches():
     _BRACE_WORK[0] = 0
     for cache in (_RESOURCE_DIRS, _ROOTS, _KEY_DIRS, _STATE):          # read from the library, the environment and the state: a judge that outlives one call must not keep them
         cache.clear()
-    for f in (real_dir, resolve, run_like, in_a_clone, run_dir, protected, key_named, ability_of, run_class, brace_expand, run_tmps, pass_writes):
+    for f in (line_assignments, real_dir, resolve, run_like, in_a_clone, run_dir, protected, key_named, ability_of, run_class, brace_expand, run_tmps, pass_writes):
         f.cache_clear()
 
 
@@ -3382,9 +3396,9 @@ def judge(call):
         return ("qargi guard: a brace expression in this command stands for more than %d words (or the braces of the command for more than %d), which cannot be checked one by one "
                 "in the time the hook has, so it is not available to an agent. Write the paths out or run it in parts." % (MAX_BRACE, MAX_BRACE_WORK))
     except TooManyValues:
-        return ("qargi guard: a variable of this command is given more than %d values (or a value built from other variables longer than %d characters, or a word built from variables that stand for "
-                "more than %d words), which cannot be followed one by one in the time the hook has, so it is not available to an agent. Write the paths out or run it in parts."
-                % (MAX_VALUES, MAX_VALUE_LEN, MAX_BRACE))
+        return ("qargi guard: a value of this command built from other variables is longer than %d characters, or a word built from variables stands for more than %d words, "
+                "which cannot be followed one by one in the time the hook has, so it is not available to an agent. Write the paths out or run it in parts."
+                % (MAX_VALUE_LEN, MAX_BRACE))
     except TooManyDirs:
         return ("qargi guard: this command changes directory in more than %d ways the guard cannot tell apart (a cd inside ( ), a substitution, a condition or a pipe may "
                 "or may not change where the next command runs), so it is not available to an agent. Write it in parts." % MAX_DIRS)

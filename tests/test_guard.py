@@ -2947,21 +2947,42 @@ class TrimmedExpansions(HookCase):
         self.assertEqual(self.judged_in_time(c).returncode, 0)
 
     def test_a_chain_that_multiplies_the_values_is_refused_at_once(self):
-        """Every variable keeps at most 32 values and a word at most 256 readings through them: a chain that squares the values at each step ends in a refusal that
-        says so, in no time, and not in a search that takes minutes."""
+        """A word has at most 256 readings through the variables and a value built from them at most 16384 characters: a chain that squares the values at each step
+        ends in a refusal that says so, in no time, and not in a search that takes minutes. (A name given more than 32 values is unknown, not a refusal: the next test.)"""
         doubling = "x1=a; x1=b; " + "; ".join("x%d=$x%d/$x%d" % (i + 1, i, i) for i in range(1, 40)) + "; echo $x40"
         wide = "a=1; a=2; a=3; b=$a/$a/$a; c=$b/$b; echo $c"
         loop = "for x in a b c d e f g h; do for y in $x $x $x; do echo $y; done; done; z=$x/$x/$x; w=$z/$z; echo $w"
-        many = "".join("x=%d; " % i for i in range(40)) + "cat $x/marshal_x"
-        for c in (doubling, wide, many):
+        for c in (doubling, wide):
             r = self.judged_in_time(c, 2.0)
             self.assertEqual(r.returncode, 2, c)
-            self.assertIn("is given more than 32 values", r.stderr, c)
+            self.assertIn("cannot be followed one by one", r.stderr, c)
         self.assertEqual(self.judged_in_time(loop, 2.0).returncode, 2)
         self.assertEqual(self.judged_in_time("x=" + "a" * 50000 + "; echo $x").returncode, 0)            # a long text is no chain
         r = self.judged_in_time("x=" + "a" * 20000 + "; y=$x; echo $y")
         self.assertEqual(r.returncode, 2)
         self.assertIn("longer than", r.stderr)
+
+    def test_a_name_given_more_than_32_values_is_unknown_not_a_refusal(self):
+        """An ordinary loop over 33 words, two loops that reuse a name, five appends to one name and a name set 33 times are allowed as they were before the assignments
+        of the line were read: the name is unknown from then on, as a variable the guard cannot read is. The key is not opened by it: an unknown name before a name that
+        starts with marshal_, a name that stands for the credentials directory, and a relative write after a cd to it are still refused."""
+        cred = self.credentials()
+        words = " ".join(str(i) for i in range(1, 34))
+        names = " ".join("test_%s" % c for c in "abcdefghijklmnopqrstuvwxyzABCDEFG")
+        ok = ["for n in %s; do echo $n; done" % words, "for t in %s; do bash tests/$t.sh; done" % names,
+              "for f in %s; do echo $f; done; for f in %s; do echo $f; done" % (" ".join("a%d" % i for i in range(17)), " ".join("b%d" % i for i in range(16))),
+              "opts=-v; opts+=' -x'; opts+=' -y'; opts+=' -z'; opts+=' -w'; opts+=' -q'; cmd $opts", "x=a; " + "x+=b; " * 16 + "echo $x",
+              "".join("d=v%d; " % i for i in range(33)) + "ls", "".join("d=v%d; " % i for i in range(40)) + "cat $d/other.token"]
+        for c in ok:
+            r = self.judged_in_time(c, 2.0)
+            self.assertEqual(r.returncode, 0, (c[:60], r.stderr))
+        sets = "".join("d=v%d; " % i for i in range(33))
+        bad = [sets + "cat $d/marshal_ed25519", sets + "d=%s; cat $d/marshal_ed25519" % cred, sets + "cd $d; echo x > a",
+               "for n in %s; do cat $n/marshal_ed25519; done" % words, "for d in %s %s; do cat $d/marshal_ed25519; done" % (words, cred)]
+        for c in bad:
+            r = self.judged_in_time(c, 2.0)
+            self.assertEqual(r.returncode, 2, c[:80])
+            self.assertNotIn("more than 32 values", r.stderr, c[:80])
 
     def test_the_real_path_of_a_directory_is_the_same_walked_name_by_name(self):
         """real_dir follows a link in the middle of a path and takes what comes after the first name that is not there as written; any other path is os.path.realpath."""
@@ -2983,6 +3004,18 @@ class TrimmedExpansions(HookCase):
             return [(p, G.real_dir(p), os.path.realpath(p)) for p in paths]
         for p, got, want in self.J.run(check):
             self.assertEqual(got, want, p)
+
+    def test_the_values_of_a_line_are_forgotten_with_the_other_caches(self):
+        """line_assignments holds the home directory it read (a ~ in a value): a judge that outlives one call, with another HOME for the next, must not reuse them."""
+        def check():
+            G = self.J.m
+            G.line_assignments("d=~/x; cat $d")
+            before = G.line_assignments.cache_info().currsize
+            G.clear_caches()
+            return before, G.line_assignments.cache_info().currsize
+        before, after = self.J.run(check)
+        self.assertGreater(before, 0)
+        self.assertEqual(after, 0)
 
     def test_a_backtick_substitution_in_the_name_is_refused_as_dollar_parenthesis_is(self):
         cred = self.credentials()
@@ -4490,6 +4523,27 @@ class FifthReview(HookCase):
         ok = ["cd $(git rev-parse --show-toplevel) && git commit -m x", "cd $d && echo x > /tmp/ok", "cd $d && cat ability", "cd sub && echo x > f", "cd $d; cd %s; echo x > a.txt" % self.clone,
               'cd "$HOME" && echo x > f', "cd $d && echo x > $HOME/f", "env -C sub touch f", "builtin cd sub && touch f"]
         self.assertEqual(self.not_allowed(ok, self.clone, None), [])
+
+    def test_a_cd_through_a_variable_the_line_assigns_keeps_the_directory_unknown(self):
+        """d=src; cd $d: bash can give d a value the guard does not follow (read, printf -v, a nameref, case conversion, select, `for d` with no `in`) or split it into an
+        option and a directory, so the value the line gives is a guess: the directory stays unknown and a relative write after it is refused, as it was before the line's
+        assignments were read."""
+        cred, s = os.path.dirname(self.key), os.path.dirname(self.skill)
+        bad = ["d=src; read d < list; cd $d; echo x > a", "d=src; read -r d < list; cd $d; echo x > a", "d=src; read d <<< $HOME/.claude/skills; cd $d; echo x > a",
+               "d=src; printf -v d %s ~/.claude/skills; cd $d; echo x > a", "src=~/.claude/skills; declare -n d=src; cd $d; echo x > a", "declare -l d=SRC; cd $d; echo x > a",
+               "d=src; while read d; do cd $d; echo x > SKILL.md; done < list", "d=src; select d in ~/.claude/skills; do cd $d; echo x > a; done",
+               "d=src; set -- ~/.claude/skills; for d; do cd $d; echo x > a; done", 'd="-L %s"; cd $d; echo x > other.token' % cred, "d=src; cd $d; echo x > a",
+               "d=src; cd ${d}; echo x > a", "d=src; cd $d && echo x > a", "d=src; pushd $d; echo x > a", "d=%s; cd $d; echo x > a" % s]
+        for cls in (None, "read-only"):
+            self.assertEqual(self.not_refused(bad, self.clone, cls), [], cls)
+        ro = ["d=%s; read d < list; cd $d; echo x > r.md" % self.out, "d=%s; cd $d; echo x > r.md" % self.out]
+        self.assertEqual(self.not_refused(ro, self.clone, "read-only"), [])
+        # the documented trade-off: a directory reached through a variable the line sets is unknown even when it is plain, so this ordinary command is refused too
+        # (the way out is the directory written out: cd DIR/src)
+        self.assertEqual(self.not_refused(["base=%s; cd $base/src; cp a.py b.py" % self.clone], self.clone, None), [])
+        self.assertEqual(self.not_allowed(["cd %s/src; cp a.py b.py" % self.clone], self.clone, None), [])
+        # a variable that is only read, a literal cd and an absolute write stay allowed
+        self.assertEqual(self.not_allowed(["d=src; cat $d/a.py", "d=src; cd sub; echo x > f", "d=src; cd $d; cat a.py", "d=src; cd $d; echo x > /tmp/ok"], self.clone, None), [])
 
     # --- G8: ${NAME:-x}, ${NAME%/} and the like are read by the value of NAME, or refused
     def test_a_braced_expansion_with_an_operator_is_read_by_its_variable_or_refused(self):
