@@ -142,6 +142,31 @@ grep -q "^warning: develop and master share no history" <<<"$out" && ok "hotfix 
 out=$($REL finish 0.1.1 --hotfix 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "develop and master share no history" <<<"$out" && grep -q "no release is open" <<<"$out" && ! grep -q "finish that release first" <<<"$out" && ok "a hotfix with an unrelated develop and no open release does not tell the lead to finish a release" || no "hotfix unrelated develop: rc=$rc $out"
 
+# --- a hotfix related to master but not to develop (develop and master are related): the fallback line, not the develop-and-master note
+# master is a merge of two histories: develop's line (A) and a second root (B); the hotfix branch grows from B alone, so it has a merge base with master
+# and none with develop, while develop and master have one. hotfix_develop_note is empty then, and finish says only that the branch and develop are unrelated.
+R=$T/hb; git init -q -b develop "$R"
+echo 0.1.0 > "$R/VERSION"; printf '# Changelog\n\n## [Unreleased]\n\n### Added\n- a change\n' > "$R/CHANGELOG.md"
+git -C "$R" add -A && git -C "$R" commit -q -m A
+et=$(git -C "$R" hash-object -t tree -w /dev/null)
+rb=$(git -C "$R" commit-tree "$et" -m B)
+dt=$(git -C "$R" rev-parse 'develop^{tree}')
+mm=$(git -C "$R" commit-tree "$dt" -p "$rb" -p develop -m "merge A and B")
+git -C "$R" branch master "$mm"
+echo 0.1.1 > "$R/VERSION"; printf '# Changelog\n\n## [0.1.1] - 2026-01-02\n\n### Fixed\n- a fix\n' > "$R/CHANGELOG.md"
+git -C "$R" add -A
+ht=$(git -C "$R" write-tree)
+hc=$(git -C "$R" commit-tree "$ht" -p "$rb" -m "the hotfix")
+git -C "$R" branch hotfix/0.1.1 "$hc"
+git -C "$R" reset -q --hard develop; git -C "$R" checkout -q -b parked
+jq -n --arg p "$R" '{schema:1, project:"hb", methodology:"gitflow", repo:{url:"https://github.com/acme/unrel.git", path:$p, long_lived:["master","develop"]}, test_command:"true"}' > "$T/c/projects/hb.json"
+export QARGI_PROJECT=hb
+git -C "$R" merge-base master hotfix/0.1.1 >/dev/null 2>&1 && git -C "$R" merge-base master develop >/dev/null 2>&1 && ! git -C "$R" merge-base develop hotfix/0.1.1 >/dev/null 2>&1 && ok "the fixture: the hotfix and develop have no merge base; each is related to master" || no "fixture merge bases"
+out=$($REL finish 0.1.1 --hotfix 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "^qargi: develop and hotfix/0.1.1 share no history (no merge base) and no release is open, so finish could not merge hotfix/0.1.1 into develop (git refuses unrelated histories)\. Nothing was changed" <<<"$out" \
+  && ! grep -q "develop and master share no history\|git switch develop\|finish that release first\|plan token" <<<"$out" && ok "a hotfix unrelated to develop only (develop and master related): finish says so, without the develop-and-master advice" || no "hotfix fallback: rc=$rc $out"
+[ -z "$(git -C "$R" tag)" ] && ok "and nothing was tagged" || no "tagged"
+
 # --- a repository with related histories is unchanged: no extra commit, no join in the plan, no note
 export QARGI_PROJECT=rel
 $REL verify 0.2.0 >/dev/null 2>&1

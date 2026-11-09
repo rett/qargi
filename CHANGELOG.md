@@ -16,6 +16,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `qargi release verify` reads `.github/workflows/*.yml` and `*.yaml` of the tree it verifies (standard library only, no YAML dependency) and warns on standard error, naming each
   CI job whose name and id match no declared gate name; a job whose name cannot be read (an expression, a block scalar, a flow mapping) is a note and never a failure.
   `release verify --strict` refuses, before anything runs, on any such job. With no workflow it prints nothing new; with workflows and no gate declared every job is named.
+- A test (`tests/test_release_unrelated.sh`) covers the fallback line of `release finish --hotfix` when the hotfix branch has no merge base with develop but develop and master are
+  related (master merges two histories): finish refuses with a line about the branch and develop only, without the advice for an unrelated develop and master.
 
 ### Fixed
 - `QARGI_NESTED` no longer skips the plan token of `qargi feature finish`, `qargi feature merge` into a detached branch and `qargi upstream sync`: as for the release verbs and
