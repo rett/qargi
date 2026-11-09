@@ -791,7 +791,7 @@ HEREDOC_WORD = re.compile(r"""[ \t]*(?:'([^'\n]*)'|"([^"\n]*)"|([^\s;&|<>()'"]+)
 MASK_SEPARATORS = re.compile(r"[;|&\n]")
 REDIRECT_END = re.compile(r"[<>][|&]?$")                    # a word that is a redirection whose file is the next word (>, &>, 2>>, {fd}>, >|, >&)
 HARMLESS = {"chmod", "mkdir", "ls", "touch", "mv", "cp", "rm", "rmdir", "ln", "pwd", "cd", "true", "false", ":", "test", "[", "wc", "head", "tail", "stat", "date", "sleep",
-            "basename", "dirname", "realpath", "readlink", "mktemp", "install", "du", "file", "diff", "cmp"}   # commands that run no file and no program they are given (not sort, sed, awk, find, make, env, a shell, an alias ...)
+            "basename", "dirname", "realpath", "readlink", "mktemp", "du", "file", "diff", "cmp"}   # commands that run no file and no program they are given (not sort, sed, awk, find, make, env, a shell, an alias ...)
 EXPANDED_LINE = re.compile(r"\$[({\[]|`|\\")               # in the body of a heredoc whose delimiter is not quoted: what the outer shell expands (it runs a substitution) or joins to the next line
 BODY_CUT = re.compile(r"\$\(|[;&|()`\n]")
 BODY_WORDS = re.compile(r"[\s,{}]+")                         # a brace word ({qargi,x}) is read as its alternatives
@@ -799,7 +799,7 @@ ANSI_QUOTED = re.compile(r"\$['\"]")                         # $'..' and $".." s
 PROSE_WORD = re.compile(r"^[A-Za-z]+[,.:;!?]?$")
 BODY_NAMES = frozenset(SCRIPTS) | {"project"}               # a line of a body that starts a command with one of these names is a lead-only verb the receiver could run later
 BODY_MARKS = ("QARGI_LEAD", "QARGI_NESTED", MEMBER_MARK, KEY_PREFIX)   # and so is a line that sets one of the lead's variables or names the signing key
-BODY_LEADS = WRAP | SHELLS | {"eval", "source", ".", "if", "then", "do", "else", "elif", "while", "until", "!", "python", "python3", "perl", "ruby", "node", "make", "doas"}   # words that put a command after them
+BODY_LEADS = WRAP | SHELLS | {"eval", "source", ".", "if", "then", "do", "else", "elif", "while", "until", "!", "python", "python3", "perl", "ruby", "node", "make", "doas", "coproc"}   # words that put a command after them
 
 
 def inert_command(words):

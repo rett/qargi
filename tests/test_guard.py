@@ -3032,6 +3032,13 @@ class TextIsData(HookCase):
         "cat <<'E' # note\nthe project set of $X\nE\nls",
         "cat <<'E'\nthe project set of $X",
         "eval \"$(cat <<'E'\nthe project set of $X\nE\n)\"",
+        # install runs the program of --strip-program, so it is no command that runs nothing; coproc starts the command that follows it
+        "cat > run.sh <<'E'\nrm -rf ~/.claude/skills/x\nE\nchmod +x run.sh; install -s --strip-program=./run.sh run.sh out.bin",
+        "cat > run.sh <<'E'\nmv ~/.qargi/state/features ~/x\nE\nchmod +x run.sh; install -s --strip-program=./run.sh run.sh out.bin",
+        "cat > run.sh <<'E'\ncp x ~/.claude/settings.json\nE\nchmod +x run.sh; install -s --strip-program run.sh run.sh out.bin",
+        "cat > run.sh <<'E'\nthe project set of $X\nE\ninstall -m 755 run.sh out/run.sh",
+        "cat > run.sh <<'E'\ncoproc qargi upgrade\nE\nchmod +x run.sh",
+        "cat > run.sh <<'E'\nthe project set of $X\nE\ncoproc ./run.sh",
     )
 
     def test_a_heredoc_body_is_data_when_a_plain_writer_receives_it(self):

@@ -55,6 +55,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `credentials/marshal_*` is refused, so `"${a[@]}"` cannot print the signing key through an array. Trimming the subscript off `${a[@]}` (the entry above) had let that through.
   A word with a variable after a path in the credentials directory (`credentials/${X:-ma}rshal_ed25519`, `credentials/m${X}shal_ed25519`, `cd credentials; cat $X`) is
   refused too, as the name the variable builds could be the key.
+- A heredoc body written in a line that also runs `install` is read whole again: `install --strip-program=PROG` runs PROG, so `install` is no longer one of the commands that
+  run nothing (`chmod`, `mkdir`, `ls` ...). `coproc` starts the command after it, so a body line that starts with it is read as the lead-only verb it starts.
 
 ## [0.2.6] - 2026-11-07
 
