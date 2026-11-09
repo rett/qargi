@@ -51,6 +51,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   that setup when `DA_NOSETUP` is set; the orphan scan sets it when run as a program, and doctor sets it for `agent list` and skips the member check (`unknown`) when `agents.json`
   does not exist. The test starts with the data directories absent, and snapshots them, `HOME` and the directories of a host that has them (types, modes, sizes, times) before and
   after.
+- The gate results of a whole-suite run are kept per run, beside its log (`STATE/suite-logs/PROJECT.feature-NAME.gates.jsonl`, `PROJECT.release-VERSION.gates.jsonl`), and not in one
+  file per project: two verifies at once truncated and appended to the same file, so a record could list a gate twice or the gates of the other run. The verdict line was never
+  affected. A test runs two verifies at once and checks each record. Two verifies of the same feature still share a log and a results file (the warning about other runs stays).
 - The member guard no longer refuses a script written with a heredoc because of what its text mentions. A body that `cat`, `tee`, `grep` or `git commit` receives is
   now data in a line with other commands too (`cat > run.sh <<'E' ... E` then `chmod +x run.sh`), as it already was when every command of the line was one of those: a body
   with `project set $X` in a sentence was refused as the `project` verb with an expansion. The other commands of the line must only look at files, make, move or remove

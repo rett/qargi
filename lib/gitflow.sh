@@ -242,7 +242,7 @@ gates_note() {
   done < <(jq -r '[.test_command, (.release? // {} | .test_command)] | .[] | select(. != null) | if type == "array" then map(@sh) | join(" ") else . end' "$af")
 }
 # run_gates -> runs the gates of GATES in order in the worktree WT, stops at the first failure (the rest are "not run") and writes one JSON line per
-# gate ({name, tier, result, seconds}) to the file GATES_FILE (set by run_suite_logged), which record_suite reads. The status is 1 when a gate failed.
+# gate ({name, tier, result, seconds}) to the file GATES_FILE (set by run_suite_logged: one per run, beside its log), which record_suite reads. The status is 1 when a gate failed.
 run_gates() {
   local n i name tier cmd rc=0 t0 res
   { mkdir -p "$DA_STATE/suite-logs" && : > "$GATES_FILE"; } 2>/dev/null || GATES_FILE=/dev/null
@@ -269,8 +269,8 @@ run_suite() { # the project's test command in the worktree WT, or the declared g
 # $DA_STATE/suite-logs/PROJECT.NAME.log (SUITE_LOG; mode 600; the last run of that name). The status is the suite's.
 run_suite_logged() {
   local rc
-  GATES_FILE=$DA_STATE/suite-logs/$PROJ.gates.json   # set here, not in run_gates: that runs in the pipeline's subshell
   SUITE_LOG=$DA_STATE/suite-logs/$PROJ.${1//\//_}.log
+  GATES_FILE=$DA_STATE/suite-logs/$PROJ.${1//\//_}.gates.jsonl   # of this run, as the log is: two verifies at once keep their gate lists apart. Set here, not in run_gates: that runs in the pipeline's subshell
   if ( umask 077; mkdir -p "$DA_STATE/suite-logs" && : > "$SUITE_LOG" ) 2>/dev/null; then
     run_suite 2>&1 | tee "$SUITE_LOG"
     rc=${PIPESTATUS[0]}
