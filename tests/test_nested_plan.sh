@@ -18,6 +18,28 @@ mkdir -p "$HOME" "$T/c/projects" "$T/s" "$T/bin" "$FAKE"
 trap 'rm -rf "$T" "$HERMETIC"' EXIT
 cd "$T" || exit 1   # a verb that changes the marshal refuses to run inside a member run, which is where this checkout may be
 tok() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
+
+# --- static: every call of need_plan in lib/ and bin/ is written QARGI_NESTED='' need_plan, or is one of the few sites below, so a future call
+# that forgets the prefix is found here and not by a user. The sites that are not prefixed (the file, how many, why):
+#   canon.sh      1  canon apply honours the variable: provisioning runs it nested after its own plan check, and the guard refuses an agent that sets it
+#   memory.sh     1  the verb unsets QARGI_NESTED first
+#   tierwrite.sh  1  the script unsets QARGI_NESTED first
+#   packs.sh      1  the write verbs unset QARGI_NESTED first
+#   project.sh    1  project link unsets QARGI_NESTED first
+ALLOW="canon.sh:1 memory.sh:1 tierwrite.sh:1 packs.sh:1 project.sh:1"
+UNSETS="memory.sh tierwrite.sh packs.sh project.sh"
+bare=$(grep -nE '(^|[^_A-Za-z])need_plan "' "$SRC"/lib/*.sh "$SRC"/bin/* 2>/dev/null | grep -vE "^[^:]*:[0-9]+:[[:space:]]*#" | grep -v "QARGI_NESTED='' need_plan" | grep -v "lib/lib.sh:")
+n_all=$(grep -hE '(^|[^_A-Za-z])need_plan "' "$SRC"/lib/*.sh "$SRC"/bin/* 2>/dev/null | grep -cvE "^[[:space:]]*#")
+msg=''
+for f in $(sed -E 's#^.*/([^/:]*):[0-9]+:.*#\1#' <<<"$bare" | sort -u); do
+  case " $ALLOW " in *" $f:"*) ;; *) msg="$msg $f (not on the list)";; esac
+done
+for a in $ALLOW; do
+  f=${a%%:*}; want=${a##*:}
+  [ "$(grep -cE "/$f:" <<<"$bare")" = "$want" ] || msg="$msg $f (has $(grep -cE "/$f:" <<<"$bare") unprefixed, the list says $want)"
+done
+for f in $UNSETS; do grep -vE '^[[:space:]]*#' "$SRC/lib/$f" | grep -q 'unset QARGI_NESTED' || msg="$msg $f (no unset QARGI_NESTED)"; done
+[ "$n_all" -ge 30 ] && [ -z "$msg" ] && ok "static: every need_plan call in lib/ is prefixed QARGI_NESTED='' or is on the short list (canon apply, and the verbs that unset it first)" || no "static need_plan check: $msg (calls found: $n_all); unprefixed: $bare"
 MSG="the plan changed or --plan is missing"
 # refused CMD...: run the command, with its output in $out; true when it exited not 0 and asked for the token
 refused() { out=$("$@" 2>&1); rc=$?; [ $rc != 0 ] && grep -q "$MSG" <<<"$out"; }
