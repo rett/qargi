@@ -41,7 +41,7 @@ for f in README.md AGENTS.md CLAUDE.md CONTRIBUTING.md; do
     && ok "gates: $f lists the gates, the feature tier first, in the order declared, a command given as words as one line" || no "gates $f: $(doc "$gout" "$f" | grep -n 'lint\|unit\|pack')"
 done
 wfg=$(doc "$gout" .github/workflows/test.yml)
-[ "$(grep -c '^    name: ' <<<"$wfg")" = 3 ] && grep -qx '    name: "unit: fast"' <<<"$wfg" && grep -qx '  gate1:' <<<"$wfg" && grep -qx '  gate3:' <<<"$wfg" && grep -qx "          make 'pack it'" <<<"$wfg" && ! grep -q 'run: make check' <<<"$wfg" && ! grep -qx '  test:' <<<"$wfg" \
+[ "$(grep -c '^    name: ' <<<"$wfg")" = 3 ] && grep -qx "    name: 'unit: fast'" <<<"$wfg" && grep -qx '  gate1:' <<<"$wfg" && grep -qx '  gate3:' <<<"$wfg" && grep -qx "          make 'pack it'" <<<"$wfg" && ! grep -q 'run: make check' <<<"$wfg" && ! grep -qx '  test:' <<<"$wfg" \
   && ok "gates: the workflow has a job for each gate, named after it (a name with a colon is quoted)" || no "gates workflow: $wfg"
 # a feature-tier gate runs on every pull request; a release-tier gate only on release and hotfix branches (and by hand), as only a release runs it
 [ "$(grep -c '^    if: ' <<<"$wfg")" = 3 ] && [ "$(grep -c "^    if: \${{ 'feature' == 'feature' || startsWith(github.head_ref, 'release/') || startsWith(github.head_ref, 'hotfix/') || github.event_name == 'workflow_dispatch' }}\$" <<<"$wfg")" = 2 ] \
@@ -58,6 +58,17 @@ doc "$gout" CONTRIBUTING.md | grep -q 'run in parallel, not in order; a job of a
   && ok "gates: CONTRIBUTING says CI runs the gates in parallel and the release tier only on release branches" || no "gates CONTRIBUTING lacks the CI clause"
 mkdir -p "$T/ci/.github/workflows"; doc "$gout" .github/workflows/test.yml > "$T/ci/.github/workflows/test.yml"; jq -n --argjson g "$GJ" '{gates: $g}' > "$T/ci/answers.json"
 [ -z "$(python3 lib/gates.py scan "$T/ci/answers.json" "$T/ci")" ] && ok "gates: the CI scan of release verify matches every job of the rendered workflow" || no "gates scan: $(python3 lib/gates.py scan "$T/ci/answers.json" "$T/ci")"
+# a name that needs a JSON escape (a quote, a backslash, a non-ASCII letter) is written so that the scan reads it back and matches the job
+HG=$(jq -nc '[{name:"say \"hi\"",command:"true",tier:"feature"},{name:"a\\b",command:"true",tier:"feature"},{name:"tést ü",command:"true",tier:"release"},{name:"it'"'"'s",command:"true",tier:"feature"}]')
+hout=$($DA methodology files gitflow --param project=acme --param "gates=$HG" 2>&1)
+mkdir -p "$T/ci2/.github/workflows"; doc "$hout" .github/workflows/test.yml > "$T/ci2/.github/workflows/test.yml"; jq -n --argjson g "$HG" '{gates: $g}' > "$T/ci2/answers.json"
+[ -n "$(doc "$hout" .github/workflows/test.yml)" ] && [ -z "$(python3 lib/gates.py scan "$T/ci2/answers.json" "$T/ci2")" ] && ok "gates: names with a quote, a backslash, a non-ASCII letter and an apostrophe are read back by the CI scan" || no "gates hostile names: $(python3 lib/gates.py scan "$T/ci2/answers.json" "$T/ci2")"
+if python3 -c 'import yaml' 2>/dev/null; then
+  python3 -I -c 'import sys, json, yaml
+d = yaml.safe_load(open(sys.argv[1]).read())
+names = [j["name"] for j in d["jobs"].values()]
+sys.exit(0 if sorted(names) == sorted(g["name"] for g in json.loads(sys.argv[2])) else 1)' "$T/ci2/.github/workflows/test.yml" "$HG" && ok "gates: the YAML parser reads each hostile name back unchanged" || no "gates hostile names parse differently"
+fi
 grep -qF '${{ github.ref }}' <<<"$wfg" && ! grep -q '{{#\|{{/\|{{^\|{{gate' <<<"$gout" && ok "gates: no template marker is left and the file's own {{ }} syntax stays" || no "gates markers: $(grep -n '{{' <<<"$gout")"
 [ "$gout" = "$($DA methodology files gitflow --param project=acme --param test_command="make suite" --param "gates=$GJ" 2>&1)" ] && ok "gates: the output is deterministic" || no "gates: output differs between runs"
 nog=$($DA methodology files gitflow --param project=acme --param test_command="make suite" 2>&1)

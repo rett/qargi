@@ -16,7 +16,7 @@ alone (it may belong to the file's own language), but a declared parameter with 
 The optional parameter gates is the project's declared gates (lib/gates.py) as one line of JSON, an array of {name, command, tier}. A template
 may hold, each marker alone on its line: {{#gates}} ... {{/gates}} (the lines between are kept when gates are declared), {{^gates}} ... {{/gates}}
 (kept when none are), and {{#gate}} ... {{/gate}} (repeated for each gate, the feature tier first, in the order declared, with {{gate_id}} (gate1,
-gate2, ...), {{gate_name}}, {{gate_name_quoted}} (a JSON string, which is also a YAML one), {{gate_tier}} and {{gate_command}} filled in). Without gates the
+gate2, ...), {{gate_name}}, {{gate_name_quoted}} (a YAML single-quoted scalar: the name in quotes, a quote doubled, no escape, so the CI scan of lib/gates.py reads it), {{gate_tier}} and {{gate_command}} filled in). Without gates the
 output is the template's {{^gates}} part, which is what it was before gates existed. A parameter may carry a
 "pattern" (a regular expression the whole value must match). A scaffold entry may say "env": "section" (the file holds the
 Development environment section) or "targets" (the file holds the bootstrap and doctor targets of a task runner): project attach
@@ -214,7 +214,7 @@ def declared_gates(value):
 
 def gate_text(body, n, gate):
     """One pass of a {{#gate}} loop body for the gate."""
-    vals = {"gate_id": "gate%d" % n, "gate_name": gate["name"], "gate_name_quoted": json.dumps(gate["name"]), "gate_tier": gate["tier"], "gate_command": gate["command"]}
+    vals = {"gate_id": "gate%d" % n, "gate_name": gate["name"], "gate_name_quoted": "'" + gate["name"].replace("'", "''") + "'", "gate_tier": gate["tier"], "gate_command": gate["command"]}
     return PLACEHOLDER.sub(lambda mo: vals.get(mo.group(1), mo.group(0)), body)
 
 
