@@ -2915,6 +2915,75 @@ class TrimmedExpansions(HookCase):
             r = self.bash(c.replace("%s", cred))
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
+    CHAIN = 1000
+
+    def judged_in_time(self, command, limit=3.0):
+        """The verdict of a command the real clock times (the budget of the hook is 5 s): it is judged, not refused for time, and well inside the budget."""
+        t0 = time.monotonic()
+        r = self.bash(command)
+        took = time.monotonic() - t0
+        self.assertNotIn(BUDGET_REFUSAL, r.stderr, command[:80])
+        self.assertLess(took, limit, command[:80])
+        return r
+
+    def test_a_thousand_dependent_assignments_are_judged_not_refused_as_too_slow(self):
+        """x1=$x0/b; x2=$x1/b ... x1000=$x999/b: each value is the one before and a step, so the text the guard reads grows with the chain; it is resolved once per
+        variable, a path under a directory that is not there is not walked name by name, and the line costs a second at most (it was refused after 5 s)."""
+        n = self.CHAIN
+        for c in ("; ".join("x%d=$x%d/b" % (i + 1, i) for i in range(n)) + "; echo $x%d" % n,
+                  "x0=a; x0=b; " + "; ".join("x%d=$x%d/c" % (i + 1, i) for i in range(n)) + "; cat $x%d" % n,
+                  "; ".join("export x%d=${x%d}/b" % (i + 1, i) for i in range(n)) + "; ls $x%d" % n):
+            r = self.judged_in_time(c)
+            self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_a_long_chain_still_ends_in_the_real_path_it_builds(self):
+        cred = self.credentials()
+        n = self.CHAIN
+        c = "x0=%s; " % cred + "; ".join("x%d=$x%d/." % (i + 1, i) for i in range(n)) + "; cat $x%d/marshal_ed25519" % n
+        r = self.judged_in_time(c)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("would read the marshal's signing key", r.stderr)
+        c = "x0=%s; " % cred + "; ".join("x%d=$x%d/." % (i + 1, i) for i in range(n)) + "; cat $x%d/other.token" % n
+        self.assertEqual(self.judged_in_time(c).returncode, 0)
+
+    def test_a_chain_that_multiplies_the_values_is_refused_at_once(self):
+        """Every variable keeps at most 32 values and a word at most 256 readings through them: a chain that squares the values at each step ends in a refusal that
+        says so, in no time, and not in a search that takes minutes."""
+        doubling = "x1=a; x1=b; " + "; ".join("x%d=$x%d/$x%d" % (i + 1, i, i) for i in range(1, 40)) + "; echo $x40"
+        wide = "a=1; a=2; a=3; b=$a/$a/$a; c=$b/$b; echo $c"
+        loop = "for x in a b c d e f g h; do for y in $x $x $x; do echo $y; done; done; z=$x/$x/$x; w=$z/$z; echo $w"
+        many = "".join("x=%d; " % i for i in range(40)) + "cat $x/marshal_x"
+        for c in (doubling, wide, many):
+            r = self.judged_in_time(c, 2.0)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("is given more than 32 values", r.stderr, c)
+        self.assertEqual(self.judged_in_time(loop, 2.0).returncode, 2)
+        self.assertEqual(self.judged_in_time("x=" + "a" * 50000 + "; echo $x").returncode, 0)            # a long text is no chain
+        r = self.judged_in_time("x=" + "a" * 20000 + "; y=$x; echo $y")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("longer than", r.stderr)
+
+    def test_the_real_path_of_a_directory_is_the_same_walked_name_by_name(self):
+        """real_dir follows a link in the middle of a path and takes what comes after the first name that is not there as written; any other path is os.path.realpath."""
+        top = os.path.realpath(tempfile.mkdtemp(dir=self.home))
+        for d in ("a/b/c", "d"):
+            os.makedirs(os.path.join(top, d))
+        open(os.path.join(top, "a", "f"), "w").close()
+        for target, link in ((os.path.join(top, "a/b"), "l1"), ("../d", "a/l2"), ("/", "rootl"), ("l1", "l3"), ("nowhere", "dang"), (os.path.join(top, "a/f"), "lf")):
+            os.symlink(target, os.path.join(top, link))
+        names = ["a", "b", "c", "d", "l1", "l2", "l3", "rootl", "dang", "lf", "f", "zz", ".", "..", ""]
+        paths = [top, top + "/", "/", "/."]
+        rnd = random.Random(7)
+        for _ in range(1500):
+            paths.append(top + "".join("/" + rnd.choice(names) for _ in range(rnd.randint(1, 6))))
+
+        def check():
+            G = self.J.m
+            G.real_dir.cache_clear()
+            return [(p, G.real_dir(p), os.path.realpath(p)) for p in paths]
+        for p, got, want in self.J.run(check):
+            self.assertEqual(got, want, p)
+
     def test_a_backtick_substitution_in_the_name_is_refused_as_dollar_parenthesis_is(self):
         cred = self.credentials()
         for c in ("cat %s/`printf m`arshal_ed25519", "cat %s/`printf marshal_ed25519`", "cat %s/../cred*/`printf m`arshal_ed25519", "cat %s/m`printf a`rshal_ed25519",
