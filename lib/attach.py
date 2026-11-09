@@ -461,6 +461,8 @@ def adopt_plan(project, answers_file, methodology=None):
     params.update({k: v for k, v in ev["params"].items() if k in (m.get("params") or {})})
     if answers.get("test_command") and "test_command" in (m.get("params") or {}) and "\n" not in answers["test_command"]:
         params["test_command"] = answers["test_command"]
+    if answers.get("gates") and "gates" in (m.get("params") or {}) and not M.G.problems(answers["gates"]):
+        params["gates"] = json.dumps(answers["gates"], separators=(",", ":"))   # the declared gates replace the test command in the files written (a gate list that is not valid is left out: project validate reports it)
     versioning, ci = m.get("versioning") or {}, m.get("ci") or {}
     files, skipped = [], []
     for item in M.render(methodology, params):

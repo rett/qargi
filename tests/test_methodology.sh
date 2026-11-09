@@ -30,6 +30,27 @@ $DA methodology files gitflow --param project=Bad >/dev/null 2>&1 && no "a bad p
 $DA methodology files gitflow --param project=a --param nope=1 >/dev/null 2>&1 && no "an unknown parameter was accepted" || ok "an unknown parameter is refused"
 $DA methodology files gitflow --param project=a --param "test_command=a
 b" >/dev/null 2>&1 && no "a multi-line command was accepted" || ok "a multi-line test command is refused"
+
+# declared gates: the scaffold names them where it names the test command; without gates it is as before
+GJ='[{"name":"lint","command":"make lint","tier":"feature"},{"name":"pack","command":["make","pack it"],"tier":"release"},{"name":"unit: fast","command":"make check","tier":"feature"}]'
+gout=$($DA methodology files gitflow --param project=acme --param test_command="make suite" --param "gates=$GJ" 2>&1)
+doc() { jq -r --arg f "$2" '.[] | select(.dest == $f) | .content' <<<"$1"; }
+for f in README.md AGENTS.md CLAUDE.md CONTRIBUTING.md; do
+  doc "$gout" "$f" | grep -q 'make suite' && no "gates: $f still names the test command" || true
+  [ "$(doc "$gout" "$f" | grep -E '^ *(- )?`(lint|unit: fast|pack)` \((feature|release)\): ' | tr -s ' ' | sed 's/^ *//; s/^- //' | tr '\n' '|')" = '`lint` (feature): `make lint`|`unit: fast` (feature): `make check`|`pack` (release): `make '"'"'pack it'"'"'`|' ] \
+    && ok "gates: $f lists the gates, the feature tier first, in the order declared, a command given as words as one line" || no "gates $f: $(doc "$gout" "$f" | grep -n 'lint\|unit\|pack')"
+done
+wfg=$(doc "$gout" .github/workflows/test.yml)
+[ "$(grep -c '^    name: ' <<<"$wfg")" = 3 ] && grep -qx '    name: "unit: fast"' <<<"$wfg" && grep -qx '  gate1:' <<<"$wfg" && grep -qx '  gate3:' <<<"$wfg" && grep -qx "          make 'pack it'" <<<"$wfg" && ! grep -q 'run: make check' <<<"$wfg" && ! grep -qx '  test:' <<<"$wfg" \
+  && ok "gates: the workflow has a job for each gate, named after it (a name with a colon is quoted)" || no "gates workflow: $wfg"
+grep -qF '${{ github.ref }}' <<<"$wfg" && ! grep -q '{{#\|{{/\|{{^\|{{gate' <<<"$gout" && ok "gates: no template marker is left and the file's own {{ }} syntax stays" || no "gates markers: $(grep -n '{{' <<<"$gout")"
+[ "$gout" = "$($DA methodology files gitflow --param project=acme --param test_command="make suite" --param "gates=$GJ" 2>&1)" ] && ok "gates: the output is deterministic" || no "gates: output differs between runs"
+nog=$($DA methodology files gitflow --param project=acme --param test_command="make suite" 2>&1)
+[ "$nog" = "$($DA methodology files gitflow --param project=acme --param test_command="make suite" --param 'gates=[]' 2>&1)" ] && [ "$nog" = "$($DA methodology files gitflow --param project=acme --param test_command="make suite" --param 'gates=' 2>&1)" ] \
+  && doc "$nog" AGENTS.md | grep -qx -- '- Tests: `make suite`.' && ! jq -r '.[].content' <<<"$nog" | grep -qi 'declared gates' && ok "gates: none, [] and empty give the scaffold with the test command" || no "gates none"
+for bad in 'nope' '{"name":"x"}' '[{"name":"x","command":"c","tier":"later"}]' '[{"name":"x","command":"c","tier":"feature"},{"name":"x","command":"d","tier":"release"}]'; do
+  $DA methodology files gitflow --param project=acme --param "gates=$bad" >/dev/null 2>&1 && no "gates=$bad was accepted" || ok "gates=$bad is refused"
+done
 $DA methodology deployment gitflow | grep -q "^github-release .*can be done for you" && ok "deployment options are listed" || no "deployment list"
 $DA methodology deployment gitflow container-image | grep -q "Containerfile" && ok "an option's instructions are printed" || no "instructions"
 $DA methodology deployment gitflow nosuch >/dev/null 2>&1 && no "an unknown option answered" || ok "an unknown deployment option is refused"

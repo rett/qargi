@@ -14,7 +14,15 @@ The branching model is git-flow, as its author described it.
 ## Tests
 
 - While working on a task, run the targeted check that covers your change.
+{{^gates}}
 - When a feature is complete, run the whole suite once on it before it is merged into `develop`: `{{test_command}}`.
+{{/gates}}
+{{#gates}}
+- When a feature is complete, run the whole suite once on it before it is merged into `develop`: the declared gates of the feature tier, in order, stopping at the first failure. A release also runs the gates of the release tier.
+{{#gate}}
+  - `{{gate_name}}` ({{gate_tier}}): `{{gate_command}}`
+{{/gate}}
+{{/gates}}
 
 ## Changes
 
