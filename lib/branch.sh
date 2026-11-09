@@ -99,7 +99,7 @@ for e in "${REM[@]}"; do
 done
 for k in "${KEPT[@]}"; do echo "  kept $k"; done
 if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi branch prune${REMOTE:+ --remote} --plan $tok --approved \"...\")"; exit 0; fi
-need_plan "$tok"
+QARGI_NESTED='' need_plan "$tok"
 n=0 m=0
 for e in "${LOCAL[@]}"; do
   IFS=$TAB read -r b sha _ w <<<"$e"

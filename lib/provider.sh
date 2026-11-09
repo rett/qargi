@@ -57,7 +57,7 @@ if [ -z "$APPROVED" ] || [ -z "$PLAN_ARG" ]; then
   exit 0
 fi
 
-need_plan "$token"
+QARGI_NESTED='' need_plan "$token"
 rec=$(jq -nc --arg b "$(id -un)" --arg t "$(now)" --arg r "$ASKED" '{by: $b, at: $t, reason: $r}')
 audit_log provider:accept "$NAME $SURFACE $PROJ"
 python3 -I "$here/gated_answers.py" store "$PROJ" "models.accept_no_barrier.$SURFACE" "$rec" --conf "$DA_CONF" >/dev/null || die "could not record it in the answers of $PROJ; nothing changed"
