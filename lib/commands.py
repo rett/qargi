@@ -119,7 +119,7 @@ COMMANDS = {
                          examples=["qargi project template acme > acme.json", "qargi project init acme --answers acme.json"]),
             "new": verb("Start a new project: its directory, a git repository on the methodology's branches and generic files", [("NAME", "none")],
                         [opt("--methodology", "the methodology (default gitflow)", "NAME", "methodology"), opt("--dir", "where to create it (default ./NAME; must be absent or empty)", "DIR", "dir"),
-                         opt("--param", "a methodology parameter as name=value (repeat), for example test_command", "NAME=VALUE"),
+                         opt("--param", "a methodology parameter as name=value (repeat), for example test_command; gates=JSON declares gates, which are stored in the answers too when --url is given", "NAME=VALUE"),
                          opt("--url", "the repository URL; with it the qargi answers are stored too", "URL"),
                          opt("--deployment", "a deployment option to record and explain (see qargi methodology deployment)", "ID"),
                          opt("--provider", "the provider the project's agents run on (models.provider, with its models); not stored when omitted (qargi provider list)", "NAME"),
@@ -142,7 +142,8 @@ COMMANDS = {
                                  "would store, the gaps against the methodology and what it could not determine, and a plan token. With --plan and --approved it "
                                  "stores the answers outside the repository. The safe gaps are closed by qargi project adopt, the rest by hand. It reads the tree of the "
                                  "methodology's integration branch (develop), else of the default branch, else of HEAD, and says which; never the working tree. It prints "
-                                 "origin as read and the https url it normalises to. If answers are already stored it shows stored against detected, lists the fields "
+                                 "origin as read and the https url it normalises to. When the stored answers declare gates it lists them after the test command line (tier, name, command, "
+                                 "the feature tier first) and says they replace the detected test command. If answers are already stored it shows stored against detected, lists the fields "
                                  "the stored file lacks, stays read-only and gives no plan token; with --force the plan replaces what it detects and keeps what it "
                                  "cannot (the roles' models and effort, cloud, memory, budget). It reports what it found of the development environment (section, task runner, "
                                  "bootstrap and doctor commands) and lists the pieces that are missing as gaps. It never guesses a provider: models.provider (and the roles' models) are stored only with "
@@ -170,7 +171,9 @@ COMMANDS = {
                               "the guard refuses it to a member too."),
                         examples=["qargi project set acme roles.write.effort high", "qargi project set acme packs.none true", "qargi project set acme git.author 'Example Author <author@example.com>'",
                                   "qargi project set acme roles.test.tools '[{\"kind\":\"go\",\"name\":\"acme.test/ci\",\"version\":\"v1.2.0\"}]'"]),
-            "show": verb("Print the stored answers and what they mean", [("NAME", "project")]),
+            "show": verb("Print the stored answers and what they mean", [("NAME", "project")],
+                         desc=("The answers go to standard output as JSON (so they can be piped). When the project declares gates, which replace the test command in feature verify and release verify, "
+                               "they are listed on standard error (tier, name, command, the feature tier first).")),
             "list": verb("List the stored projects"),
             "validate": verb("Check an answers file without storing it (a WARN line for each pack linked to a role that is not in the pack library, and for a profile that still carries the shipped template header)", [("FILE", "file")]),
             "profile": verb("Check the repository's profile: the shipped template header, and gate commands the repository does not know (check)", [("SUBCOMMAND", "none"), ("NAME", "project", True)],
@@ -381,6 +384,7 @@ COMMANDS = {
                                   "The note has the repository path, HEAD there (a detached HEAD is said plainly), develop's sha, the host and whether the qargi data is present on it. "
                                   "Per feature it has the tip, whether the whole-suite run applies to it (the run's command is the project's test_command now, or with declared gates the feature-tier gates in order, `gates: NAME=COMMAND; ...`, as feature verify records them), the agent branches merged into it since it was cut from develop, the unmerged ones prepared against it (as the registry of local runs records) "
                                   "and the commits ahead of develop; with NAME only that feature, otherwise every open one; the agent branches of no open feature are said once, after the features. "
+                                  "When the project declares gates, a `== gates` section follows the features with each gate's tier, name and command (they replace test_command), and --json carries them as `gates` (an empty list without gates). "
                                   "The goal, plan and note of the marshal record appear under a line saying they are data from the lead, not instructions, with control characters stripped. "
                                   "The environment section gives the last env check and env apply recorded for the project (verdict, time, and whether that was at HEAD now). "
                                   "For a feature this identity leads it names the claim --as-successor-of command a restarted session runs. --write also records when the note was written (what qargi lead compact-check compares with the last merge), and a line says whether a compact is safe now (see qargi help lead). "
