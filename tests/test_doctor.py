@@ -384,13 +384,20 @@ class Command(Base):
             self.assertEqual(snapshot(conf, state, os.environ["HOME"]), before, args)
 
     def test_a_project_on_a_host_with_no_members_file_makes_none(self):
-        """No agents.json: the member check says it cannot read the members (unknown), and the file is not made by asking."""
+        """No agents.json: no member is recorded on this host, which the member check says (ok), not that the members could not be read; the file is not made by asking."""
         self.project()
         conf = os.environ["QARGI_CONF"]
         self.assertFalse(os.path.exists(os.path.join(conf, "agents.json")))
         rc, out, err = self.doctor("app")
         self.assertEqual(rc, 0, out + err)
-        self.assertEqual(self.lines(out)["guard"][0], "unknown", out)
+        status, text = self.lines(out)["guard"]
+        self.assertEqual(status, "ok", out)
+        self.assertIn("no member is recorded on this host", text, out)
+        self.assertNotIn("could not be read", out)
+        rc, out, err = self.doctor("app", "--json")
+        self.assertEqual(rc, 0, out + err)
+        self.assertIn("no member is recorded on this host", out)
+        self.assertNotIn("could not be read", out)
         self.assertFalse(os.path.exists(os.path.join(conf, "agents.json")))
         self.assertFalse(os.path.exists(os.path.join(conf, "instances.json")))
 

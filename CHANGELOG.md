@@ -48,9 +48,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   gated project with a run at the tip and with a changed gate.
 - `qargi doctor` changes nothing on the host, as it says. It ran `lib/orphans.sh` and `qargi agent list`, and loading `lib/lib.sh` made the config and state directories, set them
   to mode 700 (and `~/.qargi`), and created `instances.json`, `sessions.json` and `agents.json`: a host that had never run qargi got them from its first doctor. `lib/lib.sh` now skips
-  that setup when `DA_NOSETUP` is set; the orphan scan sets it when run as a program, and doctor sets it for `agent list` and skips the member check (`unknown`) when `agents.json`
-  does not exist. The test starts with the data directories absent, and snapshots them, `HOME` and the directories of a host that has them (types, modes, sizes, times) before and
+  that setup when `DA_NOSETUP` is set; the orphan scan sets it when run as a program, and doctor sets it for `agent list` and skips the member check when `agents.json`
+  does not exist (see the next entry). The test starts with the data directories absent, and snapshots them, `HOME` and the directories of a host that has them (types, modes, sizes, times) before and
   after.
+- `qargi doctor PROJECT` on a host with no members file says `ok ... no member is recorded on this host, so there is none to be stale` in its guard check. It said `unknown ... the members
+  of project PROJECT could not be read (qargi agent list)`, which read like a failure; `unknown` stays for a `qargi agent list` that fails.
 - The gate results of a whole-suite run are kept per run, beside its log (`STATE/suite-logs/PROJECT.feature-NAME.gates.jsonl`, `PROJECT.release-VERSION.gates.jsonl`), and not in one
   file per project: two verifies at once truncated and appended to the same file, so a record could list a gate twice or the gates of the other run. The verdict line was never
   affected. A test runs two verifies at once and checks each record. Two verifies of the same feature still share a log and a results file (the warning about other runs stays).
