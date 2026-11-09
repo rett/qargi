@@ -979,25 +979,108 @@ class TooManyDirs(TooSlow):
     command may run in): the call is refused, not judged from some of them."""
 
 
-def moved(dirs, args, certain, visited, cdpath=False):
+class Assigned(dict):
+    """The plain assignments of one command line: name -> the values the line gives it (in any order: a name assigned twice has both). It is an argument of the
+    cached checks, so it is hashed by identity; line_assignments() returns the same object for the same text. loops: the names that only a `for` sets (the
+    walk of directories does not follow them: a cd in a loop runs again from the directory the last turn left)."""
+    __hash__ = object.__hash__
+    loops = frozenset()
+
+
+ASSIGN_WORD = re.compile(r"([A-Za-z_]\w*)(\+?)=(.*)\Z", re.S)
+VARIABLE = re.compile(r"\$(?:\{(\w+)[^{}]*\}|(\w+))")
+ASSIGN_BUILTINS = ("export", "declare", "typeset", "local", "readonly")
+MAX_VALUES = 32                                              # the values the line gives one name, at most (a line that gives it more is refused as a brace word is)
+
+
+def with_assigned(word, assigned, skip=()):
+    """The words word stands for when every $NAME and ${NAME...} the line assigns is replaced by each value it gives (a ~ at the start of a value is the home directory,
+    as at the assignment); [word] when it names none. The names the line does not assign stay as written, for expand_path and the callers."""
+    if not assigned or "$" not in word:
+        return [word]
+    out, pos = [""], 0
+    for m in VARIABLE.finditer(word):
+        vals = assigned.get(m.group(1) or m.group(2))
+        if not vals or (m.group(1) or m.group(2)) in skip:
+            continue
+        out = [o + word[pos:m.start()] + (os.path.expanduser(v) if v.startswith("~") else v) for o in out for v in vals]
+        pos = m.end()
+        if len(out) > MAX_BRACE:
+            raise TooManyBraces()
+    return [o + word[pos:] for o in out]
+
+
+@functools.lru_cache(maxsize=64)
+def line_assignments(command):
+    """The variables a command line sets in plain words, for the checks that read a name through a variable: NAME=VALUE in front of a command or after export, declare,
+    typeset, local and readonly, NAME+=VALUE, and the variable of `for NAME in WORDS`. A value that holds a substitution or is an array is left out (the name stays
+    unresolved, and key_named refuses a path it is placed in). The order is not followed: a name used before the line assigns it still stands for the value, which
+    refuses a little more and misses nothing."""
+    table, looped, plain = Assigned(), set(), set()
+
+    def add(name, plus, value, loop=False):
+        (looped if loop else plain).add(name)
+        if value.startswith("(") or "$(" in value or "`" in value or "<(" in value or ">(" in value:
+            return
+        vals = with_assigned(value, table)
+        cur = table.get(name, ())
+        if plus:
+            vals = [c + v for c in cur for v in vals] + vals
+        merged = tuple(dict.fromkeys(cur + tuple(vals)))
+        if len(merged) > MAX_VALUES:
+            raise TooManyBraces()
+        table[name] = merged
+
+    for _kind, ps in passes(command):
+        for piece in ps:
+            tick()
+            toks, i = parsed(piece.text)
+            prog = os.path.basename(toks[i]) if i < len(toks) else ""
+            for t in list(toks[:i]) + (toks[i + 1:] if prog in ASSIGN_BUILTINS else []):
+                m = ASSIGN_WORD.match(t)
+                if m:
+                    add(m.group(1), bool(m.group(2)), m.group(3))
+            if prog == "for" and len(toks) > i + 2 and toks[i + 2] == "in" and re.fullmatch(r"[A-Za-z_]\w*", toks[i + 1]):
+                for t in toks[i + 3:]:
+                    add(toks[i + 1], False, t, True)
+    table.loops = frozenset(looped - plain)
+    return table
+
+
+def join_assignments(outer, inner):
+    """The assignments of an outer line and of the text it hands to eval or a shell (which sees them when they are exported, and the guard does not tell)."""
+    if not outer:
+        return inner
+    if not inner:
+        return outer
+    both = Assigned()
+    for t in (outer, inner):
+        for k, v in t.items():
+            both[k] = tuple(dict.fromkeys(both.get(k, ()) + v))[:MAX_VALUES]
+    return both
+
+
+def moved(dirs, args, certain, visited, cdpath=False, assigned=None):
     """The directories the shell may be in after `cd ARGS` from any of dirs. certain: the cd is a plain command of the top level, so it changes the
     directory when the directory is there (a directory that is not there yet may be made by a command before it: both are kept). Anything else keeps
-    the directory it was in as well. `cd -` is any directory the line has been in."""
+    the directory it was in as well. `cd -` is any directory the line has been in. assigned: the variables the line sets (a `cd $d` goes to each value)."""
     ops = [t for t in args if t not in CD_FLAGS]
     if ops == ["-"]:
         return list(dict.fromkeys(dirs + visited))
     target = ops[0] if ops else "~"
-    unknown = bool(UNKNOWN.search(expand_path(target))) or cdpath
-    certain = certain and len(ops) <= 1 and not target.startswith("-") and not unknown
+    targets = with_assigned(target, assigned, assigned.loops if assigned else ())
+    unknown = any(UNKNOWN.search(expand_path(t)) for t in targets) or cdpath
+    certain = certain and len(ops) <= 1 and not target.startswith("-") and not unknown and len(targets) == 1
     new = [UNKNOWN_DIR] if unknown else []                    # the shell is in a directory the guard cannot name: relative writes are refused there (unknown_dir_refusal)
     for d in dirs:
         tick()
-        if d == UNKNOWN_DIR:
-            r = resolve("/", target) if target.startswith(("/", "~")) else None
-            new += [r] if r and certain else [d] + ([r] if r else [])
-            continue
-        r = resolve(d, target)
-        new += [r] if certain and os.path.isdir(r) else [d, r]
+        for target in targets:
+            if d == UNKNOWN_DIR:
+                r = resolve("/", target) if target.startswith(("/", "~")) else None
+                new += [r] if r and certain else [d] + ([r] if r else [])
+                continue
+            r = resolve(d, target)
+            new += [r] if certain and os.path.isdir(r) else [d, r]
     new = list(dict.fromkeys(new))
     if len(new) > MAX_DIRS:
         raise TooManyDirs()
@@ -1018,15 +1101,17 @@ def env_chdir(toks, i):
     return None
 
 
-def walk(command, here):
+def walk(command, here, assigned=None):
     """Every piece of every cut of the command, with the directories the shell may be in when it runs it: (n, ps, text, dirs). ps: the pieces of the
     cut and n the place of this one in it. here: the directory the call runs in (or a list of them). A plain `cd` at the top level of the line changes
     them for what follows (after an && only if the commands before it in the chain are plain cds too: `pushd d && popd && cmd`); a cd anywhere else (a
     subshell, a substitution, an if, after || or `cmd &&`, before a pipe, with an option or two directories ...)
     leaves the directory it was in among them, and every command is judged from each. pushd and popd are followed like cd. Each cut starts in the
-    directory of the call, and a substitution's own text in any directory the line has been in, so a cd is never applied twice to one command."""
+    directory of the call, and a substitution's own text in any directory the line has been in, so a cd is never applied twice to one command. A cd to a word
+    that holds a variable the line assigns (assigned, else line_assignments) goes to each value."""
     start = list(dict.fromkeys([here] if isinstance(here, str) else here))
     visited = list(start)
+    assigned = line_assignments(command) if assigned is None else assigned
     cdpath = "CDPATH" in command or bool(os.environ.get("CDPATH"))      # a CDPATH can send any cd to another directory than the one it names
     for kind, ps in passes(command):
         dirs = list(start) if kind == "main" else list(visited)
@@ -1037,7 +1122,7 @@ def walk(command, here):
             tick()
             toks, i = parsed(piece.text)
             chdir = env_chdir(toks, i)
-            yield n, ps, piece.text, (moved(dirs, [chdir], False, visited, cdpath) if chdir else dirs)     # env -C DIR PROGRAM runs PROGRAM in DIR, once
+            yield n, ps, piece.text, (moved(dirs, [chdir], False, visited, cdpath, assigned) if chdir else dirs)     # env -C DIR PROGRAM runs PROGRAM in DIR, once
             prog = os.path.basename(toks[i]) if i < len(toks) else ""
             if prog not in ("cd", "pushd", "popd"):
                 ran = False
@@ -1045,12 +1130,12 @@ def walk(command, here):
             certain, rest = piece.top and bool(PLAIN_CD.match(piece.text)) and (ran or not piece.chained), toks[i + 1:]    # after &&, only when everything before it in the chain is such a cd
             ran = certain
             if prog == "cd":
-                dirs = moved(dirs, rest, certain, visited, cdpath)
+                dirs = moved(dirs, rest, certain, visited, cdpath, assigned)
             elif prog == "pushd":
                 named = [t for t in rest if not t.startswith(("-", "+"))]
                 if named and "-n" not in rest:
                     stack.append(dirs)
-                    dirs = moved(dirs, named[:1], certain, visited, cdpath)
+                    dirs = moved(dirs, named[:1], certain, visited, cdpath, assigned)
                 elif not named:
                     dirs = list(dict.fromkeys(dirs + visited))
             elif stack and "-n" not in rest:
@@ -2123,11 +2208,26 @@ TRIMMED = re.compile(r"\$\{\w+(?:%%?|##?)[^{}]*\}")       # ${NAME%PATTERN}, ${N
 PARAM_HEAD = re.compile(r"\$\{[!#]?(?:\w+|[@*#?!$-])(?:\[[^\]]*\])?(?::?[-+=?])?")   # the start of a parameter expansion: ${NAME}, ${NAME[@]}, ${PIPESTATUS[0]}, ${!NAME[@]}, ${#NAME[@]}, ${NAME:-, ${NAME[@]+, ${NAME:?; its subscript and operator are no glob
 
 
+UNREAD = re.compile(r"[$`]|[?*+@!]\(")                    # in a word: a variable, a substitution (both forms) or an extglob pattern, which makes a name the guard does not know
+EXTGLOB = re.compile(r"[?*+@!]\([^()]*\)")                # an extglob pattern (?(a|b) *(..) +(..) @(..) !(..)), read as the glob * that holds every name it could stand for
+
+
+def extglob_as_glob(b):
+    """b with every extglob pattern replaced by *: a name it could match is then found by the glob, whether or not the line turns extglob on (nested patterns, innermost first)."""
+    for _ in range(8):
+        c = EXTGLOB.sub("*", b)
+        if c == b:
+            break
+        b = c
+    return b
+
+
 @functools.cache                                     # the files do not change while one command is judged
-def key_named(word, here, recursive):
+def key_named(word, here, recursive, assigned=None):
     """The signing key (or, for a recursive reader, a directory holding it) that one shell word stands for, else None. The word
-    is read with ~ and variables expanded, braces and globs expanded, symbolic links followed; `--opt=path`, `-Opath` and a
-    `<path` redirection are read as their path too."""
+    is read with ~ and variables expanded (the environment's, and the plain assignments the line makes: assigned), braces and globs expanded, symbolic
+    links followed; `--opt=path`, `-Opath` and a `<path` redirection are read as their path too. A word with a variable, a substitution or an extglob
+    pattern that follows a path in a credentials directory (the path itself may hold a glob) names something the guard cannot tell, and is returned."""
     tick()
     cands = {word, word.lstrip("<"), re.sub(r"^(?:\d+|&)?[<>]+[&|]?", "", word), word.split("=", 1)[-1]}     # 3<key, <key, <>key, <&key
     if word.startswith("-") and not word.startswith("--"):
@@ -2136,14 +2236,22 @@ def key_named(word, here, recursive):
         inner = c.strip("()")
         if inner != c:
             cands |= {inner, re.sub(r"^\[[^\]]*\]=", "", inner), inner.rsplit("=", 1)[-1]}
+    if assigned:                                             # d=CRED; cat $d/marshal_x: the word is read as each value the line gives the variable too
+        cands |= {v for c in cands for v in with_assigned(c, assigned)}
     for c in cands:
         if not c or c.startswith("-"):
             continue
         for b in brace_expand(expand_path(c)):
-            if "$" in b:
-                head = b.partition("$")[0].rpartition("/")[0]     # CRED/${X:-ma}rshal_x, CRED/m$a, CRED/$a$b, or in the directory itself: what a variable stands for is not known, and a name there could be the key
-                if below_key_dir(resolve(here, head + "/" if head or b.startswith("/") else ".")):
+            m = UNREAD.search(b)
+            if m:                                            # CRED/${X:-ma}rshal_x, CRED/m$a, CRED/`cmd`x, CRED/@(m)x, or in the directory itself: what it stands for is not known, and a name there could be the key
+                head = b[:m.start()].rpartition("/")[0]
+                if re.search(r"[*?\[]", head):              # cred*/${X:-ma}rshal_x: the directory part is a glob; any directory it matches could be the credentials directory
+                    dirs = [os.path.realpath(x) for x in glob_paths(os.path.join(here, head))]
+                else:
+                    dirs = [resolve(here, head + "/" if head or b.startswith("/") else ".")]
+                if any(below_key_dir(x) for x in dirs):
                     return b
+            b = extglob_as_glob(b)
             if "${" in b:
                 base = os.path.basename(TRIMMED.sub("x", b))      # ${f%%:*}, ${f%/*}, ${f##*/}: the * and the / belong to the pattern, not to the path
                 if bool(recursive) or base.startswith(KEY_PREFIX) or re.search(r"[*?\[]", PARAM_HEAD.sub("${x", base)):   # ${PIPESTATUS[0]} and ${arr[@]+x} are parameters, not globs; a default word after an operator still is one
@@ -2203,7 +2311,7 @@ def key_destinations(prog, toks, i):
     return out
 
 
-def key_read(toks, i, here):
+def key_read(toks, i, here, assigned=None):
     """The reason a Bash segment reads the lead's signing key, or None: any word of it that names the key, whatever the program, the words before the program
     (`<key cat`, `exec 3<key`) and a segment with no program at all. ls, stat and test only look at a file: their own operands are not read, a redirection
     in front of them is. A recursive reader (cp, rsync, tar, zip ...) also reads a directory that holds the key, but not the one it only writes into
@@ -2219,7 +2327,7 @@ def key_read(toks, i, here):
         tick()
         if k in skip:
             continue
-        named = key_named(t, here, mode)
+        named = key_named(t, here, mode, assigned)
         if named:
             return key_refusal_text(prog, named)
     return None
@@ -2321,7 +2429,7 @@ def lead_refusal(toks, i):
     return None
 
 
-def bash_skill_refusal(command, here, depth):
+def bash_skill_refusal(command, here, depth, outer=None):
     joined = ansi_c(command.replace("\\\n", ""))        # a line continuation joins the lines (segments() does the same, and reads an escaped backslash right)
     if word_then_subst(HANDOFF_SUBST, joined):
         return MarshalReason("qargi marshal handoff with a command substitution in its arguments could be given --write, which writes a file and is not available to an agent; %s"
@@ -2331,7 +2439,8 @@ def bash_skill_refusal(command, here, depth):
     if word_then_subst(AUDIT_SUBST, joined):
         return "qargi skill accept (packs_audit.py with a command substitution in its arguments could be `store`) changes a skill and is not available to an agent"
     seen = set()                                         # the (text, directory) pairs judged
-    for n, ps, seg, dirs in walk(command, here):
+    assigned = join_assignments(outer, line_assignments(command))     # the variables the line sets (and the line that handed it this text)
+    for n, ps, seg, dirs in walk(command, here, assigned):
         toks, i = parsed(seg)
         if any(t.startswith("QARGI_NESTED=") for t in toks[:i]):
             return "setting QARGI_NESTED skips a plan-token check and is not available to an agent"
@@ -2357,7 +2466,7 @@ def bash_skill_refusal(command, here, depth):
                 inner = shell_string(prog, rest) if depth < 3 else None
                 if inner is not None:
                     inner += " ; " + " ; ".join(p.text for p in ps[n + 1:n + 201]).replace('"', " ").replace("'", " ")      # a `;` inside the quoted string split it: read the pieces that follow as part of it
-                    why = bash_skill_refusal(inner, [at], depth + 1)
+                    why = bash_skill_refusal(inner, [at], depth + 1, assigned)
                     if why:
                         return why
                 if prog in SHELLS or prog in SOURCES:            # its program on its standard input, or in a file this line writes: read again what the line shows of it
@@ -2365,10 +2474,10 @@ def bash_skill_refusal(command, here, depth):
                     if unread or (fed and depth >= 3):
                         return fed_refusal(prog, unread or "a program nested more than three shells deep")
                     for text in fed:
-                        why = bash_skill_refusal(as_program(text), [at], depth + 1)
+                        why = bash_skill_refusal(as_program(text), [at], depth + 1, assigned)
                         if why:
                             return why
-            why = protected_write(toks, i, at) or key_read(toks, i, at)       # redirections alone, or in front of a program, write and read too
+            why = protected_write(toks, i, at) or key_read(toks, i, at, assigned)       # redirections alone, or in front of a program, write and read too
             if why:
                 return why
     return unreadable_project_verb(command)

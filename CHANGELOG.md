@@ -69,6 +69,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `credentials/marshal_*` is refused, so `"${a[@]}"` cannot print the signing key through an array. Trimming the subscript off `${a[@]}` (the entry above) had let that through.
   A word with a variable after a path in the credentials directory (`credentials/${X:-ma}rshal_ed25519`, `credentials/m${X}shal_ed25519`, `cd credentials; cat $X`) is
   refused too, as the name the variable builds could be the key.
+- The member guard reads the signing key through a name it did not resolve before. It follows the plain assignments of the line (`NAME=VALUE`, also after `export`,
+  `declare`, `typeset`, `local` and `readonly`, `NAME+=VALUE`, the variable of `for NAME in WORDS`, one value built from another) and reads `$NAME` and `${NAME}` in the
+  later words, in `cd $NAME`, and in a string handed to `eval` or a shell, as each value the line gave: `d=~/.qargi/config/credentials; cat $d/marshal_ed25519`,
+  `d=DIR; a=($d/*); cat ${a[@]}` and `for d in DIR; do cat $d/marshal_ed25519; done` are refused. A glob in the directory part before a variable
+  (`cat DIR/../cred*/${X:-ma}rshal_ed25519`), a backtick substitution in the name (as `$(...)` already was) and an extglob pattern (`@(m)arshal_ed25519`, `!(other.token)`,
+  with or without `shopt -s extglob` in the line: the pattern is read as `*`) are refused when they lead into the credentials directory. A name whose value the guard
+  cannot read (`d=$(cmd)`, a variable the line does not set) is still refused after a path in that directory only. Tests cover each form and the nearest allowed ones
+  (`d=DIR; cat $d/other.token`, `d=src; cat $d/marshal_x`, a loop over other directories).
 - A heredoc body written in a line that also runs `install` is read whole again: `install --strip-program=PROG` runs PROG, so `install` is no longer one of the commands that
   run nothing (`chmod`, `mkdir`, `ls` ...). `coproc` starts the command after it, so a body line that starts with it is read as the lead-only verb it starts.
 

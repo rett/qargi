@@ -2804,6 +2804,91 @@ class TrimmedExpansions(HookCase):
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("signing key", r.stderr, c)
 
+    def credentials(self):
+        """The credentials directory of the test's configuration, with the signing key and another credential beside it."""
+        cred = os.path.join(self.conf, "credentials")
+        os.makedirs(cred)
+        for name in ("marshal_ed25519", "other.token"):
+            with open(os.path.join(cred, name), "w") as f:
+                f.write("x\n")
+        return cred
+
+    def test_a_variable_the_line_sets_is_followed_to_the_key(self):
+        """d=DIR; cat $d/marshal_ed25519: the line's own plain assignments (also after export, declare, typeset, local and readonly, +=, the variable of a for loop, and one
+        value built from another) are read before a later word is judged; so are a cd to the variable, and a string handed to eval or a shell."""
+        cred = self.credentials()
+        os.makedirs(os.path.join(self.home, ".qargi", "config", "credentials"))
+        with open(os.path.join(self.home, ".qargi", "config", "credentials", "marshal_ed25519"), "w") as f:
+            f.write("x\n")
+        for c in ("d=%s; cat $d/marshal_ed25519", "d=%s; cat $d/m*", 'd=%s; cat "$d"/*', "d=%s; cat ${d}/marshal_ed25519", "d=%s; cd $d; cat *", "d=%s; cd $d && cat m*",
+                  "d=%s; pushd $d; cat *", "d=%s; cp -r $d /tmp/o", "d=%s; tar cf x.tar $d", "d=%s; grep -r . $d", "d=%s; cat <$d/marshal_ed25519", "d=%s; cat --opt=$d/marshal_ed25519 x",
+                  "d=%s; a=($d/*); cat ${a[@]}", "export d=%s; cat $d/m*", "declare -x d=%s; cat $d/marshal_ed25519", "local d=%s; cat $d/marshal_ed25519",
+                  "readonly d=%s; cat $d/marshal_ed25519", "d=%s e=$d; cat $e/marshal_ed25519", "d=%s/..; e=$d/credentials; cat $e/marshal_*", "d=%s; e=${d}; cat ${e}/marshal_ed25519",
+                  "d=%s; d2=$d/marshal_ed; cat ${d2}25519", "d=%s; d+=/marshal_ed25519; cat $d", "d=x; d=%s; cat $d/marshal_ed25519", "d=%s; eval 'cat $d/marshal_ed25519'",
+                  "d=%s; bash -c 'cat $d/marshal_ed25519'", "for d in %s; do cat $d/marshal_ed25519; done", "for d in %s/*; do cat $d; done",
+                  "for d in %s/../cred*; do cat $d/marshal_ed25519; done"):
+            c = c % cred
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("signing key", r.stderr, c)
+        for c in ("d=~/.qargi/config/credentials; cat $d/marshal_ed25519", "export d=~/.qargi/config/credentials; cat $d/m*", "d=~/.qargi/config/credentials; cd $d; cat *",
+                  "d=~/.qargi/config; cat $d/credentials/marshal_ed25519", "d=~/.qargi; e=$d/config/credentials; cat $e/m*"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("signing key", r.stderr, c)
+
+    def test_a_variable_the_line_sets_to_something_else_stays_allowed(self):
+        cred = self.credentials()
+        for c in ("d=src; cat $d/marshal_ed25519", "d=%s; cat $d/other.token", 'd=%s; cat "$d"/other.token', "d=%s; ls $d", "d=%s; echo $d", "d=%s; stat $d/marshal_ed25519",
+                  "d=%s; cd $d; ls", "d=%s; test -e $d/marshal_ed25519", "d=src; cat $d/*.py", "d=docs; cd $d; cat *", "for f in *.txt; do cat $f; done", "x=a; x=$x$x; echo $x",
+                  "d=$(git rev-parse --show-toplevel); cat $d/README.md", "for d in src docs; do ls $d; done",
+                  "d=src e=$d/lib; cat $e/x.py", "d=src; d+=/lib; cat $d/x.py"):
+            c = c % cred if "%s" in c else c
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_a_directory_part_that_is_a_glob_does_not_hide_a_variable_after_it(self):
+        """cred*/${X:-ma}rshal_x: a glob in the directory part before the variable names the credentials directory as well as the plain path does."""
+        cred = self.credentials()
+        parent = os.path.dirname(cred)
+        for c in ("cat %s/../cred*/${X:-ma}rshal_ed25519", "X=ma; cat %s/../credential?/${X}rshal_ed25519", "X=ma; cat %s*/${X}rshal_ed25519", "cat %s/../cred*/$(printf ma)rshal_ed25519",
+                  "cat %s/../cred*/$Xrshal_ed25519", "cat %s/../c*/m$X", "cat %s/../[c]redentials/${X:-ma}rshal_ed25519", "cd %s/..; cat cred*/${X:-ma}rshal_ed25519"):
+            c = c % cred
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("signing key", r.stderr, c)
+        for c in ("cat %s/src*/${X:-a}.txt", "cat %s/s*/m$X", "cat %s/../other.token", "cat %s/../cred*/other.token"):
+            c = c % parent
+            self.assertEqual(self.bash(c).returncode, 0, c)
+
+    def test_a_backtick_substitution_in_the_name_is_refused_as_dollar_parenthesis_is(self):
+        cred = self.credentials()
+        for c in ("cat %s/`printf m`arshal_ed25519", "cat %s/`printf marshal_ed25519`", "cat %s/../cred*/`printf m`arshal_ed25519", "cat %s/m`printf a`rshal_ed25519",
+                  "cd %s; cat `printf marshal_ed25519`"):
+            c = c % cred
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("signing key", r.stderr, c)
+        for c in ("cat %s/other.token `printf x`", "cat src/`printf x`.txt", "echo `printf x` > out.txt", "cat `printf x`/readme.txt"):
+            c = c % cred if "%s" in c else c
+            self.assertEqual(self.bash(c).returncode, 0, c)
+
+    def test_an_extglob_pattern_in_the_name_is_refused(self):
+        """Once extglob is on (shopt -s extglob, shopt -O, a shell started with it), @(m)arshal_x and !(other.token) name the key; the pattern is read as the glob * whether the
+        line turns extglob on or not."""
+        cred = self.credentials()
+        for c in ("shopt -s extglob\ncat %s/@(m)arshal_ed25519", "shopt -s extglob\ncat %s/!(other.token)", 'shopt -s extglob\na=(%s/!(x)); cat "${a[@]}"', "shopt -s extglob; cat %s/+(m)arshal_ed25519",
+                  "bash -O extglob -c 'cat %s/@(m)arshal_ed25519'", "cat %s/?(m)arshal_ed25519", "cat %s/*(m)arshal_ed25519", "cat %s/@(marshal_ed25519|x)", "cat %s/@(@(m)arshal_ed25519|x)",
+                  "shopt -s extglob; cd %s; cat !(other.token)", "shopt -s extglob; cat %s/../@(credentials)/marshal_ed25519", "shopt -s extglob; cat %s/../@(credentials)/@(m)arshal_ed25519",
+                  "shopt -s extglob; cp -r %s/../@(credentials) /tmp/o"):
+            c = c % cred
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("signing key", r.stderr, c)
+        for c in ("shopt -s extglob\ncat src/@(a|b).py", "shopt -s extglob; echo !(x)", "grep -E 'a+(b)' f.txt", "echo 'a?(b)' | cat", "shopt -s extglob; ls %s/!(x)"):
+            c = c % cred if "%s" in c else c
+            self.assertEqual(self.bash(c).returncode, 0, c)
+
 
 class InPlaceScripts(HookCase):
     """In sed -i -e SCRIPT FILE the script is no file: a glob, a $ or a -S in it does not name a file the guard cannot read. The file still is judged."""
