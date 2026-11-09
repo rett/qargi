@@ -27,6 +27,7 @@ refusal changes nothing.
    applied and merged; `qargi local clean --applied --scratch DIR` cleans those that are both and keeps the rest.
    `qargi local clean --stale DAYS --scratch DIR` lists the finished runs older than DAYS days, and `--yes` cleans them (a run whose work is not applied and merged is kept).
    `qargi local clean --orphans [--days N]` lists the `qargi-run.XXXXXX` directories under `/dev/shm` (or `QARGI_RUN_TMP`) that no run of your registry names, with their age; it prints a plan and a token and removes nothing until `--plan TOKEN --approved WORDS`, and then only the unnamed directories older than N days (default 2).
+   Every `qargi local clean RUN` (also by `--applied` and `--stale`) also removes the saved scrub record of the run that `qargi review check` keeps in the state, so a run that was checked and never applied leaves none behind.
 3. When the feature is complete: `qargi feature sync NAME` (merges develop in), `qargi feature verify
    NAME` (the one whole-suite run per feature), then `qargi feature finish NAME`, the only merge into
    develop. `qargi feature status NAME` shows commits ahead and whether the whole-suite run is
