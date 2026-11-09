@@ -33,6 +33,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 - `QARGI_NESTED` no longer skips the plan token of `qargi feature finish`, `qargi feature merge` into a detached branch and `qargi upstream sync`: as for the release verbs and
   `local clean --orphans`, a caller that is itself approved has not approved this plan, so the token is always needed. Tests cover all three.
+- The member guard no longer refuses a script written with a heredoc because of what its text mentions. A body that `cat`, `tee`, `grep` or `git commit` receives is
+  now data in a line with other commands too (`cat > run.sh <<'E' ... E` then `chmod +x run.sh`), as it already was when every command of the line was one of those: a body
+  with `project set $X` in a sentence was refused as the `project` verb with an expansion. The other commands of the line must only look at files, make, move or remove
+  them (`chmod`, `mkdir`, `ls`, `mv`, `cp`, `rm` ...): a shell, `make`, `source`, a script, an alias or an `export` in the line keeps the plain reading, since the file could be
+  run there. The lines of such a body that start a lead-only verb (`qargi ...`, also behind `sudo`, `env`, a shell, a keyword, a redirection or a continuation, the word
+  `project`, `QARGI_LEAD`, `QARGI_NESTED`, `QARGI_MEMBER_RUN`, `marshal_`, `$'..'`) stay refused, and so do the lines an unquoted delimiter lets the shell expand. A body a
+  shell reads (`bash <<E`, `source /dev/stdin`) or a pipe carries on (`cat <<E | sh`) is read whole. Tests cover the data, the nearest real violations and the linear time.
 - The member guard no longer reads a parameter expansion with a subscript or an operator as a glob on the signing key: `${PIPESTATUS[0]}`, `${arr[@]+...}`,
   `"${files[@]}"`, `${!a[@]}` and `${#a[@]}` (so a loop over an array next to the word `marshal`, which was refused as a read of `credentials/marshal_*`) are allowed.
   A name that starts with `marshal_`, a glob in a default word (`${X:-*}`) and a recursive reader still are refused.
