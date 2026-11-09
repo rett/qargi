@@ -1059,7 +1059,7 @@ def line_assignments(command):
         vals = with_assigned(value, table)
         cur = table.get(name, ())
         if plus and cur:
-            vals = [c + v for c in cur for v in vals]         # an append goes on from the values the line gave (the lone text would double the values at each append)
+            vals = [c + v for c in cur for v in vals]         # an append goes on from the values the line gave, and the earlier values stay too, so the count still doubles at each append (2, 4, 8, 16, 32 after 1 to 5; the sixth passes the cap and the name is unknown)
         merged = tuple(dict.fromkeys(cur + tuple(vals)))
         if "$" in value and any(len(v) > MAX_VALUE_LEN for v in vals):      # a literal text is any length; a value built from others grows with each step of a chain
             raise TooManyValues()
