@@ -95,7 +95,7 @@ TAG_NOTE = ("When the tag VERSION exists it also warns about a tag that has no G
 HOTFIX_OPT = opt("--hotfix", "a hotfix: branch from master, finish into master and the open release branch (or develop)")
 
 GROUPS = [
-    ("Set up", ["project", "methodology", "cloud", "agent", "role", "provider", "provision", "env", "instances", "skill", "tool", "packs", "discover"]),
+    ("Set up", ["project", "methodology", "cloud", "agent", "role", "provider", "provision", "env", "doctor", "instances", "skill", "tool", "packs", "discover"]),
     ("Run a task", ["feature", "marshal", "release", "branch", "changelog", "upstream", "backlog", "ref", "start", "send", "status", "report", "noticed", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
@@ -653,6 +653,27 @@ COMMANDS = {
                                "when the tag is missing and when the build reports an error; refused (exit 2) in a member run and when QARGI_NESTED is set."),
                          examples=["qargi release site 0.2.3", "qargi release site 0.2.3 --plan TOKEN --approved \"yes, commit the site\""]),
         },
+    },
+    "doctor": {
+        "summary": "Check this host for what makes qargi fail quietly: logind, the guard, /dev/shm, the window table",
+        "desc": ("Read-only, and a member may run it. It prints one line per check, `ok|warn|unknown  name: detail`, and after a warning the indented lines that say what you can do; "
+                 "it changes nothing and runs none of the fixes. It does not fail on a finding: the exit status is 0, or 1 with --strict when any check warns (2 for a usage error "
+                 "or a project that is not stored). A check that cannot be made (no logind, a tool that is missing, no project) says unknown, never warn. The project is the one "
+                 "named, else the one in effect; without one the checks that need it say unknown. The checks: "
+                 "remove-ipc: the logind setting RemoveIPC (busctl; QARGI_BUSCTL names another program) with the user's linger (loginctl; QARGI_LOGINCTL); with RemoveIPC on and "
+                 "no linger, logind removes the user's IPC objects, among them what lives in /dev/shm, when the last session ends, and the warning prints the drop-in "
+                 "/etc/systemd/logind.conf.d/remove-ipc.conf (`[Login]`, `RemoveIPC=no`) with `sudo systemctl reload systemd-logind`, or `loginctl enable-linger USER`. "
+                 "guard: `qargi` is found on PATH and `qargi __guard` answers as the guard does (it allows a harmless call and refuses git push), and with a project, no member is "
+                 "missing, stale or edited (the states of qargi agent list). "
+                 "shm: the free space under /dev/shm (QARGI_RUN_TMP moves it) and the orphaned qargi-run.* directories there, the listing of qargi local clean --orphans; it warns on "
+                 "an orphan or on less than 10% free (QARGI_DOCTOR_MIN_FREE moves the limit, in percent). "
+                 "window-source: where the context-window table of the project's local runtime comes from (its definition, or the answer lead.context_window, which overrides it) "
+                 "and whether each model id its roles name is in the table; an id that is not there warns, since its window is only assumed. "
+                 "--json prints {project, checks: [{name, status, detail, fix}], warnings, strict, exit}."),
+        "scripts": ["doctor.py", "orphans.sh"],
+        "usage": [("PROJECT", "project", True)],
+        "opts": [PROJECT_OPT, opt("--strict", "exit 1 when any check warns (the default exit status is 0)"), opt("--json", "print the checks as JSON")],
+        "examples": ["qargi doctor", "qargi doctor acme --strict", "QARGI_RUN_TMP=/dev/shm qargi doctor --json"],
     },
     "env": {
         "summary": "What a repository declares about its development environment",
@@ -1621,6 +1642,9 @@ ENVIRONMENT = [
     ("QARGI_ENV_TIMEOUT", "seconds the dry run of qargi env plan and apply may take (default 120)"),
     ("QARGI_HOOK_MARSHAL_SECS", "seconds the session-start hook gives the read of the open features (qargi marshal status --all --brief --no-fetch) before it leaves the block out "
                                 "(default 5; a whole number from 1 to 9999, anything else is ignored); a test on a loaded machine raises it"),
+    ("QARGI_BUSCTL", "the program qargi doctor asks logind with (default busctl)"),
+    ("QARGI_DOCTOR_MIN_FREE", "the percent of free space under /dev/shm below which qargi doctor warns (default 10)"),
+    ("QARGI_LOGINCTL", "the program qargi doctor reads the user's linger with (default loginctl)"),
     ("NO_COLOR", "turn off bold in the terminal help"),
 ]
 
