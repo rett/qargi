@@ -279,6 +279,11 @@ out=$($DA review check "$R32/out" 2>&1); rc=$?
 out=$($DA review check "$R32" 2>&1); rc=$?
 { [ $rc = 0 ] && grep -qx 'scrub: ok' <<<"$out"; } && ok "the scrub runs when the run directory is given instead of OUT" || no "scrub run dir: rc=$rc $out"
 [ "$(refs_all)" = "$r0" ] && [ -z "$(git -C "$A" tag)" ] && ok "no ref, worktree or temporary directory is left behind" || no "left behind: $(refs_all)"
+# a run that was checked and never applied leaves the scrub record of review check; local clean removes the run and that record with it
+sok="$T/s/scrub_ok/${R32##*/}"
+[ -f "$sok" ] && ok "a passing scrub leaves its record for the run (scrub_ok/RUN-ID)" || no "no scrub record: $(ls -la "$T/s/scrub_ok" 2>&1)"
+out=$($DA local clean "$R32" --discard 2>&1); rc=$?
+{ [ $rc = 0 ] && [ ! -e "$R32" ] && [ ! -e "$sok" ]; } && ok "local clean removes the scrub record of a run that was checked and never applied" || no "clean scrub record: rc=$rc $out; record: $(ls "$sok" 2>&1)"
 # the registry's copy, not the stored file, decides: a run prepared with no scrub is not scrubbed by a later answer
 out=$($DA review check "$R31/out" 2>&1); rc=$?
 { [ $rc = 0 ] && ! grep -q '^scrub:' <<<"$out"; } && ok "an answer set after prepare does not change the scrub of a run already out" || no "late answer: rc=$rc $out"
