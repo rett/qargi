@@ -1,0 +1,22 @@
+{
+ "purpose": "0.2.8: accept the Codex local provider (PR 10) and the top backlog items",
+ "started": "2026-11-09T12:42:52Z",
+ "goal": "0.2.8: accept the Codex local provider (PR 10) and the top backlog items",
+ "plan": "",
+ "note": "",
+ "status": "active",
+ "lead": {
+  "id": "arc-qargi",
+  "user": "rett",
+  "host": "arc",
+  "since": "2026-11-09T12:42:52Z",
+  "worktree": "94b9af1305afafc4"
+ },
+ "renewed_at": "2026-11-09T12:42:52Z",
+ "finished_at": null,
+ "updated_by": "arc-qargi",
+ "rev": 1,
+ "updated_at": "2026-11-09T12:42:52Z",
+ "feature": "rel028",
+ "project": "qargi"
+}
