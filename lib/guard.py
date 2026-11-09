@@ -3367,7 +3367,7 @@ def clear_caches():
     _BRACE_WORK[0] = 0
     for cache in (_RESOURCE_DIRS, _ROOTS, _KEY_DIRS, _STATE):          # read from the library, the environment and the state: a judge that outlives one call must not keep them
         cache.clear()
-    for f in (real_dir, resolve, run_like, in_a_clone, run_dir, protected, key_named, ability_of, run_class, brace_expand, run_tmps, pass_writes):
+    for f in (line_assignments, real_dir, resolve, run_like, in_a_clone, run_dir, protected, key_named, ability_of, run_class, brace_expand, run_tmps, pass_writes):
         f.cache_clear()
 
 

@@ -3005,6 +3005,18 @@ class TrimmedExpansions(HookCase):
         for p, got, want in self.J.run(check):
             self.assertEqual(got, want, p)
 
+    def test_the_values_of_a_line_are_forgotten_with_the_other_caches(self):
+        """line_assignments holds the home directory it read (a ~ in a value): a judge that outlives one call, with another HOME for the next, must not reuse them."""
+        def check():
+            G = self.J.m
+            G.line_assignments("d=~/x; cat $d")
+            before = G.line_assignments.cache_info().currsize
+            G.clear_caches()
+            return before, G.line_assignments.cache_info().currsize
+        before, after = self.J.run(check)
+        self.assertGreater(before, 0)
+        self.assertEqual(after, 0)
+
     def test_a_backtick_substitution_in_the_name_is_refused_as_dollar_parenthesis_is(self):
         cred = self.credentials()
         for c in ("cat %s/`printf m`arshal_ed25519", "cat %s/`printf marshal_ed25519`", "cat %s/../cred*/`printf m`arshal_ed25519", "cat %s/m`printf a`rshal_ed25519",
