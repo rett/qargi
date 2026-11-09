@@ -112,11 +112,16 @@ def check_remove_ipc():
 PROBES = (("a harmless call", "true", 0), ("git push", "git push origin HEAD", 2))
 
 
+def members_recorded():
+    """True when this host has a members file (qargi agent add makes it): without one no member is recorded."""
+    return os.path.isfile(os.path.join(PA.conf(), "agents.json"))
+
+
 def member_states(project):
     """[(member, state)] of the project's members whose file is missing, stale or edited (qargi agent list: the one place that knows), or None when that cannot be read
-    (also when the host has no members file: agent list runs here without its setup, which would have made it)."""
-    if not os.path.isfile(os.path.join(PA.conf(), "agents.json")):
-        return None    # no member was ever added on this host; agent list would make the file, and doctor makes nothing
+    (qargi agent list fails). A host with no members file has no member to be stale: [] (agent list is not run, since it would make the file)."""
+    if not members_recorded():
+        return []      # no member was ever added on this host; agent list would make the file, and doctor makes nothing
     rc, out, _ = run([os.path.join(os.path.dirname(HERE), "bin", "qargi"), "agent", "list", "--project", project], env={"DA_NOSETUP": "1"})
     if rc != 0:
         return None
@@ -150,6 +155,8 @@ def check_guard(project):
     detail = "%s __guard allows a harmless call and refuses git push" % qargi
     if not project:
         return check(name, "ok", detail + " (no project, so the members were not checked)")
+    if not members_recorded():
+        return check(name, "ok", detail + "; no member is recorded on this host, so there is none to be stale")
     states = member_states(project)
     if states is None:
         return check(name, "unknown", detail + "; the members of project %s could not be read (qargi agent list)" % project)

@@ -48,9 +48,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   gated project with a run at the tip and with a changed gate.
 - `qargi doctor` changes nothing on the host, as it says. It ran `lib/orphans.sh` and `qargi agent list`, and loading `lib/lib.sh` made the config and state directories, set them
   to mode 700 (and `~/.qargi`), and created `instances.json`, `sessions.json` and `agents.json`: a host that had never run qargi got them from its first doctor. `lib/lib.sh` now skips
-  that setup when `DA_NOSETUP` is set; the orphan scan sets it when run as a program, and doctor sets it for `agent list` and skips the member check (`unknown`) when `agents.json`
-  does not exist. The test starts with the data directories absent, and snapshots them, `HOME` and the directories of a host that has them (types, modes, sizes, times) before and
+  that setup when `DA_NOSETUP` is set; the orphan scan sets it when run as a program, and doctor sets it for `agent list` and skips the member check when `agents.json`
+  does not exist (see the next entry). The test starts with the data directories absent, and snapshots them, `HOME` and the directories of a host that has them (types, modes, sizes, times) before and
   after.
+- `qargi doctor PROJECT` on a host with no members file says `ok ... no member is recorded on this host, so there is none to be stale` in its guard check. It said `unknown ... the members
+  of project PROJECT could not be read (qargi agent list)`, which read like a failure; `unknown` stays for a `qargi agent list` that fails.
 - The gate results of a whole-suite run are kept per run, beside its log (`STATE/suite-logs/PROJECT.feature-NAME.gates.jsonl`, `PROJECT.release-VERSION.gates.jsonl`), and not in one
   file per project: two verifies at once truncated and appended to the same file, so a record could list a gate twice or the gates of the other run. The verdict line was never
   affected. A test runs two verifies at once and checks each record. Two verifies of the same feature still share a log and a results file (the warning about other runs stays).
@@ -66,9 +68,22 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   A name that starts with `marshal_`, a glob in a default word (`${X:-*}`) and a recursive reader still are refused.
 - The member guard reads the elements of an array literal as it reads the words of `for x in WORDS`: a glob inside `NAME=(...)`, `NAME+=(...)` or
   `declare|typeset|local|readonly [-aA] NAME=(...)` (also `[k]=` entries, and a relative glob after a `cd` into the credentials directory) that reaches
-  `credentials/marshal_*` is refused, so `"${a[@]}"` cannot print the signing key through an array. Trimming the subscript off `${a[@]}` (the entry above) had let that through.
-  A word with a variable after a path in the credentials directory (`credentials/${X:-ma}rshal_ed25519`, `credentials/m${X}shal_ed25519`, `cd credentials; cat $X`) is
-  refused too, as the name the variable builds could be the key.
+  `credentials/marshal_*` is refused when the array literal names the credentials directory, in plain words or through a variable the line sets (the entry below). Trimming
+  the subscript off `${a[@]}` (the entry above) had let that through. A word with a variable after the path of the credentials directory (`credentials/${X:-ma}rshal_ed25519`,
+  `credentials/m${X}shal_ed25519`, `cd credentials; cat $X`) is refused too, as the name the variable builds could be the key; the entry below widens this to a glob in the path.
+- The member guard reads the signing key through a name it did not resolve before. It follows the plain assignments of the line (`NAME=VALUE`, also after `export`,
+  `declare`, `typeset`, `local` and `readonly`, `NAME+=VALUE`, the variable of `for NAME in WORDS`, one value built from another) and reads `$NAME` and `${NAME}` in the
+  later words, in `cd $NAME`, and in a string handed to `eval` or a shell, as each value the line gave: `d=~/.qargi/config/credentials; cat $d/marshal_ed25519`,
+  `d=DIR; a=($d/*); cat ${a[@]}` and `for d in DIR; do cat $d/marshal_ed25519; done` are refused. A glob in the directory part before a variable
+  (`cat DIR/../cred*/${X:-ma}rshal_ed25519`), a backtick substitution in the name (as `$(...)` already was) and an extglob pattern (`@(m)arshal_ed25519`, `!(other.token)`,
+  with or without `shopt -s extglob` in the line: the pattern is read as `*`) are refused when they lead into the credentials directory. A name whose value the guard
+  cannot read (`d=$(cmd)`, a variable the line does not set) is refused after a path in that directory only, not when it stands in the directory part (`$X/marshal_x`,
+  `$(cmd)/marshal_x`, a variable the member's shell has and the hook's environment lacks). The guard is best-effort: it reads the text of a command and cannot resolve every
+  shell construct; the "Not covered" paragraph of its description in `lib/guard.py` names what it does not see. Tests cover each form and the nearest allowed ones
+  (`d=DIR; cat $d/other.token`, `d=src; cat $d/marshal_x`, a loop over other directories).
+- The reason the member guard gives for a variable, a substitution or an extglob pattern after a path in the credentials directory no longer says the command "would read the
+  signing key": it says the guard cannot tell what the word names, so it cannot rule the key out, and asks for the name written out (a literal path such as `credentials/other.token`).
+  A glob or a name that does reach the key keeps the old wording. What is refused does not change.
 - A heredoc body written in a line that also runs `install` is read whole again: `install --strip-program=PROG` runs PROG, so `install` is no longer one of the commands that
   run nothing (`chmod`, `mkdir`, `ls` ...). `coproc` starts the command after it, so a body line that starts with it is read as the lead-only verb it starts.
 
