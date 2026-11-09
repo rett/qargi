@@ -140,8 +140,15 @@ Signing key: the one credential a member may not even read is the lead's signing
   names the key is). ls, stat and test only look at it and stay allowed; the other credentials stay readable. The subscript and the operator of a parameter expansion
   (${arr[@]}, ${PIPESTATUS[0]}, ${#a[@]}, ${!a[@]}, ${X:-...}) are no glob, so a loop over an array is no read of the key; a default word with a glob (${X:-*}), a name
   that starts with marshal_ and a recursive reader of a braced word still are refused. The elements of an array literal (`a=(DIR/*)`, `a+=(...)`, `declare -a a=(...)`,
-  `a=([k]=DIR/*)`) are judged as the words of `for x in WORDS` are, and a word that holds a variable after a path in a credentials directory (`DIR/${X:-ma}rshal_x`,
-  `DIR/m$X`, or `$X` after a cd into it) is refused: the name it builds could be the key.
+  `a=([k]=DIR/*)`) are judged as the words of `for x in WORDS` are. The plain assignments of the line (`d=DIR`, also after export, declare, typeset, local and readonly, `d+=...`,
+  `for d in WORDS`, and a value built from another variable) are read before a later word is judged: `$d` and `${d}` stand for each value the line gives d, in the words, in a
+  cd and in a string handed to eval or a shell (assignments by `read`, `printf -v`, a substitution or an array are not followed). A word that holds a variable, a backtick or
+  $(..) substitution, or an extglob pattern after a path in a credentials directory (`DIR/${X:-ma}rshal_x`, `DIR/m$X`, `DIR/`cmd`x`, `DIR/@(m)x`, or `$X` after a cd into
+  it) is refused whatever it stands for, because the name it builds could be the key; the path before it may hold a glob (`cred*/${X:-m}x`). An extglob pattern is read as
+  the glob `*`. Its reason says the guard cannot tell what the word names (a literal name is the way out); the others say the command would read the key.
+  This is best-effort: the guard reads text and cannot resolve every shell construct. A directory the line only reaches through a name it cannot resolve (a variable or a
+  substitution as a directory component before the key's own name: `$X/marshal_x`, `$(cmd)/marshal_x`; `d=$(cmd)`; a variable the member's shell has and the hook's
+  environment lacks), a script written and run, or code that reads a file itself are not seen.
   pushd and popd are followed like cd (a directory stack), a text scan reads `dir//key` and `dir/./key` as `dir/key`, and ln, mv and cp -s|-l
   are refused on a credentials directory (or a directory above one) as the recursive readers are, since a link made in the same command
   is a name the guard cannot resolve yet.
@@ -150,8 +157,8 @@ guard does not parse (a shell loop that reads a file, `parallel`, a script writt
 loop is accepted as residual, and `qargi local verify` and the lead's review of the output are what catch a note written by a member.
 Not covered: code that writes or reads a file itself (python -c, perl -e, node -e, a script written earlier and run) unless it
 names the key by its full path, a glob that expands to a protected path (for a write), a path built from a variable the guard cannot see
-(a directory assigned to a variable earlier in the command, d=...; cat $d/marshal_ed25519; a name produced by a command substitution,
-cat $(echo ...), or by an echo piped to xargs).
+(a variable the line does not assign in plain words and the hook's environment lacks, or one set from a command substitution, d=$(...); cat $d/marshal_ed25519; a name
+produced by a command substitution, cat $(echo ...), or by an echo piped to xargs). The guard is best-effort and cannot resolve every shell construct.
 Reading a Bash command (passes(), segments()): a word quoted $'...' (ANSI-C) or $"..." is read as the plain string it stands for (ansi_c); then the plain, conservative split. The line is cut at every ; && || | & and newline whatever the quotes, a comment
 or a heredoc body, so a refused verb is found wherever a command could start, and it is refused as text too: `git commit -m "Docs; qargi packs seed" && make` is
 refused, and a member writes a message to a file with its file tool and commits with `git commit -F FILE`. The one narrowing (mask_data(), for the verbs that change
