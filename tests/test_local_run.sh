@@ -127,7 +127,7 @@ cp "$T/repo.path.keep" "$RUN/repo.path"; rm -f "$T/repo.path.keep"
 # --- a real run with the fake CLI --------------------------------------------------------------------------------------------------
 prep "$T/r" w2; task
 export OTHER_SECRET=leak GIT_AUTH_TOKEN=leak2
-out=$(FAKE_KEY=k1 $DA local run "$RUN" 2>"$T/err"); rc=$?
+out=$(FAKE_KEY=envval-k1 $DA local run "$RUN" 2>"$T/err"); rc=$?
 tr=$OUT/transcript
 [ "$rc" = 0 ] && grep -q '^OUTCOME=ok' <<<"$out" && [ -f "$tr" ] && ok "a real run: exit 0, outcome ok, the transcript is in OUT" || no "real run: rc=$rc $out $(cat "$T/err")"
 grep -q '^ARG\[run\]' "$tr" && grep -q '^ARG\[--model\]' "$tr" && grep -q '^ARG\[fake-m-1\]' "$tr" && grep -q "^ARG\[$CLONE\]" "$tr" && ok "the fake CLI got the argv as separate arguments" || no "transcript args: $(head -20 "$tr")"
@@ -135,10 +135,10 @@ grep -q '^ARG\[run\]' "$tr" && grep -q '^ARG\[--model\]' "$tr" && grep -q '^ARG\
 grep -q "^PWD=$CLONE\$" "$tr" && ok "it ran in the clone" || no "cwd: $(grep PWD "$tr")"
 grep -q '^STDIN-BEGIN' "$tr" && sed -n '/^STDIN-BEGIN/,/^STDIN-END/p' "$tr" | grep -q 'TASK: change the thing' && sed -n '/^STDIN-BEGIN/,/^STDIN-END/p' "$tr" | grep -q 'You are a qargi member' \
   && ok "the prompt came on its standard input" || no "stdin: $(sed -n '/STDIN-BEGIN/,$p' "$tr" | head)"
-grep -q '^KEY=k1$' "$tr" && grep -q '^OTHER=unset$' "$tr" && ok "only env_pass names reach it (FAKE_KEY did, OTHER_SECRET did not)" || no "env: $(grep -E 'KEY|OTHER' "$tr")"
+grep -q '^KEY=envval-k1$' "$tr" && grep -q '^OTHER=unset$' "$tr" && ok "only env_pass names reach it (FAKE_KEY did, OTHER_SECRET did not)" || no "env: $(grep -E 'KEY|OTHER' "$tr")"
 grep -q "^HOME=$RUN/home\$" "$tr" && grep -q '^GITCFG=/dev/null$' "$tr" && grep -q "^GITWRAP=$RUN/git\$" "$tr" && ok "it has the git wrapper's environment (no home, no global git configuration)" || no "git env: $(grep -E 'HOME|GIT' "$tr")"
 grep -q "^MEMBERMARK=$RUN\$" "$tr" && ok "it carries the member mark QARGI_MEMBER_RUN (the run directory), so the marshal knows it from any directory" || no "member mark: $(grep MEMBERMARK "$tr")"
-[ "$(jq -r .outcome "$RUN/dispatch.json")" = ok ] && [ "$(jq -r '.argv | join(" ")' "$RUN/dispatch.json")" = "fakellm run --model fake-m-1 --clone $CLONE --out $OUT" ] && ! grep -q 'k1' "$RUN/dispatch.json" \
+[ "$(jq -r .outcome "$RUN/dispatch.json")" = ok ] && [ "$(jq -r '.argv | join(" ")' "$RUN/dispatch.json")" = "fakellm run --model fake-m-1 --clone $CLONE --out $OUT" ] && ! grep -q 'envval-k1' "$RUN/dispatch.json" \
   && ok "dispatch.json records the argv and the outcome, not an environment value" || no "dispatch.json: $(jq -c . "$RUN/dispatch.json" 2>&1) (wanted outcome ok, argv: fakellm run --model fake-m-1 --clone $CLONE --out $OUT)"
 $DA local verify "$RUN" >/dev/null 2>&1 && ok "verify passes after the run" || no "verify after run"
 out=$($DA local run "$RUN" 2>&1); rc=$?; [ "$rc" = 2 ] && grep -q 'has been run already' <<<"$out" && ok "a second run is refused" || no "second run: rc=$rc $out"

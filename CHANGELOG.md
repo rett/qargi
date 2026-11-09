@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-11-09
+
 ### Fixed
 - `qargi local clean RUN` also removes the saved scrub record of the run (`scrub_ok/RUN-ID` in the state, written by `qargi review check`), so a run that was checked and never applied leaves no record behind.
 - `qargi release step` tells a failed write of the step record in plain words instead of printing raw `jq` text: when another command marked the step first, it says so and to run again with `--again`; otherwise it says the record cannot be written and to check that it and its directory can be written and that the record is valid JSON (commands that write the record wait for each other, so another command is not named as the cause). The exit status is unchanged.
