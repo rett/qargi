@@ -11,7 +11,7 @@ Describe what {{project}} is and how to run it.
 The declared gates, run in order; stop at the first failure:
 
 {{#gate}}
-- `{{gate_name}}` ({{gate_tier}}): `{{gate_command}}`
+- {{gate_name_code}} ({{gate_tier}}): {{gate_command_code}}
 {{/gate}}
 {{/gates}}
 

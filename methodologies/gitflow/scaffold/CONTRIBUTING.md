@@ -20,7 +20,7 @@ The branching model is git-flow, as its author described it.
 {{#gates}}
 - When a feature is complete, run the whole suite once on it before it is merged into `develop`: the declared gates of the feature tier, in order, stopping at the first failure. A release also runs the gates of the release tier.
 {{#gate}}
-  - `{{gate_name}}` ({{gate_tier}}): `{{gate_command}}`
+  - {{gate_name_code}} ({{gate_tier}}): {{gate_command_code}}
 {{/gate}}
 - In CI each gate is its own job and the jobs run in parallel, not in order; a job of a release-tier gate runs only on a pull request from a `release/` or `hotfix/` branch (or when started by hand).
 {{/gates}}

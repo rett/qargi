@@ -15,7 +15,7 @@ This project has no tool-specific setup file. The targets below are the specific
 {{#gates}}
 - Tests: the declared gates, run in order, stopping at the first failure:
 {{#gate}}
-  - `{{gate_name}}` ({{gate_tier}}): `{{gate_command}}`
+  - {{gate_name_code}} ({{gate_tier}}): {{gate_command_code}}
 {{/gate}}
 {{/gates}}
 - Never run the bootstrap on a checkout you have not reviewed; read the preview first.

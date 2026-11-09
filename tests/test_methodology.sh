@@ -69,6 +69,13 @@ d = yaml.safe_load(open(sys.argv[1]).read())
 names = [j["name"] for j in d["jobs"].values()]
 sys.exit(0 if sorted(names) == sorted(g["name"] for g in json.loads(sys.argv[2])) else 1)' "$T/ci2/.github/workflows/test.yml" "$HG" && ok "gates: the YAML parser reads each hostile name back unchanged" || no "gates hostile names parse differently"
 fi
+# a backtick in a gate does not end the inline code of the markdown files: the span is fenced by a longer run of backticks
+BG=$(jq -nc '[{name:"a`b",command:"echo `date` ``x``",tier:"feature"},{name:"`edge`",command:"`cmd`",tier:"release"}]')
+bout=$($DA methodology files gitflow --param project=acme --param "gates=$BG" 2>&1)
+for f in README.md AGENTS.md CLAUDE.md CONTRIBUTING.md; do
+  [ "$(doc "$bout" "$f" | grep -c -F -e '``a`b`` (feature): ``` echo `date` ``x`` ```' -e '`` `edge` `` (release): `` `cmd` ``')" = 2 ] \
+    && ok "gates: $f writes a gate with backticks as inline code that holds together" || no "gates backticks $f: $(doc "$bout" "$f" | grep -n 'edge\|date')"
+done
 grep -qF '${{ github.ref }}' <<<"$wfg" && ! grep -q '{{#\|{{/\|{{^\|{{gate' <<<"$gout" && ok "gates: no template marker is left and the file's own {{ }} syntax stays" || no "gates markers: $(grep -n '{{' <<<"$gout")"
 [ "$gout" = "$($DA methodology files gitflow --param project=acme --param test_command="make suite" --param "gates=$GJ" 2>&1)" ] && ok "gates: the output is deterministic" || no "gates: output differs between runs"
 nog=$($DA methodology files gitflow --param project=acme --param test_command="make suite" 2>&1)
