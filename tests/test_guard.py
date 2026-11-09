@@ -566,7 +566,7 @@ class Skills(HookCase):
         its own command with the lead's rights: project set refuses them, whole or by a dotted path, in every form the models answers are refused
         in. Look-alikes (test_commands, releases.x, sites.x, website) stay open."""
         for path in ("release", "release.preflight", "release.test_command", "release.sign.verify_command", "release.changelog.released", "release.version_file",
-                     "test_command", "env", "env.PATH", "env.acme.x", "upstream", "upstream.overlay_check", "upstream.remote", "site", "site.enabled", "site.branch", "site.config"):
+                     "test_command", "env", "env.PATH", "env.acme.x", "upstream", "upstream.overlay_check", "upstream.remote", "site", "site.enabled", "site.branch", "site.config", "backlog", "backlog.file"):
             for form in ("qargi project set p %s v", "/opt/q/bin/qargi project set p %s v", "sudo qargi project set p %s v", "cd src && qargi project set p %s v",
                          "bash -c 'qargi project set p %s v'", "env FOO=1 qargi project set p %s v", "echo $(qargi project set p %s v)",
                          "./lib/project.sh set p %s v", "bash lib/project.sh set p %s v", "qargi project --x set p %s v"):
@@ -579,7 +579,7 @@ class Skills(HookCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 2, c)
         for c in ("qargi project set p test_commands x", "qargi project set p releases.x y", "qargi project set p environment x", "qargi project set p budget_cents 500",
-                  "qargi project set p upstreams.x y", "qargi project set p sites.x y", "qargi project set p website x",
+                  "qargi project set p upstreams.x y", "qargi project set p sites.x y", "qargi project set p website x", "qargi project set p backlogs.x y",
                   "qargi project show p", "echo qargi project set p release.preflight x", "echo qargi project set p site.enabled true"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
@@ -1380,6 +1380,31 @@ class Marshal(HookCase):
         for c in ("qargi upstream review", "qargi upstream review --limit 5 --project proj", "/opt/q/bin/qargi upstream review", "bash lib/upstream.sh review",
                   "qargi upstream", "echo qargi upstream sync", "git log --grep 'upstream sync'", "grep -n 'upstream status' lib/commands.py", "cat lib/upstream.sh",
                   "git fetch upstream", "git fetch origin main"):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+
+    def test_backlog_done_is_the_leads_and_list_stays_allowed(self):
+        """backlog done moves an item out of the backlog file into the dated archive beside it and rewrites the file: the lead's, however it is run (the script
+        and its library included), and so is a verb held in a variable or one nobody knows. list only reads."""
+        cmds = []
+        for v in ("done fix-names --evidence e", "done", "done fix-names --evidence e --plan abc --approved go"):
+            cmds += ["qargi backlog %s" % v, "qargi backlog %s --project proj" % v, "/opt/q/bin/qargi backlog %s" % v, "bin/qargi backlog %s" % v,
+                     "env FOO=1 qargi backlog %s" % v, "sudo qargi backlog %s" % v, "bash -c 'qargi backlog %s'" % v, "eval 'qargi backlog %s'" % v,
+                     "echo $(qargi backlog %s)" % v, "true && qargi backlog %s" % v, "ls; qargi backlog %s" % v, "bash lib/backlog.sh %s" % v,
+                     "lib/backlog.sh %s" % v, "nohup qargi backlog %s" % v]
+        cmds += ["qargi 'backlog' 'done'", "v=done; qargi backlog $v", "qargi backlog $v", "qargi backlog ${V:-list}", "qargi backlog frobnicate", "qargi backlog DONE",
+                 "xargs qargi backlog done", "python3 lib/backlog.py apply f.md fix-names e", "python3 -I lib/backlog.py plan f.md fix-names e", "python3 lib/backlog.py list f.md"]
+        for c in cmds:
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 2, (c, res.stderr))
+            self.assertIn("qargi guard:", res.stderr, c)
+            self.assertNotIn("writes the feature marshal", res.stderr, c)
+            self.assertNotIn("changes a skill", res.stderr, c)
+        self.assertIn("qargi backlog done moves an item out of the backlog file", self.bash("qargi backlog done x --evidence e").stderr)
+        self.assertIn("qargi backlog done moves an item out of the backlog file", self.bash("bash lib/backlog.sh done x").stderr)
+        for c in ("qargi backlog list", "qargi backlog list --json", "qargi backlog list --project proj", "/opt/q/bin/qargi backlog list", "bash lib/backlog.sh list",
+                  "qargi backlog", "echo qargi backlog done", "git log --grep 'backlog done'", "grep -n 'backlog done' lib/commands.py", "cat lib/backlog.sh",
+                  "cat lib/backlog.py"):
             res = self.bash(c)
             self.assertEqual(res.returncode, 0, (c, res.stderr))
 
