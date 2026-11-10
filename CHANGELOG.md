@@ -7,6 +7,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
+- The member contract no longer says "never stash: use a WIP commit", which collided with the rules against rewriting history and for commits that pass alone. It says to check BASE out beside the work with `git worktree add` to see how BASE behaves, to `git restore` an experiment, and that a one-task member has nothing to set aside; the `gitflow-member` and `qargi-contributing` packs drop their copies
 - The member contract says once how to write a report and a commit message: with the file-writing tool, never with shell text (echo, heredoc), and a commit with `git commit -F FILE`; a read-only role whose file tool is refused puts the whole report in its final message, and a guard refusal is reported, not rephrased. The shell-heredoc fallback and the copies of the commit-message rule are gone from the contract, the `gitflow-member` and `qargi-contributing` packs, the Claude Code addendum and its `member-out` note; `qargi-verify` tells the lead to store such a report with `qargi review save`
 
 ## [0.2.8] - 2026-11-09
