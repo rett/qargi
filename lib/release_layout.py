@@ -185,7 +185,7 @@ def cmd_changelog(argv):
     m = find_unreleased(t, unrel)
     if not m and hotfix:
         # a hotfix is cut from master; a project whose unreleased heading carries the version renames it at a release, so master has none. The branch
-        # brings the items: the heading is added empty, and the push preflight and the finish check what is under it
+        # brings the items: the heading is added empty, and `release finish` refuses until the branch has entries under it
         open(path, "w", encoding="utf-8").write(add_released_heading(t, released, level(unrel)))
         print("heading-added")
         return 0

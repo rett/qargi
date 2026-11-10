@@ -267,4 +267,29 @@ out=$($REL start 0.1.1 --hotfix 2>&1); rc=$?
 [ "$rc" = 0 ] && ! grep -q "has no unreleased heading" <<<"$out" && rstart 0.1.1 --hotfix --date 2026-05-06 >/dev/null 2>&1 \
   && [ "$(git -C "$R" show hotfix/0.1.1:CHANGELOG.md)" = "$(printf '# Changelog\n\n## [Unreleased]\n\n## [0.1.1] - 2026-05-06\n\n### Added\n- a thing')" ] && ok "default layout: the hotfix start is as before (the section is kept, the released heading is added)" || no "default layout hotfix: rc=$rc $out"
 
+# --- the finish of a hotfix refuses (at its plan too, before anything moves) while the branch's changelog has no entries under the heading of the
+# version; a branch with no CHANGELOG.md is not checked
+mk hfin
+jq '.release = {changelog: {unreleased: "## {version} (unreleased)", released: "## {version} ({date})"}}' "$T/c/projects/hfin.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/hfin.json"
+git -C "$R" checkout -q master; printf '# Changelog\n\n## 1.0.0 (2026-01-01)\n\n- first\n' > "$R/CHANGELOG.md"
+git -C "$R" commit -q -am "no unreleased heading" && git -C "$R" branch -f develop master && git -C "$R" checkout -q parked
+rstart 1.0.1 --hotfix --date 2026-05-06 >/dev/null 2>&1
+m0=$(git -C "$R" rev-parse master)
+out=$($REL finish 1.0.1 --hotfix 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "the CHANGELOG.md of hotfix/1.0.1 has no entries under '## 1.0.1'" <<<"$out" && grep -q "record the entries under that heading on hotfix/1.0.1" <<<"$out" && ! grep -q "plan token" <<<"$out" \
+  && ok "hotfix finish: an empty section of the version is refused at the plan, naming the file, the heading and the fix" || no "finish with the empty section: rc=$rc $out"
+w=$($REL fix 1.0.1 --hotfix | sed -n 's/^worktree: //p')
+printf '# Changelog\n\n## 1.0.1 (2026-05-06)\n\n- the fix\n\n## 1.0.0 (2026-01-01)\n\n- first\n' > "$w/CHANGELOG.md"; git -C "$w" commit -q -am "record the fix"
+out=$($REL finish 1.0.1 --hotfix 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q "changelog check (built in)" <<<"$out" && [ -n "$(tok <<<"$out")" ] && ok "hotfix finish: with an entry committed under the heading the plan is made, and says the check is built in" || no "finish with an entry: rc=$rc $out"
+[ "$(git -C "$R" rev-parse master)" = "$m0" ] && ! git -C "$R" rev-parse -q --verify refs/tags/1.0.1 >/dev/null && ok "hotfix finish: the refusals changed nothing (master, no tag)" || no "the refused finish moved something"
+$REL verify 1.0.1 --hotfix >/dev/null 2>&1; t=$(tok <<<"$out")
+out=$($REL finish 1.0.1 --hotfix --plan "$t" --approved go 2>&1); rc=$?
+[ "$rc" = 0 ] && git -C "$R" rev-parse -q --verify refs/tags/1.0.1 >/dev/null && ok "hotfix finish: applied once the entry is there (tagged)" || no "finish apply: rc=$rc $out"
+mk hnofile
+git -C "$R" checkout -q master; git -C "$R" rm -q CHANGELOG.md; git -C "$R" commit -q -m "no changelog" && git -C "$R" branch -f develop master && git -C "$R" checkout -q parked
+rstart 0.1.1 --hotfix --date 2026-05-06 >/dev/null 2>&1
+out=$($REL finish 0.1.1 --hotfix 2>&1); rc=$?
+[ "$rc" = 0 ] && ! grep -q "changelog check" <<<"$out" && [ -n "$(tok <<<"$out")" ] && ok "hotfix finish: a branch with no CHANGELOG.md is not checked" || no "finish without a changelog: rc=$rc $out"
+
 exit $fail
