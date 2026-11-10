@@ -17,7 +17,7 @@ window N; set lead.context_window". --json says which in window_source: "answer"
 to true in that case. Nothing is written; a transcript that cannot be found or read is "unknown" (exit 0).
 
 compact-check exits 0 when a compact is safe and 1 when it is not, naming every reason: a local run prepared and not verified, a run
-verified and not applied (or applied and not merged: lib/merged.py, the test local list and local clean use, so a tip rewritten with a recorded rewrite counts by its new commit), a merge waiting in the conflicts directory, a whole-suite run in progress
+verified and not applied (or applied and not merged: lib/merged.py, the test local list and local clean use, so a tip rewritten with a recorded rewrite counts by its new commit), a merge waiting in the conflicts directory (a parked worktree, or the .done mark of a resolved one; the .master bookkeeping file of a release finish is not a merge), a whole-suite run in progress
 (a live pid file in $STATE/busy, which feature verify and release verify keep), a handoff note (the file `marshal handoff --write` records
 in $STATE/handoff/PROJECT.json) older than the last merge of the ref journal, and a release or hotfix branch that is open. Either way it
 prints the restart block: what the lead reads again after the compact to resume from stored state. --advise adds the verdict on the
@@ -373,9 +373,13 @@ def busy(state, project):
 
 
 def conflicts(state, project):
+    """The merges of the project that wait: a parked worktree (a directory under STATE/conflicts, PROJECT-KEY) or the mark of one that was resolved and is not applied
+    yet (PROJECT-KEY.done). The other files there are bookkeeping, not a merge: the .master file of a release finish (the master merge commit its second merge takes, kept
+    beside the worktree when that merge conflicts, and left by a finish that stopped after it), so it is not listed; nor is anything outside this directory, such as the
+    records of finish-intent/."""
     d = os.path.join(state, "conflicts")
     try:
-        return sorted(n for n in os.listdir(d) if n.startswith(project + "-"))
+        return sorted(n for n in os.listdir(d) if n.startswith(project + "-") and (n.endswith(".done") or os.path.isdir(os.path.join(d, n))))
     except OSError:
         return []
 

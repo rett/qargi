@@ -32,7 +32,7 @@
 # prepare also appends one JSON line per run to $QARGI_STATE/local-runs.jsonl (run directory, slug, ability, base,
 # start time, temporary directory, and the repository: its real path (repo), or its URL (url) and the path of its credential file (cred), never a token;
 # the class of the run (class: write or read-only; the class file of the run directory is a member's), the stored project of the repository (project) and a copy of the answers that decide what verification accepts (answers: runs.owned_refs, repo.long_lived,
-# repo.parking_branch, git.author, review.keep_author, review.scrub, review.trailer_policy) as they are at prepare; mode 600), so `qargi report` can list the local runs. Verify, clean and
+# repo.parking_branch, git.author, review.keep_author, review.scrub, review.trailer_policy, review.reject_trailers) as they are at prepare; mode 600), so `qargi report` can list the local runs. Verify, clean and
 # review apply read those answers from this line and not from the stored project's file, which is not the lead's alone to write: an answer changed after
 # prepare takes effect on the runs prepared after it. The registry is the lead's and the only record `verify`, `clean`, `run` and `review apply` believe
 # about a run (lib.sh run_record): the repository, the URL and the credential path come from it, and a run whose own repo.path, repo.url or cred.path
@@ -180,6 +180,23 @@ apply_state_drop() {
     apply_tmp_rm "$d" || echo "qargi: warning: could not remove $d, a temporary directory of a killed review apply of $id" >&2
   done
   return 0
+}
+# apply_lock_holder RUN -> prints the pid of the process that holds the review-apply lock of RUN (apply/RUN-ID.json.run in the state, the pid lock of review.sh: the directory
+# holds `pid` with the pid and the process's start time) and returns 0 when that process is running; "unknown" and 0 when the lock was made in the last seconds and holds no
+# pid yet (it is being taken); 1 for no lock, for a pid that is gone and for a pid that was reused by another process (the start time differs): a stale lock never blocks.
+apply_lock_holder() {
+  local id=${1##*/} d pid='' tok='' s a t
+  case $id in qargi.??????) ;; *) return 1;; esac
+  d=$DA_STATE/apply/$id.json.run
+  [ -d "$d" ] && [ ! -L "$d" ] || return 1
+  { read -r pid tok < "$d/pid"; } 2>/dev/null || true
+  if [ -z "$pid" ]; then [ -n "$(find "$d" -maxdepth 0 -newermt '-10 seconds' 2>/dev/null)" ] && { echo unknown; return 0; }; return 1; fi
+  [[ $pid =~ ^[0-9]{1,10}$ ]] && kill -0 "$pid" 2>/dev/null || return 1
+  if [ -n "$tok" ]; then   # the start time (field 22 of /proc/PID/stat) tells the process that took the lock from a later one with the same pid
+    s=$(cat "/proc/$pid/stat" 2>/dev/null) || return 1; read -ra a <<<"${s##*) }"; t=${a[19]:-}
+    [ -z "$t" ] || [ "$t" = "$tok" ] || return 1
+  fi
+  echo "$pid"
 }
 # apply_orphan_scan DAYS: the apply-in.* and apply-wt.* directories directly under the state that no run of the registry accounts for, listed like orphan_scan lists the
 # qargi-run.* ones (kept ... / orphan ...); sets AORPH_LIST ("PATH MTIME"), AORPH_KEPT and AORPH_TOTAL (reg_load first). A name that carries a run's id belongs to that run
@@ -447,51 +464,130 @@ render_warning() {
 # The task block, RUN/task.md, written by prepare for every runtime when --task-file is given: the lead hands the member its path unchanged.
 # taskblock_check TASKFILE DONE ROLE REPO BASE SCOPE... refuses, before anything is made: a task file that is a link, not a regular file, empty, over 1 MiB or with a NUL;
 # a DONE that is plainly not a command line (empty, several lines, or text bash -n cannot parse: a sentence with an apostrophe or a bracket); for a simple command
-# (one list of words, no operator) its first word, after any NAME=value words, must be an executable on PATH, a shell builtin or keyword, or a script path: a word
-# with a slash is a file of BASE (looked up in the object store of REPO at the tip of BASE, never in the lead's working tree), a file under a --scope path (the task
-# may create it) or an absolute file; a run of --repo-url cannot look and takes a relative path as given. A line with an operator (; & | < > ( ) or a backquote,
-# $( included) is accepted when bash -n parses it: only its syntax is checked, not its commands. A SCOPE path that is
+# the command words of the line must be real: the word that starts every simple command (after any NAME=value words and redirections, at the start of the line and after
+# ; & && || | ( or $( ) must be an executable on PATH, a shell builtin or keyword, or a script path. A line that merely contains an operator ("coverage > 80%",
+# "tests pass & lint is clean") is prose, and fails that rule: its first words are no commands. A word with a slash is looked up for the first command of the line only
+# (a later one may follow a cd): it is a file of BASE (looked up in the object store of REPO at the tip of BASE, never in the lead's working tree), a file under a
+# --scope path (the task may create it) or an absolute file; a run of --repo-url cannot look and takes a relative path as given. A word with $ or a backquote has
+# nothing to look up; quoted text, backquotes and ${ } are not read; only the command words are checked, never the arguments. A SCOPE path that is
 # empty, absolute, holds a space, a comma or `..`; and a task file or role text with a line of its own that starts SCOPE: (review check reads that line as the limit).
 TB_SCOPE_RE='^[[:space:]]*([-*][[:space:]]+)?SCOPE:'
-TB_OP_RE='[;&|<>()`]'   # a compound line, a substitution or a redirection
-TB_ASSIGN_RE=$'^[A-Za-z_][A-Za-z0-9_]*=("[^"]*"|\'[^\']*\'|[^[:space:]"\']*)[[:space:]]+(.*)$'   # NAME=value and the rest; a quoted value may hold spaces
+# TB_WORDS_PY: the command words of a DONE line, one per line. A small scanner (a quoted string, a backquoted one, ${ } and $(( )) are one word; ; & | < > ( ) end a
+# word; a redirection operator takes the next word as its target, a number before it is the file descriptor), then the rule: a word is a command word at the start of the
+# line and after a separator or an opening parenthesis, past NAME=value words and the keywords that a command follows (! { if then else elif do while until time). A name
+# the line defines (name() { ...; }) is no command word. What the scanner cannot read it leaves out: that only lets a line through, it never refuses one.
+TB_WORDS_PY='
+import re, sys
+s = sys.argv[1]
+OPS = ";&|<>"
+KEEP = {"!", "{", "if", "then", "else", "elif", "do", "while", "until", "time"}
+toks = []
+cur, has, i, n = "", False, 0, len(s)
+def flush():
+    global cur, has
+    if has:
+        toks.append(("w", cur))
+    cur, has = "", False
+while i < n:
+    c = s[i]
+    if c in " \t":
+        flush(); i += 1
+    elif c == "#" and not has:
+        break
+    elif c == chr(92):
+        cur += s[i + 1:i + 2]; has = True; i += 2
+    elif c == chr(39):
+        j = s.find(chr(39), i + 1); j = n if j < 0 else j
+        cur += s[i + 1:j]; has = True; i = j + 1
+    elif c == chr(34):
+        j = i + 1
+        while j < n and s[j] != chr(34):
+            j += 2 if s[j] == chr(92) else 1
+        cur += s[i + 1:j]; has = True; i = j + 1
+    elif c == "`":
+        j = s.find("`", i + 1); j = n if j < 0 else j
+        cur += s[i:j + 1]; has = True; i = j + 1
+    elif s.startswith("$((", i) or s.startswith("${", i):
+        e = "))" if s[i + 1] == "(" else "}"
+        j = s.find(e, i); j = n if j < 0 else j + len(e)
+        cur += s[i:j]; has = True; i = j
+    elif c == "$" and s.startswith("(", i + 1):
+        cur += "$"; has = True; flush(); i += 1
+    elif c in OPS:
+        if has and cur.isdigit() and c in "<>":
+            cur, has = "", False
+        flush()
+        j = i
+        while j < n and s[j] in OPS:
+            j += 1
+        run = s[i:j]; i = j
+        toks.append(("redir",) if ("<" in run or ">" in run) else ("sep",))
+    elif c == "(":
+        flush(); toks.append(("open",)); i += 1
+    elif c == ")":
+        flush(); toks.append(("close",)); i += 1
+    else:
+        cur += c; has = True; i += 1
+flush()
+out, cmd, pend, defined, k = [], True, False, set(), 0
+while k < len(toks):
+    t = toks[k]; k += 1
+    if t[0] == "redir":
+        pend = True
+    elif t[0] == "w":
+        w = t[1]
+        if pend:
+            pend = False
+        elif cmd and not re.match(r"[A-Za-z_][A-Za-z0-9_]*[+]?=", w) and w not in KEEP:
+            if k + 1 < len(toks) and toks[k][0] == "open" and toks[k + 1][0] == "close":
+                defined.add(w)
+            elif w and w not in defined:
+                out.append(w)
+            cmd = False
+    else:
+        pend = False
+        cmd = t[0] in ("sep", "open")
+print("\n".join(out))
+'
 taskblock_check() {
-  local f=$1 done=$2 role=$3 repo=$4 base=$5 s rd p ok w0 rest; shift 5
-  [ ! -L "$f" ] || die "--task-file $f is a link: give the file itself"
-  [ -f "$f" ] || die "--task-file $f: no such file"
-  grep -q '[^[:space:]]' "$f" || die "--task-file $f is empty: the task block needs the task"
-  [ "$(wc -c < "$f")" -le 1048576 ] || die "--task-file $f is over 1 MiB"
-  [ "$(tr -d '\000' < "$f" | wc -c)" = "$(wc -c < "$f")" ] || die "--task-file $f holds a NUL byte: it must be text"
-  ! grep -Eq "$TB_SCOPE_RE" "$f" || die "--task-file $f has a line that starts SCOPE:, which review check would read as the limit: give the paths with --scope"
+  local f=$1 done=$2 role=$3 repo=$4 base=$5 s rd p ok w0 tw first; shift 5
+  [ ! -L "$f" ] || usage_die "--task-file $f is a link: give the file itself"
+  [ -f "$f" ] || usage_die "--task-file $f: no such file"
+  grep -q '[^[:space:]]' "$f" || usage_die "--task-file $f is empty: the task block needs the task"
+  [ "$(wc -c < "$f")" -le 1048576 ] || usage_die "--task-file $f is over 1 MiB"
+  [ "$(tr -d '\000' < "$f" | wc -c)" = "$(wc -c < "$f")" ] || usage_die "--task-file $f holds a NUL byte: it must be text"
+  ! grep -Eq "$TB_SCOPE_RE" "$f" || usage_die "--task-file $f has a line that starts SCOPE:, which review check would read as the limit: give the paths with --scope"
   [ -n "$done" ] || usage_die "--task-file needs --done COMMAND: the check that says the task is done, as a command (make test, bash tests/x.sh)"
   case $done in *$'\n'*) usage_die "--done is one command line, not several lines: put them in a script and give its path";; esac
   bash -n -c "$done" >/dev/null 2>&1 || usage_die "--done '$done' is not a command line: bash cannot parse it (it reads as prose)"
-  if ! [[ $done =~ $TB_OP_RE ]]; then   # a simple command; a compound line is accepted on its syntax alone
-    rest=$done
-    while [[ $rest =~ $TB_ASSIGN_RE ]]; do rest=${BASH_REMATCH[2]}; done
-    read -r w0 _ <<<"$rest"
-    [ -n "$w0" ] || usage_die "--done '$done' is not a command: it has no command word"
+  tw=$(python3 -I -c "$TB_WORDS_PY" "$done" 2>/dev/null) || die "could not read the --done line: python3 is needed to check it"
+  [ -n "$tw" ] || usage_die "--done '$done' is not a command: it has no command word"
+  first=1
+  while IFS= read -r w0; do
     case $w0 in
-      *'$'*) ;;   # a variable as the command word: there is nothing to look up
+      *'$'*|*'`'*) ;;   # a variable or a substitution as the command word: there is nothing to look up
       */*)
-        p=${w0#./}; ok=''
-        case $w0 in
-          /*) [ -f "$w0" ] && ok=1;;
-          *) if [ -z "$repo" ]; then ok=1
-             else
-               git -C "$repo" cat-file -e "refs/heads/$base:$p" 2>/dev/null && ok=1
-               for s in "$@"; do
-                 s=${s#./}; s=${s%/}
-                 # shellcheck disable=SC2053  # a --scope path may be a glob
-                 if [ "$p" = "$s" ] || [[ $p == "$s"/* ]] || [[ $p == $s ]]; then ok=1; fi
-               done
-             fi;;
-        esac
-        [ -n "$ok" ] || usage_die "--done '$done' is not a command: $w0 is not an existing script (it is not a file of $base, nor under a --scope path)";;
+        if [ -n "$first" ]; then   # a later command may follow a cd, so only the first one is looked up
+          p=${w0#./}; ok=''
+          case $w0 in
+            /*) [ -f "$w0" ] && ok=1;;
+            *) if [ -z "$repo" ]; then ok=1
+               else
+                 git -C "$repo" cat-file -e "refs/heads/$base:$p" 2>/dev/null && ok=1
+                 for s in "$@"; do
+                   s=${s#./}; s=${s%/}
+                   # shellcheck disable=SC2053  # a --scope path may be a glob
+                   if [ "$p" = "$s" ] || [[ $p == "$s"/* ]] || [[ $p == $s ]]; then ok=1; fi
+                 done
+               fi;;
+          esac
+          [ -n "$ok" ] || usage_die "--done '$done' is not a command: $w0 is not an existing script (it is not a file of $base, nor under a --scope path)"
+        fi;;
       *) type -P -- "$w0" >/dev/null || compgen -b -- "$w0" | grep -qx -- "$w0" || compgen -k -- "$w0" | grep -qx -- "$w0" \
            || usage_die "--done '$done' is not a command: $w0 is not an executable, a shell builtin or an existing script (it reads as prose)";;
     esac
-  fi
+    first=''
+  done <<<"$tw"
   for s in "$@"; do
     case $s in ''|/*|*[[:space:],]*|..|../*|*/..|*/../*) usage_die "--scope '$s': a path inside the repository, relative, with no space, comma or .. in it";; esac
   done
@@ -527,15 +623,16 @@ case $verb in
     done
     if [ -n "$URL" ]; then
       [ -z "$REPO" ] || usage_die "give --repo or --repo-url, not both"
-      case $URL in https://*) ;; *) die "--repo-url must be an https URL";; esac
+      case $URL in https://*) ;; *) usage_die "--repo-url must be an https URL";; esac
       uauth=${URL#https://}; uauth=${uauth%%[/?#]*}
-      case $uauth in *@*) die "--repo-url must not carry a user name or a password (https://USER@host): the URL is recorded and put in commands; give the token with --credential-file";; esac
-      [ -z "$CRED" ] || { CRED=${CRED/#\~/$HOME}; [ -f "$CRED" ] || die "--credential-file: no such file"; CRED=$(readlink -f -- "$CRED"); }
+      case $uauth in *@*) usage_die "--repo-url must not carry a user name or a password (https://USER@host): the URL is recorded and put in commands; give the token with --credential-file";; esac
+      [ -z "$CRED" ] || { CRED=${CRED/#\~/$HOME}; [ -f "$CRED" ] || usage_die "--credential-file: no such file"; CRED=$(readlink -f -- "$CRED"); }
     else
-      [ -d "$REPO/.git" ] || [ -f "$REPO/.git" ] || die "--repo must be a git working tree"
+      [ -n "$REPO" ] || usage_die "prepare needs --repo DIR (a git working tree) or --repo-url URL"
+      [ -d "$REPO/.git" ] || [ -f "$REPO/.git" ] || usage_die "--repo must be a git working tree"
       REPO=$(readlink -f -- "$REPO")   # recorded as a real path: the registry and RUN/repo.path say the same text
     fi
-    [ "$ROLE" != lead ] && valid_role "$ROLE" || die "--role: one of $DA_ROLES (qargi role list)"
+    [ "$ROLE" != lead ] && valid_role "$ROLE" || usage_die "--role: one of $DA_ROLES (qargi role list)"
     CLASS=$(role_class "$ROLE")
     # a read-only role needs a read-only barrier on the local surface, or the project's recorded acceptance that there is none
     if [ "$CLASS" = read-only ]; then
@@ -543,7 +640,7 @@ case $verb in
       [ -n "$BPJ" ] || { echo "qargi: no stored project has this repository, so no provider is known and a read-only role cannot start: store it (qargi project attach) and give it a provider (qargi project set PROJECT models.provider NAME)" >&2; exit 2; }
       barrier_guard local "$BPJ"
     fi
-    valid_slug "$SLUG" || die "--slug: lower-case letters, digits and '-'"
+    valid_slug "$SLUG" || usage_die "--slug: lower-case letters, digits and '-'"
     [ -n "$BASE" ] && [ -d "$SCR" ] || usage_die "prepare needs --base BRANCH and --scratch DIR"
     SCR=$(readlink -f -- "$SCR")   # an absolute run directory: the registry and every later verb name it from any working directory
     # the task block (RUN/task.md) is written when --task-file is given; every check of its inputs is made here, before anything is made
@@ -570,12 +667,12 @@ case $verb in
     # is made; a repository in no project, or a project with no local runtime, gets the core's contract alone (no runtime is assumed)
     ADDENDA='' CPJ=$(project_of "$REPO" "$URL")
     # what verification and review apply will believe of the lead's answers is taken now, into the lead's registry line (the stored project's file is not read again for this run):
-    # the project's name and the answers runs.owned_refs, repo.long_lived, repo.parking_branch, git.author and review.keep_author, scrub and trailer_policy, as they are today
+    # the project's name and the answers runs.owned_refs, repo.long_lived, repo.parking_branch, git.author and review.keep_author, scrub, trailer_policy and reject_trailers, as they are today
     ANS='{}'
     if [ -n "$CPJ" ]; then
       ANS=$(jq -c 'def at(f): first(f, null); def own(k): if type == "object" then {(k): at(.[k])} else . end; def owns(ks): if type == "object" then . as $o | reduce ks[] as $k ({}; .[$k] = ($o | at(.[$k]))) else . end;
         {runs: ((at(.runs) | own("owned_refs"))), repo: {long_lived: at(.repo | objects | .long_lived), parking_branch: at(.repo | objects | .parking_branch)},
-         git: (at(.git) | own("author")), review: (at(.review) | owns(["keep_author", "scrub", "trailer_policy"]))}' "$DA_CONF/projects/$CPJ.json" 2>/dev/null) \
+         git: (at(.git) | own("author")), review: (at(.review) | owns(["keep_author", "scrub", "trailer_policy", "reject_trailers"]))}' "$DA_CONF/projects/$CPJ.json" 2>/dev/null) \
         || die "the answers of project $CPJ cannot be read, so the run could not record them; nothing was made (qargi project validate $CPJ)"
     fi
     if [ -n "$CPJ" ]; then
@@ -871,7 +968,7 @@ WRAP
       [ "$bad_n" = 0 ] || exit 1   # a stale run that clean refused (never applied, not merged, refs changed) stays, named, with the reason
       exit 0
     fi
-    [ -z "$YES" ] || die "clean: --yes is for --stale"
+    [ -z "$YES" ] || usage_die "clean: --yes is for --stale"
     if [ -n "$ALL" ]; then
       [ -z "$CLEAN_RUN$DISCARD" ] || usage_die "clean --applied takes no RUN dir and no --discard: it cleans only what is applied and merged"
       [ -d "$SCR" ] || usage_die "clean --applied needs --scratch DIR, the directory the runs were prepared in"
@@ -887,11 +984,13 @@ WRAP
       [ "$bad_n" = 0 ] || exit 1   # an applied run that was refused (not merged, refs changed); a run still in progress is no failure
       exit 0
     fi
-    [ -z "$SCR" ] || die "clean: --scratch is for --applied and --stale"
+    [ -z "$SCR" ] || usage_die "clean: --scratch is for --applied and --stale"
     reg_load
     RUN=$CLEAN_RUN
     while [ "${RUN%/}" != "$RUN" ] && [ "$RUN" != / ]; do RUN=${RUN%/}; done   # a trailing slash makes rm -rf follow a link
     marshal_touch_run "$RUN"   # the lead's clean keeps its lease on the feature the run is based on
+    # a run whose review apply is under way is not removed, --discard or not: the apply reads the run's files and its saved copy, and writes the branch and the record
+    if aph=$(apply_lock_holder "$RUN"); then die "a review apply of $RUN is running (process $aph, $DA_STATE/apply/${RUN##*/}.json.run); nothing was removed: let it finish, then clean again"; fi
     if [ -n "$RUN" ] && [ ! -e "$RUN" ] && [ ! -L "$RUN" ]; then
       # the run directory is gone (a reboot that emptied a tmpfs, or removed by hand): only the registry's record and the saved copy are left
       case ${RUN##*/} in qargi.??????) ;; *) usage_die "clean needs a RUN dir made by prepare";; esac
