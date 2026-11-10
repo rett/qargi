@@ -74,6 +74,10 @@ refusal changes nothing.
    `verify` runs the gates in order; the CI workflow of the scaffold makes each gate its own job and the jobs run in parallel. A feature-tier
    gate's job runs on every pull request; a release-tier gate's job runs only on a pull request from a `release/` or `hotfix/` branch (and
    when the workflow is started by hand), as only `release verify` runs that gate.
+   A feature gate whose check a release gate runs as well (a release gate that builds and tests everything, say) may carry
+   `"covered_by": "NAME"`, NAME being a release-tier gate (`project set` and `project validate` refuse any other name). `feature verify` still
+   runs the gate; `release verify` lists it as `covered by NAME` and does not run it, and its result in the record and the `gates:` line is
+   `covered by NAME` when NAME passed, and `not run` when NAME failed or was not reached because an earlier gate failed.
 4. `qargi release start VERSION` cuts `release/VERSION` from develop (only from a head that passed the
    suite) and bumps `VERSION` and the changelog date. Like the pushes and merges it prints a plan (the branch, the base, the files
    the bump commit changes) and a token first, and applies with `--plan TOKEN --approved "<your words>"`, which also writes the
@@ -105,7 +109,11 @@ refusal changes nothing.
    the job ids under `jobs:` and the `name:` line of each job) and warns, on standard error, naming each job whose name and id match no
    declared gate name; a job whose name cannot be read (an expression, a block scalar, a flow mapping) is reported as unknown, a note and
    never a failure. `release verify --strict` refuses, before anything runs, when any job matches no gate name. With no workflow nothing new
-   is printed; with workflows and no gates declared every job is named.
+   is printed; with workflows and no gates declared one note names all the jobs, instead of a warning each.
+   Two optional answers say which jobs are not unmatched. A gate may carry `"ci_jobs": ["job", ...]`, the CI jobs (names or ids) that run its
+   check under another name: the scan reports each as a note, `covered by gate NAME`, and does not warn. The answer `ci.not_gates` is a list
+   of job names or ids that are aggregate or publish jobs and not gates: the scan leaves them out, so `--strict` does not count them. A name
+   listed in either that no workflow has is a warning (it is not shown when a workflow or a job name cannot be read, as the name may be there).
    Two optional answers add generic checks, both warnings and neither a refusal. `release.version_files` is a list of paths
    (relative to the repository) of other files that carry the version, a manifest say: `release start` prints a warning naming the
    ones that do not yet contain the new version (as a whole version, so `0.2.1` is not found in `0.2.10`) and says to bump them on

@@ -88,7 +88,10 @@ SUITE_FAIL_NOTE = ("The output of the suite is kept in STATE/suite-logs/PROJECT.
 GATES_NOTE = ("Declared gates: the project answer gates is an ordered list of {name, command, tier} (command: a command line or a list of words, as test_command; tier: feature or release; names unique). "
               "Absent, test_command (release.test_command for a release) is run, as before. Declared, the gates run instead and test_command is not also run (a gate whose command is the same runs it): "
               "feature verify runs the gates of tier feature in order and release verify the feature tier, then the release tier, each stopping at the first failure (the rest are listed as not run). "
-              "The verdict line is still 'full suite: pass|fail at SHA', and the run record and the status lines list each gate with its result.")
+              "The verdict line is still 'full suite: pass|fail at SHA', and the run record and the status lines list each gate with its result. "
+              "A gate may also list ci_jobs, the CI jobs (names or ids) that run its check under another name: the CI scan of release verify reports them as covered by the gate. "
+              "A feature gate may name a release gate in covered_by when that gate's command runs the same check: release verify then lists the gate as covered by it and does not run it "
+              "(its result is 'covered by NAME' when NAME passed, 'not run' when NAME failed or was not reached); feature verify still runs it. The name must be a release gate.")
 OTHER_RUNS_NOTE = ("Before it starts it warns on standard error, and goes on, when another suite may be running: a whole-suite run of the project in progress, a local run "
                    "of the repository with a file changed in the last QARGI_ACTIVE_MINUTES minutes (default 10), or a tests/run.sh process in the repository (Linux).")
 TAG_NOTE = ("When the tag VERSION exists it also warns about a tag that has no GitHub release (asked with a read-only gh release view, through QARGI_GH, default gh; "
@@ -570,8 +573,10 @@ COMMANDS = {
                            [PROJECT_OPT, HOTFIX_OPT, opt("--strict", "refuse, before anything runs, when a CI job matches no declared gate name")],
                            desc=TAG_NOTE + " The exit status stays the suite's result. The command is release.test_command when the project sets one, else test_command. " + GATES_NOTE + " "
                                  "Before it runs, it reads the workflow files of the tree it verifies (.github/workflows/*.yml and *.yaml; standard library only, no YAML library: the job ids under jobs: and the name: line of each job) "
-                                 "and warns on standard error, naming each job whose name and id match no declared gate name (with no gate declared, every job). A job whose name cannot be read (an expression, a block scalar, a flow mapping) "
-                                 "is reported as unknown, a note and never a failure. --strict refuses (exit 1, nothing run) when any job matches no gate name. Without a workflow it prints nothing new. "
+                                 "and warns on standard error, naming each job whose name and id match no declared gate name, is not listed in a gate's ci_jobs and is not listed in the optional answer ci.not_gates (the jobs that are aggregate or publish jobs and not gates). "
+                                 "A job a gate lists in ci_jobs is reported as a note, covered by that gate. With no gate declared it prints one note naming the jobs instead of a warning each. "
+                                 "A name listed in ci_jobs or ci.not_gates that no workflow has is a warning. A job whose name cannot be read (an expression, a block scalar, a flow mapping) "
+                                 "is reported as unknown, a note and never a failure. --strict refuses (exit 1, nothing run) when any job matches no gate name (the listed ones match), also with no gate declared. Without a workflow it prints nothing new. "
                                  "On the release branch, with release.version_files set, it also shows whether every listed file contains VERSION (a warning for the ones that do not). " + OTHER_RUNS_NOTE + " " + SUITE_FAIL_NOTE),
             "fix": verb("Make a worktree on the release branch to commit a fix in, and push the fix again with --push", [("VERSION", "none")],
                         [PROJECT_OPT, HOTFIX_OPT, opt("--push", "push the committed fix: the same as release push (the plan token and approval below)"), PLAN, APPROVED],

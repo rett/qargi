@@ -86,7 +86,7 @@ gates_lines() { # ANSWERS_FILE -> with declared gates, a heading and one line ea
   sel=$(python3 -I "$(dirname "$(readlink -f "$0")")/gates.py" select "$1" feature release 2>/dev/null) || return 0
   [ -n "$sel" ] || return 0
   echo "declared gates (they replace the test command: feature verify and release verify run them in order and stop at the first failure):"
-  jq -r '.[] | "  \(.tier)  \(.name)  \(.command)"' <<<"$sel"
+  jq -r '.[] | "  \(.tier)  \(.name)  \(.command)" + (if .covered_by then "  (release verify: covered by \(.covered_by))" else "" end)' <<<"$sel"
 }
 
 validate() { # file -> prints problems, exit 1 if any
@@ -199,6 +199,8 @@ if isinstance(rvw, dict):
 # tier then the release tier, and the CI jobs of a release are compared with the names (lib/gates.py)
 import gates as _gates
 bad.extend(_gates.problems(c.get("gates")))
+# ci.not_gates: the CI jobs that are aggregate or publish jobs and not gates (optional; the scan of release verify leaves them out); gates[].ci_jobs: the jobs that run a gate's check under another name
+bad.extend(_gates.ci_problems(c.get("ci")))
 # backlog.file: the markdown file of the project's backlog (optional; qargi backlog): a path, ~/... or relative to the repository; it may be outside it
 bkl = c.get("backlog", {})
 need(isinstance(bkl, dict) and set(bkl) <= {"file"}, "backlog: an object like {file: \"/path/backlog.md\"} (unknown key: only file)")

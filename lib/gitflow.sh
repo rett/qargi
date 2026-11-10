@@ -243,22 +243,46 @@ gates_note() {
 }
 # run_gates -> runs the gates of GATES in order in the worktree WT, stops at the first failure (the rest are "not run") and writes one JSON line per
 # gate ({name, tier, result, seconds}) to the file GATES_FILE (set by run_suite_logged: one per run, beside its log), which record_suite reads. The status is 1 when a gate failed.
+# A gate with covered_by NAME, when NAME is a gate of this run (a release verify), is not run: it is listed as covered, and its result is "covered by NAME" when NAME
+# passed, else "not run" (NAME failed or was not reached). A feature verify has no NAME among its gates, so it runs the gate.
 run_gates() {
-  local n i name tier cmd rc=0 t0 res
+  local n i name tier cmd cov c rc=0 t0 res
+  local -A result=() covby=()
+  local -a names=() rows=()
   { mkdir -p "$DA_STATE/suite-logs" && : > "$GATES_FILE"; } 2>/dev/null || GATES_FILE=/dev/null
   n=$(jq 'length' <<<"$GATES")
   for ((i = 0; i < n; i++)); do
     name=$(jq -r ".[$i].name" <<<"$GATES"); tier=$(jq -r ".[$i].tier" <<<"$GATES"); cmd=$(jq -r ".[$i].command" <<<"$GATES")
+    cov=$(jq -r --argjson i "$i" '.[$i].covered_by as $c | select($c != null and any(.[]; .name == $c)) | $c' <<<"$GATES")
+    names[i]=$name
+    if [ -n "$cov" ]; then
+      echo "== gate $name ($tier): covered by $cov, which runs later in this verify; not run here"
+      covby["$name"]=$cov
+      rows[i]=$(jq -nc --arg n "$name" --arg t "$tier" '{name:$n, tier:$t}')
+      continue
+    fi
     if [ "$rc" != 0 ]; then
       echo "== gate $name ($tier): not run (an earlier gate failed)"
-      jq -nc --arg n "$name" --arg t "$tier" '{name:$n, tier:$t, result:"not run"}' >> "$GATES_FILE"
+      result["$name"]='not run'
+      rows[i]=$(jq -nc --arg n "$name" --arg t "$tier" '{name:$n, tier:$t, result:"not run"}')
       continue
     fi
     echo "== gate $name ($tier): $cmd"
     t0=$SECONDS
     if run_clean "$WT" bash -c "$cmd"; then res=pass; else res=fail; rc=1; fi
     echo "== gate $name: $res ($((SECONDS - t0))s)"
-    jq -nc --arg n "$name" --arg t "$tier" --arg r "$res" --argjson d "$((SECONDS - t0))" '{name:$n, tier:$t, result:$r, seconds:$d}' >> "$GATES_FILE"
+    result["$name"]=$res
+    rows[i]=$(jq -nc --arg n "$name" --arg t "$tier" --arg r "$res" --argjson d "$((SECONDS - t0))" '{name:$n, tier:$t, result:$r, seconds:$d}')
+  done
+  # a covered gate takes the verdict of the gate that covers it; every gate is then recorded, in the order declared
+  for ((i = 0; i < n; i++)); do
+    name=${names[i]}; c=${covby["$name"]:-}
+    if [ -n "$c" ]; then
+      if [ "${result["$c"]:-}" = pass ]; then res="covered by $c"
+      else res='not run'; echo "== gate $name: not run (covered by $c, which did not pass)"; fi
+      rows[i]=$(jq -c --arg r "$res" '. + {result:$r}' <<<"${rows[i]}")
+    fi
+    printf '%s\n' "${rows[i]}" >> "$GATES_FILE"
   done
   return "$rc"
 }

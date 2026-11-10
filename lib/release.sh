@@ -139,17 +139,27 @@ RTC=$(jq -r '(.release? // {}) | .test_command // empty | if type == "array" the
 # the declared gates (the answer gates; lib/gates.py) replace test_command and release.test_command: a release runs the feature-tier gates, then the release-tier gates
 case $verb in start|status|verify|push|finish) gates_load feature release; [ -z "$GATES" ] || RTC='';; esac
 # ci_scan DIR -> compares the jobs of DIR/.github/workflows with the declared gate names (lib/gates.py scan): a warning for each job that matches no gate
-# name, a note for each job whose name cannot be read (never a failure), and CI_UNMATCHED, how many jobs matched no name. Nothing is printed without workflows.
+# name, is not listed in a gate's ci_jobs and is not in ci.not_gates; a note for each job a gate covers (ci_jobs), for each job whose name cannot be read
+# (never a failure) and, with no gate declared, one note for all the jobs instead of a warning each; a warning for a listed name that no workflow has;
+# and CI_UNMATCHED, how many jobs matched no name. Nothing is printed without workflows.
 ci_scan() {
-  local kind file job name
+  local kind file job name unlisted=''
   CI_UNMATCHED=0
   while IFS=$'\t' read -r kind file job name; do
     case $kind in
-      unmatched) CI_UNMATCHED=$((CI_UNMATCHED + 1)); echo "qargi: warning: CI job $job${name:+ ($name)} in $file matches no declared gate name${GATES:+ (declared: $(jq -r 'map(.name) | join(", ")' <<<"$GATES"))}" >&2;;
+      unmatched) CI_UNMATCHED=$((CI_UNMATCHED + 1))
+                 if [ -n "${GATES:-}" ]; then echo "qargi: warning: CI job $job${name:+ ($name)} in $file matches no declared gate name (declared: $(jq -r 'map(.name) | join(", ")' <<<"$GATES"))" >&2
+                 else unlisted="${unlisted:+$unlisted, }$job"; fi;;
+      covered) echo "qargi: note: CI job $job in $file is covered by gate $name" >&2;;
+      missing) case $name in
+                 ci.not_gates) echo "qargi: warning: ci.not_gates lists $job, but no workflow has a job of that name or id" >&2;;
+                 *) echo "qargi: warning: $name lists the CI job $job in ci_jobs, but no workflow has a job of that name or id" >&2;;
+               esac;;
       unknown) if [ -n "$job" ]; then echo "qargi: note: CI job $job in $file: its name cannot be read, so it is not compared with the gates" >&2
                else echo "qargi: note: CI workflow $file: its jobs cannot be read, so they are not compared with the gates" >&2; fi;;
     esac
   done < <(python3 -I "$(dirname "$0")/gates.py" scan "$af" "$1" || true)
+  [ -z "$unlisted" ] || echo "qargi: note: no gate is declared, so the CI jobs are not compared with gate names (jobs: $unlisted); declare gates, or list the jobs that are not gates in the answer ci.not_gates" >&2
 }
 GH=${QARGI_GH:-gh}   # the one way this script talks to GitHub; tests put a stub here
 repo_slug() { jq -r '.repo.url' "$af" | sed 's|^https://[^/]*/||; s|\.git$||'; }
@@ -713,7 +723,7 @@ case $verb in
     worktree "$h"
     # the CI jobs of the tree being verified against the gate names: a warning each, a refusal with --strict (before the gates run)
     ci_scan "$WT"
-    [ -z "$STRICT" ] || [ "$CI_UNMATCHED" = 0 ] || die "--strict: $CI_UNMATCHED CI job(s) match no declared gate name (named above); nothing was run. Declare a gate of the job's name or id, or run it without --strict"
+    [ -z "$STRICT" ] || [ "$CI_UNMATCHED" = 0 ] || die "--strict: $CI_UNMATCHED CI job(s) match no declared gate name ($([ -n "${GATES:-}" ] && echo 'named above' || echo 'no gate is declared')); nothing was run. Declare a gate of the job's name or id, or run it without --strict"
     echo "running the whole suite on $on at $(g rev-parse --short "$on"): $TESTCMD"
     gates_note
     other_runs_warning
