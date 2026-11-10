@@ -202,7 +202,14 @@ flagged. `qargi backlog done ID --evidence "<text>"` prints a plan with a token:
 to. With `--plan TOKEN --approved "<your words>"` it appends the item, the date and the evidence to `NAME-archive-YYYY-MM.md` in the
 directory of the backlog file (`NAME` is the file's name without `.md`; the archive is created when absent), then removes the item
 from the backlog, and writes an audit log line. Nothing is deleted without the plan, and an id that is missing or used by more than
-one item is refused. `done` is the lead's: a member's guard refuses it, and `list` only reads.
+one item is refused. `done` takes several ids (`qargi backlog done ID1 ID2 --evidence "<text>"`): one plan lists every item, one
+token covers the batch, the same evidence is archived with each id, and an id that is missing, used by more than one item or named
+twice refuses the whole batch before any plan is printed.
+
+`qargi backlog add ID "text" [--detail "more words"]` appends the item `- [ID] text` (the detail as indented lines under it) at the
+end of the list, of the `backlog.section` list when that is set, and writes an audit log line. It refuses an id that is not a
+slug and an id that is already an item anywhere in the file, and then does not touch the file. It adds one line and removes
+nothing, so it takes no token. `add` and `done` are the lead's: a member's guard refuses them, and `list` only reads.
 
 `feature finish` and `release finish` add a line to their plans, `backlog items named in these commits: ID, ...`, for the open items
 whose id appears (as a whole slug) in the messages of the commits being merged. It is information: it is not part of the token and

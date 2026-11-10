@@ -206,6 +206,57 @@ $DA project set app backlog.section '##' >/dev/null 2>&1 && no "an empty heading
 unset QARGI_NOW
 jq 'del(.backlog.archive, .backlog.section)' "$P" > "$P.new" && mv "$P.new" "$P"
 
+# --- 5c. add: one item, validated; done: a batch with one plan and one token
+AF=$T/mem/add.md; printf -- '# Backlog\n\n- [aa-one] first\n' > "$AF"
+$DA project set app backlog.file "$AF" >/dev/null 2>&1
+out=$(bl add bb-two "second item" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "added \[bb-two\] to $AF" <<<"$out" && [ "$(cat "$AF")" = "$(printf '# Backlog\n\n- [aa-one] first\n- [bb-two] second item')" ] && ok "add appends the item to the list" || no "add rc=$rc: $out; $(cat "$AF")"
+[ "$(jq -rs '[.[] | select(.verb == "backlog:add")] | map(.detail) | join(",")' "$T/s/audit.log")" = "app bb-two" ] && ok "add leaves an audit line" || no "add audit: $(cat "$T/s/audit.log")"
+out=$(bl add cc-three "third" --detail "why it matters
+and how" 2>&1); rc=$?
+[ $rc = 0 ] && tail -3 "$AF" | head -1 | grep -qx -- '- \[cc-three\] third' && tail -2 "$AF" | head -1 | grep -qx '  why it matters' && tail -1 "$AF" | grep -qx '  and how' && ok "add --detail writes indented lines that belong to the item" || no "add detail rc=$rc: $out; $(cat "$AF")"
+bl list 2>&1 | grep -q ': 3 open items$' && ok "and list shows the three items" || no "list after add: $(bl list 2>&1)"
+cp "$AF" "$T/add.before"
+out=$(bl add aa-one "again" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q 'the id \[aa-one\] is already an item (line 3)' <<<"$out" && cmp -s "$AF" "$T/add.before" && ok "add refuses an id that is taken and changes nothing" || no "dup add rc=$rc: $out"
+for bad in 'Bad Id' a 'UPPER'; do
+  out=$(bl add "$bad" "x" 2>&1); rc=$?
+  [ $rc = 1 ] && grep -q 'a lowercase slug' <<<"$out" && cmp -s "$AF" "$T/add.before" && ok "add refuses the id '$bad' (no slug)" || no "bad slug '$bad' rc=$rc: $out"
+done
+out=$(bl add dd-four 2>&1); rc=$?; [ $rc = 2 ] && grep -q 'usage: qargi backlog' <<<"$out" && ok "add without a text is a usage error" || no "add usage rc=$rc: $out"
+out=$(bl add dd-four "x" --evidence e 2>&1); rc=$?; [ $rc = 2 ] && ok "add takes no evidence" || no "add evidence rc=$rc: $out"
+out=$(bl add dd-four "  " 2>&1); rc=$?; [ $rc = 1 ] && grep -q 'the text needs words' <<<"$out" && ok "add refuses a blank text" || no "blank text rc=$rc: $out"
+# the section: the item goes to the end of the list under the heading
+printf -- '# Backlog\n\n## Now\n\n- [aa-one] first\n\n## Later\n\n- [zz-last] last\n' > "$AF"
+$DA project set app backlog.section Now >/dev/null 2>&1
+bl add bb-two "second" >/dev/null 2>&1
+[ "$(cat "$AF")" = "$(printf '# Backlog\n\n## Now\n\n- [aa-one] first\n- [bb-two] second\n\n## Later\n\n- [zz-last] last')" ] && ok "with backlog.section the item goes to the end of that section's list" || no "add in section: $(cat "$AF")"
+out=$(bl add zz-last "taken in Later" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q 'the id \[zz-last\] is already an item' <<<"$out" && ok "an id taken outside the section is refused too" || no "dup outside section rc=$rc: $out"
+jq 'del(.backlog.section)' "$P" > "$P.new" && mv "$P.new" "$P"
+# done with several ids: one plan, one token, the same evidence for each, one apply
+printf -- '- [aa-one] first\n- [bb-two] second\n  more\n- [cc-three] third\n- [dd-four] fourth\n' > "$AF"
+export QARGI_NOW=2026-11-08; AARCH=$T/mem/add-archive-2026-11.md; rm -f "$AARCH"
+out=$(bldone aa-one cc-three --evidence "shipped together" 2>&1); rc=$?; t=$(tok <<<"$out")
+[ $rc = 0 ] && [ -n "$t" ] && [ "$(grep -c '^plan token:' <<<"$out")" = 1 ] && grep -q '^done 2 items (\[aa-one\], \[cc-three\]): move them out of' <<<"$out" && grep -q '^  | - \[aa-one\] first$' <<<"$out" \
+  && grep -q '^  | - \[cc-three\] third$' <<<"$out" && grep -q 'qargi backlog done aa-one cc-three --evidence' <<<"$out" && ok "a batch has one plan listing every item, and one token" || no "batch plan rc=$rc: $out"
+cp "$AF" "$T/add.before"
+out=$(bldone aa-one cc-three --evidence "shipped together" --plan "$t" --approved go 2>&1); rc=$?
+[ $rc = 0 ] && [ "$(printf '%s\n' "$out" | grep -c '^done \[')" = 2 ] && [ "$(cat "$AF")" = "$(printf -- '- [bb-two] second\n  more\n- [dd-four] fourth')" ] && ok "the apply removes every item of the batch and no other" || no "batch apply rc=$rc: $out; $(cat "$AF")"
+[ "$(grep -c '^### ' "$AARCH")" = 2 ] && [ "$(grep -c '^Evidence: shipped together$' "$AARCH")" = 2 ] && grep -q '^### 2026-11-08: aa-one$' "$AARCH" && grep -q '^### 2026-11-08: cc-three$' "$AARCH" && ok "the same evidence is archived with each id" || no "batch archive: $(cat "$AARCH")"
+[ "$(jq -rs '[.[] | select(.verb == "backlog:done")] | last | .detail' "$T/s/audit.log")" = "app aa-one cc-three" ] && ok "one audit line names the batch" || no "batch audit: $(tail -1 "$T/s/audit.log")"
+# a token for one id does not apply the batch; a missing, repeated or comma-joined id refuses all and changes nothing
+printf -- '- [aa-one] first\n- [bb-two] second\n' > "$AF"; cp "$AF" "$T/add.before"; rm -f "$AARCH"
+t1=$(tok <<<"$(bldone aa-one --evidence e 2>&1)")
+out=$(bldone aa-one bb-two --evidence e --plan "$t1" --approved go 2>&1); rc=$?
+[ $rc != 0 ] && grep -q 'the plan changed or --plan is missing' <<<"$out" && cmp -s "$AF" "$T/add.before" && [ ! -e "$AARCH" ] && ok "the token of one id does not apply a batch" || no "token of one rc=$rc: $out"
+for ids in 'aa-one nope-x' 'aa-one aa-one' 'aa-one,bb-two'; do
+  # shellcheck disable=SC2086  # the ids are split on purpose
+  out=$(bldone $ids --evidence e 2>&1); rc=$?
+  [ $rc != 0 ] && [ -z "$(tok <<<"$out")" ] && cmp -s "$AF" "$T/add.before" && ok "the batch '$ids' is refused with no plan, nothing changed" || no "batch '$ids' rc=$rc: $out"
+done
+unset QARGI_NOW
+
 # --- 6. feature finish names the open items the commits mention (information only)
 $DA project set app backlog.file "$MEM" >/dev/null 2>&1
 printf -- '# Backlog\n\n- [add-cache] Cache the lookups\n- [late-one] The last one\n- [never-named] Nobody mentions it\n- [ci] a short id\n- plain\n' > "$MEM"

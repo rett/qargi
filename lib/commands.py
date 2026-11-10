@@ -460,7 +460,7 @@ COMMANDS = {
         },
     },
     "backlog": {
-        "summary": "The project's backlog: list its open items, move a done one to the dated archive",
+        "summary": "The project's backlog: list, add, and archive the done ones",
         "desc": ("The backlog is a markdown file that the project answer backlog.file names (a path: ~/ works, a relative path is taken from the repository, "
                  "and the file may live outside it, in a memory store for instance; qargi project set PROJECT backlog.file PATH). "
                  "An item is a top-level list line written '- [ID] text' (or '* [ID] text'), ID a lowercase slug of letters, digits and hyphens, two characters or more "
@@ -477,13 +477,21 @@ COMMANDS = {
                          [PROJECT_OPT, opt("--json", "print the file, the items (id, line, text, full text, duplicate) and the duplicated ids as one JSON object")],
                          desc="Read only, so a member may run it. Exit 1 when backlog.file is unset or its file is missing.",
                          examples=["qargi backlog list", "qargi backlog list --json"]),
-            "done": verb("Move an item, with the evidence and the date, to the archive file beside the backlog and remove it from the backlog, with the token and an approval", [("ID", "none")],
-                         [PROJECT_OPT, opt("--evidence", "the words that show the item is done (they are archived with the item and the date)", "TEXT"), PLAN, APPROVED],
-                         desc=("The plan shows the item and the file it goes to. Applied, the item (as written, with its indented lines), the date and the evidence are appended to "
+            "add": verb("Add an item: '- [ID] TEXT' at the end of the list, of the section when backlog.section is set", [("ID", "none"), ("TEXT", "none")],
+                        [PROJECT_OPT, opt("--detail", "more words for the item, written as indented lines under it (one line of the option per line of the item)", "TEXT")],
+                        desc=("ID is a lowercase slug (letters, digits and hyphens, two characters or more); an id that is no slug, or is already an item anywhere in the file (also outside "
+                              "the section), is refused (exit 1) and the file is not touched. TEXT is one line; --detail may span lines. The item is written at once (no plan: it adds a line and "
+                              "removes nothing) and an audit line is kept. Lead only: a member's guard refuses every backlog verb but list; report the item in the task output instead."),
+                        examples=["qargi backlog add fix-names \"Rename the two helpers that share a name\"", "qargi backlog add fix-names \"Rename the helpers\" --detail \"They differ in case only.\""]),
+            "done": verb("Move items, with the evidence and the date, to the archive file beside the backlog and remove them from the backlog, with the token and an approval", [("ID", "none"), ("[ID...]", "none")],
+                         [PROJECT_OPT, opt("--evidence", "the words that show the items are done (they are archived with each item and the date)", "TEXT"), PLAN, APPROVED],
+                         desc=("Several ids make one batch: one plan listing every item, one token for the whole batch, and the same evidence archived with each id; the batch applies together "
+                               "(the archive is written once, then the backlog), and an id that is not there, is used by more than one item, or is named twice refuses the whole batch with no plan. "
+                               "The plan shows the items and the file they go to. Applied, each item (as written, with its indented lines), the date and the evidence are appended to "
                                "NAME-archive-YYYY-MM.md in the directory of the backlog file, or where backlog.archive says (NAME is the backlog file's name without .md; the archive is created when absent), "
-                               "and then the item is removed from the backlog. Nothing is deleted without the plan. Refused when the id is not there, or is used by more than one item "
+                               "and then the items are removed from the backlog. Nothing is deleted without the plan. Refused when the id is not there, or is used by more than one item "
                                "(make the ids unique first). Not available in a member run."),
-                         examples=["qargi backlog done fix-names --evidence \"merged, suite green\"",
+                         examples=["qargi backlog done fix-names --evidence \"merged, suite green\"", "qargi backlog done fix-names add-cache --evidence \"merged in feature/names, suite green\"",
                                    "qargi backlog done fix-names --evidence \"merged, suite green\" --plan TOKEN --approved \"yes\""]),
         },
     },

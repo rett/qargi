@@ -89,6 +89,100 @@ class Section(unittest.TestCase):
             self.assertEqual(named("Absent"), "")
 
 
+class Add(unittest.TestCase):
+    def add(self, text, ident, line, detail=None, section=None):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "backlog.md")
+            with open(path, "w") as f:
+                f.write(text)
+            B.OPTS["section"] = section
+            old_out, sys.stdout = sys.stdout, io.StringIO()
+            try:
+                B.cmd_add(path, ident, line, detail)
+            finally:
+                sys.stdout = old_out
+                B.OPTS["section"] = None
+            with open(path) as f:
+                return f.read()
+
+    def test_appended_after_the_last_item_and_before_the_trailing_blank_lines(self):
+        self.assertEqual(self.add("# T\n\n- [aa] one\n  more\n", "bb", "two"), "# T\n\n- [aa] one\n  more\n- [bb] two\n")
+        self.assertEqual(self.add("- [aa] one\n\n\n", "bb", "two"), "- [aa] one\n- [bb] two\n\n\n")
+
+    def test_the_detail_is_indented_and_stays_with_the_item(self):
+        got = self.add("- [aa] one\n", "bb", "two", "first line\nsecond line")
+        self.assertEqual(got, "- [aa] one\n- [bb] two\n  first line\n  second line\n")
+        items = B.parse(got.split("\n"))
+        self.assertEqual(items[1]["full"], ["- [bb] two", "  first line", "  second line"])
+
+    def test_a_file_without_a_final_newline_keeps_none(self):
+        self.assertEqual(self.add("- [aa] one", "bb", "two"), "- [aa] one\n- [bb] two")
+
+    def test_a_heading_before_the_list_gets_a_blank_line(self):
+        self.assertEqual(self.add("# Backlog\n", "aa", "one"), "# Backlog\n\n- [aa] one\n")
+
+    def test_it_goes_to_the_end_of_the_section(self):
+        text = "# T\n\n## Now\n\n- [aa] one\n\n## Later\n\n- [bb] two\n"
+        self.assertEqual(self.add(text, "cc", "three", section="Now"), "# T\n\n## Now\n\n- [aa] one\n- [cc] three\n\n## Later\n\n- [bb] two\n")
+        self.assertEqual(self.add("## Now\n## Later\n", "cc", "three", section="Now"), "## Now\n\n- [cc] three\n\n## Later\n")
+        self.assertEqual(self.add(text, "cc", "three", section="Later"), text.replace("- [bb] two\n", "- [bb] two\n- [cc] three\n"))
+
+    def test_refusals(self):
+        for ident, line, kw in (("Bad Id", "x", {}), ("a", "x", {}), ("aa", "  ", {}), ("aa", "one\ntwo", {}), ("aa", "x\x01", {}), ("aa", "x", {"detail": " "}),
+                                ("dup-id", "again", {}), ("aa", "x", {"section": "Absent"})):
+            with self.assertRaises(B.BacklogError, msg=(ident, line, kw)):
+                self.add("- [dup-id] there\n## Now\n", ident, line, **kw)
+        with self.assertRaises(B.BacklogError):    # the id is taken in another section: still refused
+            self.add("## Now\n\n- [aa] one\n\n## Later\n\n- [bb] two\n", "bb", "again", section="Now")
+
+
+class Batch(unittest.TestCase):
+    def run_done(self, text, ids):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "backlog.md")
+            with open(path, "w") as f:
+                f.write(text)
+            os.environ["QARGI_NOW"] = "2026-11-08"
+            old_out, sys.stdout = sys.stdout, io.StringIO()
+            try:
+                B.cmd_apply(path, ids, "shown by a test")
+            finally:
+                sys.stdout = old_out
+                del os.environ["QARGI_NOW"]
+            with open(path) as f:
+                rest = f.read()
+            with open(os.path.join(d, "backlog-archive-2026-11.md")) as f:
+                return rest, f.read()
+
+    def test_several_items_go_with_the_same_evidence_in_one_archive_write(self):
+        rest, arch = self.run_done("# T\n\n- [aa] one\n\n- [bb] two\n  more\n\n- [cc] three\n\n- [dd] four\n", "dd,aa,cc")
+        self.assertEqual(rest, "# T\n\n- [bb] two\n  more\n")
+        self.assertEqual(arch.count("Evidence: shown by a test"), 3)
+        self.assertEqual([ln for ln in arch.splitlines() if ln.startswith("### ")], ["### 2026-11-08: dd", "### 2026-11-08: aa", "### 2026-11-08: cc"])
+
+    def test_one_id_is_as_before_and_the_token_covers_every_id(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "backlog.md")
+            with open(path, "w") as f:
+                f.write("- [aa] one\n- [bb] two\n- [cc] three\n")
+            self.assertNotEqual(B.plan_token(path, "aa,bb", "e"), B.plan_token(path, "aa", "e"))
+            self.assertNotEqual(B.plan_token(path, "aa,bb", "e"), B.plan_token(path, "aa,cc", "e"))
+            self.assertEqual(B.plan_token(path, "aa,bb", "e"), B.plan_token(path, "aa,bb", "e"))
+
+    def test_a_missing_or_repeated_id_refuses_the_batch_and_changes_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "backlog.md")
+            text = "- [aa] one\n- [bb] two\n"
+            with open(path, "w") as f:
+                f.write(text)
+            for ids in ("aa,zz", "aa,aa", "aa,B"):
+                with self.assertRaises(B.BacklogError, msg=ids):
+                    B.cmd_apply(path, ids, "e")
+            with open(path) as f:
+                self.assertEqual(f.read(), text)
+            self.assertEqual(os.listdir(d), ["backlog.md"])
+
+
 class Named(unittest.TestCase):
     def named(self, backlog, messages):
         with tempfile.TemporaryDirectory() as d:

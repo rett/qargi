@@ -2753,7 +2753,7 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .RE
 .TP
 .B qargi backlog
-The project's backlog: list its open items, move a done one to the dated archive.
+The project's backlog: list, add, and archive the done ones.
 .PP
 The backlog is a markdown file that the project answer backlog.file names (a path: ~/ works, a relative path is taken from the repository, and the file may live outside it, in a memory store for instance; qargi project set PROJECT backlog.file PATH). An item is a top\-level list line written '\- [ID] text' (or '* [ID] text'), ID a lowercase slug of letters, digits and hyphens, two characters or more (so a task\-list box '\- [x] text' is no id), with the indented lines after it. Any other top\-level list line is an item without an id and is listed as unnumbered; headings, paragraphs and fenced code blocks are not items. feature finish and release finish print a plan line, 'backlog items named in these commits: ID, ...', for the open items whose id the messages of the commits being merged contain; it is information only and nothing is done, and nothing is printed when backlog.file is unset or its file is missing. backlog.section names a heading of the file (its text, with or without the #s): only the list under it holds items, up to the next heading of the same or a higher level (a deeper heading belongs to it); a heading the file lacks is an error for the verbs. backlog.archive says where the archive goes: a directory (created when absent; a ~/ or relative path works as for the file) that receives NAME\-archive\-YYYY\-MM.md, or a path ending in .md for one archive file whatever the month; by default the archive is beside the backlog file.
 .RS
@@ -2775,10 +2775,27 @@ print the file, the items (id, line, text, full text, duplicate) and the duplica
 .RE
 .RS
 .TP
-.BI "done " "ID"
-Move an item, with the evidence and the date, to the archive file beside the backlog and remove it from the backlog, with the token and an approval.
+.BI "add " "ID TEXT"
+Add an item: '\- [ID] TEXT' at the end of the list, of the section when backlog.section is set.
 .br
-The plan shows the item and the file it goes to. Applied, the item (as written, with its indented lines), the date and the evidence are appended to NAME\-archive\-YYYY\-MM.md in the directory of the backlog file, or where backlog.archive says (NAME is the backlog file's name without .md; the archive is created when absent), and then the item is removed from the backlog. Nothing is deleted without the plan. Refused when the id is not there, or is used by more than one item (make the ids unique first). Not available in a member run.
+ID is a lowercase slug (letters, digits and hyphens, two characters or more); an id that is no slug, or is already an item anywhere in the file (also outside the section), is refused (exit 1) and the file is not touched. TEXT is one line; \-\-detail may span lines. The item is written at once (no plan: it adds a line and removes nothing) and an audit line is kept. Lead only: a member's guard refuses every backlog verb but list; report the item in the task output instead.
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
+.RE
+.RS
+.TP
+.BI "\-\-detail " "TEXT"
+more words for the item, written as indented lines under it (one line of the option per line of the item).
+.RE
+.RE
+.RS
+.TP
+.BI "done " "ID [ID...]"
+Move items, with the evidence and the date, to the archive file beside the backlog and remove them from the backlog, with the token and an approval.
+.br
+Several ids make one batch: one plan listing every item, one token for the whole batch, and the same evidence archived with each id; the batch applies together (the archive is written once, then the backlog), and an id that is not there, is used by more than one item, or is named twice refuses the whole batch with no plan. The plan shows the items and the file they go to. Applied, each item (as written, with its indented lines), the date and the evidence are appended to NAME\-archive\-YYYY\-MM.md in the directory of the backlog file, or where backlog.archive says (NAME is the backlog file's name without .md; the archive is created when absent), and then the items are removed from the backlog. Nothing is deleted without the plan. Refused when the id is not there, or is used by more than one item (make the ids unique first). Not available in a member run.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -2787,7 +2804,7 @@ the project, instead of the one inferred from here.
 .RS
 .TP
 .BI "\-\-evidence " "TEXT"
-the words that show the item is done (they are archived with the item and the date).
+the words that show the items are done (they are archived with each item and the date).
 .RE
 .RS
 .TP

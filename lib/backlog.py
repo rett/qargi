@@ -12,11 +12,15 @@ a task-list box such as `- [x] text` is no id). Any other top-level list line is
 Headings, paragraphs and anything inside a fenced code block are not items.
 
   backlog.py list FILE [--json]        the items, a duplicated id flagged
-  backlog.py plan FILE ID EVIDENCE     what `done` would do, as text (the item and the archive file it goes to)
-  backlog.py token FILE ID EVIDENCE    the plan token: a hash of what the plan shows
-  backlog.py apply FILE ID EVIDENCE    append the item, the date and the evidence to the archive file beside FILE
+  backlog.py plan FILE IDS EVIDENCE    what `done` would do, as text (the item and the archive file it goes to)
+  backlog.py token FILE IDS EVIDENCE   the plan token: a hash of what the plan shows
+  backlog.py apply FILE IDS EVIDENCE   append the item, the date and the evidence to the archive file beside FILE
                                        (NAME-archive-YYYY-MM.md, created when absent), then remove the item from FILE
+  backlog.py add FILE ID TEXT [DETAIL] append the item `- [ID] TEXT` (DETAIL as indented lines) at the end of the list (of the section, with --section);
+                                       an id that is no slug, or is taken anywhere in the file, is refused
   backlog.py named FILE                read commit messages on standard input; print the ids of the open items they name, comma separated
+
+IDS is one id, or several joined by commas (a batch: one plan, one token, the same evidence archived with each item, all in one write of each file).
 
 Two options, given anywhere after the verb (the verb's script reads them from the project's answers backlog.archive and backlog.section):
   --section HEADING    only the list under the heading HEADING holds items: from that heading to the next heading of the same or a higher
@@ -168,6 +172,18 @@ def pick(path, ident):
     return lines, hits[0]
 
 
+def pick_all(path, idents):
+    """The items named by IDENTS (ids joined by commas, in that order) and the file's lines; BacklogError for an id that pick refuses, and for an id named twice."""
+    names = idents.split(",")
+    if len(set(names)) != len(names):
+        raise BacklogError("the id [%s] is named more than once" % next(n for n in names if names.count(n) > 1))
+    lines, found = None, []
+    for n in names:
+        lines, it = pick(path, n)
+        found.append(it)
+    return lines, found
+
+
 def clean_evidence(evidence):
     ev = evidence.strip()
     if not ev:
@@ -206,20 +222,30 @@ def cmd_list(path, as_json):
 
 def cmd_plan(path, ident, evidence):
     ev = clean_evidence(evidence)
-    _, item = pick(path, ident)
+    _, found = pick_all(path, ident)
     arch = archive_path(path)
-    out = ["done [%s]: move this item out of %s into %s (appended; the file is created when absent), then remove it from the backlog" % (ident, path, arch)]
-    out += ["  | " + ln for ln in item["full"]]
+    if len(found) == 1:
+        out = ["done [%s]: move this item out of %s into %s (appended; the file is created when absent), then remove it from the backlog" % (ident, path, arch)]
+        out += ["  | " + ln for ln in found[0]["full"]]
+    else:
+        out = ["done %d items (%s): move them out of %s into %s (appended; the file is created when absent), then remove them from the backlog" % (
+            len(found), ", ".join("[%s]" % it["id"] for it in found), path, arch)]
+        for it in found:
+            out.append("  [%s]" % it["id"])
+            out += ["  | " + ln for ln in it["full"]]
     out.append("  evidence: %s" % ev.replace("\n", "\n            "))
-    out.append("  dated %s" % today().isoformat())
+    out.append("  dated %s%s" % (today().isoformat(), "" if len(found) == 1 else " (the same evidence is archived with each item)"))
     print("\n".join(out))
     return 0
 
 
 def plan_token(path, ident, evidence):
     ev = clean_evidence(evidence)
-    _, item = pick(path, ident)
-    material = "\n".join([os.path.realpath(path), archive_path(path), ident, "\n".join(item["full"]), ev]) + "\n"
+    _, found = pick_all(path, ident)
+    parts = [os.path.realpath(path), archive_path(path)]
+    for it in found:
+        parts += [it["id"], "\n".join(it["full"])]
+    material = "\n".join(parts + [ev]) + "\n"
     return hashlib.sha256(material.encode("utf-8")).hexdigest()[:12]
 
 
@@ -243,10 +269,10 @@ def write_atomic(path, text):
 
 def cmd_apply(path, ident, evidence):
     ev = clean_evidence(evidence)
-    lines, item = pick(path, ident)
+    lines, found = pick_all(path, ident)
     arch = archive_path(path)
     day = today()
-    entry = entry_text(item, ev, day)
+    entry = "\n".join(entry_text(it, ev, day) for it in found)
     existing = ""
     if os.path.exists(arch):
         with open(arch, encoding="utf-8") as f:
@@ -257,16 +283,56 @@ def cmd_apply(path, ident, evidence):
     head = "" if existing else "# %s\n\n" % title
     os.makedirs(os.path.dirname(arch), exist_ok=True)
     sep = "" if not existing or existing.endswith("\n\n") else ("\n" if existing.endswith("\n") else "\n\n")
-    with open(arch, "a", encoding="utf-8") as f:   # the archive first: an interruption then leaves the item in both files, never in neither
+    with open(arch, "a", encoding="utf-8") as f:   # the archive first, every item in one write: an interruption then leaves the items in both files, never in neither
         f.write(head + sep + entry)
         f.flush()
         os.fsync(f.fileno())
-    rest = lines[:item["start"]] + lines[item["end"]:]
-    k = item["start"]
-    if 0 < k < len(rest) and rest[k - 1].strip() == "" and rest[k].strip() == "":   # the item stood between two blank lines: keep one
-        del rest[k]
+    rest = list(lines)
+    for item in sorted(found, key=lambda it: -it["start"]):   # from the end, so the line numbers of the items still to remove stay right
+        rest = rest[:item["start"]] + rest[item["end"]:]
+        k = item["start"]
+        if 0 < k < len(rest) and rest[k - 1].strip() == "" and rest[k].strip() == "":   # the item stood between two blank lines: keep one
+            del rest[k]
     write_atomic(path, "\n".join(rest))
-    print("done [%s]: moved to %s and removed from %s" % (ident, arch, path))
+    for it in found:
+        print("done [%s]: moved to %s and removed from %s" % (it["id"], arch, path))
+    return 0
+
+
+def clean_line(text, what):
+    t = text.strip()
+    if not t:
+        raise BacklogError("%s needs words" % what)
+    if any(ord(c) < 32 and c not in "\n\t" or ord(c) == 127 for c in t):
+        raise BacklogError("%s: no control characters" % what)
+    return t
+
+
+def cmd_add(path, ident, text, detail=None):
+    """Append the item `- [IDENT] TEXT` (and DETAIL as indented lines) at the end of the list: of the section when backlog.section is set, else of the file."""
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*[a-z0-9]", ident):
+        raise BacklogError("ID: a lowercase slug of letters, digits and hyphens, two characters or more (got %r)" % ident)
+    text = clean_line(text, "the text")
+    if "\n" in text:
+        raise BacklogError("the text is one line; put the rest in --detail")
+    lines = read_lines(path)
+    for it in parse(lines):   # the whole file: an id is taken wherever it stands
+        if it["id"] == ident:
+            raise BacklogError("the id [%s] is already an item (line %d) in %s" % (ident, it["line"], path))
+    entry = ["- [%s] %s" % (ident, text)]
+    if detail is not None:
+        entry += [("  " + ln.rstrip()) if ln.strip() else "" for ln in clean_line(detail, "--detail").split("\n")]
+    lo, hi = section_range(lines, OPTS["section"]) if OPTS["section"] else (0, len(lines))
+    at = hi
+    while at > lo and lines[at - 1].strip() == "":
+        at -= 1
+    before = lines[at - 1] if at > 0 else ""
+    if before.strip() and not (MARKER.match(before) or before[:1] in " \t"):   # a heading or a paragraph: a blank line, then the list
+        entry.insert(0, "")
+    if at < len(lines) and lines[at].strip() and not lines[at][:1] in " \t":   # the next line abuts the list (a heading): keep a blank line between
+        entry.append("")
+    write_atomic(path, "\n".join(lines[:at] + entry + lines[at:]))
+    print("added [%s] to %s%s" % (ident, path, " under '%s'" % heading_text(OPTS["section"]) if OPTS["section"] else ""))
     return 0
 
 
@@ -314,6 +380,8 @@ def main(argv):
                 print(plan_token(*rest))
                 return 0
             return (cmd_plan if cmd == "plan" else cmd_apply)(*rest)
+        if cmd == "add" and len(rest) in (3, 4):
+            return cmd_add(*rest)
         if cmd == "named" and len(rest) == 1:
             return cmd_named(rest[0])
         print(__doc__, file=sys.stderr)
