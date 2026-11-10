@@ -1316,22 +1316,32 @@ def run_refusal(full, here):
     return None
 
 
+class Unreadable(Exception):
+    """A file the guard decides on exists and cannot be read: the call is refused with this message (main), not judged as if the file said nothing."""
+
+
+def run_file(run, name):
+    """The text of a run directory's class or ability file: empty when there is none (a run made before the file existed counts as a write run), and an
+    Unreadable error when the file is there and cannot be read (a directory, a mode that bars it, a loop of links): that must not read as 'not read-only'."""
+    path = os.path.join(run, name)
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except (FileNotFoundError, NotADirectoryError):
+        return ""
+    except OSError as e:
+        raise Unreadable("the %s file of the run %s cannot be read (%s), so the guard cannot tell whether the run is read-only; refusing the call until the run directory is fixed"
+                         % (name, run, e.strerror or type(e).__name__)) from e
+
+
 @functools.cache
 def run_class(run):
-    try:
-        with open(os.path.join(run, "class")) as f:
-            return f.read().strip()
-    except OSError:
-        return ""
+    return run_file(run, "class")
 
 
 @functools.cache                                     # the files do not change while one command is judged
 def ability_of(run):
-    try:
-        with open(os.path.join(run, "ability")) as f:
-            return f.read().strip()
-    except OSError:
-        return ""
+    return run_file(run, "ability")
 
 
 def inside(path, base):
@@ -3469,6 +3479,8 @@ def main():
     CLASS = cls
     try:
         return decide(hook)
+    except Unreadable as e:                               # a run file the guard decides on cannot be read: the message names it
+        return refuse(hook, "qargi guard: %s." % e)
     except Exception as e:                                # fail closed: a guard that cannot decide refuses
         return refuse(hook, "qargi guard: internal error (%s: %s); refusing the call because the guard could not check it."
                       % (type(e).__name__, e))

@@ -316,6 +316,34 @@ class Review(HookCase):
         for tool, inp in self.reads():
             self.assertEqual(self.call(tool, inp, None, "--class", "read-only").returncode, 0, (tool, inp))
 
+    def test_a_run_file_that_exists_and_cannot_be_read_refuses_the_call_and_names_it(self):
+        """A class or ability file that cannot be read (here a directory stands where the file is: it fails the same way for every user, root included)
+        must not read as 'not read-only': the calls that ask for the class are refused with one line naming the file and the cause. A file that is not
+        there at all is still a run without that file (a write run), and the class in the hook still holds whatever the files say."""
+        for name, other in (("ability", "class"), ("class", "ability")):
+            path = os.path.join(self.run, name)
+            for f in ("ability", "class"):
+                if os.path.isfile(os.path.join(self.run, f)):
+                    os.remove(os.path.join(self.run, f))
+            if other == "ability":
+                self.ability("build")
+            os.mkdir(path)
+            for tool, inp in self.writes():
+                r = self.call(tool, inp)
+                self.assertEqual(r.returncode, 2, (name, tool, inp, r.stderr))
+                self.assertIn("the %s file of the run" % name, r.stderr, (tool, inp))
+                self.assertIn("cannot be read", r.stderr, (tool, inp))
+                self.assertIn("refusing the call", r.stderr, (tool, inp))
+                self.assertEqual(r.stderr.count("\n"), 1, r.stderr)
+            for tool, inp in self.writes():                      # the class in the hook does not ask the file: it refuses as it always did
+                self.assertEqual(self.call(tool, inp, None, "--class", "read-only").returncode, 2, (tool, inp))
+            os.rmdir(path)
+        for f in ("ability", "class"):                           # neither file there: a write run, as before
+            if os.path.isfile(os.path.join(self.run, f)):
+                os.remove(os.path.join(self.run, f))
+        for tool, inp in self.writes() + self.reads():
+            self.assertEqual(self.call(tool, inp).returncode, 0, (tool, inp))
+
     def test_a_member_cannot_change_the_run_record(self):
         self.ability("review")
         a, b = os.path.join(self.run, "ability"), os.path.join(self.run, "refs.before")

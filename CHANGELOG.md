@@ -11,6 +11,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 - The guard refuses a hook call whose input is empty or is not JSON (a hook cut off on the way, a runtime that sent nothing) instead of letting it through: exit status 2 and one line on standard error, `the hook input is empty` or `the hook input is not valid JSON (cause), so the guard cannot read the call; refusing it`. Every protocol the guard supports sends JSON, so no genuine call is affected.
+- The guard refuses a call when the `class` or `ability` file of the run it works in exists and cannot be read (a directory in its place, a mode that bars it, a loop of links), instead of reading it as a run that is not read-only: one line, `the class file of the run RUN cannot be read (cause), so the guard cannot tell whether the run is read-only; refusing the call until the run directory is fixed`. A run with no such file is still a write run, and the `--class` of the hook still decides first.
 
 ## [0.2.8] - 2026-11-09
 
