@@ -58,8 +58,8 @@ def plan_token(*parts):
 
 def audit(verb, detail, *, asked="", approved="", origin=None, ts=None, state=None):
     """Append one line to audit.log in the state directory (state, else the one qargi uses; mode 600; the directory is made when it is not
-    there): {"ts", "verb", "detail", "asked", "approved", "nested": false} and, for a line written by the supervisor, "origin". One write, so
-    lines of two processes do not mix."""
+    there): {"ts", "verb", "detail", "asked", "approved", "nested": false} and, for a line written by the supervisor, "origin". One write under an exclusive
+    lock on audit.log.lock (append_locked), so lines of two processes do not mix."""
     if state is None:
         import paths
         state = paths.state()
@@ -67,16 +67,43 @@ def audit(verb, detail, *, asked="", approved="", origin=None, ts=None, state=No
     if origin:
         line["origin"] = origin
     os.makedirs(state, exist_ok=True)
-    f = os.path.join(state, "audit.log")
-    fd = os.open(f, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    append_locked(os.path.join(state, "audit.log"), (json.dumps(line) + "\n").encode())
+
+
+def append_locked(path, data):
+    """Append data (bytes: whole lines) to path, mode 600, under an exclusive flock on path + ".lock" in the same directory, so the lines of
+    several processes (this module's, lib/transfer.py's, the pack library's, lib.sh's audit_log) never run into each other. A flock that cannot
+    be had (no fcntl, the lock file or the lock refused) ends the process with a message naming the cause: nothing is written without it."""
+    lock = path + ".lock"
     try:
-        os.write(fd, (json.dumps(line) + "\n").encode())
+        import fcntl
+    except ImportError:
+        die("could not take the lock %s: flock (the fcntl module) is not available here, so two writers could not be kept apart; nothing was written" % lock)
+    try:
+        lfd = os.open(lock, os.O_WRONLY | os.O_CREAT, 0o600)
+    except OSError as e:
+        die("could not take the lock %s: the lock file cannot be opened (%s); nothing was written" % (lock, e.strerror or e))
+    try:
+        try:
+            fcntl.flock(lfd, fcntl.LOCK_EX)
+        except OSError as e:
+            die("could not take the lock %s: flock failed (%s; does that directory's file system support locks?); nothing was written" % (lock, e.strerror or e))
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+            try:
+                rest = memoryview(data)
+                while rest:
+                    rest = rest[os.write(fd, rest):]
+            finally:
+                os.close(fd)
+        except OSError as e:
+            die("could not append to %s: %s" % (path, e.strerror or e))
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
     finally:
-        os.close(fd)
-    try:
-        os.chmod(f, 0o600)
-    except OSError:
-        pass
+        os.close(lfd)
 
 
 def die(msg, code=1):
