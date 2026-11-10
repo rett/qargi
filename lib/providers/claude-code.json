@@ -175,7 +175,7 @@
           "value": {
             "PreToolUse": [
               {
-                "matcher": "Bash|Edit|Write|NotebookEdit|Read|Grep",
+                "matcher": "Bash|Monitor|Edit|Write|NotebookEdit|Read|Grep",
                 "hooks": [
                   {"type": "command", "command": "{barrier.guard_command}", "timeout": 20, "onFailure": "block"}
                 ]
@@ -209,7 +209,7 @@
         "read": ["/tool_input/file_path", "/tool_input/notebook_path", "/tool_input/path"]
       },
       "tool_names": {
-        "shell": ["Bash"],
+        "shell": ["Bash", "Monitor"],
         "write": ["Edit", "Write", "NotebookEdit"],
         "read": ["Read"],
         "search": ["Grep"]

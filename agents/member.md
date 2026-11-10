@@ -6,7 +6,7 @@ model: {{MODEL}}
 tools: Bash, Read, Edit, Write, Grep, Glob, Monitor, TaskStop, ToolSearch, Skill
 hooks:
   PreToolUse:
-    - matcher: "Bash|Edit|Write|NotebookEdit|Read|Grep"
+    - matcher: "Bash|Monitor|Edit|Write|NotebookEdit|Read|Grep"
       hooks:
         - type: command
           command: "qargi __guard{{GUARD_ARGS}}"

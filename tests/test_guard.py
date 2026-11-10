@@ -230,10 +230,49 @@ class Guard(HookCase):
         with open(os.path.join(d, "member.md")) as f:
             text = f.read()
         self.assertIn('command: "qargi __guard{{GUARD_ARGS}}"', text)
-        self.assertIn('matcher: "Bash|Edit|Write|NotebookEdit|Read|Grep"', text)
+        self.assertIn('matcher: "Bash|Monitor|Edit|Write|NotebookEdit|Read|Grep"', text)
         tools = [l for l in text.splitlines() if l.startswith("tools:")][0]
         for t in ("Edit", "Write", "Monitor", "ToolSearch", "Skill"):
             self.assertIn(t, tools)
+
+    def test_a_monitor_call_is_judged_like_a_bash_command(self):
+        """Monitor runs a shell command in the background and a member has the tool, so its `command` goes through the same code as a Bash command's."""
+        for c in ("git push", "git push origin main", "cd a && git push", "gh pr list", "ssh host ls", "git remote add o u", "qargi local clean /tmp/r --discard",
+                  "qargi project set p gates x", "tail -f x.log; git push"):
+            b = self.hook([], {"tool_name": "Bash", "tool_input": {"command": c}, "cwd": os.getcwd()})
+            m = self.hook([], {"tool_name": "Monitor", "tool_input": {"command": c, "description": "watch", "timeout_ms": 60000, "persistent": False}, "cwd": os.getcwd()})
+            self.assertEqual(b.returncode, 2, c)
+            self.assertEqual(m, b, c)
+        for c in ("tail -f build.log", "ls -la", "git status", "grep -n x f"):
+            m = self.hook([], {"tool_name": "Monitor", "tool_input": {"command": c}, "cwd": os.getcwd()})
+            self.assertEqual(m, Verdict(0, "", ""), c)
+
+    def test_the_tools_the_hook_matches_are_the_tools_the_guard_judges_and_the_docs_list_exactly_them(self):
+        """One list of guarded tools in four places: the hook matcher of the member template and of the Claude Code definition, the tool names of the guard's hook
+        data (the definition's barrier.hook and the guard's own copy of it), and the members page."""
+        root = os.path.join(os.path.dirname(BIN), "..")
+        with open(os.path.join(root, "lib", "providers", "claude-code.json")) as f:
+            doc = json.load(f)
+        matchers = [h["matcher"] for field in doc["renderers"]["agent"]["fields"] if isinstance(field.get("value"), dict)
+                    for h in field["value"].get("PreToolUse", [])]
+        with open(os.path.join(root, "agents", "member.md")) as f:
+            matchers += [l.split('"')[1] for l in f.read().splitlines() if l.strip().startswith("- matcher:")]
+        self.assertEqual(len(matchers), 2, matchers)
+        names = [t for ts in doc["barrier"]["hook"]["tool_names"].values() for t in ts]
+        for m in matchers:
+            self.assertEqual(sorted(m.split("|")), sorted(names), m)
+        self.assertIn("Monitor", names)
+        self.assertEqual(doc["barrier"]["hook"], self.m_hook(), "the guard's own copy of the Claude Code hook data is the definition's")
+        with open(os.path.join(root, "docs", "members-and-providers", "README.md")) as f:
+            page = " ".join(f.read().split())
+        listed = ", ".join("`%s`" % t for t in matchers[0].split("|")[:-1]) + " and `%s`" % matchers[0].split("|")[-1]
+        self.assertIn("every call of " + listed + " passes `qargi __guard`", page)
+
+    def m_hook(self):
+        """CLAUDE_HOOK of guard.py, read as the data it is."""
+        r = subprocess.run([sys.executable, "-I", "-c", "import sys, json; sys.path.insert(0, sys.argv[1]); import guard; print(json.dumps(guard.CLAUDE_HOOK))", LIBDIR],
+                           capture_output=True, text=True, check=True)
+        return json.loads(r.stdout)
 
 
 class Review(HookCase):
@@ -296,6 +335,17 @@ class Review(HookCase):
         self.assertIn("report and the manifest in OUT", r.stderr)
         r = self.call("Bash", {"command": "echo x > src/a.go"})
         self.assertIn("writes its report to OUT", r.stderr)
+
+    def test_review_holds_a_monitor_command_to_the_same_rules_as_a_bash_command(self):
+        self.ability("review")
+        for tool, inp in self.writes():
+            if tool == "Bash":
+                r = self.call("Monitor", dict(inp, description="watch"))
+                self.assertEqual(r, self.call(tool, inp), inp)
+                self.assertEqual(r.returncode, 2, (inp, r.stderr))
+        for tool, inp in self.reads():
+            if tool == "Bash":
+                self.assertEqual(self.call("Monitor", dict(inp, description="watch")).returncode, 0, inp)
 
     def test_review_may_read_and_write_its_report(self):
         self.ability("review")

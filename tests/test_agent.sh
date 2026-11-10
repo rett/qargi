@@ -29,7 +29,7 @@ effort: high
 tools: Bash, Read, Edit, Write, Grep, Glob, Monitor, TaskStop, ToolSearch, Skill
 hooks:
   PreToolUse:
-    - matcher: "Bash|Edit|Write|NotebookEdit|Read|Grep"
+    - matcher: "Bash|Monitor|Edit|Write|NotebookEdit|Read|Grep"
       hooks:
         - type: command
           command: qargi __guard
@@ -53,7 +53,7 @@ jq -e --arg h "$h" --arg f "$A/forge.md" '.projects.pbase.forge | .provider == "
   && ok "the record keeps the runtime, the surface, the path, the hash of the file and the hash of what it was made from" || no "record: $(jq -c .projects.pbase.forge "$T/c/agents.json")"
 $DA agent list | grep -q "forge .*forge.md$" && ok "list shows no state for a current member" || no "list current: $($DA agent list | head -2)"
 grep -q '^name: forge$' "$A/forge.md" && grep -q 'build, test' "$A/forge.md" && grep -q '^model: claude-sonnet-5-5$' "$A/forge.md" && grep -q '^effort: high$' "$A/forge.md" && ok "it carries the name, abilities and model" || no "rendered: $(head -5 "$A/forge.md")"
-grep -q 'matcher: "Bash|Edit|Write|NotebookEdit|Read|Grep"' "$A/forge.md" && grep -q 'command: qargi __guard$' "$A/forge.md" && ok "the guard covers Bash and the edit tools" || no "hook"
+grep -q 'matcher: "Bash|Monitor|Edit|Write|NotebookEdit|Read|Grep"' "$A/forge.md" && grep -q 'command: qargi __guard$' "$A/forge.md" && ok "the guard covers Bash, Monitor and the edit tools" || no "hook"
 grep -q 'onFailure: block$' "$A/forge.md" && grep -q '^ *timeout: [0-9]' "$A/forge.md" && ok "the guard hook blocks when it fails or times out" || no "hook failure setting"
 ! grep -q '{{' "$A/forge.md" && ok "no placeholder is left" || no "placeholder left"
 $DA agent add scribe --project pbase --roles write --model opus --effort medium >/dev/null 2>&1 && grep -q '^model: opus$' "$A/scribe.md" && ok "model is the one given" || no "model"
