@@ -495,16 +495,18 @@ intent_probe() {
   elif [ "$no" = "$n" ]; then IP=old
   else IP=local; fi
 }
-# intent_drop KEY -> the push never happened: remove the tag the interrupted run made (only when it is the one the record names) and the record
+# intent_drop KEY [--check] -> the push never happened: remove the tag the interrupted run made (only when it is the one the record names) and the record.
+# With --check nothing is removed: it dies, as the removal would, when a tag of that name is not the one the record names (a plan checks this; only an apply removes).
 intent_drop() {
-  local key=$1 f ref new commit cur
+  local key=$1 check=${2:-} f ref new commit cur
   f=$(intent_file "$key")
   while IFS='|' read -r ref new commit; do
     cur=$(g rev-parse -q --verify "$ref" 2>/dev/null || true); [ -n "$cur" ] || continue
-    if [ "$cur" = "$new" ] || { [ -n "$commit" ] && [ "$(g rev-parse -q --verify "$ref^{commit}" 2>/dev/null || true)" = "$commit" ]; }; then g tag -d "${ref#refs/tags/}" >/dev/null 2>&1 || true
+    if [ "$cur" = "$new" ] || { [ -n "$commit" ] && [ "$(g rev-parse -q --verify "$ref^{commit}" 2>/dev/null || true)" = "$commit" ]; }; then
+      [ -n "$check" ] || g tag -d "${ref#refs/tags/}" >/dev/null 2>&1 || true
     else die "$ref exists and is not the tag the interrupted finish made ($cur): nothing was changed"; fi
   done < <(jq -r '.refs[] | select(.ref | startswith("refs/tags/")) | "\(.ref)|\(.new)|\(.commit // "")"' "$f")
-  intent_clear "$key"
+  [ -n "$check" ] || intent_clear "$key"
 }
 # move_ref REF NEW OLD -> update-ref REF to NEW from OLD; done already (REF is NEW) is not an error; any other value is
 move_ref() {

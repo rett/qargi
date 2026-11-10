@@ -793,14 +793,16 @@ case $verb in
     if intent_has "$KIND-$VER"; then
       intent_probe "$KIND-$VER"
       if [ "$IP" = old ]; then
-        intent_drop "$KIND-$VER"; echo "note: an earlier finish of $VER stopped before anything reached origin or moved here; its tag and record are removed and this one starts again" >&2
+        # its tag and record are removed with the apply (after the plan token is checked), never by a plan alone; the tag is checked now to be the one it made
+        STALE_REC=1; intent_drop "$KIND-$VER" --check
+        if [ -z "$APPROVED" ]; then echo "note: an earlier finish of $VER stopped before anything reached origin or moved here; its tag and record are removed when this plan is applied" >&2; fi
       else
         release_finish_resume; exit 0
       fi
     fi
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR"
     branch_exists master && branch_exists develop || die "git-flow needs a master and a develop branch"
-    g rev-parse -q --verify "refs/tags/$VER" >/dev/null && die "the tag $VER exists already"
+    [ -n "${STALE_REC:-}" ] || ! g rev-parse -q --verify "refs/tags/$VER" >/dev/null || die "the tag $VER exists already"   # a stale finish's own tag is dropped at the apply
     rel_valid
     ftmp=$(mktemp -d "$DA_STATE/.release-chk.XXXXXX")
     if [ "$VFILE" != none ]; then
@@ -873,6 +875,7 @@ case $verb in
       echo "note: no origin remote, so no CI ran on $BR; the local whole-suite run stands in" >&2
     fi
     need_free master "$second"; need_free_wt "$BR"   # a clean worktree that qargi made for the fix may hold BR: it is removed below
+    if [ -n "${STALE_REC:-}" ]; then intent_drop "$KIND-$VER"; echo "note: an earlier finish of $VER stopped before anything reached origin or moved here; its tag and record are removed and this one starts again" >&2; fi
     m0=$(sha_of master); s0=$(sha_of "$second")
     rm0=$(remote_was master); rs0=$(remote_was "$second"); rb0=$(remote_was "$BR")   # what origin has (fetched above): where the journal lines of the pushes start
     k1="$KIND-$VER-into-master"; k2="$KIND-$VER-into-${second//\//_}"

@@ -319,7 +319,9 @@ case $verb in
     if intent_has "feature-$NAME_ARG"; then
       intent_probe "feature-$NAME_ARG"
       if [ "$IP" = old ]; then
-        intent_drop "feature-$NAME_ARG"; echo "note: an earlier finish of $NAME_ARG stopped before anything reached origin or moved here; its record is removed and this one starts again" >&2
+        # the record is removed with the apply (after the plan token is checked), never by a plan alone
+        STALE_REC=1
+        if [ -z "$APPROVED" ]; then echo "note: an earlier finish of $NAME_ARG stopped before anything reached origin or moved here; its record is removed when this plan is applied" >&2; fi
       else
         feature_finish_resume; exit 0
       fi
@@ -365,6 +367,7 @@ case $verb in
     show_incoming develop "$BR"; backlog_note develop "$BR"
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi feature finish $NAME_ARG${KEEP:+ --keep} --plan $tok --approved \"...\")"; exit 0; fi
     need_plan "$tok"
+    if [ -n "${STALE_REC:-}" ]; then intent_drop "feature-$NAME_ARG"; echo "note: an earlier finish of $NAME_ARG stopped before anything reached origin or moved here; its record is removed and this one starts again" >&2; fi
     need_free develop
     need_free_wt "$BR"
     hold_begin "$NAME_ARG"

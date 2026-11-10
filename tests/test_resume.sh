@@ -98,11 +98,15 @@ out=$($REL finish 0.3.0 2>&1); rc=$?
 # --- origin at the old values: the push never happened, the record and the tag are dropped and the finish starts again
 git -C "$O" update-ref refs/heads/master "$rm0"; git -C "$O" update-ref refs/heads/develop "$rd0"; git -C "$O" tag -d 0.3.0 >/dev/null
 out=$($REL finish 0.3.0 2>&1); rc=$?; t=$(tok <<<"$out")
-[ $rc = 0 ] && [ -n "$t" ] && grep -q "stopped before anything reached origin" <<<"$out" && [ ! -e "$INTENT/app-release-0.3.0.json" ] && [ "$(rev "$R" refs/tags/0.3.0)" = none ] && [ "$(rev "$R" master)" = "$m0" ] \
-  && ok "origin at the old values: the tag and the record are dropped and a fresh plan is made" || no "stale: rc=$rc $out"
+oldtag=$(rev "$R" refs/tags/0.3.0)
+[ $rc = 0 ] && [ -n "$t" ] && grep -q "stopped before anything reached origin" <<<"$out" && grep -q "removed when this plan is applied" <<<"$out" && [ "$(rev "$R" master)" = "$m0" ] \
+  && ok "origin at the old values: a fresh plan is made and says the old tag and record are removed when it is applied" || no "stale: rc=$rc $out"
+[ -e "$INTENT/app-release-0.3.0.json" ] && [ "$oldtag" != none ] && ok "a plan alone removes neither the tag nor the record" || no "the plan removed the tag or the record: tag=$oldtag $(ls "$INTENT")"
+out=$($REL finish 0.3.0 --plan 000000000000 --approved go 2>&1); rc=$?
+[ $rc != 0 ] && [ -e "$INTENT/app-release-0.3.0.json" ] && [ "$(rev "$R" refs/tags/0.3.0)" = "$oldtag" ] && ok "an apply with a wrong token removes neither the tag nor the record" || no "wrong token removed: rc=$rc $out"
 $REL finish 0.3.0 --plan "$t" --approved go >/dev/null 2>&1
 [ "$(rev "$R" master)" = "$(rev "$O" refs/heads/master)" ] && [ "$(rev "$R" master)" != "$m0" ] && [ "$(rev "$O" refs/tags/0.3.0)" != none ] && [ ! -e "$INTENT/app-release-0.3.0.json" ] \
-  && ok "and that finish goes through" || no "stale then finish: master=$(rev "$R" master) origin=$(rev "$O" refs/heads/master)"
+  && ok "and the apply drops them and that finish goes through" || no "stale then finish: master=$(rev "$R" master) origin=$(rev "$O" refs/heads/master)"
 # --- a finish that is running is not mistaken for one that was cut off: its lock names a live process, a dead one is taken over
 $F start busy >/dev/null 2>&1
 sleep 60 & sp=$!
@@ -127,7 +131,7 @@ t=$($F finish bad | tok); d0=$(rev "$R" develop); od=$(rev "$O" develop)
 out=$(PUSH_MODE=fail $F finish bad --plan "$t" --approved go 2>&1); rc=$?
 [ $rc != 0 ] && [ "$(rev "$O" develop)" = "$od" ] && [ -f "$INTENT/app-feature-bad.json" ] && ok "feature: a push that really failed also keeps the record" || no "feature bad: rc=$rc $out"
 out=$($F finish bad 2>&1); rc=$?; t2=$(tok <<<"$out")
-[ $rc = 0 ] && [ -n "$t2" ] && grep -q "stopped before anything reached origin" <<<"$out" && ! grep -q "was cut off" <<<"$out" && ok "the re-run finds origin unchanged and starts over with a fresh plan" || no "feature bad re-run: rc=$rc $out"
+[ $rc = 0 ] && [ -n "$t2" ] && grep -q "stopped before anything reached origin" <<<"$out" && ! grep -q "was cut off" <<<"$out" && [ -f "$INTENT/app-feature-bad.json" ] && ok "the re-run finds origin unchanged and starts over with a fresh plan (the plan alone keeps the record)" || no "feature bad re-run: rc=$rc $out"
 out=$($F finish bad --plan "$t2" --approved go 2>&1); rc=$?
 [ $rc = 0 ] && [ "$(rev "$R" develop)" = "$(rev "$O" develop)" ] && [ "$(rev "$O" develop)" != "$od" ] && [ ! -e "$INTENT/app-feature-bad.json" ] && ok "and that finish goes through" || no "feature bad apply: rc=$rc $out"
 rel_ready() { # VERSION: a release branch ready to finish
@@ -149,7 +153,7 @@ t=$($REL finish 0.5.0 | tok); m0=$(rev "$R" master)
 out=$(PUSH_MODE=fail $REL finish 0.5.0 --plan "$t" --approved go 2>&1); rc=$?
 [ $rc != 0 ] && [ "$(rev "$O" refs/tags/0.5.0)" = none ] && [ -f "$INTENT/app-release-0.5.0.json" ] && [ "$(rev "$R" refs/tags/0.5.0)" != none ] && ok "release: a push that really failed keeps the record and the tag too" || no "release bad: rc=$rc $out"
 out=$($REL finish 0.5.0 2>&1); rc=$?; t2=$(tok <<<"$out")
-[ $rc = 0 ] && [ -n "$t2" ] && grep -q "stopped before anything reached origin" <<<"$out" && ok "the re-run finds origin unchanged and plans afresh" || no "release bad re-run: rc=$rc $out"
+[ $rc = 0 ] && [ -n "$t2" ] && grep -q "stopped before anything reached origin" <<<"$out" && [ -f "$INTENT/app-release-0.5.0.json" ] && [ "$(rev "$R" refs/tags/0.5.0)" != none ] && ok "the re-run finds origin unchanged and plans afresh (the plan alone keeps the tag and the record)" || no "release bad re-run: rc=$rc $out"
 out=$($REL finish 0.5.0 --plan "$t2" --approved go 2>&1); rc=$?
 [ $rc = 0 ] && [ "$(rev "$R" master)" = "$(rev "$O" refs/heads/master)" ] && [ "$(rev "$R" master)" != "$m0" ] && [ "$(rev "$O" refs/tags/0.5.0)" != none ] && [ ! -e "$INTENT/app-release-0.5.0.json" ] && ok "and that release goes through" || no "release bad apply: rc=$rc $out"
 # --- two takers of a stale lock cannot both get it: twelve verbs find a lock whose process is gone, at the same moment; one holds it (the others find its live
