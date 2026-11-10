@@ -93,6 +93,12 @@ cp "$T/o" "$T/o.first"
   && ok "the cache is read by 2 cat-file processes and no ls-tree, not one process per ref and object (cat-file $(gcount cat-file), ls-tree $(gcount ls-tree))" \
   || no "a read of 14 refs must use 2 cat-file processes and no ls-tree (cat-file $(gcount cat-file), ls-tree $(gcount ls-tree), all $(gall))"
 [ "$(vcount)" = 14 ] && ok "each of the 14 signatures was verified once (ssh-keygen -Y verify x $(vcount))" || no "14 verifications expected, got $(vcount): $(cat "$SKLOG")"
+for i in $(seq 1 14); do printf 'f%02d  lead=alice  active  goal f%02d  [signed]\n' "$i" "$i"; done > "$T/o.want"
+grep '^f[0-9]' "$T/o" | cmp -s - "$T/o.want" && ok "the 14 lines of the brief listing are the ones a record per ref gives" || no "the brief listing differs: $(diff "$T/o.want" "$T/o")"
+# the listing asks git once about what is the same for every feature (the work trees, the list of branches), not once per feature
+[ "$(gcount worktree)" = 1 ] && [ "$(gall)" -le 45 ] \
+  && ok "git is started $(gall) times for 14 features (the work trees are listed once, not per feature)" \
+  || no "a listing of 14 features must start at most 45 git processes and list the work trees once (worktree $(gcount worktree), all $(gall)): $(sort "$GLOG" | uniq -c | tr '\n' ' ')"
 
 # ============================================================ (2) every read verifies again; a record changed after a read is refused by the next
 gcount0

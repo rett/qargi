@@ -129,6 +129,7 @@ class Ctx:
             raise Refuse("the lead identity %r is not valid (letters, digits and . _ @ : + - only, at most 128)" % self.id)
         self.user, self.host = user, host
         self._worktree = None
+        self.git_memo = None        # {git arguments: output} while a listing runs (gather): the repository is not changed meanwhile
         self.t = now()
 
     def path(self, name):
@@ -982,8 +983,13 @@ def git_at(path, *args):
 def git(ctx, *args):
     if not ctx.repo:
         return None
+    if ctx.git_memo is not None and args in ctx.git_memo:
+        return ctx.git_memo[args]
     r = subprocess.run(["git", "-C", ctx.repo] + list(args), capture_output=True, text=True)
-    return r.stdout if r.returncode == 0 else None
+    out = r.stdout if r.returncode == 0 else None
+    if ctx.git_memo is not None:
+        ctx.git_memo[args] = out
+    return out
 
 
 def branch_exists(ctx, name):
@@ -1243,9 +1249,13 @@ def print_full(d, raw_lens):
 def gather(ctx, names):
     """-> [(name, describe dict, raw record)] after recording ghost transitions."""
     out, cache = [], {}
-    for n in names:
-        rec = ghost_fix(ctx, n, ctx.be.get(ctx, n))
-        out.append((n, describe(ctx, n, rec, cache), rec))
+    ctx.git_memo = {}
+    try:
+        for n in names:
+            rec = ghost_fix(ctx, n, ctx.be.get(ctx, n))
+            out.append((n, describe(ctx, n, rec, cache), rec))
+    finally:
+        ctx.git_memo = None
     return out
 
 
