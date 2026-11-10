@@ -687,6 +687,8 @@ COMMANDS = {
                  "an orphan or on less than 10% free (QARGI_DOCTOR_MIN_FREE moves the limit, in percent). "
                  "window-source: where the context-window table of the project's local runtime comes from (its definition, or the answer lead.context_window, which overrides it) "
                  "and whether each model id its roles name is in the table; an id that is not there warns, since its window is only assumed. "
+                 "project-env: the last qargi env check recorded for the project in state/env/PROJECT.json, as 'last env check VERDICT at TIME' (a warning when the verdict is not ENV OK; "
+                 "unknown, 'never run', when none was recorded). It only reads that record and never runs the project's code: qargi env check is what runs the project's doctor and records the result. "
                  "--json prints {project, checks: [{name, status, detail, fix}], warnings, strict, exit}."),
         "scripts": ["doctor.py", "orphans.sh"],
         "usage": [("PROJECT", "project", True)],
@@ -722,7 +724,8 @@ COMMANDS = {
                                 "submodule that is not initialised or at another commit, are missing items. It adds, read-only, whether the checkout "
                                 "loads the project's skills, agents and memory, whether the members are current (STALE, DRIFT), packs check and memory check. "
                                 "The last line is ENV OK or ENV INCOMPLETE: N missing (...); exit status 0, 1 or 2 (usage, no such project, no repository). "
-                                "The verdict, HEAD, time and commands are recorded under check in state/env/PROJECT.json (mode 600, the other keys are kept); no command output is."),
+                                "The verdict, HEAD, time and commands are recorded under check in state/env/PROJECT.json (mode 600, the other keys are kept); no command output is. "
+                                "qargi doctor PROJECT shows that record as its project-env line (it reads it and runs nothing of the project's)."),
                           examples=["qargi env check", "qargi env check --project acme --timeout 60", "qargi env check --repo ~/src/acme --json"]),
             "plan": verb("Run the dry run of the bootstrap, show it grouped by privilege, print a plan token (the lead's; runs project code)", [],
                          [PROJECT_OPT, opt("--repo", "the repository directory (default: the project's repo.path, else the repository around here)", "DIR", "dir"),
