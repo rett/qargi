@@ -9,6 +9,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 - `qargi review save RUN [--force]`: stores the final message of a read-only run (standard input) as `RUN/out/report.md`, and writes a minimal `manifest.json` (status, base, done, gates, `commits: []`, touched_paths, the report in artifacts) when OUT has none. It is the report path with no shell text: a reviewer whose file tool is refused returns its report as its final message and the lead stores it, instead of a heredoc that the guard reads line by line. It refuses a directory that is not a run of the lead's registry, a run that is not read-only, a run directory or OUT that is a link, an empty message and an existing `report.md` (without `--force`); `qargi review check RUN/out` then decides whether the report has the required form. The verb is the lead's: the guard refuses it from a member, as it refuses `review apply`.
 
+### Fixed
+- The guard refuses a hook call whose input is empty or is not JSON (a hook cut off on the way, a runtime that sent nothing) instead of letting it through: exit status 2 and one line on standard error, `the hook input is empty` or `the hook input is not valid JSON (cause), so the guard cannot read the call; refusing it`. Every protocol the guard supports sends JSON, so no genuine call is affected.
+
 ## [0.2.8] - 2026-11-09
 
 ### Fixed

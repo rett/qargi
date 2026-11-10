@@ -198,20 +198,27 @@ class Guard(HookCase):
                   "go test ./... && go vet ./...", "grep -n 'git push' file", "make gate-go", "gitleaks git --log-opts A..B"):
             self.assertEqual(self.guard(c).returncode, 0, c)
 
-    def test_bad_input_is_not_a_block(self):
-        r = self.hook([], "not json")
-        self.assertEqual(r.returncode, 0)
-        self.assertEqual(self.guard("").returncode, 0)
+    def test_input_that_is_empty_or_no_json_is_refused_and_names_the_cause(self):
+        """The hook is run on a tool call and every protocol it supports sends JSON: empty or cut-off input is a call the guard cannot read, so it refuses
+        (exit status 2 and one line on standard error for the Claude Code protocol), whatever the call would have been."""
+        for payload, cause in (("", "is empty"), ("  \n", "is empty"), (b"", "is empty"), ("not json", "is not valid JSON"), (b"plain text", "is not valid JSON"),
+                               ('{"tool_name": "Bash", "tool_input": {"command": "git pu', "is not valid JSON"), ('{"tool_name": "Bash", "tool_input": ', "is not valid JSON"),
+                               ("é not json".encode(), "is not valid JSON")):
+            r = self.hook([], payload)
+            self.assertEqual(r.returncode, 2, payload)
+            self.assertEqual(r.stdout, "", payload)
+            self.assertEqual(r.stderr.count("\n"), 1, r.stderr)
+            self.assertIn("the hook input " + cause, r.stderr, payload)
+            self.assertIn("refusing it", r.stderr, payload)
+        self.assertEqual(self.guard("").returncode, 0)                       # an empty command is a call; empty input is not
 
-    def test_input_that_cannot_be_decoded_is_refused_and_text_that_is_no_json_is_not(self):
+    def test_input_that_cannot_be_decoded_is_refused(self):
         for payload in (b"\xff\xfe\x80", b'{"tool_input": {"command": "ls \xff"}}', b'{"tool_input": {"command": "ls"}}\xc3'):
             r = self.hook([], payload)
             self.assertEqual(r.returncode, 2, payload)
             self.assertEqual(r.stdout, "", payload)
             self.assertEqual(r.stderr.count("\n"), 1, r.stderr)
             self.assertIn("not valid UTF-8", r.stderr, payload)
-        for payload in ("plain text", b"plain text", "\u00e9 not json".encode(), ""):
-            self.assertEqual(self.hook([], payload), Verdict(0, "", ""), payload)
         self.assertEqual(self.guard("ls"), Verdict(0, "", ""))
         self.assertEqual(self.hook([], {"tool_input": {"command": "caf\u00e9"}}), Verdict(0, "", ""))
         self.assertEqual(self.guard("git push").returncode, 2)
@@ -4745,9 +4752,9 @@ class SubprocessContract(unittest.TestCase):
         self.assertTrue(r.stdout.startswith("qargi guard: ") and r.stdout.count("\n") == 1, r)
         self.assertEqual(cli("ls"), Verdict(0, "", ""))
 
-    def test_input_that_is_no_call_passes_and_input_the_guard_cannot_read_is_refused(self):
-        for payload in ("not json", "", "{\"tool_name\": \"Bash\""):
-            self.assertEqual(self.verdict([], payload), Verdict(0, "", ""), payload)
+    def test_input_the_guard_cannot_read_is_refused(self):
+        for payload, cause in (("not json", "is not valid JSON"), ("", "is empty"), ("{\"tool_name\": \"Bash\"", "is not valid JSON")):
+            self.refusal(self.verdict([], payload), payload, "the hook input " + cause)
         for inp in ({"tool_name": "Bash", "tool_input": {"command": 7}}, {"tool_name": "Bash", "tool_input": "ls"}, {"tool_name": "Edit", "tool_input": {"file_path": ["a"]}},
                     ["not", "an", "object"]):
             self.refusal(self.verdict([], inp), inp, "qargi guard: internal error")

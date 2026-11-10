@@ -3441,8 +3441,11 @@ def decide(hook):
         return refuse(hook, "qargi guard: the input is not valid UTF-8, so the guard cannot read the call; refusing it.")
     try:
         data = json.loads(text)
-    except ValueError:
-        return hook["allow"]["exit"]                      # decodes but is no JSON: not a call to judge (as before)
+    except ValueError as e:
+        # empty or cut-off input (a hook killed or truncated on the way, a runtime that sent nothing) is a call the guard cannot read, not a call to let through:
+        # the hook is only ever run on a tool call, and every protocol it supports sends JSON
+        what = "is empty" if not text.strip() else "is not valid JSON (%s)" % str(e).splitlines()[0][:100]
+        return refuse(hook, "qargi guard: the hook input %s, so the guard cannot read the call; refusing it." % what)
     why = judge(parse_call(hook, data))
     return refuse(hook, why) if why else hook["allow"]["exit"]
 
