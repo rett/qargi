@@ -7,7 +7,8 @@
 # The same file holds the other checks of a hermetic suite: the environment hermetic.sh and hermetic.py build, spawn_bg and kill_bg, and the
 # lint (tests/hermetic_lint.py) that fails when a test file does not source tests/hermetic.sh (or import hermetic), names a literal /tmp,
 # /dev/shm or /run path, kills by pattern (pkill, killall, pgrep -f), waits with a bare sleep outside a poll loop, removes a directory it
-# did not make, binds a fixed TCP port, keeps a lock or socket outside its directory, or compares a wall-clock difference with a constant.
+# did not make, binds a fixed TCP port, keeps a lock or socket outside its directory, compares a wall-clock difference with a constant, or
+# asserts that a short token (under six characters, not a whole word or anchored) is absent from output that holds a random temporary path.
 # A justified case carries `hermetic: allow RULE (reason)` on its line or the line above.
 # Run: tests/test_hermetic.sh
 set -u
@@ -113,13 +114,14 @@ lint=$(python3 -I tests/hermetic_lint.py tests 2>&1); rc=$?
 [ "$rc" = 0 ] && [ -z "$lint" ] && ok "lint: no test file breaks a rule" || no "lint of the tests: $lint"
 lint=$(python3 -I tests/hermetic_lint.py tests/fixtures/hermetic-lint 2>&1)
 for want in test_nosource.sh:source test_py.py:source test_tmp.sh:tmp test_pgrep.sh:pgrep test_sleep.sh:sleep test_py.py:sleep test_rm.sh:rm \
-            test_port.sh:port test_lock.sh:lock test_clock.sh:clock test_py.py:clock; do
+            test_port.sh:port test_lock.sh:lock test_clock.sh:clock test_py.py:clock test_absent.sh:absent; do
   grep -q "^${want%%:*}:[0-9]*: ${want##*:}:" <<<"$lint" && ok "lint: ${want%%:*} breaks rule ${want##*:}" || no "lint misses ${want%%:*} / ${want##*:}: $lint"
 done
 [ "$(grep -c '^test_tmp.sh:' <<<"$lint")" = 3 ] && [ "$(grep -c '^test_pgrep.sh:' <<<"$lint")" = 3 ] && [ "$(grep -c '^test_rm.sh:' <<<"$lint")" = 3 ] \
   && ok "lint: each line of a sample is found (three shared places, three ways to kill by pattern, three directories not made by the test)" || no "lint: lines found: $lint"
+[ "$(grep -c '^test_absent.sh:' <<<"$lint")" = 7 ] && ok "lint: each of the seven short absent tokens of a sample is found (! grep, && no, a count of 0, an empty capture, one alternative of a pattern)" || no "lint: absent lines found: $lint"
 grep -q '^test_clean.sh\|^test_pyclean.py' <<<"$lint" && no "lint flags a clean sample: $(grep '^test_clean\|^test_pyclean' <<<"$lint")" \
-  || ok "lint: a poll loop, an allowed line, a comment and a quoted command are not findings"
+  || ok "lint: a poll loop, an allowed line, a comment, a quoted command and a short token that is present, whole-word, anchored, hyphenated or long are not findings"
 
 [ $fail = 0 ] && echo "hermetic: all passed"
 exit $fail
