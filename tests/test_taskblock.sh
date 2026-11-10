@@ -99,7 +99,11 @@ dones=(
   'HOME="$(mktemp -d)" bash tests/check.sh' '(cd lib && python3 -m pytest)' 'bash tests/check.sh && bash tests/check.sh' 'FOO=1 BAR=2 make test'
   '! grep -q x README.md' 'env -i make test' 'tests/new_test.sh' 'bash tests/never_made.sh && true' 'make test | tail -n 5' 'FOO="a b" bash tests/check.sh'
   'make test 2>&1 | tail -n 5' 'make test >/dev/null || true' 'diff <(true) <(true)' 'f() { :; }; f && make test' 'if make test; then true; fi' 'echo "a; b > c" && make test'
-  'cd tests && ./not_here_after_cd.sh')
+  'cd tests && ./not_here_after_cd.sh'
+  # forms the scanner cannot read as commands: a test with [[, case patterns after ;;, an arithmetic for, a function keyword, an array, select, until, a group, exec, a dot, [ ]
+  '[[ -f out.txt ]] && echo yes' 'case $x in a) make a;; b) make b;; esac' 'case "$(uname)" in Linux) make test;; *) true;; esac' 'for ((i=0;i<3;i++)); do echo $i; done'
+  'function g { make; }; g' 'arr=(a b c); echo "${arr[@]}"' 'select x in a b; do echo $x; break; done' 'until make test; do sleep 1; done' '{ make; make test; }'
+  'exec make test' '. tests/check.sh' '[ -x tests/check.sh ]' '[[ $x =~ ^(a|b)$ ]] && make test' '(( n > 1 )) && make' 'declare -a v=(1 2); make test' 'cd tests && case $x in a) ./check.sh;; esac')
 for d in "${dones[@]}"; do
   n=$((n+1)); prep --slug "d$n" --task-file "$T/task.txt" --done "$d" --scope tests/new_test.sh >/dev/null 2>&1 && grep -qxF "DONE: $d" "$RUN/task.md" && ok "DONE '$d' is accepted" || no "DONE '$d' refused"
 done
@@ -108,7 +112,7 @@ done
 # a line, after ; & && || | or ( or $( ). 'coverage' is left out when the machine has such a command.
 prose=('OUT/report.md ends with a verdict line' "the review is done and it's right" 'the output (looks right)' 'tests/never_made.sh' 'bash tests/check.sh; then' 'FOO=1 nothingtorun'
   'tests pass & lint is clean' 'speedup > 2x' 'make test && everything is clean' 'make test; the report has no errors' 'make test | nothingtoread' 'make test || nothing < in.txt'
-  'echo $(nothingtorun)' '(cd tests && nothingtorun)' '! nothingtorun' 'if nothingtorun; then true; fi' 'FOO=1 nothingtorun 2>&1' 'tests/never_made.sh && true')
+  'nothingtorun && case $x in a) true;; esac' '[[ -f x ]] && nothingtorun' 'cd tests && [[ -f x ]] && nothingtorun' 'echo $(nothingtorun)' '(cd tests && nothingtorun)' '! nothingtorun' 'if nothingtorun; then true; fi' 'FOO=1 nothingtorun 2>&1' 'tests/never_made.sh && true')
 type -P coverage >/dev/null || prose+=('coverage > 80%')
 for d in "${prose[@]}"; do
   n=$((n+1)); before=$(runs); out=$($Q local prepare --repo "$R" --base main --scratch "$T" --slug "d$n" --task-file "$T/task.txt" --done "$d" --scope tests/new_test.sh 2>&1); rc=$?
