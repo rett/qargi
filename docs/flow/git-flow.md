@@ -101,7 +101,11 @@ refusal changes nothing.
    the job ids under `jobs:` and the `name:` line of each job) and warns, on standard error, naming each job whose name and id match no
    declared gate name; a job whose name cannot be read (an expression, a block scalar, a flow mapping) is reported as unknown, a note and
    never a failure. `release verify --strict` refuses, before anything runs, when any job matches no gate name. With no workflow nothing new
-   is printed; with workflows and no gates declared every job is named.
+   is printed; with workflows and no gates declared one note names all the jobs, instead of a warning each.
+   Two optional answers say which jobs are not unmatched. A gate may carry `"ci_jobs": ["job", ...]`, the CI jobs (names or ids) that run its
+   check under another name: the scan reports each as a note, `covered by gate NAME`, and does not warn. The answer `ci.not_gates` is a list
+   of job names or ids that are aggregate or publish jobs and not gates: the scan leaves them out, so `--strict` does not count them. A name
+   listed in either that no workflow has is a warning (it is not shown when a workflow or a job name cannot be read, as the name may be there).
    Two optional answers add generic checks, both warnings and neither a refusal. `release.version_files` is a list of paths
    (relative to the repository) of other files that carry the version, a manifest say: `release start` prints a warning naming the
    ones that do not yet contain the new version (as a whole version, so `0.2.1` is not found in `0.2.10`) and says to bump them on

@@ -6,7 +6,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- The CI scan of `qargi release verify` can be told which jobs are not unmatched. A gate may carry `ci_jobs`, a list of CI job names or ids that run its check under another name: the scan reports each as a note, `covered by gate NAME`, and does not warn. The new answer `ci.not_gates` is a list of job names or ids that are aggregate or publish jobs and not gates; the scan leaves them out. A name listed in either that no workflow has is a warning, unless a workflow or a job name could not be read. `--strict` counts neither covered nor listed jobs. `project validate` and `project set` check both lists (non-empty names, each once).
+
 ### Changed
+- With workflows and no gate declared, the CI scan of `qargi release verify` prints one note naming all the jobs (`no gate is declared, so the CI jobs are not compared with gate names (jobs: ...)`) instead of a warning for each job. `--strict` still refuses, its message saying that no gate is declared.
 - `qargi help feature verify` names the exact lines a gate or test command may print for the failure report that ends a failed `feature verify` or `release verify`: `^FAILED: ` for a failing step, `^FAIL( |:)` and now `^--- FAIL: ` (a Go test run's line) for a failing test, and `^logs of the failed steps: ` for where the runner kept its logs. Before, a gate that printed `--- FAIL: TestX` was reported as having no failing test name.
 
 ### Fixed

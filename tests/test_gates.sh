@@ -164,7 +164,32 @@ out=$($F verify gt --strict 2>&1); rc=$?
 unset_gates
 jq --arg c "$(g tc)" '.test_command = $c' "$P" > "$P.new" && mv "$P.new" "$P"
 out=$($REL verify 0.9.0 2>&1); rc=$?
-[ $rc = 0 ] && [ "$(grep -c '^qargi: warning: CI job' <<<"$out")" = 3 ] && ok "workflows and no gate declared: every job is named as matching no gate, and test_command runs" || no "no gates, workflows rc=$rc: $out"
+[ $rc = 0 ] && ! grep -q '^qargi: warning: CI job' <<<"$out" && [ "$(grep -c '^qargi: note: no gate is declared' <<<"$out")" = 1 ] && grep -q '(jobs: lint, unit, deploy)' <<<"$out" \
+  && ok "workflows and no gate declared: one note names the jobs instead of a warning each, and test_command runs" || no "no gates, workflows rc=$rc: $out"
+out=$($REL verify 0.9.0 --strict 2>&1); rc=$?
+[ $rc != 0 ] && grep -q -- '--strict: 3 CI job(s) match no declared gate name (no gate is declared)' <<<"$out" && ok "--strict still refuses with no gate declared" || no "strict, no gates rc=$rc: $out"
+# the answer ci.not_gates leaves aggregate and publish jobs out of the comparison
+jq '.ci = {not_gates: ["deploy", "matrix"]}' "$P" > "$P.new" && mv "$P.new" "$P"
+out=$($REL verify 0.9.0 2>&1); rc=$?
+[ $rc = 0 ] && grep -q '(jobs: lint, unit)' <<<"$out" && ! grep -q 'deploy' <<<"$out" && ok "ci.not_gates: those jobs are left out of the single note" || no "not_gates note rc=$rc: $out"
+jq '.ci.not_gates = ["deploy", "matrix", "lint", "unit"]' "$P" > "$P.new" && mv "$P.new" "$P"
+out=$($REL verify 0.9.0 --strict 2>&1); rc=$?
+[ $rc = 0 ] && ! grep -q 'no gate is declared' <<<"$out" && ! grep -q 'warning: CI job' <<<"$out" && ok "ci.not_gates naming every job: no note, --strict passes" || no "all not_gates rc=$rc: $out"
+setgates "[$(gate lint "$(g lint)" feature)]"
+jq '.ci.not_gates = ["deploy", "matrix", "gone"]' "$P" > "$P.new" && mv "$P.new" "$P"
+out=$($REL verify 0.9.0 2>&1); rc=$?
+[ $rc = 0 ] && grep -q '^qargi: warning: CI job unit (Unit tests) in .github/workflows/ci.yml matches no declared gate name' <<<"$out" && ! grep -q 'warning: CI job deploy' <<<"$out" \
+  && grep -q '^qargi: warning: ci.not_gates lists gone, but no workflow has a job of that name or id' <<<"$out" && ok "with gates: only an uncovered job warns, and a listed name no workflow has warns" || no "not_gates with gates rc=$rc: $out"
+# a gate's ci_jobs: the jobs that run its check under other names
+setgates "[$(gate lint "$(g lint)" feature | jq -c '. + {ci_jobs: ["unit", "ghost"]}')]"
+out=$($REL verify 0.9.0 --strict 2>&1); rc=$?
+[ $rc = 0 ] && grep -q '^qargi: note: CI job unit in .github/workflows/ci.yml is covered by gate lint' <<<"$out" && ! grep -q 'warning: CI job' <<<"$out" \
+  && grep -q '^qargi: warning: gate lint lists the CI job ghost in ci_jobs, but no workflow has a job of that name or id' <<<"$out" && ok "ci_jobs: the job is reported covered by the gate, not warned; a name no workflow has warns; --strict passes" || no "ci_jobs rc=$rc: $out"
+out=$($DA project set app ci '{"not_gates": "deploy"}' 2>&1); rc=$?
+[ $rc != 0 ] && grep -q 'ci.not_gates: a non-empty list' <<<"$out" && ok "project set refuses a bad ci.not_gates and names it" || no "bad ci rc=$rc: $out"
+out=$($DA project set app gates '[{"name":"a","command":"true","tier":"feature","ci_jobs":"x"}]' 2>&1); rc=$?
+[ $rc != 0 ] && grep -q 'gates\[0\].ci_jobs: a non-empty list' <<<"$out" && ok "project set refuses a bad ci_jobs and names it" || no "bad ci_jobs rc=$rc: $out"
+jq 'del(.ci)' "$P" > "$P.new" && mv "$P.new" "$P"; unset_gates
 devfile .github/workflows/flow.yml 'jobs: {a: {runs-on: x}}'
 out=$($REL verify 0.9.0 --strict 2>&1); rc=$?
 grep -q 'note: CI workflow .github/workflows/flow.yml: its jobs cannot be read' <<<"$out" && ok "a workflow whose jobs cannot be read is a note" || no "flow note: $out"
