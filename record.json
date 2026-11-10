@@ -1,7 +1,7 @@
 {
  "purpose": "Release 0.2.10: guard messages (Q17), canon/CI-scan/gates (Q1,Q2,Q7,Q18), adopt/attach conventions (Q3-Q6,Q8-Q12), hotfix and finish checks (Q13,Q14), backlog add/batch done (Q19), detached-by-PR docs (Q20), member report verb (Q15), release ceremony (D4), marshal-unreachable (D2)",
  "started": "2026-11-10T09:05:06Z",
- "goal": "Release 0.2.10: guard messages (Q17), canon/CI-scan/gates (Q1,Q2,Q7,Q18), adopt/attach conventions (Q3-Q6,Q8-Q12), hotfix and finish checks (Q13,Q14), backlog add/batch done (Q19), detached-by-PR docs (Q20), member report verb (Q15), release ceremony (D4), marshal-unreachable (D2)",
+ "goal": "0.2.10 tacctl Q1-Q20 batch",
  "plan": "",
  "note": "",
  "status": "active",
@@ -12,11 +12,11 @@
   "since": "2026-11-10T09:05:06Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-10T09:05:06Z",
+ "renewed_at": "2026-11-10T09:05:25Z",
  "finished_at": null,
  "updated_by": "arc-qargi",
- "rev": 1,
- "updated_at": "2026-11-10T09:05:06Z",
+ "rev": 2,
+ "updated_at": "2026-11-10T09:05:25Z",
  "feature": "rel0210",
  "project": "qargi"
 }
