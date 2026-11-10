@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- `make bootstrap` installs and `make doctor` checks `ssh-keygen` (OpenSSH: `openssh` on Arch, `openssh-client` on Debian and Ubuntu, `openssh-clients` on Fedora), which the marshal's signed records and the test suite need; `AGENTS.md` lists it
+
 ## [0.2.8] - 2026-11-09
 
 ### Fixed
