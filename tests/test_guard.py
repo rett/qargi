@@ -650,7 +650,7 @@ class Skills(HookCase):
         the suite), and qargi release site builds and commits the site the site answers (site.*) name, so a member that could set them would run
         its own command with the lead's rights: project set refuses them, whole or by a dotted path, in every form the models answers are refused
         in. Look-alikes (test_commands, releases.x, sites.x, website) stay open."""
-        for path in ("release", "release.preflight", "release.test_command", "release.sign.verify_command", "release.changelog.released", "release.version_file",
+        for path in ("release", "release.preflight", "release.finish_check", "release.test_command", "release.sign.verify_command", "release.changelog.released", "release.version_file",
                      "test_command", "env", "env.PATH", "env.acme.x", "upstream", "upstream.overlay_check", "upstream.remote", "site", "site.enabled", "site.branch", "site.config", "backlog", "backlog.file"):
             for form in ("qargi project set p %s v", "/opt/q/bin/qargi project set p %s v", "sudo qargi project set p %s v", "cd src && qargi project set p %s v",
                          "bash -c 'qargi project set p %s v'", "env FOO=1 qargi project set p %s v", "echo $(qargi project set p %s v)",

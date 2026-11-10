@@ -39,6 +39,8 @@
 #   release.sh finish VERSION [--hotfix] [--keep] [--ignore-checks WORDS] [--plan T --approved W]
 #                                           after the checks pass: merge, tag, back-merge, delete the branch, push. The plan lists the pull request's checks
 #                                           and refuses while one fails or is pending, unless --ignore-checks gives, in the person's words, why (recorded).
+#                                           With the answer release.finish_check (a command line or a list of words, {version} replaced) the plan lists it, and once
+#                                           the plan is approved it runs in a copy of the branch before any merge, tag or push; a non-zero exit refuses, nothing moved.
 #                                           Then it prints the steps of the answer release.after_steps ({version} replaced) as "after the release: [pending]
 #                                           NAME (WHO): COMMAND" lines, never runs them, and records them as pending in STATE/release/PROJECT-VERSION.after.json
 #                                           ({schema: 2, steps: [{name, command, who, evidence_hint, state, done_at, evidence}]}) for `status`, which shows
@@ -503,15 +505,24 @@ man_pages_at() {
   if jq -e '(.release? // {}) | has("man_pages")' "$af" >/dev/null 2>&1; then jq -r '.release.man_pages[]' "$af"
   else g ls-tree -r --name-only "$1" | grep -E '(^|/)man[0-9]?/[^/]+\.[1-9]$' || true; fi
 }
+# has_answer KEY -> whether the release answer KEY (release.KEY) is set
+has_answer() { jq -e --arg k "$1" '(.release? // {}) | has($k)' "$af" >/dev/null 2>&1; }
+# answer_text KEY -> the release answer KEY as one line for a plan: the words of a list, the text of a command line ({version} is replaced when it runs)
+answer_text() { jq -r --arg k "$1" '.release[$k] | if type == "array" then join(" ") else . end' "$af"; }
+# run_answer KEY DIR NOTHING -> release.KEY (a list of words, run without a shell, or a command line, run by bash -c; {version} replaced in either, and
+# QARGI_RELEASE_VERSION set) runs in DIR with no input; a non-zero exit ends the verb with the tail of its output and NOTHING (what was not done)
+run_answer() {
+  local cmd=() out rc=0
+  if [ "$(jq -r --arg k "$1" '.release[$k] | type' "$af")" = array ]; then
+    mapfile -d '' -t cmd < <(jq -j --arg k "$1" --arg v "$VER" '.release[$k][] | split("{version}") | join($v), "\u0000"' "$af")
+  else cmd=(bash -c "$(jq -r --arg k "$1" --arg v "$VER" '.release[$k] | split("{version}") | join($v)' "$af")"); fi
+  [ "${#cmd[@]}" -gt 0 ] || return 0
+  out=$(run_clean "$2" env QARGI_RELEASE_VERSION="$VER" "${cmd[@]}" </dev/null 2>&1) || rc=$?
+  [ "$rc" = 0 ] || die "release.$1 failed (exit $rc): ${cmd[*]}"$'\n'"$(printf '%s\n' "$out" | tail -n 15 | sed 's/^/  | /')"$'\n'"$3"
+}
 # run_preflight DIR: release.preflight (an argv list, {version} replaced) runs in DIR, with no shell and no input; a non-zero exit ends the verb
 # with the tail of its output. It runs before the verb changes anything.
-run_preflight() {
-  local pre=() out rc=0
-  mapfile -d '' -t pre < <(jq -j --arg v "$VER" '(.release? // {}) | (.preflight // [])[] | split("{version}") | join($v), "\u0000"' "$af")
-  [ "${#pre[@]}" -gt 0 ] || return 0
-  out=$(run_clean "$1" "${pre[@]}" </dev/null 2>&1) || rc=$?
-  [ "$rc" = 0 ] || die "release.preflight failed (exit $rc): ${pre[*]}"$'\n'"$(printf '%s\n' "$out" | tail -n 15 | sed 's/^/  | /')"$'\n'"nothing was changed"
-}
+run_preflight() { has_answer preflight || return 0; run_answer preflight "$1" "nothing was changed"; }
 
 # --- the pull request and its CI checks (read-only calls through $GH)
 # pr_checks BRANCH -> PRC_STATE (pass|failing|pending|nopr|nochecks|noauth|nogh|unchecked), PRC_LINES ("name: pass|fail|pending|skipped" per check),
@@ -750,7 +761,7 @@ case $verb in
       echo "$n. push: push $BR to origin and open the pull request into master, so CI runs on the commit that will be released (a branch that shares no history with master is joined first). The cut covers the branch as start leaves it; a fix committed on it before the push is pushed with the push's own plan (release fix --push), and the cut goes on from there."
     else echo "$n. push: not in this cut: the repository has no origin remote, so no CI runs; finish then needs a passing local whole-suite run at the head (qargi release verify $VER${HOTFIX:+ --hotfix})"; fi
     n=3
-    echo "$n. finish: merge $BR into master with --no-ff (master is at ${msha:0:7}), tag $VER on that merge commit, merge the tag commit into $second with --no-ff$([ -n "$KEEP" ] && echo ", keep $BR" || echo ", delete $BR"), then push master, $second and the tag together (all or none). THIS IS THE PUSH AND TAG GATE: the approval words you give record that you released it. Needs the pull request's checks passed (a failing or pending check is refused; --ignore-checks \"...\" at the call, in your own words, is recorded) and the branch still at the head that was pushed."
+    echo "$n. finish: merge $BR into master with --no-ff (master is at ${msha:0:7}), tag $VER on that merge commit, merge the tag commit into $second with --no-ff$([ -n "$KEEP" ] && echo ", keep $BR" || echo ", delete $BR"), then push master, $second and the tag together (all or none). THIS IS THE PUSH AND TAG GATE: the approval words you give record that you released it. Needs the pull request's checks passed (a failing or pending check is refused; --ignore-checks \"...\" at the call, in your own words, is recorded) and the branch still at the head that was pushed.$(! has_answer finish_check || echo " release.finish_check runs in a copy of the branch first, before anything is merged, tagged or pushed (a non-zero exit refuses): $(answer_text finish_check).")"
     if [ -n "$site" ]; then echo "4. site: build the documentation site of the tag $VER and commit it on $SITE_BR (nothing is pushed)"; fi
     if [ -n "$pubown" ]; then echo "5. publish (optional): create the GitHub release of tag $VER with the changelog section as notes. The project attaches release files (release.assets or release.sign), whose hashes exist only after the tag: publish takes its own plan, and so is outside this cut's token"
     else echo "5. publish (optional): create the GitHub release of tag $VER with the changelog section as notes; skip it when the tag's release workflow publishes the release"; fi
@@ -1014,6 +1025,7 @@ case $verb in
     echo "finish $KIND $VER of $PROJ: merge $BR into master with --no-ff, tag $VER on it, merge tag $VER (the master merge commit) into $second with --no-ff${KEEP:+, keep $BR}$([ -n "$KEEP" ] || echo ", delete $BR"), push master, $second and the tag together (all or none)"
     remote_report "$BR"; remote_report master; remote_report "$second"
     show_incoming master "$BR"; backlog_note master "$BR"
+    ! has_answer finish_check || echo "finish check (release.finish_check, run in a copy of $BR once this plan is approved, before anything is merged, tagged or pushed; a non-zero exit refuses): $(answer_text finish_check)"
     if g remote get-url origin >/dev/null 2>&1; then   # the checks of the pull request at the head being released
       pr_checks_print "$BR"
       rw=$(remote_was "$BR"); [ -z "$rw" ] || [ "$rw" = "$h" ] || echo "warning: origin/$BR was at ${rw:0:7} at the last fetch, not at the head ${h:0:7} that is released: those checks may be of an older commit (qargi release push, then wait for the checks)"
@@ -1047,6 +1059,9 @@ case $verb in
       echo "note: no origin remote, so no CI ran on $BR; the local whole-suite run stands in" >&2
     fi
     need_free master "$second"; need_free_wt "$BR"   # a clean worktree that qargi made for the fix may hold BR: it is removed below
+    # release.finish_check: the project's last word before anything moves, in a copy of the branch head that is released; it comes before the stale record
+    # is dropped, so a refusal leaves everything (the record, the tag it made) as it was
+    if has_answer finish_check; then worktree "$h"; run_answer finish_check "$WT" "nothing was merged, tagged or pushed"; cleanup; fi
     if [ -n "${STALE_REC:-}" ]; then intent_drop "$KIND-$VER"; echo "note: an earlier finish of $VER stopped before anything reached origin or moved here; its tag and record are removed and this one starts again" >&2; fi
     m0=$(sha_of master); s0=$(sha_of "$second")
     rm0=$(remote_was master); rs0=$(remote_was "$second"); rb0=$(remote_was "$BR")   # what origin has (fetched above): where the journal lines of the pushes start

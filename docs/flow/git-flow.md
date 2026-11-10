@@ -101,7 +101,12 @@ refusal changes nothing.
    `applied` file of its directory is removed, and a re-run after a death finishes or redoes the apply. `release status` and `release
    verify` work as for features. `release status` shows the checks of the pull request and, after the finish, what
    is left (tag on origin, GitHub release, assets, signatures); `release finish` lists the checks and refuses
-   while one fails or is pending, unless `--ignore-checks "<your words>"`. To fix a failed check, `qargi release
+   while one fails or is pending, unless `--ignore-checks "<your words>"`. The optional answer `release.finish_check` (a command
+   line, or a command as a list of words, `{version}` replaced; `QARGI_RELEASE_VERSION` is set) is the project's last word before
+   anything moves: the finish plan and the `release plan` cut plan list it, and once the plan is approved `release finish` runs it
+   in a copy of the branch, before any merge, tag or push. A non-zero exit refuses with the tail of its output and nothing moved
+   (no ref here or on origin, no tag, no record). It is off unless set, and a member may not set it (`project set` refuses every
+   `release.*` answer). To fix a failed check, `qargi release
    fix VERSION` makes a worktree on the release branch and `release fix VERSION --push` pushes the fix to the open
    pull request.
    Pushing the tag publishes the GitHub release through the workflow; for a tag that predates it,

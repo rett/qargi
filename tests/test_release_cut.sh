@@ -113,4 +113,30 @@ git -C "$R" update-ref refs/heads/master "$(git -C "$R" commit-tree -p master -m
 out=$($REL finish 0.2.0 --plan "$ct" 2>&1); rc=$?
 [ "$rc" != 0 ] && grep -q "does not cover finish" <<<"$out" && grep -q "master is at" <<<"$out" && ! git -C "$R" rev-parse -q --verify refs/tags/0.2.0 >/dev/null && ok "master moved since the plan: finish under the cut is refused, nothing is tagged" || no "finish after master moved: rc=$rc $out"
 
+# --- release.finish_check: run by finish in a copy of the branch once the plan is approved, before anything is merged, tagged or pushed; the plans list it
+printf '#!/usr/bin/env bash\necho "$PWD $1 ${QARGI_RELEASE_VERSION:-} $(cat VERSION)" >> "%s/fc.log"\nif [ -f "%s/fc.fail" ]; then echo "finish check boom"; exit 5; fi\n' "$T" "$T" > "$T/fc.sh"
+mk fcheck with-origin
+jq --arg s "$T/fc.sh" '.release = {finish_check: ["bash", $s, "{version}"]}' "$T/c/projects/fcheck.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/fcheck.json"
+out=$($REL start 0.2.0 --date 2026-03-04 2>&1); rc=$?   # every release verb that relies on the release answers checks them first
+[ "$rc" = 0 ] && grep -q "^plan token: " <<<"$out" && ok "release.finish_check is a release answer (the plan of start is made: no verb refuses the answer)" || no "release.finish_check is not a known release answer: rc=$rc $out"
+out=$($REL plan 0.2.0 --date 2026-03-04 2>&1)
+grep -q "release.finish_check runs in a copy of the branch first, before anything is merged, tagged or pushed (a non-zero exit refuses): bash $T/fc.sh {version}" <<<"$out" && ok "the plan of the cut lists the finish check" || no "cut plan: $out"
+rstart 0.2.0 --date 2026-03-04 >/dev/null 2>&1; t=$($REL push 0.2.0 | tok); $REL push 0.2.0 --plan "$t" --approved go >/dev/null 2>&1
+out=$($REL finish 0.2.0 2>&1); t=$(tok <<<"$out")
+grep -q "^finish check (release.finish_check, run in a copy of release/0.2.0 once this plan is approved, before anything is merged, tagged or pushed; a non-zero exit refuses): bash $T/fc.sh {version}" <<<"$out" && [ ! -e "$T/fc.log" ] && ok "the finish plan lists the check and runs nothing" || no "finish plan: $out"
+refs() { { git -C "$R" for-each-ref refs/heads refs/tags; git -C "$O" for-each-ref; } | md5sum; }   # the local branches and tags, and every ref of origin
+before=$(refs); touch "$T/fc.fail"
+out=$($REL finish 0.2.0 --plan "$t" --approved go 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "release.finish_check failed (exit 5)" <<<"$out" && grep -q "finish check boom" <<<"$out" && grep -q "nothing was merged, tagged or pushed" <<<"$out" && [ "$before" = "$(refs)" ] \
+  && [ -z "$(ls "$T/s/finish-intent" 2>/dev/null)" ] && ok "a failing finish check refuses with the tail of its output; no ref moved here or on origin, no tag, no record" || no "failing finish check: rc=$rc $out"
+rm -f "$T/fc.fail"
+out=$($REL finish 0.2.0 --plan "$t" --approved go 2>&1); rc=$?
+read -r cwd arg envv ver < <(tail -1 "$T/fc.log")
+[ "$rc" = 0 ] && git -C "$R" rev-parse -q --verify refs/tags/0.2.0 >/dev/null && [ "$arg" = 0.2.0 ] && [ "$envv" = 0.2.0 ] && [ "$ver" = 0.2.0 ] && [ "$cwd" != "$R" ] && [ ! -e "$cwd" ] \
+  && ok "a passing finish check lets the finish go on; it ran in a temporary copy of the branch (its VERSION is the release's), {version} replaced, QARGI_RELEASE_VERSION set" || no "passing finish check: rc=$rc cwd=$cwd arg=$arg $out"
+mk fcline
+jq '.release = {finish_check: "test -f VERSION && echo {version} > /dev/null"}' "$T/c/projects/fcline.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/fcline.json"
+out=$($REL start 0.2.0 --date 2026-03-04 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q "^plan token: " <<<"$out" && ok "release.finish_check may be a command line" || no "a command line is refused: rc=$rc $out"
+
 exit $fail
