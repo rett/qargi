@@ -397,13 +397,14 @@ gates_line() {
 wcommit() { git -C "$WT" commit -q "$@" || die "the commit failed (is a git user.name and user.email set?)"; }
 
 
-# merge_step INTO_SHA FROM KEY MESSAGE -> MERGED (the merge commit); a --no-ff merge made in a temporary worktree.
+# merge_step INTO_SHA FROM KEY MESSAGE [LABEL] -> MERGED (the merge commit); a --no-ff merge made in a temporary worktree.
 # On a conflict nothing moves: the worktree is kept as the place to resolve it (STATE/conflicts/PROJ-KEY) with the merge in
 # progress, the conflicted files are listed and the command exits 3. Resolve and commit there, then run the same command with
 # --resolved: the commit is used if it is a merge of exactly INTO_SHA and FROM, with nothing left unmerged. Running the command
-# again without --resolved while a resolution is waiting is refused, not overwritten.
+# again without --resolved while a resolution is waiting is refused, not overwritten. LABEL (default FROM) is what the messages call FROM: a commit
+# that is only a sha, like the tagged master merge commit, is named by its tag.
 merge_step() {
-  local into=$1 from=$2 key=$3 msg=$4 dir from_sha files out donef di df dm
+  local into=$1 from=$2 key=$3 msg=$4 label=${5:-$2} dir from_sha files out donef di df dm
   dir=$DA_STATE/conflicts/$PROJ-$key; donef=$dir.done
   from_sha=$(g rev-parse "$from")
   if [ -n "${RESOLVED:-}" ]; then
@@ -413,7 +414,7 @@ merge_step() {
       [ -z "$(git -C "$dir" diff --name-only --diff-filter=U)" ] && [ ! -f "$(git -C "$dir" rev-parse --git-path MERGE_HEAD)" ] \
         || die "the merge in $dir is not finished: resolve the conflicts, git add them, git commit, then run this again with --resolved"
       [ "$(git -C "$dir" rev-parse HEAD^1 2>/dev/null)" = "$into" ] && [ "$(git -C "$dir" rev-parse HEAD^2 2>/dev/null)" = "$from_sha" ] \
-        || die "the commit in $dir is not a merge of $from into the current head (the branches moved, or it is not a merge commit): remove it with git worktree remove --force $dir and start over"
+        || die "the commit in $dir is not a merge of $label into the current head (the branches moved, or it is not a merge commit): remove it with git worktree remove --force $dir and start over"
       MERGED=$(git -C "$dir" rev-parse HEAD)
       printf '%s %s %s\n' "$into" "$from_sha" "$MERGED" > "$donef"
       g worktree remove --force "$dir" >/dev/null 2>&1 || rm -rf "$dir"
@@ -430,9 +431,9 @@ merge_step() {
   files=$(git -C "$WT" diff --name-only --diff-filter=U)
   if [ -z "$files" ]; then cleanup; die "merging $from failed without a conflict: $out"; fi
   mkdir -p "$DA_STATE/conflicts"
-  g worktree move "$WT" "$dir" >/dev/null 2>&1 || { cleanup; die "the merge of $from conflicts, and the worktree to resolve it in could not be kept; nothing was changed"; }
+  g worktree move "$WT" "$dir" >/dev/null 2>&1 || { cleanup; die "the merge of $label conflicts, and the worktree to resolve it in could not be kept; nothing was changed"; }
   WT=''
-  echo "qargi: merging $from conflicts. Nothing was changed. Conflicted files:" >&2
+  echo "qargi: merging $label conflicts. Nothing was changed. Conflicted files:" >&2
   echo "$files" | sed 's/^/  /' >&2
   echo "Resolve them in $dir (the merge is in progress there): edit, git add, git commit." >&2
   echo "Then run the same command again with --resolved. (git worktree remove --force $dir abandons it.)" >&2

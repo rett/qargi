@@ -1077,10 +1077,15 @@ case $verb in
     # A conflict in the second merge parks a worktree that holds a merge of that commit, so the commit is kept in a file beside it and a run with
     # --resolved uses the same one (a new merge of the branch into master would be another commit)
     mfile=$DA_STATE/conflicts/$PROJ-$k2.master; nm=''
-    if [ -f "$mfile" ] && read -r mi mh mm < "$mfile" && [ "$mi" = "$m0" ] && [ "$mh" = "$h" ] && g cat-file -e "$mm^{commit}" 2>/dev/null; then nm=$mm; fi
+    # the commit in the file is used only when it is what it says: a merge of exactly this master (m0) and this branch head (h), nothing else; a file
+    # that says otherwise (hand-edited, left by another release, the commit gone) is removed and the merge is made anew
+    if [ -f "$mfile" ]; then
+      if read -r mi mh mm < "$mfile" && [ "$mi" = "$m0" ] && [ "$mh" = "$h" ] && [ "$(g rev-list --parents -n 1 "$mm" 2>/dev/null)" = "$mm $m0 $h" ]; then nm=$mm
+      else rm -f -- "$mfile"; fi
+    fi
     if [ -z "$nm" ]; then merge_step "$m0" "refs/heads/$BR" "$k1" "Merge branch '$BR'"; nm=$MERGED; fi
     mkdir -p "$DA_STATE/conflicts"; printf '%s %s %s\n' "$m0" "$h" "$nm" > "$mfile"
-    merge_step "$s0" "$nm" "$k2" "Merge tag '$VER' into $second"
+    merge_step "$s0" "$nm" "$k2" "Merge tag '$VER' into $second" "tag $VER (the master merge commit ${nm:0:7})"
     ns=$MERGED
     # the intent record comes before the tag and the push: a death after the push is finished by the next run (release_finish_resume)
     PUSHED=''; g remote get-url origin >/dev/null 2>&1 && PUSHED=1

@@ -165,7 +165,10 @@ refusal changes nothing.
 Merging into develop or master, starting a release, pushing and tagging each print a plan and a token first; apply it
 with `--plan TOKEN --approved "<your words>"`. A merge that conflicts changes nothing and exits 3,
 naming a worktree with the merge in progress: resolve and commit there, then run the same command
-with `--resolved`.
+with `--resolved`. The second merge of `release finish` takes the master merge commit that carries the tag, so its conflict message
+names the tag (`merging tag VERSION (the master merge commit abc1234) conflicts`); that commit is kept in a `.master` file beside the
+worktree and a run with `--resolved` uses it only when it is a merge of exactly the current master and the release branch head
+(any other file is removed and the merge made anew).
 
 ## Detached branches
 
