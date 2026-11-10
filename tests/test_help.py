@@ -171,6 +171,13 @@ class Render(unittest.TestCase):
         self.assertIn("closing verdict line", role)
         self.assertNotIn("DONE checks that the report has a Findings section", role)
 
+    def test_the_verify_skill_names_both_ways_a_read_only_report_reaches_the_lead(self):
+        """A read-only run with no report in OUT either gave it in its final message (the lead stores it) or wrote it with local report."""
+        skill = " ".join(slurp(os.path.join(ROOT, "skills", "qargi-verify", "SKILL.md")).split())
+        self.assertIn("`qargi review save RUN_DIR` stores it", skill)
+        self.assertIn("`qargi local report`", skill)
+        self.assertIn("report", verbs("local"))
+
     # verbs the guard refuses that the topic need not name, each with the reason: none yet
     GUARD_TOPIC_EXEMPT = {}
 
