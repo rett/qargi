@@ -67,7 +67,10 @@ show_plan() { # plan.json
 
 exec_ops() { mem_exec_ops "$@"; }
 
-make_plan() { # kind -> prints plan json path
+# make_plan KIND -> sets PLAN_FILE to the plan json of KIND. Call it in the shell of the verb and not in $(...): a die inside a command
+# substitution leaves only that subshell, and the verb would go on with no plan.
+PLAN_FILE=''
+make_plan() {
   local k=$1 store; store=$(store_of "$k"); [ -n "$store" ] || die "the project has no $k store recorded"
   local tmp; tmp=$(mktemp -d -p "$WORK")
   probe "$store" "$tmp/s.jsonl" || die "the $k store $store is unreachable: $WHY; nothing was planned"
@@ -76,7 +79,7 @@ make_plan() { # kind -> prints plan json path
   if [ "$(jq -r .from_version "$tmp/plan.json")" = unknown ] && [ "$verb" = apply ]; then
     jq -r '.notes[]' "$tmp/plan.json" >&2; die "the $k store has an unrecognised layout; nothing was changed"
   fi
-  echo "$tmp/plan.json"
+  PLAN_FILE=$tmp/plan.json
 }
 
 case $verb in
@@ -93,7 +96,7 @@ case $verb in
   plan)
     reach_all || die "a store is unreachable: nothing was planned"
     declare -A plan=()
-    for k in $kinds; do plan[$k]=$(make_plan "$k"); done
+    for k in $kinds; do make_plan "$k"; plan[$k]=$PLAN_FILE; done
     tok=$(for k in $kinds; do jq -S -c .ops "${plan[$k]}"; done | plan_token)
     for k in $kinds; do echo "== $k"; show_plan "${plan[$k]}"; done
     echo "plan token: $tok   (apply with: --plan $tok --approved \"...\")";;
@@ -102,7 +105,7 @@ case $verb in
     ant_ok
     reach_all || die "a store is unreachable: nothing was changed"
     declare -A plan=()
-    for k in $kinds; do plan[$k]=$(make_plan "$k"); done
+    for k in $kinds; do make_plan "$k"; plan[$k]=$PLAN_FILE; done
     tok=$(for k in $kinds; do jq -S -c .ops "${plan[$k]}"; done | plan_token)
     need_plan_nested "$tok"; audit_log canon-apply "$PROJECT"
     for k in $kinds; do

@@ -83,6 +83,16 @@ echo ok > "$FAKE/mode"
 out=$(TMPDIR=$T/tmp bin/qargi canon plan solo 2>&1); rc=$?
 [ -z "$(left)" ] && ok "a project with no store: nothing left in TMPDIR" || no "solo tmp (rc=$rc, left: $(left)): $out"
 
+# a project with no store recorded: plan and apply stop with the reason and print no token, no jq error
+for v in "plan solo" "apply solo --plan x --approved go"; do
+  out=$(bin/qargi canon $v 2>&1); rc=$?
+  [ "$rc" != 0 ] && grep -qF 'no memory store recorded' <<<"$out" && ! grep -qiE 'plan token|jq|Could not open' <<<"$out" \
+    && ok "${v%% *}: a project with no store stops with 'no store recorded', no token" || no "solo $v (rc=$rc): $out"
+done
+out=$(bin/qargi canon plan solo --kind reference 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -qF 'no reference store recorded' <<<"$out" && ! grep -q 'plan token' <<<"$out" \
+  && ok "plan --kind reference: the same" || no "solo reference (rc=$rc): $out"
+
 # each store is read once per plan, and its plan is built once (one list call per kind and probe)
 echo ok > "$FAKE/mode"; : > "$FAKE/calls"
 bin/qargi canon plan alpha >/dev/null 2>&1
