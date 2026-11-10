@@ -118,3 +118,4 @@
 20 bash tests/test_marshal_lease.sh
 0 python3 tests/test_docs_links.py
 15 bash tests/test_json_plans.sh
+17 bash tests/test_resume_push.sh
