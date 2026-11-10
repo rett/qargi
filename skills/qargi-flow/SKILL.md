@@ -68,7 +68,9 @@ After a resolution the whole-suite run is stale again; sync, verify, finish.
 
 - Never commit to master or develop by hand, never force-push, never delete a branch qargi did not create.
 - Keep the main checkout on the parking branch (`qargi feature park`). A `repo.detached` branch never merges with develop or a
-  feature. `qargi branch prune` clears merged branches.
+  feature. `qargi branch prune` clears merged branches. A detached branch that origin takes only by pull request: cut
+  `agent/pr-SLUG` from `origin/BRANCH` in a worktree, `local prepare --base` it, apply, fast-forward, push, merge the pull request
+  with a merge commit; `branch prune` after a fetch clears the branches (docs/flow/git-flow.md, Detached branches).
 - Run the whole suite only at a checkpoint (feature complete, release verify); tasks and merges use targeted checks.
 - A project may declare `gates`: `feature verify` and `release verify` run them in order, stop at the first failure and skip the test command. A member runs only the checks of its own change.
 - A tag, once pushed, is final. Say what will be tagged before the plan is applied.

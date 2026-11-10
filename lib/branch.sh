@@ -35,11 +35,19 @@ protected() { # BRANCH -> 0 for a branch prune never touches
   printf '%s\n%s\n%s\n' "$LL" "$DETACHED" "$PARK" | grep -Fxq -- "$1"
 }
 # the tips of everything merged with --no-ff into develop, into a branch of repo.long_lived or repo.detached that exists, or into an open
-# feature: the second parents of their merge commits
+# feature: the second parents of their merge commits. A detached branch that origin accepts only through a pull request lags behind origin/BRANCH locally
+# (the merge happens on origin), so the remote-tracking branch of each detached branch counts as a place a branch is merged into too; --remote fetches first.
+if [ -n "$REMOTE" ]; then
+  g remote get-url origin >/dev/null 2>&1 || die "the repository has no origin remote"
+  command -v timeout >/dev/null 2>&1 || die "no timeout command to bound the check of origin"
+  g fetch -q origin 2>/dev/null || die "fetch failed"
+fi
 mapfile -t feats < <(g for-each-ref --format='%(refname)' 'refs/heads/feature/*')
 longs=()
 while IFS= read -r l; do [ -z "$l" ] || [ "$l" = develop ] || ! branch_exists "$l" || longs+=("$l"); done < <(printf '%s\n%s\n' "$LL" "$DETACHED" | sort -u)
-TIPS=$(g rev-list --merges --parents develop ${longs[@]+"${longs[@]}"} "${feats[@]}" | awk 'NF > 2 {for (i = 3; i <= NF; i++) print $i}' | sort -u)
+rems=()   # origin/BRANCH of each detached branch the repository has a remote-tracking branch of
+while IFS= read -r l; do [ -z "$l" ] || ! g rev-parse -q --verify "refs/remotes/origin/$l" >/dev/null 2>&1 || rems+=("origin/$l"); done <<<"$DETACHED"
+TIPS=$(g rev-list --merges --parents develop ${longs[@]+"${longs[@]}"} ${rems[@]+"${rems[@]/#/refs/remotes/}"} "${feats[@]}" | awk 'NF > 2 {for (i = 3; i <= NF; i++) print $i}' | sort -u)
 merged_into() { # SHA KIND(agent|feature) -> the branch it is merged into, else nothing
   local sha=$1 t tt targets=develop f
   [ "${#longs[@]}" = 0 ] || targets="$targets ${longs[*]}"
@@ -48,6 +56,10 @@ merged_into() { # SHA KIND(agent|feature) -> the branch it is merged into, else 
   for t in $targets; do
     tt=$(sha_of "$t")
     if [ "$sha" != "$tt" ] && g merge-base --is-ancestor "$sha" "$t" 2>/dev/null; then echo "$t"; return 0; fi
+  done
+  for t in ${rems[@]+"${rems[@]}"}; do
+    tt=$(g rev-parse -q --verify "refs/remotes/$t" || true)
+    if [ "$sha" != "$tt" ] && g merge-base --is-ancestor "$sha" "refs/remotes/$t" 2>/dev/null; then echo "$t"; return 0; fi
   done
 }
 
@@ -67,9 +79,6 @@ while IFS= read -r ref; do
 done < <(g for-each-ref --format='%(refname)' 'refs/heads/agent/*' 'refs/heads/feature/*')
 
 if [ -n "$REMOTE" ]; then
-  g remote get-url origin >/dev/null 2>&1 || die "the repository has no origin remote"
-  command -v timeout >/dev/null 2>&1 || die "no timeout command to bound the check of origin"
-  g fetch -q origin 2>/dev/null || die "fetch failed"
   rl=$(GIT_TERMINAL_PROMPT=0 timeout "${QARGI_REMOTE_TIMEOUT:-10}" git -C "$REPO" ls-remote --heads origin 'refs/heads/agent/*' 'refs/heads/feature/*' 2>/dev/null) || die "origin could not be asked (no answer within ${QARGI_REMOTE_TIMEOUT:-10}s, or it refused)"
   while read -r sha ref; do
     [ -n "$sha" ] || continue

@@ -15,6 +15,7 @@
 #   local.sh clean --stale DAYS --scratch DIR [--yes]   list the finished runs (verified or applied) under DIR older than DAYS; with --yes clean them
 #   local.sh clean --orphans [--days N] [--plan TOKEN --approved WORDS]   list the qargi-run.* directories of the run temporary parent (/dev/shm, or QARGI_RUN_TMP)
 #                                        that no run of the registry names, each with its age; a plan and token first, then only the ones older than N days (2) are removed
+#   local.sh report RUN [--findings] [--from FILE] [--force] < REPORT   a read-only member writes its own report: OUT/report.md (or findings.md) and a minimal manifest.json, inside OUT only
 #   local.sh list [--scratch DIR]        read-only: each run (under DIR, else the registry's) with role, slug, age, applied and merged; a run whose
 #                                        directory is gone (and that clean did not remove) says "directory gone", and names its saved copy
 #   local.sh run RUN_DIR [--task FILE] [--model TIER|ID] [--effort LEVEL] [--timeout SECONDS] [--again] [--dry-run]
@@ -1016,6 +1017,70 @@ $vout}"
     reg_load; [ -n "$(reg_get "$RUN" closed)" ] || die "could not mark $RUN closed in $DA_STATE/local-runs.jsonl"
     audit_log "local:close" "$HOW $RUN"
     echo "closed $RUN: its patches were applied by hand ($HOW). It is no longer an open run (lead compact-check, feature finish); its files are kept: qargi local clean $RUN removes them";;
+  report)
+    # qargi local report RUN [--findings] [--from FILE] [--force]: the member's own way to put its report into OUT when its file tool is refused (the lead's
+    # way for the final message is review save). Standard input, or FILE under OUT, becomes OUT/report.md (--findings: OUT/findings.md), with a minimal
+    # manifest.json when OUT has none. It runs no other verb, writes nothing but those files and reads nothing but its input, all inside the OUT of a
+    # read-only run the lead's registry names; with the member mark set (qargi local run) RUN must be the member's own run.
+    RRUN='' RFIND='' RFROM='' RFORCE='' RMAX=1048576 RUSE='usage: qargi local report RUN [--findings] [--from FILE] [--force] < REPORT'
+    while [ $# -gt 0 ]; do
+      case $1 in
+        --findings) RFIND=1; shift;; --force) RFORCE=1; shift;; --from) need_val "$1" $#; RFROM=$2; shift 2;;
+        -*) usage_die "unknown option $1 ($RUSE)";;
+        *) [ -z "$RRUN" ] || usage_die "unexpected argument $1 ($RUSE)"; RRUN=$1; shift;;
+      esac
+    done
+    [ -n "${RRUN%/}" ] || usage_die "$RUSE"
+    RRUN=${RRUN%/}
+    [ -d "$RRUN" ] && [ ! -L "$RRUN" ] || die "$RRUN is not a run directory (a link, or no such directory): nothing was written"
+    RUN=$(readlink -f -- "$RRUN") || die "no such run directory: $RRUN"
+    SOUT=$RUN/out
+    { [ -f "$RUN/refs.before" ] && [ -f "$RUN/ability" ] && case ${RUN##*/} in qargi.??????) true;; *) false;; esac; } \
+      || die "$RUN is not a run prepared by qargi local prepare: nothing was written"
+    [ -z "${QARGI_MEMBER_RUN:-}" ] || [ "$(readlink -f -- "$QARGI_MEMBER_RUN" 2>/dev/null)" = "$RUN" ] \
+      || die "a member reports on its own run only ($RUN is not the run this member was started in): nothing was written"
+    reg_load; reg_has "$RUN" || die "the lead's registry names no run $RUN (a directory a member made is not one): nothing was written"
+    [ "$(run_class "$RUN")" = read-only ] \
+      || die "$RUN is not a read-only run ($(cat "$RUN/ability" 2>/dev/null || echo build)): its product is patches, and the lead takes them in with qargi local verify; nothing was written"
+    [ -d "$SOUT" ] && [ ! -L "$SOUT" ] || die "$SOUT is a link or not a directory: nothing was written"
+    RNAME=report.md; [ -z "$RFIND" ] || RNAME=findings.md
+    RMSG=$(mktemp "$SOUT/.report.XXXXXX") || die "could not write in $SOUT: nothing was written"
+    RMAN=''
+    trap 'rm -f -- "${RMSG:-}" "${RMAN:-}"' EXIT
+    if [ -n "$RFROM" ]; then
+      case $RFROM in /*) rf=$RFROM;; *) rf=$SOUT/$RFROM;; esac
+      [ -f "$rf" ] && [ ! -L "$rf" ] || die "$RFROM is not a regular file under $SOUT (a link, a directory or no such file): nothing was written"
+      rp=$(readlink -f -- "$rf") || die "no such file: $RFROM"
+      case $rp in "$SOUT"/*) true;; *) die "$RFROM is not under $SOUT: a report is read from OUT only; nothing was written";; esac
+      case $rp in "$SOUT/$RNAME"|"$SOUT/manifest.json") die "$RFROM is the file this writes: give another file; nothing was written";; esac
+      [ "$(wc -c < "$rp" | tr -d ' ')" -le "$RMAX" ] || die "$RFROM is too large for a report (over $RMAX bytes): nothing was written"
+      cat -- "$rp" > "$RMSG" || die "could not read $RFROM: nothing was written"
+    else
+      [ ! -t 0 ] || usage_die "give the report on standard input or with --from FILE: $RUSE"
+      head -c $((RMAX + 1)) > "$RMSG" || die "could not read the report from standard input: nothing was written"
+      [ "$(wc -c < "$RMSG" | tr -d ' ')" -le "$RMAX" ] || die "the report on standard input is too large (over $RMAX bytes): nothing was written"
+    fi
+    grep -q '[^[:space:]]' "$RMSG" || die "the report is empty: nothing was written"
+    [ -z "$(tail -c 1 "$RMSG")" ] || echo >> "$RMSG"
+    if [ -z "$RFORCE" ] && { [ -e "$SOUT/$RNAME" ] || [ -L "$SOUT/$RNAME" ]; }; then
+      die "$SOUT/$RNAME exists already: nothing was written (--force replaces it)"
+    fi
+    chmod 644 "$RMSG"; mv -T -- "$RMSG" "$SOUT/$RNAME" || die "could not write $SOUT/$RNAME"
+    echo "wrote $SOUT/$RNAME ($(wc -c < "$SOUT/$RNAME" | tr -d ' ') bytes)"
+    if [ -e "$SOUT/manifest.json" ] || [ -L "$SOUT/manifest.json" ]; then
+      echo "kept $SOUT/manifest.json (the member wrote one)"
+    else
+      rbase=$(reg_get "$RUN" base)
+      rsha=$(awk -v b="refs/heads/$rbase" '$1=="local" && $2==b {print $3}' "$RUN/refs.before" 2>/dev/null | head -n 1)
+      RMAN=$(mktemp "$SOUT/.manifest.XXXXXX") || die "could not write the manifest in $SOUT"
+      jq -n --arg b "$rbase" --arg s "$rsha" --arg slug "$(reg_get "$RUN" slug)" --arg role "$(reg_get "$RUN" ability)" --arg f "$RNAME" \
+        '{status:"DONE", blocked_reason:"", task:("read-only run " + $role + " " + $slug + ": the report was written by the member (qargi local report)"),
+          base:{branch:$b, sha:$s}, branch:"", scope:[], done:{command:"", exit_code:null, output_tail:""}, gates:[], commits:[], touched_paths:[],
+          artifacts:[{path:$f, kind:"report"}]}' > "$RMAN" || die "could not make the manifest"
+      chmod 644 "$RMAN"; mv -T -- "$RMAN" "$SOUT/manifest.json" || die "could not write $SOUT/manifest.json"
+      echo "wrote $SOUT/manifest.json (status DONE, commits: [])"
+    fi
+    echo "next: qargi review check $SOUT";;
   list)
     # read-only: the runs under --scratch DIR (the directories prepare made), else the runs of the registry that still exist; then the runs of the
     # registry (under DIR) whose directory is gone and that clean did not remove, each marked "directory gone" with its saved copy
@@ -1078,5 +1143,5 @@ $vout}"
     [ -n "$RPJ" ] || { echo "qargi: no stored project has the repository of this run, so no runtime is known: store it (qargi project attach) and give it a local provider (qargi project set PROJECT models.provider.local NAME)" >&2; exit 2; }
     RPROV=$(project_provider "$RPJ" local) || exit $?
     exec python3 -I "$(dirname "$0")/local_run.py" "$RUN" --project "$RPJ" --runtime "$RPROV" --class "$(run_class "$RUN")" "$@";;
-  *) usage_die "usage: local.sh prepare|verify|close|clean|list|run ...";;
+  *) usage_die "usage: local.sh prepare|verify|close|clean|report|list|run ...";;
 esac

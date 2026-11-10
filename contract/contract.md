@@ -59,8 +59,9 @@ waiting) and finish them before the report.
 # Output
 Write outputs only to OUT (`output-format.md`: the files, the manifest, what a read-only role returns). Use your
 file-writing tool: the guard allows it in OUT for every class. Write no report or commit message with shell text
-(echo, heredoc): the guard reads every line as a command. A read-only role whose file tool is refused puts the whole
-report in its final message; the lead stores it. Run `qargi review check OUT` until it reports no failure (`0 fail`,
+(echo, heredoc): the guard reads every line as a command. A read-only role whose file tool is refused for report.md writes
+the text under another name in OUT and runs `qargi local report RUN_DIR --from NAME`; if every write is refused it puts the whole
+report in its final message and the lead stores it. Run `qargi review check OUT` until it reports no failure (`0 fail`,
 or `OK report-only run`); explain a warn in the report.
 
 # Final report (your last message)

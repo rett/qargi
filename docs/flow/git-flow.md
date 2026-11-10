@@ -43,6 +43,10 @@ refusal changes nothing.
      closes it; a read-only run, an advisor or a review that returned a `report.md` and no patches, closes with a plain
      `qargi local clean RUN`. A run whose patches you applied by hand (`git am`) is closed with
      `qargi local close RUN --applied-by-am`.
+   - A read-only member whose runtime refuses its file tool for `report.md` writes the text under another name in OUT and runs
+     `qargi local report RUN --from NAME` itself: that writes `OUT/report.md` and a minimal `manifest.json` and nothing outside OUT,
+     refuses a build run, a run your registry does not name and, with the member mark set, any run but its own. A member whose
+     writes are all refused returns the report as its final message, and you store it with `qargi review save RUN < MESSAGE`.
    - Keep `--scratch` on disk (prepare warns about a tmpfs, which a reboot empties). A passing verify also saves the run's output in
      `<state>/runs/`, and `qargi review apply --from-saved ID` applies it when the run directory is gone (`local list` shows such
      a run as directory gone).
@@ -138,6 +142,15 @@ develop cannot be merged into the detached branch. `feature start` and the other
 from it as from any base (`local prepare --base docs-site`, `review apply`), and the finished `agent/<slug>` branch is merged
 into it with `qargi feature merge docs-site agent/<slug>`: a plan and token, local only, nothing is pushed.
 
+When origin accepts the detached branch only through a pull request, the local branch is not where the change lands, so the
+lead works on a short-lived branch instead. The lead fetches, cuts `agent/pr-<slug>` from `origin/docs-site` in a worktree of its
+own, and prepares the run with `qargi local prepare --base agent/pr-<slug>`. After `qargi review apply` the lead fast-forwards
+`agent/pr-<slug>` to the applied `agent/<slug>` in that worktree, pushes `agent/pr-<slug>`, opens the pull request into
+`docs-site` and merges it on origin with a merge commit, then removes the worktree. The local `docs-site` is never merged into
+and need not be updated. After a fetch, `qargi branch prune` counts `origin/docs-site` as a place a branch is merged into
+(the same `--no-ff` rule), so it clears `agent/pr-<slug>` and the applied `agent/<slug>`, and with `--remote` the branch on origin
+if the host did not delete it. A pull request merged by squash or rebase leaves no merge commit: delete those branches by hand.
+
 A documentation site kept on such a branch is regenerated when a release ships. With `site.enabled` set to `true` (and
 `site.branch`, which defaults to `gh-pages` when `repo.detached` lists it, and `site.config`, default `site/site.json` with the
 hand pages in `site/pages/`), `release finish` ends with `next: qargi release site VERSION`. That verb builds the site of the
@@ -164,7 +177,8 @@ push develop to origin", or "local only, will not push" and why), and the token 
 
 `qargi branch prune [--remote]` prints the merged `agent/*` and `feature/*` branches of the project (with `--remote`, the same
 branches on origin, asked live) and the worktrees qargi made for them, with a token; apply it with `--plan TOKEN --approved
-"<your words>"`. A branch is merged when it was merged with `--no-ff` into develop, or, for an agent branch, into an open
+"<your words>"`. A branch is merged when it was merged with `--no-ff` into develop, into a detached branch or its remote-tracking
+branch `origin/BRANCH` (after a fetch; `--remote` fetches), or, for an agent branch, into an open
 feature; a branch that only sits at the tip of develop or of a feature was never merged and is kept. It never deletes master,
 develop, the branches of `repo.long_lived` or `repo.detached`, the parking branch, an unmerged branch, or a branch checked out in a
 worktree qargi did not make (the main checkout, the runtime's own worktrees) or in a dirty one; each kept branch is listed with
