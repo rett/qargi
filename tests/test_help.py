@@ -138,6 +138,23 @@ class Render(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
         self.assertIn("local verify", r.stdout)
 
+    def test_the_guard_topic_and_the_review_role_say_what_a_read_only_member_runs_where_tmpdir_points_and_what_a_piece_after_a_cut_may_not_start_with(self):
+        """What the guard refuses a read-only member, as the member needs to read it: an assignment (not the command), the TMP that TMPDIR is, and the words the
+        guard reads after a separator. The behaviour itself is tested in test_guard.py."""
+        topic = " ".join(" ".join(C.TOPICS["guard"][1]).split())
+        role = " ".join(slurp(os.path.join(ROOT, "roles", "review", "ROLE.md")).split())
+        for name, text in (("the guard topic", topic), ("the review role", role)):
+            for needle in ("build, vet and test", "TMPDIR", "OUT and TMP", "git push", "git tag", "ssh", "scp", "sftp", "gh", "not mid-sentence" if text is topic else "middle of a sentence"):
+                self.assertIn(needle, text, "%s does not say %r" % (name, needle))
+            self.assertNotIn("is not set", text, name)
+        self.assertIn("is refused, not the command", topic)
+        self.assertIn("not the command", role)
+        self.assertIn("the run's TMP", topic)
+        self.assertIn("the run's TMP", role)
+        self.assertIn("a Go test writes", role)
+        self.assertIn("environment", role)
+        self.assertIn("never the clone", role)
+
     def test_review_check_help_and_the_review_role_state_the_report_only_rule(self):
         # what review_check.py requires of a report-only run: the manifest beside the report, a closing verdict line, SCOPE as a hard limit, a batch warning
         r = subprocess.run([BIN, "help", "review", "check"], capture_output=True, text=True, stdin=subprocess.DEVNULL, env=dict(os.environ, QARGI_HOME=tempfile.mkdtemp()))

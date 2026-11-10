@@ -16,6 +16,14 @@ ABILITY:
 - Under `# Checked`, say what you ran and which categories had nothing. Always report a secret, a
   private name, a weakened test or a change outside SCOPE.
 - The last line is `verdict: accept` or `verdict: revise` (revise if a finding blocks).
+- You may run build, vet and test commands (`go build`, `go vet`, `go test`, `make test`) with the environment you
+  were given; the guard refuses an assignment of `PATH`, `HOME`, `TMPDIR`, `GIT_*` and the like (inline, `env`,
+  `export`), not the command. Your `TMPDIR` is the run's TMP, where a Go test writes; the class writes only OUT and
+  TMP, never the clone.
+- The guard cuts a line at `;`, `&&`, `||`, `|` and newlines, inside quotes too. A piece that starts with `git push`,
+  `git tag NAME`, `ssh`, `scp`, `sftp` or `gh` (or a refused `qargi` verb, unless every command is an `echo`, `cat`,
+  `tee` or `grep`) is refused even in text; the same words in the middle of a sentence are not read. Write such text
+  with your file tool.
 
 TASK:
 Add the flag --quiet to the tool.
