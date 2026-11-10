@@ -237,6 +237,22 @@ class Render(unittest.TestCase):
         for k in keys:
             self.assertIn(k, imp, "import help does not name the gated key %s" % k)
 
+    def test_the_release_answers_are_listed_by_the_key_completion_and_the_error_text_of_the_release_check(self):
+        """Every layout key of a release (lib/release_layout.py) can be typed as a project key (changelog by its three sub-keys), and the text of the release answers
+        check names every key it accepts: it is built from RELEASE_KEYS, not copied."""
+        import release_layout as RL, release_sign as RS
+        for k in RL.LAYOUT_KEYS:
+            want = ["release.changelog." + c for c in RL.CHANGELOG_KEYS] if k == "changelog" else ["release." + k]
+            for w in want:
+                self.assertIn(w, H.EXTRA_KEYS, "%s is not among the keys the completion offers" % w)
+        for k in ("finish_check", "hotfix_preflight"):
+            self.assertIn("release." + k, H.EXTRA_KEYS)
+        msg = RS.problems("not an object")[0]
+        for k in RS.RELEASE_KEYS:
+            self.assertRegex(msg, r"[{ ]%s[,}]" % k, "the check's error text does not name release.%s" % k)
+        self.assertIn("release.hotfix_preflight", slurp(os.path.join(LIB, "release_sign.py")).split('"""')[1], "the header of lib/release_sign.py does not list the layout answers")
+        self.assertIn("release.finish_check", slurp(os.path.join(LIB, "release_sign.py")).split('"""')[1])
+
     def test_the_approvals_topic_states_the_rules_the_skills_point_at(self):
         text = " ".join(C.TOPICS["approvals"][1])
         for needle in ("covers the plan", "recorded, not verified", "Never allow-list", "A member never applies"):
