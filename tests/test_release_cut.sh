@@ -240,4 +240,31 @@ out=$($REL site 0.6.0 --plan "$st" 2>&1); rc=$?
 [ "$rc" = 0 ] && [ "$(git -C "$R" rev-parse gh-pages)" != "$S0" ] && [ "$(sstate)" = "start:done finish:done site:done" ] && grep '"verb":"release:site"' "$T/s/audit.log" | grep -q '"approved":"ship the site too"' && grep -q "is complete" <<<"$out" \
   && ok "site --plan alone builds the site on the site branch with the recorded words, and the cut is complete" || no "site under the cut: rc=$rc $out; $(sstate)"
 
+# --- a hotfix of a project whose unreleased heading carries the version: a release renames the heading, so master has none; the hotfix start adds
+# the heading of the hotfix (empty), a release start is still refused, and the default layout is unchanged
+mk nohead
+jq '.release = {changelog: {unreleased: "## {version} (unreleased)", released: "## {version} ({date})"}}' "$T/c/projects/nohead.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/nohead.json"
+git -C "$R" checkout -q master; printf '# Changelog\n\n## 1.0.0 (2026-01-01)\n\n- first\n' > "$R/CHANGELOG.md"
+git -C "$R" commit -q -am "no unreleased heading" && git -C "$R" branch -f develop master && git -C "$R" checkout -q parked; $REL verify 1.0.1 >/dev/null 2>&1
+out=$($REL start 1.0.1 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "has no '## {version} (unreleased)' section to release" <<<"$out" && ok "a release start on a master with no unreleased heading is refused" || no "release start without the heading: rc=$rc $out"
+out=$($REL start 1.0.1 --allow-empty-notes 2>&1); [ "$?" = 1 ] && grep -q "has no '## {version} (unreleased)' section" <<<"$out" && ok "a release start is refused with --allow-empty-notes too" || no "release start --allow-empty-notes: $out"
+out=$($REL start 1.0.1 --hotfix --date 2026-05-06 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q "CHANGELOG.md: master has no unreleased heading, so the heading for 1.0.1 was added with no entries" <<<"$out" && ok "hotfix start: the plan says the heading was added because master had none" || no "hotfix plan without the heading: rc=$rc $out"
+out=$(rstart 1.0.1 --hotfix --date 2026-05-06 2>&1); rc=$?
+cl=$(git -C "$R" show hotfix/1.0.1:CHANGELOG.md 2>&1)
+[ "$rc" = 0 ] && [ "$cl" = "$(printf '# Changelog\n\n## 1.0.1 (2026-05-06)\n\n## 1.0.0 (2026-01-01)\n\n- first')" ] && ok "hotfix start: the branch's changelog has the new heading, empty, above the newest one" || no "hotfix start without the heading: rc=$rc $out; $cl"
+[ "$(git -C "$R" show master:CHANGELOG.md | grep -c 1.0.1)" = 0 ] && ok "master's changelog is untouched" || no "master changed"
+# no heading of that level at all: the heading goes to the end
+mk nohead2
+jq '.release = {changelog: {unreleased: "## {version} (unreleased)", released: "## {version} ({date})"}}' "$T/c/projects/nohead2.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/nohead2.json"
+git -C "$R" checkout -q master; printf '# Changelog\n' > "$R/CHANGELOG.md"; git -C "$R" commit -q -am "bare" && git -C "$R" checkout -q parked
+rstart 0.1.1 --hotfix --date 2026-05-06 >/dev/null 2>&1
+[ "$(git -C "$R" show hotfix/0.1.1:CHANGELOG.md)" = "$(printf '# Changelog\n\n## 0.1.1 (2026-05-06)')" ] && ok "hotfix start: with no heading of the level the new heading goes to the end" || no "heading at the end: $(git -C "$R" show hotfix/0.1.1:CHANGELOG.md 2>&1)"
+# the default layout: master has the section, the hotfix renames nothing new and the plan has no such line
+mk deflt
+out=$($REL start 0.1.1 --hotfix 2>&1); rc=$?
+[ "$rc" = 0 ] && ! grep -q "has no unreleased heading" <<<"$out" && rstart 0.1.1 --hotfix --date 2026-05-06 >/dev/null 2>&1 \
+  && [ "$(git -C "$R" show hotfix/0.1.1:CHANGELOG.md)" = "$(printf '# Changelog\n\n## [Unreleased]\n\n## [0.1.1] - 2026-05-06\n\n### Added\n- a thing')" ] && ok "default layout: the hotfix start is as before (the section is kept, the released heading is added)" || no "default layout hotfix: rc=$rc $out"
+
 exit $fail

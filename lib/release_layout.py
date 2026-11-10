@@ -22,7 +22,8 @@ Answers, under `release` in the project's answers file (every one optional; the 
                                plan is approved and before any merge, tag or push; a non-zero exit refuses with nothing moved (default: none)
 
   release_layout.py problems REL_JSON                  the problems of those answers (a JSON object on the command line); one per line
-  release_layout.py changelog FILE VER DATE ALLOW AF   check and rewrite the changelog for a release; exit 1 with the reason
+  release_layout.py changelog FILE VER DATE ALLOW AF [KIND]  check and rewrite the changelog for a release; exit 1 with the reason. KIND hotfix: a
+                               changelog with no unreleased heading gets the released heading, empty, above the newest heading of that level (it prints heading-added)
   release_layout.py manpage FILE NAME VER DATE OLD     set the .TH date and version of a manual page; exit 1 with the reason
   release_layout.py th-empty FILE...                   print each manual page whose .TH line has no date or no version (exit 1 if any)
   release_layout.py has-section FILE VER AF            exit 0 when the changelog has a released section for VER
@@ -167,11 +168,27 @@ def section_end(rest, lvl):
     return n.start() if n else len(rest)
 
 
+def add_released_heading(t, released, lvl):
+    """t with the released heading, an empty section, above the newest heading of level lvl (at the end when there is none)."""
+    m = re.search(r"^#{%d} " % lvl, t, re.M)
+    if not m:
+        return t + ("" if not t or t.endswith("\n\n") else "\n" if t.endswith("\n") else "\n\n") + released + "\n"
+    return t[:m.start()] + released + "\n\n" + t[m.start():]
+
+
 def cmd_changelog(argv):
     path, ver, date, allow, af = argv[:5]
+    hotfix = len(argv) > 5 and argv[5] == "hotfix"
     unrel, rel = templates(load_release(af))
     t = open(path, encoding="utf-8").read()
+    released = rel.replace("{version}", ver).replace("{date}", date)
     m = find_unreleased(t, unrel)
+    if not m and hotfix:
+        # a hotfix is cut from master; a project whose unreleased heading carries the version renames it at a release, so master has none. The branch
+        # brings the items: the heading is added empty, and the push preflight and the finish check what is under it
+        open(path, "w", encoding="utf-8").write(add_released_heading(t, released, level(unrel)))
+        print("heading-added")
+        return 0
     if not m:
         sys.exit("qargi: %s has no '%s' section to release. Fix: add one with the changes of this release, then start again."
                  % (os.path.basename(path), unrel))
@@ -179,7 +196,6 @@ def cmd_changelog(argv):
     if not allow and not [l for l in body.split("\n") if l.strip() and not l.startswith("#")]:
         sys.exit("qargi: %s has nothing under '%s'. Fix: record the changes of this release there (or pass --allow-empty-notes to release without notes), then start again."
                  % (os.path.basename(path), unrel))
-    released = rel.replace("{version}", ver).replace("{date}", date)
     head = m.group(0).rstrip("\n")
     if "{version}" in unrel:        # the unreleased heading carries the version: it is renamed, nothing is kept
         new = t[:m.start()] + released + ("\n" if m.group(0).endswith("\n") else "") + t[m.end():]
@@ -310,7 +326,7 @@ def main(argv):
         found = problems(rel)
         print("\n".join(found))
         return 1 if found else 0
-    if cmd == "changelog" and len(rest) == 5:
+    if cmd == "changelog" and len(rest) in (5, 6):
         return cmd_changelog(rest)
     if cmd == "manpage" and len(rest) == 5:
         return cmd_manpage(rest)

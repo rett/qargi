@@ -818,7 +818,7 @@ case $verb in
       if [ "$KIND" = hotfix ]; then pre_line="preflight (release.$pk): not run now: $BASE does not have the content this hotfix brings. It runs in a copy of $BR when you push, before anything is pushed (a non-zero exit refuses the push): $(answer_text "$pk")"
       else run_preflight "$WT"; pre_line="preflight (release.preflight): passed on $BASE (at ${b0:0:7}); it runs again in a copy of $BR when you push"; fi
     fi
-    oldver=''
+    oldver=''; cl_line=''
     if [ "$VFILE" != none ]; then
       if [ -f "$WT/$VFILE" ]; then oldver=$(tr -d '[:space:]' < "$WT/$VFILE"); echo "$VER" > "$WT/$VFILE"; git -C "$WT" add -- "$VFILE"
       elif [ "$VFILE_SET" = true ]; then die "release.version_file: $VFILE is not a file at the head of $BASE (set it to none when the project has no version file)"; fi
@@ -830,7 +830,8 @@ case $verb in
       git -C "$WT" add "$mp"
     done < <(man_pages_at "$b0")
     if [ -f "$WT/CHANGELOG.md" ]; then
-      python3 -I "$RL" changelog "$WT/CHANGELOG.md" "$VER" "$DATE" "$ALLOW_EMPTY" "$af" || exit 1
+      cl_out=$(python3 -I "$RL" changelog "$WT/CHANGELOG.md" "$VER" "$DATE" "$ALLOW_EMPTY" "$af" "$KIND") || exit 1
+      [ "$cl_out" != heading-added ] || cl_line="CHANGELOG.md: $BASE has no unreleased heading, so the heading for $VER was added with no entries; the changes of this hotfix are recorded under it on $BR, and release push and finish check them"
       git -C "$WT" add CHANGELOG.md
     fi
     # the plan: the branch, where it is cut from, the bump commit and the files it changes (all made in the temporary worktree above, so a refusal comes
@@ -841,6 +842,7 @@ case $verb in
     bl='none (an empty commit)'; [ -z "$bumped" ] || bl=$(printf '%s' "$bumped" | paste -sd, - | sed 's/,/, /g')
     echo "files the commit changes: $bl"
     echo "the version becomes $VER${oldver:+ (was $oldver)} and the changelog (and a man page) is dated $DATE"
+    [ -z "$cl_line" ] || echo "$cl_line"
     [ -z "$pre_line" ] || echo "$pre_line"
     hn=$(hotfix_develop_note) && echo "warning: $hn"
     if [ -z "$APPROVED" ]; then
