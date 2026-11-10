@@ -49,7 +49,14 @@ refusal changes nothing.
    the bump commit changes) and a token first, and applies with `--plan TOKEN --approved "<your words>"`, which also writes the
    audit log line. `qargi release push VERSION` opens the pull
    request into master so CI runs on the commit to be released; `qargi release finish VERSION`
-   merges into master, tags, merges back into develop and pushes. `release status` and `release
+   merges into master, tags, merges back into develop and pushes. Both finishing verbs (`feature finish`, `release
+   finish`) write an intent record under the state (`finish-intent/`) before they push, and remove it when the last
+   step is done. If the process dies after the push, run the same command again: it asks origin, and when origin
+   holds exactly what the record intended it shows the local steps left (move the branches, delete the branch, the
+   audit line) with a plan token, and applies them with `--plan` and `--approved`; when origin still has the old
+   values it drops the record and the tag and starts again; when origin holds anything else it refuses and names the
+   ref. `review apply` keeps its record in the state too (`apply/RUN-ID.json`): a run is not applied twice though the
+   `applied` file of its directory is removed, and a re-run after a death finishes or redoes the apply. `release status` and `release
    verify` work as for features. `release status` shows the checks of the pull request and, after the finish, what
    is left (tag on origin, GitHub release, assets, signatures); `release finish` lists the checks and refuses
    while one fails or is pending, unless `--ignore-checks "<your words>"`. To fix a failed check, `qargi release

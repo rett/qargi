@@ -1,0 +1,4 @@
+# Phrases that lib/ may hold although qargi keeps no code for earlier versions (tests/test_legacy_lint.py).
+# One line per file and phrase: `FILE: PHRASE  # why`. PHRASE is one of: older record, migrat, earlier version (any case).
+# The list only shrinks: delete a line when the code it names is gone (the test fails on a line that matches nothing).
+lib/packs_audit.py: older record  # an acceptance stored without a provider counts as the project's provider's; to be deleted with its readers (not yet scheduled)

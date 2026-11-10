@@ -6,7 +6,7 @@
   CloudBackend    a Managed Agents memory store, through the `ant` CLI (tests use a fake `ant`)
 
 A backend lists, reads, creates, updates and moves notes, and archives them. It has no way to delete one:
-what a split, merge or migration would remove moves under /_archive/ and the planner records where it came
+what a split, merge or canon plan would remove moves under /_archive/ and the planner records where it came
 from (memplan.py). apply_ops(backend, ops, expect_sha) runs a plan's steps for every backend; it checks each
 note's digest against the one the plan was computed from and changes nothing if any differs.
 Nothing here talks to the network except CloudBackend, and only through `ant`.

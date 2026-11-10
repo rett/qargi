@@ -75,7 +75,7 @@ merge_detached() {
   echo "merge $EXTRA into the detached branch $d with --no-ff (local only: nothing is pushed)"
   show_incoming "$d" "$EXTRA"
   if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi feature merge $d $EXTRA --plan $tok --approved \"...\")"; return 0; fi
-  QARGI_NESTED='' need_plan "$tok"
+  need_plan "$tok"
   need_free "$d"
   merge_step "$h" "refs/heads/$EXTRA" "detached-${d//\//_}-merge-${EXTRA//\//_}" "Merge branch '$EXTRA' into $d"
   g update-ref "refs/heads/$d" "$MERGED" "$h" || die "could not move $d (it changed meanwhile)"
@@ -118,6 +118,62 @@ open_run_gate() {
 sync_numbers() {
   local r
   r=$(changelog_check "$1") || { echo "qargi: warning: $BR has duplicate changelog item numbers (release.changelog.numbered); feature finish refuses until they are renumbered:" >&2; printf '%s\n' "$r" | sed 's/^/  /' >&2; }
+}
+
+# feature_finish_tail -> everything `finish` does once the merge is made and (with a push) pushed: the journal line, develop, the suite record, the deletion of
+# the branch, the audit line, the marshal, the notices. It reads d0 rd0 MERGED h k pushd pushwhy rdel KEEP (set by the finish, or loaded from the intent
+# record by feature_finish_resume) and marks each step in the record (gitflow.sh, intent_*), so a run that was cut off does only what is left. The record goes last.
+feature_finish_tail() {
+  local key=feature-$NAME_ARG
+  if ! intent_marked "$key" journal; then
+    [ -z "$pushd" ] || journal_push refs/heads/develop "$rd0" "$MERGED" feature:finish
+    intent_mark "$key" journal
+  fi
+  if ! intent_marked "$key" refs; then
+    move_ref refs/heads/develop "$MERGED" "$d0" || die "origin has the merge but develop moved locally meanwhile: git fetch origin, then check develop against origin"
+    journal_ref "$REPO" refs/heads/develop "$d0" "$MERGED" feature:finish
+    merge_forget "$k"
+    # develop contains the feature, so the merge has the tree the whole suite just passed: the same run stands for develop's new head
+    [ ! -f "$(rec "$BR")" ] || jq -c --arg s "$MERGED" '.sha = $s' "$(rec "$BR")" > "$(rec develop)"
+    intent_mark "$key" refs
+  fi
+  if [ -z "$KEEP" ] && ! intent_marked "$key" branch; then
+    if [ "$(sha_of "$BR")" = "$h" ]; then wt_drop "$BR"; g update-ref -d "refs/heads/$BR" "$h"; journal_ref "$REPO" "refs/heads/$BR" "$h" "" feature:finish
+    elif branch_exists "$BR"; then echo "note: $BR is at $(sha_of "$BR") now, not at the merged ${h:0:7}: it is not deleted" >&2; fi
+    intent_mark "$key" branch
+  fi
+  if ! intent_marked "$key" audit; then audit_log "feature:finish" "$PROJ $NAME_ARG"; intent_mark "$key" audit; fi
+  hold_end
+  marshal_finish "$PROJ" "$NAME_ARG" || echo "qargi: warning: the marshal record of $NAME_ARG was not marked finished (see above); the merge is done" >&2
+  echo "merged $BR into develop ($(g rev-parse --short develop))$([ -n "$KEEP" ] || echo "; deleted $BR"); the whole-suite run carries over to develop"
+  parking_follow
+  if g remote get-url origin >/dev/null 2>&1; then
+    if [ -n "$rdel" ]; then
+      if g push -q --force-with-lease="refs/heads/$BR:$rdel" origin ":refs/heads/$BR" 2>/dev/null; then journal_push "refs/heads/$BR" "$rdel" "" feature:finish; echo "deleted origin/$BR"
+      else echo "note: could not delete origin/$BR (it moved, or origin refused)" >&2; fi
+    fi
+  fi
+  if [ -n "$pushd" ]; then echo "pushed develop"; else echo "develop was not pushed ($pushwhy)"; fi
+  lead_advice
+  intent_clear "$key"
+}
+# feature_finish_resume -> a finish of the feature that was cut off after its push (intent_probe said so): shows what is left, and with --plan and --approved
+# does it (feature_finish_tail). The values are the record's, not the command line's; the plan token covers the record.
+feature_finish_resume() {
+  local key=feature-$NAME_ARG f tok
+  f=$(intent_file "$key")
+  d0=$(jq -r '.refs[0].local_old' "$f"); rd0=$(jq -r '.refs[0].origin_old' "$f"); MERGED=$(jq -r '.refs[0].new' "$f")
+  h=$(jq -r '.ctx.head' "$f"); KEEP=$(jq -r '.ctx.keep' "$f"); pushd=$(jq -r '.ctx.pushd' "$f"); pushwhy=$(jq -r '.ctx.pushwhy' "$f"); rdel=$(jq -r '.ctx.rdel' "$f"); k=$(jq -r '.ctx.k' "$f")
+  tok=$(jq -S -c 'del(.done)' "$f" | plan_token)
+  echo "finish feature $NAME_ARG of $PROJ was cut off$([ -n "$pushd" ] && echo ": origin holds the merge into develop (asked just now)" || echo " (develop was not to be pushed)"); finishing it:"
+  echo "  develop ${d0:0:7} -> ${MERGED:0:7}${KEEP:+; $BR is kept}$([ -n "$KEEP" ] || echo "; $BR is deleted")${rdel:+; origin/$BR is deleted (${rdel:0:7})}"
+  echo "  steps already done: $(jq -r '.done | if length == 0 then "none" else join(", ") end' "$f")"
+  if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi feature finish $NAME_ARG --plan $tok --approved \"...\")"; exit 0; fi
+  need_plan "$tok"
+  g cat-file -e "$MERGED^{commit}" 2>/dev/null || die "the merge commit of the interrupted finish is not in $REPO: nothing was changed"
+  need_free develop; [ -n "$KEEP" ] || need_free_wt "$BR"
+  hold_begin "$NAME_ARG"
+  feature_finish_tail
 }
 
 # stale_why BRANCH RAN -> why the whole-suite result at RAN no longer stands for BRANCH: the commits on its first-parent line since RAN
@@ -258,6 +314,16 @@ case $verb in
     [ "$res" = pass ];;
   finish)
     marshal_gate "$NAME_ARG"
+    # a finish that was cut off after its push left a record (gitflow.sh, intent_*): complete it, or drop it when the push never happened
+    intent_lock "feature-$NAME_ARG"
+    if intent_has "feature-$NAME_ARG"; then
+      intent_probe "feature-$NAME_ARG"
+      if [ "$IP" = old ]; then
+        intent_drop "feature-$NAME_ARG"; echo "note: an earlier finish of $NAME_ARG stopped before anything reached origin or moved here; its record is removed and this one starts again" >&2
+      else
+        feature_finish_resume; exit 0
+      fi
+    fi
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi feature start $NAME_ARG)"
     open_run_gate "$NAME_ARG"
     # behind develop, with files both sides changed since they parted: a sync is due, and the files are named. A feature behind develop
@@ -298,35 +364,21 @@ case $verb in
     remote_report develop; remote_report "$BR"
     show_incoming develop "$BR"; backlog_note develop "$BR"
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi feature finish $NAME_ARG${KEEP:+ --keep} --plan $tok --approved \"...\")"; exit 0; fi
-    QARGI_NESTED='' need_plan "$tok"
+    need_plan "$tok"
     need_free develop
     need_free_wt "$BR"
     hold_begin "$NAME_ARG"
     k="feature-$NAME_ARG-into-develop"
     merge_step "$d0" "refs/heads/$BR" "$k" "Merge branch '$BR' into develop"
-    # develop contains the feature, so the merge has the tree the whole suite just passed: the same run stands for develop's new head
+    # the intent record comes before the push: a death after the push is finished by the next run (feature_finish_resume)
+    rd0=''; [ -z "$pushd" ] || rd0=$(remote_was develop)   # what origin has (fetched above): the journal line of the push starts there
+    intent_write "feature-$NAME_ARG" "$(jq -nc --arg name "$NAME_ARG" --arg project "$PROJ" --argjson pushed "$([ -n "$pushd" ] && echo true || echo false)" \
+      --arg d0 "$d0" --arg rd0 "$rd0" --arg m "$MERGED" --arg h "$h" --arg keep "$KEEP" --arg pushd "$pushd" --arg pushwhy "$pushwhy" --arg rdel "$rdel" --arg k "$k" \
+      '{schema:1, verb:"feature:finish", project:$project, name:$name, pushed:$pushed, refs:[{ref:"refs/heads/develop", local_old:$d0, origin_old:$rd0, new:$m}],
+        ctx:{head:$h, keep:$keep, pushd:$pushd, pushwhy:$pushwhy, rdel:$rdel, k:$k}, done:[]}')"
     if [ -n "$pushd" ]; then
-      rd0=$(remote_was develop)   # what origin has (fetched above): the journal line of the push starts there
-      g push -q --atomic origin "$MERGED:refs/heads/develop" || die "the push failed; nothing was changed locally or on origin (run it again)"
-      journal_push refs/heads/develop "$rd0" "$MERGED" feature:finish
+      g push -q --atomic origin "$MERGED:refs/heads/develop" || { intent_clear "feature-$NAME_ARG"; die "the push failed; nothing was changed locally or on origin (run it again)"; }
     fi
-    g update-ref refs/heads/develop "$MERGED" "$d0" || die "origin has the merge but develop moved locally meanwhile: git fetch origin, then check develop against origin"
-    journal_ref "$REPO" refs/heads/develop "$d0" "$MERGED" feature:finish
-    merge_forget "$k"
-    jq -c --arg s "$MERGED" '.sha = $s' "$(rec "$BR")" > "$(rec develop)"
-    if [ -z "$KEEP" ]; then wt_drop "$BR"; g update-ref -d "refs/heads/$BR" "$h"; journal_ref "$REPO" "refs/heads/$BR" "$h" "" feature:finish; fi
-    audit_log "feature:finish" "$PROJ $NAME_ARG"
-    hold_end
-    marshal_finish "$PROJ" "$NAME_ARG" || echo "qargi: warning: the marshal record of $NAME_ARG was not marked finished (see above); the merge is done" >&2
-    echo "merged $BR into develop ($(g rev-parse --short develop))$([ -n "$KEEP" ] || echo "; deleted $BR"); the whole-suite run carries over to develop"
-    parking_follow
-    if g remote get-url origin >/dev/null 2>&1; then
-      if [ -n "$rdel" ]; then
-        if g push -q --force-with-lease="refs/heads/$BR:$rdel" origin ":refs/heads/$BR" 2>/dev/null; then journal_push "refs/heads/$BR" "$rdel" "" feature:finish; echo "deleted origin/$BR"
-        else echo "note: could not delete origin/$BR (it moved, or origin refused)" >&2; fi
-      fi
-    fi
-    if [ -n "$pushd" ]; then echo "pushed develop"; else echo "develop was not pushed ($pushwhy)"; fi
-    lead_advice;;
+    feature_finish_tail;;
   *) usage_die "usage: qargi feature start|list|park|sync|merge|status|verify|finish NAME [BRANCH] [--project P]";;
 esac

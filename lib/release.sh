@@ -413,6 +413,75 @@ site_status() {
 # after_release: the methodology's steps after a release (methodology.json after_release) whose answer is true, as "next: ..." lines
 after_release() { python3 -I "$RSITE" next "$af" "$METH" "$VER" 2>/dev/null || true; }
 
+# release_finish_tail -> everything `finish` does once the merges are made, the tag exists and (with an origin) the push is done: the journal
+# lines, the local branches, the deletion of the release branch, the audit line, the notices. It reads m0 s0 nm ns rm0 rs0 rb0 k1 k2 second h
+# tagsha PUSHED KEEP IGNORED IGNORE_CHECKS (set by the finish, or loaded from the intent record by release_finish_resume) and marks each step in the
+# record (gitflow.sh, intent_*), so a run that was cut off does only what is left. The record goes last.
+release_finish_tail() {
+  local key=$KIND-$VER
+  if ! intent_marked "$key" journal; then
+    if [ -n "$PUSHED" ]; then
+      journal_push refs/heads/master "$rm0" "$nm" "$KIND:finish"
+      journal_push "refs/heads/$second" "$rs0" "$ns" "$KIND:finish"
+      journal_push "refs/tags/$VER" "" "$tagsha" "$KIND:finish"
+    fi
+    journal_ref "$REPO" "refs/tags/$VER" "" "$tagsha" "$KIND:finish"
+    intent_mark "$key" journal
+  fi
+  if ! intent_marked "$key" refs; then
+    move_ref refs/heads/master "$nm" "$m0" && move_ref "refs/heads/$second" "$ns" "$s0" || die "origin has the release but master or $second moved locally meanwhile: git fetch origin, then check master and $second against origin"
+    journal_ref "$REPO" refs/heads/master "$m0" "$nm" "$KIND:finish"
+    journal_ref "$REPO" "refs/heads/$second" "$s0" "$ns" "$KIND:finish"
+    merge_forget "$k1" "$k2"
+    intent_mark "$key" refs
+  fi
+  if [ -z "$KEEP" ] && ! intent_marked "$key" branch; then
+    if [ "$(sha_of "$BR")" = "$h" ]; then wt_drop "$BR"; g update-ref -d "refs/heads/$BR" "$h"; journal_ref "$REPO" "refs/heads/$BR" "$h" "" "$KIND:finish"
+    elif branch_exists "$BR"; then echo "note: $BR is at $(sha_of "$BR") now, not at the released ${h:0:7}: it is not deleted" >&2; fi
+    intent_mark "$key" branch
+  fi
+  if ! intent_marked "$key" audit; then audit_log "release:finish" "$PROJ $VER${IGNORED:+ checks ignored: $IGNORE_CHECKS}"; intent_mark "$key" audit; fi
+  [ -z "$IGNORED" ] || echo "checks ignored on your word: $IGNORE_CHECKS"
+  echo "merged $BR into master (tagged $VER) and into $second${KEEP:+; kept $BR}$([ -n "$KEEP" ] || echo "; deleted $BR")"
+  [ "$second" != develop ] || parking_follow
+  if [ -n "$PUSHED" ]; then
+    if [ -z "$KEEP" ] && [ -n "$rb0" ]; then
+      if g push -q origin --delete "$BR"; then journal_push "refs/heads/$BR" "$rb0" "" "$KIND:finish"; else echo "note: could not delete origin/$BR" >&2; fi
+    fi
+    echo "pushed master, $second and tag $VER"
+  else
+    echo "no origin remote: nothing was pushed"
+  fi
+  lead_advice
+  if ! intent_marked "$key" after; then after_steps_record; intent_mark "$key" after; fi
+  after_release
+  intent_clear "$key"
+}
+# release_finish_resume -> a finish of VER that was cut off after its push (intent_probe said so): shows what is left, and with --plan and --approved
+# does it (release_finish_tail). The values are the record's, not the command line's; the plan token covers the record.
+release_finish_resume() {
+  local key=$KIND-$VER f tok
+  f=$(intent_file "$key")
+  m0=$(jq -r '.refs[0].local_old' "$f"); rm0=$(jq -r '.refs[0].origin_old' "$f"); nm=$(jq -r '.refs[0].new' "$f")
+  s0=$(jq -r '.refs[1].local_old' "$f"); rs0=$(jq -r '.refs[1].origin_old' "$f"); ns=$(jq -r '.refs[1].new' "$f"); tagsha=$(jq -r '.refs[2].new' "$f")
+  h=$(jq -r '.ctx.head' "$f"); second=$(jq -r '.ctx.second' "$f"); KEEP=$(jq -r '.ctx.keep' "$f"); IGNORED=$(jq -r '.ctx.ignored' "$f"); IGNORE_CHECKS=$(jq -r '.ctx.ignore_checks' "$f")
+  rb0=$(jq -r '.ctx.rb0' "$f"); k1=$(jq -r '.ctx.k1' "$f"); k2=$(jq -r '.ctx.k2' "$f"); PUSHED=''; [ "$(jq -r '.pushed' "$f")" != true ] || PUSHED=1
+  tok=$(jq -S -c 'del(.done)' "$f" | plan_token)
+  echo "finish $KIND $VER of $PROJ was cut off$([ -n "$PUSHED" ] && echo ": origin holds the release (master, $second and the tag, asked just now)" || echo " (no origin)"); finishing it:"
+  echo "  master ${m0:0:7} -> ${nm:0:7}; $second ${s0:0:7} -> ${ns:0:7}; tag $VER ${tagsha:0:7}${KEEP:+; $BR is kept}$([ -n "$KEEP" ] || echo "; $BR is deleted")"
+  echo "  steps already done: $(jq -r '.done | if length == 0 then "none" else join(", ") end' "$f")"
+  if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release finish $VER${HOTFIX:+ --hotfix} --plan $tok --approved \"...\")"; exit 0; fi
+  need_plan "$tok"
+  [ -n "$tagsha" ] || die "the record of the interrupted finish has no tag: remove $f and start again"
+  if [ -z "$(g rev-parse -q --verify "refs/tags/$VER" 2>/dev/null || true)" ]; then
+    [ -n "$PUSHED" ] && g fetch -q origin "refs/tags/$VER:refs/tags/$VER" 2>/dev/null || die "the tag $VER is missing here and could not be fetched from origin"
+  fi
+  [ "$(g rev-parse "refs/tags/$VER")" = "$tagsha" ] || die "the tag $VER is not the one the interrupted finish made ($tagsha): nothing was changed"
+  g cat-file -e "$nm^{commit}" 2>/dev/null && g cat-file -e "$ns^{commit}" 2>/dev/null || die "the merge commits of the interrupted finish are not in $REPO: nothing was changed"
+  need_free master "$second"; [ -n "$KEEP" ] || need_free_wt "$BR"
+  release_finish_tail
+}
+
 # rel_valid: the release answers of the project must be valid before a verb relies on them
 rel_valid() { python3 -I "$RS" config "$af" || die "the release answers of $PROJ are not valid (qargi project validate $PROJ)"; }
 # man_pages_at REF: the manual pages a release dates, one per line: release.man_pages, else the man/*.1 files tracked at REF
@@ -590,7 +659,7 @@ case $verb in
       echo "plan token: $tok   (apply with: qargi release start $VER${HOTFIX:+ --hotfix}${date_given:+ --date $date_given}${ALLOW_EMPTY:+ --allow-empty-notes} --plan $tok --approved \"...\")"
       exit 0
     fi
-    QARGI_NESTED='' need_plan "$tok"   # a caller that is itself approved (QARGI_NESTED) has not approved this plan: the token is always needed, here and below
+    need_plan "$tok"
     wcommit --allow-empty -m "Bumped version number to $VER"
     g update-ref "refs/heads/$BR" "$(git -C "$WT" rev-parse HEAD)" "" || die "could not create $BR"
     audit_log "release:start" "$PROJ $BR"
@@ -692,7 +761,7 @@ case $verb in
     pw=$(wt_of "$BR"); [ -z "$pw" ] || [ -z "$(git -C "$pw" status --porcelain 2>/dev/null)" ] || echo "warning: $pw has uncommitted changes: only what is committed on $BR is pushed"
     pr_find "$BR"; [ -z "$PR_NUM" ] || echo "the pull request #$PR_NUM of $BR is open already: the push updates it${PR_URL:+ ($PR_URL)}"
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release push $VER${HOTFIX:+ --hotfix} --plan $tok --approved \"...\")"; exit 0; fi
-    QARGI_NESTED='' need_plan "$tok"
+    need_plan "$tok"
     worktree "$h"; run_preflight "$WT"; cleanup
     if [ -n "$join" ]; then
       need_free_wt "$BR"
@@ -719,6 +788,16 @@ case $verb in
     fi
     echo "when its checks pass: qargi release finish $VER${HOTFIX:+ --hotfix}";;
   finish)
+    # a finish that was cut off after its push left a record (gitflow.sh, intent_*): complete it, or drop it when the push never happened
+    intent_lock "$KIND-$VER"
+    if intent_has "$KIND-$VER"; then
+      intent_probe "$KIND-$VER"
+      if [ "$IP" = old ]; then
+        intent_drop "$KIND-$VER"; echo "note: an earlier finish of $VER stopped before anything reached origin or moved here; its tag and record are removed and this one starts again" >&2
+      else
+        release_finish_resume; exit 0
+      fi
+    fi
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR"
     branch_exists master && branch_exists develop || die "git-flow needs a master and a develop branch"
     g rev-parse -q --verify "refs/tags/$VER" >/dev/null && die "the tag $VER exists already"
@@ -773,7 +852,7 @@ case $verb in
       esac
     fi
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release finish $VER${HOTFIX:+ --hotfix}${KEEP:+ --keep}${IGNORE_SET:+ --ignore-checks \"$IGNORE_CHECKS\"} --plan $tok --approved \"...\")"; exit 0; fi
-    QARGI_NESTED='' need_plan "$tok"
+    need_plan "$tok"
     if g remote get-url origin >/dev/null 2>&1; then
       g fetch -q origin || die "fetch failed"
       g rev-parse -q --verify "refs/remotes/origin/$BR" >/dev/null || die "$BR is not on origin: qargi release push $VER${HOTFIX:+ --hotfix} (CI must see what is released)"
@@ -801,37 +880,25 @@ case $verb in
     nm=$MERGED
     merge_step "$s0" "refs/heads/$BR" "$k2" "Merge branch '$BR' into $second"
     ns=$MERGED
+    # the intent record comes before the tag and the push: a death after the push is finished by the next run (release_finish_resume)
+    PUSHED=''; g remote get-url origin >/dev/null 2>&1 && PUSHED=1
+    intent_write "$KIND-$VER" "$(jq -nc --arg verb "$KIND:finish" --arg project "$PROJ" --arg name "$VER" --argjson pushed "$([ -n "$PUSHED" ] && echo true || echo false)" \
+      --arg m0 "$m0" --arg rm0 "$rm0" --arg nm "$nm" --arg s2 "$second" --arg s0 "$s0" --arg rs0 "$rs0" --arg ns "$ns" --arg br "$BR" --arg h "$h" \
+      --arg keep "$KEEP" --arg ig "$IGNORED" --arg igc "$IGNORE_CHECKS" --arg rb0 "$rb0" --arg k1 "$k1" --arg k2 "$k2" \
+      '{schema:1, verb:$verb, project:$project, name:$name, pushed:$pushed,
+        refs:[{ref:"refs/heads/master", local_old:$m0, origin_old:$rm0, new:$nm}, {ref:("refs/heads/" + $s2), local_old:$s0, origin_old:$rs0, new:$ns},
+              {ref:("refs/tags/" + $name), local_old:"", origin_old:"", new:"", commit:$nm}],
+        ctx:{branch:$br, head:$h, second:$s2, keep:$keep, ignored:$ig, ignore_checks:$igc, rb0:$rb0, k1:$k1, k2:$k2}, done:[]}')"
     g tag -a "$VER" -m "$VER" "$nm"
-    if g remote get-url origin >/dev/null 2>&1; then
+    tagsha=$(g rev-parse "refs/tags/$VER")
+    intent_update "$KIND-$VER" '.refs[2].new = $t' --arg t "$tagsha"
+    if [ -n "$PUSHED" ]; then
       # all or none: the push comes before any local branch moves, so a failure changes nothing
       if ! g push -q --atomic origin "$nm:refs/heads/master" "$ns:refs/heads/$second" "refs/tags/$VER"; then
-        g tag -d "$VER" >/dev/null 2>&1; die "the push failed; nothing was changed locally or on origin (run it again)"
+        g tag -d "$VER" >/dev/null 2>&1; intent_clear "$KIND-$VER"; die "the push failed; nothing was changed locally or on origin (run it again)"
       fi
-      journal_push refs/heads/master "$rm0" "$nm" "$KIND:finish"
-      journal_push "refs/heads/$second" "$rs0" "$ns" "$KIND:finish"
-      journal_push "refs/tags/$VER" "" "$(g rev-parse "refs/tags/$VER")" "$KIND:finish"
     fi
-    journal_ref "$REPO" "refs/tags/$VER" "" "$(g rev-parse "refs/tags/$VER")" "$KIND:finish"
-    g update-ref refs/heads/master "$nm" "$m0" && g update-ref "refs/heads/$second" "$ns" "$s0" || die "origin has the release but master or $second moved locally meanwhile: git fetch origin, then check master and $second against origin"
-    journal_ref "$REPO" refs/heads/master "$m0" "$nm" "$KIND:finish"
-    journal_ref "$REPO" "refs/heads/$second" "$s0" "$ns" "$KIND:finish"
-    merge_forget "$k1" "$k2"
-    if [ -z "$KEEP" ]; then wt_drop "$BR"; g update-ref -d "refs/heads/$BR" "$h"; journal_ref "$REPO" "refs/heads/$BR" "$h" "" "$KIND:finish"; fi
-    audit_log "release:finish" "$PROJ $VER${IGNORED:+ checks ignored: $IGNORE_CHECKS}"
-    [ -z "$IGNORED" ] || echo "checks ignored on your word: $IGNORE_CHECKS"
-    echo "merged $BR into master (tagged $VER) and into $second${KEEP:+; kept $BR}$([ -n "$KEEP" ] || echo "; deleted $BR")"
-    [ "$second" != develop ] || parking_follow
-    if g remote get-url origin >/dev/null 2>&1; then
-      if [ -z "$KEEP" ] && [ -n "$rb0" ]; then
-        if g push -q origin --delete "$BR"; then journal_push "refs/heads/$BR" "$rb0" "" "$KIND:finish"; else echo "note: could not delete origin/$BR" >&2; fi
-      fi
-      echo "pushed master, $second and tag $VER"
-    else
-      echo "no origin remote: nothing was pushed"
-    fi
-    lead_advice
-    after_steps_record
-    after_release;;
+    release_finish_tail;;
   step)
     [ -n "$STEPNAME" ] || die "usage: qargi release step VERSION NAME [--evidence TEXT] [--again]"
     case $EVIDENCE in *[[:cntrl:]]*) die "--evidence is one line of text";; esac
@@ -1002,7 +1069,7 @@ case $verb in
     echo "run: $GH -R $(repo_slug) release create $VER --verify-tag --title \"$title\" --notes-file NOTES$([ "${#assets[@]}" -eq 0 ] || printf ' %s' "${assets[@]}")"
     echo "(--verify-tag: the tag must already be on origin; NOTES holds the text above)"
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release publish $VER --plan $tok --approved \"...\")"; exit 0; fi
-    QARGI_NESTED='' need_plan "$tok"
+    need_plan "$tok"
     case $GHS in
       missing) ;;
       nogh) die "gh is not installed: create the release by hand, or run the release workflow by hand with this tag";;
@@ -1049,7 +1116,7 @@ case $verb in
     echo "  changes: $(git -C "$WT" diff --cached --shortstat | sed 's/^ *//')"
     remote_report "$SITE_BR"
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release site $VER --plan $tok --approved \"...\")"; exit 0; fi
-    QARGI_NESTED='' need_plan "$tok"
+    need_plan "$tok"
     wcommit -m "$SITE_SUBJECT $VER" -m "Built by qargi release site from tag $VER (${tc:0:12}) with the hand pages of $SITE_BR at ${s0:0:12}: $SITE_CONF records release $VER; _site/ is not committed."
     new=$(git -C "$WT" rev-parse HEAD)
     g update-ref "refs/heads/$SITE_BR" "$new" "$s0" || die "$SITE_BR moved meanwhile; nothing was changed (run it again)"

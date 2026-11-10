@@ -45,7 +45,14 @@ case $1 in
   *) echo "{}";;
 esac
 EOS
-chmod 755 "$T/bin/curl" "$T/bin/git" "$T/bin/ant"; export PATH=$T/bin:$PATH
+# fake jq: with JQ_ARGV_LOG set it appends every argument of the call to that file (one per line, a call ends in a line of dashes), then runs the real jq
+REALJQ=$(command -v jq); export REALJQ
+cat > "$T/bin/jq" <<'EOS'
+#!/usr/bin/env bash
+if [ -n "${JQ_ARGV_LOG:-}" ]; then { printf '%s\n' "$@"; echo ----; } >> "$JQ_ARGV_LOG"; fi
+exec "$REALJQ" "$@"
+EOS
+chmod 755 "$T/bin/curl" "$T/bin/git" "$T/bin/ant" "$T/bin/jq"; export PATH=$T/bin:$PATH
 jq -n '{schema:1,project:"alpha",repo:{url:"https://github.com/example/x",path:"",long_lived:["main"]},
   roles:{build:{base:"main",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:[],skills:[]},
          write:{base:"gh-pages",push:{mode:"none"},model:"claude-opus-5-5",effort:"medium",apt:[],skills:[]}},
@@ -66,7 +73,9 @@ out=$($S --from-file "$T/tokfile" 2>&1); tok=$(echo "$out" | sed -n 's/^plan tok
 [ -n "$tok" ] && [ ! -e "$T/c/credentials/alpha-lead-push" ] && ! grep -qw vault "$FAKE/ant.log" 2>/dev/null && ok "without --approved it checks and prints a plan, and changes nothing" || no "plan: $out"
 $S --from-file "$T/tokfile" --asked "user: yes" --approved "user: yes" --plan 000000000000 >/dev/null 2>&1 && no "a wrong plan token was accepted" || ok "a wrong plan token is refused"
 $S --from-file "$T/tokfile" --approved "user: yes" --plan "$tok" >/dev/null 2>&1 && no "applied without --asked" || ok "applying needs --asked"
-out=$($S --from-file "$T/tokfile" --asked "user: yes" --approved "user: yes" --plan "$tok" 2>&1); [ $? = 0 ] && ok "apply succeeds" || no "apply: $out"
+out=$(JQ_ARGV_LOG="$FAKE/jq-argv" $S --from-file "$T/tokfile" --asked "user: yes" --approved "user: yes" --plan "$tok" 2>&1); [ $? = 0 ] && ok "apply succeeds" || no "apply: $out"
+# no jq call of the apply has the token among its arguments (an argument is readable by every user in the process list)
+[ "$(grep -c '^----$' "$FAKE/jq-argv" 2>/dev/null || echo 0)" -ge 5 ] && ! grep -qF "$TOK" "$FAKE/jq-argv" && ok "the token is in no jq argument (it went on stdin)" || no "jq argv: $(grep -c '^----$' "$FAKE/jq-argv" 2>&1) calls logged; the token in argv: $(grep -cF "$TOK" "$FAKE/jq-argv" 2>&1)"
 f=$T/c/credentials/alpha-lead-push
 [ "$(cat "$f")" = "$TOK" ] && [ "$(stat -c %a "$f")" = 600 ] && [ "$(stat -c %a "$(dirname "$f")")" = 700 ] && ok "the token is stored mode 600 in a directory only you can enter" || no "token file"
 jq -e '.auth.type == "static_bearer" and .auth.token == "'"$TOK"'" and .auth.mcp_server_url == "https://api.githubcopilot.com/mcp/"' "$FAKE/cred-body" >/dev/null && ok "the vault credential is a bearer credential for the GitHub tool" || no "credential body"

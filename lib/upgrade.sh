@@ -9,14 +9,9 @@
 # (merge --ff-only); another branch is checked out at the fetched tip; a tag is checked out detached. The git commands that
 # write into the root-owned checkout run through sudo (QARGI_SUDO names another command, '' none); install.sh --user then
 # runs as you. Members and agents cannot use it (the guard refuses the verb). Nothing is pushed anywhere.
-# A members file (agents.json) that is not in the current shape is warned about, in the plan and after the upgrade: every agent verb refuses it.
-# The warning changes nothing: the file is not read further, moved or rewritten here.
 . "$(dirname "$0")/lib.sh"
 
 BRANCH='' TAG=''
-shape_warning() { # -> a line telling that every agent verb refuses the members file, when it is not in the current shape (see members_shape_ok in lib.sh)
-  members_shape_ok || echo "qargi: warning: $MEMBERS_FILE is not in the current shape, so every agent verb refuses it (add, list, models, for, rename, refresh, remove) and no member can be dispatched: move it aside (mv $MEMBERS_FILE $MEMBERS_FILE.old) and add the members again with qargi agent add NAME --project P"
-}
 while [ $# -gt 0 ]; do
   case $1 in
     --branch) need_val "$1" $#; BRANCH=$2; shift 2;;
@@ -66,7 +61,6 @@ if [ -z "$APPROVED" ] || [ -z "$PLAN_ARG" ]; then
   echo "commits:"; g log --oneline --no-decorate -30 "$cur_sha..$new_sha" 2>/dev/null | sed 's/^/  /'
   g diff --stat "$cur_sha" "$new_sha" | tail -1 | sed 's/^/files:/'
   echo "plan token: $token   (apply with: --plan $token --approved \"...\")"
-  shape_warning
   exit 0
 fi
 
@@ -80,6 +74,5 @@ else gw checkout --quiet -B "$BRANCH" "$ref" || die "could not check out $label"
 if [ -n "$SUDO" ]; then $SUDO python3 -I -m compileall -q "$root/lib" >/dev/null 2>&1 || echo "qargi: note: the bytecode of $root/lib was not compiled, so qargi __guard starts slower (run: $SUDO python3 -I -m compileall -q $root/lib)" >&2; fi
 "$root/install.sh" --user || die "the checkout moved but install.sh --user failed; run $root/install.sh --user yourself"
 echo "upgraded $root to $label $(g rev-parse --short HEAD) (approved: $APPROVED)"
-if ! members_shape_ok; then shape_warning; exit 0; fi
 n=$(jq -r '(.projects // {}) | to_entries[] | .key as $p | .value | keys[] | "qargi agent refresh " + . + " --project " + $p' "$MEMBERS_FILE" 2>/dev/null || true)
 [ -z "$n" ] || printf 'members to refresh if the member definition changed:\n%s\n' "$(sed 's/^/  /' <<<"$n")"

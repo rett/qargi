@@ -659,8 +659,8 @@ resolve_cloud() { # role profile-or-empty project -> prints INSTANCE MODEL EFFOR
   echo "$inst $model ${effort:-default} $prof"
 }
 
-# agents.json is {"schema": 2, "projects": {P: {NAME: record}}} (an empty object reads as no members). Any other shape is an earlier one: it is never
-# converted and never rewritten, the verbs stop (exit 2) and say what to do. So does a record without what the verbs need (a non-empty list of roles
+# agents.json is {"schema": 2, "projects": {P: {NAME: record}}} (an empty object reads as no members). Any other shape is refused: it is never
+# converted and never rewritten (qargi keeps no reader for another format), the verbs stop (exit 2) and say what to do. So does a record without what the verbs need (a non-empty list of roles
 # and the path of its file): it would otherwise be refreshed as a read-only member, hide the others in `list`, or be written to a file called "null".
 # The records checked are those of the project the verb is about (--project, else the project in effect; `list` without --project shows every project, so it
 # checks every one): one hand-broken record of another project does not stop the work of this one.

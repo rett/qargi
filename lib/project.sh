@@ -592,7 +592,7 @@ PY
       echo; echo "plan token: $tok   (create with: qargi project new $n --plan $tok --approved \"...\" plus the same options)"
       exit 0
     fi
-    QARGI_NESTED='' need_plan "$tok"
+    need_plan "$tok"
     mkdir -p "$dir"
     jq -r '.[] | [.dest, (.content | @base64)] | @tsv' <<<"$files" | while IFS=$'\t' read -r rel b64; do
       mkdir -p "$dir/$(dirname "$rel")"; printf '%s' "$b64" | base64 -d > "$dir/$rel"
@@ -713,7 +713,7 @@ PY
       echo "plan token: $tok   (store with: qargi project attach $dir --plan $tok --approved \"...\"${force:+ --force})"
       exit 0
     fi
-    QARGI_NESTED='' need_plan "$tok"
+    need_plan "$tok"
     f=$(mktemp); jq . <<<"$ans" > "$f"
     out=$(validate "$f") || { echo "$out" >&2; rm -f "$f"; die "the answers are not valid; nothing stored"; }
     gated_refuse "$f" "$sf" || { rm -f "$f"; exit 1; }
@@ -758,7 +758,7 @@ PY
       echo "plan token: $tok   (create with: qargi project adopt $n --plan $tok --approved \"...\"${meth:+ --methodology $meth})"
       exit 0
     fi
-    QARGI_NESTED='' need_plan "$tok"
+    need_plan "$tok"
     res=$(python3 -I "$lib/attach.py" adopt-apply "$n" "$PROJ_DIR/$n.json" <<<"$plan") || exit $?
     audit_log "project:adopt" "$n"
     jq -r '.branches[] | "created branch " + .' <<<"$res"
@@ -827,7 +827,7 @@ PY
       case $1 in --resource) need_val "$1" $#; res=${2// /}; shift 2;;
         --plan) need_val "$1" $#; PLAN_ARG=${2:-}; shift 2;; --approved) need_val "$1" $#; APPROVED=${2:-}; shift 2;; *) usage_die "unknown option $1";; esac
     done
-    export PLAN_ARG; unset QARGI_NESTED
+    export PLAN_ARG
     [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"
     PLK=$(dirname "$(readlink -f "$0")")/project_link.py
     LW=$(mktemp -d); trap 'rm -rf "$LW"' EXIT

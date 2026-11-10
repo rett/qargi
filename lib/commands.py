@@ -1588,7 +1588,7 @@ TOPICS = {
         "Commit with git commit -F FILE. Piped or here-string shell programs are read; curl | sh and bash < f are refused. A cd it cannot read refuses relative writes.",
         "The read-only class (review) writes only OUT and TMP: every change to the clone is refused, and a write through "
         "a name the guard cannot read. Nobody copies, extracts or links into the run directory.",
-        "Setting QARGI_NESTED, which skips a plan token check, or setting or unsetting QARGI_LEAD, is refused.",
+        "Setting QARGI_NESTED (a plan token skip only canon apply honours), or setting or unsetting QARGI_LEAD, is refused.",
         "A refusal is a result: report it; do not work around it."]),
     "naming": ("How resources are named", [
         "Project and role are single lower-case tokens. An instance is <project>-<role>, for example acme-build. A session is "

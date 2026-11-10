@@ -111,7 +111,7 @@ busy_end() { [ -z "$BUSY" ] || rm -f "$BUSY"; BUSY=''; }
 lead_advice() {
   python3 -I "$(dirname "${BASH_SOURCE[0]}")/lead_usage.py" advice --state "$DA_STATE" --conf "$DA_CONF" --project "${PROJ:-}" "$@" 2>/dev/null || true
 }
-on_exit() { marshal_hold_stop; busy_end; cleanup; }
+on_exit() { marshal_hold_stop; busy_end; cleanup; intent_unlock; }
 trap on_exit EXIT   # the lease renewer never outlives the verb, whatever way it ended
 worktree() { # commit-ish -> a detached temporary worktree there (WT)
   WT=$(mktemp -d "$DA_STATE/release-wt.XXXXXX")
@@ -414,6 +414,95 @@ merge_step() {
   exit 3
 }
 merge_forget() { local k; for k in "$@"; do rm -f "$DA_STATE/conflicts/$PROJ-$k.done"; done; }   # after the refs moved
+
+# ---- the intent record of a finishing verb (release finish, feature finish)
+# A finish pushes origin in one atomic push and moves the local branches after it, so a death between the two leaves origin finished and the
+# local refs where they were. Before anything is tagged or pushed the verb writes $DA_STATE/finish-intent/PROJECT-KEY.json (KEY: release-VERSION,
+# hotfix-VERSION or feature-NAME) under a lock: the verb, whether it pushes, and for every ref the value it has locally (local_old), the value
+# origin has (origin_old) and the value the finish gives it (new; a tag's is filled in once the tag exists, its commit is `commit`), with
+# ctx, the other values the remaining steps need, and done, the steps finished after the push. The record is removed when the last step is done.
+# A run that finds a record asks origin live (intent_probe): at the new values the push happened and the run does only the steps not marked
+# done; at the old values it never happened, the record and the tag it made are dropped and the finish begins again; any other value is
+# refused with what differs. Nothing here replaces the plan token: completing is applied like any apply, with --plan and --approved.
+intent_file() { printf '%s/finish-intent/%s-%s.json' "$DA_STATE" "$PROJ" "${1//\//_}"; }   # KEY
+intent_has() { [ -f "$(intent_file "$1")" ]; }
+intent_write() { # KEY JSON: create or replace the record, atomically, under its lock
+  local f; f=$(intent_file "$1")
+  mkdir -p "$(dirname "$f")" && chmod 700 "$(dirname "$f")" 2>/dev/null
+  ( umask 077; flock 9; printf '%s\n' "$2" > "$f.tmp" && mv -f "$f.tmp" "$f" ) 9> "$f.lock" || die "could not write the intent record $f: nothing was changed"
+}
+# intent_lock KEY -> a lock directory (FILE.run with the pid of this verb in it) held while a finish of KEY runs, so a second finish of the same name
+# never mistakes the record of a running one for one that was cut off. A lock whose pid is gone (a death) is taken over; the exit trap removes it.
+# (Not flock on an inherited descriptor: the lease renewer the verb starts would outlive a killed verb and keep it.)
+INTENT_LOCK=''
+intent_lock() {
+  local f d pid; f=$(intent_file "$1"); d=$f.run
+  mkdir -p "$(dirname "$f")" && chmod 700 "$(dirname "$f")" 2>/dev/null
+  until mkdir "$d" 2>/dev/null; do
+    pid=$(cat "$d/pid" 2>/dev/null || true)
+    if [ -n "$pid" ]; then kill -0 "$pid" 2>/dev/null || { rm -rf "$d"; continue; }
+    elif [ -z "$(find "$d" -maxdepth 0 -newermt '-10 seconds' 2>/dev/null)" ]; then rm -rf "$d"; continue; fi   # no pid yet: a lock made in the last seconds is being taken
+    die "another finish of $1 is running (process ${pid:-unknown}, $d); nothing was changed"
+  done
+  echo "$$" > "$d/pid"; INTENT_LOCK=$d
+}
+intent_unlock() { [ -z "$INTENT_LOCK" ] || rm -rf "$INTENT_LOCK"; INTENT_LOCK=''; }
+intent_get() { jq -r "$2" "$(intent_file "$1")"; }   # KEY JQ_FILTER
+intent_update() { # KEY JQ_FILTER [jq args]: rewrite the record in place, under its lock
+  local f; f=$(intent_file "$1"); shift
+  json_update "$f" "$@" || die "could not update the intent record $f"
+}
+intent_mark() { intent_update "$1" '.done = ((.done + [$s]) | unique)' --arg s "$2"; }   # KEY STEP
+intent_marked() { jq -e --arg s "$2" '.done | index($s) != null' "$(intent_file "$1")" >/dev/null 2>&1; }   # KEY STEP
+intent_clear() { local f; f=$(intent_file "$1"); rm -f "$f" "$f.lock" "$f.tmp"; }
+# intent_probe KEY -> IP is new (origin holds the new values: complete the local steps), old (it holds the old ones: the push never happened) or
+# local (a finish with no push: every local ref is at its old or new value). Dies naming each ref that differs, or when origin cannot be asked.
+intent_probe() {
+  local key=$1 f out='' rc=0 pushed ref lo oo new v cur n=0 nn=0 no=0 diff=''
+  f=$(intent_file "$key"); pushed=$(jq -r '.pushed' "$f")
+  if [ "$pushed" = true ]; then
+    command -v timeout >/dev/null 2>&1 || die "there is no timeout command to bound the question to origin, so I cannot tell whether the interrupted finish reached it"
+    # shellcheck disable=SC2046  # the refs of the record are words
+    out=$(GIT_TERMINAL_PROMPT=0 timeout "${QARGI_REMOTE_TIMEOUT:-10}" git -C "$REPO" ls-remote origin $(jq -r '.refs[].ref' "$f") 2>&1) || rc=$?
+    [ "$rc" = 0 ] || die "origin could not be asked (${out:0:120}): I cannot tell whether the interrupted finish reached it; nothing was changed"
+  fi
+  while IFS='|' read -r ref lo oo new; do
+    n=$((n + 1))
+    if [ "$pushed" = true ]; then
+      v=$(awk -v r="$ref" '$2 == r {print $1; exit}' <<<"$out")
+      if [ "$v" = "$oo" ]; then no=$((no + 1))
+      elif [ -n "$new" ] && [ "$v" = "$new" ]; then nn=$((nn + 1))
+      else diff+=$'\n'"  origin $ref is ${v:-absent}; the interrupted finish expected ${oo:-absent} before its push or ${new:-an unrecorded value} after"; fi
+    else
+      cur=$(g rev-parse -q --verify "$ref" 2>/dev/null || true)
+      if [ -n "$new" ] && { [ "$cur" = "$lo" ] || [ "$cur" = "$new" ]; }; then nn=$((nn + 1))
+      elif [ -z "$new" ] && [ "$cur" = "$lo" ]; then no=$((no + 1))
+      else diff+=$'\n'"  $ref is ${cur:-absent} here; the interrupted finish expected ${lo:-absent} or ${new:-an unrecorded value}"; fi
+    fi
+  done < <(jq -r '.refs[] | "\(.ref)|\(.local_old)|\(.origin_old)|\(.new)"' "$f")
+  [ -z "$diff" ] || die "an interrupted finish ($key) left a record, and the refs are not as it left them:$diff"$'\n'"Nothing was changed. Look at origin and at the branches; when the state is what you want, remove $f"
+  if [ "$pushed" = true ]; then
+    if [ "$nn" = "$n" ]; then IP=new; elif [ "$no" = "$n" ]; then IP=old; else die "an interrupted finish ($key) left a record, and origin holds some of its refs but not all (the push is atomic, so something else changed them). Nothing was changed. Look at origin; then remove $f"; fi
+  elif [ "$no" = "$n" ]; then IP=old
+  else IP=local; fi
+}
+# intent_drop KEY -> the push never happened: remove the tag the interrupted run made (only when it is the one the record names) and the record
+intent_drop() {
+  local key=$1 f ref new commit cur
+  f=$(intent_file "$key")
+  while IFS='|' read -r ref new commit; do
+    cur=$(g rev-parse -q --verify "$ref" 2>/dev/null || true); [ -n "$cur" ] || continue
+    if [ "$cur" = "$new" ] || { [ -n "$commit" ] && [ "$(g rev-parse -q --verify "$ref^{commit}" 2>/dev/null || true)" = "$commit" ]; }; then g tag -d "${ref#refs/tags/}" >/dev/null 2>&1 || true
+    else die "$ref exists and is not the tag the interrupted finish made ($cur): nothing was changed"; fi
+  done < <(jq -r '.refs[] | select(.ref | startswith("refs/tags/")) | "\(.ref)|\(.new)|\(.commit // "")"' "$f")
+  intent_clear "$key"
+}
+# move_ref REF NEW OLD -> update-ref REF to NEW from OLD; done already (REF is NEW) is not an error; any other value is
+move_ref() {
+  local cur; cur=$(g rev-parse -q --verify "$1" 2>/dev/null || true)
+  [ "$cur" = "$2" ] && return 0
+  g update-ref "$1" "$2" "$3"
+}
 
 # no_merge_base A B -> 0 when the branches A and B share no history (git merge-base finds nothing, exit 1: for example a master that is
 # one parentless snapshot commit); a missing ref is not that (it fails the other way)

@@ -131,6 +131,53 @@ echo "$out" | grep -q "names: accept periods" && echo "$out" | grep -q "feature 
 read -r ab at _ < "$R1/applied"; [ "$ab" = agent/names ] && [ "$at" = "$(git -C "$A" rev-parse agent/names)" ] && $DA local verify "$R1" >/dev/null 2>&1 && ok "the application is recorded in the run and local verify still accepts it" || no "applied record"
 $DA review apply "$R1" >/dev/null 2>&1 && no "a run was applied twice" || ok "a run that was applied is refused"
 
+# the record that a run was applied is in the lead's state, not only in the run directory (a member's to write): a deleted `applied` file does not make the run appliable again
+[ "$(jq -r '.status' "$T/s/apply/${R1##*/}.json" 2>/dev/null)" = "done" ] && ok "the apply record is in the state directory and says done" || no "apply record: $(cat "$T/s/apply/${R1##*/}.json" 2>&1)"
+cp "$R1/applied" "$T/applied.keep"; rm -f "$R1/applied"
+out=$($DA review apply "$R1" 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "applied already" <<<"$out" && ok "a run whose applied file a member removed is still refused as applied" || no "removed applied file: rc=$rc $out"
+cp "$T/applied.keep" "$R1/applied"
+
+# a death in the middle of an apply is recoverable: a git shim kills the verb right after the Nth matching git call
+mkdir -p "$T/shim"; REALGIT=$(command -v git); export REALGIT
+cat > "$T/shim/git" <<'S'
+#!/usr/bin/env bash
+"$REALGIT" "$@"; rc=$?
+if [ -n "${DIE_AFTER:-}" ] && [ ! -e "${DIE_FLAG:-/nonexistent}" ]; then
+  case " $* " in *"$DIE_AFTER"*) : > "$DIE_FLAG"; kill -9 "$PPID";; esac
+fi
+exit $rc
+S
+chmod +x "$T/shim/git"
+# (1) after the branch was made, before the patches: the branch is only the base; the re-run removes it and applies the series
+R7=$(newrun halfway)
+PATH=$T/shim:$PATH DIE_AFTER="worktree add -q -b agent/halfway" DIE_FLAG=$T/die-1 $DA review apply "$R7" >/dev/null 2>&1; rc=$?
+[ $rc != 0 ] && [ -e "$T/die-1" ] && git -C "$A" rev-parse -q --verify agent/halfway >/dev/null && [ ! -e "$R7/applied" ] && [ "$(jq -r .status "$T/s/apply/${R7##*/}.json")" = started ] \
+  && ok "(setup) a death after the branch was made leaves the branch, no applied file and a record that says started" || no "setup 1: rc=$rc $(cat "$T/s/apply/${R7##*/}.json" 2>&1)"
+git -C "$A" worktree prune
+out=$($DA review apply "$R7" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "cut off while making agent/halfway" <<<"$out" && [ "$(git -C "$A" rev-list --count "$dev..agent/halfway")" = 2 ] && [ -f "$R7/applied" ] && [ "$(jq -r .status "$T/s/apply/${R7##*/}.json")" = "done" ] \
+  && ok "the re-run removes the half-made branch, applies the series and records it" || no "re-run 1: rc=$rc $out"
+# (2) after the branch was built and the journal and audit lines were written, before the run's own files: the re-run finishes without applying again
+R8=$(newrun built)
+PATH=$T/shim:$PATH DIE_AFTER="log --reverse" DIE_FLAG=$T/die-2 $DA review apply "$R8" >/dev/null 2>&1; rc=$?
+tip=$(git -C "$A" rev-parse agent/built)
+[ $rc != 0 ] && [ -e "$T/die-2" ] && [ ! -e "$R8/applied" ] && [ "$(jq -r .status "$T/s/apply/${R8##*/}.json")" = built ] && [ "$(jq -r .tip "$T/s/apply/${R8##*/}.json")" = "$tip" ] \
+  && ok "(setup) a death after the branch was built leaves a record that says built, with the tip" || no "setup 2: rc=$rc $(cat "$T/s/apply/${R8##*/}.json" 2>&1)"
+out=$($DA review apply "$R8" 2>&1); rc=$?
+read -r ab at _ < "$R8/applied" 2>/dev/null
+[ $rc = 0 ] && grep -q "finishing it" <<<"$out" && [ "$(git -C "$A" rev-parse agent/built)" = "$tip" ] && [ "$ab" = agent/built ] && [ "$at" = "$tip" ] && [ "$(jq -r .status "$T/s/apply/${R8##*/}.json")" = "done" ] \
+  && $DA local verify "$R8" >/dev/null 2>&1 && ok "the re-run finishes from the record: the branch is as it was, the run records it, local verify accepts it" || no "re-run 2: rc=$rc $out"
+[ "$(jq -rs '[.[] | select(.verb == "review:apply" and (.detail | startswith("'"$R8"' ")))] | length' "$T/s/audit.log")" = 1 ] && [ "$(jq -rs '[.[] | select(.verb == "review:apply" and .ref == "refs/heads/agent/built")] | length' "$T/s/ref-journal.jsonl")" = 1 ] \
+  && ok "and the audit line and the journal line are written once" || no "audit/journal counts"
+# (3) the branch moved after it was built: the re-run refuses and says so
+R9=$(newrun moved)
+PATH=$T/shim:$PATH DIE_AFTER="log --reverse" DIE_FLAG=$T/die-3 $DA review apply "$R9" >/dev/null 2>&1
+git -C "$A" update-ref refs/heads/agent/moved "$dev"
+out=$($DA review apply "$R9" 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "built agent/moved at" <<<"$out" && grep -q "is at" <<<"$out" && [ ! -e "$R9/applied" ] && ok "a branch that is not where the record says it was built is refused, precisely" || no "moved: rc=$rc $out"
+rm -rf "$T"/s/apply-in.* "$T"/s/apply-wt.*   # what the killed runs left in the state directory
+
 R2=$(newrun failing); rm -f "$R2/out/manifest.json"
 out=$($DA review apply "$R2" 2>&1); rc=$?; [ $rc != 0 ] && echo "$out" | grep -q FAIL && ! git -C "$A" rev-parse -q --verify agent/failing >/dev/null && ok "a failing review check refuses and creates no branch" || no "failing check: $out"
 

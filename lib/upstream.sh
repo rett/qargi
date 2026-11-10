@@ -106,7 +106,7 @@ case $verb in
     fi
     [ "${#OVERLAY_CHECK[@]}" = 0 ] || echo "  then the overlay check runs on a trial merge of $INTO into develop: ${OVERLAY_CHECK[*]}"
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi upstream sync --plan $tok --approved \"...\")"; exit 0; fi
-    QARGI_NESTED='' need_plan "$tok"
+    need_plan "$tok"
     g update-ref "refs/heads/$INTO" "$U" "${H:-0000000000000000000000000000000000000000}" || die "could not move $INTO (it changed meanwhile)"
     [ -z "$H" ] || wt_follow "$INTO" "$U"
     journal_ref "$REPO" "refs/heads/$INTO" "$H" "$U" upstream:sync

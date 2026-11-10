@@ -50,13 +50,13 @@ out=$(bash "$INSTALL" --user --uninstall 2>&1); rc=$?
 [ "$rc" = 0 ] && ok "uninstall succeeds" || no "uninstall: rc=$rc $out"
 left=''; for s in $CURRENT; do [ ! -e "$S/$s" ] && [ ! -L "$S/$s" ] || left="$left $s"; done
 [ -z "$left" ] && ok "uninstall removes the skills" || no "skills left:$left"
-# no manifest (an install from before it): uninstall says what it cannot know, removes nothing without --force, and with --force only the fixed paths
+# no manifest: nothing is recorded, so uninstall removes nothing and fails, with --force too (no guessing at fixed paths)
 mkdir "$S/qargi-flow"; echo mine > "$S/qargi-flow/notes.md"; ln -s "$T/elsewhere" "$S/qargi-team"; echo mine > "$S/other-skill"
 out=$(bash "$INSTALL" --user --uninstall 2>&1); rc=$?
-{ [ "$rc" != 0 ] && [ -f "$S/qargi-flow/notes.md" ] && [ -L "$S/qargi-team" ] && echo "$out" | grep -q "no install manifest" && echo "$out" | grep -q "nothing removed"; } && ok "without a manifest uninstall says what it cannot know and removes nothing" || no "uninstall without a manifest: rc=$rc $out"
-bash "$INSTALL" --user --uninstall --force >/dev/null 2>&1
-{ [ ! -e "$S/qargi-flow" ] && [ ! -e "$S/qargi-team" ] && [ -d "$T/elsewhere" ] && [ -f "$S/other-skill" ]; } && ok "uninstall --force without a manifest removes the fixed paths, leaves what a link pointed to and any other file" || no "uninstall --force without a manifest"
-rm -f "$S/other-skill"
+{ [ "$rc" != 0 ] && [ -f "$S/qargi-flow/notes.md" ] && [ -L "$S/qargi-team" ] && echo "$out" | grep -q "no install manifest" && echo "$out" | grep -q "nothing was removed"; } && ok "without a manifest uninstall says so and removes nothing" || no "uninstall without a manifest: rc=$rc $out"
+out=$(bash "$INSTALL" --user --uninstall --force 2>&1); rc=$?
+{ [ "$rc" != 0 ] && [ -f "$S/qargi-flow/notes.md" ] && [ -L "$S/qargi-team" ] && [ -d "$T/elsewhere" ] && [ -f "$S/other-skill" ]; } && ok "uninstall --force without a manifest removes nothing either" || no "uninstall --force without a manifest: rc=$rc $out"
+rm -rf "$S/qargi-flow" "$S/other-skill"; rm -f "$S/qargi-team"
 
 # --- --project ---
 P=$T/proj; mkdir -p "$P"; git init -q "$P"

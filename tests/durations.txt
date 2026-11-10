@@ -106,4 +106,6 @@
 1 python3 tests/test_backlog.py
 14 bash tests/test_backlog.sh
 5 bash tests/test_nested_plan.sh
+16 bash tests/test_resume.sh
 13 bash tests/test_taskblock.sh
+1 python3 tests/test_legacy_lint.py

@@ -63,8 +63,7 @@ def setup_paths(roles):
 def detect(kind, mems, roles=None):
     """-> (state, why). state is LATEST (conforms), "empty" (no memories, or only the first files of a set-up that was
     interrupted before it wrote the marker: it is set up from the seed) or "unknown" (a marker this qargi does not read,
-    or no marker). Layouts older than canon 2 are not migrated. Without `roles` a store with no marker is empty only
-    when it holds no memories."""
+    or no marker). Without `roles` a store with no marker is empty only when it holds no memories."""
     if "/CANON.md" in mems:
         d = parse_marker(mems["/CANON.md"]["content"])
         try:
@@ -75,7 +74,7 @@ def detect(kind, mems, roles=None):
             return LATEST, "marker"
         if n > LATEST:
             return "unknown", "written by a newer qargi (canon %d); this one knows %d" % (n, LATEST)
-        return "unknown", "canon version %d is older than the %d this qargi reads, and it no longer migrates it" % (n, LATEST)
+        return "unknown", "canon version %d is older than the %d this qargi reads, which is the only one it reads" % (n, LATEST)
     if not mems:
         return "empty", "empty store: it is set up from the seed"
     order = setup_paths(roles) if roles else []
@@ -148,7 +147,7 @@ def add_header(kind, p, content, project, today):
         want.append(("Applies to", applies_for(kind, p, project)))
     if "Sources" not in f:
         m = re.match(r"\d{4}-\d{2}-\d{2}\s+by\s+(.+?)(?:\s+on\s+.*)?$", f.get("Verified", ""))
-        src = "%s, %s" % (m.group(1), f["Verified"][:10]) if m else "carried over by the canon %d migration on %s; %s" % (LATEST, today, NOT_RECORDED)
+        src = "%s, %s" % (m.group(1), f["Verified"][:10]) if m else "carried over by the canon %d plan on %s; %s" % (LATEST, today, NOT_RECORDED)
         want.append(("Sources", src))
     if not want:
         return content, []
