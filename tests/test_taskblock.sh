@@ -72,6 +72,28 @@ refuse "--scope without --task-file" "go with --task-file" --slug r15 --scope li
 n=0; for d in 'make test' 'true' 'FOO=1 bash tests/check.sh' './tests/check.sh' 'cd tests && ./check.sh'; do
   n=$((n+1)); prep --slug "d$n" --task-file "$T/task.txt" --done "$d" >/dev/null 2>&1 && grep -qxF "DONE: $d" "$RUN/task.md" && ok "DONE '$d' is accepted" || no "DONE '$d' refused"
 done
+# the ordinary command lines of a project are DONE lines: the isolated suite run, an assignment with a substitution, a subshell, a script the task creates (it is
+# under --scope), a chain, an environment prefix, a negation. A compound line is accepted when bash parses it (only its syntax is checked).
+# shellcheck disable=SC2016  # the lines are text for --done
+for d in 'T=$(mktemp -d -p /dev/shm); mkdir $T/h; HOME=$T/h bash tests/run.sh' 'T=$(mktemp -d -p /dev/shm); mkdir $T/h; HOME=$T/h bash tests/run.sh --tier fast' 'HOME="$(mktemp -d)" bash tests/check.sh' \
+  '(cd lib && python3 -m pytest)' 'bash tests/check.sh && bash tests/check.sh' 'cd tests && ./check.sh' 'FOO=1 BAR=2 make test' '! grep -q x README.md' 'env -i make test' \
+  'bash tests/new_test.sh' 'tests/new_test.sh' './tests/new_test.sh' 'bash tests/never_made.sh && true' 'make test | tail -n 5' 'HOME=$T/h bash tests/check.sh' 'FOO="a b" bash tests/check.sh'; do
+  n=$((n+1)); prep --slug "d$n" --task-file "$T/task.txt" --done "$d" --scope tests/new_test.sh >/dev/null 2>&1 && grep -qxF "DONE: $d" "$RUN/task.md" && ok "DONE '$d' is accepted" || no "DONE '$d' refused"
+done
+# what is plainly not a command line: prose (a sentence whose first word is a path that is not a script, one that bash cannot parse), and a script that is neither at BASE nor under a --scope path
+for d in 'OUT/report.md ends with a verdict line' "the review is done and it's right" 'the output (looks right)' 'tests/never_made.sh' 'bash tests/check.sh; then' 'FOO=1 nothingtorun'; do
+  n=$((n+1)); before=$(runs); out=$($Q local prepare --repo "$R" --base main --scratch "$T" --slug "d$n" --task-file "$T/task.txt" --done "$d" --scope tests/new_test.sh 2>&1); rc=$?
+  if [ $rc = 2 ] && [ "$(runs)" = "$before" ]; then ok "DONE '$d' is refused (usage error), and no run is made"; else no "DONE '$d': rc=$rc $out"; fi
+done
+# a script is looked up at BASE (the tip of the base branch), not in the lead's working tree: one that only the checkout has is refused, one that only BASE has is accepted
+echo untracked > "$R/tests/untracked.sh"
+refuse "a script that exists in the checkout but not at BASE" "not an existing script" --slug u1 --task-file "$T/task.txt" --done './tests/untracked.sh'
+git -C "$R" checkout -q -b withx && echo x > "$R/tests/atbase.sh" && git -C "$R" add tests/atbase.sh && git -C "$R" -c user.name=t -c user.email=t@example.net commit -q -m x && git -C "$R" checkout -q main
+[ ! -e "$R/tests/atbase.sh" ] || no "setup: the checkout has the script"
+out=$($Q local prepare --repo "$R" --base withx --scratch "$T" --slug u2 --task-file "$T/task.txt" --done './tests/atbase.sh' 2>&1); rc=$?
+[ $rc = 0 ] && ok "a script that exists at BASE is accepted although the checkout is on another branch without it" || no "script at BASE: rc=$rc $out"
+refuse "that script on another base" "not an existing script" --slug u3 --task-file "$T/task.txt" --done './tests/atbase.sh'
+rm -f "$R/tests/untracked.sh"
 
 # --- P3: a run prepared with --scope; review check fails a patch outside it and passes one inside
 sc() { # NAME FILES...: a run with --scope lib/, a member series that changes the given files, its OUT

@@ -3160,7 +3160,7 @@ the file with the task: prepare then writes the whole task block to RUN/task.md 
 .RS
 .TP
 .BI "\-\-done " "COMMAND"
-the check that says the task is done, as one command line (with \-\-task\-file). Refused when it is not a command: its first word, after any NAME=value words, must be an executable on PATH, a shell builtin or keyword, or an existing script (a word with a slash is a file of the repository or an absolute one; with \-\-repo\-url a relative path is taken as given).
+the check that says the task is done, as one command line (with \-\-task\-file). Refused when it is empty, has several lines or bash \-n cannot parse it, and, for a simple command (no ; & | < > ( ) operator), when its first word, after any NAME=value words, is not an executable on PATH, a shell builtin or keyword, or a script (a word with a slash is a file of BASE, a file under a \-\-scope path that the task may create, or an absolute one; with \-\-repo\-url a relative path is taken as given). A line with an operator is accepted when bash parses it: only its syntax is checked.
 .RE
 .RS
 .TP
