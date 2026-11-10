@@ -179,7 +179,7 @@ COMMANDS = {
                               "roles.ROLE.tools is the list of the tools a role needs beyond its apt packages, each {kind, name, ...}: kind go (name a package path, version a tag: go install NAME@VERSION), "
                               "kind binary (name the file name, version, url of the file itself, sha256 of it: downloaded to ~/.local/bin and kept only when the hash matches) and kind submodule "
                               "(name as in .gitmodules, path: checked out in each member clone by qargi local prepare). env plan lists them, env apply installs them and env check reports one that is "
-                              "missing or wrong; a member's guard refuses setting them (and a whole role), as it refuses release.*, test_command, gates, env.*, site.* and backlog.*. "
+                              "missing or wrong; a member's guard refuses setting them (and a whole role), as it refuses release.*, test_command, gates, env.*, upstream.*, site.*, backlog.*, ci.*, methodology_accepted, git.* and review.*. "
                               "backlog.file is the markdown file of the project's backlog (qargi backlog); a path outside the repository is fine. "
                               "git.author ('Name <email>') is the author qargi review apply gives the commits it applies, and review.keep_author true keeps the member's author instead; "
                               "review.scrub (a command line or a list of words) is run by qargi review check (and by qargi review apply, unless a passing check recorded the same series) on the applied series with the range in QARGI_SCRUB_BASE and QARGI_SCRUB_TIP, and review.trailer_policy reject fails a commit with a "
@@ -1487,7 +1487,9 @@ COMMANDS = {
                  "nothing until you confirm; replaced and removed items are saved under the state directory first. The archive is treated as "
                  "untrusted data: names and checksums are verified. Definitions are restored as files only (rebuild with provision). Memory "
                  "notes go to the stores named in the project's answers. An archive's project answers never add or change models.extensions or "
-                 "models.accept_no_barrier (they take a plan token and an approval: qargi provider enable, disable, accept): the stored value stays, "
+                 "models.accept_no_barrier (they take a plan token and an approval: qargi provider enable, disable, accept), nor the lead's answers ci.not_gates, "
+                 "methodology_accepted, review.reject_trailers, backlog.archive and backlog.section (a member's project set is refused them too); an archive may keep or drop "
+                 "entries of such a list but not add or change one: the stored value stays, "
                  "or the key is left out, and a note says so. It asks at a terminal; --dry-run shows the plan without one."),
         "scripts": ["transfer.py"],
         "usage": [("FILE", "file")],

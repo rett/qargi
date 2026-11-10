@@ -222,6 +222,21 @@ class Render(unittest.TestCase):
             for para in C.TOPICS[t][1]:
                 self.assertIn(H.esc(para), shipped, "the %s topic is not in man/qargi.1 as man() writes it" % t)
 
+    def test_project_set_help_names_every_answer_the_guard_refuses_a_member_and_import_help_every_gated_key(self):
+        """The help of project set lists the answers a member's guard refuses (EXECUTED_ANSWERS, git and review, runs and packs have their own sentences), and the help of
+        import names each key of GATED_KEYS in lib/transfer.py that an archive may not add or change."""
+        text = C.COMMANDS["project"]["verbs"]["set"]["desc"]
+        for a in G.EXECUTED_ANSWERS + G.IDENTITY_ANSWERS:
+            self.assertRegex(text, r"(?<![a-z_.])%s(\.\*|,| and |\.)" % re.escape(a), "project set help does not name %s among what a member's guard refuses" % a)
+        src = slurp(os.path.join(LIB, "transfer.py"))
+        m = re.search(r"^GATED_KEYS = (.*?)^PROVIDER_KEYS", src, re.S | re.M)
+        self.assertTrue(m, "GATED_KEYS of lib/transfer.py moved: update this test")
+        keys = re.findall(r'"([a-z_.]+)"', re.sub(r"#[^\n]*", "", m.group(1)))
+        self.assertGreaterEqual(len(keys), 7)
+        imp = C.COMMANDS["import"]["desc"]
+        for k in keys:
+            self.assertIn(k, imp, "import help does not name the gated key %s" % k)
+
     def test_the_approvals_topic_states_the_rules_the_skills_point_at(self):
         text = " ".join(C.TOPICS["approvals"][1])
         for needle in ("covers the plan", "recorded, not verified", "Never allow-list", "A member never applies"):
