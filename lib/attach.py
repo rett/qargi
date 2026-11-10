@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Attach qargi to an existing repository without changing it.
 
-  attach.py detect DIR [--name N] [--methodology M] [--provider P | --provider-local L --provider-cloud C]
+  attach.py detect DIR [--name N] [--methodology M] [--provider P | --provider-local L --provider-cloud C] [--answers FILE]
                                                    print JSON: what was found, the draft answers, the gaps, the questions
   attach.py check-provider [--provider P | --provider-local L --provider-cloud C]
                                                    exit 1 and the reason when a provider named there cannot be used (nothing is written)
@@ -89,11 +89,13 @@ class TreeRepo:
         return None, None
 
 
-def env_view(m, tree, root):
+def env_view(m, tree, root, answers=None):
     """What the development environment of a tree is and what a methodology's scaffold adds to it: {found, skip, gaps, params}.
+    The environment is the effective one (lib/env.py effective): a command the project's answers declare (env.bootstrap_command, env.doctor_command) is in effect, so the
+    target it stands for is not a gap.
     found: the summary detect reports; skip: the scaffold destinations that are not written or listed because the piece they hold exists
     elsewhere; gaps: the pieces that are missing and that no scaffold file will supply; params: the scaffold parameters that fit the runner."""
-    envd = ENV.detect(root, TreeRepo(tree, root))
+    envd = ENV.effective(root, answers, TreeRepo(tree, root))
     tg = envd["targets"]
     runner = envd["runner"] or (envd["runners"][0]["runner"] if envd["runners"] else None) or "make"
     cmds = ENV.commands_for(runner)
@@ -121,7 +123,7 @@ def env_view(m, tree, root):
                      "why": "no section headed Development environment, Environment or Setup in AGENTS.md or README.md; add one that names the bootstrap and doctor commands"})
     if "targets" not in writes:
         for role in ("bootstrap", "doctor"):
-            if not tg[role]:
+            if not tg[role] and not (envd["commands"][role + "_command"]["source"] or "").startswith("answers:"):
                 files = ", ".join(r["file"] for r in envd["runners"]) or "a Makefile"
                 gaps.append({"kind": "env", "what": "%s target" % role, "why": "none (%s) in %s; add one" % (" or ".join(ENV.WANTED[role]), files)})
     found = {"section": (envd["section"] or {}).get("file"), "runner": envd["runner"], "bootstrap_command": envd["commands"]["bootstrap_command"]["command"],
@@ -239,9 +241,24 @@ def tag_pattern(tags):
     return {"count": len(tags), "pattern": "v<semver>" if sem[0].startswith("v") else "<semver>"}
 
 
-def changelog_info(d, unreleased=None):
+def last_release(text, released):
+    """The version of the newest released section of a changelog (the first heading that follows the released template), or ''."""
+    parts = []
+    for i, piece in enumerate(RLAY.PLACEHOLDER_RE.split(released)):
+        if i % 2 == 0:
+            parts.append(re.escape(piece))
+        else:
+            parts.append(r"(?P<v>v?[0-9][^\s\]\)]*)" if piece == "version" else r"[0-9][^\s\]\)]*")
+    pat = re.compile(r"^" + "".join(parts), re.M)
+    m = pat.search(text)
+    return m.group("v") if m and "v" in pat.groupindex else ""
+
+
+def changelog_info(d, unreleased=None, released=None):
     """The changelog file and whether it has the heading of the changes to come: '## [Unreleased]' (also without the brackets) unless the
-    project's answer release.changelog.unreleased names another heading. The key is called keepachangelog: with the default it is that format."""
+    project's answer release.changelog.unreleased names another heading. The key is called keepachangelog: with the default it is that format.
+    versioned: the heading carries the version ({version}), so right after a release there is none until the next change starts one;
+    last_release: the version of the newest released section (the released template), when there is one."""
     unreleased = unreleased or RLAY.DEFAULT_UNRELEASED
     for f in ("CHANGELOG.md", "CHANGELOG", "HISTORY.md", "NEWS.md"):
         if exists(d, f):
@@ -250,7 +267,8 @@ def changelog_info(d, unreleased=None):
                 has = re.search(r"(?mi)^## \[?unreleased\]?", t)
             else:
                 has = RLAY.find_unreleased(t, unreleased)
-            return {"file": f, "keepachangelog": bool(has)}
+            return {"file": f, "keepachangelog": bool(has), "versioned": "{version}" in unreleased,
+                    "last_release": last_release(t, released or RLAY.DEFAULT_RELEASED)}
     return {}
 
 
@@ -295,8 +313,11 @@ def _agreed(models):
     return next(iter(models)) if len(models) == 1 else None
 
 
-def detect(d, name=None, methodology="gitflow", provider=None, release=None):
-    """release: the `release` answers of the project when it has any (its version file and changelog headings are looked for, not the defaults)."""
+def detect(d, name=None, methodology="gitflow", provider=None, release=None, answers=None):
+    """release: the `release` answers of the project when it has any (its version file and changelog headings are looked for, not the defaults).
+    answers: the project's stored answers when it has any (release is then theirs, and their env commands are in effect)."""
+    if isinstance(answers, dict) and release is None:
+        release = answers.get("release")
     release = release if isinstance(release, dict) else {}
     d = os.path.realpath(d)
     top = git(d, "rev-parse", "--show-toplevel")
@@ -313,13 +334,13 @@ def detect(d, name=None, methodology="gitflow", provider=None, release=None):
     ref, ref_why = integration_ref(d, (m.get("branches") or {}).get("long_lived", []), branches)
     dpath, d = d, Tree(d, ref)   # from here on d is the tree of ref
     cmd, why = test_command(d)
-    ev = env_view(m, d, dpath)
+    ev = env_view(m, d, dpath, answers)
     ci = sorted(f for f in d.listdir(".github/workflows") if f.endswith((".yml", ".yaml")))
     found = {
         "ref": ref and git(dpath, "rev-parse", "--abbrev-ref", ref) or ref, "ref_why": ref_why,
         "path": dpath, "remote": remote, "current_branch": head, "branches": branches, "long_lived": long_lived,
         "tags": tag_pattern(tags), "version": version_info(d, release.get("version_file")),
-        "changelog": changelog_info(d, RLAY.templates(release)[0]),
+        "changelog": changelog_info(d, *RLAY.templates(release)),
         "test_command": cmd, "test_command_from": why, "language": language(d), "ci_workflows": ci,
         "files": {f: exists(d, f) for f in ("README.md", "CONTRIBUTING.md", "CLAUDE.md", "AGENTS.md", "LICENSE", ".gitignore")},
         "dirty": bool(git(dpath, "status", "--porcelain")),
@@ -372,16 +393,22 @@ def detect(d, name=None, methodology="gitflow", provider=None, release=None):
     for b in (m.get("branches") or {}).get("long_lived", []):
         if b not in branches and not (b == "master" and "main" in branches):
             gaps.append({"kind": "branch", "what": b, "why": "the methodology keeps a long-lived %s branch" % b})
+    info = []
     if found["changelog"] and not found["changelog"]["keepachangelog"]:
         unrel = RLAY.templates(release)[0]
-        why = ("no '## [Unreleased]' heading: not in the Keep a Changelog format" if unrel == RLAY.DEFAULT_UNRELEASED
-               else "no '%s' heading (release.changelog.unreleased): the release flow cannot find the changes to come" % unrel)
-        gaps.append({"kind": "format", "what": found["changelog"]["file"], "why": why})
+        cl = found["changelog"]
+        if cl["versioned"] and cl["last_release"]:
+            # the heading carries the version and the release renamed it: there is none until the next change starts one. Nothing is wrong
+            info.append({"kind": "changelog", "what": cl["file"], "why": "no unreleased section yet; the last release is %s (the heading '%s' is started by the next change)" % (cl["last_release"], unrel)})
+        else:
+            why = ("no '## [Unreleased]' heading: not in the Keep a Changelog format" if unrel == RLAY.DEFAULT_UNRELEASED
+                   else "no '%s' heading (release.changelog.unreleased): the release flow cannot find the changes to come" % unrel)
+            gaps.append({"kind": "format", "what": cl["file"], "why": why})
     if tags and not found["tags"]["pattern"]:
         gaps.append({"kind": "tags", "what": "tags", "why": "the existing tags are not semantic versions"})
     if not ci:
         gaps.append({"kind": "ci", "what": ".github/workflows", "why": "no CI workflow was found"})
-    return {"found": found, "answers": answers, "gaps": gaps, "questions": questions, "methodology": methodology}
+    return {"found": found, "answers": answers, "gaps": gaps, "info": info, "questions": questions, "methodology": methodology}
 
 
 class Refuse(Exception):
@@ -440,7 +467,7 @@ def adopt_plan(project, answers_file, methodology=None):
     methodology = methodology or answers.get("methodology") or "gitflow"
     where, md, m = M.load(methodology)
     long_lived = (m.get("branches") or {}).get("long_lived", [])
-    det = detect(d, project, methodology, release=answers.get("release"))
+    det = detect(d, project, methodology, answers=answers)
     found = det["found"]
     base_name, base_sha = default_branch_tip(d)
     heads = git(d, "for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads").splitlines()
@@ -456,7 +483,7 @@ def adopt_plan(project, answers_file, methodology=None):
     adopt_exists = bool(git(d, "rev-parse", "--verify", "-q", "refs/heads/" + adopt_branch) or git(d, "rev-parse", "--verify", "-q", "refs/remotes/origin/" + adopt_branch))
     tree = Tree(d, integ_sha)
     lower = {p.lower() for p in tree.files | tree.dirs}
-    ev = env_view(m, tree, d)
+    ev = env_view(m, tree, d, answers)
     params = {"project": project}
     params.update({k: v for k, v in ev["params"].items() if k in (m.get("params") or {})})
     if answers.get("test_command") and "test_command" in (m.get("params") or {}) and "\n" not in answers["test_command"]:
@@ -464,7 +491,7 @@ def adopt_plan(project, answers_file, methodology=None):
     if answers.get("gates") and "gates" in (m.get("params") or {}) and not M.G.problems(answers["gates"]):
         params["gates"] = json.dumps(answers["gates"], separators=(",", ":"))   # the declared gates replace the test command in the files written (a gate list that is not valid is left out: project validate reports it)
     versioning, ci = m.get("versioning") or {}, m.get("ci") or {}
-    files, skipped = [], []
+    files, skipped, declared = [], [], []
     for item in M.render(methodology, params):
         dest = item["dest"]
         parts = dest.split("/")
@@ -477,7 +504,8 @@ def adopt_plan(project, answers_file, methodology=None):
         elif dest.lower() in lower:
             why = "a path that differs only in letter case exists"
         elif dest == versioning.get("file") and (answers.get("release") or {}).get("version_file") == "none":
-            why = "release.version_file is none: the project keeps no version file"
+            declared.append({"kind": "declared", "what": dest, "why": "not written: release.version_file is none, the project keeps no version file"})
+            continue
         elif dest == versioning.get("file") and found["version"]:
             why = "the version is kept in %s" % found["version"]["file"]
         elif dest == versioning.get("changelog") and found["changelog"]:
@@ -493,6 +521,7 @@ def adopt_plan(project, answers_file, methodology=None):
             files.append(item)
     if adopt_exists:
         files = []
+    info = det["info"] + declared       # what the changelog or the answers say is so: not gaps, so not left for you to judge
     left = [g for g in det["gaps"] if g["kind"] in ("format", "tags", "ci")]
     left += [dict(g, why="not written: " + g["why"]) for g in ev["gaps"]]
     left += [{"kind": "file", "what": x["what"], "why": "not written: " + x["why"]} for x in skipped]
@@ -517,7 +546,7 @@ def adopt_plan(project, answers_file, methodology=None):
         "files": [{"dest": f["dest"], "sha256": hashlib.sha256(f["content"].encode()).hexdigest()} for f in files],
     }
     return {"project": project, "methodology": methodology, "path": d, "base": basis["base"], "integration": basis["integration"],
-            "branches": branches, "adopt_branch": adopt_branch, "adopt_exists": adopt_exists, "files": files, "skipped": skipped, "left": left,
+            "branches": branches, "adopt_branch": adopt_branch, "adopt_exists": adopt_exists, "files": files, "skipped": skipped, "left": left, "info": info,
             "nothing_to_do": not branches and not files, "basis": basis}
 
 
@@ -591,7 +620,7 @@ def main(argv):
     if len(argv) < 2 or argv[0] != "detect":
         raise SystemExit("usage: attach.py detect DIR [--name N] [--methodology M] [--provider P | --provider-local L --provider-cloud C]")
     d, name, meth, i = argv[1], None, "gitflow", 2
-    opts = {}
+    opts, answers = {}, None
     while i < len(argv):
         if argv[i] == "--name" and i + 1 < len(argv):
             name, i = argv[i + 1], i + 2
@@ -599,10 +628,16 @@ def main(argv):
             meth, i = argv[i + 1], i + 2
         elif argv[i] in ("--provider", "--provider-local", "--provider-cloud") and i + 1 < len(argv):
             opts[argv[i]], i = argv[i + 1], i + 2
+        elif argv[i] == "--answers" and i + 1 < len(argv):
+            try:
+                answers = json.load(open(argv[i + 1]))
+            except (OSError, ValueError):
+                answers = None
+            i += 2
         else:
             raise SystemExit("qargi: unknown option %s" % argv[i])
     prov = provider_arg(opts.get("--provider"), opts.get("--provider-local"), opts.get("--provider-cloud"))
-    print(json.dumps(detect(d, name, meth, prov), indent=2, sort_keys=True))
+    print(json.dumps(detect(d, name, meth, prov, answers=answers), indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":

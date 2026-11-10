@@ -343,9 +343,9 @@ def problems(e):
     return bad
 
 
-def effective(repo_dir, answers=None):
-    """detect(repo_dir) with the answers' env overrides applied: a command in env.* wins over the detected one."""
-    d = detect(repo_dir)
+def effective(repo_dir, answers=None, repo=None):
+    """detect(repo_dir) with the answers' env overrides applied: a command in env.* wins over the detected one. repo: as for detect."""
+    d = detect(repo_dir, repo)
     e = (answers or {}).get("env")
     if isinstance(e, dict) and not problems(e):
         for k in KEYS[:3]:

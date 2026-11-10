@@ -631,11 +631,13 @@ PY
     export PLAN_ARG   # need_plan reads it
     PROVARGS=(); [ -z "$prov" ] || PROVARGS+=(--provider "$prov"); [ -z "$provl" ] || PROVARGS+=(--provider-local "$provl"); [ -z "$provc" ] || PROVARGS+=(--provider-cloud "$provc")
     det=$(python3 -I "$(dirname "$0")/attach.py" detect "$dir" ${name:+--name "$name"} --methodology "$meth" "${PROVARGS[@]}") || exit 1
-    [ -z "$url" ] || det=$(jq --arg u "$url" '.answers.repo.url = $u | .questions |= map(select(startswith("repo.url") | not))' <<<"$det")
     n=$(jq -r .answers.project <<<"$det")
     valid_project "$n" || die "the project name '$n' is not valid: --name (lower-case letters and digits)"
     sf=$PROJ_DIR/$n.json; stored=''
     [ ! -f "$sf" ] || stored=1
+    # a stored project is read with its answers: the commands it declares (env.*) and its changelog headings are what the gaps are measured against
+    [ -z "$stored" ] || det=$(python3 -I "$(dirname "$0")/attach.py" detect "$dir" --name "$n" --methodology "$meth" "${PROVARGS[@]}" --answers "$sf") || exit 1
+    [ -z "$url" ] || det=$(jq --arg u "$url" '.answers.repo.url = $u | .questions |= map(select(startswith("repo.url") | not))' <<<"$det")
     ans=$(jq -c .answers <<<"$det")
     if [ -n "$stored" ] && [ -n "$force" ]; then
       # replace only what was detected; keep every answer that cannot be detected (roles, cloud, memory, budget, ...)
@@ -687,6 +689,10 @@ PY
     echo
     echo "gaps against the $meth methodology (nothing is changed in the repository; qargi project adopt $n closes the safe ones as a branch to review):"
     jq -r 'if (.gaps | length) == 0 then "  none" else .gaps[] | "  - \(.kind): \(.what) (\(.why))" end' <<<"$det"
+    if [ "$(jq -r '.info | length' <<<"$det")" != 0 ]; then
+      echo "noted, not gaps (nothing to close):"
+      jq -r '.info[] | "  - \(.kind): \(.what) (\(.why))"' <<<"$det"
+    fi
     jq -r '.found.env | "development environment found: section in \(.section // "none"); task runner \(.runner // "none"); bootstrap \(.bootstrap_command // "none"); doctor \(.doctor_command // "none"); \(.pins | length) pinned tool(s), \(.submodules) submodule(s) (qargi env show reads it in full)"' <<<"$det"
     # a hint only: the repository's own skills are read from the working tree, nothing is changed or stored. The directory is the project's
     # provider's (layout.project_skills_dir); a project with no provider yet (attach never guesses one) is hinted for every provider's.
@@ -751,6 +757,10 @@ PY
         jq -r '.left[] | "    - \(.kind): \(.what) (\(.why))"' <<<"$plan"
       fi
     }
+    if [ "$(jq -r '.info | length' <<<"$plan")" != 0 ]; then
+      echo "  noted, not gaps (nothing to close):"
+      jq -r '.info[] | "    - \(.kind): \(.what) (\(.why))"' <<<"$plan"
+    fi
     left
     if [ "$(jq -r .nothing_to_do <<<"$plan")" = true ]; then echo; echo "nothing to do: the safe gaps are closed"; exit 0; fi
     echo

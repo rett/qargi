@@ -131,6 +131,19 @@ out=$($DA project adopt hay 2>&1); echo "$out" | grep -qi "no '## \[Unreleased\]
 jq '.release = {version_file: "none", changelog: {unreleased: "## Next", released: "## {version}"}}' "$T/c/projects/hay.json" > "$T/hay.json" && mv "$T/hay.json" "$T/c/projects/hay.json"
 out=$($DA project adopt hay 2>&1)
 ! grep -qi "format" <<<"$out" && ! grep -q "^    VERSION$" <<<"$out" && grep -q "^    CONTRIBUTING.md$" <<<"$out" && ok "with the answers, the changelog's own heading is found and no VERSION file is planned" || no "template gap: $out"
+# declared settings are not gaps: release.version_file none is information, apart from what is left for the owner to judge
+! grep -q "version_file" <<<"$(sed -n '/left for you/,$p' <<<"$out")" && grep -q "noted, not gaps" <<<"$out" && grep -q "declared: VERSION (not written: release.version_file is none" <<<"$out" \
+  && ok "release.version_file none is printed as information, not under left for you to judge" || no "declared setting: $out"
+# a versioned unreleased heading right after a release is information too: the heading is started by the next change
+V=$T/v; git init -q -b main "$V"; printf '# Changes\n\n## 1.2.3 (2026-01-01)\n\n- x\n' > "$V/CHANGELOG.md"; git -C "$V" add -A; git -C "$V" commit -q -m first
+attach vee "$V"
+out=$($DA project adopt vee 2>&1); grep -qi "no '## \[Unreleased\]' heading" <<<"$out" && ok "by default a released-only changelog is a format gap" || no "versioned default: $out"
+jq '.release = {changelog: {unreleased: "## {version} (unreleased)", released: "## {version} ({date})"}}' "$T/c/projects/vee.json" > "$T/vee.json" && mv "$T/vee.json" "$T/c/projects/vee.json"
+out=$($DA project adopt vee 2>&1)
+grep -q "noted, not gaps" <<<"$out" && grep -q "changelog: CHANGELOG.md (no unreleased section yet; the last release is 1.2.3" <<<"$out" && ! grep -q -- "- format:" <<<"$out" \
+  && ok "adopt: no unreleased section right after a release is information with the last release, not a format gap" || no "versioned adopt: $out"
+out=$($DA project attach "$V" --name vee 2>&1); grep -q -- "- format:" <<<"$out" && no "versioned attach: a gap: $out"
+grep -q "^noted, not gaps (nothing to close):" <<<"$out" && grep -q "no unreleased section yet; the last release is 1.2.3" <<<"$out" && ok "attach: the same, under information after the gaps" || no "versioned attach: $out"
 # --- H: the development environment. A justfile without the targets, a CLAUDE.md of its own; and a README that already has the section ---
 H=$T/h2; git init -q -b main "$H"; printf 'default:\n    @true\n' > "$H/justfile"; printf '# Mine\n' > "$H/CLAUDE.md"; git -C "$H" add -A; git -C "$H" commit -q -m first
 attach heth "$H"
@@ -144,6 +157,18 @@ $DA project adopt heth --plan "$tok" --approved go >/dev/null 2>&1 || no "apply 
 a=$(git -C "$H" show agent/adopt-gitflow:AGENTS.md)
 grep -q '^## Development environment$' <<<"$a" && grep -q '`just bootstrap`' <<<"$a" && grep -q '`just --dry-run bootstrap`' <<<"$a" && grep -q '`just doctor`' <<<"$a" && ! grep -qiE '(^|[^[:alnum:]])qargi([^[:alnum:]]|$)' <<<"$a" \
   && [ "$(git -C "$H" show agent/adopt-gitflow:CLAUDE.md 2>&1)" = "# Mine" ] && ok "the drafted section names the runner's commands, nothing about qargi, and CLAUDE.md is untouched" || no "drafted AGENTS.md: $a"
+# the environment gaps are measured against the effective environment: a command the answers declare (env.bootstrap_command) is not a missing target
+H3=$T/h3; git init -q -b main "$H3"; printf 'default:\n    @true\n' > "$H3/justfile"; git -C "$H3" add -A; git -C "$H3" commit -q -m first
+attach heth3 "$H3"
+out=$($DA project adopt heth3 2>&1); grep -q "env: bootstrap target (not written" <<<"$out" && grep -q "env: doctor target (not written" <<<"$out" && ok "without env answers both targets are missing" || no "env answers absent: $out"
+jq '.env = {bootstrap_command: "just setup-all", doctor_command: "just verify-all"}' "$T/c/projects/heth3.json" > "$T/h3.json" && mv "$T/h3.json" "$T/c/projects/heth3.json"
+out=$($DA project adopt heth3 2>&1); tok=$(tokof "$out")
+! grep -q "env: bootstrap target" <<<"$out" && ! grep -q "env: doctor target" <<<"$out" && ok "adopt: declared env.bootstrap_command and env.doctor_command close the target gaps" || no "env answers adopt: $out"
+out=$($DA project attach "$H3" --name heth3 2>&1)
+! grep -q "env: bootstrap target" <<<"$out" && ! grep -q "env: doctor target" <<<"$out" && grep -q "bootstrap just setup-all; doctor just verify-all" <<<"$out" && ok "attach: the same, and the environment line shows the declared commands" || no "env answers attach: $out"
+$DA project adopt heth3 --plan "$tok" --approved go >/dev/null 2>&1 || no "apply heth3"
+a=$(git -C "$H3" show agent/adopt-gitflow:AGENTS.md)
+grep -q '`just setup-all`' <<<"$a" && grep -q '`just verify-all`' <<<"$a" && ok "the AGENTS.md written names the declared commands" || no "heth3 AGENTS.md: $a"
 I=$T/i; git init -q -b main "$I"; printf '# Iota\n\n## Setup\n\nmake bootstrap\n' > "$I/README.md"; printf 'bootstrap:\n\t@true\ndoctor:\n\t@true\n' > "$I/Makefile"
 git -C "$I" add -A; git -C "$I" commit -q -m first
 attach iota "$I"

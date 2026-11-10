@@ -6,6 +6,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- `qargi project attach` and `qargi project adopt` print a declared setting, or a state that is not a problem, apart from the gaps, under "noted, not gaps (nothing to close)": `release.version_file none` (no `VERSION` is planned, and it is no longer listed under "left for you to judge"), and a changelog whose unreleased heading carries the version (`release.changelog.unreleased` with `{version}`) that has none right after a release ("no unreleased section yet; the last release is X"; before, a format gap). The plan JSON of adopt has an `info` list for them, and so has the detection JSON of attach.
+
+### Fixed
+- The environment gaps of `project attach` and `project adopt` are measured against the effective environment: a command the project's answers declare (`env.bootstrap_command`, `env.doctor_command`) is not reported as a missing target, and the files adopt writes name the declared commands. `project attach` of a stored project reads its answers (`attach.py detect --answers FILE`), so its `release` answers (version file, changelog headings) apply too.
+
 ## [0.2.9] - 2026-11-09
 
 ### Added
