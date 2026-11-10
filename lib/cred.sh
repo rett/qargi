@@ -111,8 +111,9 @@ case $verb in
     if [ -z "$vid" ]; then vid=$(ant beta:vaults create --display-name "$vname" </dev/null 2>/dev/null | jq -r '.id // empty'); fi
     [ -n "$vid" ] || die "could not create the vault $vname (the token file is stored at $dest)"
     old=$(ant beta:vaults:credentials list --vault-id "$vid" </dev/null 2>/dev/null | jq -r 'select((.archived_at // null) == null) | .id')
-    jq -nc --arg t "$tok" --arg u "https://api.githubcopilot.com/mcp/" --arg n "$PROJECT lead: GitHub write token" \
-      '{display_name: $n, auth: {type: "static_bearer", mcp_server_url: $u, token: $t}}' \
+    # the token goes to jq on standard input (an argument is readable in the process list), as the raw text it is
+    printf '%s' "$tok" | jq -Rsc --arg u "https://api.githubcopilot.com/mcp/" --arg n "$PROJECT lead: GitHub write token" \
+      '{display_name: $n, auth: {type: "static_bearer", mcp_server_url: $u, token: .}}' \
       | ant beta:vaults:credentials create --vault-id "$vid" >/dev/null 2>&1 || die "could not store the credential in $vid"
     for c in $old; do ant beta:vaults:credentials archive --vault-id "$vid" --credential-id "$c" </dev/null >/dev/null 2>&1 || true; done   # a rotation replaces the old one
     cur=$(jq -c '.lead.push // {}' "$PCFG")
