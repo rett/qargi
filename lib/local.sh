@@ -551,12 +551,12 @@ print("\n".join(out))
 '
 taskblock_check() {
   local f=$1 done=$2 role=$3 repo=$4 base=$5 s rd p ok w0 tw first; shift 5
-  [ ! -L "$f" ] || die "--task-file $f is a link: give the file itself"
-  [ -f "$f" ] || die "--task-file $f: no such file"
-  grep -q '[^[:space:]]' "$f" || die "--task-file $f is empty: the task block needs the task"
-  [ "$(wc -c < "$f")" -le 1048576 ] || die "--task-file $f is over 1 MiB"
-  [ "$(tr -d '\000' < "$f" | wc -c)" = "$(wc -c < "$f")" ] || die "--task-file $f holds a NUL byte: it must be text"
-  ! grep -Eq "$TB_SCOPE_RE" "$f" || die "--task-file $f has a line that starts SCOPE:, which review check would read as the limit: give the paths with --scope"
+  [ ! -L "$f" ] || usage_die "--task-file $f is a link: give the file itself"
+  [ -f "$f" ] || usage_die "--task-file $f: no such file"
+  grep -q '[^[:space:]]' "$f" || usage_die "--task-file $f is empty: the task block needs the task"
+  [ "$(wc -c < "$f")" -le 1048576 ] || usage_die "--task-file $f is over 1 MiB"
+  [ "$(tr -d '\000' < "$f" | wc -c)" = "$(wc -c < "$f")" ] || usage_die "--task-file $f holds a NUL byte: it must be text"
+  ! grep -Eq "$TB_SCOPE_RE" "$f" || usage_die "--task-file $f has a line that starts SCOPE:, which review check would read as the limit: give the paths with --scope"
   [ -n "$done" ] || usage_die "--task-file needs --done COMMAND: the check that says the task is done, as a command (make test, bash tests/x.sh)"
   case $done in *$'\n'*) usage_die "--done is one command line, not several lines: put them in a script and give its path";; esac
   bash -n -c "$done" >/dev/null 2>&1 || usage_die "--done '$done' is not a command line: bash cannot parse it (it reads as prose)"
@@ -623,15 +623,16 @@ case $verb in
     done
     if [ -n "$URL" ]; then
       [ -z "$REPO" ] || usage_die "give --repo or --repo-url, not both"
-      case $URL in https://*) ;; *) die "--repo-url must be an https URL";; esac
+      case $URL in https://*) ;; *) usage_die "--repo-url must be an https URL";; esac
       uauth=${URL#https://}; uauth=${uauth%%[/?#]*}
-      case $uauth in *@*) die "--repo-url must not carry a user name or a password (https://USER@host): the URL is recorded and put in commands; give the token with --credential-file";; esac
-      [ -z "$CRED" ] || { CRED=${CRED/#\~/$HOME}; [ -f "$CRED" ] || die "--credential-file: no such file"; CRED=$(readlink -f -- "$CRED"); }
+      case $uauth in *@*) usage_die "--repo-url must not carry a user name or a password (https://USER@host): the URL is recorded and put in commands; give the token with --credential-file";; esac
+      [ -z "$CRED" ] || { CRED=${CRED/#\~/$HOME}; [ -f "$CRED" ] || usage_die "--credential-file: no such file"; CRED=$(readlink -f -- "$CRED"); }
     else
-      [ -d "$REPO/.git" ] || [ -f "$REPO/.git" ] || die "--repo must be a git working tree"
+      [ -n "$REPO" ] || usage_die "prepare needs --repo DIR (a git working tree) or --repo-url URL"
+      [ -d "$REPO/.git" ] || [ -f "$REPO/.git" ] || usage_die "--repo must be a git working tree"
       REPO=$(readlink -f -- "$REPO")   # recorded as a real path: the registry and RUN/repo.path say the same text
     fi
-    [ "$ROLE" != lead ] && valid_role "$ROLE" || die "--role: one of $DA_ROLES (qargi role list)"
+    [ "$ROLE" != lead ] && valid_role "$ROLE" || usage_die "--role: one of $DA_ROLES (qargi role list)"
     CLASS=$(role_class "$ROLE")
     # a read-only role needs a read-only barrier on the local surface, or the project's recorded acceptance that there is none
     if [ "$CLASS" = read-only ]; then
@@ -639,7 +640,7 @@ case $verb in
       [ -n "$BPJ" ] || { echo "qargi: no stored project has this repository, so no provider is known and a read-only role cannot start: store it (qargi project attach) and give it a provider (qargi project set PROJECT models.provider NAME)" >&2; exit 2; }
       barrier_guard local "$BPJ"
     fi
-    valid_slug "$SLUG" || die "--slug: lower-case letters, digits and '-'"
+    valid_slug "$SLUG" || usage_die "--slug: lower-case letters, digits and '-'"
     [ -n "$BASE" ] && [ -d "$SCR" ] || usage_die "prepare needs --base BRANCH and --scratch DIR"
     SCR=$(readlink -f -- "$SCR")   # an absolute run directory: the registry and every later verb name it from any working directory
     # the task block (RUN/task.md) is written when --task-file is given; every check of its inputs is made here, before anything is made
@@ -967,7 +968,7 @@ WRAP
       [ "$bad_n" = 0 ] || exit 1   # a stale run that clean refused (never applied, not merged, refs changed) stays, named, with the reason
       exit 0
     fi
-    [ -z "$YES" ] || die "clean: --yes is for --stale"
+    [ -z "$YES" ] || usage_die "clean: --yes is for --stale"
     if [ -n "$ALL" ]; then
       [ -z "$CLEAN_RUN$DISCARD" ] || usage_die "clean --applied takes no RUN dir and no --discard: it cleans only what is applied and merged"
       [ -d "$SCR" ] || usage_die "clean --applied needs --scratch DIR, the directory the runs were prepared in"
@@ -983,7 +984,7 @@ WRAP
       [ "$bad_n" = 0 ] || exit 1   # an applied run that was refused (not merged, refs changed); a run still in progress is no failure
       exit 0
     fi
-    [ -z "$SCR" ] || die "clean: --scratch is for --applied and --stale"
+    [ -z "$SCR" ] || usage_die "clean: --scratch is for --applied and --stale"
     reg_load
     RUN=$CLEAN_RUN
     while [ "${RUN%/}" != "$RUN" ] && [ "$RUN" != / ]; do RUN=${RUN%/}; done   # a trailing slash makes rm -rf follow a link

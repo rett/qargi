@@ -92,6 +92,12 @@ git -C "$T/r2" update-ref refs/heads/feature/x "$AT"
 out=$(./bin/qargi local prepare --repo "$T/r2" --base main --slug c5 --scratch "$T"); C5=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out"); G5=$(sed -n '1,/^$/s/^GIT=//p' <<<"$out"); CL5=$(sed -n '1,/^$/s/^CLONE=//p' <<<"$out")
 echo z > "$CL5/h"; $G5 -C "$CL5" add h && $G5 -C "$CL5" commit -q -m work; echo '{}' > "$C5/out/manifest.json"; echo r > "$C5/out/report.md"; ./bin/qargi local verify "$C5" >/dev/null 2>&1
 err=$(./bin/qargi local clean "$C5" --discard 2>&1) && [ ! -e "$C5" ] && grep -q 'dropped 1 unmerged commit' <<<"$err" && ok "--discard drops it on purpose and says how many commits" || no "discard: $err"
+# an option that goes with another verb form is a usage error (exit 2), not a failure of the clean
+for bad in "--yes" "--scratch $T/ls"; do
+  # shellcheck disable=SC2086
+  out=$(./bin/qargi local clean "$T/nosuch.run" $bad 2>&1); rcu=$?
+  { [ $rcu = 2 ] && grep -q 'is for --' <<<"$out"; } && ok "clean RUN $bad is a usage error (exit 2)" || no "clean RUN $bad (rc=$rcu): $out"
+done
 # a run whose review apply is under way is not cleaned: the apply holds a pid lock (STATE/apply/RUN-ID.json.run: the pid and its start time), and clean refuses, --discard
 # or not, while that process lives; a lock whose process is gone, or whose pid another process now has, does not block
 out=$(./bin/qargi local prepare --repo "$T/r2" --base main --slug lk --scratch "$T"); CLK=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out"); echo '{}' > "$CLK/out/manifest.json"

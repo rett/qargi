@@ -48,7 +48,13 @@ prep --slug plain || no "plain prepare failed"
 refuse() { # LABEL EXPECTED-TEXT ARGS...
   local label=$1 want=$2 before out rc; shift 2; before=$(runs)
   out=$($Q local prepare --repo "$R" --base main --scratch "$T" "$@" 2>&1); rc=$?
-  if [ "$rc" != 0 ] && grep -q -- "$want" <<<"$out" && [ "$(runs)" = "$before" ]; then ok "$label is refused, and no run is made"; else no "$label: rc=$rc runs $before -> $(runs): $out"; fi
+  if [ "$rc" = 2 ] && grep -q -- "$want" <<<"$out" && [ "$(runs)" = "$before" ]; then ok "$label is refused (usage error, exit 2), and no run is made"; else no "$label: rc=$rc runs $before -> $(runs): $out"; fi
+}
+# the same for a refusal that takes its own arguments: prepare with neither --repo nor --repo-url, and a value of an option that cannot be right, are usage errors too
+refuse_raw() { # LABEL EXPECTED-TEXT ARGS...: the whole of local prepare's arguments
+  local label=$1 want=$2 before out rc; shift 2; before=$(runs)
+  out=$($Q local prepare "$@" 2>&1); rc=$?
+  if [ "$rc" = 2 ] && grep -q -- "$want" <<<"$out" && [ "$(runs)" = "$before" ]; then ok "$label is a usage error (exit 2), and no run is made"; else no "$label: rc=$rc runs $before -> $(runs): $out"; fi
 }
 refuse "a prose DONE" "reads as prose" --slug r1 --task-file "$T/task.txt" --done 'the output looks right'
 refuse "an empty DONE" "needs --done" --slug r2 --task-file "$T/task.txt" --done ''
@@ -63,6 +69,17 @@ refuse "a task file that is a link" "is a link" --slug r8 --task-file "$T/link.t
 refuse "a task file that is not there" "no such file" --slug r9 --task-file "$T/missing.txt" --done 'bash tests/check.sh'
 printf 'Do it.\nSCOPE: everything\n' > "$T/scoped.txt"
 refuse "a task file with its own SCOPE: line" "starts SCOPE:" --slug r10 --task-file "$T/scoped.txt" --done 'bash tests/check.sh'
+refuse_raw "prepare with no --repo and no --repo-url" "needs --repo DIR" --base main --scratch "$T" --slug n1
+refuse_raw "prepare with a --repo that is no git working tree" "must be a git working tree" --repo "$T" --base main --scratch "$T" --slug n2
+refuse_raw "prepare with a --repo-url that is not https" "must be an https URL" --repo-url http://example.invalid/x.git --base main --scratch "$T" --slug n3
+refuse_raw "prepare with a --repo-url that carries a user name" "must not carry a user name" --repo-url https://user@example.invalid/x.git --base main --scratch "$T" --slug n4
+refuse_raw "prepare with a --credential-file that is not there" "no such file" --repo-url https://example.invalid/x.git --credential-file "$T/nocred" --base main --scratch "$T" --slug n5
+refuse_raw "prepare with an unknown --role" "one of" --repo "$R" --role nosuchrole --base main --scratch "$T" --slug n6
+refuse_raw "prepare with --role lead" "one of" --repo "$R" --role lead --base main --scratch "$T" --slug n7
+refuse_raw "prepare with a --slug of capitals and a space" "lower-case letters" --repo "$R" --base main --scratch "$T" --slug 'Bad Slug'
+refuse_raw "prepare with no --slug" "lower-case letters" --repo "$R" --base main --scratch "$T"
+refuse_raw "prepare with no --base" "needs --base" --repo "$R" --scratch "$T" --slug n8
+refuse_raw "prepare with an option it does not have" "unknown option" --repo "$R" --nosuch x
 refuse "an absolute --scope" "relative" --slug r11 --task-file "$T/task.txt" --done 'bash tests/check.sh' --scope /etc
 refuse "a --scope with .." "relative" --slug r12 --task-file "$T/task.txt" --done 'bash tests/check.sh' --scope ../x
 refuse "a --scope with a comma" "relative" --slug r13 --task-file "$T/task.txt" --done 'bash tests/check.sh' --scope 'a,b'
