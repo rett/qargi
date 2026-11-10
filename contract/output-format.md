@@ -1,30 +1,9 @@
 # Output files (in OUT)
-OUT is the output directory the task block gives. `qargi review check` and `qargi local clean` read OUT; write
-nothing of your result anywhere else.
+OUT is the output directory the task block gives. `qargi review check` and `qargi local clean` read OUT; write nothing of your result anywhere else.
 
-patches/NNNN-*.patch: one patch per commit, in order, from `git format-patch --binary
-BASE_SHA..HEAD` (never a single combined patch), series.md (each patch in order: subject, the
-change group it belongs to, why, which checks it passed), run.bundle
-(git bundle create run.bundle BASE_SHA..agent/<slug>), manifest.json, log.txt
-(every command with its exit status, in order). If OUT_PREFIX is given, start the name of every
-file you write to OUT with it (build--manifest.json): outputs are collected by base name and the
-members of a team share one directory.
-manifest.json, required keys: status (DONE|BLOCKED), base {branch, sha}, done {command, exit_code,
-output_tail}, gates[] {name, command, result pass|fail|not run, exit_code, verdict_line verbatim},
-commits[] {sha, subject}, scope[] (SCOPE as the task block gives it; empty without one) and
-touched_paths[] {path, reason}. `qargi review check` fails a patch that touches a path outside SCOPE. See manifest.example.json beside this file.
-Other keys, when they apply: blocked_reason, task, branch, commit_advice[] {sha, subject,
-why_separate, depends_on[], builds_alone}, patch_groups[] {name, why, commits[]} (related commits
-grouped under the one change they implement, so a change is reviewed with its context),
-deviations[], noticed_not_acted_on[], artifacts[] {path, kind: report|log|other} (deliverables
-that are not patches), usage_impact[] {kind: command|flag|output|config|file, before, after, where}
-(required when you change something a user sees or types), on_top_of {run, head_sha} and, per commit,
-for_group (when your work builds on another member's series), environment {tool versions, test_user}.
+patches/NNNN-*.patch: one patch per commit, in order, from `git format-patch --binary BASE_SHA..HEAD` (never a single combined patch), series.md (each patch in order: subject, the change group it belongs to, why, which checks it passed), run.bundle (git bundle create run.bundle BASE_SHA..agent/<slug>), manifest.json, log.txt (every command with its exit status, in order). If OUT_PREFIX is given, start the name of every file you write to OUT with it (build--manifest.json): outputs are collected by base name and the members of a team share one directory. manifest.json, required keys: status (DONE|BLOCKED), base {branch, sha}, done {command, exit_code, output_tail}, gates[] {name, command, result pass|fail|not run, exit_code, verdict_line verbatim}, commits[] {sha, subject}, scope[] (SCOPE as the task block gives it; empty without one) and touched_paths[] {path, reason}. `qargi review check` fails a patch that touches a path outside SCOPE. See manifest.example.json beside this file. Other keys, when they apply: blocked_reason, task, branch, commit_advice[] {sha, subject, why_separate, depends_on[], builds_alone}, patch_groups[] {name, why, commits[]} (related commits grouped under the one change they implement, so a change is reviewed with its context), deviations[], noticed_not_acted_on[], artifacts[] {path, kind: report|log|other} (deliverables that are not patches), usage_impact[] {kind: command|flag|output|config|file, before, after, where} (required when you change something a user sees or types), on_top_of {run, head_sha} and, per commit, for_group (when your work builds on another member's series), environment {tool versions, test_user}.
 
 ## Two shapes
 A role that changes the repository returns patches: everything above.
 
-A read-only role returns `report.md` and `manifest.json`, nothing else (`status`, `commits: []`, the report in
-`artifacts[]`). `report.md` has `# Findings` (per finding: severity high|medium|low, file:line, what is wrong, the
-evidence, a suggested fix as a fenced diff), then `# Checked` (what you ran with its exit status; what you only
-read), and ends with one line: `verdict: accept` or `verdict: revise`.
+A read-only role returns `report.md` and `manifest.json`, nothing else (`status`, `commits: []`, the report in `artifacts[]`). `report.md` has `# Findings` (per finding: severity high|medium|low, file:line, what is wrong, the evidence, a suggested fix as a fenced diff), then `# Checked` (what you ran with its exit status; what you only read), and ends with one line: `verdict: accept` or `verdict: revise`.

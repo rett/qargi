@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Plans for writing a memory tier: `qargi memory init TIER` and `qargi memory move PATH --from T --to T`.
 
-  tierplan.py plan-init TIER [--project P] [--today D] --out FILE
-  tierplan.py plan-move PATH --from T --to T [--project P] [--today D] --out FILE
+  tierplan.py plan-init TIER [--project P] [--worktree DIR] [--today D] --out FILE
+  tierplan.py plan-move PATH --from T --to T [--project P] [--worktree DIR] [--today D] --out FILE
   tierplan.py show FILE
   tierplan.py apply FILE
 
@@ -12,6 +12,10 @@ against the notes the plan read before the first change (membackend.apply_ops). 
 
 init writes the canon-2 seed (memplan.canon_plan on an empty store) into one directory tier. It refuses a directory
 that has other content, a repo tier that leaves its checkout, and locations that overlap another tier's.
+
+The repo tier lives inside the project's checkout (repo.path) and qargi never commits it. --worktree DIR (the repo tier of init, or a
+move that has it at one end) writes it into DIR instead, a worktree of the same repository, at the same path inside it, so the files
+can be made on the branch that must hold them; the warning in the plan says in which directory and on which branch to commit.
 
 move copies notes from one tier to another and archives the originals (/_archive/<date>/<path>), moving their index
 rows too. A note lives in one tier, so the plan refuses a path that any other tier holds. A stale plan (a tier
@@ -91,9 +95,59 @@ def checkout_of(a, tier):
     return repo, os.path.relpath(loc, repo)
 
 
-def repo_warning(repo, rel):
-    return ("WARNING: this writes into the repository checkout %s at %s; qargi never commits it: review and commit it "
-            "yourself, or ignore it in git." % (repo, rel))
+def git_out(path, *args):   # (the flags in the calls below are git's, in single quotes: the help test reads double-quoted ones as this script's own)
+    try:
+        r = subprocess.run(["git", "-C", path] + list(args), capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def branch_of(path):
+    """The branch checked out in a work tree, or 'a detached HEAD at SHA'."""
+    b = git_out(path, "symbolic-ref", '--short', "-q", "HEAD")
+    if b:
+        return b
+    sha = git_out(path, "rev-parse", '--short', "HEAD")
+    return "a detached HEAD at %s" % sha if sha else "no commit yet"
+
+
+def common_dir(path):
+    d = git_out(path, "rev-parse", '--git-common-dir')
+    return os.path.realpath(os.path.join(path, d)) if d else None
+
+
+def repo_place(a, tier, worktree):
+    """For the repo tier: (the directory to commit in, the tier's path inside it, the tier with its location there). Without a worktree that is the project's
+    checkout; with one, DIR must be the top of a work tree of the same repository."""
+    repo, rel = checkout_of(a, tier)
+    if not worktree:
+        return repo, rel, tier
+    wt = os.path.realpath(os.path.expanduser(worktree))
+    if not os.path.isdir(wt):
+        raise Refused("--worktree %s is not a directory" % worktree)
+    top = git_out(wt, "rev-parse", '--show-toplevel')
+    if not top or os.path.realpath(top) != wt:
+        raise Refused("--worktree %s is not the top of a git work tree" % worktree)
+    cd = common_dir(wt)
+    if not cd or cd != common_dir(os.path.expanduser(repo)):
+        raise Refused("--worktree %s is not a worktree of the project's repository %s (git worktree list shows them)" % (worktree, repo))
+    loc = os.path.join(wt, rel)
+    if not real(loc).startswith(wt + os.sep):
+        raise Refused("the repo tier %s leaves the worktree %s (a link points out of it?); refusing" % (rel, wt))
+    return wt, rel, dict(tier, location=loc)
+
+
+def repo_warning(repo, rel, worktree=False):
+    """Where the repo tier is written and where its files must be committed; qargi never commits them."""
+    branch = branch_of(repo)
+    if worktree:
+        return ("WARNING: this writes into %s at %s, a worktree of the project's repository (%s checked out there); qargi never commits it: commit %s on that "
+                "branch (git -C %s add %s, then git commit), so that it reaches the other worktrees and the members' clones when that branch does."
+                % (repo, rel, branch, rel, repo, rel))
+    return ("WARNING: this writes into the repository checkout %s at %s (%s checked out there); qargi never commits it: review it and commit it yourself on "
+            "that branch, or ignore it in git. A member's clone is made from the committed branch, so it sees the files only after that. To write them into "
+            "another worktree of this repository, for example one on the integration branch, add --worktree DIR." % (repo, rel, branch))
 
 
 def tier_named(a, project, name):
@@ -132,15 +186,17 @@ def open_ref(ref, write):
 
 # --- init
 
-def plan_init(tier_name, project_arg, today):
+def plan_init(tier_name, project_arg, today, worktree=None):
     if tier_name == "cloud":
         raise Refused("the cloud tier is created by qargi provision")
+    if worktree and tier_name != "repo":
+        raise Refused("--worktree is for the repo tier, which lives in a checkout; tier %s is a directory of its own" % tier_name)
     project, a = load_answers(project_arg)
     t = tier_named(a, project, tier_name)
-    loc = t["location"]
     repo = rel = None
     if tier_name == "repo":
-        repo, rel = checkout_of(a, t)
+        repo, rel, t = repo_place(a, t, worktree)
+    loc = t["location"]
     if not loc:
         raise Refused("tier %s has no location" % tier_name)
     me = real(loc)
@@ -167,7 +223,7 @@ def plan_init(tier_name, project_arg, today):
     plan = M.canon_plan(held, "memory", pa, roles, seed_dir(), today)
     plan.update(verb="init", tier=tier_name, stores={"target": loc}, needs_ant=False, private={"target": tier_name in PRIVATE})
     if repo:
-        plan["warning"] = repo_warning(repo, rel)
+        plan["warning"] = repo_warning(repo, rel, bool(worktree))
     return plan
 
 
@@ -235,9 +291,11 @@ def select_notes(src, path):
     return [p for p in T.notes_of(src) if p == base or p.startswith(base + "/")]
 
 
-def plan_move(path, frm, to, project_arg, today):
+def plan_move(path, frm, to, project_arg, today, worktree=None):
     if frm == to:
         raise Refused("--from and --to are the same tier")
+    if worktree and "repo" not in (frm, to):
+        raise Refused("--worktree is for the repo tier, and this move has it at neither end")
     why = B.path_problem(path)
     if why:
         raise Refused("PATH %s is not a store path (%s)" % (path, why))
@@ -247,6 +305,9 @@ def plan_move(path, frm, to, project_arg, today):
         raise Refused("PATH must lie under /shared/ or /roles/<role>/: %s" % path)
     project, a = load_answers(project_arg)
     tiers = {t["tier"]: t for t in T.resolve(a, project)}
+    repo = rel = None
+    if "repo" in (frm, to):
+        repo, rel, tiers["repo"] = repo_place(a, tiers["repo"], worktree)
     states = {}
     for name in (frm, to):
         t = tiers[name]
@@ -279,10 +340,6 @@ def plan_move(path, frm, to, project_arg, today):
                 refused.append("refused: %s is also in tier %s; resolve it first (qargi memory check)" % (p, name))
     if refused:
         raise Refused("\n".join(refused))
-    repo = rel = None
-    for name in (frm, to):
-        if name == "repo":
-            repo, rel = checkout_of(a, tiers[name])
     sb, db = backend_of(tiers[frm]), backend_of(tiers[to])
     label = "tier-%s" % frm
     try:
@@ -330,7 +387,7 @@ def plan_move(path, frm, to, project_arg, today):
     plan.update(verb="move", from_tier=frm, to_tier=to, path=path, stores={"source": ref_of(tiers[frm]), "target": ref_of(tiers[to])},
                 needs_ant="cloud" in (frm, to), private={"target": to in PRIVATE, "source": frm in PRIVATE})
     if repo:
-        plan["warning"] = repo_warning(repo, rel)
+        plan["warning"] = repo_warning(repo, rel, bool(worktree))
     return plan
 
 
@@ -377,6 +434,7 @@ def main(argv):
     s.add_argument("--to", required=True, choices=T.ORDER)
     for s in (sub.choices["plan-init"], s):
         s.add_argument("--project")
+        s.add_argument("--worktree")
         s.add_argument('--today')
         s.add_argument('--out', required=True)
     for n in ("show", "apply"):
@@ -387,7 +445,8 @@ def main(argv):
             ap.error("TIER is one of repo, project, shared, system")
         if a.cmd in ("plan-init", "plan-move"):
             today = a.today or M.today_utc()
-            plan = plan_init(a.tier, a.project, today) if a.cmd == "plan-init" else plan_move(a.path, a.frm, a.to, a.project, today)
+            plan = (plan_init(a.tier, a.project, today, a.worktree) if a.cmd == "plan-init"
+                    else plan_move(a.path, a.frm, a.to, a.project, today, a.worktree))
             if plan is None:
                 return 0
             with open(a.out, "w") as f:

@@ -243,6 +243,17 @@ def repo_rel(answers):
     return os.path.normpath(os.path.relpath(os.path.normpath(loc), os.path.normpath(os.path.expanduser(rp))))
 
 
+def branch_of(checkout):
+    """The branch checked out in a work tree, or the words for a detached HEAD; '' when git cannot say."""
+    if not checkout or not shutil.which("git") or not os.path.isdir(checkout):
+        return ""
+    try:
+        r = subprocess.run(["git", "-C", checkout, "symbolic-ref", "--short", "-q", "HEAD"], capture_output=True, text=True, timeout=3, stdin=subprocess.DEVNULL)
+    except (subprocess.TimeoutExpired, OSError):
+        return ""
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else "a detached HEAD"
+
+
 def dirty_count(checkout, rel):
     """Number of paths with uncommitted changes under rel in the checkout; 0 when git is missing or anything fails."""
     if not checkout or not rel or not shutil.which("git") or not os.path.isdir(checkout):
@@ -348,7 +359,8 @@ def collect(answers, project, role, ant, deadline, repo_tier=None, checkout=None
         checkout = os.path.expanduser((answers.get("repo") or {}).get("path") or "")
     n_dirty = dirty_count(checkout, rel) if rel else 0
     return {"project": project, "role": role, "rows": rows, "files": ordered, "notloaded": nl, "meta": meta, "reference": reference,
-            "repo_dirty": n_dirty, "repo_rel": rel, "cloud_why": cloud_why, "grant": ""}
+            "repo_dirty": n_dirty, "repo_rel": rel, "repo_checkout": checkout if n_dirty else "", "repo_branch": branch_of(checkout) if n_dirty else "",
+            "cloud_why": cloud_why, "grant": ""}
 
 
 def row_lines(c):
@@ -365,8 +377,10 @@ def _dirty_line(c, packet=False):
     if packet:
         return ("WARNING: the repo tier %s has %d uncommitted path(s) in the lead's checkout; your clone has the committed version only."
                 % (c["repo_rel"], c["repo_dirty"]))
-    return ("WARNING: repo tier %s has %d uncommitted path(s); dispatched agents see only the committed version. qargi never commits them."
-            % (c["repo_rel"], c["repo_dirty"]))
+    where = (" Commit them yourself on %s in %s (qargi memory init repo --worktree DIR writes the tier into another worktree of the repository instead)."
+             % (c["repo_branch"] if c.get("repo_branch") else "the branch checked out", c["repo_checkout"])) if c.get("repo_checkout") else ""
+    return ("WARNING: repo tier %s has %d uncommitted path(s); dispatched agents see only the committed version. qargi never commits them.%s"
+            % (c["repo_rel"], c["repo_dirty"], where))
 
 
 def _head(c):

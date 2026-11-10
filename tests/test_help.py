@@ -125,6 +125,10 @@ class Render(unittest.TestCase):
                 if verb and verbs(cmd) and verb not in verbs(cmd):
                     self.fail("topic %s names qargi %s %s, which is not a verb" % (t, cmd, verb))
 
+    def test_no_help_topic_has_a_commands_name(self):
+        """`qargi help NAME` shows the topic first when NAME is one, so a topic named like a command would hide that command's help."""
+        self.assertEqual(sorted(set(C.TOPICS) & set(C.COMMANDS)), [])
+
     def test_the_guard_topic_is_listed_renders_and_is_in_the_man_page(self):
         self.assertIn("guard", C.TOPICS)
         title, paras = C.TOPICS["guard"]
@@ -138,6 +142,23 @@ class Render(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
         self.assertIn("local verify", r.stdout)
 
+    def test_the_guard_topic_and_the_review_role_say_what_a_read_only_member_runs_where_tmpdir_points_and_what_a_piece_after_a_cut_may_not_start_with(self):
+        """What the guard refuses a read-only member, as the member needs to read it: an assignment (not the command), the TMP that TMPDIR is, and the words the
+        guard reads after a separator. The behaviour itself is tested in test_guard.py."""
+        topic = " ".join(" ".join(C.TOPICS["guard"][1]).split())
+        role = " ".join(slurp(os.path.join(ROOT, "roles", "review", "ROLE.md")).split())
+        for name, text in (("the guard topic", topic), ("the review role", role)):
+            for needle in ("build, vet and test", "TMPDIR", "OUT and TMP", "git push", "git tag", "ssh", "scp", "sftp", "gh", "not mid-sentence" if text is topic else "middle of a sentence"):
+                self.assertIn(needle, text, "%s does not say %r" % (name, needle))
+            self.assertNotIn("is not set", text, name)
+        self.assertIn("is refused, not the command", topic)
+        self.assertIn("not the command", role)
+        self.assertIn("the run's TMP", topic)
+        self.assertIn("the run's TMP", role)
+        self.assertIn("a Go test writes", role)
+        self.assertIn("environment", role)
+        self.assertIn("never the clone", role)
+
     def test_review_check_help_and_the_review_role_state_the_report_only_rule(self):
         # what review_check.py requires of a report-only run: the manifest beside the report, a closing verdict line, SCOPE as a hard limit, a batch warning
         r = subprocess.run([BIN, "help", "review", "check"], capture_output=True, text=True, stdin=subprocess.DEVNULL, env=dict(os.environ, QARGI_HOME=tempfile.mkdtemp()))
@@ -149,6 +170,13 @@ class Render(unittest.TestCase):
         role = slurp(os.path.join(ROOT, "roles", "review", "ROLE.md"))
         self.assertIn("closing verdict line", role)
         self.assertNotIn("DONE checks that the report has a Findings section", role)
+
+    def test_the_verify_skill_names_both_ways_a_read_only_report_reaches_the_lead(self):
+        """A read-only run with no report in OUT either gave it in its final message (the lead stores it) or wrote it with local report."""
+        skill = " ".join(slurp(os.path.join(ROOT, "skills", "qargi-verify", "SKILL.md")).split())
+        self.assertIn("`qargi review save RUN_DIR` stores it", skill)
+        self.assertIn("`qargi local report`", skill)
+        self.assertIn("report", verbs("local"))
 
     # verbs the guard refuses that the topic need not name, each with the reason: none yet
     GUARD_TOPIC_EXEMPT = {}
@@ -193,6 +221,47 @@ class Render(unittest.TestCase):
             self.assertIn("\n.SH %s\n" % t.upper(), shipped)
             for para in C.TOPICS[t][1]:
                 self.assertIn(H.esc(para), shipped, "the %s topic is not in man/qargi.1 as man() writes it" % t)
+
+    def test_project_set_help_names_every_answer_the_guard_refuses_a_member_and_import_help_every_gated_key(self):
+        """The help of project set lists the answers a member's guard refuses (EXECUTED_ANSWERS, git and review, runs and packs have their own sentences), and the help of
+        import names each key of GATED_KEYS in lib/transfer.py that an archive may not add or change."""
+        text = C.COMMANDS["project"]["verbs"]["set"]["desc"]
+        for a in G.EXECUTED_ANSWERS + G.IDENTITY_ANSWERS:
+            self.assertRegex(text, r"(?<![a-z_.])%s(\.\*|,| and |\.)" % re.escape(a), "project set help does not name %s among what a member's guard refuses" % a)
+        src = slurp(os.path.join(LIB, "transfer.py"))
+        m = re.search(r"^GATED_KEYS = (.*?)^PROVIDER_KEYS", src, re.S | re.M)
+        self.assertTrue(m, "GATED_KEYS of lib/transfer.py moved: update this test")
+        keys = re.findall(r'"([a-z_.]+)"', re.sub(r"#[^\n]*", "", m.group(1)))
+        self.assertGreaterEqual(len(keys), 7)
+        imp = C.COMMANDS["import"]["desc"]
+        for k in keys:
+            self.assertIn(k, imp, "import help does not name the gated key %s" % k)
+
+    def test_the_release_answers_are_listed_by_the_key_completion_and_the_error_text_of_the_release_check(self):
+        """Every layout key of a release (lib/release_layout.py) can be typed as a project key (changelog by its three sub-keys), and the text of the release answers
+        check names every key it accepts: it is built from RELEASE_KEYS, not copied."""
+        import release_layout as RL, release_sign as RS
+        for k in RL.LAYOUT_KEYS:
+            want = ["release.changelog." + c for c in RL.CHANGELOG_KEYS] if k == "changelog" else ["release." + k]
+            for w in want:
+                self.assertIn(w, H.EXTRA_KEYS, "%s is not among the keys the completion offers" % w)
+        for k in ("finish_check", "hotfix_preflight"):
+            self.assertIn("release." + k, H.EXTRA_KEYS)
+        msg = RS.problems("not an object")[0]
+        for k in RS.RELEASE_KEYS:
+            self.assertRegex(msg, r"[{ ]%s[,}]" % k, "the check's error text does not name release.%s" % k)
+        self.assertIn("release.hotfix_preflight", slurp(os.path.join(LIB, "release_sign.py")).split('"""')[1], "the header of lib/release_sign.py does not list the layout answers")
+        self.assertIn("release.finish_check", slurp(os.path.join(LIB, "release_sign.py")).split('"""')[1])
+
+    def test_the_registry_comment_of_lib_sh_lists_the_review_answers_the_registry_copy_keeps(self):
+        """lib/local.sh copies owns([...]) of the review answers into the registry line; the comment in lib/lib.sh names each of them."""
+        m = re.search(r'review: \(at\(\.review\) \| owns\(\[([^\]]*)\]\)', slurp(os.path.join(LIB, "local.sh")))
+        self.assertTrue(m, "the review answers kept in the registry line moved in lib/local.sh: update this test")
+        kept = re.findall(r'"([a-z_]+)"', m.group(1))
+        self.assertGreaterEqual(len(kept), 4)
+        comment = " ".join(l for l in slurp(os.path.join(LIB, "lib.sh")).splitlines() if l.startswith("#"))
+        for k in kept:
+            self.assertIn("review." + k, comment, "the comment in lib/lib.sh does not name review.%s" % k)
 
     def test_the_approvals_topic_states_the_rules_the_skills_point_at(self):
         text = " ".join(C.TOPICS["approvals"][1])
@@ -411,7 +480,8 @@ class Rich(Env):
     def test_project_answers_and_their_values(self):
         keys = H.complete(["project", "set", "alpha", ""])
         for k in ("budget_cents", "lead.push.local", "roles.build.effort", "roles.write.model", "teams.code-docs.members", "lead.push.merge",
-                  "release.version_file", "release.changelog.unreleased", "release.changelog.released", "release.man_pages", "release.test_command", "release.preflight"):
+                  "release.version_file", "release.changelog.unreleased", "release.changelog.released", "release.man_pages", "release.test_command", "release.preflight",
+                  "ci.not_gates", "methodology_accepted", "review.reject_trailers", "backlog.file", "backlog.archive", "backlog.section"):
             self.assertIn(k, keys)
         self.assertEqual(dict(H.complete_described(["project", "set", "alpha", ""]))["budget_cents"], "now 1500")
         self.assertEqual(H.complete(["project", "set", "alpha", "roles.build.effort", ""]), list(C.EFFORTS))

@@ -7,7 +7,7 @@
 # The runtimes that ship are the subject of these lines: the skill that defines or chooses a runtime names the two it ships and the family they
 # share, and the example of a full definition.
 skills/qargi-project/SKILL.md:1
-skills/qargi-providers/SKILL.md:2
+skills/qargi-providers/SKILL.md:1
 skills/qargi-providers/definition.md:1
 
 # The member template of the Claude member file (the adapter's template, the same lines as the render) and the file name CLAUDE.md that repositories use.

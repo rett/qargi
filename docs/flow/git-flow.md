@@ -20,6 +20,10 @@ refusal changes nothing.
      rights in a throw-away checkout of the applied series (`BASE..tip`, the commit the run's base branch had when it was prepared,
      then the patches with `git am`), with the range in `QARGI_SCRUB_BASE` and `QARGI_SCRUB_TIP`. `review.trailer_policy` is `none`
      (default) or `reject`, which fails any commit whose message carries a `Co-Authored-By` or `Generated with` style trailer.
+     `review.reject_trailers` adds trailer keys to those two under `reject` (a list such as `["Signed-off-by", "Change-Id", "X-*"]`:
+     letters, digits and hyphens, `*` for any run of them; a list while the policy is not `reject` is refused when it is set). A
+     failing verdict names the commit, the line of its message and what matched, for example
+     `scrub: FAIL review.reject_trailers names Signed-off-by: 1a2b3c4d5e6f line 5 of its message carries "Signed-off-by: ..."`.
    - The scrub output gains one line, `scrub: ok` or `scrub: FAIL` with the first lines of what the command (or the policy) said,
      and a failing scrub fails the check (exit 1). Nothing is made in your repository: no branch, tag or worktree entry is left
      behind. With neither answer set, nothing changes. Both answers are the run's own copy taken at `local prepare`, as `git.author`
@@ -43,6 +47,10 @@ refusal changes nothing.
      closes it; a read-only run, an advisor or a review that returned a `report.md` and no patches, closes with a plain
      `qargi local clean RUN`. A run whose patches you applied by hand (`git am`) is closed with
      `qargi local close RUN --applied-by-am`.
+   - A read-only member whose runtime refuses its file tool for `report.md` writes the text under another name in OUT and runs
+     `qargi local report RUN --from NAME` itself: that writes `OUT/report.md` and a minimal `manifest.json` and nothing outside OUT,
+     refuses a build run, a run your registry does not name and, with the member mark set, any run but its own. A member whose
+     writes are all refused returns the report as its final message, and you store it with `qargi review save RUN < MESSAGE`.
    - Keep `--scratch` on disk (prepare warns about a tmpfs, which a reboot empties). A passing verify also saves the run's output in
      `<state>/runs/`, and `qargi review apply --from-saved ID` applies it when the run directory is gone (`local list` shows such
      a run as directory gone).
@@ -70,6 +78,10 @@ refusal changes nothing.
    `verify` runs the gates in order; the CI workflow of the scaffold makes each gate its own job and the jobs run in parallel. A feature-tier
    gate's job runs on every pull request; a release-tier gate's job runs only on a pull request from a `release/` or `hotfix/` branch (and
    when the workflow is started by hand), as only `release verify` runs that gate.
+   A feature gate whose check a release gate runs as well (a release gate that builds and tests everything, say) may carry
+   `"covered_by": "NAME"`, NAME being a release-tier gate (`project set` and `project validate` refuse any other name). `feature verify` still
+   runs the gate; `release verify` lists it as `covered by NAME` and does not run it, and its result in the record and the `gates:` line is
+   `covered by NAME` when NAME passed, and `not run` when NAME failed or was not reached because an earlier gate failed.
 4. `qargi release start VERSION` cuts `release/VERSION` from develop (only from a head that passed the
    suite) and bumps `VERSION` and the changelog date. Like the pushes and merges it prints a plan (the branch, the base, the files
    the bump commit changes) and a token first, and applies with `--plan TOKEN --approved "<your words>"`, which also writes the
@@ -89,7 +101,12 @@ refusal changes nothing.
    `applied` file of its directory is removed, and a re-run after a death finishes or redoes the apply. `release status` and `release
    verify` work as for features. `release status` shows the checks of the pull request and, after the finish, what
    is left (tag on origin, GitHub release, assets, signatures); `release finish` lists the checks and refuses
-   while one fails or is pending, unless `--ignore-checks "<your words>"`. To fix a failed check, `qargi release
+   while one fails or is pending, unless `--ignore-checks "<your words>"`. The optional answer `release.finish_check` (a command
+   line, or a command as a list of words, `{version}` replaced; `QARGI_RELEASE_VERSION` is set) is the project's last word before
+   anything moves: the finish plan and the `release plan` cut plan list it, and once the plan is approved `release finish` runs it
+   in a copy of the branch, before any merge, tag or push. A non-zero exit refuses with the tail of its output and nothing moved
+   (no ref here or on origin, no tag, no record). It is off unless set, and a member may not set it (`project set` refuses every
+   `release.*` answer). To fix a failed check, `qargi release
    fix VERSION` makes a worktree on the release branch and `release fix VERSION --push` pushes the fix to the open
    pull request.
    Pushing the tag publishes the GitHub release through the workflow; for a tag that predates it,
@@ -101,7 +118,11 @@ refusal changes nothing.
    the job ids under `jobs:` and the `name:` line of each job) and warns, on standard error, naming each job whose name and id match no
    declared gate name; a job whose name cannot be read (an expression, a block scalar, a flow mapping) is reported as unknown, a note and
    never a failure. `release verify --strict` refuses, before anything runs, when any job matches no gate name. With no workflow nothing new
-   is printed; with workflows and no gates declared every job is named.
+   is printed; with workflows and no gates declared one note names all the jobs, instead of a warning each.
+   Two optional answers say which jobs are not unmatched. A gate may carry `"ci_jobs": ["job", ...]`, the CI jobs (names or ids) that run its
+   check under another name: the scan reports each as a note, `covered by gate NAME`, and does not warn. The answer `ci.not_gates` is a list
+   of job names or ids that are aggregate or publish jobs and not gates: the scan leaves them out, so `--strict` does not count them. A name
+   listed in either that no workflow has is a warning (it is not shown when a workflow or a job name cannot be read, as the name may be there).
    Two optional answers add generic checks, both warnings and neither a refusal. `release.version_files` is a list of paths
    (relative to the repository) of other files that carry the version, a manifest say: `release start` prints a warning naming the
    ones that do not yet contain the new version (as a whole version, so `0.2.1` is not found in `0.2.10`) and says to bump them on
@@ -121,12 +142,32 @@ refusal changes nothing.
    pending steps; the owner's read `waits for the owner: run COMMAND`. The record is kept across sessions.
 5. A hotfix is the same with `--hotfix`: `qargi release start VERSION --hotfix` (from master), then
    `release push` and `release finish --hotfix` (master is merged and tagged as above; the tagged master commit is then merged
-   into the open release branch instead of develop, if there is one).
+   into the open release branch instead of develop, if there is one). `release.preflight` does not run at the start of a hotfix: it is cut
+   from master, which cannot have the content the hotfix brings; the plan of `release start --hotfix` says so, and `release push` runs
+   the preflight in a copy of the branch before anything is pushed, so the fix must be committed first. The optional answer
+   `release.hotfix_preflight` (a command line or a list of words, `{version}` replaced) is what `release push` runs for a hotfix
+   instead of `release.preflight`, for a project whose stored preflight needs more than a hotfix brings or does not suit it; the
+   plan of `start --hotfix` and of `push` name the answer that runs. A release (not a hotfix) never runs it.
+6. One plan and one approval for the whole cut. `qargi release plan VERSION [--hotfix] [--date D] [--keep]` prints the plan of every
+   step (start; push when there is an origin; finish; site when `site.enabled`) with what moves, and one token; `publish` is not in the cut.
+   `release plan VERSION --plan TOKEN --approved "<your words>"` records the approval once (the words, the plan, an audit line `release:cut`)
+   in `<state>/release/PROJECT-VERSION.cut.json`. Each step is then its own verb with `--plan TOKEN` alone: `release start`, `push`,
+   `finish`, `site`; the words are the record's and are on that step's audit line, and each step prints the next. A step
+   runs only when what the plan fixed still holds: `start` finds its own plan as it was frozen, `push` the branch where `start` left it,
+   `finish` the branch where `push` left it (the head the checks ran on), master and the second target as planned and `--keep` as planned,
+   `site` the tag on the commit `finish` tagged. Otherwise it is refused before anything moves, and the step
+   is run with its own plan and approval (a fix committed after `start` is pushed that way, with `release fix --push`); the cut
+   records that and goes on from the new state. `finish` is still the push and tag gate: the approval words are the owner's, and
+   `--ignore-checks "<words>"` at the call is recorded as before. `release plan VERSION` again, and `release status`, show which
+   steps ran; `--again` discards the record. The single verbs and their own tokens work as before.
 
 Merging into develop or master, starting a release, pushing and tagging each print a plan and a token first; apply it
 with `--plan TOKEN --approved "<your words>"`. A merge that conflicts changes nothing and exits 3,
 naming a worktree with the merge in progress: resolve and commit there, then run the same command
-with `--resolved`.
+with `--resolved`. The second merge of `release finish` takes the master merge commit that carries the tag, so its conflict message
+names the tag (`merging tag VERSION (the master merge commit abc1234) conflicts`); that commit is kept in a `.master` file beside the
+worktree and a run with `--resolved` uses it only when it is a merge of exactly the current master and the release branch head
+(any other file is removed and the merge made anew).
 
 ## Detached branches
 
@@ -137,6 +178,15 @@ develop, master, a release, a hotfix or a feature branch, in either direction (`
 develop cannot be merged into the detached branch. `feature start` and the other feature verbs refuse its name. Tasks are cut
 from it as from any base (`local prepare --base docs-site`, `review apply`), and the finished `agent/<slug>` branch is merged
 into it with `qargi feature merge docs-site agent/<slug>`: a plan and token, local only, nothing is pushed.
+
+When origin accepts the detached branch only through a pull request, the local branch is not where the change lands, so the
+lead works on a short-lived branch instead. The lead fetches, cuts `agent/pr-<slug>` from `origin/docs-site` in a worktree of its
+own, and prepares the run with `qargi local prepare --base agent/pr-<slug>`. After `qargi review apply` the lead fast-forwards
+`agent/pr-<slug>` to the applied `agent/<slug>` in that worktree, pushes `agent/pr-<slug>`, opens the pull request into
+`docs-site` and merges it on origin with a merge commit, then removes the worktree. The local `docs-site` is never merged into
+and need not be updated. After a fetch, `qargi branch prune` counts `origin/docs-site` as a place a branch is merged into
+(the same `--no-ff` rule), so it clears `agent/pr-<slug>` and the applied `agent/<slug>`, and with `--remote` the branch on origin
+if the host did not delete it. A pull request merged by squash or rebase leaves no merge commit: delete those branches by hand.
 
 A documentation site kept on such a branch is regenerated when a release ships. With `site.enabled` set to `true` (and
 `site.branch`, which defaults to `gh-pages` when `repo.detached` lists it, and `site.config`, default `site/site.json` with the
@@ -164,7 +214,8 @@ push develop to origin", or "local only, will not push" and why), and the token 
 
 `qargi branch prune [--remote]` prints the merged `agent/*` and `feature/*` branches of the project (with `--remote`, the same
 branches on origin, asked live) and the worktrees qargi made for them, with a token; apply it with `--plan TOKEN --approved
-"<your words>"`. A branch is merged when it was merged with `--no-ff` into develop, or, for an agent branch, into an open
+"<your words>"`. A branch is merged when it was merged with `--no-ff` into develop, into a detached branch or its remote-tracking
+branch `origin/BRANCH` (after a fetch; `--remote` fetches), or, for an agent branch, into an open
 feature; a branch that only sits at the tip of develop or of a feature was never merged and is kept. It never deletes master,
 develop, the branches of `repo.long_lived` or `repo.detached`, the parking branch, an unmerged branch, or a branch checked out in a
 worktree qargi did not make (the main checkout, the runtime's own worktrees) or in a dirty one; each kept branch is listed with
@@ -191,16 +242,30 @@ instance. An item is a top-level list line written `- [ID] text` (or `* [ID] tex
 and hyphens, two characters or more (a task-list box such as `- [x] text` is no id), with the indented lines after it. Any other
 top-level list line is an item without an id; headings, paragraphs and fenced code blocks are not items.
 
+Two optional answers shape the file's use. `backlog.section` is the text of a heading of the file (with or without its `#`s; `Now`
+or `## Now`): only the list under that heading holds items, up to the next heading of the same or a higher level (a deeper heading
+belongs to the section), and a heading the file lacks is an error. `backlog.archive` says where the archives go: a directory
+(created when absent; an absolute path, `~/...` or a path relative to the repository) that receives `NAME-archive-YYYY-MM.md`, or a
+path ending in `.md` for one archive file whatever the month. Without it the archive is beside the backlog file.
+
 `qargi backlog list [--json]` shows the open items with their ids, an item without an id as unnumbered (`-`) and a duplicated id
 flagged. `qargi backlog done ID --evidence "<text>"` prints a plan with a token: the item as written and the archive file it goes
 to. With `--plan TOKEN --approved "<your words>"` it appends the item, the date and the evidence to `NAME-archive-YYYY-MM.md` in the
 directory of the backlog file (`NAME` is the file's name without `.md`; the archive is created when absent), then removes the item
 from the backlog, and writes an audit log line. Nothing is deleted without the plan, and an id that is missing or used by more than
-one item is refused. `done` is the lead's: a member's guard refuses it, and `list` only reads.
+one item is refused. `done` takes several ids (`qargi backlog done ID1 ID2 --evidence "<text>"`): one plan lists every item, one
+token covers the batch, the same evidence is archived with each id, and an id that is missing, used by more than one item or named
+twice refuses the whole batch before any plan is printed.
+
+`qargi backlog add ID "text" [--detail "more words"]` appends the item `- [ID] text` (the detail as indented lines under it) at the
+end of the list, of the `backlog.section` list when that is set, and writes an audit log line. It refuses an id that is not a
+slug and an id that is already an item anywhere in the file, and then does not touch the file. It adds one line and removes
+nothing, so it takes no token. `add` and `done` are the lead's: a member's guard refuses them, and `list` only reads.
 
 `feature finish` and `release finish` add a line to their plans, `backlog items named in these commits: ID, ...`, for the open items
 whose id appears (as a whole slug) in the messages of the commits being merged. It is information: it is not part of the token and
-nothing is done with it. With `backlog.file` unset, or its file missing, nothing is printed.
+nothing is done with it. With `backlog.file` unset, or its file missing, nothing is printed. With `backlog.section` set, only the items under
+that heading are looked for (a heading the file lacks names nothing).
 
 ## The worktree root
 

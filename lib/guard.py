@@ -44,10 +44,10 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     the last two have names a project may use for its own scripts, so only the files in the lib directory of the tool or of the installed
     copy count, found from the directory the command runs in);
   - qargi project init (it stores a whole answers file, so it is a way to models.extensions and models.accept_no_barrier, which have gated verbs;
-    found like the skill verbs), and qargi project set of any models answer, of release.*, of test_command, of gates, of env.*, of site.* (the commands, environment and site the lead later runs or builds), of packs.* (the opt-out of the render check), of git.* and review.* (the identity and the author rule qargi review apply gives the commits it applies, and the scrub command and trailer policy qargi review check runs), of runs.* (the refs that verify and clean accept as a runtime's own) and of
+    found like the skill verbs), and qargi project set of any models answer, of release.*, of test_command, of gates, of env.*, of site.* (the commands, environment and site the lead later runs or builds), of packs.* (the opt-out of the render check), of git.* and review.* (the identity and the author rule qargi review apply gives the commits it applies, and the scrub command and trailer policy qargi review check runs), of ci.* and methodology_accepted (the CI jobs left out of the gate comparison, the deviations the lead accepts), of runs.* (the refs that verify and clean accept as a runtime's own) and of
     roles.<role>.tools, a whole role or roles (the tools env apply installs and local prepare checks out; the other answers stay open). A project verb the guard cannot read is
     refused: set with a path that is missing or built by xargs, a variable, a substitution, a brace or a glob; and any command with the word project,
-    link, unlink, set or init after it and a shell expansion or xargs in the segment (found again inside `sh -c` and `eval` strings with the quotes
+    link, unlink, set, unset or init after it and a shell expansion or xargs in the segment (found again inside `sh -c` and `eval` strings with the quotes
     taken off, so a quote or a backslash inside the verb does not hide it). Whatever the verb would have said, it is not read. lib/gated_answers.py, the store behind
     provider enable|disable|accept (no environment variable or option opens project set to the two keys any more), is refused in any use;
   - setting QARGI_NESTED (it makes some verbs skip their plan-token check);
@@ -215,18 +215,18 @@ git subcommands that change the tree or the repository. A target the shell would
 substitution) is refused when it could name a record file of the run (`> abilit?`, `> $F`, `cp x $D/ability`) or, for a command that makes or replaces
 its file, whenever a variable or a substitution builds the name; a glob that can name a protected location is refused for a write. A directory that only lies above a protected location or the run
 (/tmp, $HOME) is refused as an mv destination only when something moved into it is, holds or has the name of the place (fits_beside), and always with -T. Under the read-only class the
-variables a read-only tool takes its programs and options from (PATH, GIT_*, PAGER, BASH_ENV, RIPGREP_CONFIG_PATH, LD_* ...) are not set, and a write to
+variables a read-only tool takes its programs and options from (PATH, GIT_*, PAGER, BASH_ENV, RIPGREP_CONFIG_PATH, LD_* ...) may not be assigned (the member runs with the ones it was given), and a write to
 a git configuration or hook file (GIT_PLACE: ~/.gitconfig, ~/.config/git, .git/config, .git/hooks, .git/modules, .git/worktrees, config.worktree, info/attributes) in a
 command that also runs git is refused for every member.
 The run: a directory is a run when it holds ability and refs.before, or the clone and out directories beside any file of the record (RUN_CONTROL), and it is not
 below the clone directory of another (a repository may hold a docs/tmpdir). RUN_CONTROL files are not written, moved, removed, copied or linked, nothing is
 the run directory itself is no destination (a copy over it, an extraction, a link; run_dir_refusal), and the run directory is not removed or moved; under
-`--class read-only` the run is not asked whether the member is read-only: a run that cannot be found refuses every write (NO_RUN).
+`--class read-only` the run is not asked whether the member is read-only: a run that cannot be found refuses every write (NO_RUN), but a path in the TMP the lead's registry names for a run finds that run (tmp_run; with the member mark in the environment, only the member's own run).
 Not seen: a script built by code (python -c ...), a program or a verb held in a variable, the output of a substitution handed to sh -c (`bash -c "$(echo qargi upgrade)"`),
 a wrapper's option that takes a value (sudo -u root qargi ...; the ones of xargs are read).
 
-Failure: the guard fails closed. Any unexpected exception ends in exit 2 with the reason on stderr. Input that is not
-JSON is still let through (exit 0), as before. Known limits outside this file: a hook that cannot start, exits other than 0 or 2, times out or prints invalid
+Failure: the guard fails closed. Any unexpected exception ends in exit 2 with the reason on stderr. Input that is empty, is not
+valid UTF-8 or is not JSON is refused (exit 2): the call cannot be read. Known limits outside this file: a hook that cannot start, exits other than 0 or 2, times out or prints invalid
 JSON is a non-blocking error for the runtime and the action goes ahead, so agents/member.md sets `onFailure: "block"` and a `timeout` (a runtime that does not
 enforce `onFailure` lets such a failure through), and the frontmatter hooks of a project-level agent file run only after the workspace is trusted: until then the
 member runs without this guard."""
@@ -239,10 +239,10 @@ HANDOFF_SUBST = re.compile(r"(?:marshal(?:\.sh)?[\"']*\s+[\"']*handoff|marshal_h
 PROJECT_SET_SUBST = re.compile(r"project(?:\.sh)?[\"']*\s+[\"']*set[\"']*\s")   # `project set ... $(...)`: the substitution may produce a models path, and splitting it off hides that
 AUDIT_SUBST = re.compile(r"packs_audit\.py[\"']*")   # `packs_audit.py ... $(...)`: the substitution may produce `store`, and splitting it off hides that
 UNREADABLE = "$`{}*?[]"                                     # in a word: a variable, a substitution, a brace or a glob builds it, so the guard cannot read what it is
-EXECUTED_ANSWERS = ("release", "test_command", "gates", "env", "upstream", "site", "backlog")   # the answers the lead later runs, passes to a process, fetches from or builds from (release site): a member may not set them (project set)
+EXECUTED_ANSWERS = ("release", "test_command", "gates", "env", "upstream", "site", "backlog", "ci", "methodology_accepted")   # the answers the lead later runs, passes to a process, fetches from or builds from (release site), or decides with (ci.not_gates takes a CI job out of the gate comparison, methodology_accepted a deviation out of the open ones): a member may not set them (project set)
 ROLE_TOOLS_PATH = re.compile(r"roles|roles\.[^.]+|roles\.[^.]+\.tools(?:\..*)?")   # roles.<role>.tools: what env apply installs and local prepare checks out; a whole role, or all of them, holds it
 IDENTITY_ANSWERS = ("git", "review")   # git.author (the author review apply gives the applied commits) and review.keep_author (keep the member's instead): the lead's, a member may not set them (project set)
-PROJECT_VERBS = ("set", "init", "link", "unlink")           # the project verbs a member may not run (set: the models answers; init: the whole file; link, unlink: what a session loads)
+PROJECT_VERBS = ("set", "unset", "init", "link", "unlink")  # the project verbs a member may not run (set, unset: the answers of the lead; init: the whole file; link, unlink: what a session loads)
 XARGS_VALUE_OPTS = {"-I", "-a", "-d", "-E", "-L", "-n", "-P", "-s", "--arg-file", "--delimiter", "--max-lines", "--max-args", "--max-procs", "--max-chars", "--process-slot-var"}   # take the next word
 WRAP = {"sudo", "env", "command", "builtin", "exec", "nohup", "time", "timeout", "setsid", "xargs", "nice", "parallel"}
 WRITERS = {"rm", "rmdir", "touch", "mkdir", "chmod", "chown", "truncate", "tee", "patch", "unlink", "shred",
@@ -1282,12 +1282,8 @@ def run_dir_refusal(full):
     return None
 
 
-@functools.cache                                     # the files do not change while one command is judged
-def run_tmps(run):
-    """The temporary directories of a run that are the member's (TMP): the one the lead's registry names for it, as `qargi local clean` reads it (the run's own
-    tmpdir file is not read: a member can write it), and run/tmp, where prepare puts it when there is no /dev/shm."""
-    real = os.path.realpath(run)
-    out = [os.path.join(real, "tmp")]
+def registered_tmps():
+    """(run, tmpdir) for every line of the lead's registry that names an absolute temporary directory for a run, both as real paths."""
     for st in state_dirs():
         try:
             with open(os.path.join(st, REGISTRY), encoding="utf-8", errors="replace") as f:
@@ -1298,11 +1294,32 @@ def run_tmps(run):
                         e = json.loads(line)
                     except ValueError:
                         continue
-                    if isinstance(e, dict) and isinstance(e.get("run"), str) and isinstance(e.get("tmpdir"), str) and os.path.realpath(e["run"]) == real and os.path.isabs(e["tmpdir"]):
-                        out.append(os.path.realpath(e["tmpdir"]))
+                    if isinstance(e, dict) and isinstance(e.get("run"), str) and isinstance(e.get("tmpdir"), str) and os.path.isabs(e["tmpdir"]):
+                        yield os.path.realpath(e["run"]), os.path.realpath(e["tmpdir"])
         except OSError:
             pass
-    return tuple(out)
+
+
+@functools.cache                                     # the files do not change while one command is judged
+def run_tmps(run):
+    """The temporary directories of a run that are the member's (TMP): the one the lead's registry names for it, as `qargi local clean` reads it (the run's own
+    tmpdir file is not read: a member can write it), and run/tmp, where prepare puts it when there is no /dev/shm."""
+    real = os.path.realpath(run)
+    return (os.path.join(real, "tmp"),) + tuple(t for r, t in registered_tmps() if r == real)
+
+
+@functools.cache
+def tmp_run(full):
+    """The run whose TMP the real path full lies in, by the lead's registry, or None. TMP is usually below /dev/shm, away from the run directory, so a call made
+    from a directory that is in no run is matched to its run by the path it writes. Only a directory that is a run (is_run) counts, and full must lie in the
+    registered directory (never above it, never beside it). When the hook's environment carries the member mark (MEMBER_MARK: the run directory, put there when
+    the member is started), only that run's TMP counts: a member of run A does not find run B by B's TMP. Without the mark the path alone names the run."""
+    mark = os.environ.get(MEMBER_MARK)
+    mine = os.path.realpath(mark) if mark else None
+    for r, t in registered_tmps():
+        if inside(full, t) and is_run(r) and (mine is None or r == mine):
+            return r
+    return None
 
 
 def member_space(full, run):
@@ -1729,6 +1746,8 @@ RESTRICTED_ENV = {"PATH", "ENV", "BASH_ENV", "IFS", "HOME", "SHELL", "SHELLOPTS"
                   "SSH_ASKPASS", "XDG_CONFIG_HOME", "PROMPT_COMMAND", "RIPGREP_CONFIG_PATH", "NODE_OPTIONS", "RUBYOPT", "PERL5OPT", "PYTHONSTARTUP", "PYTHONPATH",
                   "EXINIT", "VIMINIT", "GREP_OPTIONS", "BROWSER", "PERL5LIB", "RUBYLIB", "NODE_PATH"}
 RESTRICTED_ENV_PREFIX = ("GIT_", "LD_", "BASH_", "RIPGREP_")   # what a read-only tool reads its programs and options from
+RESTRICTED_MSG = ("under the read-only class %s may not be assigned (inline, env, export, declare ...): the tools it runs read their programs and options from it, "
+                  "so a read-only member runs with the %s it was given. A build, vet or test command with the environment it was given is not refused; leave the assignment out")
 ASSIGNMENT = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)(?:\[[^=]*\])?\+?=")
 NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
@@ -1840,7 +1859,7 @@ def review_refusal(call):
         why = control_refusal(full) or run_dir_refusal(full)
         if why:
             return why
-        run = run_dir(os.path.dirname(full)) or run_dir(cwd)
+        run = run_dir(os.path.dirname(full)) or run_dir(cwd) or tmp_run(full)
         if CLASS == "read-only" and not run:
             return OwnReason(NO_RUN)
         if run and is_review(run) and not member_space(full, run):
@@ -1882,7 +1901,7 @@ def review_segment(toks, i, here, text=""):
     if reading(run_dir(here)):                               # what a read-only tool runs or reads its options from is not set by a member
         bad = next((n for n in env_names(toks, i) if restricted_name(n)), None)
         if bad:
-            return OwnReason("under the read-only class %s is not set: the tools it runs read their programs and options from it" % bad)
+            return OwnReason(RESTRICTED_MSG % (bad, bad))
     ro = reading(run_dir(here))
     src_last = None                                          # cp -t DIR SRC: write_targets names SRC too (as it always did); it is read, not written
     if prog in COPIERS and prog != "rsync" and any(cluster_value(toks[i + 1:], n, "t") is not None or toks[i + 1 + n].startswith("--target-directory") for n in range(len(toks) - i - 1)):
@@ -1900,7 +1919,7 @@ def review_segment(toks, i, here, text=""):
             why = control_refusal(full) or (None if what == "git config" and dest == "." else run_dir_refusal(full))     # git config --list in the run directory reads: its "." is where it was run
             if why:
                 return why
-            run = run_dir(full if os.path.isdir(full) else os.path.dirname(full)) or run_dir(here)
+            run = run_dir(full if os.path.isdir(full) else os.path.dirname(full)) or run_dir(here) or tmp_run(full)
             if CLASS == "read-only" and not run:
                 return OwnReason(NO_RUN)
             if what.split()[0] in DESTRUCTIVE:
@@ -3019,6 +3038,8 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         return MemoryReason("qargi memory %s changes a memory tier and is not available to an agent; %s" % (which, MEMORY_NOTE))
     if area == "project" and verb in ("link", "unlink"):
         return "qargi project %s changes what the checkout and the runtime's memory directory load (skills, agents, memory) and is not available to an agent" % verb
+    if area == "project" and verb == "unset":
+        return "qargi project unset removes an answer of the project the lead runs on (the answers qargi project set refuses a member are among them, and unset has no plan token) and is not available to an agent: propose the removal in your report"
     if area == "project" and verb == "init":
         return "qargi project init stores a whole answers file (the models answers that choose the runtime and what counts as a barrier among them) and is not available to an agent"
     if area == "project" and verb == "set":
@@ -3394,7 +3415,7 @@ def clear_caches():
     _BRACE_WORK[0] = 0
     for cache in (_RESOURCE_DIRS, _ROOTS, _KEY_DIRS, _STATE):          # read from the library, the environment and the state: a judge that outlives one call must not keep them
         cache.clear()
-    for f in (line_assignments, real_dir, resolve, run_like, in_a_clone, run_dir, protected, key_named, ability_of, run_class, brace_expand, run_tmps, pass_writes):
+    for f in (line_assignments, real_dir, resolve, run_like, in_a_clone, run_dir, protected, key_named, ability_of, run_class, brace_expand, run_tmps, tmp_run, pass_writes):
         f.cache_clear()
 
 

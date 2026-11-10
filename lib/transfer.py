@@ -13,6 +13,7 @@ import datetime, getpass, hashlib, io, json, os, re, shutil, subprocess, sys, ta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import paths as P  # noqa: E402  where the data lives
+import procenv as PE  # noqa: E402  the locked append to the audit log
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -143,10 +144,8 @@ def pick(items, prompt, default):
 
 def audit(verb, detail, approved=""):
     os.makedirs(STATE, mode=0o700, exist_ok=True)
-    f = os.path.join(STATE, "audit.log")
-    with open(f, "a") as fh:
-        fh.write(json.dumps({"ts": now(), "verb": verb, "detail": detail, "asked": "", "approved": approved, "nested": False}) + "\n")
-    os.chmod(f, 0o600)
+    line = json.dumps({"ts": now(), "verb": verb, "detail": detail, "asked": "", "approved": approved, "nested": False}) + "\n"
+    PE.append_locked(os.path.join(STATE, "audit.log"), line.encode())
 
 
 # --- files and the cloud -------------------------------------------------------------------------------------------
@@ -620,7 +619,9 @@ def build_plan(archive, comps, projects, modes):
     return plan
 
 
-GATED_KEYS = ("extensions", "accept_no_barrier")   # under models: what an agent may run on, and a surface accepted with no read-only barrier
+GATED_KEYS = ("models.extensions", "models.accept_no_barrier",   # what an agent may run on, and a surface accepted with no read-only barrier (their own verbs, a plan token and an approval)
+              "ci.not_gates", "methodology_accepted", "review.reject_trailers", "backlog.archive", "backlog.section")   # the lead's answers, which a member's project set is refused
+PROVIDER_KEYS = ("models.extensions", "models.accept_no_barrier")      # the ones above that only the provider verbs store
 
 
 def _gated_narrower(new, old):
@@ -640,9 +641,9 @@ def _gated_narrower(new, old):
 
 
 def gate_answers(archive):
-    """The project answers in the archive may not add or change models.extensions or models.accept_no_barrier: those have verbs with a plan
-    token and an approval (provider enable|disable|accept), and an archive is untrusted data. Where the file would, the stored value stays (or
-    the key is left out when none is stored). Returns the paths changed and the keys, for a note."""
+    """The project answers in the archive may not add or change the keys of GATED_KEYS: models.extensions and models.accept_no_barrier have verbs with a
+    plan token and an approval (provider enable|disable|accept), the others are answers a member's project set is refused, and an archive is untrusted
+    data. Where the file would, the stored value stays (or the key is left out when none is stored). Returns the paths changed and the keys, for a note."""
     changed = []
     for path in sorted(archive):
         m = re.fullmatch(r"config/projects/([^/]+)\.json", path)
@@ -652,20 +653,25 @@ def gate_answers(archive):
             doc = json.loads(archive[path][0])
         except ValueError:
             continue
-        models = doc.get("models") if isinstance(doc, dict) else None
-        if not isinstance(models, dict):
+        if not isinstance(doc, dict):
             continue
         stored = project_answers(m.group(1))
-        stored = stored.get("models") if isinstance(stored, dict) else None
-        stored = stored if isinstance(stored, dict) else {}
         hit = []
-        for k in GATED_KEYS:
-            if k in models and not _gated_narrower(models[k], stored.get(k)):
-                if k in stored:
-                    models[k] = stored[k]
+        for key in GATED_KEYS:
+            names = key.split(".")
+            node, held = doc, stored if isinstance(stored, dict) else {}
+            for n in names[:-1]:                     # the object that holds the key, in the archive and in the stored file
+                node = node.get(n) if isinstance(node, dict) else None
+                held = held.get(n) if isinstance(held, dict) else None
+            if not isinstance(node, dict) or names[-1] not in node:
+                continue
+            held = held if isinstance(held, dict) else {}
+            if not _gated_narrower(node[names[-1]], held.get(names[-1])):
+                if names[-1] in held:
+                    node[names[-1]] = held[names[-1]]
                 else:
-                    del models[k]
-                hit.append("models." + k)
+                    del node[names[-1]]
+                hit.append(key)
         if hit:
             archive[path] = (jdump(doc), archive[path][1])
             changed.append((path, hit))
@@ -739,8 +745,7 @@ def apply_plan(plan, archive, projects):
         elif path == "state/audit.log":
             have = set((read(os.path.join(STATE, "audit.log")) or b"").decode("utf-8", "replace").splitlines())
             new = [l for l in archive[path][0].decode("utf-8", "replace").splitlines() if l not in have]
-            with open(os.path.join(STATE, "audit.log"), "a") as fh:
-                fh.write("".join(l + "\n" for l in new))
+            PE.append_locked(os.path.join(STATE, "audit.log"), "".join(l + "\n" for l in new).encode())
         else:
             target = {"config": CONF, "credentials": CONF, "definitions": os.path.join(STATE, "definitions"), "state": STATE}[comp]
             full = os.path.join(target, "credentials/" + rest if comp == "credentials" else rest)
@@ -779,7 +784,12 @@ def cmd_import(args):
     if bad:
         die("the archive holds a name that is not valid for its folder (%r): refusing it" % bad[0][:80])
     for path, keys in gate_answers(archive):
-        print("note: %s would add or change %s, which only qargi provider enable|disable|accept store (a plan token and an approval); the stored value stays, none is added" % (path, ", ".join(keys)), file=sys.stderr)
+        theirs = [k for k in keys if k in PROVIDER_KEYS]
+        lead = [k for k in keys if k not in PROVIDER_KEYS]
+        if theirs:
+            print("note: %s would add or change %s, which only qargi provider enable|disable|accept store (a plan token and an approval); the stored value stays, none is added" % (path, ", ".join(theirs)), file=sys.stderr)
+        if lead:
+            print("note: %s would add or change %s, which are the lead's own answers (a member may not set them); the stored value stays, none is added" % (path, ", ".join(lead)), file=sys.stderr)
     out = tty()[1] or sys.stdout
     present = [c for c in ORDER if manifest["components"].get(c)]
     aprojects = manifest.get("projects") or []

@@ -48,12 +48,12 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 import env as E  # noqa: E402
 import paths as P  # noqa: E402
+import procenv as PE  # noqa: E402
 import tools as T  # noqa: E402
 
 CAP = 1024 * 1024
 TIMEOUT = 120
 KEEP = ("HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TZ", "TMPDIR")
-DEFAULT_PATH = "/usr/local/bin:/usr/bin:/bin"
 PRIVILEGED = ("sudo", "doas", "pkexec", "su", "run0")
 WRAPPERS = ("sudo", "doas", "pkexec", "run0", "env", "command", "nohup", "time", "exec", "nice", "ionice", "setsid", "timeout")
 SHELLS = ("sh", "bash", "dash", "zsh", "ksh")
@@ -81,7 +81,7 @@ def vis(s):
 
 
 def library():
-    from conformance import library as L          # the existing helpers of the approvals: token_of, exec_names, audit
+    from conformance import library as L          # the existing helpers of the approvals: exec_names, Failure
     return L
 
 
@@ -94,9 +94,8 @@ def timeout():
 
 
 def child_env():
-    env = {k: os.environ[k] for k in KEEP if os.environ.get(k)}
-    path = [d for d in os.environ.get("PATH", DEFAULT_PATH).split(os.pathsep) if d.startswith("/")]
-    env["PATH"] = os.pathsep.join(path) or DEFAULT_PATH
+    env = PE.pass_env(KEEP)
+    env["PATH"] = PE.clean_path()
     return env
 
 
@@ -221,8 +220,7 @@ def analyse(text):
 
 
 def token_of(text, ctx):
-    L = library()
-    return L.token_of(json.dumps({"dry_run_output": text, "dry_run_command": ctx["dry"], "bootstrap_command": ctx["boot"], "repo": ctx["repo"],
+    return PE.plan_token(json.dumps({"dry_run_output": text, "dry_run_command": ctx["dry"], "bootstrap_command": ctx["boot"], "repo": ctx["repo"],
                                   "head": ctx["head"], "host": socket.gethostname(), "tools": ctx["tools"]}, sort_keys=True))
 
 
@@ -348,7 +346,7 @@ def install(todo, ctx):
 
 
 def audit(verb, detail, opts):
-    library().audit(verb, detail, {"--approved": opts.get("--approved", "")})
+    PE.audit(verb, detail, approved=opts.get("--approved", ""))
 
 
 def record_name(ctx):
@@ -438,7 +436,7 @@ def apply(argv):
         print("%s: %s" % (T.label(t), "installed" if trc == 0 else "FAILED"), flush=True)
         for ln in msg.splitlines():
             print("  " + vis(ln))
-    f = write_record(ctx, {"time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "seconds": round(time.time() - t0, 1), "exit": rc, "command": ctx["boot"],
+    f = write_record(ctx, {"time": PE.now(), "seconds": round(time.time() - t0, 1), "exit": rc, "command": ctx["boot"],
                            "dry_run_command": ctx["dry"], "token": tok, "head": ctx["head"], "host": socket.gethostname(), "repo": ctx["repo"],
                            "dry_run_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), "allow_root": bool(priv),
                            "tools": [{"kind": t["kind"], "name": t["name"], "version": t.get("version"), "exit": trc} for t, trc, _ in done]})

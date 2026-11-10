@@ -15,7 +15,8 @@ Answers, under `release` in the project's answers file:
                                its text, who is the lead, no evidence is required) or an object {name, command, who, evidence}: who is lead or owner,
                                evidence says what shows the step was done (when it is set, the release step verb wants --evidence)
   release.notes_file           a file with the release notes, relative to the repository; {version} is replaced (release push warns of the changelog items it does not mention)
-  release.version_file, release.version_files, release.changelog.unreleased|released, release.man_pages, release.test_command, release.preflight
+  release.version_file, release.version_files, release.changelog.unreleased|released|numbered, release.man_pages, release.test_command, release.preflight,
+  release.hotfix_preflight, release.finish_check
                                the layout of what a release updates and runs; lib/release_layout.py describes and checks them
 
 The record is $STATE/release/PROJECT-VERSION.sign.json: the tag's commit, the sha256 of every signed file and of its signature, and the
@@ -40,7 +41,7 @@ result of the signing and of verify_command. Nothing the person types (the passp
 import fnmatch, glob, hashlib, json, os, re, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import release_layout   # the layout answers of a release (version_file, changelog, man_pages, test_command, preflight)
+import release_layout   # the layout answers of a release (release_layout.LAYOUT_KEYS)
 
 NS_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._@:+-]{0,63}")
 CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
@@ -112,7 +113,7 @@ def problems(rel):
     if rel is None:
         return out
     if not isinstance(rel, dict):
-        return ["release: an object like {sign, assets, notes_file, assets_command, after_steps, version_file, version_files, changelog, man_pages, test_command, preflight}"]
+        return ["release: an object like {%s}" % ", ".join(RELEASE_KEYS)]
     for k in rel:
         if k not in RELEASE_KEYS:
             out.append("release.%s: unknown key (%s)" % (k, ", ".join(RELEASE_KEYS)))

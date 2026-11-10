@@ -11,7 +11,8 @@ cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 export QARGI_LEAD=lead HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T/shm QARGI_PROJECT=app
 export GIT_AUTHOR_NAME=lead GIT_AUTHOR_EMAIL=lead@example.net GIT_COMMITTER_NAME=lead GIT_COMMITTER_EMAIL=lead@example.net
 mkdir -p "$HOME" "$T/c/projects" "$T/shm" "$T/scr"

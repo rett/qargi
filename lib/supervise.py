@@ -29,6 +29,7 @@ from datetime import datetime, timezone, timedelta
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import paths as P  # noqa: E402  where the data lives
+import procenv as PE  # noqa: E402  the audit line
 STATE = P.state()
 DEFAULTS = os.environ.get("QARGI_SUPERVISE_DEFAULTS") or os.path.join(HERE, "supervise-defaults.json")
 
@@ -192,8 +193,7 @@ def append_line(path, text):
 
 
 def audit(verb, detail, now_iso, asked=""):
-    append_line(os.path.join(STATE, "audit.log"), json.dumps(
-        {"ts": now_iso, "verb": verb, "detail": detail, "asked": asked, "approved": "", "nested": False, "origin": "supervisor"}))
+    PE.audit(verb, detail, asked=asked, origin="supervisor", ts=now_iso, state=STATE)
 
 
 def blank_row(key, kind):

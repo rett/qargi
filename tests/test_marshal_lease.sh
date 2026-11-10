@@ -9,7 +9,8 @@ cd "$(dirname "$0")/.." || exit 1
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi
 trap 'rm -rf "$T" "$HERMETIC"' EXIT
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T/shm GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
 export QARGI_PROJECT=app
 S=$QARGI_STATE
@@ -22,7 +23,6 @@ jq -n --arg p "$R" '{schema:1, project:"app", methodology:"gitflow", repo:{url:"
 F="$DA feature"
 rec() { echo "$S/features/app-$1.json"; }
 j() { jq -r "$2" "$(rec "$1")"; }
-out() { cat "$T/o" "$T/e"; }
 at() { local now=$1; shift; QARGI_MARSHAL_NOW=$now "$@" >"$T/o" 2>"$T/e"; }   # at NOW CMD...: the clock injected, output in $T/o and $T/e
 iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
 commit_on() { local w; w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R" worktree add -q "$w" "$1"; echo "$1" > "$w/$2"; git -C "$w" add -A; git -C "$w" commit -q -m "$1 $2"; git -C "$R" worktree remove --force "$w"; }

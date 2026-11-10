@@ -50,6 +50,13 @@ class Base(unittest.TestCase):
         git(e.repo, "init", "-q", "-b", "main")
         git(e.repo, "commit", "-q", "--allow-empty", "-m", "one")
 
+    def wt(self, e, branch="integration"):
+        self.git_repo(e)
+        path = os.path.join(e.tmp, "wt-" + branch)
+        r = git(e.repo, "worktree", "add", "-q", "-b", branch, path)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return os.path.realpath(path)
+
     def token_of(self, r):
         m = TOKEN.search(r.stdout)
         self.assertTrue(m, "no plan token in: " + r.stdout + r.stderr)
@@ -223,7 +230,10 @@ class Init(Base):
         head = git(e.repo, "rev-parse", "HEAD").stdout
         r = e.qargi("memory", "init", "repo", "--project", P)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn("WARNING: this writes into the repository checkout %s at qargi/memory; qargi never commits it: review and commit it yourself, or ignore it in git." % e.repo, r.stdout)
+        self.assertIn("WARNING: this writes into the repository checkout %s at qargi/memory (main checked out there); qargi never commits it: review it and commit it yourself on that branch, "
+                      "or ignore it in git." % e.repo, r.stdout)
+        self.assertIn("A member's clone is made from the committed branch", r.stdout)
+        self.assertIn("add --worktree DIR", r.stdout)
         self.assertFalse(os.path.exists(e.d("repo")))
         r = e.qargi("memory", "init", "repo", "--project", P, "--plan", self.token_of(r), "--approved", "test")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
@@ -233,6 +243,56 @@ class Init(Base):
         self.assertEqual(git(e.repo, "rev-parse", "HEAD").stdout, head)
         self.assertEqual(git(e.repo, "log", "--oneline").stdout.count("\n"), 1)
         self.assertEqual(git(e.repo, "diff", "--cached", "--name-only").stdout, "")     # and nothing staged either
+
+
+class Worktree(Base):
+    """--worktree DIR: the repo tier is written into another worktree of the project's repository, and the plan says where to commit it."""
+    def test_init_writes_into_the_worktree_and_names_the_branch_to_commit_on(self):
+        e = self.mk()
+        wt = self.wt(e)
+        r = e.qargi("memory", "init", "repo", "--project", P, "--worktree", wt)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("init tier repo -> %s" % os.path.join(wt, "qargi", "memory"), r.stdout)
+        self.assertIn("WARNING: this writes into %s at qargi/memory, a worktree of the project's repository (integration checked out there); qargi never commits it: commit "
+                      "qargi/memory on that branch (git -C %s add qargi/memory, then git commit)" % (wt, wt), r.stdout)
+        self.assertNotIn("add --worktree DIR", r.stdout)
+        r = e.qargi("memory", "init", "repo", "--project", P, "--worktree", wt, "--plan", self.token_of(r), "--approved", "test")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("/CANON.md", files_under(os.path.join(wt, "qargi", "memory")))
+        self.assertFalse(os.path.exists(e.d("repo")), "the main checkout was written")
+        self.assertIn("?? qargi/", git(wt, "status", "--porcelain").stdout)
+        self.assertEqual(git(e.repo, "status", "--porcelain").stdout, "")
+
+    def test_the_token_is_of_the_worktree(self):
+        e = self.mk()
+        wt = self.wt(e)
+        plain = e.qargi("memory", "init", "repo", "--project", P)
+        r = e.qargi("memory", "init", "repo", "--project", P, "--worktree", wt, "--plan", self.token_of(plain), "--approved", "test")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(wt, "qargi")))
+        self.assertFalse(os.path.exists(e.d("repo")))
+
+    def test_refusals(self):
+        e = self.mk()
+        wt = self.wt(e)
+        other = os.path.join(e.tmp, "other")
+        os.makedirs(other)
+        git(other, "init", "-q", "-b", "main")
+        sub = os.path.join(wt, "docs")
+        os.makedirs(sub)
+        for arg, want in ((os.path.join(e.tmp, "nope"), "is not a directory"), (other, "is not a worktree of the project's repository"), (sub, "is not the top of a git work tree"),
+                          (e.tmp, "is not the top of a git work tree")):
+            r = e.qargi("memory", "init", "repo", "--project", P, "--worktree", arg)
+            self.assertEqual(r.returncode, 1, (arg, r.stdout, r.stderr))
+            self.assertIn(want, r.stderr, arg)
+        for tier in ("shared", "project"):
+            r = e.qargi("memory", "init", tier, "--project", P, "--worktree", wt)
+            self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+            self.assertIn("--worktree is for the repo tier", r.stderr)
+            self.assertFalse(os.path.exists(e.d(tier)))
+        self.assertFalse(os.path.exists(os.path.join(wt, "qargi")))
+        r = e.qargi("memory", "init", "repo", "--project", P, "--worktree")
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
 
 
 class Plans(Base):
@@ -439,7 +499,26 @@ class Move(Base):
         put(e.d("repo"), seed_files(P))
         r = self.plan(e, "/roles/build/r.md", "project", "repo")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn("WARNING: this writes into the repository checkout %s at qargi/memory; qargi never commits it" % e.repo, r.stdout)
+        self.assertIn("WARNING: this writes into the repository checkout %s at qargi/memory (main checked out there); qargi never commits it" % e.repo, r.stdout)
+
+    def test_a_move_into_the_repo_tier_of_a_worktree(self):
+        e = self.two()
+        wt = self.wt(e)
+        put(os.path.join(wt, "qargi", "memory"), seed_files(P))
+        r = e.qargi("memory", "move", "/roles/build/r.md", "--from", "project", "--to", "repo", "--project", P, "--worktree", wt)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("WARNING: this writes into %s at qargi/memory, a worktree of the project's repository (integration checked out there)" % wt, r.stdout)
+        r = e.qargi("memory", "move", "/roles/build/r.md", "--from", "project", "--to", "repo", "--project", P, "--worktree", wt, "--plan", self.token_of(r), "--approved", "test")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("/roles/build/r.md", files_under(os.path.join(wt, "qargi", "memory")))
+        self.assertFalse(os.path.exists(e.d("repo")))
+
+    def test_a_move_without_the_repo_tier_refuses_the_option(self):
+        e = self.two()
+        wt = self.wt(e)
+        r = e.qargi("memory", "move", "/roles/build/r.md", "--from", "project", "--to", "shared", "--project", P, "--worktree", wt)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("this move has it at neither end", r.stderr)
 
     def test_the_cloud_as_the_source(self):
         e = self.two(cloud={**seed_files(P), "/roles/build/c.md": NOTE})

@@ -21,6 +21,7 @@ LIB = os.path.join(ROOT, "lib")
 BUDGET = os.path.join(ROOT, "tests", "startup-budget.txt")
 GOLDENS = os.path.join(ROOT, "tests", "fixtures", "startup-goldens.json")
 RUNS = 20
+VERBS = ("agent for build", "marshal status --brief --no-fetch")      # the verbs with a ceiling in tests/startup-budget.txt besides role list and the guard
 WS = "wrkspc_01QargiQargiQargi"
 sys.path.insert(0, LIB)
 import commands as C  # noqa: E402
@@ -252,15 +253,20 @@ class Processes(unittest.TestCase):
             return r, f.read().splitlines()
 
     def test_exactly_one_python_process_before_the_verb(self):
-        for argv in (("role", "list"), ("role", "show", "build")):                 # the verb runs no python: the preamble is all there is
+        for argv in (("role", "list"), ("role", "show", "build")):                 # the verb is one python process of its own (lib/role.py), after the preamble
             r, py = self.starts(*argv)
             self.assertEqual(r.returncode, 0, argv)
-            self.assertEqual(len(py), 1, (argv, py))
+            self.assertEqual(len(py), 2, (argv, py))
             self.assertIn("preamble", py[0])
-        for argv in (("nosuch",), ("lead", "status"), ("role", "nosuchverb")):     # the dispatcher's errors: the preamble, nothing else
+            self.assertIn("import role;", py[1])                                     # imported, as the guard is, so its bytecode is cached
+            self.assertNotIn("preamble", py[1])
+        for argv in (("nosuch",), ("lead", "status")):                             # the dispatcher's errors: the preamble, nothing else
             r, py = self.starts(*argv, cwd=self.h.t)
             self.assertEqual(r.returncode, 2, argv)
             self.assertEqual(len(py), 1, (argv, py))
+        r, py = self.starts("role", "nosuchverb", cwd=self.h.t)                    # the verb's own usage error: the preamble, then role.py
+        self.assertEqual((r.returncode, len(py)), (2, 2), py)
+        self.assertEqual(r.stderr, "qargi: usage: qargi role list|show|prompt|check ...\n")
         r, py = self.starts("project", "show", "alpha", cwd=self.h.repo)          # a verb that runs python of its own: the preamble is first and once
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("preamble", py[0])
@@ -272,6 +278,23 @@ class Processes(unittest.TestCase):
             self.assertEqual(r.returncode, 0, argv)
             self.assertEqual([l for l in py if "preamble" in l], [], argv)
 
+    def test_the_large_modules_are_imported_not_run(self):
+        """provider, marshal_store, help, gates and lead_usage start through the one form (bin/qargi, and pymod in lib/lib.sh): python3 -I -c SRC LIB MODULE
+        ARGS, so their bytecode is cached. No call starts one of them as a script (`python3 -I lib/provider.py ...`, which compiles it on every run)."""
+        script = re.compile(r"^(-B )?-I \S*/(provider|marshal_store|help|gates|lead_usage)\.py( |$)")
+        ran = {}
+        for argv in (("provider", "list"), ("help", "role"), ("__complete", "role", ""), ("lead", "usage"), ("marshal", "status", "--brief", "--no-fetch")):
+            r, py = self.starts(*argv, cwd=self.h.repo)
+            self.assertEqual([l for l in py if script.match(l)], [], argv)
+            self.assertNotIn("Traceback", r.stderr, argv)
+            ran[argv] = (r, py)
+        r, py = ran[("provider", "list")]
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(any(" provider list" in l and "__import__" in l for l in py), py)
+        py = ran[("help", "role")][1]
+        self.assertEqual(len(py), 1, py)
+        self.assertTrue(" help show role" in py[0] and "__import__" in py[0], py)
+
     def test_the_binding_is_exported_to_the_verb_and_the_arguments_resolved(self):
         self.write_shim('#!/bin/sh\nprintf \'%%s|%%s|%%s|%%s\\n\' "$*" "${ANTHROPIC_PROFILE-unset}" "${QARGI_CLOUD_WORKSPACE-unset}" "${QARGI_CLOUD_PROJECT-unset}" >> "$QARGI_TEST_PYLOG"\nexec "%s" "$@"\n'
                         % self.real)
@@ -279,9 +302,9 @@ class Processes(unittest.TestCase):
         self.assertTrue(py[0].endswith("|unset|unset|unset"), py[0])                # the preamble runs in the caller's environment
         self.assertEqual(len(py), 2, py)
         self.assertTrue(py[1].endswith("|qargi|%s|alpha" % WS), py[1])              # the verb gets the binding
-        self.assertIn("provider.py disable alpha nothing|", py[1])                  # with the project filled in where it belongs (argv order)
+        self.assertIn(" provider disable alpha nothing|", py[1])                    # with the project filled in where it belongs (argv order); the module is imported (pymod)
         r, py = self.starts("provider", "disable", "alpha", "nothing", cwd=self.h.t)  # named outside the repository: the binding still
-        self.assertTrue(py[1].endswith("provider.py disable alpha nothing|qargi|%s|alpha" % WS), py[1])
+        self.assertTrue(py[1].endswith(" provider disable alpha nothing|qargi|%s|alpha" % WS), py[1])
         r, py = self.starts("noticed", "list", cwd=self.h.t)                        # about no project: no binding
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertTrue(py[1].endswith("noticed.py list|unset|unset|unset"), py[1])
@@ -482,6 +505,7 @@ class Guard(unittest.TestCase):
         self.assertIn("guard", r.stderr)
 
 
+
 def enforced(comment):
     """True for a budget line whose comment says `enforced`: its ceiling fails the test, it does not only warn."""
     return re.search(r"\benforced\b", comment) is not None
@@ -499,6 +523,9 @@ class Budget(unittest.TestCase):
         self.assertIn("role list", b)
         self.assertIn("__guard", b)
         self.assertFalse(enforced(b["role list"][1]))
+        for verb in VERBS:
+            self.assertIn(verb, b)
+            self.assertFalse(enforced(b[verb][1]), verb)
         self.assertTrue(enforced(b["__guard"][1]), "the guard's ceiling is the one that fails")
         with self.assertRaises(ValueError):
             read_budget("role list fast\n")

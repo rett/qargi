@@ -25,7 +25,7 @@
 #
 # The manifest has one step per line, fields separated by `|`: tier (fast|full), mode (par: may run beside others; serial: runs
 # alone, after the pool), timeout and time budget in seconds, the command, and optionally the `covers` globs (the files the step
-# tests, space separated). A step that takes more than 1.5x its budget is reported (a warning). Budgets only shrink.
+# tests, space separated). A step that takes more than 1.5x its budget is reported (a warning). A budget is the last recorded duration of the step, rounded up by a tenth.
 # Every step runs in a session of its own with a fresh HOME and a TMPDIR of its own, no standard input and no open file but its output;
 # one that takes longer than its timeout, or leaves a process running, fails. The directories at the top level of the suite's TMPDIR
 # are compared before and after every step: one the step removed, or left, is named in its block and in the summary (a warning: with

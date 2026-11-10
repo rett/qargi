@@ -9,7 +9,8 @@ cd "$(dirname "$0")/.." || exit 1
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0
 trap 'rm -rf "$T" "$HERMETIC"' EXIT
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 
 # top-level directories a copy of the tool does not need (the tests, the sample projects, generated completions, the manual page and the docs)
 NOT_COPIED="tests examples completions man docs"

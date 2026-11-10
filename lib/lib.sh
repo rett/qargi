@@ -22,6 +22,14 @@ TRK=$DA_STATE/sessions.json
 MEMBERS_FILE=$DA_CONF/agents.json   # the members you named (qargi agent add): {"schema": 2, "projects": {PROJECT: {NAME: {roles, file, model, effort, ...}}}}
 export BETA=managed-agents-2026-04-01
 
+# pymod MODULE ARGS...: runs lib/MODULE.py's main() with ARGS, as `python3 -I lib/MODULE.py ARGS` does, and answers with its exit status. The module is
+# imported, not run as a script: python compiles a script on every run and caches only what it imports (the __pycache__ next to the source, which
+# install.sh --user and qargi upgrade fill), so the large modules start faster. Only provider, marshal_store, help, gates and lead_usage are run this way;
+# bin/qargi holds the same text (tests/test_startup.py checks that they agree). sys.argv is what the script had (argv[0] the module's path); gates.main
+# takes the whole argv, the others take it without the name.
+PYMOD_SRC='import sys; sys.path.insert(0, sys.argv.pop(1)); m = __import__(sys.argv.pop(1)); sys.argv[0] = m.__file__; sys.exit(m.main(sys.argv if m.__name__ == "gates" else sys.argv[1:]))'
+pymod() { python3 -I -c "$PYMOD_SRC" "$QARGI_TOOL/lib" "$@"; }
+
 # The first load makes the directories (mode 700) and the three files. DA_NOSETUP, set in the environment of a read-only caller (qargi doctor and the
 # scripts it runs), skips all of it: nothing is created or changed, and a file that is not there stays not there.
 if [ -z "${DA_NOSETUP:-}" ]; then
@@ -117,7 +125,7 @@ out_has_report() {
 #   reg_edit DIR drop|cleaned   rewrites the registry under its lock: drops the lines of DIR, or marks them cleaned (a time), mode 600
 # The line also holds what prepare took from the lead's answers, the one copy that verify, clean and review apply believe: the class of the run (class:
 # write or read-only), the stored project of its repository (project) and answers, an object with the answers that decide what verification accepts (runs.owned_refs, repo.long_lived,
-# repo.parking_branch, git.author, review.keep_author, review.scrub, review.trailer_policy).
+# repo.parking_branch, git.author, review.keep_author, review.scrub, review.trailer_policy, review.reject_trailers).
 # A path is compared by its real path; the run directory of a line may be gone (a reboot that emptied a tmpfs, a clean), and the path is then
 # taken as written, resolved as far as it exists (readlink -m).
 declare -gA LRUNS=()   # -g: lib.sh is sourced from inside a function by some callers
@@ -254,7 +262,7 @@ split_instance() {
 #   prov=$(project_provider "$p" local) || exit $?
 project_provider() { # project-or-empty [surface]
   local p
-  p=$(python3 -I "$(dirname "${BASH_SOURCE[0]}")/provider.py" of "${1:-}" --conf "$DA_CONF" ${2:+--surface "$2"} </dev/null) || return $?
+  p=$(pymod provider of "${1:-}" --conf "$DA_CONF" ${2:+--surface "$2"} </dev/null) || return $?
   printf '%s' "$p" | grep -Eq '^[a-z][a-z0-9-]*$' || { echo "qargi: models.provider '$p' is not a provider name (lower-case letters, digits and '-')" >&2; return 1; }
   echo "$p"
 }
@@ -264,7 +272,7 @@ project_provider() { # project-or-empty [surface]
 # leaving out what the runtime would have added.
 project_provider_if_set() { # project-or-empty surface
   local p
-  p=$(python3 -I "$(dirname "${BASH_SOURCE[0]}")/provider.py" of-if-set "${1:-}" --conf "$DA_CONF" --surface "$2" </dev/null) || return $?
+  p=$(pymod provider of-if-set "${1:-}" --conf "$DA_CONF" --surface "$2" </dev/null) || return $?
   [ -z "$p" ] || printf '%s' "$p" | grep -Eq '^[a-z][a-z0-9-]*$' || { echo "qargi: models.provider '$p' is not a provider name (lower-case letters, digits and '-')" >&2; return 1; }
   [ -z "$p" ] || echo "$p"
 }
@@ -272,7 +280,7 @@ project_provider_if_set() { # project-or-empty surface
 # clone-dir: where a hosted session keeps its outputs and its clones). The core names no hosted directory; the runtime's definition does.
 # Prints the text; on failure (no cloud runtime for the project, or it has no such topic) prints the reason on stderr and returns its status.
 cloud_note() { # project topic
-  python3 -I "$(dirname "${BASH_SOURCE[0]}")/provider.py" notes "$2" --project "$1" --surface cloud </dev/null
+  pymod provider notes "$2" --project "$1" --surface cloud </dev/null
 }
 # barrier_guard SURFACE PROJECT-or-empty: a read-only role is about to run on SURFACE. Exits 2 with the reason and the
 # `qargi provider accept` command when the project's provider has no read-only barrier there and the project did not accept
@@ -280,7 +288,7 @@ cloud_note() { # project topic
 barrier_guard() {
   local rc=0 prov
   prov=$(project_provider "${2:-}" "$1") || exit $?   # no default provider: a project with none for this surface is refused here (exit 2)
-  python3 -I "$(dirname "${BASH_SOURCE[0]}")/provider.py" require-barrier "$prov" "$1" ${2:+--project "$2"} || rc=$?
+  pymod provider require-barrier "$prov" "$1" ${2:+--project "$2"} || rc=$?
   [ "$rc" = 0 ] || exit "$rc"
 }
 
@@ -292,8 +300,13 @@ mem_index() {
 # mem_dump STORE: JSON lines of every memory of a store, with content (QARGI_CANON_FIXTURE_DIR replaces the cloud in tests).
 mem_dump() {
   if [ -n "${QARGI_CANON_FIXTURE_DIR:-}" ]; then cat "$QARGI_CANON_FIXTURE_DIR/$1.jsonl"; return; fi
-  ant beta:memory-stores:memories list --memory-store-id "$1" --path-prefix / --view full --max-items -1 </dev/null 2>/dev/null \
-    | jq -c 'select(.type=="memory") | {type, id, path, content, content_sha256}'
+  local out err why rc=0
+  err=$(mktemp) || return 1
+  out=$(ant beta:memory-stores:memories list --memory-store-id "$1" --path-prefix / --view full --max-items -1 </dev/null 2>"$err") || rc=$?
+  why=$(grep -v '^[[:space:]]*$' "$err" | head -1 | cut -c1-160); rm -f "$err"
+  # a failing list is not an empty store: status 1 and the reason on standard error
+  [ "$rc" = 0 ] || { echo "${why:-the store list failed (status $rc)}" >&2; return 1; }
+  jq -c 'select(.type=="memory") | {type, id, path, content, content_sha256}' <<<"$out"
 }
 
 # mem_exec_ops STORE PLAN_JSON: run a plan's steps ({ops: [move|create|update|marker]}) against a store, in order;
@@ -352,10 +365,19 @@ run_clean() { # DIR COMMAND...: runs a command in DIR without the project's clou
 # said>": the quote is stored in the tracker so the choice is auditable.
 # Every approval-gated or cloud-driving verb leaves an append-only line here.
 audit_log() { # verb [detail]
-  local f=$DA_STATE/audit.log
+  local f=$DA_STATE/audit.log line rc=0
   # AUDIT_ORIGIN (set by the supervisor only) adds an origin field, so its lines can be told from the owner's
-  jq -nc --arg t "$(now)" --arg v "$1" --arg d "${2:-}" --arg a "${ASKED:-}" --arg p "${APPROVED:-}" --arg n "${NESTED_SKIPPED:-}" --arg o "${AUDIT_ORIGIN:-}" \
-    '{ts:$t, verb:$v, detail:$d, asked:$a, approved:$p, nested:($n != "")} + (if $o == "" then {} else {origin:$o} end)' >> "$f"
+  line=$(jq -nc --arg t "$(now)" --arg v "$1" --arg d "${2:-}" --arg a "${ASKED:-}" --arg p "${APPROVED:-}" --arg n "${NESTED_SKIPPED:-}" --arg o "${AUDIT_ORIGIN:-}" \
+    '{ts:$t, verb:$v, detail:$d, asked:$a, approved:$p, nested:($n != "")} + (if $o == "" then {} else {origin:$o} end)') || return 1
+  # one whole line, appended under an exclusive flock on audit.log.lock beside the log (the python writers take the same lock); a flock
+  # that failed (or is not installed) took no lock: say so and write nothing, as pid_lock does
+  ( umask 077; flock 9 || exit 4; printf '%s\n' "$line" >> "$f" ) 9> "$f.lock" || rc=$?
+  case $rc in
+    0) ;;
+    4) command -v flock >/dev/null 2>&1 || die "could not take the lock $f.lock: the flock command (util-linux) is not installed, so two writers of the audit log could not be kept apart; nothing was written"
+       die "could not take the lock $f.lock: flock on $f.lock failed (does that directory's file system support locks?); nothing was written";;
+    *) die "could not append to the audit log $f";;
+  esac
   chmod 600 "$f" 2>/dev/null || true
 }
 
@@ -488,7 +510,7 @@ cloud_contract() { # [project]
   cat "$ct/contract.md" "$ct/output-format.md" || return 1
   prov=$(project_provider_if_set "${1:-}" cloud) || { echo "qargi: the prompt of a cloud agent of project ${1:-} cannot be made: its cloud provider does not resolve, so the contract addenda of its runtime would be left out" >&2; return 1; }
   [ -n "$prov" ] || return 0
-  python3 -I "$(dirname "${BASH_SOURCE[0]}")/provider.py" addenda "$prov" cloud
+  pymod provider addenda "$prov" cloud
 }
 
 agent_prompt() { # role [project]

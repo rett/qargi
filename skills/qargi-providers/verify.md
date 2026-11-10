@@ -4,44 +4,17 @@ Load when verifying, attesting or enabling a runtime or extension.
 
 ## What counts
 
-The review of a pack with executables gives each one's path, sha256, interpreter, first lines, the
-URLs and network commands it mentions and the commands the argv would run. qargi runs an approved
-executable only from a private copy, after its hash and the pack's were checked against the sealed
-record.
+The review of a pack with executables gives each one's path, sha256, interpreter, first lines, the URLs and network commands it mentions and the commands the argv would run. qargi runs an approved executable only from a private copy, after its hash and the pack's were checked against the sealed record.
 
 - A shipped definition is verified by the `verified_on` date and `source` of each cell.
-- A library definition is verified by `qargi provider check NAME` on the sealed pack, which
-  records every capability whose hermetic cases all pass in `state/providers/NAME/verified.json`,
-  bound to the content hash. An edit and a reseal, or a reseal of the runtime an extension
-  extends, make the record stale until `check` is run again. The hermetic cases are the agent
-  render twice and read back, the skills link planned, applied and undone in a temporary
-  repository, the read-only corpus through the guard, and an adapter's stub.
+- A library definition is verified by `qargi provider check NAME` on the sealed pack, which records every capability whose hermetic cases all pass in `state/providers/NAME/verified.json`, bound to the content hash. An edit and a reseal, or a reseal of the runtime an extension extends, make the record stale until `check` is run again. The hermetic cases are the agent render twice and read back, the skills link planned, applied and undone in a temporary repository, the read-only corpus through the guard, and an adapter's stub.
 
 ## Attest
 
-A fact no hermetic case can show (an OS sandbox that really holds, a real model id, a cost
-report) is `qargi provider attest NAME CAP`. It records a check that the person ran; it runs
-nothing and spends nothing itself. **Attest is asked each time.** Never run a live check, or
-suggest the person has pre-approved one, on your own initiative. Without the facts the verb
-prints what is needed. Before any run, tell the person: the runtime and the capability; the exact
-command or API calls and the scratch resources; the smallest model and effort; the hard ceiling in
-cents or tokens; the expected cost and how it is cleaned up. Only on their go-ahead, after the
-run: `qargi provider attest NAME CAP --asked "<their words>" --did "<what was run>" --result
-pass|fail --cost-cents N --cleanup "<state>" [--note TEXT]`, then the plan token as for any change.
-A failed result removes the earlier record. A free local check that makes no API call needs no
-spend ask but is recorded the same way (`--cost-cents 0`).
+A fact no hermetic case can show (an OS sandbox that really holds, a real model id, a cost report) is `qargi provider attest NAME CAP`. It records a check that the person ran; it runs nothing and spends nothing itself. **Attest is asked each time.** Never run a live check, or suggest the person has pre-approved one, on your own initiative. Without the facts the verb prints what is needed. Before any run, tell the person: the runtime and the capability; the exact command or API calls and the scratch resources; the smallest model and effort; the hard ceiling in cents or tokens; the expected cost and how it is cleaned up. Only on their go-ahead, after the run: `qargi provider attest NAME CAP --asked "<their words>" --did "<what was run>" --result pass|fail --cost-cents N --cleanup "<state>" [--note TEXT]`, then the plan token as for any change. A failed result removes the earlier record. A free local check that makes no API call needs no spend ask but is recorded the same way (`--cost-cents 0`).
 
-A read-only role on a surface whose barrier is not supported is refused unless the person accepts
-that for the project: `qargi provider accept NAME --surface S --no-barrier --asked "..."` (plan
-token, then `--plan TOKEN --approved "..."`).
+A read-only role on a surface whose barrier is not supported is refused unless the person accepts that for the project: `qargi provider accept NAME --surface S --no-barrier --asked "..."` (plan token, then `--plan TOKEN --approved "..."`).
 
 ## Extensions
 
-`qargi provider new NAME --kind extension` scaffolds one: `extends` (a runtime or family),
-`provides` (capabilities), `requires` and `adds.capabilities` (plus barrier, dispatch variants,
-renderers, resources). Seal it, then `qargi provider enable PROJECT NAME` (a plan and approval,
-with `--approve-exec` for executables); `disable PROJECT NAME` undoes it. Extensions are per
-project only (`models.extensions` in the answers). Nothing is overridden: two extensions that add
-the same thing, or one that adds what the runtime already has, are refused, naming both. What an
-extension provides counts only after `qargi provider check NAME [--project P]` passes for it, or
-an attest, and `provider show RUNTIME --project P` shows which pack provided each capability.
+`qargi provider new NAME --kind extension` scaffolds one: `extends` (a runtime or family), `provides` (capabilities), `requires` and `adds.capabilities` (plus barrier, dispatch variants, renderers, resources). Seal it, then `qargi provider enable PROJECT NAME` (a plan and approval, with `--approve-exec` for executables); `disable PROJECT NAME` undoes it. Extensions are per project only (`models.extensions` in the answers). Nothing is overridden: two extensions that add the same thing, or one that adds what the runtime already has, are refused, naming both. What an extension provides counts only after `qargi provider check NAME [--project P]` passes for it, or an attest, and `provider show RUNTIME --project P` shows which pack provided each capability.

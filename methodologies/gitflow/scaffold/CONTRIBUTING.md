@@ -27,5 +27,5 @@ The branching model is git-flow, as its author described it.
 
 ## Changes
 
-- Every user-visible change gets a changelog entry under `[Unreleased]`, in the same commit as the change.
+- Every user-visible change gets a changelog entry {{changelog_entry}}, in the same commit as the change.
 - One logical change per commit; no private names (hosts, users, home paths) in files or commit messages.

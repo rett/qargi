@@ -7,7 +7,8 @@ cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 export QARGI_CONF=$T/c QARGI_STATE=$T/s FAKE=$T/fake
 mkdir -p "$T/c" "$T/s" "$T/bin" "$FAKE"
 cat > "$T/bin/ant" <<'EOS'

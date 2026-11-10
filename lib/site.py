@@ -945,7 +945,7 @@ def default_home(src, hand):
     items += ['<li><a href="/reference/">Command reference</a></li>', '<li><a href="/releases/">Releases</a></li>']
     body = "<p>%s</p>\n<p>%s</p>\n<h2 id=\"pages\">Pages %s</h2>\n<ul>%s</ul>" % (
         esc(c.intro), esc(sentence(c.tagline)), MD.anchor_html("pages", "Pages"), "".join(items))
-    p = Page("", "home", "qargi documentation", "Documentation for qargi, which hands development tasks to sandboxed agents and takes the work back as patches you review and apply yourself.", body, [(2, "pages", "Pages")])
+    p = Page("", "home", "qargi documentation", "Documentation for qargi, which hands tasks to agents behind a best-effort text guard, not a sandbox, and takes the work back as patches you review.", body, [(2, "pages", "Pages")])
     p.toc = False
     return p
 

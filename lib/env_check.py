@@ -36,6 +36,7 @@ import contextlib, io, json, os, re, shlex, shutil, signal, subprocess, sys, tem
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import env as E  # noqa: E402
 import paths as P  # noqa: E402
+import procenv as PE  # noqa: E402
 import tools as T  # noqa: E402
 
 TIMEOUT = 300
@@ -64,24 +65,10 @@ def usage_error(msg=None):
 
 # ---- running a command ----------------------------------------------------------------------------------------------
 
-def clean_path():
-    """The caller's PATH without empty and relative entries: a command is never looked up in the working directory."""
-    parts = [p for p in os.environ.get("PATH", "").split(os.pathsep) if p.startswith("/")]
-    return os.pathsep.join(parts) or "/usr/bin:/bin"
-
-
-def child_env():
-    env = {"PATH": clean_path(), "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "TERM": "dumb", "GIT_TERMINAL_PROMPT": "0"}
-    for k in ("HOME", "USER", "LOGNAME", "TMPDIR"):
-        if os.environ.get(k):
-            env[k] = os.environ[k]
-    return env
-
-
 def run(argv, cwd, timeout):
     """{exit, timed_out, seconds, text, error}: argv run without a shell in cwd, stdin closed, stdout and stderr together (the first READ_CAP
     bytes are read), in its own session so a timeout ends everything it started."""
-    env = child_env()
+    env = PE.child_env()
     exe = argv[0]
     if "/" not in exe and shutil.which(exe, path=env["PATH"]) is None:
         return {"exit": None, "timed_out": False, "seconds": 0.0, "text": "", "error": "%s is not on PATH" % E.clean(exe, 60)}
@@ -109,12 +96,8 @@ def run(argv, cwd, timeout):
 
 def git(repo, *args):
     """(exit, stdout) of a git command in repo: no prompt, no optional lock, no pager."""
-    env = dict(child_env(), GIT_OPTIONAL_LOCKS="0")
-    try:
-        r = subprocess.run(["git", "-c", "core.fsmonitor=false", "-C", repo] + list(args), capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env, timeout=30)
-    except (OSError, subprocess.SubprocessError):
-        return 1, ""
-    return r.returncode, r.stdout
+    rc, out, _ = PE.git(*args, repo=repo)
+    return (1 if rc is None else rc), out
 
 
 # ---- the project's doctor --------------------------------------------------------------------------------------------
@@ -216,7 +199,7 @@ def pinned_tools(pins):
 
 def check_tool(tool, pinned, repo):
     """The missing items of one tool: not on PATH, no answer to --version, or a version that is not what a pin names."""
-    path = child_env()["PATH"]
+    path = PE.child_env()["PATH"]
     name = next((n for n in [tool] + FALLBACK.get(tool, []) if shutil.which(n, path=path)), None)
     if name is None:
         return ["%s is not installed (pinned in %s)" % (tool, ", ".join(sorted({f for f, _ in pinned})))]
@@ -489,7 +472,7 @@ def record(project, d, repo, verdict, code, expected, missing, command, builtin_
     dest = os.path.join(P.state(), "env")
     os.makedirs(dest, mode=0o700, exist_ok=True)
     entry = {"repo": repo, "head": head.strip() if rc == 0 else "",
-           "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "verdict": verdict.split(" (")[0], "exit": code,
+           "time": PE.now(), "verdict": verdict.split(" (")[0], "exit": code,
            "missing": len(missing), "expected": expected, "doctor_command": command, "builtin_minimum": builtin_used,
            "dry_run_command": d["commands"]["dry_run_command"]["command"]}
     final = os.path.join(dest, project + ".json")

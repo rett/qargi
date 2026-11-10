@@ -6,7 +6,8 @@ cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
 export QARGI_PROJECT=app
 mkdir -p "$HOME" "$T/c/projects" "$T/bin"
@@ -27,7 +28,6 @@ task() { # name: a task branch with one commit, cut from develop (as an applied,
   git -C "$R" branch "agent/$1" develop; local w; w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R" worktree add -q "$w" "agent/$1"
   echo "$1" > "$w/$1.txt"; git -C "$w" add -A; git -C "$w" commit -q -m "task $1"; git -C "$R" worktree remove --force "$w"
 }
-tok() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 # rstart ARGS: release start through its plan (a token) and the approval; a refusal of the plan is printed and fails
 rstart() { local p t; p=$($REL start "$@" 2>&1); t=$(tok <<<"$p"); [ -n "$t" ] || { printf '%s\n' "$p"; return 1; }; $REL start "$@" --plan "$t" --approved go; }
 dev0=$(git -C "$R" rev-parse develop)
@@ -154,7 +154,7 @@ $REL verify 0.3.0 >/dev/null 2>&1; rstart 0.3.0 --allow-empty-notes >/dev/null 2
 out=$($REL start 0.2.1 --hotfix --allow-empty-notes 2>&1)
 grep -q "create hotfix/0.2.1 from master" <<<"$out" && grep -q -- "qargi release start 0.2.1 --hotfix --allow-empty-notes --plan $(tok <<<"$out") --approved" <<<"$out" && ! git -C "$R" rev-parse -q --verify refs/heads/hotfix/0.2.1 >/dev/null && ok "a hotfix start prints its plan from master and its apply line too" || no "hotfix plan: $out"
 rstart 0.2.1 --hotfix --allow-empty-notes >/dev/null 2>&1 && [ "$(git -C "$R" rev-parse hotfix/0.2.1~1)" = "$(git -C "$R" rev-parse master)" ] && ok "a hotfix is cut from master" || no "hotfix start"
-w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R" worktree add -q "$w" hotfix/0.2.1; echo fix > "$w/fix.txt"; git -C "$w" add -A; git -C "$w" commit -q -m "the fix"; git -C "$R" worktree remove --force "$w"
+w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R" worktree add -q "$w" hotfix/0.2.1; echo fix > "$w/fix.txt"; awk '/^## \[0[.]2[.]1\]/ { print; print ""; print "- the fix"; next } { print }' "$w/CHANGELOG.md" > "$w/CL.new" && mv "$w/CL.new" "$w/CHANGELOG.md"; git -C "$w" add -A; git -C "$w" commit -q -m "the fix"; git -C "$R" worktree remove --force "$w"
 t=$($REL push 0.2.1 --hotfix | tok); $REL push 0.2.1 --hotfix --plan "$t" --approved go >/dev/null 2>&1
 d2=$(git -C "$R" rev-parse develop); r2=$(git -C "$R" rev-parse release/0.3.0); m2=$(git -C "$R" rev-parse master)
 t=$($REL finish 0.2.1 --hotfix | tok); $REL finish 0.2.1 --hotfix --plan "$t" --approved go >/dev/null 2>&1; rc=$?

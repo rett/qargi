@@ -58,6 +58,7 @@ HOOK_REC = ("Reads the hook's JSON on stdin and appends one small line to the ru
             "(ids, times, names and hashes; never command, message or error text). It always exits 0 at once, even on malformed input, "
             "so it cannot block an agent. Register it with qargi supervise hooks.")
 ASKED = opt("--asked", "the request, in your words, that names the cloud instance; recorded in the audit log", "REQUEST")
+WORKTREE = opt("--worktree", "write the repo tier into DIR, another worktree of the project's repository (the same path inside it), instead of its checkout; the plan says on which branch to commit it", "DIR", "dir")
 PLAN = opt("--plan", "the plan token printed by the same command without --approved", "TOKEN")
 APPROVED = opt("--approved", "your go-ahead for exactly that plan, in your words; recorded in the audit log", "WORDS")
 EXEC = opt("--approve-exec", "name every executable the pack holds, separated by commas, to approve running them", "NAMES")
@@ -77,16 +78,25 @@ GLOBAL_OPTS = [opt("--json", "print the result as one JSON object with the verb,
 PROJECT_OPT = opt("--project", "the project, instead of the one inferred from here", "PROJECT", "project")
 MEMBER_PROJECT_OPT = opt("--project", "the project the member belongs to (default: the one in effect when it has the member, else the only project that has it)", "PROJECT", "project")
 AS_OPT = opt("--as", "act as this lead identity (default: the session id in QARGI_LEAD, else user@host)", "ID")
+FLOW_UNREACHABLE_OPT = opt("--assume-unreachable-ok", "go on although the shared marshal cannot be asked because its remote cannot be reached (without it that is a refusal, exit 3, nothing changed); recorded as marshal:unreachable-ok in the audit log")
+FLOW_UNREACHABLE_NOTE = ("It asks the marshal first. With the shared refs backend a remote that cannot be reached is a refusal (exit 3, nothing changed; the message says what could not be reached and why) "
+                         "unless --assume-unreachable-ok is given: then it goes on and the audit log gets a marshal:unreachable-ok line. A project whose marshal is local is not affected.")
+UNREACHABLE_OPT = opt("--assume-unreachable-ok", "go on although the remote of the shared records cannot be reached (a claim stays provisional, a check answers from the cache); recorded as marshal:unreachable-ok in the audit log")
 RESOLVED_OPT = opt("--resolved", "use the merge you resolved and committed in the conflict worktree")
 REMOTE_NOTE = ("It asks the live origin with git ls-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, "
                "and says 'remote not checked' when origin cannot be reached.")
 SUITE_FAIL_NOTE = ("The output of the suite is kept in STATE/suite-logs/PROJECT.feature-NAME.log (PROJECT.release-VERSION.log for a release; the last run of each). When "
-                   "the suite fails, the last lines of the output are the failing steps and tests that its report names (the FAILED: and FAIL lines of tests/run.sh; "
-                   "a test command that is no runner shows its last lines instead), where the runner kept the logs of the failed steps, and the path of that log.")
+                   "the suite fails, the last lines of the output are the failing steps and tests that its report names, where the runner kept the logs of the failed steps, and the path of that log. "
+                   "Any gate or test command may print the lines that are named, at the start of a line: a failing step is a line matching ^FAILED: (the step follows); a failing test is a line "
+                   "matching ^FAIL( |:) or ^--- FAIL: (the name follows; the second is a Go test run's); the logs of the failed steps are a line ^logs of the failed steps: (the directory follows). "
+                   "A command that prints none shows its last lines instead.")
 GATES_NOTE = ("Declared gates: the project answer gates is an ordered list of {name, command, tier} (command: a command line or a list of words, as test_command; tier: feature or release; names unique). "
               "Absent, test_command (release.test_command for a release) is run, as before. Declared, the gates run instead and test_command is not also run (a gate whose command is the same runs it): "
               "feature verify runs the gates of tier feature in order and release verify the feature tier, then the release tier, each stopping at the first failure (the rest are listed as not run). "
-              "The verdict line is still 'full suite: pass|fail at SHA', and the run record and the status lines list each gate with its result.")
+              "The verdict line is still 'full suite: pass|fail at SHA', and the run record and the status lines list each gate with its result. "
+              "A gate may also list ci_jobs, the CI jobs (names or ids) that run its check under another name: the CI scan of release verify reports them as covered by the gate. "
+              "A feature gate may name a release gate in covered_by when that gate's command runs the same check: release verify then lists the gate as covered by it and does not run it "
+              "(its result is 'covered by NAME' when NAME passed, 'not run' when NAME failed or was not reached); feature verify still runs it. The name must be a release gate.")
 OTHER_RUNS_NOTE = ("Before it starts it warns on standard error, and goes on, when another suite may be running: a whole-suite run of the project in progress, a local run "
                    "of the repository with a file changed in the last QARGI_ACTIVE_MINUTES minutes (default 10), or a tests/run.sh process in the repository (Linux).")
 TAG_NOTE = ("When the tag VERSION exists it also warns about a tag that has no GitHub release (asked with a read-only gh release view, through QARGI_GH, default gh; "
@@ -146,31 +156,52 @@ COMMANDS = {
                                  "the feature tier first) and says they replace the detected test command. If answers are already stored it shows stored against detected, lists the fields "
                                  "the stored file lacks, stays read-only and gives no plan token; with --force the plan replaces what it detects and keeps what it "
                                  "cannot (the roles' models and effort, cloud, memory, budget). It reports what it found of the development environment (section, task runner, "
-                                 "bootstrap and doctor commands) and lists the pieces that are missing as gaps. It never guesses a provider: models.provider (and the roles' models) are stored only with "
+                                 "bootstrap and doctor commands; a command the stored answers declare in env.* is in effect) and lists the pieces that are missing as gaps. A declared setting or a "
+                                 "versioned unreleased heading right after a release is printed apart, as noted, not a gap. The lead's accepted deviations (the answer methodology_accepted, a list of "
+                                 "{gap, reason, date}, the gap written as it is printed here: file: CONTRIBUTING.md) are printed apart from the open gaps, and one whose gap is gone says "
+                                 "'accepted, no longer applies'. It never guesses a provider: models.provider (and the roles' models) are stored only with "
                                  "--provider NAME, and without it the output says so; with --force --provider fills in a provider that is not set and never replaces one.")),
             "adopt": verb("Adopt an attached repository: create the missing long-lived branches and the missing methodology files on a branch to review", [("NAME", "project")],
-                          [opt("--methodology", "the methodology (default: the project's, else gitflow)", "NAME", "methodology"), PLAN, APPROVED],
+                          [opt("--methodology", "the methodology (default: the project's, else gitflow)", "NAME", "methodology"),
+                           opt("--show", "also print everything the plan token covers: the refs it starts from, the branches, and the full content of each file to write (changes nothing; not with --plan)"), PLAN, APPROVED],
                           desc=("Prints the plan and a token: the local branches it would create (at the default branch tip; main stands for master; none is moved) and the files from the "
                                 "methodology that do not exist, written as one commit on agent/adopt-NAME cut from develop. With --plan and --approved it creates exactly that. Existing "
                                 "branches and files are never changed, nothing is pushed or checked out, and a second run finds nothing to do. Changelog format, tag format and CI content "
                                 "are listed as left for you, and so are the bootstrap and doctor targets a repository with a task runner lacks (an existing file is not edited), and long-lived branches "
                                 "that share no history (a master made as a snapshot has no merge base with develop): none is joined here, and the line says that release push joins the history of master. "
-                                "The AGENTS.md section it drafts names the repository's own runner. Refused (exit 2) with a dirty working tree, a detached HEAD, no commits, a project that is not attached, and in a member run."),
+                                "The AGENTS.md section it drafts names the repository's own runner and only the bootstrap, dry-run and doctor commands the repository has or declares (env.* in the answers); a line for a command it lacks is left out. "
+                                "The changelog sentence of the runtime's instruction file and CONTRIBUTING.md is rendered from the project's release.changelog.unreleased heading and release.changelog.numbered. A declared setting (release.version_file none) "
+                                "and a versioned unreleased heading right after a release (no unreleased section yet; the last release is X) are printed apart as noted, not gaps. A repository that has AGENTS.md or the runtime's own instruction file "
+                                "gets a list of what adopt does about each (it edits neither): with an instruction file of the runtime and no AGENTS.md it writes AGENTS.md with the Development environment section only, and says to add the @AGENTS.md import line to that file. "
+                                "An accepted deviation (methodology_accepted: a gap named file: X or branch: X) is left out of the files and branches it would write, and printed apart from what is left for you; one whose gap is gone says 'accepted, no longer applies'. "
+                                "Refused (exit 2) with a dirty working tree, a detached HEAD, no commits, a project that is not attached, and in a member run."),
                           examples=["qargi project adopt acme", 'qargi project adopt acme --plan TOKEN --approved "go ahead"']),
             "set": verb("Change one answer", [("NAME", "project"), ("PATH", "key"), ("VALUE", "value")],
                         desc=("PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string. models.extensions and models.accept_no_barrier are refused here: they change only through qargi provider enable|disable and qargi provider accept. "
+                              "methodology_accepted (a list of {gap, reason, date}: the deviations from the methodology the lead accepts) is the lead's: a member run is refused. "
                               "roles.ROLE.tools is the list of the tools a role needs beyond its apt packages, each {kind, name, ...}: kind go (name a package path, version a tag: go install NAME@VERSION), "
                               "kind binary (name the file name, version, url of the file itself, sha256 of it: downloaded to ~/.local/bin and kept only when the hash matches) and kind submodule "
                               "(name as in .gitmodules, path: checked out in each member clone by qargi local prepare). env plan lists them, env apply installs them and env check reports one that is "
-                              "missing or wrong; a member's guard refuses setting them (and a whole role), as it refuses release.*, test_command, gates, env.*, site.* and backlog.*. "
+                              "missing or wrong; a member's guard refuses setting them (and a whole role), as it refuses release.*, test_command, gates, env.*, upstream.*, site.*, backlog.*, ci.*, methodology_accepted, git.* and review.*. "
                               "backlog.file is the markdown file of the project's backlog (qargi backlog); a path outside the repository is fine. "
                               "git.author ('Name <email>') is the author qargi review apply gives the commits it applies, and review.keep_author true keeps the member's author instead; "
                               "review.scrub (a command line or a list of words) is run by qargi review check (and by qargi review apply, unless a passing check recorded the same series) on the applied series with the range in QARGI_SCRUB_BASE and QARGI_SCRUB_TIP, and review.trailer_policy reject fails a commit with a "
-                              "Co-Authored-By or Generated-with trailer (none is the default); a member's guard refuses setting them. "
+                              "Co-Authored-By or Generated-with trailer (none is the default); review.reject_trailers is a list of further trailer keys (letters, digits and hyphens, * for any run of them, for example "
+                              "[\"Signed-off-by\", \"X-*\"]) refused under the policy reject (setting it while the policy is not reject is refused), and the failing verdict names the commit, the line of its "
+                              "message and the entry that matched; a member's guard refuses setting them. "
                               "runs.owned_refs is a list of glob patterns for the refs a runtime or harness creates in the repository, which local verify and clean accept and name (see local verify); "
-                              "the guard refuses it to a member too."),
+                              "the guard refuses it to a member too. "
+                              "It prints the new value and then 'was: OLD' (the JSON the answer held, or '(not set)' when the key was absent) and writes an audit line (project:set, with the old value). "
+                              "A null stored for an optional answer (git.author, gates, review.*, backlog.*) is the same as not set, and project validate accepts it; qargi project unset removes the key itself."),
                         examples=["qargi project set acme roles.write.effort high", "qargi project set acme packs.none true", "qargi project set acme git.author 'Example Author <author@example.com>'",
                                   "qargi project set acme roles.test.tools '[{\"kind\":\"go\",\"name\":\"acme.test/ci\",\"version\":\"v1.2.0\"}]'"]),
+            "unset": verb("Remove one answer", [("NAME", "project"), ("PATH", "key")],
+                          desc=("PATH is dotted, as for set. Prints 'was: OLD' (the JSON the answer held) and writes an audit line (project:unset, with the old value). It refuses what set refuses: "
+                                "the marshal backend (marshal.backend: qargi marshal enable|disable) and models.extensions and models.accept_no_barrier, also as keys of a whole models object (exit 2: "
+                                "qargi provider enable|disable and qargi provider accept take a plan token and an approval). A key that is not set is an error and changes nothing, and so is the removal of an answer the "
+                                "project needs (repo.url, a role's base): validate refuses it and the file is not touched. A member never runs it: it is refused in a member's run directory "
+                                "or with the member mark in the environment (exit 2); propose the removal in the report."),
+                          examples=["qargi project unset acme backlog.file", "qargi project unset acme review.scrub"]),
             "show": verb("Print the stored answers and what they mean", [("NAME", "project")],
                          desc=("The answers go to standard output as JSON (so they can be piped). When the project declares gates, which replace the test command in feature verify and release verify, "
                                "they are listed on standard error (tier, name, command, the feature tier first).")),
@@ -252,7 +283,7 @@ COMMANDS = {
                  "Four ship with qargi: build, write, review and test (review is read-only). Add your own under ~/.qargi/config/roles/NAME/: "
                  "a name of one lower-case token, never lead. The class decides what the guard allows a member (read-only: nothing in the clone "
                  "changes); the text of a role cannot change it. A task block carries the role's text; a cloud agent of the role has it in its system prompt."),
-        "scripts": ["role.sh"],
+        "scripts": ["role.py"],
         "verbs": {
             "list": verb("List the roles, their class and where they live"),
             "show": verb("Print a role: its class, description and instructions", [("NAME", "workrole")]),
@@ -270,8 +301,8 @@ COMMANDS = {
         "scripts": ["feature.sh"],
         "verbs": {
             "start": verb("Cut feature/NAME from develop", [("NAME", "none")], [PROJECT_OPT, opt("--purpose", "what the feature is about; related work only goes into one feature", "TEXT"),
-                                                  opt("--worktree", "also make the feature's worktree at <worktrees.root>/feature/NAME and print its path")],
-                          desc="Refuses a name origin already has (asked live with git ls-remote), so another person's branch is not shadowed; fetch it instead. Refuses the name of a detached branch (repo.detached)."),
+                                                  opt("--worktree", "also make the feature's worktree at <worktrees.root>/feature/NAME and print its path"), FLOW_UNREACHABLE_OPT],
+                          desc="Refuses a name origin already has (asked live with git ls-remote), so another person's branch is not shadowed; fetch it instead. Refuses the name of a detached branch (repo.detached). The marshal record is made before the branch: " + FLOW_UNREACHABLE_NOTE),
             "list": verb("List the open features: purpose, distance from develop, and the files two features both change", [], [PROJECT_OPT],
                          desc=("Several features can be open at once. Two that change the same file will conflict whichever lands second: keep related work in one feature, unrelated work in another. "
                                "It also flags each worktree of the project outside the worktree root (answers worktrees.root, default <state>/worktrees/PROJECT) with the git worktree move that "
@@ -283,21 +314,21 @@ COMMANDS = {
                                "them with an agent task based on develop, or keep them on a branch of their own). After feature finish, release finish and hotfix finish moved "
                                "develop, a clean main checkout on the parking branch with no commits of its own is fast-forwarded to develop, and one status line says why it was not. "
                                "The parking branch is never pushed or merged.")),
-            "sync": verb("Merge develop into the feature (after another feature landed, before this one's checkpoint)", [("NAME", "none")], [PROJECT_OPT, RESOLVED_OPT],
+            "sync": verb("Merge develop into the feature (after another feature landed, before this one's checkpoint)", [("NAME", "none")], [PROJECT_OPT, RESOLVED_OPT, FLOW_UNREACHABLE_OPT],
                          desc=("With the answer release.changelog.numbered true it then checks the changelog for duplicate item numbers and warns (exit status unchanged); "
-                               "feature finish refuses them. See qargi changelog.")),
-            "merge": verb("Merge a verified task branch into feature/NAME with --no-ff", [("NAME", "none"), ("BRANCH", "branch")], [PROJECT_OPT, PLAN, APPROVED, RESOLVED_OPT],
+                               "feature finish refuses them. See qargi changelog. " + FLOW_UNREACHABLE_NOTE)),
+            "merge": verb("Merge a verified task branch into feature/NAME with --no-ff", [("NAME", "none"), ("BRANCH", "branch")], [PROJECT_OPT, PLAN, APPROVED, RESOLVED_OPT, FLOW_UNREACHABLE_OPT],
                           desc=("NAME may be a detached long-lived branch of the answers (repo.detached) instead of a feature: BRANCH must then be an agent/* branch, "
                                 "and the merge, local only, prints a plan and token like a merge into develop (--plan, --approved). A detached branch never meets develop, master, "
                                 "release, hotfix or feature branches: a merge between them, in either direction and by name or by history, is refused here, in sync, in finish and in release finish. "
                                 "For a feature, --plan and --approved are not used. When the registry of local runs names a run of BRANCH (its slug) that still exists and has no passing "
-                                "local verify, a warning names the run; the merge goes on.")),
+                                "local verify, a warning names the run; the merge goes on. " + FLOW_UNREACHABLE_NOTE)),
             "status": verb("Show the feature: commits ahead of develop and whether the whole suite passed at its head", [("NAME", "none")], [PROJECT_OPT],
                            desc=REMOTE_NOTE + " With declared gates a 'gates:' line lists each with its result at the last run. Flags worktrees outside the worktree root like list. When the whole-suite result is for an older head it says why (the commits on the branch since the run, a merge of a task branch or of develop named as such) and that the next step is qargi feature verify NAME."),
-            "verify": verb("Run the project's whole test suite on the feature's head and record the result", [("NAME", "none")], [PROJECT_OPT],
-                           desc=GATES_NOTE + " " + OTHER_RUNS_NOTE + " " + SUITE_FAIL_NOTE),
+            "verify": verb("Run the project's whole test suite on the feature's head and record the result", [("NAME", "none")], [PROJECT_OPT, FLOW_UNREACHABLE_OPT],
+                           desc=GATES_NOTE + " " + OTHER_RUNS_NOTE + " " + SUITE_FAIL_NOTE + " " + FLOW_UNREACHABLE_NOTE),
             "finish": verb("Merge the feature into develop with --no-ff and delete it", [("NAME", "none")],
-                           [PROJECT_OPT, opt("--keep", "keep the branch"), PLAN, APPROVED, RESOLVED_OPT],
+                           [PROJECT_OPT, opt("--keep", "keep the branch"), PLAN, APPROVED, RESOLVED_OPT, FLOW_UNREACHABLE_OPT],
                            desc=("Needs a passing whole-suite run at the feature's head. A feature behind develop is refused (exit 1, nothing changed); when both sides "
                                  "changed the same files since their merge base, the message lists them and says to run qargi feature sync first. With the answer release.changelog.numbered true it also refuses a changelog with duplicate item numbers (qargi changelog renumber). Pushes develop if the repository has an origin. With the answer branches.delete_merged "
                                  "local+remote (default local) it also deletes the feature branch on origin when origin has it (asked live) and holds nothing the feature lacks; the plan shows "
@@ -307,7 +338,7 @@ COMMANDS = {
                                  "nothing: the merge is left in progress in a worktree under the state directory (exit 3), you or the lead resolve and commit it there, "
                                  "and the same command with --resolved applies exactly that merge. It is refused first (exit 1, nothing changed) while a run prepared against feature/NAME is open, and lists "
                                  "each one: prepared and not verified, verified and not applied, or applied and not merged. A run that was cleaned, discarded (local clean --discard), closed "
-                                 "(local close --applied-by-am) or applied and merged is not open.")),
+                                 "(local close --applied-by-am) or applied and merged is not open. " + FLOW_UNREACHABLE_NOTE)),
         },
     },
     "marshal": {
@@ -324,14 +355,18 @@ COMMANDS = {
                  "marshal enable switches the project to the shared backend, where each record is a commit on refs/qargi/features/NAME of the remote "
                  "origin so several machines and people see the same leads (takeover then waits for the record to stay unchanged for the ttl as seen by "
                  "the taker's own clock). Only the lead pushes those refs; a member run cannot. "
-                 "Exit status 3 means the remote could not be checked (the cache was used). Records can be signed: one key per lead machine, a signers file per project "
+                 "Exit status 3 means the remote could not be checked. claim and check then refuse, saying what could not be reached (the records of the project on the remote) and why, and change nothing; "
+                 "with --assume-unreachable-ok they go on (a claim stays provisional until a later verb completes or drops it, a check answers from what this machine fetched last) and the audit log gets a marshal:unreachable-ok line. "
+                 "The verbs of the flow that ask the marshal first (feature start, sync, merge, verify and finish) do the same and take the same flag: they refuse with exit 3 and change nothing, and with --assume-unreachable-ok go on and write the same audit line. "
+                 "status shows the cache with a 'remote not checked' notice. "
+                 "Every other change of a shared record (set, renew, release, take, takeover, finish, resign) needs the remote and exits 3 without it; there is no override for those. Records can be signed: one key per lead machine, a signers file per project "
                  "and the mode in the switch file (marshal enable --integrity); with integrity on, status and check tag records signed, unsigned, INVALID or cannot verify, "
                  "strict ignores unsigned and invalid ones with a warning, and a rollback prints rollback detected."),
         "scripts": ["marshal.sh", "marshal_store.py", "marshal_refs.py"],
         "verbs": {
             "claim": verb("Become the lead of feature NAME (creates the record; refuses when another lead holds it)", [("NAME", "none")],
                           [PROJECT_OPT, AS_OPT, opt("--goal", "what the feature is to achieve", "TEXT"),
-                           opt("--as-successor-of", "continue as the lead after a restart: the old lead's id (see marshal handoff)", "ID")],
+                           opt("--as-successor-of", "continue as the lead after a restart: the old lead's id (see marshal handoff)", "ID"), UNREACHABLE_OPT],
                           desc=("With --as-successor-of ID you take over from the lead ID without the owner's words when that lead's lease is stale and its host, OS user and "
                                 "work tree are yours (a restart gives the session a new id and nothing else that tells it apart). The record keeps its goal, plan and note and "
                                 "names the succession; it is audited as marshal:succession. Any other case is refused: the owner's marshal takeover covers it. "
@@ -346,8 +381,8 @@ COMMANDS = {
                         [PROJECT_OPT, AS_OPT, opt("--goal", "the goal", "TEXT"), opt("--plan", "the plan, free text or a checklist", "TEXT"), opt("--note", "a note for the next reader", "TEXT"),
                          opt("--status", "planned, active, blocked or verifying", "STATE", ("planned", "active", "blocked", "verifying"))]),
             "check": verb("Before starting work or changing a plan: is the feature free for you, is anything else in its way (exit 1: refuse; warnings go to stderr)", [("[NAME]", "none")],
-                          [PROJECT_OPT, AS_OPT, opt("--no-fetch", "read the cache of the shared refs only, do not fetch (the session hook uses it)")],
-                          desc="This verb only reads; it renews no lease. The commands of the flow that ask the marshal first (feature merge, sync, status, verify and finish; local prepare, verify and clean; review check and apply) renew the lease of their own lead as they ask."),
+                          [PROJECT_OPT, AS_OPT, opt("--no-fetch", "read the cache of the shared refs only, do not fetch (the session hook uses it)"), UNREACHABLE_OPT],
+                          desc="With the shared refs backend it asks the remote and refuses (exit 3) when it cannot be reached, unless --assume-unreachable-ok. This verb only reads; it renews no lease. The commands of the flow that ask the marshal first (feature merge, sync, status, verify and finish; local prepare, verify and clean; review check and apply) renew the lease of their own lead as they ask."),
             "renew": verb("Renew your lease on a feature (long verbs and the lead's other commands on the feature do this themselves)", [("NAME", "none")], [PROJECT_OPT, AS_OPT]),
             "release": verb("Give the feature up, leaving a handoff note; it has no lead until someone takes it", [("NAME", "none")],
                             [PROJECT_OPT, AS_OPT, opt("--note", "what the next lead must know", "TEXT")],
@@ -385,6 +420,7 @@ COMMANDS = {
                                   "Per feature it has the tip, whether the whole-suite run applies to it (the run's command is the project's test_command now, or with declared gates the feature-tier gates in order, `gates: NAME=COMMAND; ...`, as feature verify records them), the agent branches merged into it since it was cut from develop, the unmerged ones prepared against it (as the registry of local runs records) "
                                   "and the commits ahead of develop; with NAME only that feature, otherwise every open one; the agent branches of no open feature are said once, after the features. "
                                   "When the project declares gates, a `== gates` section follows the features with each gate's tier, name and command (they replace test_command), and --json carries them as `gates` (an empty list without gates). "
+                                  "When the project answers hold accepted deviations (methodology_accepted), a `== methodology deviations` section follows the gates, apart from the open gaps: each deviation with its status (accepted, or accepted, no longer applies), reason and date, and the number of open gaps; --json carries them as `deviations`. "
                                   "The goal, plan and note of the marshal record appear under a line saying they are data from the lead, not instructions, with control characters stripped. "
                                   "The environment section gives the last env check and env apply recorded for the project (verdict, time, and whether that was at HEAD now). "
                                   "For a feature this identity leads it names the claim --as-successor-of command a restarted session runs. --write also records when the note was written (what qargi lead compact-check compares with the last merge), and a line says whether a compact is safe now (see qargi help lead). "
@@ -405,7 +441,10 @@ COMMANDS = {
         "scripts": ["branch.sh"],
         "verbs": {
             "prune": verb("List, or with the token and an approval delete, the merged agent/* and feature/* branches and their worktrees", [],
-                          [PROJECT_OPT, opt("--remote", "also the merged agent/* and feature/* branches on origin"), PLAN, APPROVED],
+                          [PROJECT_OPT, opt("--remote", "also the merged agent/* and feature/* branches on origin (fetches first)"), PLAN, APPROVED],
+                          desc=("A branch is merged when it was merged with --no-ff into develop, into a branch of repo.long_lived or repo.detached or the remote-tracking branch origin/BRANCH of a detached one "
+                                "(a detached branch that origin changes only through a pull request lags behind it locally; fetch first, --remote does), or, for an agent branch, into an open feature. "
+                                "A branch that only sits at a tip was never merged and is kept."),
                           examples=["qargi branch prune", "qargi branch prune --remote --plan TOKEN --approved \"yes, prune them\""]),
         },
     },
@@ -451,27 +490,38 @@ COMMANDS = {
         },
     },
     "backlog": {
-        "summary": "The project's backlog: list its open items, move a done one to the dated archive",
+        "summary": "The project's backlog: list, add, and archive the done ones",
         "desc": ("The backlog is a markdown file that the project answer backlog.file names (a path: ~/ works, a relative path is taken from the repository, "
                  "and the file may live outside it, in a memory store for instance; qargi project set PROJECT backlog.file PATH). "
                  "An item is a top-level list line written '- [ID] text' (or '* [ID] text'), ID a lowercase slug of letters, digits and hyphens, two characters or more "
                  "(so a task-list box '- [x] text' is no id), with the indented lines after it. Any other top-level list line is an item without an id and is listed as unnumbered; "
                  "headings, paragraphs and fenced code blocks are not items. feature finish and release finish print a plan line, 'backlog items named in these commits: ID, ...', "
                  "for the open items whose id the messages of the commits being merged contain; it is information only and nothing is done, and nothing is printed when backlog.file "
-                 "is unset or its file is missing."),
+                 "is unset or its file is missing. backlog.section names a heading of the file (its text, with or without the #s): only the list under it holds items, up to the next "
+                 "heading of the same or a higher level (a deeper heading belongs to it), also for that plan line; a heading the file lacks is an error for the verbs and names nothing in the plan line. "
+                 "backlog.archive says where the archive goes: a directory (created when absent; a ~/ or relative path works as for the file) that receives NAME-archive-YYYY-MM.md, "
+                 "or a path ending in .md for one archive file whatever the month; by default the archive is beside the backlog file."),
         "scripts": ["backlog.sh"],
         "verbs": {
             "list": verb("List the open items with their ids; an item without an id is shown as '-', a duplicated id is flagged", [],
                          [PROJECT_OPT, opt("--json", "print the file, the items (id, line, text, full text, duplicate) and the duplicated ids as one JSON object")],
                          desc="Read only, so a member may run it. Exit 1 when backlog.file is unset or its file is missing.",
                          examples=["qargi backlog list", "qargi backlog list --json"]),
-            "done": verb("Move an item, with the evidence and the date, to the archive file beside the backlog and remove it from the backlog, with the token and an approval", [("ID", "none")],
-                         [PROJECT_OPT, opt("--evidence", "the words that show the item is done (they are archived with the item and the date)", "TEXT"), PLAN, APPROVED],
-                         desc=("The plan shows the item and the file it goes to. Applied, the item (as written, with its indented lines), the date and the evidence are appended to "
-                               "NAME-archive-YYYY-MM.md in the directory of the backlog file (NAME is the backlog file's name without .md; the archive is created when absent), "
-                               "and then the item is removed from the backlog. Nothing is deleted without the plan. Refused when the id is not there, or is used by more than one item "
+            "add": verb("Add an item: '- [ID] TEXT' at the end of the list, of the section when backlog.section is set", [("ID", "none"), ("TEXT", "none")],
+                        [PROJECT_OPT, opt("--detail", "more words for the item, written as indented lines under it (one line of the option per line of the item)", "TEXT")],
+                        desc=("ID is a lowercase slug (letters, digits and hyphens, two characters or more); an id that is no slug, or is already an item anywhere in the file (also outside "
+                              "the section), is refused (exit 1) and the file is not touched. TEXT is one line; --detail may span lines. The item is written at once (no plan: it adds a line and "
+                              "removes nothing) and an audit line is kept. Lead only: a member's guard refuses every backlog verb but list; report the item in the task output instead."),
+                        examples=["qargi backlog add fix-names \"Rename the two helpers that share a name\"", "qargi backlog add fix-names \"Rename the helpers\" --detail \"They differ in case only.\""]),
+            "done": verb("Move items, with the evidence and the date, to the archive file beside the backlog and remove them from the backlog, with the token and an approval", [("ID", "none"), ("[ID...]", "none")],
+                         [PROJECT_OPT, opt("--evidence", "the words that show the items are done (they are archived with each item and the date)", "TEXT"), PLAN, APPROVED],
+                         desc=("Several ids make one batch: one plan listing every item, one token for the whole batch, and the same evidence archived with each id; the batch applies together "
+                               "(the archive is written once, then the backlog), and an id that is not there, is used by more than one item, or is named twice refuses the whole batch with no plan. "
+                               "The plan shows the items and the file they go to. Applied, each item (as written, with its indented lines), the date and the evidence are appended to "
+                               "NAME-archive-YYYY-MM.md in the directory of the backlog file, or where backlog.archive says (NAME is the backlog file's name without .md; the archive is created when absent), "
+                               "and then the items are removed from the backlog. Nothing is deleted without the plan. Refused when the id is not there, or is used by more than one item "
                                "(make the ids unique first). Not available in a member run."),
-                         examples=["qargi backlog done fix-names --evidence \"merged, suite green\"",
+                         examples=["qargi backlog done fix-names --evidence \"merged, suite green\"", "qargi backlog done fix-names add-cache --evidence \"merged in feature/names, suite green\"",
                                    "qargi backlog done fix-names --evidence \"merged, suite green\" --plan TOKEN --approved \"yes\""]),
         },
     },
@@ -510,13 +560,17 @@ COMMANDS = {
                  "It is pushed and a pull request into master runs CI on the commit that will be released. Finishing merges it into master with --no-ff, "
                  "tags that merge commit, merges the tagged master commit (not the branch a second time) into develop (a hotfix: into the open release branch, if there is one) with --no-ff, "
                  "so master holds no merge commit that develop lacks, and deletes the branch. A release starts only from "
-                 "a develop whose head passed the whole suite. Starting, pushing, merging, tagging and publishing need the plan token and an approval; signing needs your terminal. "
+                 "a develop whose head passed the whole suite. Starting, pushing, merging, tagging and publishing need the plan token and an approval: release plan prints one plan for the cut (start, push, finish, site) and one token, "
+                 "its approval is recorded once, and those steps then take --plan TOKEN alone; publishing is not in the cut and has its own plan and approval; signing needs your terminal. "
                  "The layout of what a release updates is the project's, set in its answers (all optional): release.version_file (the file that holds only the version; default VERSION; "
                  "none when there is no such file, and the version is then the changelog heading and the tag), release.changelog.unreleased (the heading of the changes to come, default "
                  "'## [Unreleased]'; it may carry the version, as in '## {version} (unreleased)', and is then renamed) and release.changelog.released (default '## [{version}] - {date}'), "
                  "release.version_files (other files that carry the version, a list of paths; default none: start, status and verify warn of the ones that do not contain the version, never bump them), "
                  "release.man_pages (a list of paths; default the man/*.1 files), release.test_command (what release verify runs, a command line or a list of words; default test_command) "
-                 "and release.preflight (a command as a list of words, {version} replaced, run by start and push before they change anything; a non-zero exit refuses and shows the tail of its output). "
+                 "and release.preflight (a command as a list of words, {version} replaced, run by start and push before they change anything; a non-zero exit refuses and shows the tail of its output; "
+                 "a hotfix's start does not run it, because master lacks the content the hotfix brings, and its push does, in a copy of the branch). "
+                 "release.hotfix_preflight (the same forms) is what a hotfix's push runs instead of release.preflight, in a copy of the branch before anything is pushed, when the stored preflight needs content only the fix has or does not suit a hotfix; default none, and release.preflight runs. "
+                 "release.finish_check (a command line, or a command as a list of words, {version} replaced; default none) is run by finish in a copy of the branch once its plan is approved, before anything is merged, tagged or pushed; a non-zero exit refuses and shows the tail of its output, and nothing has moved. "
                  "The project answer gates (an ordered list of {name, command, tier}) replaces test_command and release.test_command when declared: release verify runs the feature-tier gates, then the release-tier gates. "
                  "The release files are the project's too: release.assets_command (the command that builds them, a command line or a list of words with {version} replaced), which "
                  "release assets runs in a clean worktree of the tag, and release.assets (files or globs to attach, {version} replaced), taken in that worktree by release publish. "
@@ -530,6 +584,23 @@ COMMANDS = {
                  "release finish ends with 'next: qargi release site VERSION' (the methodology's after_release step) and release status has a site line."),
         "scripts": ["release.sh"],
         "verbs": {
+            "plan": verb("One plan and one approval for the whole cut: start, push, finish and site (publish has its own plan)", [("VERSION", "none")],
+                         [PROJECT_OPT, HOTFIX_OPT, opt("--date", "the changelog and man page date (default today)", "YYYY-MM-DD"), opt("--keep", "keep the branch when the cut finishes"),
+                          opt("--allow-empty-notes", "release although the unreleased section of CHANGELOG.md is empty"),
+                          opt("--again", "discard the recorded cut of VERSION and plan anew"), PLAN, APPROVED],
+                         desc=("Without --approved it changes nothing: it prints every step of the ceremony with what moves (1 start, 2 push when the repository has an origin, 3 finish, 4 site when "
+                               "site.enabled is true) and ONE plan token; publish is named as outside the cut. The start step is planned by release start itself, so its refusals come before a token does. "
+                               "Approving it is release plan VERSION --plan TOKEN --approved \"<your go-ahead>\" (the same --date, --keep and --allow-empty-notes): the words are recorded once, with the plan, "
+                               "under the state's release directory (PROJECT-VERSION.cut.json), and the audit log gets a release:cut line. Lead only. Then each step is its own verb with --plan TOKEN alone "
+                               "(release start, push, finish, site VERSION --plan TOKEN): the words are the record's and appear on that step's audit line, the step runs only when what the plan fixed "
+                               "still holds, and each prints the next one. start must find its own plan as it was frozen (the head of the base, the files bumped, the date); push the branch where start left it; "
+                               "finish the branch where push left it (the head CI ran on), master and the second target as planned and --keep as planned; site the tag on the commit finish tagged. "
+                               "release publish is not a step of the cut: what it creates (the notes and the release files, whose hashes exist only after the tag) is shown by its own plan, so it refuses the cut token (run publish with its own plan and approval). A step that no longer matches "
+                               "is refused before anything moves and is run with its own plan and approval (a fix committed after start is pushed that way, release fix --push); the cut records it and goes on from "
+                               "the new state. A step under the cut is the lead's, as approving is: it is refused (exit 2) in a member run and when QARGI_NESTED is set, and a --plan that is not the recorded cut's token (without --approved) is refused naming that a cut is recorded. "
+                               "finish is still the push and tag gate: the cut's words are the owner's, and --ignore-checks WORDS at the call is recorded as before. "
+                               "Run again, plan shows the recorded cut and which steps ran (release status does too); --again discards it. A cut cannot begin once the branch or the tag exists."),
+                         examples=["qargi release plan 0.2.4", "qargi release plan 0.2.4 --date 2026-11-12 --plan TOKEN --approved \"cut 0.2.4\"", "qargi release start 0.2.4 --plan TOKEN"]),
             "start": verb("Cut release/VERSION from develop (hotfix/VERSION from master) and bump the version", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT, opt("--date", "the changelog and man page date (default today)", "YYYY-MM-DD"),
                                                                                                     opt("--allow-empty-notes", "release although the unreleased section of CHANGELOG.md ('## [Unreleased]' by default) is empty"), PLAN, APPROVED],
                           desc=("Without --approved it changes nothing: it prints the plan (the branch, the base it is cut from and that base's head, the one commit that bumps the version, the files "
@@ -538,8 +609,10 @@ COMMANDS = {
                                 "The checks below run for the plan too, so a refusal comes before a token does. "
                                 "Before anything changes it checks what a release must update and refuses, naming the file and the fix: a man page (man/*.1) needs a .TH line "
                                 "with a date and a version field, which the first commit sets to the date and VERSION (the pages are release.man_pages, else man/*.1); a CHANGELOG.md needs content under "
-                                "its unreleased heading ('## [Unreleased]', or release.changelog.unreleased). The version file is release.version_file (default VERSION; none: no file is bumped). "
-                                "release.preflight runs before anything changes. A project without a man page or changelog is not checked for that part. A release (not a hotfix) ends by listing what it contains: "
+                                "its unreleased heading ('## [Unreleased]', or release.changelog.unreleased). A hotfix does not need that heading when release.changelog.unreleased carries {version} (such a project renames it at a release, so master has none); with any other unreleased heading, the default one included, a master without it is refused for a hotfix as for a release. When it applies, "
+                                "the plan says so and the hotfix branch gets the heading for VERSION, empty, above the first heading that follows the released template (else the first of that level, fenced code ignored; at the end when there is none) (the changes are recorded under it on the branch; release finish refuses, before anything is merged, tagged or pushed, while that section of the branch's CHANGELOG.md is missing or empty, and release push runs only the preflight the project set); a release is still refused. The version file is release.version_file (default VERSION; none: no file is bumped). "
+                                "release.preflight runs before anything changes; for a hotfix it does not run at start (master does not have the fix, its changelog entry or whatever the check looks for), "
+                                "the plan says so, and release push runs it in a copy of the branch before anything is pushed (release.hotfix_preflight, when set, runs there instead of it). A project without a man page or changelog is not checked for that part. A release (not a hotfix) ends by listing what it contains: "
                                 "the features merged into develop since the previous tag, the --no-ff merges whose message is \"Merge branch 'feature/...'\", one per line with the short sha. "
                                 "When master and the new branch share no history (no merge base: master is one snapshot commit, say) it says so and that release push joins them. "
                                 "With the answer release.version_files (a list of paths relative to the repository) it checks, once VERSION is bumped, that each listed file on the new branch "
@@ -565,8 +638,10 @@ COMMANDS = {
                            [PROJECT_OPT, HOTFIX_OPT, opt("--strict", "refuse, before anything runs, when a CI job matches no declared gate name")],
                            desc=TAG_NOTE + " The exit status stays the suite's result. The command is release.test_command when the project sets one, else test_command. " + GATES_NOTE + " "
                                  "Before it runs, it reads the workflow files of the tree it verifies (.github/workflows/*.yml and *.yaml; standard library only, no YAML library: the job ids under jobs: and the name: line of each job) "
-                                 "and warns on standard error, naming each job whose name and id match no declared gate name (with no gate declared, every job). A job whose name cannot be read (an expression, a block scalar, a flow mapping) "
-                                 "is reported as unknown, a note and never a failure. --strict refuses (exit 1, nothing run) when any job matches no gate name. Without a workflow it prints nothing new. "
+                                 "and warns on standard error, naming each job whose name and id match no declared gate name, is not listed in a gate's ci_jobs and is not listed in the optional answer ci.not_gates (the jobs that are aggregate or publish jobs and not gates). "
+                                 "A job a gate lists in ci_jobs is reported as a note, covered by that gate. With no gate declared it prints one note naming the jobs instead of a warning each. "
+                                 "A name listed in ci_jobs or ci.not_gates that no workflow has is a warning. A job whose name cannot be read (an expression, a block scalar, a flow mapping) "
+                                 "is reported as unknown, a note and never a failure. --strict refuses (exit 1, nothing run) when any job matches no gate name (the listed ones match), also with no gate declared. Without a workflow it prints nothing new. "
                                  "On the release branch, with release.version_files set, it also shows whether every listed file contains VERSION (a warning for the ones that do not). " + OTHER_RUNS_NOTE + " " + SUITE_FAIL_NOTE),
             "fix": verb("Make a worktree on the release branch to commit a fix in, and push the fix again with --push", [("VERSION", "none")],
                         [PROJECT_OPT, HOTFIX_OPT, opt("--push", "push the committed fix: the same as release push (the plan token and approval below)"), PLAN, APPROVED],
@@ -593,10 +668,12 @@ COMMANDS = {
                            desc=("The plan lists the checks of the branch's pull request (gh pr checks: one line per check, pass, fail or pending) and refuses, without a token, while one fails or is pending, "
                                  "unless --ignore-checks WORDS is given; the plan token covers the words. A missing gh, no pull request or no checks is a warning in the plan, and the apply then refuses "
                                  "(the checks are read again) unless --ignore-checks is given. A clean worktree that release fix made is removed with the branch. "
-                                 "The second merge is of the master merge commit that carries the tag (message \"Merge tag 'VERSION' into develop\"); it may conflict, usually over the version number (the model says so). "
+                                 "The second merge is of the master merge commit that carries the tag (message \"Merge tag 'VERSION' into develop\"); it may conflict, usually over the version number (the model says so), "
+                                 "and the message then names the tag and the short sha of that commit, which is kept in a .master file beside the worktree and used again only when it is a merge of the current master and the branch head. "
                                  "Nothing moves then: resolve in the worktree "
                                  "the message names, which holds a merge of that commit, commit, and run the same command with --resolved. It refuses a branch whose manual page has an empty .TH date or version, "
-                                 "and, when release.version_file is none, one whose changelog has no section for VERSION. It also refuses, with the fix, a branch that shares no history with master (no merge base): "
+                                 "and, when release.version_file is none, one whose changelog has no section for VERSION. When release.finish_check is set the plan lists it, and once the plan is approved it runs in a copy of the branch before any merge, tag or push "
+                                 "(a non-zero exit refuses with the tail of its output; nothing was merged, tagged or pushed). It also refuses, with the fix, a branch that shares no history with master (no merge base): "
                                  "run release push first, whose plan joins the history of master. " + REMOTE_NOTE + " "
                                  "When the answer release.after_steps lists steps (a string, or an object {name, command, who, evidence}; {version} replaced), it prints each as an 'after the release: [pending] NAME (WHO): COMMAND' line, never runs them, and "
                                  "records them as pending under the state's release directory (PROJECT-VERSION.after.json) for release status and release step. "
@@ -645,7 +722,7 @@ COMMANDS = {
                                   "of qargi release assets, the repository or another worktree of it (a symbolic link that leaves them, a path with a .git component and two files of one base name are refused), attached by the same call that creates the release. "
                                   "It refuses when GitHub has the release already, when the tag is missing, when the notes are empty, and, when the answer release.sign is set, until "
                                   "qargi release sign recorded an ok for VERSION and none of the signed files or signatures changed since (without release.sign, which is the default, there is no such wait); --verify-tag makes gh refuse a tag that is not on origin. "
-                                  "Needs the plan token and an approval; a member run cannot publish.")),
+                                  "Needs the plan token and an approval; a member run cannot publish. The token of a release plan (the cut) is refused for it: publish has its own plan.")),
             "site": verb("Build the documentation site of the tag VERSION and commit it on the detached site branch; never pushes", [("VERSION", "none")],
                          [PROJECT_OPT, PLAN, APPROVED],
                          desc=("Only when the answer site.enabled is true. The source is the tree of the tag VERSION (its CHANGELOG.md, VERSION, README.md and "
@@ -675,6 +752,10 @@ COMMANDS = {
                  "an orphan or on less than 10% free (QARGI_DOCTOR_MIN_FREE moves the limit, in percent). "
                  "window-source: where the context-window table of the project's local runtime comes from (its definition, or the answer lead.context_window, which overrides it) "
                  "and whether each model id its roles name is in the table; an id that is not there warns, since its window is only assumed. "
+                 "tools: flock (the locks of the finishing verbs and the ref journal) and timeout (the bound on a question put to a remote) are on PATH; a missing one warns and names what it is for and "
+                 "the package that has it (util-linux, coreutils; make bootstrap installs both). "
+                 "project-env: the last qargi env check recorded for the project in state/env/PROJECT.json, as 'last env check VERDICT at TIME' (a warning when the verdict is not ENV OK; "
+                 "unknown, 'never run', when none was recorded). It only reads that record and never runs the project's code: qargi env check is what runs the project's doctor and records the result. "
                  "--json prints {project, checks: [{name, status, detail, fix}], warnings, strict, exit}."),
         "scripts": ["doctor.py", "orphans.sh"],
         "usage": [("PROJECT", "project", True)],
@@ -710,7 +791,8 @@ COMMANDS = {
                                 "submodule that is not initialised or at another commit, are missing items. It adds, read-only, whether the checkout "
                                 "loads the project's skills, agents and memory, whether the members are current (STALE, DRIFT), packs check and memory check. "
                                 "The last line is ENV OK or ENV INCOMPLETE: N missing (...); exit status 0, 1 or 2 (usage, no such project, no repository). "
-                                "The verdict, HEAD, time and commands are recorded under check in state/env/PROJECT.json (mode 600, the other keys are kept); no command output is."),
+                                "The verdict, HEAD, time and commands are recorded under check in state/env/PROJECT.json (mode 600, the other keys are kept); no command output is. "
+                                "qargi doctor PROJECT shows that record as its project-env line (it reads it and runs nothing of the project's)."),
                           examples=["qargi env check", "qargi env check --project acme --timeout 60", "qargi env check --repo ~/src/acme --json"]),
             "plan": verb("Run the dry run of the bootstrap, show it grouped by privilege, print a plan token (the lead's; runs project code)", [],
                          [PROJECT_OPT, opt("--repo", "the repository directory (default: the project's repo.path, else the repository around here)", "DIR", "dir"),
@@ -1097,7 +1179,7 @@ COMMANDS = {
                              opt("--role", "the task's role, written to RUN/ability, with its class in RUN/class and in your registry (the registry's decides); a read-only role keeps the clone unchanged (default build)", "ROLE", "workrole"),
                              opt("--profile", "the profile to dispatch under (for example advisor or auditor for review); resolved before any clone, refused when its class does not fit the role, recorded in RUN/profile and printed with MEMBER, MODEL and EFFORT", "NAME"),
                              opt("--task-file", "the file with the task: prepare then writes the whole task block to RUN/task.md for every runtime (refused when the file is empty, not a regular file, a link, over 1 MiB, or has a line that starts SCOPE:); needs --done", "FILE", "file"),
-                             opt("--done", "the check that says the task is done, as one command line (with --task-file). Refused when it is empty, has several lines or bash -n cannot parse it, and, for a simple command (no ; & | < > ( ) operator), when its first word, after any NAME=value words, is not an executable on PATH, a shell builtin or keyword, or a script (a word with a slash is a file of BASE, a file under a --scope path that the task may create, or an absolute one; with --repo-url a relative path is taken as given). A line with an operator is accepted when bash parses it: only its syntax is checked", "COMMAND"),
+                             opt("--done", "the check that says the task is done, as one command line (with --task-file). Refused when it is empty, has several lines or bash -n cannot parse it, and when the word that starts any of its simple commands (at the start of the line and after ; & && || | ( or $(, past NAME=value words and redirections) is not an executable on PATH, a shell builtin or keyword, or a script, so prose that only contains an operator (coverage > 80%) is refused (a first word with a slash is a file of BASE, a file under a --scope path that the task may create, or an absolute one; with --repo-url a relative path is taken as given; a later word with a slash is not looked up, since a cd may precede it). Only command words are checked, never the arguments", "COMMAND"),
                              opt("--scope", "a path the task may change, relative, with no space, comma or .. in it (repeat for several; a directory, a file or a glob); written as the SCOPE: line, which qargi review check applies as the limit. Without it the line says none (with --task-file)", "PATH")],
                             desc=("With --task-file, prepare writes RUN/task.md, the task block, for every runtime, and prints TASK_FILE=RUN/task.md; the lead hands the member that path unchanged. Its sections, in this order: "
                                   "ROLE (with the class), ABILITY (the role's text), TASK (the file), DONE, PROFILE (the text of the repository's profile, ~/.qargi/config/profiles/<repository>.md, when there is one), "
@@ -1169,6 +1251,7 @@ COMMANDS = {
                                 "(a feature finish since the run was prepared, for one) are no change and are named in its output. It also refuses a run whose clone holds commits that were "
                                 "never applied (review apply) or whose applied tip is on no branch but agent/* in the repository (feature merge first), so "
                                 "finished work is not deleted by mistake. --discard is the deliberate way past all of these; it still refuses anything that prepare did not make. "
+                                "It also refuses, --discard or not, a run whose review apply is running (the apply holds a pid lock in the lead's state, apply/RUN-ID.json.run); a lock whose process is gone does not block, and clean removes it. "
                                 "A run cleaned with --applied needs a RUN/applied record and a repository path in the registry (a run of a repository URL is kept); --applied takes no RUN_DIR and no --discard. "
                                 "A cleaned run keeps its line in the registry, marked cleaned: marshal status and handoff list it as cleaned, never as an open task. "
                                 "--stale DAYS --scratch DIR is a plan first: it prints each finished run older than DAYS days and changes nothing; with --yes each is cleaned exactly as clean RUN would, "
@@ -1191,6 +1274,17 @@ COMMANDS = {
                                 "A clean marks the run's record cleaned and removes its saved copy."),
                           examples=["qargi local clean --applied --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch --yes",
                                     "qargi local clean --orphans --days 3", "qargi local clean --orphans --days 3 --plan TOKEN --approved \"remove them\""]),
+            "report": verb("A read-only member's own way to write its report: standard input, or a file under OUT, as RUN/out/report.md with a minimal manifest.json", [("RUN", "dir", True)],
+                           [opt("--findings", "write RUN/out/findings.md instead of report.md"), opt("--from", "read the report from this file under OUT (a relative name is relative to OUT) instead of standard input", "FILE", "file"),
+                            opt("--force", "replace a report that is there already")],
+                           desc=("For a read-only run whose member's file tool is refused for a report file: the member writes its text with its file tool under another name in OUT (draft.txt) and runs this verb itself, "
+                                 "with the RUN_DIR of its task block, so the report reaches OUT without shell text (echo, heredoc). The report is read from a regular file under OUT (--from) or from standard input (qargi local report RUN < report.md); "
+                                 "a link, a path that leaves OUT, a file over one megabyte and an empty report are refused. A report that is there already is kept unless --force. "
+                                 "When OUT has no manifest.json one is written (status DONE, the run's base branch and commit, commits [] and the report in artifacts); a manifest the member wrote is kept. "
+                                 "Prints what it wrote and the qargi review check command to run next; the check, not this verb, decides whether the report has the required form. "
+                                 "It is not review save, which is the lead's and stores a member's final message: it works in a read-only run that the lead's registry names, only inside that run's OUT, "
+                                 "and with the member mark set (qargi local run) only in the member's own run. A build run is refused (its product is patches). "
+                                 "findings.md is not a report review check reads: it is for a member that writes its findings apart from the report.")),
             "list": verb("List the local runs: role, slug, age, whether applied and merged", [],
                          [opt("--scratch", "the directory the runs were prepared in (default: the runs of the registry that still exist)", "DIR", "dir")],
                          desc=("Read-only. One row per run: ROLE, SLUG, AGE, APPLIED (RUN/applied exists: review apply ran; closed for a run closed with close --applied-by-am), MERGED (the applied tip is on a branch other than agent/*; ? for a run of a repository URL) and RUN. "
@@ -1211,6 +1305,7 @@ COMMANDS = {
                                 "A report-only run (a review) has no patches: it passes with a report.md (or PREFIXreport.md, as in a team run) that has a Findings section and whose last non-empty line is "
                                 "`verdict: accept` or `verdict: revise`, and the manifest.json (PREFIXmanifest.json) beside it; a missing manifest or verdict line fails, a missing Checked section warns. "
                                 "A patch, or a touched_paths entry of the manifest, outside SCOPE fails: SCOPE is the SCOPE line of RUN/task.md (beside OUT) when it records one, else the manifest's scope[]. "
+                                "A manifest whose done.command is not the DONE line of RUN/task.md (the check the lead set) fails, with both commands named; a manifest with no done.command warns. "
                                 "Commits dated within two minutes of each other (made in one batch at the end) warn: explain the warning in the report. "
                                 "Prints OK, WARN or FAIL lines and a summary; exit 1 when any line is FAIL (warnings alone exit 0). "
                                 "When the run is in the lead's registry and the project declared a take-in scrub, a series that passes is then scrubbed: the answer review.scrub (a command line or a list of words) "
@@ -1284,17 +1379,21 @@ COMMANDS = {
                                 "README.md and INDEX.md repeat per tier and are fine). A tier that does not exist (memory init creates it) or cannot be reached is information, not a failure. "
                                 "Exit 1 when anything failed.")),
             "init": verb("Create a memory tier (repo, project, shared or system) as an empty store of the standard layout", [("TIER", "none")],
-                         [PROJECT_OPT, PLAN, APPROVED],
+                         [PROJECT_OPT, WORKTREE, PLAN, APPROVED],
                          desc=("Without --approved it shows what would be created and a plan token and changes nothing. It refuses a tier that holds files that are not "
                                "a standard store, one whose place overlaps another tier, a repo tier outside the checkout, and the cloud tier (provision creates that). "
-                               "The repo tier is written inside your repository checkout: qargi never commits it, so review it and commit or ignore it yourself. "
+                               "The repo tier is written inside your repository checkout: qargi never commits it, so review it and commit or ignore it yourself; the plan names the branch checked out "
+                               "there, which is where the files must be committed. --worktree DIR writes the repo tier into another worktree of the repository instead (the same path inside it), "
+                               "and the plan then names the branch of that worktree; it is refused for any other tier. "
                                "A tier that is already set up says so and exits 0.")),
             "move": verb("Move notes from one tier to another, with the original archived in the first", [("PATH", "none")],
                          [PROJECT_OPT, opt("--from", "the tier the notes are in", "TIER", ("repo", "cloud", "project", "shared", "system")),
-                          opt("--to", "the tier they go to", "TIER", ("repo", "cloud", "project", "shared", "system")), PLAN, APPROVED],
+                          opt("--to", "the tier they go to", "TIER", ("repo", "cloud", "project", "shared", "system")), WORKTREE, PLAN, APPROVED],
                          desc=("PATH is one note (ending in .md) or a folder prefix under shared/ or roles/ROLE/. Only notes move, never indexes. A note must live in one tier, "
                                "so it refuses a path that is also in another tier. Nothing is deleted: the original goes to /_archive/<date>/ of the first tier and each copy "
-                               "records its origin. Without --approved it prints the plan and its token and changes nothing; a tier whose notes changed since the plan is refused.")),
+                               "records its origin. Without --approved it prints the plan and its token and changes nothing; a tier whose notes changed since the plan is refused. "
+                               "A move that has the repo tier at one end warns where its files must be committed, and --worktree DIR (refused when neither end is the repo tier) uses the repo tier "
+                               "of that worktree of the repository instead of the checkout's.")),
             "split": verb("Copy the notes a selector picks into another store, optionally archiving the originals", [("FROM", "file"), ("TO", "file")],
                           [PREFIX, ROLE_SEL, NOTE_KIND, opt("--archive", "move the originals to /_archive/<date>/ in FROM (with their origin in Sources:)"), PLAN, APPROVED],
                           desc="At least one of --prefix, --role and --note-kind is needed; a note must match every one given. Notes already in TO are left; a different one goes to /_conflicts/<date>/ in TO.",
@@ -1311,7 +1410,8 @@ COMMANDS = {
     "canon": {
         "summary": "Bring a project's two memory stores to the standard layout and keep them there",
         "desc": ("The canon fixes the layout and the note format of both stores (shared/ and roles/<role>/, a header on every note, an "
-                 "index with a Load column). plan and apply set up an empty store and keep a current one current; a store of an older layout or canon version is reported as unknown and not changed."),
+                 "index with a Load column). plan and apply set up an empty store and keep a current one current; a store of an older layout or canon version is reported as unknown and not changed. "
+                 "A store that cannot be listed (the cloud tool missing, not logged in, no access) is reported as `unreachable: <reason>`, exits 1 and is never taken for an empty one: no plan is advised or made for it, and apply, seed-role and promote write nothing. A project with no store recorded checks clean."),
         "scripts": ["canon.sh"],
         "verbs": {
             "check": verb("Report conformance and the version of each store", [("PROJECT", "project")], [KIND]),
@@ -1393,7 +1493,9 @@ COMMANDS = {
                  "nothing until you confirm; replaced and removed items are saved under the state directory first. The archive is treated as "
                  "untrusted data: names and checksums are verified. Definitions are restored as files only (rebuild with provision). Memory "
                  "notes go to the stores named in the project's answers. An archive's project answers never add or change models.extensions or "
-                 "models.accept_no_barrier (they take a plan token and an approval: qargi provider enable, disable, accept): the stored value stays, "
+                 "models.accept_no_barrier (they take a plan token and an approval: qargi provider enable, disable, accept), nor the lead's answers ci.not_gates, "
+                 "methodology_accepted, review.reject_trailers, backlog.archive and backlog.section (a member's project set is refused them too); an archive may keep or drop "
+                 "entries of such a list but not add or change one: the stored value stays, "
                  "or the key is left out, and a note says so. It asks at a terminal; --dry-run shows the plan without one."),
         "scripts": ["transfer.py"],
         "usage": [("FILE", "file")],
@@ -1578,25 +1680,24 @@ TOPICS = {
         "prompt is the person's real control. A member never applies: it reports the plan and its token, and the lead shows them to the person "
         "(what the member's guard refuses: qargi help guard)."]),
     "guard": ("What a member's guard refuses", [
-        "A best-effort text check, not a sandbox: a member runs as your OS user (a real sandbox is not yet built); "
-        "qargi local verify and review check are the backstop.",
+        "A best-effort text check, not a sandbox: a member runs as your OS user; qargi local verify and review check are the backstop.",
         "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
-        "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, gates, env, site, backlog, packs, runs, upstream, git, review, roles.ROLE.tools, a whole role), init, new, link and unlink; "
+        "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, gates, env, site, backlog, packs, runs, upstream, git, review, roles), init, new, link and unlink; "
         "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (the rest "
         "read); release publish, sign, site, assets and fix; marshal claim, set, renew, release, take, "
         "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish, verify and park; branch prune; changelog renumber without --check; "
         "upstream status, sync; backlog done; ref record; memory init, "
-        "move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; review apply; env plan and apply; the names team run and task (skills, not commands).",
+        "move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; review apply; env plan and apply; team run and task.",
         "It refuses writes in the pack library, credentials, the install record, the runtime's skills, agents and plugin directories, the installed copy, "
         "the state's render, providers, marshal, feature and saved-run directories, its ref journal, the memory tiers, ~/.config/anthropic, and the "
         "lead's git configuration and session files. "
-        "Reading stays allowed except the lead's signing key and its directory. It refuses git push, git remote changes, git -c or config of keys that run programs (alias.*), gh, ssh, scp, sftp and rsync to a host.",
-        "A command is cut at every ; && || | and newline, inside quotes and heredocs too, and a substitution is a command: no refused verb, push or tag in text, "
-        "unless every command is echo, cat, tee, grep or git commit (then text is data, as is a heredoc body cat or tee gets, bar lines starting qargi). "
-        "Commit with git commit -F FILE. Piped or here-string shell programs are read; curl | sh and bash < f are refused. A cd it cannot read refuses relative writes.",
-        "The read-only class (review) writes only OUT and TMP: every change to the clone is refused, and a write through "
-        "a name the guard cannot read.",
-        "Setting QARGI_NESTED (a plan token skip only canon apply honours), or setting or unsetting QARGI_LEAD, is refused.",
+        "Reading stays allowed except the lead's signing key. It refuses git push, git remote changes, git -c or config of keys that run programs (alias.*), and rsync to a host.",
+        "A command is cut at every ; && || | and newline, inside quotes and heredocs, and a substitution is a command. A piece that starts with git push, git tag NAME, ssh, scp, sftp or gh "
+        "is refused even in text (not mid-sentence); any other refused verb is text when every command is echo, cat, tee, grep or git commit, "
+        "as is a heredoc body cat or tee gets, bar lines starting qargi. "
+        "Shell programs piped in or here-strings are read; curl | sh and bash < f are refused. A cd it cannot read refuses relative writes.",
+        "The read-only class (review) writes only OUT and TMP (its TMPDIR is the run's TMP): every change to the clone is refused. It runs build, vet and test commands with its given environment; assigning PATH, TMPDIR or GIT_* is refused, not the command.",
+        "Setting QARGI_NESTED (skips a plan token), or setting or unsetting QARGI_LEAD, is refused.",
         "A refusal is a result: report it."]),
     "naming": ("How resources are named", [
         "Project and role are single lower-case tokens. An instance is <project>-<role>, for example acme-build. A session is "

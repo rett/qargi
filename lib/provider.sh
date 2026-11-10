@@ -29,13 +29,13 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$NAME" ] && [ -n "$SURFACE" ] || usage_die "$usage"
-[ -n "$NOBAR" ] || die "say what you accept: --no-barrier (running a read-only role on $SURFACE without a read-only barrier). $usage"
-[ -n "$ASKED" ] || die "--asked \"<your words>\" is required: they are recorded as the reason. $usage"
+[ -n "$NOBAR" ] || usage_die "say what you accept: --no-barrier (running a read-only role on $SURFACE without a read-only barrier). $usage"
+[ -n "$ASKED" ] || usage_die "--asked \"<your words>\" is required: they are recorded as the reason. $usage"
 [ -z "$APPROVED" ] || [ -n "$PLAN_ARG" ] || usage_die "--approved needs --plan TOKEN, the token the plan printed"
 
-[ -n "$PROJ" ] || PROJ=$(python3 -I "$here/help.py" infer)
+[ -n "$PROJ" ] || PROJ=$(pymod help infer)
 # the barrier of the project's runtime as composed with the extensions the project enabled: one an extension provides and has verified counts
-state=$(python3 -I "$here/provider.py" effective "$NAME" "$SURFACE" read_only_barrier ${PROJ:+--project "$PROJ"}) || exit 1
+state=$(pymod provider effective "$NAME" "$SURFACE" read_only_barrier ${PROJ:+--project "$PROJ"}) || exit 1
 [ -n "$PROJ" ] || usage_die "no project: give --project P (the project whose answers record the acceptance)"
 valid_project "$PROJ" && [ -f "$DA_CONF/projects/$PROJ.json" ] || die "no stored answers for project '$PROJ' (qargi project list)"
 

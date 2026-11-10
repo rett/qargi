@@ -12,7 +12,8 @@ git init -q --bare "$T/remote.git" && git -C "$T/r" remote add origin "$T/remote
 mkdir -p "$T/c/projects"
 jq -n --arg p "$T/r" '{schema:1,project:"rproj",repo:{url:"https://github.com/example/rproj",path:$p,long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:{local:"claude-code",cloud:"claude-platform"}},memory:{},budget_cents:500}' > "$T/c/projects/rproj.json"
 eval "$(./bin/qargi local prepare --repo "$T/r" --base main --slug demo --scratch "$T" | sed '/^$/,$d' | sed 's/^/export /')"
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 [ "$($GIT -C "$CLONE" branch --show-current)" = agent/demo ] && ok "clone is on agent/demo" || no "branch"
 echo x > "$CLONE/f"; $GIT -C "$CLONE" add f && $GIT -C "$CLONE" commit -q -m work && ok "commit through the wrapper"
 [ "$($GIT -C "$CLONE" log -1 --format=%an)" = qargi ] && ok "author is qargi" || no "author"
@@ -92,6 +93,28 @@ git -C "$T/r2" update-ref refs/heads/feature/x "$AT"
 out=$(./bin/qargi local prepare --repo "$T/r2" --base main --slug c5 --scratch "$T"); C5=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out"); G5=$(sed -n '1,/^$/s/^GIT=//p' <<<"$out"); CL5=$(sed -n '1,/^$/s/^CLONE=//p' <<<"$out")
 echo z > "$CL5/h"; $G5 -C "$CL5" add h && $G5 -C "$CL5" commit -q -m work; echo '{}' > "$C5/out/manifest.json"; echo r > "$C5/out/report.md"; ./bin/qargi local verify "$C5" >/dev/null 2>&1
 err=$(./bin/qargi local clean "$C5" --discard 2>&1) && [ ! -e "$C5" ] && grep -q 'dropped 1 unmerged commit' <<<"$err" && ok "--discard drops it on purpose and says how many commits" || no "discard: $err"
+# an option that goes with another verb form is a usage error (exit 2), not a failure of the clean
+for bad in "--yes" "--scratch $T/ls"; do
+  # shellcheck disable=SC2086
+  out=$(./bin/qargi local clean "$T/nosuch.run" $bad 2>&1); rcu=$?
+  { [ $rcu = 2 ] && grep -q 'is for --' <<<"$out"; } && ok "clean RUN $bad is a usage error (exit 2)" || no "clean RUN $bad (rc=$rcu): $out"
+done
+# a run whose review apply is under way is not cleaned: the apply holds a pid lock (STATE/apply/RUN-ID.json.run: the pid and its start time), and clean refuses, --discard
+# or not, while that process lives; a lock whose process is gone, or whose pid another process now has, does not block
+out=$(./bin/qargi local prepare --repo "$T/r2" --base main --slug lk --scratch "$T"); CLK=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out"); echo '{}' > "$CLK/out/manifest.json"
+LKD=$T/s/apply/$(basename "$CLK").json.run; mkdir -p "$LKD"
+sleep 300 & LKP=$!
+LKS=$(cat "/proc/$LKP/stat"); read -ra LKA <<<"${LKS##*) }"; printf '%s %s\n' "$LKP" "${LKA[19]}" > "$LKD/pid"
+out=$(./bin/qargi local clean "$CLK" 2>&1); rcl=$?; out2=$(./bin/qargi local clean "$CLK" --discard 2>&1); rcl2=$?
+{ [ $rcl = 1 ] && [ $rcl2 = 1 ] && grep -q "a review apply of $CLK is running (process $LKP" <<<"$out" && grep -q 'is running' <<<"$out2" && [ -d "$CLK" ] && [ -d "$LKD" ]; } \
+  && ok "clean refuses a run whose review apply is running, --discard too, and removes nothing" || no "clean under a live apply lock (rc=$rcl/$rcl2): $out $out2"
+printf '%s 1\n' "$LKP" > "$LKD/pid"
+out=$(./bin/qargi local clean "$CLK" 2>&1); rcl=$?
+{ [ $rcl = 0 ] && [ ! -e "$CLK" ] && [ ! -e "$LKD" ]; } && ok "a lock whose pid has another start time (the pid was reused) does not block clean, and clean removes the lock" || no "reused pid (rc=$rcl): $out"
+out=$(./bin/qargi local prepare --repo "$T/r2" --base main --slug lk2 --scratch "$T"); CLK=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out"); echo '{}' > "$CLK/out/manifest.json"
+LKD=$T/s/apply/$(basename "$CLK").json.run; mkdir -p "$LKD"; kill "$LKP"; wait "$LKP" 2>/dev/null; printf '%s %s\n' "$LKP" "${LKA[19]}" > "$LKD/pid"
+out=$(./bin/qargi local clean "$CLK" 2>&1); rcl=$?
+{ [ $rcl = 0 ] && [ ! -e "$CLK" ] && [ ! -e "$LKD" ]; } && ok "a stale lock (its process is dead) does not block clean, and clean removes it" || no "stale apply lock (rc=$rcl): $out"
 # lead-side moves: strict until a verify has passed, then fast-forwards and new branches are accepted
 LC="git -c user.name=t -c user.email=t@example.net"
 git init -q -b main "$T/r3" && $LC -C "$T/r3" commit -q --allow-empty -m one && git -C "$T/r3" branch develop && git -C "$T/r3" checkout -q develop

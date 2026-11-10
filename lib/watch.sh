@@ -18,7 +18,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$sid" ] || usage_die "usage: watch.sh SID [MAX_SECONDS] [--warn PCT]"
-case $warn in ''|*[!0-9]*) die "--warn is a whole percent (0 turns it off)";; esac
+case $warn in ''|*[!0-9]*) usage_die "--warn is a whole percent (0 turns it off)";; esac
 interval=${QARGI_WATCH_INTERVAL:-30}
 case $interval in ''|*[!0-9.]*|.|*.*.*) die "QARGI_WATCH_INTERVAL is a number of seconds";; esac
 

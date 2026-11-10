@@ -11,7 +11,8 @@ cd "$(dirname "$0")/.." || exit 1
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi; TOOL=$PWD
 trap 'jobs -p | xargs -r kill 2>/dev/null; rm -rf "$T" "$HERMETIC"' EXIT
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T/shm GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
 export QARGI_PROJECT=app
 S=$QARGI_STATE
@@ -30,7 +31,6 @@ jq -n --arg p "$R" '{schema:1, project:"app", methodology:"gitflow", repo:{url:"
 F="$DA feature"
 rec() { echo "$S/features/app-$1.json"; }
 j() { jq -r "$2" "$(rec "$1")"; }            # j NAME FILTER
-out() { cat "$T/o" "$T/e"; }
 run() { "$@" >"$T/o" 2>"$T/e"; }             # run CMD...: stdout and stderr in $T/o and $T/e, the status returned
 tip() { git -C "$R" rev-parse "$1"; }
 commit_on() { # BRANCH FILE: one commit on BRANCH (in a temporary worktree)
@@ -44,7 +44,6 @@ mkfeat() { # NAME LEAD: branch feature/NAME and, for a LEAD, a record led by it,
 }
 ttl() { jq --argjson n "$1" '.marshal.lease_minutes = $n' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"; }
 tc() { jq --arg c "$1" '.test_command = $c' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"; }
-tok() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 
 # --- start: the first wiring assertion (the record the marshal keeps appears with the branch)
 export QARGI_LEAD=alice
@@ -179,6 +178,59 @@ EOS
   run "$B" feature merge br-$kind agent/br-$kind; rc=$?
   [ $rc = 0 ] && [ "$(tip "feature/br-$kind")" != "$b" ] && ok "marshal $kind: feature merge still works" || no "SPEC marshal $kind: merge rc=$rc $(out)"
 done
+
+# --- the shared marshal cannot be asked: the flow verbs refuse (exit 3, nothing changes) unless --assume-unreachable-ok, which is audited
+GONE=$T/gone.git; AUD=$S/audit.log
+break_origin() { git -C "$R" remote set-url origin "$GONE"; }
+mend_origin() { git -C "$R" remote set-url origin "$T/origin.git"; }
+export QARGI_REMOTE_TIMEOUT=2
+task un1; task un2; task un3
+# a project whose marshal is local never asks the remote: an unreachable origin changes nothing for it, the flag is accepted and nothing is audited
+mkfeat un0 alice; break_origin
+a0=$(wc -l < "$AUD"); b=$(tip feature/un0)
+run $F merge un0 agent/un1; rc=$?
+[ $rc = 0 ] && [ "$(tip feature/un0)" != "$b" ] && ! grep -qi "marshal could not be asked\|marshal.*remote not checked" "$T/e" && ok "local marshal: an unreachable origin does not matter to feature merge (exit 0, no warning)" || no "local marshal with a broken origin: rc=$rc $(out)"
+b=$(tip feature/un0)
+run $F merge un0 agent/un2 --assume-unreachable-ok; rc=$?
+[ $rc = 0 ] && [ "$(tip feature/un0)" != "$b" ] && ! tail -n +"$((a0 + 1))" "$AUD" | grep -q unreachable-ok && ok "local marshal: the flag is accepted and writes no audit line" || no "local marshal with the flag: rc=$rc $(out)"
+mend_origin
+# switch the project to the shared refs backend the way the owner does, claim with the origin reachable, then lose the origin
+WORDS="the shared refs are fine for this project"
+run "$DA" marshal enable; tk=$(tokof)
+run "$DA" marshal enable --plan "$tk" --approved "$WORDS"; rc=$?
+[ $rc = 0 ] && ok "shared marshal: enabled for the test" || no "marshal enable: rc=$rc $(out)"
+mkfeat un7 alice; commit_on develop un7-dev.txt
+break_origin
+b=$(tip feature/un7); a1=$(wc -l < "$AUD")
+run $F merge un7 agent/un3; rc=$?
+[ $rc = 3 ] && [ "$(tip feature/un7)" = "$b" ] && grep -q "could not be reached" <(out) && grep -q -- "--assume-unreachable-ok" "$T/e" && grep -q "feature merge un7 is refused" "$T/e" \
+  && ok "unreachable: feature merge is refused (exit 3), names what could not be reached and the flag, and the branch did not move" || no "SPEC unreachable merge: rc=$rc $(out)"
+run $F sync un7; rc=$?
+[ $rc = 3 ] && [ "$(tip feature/un7)" = "$b" ] && grep -q -- "--assume-unreachable-ok" "$T/e" && ok "unreachable: feature sync is refused too" || no "SPEC unreachable sync: rc=$rc $(out)"
+tc "touch '$T/suite-ran2'"
+run $F verify un7; rc=$?
+[ $rc = 3 ] && [ ! -e "$T/suite-ran2" ] && grep -q -- "--assume-unreachable-ok" "$T/e" && ok "unreachable: feature verify is refused and the suite did not run" || no "SPEC unreachable verify: rc=$rc $(out)"
+run $F finish un7; rc=$?
+[ $rc = 3 ] && grep -q -- "--assume-unreachable-ok" "$T/e" && ok "unreachable: feature finish is refused" || no "SPEC unreachable finish: rc=$rc $(out)"
+run $F start un8 --purpose "not made"; rc=$?
+[ $rc = 3 ] && ! git -C "$R" rev-parse -q --verify feature/un8 >/dev/null && [ ! -e "$(rec un8)" ] && grep -q -- "--assume-unreachable-ok" "$T/e" \
+  && ok "unreachable: feature start is refused (exit 3) before the branch or the record is made" || no "SPEC unreachable start: rc=$rc $(out)"
+[ "$(wc -l < "$AUD")" = "$a1" ] && ok "unreachable: a refusal writes no audit line" || no "a refusal was audited: $(tail -n +"$((a1 + 1))" "$AUD")"
+run $F list; rc=$?
+[ $rc = 0 ] && ok "unreachable: a read (feature list) is not refused" || no "feature list with an unreachable marshal: rc=$rc $(out)"
+run $F status un7 --assume-unreachable-ok; rc=$?
+[ $rc != 0 ] && grep -q -- "--assume-unreachable-ok belongs to" "$T/e" && ok "the flag is refused where no marshal is asked first (feature status)" || no "flag on status: rc=$rc $(out)"
+run $F merge un7 agent/un3 --assume-unreachable-ok; rc=$?
+[ $rc = 0 ] && [ "$(tip feature/un7)" != "$b" ] && ok "--assume-unreachable-ok: feature merge goes on" || no "merge with the flag: rc=$rc $(out)"
+tail -n +"$((a1 + 1))" "$AUD" | grep -q '"verb":"marshal:unreachable-ok"' && tail -n +"$((a1 + 1))" "$AUD" | grep -q "app un7 verb=check remote=origin" \
+  && ok "--assume-unreachable-ok: the audit log has marshal:unreachable-ok (project, feature, verb, remote)" || no "SPEC audit line of the flow verb: $(tail -n +"$((a1 + 1))" "$AUD")"
+b=$(tip feature/un7)
+run $F sync un7 --assume-unreachable-ok; rc=$?
+[ $rc = 0 ] && [ "$(tip feature/un7)" != "$b" ] && ok "--assume-unreachable-ok: feature sync goes on" || no "sync with the flag: rc=$rc $(out)"
+run $F start un9 --assume-unreachable-ok; rc=$?
+[ $rc = 0 ] && git -C "$R" rev-parse -q --verify feature/un9 >/dev/null && grep -q "app un9 verb=start remote=origin" "$AUD" \
+  && ok "--assume-unreachable-ok: feature start makes the branch and audits the override (verb=start)" || no "start with the flag: rc=$rc $(out); $(tail -n 2 "$AUD")"
+mend_origin; unset QARGI_REMOTE_TIMEOUT
 
 [ "$fail" = 0 ] && echo "marshal flow: all passed" || echo "marshal flow: FAILED"
 exit "$fail"

@@ -12,7 +12,8 @@ cd "$(dirname "$0")/.." || exit 1
 [ -z "${TMP:-}" ] || export TMPDIR=$TMP
 T=$(mktemp -d); fail=0
 trap 'rm -rf "$T" "$HERMETIC"' EXIT
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 export QARGI_HOME=$T/qh QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_CANON_FIXTURE_DIR=$T/fix
 mkdir -p "$T/c/projects" "$T/s" "$T/root/bin"
 cp -r lib "$T/root/lib"
@@ -135,6 +136,7 @@ tier "$REPOD" REPO; w "$REPOD/roles/lead/INDEX.md" "ROLE-INDEX"$'\n'
 n=$(git -C "$REPO" status --porcelain --untracked-files=all -- qargi/memory | wc -l)
 ctx=$(hook | ctxof)
 has "$ctx" "WARNING: repo tier qargi/memory has $n uncommitted path(s); dispatched agents see only the committed version. qargi never commits them." && ok "a repo tier with untracked files warns with the count ($n)" || no "dirty warning: $(printf '%s' "$ctx" | grep -m1 WARNING)"
+has "$ctx" "Commit them yourself on $(git -C "$REPO" symbolic-ref --short HEAD) in $REPO " && has "$ctx" "memory init repo --worktree DIR" && ok "and it says on which branch and in which directory to commit" || no "dirty where: $(printf '%s' "$ctx" | grep WARNING)"
 git -C "$REPO" add -A && git -C "$REPO" -c user.name=t -c user.email=t@example.net commit -q -m tier
 ctx=$(hook | ctxof)
 ! has "$ctx" "WARNING: repo tier" && has "$ctx" "INDEX-REPO" && ok "once committed there is no warning" || no "clean warned"

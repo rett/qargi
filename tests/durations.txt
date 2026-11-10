@@ -1,122 +1,134 @@
-154 bash tests/test_agent.sh
-165 bash tests/test_packs_claude_hostile.sh
-176 bash tests/test_marshal_refs.sh
-182 python3 tests/test_provider.py
-207 bash tests/test_packs_link.sh
-228 bash tests/test_packs_render.sh
-245 bash tests/test_packs_audit.sh
-82 bash tests/test_flow.sh
-39 bash tests/test_fverify.sh
-101 bash tests/test_local.sh
-90 bash tests/test_packs.sh
-2 bash tests/test_watch.sh
-109 bash tests/test_marshal_handoff.sh
-104 bash tests/test_open_providers.sh
-83 bash tests/test_project.sh
-60 python3 tests/test_startup.py
-102 python3 tests/test_guard.py
-95 bash tests/test_no_default_provider.sh
-126 bash tests/test_conformance_selftest.sh
-73 bash tests/test_local_run.sh
+203 bash tests/test_agent.sh
+98 bash tests/test_packs_claude_hostile.sh
+179 bash tests/test_marshal_refs.sh
+221 python3 tests/test_provider.py
+194 bash tests/test_packs_link.sh
+175 bash tests/test_packs_render.sh
+284 bash tests/test_packs_audit.sh
+220 bash tests/test_flow.sh
+65 bash tests/test_fverify.sh
+251 bash tests/test_local.sh
+97 bash tests/test_packs.sh
+5 bash tests/test_watch.sh
+177 bash tests/test_marshal_handoff.sh
+88 bash tests/test_open_providers.sh
+170 bash tests/test_project.sh
+118 python3 tests/test_startup.py
+41 python3 tests/test_startup_modules.py
+132 python3 tests/test_guard.py
+143 bash tests/test_no_default_provider.sh
+162 bash tests/test_conformance_selftest.sh
+78 bash tests/test_local_run.sh
 55 bash tests/test_marshal.sh
-279 bash tests/test_marshal_sign.sh main
-30 bash tests/test_marshal_sign.sh review-a
-39 bash tests/test_marshal_sign.sh review-b
-43 python3 tests/test_env_apply.py
-49 bash tests/test_journal.sh
-21 bash tests/test_runs_close.sh
-18 bash tests/test_valued_opts.sh
-41 bash tests/test_agent_cloud.sh
-39 python3 tests/test_provider_adapter.py
-29 python3 tests/test_tierplan.py
-48 bash tests/test_packs_seed.sh
-28 python3 tests/test_supervise.py
-21 python3 tests/test_env.py
-36 python3 tests/test_site.py
+276 bash tests/test_marshal_sign.sh main
+24 bash tests/test_marshal_sign.sh review-a
+46 bash tests/test_marshal_sign.sh review-b
+39 python3 tests/test_env_apply.py
+98 bash tests/test_journal.sh
+168 bash tests/test_runs_close.sh
+34 bash tests/test_valued_opts.sh
+67 bash tests/test_agent_cloud.sh
+61 python3 tests/test_provider_adapter.py
+39 python3 tests/test_tierplan.py
+71 bash tests/test_packs_seed.sh
+2 python3 tests/test_packs_check.py
+32 python3 tests/test_supervise.py
+26 python3 tests/test_env.py
+127 python3 tests/test_site.py
 31 bash tests/test_session.sh
-26 python3 tests/test_transfer.py
-32 bash tests/test_models.sh
-29 bash tests/test_release_preflight.sh
-30 bash tests/test_provider_degrade.sh
-36 bash tests/test_cloud_bases.sh
-26 python3 tests/test_membackend.py
-34 bash tests/test_session_profiles.sh
-14 python3 tests/test_discover.py
-33 bash tests/test_install.sh
-15 python3 tests/test_tiers.py
-24 bash tests/test_marshal_flow.sh
-19 bash tests/test_release_publish.sh
-20 bash tests/test_release_site.sh
-12 bash tests/test_release_assets.sh
-7 bash tests/test_release_after_steps.sh
-29 python3 tests/test_home.py
-17 bash tests/test_review.sh
-19 bash tests/test_tier_hook.sh
-14 python3 tests/test_lead_usage.py
-17 bash tests/test_adopt.sh
-11 bash tests/test_marshal_forget.sh
-16 bash tests/test_runner.sh
-17 bash tests/test_lead.sh
-7 python3 tests/test_guard.py Guard FailsClosed HookProtocol Substitutions GlobBound TrimmedExpansions InPlaceScripts SubprocessContract
-14 bash tests/test_tier_packet.sh
+28 python3 tests/test_transfer.py
+30 bash tests/test_models.sh
+95 bash tests/test_release_preflight.sh
+53 bash tests/test_provider_degrade.sh
+34 bash tests/test_cloud_bases.sh
+38 python3 tests/test_membackend.py
+52 bash tests/test_session_profiles.sh
+17 python3 tests/test_discover.py
+58 bash tests/test_install.sh
+19 python3 tests/test_tiers.py
+29 bash tests/test_marshal_flow.sh
+27 bash tests/test_release_publish.sh
+37 bash tests/test_release_site.sh
+27 bash tests/test_release_assets.sh
+21 bash tests/test_release_after_steps.sh
+40 python3 tests/test_home.py
+205 bash tests/test_review.sh
+20 bash tests/test_tier_hook.sh
+38 python3 tests/test_lead_usage.py
+56 bash tests/test_adopt.sh
+13 bash tests/test_marshal_forget.sh
+31 bash tests/test_runner.sh
+36 bash tests/test_lead.sh
+9 python3 tests/test_guard.py Guard FailsClosed HookProtocol Substitutions GlobBound TrimmedExpansions InPlaceScripts SubprocessContract
+15 bash tests/test_tier_packet.sh
 15 bash tests/test_prompt.sh
-9 bash tests/test_upstream.sh
-17 bash tests/conformance.sh claude-code
-9 bash tests/test_team.sh
-17 bash tests/test_linker.sh
+17 bash tests/test_upstream.sh
+18 bash tests/conformance.sh claude-code
+19 bash tests/test_team.sh
+18 bash tests/test_linker.sh
 12 bash tests/test_role.sh
-13 bash tests/test_release_gh.sh
-11 bash tests/test_attach.sh
-8 bash tests/test_gitflow_detached.sh
-6 bash tests/test_provider_notes.sh
-4 python3 tests/test_upgrade.py
-6 bash tests/test_changelog_renumber.sh
-4 python3 tests/test_cloud.py
-6 bash tests/conformance.sh claude-platform
-2 python3 tests/test_report.py
-1 python3 tests/test_noticed.py
-8 python3 tests/test_render.py
-1 bash tests/test_canon_audit.sh
+20 bash tests/test_release_gh.sh
+26 bash tests/test_attach.sh
+23 bash tests/test_local_report.sh
+23 bash tests/test_gitflow_detached.sh
+17 bash tests/test_provider_notes.sh
+5 python3 tests/test_upgrade.py
+7 bash tests/test_changelog_renumber.sh
+5 python3 tests/test_cloud.py
+7 bash tests/conformance.sh claude-platform
+3 python3 tests/test_report.py
+3 python3 tests/test_noticed.py
+7 python3 tests/test_render.py
+0 bash tests/test_canon_audit.sh
+4 bash tests/test_canon_reach.sh
 3 bash tests/test_project_profile.sh
-3 bash tests/test_new.sh
-10 python3 tests/test_canon.py
-10 bash tests/test_release_ci.sh
-0 bash tests/test_changelog_section.sh
-9 bash tests/test_marshal_hook.sh
+5 bash tests/test_new.sh
+11 python3 tests/test_canon.py
+29 bash tests/test_release_ci.sh
+1 bash tests/test_changelog_section.sh
+12 bash tests/test_marshal_hook.sh
 2 python3 tests/test_help.py
-1 python3 tests/test_tools.py
-1 python3 tests/role_seed_sim.py shared
-2 bash tests/test_methodology.sh
-1 bash tests/test_verify_env.sh
-1 python3 tests/role_seed_sim.py build
-1 python3 tests/role_seed_sim.py write
-0 python3 tests/role_seed_sim.py review
-0 python3 tests/role_seed_sim.py test
+2 python3 tests/test_tools.py
+1 python3 tests/test_procenv.py
+0 python3 tests/role_seed_sim.py shared
+6 bash tests/test_methodology.sh
+3 bash tests/test_verify_env.sh
+0 python3 tests/role_seed_sim.py build
+0 python3 tests/role_seed_sim.py write
+1 python3 tests/role_seed_sim.py review
+1 python3 tests/role_seed_sim.py test
 0 bash tests/test_skill_budget.sh
 1 bash tests/test_cred.sh
-0 bash tests/test_neutral.sh
+1 bash tests/test_neutral.sh
 4 bash tests/test_leadcred.sh
-2 bash tests/test_hermetic.sh
+33 bash tests/test_hermetic.sh
 4 python3 tests/test_marshal_sign_unit.py
-0 bash tests/test_tool_copy.sh
-57 shellcheck -x -S warning lib/*.sh lib/conformance/*.sh bin/qargi install.sh tests/*.sh
-10 python3 tests/test_ci.py
-1 python3 tests/test_gates.py
-19 bash tests/test_gates.sh
-1 python3 tests/test_backlog.py
-14 bash tests/test_backlog.sh
-5 bash tests/test_nested_plan.sh
-16 bash tests/test_resume.sh
-13 bash tests/test_taskblock.sh
-1 python3 tests/test_legacy_lint.py
-1 bash tests/test_prompts.sh
-25 python3 tests/test_doctor.py
-20 bash tests/test_release_checks.sh
-22 bash tests/test_release_unrelated.sh
+1 bash tests/test_tool_copy.sh
+74 shellcheck -x -S warning lib/*.sh lib/conformance/*.sh bin/qargi install.sh tests/*.sh
+34 python3 tests/test_ci.py
+0 python3 tests/test_gates.py
+58 bash tests/test_gates.sh
+0 python3 tests/test_backlog.py
+36 bash tests/test_backlog.sh
+7 bash tests/test_nested_plan.sh
+25 bash tests/test_resume.sh
+33 bash tests/test_taskblock.sh
+0 python3 tests/test_legacy_lint.py
+4 python3 tests/test_usage_exit.py
+0 bash tests/test_prompts.sh
+23 python3 tests/test_doctor.py
+27 bash tests/test_release_checks.sh
+29 bash tests/test_release_unrelated.sh
 8 bash tests/test_release_snapshot_cycle.sh
-18 bash tests/test_local_concurrency.sh
-20 bash tests/test_marshal_lease.sh
+21 bash tests/test_local_concurrency.sh
+18 bash tests/test_marshal_lease.sh
 0 python3 tests/test_docs_links.py
-15 bash tests/test_json_plans.sh
-17 bash tests/test_resume_push.sh
-25 bash tests/test_release_master_merge.sh
+17 bash tests/test_json_plans.sh
+26 bash tests/test_resume_push.sh
+53 bash tests/test_release_master_merge.sh
+61 bash tests/test_release_cut.sh
+5 python3 tests/test_marshal_batch.py
+36 bash tests/test_marshal_batch.sh
+15 python3 tests/test_marshal_startup.py
+0 python3 tests/test_prose_lint.py
+12 bash tests/test_audit_lock.sh

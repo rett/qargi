@@ -6,13 +6,16 @@ set -eu
 root=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 lib=$root/lib
 
-usage() { python3 -I "$lib/help.py" show >&2; exit 2; }
-help="$lib/help.py"
+# help and provider are imported, not run as scripts, for the same reason as the guard below; lib/lib.sh holds this text too (pymod MODULE ARGS...)
+# for the scripts: it runs lib/MODULE.py's main() as the script would and answers with its exit status. This script does not source lib.sh (that
+# costs a start-up of its own), and execs, so it holds the text itself; tests/test_startup.py checks that the two agree.
+PYMOD_SRC='import sys; sys.path.insert(0, sys.argv.pop(1)); m = __import__(sys.argv.pop(1)); sys.argv[0] = m.__file__; sys.exit(m.main(sys.argv if m.__name__ == "gates" else sys.argv[1:]))'
+usage() { python3 -I -c "$PYMOD_SRC" "$lib" help show >&2; exit 2; }
 
 area=${1:-}; [ -n "$area" ] || usage; shift
 case $area in
-  help|-h|--help) exec python3 -I "$help" show "$@";;
-  __complete) exec python3 -I "$help" complete "$@";;
+  help|-h|--help) exec python3 -I -c "$PYMOD_SRC" "$lib" help show "$@";;
+  __complete) exec python3 -I -c "$PYMOD_SRC" "$lib" help complete "$@";;
   # The guard runs on every tool call of a member, so its start-up is the one that counts: guard.py is imported, not run as a script (python
   # compiles a script on every run, a cache only an imported module gets: 235 KB, about 60 ms). The cache is the __pycache__ next to the
   # source, which install.sh --user and qargi upgrade fill (compileall); where the tool is read-only and nothing filled it, python skips the
@@ -29,8 +32,8 @@ elif [ "$area" != hook ]; then
   done
 fi
 # qargi COMMAND --help and qargi COMMAND VERB --help
-case ${1:-} in -h|--help) exec python3 -I "$help" show "$area";; esac
-case ${2:-} in -h|--help) exec python3 -I "$help" show "$area" "${1:-}";; esac
+case ${1:-} in -h|--help) exec python3 -I -c "$PYMOD_SRC" "$lib" help show "$area";; esac
+case ${2:-} in -h|--help) exec python3 -I -c "$PYMOD_SRC" "$lib" help show "$area" "${1:-}";; esac
 # The run-event hooks (qargi hook tool-use ...) never go through resolve and never fail: a hook must not block an agent.
 case $area:${1:-} in
   hook:subagent-start|hook:subagent-stop|hook:tool-use|hook:tool-failure|hook:notification|hook:stop-failure|hook:pre-compact)
@@ -63,7 +66,7 @@ case $area in
   credential) exec "$lib/cred.sh" "$@";;
   local) exec "$lib/local.sh" "$@";;
   agent) exec "$lib/agent.sh" "$@";;
-  role) exec "$lib/role.sh" "$@";;
+  role) exec python3 -I -c 'import sys; sys.path.insert(0, sys.argv.pop(1)); import role; sys.exit(role.main())' "$lib" "$@";;
   feature) exec "$lib/feature.sh" "$@";;
   marshal) exec "$lib/marshal.sh" "$@";;
   release) exec "$lib/release.sh" "$@";;
@@ -78,7 +81,7 @@ case $area in
   start|send|status|stop|mark|close|track) exec "$lib/session.sh" "$area" "$@";;
   report) exec python3 -I "$lib/report.py" "$@";;
   noticed) exec python3 -I "$lib/noticed.py" "$@";;
-  provider) exec python3 -I "$lib/provider.py" "$@";;
+  provider) exec python3 -I -c "$PYMOD_SRC" "$lib" provider "$@";;
   env) exec python3 -I "$lib/env.py" "$@";;
   doctor) exec python3 -I "$lib/doctor.py" "$@";;
   upgrade) exec "$lib/upgrade.sh" "$@";;
