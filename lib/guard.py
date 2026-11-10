@@ -44,10 +44,10 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     the last two have names a project may use for its own scripts, so only the files in the lib directory of the tool or of the installed
     copy count, found from the directory the command runs in);
   - qargi project init (it stores a whole answers file, so it is a way to models.extensions and models.accept_no_barrier, which have gated verbs;
-    found like the skill verbs), and qargi project set of any models answer, of release.*, of test_command, of gates, of env.*, of site.* (the commands, environment and site the lead later runs or builds), of packs.* (the opt-out of the render check), of git.* and review.* (the identity and the author rule qargi review apply gives the commits it applies, and the scrub command and trailer policy qargi review check runs), of runs.* (the refs that verify and clean accept as a runtime's own) and of
+    found like the skill verbs), and qargi project set of any models answer, of release.*, of test_command, of gates, of env.*, of site.* (the commands, environment and site the lead later runs or builds), of packs.* (the opt-out of the render check), of git.* and review.* (the identity and the author rule qargi review apply gives the commits it applies, and the scrub command and trailer policy qargi review check runs), of ci.* and methodology_accepted (the CI jobs left out of the gate comparison, the deviations the lead accepts), of runs.* (the refs that verify and clean accept as a runtime's own) and of
     roles.<role>.tools, a whole role or roles (the tools env apply installs and local prepare checks out; the other answers stay open). A project verb the guard cannot read is
     refused: set with a path that is missing or built by xargs, a variable, a substitution, a brace or a glob; and any command with the word project,
-    link, unlink, set or init after it and a shell expansion or xargs in the segment (found again inside `sh -c` and `eval` strings with the quotes
+    link, unlink, set, unset or init after it and a shell expansion or xargs in the segment (found again inside `sh -c` and `eval` strings with the quotes
     taken off, so a quote or a backslash inside the verb does not hide it). Whatever the verb would have said, it is not read. lib/gated_answers.py, the store behind
     provider enable|disable|accept (no environment variable or option opens project set to the two keys any more), is refused in any use;
   - setting QARGI_NESTED (it makes some verbs skip their plan-token check);
@@ -239,10 +239,10 @@ HANDOFF_SUBST = re.compile(r"(?:marshal(?:\.sh)?[\"']*\s+[\"']*handoff|marshal_h
 PROJECT_SET_SUBST = re.compile(r"project(?:\.sh)?[\"']*\s+[\"']*set[\"']*\s")   # `project set ... $(...)`: the substitution may produce a models path, and splitting it off hides that
 AUDIT_SUBST = re.compile(r"packs_audit\.py[\"']*")   # `packs_audit.py ... $(...)`: the substitution may produce `store`, and splitting it off hides that
 UNREADABLE = "$`{}*?[]"                                     # in a word: a variable, a substitution, a brace or a glob builds it, so the guard cannot read what it is
-EXECUTED_ANSWERS = ("release", "test_command", "gates", "env", "upstream", "site", "backlog")   # the answers the lead later runs, passes to a process, fetches from or builds from (release site): a member may not set them (project set)
+EXECUTED_ANSWERS = ("release", "test_command", "gates", "env", "upstream", "site", "backlog", "ci", "methodology_accepted")   # the answers the lead later runs, passes to a process, fetches from or builds from (release site), or decides with (ci.not_gates takes a CI job out of the gate comparison, methodology_accepted a deviation out of the open ones): a member may not set them (project set)
 ROLE_TOOLS_PATH = re.compile(r"roles|roles\.[^.]+|roles\.[^.]+\.tools(?:\..*)?")   # roles.<role>.tools: what env apply installs and local prepare checks out; a whole role, or all of them, holds it
 IDENTITY_ANSWERS = ("git", "review")   # git.author (the author review apply gives the applied commits) and review.keep_author (keep the member's instead): the lead's, a member may not set them (project set)
-PROJECT_VERBS = ("set", "init", "link", "unlink")           # the project verbs a member may not run (set: the models answers; init: the whole file; link, unlink: what a session loads)
+PROJECT_VERBS = ("set", "unset", "init", "link", "unlink")  # the project verbs a member may not run (set, unset: the answers of the lead; init: the whole file; link, unlink: what a session loads)
 XARGS_VALUE_OPTS = {"-I", "-a", "-d", "-E", "-L", "-n", "-P", "-s", "--arg-file", "--delimiter", "--max-lines", "--max-args", "--max-procs", "--max-chars", "--process-slot-var"}   # take the next word
 WRAP = {"sudo", "env", "command", "builtin", "exec", "nohup", "time", "timeout", "setsid", "xargs", "nice", "parallel"}
 WRITERS = {"rm", "rmdir", "touch", "mkdir", "chmod", "chown", "truncate", "tee", "patch", "unlink", "shred",

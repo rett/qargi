@@ -669,6 +669,35 @@ class Skills(HookCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
+    def test_refuses_project_set_of_the_ci_and_deviation_answers_and_the_newer_lead_answers_to_a_member(self):
+        """ci.not_gates takes a CI job out of the comparison with the gates and methodology_accepted takes a deviation out of the open ones: both are the lead's,
+        so project set refuses them (whole or by a dotted path) as it refuses the other lead-only answers; so are the newer release, review and backlog answers.
+        Look-alikes (cis, ci_jobs, methodology, methodology_accepted_x) stay open."""
+        for path in ("ci", "ci.not_gates", "ci.not_gates.0", "methodology_accepted", "methodology_accepted.0", "release.finish_check", "release.hotfix_preflight",
+                     "review.reject_trailers", "backlog.archive", "backlog.section"):
+            for form in ("qargi project set p %s v", "sudo qargi project set p %s v", "cd src && qargi project set p %s v", "bash -c 'qargi project set p %s v'",
+                         "echo $(qargi project set p %s v)", "./lib/project.sh set p %s v"):
+                c = form % path
+                r = self.bash(c)
+                self.assertEqual(r.returncode, 2, c)
+                self.assertIn("qargi project set of %s changes" % path, r.stderr, c)
+        for c in ("qargi project set p cis v", "qargi project set p ci_jobs v", "qargi project set p methodology v", "qargi project set p methodology_accepted_x v",
+                  "echo qargi project set p ci.not_gates x", "qargi project show p"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_refuses_project_unset_with_words_the_guard_cannot_read_to_a_member(self):
+        """project unset removes an answer, with the refusals of project set (and a refusal of its own in a member run, in lib/project.sh): a form whose verb or path
+        a variable, a substitution, a brace, a glob or xargs builds cannot be read here and is refused, as for project set."""
+        for c in ("qargi project unset p $K", "qargi project unset p models.$K", "echo $(qargi project unset p models.extensions)", "bash -c 'qargi project unset p $K'",
+                  "echo models.extensions | xargs qargi project unset p", "qargi project unset p {models,gates}", "qargi project unset p `echo gates`"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("qargi project unset", r.stderr, c)
+        for c in ("echo qargi project unset p gates", "qargi project show p"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
     def test_refuses_project_set_of_the_author_answers_to_a_member(self):
         """git.author and review.keep_author decide whose name qargi review apply puts on a member's commits, and review.scrub (a command the lead runs)
         and review.trailer_policy what qargi review check does with a returned series: they are the lead's, so project set refuses them, whole or by a dotted path, in the forms the other lead-only answers are refused in. Look-alikes (gitx, reviews, review_x)
