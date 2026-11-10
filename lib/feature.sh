@@ -24,15 +24,17 @@
 #                                                  both sides changed the same files, the message lists them and says to sync first. Refused, with
 #                                                  the runs listed, while a run of the feature is open (not cleaned, discarded, closed or merged).
 # The marshal (lib/marshal.sh) records who leads each feature: start makes you the lead, merge, sync, verify and finish ask it first
-# (another live lead: refused, nothing changes; an anonymous identity or an unreachable marshal only warns), verify and finish keep
+# (another live lead: refused, nothing changes; an anonymous identity only warns). With the shared refs backend a remote that cannot be
+# asked is a refusal too (exit 3, nothing changes) unless the verb is given --assume-unreachable-ok, which goes on and writes the audit
+# line marshal:unreachable-ok; a marshal that is missing or fails in some other way still only warns. verify and finish keep
 # your lease alive while they run, finish marks the record finished, and list and status show the lead.
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
-NAME_ARG='' EXTRA='' PROJ='' PLAN_ARG='' APPROVED='' KEEP='' RESOLVED='' PURPOSE='' WORKTREE=''
+NAME_ARG='' EXTRA='' PROJ='' PLAN_ARG='' APPROVED='' KEEP='' RESOLVED='' PURPOSE='' WORKTREE='' ASSUME_UNREACHABLE=''
 while [ $# -gt 0 ]; do
   case $1 in
-    --project) need_val "$1" $#; PROJ=$2; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;; --approved) need_val "$1" $#; APPROVED=$2; shift 2;; --keep) KEEP=1; shift;; --resolved) RESOLVED=1; shift;; --purpose) need_val "$1" $#; PURPOSE=$2; shift 2;; --worktree) WORKTREE=1; shift;;
+    --project) need_val "$1" $#; PROJ=$2; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;; --approved) need_val "$1" $#; APPROVED=$2; shift 2;; --keep) KEEP=1; shift;; --resolved) RESOLVED=1; shift;; --purpose) need_val "$1" $#; PURPOSE=$2; shift 2;; --worktree) WORKTREE=1; shift;; --assume-unreachable-ok) ASSUME_UNREACHABLE=1; shift;;
     -*) usage_die "unknown option $1";;
     *) if [ -z "$NAME_ARG" ]; then NAME_ARG=$1; else EXTRA=$1; fi; shift;;
   esac
@@ -44,6 +46,7 @@ if [ "$verb" = list ] || [ "$verb" = park ]; then NAME_ARG=-; fi
 case $NAME_ARG in master|develop) die "'$NAME_ARG' is a long-lived branch";; esac
 export RESOLVED
 [ -z "$WORKTREE" ] || [ "$verb" = start ] || die "--worktree belongs to feature start"
+case $verb in sync|merge|verify|finish) ;; *) [ -z "$ASSUME_UNREACHABLE" ] || die "--assume-unreachable-ok belongs to the verbs that ask the marshal first: feature sync, merge, verify and finish";; esac
 . "$(dirname "$0")/gitflow.sh"
 # shellcheck disable=SC2154  # PROJ and TESTCMD come from project_load
 project_load
