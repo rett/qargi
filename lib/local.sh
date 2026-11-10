@@ -167,12 +167,13 @@ apply_tmp_rm() {
   return 0
 }
 # apply_state_drop RUN: remove what `review apply` keeps in the lead's state for a run that clean removes: its apply record (apply/RUN-ID.json, the path rule of
-# apply_rec_file in review.sh, and the lock beside it) and the temporary directories of an apply that was killed, which carry the run's id in their names
+# apply_rec_file in review.sh, and the locks beside it) and the temporary directories of an apply that was killed, which carry the run's id in their names
 # (apply-in.RUN-ID.*, apply-wt.RUN-ID.*). Quoted names, no link followed (rm -f on a link removes the link; a link in place of a directory is left alone and said).
 apply_state_drop() {
   local id=${1##*/} d
   case $id in qargi.??????) ;; *) return 0;; esac
   rm -f -- "$DA_STATE/apply/$id.json" "$DA_STATE/apply/$id.json.lock"
+  rm -rf -- "$DA_STATE/apply/$id.json.run"   # the pid lock of an apply (a directory with the pid in it)
   for d in "$DA_STATE"/apply-in."$id".* "$DA_STATE"/apply-wt."$id".*; do
     [ -e "$d" ] || [ -L "$d" ] || continue
     apply_tmp_rm "$d" || echo "qargi: warning: could not remove $d, a temporary directory of a killed review apply of $id" >&2
