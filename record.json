@@ -1,7 +1,7 @@
 {
  "purpose": "release start --hotfix adds the unreleased changelog heading when master has none (Q21)",
  "started": "2026-11-10T19:59:45Z",
- "goal": "release start --hotfix adds the unreleased changelog heading when master has none (Q21)",
+ "goal": "Q21: hotfix start without an unreleased changelog heading",
  "plan": "",
  "note": "",
  "status": "active",
@@ -12,11 +12,11 @@
   "since": "2026-11-10T19:59:45Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-10T19:59:45Z",
+ "renewed_at": "2026-11-10T19:59:58Z",
  "finished_at": null,
  "updated_by": "arc-qargi",
- "rev": 1,
- "updated_at": "2026-11-10T19:59:45Z",
+ "rev": 2,
+ "updated_at": "2026-11-10T19:59:58Z",
  "feature": "hotfixstart",
  "project": "qargi"
 }
