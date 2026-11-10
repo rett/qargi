@@ -99,7 +99,7 @@ add f1 '{"status":"DONE"}' "/mnt/session/outputs/build--manifest.json"
 add f2 'patch one' "/mnt/session/outputs/build--0001-names-accept-periods.patch"
 add f3 '{"status":"DONE"}' "/mnt/session/outputs/write--manifest.json"
 add f4 'patch write' "/mnt/session/outputs/write--0001-docs-describe.patch"
-add f5 '# Review\n\n## Findings\n\nnone\n' "/mnt/session/outputs/review--report.md"
+add f5 '# Findings\n\nnone\n\n# Checked\n\nnothing\n\nverdict: accept\n' "/mnt/session/outputs/review--report.md"
 add f6 '{"status":"DONE"}' "/mnt/session/outputs/review--manifest.json"
 add f7 '{"team":"code-docs","members":[],"verdict":"accept","rounds":1}' "/mnt/session/outputs/lead--team.json"
 add f8 'summary' "/mnt/session/outputs/lead--summary.md"
@@ -123,7 +123,7 @@ QARGI_CONF=$T/c QARGI_STATE=$T/s "$T/tool/bin/qargi" collect sesn_k "$T/known" >
 
 # --- the team check
 rm -rf "$T/chk"; mkdir -p "$T/chk/review" "$T/chk/lead"
-printf '# Review\n\n## Findings\n\nnone\n' > "$T/chk/review/report.md"
+printf '# Findings\n\nnone\n\n# Checked\n\nnothing\n\nverdict: accept\n' > "$T/chk/review/report.md"; printf '{"status":"DONE","commits":[]}\n' > "$T/chk/review/manifest.json"
 $DA team check "$T/chk" >/dev/null 2>&1 && no "a team without team.json passed" || ok "a team run without the lead's team.json fails"
 echo '{"team":"code-docs","members":[],"verdict":"revise","rounds":2}' > "$T/chk/lead/team.json"
 out=$($DA team check "$T/chk" 2>&1); echo "$out" | grep -q "did not reach accept" && ok "a team that did not reach accept is flagged" || no "check: $out"

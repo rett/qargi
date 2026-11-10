@@ -41,4 +41,14 @@ if python3 -I -c 'import json,sys; m=json.load(open("contract/manifest.example.j
 has $C 'Record each check in `log.txt`' && has $C 'Report only what you ran' && has $C '`not run` with the reason, never `pass`' && ok "the contract says to log each check, report only what was run, and that an unrun check is not run, never pass" || no "the contract's rule on recording and claiming checks"
 has $C 'Commit as you go' && has $C 'sent back' && ok "the contract says to commit as you go and that a batch at the end is sent back" || no "the contract's commit-as-you-go rule"
 
+# P5: one review vocabulary, in every text that describes a report
+F=contract/output-format.md
+has $F 'severity high\|medium\|low' && has $F '# Checked' && has $F 'ends with one line: `verdict: accept` or `verdict: revise`' && ok "the output format gives the report shape: severity high|medium|low, # Checked, a last verdict line" || no "the output format's read-only paragraph"
+for f in roles/review/ROLE.md packs/skills/review-findings/SKILL.md provision/role-seeds/review/reference/conventions/findings.md; do
+  has $f '`verdict: accept` or `verdict: revise`' && has $f 'medium' && has $f '# Checked' && ok "$f uses the report words: high/medium/low, # Checked, the verdict line" || no "$f does not use the report words"
+done
+has provision/role-seeds/review/reference/workflow/workflow.md 'last line `verdict: accept` or `verdict: revise`' && ok "the review workflow ends the report with the verdict line" || no "the review workflow names the verdict line"
+bad=$(grep -rlE 'CONFIRMED|PLAUSIBLE|not ready|ready with changes|High, Medium|\*\*High' roles packs/skills provision/role-seeds contract agents skills || true)
+[ -z "$bad" ] && ok "no review text keeps another vocabulary (CONFIRMED, PLAUSIBLE, not ready, ready with changes, capitalised severities)" || no "another review vocabulary in: $bad"
+
 exit $fail

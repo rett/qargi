@@ -3,7 +3,7 @@
 not one monolithic patch. Usage: review_check.py OUT [--allow-empty]   (exit 1 on any FAIL, 2 on a usage error)
 OUT is the member's output directory (RUN/out; given RUN, whose out directory exists, it checks RUN/out): it holds manifest.json and the patches in OUT/patches/*.patch, the one place `review apply` reads them from.
 SCOPE is a hard limit: the SCOPE line of RUN/task.md (beside OUT) when it records one, else the manifest's scope[]; a patch outside it fails.
-A review run has no patches: report.md (or PREFIXreport.md) with a Findings heading is its deliverable."""
+A review run has no patches: report.md (or PREFIXreport.md) with a Findings heading and a last line `verdict: accept` or `verdict: revise`, with manifest.json beside it, is its deliverable."""
 import fnmatch, glob, json, os, re, sys
 from email.utils import parsedate_to_datetime
 
@@ -30,7 +30,22 @@ if not patches:
     for rep in sorted(glob.glob(os.path.join(run, "*report.md"))):
         text = open(rep, errors="replace").read()
         if text.strip() and re.search(r"(?mi)^#+\s*findings\b", text):
-            print("OK report-only run: %s holds a Findings section (%d chars)" % (os.path.basename(rep), len(text))); sys.exit(0)
+            # the report is `# Findings`, `# Checked`, and a last line `verdict: accept` or `verdict: revise`; manifest.json travels with it
+            base = os.path.basename(rep)
+            last = [l.strip() for l in text.splitlines() if l.strip()][-1]
+            try:
+                json.load(open(os.path.join(run, base[:-len("report.md")] + "manifest.json")))
+            except Exception as e:
+                F("%s: %smanifest.json missing or unreadable (%s); a report-only run returns report.md and manifest.json" % (base, base[:-len("report.md")], e))
+            if not re.fullmatch(r"verdict: (accept|revise)", last):
+                F("%s: the last line must be `verdict: accept` or `verdict: revise` (it is: %s)" % (base, last[:60]))
+            if not re.search(r"(?mi)^#+\s*checked\b", text):
+                W("%s: no `# Checked` section (what you ran with its exit status; what you only read)" % base)
+            if fails:
+                print("\n".join(fails + warns)); print("%d fail, %d warn" % (len(fails), len(warns))); sys.exit(1)
+            print("OK report-only run: %s holds a Findings section and ends with its verdict (%d chars)" % (base, len(text)))
+            if warns: print("\n".join(warns))
+            sys.exit(0)
     try:
         m0 = json.load(open(os.path.join(run, "manifest.json")))
     except Exception:

@@ -24,6 +24,7 @@ for_group (when your work builds on another member's series), environment {tool 
 ## Two shapes
 A role that changes the repository returns patches: everything above.
 
-A read-only role (review) returns a report and no patches: `report.md` and `manifest.json` in OUT, with
-`status`, `commits: []` and the report listed in `artifacts[]` (kind `report`). No `patches/`, no `series.md`,
-no bundle. A suggested fix goes in the report as a fenced diff, never a patch file.
+A read-only role returns `report.md` and `manifest.json`, nothing else (`status`, `commits: []`, the report in
+`artifacts[]`). `report.md` has `# Findings` (per finding: severity high|medium|low, file:line, what is wrong, the
+evidence, a suggested fix as a fenced diff), then `# Checked` (what you ran with its exit status; what you only
+read), and ends with one line: `verdict: accept` or `verdict: revise`.
