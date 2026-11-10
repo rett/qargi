@@ -21,6 +21,7 @@ LIB = os.path.join(ROOT, "lib")
 BUDGET = os.path.join(ROOT, "tests", "startup-budget.txt")
 GOLDENS = os.path.join(ROOT, "tests", "fixtures", "startup-goldens.json")
 RUNS = 20
+VERBS = ("agent for build", "marshal status --brief --no-fetch")      # the verbs with a ceiling in tests/startup-budget.txt besides role list and the guard
 WS = "wrkspc_01QargiQargiQargi"
 sys.path.insert(0, LIB)
 import commands as C  # noqa: E402
@@ -522,6 +523,9 @@ class Budget(unittest.TestCase):
         self.assertIn("role list", b)
         self.assertIn("__guard", b)
         self.assertFalse(enforced(b["role list"][1]))
+        for verb in VERBS:
+            self.assertIn(verb, b)
+            self.assertFalse(enforced(b[verb][1]), verb)
         self.assertTrue(enforced(b["__guard"][1]), "the guard's ceiling is the one that fails")
         with self.assertRaises(ValueError):
             read_budget("role list fast\n")

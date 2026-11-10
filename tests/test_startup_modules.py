@@ -1,11 +1,37 @@
 #!/usr/bin/env python3
 """The large Python modules run as imported modules (pymod in lib/lib.sh, the same form in bin/qargi): provider, marshal_store, help, gates and
-lead_usage. Each answers as the script did (exit status, standard output and standard error), and its bytecode is cached where the script's never was.
-Offline. Run: python3 tests/test_startup_modules.py"""
+lead_usage. Each answers as the script did (exit status, standard output and standard error), its bytecode is cached where the script's never was,
+and the verbs that use them stay under their startup ceilings (tests/startup-budget.txt). Offline.
+Run: python3 tests/test_startup_modules.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
-import json, os, re, subprocess, sys, unittest
+import json, os, re, shutil, subprocess, sys, time, unittest
 
-from test_startup import LIB, ROOT, GuardTool
+from test_startup import BUDGET, LIB, ROOT, RUNS, VERBS, GuardTool, base_env, median_ms, read_budget
+
+
+class VerbTool(GuardTool):
+    """The tool as an installation leaves it (lib/ compiled) with a project, a repository, a member and an open feature, to time a verb in."""
+
+    def __init__(self):
+        super().__init__()
+        for d in ("roles", "agents", "catalog", "contract", "provision", "methodologies", "canon"):      # what the verbs read besides bin/ and lib/
+            shutil.copytree(os.path.join(ROOT, d), os.path.join(self.t, d), ignore=shutil.ignore_patterns("__pycache__"))
+        shutil.copy(os.path.join(ROOT, "VERSION"), os.path.join(self.t, "VERSION"))
+        self.conf, self.state, self.repo = (os.path.join(self.t, x) for x in ("conf", "state", "repo"))
+        os.makedirs(os.path.join(self.conf, "projects"))
+        os.makedirs(self.repo)
+        with open(os.path.join(self.conf, "projects", "alpha.json"), "w") as f:
+            json.dump({"repo": {"url": "https://example.com/acme.git", "path": self.repo}, "roles": {"build": {}, "review": {}}, "models": {"provider": "claude-code"}}, f)
+        ident = {"GIT_AUTHOR_NAME": "a", "GIT_COMMITTER_NAME": "a", "GIT_AUTHOR_EMAIL": "a@example.invalid", "GIT_COMMITTER_EMAIL": "a@example.invalid"}
+        self.verb_env = dict(base_env(), **ident, **self.env(QARGI_CONF=self.conf, QARGI_STATE=self.state, QARGI_LEAD="lead1"))
+        self.compile()
+        for argv in (["git", "init", "-q", "."], ["git", "commit", "-q", "--allow-empty", "-m", "init"], ["git", "branch", "develop"],
+                     [self.bin, "agent", "add", "worker", "--project", "alpha"], [self.bin, "feature", "start", "f1"]):
+            r = self.run(argv)
+            assert r.returncode == 0, (argv, r.stderr)
+
+    def run(self, argv):
+        return subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=self.repo, env=self.verb_env)
 
 
 class PyMod(unittest.TestCase):
@@ -121,6 +147,31 @@ class PyMod(unittest.TestCase):
         self.assertNotEqual(a.returncode, 0)
         self.assertEqual(a.returncode, b.returncode)
         self.assertIn("SyntaxError", a.stderr)
+
+
+class Ceilings(unittest.TestCase):
+    def test_the_verbs_against_their_ceilings(self):
+        """`qargi agent for build` (a member's tier, four of the large modules) and `qargi marshal status --brief --no-fetch` (the lead's polling), from a tool
+        whose lib/ is compiled, with a project, a member and an open feature: the median of RUNS runs; over the ceiling it warns, as for role list."""
+        with open(BUDGET) as f:
+            budget = read_budget(f.read())
+        tool = VerbTool()
+        try:
+            for verb in VERBS:
+                argv = [tool.bin] + verb.split()
+                r = tool.run(argv)
+                self.assertEqual(r.returncode, 0, (verb, r.stderr))
+                self.assertNotEqual(r.stdout, "", verb)
+                times = []
+                for _ in range(RUNS):
+                    t0 = time.perf_counter()
+                    tool.run(argv)
+                    times.append((time.perf_counter() - t0) * 1000)
+                got, ceiling = median_ms(times), budget[verb][0]
+                print("startup: qargi %s median %.0f ms over %d runs (ceiling %d ms)%s" % (verb, got, RUNS, ceiling, "" if got <= ceiling else
+                      "\nWARNING: over the ceiling of tests/startup-budget.txt (a loaded machine, or startup got slower: measure it again alone)"), file=sys.stderr)
+        finally:
+            tool.close()
 
 
 if __name__ == "__main__":
