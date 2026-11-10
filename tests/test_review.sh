@@ -59,6 +59,8 @@ git reset -q --hard "$BASE"
 for k in 1 2 3; do echo "$k" >> "internal/f$k.go"; git add -A; mk "step $k" "Why step $k happened." "2026-10-27T12:00:0$k"; done
 run batch; manifest "$T/batch"; echo "# s" > "$T/batch/series.md"
 out=$($DA review check "$T/batch" 2>&1); rc=$?; [ $rc = 0 ] && echo "$out" | grep -q "WARN all 3 commits.*one batch" && echo "$out" | grep -q "0 fail, 1 warn" && ok "commits made within seconds of each other are a warning, not a note, and do not fail the series" || no "batch warning: rc=$rc $out"
+# the warning cannot be cleared without rewriting history, which the contract forbids: the contract asks for no failure and an explained warning, not for 0 warn
+CT=${DA%/bin/qargi}/contract/contract.md; ! grep -q '0 warn' "$CT" && grep -q 'reports no failure' "$CT" && grep -q 'explain a warn in the report' "$CT" && ok "the contract asks for no failure and an explained warning, not for 0 warn" || no "the contract still asks for 0 warn"
 
 # missing commit advice / groups are warnings
 cp -r "$T/good" "$T/nogroups"; jq 'del(.patch_groups) | del(.commit_advice)' "$T/nogroups/manifest.json" > "$T/nogroups/m.json" && mv "$T/nogroups/m.json" "$T/nogroups/manifest.json"
