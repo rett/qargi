@@ -65,6 +65,11 @@ tok=$(sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' <<<"$out")
 [ "$(acc)" = '{}' ] && ok "a refused apply records nothing" || no "recorded after a refusal: $(acc)"
 "${ACCEPT[@]}" --plan "$tok" --approved "go" >/dev/null 2>&1 && no "accepted without --asked" || ok "--asked is required"
 "$DA" provider accept nobarrier-cloud --surface cloud --project alpha --asked x >/dev/null 2>&1 && no "accepted without --no-barrier" || ok "--no-barrier is required"
+# a missing flag is a usage error: exit 2, as the manual page promises (it was 1)
+"${ACCEPT[@]}" --plan "$tok" --approved "go" >/dev/null 2>&1; rc=$?
+[ "$rc" = 2 ] && ok "a missing --asked exits 2" || no "missing --asked: rc=$rc"
+"$DA" provider accept nobarrier-cloud --surface cloud --project alpha --asked x >/dev/null 2>&1; rc=$?
+[ "$rc" = 2 ] && ok "a missing --no-barrier exits 2" || no "missing --no-barrier: rc=$rc"
 "$DA" provider accept nope --surface cloud --no-barrier --project alpha --asked x >/dev/null 2>&1 && no "an unknown provider was accepted" || ok "an unknown provider is refused"
 "$DA" provider accept nobarrier-cloud --surface moon --no-barrier --project alpha --asked x >/dev/null 2>&1 && no "an unknown surface was accepted" || ok "an unknown surface is refused"
 "$DA" provider accept nobarrier-cloud --surface cloud --no-barrier --project nosuch --asked x >/dev/null 2>&1 && no "a project without answers was accepted" || ok "a project without stored answers is refused"

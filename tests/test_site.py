@@ -858,6 +858,20 @@ class Build(unittest.TestCase):
             self.assertIsNone(u.find(ns + "lastmod"), u.find(ns + "loc").text)
         self.assertEqual(run("check-output", o)[0], 0)
 
+    def test_the_generated_home_page_says_what_the_guard_is(self):
+        """Without a hand-written home page the generator writes one; it must not call the agents sandboxed (the guard is a text check)."""
+        t = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, t, True)
+        shutil.copytree(FIX, os.path.join(t, "fix"))
+        pages = os.path.join(t, "fix", "pages")
+        os.remove(os.path.join(pages, "index.md"))
+        rc, out, err = build(os.path.join(t, "o"), pages)
+        self.assertEqual(rc, 0, out + err)
+        home = slurp(os.path.join(t, "o", "index.html"))
+        self.assertNotIn("sandboxed", home)
+        self.assertIn("best-effort text guard", home)
+        self.assertIn("not a sandbox", home)
+
     def test_page_text_cannot_inject_html(self):
         t = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, t, True)

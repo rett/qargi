@@ -125,6 +125,10 @@ class Render(unittest.TestCase):
                 if verb and verbs(cmd) and verb not in verbs(cmd):
                     self.fail("topic %s names qargi %s %s, which is not a verb" % (t, cmd, verb))
 
+    def test_no_help_topic_has_a_commands_name(self):
+        """`qargi help NAME` shows the topic first when NAME is one, so a topic named like a command would hide that command's help."""
+        self.assertEqual(sorted(set(C.TOPICS) & set(C.COMMANDS)), [])
+
     def test_the_guard_topic_is_listed_renders_and_is_in_the_man_page(self):
         self.assertIn("guard", C.TOPICS)
         title, paras = C.TOPICS["guard"]
@@ -166,6 +170,13 @@ class Render(unittest.TestCase):
         role = slurp(os.path.join(ROOT, "roles", "review", "ROLE.md"))
         self.assertIn("closing verdict line", role)
         self.assertNotIn("DONE checks that the report has a Findings section", role)
+
+    def test_the_verify_skill_names_both_ways_a_read_only_report_reaches_the_lead(self):
+        """A read-only run with no report in OUT either gave it in its final message (the lead stores it) or wrote it with local report."""
+        skill = " ".join(slurp(os.path.join(ROOT, "skills", "qargi-verify", "SKILL.md")).split())
+        self.assertIn("`qargi review save RUN_DIR` stores it", skill)
+        self.assertIn("`qargi local report`", skill)
+        self.assertIn("report", verbs("local"))
 
     # verbs the guard refuses that the topic need not name, each with the reason: none yet
     GUARD_TOPIC_EXEMPT = {}

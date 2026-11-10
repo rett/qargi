@@ -146,5 +146,13 @@ done
 grep -q '^test_clean.sh\|^test_pyclean.py' <<<"$lint" && no "lint flags a clean sample: $(grep '^test_clean\|^test_pyclean' <<<"$lint")" \
   || ok "lint: a poll loop, an allowed line, a comment, a quoted command and a short token that is present, whole-word, anchored, hyphenated or long are not findings"
 
+# CONTRIBUTING.md lists the rules of the lint and the legacy lint: a rule added to the code must be named there
+missing=''
+for r in $(python3 -I -c 'import sys; sys.path.insert(0, "tests"); import hermetic_lint; print(*hermetic_lint.RULES)'); do
+  grep -q "\`$r\` (" CONTRIBUTING.md || missing="$missing $r"
+done
+grep -q 'tests/test_legacy_lint.py' CONTRIBUTING.md || missing="$missing legacy-lint"
+[ -z "$missing" ] && ok "CONTRIBUTING.md names every rule of the hermetic lint and the legacy lint" || no "CONTRIBUTING.md does not name:$missing"
+
 [ $fail = 0 ] && echo "hermetic: all passed"
 exit $fail

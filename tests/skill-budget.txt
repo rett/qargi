@@ -41,4 +41,4 @@ skills/qargi-task/SKILL.md 839 # raised: names the keys local prepare prints (RO
 skills/qargi-task/cloud.md 760
 skills/qargi-task/local-run.md 196 # lowered: prepare writes RUN/task.md
 skills/qargi-team/SKILL.md 894
-skills/qargi-verify/SKILL.md 694 # raised: two sentences on local runs (feature finish refuses an open run, local close for one applied by hand; before a reboot apply verified runs or use the saved copy); a read-only run that returned its report in its final message (the lead stores it)
+skills/qargi-verify/SKILL.md 705 # raised: two sentences on local runs (feature finish refuses an open run, local close for one applied by hand; before a reboot apply verified runs or use the saved copy); a read-only run that returned its report in its final message (the lead stores it) or wrote it with local report (the member's own writer, 11 words)
