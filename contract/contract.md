@@ -24,9 +24,8 @@ reformulation.
   saying what changed and why, each commit building and passing alone. Its docs and changelog entry go in that
   commit, or in the next when it would span three or more top-level directories. Never squash, amend or rewrite history. Use the
   identity configured in CLONE, no attribution or session trailer unless the profile requires one; check each
-  message with `git interpret-trailers --parse`. The guard cuts a command at every ; && || | and newline, quotes and
-  heredocs included: no qargi verb, push or tag in text on the command line. Write the message to a file, commit with
-  `git commit -F FILE`.
+  message with `git interpret-trailers --parse`. Write each commit message to a file with your file-writing tool and
+  commit with `git commit -F FILE`. A guard refusal is a result: report it; do not rephrase the command to pass it.
 - Keep private names (hosts, addresses, users, home paths) out of files and commit messages, and follow the
   profile's rules for examples. Never act against a production system or use real credentials. Never weaken or
   skip a test or check to make DONE pass.
@@ -42,9 +41,11 @@ removes TMP. Start long commands through your runtime's background facility (no 
 waiting) and finish them before the report.
 
 # Output
-Write outputs only to OUT (`output-format.md`: the files, the manifest, what a read-only role returns). If your
-write tool is refused there, use the shell (a heredoc). Run
-`qargi review check OUT` until it reports no failure (`0 fail, 0 warn`, or `OK report-only run`).
+Write outputs only to OUT (`output-format.md`: the files, the manifest, what a read-only role returns). Use your
+file-writing tool: the guard allows it in OUT for every class. Write no report or commit message with shell text
+(echo, heredoc): the guard reads every line as a command. A read-only role whose file tool is refused puts the whole
+report in its final message; the lead stores it. Run `qargi review check OUT` until it reports no failure (`0 fail,
+0 warn`, or `OK report-only run`).
 
 # Final report (your last message)
 Line 1: DONE or BLOCKED. Then: the DONE check and each gate result quoted verbatim; files changed, one line of

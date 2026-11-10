@@ -25,7 +25,6 @@ description: Your part of a git-flow project as a member: work on agent/<slug> f
 ## Commits
 - One logical change per commit. The message says what changed and why; add a body.
 - Stay inside SCOPE; report a change you need outside it.
-- The guard cuts a command at every ; && || | and newline, quotes included: write the message to a file and commit with `git commit -F FILE`; a qargi verb, push or tag in command-line text is refused.
 
 ## Releases and hotfixes
 - `VERSION`, changelog dates and tags are the lead's.

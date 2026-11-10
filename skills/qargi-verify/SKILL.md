@@ -13,7 +13,7 @@ Gates come from the repository's profile alone (`~/.qargi/config/profiles/<repo>
 For each run:
 
 1. `qargi local verify RUN_DIR` (a cloud collect has none). A change in the real repository's refs means the agent pushed or wrote there: stop and tell the user. A pass arms the run for your merges.
-2. `qargi review check RUN_DIR/out` (OUT; or a cloud collect directory): one numbered patch per commit, a matching manifest and `series.md`. A FAIL goes back to the agent.
+2. `qargi review check RUN_DIR/out` (OUT; or a cloud collect directory): one numbered patch per commit, a matching manifest and `series.md`. A FAIL goes back to the agent. A read-only run with no report in OUT gave it in its final message: `qargi review save RUN_DIR` stores it.
 3. `manifest.json`: base SHA equals the current base; `done.exit_code`; gate verdict lines; touched paths inside SCOPE; status DONE.
 4. Read each commit's diff on its own, with the agent's commit advice: one logical change with its tests, docs and changelog entry. Run the profile's private-name or secret scrub on the patches and grep commit messages for private names and trailers (`git interpret-trailers`). Refuse on a hit.
 
