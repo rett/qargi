@@ -2,8 +2,8 @@
 
 **A gathering place for agent work: dispatch, review, remember.**
 
-Qargi is a set of Claude Code skills and a CLI that dispatch one-off, task-scoped development tasks to sandboxed agents and take the work back as
-reviewable patches. An agent works on one task in its own clone and never pushes; the dispatching session verifies the result and applies it. Local
+Qargi is a set of Claude Code skills and a CLI that dispatch one-off, task-scoped development tasks to agents and take the work back as
+reviewable patches. An agent works on one task in its own clone and is given no way to push (a git wrapper without credentials, and a guard that refuses the ordinary ways); the dispatching session verifies the result and applies it. Local
 members are the default and cloud agents are used only when you ask for them in that request; each runs on a runtime the project names for that surface.
 
 ## Quick start

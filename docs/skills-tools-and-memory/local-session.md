@@ -18,7 +18,7 @@ The plan refuses, writing nothing, a skill whose `SKILL.md` name differs from it
 
 - Applying a render writes nothing into a repository or into `~/.claude`: it lives in the state directory only. Only the links you apply (`packs link`, `project link`) put anything in a checkout.
 - Role scoping is advisory here: Claude Code cannot hold a session to one role's skills, so the render is the union over the project's roles.
-- A member cannot change the render: the guard refuses its writes under `state/render/`. Only you apply it.
+- The guard refuses a member's ordinary writes under `state/render/`; only you apply the render, and `local verify` is the backstop.
 - A tool whose pack lists vault credentials (`vault_ids`) cannot authenticate locally; the plan names it and you configure its credentials yourself.
 
 ## Baseline packs

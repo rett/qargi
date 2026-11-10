@@ -30,11 +30,12 @@ and any write in the pack library, in `credentials/` or `install.json` of the
 configuration directory (not the rest of it), under `state/render`, and in the skills and agents
 directories the runtimes declare, outside its clone (for Claude Code `~/.claude/skills`, `.claude/skills`,
 `~/.claude/agents` and `~/.claude/plugins`); the `skills/` and `.claude/skills` directories of the repository in
-the member's clone stay writable, since they are the work product. The guard fails closed on an
-internal error, and the Claude Code member file sets `onFailure: "block"` on the hook (Claude
-Code 2.1.295 or later) so that a hook that cannot run blocks the call; frontmatter
+the member's clone stay writable, since they are the work product. The guard refuses a call
+it cannot read or decide (an internal error, input that is not JSON). The Claude Code member file sets `onFailure: "block"` on the hook (Claude
+Code 2.1.295 or later) so that a hook that cannot start, for example because `qargi` is not on `PATH`,
+blocks the call; on a runtime that does not enforce it such a call goes through. Frontmatter
 hooks of a project-level agent run only once you trust the workspace. So one definition
 serves every role; what a role does comes from its role text and the contract, not
 from the definition. The guard is a second barrier beside the credential-free git
-wrapper; `qargi local verify` remains the proof. A new member is available in Claude
+wrapper. What the guard is: a best-effort text check of the command or the path of a call, which refuses the ordinary ways to push, reach out, change a skill or write where a role may not. It is not a sandbox. A local member runs as your operating-system user, so an agent that goes out of its way can get around it; a real sandbox is not yet built. `qargi local verify` and `qargi review check` are the backstop: they check what came back, not what was attempted. A new member is available in Claude
 Code sessions started after it is added.
