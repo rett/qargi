@@ -669,6 +669,35 @@ class Skills(HookCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
+    def test_refuses_project_set_of_the_ci_and_deviation_answers_and_the_newer_lead_answers_to_a_member(self):
+        """ci.not_gates takes a CI job out of the comparison with the gates and methodology_accepted takes a deviation out of the open ones: both are the lead's,
+        so project set refuses them (whole or by a dotted path) as it refuses the other lead-only answers; so are the newer release, review and backlog answers.
+        Look-alikes (cis, ci_jobs, methodology, methodology_accepted_x) stay open."""
+        for path in ("ci", "ci.not_gates", "ci.not_gates.0", "methodology_accepted", "methodology_accepted.0", "release.finish_check", "release.hotfix_preflight",
+                     "review.reject_trailers", "backlog.archive", "backlog.section"):
+            for form in ("qargi project set p %s v", "sudo qargi project set p %s v", "cd src && qargi project set p %s v", "bash -c 'qargi project set p %s v'",
+                         "echo $(qargi project set p %s v)", "./lib/project.sh set p %s v"):
+                c = form % path
+                r = self.bash(c)
+                self.assertEqual(r.returncode, 2, c)
+                self.assertIn("qargi project set of %s changes" % path, r.stderr, c)
+        for c in ("qargi project set p cis v", "qargi project set p ci_jobs v", "qargi project set p methodology v", "qargi project set p methodology_accepted_x v",
+                  "echo qargi project set p ci.not_gates x", "qargi project show p"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_refuses_project_unset_with_words_the_guard_cannot_read_to_a_member(self):
+        """project unset removes an answer, with the refusals of project set (and a refusal of its own in a member run, in lib/project.sh): a form whose verb or path
+        a variable, a substitution, a brace, a glob or xargs builds cannot be read here and is refused, as for project set."""
+        for c in ("qargi project unset p $K", "qargi project unset p models.$K", "echo $(qargi project unset p models.extensions)", "bash -c 'qargi project unset p $K'",
+                  "echo models.extensions | xargs qargi project unset p", "qargi project unset p {models,gates}", "qargi project unset p `echo gates`"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("qargi project unset", r.stderr, c)
+        for c in ("echo qargi project unset p gates", "qargi project show p"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
     def test_refuses_project_set_of_the_author_answers_to_a_member(self):
         """git.author and review.keep_author decide whose name qargi review apply puts on a member's commits, and review.scrub (a command the lead runs)
         and review.trailer_policy what qargi review check does with a returned series: they are the lead's, so project set refuses them, whole or by a dotted path, in the forms the other lead-only answers are refused in. Look-alikes (gitx, reviews, review_x)
@@ -4693,6 +4722,36 @@ class FifthReview(HookCase):
                 f.write("review\n" if name == "ability" else "")
         self.assertEqual(self.not_refused(["echo x > %s/n" % tmp], os.path.join(other, "clone"), "read-only"), [])
         self.assertEqual(self.not_allowed(["echo x > %s/out/r.md" % other], os.path.join(other, "clone"), "read-only"), [])
+
+    def test_a_member_run_mark_limits_the_tmp_match_to_the_tmp_of_its_own_run(self):
+        """With QARGI_MEMBER_RUN in the hook's environment the member is known: the TMP of another run does not find that run, so a read-only member of run A cannot
+        write the TMP of run B by its path (Bash and the file tools alike). Without the mark the path match is as before."""
+        tmp_a, tmp_b = (os.path.join(self.t, d) for d in ("shm-a", "shm-b"))
+        other = os.path.join(self.t, "run2")
+        for d in (tmp_a, tmp_b, os.path.join(other, "clone"), os.path.join(other, "out"), os.path.join(self.t, "plain")):
+            os.makedirs(d)
+        for name, text in (("ability", "review\n"), ("refs.before", ""), ("class", "read-only\n")):
+            with open(os.path.join(other, name), "w") as f:
+                f.write(text)
+        with open(os.path.join(self.state, "local-runs.jsonl"), "w") as f:
+            f.write(json.dumps({"run": self.run_dir, "tmpdir": tmp_a}) + "\n" + json.dumps({"run": other, "tmpdir": tmp_b}) + "\n")
+        away = os.path.join(self.t, "plain")
+
+        def verdicts(mark, tmp):
+            env = self.env()
+            if mark:
+                env["QARGI_MEMBER_RUN"] = mark
+            return [self.hook(["--class", "read-only"], {"tool_name": "Bash", "tool_input": {"command": "echo x > %s/n" % tmp}, "cwd": away}, env).returncode,
+                    self.hook(["--class", "read-only"], {"tool_name": "Write", "tool_input": {"file_path": os.path.join(tmp, "n")}, "cwd": away}, env).returncode]
+        self.assertEqual(verdicts(self.run_dir, tmp_a), [0, 0])                  # its own TMP
+        self.assertEqual(verdicts(self.run_dir, tmp_b), [2, 2])                  # another run's TMP
+        self.assertEqual(verdicts(other, tmp_b), [0, 0])
+        self.assertEqual(verdicts(other, tmp_a), [2, 2])
+        self.assertEqual(verdicts(os.path.join(self.t, "gone"), tmp_a), [2, 2])  # a mark that names no run finds none
+        self.assertEqual(verdicts(None, tmp_a), [0, 0])                          # no mark: the path names the run, as before
+        self.assertEqual(verdicts(None, tmp_b), [0, 0])
+        r = self.hook(["--class", "read-only"], {"tool_name": "Write", "tool_input": {"file_path": os.path.join(tmp_b, "n")}, "cwd": away}, dict(self.env(), QARGI_MEMBER_RUN=self.run_dir))
+        self.assertIn("no run directory", r.stderr)
 
     # --- G7: a cd the guard cannot read leaves the directory unknown, and a relative write after it is refused
     def test_a_cd_to_a_directory_the_guard_cannot_name_makes_a_relative_write_unreadable(self):

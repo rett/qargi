@@ -44,10 +44,10 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     the last two have names a project may use for its own scripts, so only the files in the lib directory of the tool or of the installed
     copy count, found from the directory the command runs in);
   - qargi project init (it stores a whole answers file, so it is a way to models.extensions and models.accept_no_barrier, which have gated verbs;
-    found like the skill verbs), and qargi project set of any models answer, of release.*, of test_command, of gates, of env.*, of site.* (the commands, environment and site the lead later runs or builds), of packs.* (the opt-out of the render check), of git.* and review.* (the identity and the author rule qargi review apply gives the commits it applies, and the scrub command and trailer policy qargi review check runs), of runs.* (the refs that verify and clean accept as a runtime's own) and of
+    found like the skill verbs), and qargi project set of any models answer, of release.*, of test_command, of gates, of env.*, of site.* (the commands, environment and site the lead later runs or builds), of packs.* (the opt-out of the render check), of git.* and review.* (the identity and the author rule qargi review apply gives the commits it applies, and the scrub command and trailer policy qargi review check runs), of ci.* and methodology_accepted (the CI jobs left out of the gate comparison, the deviations the lead accepts), of runs.* (the refs that verify and clean accept as a runtime's own) and of
     roles.<role>.tools, a whole role or roles (the tools env apply installs and local prepare checks out; the other answers stay open). A project verb the guard cannot read is
     refused: set with a path that is missing or built by xargs, a variable, a substitution, a brace or a glob; and any command with the word project,
-    link, unlink, set or init after it and a shell expansion or xargs in the segment (found again inside `sh -c` and `eval` strings with the quotes
+    link, unlink, set, unset or init after it and a shell expansion or xargs in the segment (found again inside `sh -c` and `eval` strings with the quotes
     taken off, so a quote or a backslash inside the verb does not hide it). Whatever the verb would have said, it is not read. lib/gated_answers.py, the store behind
     provider enable|disable|accept (no environment variable or option opens project set to the two keys any more), is refused in any use;
   - setting QARGI_NESTED (it makes some verbs skip their plan-token check);
@@ -221,12 +221,12 @@ command that also runs git is refused for every member.
 The run: a directory is a run when it holds ability and refs.before, or the clone and out directories beside any file of the record (RUN_CONTROL), and it is not
 below the clone directory of another (a repository may hold a docs/tmpdir). RUN_CONTROL files are not written, moved, removed, copied or linked, nothing is
 the run directory itself is no destination (a copy over it, an extraction, a link; run_dir_refusal), and the run directory is not removed or moved; under
-`--class read-only` the run is not asked whether the member is read-only: a run that cannot be found refuses every write (NO_RUN), but a path in the TMP the lead's registry names for a run finds that run (tmp_run).
+`--class read-only` the run is not asked whether the member is read-only: a run that cannot be found refuses every write (NO_RUN), but a path in the TMP the lead's registry names for a run finds that run (tmp_run; with the member mark in the environment, only the member's own run).
 Not seen: a script built by code (python -c ...), a program or a verb held in a variable, the output of a substitution handed to sh -c (`bash -c "$(echo qargi upgrade)"`),
 a wrapper's option that takes a value (sudo -u root qargi ...; the ones of xargs are read).
 
-Failure: the guard fails closed. Any unexpected exception ends in exit 2 with the reason on stderr. Input that is not
-JSON is still let through (exit 0), as before. Known limits outside this file: a hook that cannot start, exits other than 0 or 2, times out or prints invalid
+Failure: the guard fails closed. Any unexpected exception ends in exit 2 with the reason on stderr. Input that is empty, is not
+valid UTF-8 or is not JSON is refused (exit 2): the call cannot be read. Known limits outside this file: a hook that cannot start, exits other than 0 or 2, times out or prints invalid
 JSON is a non-blocking error for the runtime and the action goes ahead, so agents/member.md sets `onFailure: "block"` and a `timeout` (a runtime that does not
 enforce `onFailure` lets such a failure through), and the frontmatter hooks of a project-level agent file run only after the workspace is trusted: until then the
 member runs without this guard."""
@@ -239,10 +239,10 @@ HANDOFF_SUBST = re.compile(r"(?:marshal(?:\.sh)?[\"']*\s+[\"']*handoff|marshal_h
 PROJECT_SET_SUBST = re.compile(r"project(?:\.sh)?[\"']*\s+[\"']*set[\"']*\s")   # `project set ... $(...)`: the substitution may produce a models path, and splitting it off hides that
 AUDIT_SUBST = re.compile(r"packs_audit\.py[\"']*")   # `packs_audit.py ... $(...)`: the substitution may produce `store`, and splitting it off hides that
 UNREADABLE = "$`{}*?[]"                                     # in a word: a variable, a substitution, a brace or a glob builds it, so the guard cannot read what it is
-EXECUTED_ANSWERS = ("release", "test_command", "gates", "env", "upstream", "site", "backlog")   # the answers the lead later runs, passes to a process, fetches from or builds from (release site): a member may not set them (project set)
+EXECUTED_ANSWERS = ("release", "test_command", "gates", "env", "upstream", "site", "backlog", "ci", "methodology_accepted")   # the answers the lead later runs, passes to a process, fetches from or builds from (release site), or decides with (ci.not_gates takes a CI job out of the gate comparison, methodology_accepted a deviation out of the open ones): a member may not set them (project set)
 ROLE_TOOLS_PATH = re.compile(r"roles|roles\.[^.]+|roles\.[^.]+\.tools(?:\..*)?")   # roles.<role>.tools: what env apply installs and local prepare checks out; a whole role, or all of them, holds it
 IDENTITY_ANSWERS = ("git", "review")   # git.author (the author review apply gives the applied commits) and review.keep_author (keep the member's instead): the lead's, a member may not set them (project set)
-PROJECT_VERBS = ("set", "init", "link", "unlink")           # the project verbs a member may not run (set: the models answers; init: the whole file; link, unlink: what a session loads)
+PROJECT_VERBS = ("set", "unset", "init", "link", "unlink")  # the project verbs a member may not run (set, unset: the answers of the lead; init: the whole file; link, unlink: what a session loads)
 XARGS_VALUE_OPTS = {"-I", "-a", "-d", "-E", "-L", "-n", "-P", "-s", "--arg-file", "--delimiter", "--max-lines", "--max-args", "--max-procs", "--max-chars", "--process-slot-var"}   # take the next word
 WRAP = {"sudo", "env", "command", "builtin", "exec", "nohup", "time", "timeout", "setsid", "xargs", "nice", "parallel"}
 WRITERS = {"rm", "rmdir", "touch", "mkdir", "chmod", "chown", "truncate", "tee", "patch", "unlink", "shred",
@@ -1312,9 +1312,12 @@ def run_tmps(run):
 def tmp_run(full):
     """The run whose TMP the real path full lies in, by the lead's registry, or None. TMP is usually below /dev/shm, away from the run directory, so a call made
     from a directory that is in no run is matched to its run by the path it writes. Only a directory that is a run (is_run) counts, and full must lie in the
-    registered directory (never above it, never beside it)."""
+    registered directory (never above it, never beside it). When the hook's environment carries the member mark (MEMBER_MARK: the run directory, put there when
+    the member is started), only that run's TMP counts: a member of run A does not find run B by B's TMP. Without the mark the path alone names the run."""
+    mark = os.environ.get(MEMBER_MARK)
+    mine = os.path.realpath(mark) if mark else None
     for r, t in registered_tmps():
-        if inside(full, t) and is_run(r):
+        if inside(full, t) and is_run(r) and (mine is None or r == mine):
             return r
     return None
 
