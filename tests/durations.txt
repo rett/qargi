@@ -122,3 +122,4 @@
 15 bash tests/test_json_plans.sh
 17 bash tests/test_resume_push.sh
 25 bash tests/test_release_master_merge.sh
+25 bash tests/test_release_cut.sh

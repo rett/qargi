@@ -77,6 +77,7 @@ GLOBAL_OPTS = [opt("--json", "print the result as one JSON object with the verb,
 PROJECT_OPT = opt("--project", "the project, instead of the one inferred from here", "PROJECT", "project")
 MEMBER_PROJECT_OPT = opt("--project", "the project the member belongs to (default: the one in effect when it has the member, else the only project that has it)", "PROJECT", "project")
 AS_OPT = opt("--as", "act as this lead identity (default: the session id in QARGI_LEAD, else user@host)", "ID")
+UNREACHABLE_OPT = opt("--assume-unreachable-ok", "go on although the remote of the shared records cannot be reached (a claim stays provisional, a check answers from the cache); recorded as marshal:unreachable-ok in the audit log")
 RESOLVED_OPT = opt("--resolved", "use the merge you resolved and committed in the conflict worktree")
 REMOTE_NOTE = ("It asks the live origin with git ls-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, "
                "and says 'remote not checked' when origin cannot be reached.")
@@ -339,14 +340,17 @@ COMMANDS = {
                  "marshal enable switches the project to the shared backend, where each record is a commit on refs/qargi/features/NAME of the remote "
                  "origin so several machines and people see the same leads (takeover then waits for the record to stay unchanged for the ttl as seen by "
                  "the taker's own clock). Only the lead pushes those refs; a member run cannot. "
-                 "Exit status 3 means the remote could not be checked (the cache was used). Records can be signed: one key per lead machine, a signers file per project "
+                 "Exit status 3 means the remote could not be checked. claim and check then refuse, saying what could not be reached (the records of the project on the remote) and why, and change nothing; "
+                 "with --assume-unreachable-ok they go on (a claim stays provisional until a later verb completes or drops it, a check answers from what this machine fetched last) and the audit log gets a marshal:unreachable-ok line. "
+                 "status shows the cache with a 'remote not checked' notice, and the verbs of the flow that ask the marshal first (feature start, merge, finish, ...) still warn and go on, as before. "
+                 "Every other change of a shared record (set, renew, release, take, takeover, finish, resign) needs the remote and exits 3 without it; there is no override for those. Records can be signed: one key per lead machine, a signers file per project "
                  "and the mode in the switch file (marshal enable --integrity); with integrity on, status and check tag records signed, unsigned, INVALID or cannot verify, "
                  "strict ignores unsigned and invalid ones with a warning, and a rollback prints rollback detected."),
         "scripts": ["marshal.sh", "marshal_store.py", "marshal_refs.py"],
         "verbs": {
             "claim": verb("Become the lead of feature NAME (creates the record; refuses when another lead holds it)", [("NAME", "none")],
                           [PROJECT_OPT, AS_OPT, opt("--goal", "what the feature is to achieve", "TEXT"),
-                           opt("--as-successor-of", "continue as the lead after a restart: the old lead's id (see marshal handoff)", "ID")],
+                           opt("--as-successor-of", "continue as the lead after a restart: the old lead's id (see marshal handoff)", "ID"), UNREACHABLE_OPT],
                           desc=("With --as-successor-of ID you take over from the lead ID without the owner's words when that lead's lease is stale and its host, OS user and "
                                 "work tree are yours (a restart gives the session a new id and nothing else that tells it apart). The record keeps its goal, plan and note and "
                                 "names the succession; it is audited as marshal:succession. Any other case is refused: the owner's marshal takeover covers it. "
@@ -361,8 +365,8 @@ COMMANDS = {
                         [PROJECT_OPT, AS_OPT, opt("--goal", "the goal", "TEXT"), opt("--plan", "the plan, free text or a checklist", "TEXT"), opt("--note", "a note for the next reader", "TEXT"),
                          opt("--status", "planned, active, blocked or verifying", "STATE", ("planned", "active", "blocked", "verifying"))]),
             "check": verb("Before starting work or changing a plan: is the feature free for you, is anything else in its way (exit 1: refuse; warnings go to stderr)", [("[NAME]", "none")],
-                          [PROJECT_OPT, AS_OPT, opt("--no-fetch", "read the cache of the shared refs only, do not fetch (the session hook uses it)")],
-                          desc="This verb only reads; it renews no lease. The commands of the flow that ask the marshal first (feature merge, sync, status, verify and finish; local prepare, verify and clean; review check and apply) renew the lease of their own lead as they ask."),
+                          [PROJECT_OPT, AS_OPT, opt("--no-fetch", "read the cache of the shared refs only, do not fetch (the session hook uses it)"), UNREACHABLE_OPT],
+                          desc="With the shared refs backend it asks the remote and refuses (exit 3) when it cannot be reached, unless --assume-unreachable-ok. This verb only reads; it renews no lease. The commands of the flow that ask the marshal first (feature merge, sync, status, verify and finish; local prepare, verify and clean; review check and apply) renew the lease of their own lead as they ask."),
             "renew": verb("Renew your lease on a feature (long verbs and the lead's other commands on the feature do this themselves)", [("NAME", "none")], [PROJECT_OPT, AS_OPT]),
             "release": verb("Give the feature up, leaving a handoff note; it has no lead until someone takes it", [("NAME", "none")],
                             [PROJECT_OPT, AS_OPT, opt("--note", "what the next lead must know", "TEXT")],
@@ -529,13 +533,15 @@ COMMANDS = {
                  "It is pushed and a pull request into master runs CI on the commit that will be released. Finishing merges it into master with --no-ff, "
                  "tags that merge commit, merges the tagged master commit (not the branch a second time) into develop (a hotfix: into the open release branch, if there is one) with --no-ff, "
                  "so master holds no merge commit that develop lacks, and deletes the branch. A release starts only from "
-                 "a develop whose head passed the whole suite. Starting, pushing, merging, tagging and publishing need the plan token and an approval; signing needs your terminal. "
+                 "a develop whose head passed the whole suite. Starting, pushing, merging, tagging and publishing need the plan token and an approval, each its own or all of them at once: release plan prints one plan for the whole cut and one token, "
+                 "its approval is recorded once, and the steps then take --plan TOKEN alone; signing needs your terminal. "
                  "The layout of what a release updates is the project's, set in its answers (all optional): release.version_file (the file that holds only the version; default VERSION; "
                  "none when there is no such file, and the version is then the changelog heading and the tag), release.changelog.unreleased (the heading of the changes to come, default "
                  "'## [Unreleased]'; it may carry the version, as in '## {version} (unreleased)', and is then renamed) and release.changelog.released (default '## [{version}] - {date}'), "
                  "release.version_files (other files that carry the version, a list of paths; default none: start, status and verify warn of the ones that do not contain the version, never bump them), "
                  "release.man_pages (a list of paths; default the man/*.1 files), release.test_command (what release verify runs, a command line or a list of words; default test_command) "
-                 "and release.preflight (a command as a list of words, {version} replaced, run by start and push before they change anything; a non-zero exit refuses and shows the tail of its output). "
+                 "and release.preflight (a command as a list of words, {version} replaced, run by start and push before they change anything; a non-zero exit refuses and shows the tail of its output; "
+                 "a hotfix's start does not run it, because master lacks the content the hotfix brings, and its push does, in a copy of the branch). "
                  "The project answer gates (an ordered list of {name, command, tier}) replaces test_command and release.test_command when declared: release verify runs the feature-tier gates, then the release-tier gates. "
                  "The release files are the project's too: release.assets_command (the command that builds them, a command line or a list of words with {version} replaced), which "
                  "release assets runs in a clean worktree of the tag, and release.assets (files or globs to attach, {version} replaced), taken in that worktree by release publish. "
@@ -549,6 +555,22 @@ COMMANDS = {
                  "release finish ends with 'next: qargi release site VERSION' (the methodology's after_release step) and release status has a site line."),
         "scripts": ["release.sh"],
         "verbs": {
+            "plan": verb("One plan and one approval for the whole cut: start, push, finish, site and publish", [("VERSION", "none")],
+                         [PROJECT_OPT, HOTFIX_OPT, opt("--date", "the changelog and man page date (default today)", "YYYY-MM-DD"), opt("--keep", "keep the branch when the cut finishes"),
+                          opt("--allow-empty-notes", "release although the unreleased section of CHANGELOG.md is empty"),
+                          opt("--again", "discard the recorded cut of VERSION and plan anew"), PLAN, APPROVED],
+                         desc=("Without --approved it changes nothing: it prints every step of the ceremony with what moves (1 start, 2 push when the repository has an origin, 3 finish, 4 site when "
+                               "site.enabled is true, 5 publish, optional) and ONE plan token. The start step is planned by release start itself, so its refusals come before a token does. "
+                               "Approving it is release plan VERSION --plan TOKEN --approved \"<your go-ahead>\" (the same --date, --keep and --allow-empty-notes): the words are recorded once, with the plan, "
+                               "under the state's release directory (PROJECT-VERSION.cut.json), and the audit log gets a release:cut line. Lead only. Then each step is its own verb with --plan TOKEN alone "
+                               "(release start, push, finish, site, publish VERSION --plan TOKEN): the words are the record's and appear on that step's audit line, the step runs only when what the plan fixed "
+                               "still holds, and each prints the next one. start must find its own plan as it was frozen (the head of the base, the files bumped, the date); push the branch where start left it; "
+                               "finish the branch where push left it (the head CI ran on), master and the second target as planned and --keep as planned; site and publish the tag on the commit finish tagged, "
+                               "and publish only when no release file is attached (release.assets, release.sign: their hashes exist only after the tag, so publish takes its own plan). A step that no longer matches "
+                               "is refused before anything moves and is run with its own plan and approval (a fix committed after start is pushed that way, release fix --push); the cut records it and goes on from "
+                               "the new state. finish is still the push and tag gate: the cut's words are the owner's, and --ignore-checks WORDS at the call is recorded as before. "
+                               "Run again, plan shows the recorded cut and which steps ran (release status does too); --again discards it. A cut cannot begin once the branch or the tag exists."),
+                         examples=["qargi release plan 0.2.4", "qargi release plan 0.2.4 --date 2026-11-12 --plan TOKEN --approved \"cut 0.2.4\"", "qargi release start 0.2.4 --plan TOKEN"]),
             "start": verb("Cut release/VERSION from develop (hotfix/VERSION from master) and bump the version", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT, opt("--date", "the changelog and man page date (default today)", "YYYY-MM-DD"),
                                                                                                     opt("--allow-empty-notes", "release although the unreleased section of CHANGELOG.md ('## [Unreleased]' by default) is empty"), PLAN, APPROVED],
                           desc=("Without --approved it changes nothing: it prints the plan (the branch, the base it is cut from and that base's head, the one commit that bumps the version, the files "
@@ -558,7 +580,8 @@ COMMANDS = {
                                 "Before anything changes it checks what a release must update and refuses, naming the file and the fix: a man page (man/*.1) needs a .TH line "
                                 "with a date and a version field, which the first commit sets to the date and VERSION (the pages are release.man_pages, else man/*.1); a CHANGELOG.md needs content under "
                                 "its unreleased heading ('## [Unreleased]', or release.changelog.unreleased). The version file is release.version_file (default VERSION; none: no file is bumped). "
-                                "release.preflight runs before anything changes. A project without a man page or changelog is not checked for that part. A release (not a hotfix) ends by listing what it contains: "
+                                "release.preflight runs before anything changes; for a hotfix it does not run at start (master does not have the fix, its changelog entry or whatever the check looks for), "
+                                "the plan says so, and release push runs it in a copy of the branch before anything is pushed. A project without a man page or changelog is not checked for that part. A release (not a hotfix) ends by listing what it contains: "
                                 "the features merged into develop since the previous tag, the --no-ff merges whose message is \"Merge branch 'feature/...'\", one per line with the short sha. "
                                 "When master and the new branch share no history (no merge base: master is one snapshot commit, say) it says so and that release push joins them. "
                                 "With the answer release.version_files (a list of paths relative to the repository) it checks, once VERSION is bumped, that each listed file on the new branch "
