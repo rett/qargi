@@ -93,7 +93,7 @@
 # The layout of what a release updates is the project's: the answers release.version_file (default VERSION; none: the project has no such file),
 # release.changelog.unreleased and .released (heading templates; default '## [Unreleased]' and '## [{version}] - {date}'), release.man_pages (default
 # man/*.1), release.version_files (other files that carry the version; checked, never bumped), release.test_command (what `verify` runs; default test_command) and release.preflight (an argv list, {version} replaced, run by `start` and
-# `push` before they change anything; a non-zero exit refuses; for a hotfix `start` does not run it, master lacking the content the hotfix brings, and `push` does, in a copy of the branch). lib/release_layout.py checks and applies them.
+# `push` before they change anything; a non-zero exit refuses; for a hotfix `start` does not run it, master lacking the content the hotfix brings, and `push` does, in a copy of the branch). release.hotfix_preflight (the same forms) is what `push` runs for a hotfix instead of release.preflight. lib/release_layout.py checks and applies them.
 #
 # Options for all: --project P, --date D. Pushing, merging and tagging need the plan token and an approval.
 . "$(dirname "$0")/lib.sh"
@@ -520,9 +520,15 @@ run_answer() {
   out=$(run_clean "$2" env QARGI_RELEASE_VERSION="$VER" "${cmd[@]}" </dev/null 2>&1) || rc=$?
   [ "$rc" = 0 ] || die "release.$1 failed (exit $rc): ${cmd[*]}"$'\n'"$(printf '%s\n' "$out" | tail -n 15 | sed 's/^/  | /')"$'\n'"$3"
 }
-# run_preflight DIR: release.preflight (an argv list, {version} replaced) runs in DIR, with no shell and no input; a non-zero exit ends the verb
-# with the tail of its output. It runs before the verb changes anything.
-run_preflight() { has_answer preflight || return 0; run_answer preflight "$1" "nothing was changed"; }
+# preflight_key -> the answer that is the preflight of this verb: for a hotfix release.hotfix_preflight when it is set (the stored preflight may need content
+# only the fix has, or not suit a hotfix), else release.preflight; nothing when neither is set
+preflight_key() {
+  if [ "$KIND" = hotfix ] && has_answer hotfix_preflight; then echo hotfix_preflight
+  elif has_answer preflight; then echo preflight; fi
+}
+# run_preflight DIR: the preflight (preflight_key; an argv list, or a command line run by bash -c; {version} replaced) runs in DIR with no input; a non-zero
+# exit ends the verb with the tail of its output. It runs before the verb changes anything.
+run_preflight() { local k; k=$(preflight_key); [ -z "$k" ] || run_answer "$k" "$1" "nothing was changed"; }
 
 # --- the pull request and its CI checks (read-only calls through $GH)
 # pr_checks BRANCH -> PRC_STATE (pass|failing|pending|nopr|nochecks|noauth|nogh|unchecked), PRC_LINES ("name: pass|fail|pending|skipped" per check),
@@ -800,8 +806,9 @@ case $verb in
     # fix, its changelog entry, what a project's own check looks for), so release.preflight cannot pass there: it runs in a copy of the branch at `push`,
     # where it already runs, once the fix is committed (the plan says so)
     pre_line=''
-    if jq -e '(.release? // {}) | has("preflight")' "$af" >/dev/null 2>&1; then
-      if [ "$KIND" = hotfix ]; then pre_line="preflight (release.preflight): not run now: $BASE does not have the content this hotfix brings. It runs in a copy of $BR when you push, before anything is pushed (a non-zero exit refuses the push): $(jq -r '.release.preflight | join(" ")' "$af")"
+    pk=$(preflight_key)
+    if [ -n "$pk" ]; then
+      if [ "$KIND" = hotfix ]; then pre_line="preflight (release.$pk): not run now: $BASE does not have the content this hotfix brings. It runs in a copy of $BR when you push, before anything is pushed (a non-zero exit refuses the push): $(answer_text "$pk")"
       else run_preflight "$WT"; pre_line="preflight (release.preflight): passed on $BASE (at ${b0:0:7}); it runs again in a copy of $BR when you push"; fi
     fi
     oldver=''
@@ -936,7 +943,7 @@ case $verb in
       echo "join the history of master: merge master into the release branch keeping the release tree (-s ours --allow-unrelated-histories), as a new commit on $BR before the push; the tree of $BR must be the same before and after (checked: the branch does not move otherwise), and master must still be at ${msha:0:7}; the lead's hooks and signing do not run on it"
       jb=$(join_blocker "$BR"); [ -z "$jb" ] || echo "warning: $jb"
     fi
-    jq -e '(.release? // {}) | has("preflight")' "$af" >/dev/null 2>&1 && echo "preflight (release.preflight, run in a copy of $BR before the push): $(jq -r '.release.preflight | join(" ")' "$af")"
+    pk=$(preflight_key); [ -z "$pk" ] || echo "preflight (release.$pk, run in a copy of $BR before the push): $(answer_text "$pk")"
     notes_report
     remote_report "$BR"
     pw=$(wt_of "$BR"); [ -z "$pw" ] || [ -z "$(git -C "$pw" status --porcelain 2>/dev/null)" ] || echo "warning: $pw has uncommitted changes: only what is committed on $BR is pushed"

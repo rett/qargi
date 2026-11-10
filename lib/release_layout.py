@@ -15,6 +15,9 @@ Answers, under `release` in the project's answers file (every one optional; the 
   release.test_command         the command of `release verify` (a command line, or a list of words; default: the answer test_command)
   release.preflight            a command as a list of words, {version} replaced, run by `release start` and `release push` before they change
                                anything; a non-zero exit refuses
+  release.hotfix_preflight     a command line, or a command as a list of words, {version} replaced: what `release push` runs for a hotfix, in a copy of the branch
+                               before anything is pushed, instead of release.preflight (default: none, and release.preflight runs); `release start` does not run
+                               it
   release.finish_check         a command line, or a command as a list of words, {version} replaced, run by `release finish` in a copy of the branch once its
                                plan is approved and before any merge, tag or push; a non-zero exit refuses with nothing moved (default: none)
 
@@ -33,7 +36,7 @@ import sys
 
 DEFAULT_UNRELEASED = "## [Unreleased]"
 DEFAULT_RELEASED = "## [{version}] - {date}"
-LAYOUT_KEYS = ("version_file", "version_files", "changelog", "man_pages", "test_command", "preflight", "finish_check")
+LAYOUT_KEYS = ("version_file", "version_files", "changelog", "man_pages", "test_command", "preflight", "hotfix_preflight", "finish_check")
 CHANGELOG_KEYS = ("unreleased", "released", "numbered")
 CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
 PLACEHOLDER_RE = re.compile(r"\{([^{}]*)\}")
@@ -111,6 +114,8 @@ def problems(rel):
         p = rel["preflight"]
         if not (isinstance(p, list) and p and all(isinstance(x, str) and x and "\x00" not in x for x in p)):
             out.append("release.preflight: a command as a list of words, run without a shell, {version} replaced (for example [\"make\", \"check-release\", \"{version}\"])")
+    if "hotfix_preflight" in rel:
+        out.extend(command_problem("release.hotfix_preflight", rel["hotfix_preflight"], '["make", "check-hotfix", "{version}"]'))
     if "finish_check" in rel:
         out.extend(command_problem("release.finish_check", rel["finish_check"], '"make check-release"'))
     return out

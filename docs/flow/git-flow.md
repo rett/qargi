@@ -144,7 +144,10 @@ refusal changes nothing.
    `release push` and `release finish --hotfix` (master is merged and tagged as above; the tagged master commit is then merged
    into the open release branch instead of develop, if there is one). `release.preflight` does not run at the start of a hotfix: it is cut
    from master, which cannot have the content the hotfix brings; the plan of `release start --hotfix` says so, and `release push` runs
-   the preflight in a copy of the branch before anything is pushed, so the fix must be committed first.
+   the preflight in a copy of the branch before anything is pushed, so the fix must be committed first. The optional answer
+   `release.hotfix_preflight` (a command line or a list of words, `{version}` replaced) is what `release push` runs for a hotfix
+   instead of `release.preflight`, for a project whose stored preflight needs more than a hotfix brings or does not suit it; the
+   plan of `start --hotfix` and of `push` name the answer that runs. A release (not a hotfix) never runs it.
 6. One plan and one approval for the whole cut. `qargi release plan VERSION [--hotfix] [--date D] [--keep]` prints the plan of every
    step (start; push when there is an origin; finish; site when `site.enabled`; publish, optional) with what moves, and one token.
    `release plan VERSION --plan TOKEN --approved "<your words>"` records the approval once (the words, the plan, an audit line `release:cut`)
