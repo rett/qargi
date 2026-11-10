@@ -91,7 +91,7 @@
 # The layout of what a release updates is the project's: the answers release.version_file (default VERSION; none: the project has no such file),
 # release.changelog.unreleased and .released (heading templates; default '## [Unreleased]' and '## [{version}] - {date}'), release.man_pages (default
 # man/*.1), release.version_files (other files that carry the version; checked, never bumped), release.test_command (what `verify` runs; default test_command) and release.preflight (an argv list, {version} replaced, run by `start` and
-# `push` before they change anything; a non-zero exit refuses). lib/release_layout.py checks and applies them.
+# `push` before they change anything; a non-zero exit refuses; for a hotfix `start` does not run it, master lacking the content the hotfix brings, and `push` does, in a copy of the branch). lib/release_layout.py checks and applies them.
 #
 # Options for all: --project P, --date D. Pushing, merging and tagging need the plan token and an approval.
 . "$(dirname "$0")/lib.sh"
@@ -630,8 +630,14 @@ case $verb in
     worktree "$BASE"
     git -C "$WT" checkout -q --detach "$b0"
     # the preflight: every file the release must update is checked and rewritten in the temporary worktree first; a refusal
-    # exits before any branch exists, so nothing has changed
-    run_preflight "$WT"
+    # exits before any branch exists, so nothing has changed. A hotfix is cut from master, which does not have the content the hotfix brings (the
+    # fix, its changelog entry, what a project's own check looks for), so release.preflight cannot pass there: it runs in a copy of the branch at `push`,
+    # where it already runs, once the fix is committed (the plan says so)
+    pre_line=''
+    if jq -e '(.release? // {}) | has("preflight")' "$af" >/dev/null 2>&1; then
+      if [ "$KIND" = hotfix ]; then pre_line="preflight (release.preflight): not run now: $BASE does not have the content this hotfix brings. It runs in a copy of $BR when you push, before anything is pushed (a non-zero exit refuses the push): $(jq -r '.release.preflight | join(" ")' "$af")"
+      else run_preflight "$WT"; pre_line="preflight (release.preflight): passed on $BASE (at ${b0:0:7}); it runs again in a copy of $BR when you push"; fi
+    fi
     oldver=''
     if [ "$VFILE" != none ]; then
       if [ -f "$WT/$VFILE" ]; then oldver=$(tr -d '[:space:]' < "$WT/$VFILE"); echo "$VER" > "$WT/$VFILE"; git -C "$WT" add -- "$VFILE"
@@ -655,6 +661,7 @@ case $verb in
     bl='none (an empty commit)'; [ -z "$bumped" ] || bl=$(printf '%s' "$bumped" | paste -sd, - | sed 's/,/, /g')
     echo "files the commit changes: $bl"
     echo "the version becomes $VER${oldver:+ (was $oldver)} and the changelog (and a man page) is dated $DATE"
+    [ -z "$pre_line" ] || echo "$pre_line"
     hn=$(hotfix_develop_note) && echo "warning: $hn"
     if [ -z "$APPROVED" ]; then
       echo "plan token: $tok   (apply with: qargi release start $VER${HOTFIX:+ --hotfix}${date_given:+ --date $date_given}${ALLOW_EMPTY:+ --allow-empty-notes} --plan $tok --approved \"...\")"

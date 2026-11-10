@@ -46,4 +46,20 @@ rstart 0.2.0 --date 2026-03-04 >/dev/null 2>&1 || no "stale: start failed: $(rst
 left=$(ls "$CF" | sort | paste -sd' ')
 [ "$left" = "stale-hotfix-0.2.0-into-develop.master stale-release-0.3.0-into-develop.master" ] && ok "start removes the .master and .done files of the release it starts, and no other" || no "left in conflicts: $left"
 
+# --- a hotfix is not refused by a release.preflight that needs content only the hotfix brings: start does not run it for a hotfix (the plan says
+# so and when it runs), push runs it in a copy of the branch, before anything is pushed
+printf '#!/usr/bin/env bash\necho "$*" >> "%s/gh.log"\ncase "$*" in *"pr create"*) echo https://example.net/acme/x/pull/1;; esac\n' "$T" > "$T/gh"; chmod +x "$T/gh"; export QARGI_GH=$T/gh
+mk hot with-origin
+jq '.release = {preflight: ["test", "-f", "FIXED"]}' "$T/c/projects/hot.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/hot.json"
+out=$($REL start 0.1.1 --hotfix 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q "preflight (release.preflight): not run now: master does not have the content this hotfix brings. It runs in a copy of hotfix/0.1.1 when you push" <<<"$out" && ok "hotfix start: the plan says the preflight is not run now, and where and when it runs" || no "hotfix plan: rc=$rc $out"
+out=$(rstart 0.1.1 --hotfix 2>&1); rc=$?
+[ "$rc" = 0 ] && git -C "$R" rev-parse -q --verify refs/heads/hotfix/0.1.1 >/dev/null && ok "hotfix start: a preflight that needs the fix does not refuse the start" || no "hotfix start refused: rc=$rc $out"
+out=$($REL start 0.1.2 2>&1); grep -q "release.preflight failed" <<<"$out" && ok "a release (not a hotfix) is still refused at start by a failing preflight" || no "release start with a failing preflight: $out"
+t=$($REL push 0.1.1 --hotfix | tok); out=$($REL push 0.1.1 --hotfix --plan "$t" --approved go 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "release.preflight failed" <<<"$out" && [ -z "$(git -C "$R" ls-remote origin refs/heads/hotfix/0.1.1)" ] && ok "push before the fix: the preflight refuses it and nothing is pushed" || no "push before the fix: rc=$rc $out"
+w=$($REL fix 0.1.1 --hotfix | sed -n 's/^worktree: //p'); echo fixed > "$w/FIXED"; git -C "$w" add FIXED && git -C "$w" commit -q -m "the fix"
+t=$($REL push 0.1.1 --hotfix | tok); out=$($REL push 0.1.1 --hotfix --plan "$t" --approved go 2>&1); rc=$?
+[ "$rc" = 0 ] && [ -n "$(git -C "$R" ls-remote origin refs/heads/hotfix/0.1.1)" ] && ok "push after the fix: the preflight passes in the copy of the branch and the branch is pushed" || no "push after the fix: rc=$rc $out"
+
 exit $fail
