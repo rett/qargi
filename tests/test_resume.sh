@@ -169,7 +169,7 @@ while [ ! -e "$3" ]; do :; done
 intent_lock race-key
 echo "in $$" >> "$4"; sleep 0.5; echo out >> "$4"; intent_unlock
 R
-RL=$T/race/finish-intent/app-race-key.json.run; mkdir -p "$RL"; sleep 0 & dead=$!; wait "$dead"; echo "$dead" > "$RL/pid"
+RL=$T/race/finish-intent/app-race-key.json.run; mkdir -p "$RL"; true & dead=$!; wait "$dead"; echo "$dead" > "$RL/pid"
 for _ in $(seq 12); do bash "$T/racer.sh" "$T/race" "$T/lockfns.sh" "$T/race.gate" "$T/race.log" 2>/dev/null & done
 sleep 1; : > "$T/race.gate"; wait
 nin=$(grep -c '^in ' "$T/race.log" 2>/dev/null); nin=${nin:-0}

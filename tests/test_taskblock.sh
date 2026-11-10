@@ -75,9 +75,15 @@ done
 # the ordinary command lines of a project are DONE lines: the isolated suite run, an assignment with a substitution, a subshell, a script the task creates (it is
 # under --scope), a chain, an environment prefix, a negation. A compound line is accepted when bash parses it (only its syntax is checked).
 # shellcheck disable=SC2016  # the lines are text for --done
-for d in 'T=$(mktemp -d -p /dev/shm); mkdir $T/h; HOME=$T/h bash tests/run.sh' 'T=$(mktemp -d -p /dev/shm); mkdir $T/h; HOME=$T/h bash tests/run.sh --tier fast' 'HOME="$(mktemp -d)" bash tests/check.sh' \
-  '(cd lib && python3 -m pytest)' 'bash tests/check.sh && bash tests/check.sh' 'cd tests && ./check.sh' 'FOO=1 BAR=2 make test' '! grep -q x README.md' 'env -i make test' \
-  'bash tests/new_test.sh' 'tests/new_test.sh' './tests/new_test.sh' 'bash tests/never_made.sh && true' 'make test | tail -n 5' 'HOME=$T/h bash tests/check.sh' 'FOO="a b" bash tests/check.sh'; do
+dones=(
+  # hermetic: allow tmp (text given to --done, a path the test never touches)
+  'T=$(mktemp -d -p /dev/shm); mkdir $T/h; HOME=$T/h bash tests/run.sh'
+  # hermetic: allow tmp (text given to --done, a path the test never touches)
+  'T=$(mktemp -d -p /dev/shm); mkdir $T/h; HOME=$T/h bash tests/run.sh --tier fast'
+  'HOME="$(mktemp -d)" bash tests/check.sh' '(cd lib && python3 -m pytest)' 'bash tests/check.sh && bash tests/check.sh' 'cd tests && ./check.sh' 'FOO=1 BAR=2 make test'
+  '! grep -q x README.md' 'env -i make test' 'bash tests/new_test.sh' 'tests/new_test.sh' './tests/new_test.sh' 'bash tests/never_made.sh && true' 'make test | tail -n 5'
+  'HOME=$T/h bash tests/check.sh' 'FOO="a b" bash tests/check.sh')
+for d in "${dones[@]}"; do
   n=$((n+1)); prep --slug "d$n" --task-file "$T/task.txt" --done "$d" --scope tests/new_test.sh >/dev/null 2>&1 && grep -qxF "DONE: $d" "$RUN/task.md" && ok "DONE '$d' is accepted" || no "DONE '$d' refused"
 done
 # what is plainly not a command line: prose (a sentence whose first word is a path that is not a script, one that bash cannot parse), and a script that is neither at BASE nor under a --scope path
