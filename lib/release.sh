@@ -656,18 +656,27 @@ CUTREC=$DA_STATE/release/$PROJ-$VER.cut.json
 CUT=''
 cut_get() { jq -r "$1" "$CUTREC" 2>/dev/null; }
 # cut_load: sets CUT=1 when --plan names the token of the approved cut of VER and the verb is a step of it; the approval words, the date, --allow-empty-notes
-# and --keep are then the cut's. Dies on a token of a cut that is not approved, on a step the cut does not have and on a kind that differs.
+# and --keep are then the cut's. Dies on a token of a cut that is not approved, on a step the cut does not have, on a kind that differs, in a member run or under
+# QARGI_NESTED (the words are the owner's), and on a --plan that is not the token of the recorded cut (without --approved: a step's own plan is not a cut's step).
+cut_lead_only() { # WHAT: exit 2 in a member run or under QARGI_NESTED (the lead's, with the owner's words)
+  python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import marshal_refs as m; sys.exit(2 if m.in_member_run() else 0)' "$(dirname "$0")" && [ -z "${QARGI_NESTED:-}" ] \
+    || { echo "qargi: $1 is not available in a member run or a nested call: it is the lead's, with the owner's words" >&2; exit 2; }
+}
 cut_load() {
   local rk
   [ -n "$PLAN_ARG" ] && [ -f "$CUTREC" ] || return 0
   case $verb in start|push|finish|site|publish) ;; *) return 0;; esac
-  jq -e --arg t "$PLAN_ARG" '.token == $t' "$CUTREC" >/dev/null 2>&1 || return 0
+  if ! jq -e --arg t "$PLAN_ARG" '.token == $t' "$CUTREC" >/dev/null 2>&1; then
+    [ -n "$APPROVED" ] || die "a cut of $VER is recorded and $PLAN_ARG is not its token: nothing was changed (qargi release plan $VER${HOTFIX:+ --hotfix} shows the cut and its token; a step's own plan takes --approved)"
+    return 0
+  fi
   [ -z "$APPROVED" ] || die "$PLAN_ARG is the token of the whole cut of $VER, whose approval is recorded: run this step with --plan $PLAN_ARG alone (without --approved), or with the token of the step's own plan and --approved"
   [ -n "$(cut_get '.approval.words // empty')" ] || die "the cut $PLAN_ARG of $VER is not approved: qargi release plan $VER${HOTFIX:+ --hotfix} --plan $PLAN_ARG --approved \"...\""
   jq -e --arg s "$verb" '.steps | index($s) != null' "$CUTREC" >/dev/null || die "the cut $PLAN_ARG of $VER has no $verb step (its steps: $(cut_get '.steps | join(", ")')): run $verb with its own plan"
   case $verb in start|push|finish)
     rk=$(cut_get .kind); [ "$rk" = "$KIND" ] || die "the cut $PLAN_ARG is the cut of a $rk of $VER: run it$([ "$rk" = hotfix ] && echo ' with --hotfix' || echo ' without --hotfix')";;
   esac
+  cut_lead_only "running a step under the cut of a release (its approval words are the owner's)"
   CUT=1
   APPROVED=$(cut_get .approval.words)
   [ -n "$DATE" ] || DATE=$(cut_get '.date // empty')
@@ -776,8 +785,7 @@ case $verb in
       echo "plan token: $tok   (approve the whole cut once with: qargi release plan $VER${HOTFIX:+ --hotfix} --date $DATE${KEEP:+ --keep}${ALLOW_EMPTY:+ --allow-empty-notes} --plan $tok --approved \"...\")"
       exit 0
     fi
-    python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import marshal_refs as m; sys.exit(2 if m.in_member_run() else 0)' "$(dirname "$0")" && [ -z "${QARGI_NESTED:-}" ] \
-      || { echo "qargi: approving the cut of a release is not available in a member run or a nested call: it is the lead's, with the owner's words" >&2; exit 2; }
+    cut_lead_only "approving the cut of a release"
     need_plan "$tok"
     mkdir -p "$DA_STATE/release"
     jq -n --arg p "$PROJ" --arg v "$VER" --arg k "$KIND" --arg tok "$tok" --arg at "$(now)" --arg date "$DATE" --arg keep "$KEEP" --arg ae "$ALLOW_EMPTY" --arg b0 "$b0" --arg m "$msha" \

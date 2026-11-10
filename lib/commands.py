@@ -593,7 +593,8 @@ COMMANDS = {
                                "finish the branch where push left it (the head CI ran on), master and the second target as planned and --keep as planned; site and publish the tag on the commit finish tagged, "
                                "and publish only when no release file is attached (release.assets, release.sign: their hashes exist only after the tag, so publish takes its own plan). A step that no longer matches "
                                "is refused before anything moves and is run with its own plan and approval (a fix committed after start is pushed that way, release fix --push); the cut records it and goes on from "
-                               "the new state. finish is still the push and tag gate: the cut's words are the owner's, and --ignore-checks WORDS at the call is recorded as before. "
+                               "the new state. A step under the cut is the lead's, as approving is: it is refused (exit 2) in a member run and when QARGI_NESTED is set, and a --plan that is not the recorded cut's token (without --approved) is refused naming that a cut is recorded. "
+                               "finish is still the push and tag gate: the cut's words are the owner's, and --ignore-checks WORDS at the call is recorded as before. "
                                "Run again, plan shows the recorded cut and which steps ran (release status does too); --again discards it. A cut cannot begin once the branch or the tag exists."),
                          examples=["qargi release plan 0.2.4", "qargi release plan 0.2.4 --date 2026-11-12 --plan TOKEN --approved \"cut 0.2.4\"", "qargi release start 0.2.4 --plan TOKEN"]),
             "start": verb("Cut release/VERSION from develop (hotfix/VERSION from master) and bump the version", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT, opt("--date", "the changelog and man page date (default today)", "YYYY-MM-DD"),

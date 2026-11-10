@@ -128,6 +128,17 @@ out=$($REL plan 0.2.0 --date 2026-03-04 --plan "$ct" --approved "ship it" 2>&1);
   && grep -c '"verb":"release:cut"' "$T/s/audit.log" | grep -qx 1 && ok "approving records the words once, the steps and an audit line, and names the next step" || no "approval: rc=$rc $out; $(cat "$T/s/release/cut-0.2.0.cut.json" 2>&1)"
 out=$($REL start 0.2.0 --date 2026-03-04 --plan "$ct" --approved again 2>&1); rc=$?
 [ "$rc" != 0 ] && grep -q "whose approval is recorded" <<<"$out" && ok "a step under the cut takes no words of its own" || no "start with --approved under the cut: rc=$rc $out"
+mkdir -p "$T/memberrun"; : > "$T/memberrun/ability"; : > "$T/memberrun/refs.before"   # what qargi local prepare leaves in a member's run directory
+out=$(cd "$T/memberrun" && $REL start 0.2.0 --date 2026-03-04 --plan "$ct" 2>&1); rc=$?
+[ "$rc" = 2 ] && grep -q "running a step under the cut of a release .* is not available in a member run" <<<"$out" && ! git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && [ "$(cutstate)" = "start:pending push:pending finish:pending publish:pending" ] \
+  && ok "a step under the cut is refused in a member run (the recorded words are the owner's): exit 2, nothing created, nothing recorded" || no "start under the cut in a member run: rc=$rc $out"
+out=$(QARGI_NESTED=1 $REL start 0.2.0 --date 2026-03-04 --plan "$ct" 2>&1); rc=$?
+[ "$rc" = 2 ] && ! git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && ok "a step under the cut is refused in a nested call too" || no "start under the cut, nested: rc=$rc $out"
+out=$($REL start 0.2.0 --date 2026-03-04 --plan wrongtoken 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "a cut of 0.2.0 is recorded and wrongtoken is not its token" <<<"$out" && ! grep -q "^plan token:" <<<"$out" && ! git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null \
+  && ok "a --plan that is not the recorded cut's token (and no --approved) dies and names that a cut is recorded, and prints no plan" || no "start with a wrong token: rc=$rc $out"
+out=$($REL push 0.2.0 --plan wrongtoken 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "is recorded and wrongtoken is not its token" <<<"$out" && ok "the same for push" || no "push with a wrong token: rc=$rc $out"
 out=$($REL start 0.2.0 --date 2026-04-05 --plan "$ct" 2>&1); rc=$?
 [ "$rc" != 0 ] && grep -q "does not cover start" <<<"$out" && ! git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && ok "start under the cut with another date: refused before anything is created" || no "start with another date: rc=$rc $out"
 out=$($REL start 0.2.0 --plan "$ct" 2>&1); rc=$?
