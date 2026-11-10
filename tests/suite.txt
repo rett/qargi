@@ -76,6 +76,7 @@ fast | par | 300 | 4 | bash tests/test_project_profile.sh | lib/project_profile.
 full | par | 564 | 94 | bash tests/test_local.sh | lib/local.sh
 full | par | 300 | 20 | bash tests/test_local_concurrency.sh | lib/local.sh lib/lib.sh
 full | par | 342 | 57 | bash tests/test_local_run.sh | lib/local*.sh lib/local*.py
+full | par | 300 | 15 | bash tests/test_taskblock.sh | lib/local.sh lib/review_check.py roles/*/ROLE.md tests/golden/taskblock-*.md
 fast | par | 300 | 3 | bash tests/test_cred.sh | lib/cred.sh
 full | par | 480 | 80 | bash tests/test_packs.sh | lib/packs.sh
 full | par | 300 | 42 | bash tests/test_packs_seed.sh | lib/packs*.sh lib/packs*.py

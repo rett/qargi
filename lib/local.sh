@@ -4,6 +4,7 @@
 # compares every ref of the real repository (and of its remote) before and after.
 #
 #   local.sh prepare (--repo DIR | --repo-url URL [--credential-file FILE]) --base BRANCH --slug SLUG --scratch DIR [--role R] [--profile NAME]
+#                                        [--task-file F --done CMD [--scope PATH]...]   (writes RUN/task.md, the task block, for every runtime: taskblock_write)
 #                                        (the submodules the role declares in roles.R.tools are checked out in the clone from the lead's
 #                                        copy of their objects, offline, and printed as SUBMODULES=path,...; lib/tools.py)
 #   local.sh verify RUN_DIR
@@ -379,12 +380,64 @@ render_warning() {
   return 0
 }
 
+# The task block, RUN/task.md, written by prepare for every runtime when --task-file is given: the lead hands the member its path unchanged.
+# taskblock_check TASKFILE DONE ROLE REPO SCOPE... refuses, before anything is made: a task file that is a link, not a regular file, empty, over 1 MiB or with a NUL;
+# a DONE that is not a command (its first word, after any NAME=value words, must be an executable on PATH, a shell builtin or keyword, or an existing script path:
+# a word with a slash is a file of the repository, or an absolute one; a run of --repo-url cannot look and takes a relative path as given); a SCOPE path that is
+# empty, absolute, holds a space, a comma or `..`; and a task file or role text with a line of its own that starts SCOPE: (review check reads that line as the limit).
+TB_SCOPE_RE='^[[:space:]]*([-*][[:space:]]+)?SCOPE:'
+taskblock_check() {
+  local f=$1 done=$2 role=$3 repo=$4 w s rd; shift 4
+  [ ! -L "$f" ] || die "--task-file $f is a link: give the file itself"
+  [ -f "$f" ] || die "--task-file $f: no such file"
+  grep -q '[^[:space:]]' "$f" || die "--task-file $f is empty: the task block needs the task"
+  [ "$(wc -c < "$f")" -le 1048576 ] || die "--task-file $f is over 1 MiB"
+  [ "$(tr -d '\000' < "$f" | wc -c)" = "$(wc -c < "$f")" ] || die "--task-file $f holds a NUL byte: it must be text"
+  ! grep -Eq "$TB_SCOPE_RE" "$f" || die "--task-file $f has a line that starts SCOPE:, which review check would read as the limit: give the paths with --scope"
+  [ -n "$done" ] || usage_die "--task-file needs --done COMMAND: the check that says the task is done, as a command (make test, bash tests/x.sh)"
+  case $done in *$'\n'*) usage_die "--done is one command line, not several lines: put them in a script and give its path";; esac
+  read -r -a w <<<"$done"
+  while [ ${#w[@]} -gt 0 ] && [[ ${w[0]} =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; do w=("${w[@]:1}"); done
+  [ ${#w[@]} -gt 0 ] || usage_die "--done '$done' is not a command: it has no command word"
+  case ${w[0]} in
+    */*) if [ -n "$repo" ]; then case ${w[0]} in /*) [ -f "${w[0]}" ];; *) [ -f "$repo/${w[0]}" ];; esac
+         else case ${w[0]} in /*) [ -f "${w[0]}" ];; *) true;; esac; fi \
+           || usage_die "--done '$done' is not a command: ${w[0]} is not an existing script";;
+    *) type -P -- "${w[0]}" >/dev/null || compgen -b -- "${w[0]}" | grep -qx -- "${w[0]}" || compgen -k -- "${w[0]}" | grep -qx -- "${w[0]}" \
+         || usage_die "--done '$done' is not a command: ${w[0]} is not an executable, a shell builtin or an existing script (it reads as prose)";;
+  esac
+  for s in "$@"; do
+    case $s in ''|/*|*[[:space:],]*|..|../*|*/..|*/../*) usage_die "--scope '$s': a path inside the repository, relative, with no space, comma or .. in it";; esac
+  done
+  rd=$(role_dir "$role") || die "no role named $role (qargi role list)"
+  ! grep -Eq "$TB_SCOPE_RE" "$rd/ROLE.md" || die "the text of role $role has a line that starts SCOPE:, which review check would read as the limit"
+}
+
+# taskblock_write RUN ROLE CLASS REPO URL BASE BSHA TMP DONE TASKFILE SCOPE...: RUN/task.md, the sections in a fixed order: ROLE, ABILITY (the role's text), TASK,
+# DONE, PROFILE (the repository's profile, CONFIG/profiles/<repository>.md, when there is one), BASE, BASE_SHA, SCOPE (paths comma separated; none without any), then the paths.
+taskblock_write() {
+  local run=$1 role=$2 class=$3 repo=$4 url=$5 base=$6 bsha=$7 tmpd=$8 done=$9 f=${10} name pf rd out s sc=''; shift 10
+  for s in "$@"; do s=${s#./}; sc+="${sc:+, }$s"; done
+  rd=$(role_dir "$role"); out=$run/task.md.new
+  if [ -n "$repo" ]; then name=$(basename -- "$repo"); else name=${url%/}; name=${name##*/}; name=${name%.git}; fi
+  pf=$DA_CONF/profiles/$name.md
+  {
+    printf 'ROLE: %s (class %s)\n\nABILITY:\n' "$role" "$class"; cat "$rd/ROLE.md"
+    printf '\nTASK:\n'; cat "$f"
+    printf '\nDONE: %s\n' "$done"
+    if [ -n "$name" ] && [ -f "$pf" ] && [ ! -L "$pf" ] && grep -q '[^[:space:]]' "$pf" && ! grep -Eq "$TB_SCOPE_RE" "$pf"; then printf '\nPROFILE:\n'; cat "$pf"; fi
+    printf '\nBASE: %s\nBASE_SHA: %s\nSCOPE: %s\nRUN_DIR: %s\nCLONE: %s/clone\nOUT: %s/out\nTMP: %s\nGIT: %s/git\nCONTRACT: %s/contract\n' \
+      "$base" "$bsha" "${sc:-none}" "$run" "$run" "$run" "$tmpd" "$run" "$run"
+  } > "$out" && mv -f "$out" "$run/task.md"
+}
+
 verb=${1:-}; shift || true
 case $verb in
   prepare)
-    REPO='' URL='' CRED='' BASE='' SLUG='' SCR='' ROLE=build PROFILE=''
+    REPO='' URL='' CRED='' BASE='' SLUG='' SCR='' ROLE=build PROFILE='' TASKF='' DONE='' SCOPES=()
     while [ $# -gt 0 ]; do
-      case $1 in --repo) need_val "$1" $#; REPO=$2; shift 2;; --repo-url) need_val "$1" $#; URL=$2; shift 2;; --credential-file) need_val "$1" $#; CRED=$2; shift 2;; --base) need_val "$1" $#; BASE=$2; shift 2;; --slug) need_val "$1" $#; SLUG=$2; shift 2;; --scratch) need_val "$1" $#; SCR=$2; shift 2;; --role) need_val "$1" $#; ROLE=$2; shift 2;; --profile) need_val "$1" $#; PROFILE=$2; shift 2;; *) usage_die "unknown option $1";; esac
+      case $1 in --repo) need_val "$1" $#; REPO=$2; shift 2;; --repo-url) need_val "$1" $#; URL=$2; shift 2;; --credential-file) need_val "$1" $#; CRED=$2; shift 2;; --base) need_val "$1" $#; BASE=$2; shift 2;; --slug) need_val "$1" $#; SLUG=$2; shift 2;; --scratch) need_val "$1" $#; SCR=$2; shift 2;; --role) need_val "$1" $#; ROLE=$2; shift 2;; --profile) need_val "$1" $#; PROFILE=$2; shift 2;;
+        --task-file) need_val "$1" $#; TASKF=$2; shift 2;; --done) need_val "$1" $#; DONE=$2; shift 2;; --scope) need_val "$1" $#; SCOPES+=("$2"); shift 2;; *) usage_die "unknown option $1";; esac
     done
     if [ -n "$URL" ]; then
       [ -z "$REPO" ] || usage_die "give --repo or --repo-url, not both"
@@ -407,6 +460,12 @@ case $verb in
     valid_slug "$SLUG" || die "--slug: lower-case letters, digits and '-'"
     [ -n "$BASE" ] && [ -d "$SCR" ] || usage_die "prepare needs --base BRANCH and --scratch DIR"
     SCR=$(readlink -f -- "$SCR")   # an absolute run directory: the registry and every later verb name it from any working directory
+    # the task block (RUN/task.md) is written when --task-file is given; every check of its inputs is made here, before anything is made
+    if [ -n "$TASKF" ]; then
+      taskblock_check "$TASKF" "$DONE" "$ROLE" "${REPO:-}" ${SCOPES[@]+"${SCOPES[@]}"}
+    else
+      { [ -z "$DONE" ] && [ ${#SCOPES[@]} = 0 ]; } || usage_die "--done and --scope go with --task-file: they are written to the task block it makes"
+    fi
     # a tmpfs (a ramfs) is emptied by a reboot: the clone, the commits and the output of a run there are lost
     case $(stat -f -c %T -- "$SCR" 2>/dev/null) in
       tmpfs|ramfs) echo "qargi: warning: --scratch $SCR is on a tmpfs: a reboot loses the run (its clone, commits and output). Prefer a directory on disk, for example ~/.cache/qargi-runs; a passing verify saves a copy of the output in $DA_STATE/runs" >&2;;
@@ -487,6 +546,7 @@ case $verb in
     git -C "$RUN/clone" remote set-url --push origin DISABLED
     git -C "$RUN/clone" rev-parse --verify -q "origin/$BASE" >/dev/null || die "no branch $BASE in the repository"
     git -C "$RUN/clone" checkout -q -b "agent/$SLUG" "origin/$BASE"
+    BSHA=$(git -C "$RUN/clone" rev-parse "origin/$BASE")
     # the submodules the role declares (roles.ROLE.tools, kind submodule) are checked out in the clone from the lead's copy of their objects,
     # offline (lib/tools.py checkout): a commit that is not on this host, or a run cloned from a URL, is a note on stderr and nothing is fetched
     SUBS='' SPROJ=$(project_of "$REPO" "$URL")
@@ -511,6 +571,9 @@ WRAP
        + (if $ru == "" then {repo:$rp} else {url:$ru} + (if $rc == "" then {} else {cred:$rc} end) end)' | ( umask 077; flock 9 && cat >> "$DA_STATE/local-runs.jsonl" ) 9> "$DA_STATE/local-runs.jsonl.lock"
     chmod 600 "$DA_STATE/local-runs.jsonl" 2>/dev/null || true
     render_warning "$REPO" "$URL"
+    if [ -n "$TASKF" ]; then
+      taskblock_write "$RUN" "$ROLE" "$CLASS" "$REPO" "$URL" "$BASE" "$BSHA" "$TMPD" "$DONE" "$TASKF" ${SCOPES[@]+"${SCOPES[@]}"} || die "could not write $RUN/task.md"
+    fi
     echo "RUN=$RUN"
     echo "ROLE=$ROLE"
     echo "CLASS=$CLASS"
@@ -520,10 +583,11 @@ WRAP
     echo "OUT=$RUN/out"
     echo "TMP=$TMPD"
     echo "GIT=$RUN/git"
-    BSHA=$(git -C "$RUN/clone" rev-parse "origin/$BASE")
     echo "BASE_SHA=$BSHA"
     echo "CONTRACT=$RUN/contract"
     [ -z "$SUBS" ] || echo "$SUBS"
+    [ -z "$TASKF" ] || [ -z "$SUBS" ] || printf 'SUBMODULES: %s\n' "${SUBS#SUBMODULES=}" >> "$RUN/task.md"
+    [ -z "$TASKF" ] || echo "TASK_FILE=$RUN/task.md"
     echo
     echo "TASK-BLOCK PATHS"
     echo "RUN_DIR=$RUN"
@@ -544,6 +608,7 @@ WRAP
       [ -z "$REPO" ] || [ -z "$prel" ] || pargs+=(--checkout "$REPO")
       if pkt=$(timeout 8 python3 -I "$tc" packet "${pargs[@]}" </dev/null) && [ -n "$pkt" ]; then
         printf '\nTASK-BLOCK MEMORY\n%s\n' "$pkt"
+        [ -z "$TASKF" ] || printf '\nMEMORY:\n%s\n' "$pkt" >> "$RUN/task.md"   # after SCOPE: the member's block carries the packet the lead no longer pastes
       fi
     fi;;
   verify)
