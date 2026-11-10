@@ -215,13 +215,13 @@ git subcommands that change the tree or the repository. A target the shell would
 substitution) is refused when it could name a record file of the run (`> abilit?`, `> $F`, `cp x $D/ability`) or, for a command that makes or replaces
 its file, whenever a variable or a substitution builds the name; a glob that can name a protected location is refused for a write. A directory that only lies above a protected location or the run
 (/tmp, $HOME) is refused as an mv destination only when something moved into it is, holds or has the name of the place (fits_beside), and always with -T. Under the read-only class the
-variables a read-only tool takes its programs and options from (PATH, GIT_*, PAGER, BASH_ENV, RIPGREP_CONFIG_PATH, LD_* ...) are not set, and a write to
+variables a read-only tool takes its programs and options from (PATH, GIT_*, PAGER, BASH_ENV, RIPGREP_CONFIG_PATH, LD_* ...) may not be assigned (the member runs with the ones it was given), and a write to
 a git configuration or hook file (GIT_PLACE: ~/.gitconfig, ~/.config/git, .git/config, .git/hooks, .git/modules, .git/worktrees, config.worktree, info/attributes) in a
 command that also runs git is refused for every member.
 The run: a directory is a run when it holds ability and refs.before, or the clone and out directories beside any file of the record (RUN_CONTROL), and it is not
 below the clone directory of another (a repository may hold a docs/tmpdir). RUN_CONTROL files are not written, moved, removed, copied or linked, nothing is
 the run directory itself is no destination (a copy over it, an extraction, a link; run_dir_refusal), and the run directory is not removed or moved; under
-`--class read-only` the run is not asked whether the member is read-only: a run that cannot be found refuses every write (NO_RUN).
+`--class read-only` the run is not asked whether the member is read-only: a run that cannot be found refuses every write (NO_RUN), but a path in the TMP the lead's registry names for a run finds that run (tmp_run).
 Not seen: a script built by code (python -c ...), a program or a verb held in a variable, the output of a substitution handed to sh -c (`bash -c "$(echo qargi upgrade)"`),
 a wrapper's option that takes a value (sudo -u root qargi ...; the ones of xargs are read).
 
@@ -1282,12 +1282,8 @@ def run_dir_refusal(full):
     return None
 
 
-@functools.cache                                     # the files do not change while one command is judged
-def run_tmps(run):
-    """The temporary directories of a run that are the member's (TMP): the one the lead's registry names for it, as `qargi local clean` reads it (the run's own
-    tmpdir file is not read: a member can write it), and run/tmp, where prepare puts it when there is no /dev/shm."""
-    real = os.path.realpath(run)
-    out = [os.path.join(real, "tmp")]
+def registered_tmps():
+    """(run, tmpdir) for every line of the lead's registry that names an absolute temporary directory for a run, both as real paths."""
     for st in state_dirs():
         try:
             with open(os.path.join(st, REGISTRY), encoding="utf-8", errors="replace") as f:
@@ -1298,11 +1294,29 @@ def run_tmps(run):
                         e = json.loads(line)
                     except ValueError:
                         continue
-                    if isinstance(e, dict) and isinstance(e.get("run"), str) and isinstance(e.get("tmpdir"), str) and os.path.realpath(e["run"]) == real and os.path.isabs(e["tmpdir"]):
-                        out.append(os.path.realpath(e["tmpdir"]))
+                    if isinstance(e, dict) and isinstance(e.get("run"), str) and isinstance(e.get("tmpdir"), str) and os.path.isabs(e["tmpdir"]):
+                        yield os.path.realpath(e["run"]), os.path.realpath(e["tmpdir"])
         except OSError:
             pass
-    return tuple(out)
+
+
+@functools.cache                                     # the files do not change while one command is judged
+def run_tmps(run):
+    """The temporary directories of a run that are the member's (TMP): the one the lead's registry names for it, as `qargi local clean` reads it (the run's own
+    tmpdir file is not read: a member can write it), and run/tmp, where prepare puts it when there is no /dev/shm."""
+    real = os.path.realpath(run)
+    return (os.path.join(real, "tmp"),) + tuple(t for r, t in registered_tmps() if r == real)
+
+
+@functools.cache
+def tmp_run(full):
+    """The run whose TMP the real path full lies in, by the lead's registry, or None. TMP is usually below /dev/shm, away from the run directory, so a call made
+    from a directory that is in no run is matched to its run by the path it writes. Only a directory that is a run (is_run) counts, and full must lie in the
+    registered directory (never above it, never beside it)."""
+    for r, t in registered_tmps():
+        if inside(full, t) and is_run(r):
+            return r
+    return None
 
 
 def member_space(full, run):
@@ -1729,6 +1743,8 @@ RESTRICTED_ENV = {"PATH", "ENV", "BASH_ENV", "IFS", "HOME", "SHELL", "SHELLOPTS"
                   "SSH_ASKPASS", "XDG_CONFIG_HOME", "PROMPT_COMMAND", "RIPGREP_CONFIG_PATH", "NODE_OPTIONS", "RUBYOPT", "PERL5OPT", "PYTHONSTARTUP", "PYTHONPATH",
                   "EXINIT", "VIMINIT", "GREP_OPTIONS", "BROWSER", "PERL5LIB", "RUBYLIB", "NODE_PATH"}
 RESTRICTED_ENV_PREFIX = ("GIT_", "LD_", "BASH_", "RIPGREP_")   # what a read-only tool reads its programs and options from
+RESTRICTED_MSG = ("under the read-only class %s may not be assigned (inline, env, export, declare ...): the tools it runs read their programs and options from it, "
+                  "so a read-only member runs with the %s it was given. A build, vet or test command with the environment it was given is not refused; leave the assignment out")
 ASSIGNMENT = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)(?:\[[^=]*\])?\+?=")
 NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
@@ -1840,7 +1856,7 @@ def review_refusal(call):
         why = control_refusal(full) or run_dir_refusal(full)
         if why:
             return why
-        run = run_dir(os.path.dirname(full)) or run_dir(cwd)
+        run = run_dir(os.path.dirname(full)) or run_dir(cwd) or tmp_run(full)
         if CLASS == "read-only" and not run:
             return OwnReason(NO_RUN)
         if run and is_review(run) and not member_space(full, run):
@@ -1882,7 +1898,7 @@ def review_segment(toks, i, here, text=""):
     if reading(run_dir(here)):                               # what a read-only tool runs or reads its options from is not set by a member
         bad = next((n for n in env_names(toks, i) if restricted_name(n)), None)
         if bad:
-            return OwnReason("under the read-only class %s is not set: the tools it runs read their programs and options from it" % bad)
+            return OwnReason(RESTRICTED_MSG % (bad, bad))
     ro = reading(run_dir(here))
     src_last = None                                          # cp -t DIR SRC: write_targets names SRC too (as it always did); it is read, not written
     if prog in COPIERS and prog != "rsync" and any(cluster_value(toks[i + 1:], n, "t") is not None or toks[i + 1 + n].startswith("--target-directory") for n in range(len(toks) - i - 1)):
@@ -1900,7 +1916,7 @@ def review_segment(toks, i, here, text=""):
             why = control_refusal(full) or (None if what == "git config" and dest == "." else run_dir_refusal(full))     # git config --list in the run directory reads: its "." is where it was run
             if why:
                 return why
-            run = run_dir(full if os.path.isdir(full) else os.path.dirname(full)) or run_dir(here)
+            run = run_dir(full if os.path.isdir(full) else os.path.dirname(full)) or run_dir(here) or tmp_run(full)
             if CLASS == "read-only" and not run:
                 return OwnReason(NO_RUN)
             if what.split()[0] in DESTRUCTIVE:
@@ -3394,7 +3410,7 @@ def clear_caches():
     _BRACE_WORK[0] = 0
     for cache in (_RESOURCE_DIRS, _ROOTS, _KEY_DIRS, _STATE):          # read from the library, the environment and the state: a judge that outlives one call must not keep them
         cache.clear()
-    for f in (line_assignments, real_dir, resolve, run_like, in_a_clone, run_dir, protected, key_named, ability_of, run_class, brace_expand, run_tmps, pass_writes):
+    for f in (line_assignments, real_dir, resolve, run_like, in_a_clone, run_dir, protected, key_named, ability_of, run_class, brace_expand, run_tmps, tmp_run, pass_writes):
         f.cache_clear()
 
 
