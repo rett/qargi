@@ -149,14 +149,13 @@ refusal changes nothing.
    instead of `release.preflight`, for a project whose stored preflight needs more than a hotfix brings or does not suit it; the
    plan of `start --hotfix` and of `push` name the answer that runs. A release (not a hotfix) never runs it.
 6. One plan and one approval for the whole cut. `qargi release plan VERSION [--hotfix] [--date D] [--keep]` prints the plan of every
-   step (start; push when there is an origin; finish; site when `site.enabled`; publish, optional) with what moves, and one token.
+   step (start; push when there is an origin; finish; site when `site.enabled`) with what moves, and one token; `publish` is not in the cut.
    `release plan VERSION --plan TOKEN --approved "<your words>"` records the approval once (the words, the plan, an audit line `release:cut`)
    in `<state>/release/PROJECT-VERSION.cut.json`. Each step is then its own verb with `--plan TOKEN` alone: `release start`, `push`,
-   `finish`, `site`, `publish`; the words are the record's and are on that step's audit line, and each step prints the next. A step
+   `finish`, `site`; the words are the record's and are on that step's audit line, and each step prints the next. A step
    runs only when what the plan fixed still holds: `start` finds its own plan as it was frozen, `push` the branch where `start` left it,
    `finish` the branch where `push` left it (the head the checks ran on), master and the second target as planned and `--keep` as planned,
-   `site` and `publish` the tag on the commit `finish` tagged; `publish` is outside the token when release files are attached
-   (`release.assets`, `release.sign`: their hashes exist only after the tag). Otherwise it is refused before anything moves, and the step
+   `site` the tag on the commit `finish` tagged. Otherwise it is refused before anything moves, and the step
    is run with its own plan and approval (a fix committed after `start` is pushed that way, with `release fix --push`); the cut
    records that and goes on from the new state. `finish` is still the push and tag gate: the approval words are the owner's, and
    `--ignore-checks "<words>"` at the call is recorded as before. `release plan VERSION` again, and `release status`, show which

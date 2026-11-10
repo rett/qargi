@@ -556,8 +556,8 @@ COMMANDS = {
                  "It is pushed and a pull request into master runs CI on the commit that will be released. Finishing merges it into master with --no-ff, "
                  "tags that merge commit, merges the tagged master commit (not the branch a second time) into develop (a hotfix: into the open release branch, if there is one) with --no-ff, "
                  "so master holds no merge commit that develop lacks, and deletes the branch. A release starts only from "
-                 "a develop whose head passed the whole suite. Starting, pushing, merging, tagging and publishing need the plan token and an approval, each its own or all of them at once: release plan prints one plan for the whole cut and one token, "
-                 "its approval is recorded once, and the steps then take --plan TOKEN alone; signing needs your terminal. "
+                 "a develop whose head passed the whole suite. Starting, pushing, merging, tagging and publishing need the plan token and an approval: release plan prints one plan for the cut (start, push, finish, site) and one token, "
+                 "its approval is recorded once, and those steps then take --plan TOKEN alone; publishing is not in the cut and has its own plan and approval; signing needs your terminal. "
                  "The layout of what a release updates is the project's, set in its answers (all optional): release.version_file (the file that holds only the version; default VERSION; "
                  "none when there is no such file, and the version is then the changelog heading and the tag), release.changelog.unreleased (the heading of the changes to come, default "
                  "'## [Unreleased]'; it may carry the version, as in '## {version} (unreleased)', and is then renamed) and release.changelog.released (default '## [{version}] - {date}'), "
@@ -580,18 +580,18 @@ COMMANDS = {
                  "release finish ends with 'next: qargi release site VERSION' (the methodology's after_release step) and release status has a site line."),
         "scripts": ["release.sh"],
         "verbs": {
-            "plan": verb("One plan and one approval for the whole cut: start, push, finish, site and publish", [("VERSION", "none")],
+            "plan": verb("One plan and one approval for the whole cut: start, push, finish and site (publish has its own plan)", [("VERSION", "none")],
                          [PROJECT_OPT, HOTFIX_OPT, opt("--date", "the changelog and man page date (default today)", "YYYY-MM-DD"), opt("--keep", "keep the branch when the cut finishes"),
                           opt("--allow-empty-notes", "release although the unreleased section of CHANGELOG.md is empty"),
                           opt("--again", "discard the recorded cut of VERSION and plan anew"), PLAN, APPROVED],
                          desc=("Without --approved it changes nothing: it prints every step of the ceremony with what moves (1 start, 2 push when the repository has an origin, 3 finish, 4 site when "
-                               "site.enabled is true, 5 publish, optional) and ONE plan token. The start step is planned by release start itself, so its refusals come before a token does. "
+                               "site.enabled is true) and ONE plan token; publish is named as outside the cut. The start step is planned by release start itself, so its refusals come before a token does. "
                                "Approving it is release plan VERSION --plan TOKEN --approved \"<your go-ahead>\" (the same --date, --keep and --allow-empty-notes): the words are recorded once, with the plan, "
                                "under the state's release directory (PROJECT-VERSION.cut.json), and the audit log gets a release:cut line. Lead only. Then each step is its own verb with --plan TOKEN alone "
-                               "(release start, push, finish, site, publish VERSION --plan TOKEN): the words are the record's and appear on that step's audit line, the step runs only when what the plan fixed "
+                               "(release start, push, finish, site VERSION --plan TOKEN): the words are the record's and appear on that step's audit line, the step runs only when what the plan fixed "
                                "still holds, and each prints the next one. start must find its own plan as it was frozen (the head of the base, the files bumped, the date); push the branch where start left it; "
-                               "finish the branch where push left it (the head CI ran on), master and the second target as planned and --keep as planned; site and publish the tag on the commit finish tagged, "
-                               "and publish only when no release file is attached (release.assets, release.sign: their hashes exist only after the tag, so publish takes its own plan). A step that no longer matches "
+                               "finish the branch where push left it (the head CI ran on), master and the second target as planned and --keep as planned; site the tag on the commit finish tagged. "
+                               "release publish is not a step of the cut: what it creates (the notes and the release files, whose hashes exist only after the tag) is shown by its own plan, so it refuses the cut token (run publish with its own plan and approval). A step that no longer matches "
                                "is refused before anything moves and is run with its own plan and approval (a fix committed after start is pushed that way, release fix --push); the cut records it and goes on from "
                                "the new state. A step under the cut is the lead's, as approving is: it is refused (exit 2) in a member run and when QARGI_NESTED is set, and a --plan that is not the recorded cut's token (without --approved) is refused naming that a cut is recorded. "
                                "finish is still the push and tag gate: the cut's words are the owner's, and --ignore-checks WORDS at the call is recorded as before. "
@@ -717,7 +717,7 @@ COMMANDS = {
                                   "of qargi release assets, the repository or another worktree of it (a symbolic link that leaves them, a path with a .git component and two files of one base name are refused), attached by the same call that creates the release. "
                                   "It refuses when GitHub has the release already, when the tag is missing, when the notes are empty, and, when the answer release.sign is set, until "
                                   "qargi release sign recorded an ok for VERSION and none of the signed files or signatures changed since (without release.sign, which is the default, there is no such wait); --verify-tag makes gh refuse a tag that is not on origin. "
-                                  "Needs the plan token and an approval; a member run cannot publish.")),
+                                  "Needs the plan token and an approval; a member run cannot publish. The token of a release plan (the cut) is refused for it: publish has its own plan.")),
             "site": verb("Build the documentation site of the tag VERSION and commit it on the detached site branch; never pushes", [("VERSION", "none")],
                          [PROJECT_OPT, PLAN, APPROVED],
                          desc=("Only when the answer site.enabled is true. The source is the tree of the tag VERSION (its CHANGELOG.md, VERSION, README.md and "
