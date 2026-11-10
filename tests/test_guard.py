@@ -1589,6 +1589,31 @@ class Marshal(HookCase):
             res = self.bash(c)
             self.assertEqual(res.returncode, 0, (c, res.stderr))
 
+    def test_the_resume_record_directories_are_protected_and_readable(self):
+        """$STATE/finish-intent and $STATE/apply hold what a re-run of the finishing verbs and of review apply completes from; a member who could write them
+        would steer the re-run (which branch it makes, which tip it believes was built, what origin was meant to hold)."""
+        for d, rec in (("finish-intent", "proj-feature-x.json"), ("apply", "qargi.abcdef.json")):
+            p = os.path.join(self.state, d)
+            os.makedirs(p)
+            with open(os.path.join(p, rec), "w") as f:
+                f.write("{}\n")
+            os.symlink(p, os.path.join(self.clone, "to-" + d))
+            for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path")):
+                for cls in ((), ("--class", "read-only")):
+                    for f in (p + "/" + rec, p + "/new.json", "to-%s/new.json" % d):
+                        res = self.hook(list(cls), {"tool_name": tool, "tool_input": {key: f}, "cwd": self.clone}, self.env())
+                        self.assertEqual(res.returncode, 2, (tool, f, cls, res.stderr))
+                        self.assertIn("finish-intent/ and apply/", res.stderr)
+            for c in ["echo h > %s/%s" % (p, rec), "echo h >> $QARGI_STATE/%s/%s" % (d, rec), "printf h | tee %s/new.json" % p, "cp a.txt %s/new.json" % p,
+                      "mv a.txt %s/new.json" % p, "rm -f %s/%s" % (p, rec), "echo h > to-%s/new.json" % d, "cd %s && echo h > new.json" % p,
+                      "bash -c 'echo h > %s/new.json'" % p]:
+                res = self.bash(c)
+                self.assertEqual(res.returncode, 2, (c, res.stderr))
+                self.assertIn("finish-intent/ and apply/", res.stderr, c)
+            for c in ("cat %s/%s" % (p, rec), "ls %s" % p, "echo x > %s/%s-notes.md" % (self.state, d), "echo x > %s/unrelated.txt" % self.state):
+                res = self.bash(c)
+                self.assertEqual(res.returncode, 0, (c, res.stderr))
+
     def test_the_handoff_and_busy_directories_are_protected_and_the_context_verbs_are_reads(self):
         """$STATE/handoff and $STATE/busy tell `qargi lead compact-check` when the note was written and what is running: a member does not write
         them. The verbs lead usage and lead compact-check only read, so a member may run them; claiming by succession writes the marshal."""
