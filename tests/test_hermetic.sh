@@ -109,6 +109,23 @@ pid=$(cat "$T/bg.pid" 2>/dev/null)
 for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
 [ "$rc" = 0 ] && [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null && ok "spawn_bg: the process it started is killed by pid when the test ends" || { no "spawn_bg: rc=$rc pid=$pid"; kill "$pid" 2>/dev/null; }
 
+# 7b. python writes no bytecode into the source tree: python3 -I ignores PYTHONDONTWRITEBYTECODE, so the python3 first on PATH is a wrapper
+#     that adds -B. A copy of bin/ and lib/ is run through qargi verbs that import lib modules (the help preamble); nothing may appear in it.
+#     The control runs the same verb with the real python3 (the caller's PATH, the variable set as the suite sets it): it does write, so the
+#     check can fail. python tests: the same in hermetic.py, started as tests/run.sh starts a step (PYTHONDONTWRITEBYTECODE=1, which lets the
+#     python3 that imports hermetic.py skip its own bytecode; started by hand it writes tests/__pycache__, which git ignores).
+copy_tool "$SRC" "$T/pyc" bin lib
+find "$T/pyc" -name __pycache__ -prune -exec rm -rf {} +
+"$T/pyc/bin/qargi" role list >/dev/null 2>&1; "$T/pyc/bin/qargi" project list >/dev/null 2>&1
+n=$(find "$T/pyc" -name '*.pyc' | wc -l)
+[ "$n" = 0 ] && [ "$(command -v python3)" = "$HERMETIC/bin/python3" ] && ok "no bytecode: running qargi verbs through the hermetic python3 writes no __pycache__" || no "bytecode: $n files, python3 is $(command -v python3): $(find "$T/pyc" -name '*.pyc' | head -3)"
+PATH=${PATH#"$HERMETIC/bin:"} PYTHONDONTWRITEBYTECODE=1 "$T/pyc/bin/qargi" role list >/dev/null 2>&1
+n=$(find "$T/pyc" -name '*.pyc' | wc -l)
+[ "$n" -gt 0 ] && ok "no bytecode: the control (the real python3 with PYTHONDONTWRITEBYTECODE=1 under -I) does write, so the check can fail" || no "control wrote no bytecode: the check proves nothing"
+rm -rf "$T/pyc"; copy_tool "$SRC" "$T/pyc" bin lib tests; find "$T/pyc" -name __pycache__ -prune -exec rm -rf {} +
+out=$(cd / && env -i PATH="${PATH#"$HERMETIC/bin:"}" HOME="$T" PYTHONDONTWRITEBYTECODE=1 python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import hermetic, subprocess; subprocess.run(["python3", "-I", "-c", "import sys; sys.path.insert(0, sys.argv[2]); import help", "x", sys.argv[2]])' "$T/pyc/tests" "$T/pyc/lib" 2>&1)
+[ "$(find "$T/pyc" -name '*.pyc' | wc -l)" = 0 ] && ok "no bytecode: a python test (hermetic.py) and what it starts with python3 -I write no __pycache__" || no "hermetic.py bytecode: $(find "$T/pyc" -name '*.pyc' | head -3) $out"
+
 # 8. the lint: the tests pass it; every rule finds its sample, and a clean sample is left alone
 lint=$(python3 -I tests/hermetic_lint.py tests 2>&1); rc=$?
 [ "$rc" = 0 ] && [ -z "$lint" ] && ok "lint: no test file breaks a rule" || no "lint of the tests: $lint"
