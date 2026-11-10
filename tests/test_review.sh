@@ -521,6 +521,20 @@ out=$($DA review check "$R45/out" 2>&1); rc=$?
 setans '.review.trailer_policy = "none"'; R46=$(newrun rejextra6); setreg "$R46" '["Signed-off-by"]'; addtrailer "$R46" 'Signed-off-by: A <a@example.net>'
 out=$($DA review check "$R46/out" 2>&1); rc=$?
 { [ $rc = 0 ] && ! grep -q '^scrub:' <<<"$out"; } && ok "the list counts only under the policy reject" || no "list without the policy rc=$rc $out"
+# end to end: local prepare copies review.reject_trailers into the run's registry line (the other tests above write the list into the registry themselves), so a
+# prepared run is held to it with nothing added by hand; an answer changed after prepare is not believed
+setans '.review.trailer_policy = "reject" | .review.reject_trailers = ["Signed-off-by", "X-*"]'
+R47=$(newrun rejprep); addtrailer "$R47" 'Signed-off-by: A <a@example.net>'
+[ "$(jq -c --arg r "$(readlink -f "$R47")" 'select(.run == $r) | .answers.review.reject_trailers' "$T/s/local-runs.jsonl")" = '["Signed-off-by","X-*"]' ] \
+  && ok "local prepare copies review.reject_trailers into the run's line of the registry" || no "registry copy: $(jq -c '.answers.review' "$T/s/local-runs.jsonl" | tail -1)"
+setans '.review.trailer_policy = "reject" | .review.reject_trailers = ["Change-Id"]'
+out=$($DA review check "$R47/out" 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q '^scrub: FAIL review.reject_trailers names Signed-off-by: [0-9a-f]\{12\} line 5 of its message carries "Signed-off-by: A <a@example.net>"$' <<<"$out"; } \
+  && ok "a prepared run is held to review.reject_trailers as it was at prepare (no registry edit), and a later change of the answer is not believed" || no "prepared reject_trailers: rc=$rc $out"
+R48=$(newrun rejprep2); addtrailer "$R48" 'X-Note: later'
+out=$($DA review check "$R48/out" 2>&1); rc=$?
+{ [ $rc = 0 ] && grep -qx 'scrub: ok' <<<"$out" && [ "$(jq -c --arg r "$(readlink -f "$R48")" 'select(.run == $r) | .answers.review.reject_trailers' "$T/s/local-runs.jsonl")" = '["Change-Id"]' ]; } \
+  && ok "a run prepared after the answer changed takes the new list" || no "second prepared run: rc=$rc $out"
 setans '.review.trailer_policy = "none"'
 # a report-only run (no patches) is not scrubbed
 setans '.review.scrub = "exit 1"'; mkdir -p "$T/rep2"; printf '# Findings\n\nnone\n\n# Checked\n\nnothing\n\nverdict: accept\n' > "$T/rep2/report.md"; printf '{"status":"DONE","commits":[]}\n' > "$T/rep2/manifest.json"

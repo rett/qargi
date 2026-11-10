@@ -32,7 +32,7 @@
 # prepare also appends one JSON line per run to $QARGI_STATE/local-runs.jsonl (run directory, slug, ability, base,
 # start time, temporary directory, and the repository: its real path (repo), or its URL (url) and the path of its credential file (cred), never a token;
 # the class of the run (class: write or read-only; the class file of the run directory is a member's), the stored project of the repository (project) and a copy of the answers that decide what verification accepts (answers: runs.owned_refs, repo.long_lived,
-# repo.parking_branch, git.author, review.keep_author, review.scrub, review.trailer_policy) as they are at prepare; mode 600), so `qargi report` can list the local runs. Verify, clean and
+# repo.parking_branch, git.author, review.keep_author, review.scrub, review.trailer_policy, review.reject_trailers) as they are at prepare; mode 600), so `qargi report` can list the local runs. Verify, clean and
 # review apply read those answers from this line and not from the stored project's file, which is not the lead's alone to write: an answer changed after
 # prepare takes effect on the runs prepared after it. The registry is the lead's and the only record `verify`, `clean`, `run` and `review apply` believe
 # about a run (lib.sh run_record): the repository, the URL and the credential path come from it, and a run whose own repo.path, repo.url or cred.path
@@ -666,12 +666,12 @@ case $verb in
     # is made; a repository in no project, or a project with no local runtime, gets the core's contract alone (no runtime is assumed)
     ADDENDA='' CPJ=$(project_of "$REPO" "$URL")
     # what verification and review apply will believe of the lead's answers is taken now, into the lead's registry line (the stored project's file is not read again for this run):
-    # the project's name and the answers runs.owned_refs, repo.long_lived, repo.parking_branch, git.author and review.keep_author, scrub and trailer_policy, as they are today
+    # the project's name and the answers runs.owned_refs, repo.long_lived, repo.parking_branch, git.author and review.keep_author, scrub, trailer_policy and reject_trailers, as they are today
     ANS='{}'
     if [ -n "$CPJ" ]; then
       ANS=$(jq -c 'def at(f): first(f, null); def own(k): if type == "object" then {(k): at(.[k])} else . end; def owns(ks): if type == "object" then . as $o | reduce ks[] as $k ({}; .[$k] = ($o | at(.[$k]))) else . end;
         {runs: ((at(.runs) | own("owned_refs"))), repo: {long_lived: at(.repo | objects | .long_lived), parking_branch: at(.repo | objects | .parking_branch)},
-         git: (at(.git) | own("author")), review: (at(.review) | owns(["keep_author", "scrub", "trailer_policy"]))}' "$DA_CONF/projects/$CPJ.json" 2>/dev/null) \
+         git: (at(.git) | own("author")), review: (at(.review) | owns(["keep_author", "scrub", "trailer_policy", "reject_trailers"]))}' "$DA_CONF/projects/$CPJ.json" 2>/dev/null) \
         || die "the answers of project $CPJ cannot be read, so the run could not record them; nothing was made (qargi project validate $CPJ)"
     fi
     if [ -n "$CPJ" ]; then
