@@ -475,7 +475,9 @@ TB_SCOPE_RE='^[[:space:]]*([-*][[:space:]]+)?SCOPE:'
 # TB_WORDS_PY: the command words of a DONE line, one per line. A small scanner (a quoted string, a backquoted one, ${ } and $(( )) are one word; ; & | < > ( ) end a
 # word; a redirection operator takes the next word as its target, a number before it is the file descriptor), then the rule: a word is a command word at the start of the
 # line and after a separator or an opening parenthesis, past NAME=value words and the keywords that a command follows (! { if then else elif do while until time). A name
-# the line defines (name() { ...; }) is no command word. What the scanner cannot read it leaves out: that only lets a line through, it never refuses one.
+# the line defines (name() { ...; }) is no command word; the words of a [[ ]] test are not read. What the scanner cannot read it leaves out: at a case, function or select
+# command word, at (( and at an array assignment (NAME=( ) it reports the words found before that point and stops, so the rest of the line is accepted on `bash -n` alone
+# (a case pattern, an arithmetic for header and the elements of an array are not command words). That only lets a line through, it never refuses one.
 TB_WORDS_PY='
 import re, sys
 s = sys.argv[1]
@@ -522,6 +524,8 @@ while i < n:
             j += 1
         run = s[i:j]; i = j
         toks.append(("redir",) if ("<" in run or ">" in run) else ("sep",))
+    elif c == "(" and (s.startswith("(", i + 1) or cur.endswith("=")):
+        flush(); toks.append(("stop",)); break
     elif c == "(":
         flush(); toks.append(("open",)); i += 1
     elif c == ")":
@@ -539,11 +543,21 @@ while k < len(toks):
         if pend:
             pend = False
         elif cmd and not re.match(r"[A-Za-z_][A-Za-z0-9_]*[+]?=", w) and w not in KEEP:
+            if w in ("case", "function", "select"):
+                out.append(w); break
+            if w == "[[":
+                out.append(w)
+                while k < len(toks) and toks[k] != ("w", "]]"):
+                    k += 1
+                cmd = False
+                continue
             if k + 1 < len(toks) and toks[k][0] == "open" and toks[k + 1][0] == "close":
                 defined.add(w)
             elif w and w not in defined:
                 out.append(w)
             cmd = False
+    elif t[0] == "stop":
+        out.append(":"); break
     else:
         pend = False
         cmd = t[0] in ("sep", "open")
@@ -583,7 +597,7 @@ taskblock_check() {
           esac
           [ -n "$ok" ] || usage_die "--done '$done' is not a command: $w0 is not an existing script (it is not a file of $base, nor under a --scope path)"
         fi;;
-      *) type -P -- "$w0" >/dev/null || compgen -b -- "$w0" | grep -qx -- "$w0" || compgen -k -- "$w0" | grep -qx -- "$w0" \
+      *) type -P -- "$w0" >/dev/null || compgen -b -- "$w0" | grep -qxF -- "$w0" || compgen -k -- "$w0" | grep -qxF -- "$w0" \
            || usage_die "--done '$done' is not a command: $w0 is not an executable, a shell builtin or an existing script (it reads as prose)";;
     esac
     first=''
