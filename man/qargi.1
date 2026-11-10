@@ -56,7 +56,7 @@ Project and role are single lower\-case tokens. An instance is <project>\-<role>
 Cloud resources follow <project>\-<component>[\-<role>]: the agent <project>\-<role> (acme\-build), the deployment <project>\-deployment\-<role>, the shared <project>\-environment, and the stores <project>\-memory and <project>\-reference. The lead is <project>\-lead, and so is its agent.
 .PP
 qargi instances normalize renames existing resources to match.
-.SH MEMORY
+.SH MEMORY-STORES
 <project>\-memory is where agents write verified how\-to facts they learn, under their own role folder (shared/ is curated and reached by promotion). <project>\-reference is read\-only: rules, workflow and conventions you and the coordinator curate. Both have shared/ for every role and roles/<role>/ for one.
 .PP
 An agent reads each store's README.md, then shared/INDEX.md and its role's index, then only the notes its task needs. The canon (qargi canon) fixes the layout and the note format. Read one note with qargi memory get.
@@ -3436,7 +3436,7 @@ The procedure every lead follows, whoever it is.
 .B qargi memory
 Check a memory store, list its tiers, read a note, split, merge or copy stores.
 .PP
-split, merge and copy work between two stores, each a directory of notes, a .jsonl dump (read\-only: a source, never a target) or a memstore_ id. A note with a name starting with a dot, or that a store cannot hold, makes the plan refuse and name it. Nothing is deleted: what a split moves out of a store goes to /_archive/<date>/ and a collision to /_conflicts/<date>/, and the origin of every note written is added to its Sources: line, so each change can be undone. Without \-\-approved they print the plan and its token and change nothing; a store whose notes changed since the plan is refused.
+split, merge and copy work between two stores, each a directory of notes, a .jsonl dump (read\-only: a source, never a target) or a memstore_ id. A note with a name starting with a dot, or that a store cannot hold, makes the plan refuse and name it. Nothing is deleted: what a split moves out of a store goes to /_archive/<date>/ and a collision to /_conflicts/<date>/, and the origin of every note written is added to its Sources: line, so each change can be undone. Without \-\-approved they print the plan and its token and change nothing; a store whose notes changed since the plan is refused. The two stores of a cloud project and how an agent reads them: qargi help memory\-stores.
 .RS
 .TP
 .BI "lint " "STORE_ID"

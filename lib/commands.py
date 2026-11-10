@@ -1262,7 +1262,8 @@ COMMANDS = {
                  "target) or a memstore_ id. A note with a name starting with a dot, or that a store cannot hold, makes the plan refuse and name it. Nothing is "
                  "deleted: what a split moves out of a store goes to /_archive/<date>/ and a collision to /_conflicts/<date>/, and the "
                  "origin of every note written is added to its Sources: line, so each change can be undone. Without --approved they "
-                 "print the plan and its token and change nothing; a store whose notes changed since the plan is refused."),
+                 "print the plan and its token and change nothing; a store whose notes changed since the plan is refused. "
+                 "The two stores of a cloud project and how an agent reads them: qargi help memory-stores."),
         "scripts": ["memory.sh", "tierwrite.sh", "tierplan.py", "tiers.py"],
         "verbs": {
             "lint": verb("Check a store against the canon", [("STORE_ID", "store")], [opt("--kind", "recipes or reference (for a store before the canon)", "KIND", ("recipes", "reference"))]),
@@ -1598,7 +1599,7 @@ TOPICS = {
         "<project>-deployment-<role>, the shared <project>-environment, and the stores <project>-memory and <project>-reference. "
         "The lead is <project>-lead, and so is its agent.",
         "qargi instances normalize renames existing resources to match."]),
-    "memory": ("The two memory stores", [
+    "memory-stores": ("The two memory stores", [
         "<project>-memory is where agents write verified how-to facts they learn, under their own role folder (shared/ is curated and reached by promotion). <project>-reference is read-only: rules, workflow and "
         "conventions you and the coordinator curate. Both have shared/ for every role and roles/<role>/ for one.",
         "An agent reads each store's README.md, then shared/INDEX.md and its role's index, then only the notes its task needs. "
