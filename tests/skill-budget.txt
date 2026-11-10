@@ -12,7 +12,7 @@ lib/providers/claude-platform/cloud-run.md 61
 packs/skills/docs-site-member/SKILL.md 163 # raised: two rules: no line starts with <, and run the render check before reporting; for the lead's review
 packs/skills/gitflow-member/SKILL.md 249 # lowered: the commit-message and guard line lives in the contract only
 packs/skills/keep-a-changelog/SKILL.md 344 # raised: one rule on numbered items (unnumbered bullet, the lead renumbers), kept here only; for the lead's review
-packs/skills/qargi-contributing/SKILL.md 115
+packs/skills/qargi-contributing/SKILL.md 88 # lowered: the commit-message line lives in the contract only
 packs/skills/review-findings/SKILL.md 136
 packs/skills/secrets-scan/SKILL.md 93
 packs/skills/shellcheck-gate/SKILL.md 358 # raised: two lines of guidance (a disable names the shellcheck version that introduced the code; the project's own lint severity wins); for the lead's review

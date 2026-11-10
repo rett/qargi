@@ -18,7 +18,7 @@ has $C 'file-writing tool' && has $C 'git commit -F FILE' && ok "the contract sa
 ! has $C 'use the shell' && ! has $C 'shell \(a heredoc\)' && ok "the contract does not send a refused write tool to the shell" || no "the contract still falls back to a shell heredoc"
 has $C 'final message' && ok "the contract says a read-only role whose file tool is refused reports in its final message" || no "the contract names the final-message fallback"
 has $C 'guard refusal is a result' && ok "the contract says a guard refusal is reported, not worked around" || no "the contract says to report a guard refusal"
-rest=$(grep -liE 'heredoc|commit -F|cuts a command' "${OTHERS[@]}" || true)
+rest=$(grep -liE 'heredoc|commit -F|-F FILE|cuts a command' "${OTHERS[@]}" || true)
 [ -z "$rest" ] && ok "no other prompt text repeats the heredoc and commit-message rules" || no "these texts repeat a rule the contract states: $rest"
 if python3 -I -c 'import json,sys; sys.exit("heredoc" in json.load(open("lib/providers/claude-code.json"))["notes"]["member-out"])'; then ok "the member-out note does not name a heredoc"; else no "the member-out note still names a heredoc"; fi
 
