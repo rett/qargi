@@ -278,13 +278,14 @@ run_suite_logged() {
   return "$rc"
 }
 # suite_failure_report -> after a failed run_suite_logged, the last lines of the verb's output: the failing steps (`FAILED: step` lines of
-# tests/run.sh) and failing tests (`FAIL name` lines) its report holds, where its own logs of the failed steps are, and the log of the
-# whole run. A test command that is no tests/run.sh has neither: its last lines stand in.
+# tests/run.sh) and failing tests (`FAIL name`, `FAIL: name` and `--- FAIL: name` lines) its report holds, where its own logs of the failed
+# steps are (`logs of the failed steps: DIR`), and the log of the whole run. Any gate may print these lines (the help of feature verify names
+# the patterns); a test command that prints none: its last lines stand in.
 suite_failure_report() {
   local f=${SUITE_LOG:-} steps names dir gate
   if [ -n "$f" ] && [ -s "$f" ]; then
     steps=$(sed -n 's/^FAILED: //p' "$f" | awk '!s[$0]++')
-    names=$(grep -E '^FAIL( |:)' "$f" | awk '!s[$0]++')
+    names=$(grep -E '^(FAIL( |:)|--- FAIL: )' "$f" | awk '!s[$0]++')
     dir=$(sed -n 's/^logs of the failed steps: //p' "$f" | tail -1)
     gate=$(sed -n 's/^== gate \(.*\): fail ([0-9]*s)$/\1/p' "$f" | head -1)
     [ -z "$gate" ] || echo "failing gate: $gate"

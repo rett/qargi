@@ -81,8 +81,10 @@ RESOLVED_OPT = opt("--resolved", "use the merge you resolved and committed in th
 REMOTE_NOTE = ("It asks the live origin with git ls-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, "
                "and says 'remote not checked' when origin cannot be reached.")
 SUITE_FAIL_NOTE = ("The output of the suite is kept in STATE/suite-logs/PROJECT.feature-NAME.log (PROJECT.release-VERSION.log for a release; the last run of each). When "
-                   "the suite fails, the last lines of the output are the failing steps and tests that its report names (the FAILED: and FAIL lines of tests/run.sh; "
-                   "a test command that is no runner shows its last lines instead), where the runner kept the logs of the failed steps, and the path of that log.")
+                   "the suite fails, the last lines of the output are the failing steps and tests that its report names, where the runner kept the logs of the failed steps, and the path of that log. "
+                   "Any gate or test command may print the lines that are named, at the start of a line: a failing step is a line matching ^FAILED: (the step follows); a failing test is a line "
+                   "matching ^FAIL( |:) or ^--- FAIL: (the name follows; the second is a Go test run's); the logs of the failed steps are a line ^logs of the failed steps: (the directory follows). "
+                   "A command that prints none shows its last lines instead.")
 GATES_NOTE = ("Declared gates: the project answer gates is an ordered list of {name, command, tier} (command: a command line or a list of words, as test_command; tier: feature or release; names unique). "
               "Absent, test_command (release.test_command for a release) is run, as before. Declared, the gates run instead and test_command is not also run (a gate whose command is the same runs it): "
               "feature verify runs the gates of tier feature in order and release verify the feature tier, then the release tier, each stopping at the first failure (the rest are listed as not run). "
