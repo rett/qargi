@@ -106,22 +106,22 @@ while [ $# -gt 0 ]; do
     --hotfix) HOTFIX=1; shift;; --keep) KEEP=1; shift;; --resolved) RESOLVED=1; shift;; --allow-empty-notes) ALLOW_EMPTY=1; shift;;
     --strict) STRICT=1; shift;;
     --evidence) need_val "$1" $#; EVIDENCE=$2; EVIDENCE_SET=1; shift 2;; --again) AGAIN=1; shift;;
-    -*) die "unknown option $1";;
+    -*) usage_die "unknown option $1";;
     *) if [ "$verb" = step ] && [ -n "$VER" ] && [ -z "$STEPNAME" ]; then STEPNAME=$1; else VER=$1; fi; shift;;
   esac
 done
-[ "$verb" = publish ] || { [ ${#ASSETS[@]} -eq 0 ] && [ ${#ASSET_DIRS[@]} -eq 0 ] && [ -z "$NOTES_OPT" ]; } || die "--asset, --asset-dir and --notes-file belong to release publish"
-[ "$verb" = assets ] || [ -z "$RECREATE" ] || die "--recreate belongs to release assets"
-[ "$verb" = step ] || { [ -z "$EVIDENCE_SET" ] && [ -z "$AGAIN" ]; } || die "--evidence and --again belong to release step"
-[ "$verb" = verify ] || [ -z "$STRICT" ] || die "--strict belongs to release verify"
-[ "$verb" = fix ] || [ -z "$FIXPUSH" ] || die "--push belongs to release fix"
-[ "$verb" = finish ] || [ -z "$IGNORE_SET" ] || die "--ignore-checks belongs to release finish"
-[ -z "$IGNORE_SET" ] || printf '%s' "$IGNORE_CHECKS" | grep -q '[^[:space:]]' || die "--ignore-checks needs the reason, in the words you gave: --ignore-checks \"...\""
+[ "$verb" = publish ] || { [ ${#ASSETS[@]} -eq 0 ] && [ ${#ASSET_DIRS[@]} -eq 0 ] && [ -z "$NOTES_OPT" ]; } || usage_die "--asset, --asset-dir and --notes-file belong to release publish"
+[ "$verb" = assets ] || [ -z "$RECREATE" ] || usage_die "--recreate belongs to release assets"
+[ "$verb" = step ] || { [ -z "$EVIDENCE_SET" ] && [ -z "$AGAIN" ]; } || usage_die "--evidence and --again belong to release step"
+[ "$verb" = verify ] || [ -z "$STRICT" ] || usage_die "--strict belongs to release verify"
+[ "$verb" = fix ] || [ -z "$FIXPUSH" ] || usage_die "--push belongs to release fix"
+[ "$verb" = finish ] || [ -z "$IGNORE_SET" ] || usage_die "--ignore-checks belongs to release finish"
+[ -z "$IGNORE_SET" ] || printf '%s' "$IGNORE_CHECKS" | grep -q '[^[:space:]]' || usage_die "--ignore-checks needs the reason, in the words you gave: --ignore-checks \"...\""
 [ "$verb" != fix ] || [ -z "$FIXPUSH" ] || verb=push   # fix --push is push
 export PLAN_ARG RESOLVED   # need_plan reads PLAN_ARG; merge_step reads RESOLVED
 
-[ -n "$VER" ] || die "usage: qargi release start|status|verify|fix|push|finish|step|assets|sign|publish|site VERSION [--hotfix] [--project P]"
-printf '%s' "$VER" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || die "'$VER' is not a version like 0.1.1"
+[ -n "$VER" ] || usage_die "usage: qargi release start|status|verify|fix|push|finish|step|assets|sign|publish|site VERSION [--hotfix] [--project P]"
+printf '%s' "$VER" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || usage_die "'$VER' is not a version like 0.1.1"
 . "$(dirname "$0")/gitflow.sh"
 project_load
 read -r REL_PAT HOT_PAT < <(python3 -I - "$(dirname "$0")" "$METH" <<'PY'
@@ -900,10 +900,10 @@ case $verb in
     fi
     release_finish_tail;;
   step)
-    [ -n "$STEPNAME" ] || die "usage: qargi release step VERSION NAME [--evidence TEXT] [--again]"
-    case $EVIDENCE in *[[:cntrl:]]*) die "--evidence is one line of text";; esac
-    [ "${#EVIDENCE}" -le 500 ] || die "--evidence is at most 500 characters"
-    [ -z "$EVIDENCE_SET" ] || printf '%s' "$EVIDENCE" | grep -q '[^[:space:]]' || die "--evidence needs the text that shows the step was done"
+    [ -n "$STEPNAME" ] || usage_die "usage: qargi release step VERSION NAME [--evidence TEXT] [--again]"
+    case $EVIDENCE in *[[:cntrl:]]*) usage_die "--evidence is one line of text";; esac
+    [ "${#EVIDENCE}" -le 500 ] || usage_die "--evidence is at most 500 characters"
+    [ -z "$EVIDENCE_SET" ] || printf '%s' "$EVIDENCE" | grep -q '[^[:space:]]' || usage_die "--evidence needs the text that shows the step was done"
     [ -f "$AFTERREC" ] && jq -e '.schema == 2 and (.steps | type == "array")' "$AFTERREC" >/dev/null 2>&1 \
       || die "no record of the after-steps of $VER for $PROJ (qargi release finish $VER records the steps of release.after_steps)"
     cur=$(jq -c --arg n "$STEPNAME" '[.steps[] | select(.name == $n)] | first // empty' "$AFTERREC")
@@ -1126,5 +1126,5 @@ case $verb in
     echo "preview it before you push: build the site locally and serve it (the site branch's build script, for example tools/build-local.sh REPO OUT, then python3 -m http.server --directory OUT)"
     if g remote get-url origin >/dev/null 2>&1; then echo "push it with: git -C $REPO push origin $SITE_BR"
     else echo "the repository has no origin remote: push $SITE_BR where the site is deployed from"; fi;;
-  *) die "usage: qargi release start|status|verify|fix|push|finish|step|assets|sign|publish|site VERSION [--hotfix] [--project P]";;
+  *) usage_die "usage: qargi release start|status|verify|fix|push|finish|step|assets|sign|publish|site VERSION [--hotfix] [--project P]";;
 esac

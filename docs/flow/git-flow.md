@@ -8,26 +8,52 @@ refusal changes nothing.
 1. `qargi feature start NAME --purpose "..."` cuts `feature/NAME` from develop. A feature is a broad
    theme; `qargi feature list` shows the open ones and the files two of them both change.
 2. Tasks run on `agent/<slug>` (`/qargi-task ... --base feature/NAME`) with targeted checks only.
-   Per task: `qargi review check RUN/out` and `qargi review apply RUN` (puts the series on `agent/<slug>`; the author of each commit is reset to yours: the answer `git.author`, a string `Name <email>`, else the repository's `user.name` and `user.email`; `review.keep_author` `true` keeps the member's; the member's author is recorded in the ref journal and the audit log),
-   A project can declare a take-in scrub that `qargi review check` runs after the series check passes, and that `qargi review apply` runs again before it applies anything unless a passing check recorded the same series (the record, in your state directory, holds a hash of the patches and of the declared scrub; when it matches, apply prints `scrub: skipped (review check passed it for this series)`, and a changed patch, `review.scrub` or `review.trailer_policy` runs the scrub again; a failing scrub refuses the apply with nothing applied): the answer `review.scrub` names a command (one command line, or a list of words),
-   run with the lead's rights in a throw-away checkout of the applied series (`BASE..tip`, the commit the run's base branch had when it was prepared, then the patches with `git am`), with the range in
-   `QARGI_SCRUB_BASE` and `QARGI_SCRUB_TIP`; `review.trailer_policy` is `none` (default) or `reject`, which fails any commit whose message carries a `Co-Authored-By` or `Generated with` style trailer. The
-   output gains one line, `scrub: ok` or `scrub: FAIL` with the first lines of what the command (or the policy) said, and a failing scrub fails the check (exit 1). Nothing is made in your repository: no
-   branch, tag or worktree entry is left behind. With neither answer set, nothing changes. Both answers are the run's own copy taken at `local prepare`, as `git.author` is, so a change applies to the runs
-   prepared after it; a series that fails the check itself is not scrubbed (the output says so), and a report-only run has no series to scrub. A member's guard refuses `project set` of both, as the command is the lead's. A member's own `review check` (the member mark that `qargi local run` sets is in its environment) does not run the scrub or make the checkout and prints `scrub: not run (a member's check; the lead's check runs it)`; that does not fail the check.
-   `qargi feature merge NAME BRANCH`, `qargi local clean RUN`, then `qargi branch prune` to
-   delete merged `agent/*` branches. Run `qargi local verify RUN` on every returned run before
-   merging any of them; verify and clean accept and name qargi's own moves (`develop moved by qargi feature finish`, a fetch, the
-   parking branch fast-forwarded to develop), so a run whose work is merged need not be cleaned before the next `feature finish`. A branch you make or push yourself
-   while a run is out is accepted once you journal it with `qargi ref note BRANCH origin/BRANCH` (a ref that existed before the run still has to be explained), and the harness's own
-   `worktree-bridge-*` branches are left out, as are the refs you declare a runtime's own with the answer `runs.owned_refs` (glob patterns such as `refs/heads/foo-*`; verify and clean name the pattern). The answers a run is checked and applied by (`runs.owned_refs`, `repo.long_lived`, `repo.parking_branch`, `git.author`, `review.keep_author`) are the copy `local prepare` took into your registry: change one and the runs prepared after it follow, not the ones already out. `feature finish` is refused while a run of the feature is open (the message names each open run and the exact command that closes it; a read-only run, an advisor or a review that returned a `report.md` and no patches, closes with a plain `qargi local clean RUN`); a run whose
-   patches you applied by hand (`git am`) is closed with `qargi local close RUN --applied-by-am`. Keep `--scratch` on
-   disk (prepare warns about a tmpfs, which a reboot empties); a passing verify also saves the run's output in `<state>/runs/`, and
-   `qargi review apply --from-saved ID` applies it when the run directory is gone (`local list` shows such a run as directory gone). `qargi local list --scratch DIR` shows each run's role, slug, age and whether it is
-   applied and merged; `qargi local clean --applied --scratch DIR` cleans those that are both and keeps the rest.
-   `qargi local clean --stale DAYS --scratch DIR` lists the finished runs older than DAYS days, and `--yes` cleans them (a run whose work is not applied and merged is kept).
-   `qargi local clean --orphans [--days N]` lists the `qargi-run.XXXXXX` directories under `/dev/shm` (or `QARGI_RUN_TMP`) that no run of your registry names, with their age; it prints a plan and a token and removes nothing until `--plan TOKEN --approved WORDS`, and then only the unnamed directories older than N days (default 2).
-   Every `qargi local clean RUN` (also by `--applied` and `--stale`) also removes the saved scrub record of the run that `qargi review check` keeps in the state, so a run that was checked and never applied leaves none behind.
+   - Per task: `qargi review check RUN/out` and `qargi review apply RUN`. The apply puts the series on `agent/<slug>`; the author
+     of each commit is reset to yours: the answer `git.author`, a string `Name <email>`, else the repository's `user.name` and
+     `user.email`. `review.keep_author` `true` keeps the member's. The member's author is recorded in the ref journal and the audit log.
+   - A project can declare a take-in scrub. `qargi review check` runs it after the series check passes, and `qargi review apply`
+     runs it again before it applies anything, unless a passing check recorded the same series. The record, in your state directory,
+     holds a hash of the patches and of the declared scrub. When it matches, apply prints
+     `scrub: skipped (review check passed it for this series)`; a changed patch, `review.scrub` or `review.trailer_policy` runs the
+     scrub again; a failing scrub refuses the apply with nothing applied.
+   - The scrub is set by two answers. `review.scrub` names a command (one command line, or a list of words), run with the lead's
+     rights in a throw-away checkout of the applied series (`BASE..tip`, the commit the run's base branch had when it was prepared,
+     then the patches with `git am`), with the range in `QARGI_SCRUB_BASE` and `QARGI_SCRUB_TIP`. `review.trailer_policy` is `none`
+     (default) or `reject`, which fails any commit whose message carries a `Co-Authored-By` or `Generated with` style trailer.
+   - The scrub output gains one line, `scrub: ok` or `scrub: FAIL` with the first lines of what the command (or the policy) said,
+     and a failing scrub fails the check (exit 1). Nothing is made in your repository: no branch, tag or worktree entry is left
+     behind. With neither answer set, nothing changes. Both answers are the run's own copy taken at `local prepare`, as `git.author`
+     is, so a change applies to the runs prepared after it. A series that fails the check itself is not scrubbed (the output says
+     so), and a report-only run has no series to scrub.
+   - A member's guard refuses `project set` of both answers, as the command is the lead's. A member's own `review check` (the
+     member mark that `qargi local run` sets is in its environment) does not run the scrub or make the checkout and prints
+     `scrub: not run (a member's check; the lead's check runs it)`; that does not fail the check.
+   - Then `qargi feature merge NAME BRANCH`, `qargi local clean RUN`, and `qargi branch prune` to delete merged `agent/*`
+     branches. Run `qargi local verify RUN` on every returned run before merging any of them. Verify and clean accept and name
+     qargi's own moves (`develop moved by qargi feature finish`, a fetch, the parking branch fast-forwarded to develop), so a run
+     whose work is merged need not be cleaned before the next `feature finish`.
+   - A branch you make or push yourself while a run is out is accepted once you journal it with
+     `qargi ref note BRANCH origin/BRANCH` (a ref that existed before the run still has to be explained). The harness's own
+     `worktree-bridge-*` branches are left out, as are the refs you declare a runtime's own with the answer `runs.owned_refs`
+     (glob patterns such as `refs/heads/foo-*`; verify and clean name the pattern).
+   - The answers a run is checked and applied by (`runs.owned_refs`, `repo.long_lived`, `repo.parking_branch`, `git.author`,
+     `review.keep_author`) are the copy `local prepare` took into your registry: change one and the runs prepared after it follow,
+     not the ones already out.
+   - `feature finish` is refused while a run of the feature is open. The message names each open run and the exact command that
+     closes it; a read-only run, an advisor or a review that returned a `report.md` and no patches, closes with a plain
+     `qargi local clean RUN`. A run whose patches you applied by hand (`git am`) is closed with
+     `qargi local close RUN --applied-by-am`.
+   - Keep `--scratch` on disk (prepare warns about a tmpfs, which a reboot empties). A passing verify also saves the run's output in
+     `<state>/runs/`, and `qargi review apply --from-saved ID` applies it when the run directory is gone (`local list` shows such
+     a run as directory gone).
+   - `qargi local list --scratch DIR` shows each run's role, slug, age and whether it is applied and merged;
+     `qargi local clean --applied --scratch DIR` cleans those that are both and keeps the rest. `qargi local clean --stale DAYS --scratch DIR`
+     lists the finished runs older than DAYS days, and `--yes` cleans them (a run whose work is not applied and merged is kept).
+   - `qargi local clean --orphans [--days N]` lists the `qargi-run.XXXXXX` directories under `/dev/shm` (or `QARGI_RUN_TMP`) that
+     no run of your registry names, with their age; it prints a plan and a token and removes nothing until `--plan TOKEN --approved WORDS`,
+     and then only the unnamed directories older than N days (default 2).
+   - Every `qargi local clean RUN` (also by `--applied` and `--stale`) also removes the saved scrub record of the run that
+     `qargi review check` keeps in the state, so a run that was checked and never applied leaves none behind.
 3. When the feature is complete: `qargi feature sync NAME` (merges develop in), `qargi feature verify
    NAME` (the one whole-suite run per feature), then `qargi feature finish NAME`, the only merge into
    develop. `qargi feature status NAME` shows commits ahead and whether the whole-suite run is

@@ -402,7 +402,7 @@ def cmd_recommend(args):
 
 def cmd_show(args):
     if not args:
-        die("show needs an ID (qargi discover search ...)")
+        die("show needs an ID (qargi discover search ...)", 2)
     e = find_entry(args[0])
     if not e:
         die("no entry '%s' (search the catalog, or --online, first)" % args[0])
@@ -489,7 +489,7 @@ def cmd_install(args):
         elif ident is None: ident = a; i += 1
         else: die("one ID at a time")
     if not ident:
-        die("install needs an ID (qargi discover search ...)")
+        die("install needs an ID (qargi discover search ...)", 2)
     e = find_entry(ident)
     if not e:
         die("no entry '%s' (search first; online entries are found with: qargi discover search QUERY --online)" % ident)

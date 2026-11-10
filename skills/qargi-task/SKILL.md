@@ -8,7 +8,7 @@ argument-hint: "<task>" --done "<check>" [--instance NAME] [--base B] [--scope P
 
 A **role** says what a task is for (`qargi role list`): build, write, review and test ship with
 qargi; add your own in `~/.qargi/config/roles/NAME/`. Its
-**class** (write or read-only) is what the guard enforces; its text cannot change that. A **member** is a
+**class** (write or read-only) is what the guard checks; its text cannot change it. A **member** is a
 local agent you named and gave roles (`qargi agent add`), written by the project's local runtime from
 one member definition (`/qargi-instances`); an **instance** is a registered cloud agent of
 one role. All

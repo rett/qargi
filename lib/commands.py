@@ -9,7 +9,7 @@ pack-tool, member, file, dir, none, or a tuple of fixed words."""
 TAGLINE = "A gathering place for agent work: dispatch, review, remember."
 
 INTRO = (
-    "qargi dispatches one-off, task-scoped development tasks to sandboxed agents and takes the work back as "
+    "qargi dispatches one-off, task-scoped development tasks to agents and takes the work back as "
     "reviewable patches. An agent is a member on this machine (local, the default) or a "
     "cloud agent (only when you ask for it in that request). Agents work in their own clone and "
     "never push. A team adds a lead that coordinates members for build, write and review on one task. "
@@ -961,8 +961,9 @@ COMMANDS = {
         "summary": "List and inspect the development and release methodologies",
         "desc": ("A methodology is the way a project is developed and released, as data: its branches, versioning and changelog, test tiers, "
                  "CI, release steps and deployment options, and the generic files a new project starts with. One ships with qargi (gitflow); "
-                 "add your own under ~/.qargi/config/methodologies/NAME/ (methodology.json and a scaffold/ directory). These verbs only read; "
-                 "qargi project new and adopt write, and only after a plan."),
+                 "add your own under ~/.qargi/config/methodologies/NAME/ (methodology.json and a scaffold/ directory). Today a methodology sets "
+                 "the files and parameters a project starts with and a few patterns; the feature, release and branch verbs name develop and master themselves. "
+                 "These verbs only read; qargi project new and adopt write, and only after a plan."),
         "scripts": ["methodology.py"],
         "verbs": {
             "list": verb("List the methodologies and where they live"),
@@ -1262,7 +1263,8 @@ COMMANDS = {
                  "target) or a memstore_ id. A note with a name starting with a dot, or that a store cannot hold, makes the plan refuse and name it. Nothing is "
                  "deleted: what a split moves out of a store goes to /_archive/<date>/ and a collision to /_conflicts/<date>/, and the "
                  "origin of every note written is added to its Sources: line, so each change can be undone. Without --approved they "
-                 "print the plan and its token and change nothing; a store whose notes changed since the plan is refused."),
+                 "print the plan and its token and change nothing; a store whose notes changed since the plan is refused. "
+                 "The two stores of a cloud project and how an agent reads them: qargi help memory-stores."),
         "scripts": ["memory.sh", "tierwrite.sh", "tierplan.py", "tiers.py"],
         "verbs": {
             "lint": verb("Check a store against the canon", [("STORE_ID", "store")], [opt("--kind", "recipes or reference (for a store before the canon)", "KIND", ("recipes", "reference"))]),
@@ -1571,25 +1573,26 @@ TOPICS = {
         "prompt is the person's real control. A member never applies: it reports the plan and its token, and the lead shows them to the person "
         "(what the member's guard refuses: qargi help guard)."]),
     "guard": ("What a member's guard refuses", [
-        "The guard hooks a member's calls: a barrier, not a wall; qargi local verify is its backstop.",
+        "A best-effort text check, not a sandbox: a member runs as your OS user (a real sandbox is not yet built); "
+        "qargi local verify and review check are the backstop.",
         "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
         "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, gates, env, site, backlog, packs, runs, upstream, git, review, roles.ROLE.tools, a whole role), init, new, link and unlink; "
         "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (the rest "
         "read); release publish, sign, site, assets and fix; marshal claim, set, renew, release, take, "
         "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish, verify and park; branch prune; changelog renumber without --check; "
         "upstream status, sync; backlog done; ref record; memory init, "
-        "move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; review apply; team run; env plan and apply; task.",
+        "move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; review apply; env plan and apply; the names team run and task (skills, not commands).",
         "It refuses writes in the pack library, credentials, the install record, the runtime's skills, agents and plugin directories, the installed copy, "
         "the state's render, providers, marshal, feature and saved-run directories, its ref journal, the memory tiers, ~/.config/anthropic, and the "
         "lead's git configuration and session files. "
-        "Reading stays allowed except the lead's signing key: copying, linking, archiving or searching its directory is refused. It refuses git push, git remote changes, git -c or config of keys that run programs (alias.*), gh, ssh, scp, sftp and rsync to a host.",
+        "Reading stays allowed except the lead's signing key and its directory. It refuses git push, git remote changes, git -c or config of keys that run programs (alias.*), gh, ssh, scp, sftp and rsync to a host.",
         "A command is cut at every ; && || | and newline, inside quotes and heredocs too, and a substitution is a command: no refused verb, push or tag in text, "
         "unless every command is echo, cat, tee, grep or git commit (then text is data, as is a heredoc body cat or tee gets, bar lines starting qargi). "
         "Commit with git commit -F FILE. Piped or here-string shell programs are read; curl | sh and bash < f are refused. A cd it cannot read refuses relative writes.",
         "The read-only class (review) writes only OUT and TMP: every change to the clone is refused, and a write through "
-        "a name the guard cannot read. Nobody copies, extracts or links into the run directory.",
+        "a name the guard cannot read.",
         "Setting QARGI_NESTED (a plan token skip only canon apply honours), or setting or unsetting QARGI_LEAD, is refused.",
-        "A refusal is a result: report it; do not work around it."]),
+        "A refusal is a result: report it."]),
     "naming": ("How resources are named", [
         "Project and role are single lower-case tokens. An instance is <project>-<role>, for example acme-build. A session is "
         "<instance>-<task-slug>, and the agent's branch is agent/<task-slug>.",
@@ -1597,7 +1600,7 @@ TOPICS = {
         "<project>-deployment-<role>, the shared <project>-environment, and the stores <project>-memory and <project>-reference. "
         "The lead is <project>-lead, and so is its agent.",
         "qargi instances normalize renames existing resources to match."]),
-    "memory": ("The two memory stores", [
+    "memory-stores": ("The two memory stores", [
         "<project>-memory is where agents write verified how-to facts they learn, under their own role folder (shared/ is curated and reached by promotion). <project>-reference is read-only: rules, workflow and "
         "conventions you and the coordinator curate. Both have shared/ for every role and roles/<role>/ for one.",
         "An agent reads each store's README.md, then shared/INDEX.md and its role's index, then only the notes its task needs. "

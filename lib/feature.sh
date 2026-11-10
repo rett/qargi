@@ -233,7 +233,7 @@ case $verb in
     fi
     push_feature "$BR";;
   merge)
-    [ -z "$DET" ] || { [ -n "$EXTRA" ] || die "usage: qargi feature merge $NAME_ARG BRANCH"; merge_detached; exit 0; }
+    [ -z "$DET" ] || { [ -n "$EXTRA" ] || usage_die "usage: qargi feature merge $NAME_ARG BRANCH"; merge_detached; exit 0; }
     marshal_gate "$NAME_ARG"
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi feature start $NAME_ARG)"
     [ -n "$EXTRA" ] || usage_die "usage: qargi feature merge $NAME_ARG BRANCH"

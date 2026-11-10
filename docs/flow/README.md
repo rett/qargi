@@ -74,11 +74,19 @@ local run for that role (default `build`): a read-only role keeps the clone unch
 
 ## Methodologies
 
-A methodology is the way a project is developed and released, as data: its branches, versioning and
+A methodology file describes the way a project is developed and released: its branches, versioning and
 changelog, test tiers, CI, release steps, deployment options and the generic files a new project
 starts with. One ships, `gitflow`; add your own under `~/.qargi/config/methodologies/NAME/`
 (`methodology.json` and a `scaffold/` directory). `qargi methodology list` shows them, `show NAME`
 prints one, and `check [NAME]` validates one or all. These verbs only read.
+
+Methodologies are not pluggable in behaviour yet. What a methodology file sets today is the scaffold: the files
+and parameters (`test_command`, the task runner, CI timeout, the first version) that `project new` and `project adopt`
+write, the integration branch `project attach` looks for (the last of `branches.long_lived`), the release and hotfix
+branch name patterns that `release` reads, and the `after_release` steps that `release finish` and `release status` print. What it does not set is the flow itself: the
+`feature`, `release` and `branch` verbs name `develop`, `master` and the `feature/` and `agent/` prefixes literally,
+so a second methodology can change the files a project starts with and those patterns, not how features and releases
+merge. Until the verbs read the branch roles from the file, treat `gitflow` as the only flow qargi runs.
 
 - `qargi project new NAME [--dir DIR] [--param test_command='make test'] [--url URL]` starts a new
   project on the methodology's branches with its generic files.
