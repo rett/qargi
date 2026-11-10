@@ -4694,6 +4694,36 @@ class FifthReview(HookCase):
         self.assertEqual(self.not_refused(["echo x > %s/n" % tmp], os.path.join(other, "clone"), "read-only"), [])
         self.assertEqual(self.not_allowed(["echo x > %s/out/r.md" % other], os.path.join(other, "clone"), "read-only"), [])
 
+    def test_a_member_run_mark_limits_the_tmp_match_to_the_tmp_of_its_own_run(self):
+        """With QARGI_MEMBER_RUN in the hook's environment the member is known: the TMP of another run does not find that run, so a read-only member of run A cannot
+        write the TMP of run B by its path (Bash and the file tools alike). Without the mark the path match is as before."""
+        tmp_a, tmp_b = (os.path.join(self.t, d) for d in ("shm-a", "shm-b"))
+        other = os.path.join(self.t, "run2")
+        for d in (tmp_a, tmp_b, os.path.join(other, "clone"), os.path.join(other, "out"), os.path.join(self.t, "plain")):
+            os.makedirs(d)
+        for name, text in (("ability", "review\n"), ("refs.before", ""), ("class", "read-only\n")):
+            with open(os.path.join(other, name), "w") as f:
+                f.write(text)
+        with open(os.path.join(self.state, "local-runs.jsonl"), "w") as f:
+            f.write(json.dumps({"run": self.run_dir, "tmpdir": tmp_a}) + "\n" + json.dumps({"run": other, "tmpdir": tmp_b}) + "\n")
+        away = os.path.join(self.t, "plain")
+
+        def verdicts(mark, tmp):
+            env = self.env()
+            if mark:
+                env["QARGI_MEMBER_RUN"] = mark
+            return [self.hook(["--class", "read-only"], {"tool_name": "Bash", "tool_input": {"command": "echo x > %s/n" % tmp}, "cwd": away}, env).returncode,
+                    self.hook(["--class", "read-only"], {"tool_name": "Write", "tool_input": {"file_path": os.path.join(tmp, "n")}, "cwd": away}, env).returncode]
+        self.assertEqual(verdicts(self.run_dir, tmp_a), [0, 0])                  # its own TMP
+        self.assertEqual(verdicts(self.run_dir, tmp_b), [2, 2])                  # another run's TMP
+        self.assertEqual(verdicts(other, tmp_b), [0, 0])
+        self.assertEqual(verdicts(other, tmp_a), [2, 2])
+        self.assertEqual(verdicts(os.path.join(self.t, "gone"), tmp_a), [2, 2])  # a mark that names no run finds none
+        self.assertEqual(verdicts(None, tmp_a), [0, 0])                          # no mark: the path names the run, as before
+        self.assertEqual(verdicts(None, tmp_b), [0, 0])
+        r = self.hook(["--class", "read-only"], {"tool_name": "Write", "tool_input": {"file_path": os.path.join(tmp_b, "n")}, "cwd": away}, dict(self.env(), QARGI_MEMBER_RUN=self.run_dir))
+        self.assertIn("no run directory", r.stderr)
+
     # --- G7: a cd the guard cannot read leaves the directory unknown, and a relative write after it is refused
     def test_a_cd_to_a_directory_the_guard_cannot_name_makes_a_relative_write_unreadable(self):
         s = os.path.dirname(self.skill)

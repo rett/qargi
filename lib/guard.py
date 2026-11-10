@@ -221,12 +221,12 @@ command that also runs git is refused for every member.
 The run: a directory is a run when it holds ability and refs.before, or the clone and out directories beside any file of the record (RUN_CONTROL), and it is not
 below the clone directory of another (a repository may hold a docs/tmpdir). RUN_CONTROL files are not written, moved, removed, copied or linked, nothing is
 the run directory itself is no destination (a copy over it, an extraction, a link; run_dir_refusal), and the run directory is not removed or moved; under
-`--class read-only` the run is not asked whether the member is read-only: a run that cannot be found refuses every write (NO_RUN), but a path in the TMP the lead's registry names for a run finds that run (tmp_run).
+`--class read-only` the run is not asked whether the member is read-only: a run that cannot be found refuses every write (NO_RUN), but a path in the TMP the lead's registry names for a run finds that run (tmp_run; with the member mark in the environment, only the member's own run).
 Not seen: a script built by code (python -c ...), a program or a verb held in a variable, the output of a substitution handed to sh -c (`bash -c "$(echo qargi upgrade)"`),
 a wrapper's option that takes a value (sudo -u root qargi ...; the ones of xargs are read).
 
-Failure: the guard fails closed. Any unexpected exception ends in exit 2 with the reason on stderr. Input that is not
-JSON is still let through (exit 0), as before. Known limits outside this file: a hook that cannot start, exits other than 0 or 2, times out or prints invalid
+Failure: the guard fails closed. Any unexpected exception ends in exit 2 with the reason on stderr. Input that is empty, is not
+valid UTF-8 or is not JSON is refused (exit 2): the call cannot be read. Known limits outside this file: a hook that cannot start, exits other than 0 or 2, times out or prints invalid
 JSON is a non-blocking error for the runtime and the action goes ahead, so agents/member.md sets `onFailure: "block"` and a `timeout` (a runtime that does not
 enforce `onFailure` lets such a failure through), and the frontmatter hooks of a project-level agent file run only after the workspace is trusted: until then the
 member runs without this guard."""
@@ -1312,9 +1312,12 @@ def run_tmps(run):
 def tmp_run(full):
     """The run whose TMP the real path full lies in, by the lead's registry, or None. TMP is usually below /dev/shm, away from the run directory, so a call made
     from a directory that is in no run is matched to its run by the path it writes. Only a directory that is a run (is_run) counts, and full must lie in the
-    registered directory (never above it, never beside it)."""
+    registered directory (never above it, never beside it). When the hook's environment carries the member mark (MEMBER_MARK: the run directory, put there when
+    the member is started), only that run's TMP counts: a member of run A does not find run B by B's TMP. Without the mark the path alone names the run."""
+    mark = os.environ.get(MEMBER_MARK)
+    mine = os.path.realpath(mark) if mark else None
     for r, t in registered_tmps():
-        if inside(full, t) and is_run(r):
+        if inside(full, t) and is_run(r) and (mine is None or r == mine):
             return r
     return None
 
