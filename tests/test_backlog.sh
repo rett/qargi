@@ -8,7 +8,8 @@ cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
 export QARGI_PROJECT=app QARGI_LEAD=lead-one
 mkdir -p "$HOME" "$T/c/projects" "$T/bin" "$T/mem"
@@ -27,7 +28,6 @@ $DA project template app | jq --arg p "$R" '.repo.url = "https://github.com/acme
 F="$DA feature"; REL="$DA release"
 bl() { "$DA" backlog "$@"; }
 bldone() { bl 'done' "$@"; }   # quoted: shellcheck takes a bare done after a word for the keyword
-tok() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 sum() { sha256sum "$@" 2>/dev/null | cut -d' ' -f1 | tr '\n' ' '; }
 MEM=$T/mem/backlog.md
 write_backlog() { cat > "$MEM" <<'EOF'
@@ -149,6 +149,114 @@ $DA project set app backlog.file '~/bl.md' >/dev/null 2>&1
 bl list 2>&1 | grep -q '^  home-item  under home$' && ok "a path under the home directory (tilde slash) is taken from it" || no "home"
 rm -rf "$R/docs"
 
+# --- 5b. backlog.section: only the list under the heading holds items; backlog.archive: where the archive goes
+SF=$T/mem/sect.md; AD=$T/mem/arch
+cat > "$SF" <<'EOF'
+# Backlog
+
+- [top-one] above every section
+
+## Now
+
+- [now-one] first of now
+### Detail
+
+- [now-deep] under a deeper heading, still in Now
+
+## Later
+
+- [later-one] in Later
+EOF
+$DA project set app backlog.file "$SF" >/dev/null 2>&1
+out=$($DA project set app backlog.section '## Now' 2>&1); rc=$?
+[ $rc = 0 ] && [ "$(jq -r .backlog.section "$P")" = "## Now" ] && ok "backlog.section is stored" || no "set section rc=$rc: $out"
+out=$(bl list 2>&1)
+grep -q ': 2 open items$' <<<"$out" && grep -q '^  now-one  *first of now$' <<<"$out" && grep -q '^  now-deep  *under a deeper heading' <<<"$out" && ! grep -q 'top-one\|later-one' <<<"$out" \
+  && ok "list shows only the items under the section (a deeper heading belongs to it, the next heading of its level ends it)" || no "section list: $out"
+out=$(bl list --json 2>&1); jq -e '.section == "## Now" and (.items | map(.id)) == ["now-one","now-deep"]' <<<"$out" >/dev/null && ok "list --json names the section" || no "section json: $out"
+out=$(bldone later-one --evidence e 2>&1); rc=$?
+[ $rc = 1 ] && grep -q 'no open item \[later-one\]' <<<"$out" && ok "done refuses an item outside the section" || no "outside the section rc=$rc: $out"
+$DA project set app backlog.section Missing >/dev/null 2>&1
+out=$(bl list 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "no heading 'Missing' in the backlog file (backlog.section)" <<<"$out" && ok "a heading that is not in the file is an error" || no "missing heading rc=$rc: $out"
+$DA project set app backlog.section Now >/dev/null 2>&1
+export QARGI_NOW=2026-11-08
+out=$(bldone now-one --evidence "finished" 2>&1); t=$(tok <<<"$out")
+bldone now-one --evidence "finished" --plan "$t" --approved go >/dev/null 2>&1
+{ ! grep -q now-one "$SF" && grep -q 'top-one' "$SF" && grep -q 'later-one' "$SF" && [ -f "$T/mem/sect-archive-2026-11.md" ]; } && ok "done removes the item of the section and archives it beside the file" || no "section done: $(cat "$SF")"
+# the archive in a directory of its own (created), named as before; a relative path is taken from the repository; a name ending in .md is the one archive file
+$DA project set app backlog.archive "$AD" >/dev/null 2>&1
+out=$(bldone now-deep --evidence "second" 2>&1); t=$(tok <<<"$out")
+grep -q "into $AD/sect-archive-2026-11.md" <<<"$out" && ok "the plan names the archive in backlog.archive" || no "archive plan: $out"
+bldone now-deep --evidence "second" --plan "$t" --approved go >/dev/null 2>&1
+{ [ -f "$AD/sect-archive-2026-11.md" ] && grep -q '^### 2026-11-08: now-deep$' "$AD/sect-archive-2026-11.md" && grep -q '^# sect archive 2026-11$' "$AD/sect-archive-2026-11.md"; } && ok "the archive directory is created and holds the monthly file" || no "archive dir: $(ls -R "$AD")"
+cat > "$SF" <<'EOF'
+## Now
+
+- [one-aa] first
+- [one-bb] second
+EOF
+$DA project set app backlog.archive "$T/mem/all.md" >/dev/null 2>&1
+for i in one-aa one-bb; do
+  out=$(bldone "$i" --evidence "ev $i" 2>&1); t=$(tok <<<"$out"); bldone "$i" --evidence "ev $i" --plan "$t" --approved go >/dev/null 2>&1
+done
+[ "$(grep -c '^### ' "$T/mem/all.md")" = 2 ] && grep -q '^# all$' "$T/mem/all.md" && ok "a backlog.archive ending in .md is the one archive file, whatever the month" || no "one archive file: $(cat "$T/mem/all.md")"
+$DA project set app backlog.archive "$(printf 'a\nb')" >/dev/null 2>&1 && no "a control character in backlog.archive accepted" || ok "backlog.archive refuses a control character"
+$DA project set app backlog.section '##' >/dev/null 2>&1 && no "an empty heading accepted" || ok "backlog.section refuses a heading with no text"
+unset QARGI_NOW
+jq 'del(.backlog.archive, .backlog.section)' "$P" > "$P.new" && mv "$P.new" "$P"
+
+# --- 5c. add: one item, validated; done: a batch with one plan and one token
+AF=$T/mem/add.md; printf -- '# Backlog\n\n- [aa-one] first\n' > "$AF"
+$DA project set app backlog.file "$AF" >/dev/null 2>&1
+out=$(bl add bb-two "second item" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "added \[bb-two\] to $AF" <<<"$out" && [ "$(cat "$AF")" = "$(printf '# Backlog\n\n- [aa-one] first\n- [bb-two] second item')" ] && ok "add appends the item to the list" || no "add rc=$rc: $out; $(cat "$AF")"
+[ "$(jq -rs '[.[] | select(.verb == "backlog:add")] | map(.detail) | join(",")' "$T/s/audit.log")" = "app bb-two" ] && ok "add leaves an audit line" || no "add audit: $(cat "$T/s/audit.log")"
+out=$(bl add cc-three "third" --detail "why it matters
+and how" 2>&1); rc=$?
+[ $rc = 0 ] && tail -3 "$AF" | head -1 | grep -qx -- '- \[cc-three\] third' && tail -2 "$AF" | head -1 | grep -qx '  why it matters' && tail -1 "$AF" | grep -qx '  and how' && ok "add --detail writes indented lines that belong to the item" || no "add detail rc=$rc: $out; $(cat "$AF")"
+bl list 2>&1 | grep -q ': 3 open items$' && ok "and list shows the three items" || no "list after add: $(bl list 2>&1)"
+cp "$AF" "$T/add.before"
+out=$(bl add aa-one "again" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q 'the id \[aa-one\] is already an item (line 3)' <<<"$out" && cmp -s "$AF" "$T/add.before" && ok "add refuses an id that is taken and changes nothing" || no "dup add rc=$rc: $out"
+for bad in 'Bad Id' a 'UPPER'; do
+  out=$(bl add "$bad" "x" 2>&1); rc=$?
+  [ $rc = 1 ] && grep -q 'a lowercase slug' <<<"$out" && cmp -s "$AF" "$T/add.before" && ok "add refuses the id '$bad' (no slug)" || no "bad slug '$bad' rc=$rc: $out"
+done
+out=$(bl add dd-four 2>&1); rc=$?; [ $rc = 2 ] && grep -q 'usage: qargi backlog' <<<"$out" && ok "add without a text is a usage error" || no "add usage rc=$rc: $out"
+out=$(bl add dd-four "x" --evidence e 2>&1); rc=$?; [ $rc = 2 ] && ok "add takes no evidence" || no "add evidence rc=$rc: $out"
+out=$(bl add dd-four "  " 2>&1); rc=$?; [ $rc = 1 ] && grep -q 'the text needs words' <<<"$out" && ok "add refuses a blank text" || no "blank text rc=$rc: $out"
+# the section: the item goes to the end of the list under the heading
+printf -- '# Backlog\n\n## Now\n\n- [aa-one] first\n\n## Later\n\n- [zz-last] last\n' > "$AF"
+$DA project set app backlog.section Now >/dev/null 2>&1
+bl add bb-two "second" >/dev/null 2>&1
+[ "$(cat "$AF")" = "$(printf '# Backlog\n\n## Now\n\n- [aa-one] first\n- [bb-two] second\n\n## Later\n\n- [zz-last] last')" ] && ok "with backlog.section the item goes to the end of that section's list" || no "add in section: $(cat "$AF")"
+out=$(bl add zz-last "taken in Later" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q 'the id \[zz-last\] is already an item' <<<"$out" && ok "an id taken outside the section is refused too" || no "dup outside section rc=$rc: $out"
+jq 'del(.backlog.section)' "$P" > "$P.new" && mv "$P.new" "$P"
+# done with several ids: one plan, one token, the same evidence for each, one apply
+printf -- '- [aa-one] first\n- [bb-two] second\n  more\n- [cc-three] third\n- [dd-four] fourth\n' > "$AF"
+export QARGI_NOW=2026-11-08; AARCH=$T/mem/add-archive-2026-11.md; rm -f "$AARCH"
+out=$(bldone aa-one cc-three --evidence "shipped together" 2>&1); rc=$?; t=$(tok <<<"$out")
+[ $rc = 0 ] && [ -n "$t" ] && [ "$(grep -c '^plan token:' <<<"$out")" = 1 ] && grep -q '^done 2 items (\[aa-one\], \[cc-three\]): move them out of' <<<"$out" && grep -q '^  | - \[aa-one\] first$' <<<"$out" \
+  && grep -q '^  | - \[cc-three\] third$' <<<"$out" && grep -q 'qargi backlog done aa-one cc-three --evidence' <<<"$out" && ok "a batch has one plan listing every item, and one token" || no "batch plan rc=$rc: $out"
+cp "$AF" "$T/add.before"
+out=$(bldone aa-one cc-three --evidence "shipped together" --plan "$t" --approved go 2>&1); rc=$?
+[ $rc = 0 ] && [ "$(printf '%s\n' "$out" | grep -c '^done \[')" = 2 ] && [ "$(cat "$AF")" = "$(printf -- '- [bb-two] second\n  more\n- [dd-four] fourth')" ] && ok "the apply removes every item of the batch and no other" || no "batch apply rc=$rc: $out; $(cat "$AF")"
+[ "$(grep -c '^### ' "$AARCH")" = 2 ] && [ "$(grep -c '^Evidence: shipped together$' "$AARCH")" = 2 ] && grep -q '^### 2026-11-08: aa-one$' "$AARCH" && grep -q '^### 2026-11-08: cc-three$' "$AARCH" && ok "the same evidence is archived with each id" || no "batch archive: $(cat "$AARCH")"
+[ "$(jq -rs '[.[] | select(.verb == "backlog:done")] | last | .detail' "$T/s/audit.log")" = "app aa-one cc-three" ] && ok "one audit line names the batch" || no "batch audit: $(tail -1 "$T/s/audit.log")"
+# a token for one id does not apply the batch; a missing, repeated or comma-joined id refuses all and changes nothing
+printf -- '- [aa-one] first\n- [bb-two] second\n' > "$AF"; cp "$AF" "$T/add.before"; rm -f "$AARCH"
+t1=$(tok <<<"$(bldone aa-one --evidence e 2>&1)")
+out=$(bldone aa-one bb-two --evidence e --plan "$t1" --approved go 2>&1); rc=$?
+[ $rc != 0 ] && grep -q 'the plan changed or --plan is missing' <<<"$out" && cmp -s "$AF" "$T/add.before" && [ ! -e "$AARCH" ] && ok "the token of one id does not apply a batch" || no "token of one rc=$rc: $out"
+for ids in 'aa-one nope-x' 'aa-one aa-one' 'aa-one,bb-two'; do
+  # shellcheck disable=SC2086  # the ids are split on purpose
+  out=$(bldone $ids --evidence e 2>&1); rc=$?
+  [ $rc != 0 ] && [ -z "$(tok <<<"$out")" ] && cmp -s "$AF" "$T/add.before" && ok "the batch '$ids' is refused with no plan, nothing changed" || no "batch '$ids' rc=$rc: $out"
+done
+unset QARGI_NOW
+
 # --- 6. feature finish names the open items the commits mention (information only)
 $DA project set app backlog.file "$MEM" >/dev/null 2>&1
 printf -- '# Backlog\n\n- [add-cache] Cache the lookups\n- [late-one] The last one\n- [never-named] Nobody mentions it\n- [ci] a short id\n- plain\n' > "$MEM"
@@ -172,6 +280,19 @@ $DA project set app backlog.file "$T/mem/gone.md" >/dev/null 2>&1
 out=$($F finish bl 2>&1); rc=$?
 [ $rc = 0 ] && ! grep -q 'backlog' <<<"$out" && [ "$(tok <<<"$out")" = "$t1" ] && ok "file missing: no line and no failure" || no "missing: rc=$rc $out"
 $DA project set app backlog.file "$MEM" >/dev/null 2>&1
+# backlog.section: only the list under the heading holds items, so the plan names only the commits' ids that are in it
+cp "$MEM" "$T/mem/plain.md"
+printf -- '# Backlog\n\n## Now\n\n- [add-cache] Cache the lookups\n\n## Later\n\n- [late-one] The last one\n- [never-named] Nobody mentions it\n' > "$MEM"
+$DA project set app backlog.section Now >/dev/null 2>&1
+out=$($F finish bl 2>&1); grep -qx '  backlog items named in these commits: add-cache' <<<"$out" && ok "backlog.section: the finish plan names only the items under the heading" || no "section Now: $out"
+$DA project set app backlog.section '## Later' >/dev/null 2>&1
+out=$($F finish bl 2>&1); grep -qx '  backlog items named in these commits: late-one' <<<"$out" && ok "backlog.section may be written with its #s" || no "section Later: $out"
+$DA project set app backlog.section Missing >/dev/null 2>&1
+out=$($F finish bl 2>&1); rc=$?
+[ $rc = 0 ] && ! grep -q 'backlog items' <<<"$out" && [ -n "$(tok <<<"$out")" ] && ok "a heading that is not in the file names nothing and fails nothing" || no "section Missing: rc=$rc $out"
+jq 'del(.backlog.section)' "$P" > "$P.new" && mv "$P.new" "$P"
+out=$($F finish bl 2>&1); grep -qx '  backlog items named in these commits: add-cache, late-one' <<<"$out" && ok "without the section both lists are read" || no "section unset: $out"
+cp "$T/mem/plain.md" "$MEM"
 bldone add-cache --evidence "finished" --plan "$(bldone add-cache --evidence finished | tok)" --approved go >/dev/null 2>&1
 out=$($F finish bl 2>&1); grep -qx '  backlog items named in these commits: late-one' <<<"$out" && ok "an item that was done is open no longer" || no "after done: $out"
 t=$(tok <<<"$out"); $F finish bl --plan "$t" --approved go >/dev/null 2>&1 && [ "$(git -C "$R" rev-list --count "$d0..develop")" -gt 0 ] && ok "the finish itself goes on as before" || no "finish apply"

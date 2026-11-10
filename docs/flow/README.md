@@ -94,7 +94,24 @@ merge. Until the verbs read the branch roles from the file, treat `gitflow` as t
   gaps against the methodology, and changes nothing in the repository.
 - `qargi project adopt PROJECT` closes the safe gaps of an attached repository: it creates the missing long-lived
   branches locally and writes the missing methodology files as one commit on `agent/adopt-<methodology>` for you to review.
-  It never overwrites a file or pushes; changelog format, tag format and CI content stay yours.
+  It never overwrites a file or pushes; changelog format, tag format and CI content stay yours. What the project
+  declares is not a gap: `release.version_file none`, and a versioned unreleased heading right after a release ("no
+  unreleased section yet; the last release is X"), are printed apart as "noted, not gaps". The environment gaps are
+  measured against the effective environment (`env.bootstrap_command`, `env.doctor_command` in the answers close the
+  target gaps), and a file it writes never names a bootstrap, dry-run or doctor command the repository lacks. The
+  changelog sentence of `CLAUDE.md` and `CONTRIBUTING.md` and the heading of a new `CHANGELOG.md` follow
+  `release.changelog.unreleased` and `release.changelog.numbered`. A repository with its own `CLAUDE.md` or `AGENTS.md`
+  gets a list of what adopt does about each (it edits neither; with a `CLAUDE.md` and no `AGENTS.md` it writes
+  `AGENTS.md` with the Development environment section only, and the `@AGENTS.md` import line in `CLAUDE.md` is yours
+  to add). `qargi project adopt PROJECT --show` prints everything the plan token covers: the refs, the branches, and the
+  full content of each file to write.
+
+  A deviation you accept on purpose is recorded by the lead in the answer `methodology_accepted`, a list of
+  `{gap, reason, date}` with the gap written as attach prints it (`file: CONTRIBUTING.md`, `branch: develop`, `env: doctor
+  target`): `qargi project set NAME methodology_accepted '[{"gap":"file: CONTRIBUTING.md","reason":"the workflow is in the
+  wiki","date":"2026-11-10"}]'`. A member run may not set it. `project attach`, `project adopt` and `marshal handoff` print the
+  accepted deviations apart from the open gaps; adopt writes no accepted file and creates no accepted branch; an accepted
+  deviation whose gap is gone reads "accepted, no longer applies".
 
 Each prints a plan and a token; they write only when you apply it with `--plan TOKEN --approved "<your
 words>"` (`qargi help approvals`). With `--json` on any of these (or any other gated verb) the plan comes as one JSON object,

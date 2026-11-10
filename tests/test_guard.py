@@ -650,7 +650,7 @@ class Skills(HookCase):
         the suite), and qargi release site builds and commits the site the site answers (site.*) name, so a member that could set them would run
         its own command with the lead's rights: project set refuses them, whole or by a dotted path, in every form the models answers are refused
         in. Look-alikes (test_commands, releases.x, sites.x, website) stay open."""
-        for path in ("release", "release.preflight", "release.test_command", "release.sign.verify_command", "release.changelog.released", "release.version_file",
+        for path in ("release", "release.preflight", "release.finish_check", "release.hotfix_preflight", "release.test_command", "release.sign.verify_command", "release.changelog.released", "release.version_file",
                      "test_command", "env", "env.PATH", "env.acme.x", "upstream", "upstream.overlay_check", "upstream.remote", "site", "site.enabled", "site.branch", "site.config", "backlog", "backlog.file"):
             for form in ("qargi project set p %s v", "/opt/q/bin/qargi project set p %s v", "sudo qargi project set p %s v", "cd src && qargi project set p %s v",
                          "bash -c 'qargi project set p %s v'", "env FOO=1 qargi project set p %s v", "echo $(qargi project set p %s v)",
@@ -666,6 +666,52 @@ class Skills(HookCase):
         for c in ("qargi project set p test_commands x", "qargi project set p releases.x y", "qargi project set p environment x", "qargi project set p budget_cents 500",
                   "qargi project set p upstreams.x y", "qargi project set p sites.x y", "qargi project set p website x", "qargi project set p backlogs.x y",
                   "qargi project show p", "echo qargi project set p release.preflight x", "echo qargi project set p site.enabled true"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_refuses_project_set_of_the_ci_and_deviation_answers_and_the_newer_lead_answers_to_a_member(self):
+        """ci.not_gates takes a CI job out of the comparison with the gates and methodology_accepted takes a deviation out of the open ones: both are the lead's,
+        so project set refuses them (whole or by a dotted path) as it refuses the other lead-only answers; so are the newer release, review and backlog answers.
+        Look-alikes (cis, ci_jobs, methodology, methodology_accepted_x) stay open."""
+        for path in ("ci", "ci.not_gates", "ci.not_gates.0", "methodology_accepted", "methodology_accepted.0", "release.finish_check", "release.hotfix_preflight",
+                     "review.reject_trailers", "backlog.archive", "backlog.section"):
+            for form in ("qargi project set p %s v", "sudo qargi project set p %s v", "cd src && qargi project set p %s v", "bash -c 'qargi project set p %s v'",
+                         "echo $(qargi project set p %s v)", "./lib/project.sh set p %s v"):
+                c = form % path
+                r = self.bash(c)
+                self.assertEqual(r.returncode, 2, c)
+                self.assertIn("qargi project set of %s changes" % path, r.stderr, c)
+        for c in ("qargi project set p cis v", "qargi project set p ci_jobs v", "qargi project set p methodology v", "qargi project set p methodology_accepted_x v",
+                  "echo qargi project set p ci.not_gates x", "qargi project show p"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_refuses_project_unset_with_words_the_guard_cannot_read_to_a_member(self):
+        """project unset removes an answer, with the refusals of project set (and a refusal of its own in a member run, in lib/project.sh): a form whose verb or path
+        a variable, a substitution, a brace, a glob or xargs builds cannot be read here and is refused, as for project set."""
+        for c in ("qargi project unset p $K", "qargi project unset p models.$K", "echo $(qargi project unset p models.extensions)", "bash -c 'qargi project unset p $K'",
+                  "echo models.extensions | xargs qargi project unset p", "qargi project unset p {models,gates}", "qargi project unset p `echo gates`"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("qargi project unset", r.stderr, c)
+        for c in ("echo qargi project unset p gates", "qargi project show p"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_refuses_project_unset_whatever_the_path_to_a_member_that_carries_no_mark(self):
+        """project unset in its readable form is refused by the guard itself, whatever the path (the refusal of lib/project.sh needs the member's run directory or
+        mark, which a member started some other way, after a cd, does not carry): it removes gates, review.scrub, release.finish_check and the other answers whose
+        set is refused, and it has no plan token. The class of the hook (none or read-only) does not matter; show, list and look-alikes stay open."""
+        for path in ("gates", "release.finish_check", "methodology_accepted", "review.scrub", "review.trailer_policy", "ci.not_gates", "runs.owned_refs", "budget_cents"):
+            for form in ("qargi project unset p %s", "cd / && qargi project unset p %s", "sudo qargi project unset p %s", "bash -c 'qargi project unset p %s'",
+                         "env FOO=1 qargi project unset p %s", "./lib/project.sh unset p %s", "bash lib/project.sh unset p %s"):
+                c = form % path
+                for args in ([], ["--class", "read-only"]):
+                    r = self.hook(args, {"tool_name": "Bash", "tool_input": {"command": c}, "cwd": "/"}, {"HOME": self.home, "QARGI_CONF": self.conf})
+                    self.assertEqual(r.returncode, 2, (c, args))
+                    self.assertIn("qargi project unset removes an answer of the project the lead runs on", r.stderr, (c, args))
+                    self.assertIn("propose the removal in your report", r.stderr, (c, args))
+        for c in ("echo qargi project unset p gates", "qargi project show p", "qargi project list", "grep -n unset lib/project.sh", "qargi project set p budget_cents 500"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
@@ -3958,6 +4004,22 @@ class RunRecord(HookCase):
             self.assertEqual(self.call("Bash", {"command": c}).returncode, 0, c)
         self.assertEqual(self.call("Bash", {"command": "PATH=. ls"}, None, None).returncode, 0)               # a member that writes is not held to it
 
+    def test_the_refusal_of_an_assignment_says_a_read_only_member_may_not_assign_and_runs_with_the_one_it_was_given(self):
+        """The refusal is for the command that ASSIGNS a restricted name (inline, env, export ...); it must not read as if the variable were missing from the
+        environment of a command that only uses it. Every name of RESTRICTED_ENV and a name of each prefix gets the same sentence."""
+        g = self.J.m
+        names = sorted(g.RESTRICTED_ENV) + [p + "X" for p in g.RESTRICTED_ENV_PREFIX]
+        cmds = [f % n for n in names for f in ("%s=x ls", "export %s=x", "env %s=x ls")]
+        got = list(self.table(cmds))
+        wrong = [(c, r.stderr.strip()[:120]) for c, r in got if r.returncode != 2 or "is not set" in r.stderr]
+        self.assertEqual(wrong, [])
+        for c, r in got:
+            name = c.split("=")[0].split()[-1]
+            self.assertIn("read-only class %s may not be assigned" % name, r.stderr, c)
+            self.assertIn("runs with the %s it was given" % name, r.stderr, c)
+        for c in ("go build ./...", "go vet ./...", "go test ./...", "cargo test", "make test", "echo $TMPDIR", "ls $TMPDIR", "cat $PATH"):
+            self.assertEqual(self.call("Bash", {"command": c}).returncode, 0, c)
+
     # --- configuration and hooks of git, written by a command that also runs git
     GIT_PLACES = ("echo '[core]' > ~/.gitconfig; git log", "echo x >> ~/.config/git/config && git status", "echo x > ~/.config/git/attributes; git log", "echo x > .git/hooks/post-checkout; git status",
                   "echo x > .git/config; git log", "printf x | tee ~/.gitconfig; git log", "cp /etc/hostname ~/.gitconfig && git status", "git status; echo x >| ~/.gitconfig",
@@ -4629,6 +4691,84 @@ class FifthReview(HookCase):
                 self.assertIn("report and the manifest in OUT", r.stderr)
         for f in ("ability", "class", "tmpdir"):
             self.assertEqual(self.call("Write", {"file_path": os.path.join(self.run_dir, f)}, None, "read-only").returncode, 2, f)
+
+    def test_a_write_to_the_tmp_the_registry_names_is_matched_to_its_run_by_the_path_not_by_the_directory_of_the_call(self):
+        """TMP is usually below /dev/shm, away from the run directory: a call made from a directory that is in no run (cd elsewhere, a tool that starts in the home)
+        found no run and was refused as NO_RUN. The registry names the run a TMP belongs to, so the path finds it; everything else stays refused."""
+        tmp = os.path.join(self.t, "shm-tmp")
+        os.makedirs(tmp)
+        plain = os.path.join(self.t, "plain")                                  # a directory that holds no run's record
+        os.makedirs(plain)
+        elsewhere = os.path.join(self.t, "elsewhere")
+        os.makedirs(elsewhere)
+        reg = os.path.join(self.state, "local-runs.jsonl")
+        away = os.path.join(self.t, "plain")                               # the working directory of the call: in no run
+        cmds = ["echo x > %s/n" % tmp, "cp r %s/" % tmp, "git log > %s/l" % tmp, "mkdir %s/d" % tmp, "touch %s/n" % tmp, "sort -o %s/s f" % tmp]
+        with open(reg, "w") as f:
+            f.write(json.dumps({"run": self.run_dir, "tmpdir": tmp}) + "\n")
+        self.assertEqual(self.not_allowed(cmds, away, "read-only"), [])
+        for tool in ("Write", "Edit"):
+            self.assertEqual(self.call(tool, {"file_path": os.path.join(tmp, "n")}, away, "read-only").returncode, 0, tool)
+        refused = ["echo x > %s/n" % elsewhere, "echo x > %s/n" % self.t, "echo x > %s/../n" % tmp, "echo x > %s" % os.path.join(self.run_dir, "ability"),
+                   "echo x > %s/a.go" % self.clone, "cp r %s" % elsewhere, "echo x > %s.other/n" % tmp, "rm -rf %s/.." % tmp, "echo x > /tmp/qargi-zzz"]
+        self.assertEqual(self.not_refused(refused, away, "read-only"), [])
+        for f in (os.path.join(elsewhere, "n"), os.path.join(self.t, "n"), os.path.join(tmp + ".other", "n")):
+            self.assertEqual(self.call("Write", {"file_path": f}, away, "read-only").returncode, 2, f)
+        # fail closed: a registry that names a directory which is no run, one that is unreadable or does not name this tmpdir, and no registry at all
+        for entry in ({"run": plain, "tmpdir": tmp}, {"run": os.path.join(self.t, "gone"), "tmpdir": tmp}, {"run": self.run_dir, "tmpdir": elsewhere}, {"run": self.run_dir, "tmpdir": "relative/tmp"},
+                      {"run": self.run_dir}, {"tmpdir": tmp}, {"run": 7, "tmpdir": tmp}):
+            with open(reg, "w") as f:
+                f.write("not json\n" + json.dumps(entry) + "\n")
+            r = self.call("Bash", {"command": "echo x > %s/n" % tmp}, away, "read-only")
+            self.assertEqual(r.returncode, 2, entry)
+            self.assertIn("no run directory", r.stderr)
+        os.unlink(reg)
+        r = self.call("Write", {"file_path": os.path.join(tmp, "n")}, away, "read-only")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("no run directory", r.stderr)
+        r = self.call("Bash", {"command": "echo x > %s/n" % tmp}, away, "read-only")
+        self.assertEqual(r.returncode, 2)
+        # a member of another run, called from inside it, is held to its own OUT and TMP as before
+        with open(reg, "w") as f:
+            f.write(json.dumps({"run": self.run_dir, "tmpdir": tmp}) + "\n")
+        other = os.path.join(self.t, "run2")
+        for d in ("clone", "out"):
+            os.makedirs(os.path.join(other, d))
+        for name in ("ability", "refs.before"):
+            with open(os.path.join(other, name), "w") as f:
+                f.write("review\n" if name == "ability" else "")
+        self.assertEqual(self.not_refused(["echo x > %s/n" % tmp], os.path.join(other, "clone"), "read-only"), [])
+        self.assertEqual(self.not_allowed(["echo x > %s/out/r.md" % other], os.path.join(other, "clone"), "read-only"), [])
+
+    def test_a_member_run_mark_limits_the_tmp_match_to_the_tmp_of_its_own_run(self):
+        """With QARGI_MEMBER_RUN in the hook's environment the member is known: the TMP of another run does not find that run, so a read-only member of run A cannot
+        write the TMP of run B by its path (Bash and the file tools alike). Without the mark the path match is as before."""
+        tmp_a, tmp_b = (os.path.join(self.t, d) for d in ("shm-a", "shm-b"))
+        other = os.path.join(self.t, "run2")
+        for d in (tmp_a, tmp_b, os.path.join(other, "clone"), os.path.join(other, "out"), os.path.join(self.t, "plain")):
+            os.makedirs(d)
+        for name, text in (("ability", "review\n"), ("refs.before", ""), ("class", "read-only\n")):
+            with open(os.path.join(other, name), "w") as f:
+                f.write(text)
+        with open(os.path.join(self.state, "local-runs.jsonl"), "w") as f:
+            f.write(json.dumps({"run": self.run_dir, "tmpdir": tmp_a}) + "\n" + json.dumps({"run": other, "tmpdir": tmp_b}) + "\n")
+        away = os.path.join(self.t, "plain")
+
+        def verdicts(mark, tmp):
+            env = self.env()
+            if mark:
+                env["QARGI_MEMBER_RUN"] = mark
+            return [self.hook(["--class", "read-only"], {"tool_name": "Bash", "tool_input": {"command": "echo x > %s/n" % tmp}, "cwd": away}, env).returncode,
+                    self.hook(["--class", "read-only"], {"tool_name": "Write", "tool_input": {"file_path": os.path.join(tmp, "n")}, "cwd": away}, env).returncode]
+        self.assertEqual(verdicts(self.run_dir, tmp_a), [0, 0])                  # its own TMP
+        self.assertEqual(verdicts(self.run_dir, tmp_b), [2, 2])                  # another run's TMP
+        self.assertEqual(verdicts(other, tmp_b), [0, 0])
+        self.assertEqual(verdicts(other, tmp_a), [2, 2])
+        self.assertEqual(verdicts(os.path.join(self.t, "gone"), tmp_a), [2, 2])  # a mark that names no run finds none
+        self.assertEqual(verdicts(None, tmp_a), [0, 0])                          # no mark: the path names the run, as before
+        self.assertEqual(verdicts(None, tmp_b), [0, 0])
+        r = self.hook(["--class", "read-only"], {"tool_name": "Write", "tool_input": {"file_path": os.path.join(tmp_b, "n")}, "cwd": away}, dict(self.env(), QARGI_MEMBER_RUN=self.run_dir))
+        self.assertIn("no run directory", r.stderr)
 
     # --- G7: a cd the guard cannot read leaves the directory unknown, and a relative write after it is refused
     def test_a_cd_to_a_directory_the_guard_cannot_name_makes_a_relative_write_unreadable(self):

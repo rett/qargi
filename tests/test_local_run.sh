@@ -8,7 +8,8 @@ cd "$(dirname "$0")/.." || exit 1
 T=$(mktemp -d); trap 'rm -rf "$T" "$HERMETIC"' EXIT; fail=0
 export QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T TMPDIR=$T/tmp
 mkdir -p "$T/tmp" "$T/bin" "$T/c/projects"
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 DA=./bin/qargi
 LC="git -c user.name=t -c user.email=t@example.net"
 git init -q -b main "$T/r" && $LC -C "$T/r" commit -q --allow-empty -m one

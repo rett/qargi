@@ -34,8 +34,8 @@ case $verb in
         *) usage_die "usage: qargi lead usage [--project P] [--session ID | --transcript FILE] [--json]; qargi lead compact-check [--project P] [--advise] [--json]";;
       esac
     done
-    [ -n "$ctx_proj" ] || ctx_proj=$(python3 -I "$(dirname "$0")/help.py" infer)
-    exec python3 -I "$(dirname "$0")/lead_usage.py" "$verb" --state "$DA_STATE" --conf "$DA_CONF" --project "$ctx_proj" ${ctx_args[@]+"${ctx_args[@]}"};;
+    [ -n "$ctx_proj" ] || ctx_proj=$(pymod help infer)
+    pymod lead_usage "$verb" --state "$DA_STATE" --conf "$DA_CONF" --project "$ctx_proj" ${ctx_args[@]+"${ctx_args[@]}"}; exit $?;;
 esac
 PROJECT=${2:-}; shift 2 || true
 valid_project "$PROJECT" || usage_die "usage: lead.sh grant|status|revoke PROJECT"

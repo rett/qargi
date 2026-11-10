@@ -23,6 +23,7 @@ Environment (read here and nowhere else):
   QARGI_LEAD              the identity when --as is not given (a session id); else user@host (anonymous: warns only)
   QARGI_MARSHAL_NOW       epoch seconds to use as "now" (tests inject the clock with it)
   QARGI_MARSHAL_AUDIT_OUT a file to write the one-line audit detail of a takeover into (marshal.sh appends it to the audit log)
+  QARGI_MARSHAL_OVERRIDE_OUT a file that gets a line when claim or check went on without the remote (marshal.sh sets it with --assume-unreachable-ok)
 
 Backends. The records above are the LOCAL backend: this machine only, the default. With --backend refs --remote R (or, when
 --backend is not given, a switch file $STATE/marshal/<project>.enabled {backend, remote, ...} written by the marshal enable verb)
@@ -31,7 +32,11 @@ compare-and-swap push, the local file keeps the flock and holds a claim that has
 and a lease is stale when the ref's oid stayed unchanged for ttl minutes on this machine's own monotonic clock (never the lead's
 wall clock). A lost race is one refresh and a second decision, then a refusal. A read verb fetches (--no-fetch: not; inside a member
 run: never) and never pushes; a verb that changes the marshal exits 2 inside a member run. An unreachable remote is reported as
-"remote not checked": reads continue on the cache, a claim stays provisional and the next verb completes or drops it.
+"remote not checked (why)" with what could not be reached. The command line's claim and check (--need-remote, which lib/marshal.sh passes
+unless the lead gave --assume-unreachable-ok) refuse with exit 3 and change nothing; with the override they go on as the shell API's
+verbs always do (feature start, the flow verbs' gate: no --need-remote): a read continues on the cache, a claim stays provisional and the next
+verb completes or drops it, and QARGI_MARSHAL_OVERRIDE_OUT (set by lib/marshal.sh with the override) receives a line for the audit log.
+status shows the cache with the notice, as it always did. Every other change of a shared record needs the remote: it exits 3 whatever the flag.
 Environment: QARGI_REMOTE_TIMEOUT (seconds for a fetch or push, default 10) and QARGI_MARSHAL_MONO (the monotonic clock; tests).
 
 Integrity. The switch file also holds `integrity`: off (the default, everything above), advisory or strict. Writes are signed with
@@ -112,6 +117,8 @@ class Ctx:
         self.name = getattr(a, "name", None)
         self.be = be or LocalBackend()
         self.fetch_ok = not getattr(a, "no_fetch", False) and not getattr(self.be, "member", False)
+        self.need_remote = bool(getattr(a, "need_remote", False))   # claim and check of the command line: a remote that cannot be asked is a refusal, not a warning
+        self.verb = getattr(a, "verb", "")
         self.ttl = a.ttl if a.ttl and a.ttl > 0 else 15
         user = pwd.getpwuid(os.getuid()).pw_name
         host = socket.gethostname()
@@ -122,6 +129,7 @@ class Ctx:
             raise Refuse("the lead identity %r is not valid (letters, digits and . _ @ : + - only, at most 128)" % self.id)
         self.user, self.host = user, host
         self._worktree = None
+        self.git_memo = None        # {git arguments: output} while a listing runs (gather): the repository is not changed meanwhile
         self.t = now()
 
     def path(self, name):
@@ -218,6 +226,32 @@ def note_audit(text):
     if out:
         with open(out, "w") as f:
             f.write(text)
+
+
+def note_unreachable_ok(ctx, name, why):
+    """The audit detail of a verb that went on although the remote was not reached (the lead gave --assume-unreachable-ok): lib/marshal.sh
+    appends it to the audit log. Only lib/marshal.sh sets QARGI_MARSHAL_OVERRIDE_OUT, and only when that flag was given."""
+    out = os.environ.get("QARGI_MARSHAL_OVERRIDE_OUT")
+    if out:
+        with open(out, "a") as f:
+            f.write("%s %s verb=%s remote=%s why=%s\n" % (ctx.project, name or "-", ctx.verb, getattr(ctx.be, "remote", "-"), " ".join(clean(why).split())[:200]))
+
+
+def unreachable_text(ctx, why, name, tail):
+    """What a verb says when the remote of the shared records was not reached: what could not be asked and why, then TAIL (what that means for the verb)."""
+    return "remote not checked (%s): the shared marshal records of %s (refs/qargi/features/%s on the remote %s) could not be reached; %s" % (
+        why, ctx.project, name or "*", getattr(ctx.be, "remote", "?"), tail)
+
+
+def unreachable_refusal(ctx, why, name, what, override=True):
+    """The Unreachable of a change the remote did not take (WHAT: the verb's result, such as 'feature X was not changed'). claim and check, which could go
+    on without the remote, say how; a change to a shared record cannot, so for the others there is nothing to override."""
+    if ctx.need_remote and override:
+        tail = "%s. If you know no other lead holds %s, go on without the remote: qargi marshal %s%s --assume-unreachable-ok (audited as marshal:unreachable-ok)" % (
+            what, name or "a feature you name", ctx.verb, " " + name if name else "")
+    else:
+        tail = "%s; try again when the remote is reachable (a change to a shared record needs the remote: there is no override)" % what
+    return unreachable_text(ctx, why, name, tail)
 
 
 def update(ctx, name, fn, create=False):
@@ -395,6 +429,7 @@ class Integrity:
         self.signers = os.path.join(ctx.state, "marshal", "%s.signers" % ctx.project)
         self.marks_path = os.path.join(ctx.state, "features", ".accepted-%s.json" % ctx.project)
         self.tags = {}
+        self.pre = {}
         self.notes = []
         self.steps = STEPS                                    # commits this read may still look at to find a record by identity
 
@@ -430,9 +465,32 @@ class Integrity:
         ok, why = S.verify(payload, armor, self.signers, signer)
         return ("signed", "") if ok else ("INVALID", why)
 
+    def prefetch(self, items, workers=8):
+        """classify for all the records of items [(kind, name, oid, rec, parents, message)] at once, in up to `workers` threads (a
+        verification is a wait for the key tool): the answers wait in self.pre, by (kind, name, oid), for verify, which takes each once. A
+        classify that raised leaves no answer: verify then does it itself, and raises as it would have."""
+        import threading
+        todo = list(items)
+
+        def work():
+            while True:
+                try:
+                    kind, name, oid, rec, parents, message = todo.pop()
+                except IndexError:
+                    return
+                try:
+                    self.pre[(kind, name, oid)] = self.classify(kind, name, rec, parents, message)
+                except Exception:
+                    pass
+        threads = [threading.Thread(target=work) for _ in range(min(workers, len(todo)))]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
     def verify(self, kind, name, oid, rec, parents, message):
         """The callback of marshal_refs.read: strict ignores what is not signed, advisory uses everything and only tags."""
-        tag, why = self.classify(kind, name, rec, parents, message)
+        tag, why = self.pre.pop((kind, name, oid), None) or self.classify(kind, name, rec, parents, message)
         self.tags[(kind, name)] = (tag, why, rec.get("signer") if tag == "signed" else None)
         if tag == "signed" or not self.strict:
             return None
@@ -620,7 +678,7 @@ class RefsBackend:
                 why = None if ok else w
             heads = self.heads = {}
             guard = Integrity(self, ctx) if self.integrity != "off" else None
-            feats, done, ignored = R.read(ctx.repo, sane, guard.verify if guard else None, heads)
+            feats, done, ignored = R.read(ctx.repo, sane, guard.verify if guard else None, heads, guard.prefetch if guard else None)
             bad = {r.rsplit("/", 1)[1] for r, _ in ignored if r.startswith("refs/qargi/features/") and R.name_ok(r.rsplit("/", 1)[1])}
             if guard:
                 view, based, bad = guard.settle(feats, done, ignored, heads, not self.member, ctx.name)
@@ -657,7 +715,10 @@ class RefsBackend:
         if self.snap is None:
             why = self.load(ctx, ctx.fetch_ok)
             if why is not None:
+                if ctx.need_remote:
+                    raise Unreachable(unreachable_refusal(ctx, why, ctx.name, "the answer would come from what this machine fetched last, which may be out of date"))
                 print("qargi: remote not checked (%s): showing what this machine fetched last" % why, file=sys.stderr)
+                note_unreachable_ok(ctx, ctx.name, why)
         return self.snap
 
     # -- reading
@@ -804,9 +865,12 @@ class RefsBackend:
                 if new is None:
                     return res
                 if not (create and remote is None):
-                    raise Unreachable("remote not checked (%s): feature %s was not changed; try again when the remote is reachable" % (why, name))
+                    raise Unreachable(unreachable_refusal(ctx, why, name, "feature %s was not changed" % name, override=False))
+                if ctx.need_remote:
+                    raise Unreachable(unreachable_refusal(ctx, why, name, "the claim of %s was not made" % name))
                 self.mirror(ctx, name, self.stamp(ctx, name, new, rec), "provisional")
                 print("qargi: remote not checked (%s): the claim of %s is provisional here; the next marshal verb on it completes or drops it" % (why, name), file=sys.stderr)
+                note_unreachable_ok(ctx, name, why)
                 return res
             new, res = fn(rec)
             if new is None:
@@ -847,10 +911,14 @@ class RefsBackend:
                     self.mirror(ctx, name, new)
                 return res
             if st == "unreachable":
+                if wrote_prov and ctx.need_remote:
+                    os.unlink(path)                               # the note was made for this push only
+                    raise Unreachable(unreachable_refusal(ctx, last, name, "the claim of %s was not made" % name))
                 if wrote_prov:
                     print("qargi: remote not checked (%s): the claim of %s is provisional here; the next marshal verb on it completes or drops it" % (last, name), file=sys.stderr)
+                    note_unreachable_ok(ctx, name, last)
                     return res
-                raise Unreachable("remote not checked (%s): feature %s was not changed; try again when the remote is reachable" % (last, name))
+                raise Unreachable(unreachable_refusal(ctx, last, name, "feature %s was not changed" % name, override=False))
             if retried:                                           # rejected twice
                 if wrote_prov:
                     os.unlink(path)
@@ -867,7 +935,7 @@ def resign_target(be, ctx, name):
     R = be.R
     why = be.load(ctx, True)
     if why is not None:
-        raise Unreachable("remote not checked (%s): feature %s was not changed; try again when the remote is reachable" % (why, name))
+        raise Unreachable(unreachable_refusal(ctx, why, name, "feature %s was not changed" % name, override=False))
     head = be.heads.get("refs/qargi/features/" + name)
     if head is None:
         raise Refuse("no open feature %s on the remote (no refs/qargi/features/%s)" % (name, name))
@@ -921,7 +989,7 @@ def refs_resign(be, ctx, name, expect=None, show=False):
             if st == "ok":
                 return new["rev"]
             if st == "unreachable":
-                raise Unreachable("remote not checked (%s): feature %s was not changed; try again when the remote is reachable" % (last, name))
+                raise Unreachable(unreachable_refusal(ctx, last, name, "feature %s was not changed" % name, override=False))
         raise Refuse("feature %s changed while it was being signed, or the remote refused the push (%s); try again" % (name, last))
 
 
@@ -939,8 +1007,13 @@ def git_at(path, *args):
 def git(ctx, *args):
     if not ctx.repo:
         return None
+    if ctx.git_memo is not None and args in ctx.git_memo:
+        return ctx.git_memo[args]
     r = subprocess.run(["git", "-C", ctx.repo] + list(args), capture_output=True, text=True)
-    return r.stdout if r.returncode == 0 else None
+    out = r.stdout if r.returncode == 0 else None
+    if ctx.git_memo is not None:
+        ctx.git_memo[args] = out
+    return out
 
 
 def branch_exists(ctx, name):
@@ -1200,9 +1273,13 @@ def print_full(d, raw_lens):
 def gather(ctx, names):
     """-> [(name, describe dict, raw record)] after recording ghost transitions."""
     out, cache = [], {}
-    for n in names:
-        rec = ghost_fix(ctx, n, ctx.be.get(ctx, n))
-        out.append((n, describe(ctx, n, rec, cache), rec))
+    ctx.git_memo = {}
+    try:
+        for n in names:
+            rec = ghost_fix(ctx, n, ctx.be.get(ctx, n))
+            out.append((n, describe(ctx, n, rec, cache), rec))
+    finally:
+        ctx.git_memo = None
     return out
 
 
@@ -1612,7 +1689,7 @@ def choose_backend(a):
 
 def main(argv):
     # flags are single-quoted: tests/test_help.py treats a double-quoted option string as a user-facing option that commands.py must
-    # describe; --state, --repo, --conf, --ttl, --purpose, --lenient, --renew, --backend, --remote, --show and --expect-head are only passed by lib/marshal.sh (or come from the switch file)
+    # describe; --state, --repo, --conf, --ttl, --purpose, --lenient, --renew, --backend, --remote, --show, --need-remote and --expect-head are only passed by lib/marshal.sh (or come from the switch file)
     p = argparse.ArgumentParser(prog="marshal_store.py")
     p.add_argument("verb", choices=["claim", "start", "status", "set", "check", "renew", "release", "take", "takeover", "finish", "resign"])
     p.add_argument("name", nargs="?")
@@ -1635,6 +1712,7 @@ def main(argv):
     p.add_argument('--remote')
     p.add_argument('--show', action="store_true")
     p.add_argument('--expect-head', dest="expect_head")
+    p.add_argument('--need-remote', dest="need_remote", action="store_true")
     a = p.parse_intermixed_args(argv)   # NAME comes after the options: Python before 3.13 would take an empty optional positional too early
     if a.verb not in ("status", "check") and not a.name:
         return usage_exit("%s needs a feature NAME" % a.verb)

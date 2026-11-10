@@ -6,43 +6,22 @@ argument-hint: agent add|list|models|refresh|for ... | instances init|list|show|
 
 # /qargi-instances
 
-The registry (`~/.qargi/config/instances.json`) and the
-session tracker (`~/.qargi/state/sessions.json`) are per user and never in a repository. Plans, tokens and `--approved`:
-`qargi help approvals`.
+The registry (`~/.qargi/config/instances.json`) and the session tracker (`~/.qargi/state/sessions.json`) are per user and never in a repository. Plans, tokens and `--approved`: `qargi help approvals`.
 
 ## Models and members (local)
 
-There are two base members, one per guard class (`qargi help guard`): `worker` (roles build, write and test; write class)
-and `reviewer` (review; read-only). Everything else is a profile, resolved at dispatch: a base, a tier (fast, balanced, deep,
-frontier; the project's `models.provider` maps tiers to models; there is no default provider), an
-effort and a purpose. Shipped profiles: `build`, `write`, `test` (worker); `review`, `auditor`, `advisor` (reviewer);
-`researcher`, `lead`. A project adds or overrides `profiles.<name>`.
+There are two base members, one per guard class (`qargi help guard`): `worker` (roles build, write and test; write class) and `reviewer` (review; read-only). Everything else is a profile, resolved at dispatch: a base, a tier (fast, balanced, deep, frontier; the project's `models.provider` maps tiers to models; there is no default provider), an effort and a purpose. Shipped profiles: `build`, `write`, `test` (worker); `review`, `auditor`, `advisor` (reviewer); `researcher`, `lead`. A project adds or overrides `profiles.<name>`.
 
 - `qargi agent models [--project P] [--json]`: the bases, profiles and members of one project (exit 2 with none in effect). `qargi agent list` shows every project's members.
-- `qargi agent add NAME --roles LIST --project P` (`--project` is required; `worker` and `reviewer` default to their base's
-  roles): one neutral definition is rendered by the project's local runtime (`models.provider.local`), model and effort mapped
-  through its catalog. The render is kept in `~/.qargi/config/agents/P/`, outside every repository, and written to the
-  project's member render (`~/.qargi/state/render/P/RUNTIME.agents`, linked into a work tree by
-  `qargi project link P --resource agents`) or to the checkout's own agents directory, hidden from git. A project with no local
-  runtime or agent files is refused (exit 2).
-- `agent list` and `agent models` flag a member `MISSING` (the file is gone: a cleaned checkout, a fresh clone), `STALE` (the
-  copy in config is gone, or the definition, catalog, renderer or an extension changed since) or `DRIFT` (edited by hand), each
-  with its fix: `qargi agent refresh NAME --project P` writes copy and file again, keeping name, roles and model; a `DRIFT`
-  file is replaced, so look at the edit first.
-- **Dispatch**: `qargi agent for ROLE [--profile NAME] [--project P]` prints one line, `MEMBER MODEL EFFORT PROFILE` (MODEL is
-  the alias, `-` when none). Spawn it as `qargi provider notes spawn` says. A profile whose base does not fit the role is
-  refused. Per-task diff checks: `--profile auditor` on review (fast, low effort). Search is not a role:
-  `qargi provider notes exploration`. Your own session model is set in the runtime (`qargi provider notes session-model`); the
-  `lead` profile has no base, is never dispatched, and its tier is the recommendation. Frontier is opt-in: `--profile researcher`
-  only when the owner or you name it for the task.
+- `qargi agent add NAME --roles LIST --project P` (`--project` is required; `worker` and `reviewer` default to their base's roles): one neutral definition is rendered by the project's local runtime (`models.provider.local`), model and effort mapped through its catalog. The render is kept in `~/.qargi/config/agents/P/`, outside every repository, and written to the project's member render (`~/.qargi/state/render/P/RUNTIME.agents`, linked into a work tree by `qargi project link P --resource agents`) or to the checkout's own agents directory, hidden from git. A project with no local runtime or agent files is refused (exit 2).
+- `agent list` and `agent models` flag a member `MISSING` (the file is gone: a cleaned checkout, a fresh clone), `STALE` (the copy in config is gone, or the definition, catalog, renderer or an extension changed since) or `DRIFT` (edited by hand), each with its fix: `qargi agent refresh NAME --project P` writes copy and file again, keeping name, roles and model; a `DRIFT` file is replaced, so look at the edit first.
+- **Dispatch**: `qargi agent for ROLE [--profile NAME] [--project P]` prints one line, `MEMBER MODEL EFFORT PROFILE` (MODEL is the alias, `-` when none). Spawn it as `qargi provider notes spawn` says. A profile whose base does not fit the role is refused. Per-task diff checks: `--profile auditor` on review (fast, low effort). Search is not a role: `qargi provider notes exploration`. Your own session model is set in the runtime (`qargi provider notes session-model`); the `lead` profile has no base, is never dispatched, and its tier is the recommendation. Frontier is opt-in: `--profile researcher` only when the owner or you name it for the task.
 - `qargi instances init --location local --agent FILE [--name N] [--model M] [--effort E]` records a local agent file's path, sha256, model and effort.
-- With the runtime's `dispatch.mode` `command` there is no member file: `qargi local run RUN` runs the CLI with the member's
-  prompt composed in (`/qargi-task`).
+- With the runtime's `dispatch.mode` `command` there is no member file: `qargi local run RUN` runs the CLI with the member's prompt composed in (`/qargi-task`).
 
 ## Cloud instances
 
-Cloud verbs need `--asked "<the user's request that names the cloud instance>"`; changes to existing resources also need
-`--approved` after you have shown the printed PLAN.
+Cloud verbs need `--asked "<the user's request that names the cloud instance>"`; changes to existing resources also need `--approved` after you have shown the printed PLAN.
 
 | Verb | Command | Notes |
 |---|---|---|
@@ -55,6 +34,4 @@ Cloud verbs need `--asked "<the user's request that names the cloud instance>"`;
 | normalize | `qargi instances normalize NAME --asked "..." [--approved "..."]` | Renames the agent, environment, deployment and stores to the `<project>-...` names; plan first. |
 | remove | `qargi instances remove NAME` | Registry entry only; refuses with open sessions. |
 
-Instance names are `<project>-<role>` with a role from the fixed list (`build`, `review`, `write`, `test`, `lead`), for example
-`myproject-build`, or a base: `<project>-worker` (class write) or `<project>-reviewer` (read-only; first accept the missing cloud
-read-only barrier with `qargi provider accept NAME --surface cloud --no-barrier`). An existing deployment needs a conforming `--name`.
+Instance names are `<project>-<role>` with a role from the fixed list (`build`, `review`, `write`, `test`, `lead`), for example `myproject-build`, or a base: `<project>-worker` (class write) or `<project>-reviewer` (read-only; first accept the missing cloud read-only barrier with `qargi provider accept NAME --surface cloud --no-barrier`). An existing deployment needs a conforming `--name`.

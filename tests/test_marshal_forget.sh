@@ -15,7 +15,8 @@ cd "$(dirname "$0")/.." || exit 1
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi
 trap 'rm -rf "$T" "$HERMETIC"' EXIT
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
 export QARGI_PROJECT=app
 unset GIT_TERMINAL_PROMPT
@@ -36,10 +37,8 @@ mk() { # NAME: a machine with its own home, conf, state and a clone of the origi
 }
 # the machines run from their own directory, never from the checkout this test sits in (which may itself be a member's run directory)
 XE() { local m=$1; shift; cd "${XD:-$T/m/$m}" && env HOME="$T/m/$m/home" QARGI_CONF="$T/m/$m/c" QARGI_STATE="$T/m/$m/s" "$DA" "$@" >"$T/o" 2>"$T/e"; }
-out() { cat "$T/o" "$T/e"; }
 S() { echo "$T/m/$1/s"; }
 MK() { echo "$(S "$1")/features/.accepted-app.json"; }
-tokof() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' "$T/o"; }
 OWN() { local m=$1 tk; shift; XE "$m" marshal "$@"; tk=$(tokof); [ -n "$tk" ] || return 97; XE "$m" marshal "$@" --plan "$tk" --approved "$WORDS"; }
 OG() { git --git-dir="$ORIGIN" "$@"; }
 oref() { OG rev-parse -q --verify "$1" 2>/dev/null || echo none; }

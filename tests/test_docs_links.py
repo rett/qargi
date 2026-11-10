@@ -116,6 +116,17 @@ class DocsTree(unittest.TestCase):
         self.assertLessEqual(n, README_MAX_LINES, "README.md has %d lines; the detail belongs in docs/" % n)
         self.assertIn("https://qargi.rettware.com/", read(os.path.join(ROOT, "README.md")))
 
+    def test_readme_requirements_name_the_tools_qargi_calls(self):
+        line = next(l for l in read(os.path.join(ROOT, "README.md")).split("\n") if l.startswith("Requirements:"))
+        for tool in ("bash", "GNU coreutils", "`timeout`", "findutils", "git", "jq", "python3", "`flock`", "`ssh-keygen`"):
+            self.assertIn(tool, line)
+
+    def test_the_skills_page_names_the_answers_and_verbs_of_the_lead(self):
+        text = read(os.path.join(ROOT, "docs", "skills-tools-and-memory", "README.md"))
+        for name in ("backlog.archive", "backlog.section", "review.reject_trailers", "ci.not_gates", "methodology_accepted", "project unset",
+                     "backlog add", "backlog done", "local report", "release plan", "project adopt PROJECT --show"):
+            self.assertIn(name, text)
+
     def test_documentation_table(self):
         rows = table_rows(os.path.join(ROOT, "README.md"))
         self.assertTrue(rows, "README.md has no table under '## Documentation'")
@@ -147,6 +158,12 @@ class DocsTree(unittest.TestCase):
             verbs = C.COMMANDS[words[1]].get("verbs")
             if isinstance(verbs, dict):
                 self.assertTrue(words[2] in verbs, "not a verb: " + " ".join(words))
+
+    def test_providers_page_says_a_definition_that_does_not_load_stops_member_writes(self):
+        """The guard fails closed on a library definition it cannot load; the page says so and where a pack is drafted."""
+        text = " ".join(read(os.path.join(ROOT, "docs", "members-and-providers", "providers.md")).split())
+        for want in ("~/.qargi/config/packs/providers/NAME/", "fails closed", "does not load", "every call of a member that writes", "qargi provider check NAME"):
+            self.assertIn(want, text)
 
 
 class Checker(unittest.TestCase):

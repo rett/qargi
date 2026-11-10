@@ -10,7 +10,8 @@ cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
 fail=0
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 T=$(mktemp -d -p "$HERMETIC"); export TMPDIR=$T
 mkdir -p "$QARGI_CONF/projects" "$QARGI_STATE"
 echo '{}' > "$QARGI_CONF/projects/demo.json"   # verbs that look the project up before they read their options
@@ -36,7 +37,7 @@ declare -A SCRIPTS=(
   [feature.sh]="feature start x|feature list x|feature merge x y"
   [hook.sh]="hook session-start"
   [lead.sh]="lead grant demo|lead status demo|lead revoke demo"
-  [local.sh]="local prepare|local clean|local list|local verify|local run"
+  [local.sh]="local prepare|local clean|local list|local verify|local run|local report x"
   [memory.sh]="memory copy a b|memory split a b|memory merge a b|memory lint memstore_x|memory get memstore_x /a.md|memory init repo|memory move /a.md"
   [packs.sh]="skill list|skill new x|skill import x|tool list|tool import x|packs render|packs check"
   [project.sh]="project init demo|project new demo|project attach|project adopt demo|project link demo|project unlink demo|project set demo a b|project profile check demo"

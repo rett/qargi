@@ -11,6 +11,7 @@ if ! command -v marshal_check >/dev/null 2>&1; then
   else
     marshal_start() { return 127; }; marshal_check() { return 127; }; marshal_finish() { return 127; }
     marshal_hold_start() { :; }; marshal_hold_stop() { :; }; marshal_touch() { :; }; marshal_touch_run() { :; }
+    marshal_override_audit() { [ -z "$1" ] || rm -f "$1"; }
   fi
 fi
 
@@ -40,12 +41,12 @@ journal_line() { # REPO REF OLD NEW VERB URL [WHY]: one line; with URL a ref of 
   ref=$2 old=${3:-$zero} new=${4:-$zero} verb=$5
   repo=$(readlink -f "$1" 2>/dev/null) || repo=$1
   [ -n "${DA_STATE:-}" ] && case $ref in refs/heads/?*|refs/tags/?*) ;; *) false;; esac \
-    && ( umask 077; flock 9 && jq -nc --arg at "$(now)" --argjson ep "$(date +%s)" --arg v "$verb" --arg p "${PROJ:-}" --arg r "$repo" \
+    && ( umask 077; flock 9 || exit 4; jq -nc --arg at "$(now)" --argjson ep "$(date +%s)" --arg v "$verb" --arg p "${PROJ:-}" --arg r "$repo" \
            --arg ref "$ref" --arg o "$old" --arg n "$new" --arg by "$(id -un 2>/dev/null || echo unknown)@$(hostname 2>/dev/null || echo unknown)" \
            --arg u "$6" --arg w "${7:-}" \
            '{at:$at, epoch:$ep, verb:$v, project:$p, repo:$r, ref:$ref, old:$o, new:$n, by:$by}
             + (if $u == "" then {} else {remote:"origin", url:$u} end) + (if $w == "" then {} else {why:$w} end)' >> "$f" ) 9> "$f.lock" \
-    || echo "qargi: warning: the ref journal could not be written for $ref ($verb); a later 'qargi local verify' of a run prepared before this may not accept the change" >&2
+    || echo "qargi: warning: the ref journal could not be written for $ref ($verb)$([ $? != 4 ] || { command -v flock >/dev/null 2>&1 && echo ": flock on $f.lock failed" || echo ": the flock command (util-linux) is not installed"; }); a later 'qargi local verify' of a run prepared before this may not accept the change" >&2
   return 0
 }
 # remote_was BRANCH -> what origin had for BRANCH as far as this repository knows: the remote-tracking ref (current after a fetch)
@@ -109,7 +110,7 @@ busy_end() { [ -z "$BUSY" ] || rm -f "$BUSY"; BUSY=''; }
 # lead_advice [--feature NAME]: the one line of the stage verbs (feature finish, the last merge of a feature, release finish, marshal handoff):
 # the lead's context in use and whether a compact is safe now (lib/lead_usage.py). Fail-soft: it never changes the status of the verb.
 lead_advice() {
-  python3 -I "$(dirname "${BASH_SOURCE[0]}")/lead_usage.py" advice --state "$DA_STATE" --conf "$DA_CONF" --project "${PROJ:-}" "$@" 2>/dev/null || true
+  pymod lead_usage advice --state "$DA_STATE" --conf "$DA_CONF" --project "${PROJ:-}" "$@" 2>/dev/null || true
 }
 on_exit() { marshal_hold_stop; busy_end; cleanup; intent_unlock; }
 trap on_exit EXIT   # the lease renewer never outlives the verb, whatever way it ended
@@ -224,11 +225,11 @@ detached_mix() {
 gates_load() {
   local out rc=0
   GATES=''
-  out=$(python3 -I "$(dirname "$0")/gates.py" select "$af" "$@" 2>&1) || rc=$?
+  out=$(pymod gates select "$af" "$@" 2>&1) || rc=$?
   [ "$rc" = 0 ] || die "$out"
   [ -n "$out" ] || return 0
   GATES=$out
-  TESTCMD=$(python3 -I "$(dirname "$0")/gates.py" identity "$af" "$@") || die "the gates of the answers cannot be read"   # the one place the identity is built (lib/gates.py)
+  TESTCMD=$(pymod gates identity "$af" "$@") || die "the gates of the answers cannot be read"   # the one place the identity is built (lib/gates.py)
 }
 # gates_need TIERS -> refuses when gates are declared and none has those tiers (a verify of nothing would pass)
 gates_need() { [ "${GATES:-}" != "[]" ] || die "the answer gates declares no gate of tier $1: add one (qargi project set $PROJ gates '[...]'); there is nothing to run"; }
@@ -243,22 +244,46 @@ gates_note() {
 }
 # run_gates -> runs the gates of GATES in order in the worktree WT, stops at the first failure (the rest are "not run") and writes one JSON line per
 # gate ({name, tier, result, seconds}) to the file GATES_FILE (set by run_suite_logged: one per run, beside its log), which record_suite reads. The status is 1 when a gate failed.
+# A gate with covered_by NAME, when NAME is a gate of this run (a release verify), is not run: it is listed as covered, and its result is "covered by NAME" when NAME
+# passed, else "not run" (NAME failed or was not reached). A feature verify has no NAME among its gates, so it runs the gate.
 run_gates() {
-  local n i name tier cmd rc=0 t0 res
+  local n i name tier cmd cov c rc=0 t0 res
+  local -A result=() covby=()
+  local -a names=() rows=()
   { mkdir -p "$DA_STATE/suite-logs" && : > "$GATES_FILE"; } 2>/dev/null || GATES_FILE=/dev/null
   n=$(jq 'length' <<<"$GATES")
   for ((i = 0; i < n; i++)); do
     name=$(jq -r ".[$i].name" <<<"$GATES"); tier=$(jq -r ".[$i].tier" <<<"$GATES"); cmd=$(jq -r ".[$i].command" <<<"$GATES")
+    cov=$(jq -r --argjson i "$i" '.[$i].covered_by as $c | select($c != null and any(.[]; .name == $c)) | $c' <<<"$GATES")
+    names[i]=$name
+    if [ -n "$cov" ]; then
+      echo "== gate $name ($tier): covered by $cov, which runs later in this verify; not run here"
+      covby["$name"]=$cov
+      rows[i]=$(jq -nc --arg n "$name" --arg t "$tier" '{name:$n, tier:$t}')
+      continue
+    fi
     if [ "$rc" != 0 ]; then
       echo "== gate $name ($tier): not run (an earlier gate failed)"
-      jq -nc --arg n "$name" --arg t "$tier" '{name:$n, tier:$t, result:"not run"}' >> "$GATES_FILE"
+      result["$name"]='not run'
+      rows[i]=$(jq -nc --arg n "$name" --arg t "$tier" '{name:$n, tier:$t, result:"not run"}')
       continue
     fi
     echo "== gate $name ($tier): $cmd"
     t0=$SECONDS
     if run_clean "$WT" bash -c "$cmd"; then res=pass; else res=fail; rc=1; fi
     echo "== gate $name: $res ($((SECONDS - t0))s)"
-    jq -nc --arg n "$name" --arg t "$tier" --arg r "$res" --argjson d "$((SECONDS - t0))" '{name:$n, tier:$t, result:$r, seconds:$d}' >> "$GATES_FILE"
+    result["$name"]=$res
+    rows[i]=$(jq -nc --arg n "$name" --arg t "$tier" --arg r "$res" --argjson d "$((SECONDS - t0))" '{name:$n, tier:$t, result:$r, seconds:$d}')
+  done
+  # a covered gate takes the verdict of the gate that covers it; every gate is then recorded, in the order declared
+  for ((i = 0; i < n; i++)); do
+    name=${names[i]}; c=${covby["$name"]:-}
+    if [ -n "$c" ]; then
+      if [ "${result["$c"]:-}" = pass ]; then res="covered by $c"
+      else res='not run'; echo "== gate $name: not run (covered by $c, which did not pass)"; fi
+      rows[i]=$(jq -c --arg r "$res" '. + {result:$r}' <<<"${rows[i]}")
+    fi
+    printf '%s\n' "${rows[i]}" >> "$GATES_FILE"
   done
   return "$rc"
 }
@@ -278,13 +303,14 @@ run_suite_logged() {
   return "$rc"
 }
 # suite_failure_report -> after a failed run_suite_logged, the last lines of the verb's output: the failing steps (`FAILED: step` lines of
-# tests/run.sh) and failing tests (`FAIL name` lines) its report holds, where its own logs of the failed steps are, and the log of the
-# whole run. A test command that is no tests/run.sh has neither: its last lines stand in.
+# tests/run.sh) and failing tests (`FAIL name`, `FAIL: name` and `--- FAIL: name` lines) its report holds, where its own logs of the failed
+# steps are (`logs of the failed steps: DIR`), and the log of the whole run. Any gate may print these lines (the help of feature verify names
+# the patterns); a test command that prints none: its last lines stand in.
 suite_failure_report() {
   local f=${SUITE_LOG:-} steps names dir gate
   if [ -n "$f" ] && [ -s "$f" ]; then
     steps=$(sed -n 's/^FAILED: //p' "$f" | awk '!s[$0]++')
-    names=$(grep -E '^FAIL( |:)' "$f" | awk '!s[$0]++')
+    names=$(grep -E '^(FAIL( |:)|--- FAIL: )' "$f" | awk '!s[$0]++')
     dir=$(sed -n 's/^logs of the failed steps: //p' "$f" | tail -1)
     gate=$(sed -n 's/^== gate \(.*\): fail ([0-9]*s)$/\1/p' "$f" | head -1)
     [ -z "$gate" ] || echo "failing gate: $gate"
@@ -372,13 +398,14 @@ gates_line() {
 wcommit() { git -C "$WT" commit -q "$@" || die "the commit failed (is a git user.name and user.email set?)"; }
 
 
-# merge_step INTO_SHA FROM KEY MESSAGE -> MERGED (the merge commit); a --no-ff merge made in a temporary worktree.
+# merge_step INTO_SHA FROM KEY MESSAGE [LABEL] -> MERGED (the merge commit); a --no-ff merge made in a temporary worktree.
 # On a conflict nothing moves: the worktree is kept as the place to resolve it (STATE/conflicts/PROJ-KEY) with the merge in
 # progress, the conflicted files are listed and the command exits 3. Resolve and commit there, then run the same command with
 # --resolved: the commit is used if it is a merge of exactly INTO_SHA and FROM, with nothing left unmerged. Running the command
-# again without --resolved while a resolution is waiting is refused, not overwritten.
+# again without --resolved while a resolution is waiting is refused, not overwritten. LABEL (default FROM) is what the messages call FROM: a commit
+# that is only a sha, like the tagged master merge commit, is named by its tag.
 merge_step() {
-  local into=$1 from=$2 key=$3 msg=$4 dir from_sha files out donef di df dm
+  local into=$1 from=$2 key=$3 msg=$4 label=${5:-$2} dir from_sha files out donef di df dm
   dir=$DA_STATE/conflicts/$PROJ-$key; donef=$dir.done
   from_sha=$(g rev-parse "$from")
   if [ -n "${RESOLVED:-}" ]; then
@@ -388,7 +415,7 @@ merge_step() {
       [ -z "$(git -C "$dir" diff --name-only --diff-filter=U)" ] && [ ! -f "$(git -C "$dir" rev-parse --git-path MERGE_HEAD)" ] \
         || die "the merge in $dir is not finished: resolve the conflicts, git add them, git commit, then run this again with --resolved"
       [ "$(git -C "$dir" rev-parse HEAD^1 2>/dev/null)" = "$into" ] && [ "$(git -C "$dir" rev-parse HEAD^2 2>/dev/null)" = "$from_sha" ] \
-        || die "the commit in $dir is not a merge of $from into the current head (the branches moved, or it is not a merge commit): remove it with git worktree remove --force $dir and start over"
+        || die "the commit in $dir is not a merge of $label into the current head (the branches moved, or it is not a merge commit): remove it with git worktree remove --force $dir and start over"
       MERGED=$(git -C "$dir" rev-parse HEAD)
       printf '%s %s %s\n' "$into" "$from_sha" "$MERGED" > "$donef"
       g worktree remove --force "$dir" >/dev/null 2>&1 || rm -rf "$dir"
@@ -405,9 +432,9 @@ merge_step() {
   files=$(git -C "$WT" diff --name-only --diff-filter=U)
   if [ -z "$files" ]; then cleanup; die "merging $from failed without a conflict: $out"; fi
   mkdir -p "$DA_STATE/conflicts"
-  g worktree move "$WT" "$dir" >/dev/null 2>&1 || { cleanup; die "the merge of $from conflicts, and the worktree to resolve it in could not be kept; nothing was changed"; }
+  g worktree move "$WT" "$dir" >/dev/null 2>&1 || { cleanup; die "the merge of $label conflicts, and the worktree to resolve it in could not be kept; nothing was changed"; }
   WT=''
-  echo "qargi: merging $from conflicts. Nothing was changed. Conflicted files:" >&2
+  echo "qargi: merging $label conflicts. Nothing was changed. Conflicted files:" >&2
   echo "$files" | sed 's/^/  /' >&2
   echo "Resolve them in $dir (the merge is in progress there): edit, git add, git commit." >&2
   echo "Then run the same command again with --resolved. (git worktree remove --force $dir abandons it.)" >&2
@@ -429,7 +456,16 @@ intent_has() { [ -f "$(intent_file "$1")" ]; }
 intent_write() { # KEY JSON: create or replace the record, atomically, under its lock
   local f; f=$(intent_file "$1")
   mkdir -p "$(dirname "$f")" && chmod 700 "$(dirname "$f")" 2>/dev/null
-  ( umask 077; flock 9; printf '%s\n' "$2" > "$f.tmp" && mv -f "$f.tmp" "$f" ) 9> "$f.lock" || die "could not write the intent record $f: nothing was changed"
+  # a flock that failed (or is not installed) took no lock: say so, never write as if it had (status 4, as in pid_lock)
+  ( umask 077; flock 9 || exit 4; printf '%s\n' "$2" > "$f.tmp" && mv -f "$f.tmp" "$f" ) 9> "$f.lock" || {
+    [ $? != 4 ] || flock_die "the intent record $f" "$f.lock"
+    die "could not write the intent record $f: nothing was changed"
+  }
+}
+# flock_die WHAT LOCKFILE: ends the verb after a flock that took no lock, saying whether the command is missing or the lock failed
+flock_die() {
+  command -v flock >/dev/null 2>&1 || die "could not take the lock for $1: the flock command (util-linux) is not installed, so two runs could not be kept apart; nothing was changed"
+  die "could not take the lock for $1: flock on $2 failed (does that directory's file system support locks?); nothing was changed"
 }
 # A pid lock: a directory with the pid of its holder (and a token naming that process, so a pid given to another process later is not taken for it) in it,
 # held while a verb runs, so a second verb of the same kind never mistakes the record of a running one for one that was cut off. A lock whose process is
@@ -443,7 +479,7 @@ proc_alive() { local t; kill -0 "$1" 2>/dev/null || return 1; [ -n "${2:-}" ] ||
 pid_lock() {
   local d=$1 rc=0 out
   mkdir -p "$(dirname "$d")" && chmod 700 "$(dirname "$d")" 2>/dev/null
-  out=$( ( flock 9
+  out=$( ( flock 9 || exit 4   # a flock that failed (or is not installed) took no lock: say so, never go on as if it had
     if ! mkdir "$d" 2>/dev/null; then
       pid='' tok=''; { read -r pid tok <"$d/pid"; } 2>/dev/null || true
       if [ -n "$pid" ]; then
@@ -452,7 +488,13 @@ pid_lock() {
       rm -rf -- "$d"; mkdir "$d" || exit 1
     fi
     echo "$$ $(proc_token $$)" > "$d/pid" ) 9>"$(dirname "$d")/.pidlock" ) || rc=$?
-  case $rc in 0) INTENT_LOCK=$d;; 3) die "another $2 is running (process $out, $d); nothing was changed";; *) die "could not take the lock $d";; esac
+  case $rc in
+    0) INTENT_LOCK=$d;;
+    3) die "another $2 is running (process $out, $d); nothing was changed";;
+    4) command -v flock >/dev/null 2>&1 || die "could not take the lock $d: the flock command (util-linux) is not installed, so two runs of this verb could not be kept apart; nothing was changed"
+       die "could not take the lock $d: flock on $(dirname "$d")/.pidlock failed (does that directory's file system support locks?); nothing was changed";;
+    *) die "could not take the lock $d";;
+  esac
 }
 intent_lock() { pid_lock "$(intent_file "$1").run" "finish of $1"; }   # KEY
 intent_unlock() { [ -z "$INTENT_LOCK" ] || rm -rf "$INTENT_LOCK"; INTENT_LOCK=''; }
@@ -563,15 +605,17 @@ backlog_file() {
   printf '%s\n' "$f"
 }
 # backlog_note BASE BRANCH -> informational, for a finish plan: the open backlog items whose id the messages of the commits BRANCH brings into BASE
-# name. Prints nothing when backlog.file is unset or its file is missing or unreadable; it never fails and never acts.
+# name, among the items of the list under the heading backlog.section when that is set. Prints nothing when backlog.file is unset or its file is missing
+# or unreadable (or has no such heading); it never fails and never acts.
 backlog_note() {
-  local f ids
+  local f ids bs
   f=$(backlog_path) && [ -n "$f" ] && [ -f "$f" ] || return 0
-  ids=$(g log --format='%B' "$1..$2" 2>/dev/null | python3 -I "$(dirname "$0")/backlog.py" named "$f" 2>/dev/null) || return 0
+  bs=$(jq -r '.backlog.section // ""' "$af" 2>/dev/null) || bs=''
+  ids=$(g log --format='%B' "$1..$2" 2>/dev/null | python3 -I "$(dirname "$0")/backlog.py" named "$f" ${bs:+--section "$bs"} 2>/dev/null) || return 0
   [ -z "$ids" ] || echo "  backlog items named in these commits: $ids"
 }
 project_load() { # PROJ (or inferred) -> af, REPO, TESTCMD, METH
-  [ -n "$PROJ" ] || PROJ=$(python3 -I "$(dirname "$0")/help.py" infer)
+  [ -n "$PROJ" ] || PROJ=$(pymod help infer)
   af=$DA_CONF/projects/$PROJ.json
   [ -f "$af" ] || die "no stored answers for '$PROJ': qargi project attach DIR, or --project"
   REPO=$(jq -r '.repo.path // ""' "$af"); REPO=${REPO/#\~/$HOME}
@@ -588,13 +632,31 @@ project_load() { # PROJ (or inferred) -> af, REPO, TESTCMD, METH
   RDIR=$DA_STATE/releases; mkdir -p "$RDIR"
 }
 
-# marshal_gate NAME -> asks the marshal whether this identity may change feature NAME. Only an explicit refusal (status 1, the
-# message already printed) ends the verb with exit 1 and changes nothing; warnings pass through on stderr, and any other failure
-# (script missing, an exception) is a warning too: an unreachable marshal never blocks work.
+# marshal_flow FUNC ARGS...: runs the shell API function FUNC (marshal_check or marshal_start) for a flow verb. Unless the lead gave --assume-unreachable-ok
+# (ASSUME_UNREACHABLE, set by the verb's option parsing) it adds --need-remote: a shared marshal whose remote cannot be asked is then an exit 3 and nothing
+# is changed. With the flag the verb goes on, and what marshal_store.py wrote into the override file becomes an audit line marshal:unreachable-ok. A project
+# whose marshal is local (the default) or off never reaches a remote and is not affected either way.
+marshal_flow() {
+  local ovf='' frc=0
+  if [ -n "${ASSUME_UNREACHABLE:-}" ]; then ovf=$(mktemp "$DA_STATE/.marshal-override.XXXXXX" 2>/dev/null) || ovf=''
+  else set -- "$@" --need-remote; fi
+  QARGI_MARSHAL_OVERRIDE_OUT=$ovf "$@" || frc=$?
+  [ -z "$ovf" ] || marshal_override_audit "$ovf" "$frc"
+  return "$frc"
+}
+# marshal_unreachable_refuse NAME: the end of a flow verb that could not ask the marshal (exit 3, nothing changed; the marshal's own message, printed
+# before, says what could not be reached and why). It names the flag of the flow verbs: the marshal's message names the one of qargi marshal check.
+marshal_unreachable_refuse() {
+  echo "qargi: feature ${verb:-the verb} $1 is refused: the marshal could not be asked, so it is not known whether another lead holds $1. If you know none does, run it again with --assume-unreachable-ok (audited as marshal:unreachable-ok)" >&2
+  exit 3
+}
+# marshal_gate NAME -> asks the marshal whether this identity may change feature NAME. An explicit refusal (status 1, the message already printed) ends the
+# verb with exit 1 and changes nothing; so does a shared marshal whose remote cannot be asked (status 3, exit 3) unless --assume-unreachable-ok was given
+# (marshal_flow). Warnings pass through on stderr, and any other failure (script missing, an exception) is a warning too.
 marshal_gate() {
   local rc=0 err
   err=$(mktemp "$DA_STATE/.marshal-gate.XXXXXX" 2>/dev/null) || err=/dev/null
-  marshal_check "$PROJ" "$1" 2>"$err" || rc=$?
+  marshal_flow marshal_check "$PROJ" "$1" 2>"$err" || rc=$?
   if [ "$err" != /dev/null ]; then
     cat "$err" >&2
     if [ "$rc" = 1 ] && grep -q '^Traceback' "$err"; then rc=70; fi   # an exception also exits 1, but it is not a refusal
@@ -602,6 +664,7 @@ marshal_gate() {
   fi
   [ "$rc" -ne 0 ] || return 0
   [ "$rc" -ne 1 ] || exit 1
+  if [ "$rc" = 3 ] && [ -z "${ASSUME_UNREACHABLE:-}" ]; then marshal_unreachable_refuse "$1"; fi
   echo "qargi: warning: the marshal could not be asked (status $rc); going on" >&2
 }
 # hold_begin NAME / hold_end -> the lease of NAME is renewed while a long step runs. An interrupt leaves through the EXIT trap,

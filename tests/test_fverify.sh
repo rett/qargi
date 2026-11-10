@@ -8,7 +8,8 @@ cd "$(dirname "$0")/.." || exit 1
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi
 trap 'rm -rf "$T" "$HERMETIC"' EXIT
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
 export QARGI_PROJECT=app QARGI_LEAD=lead-one
 mkdir -p "$HOME" "$T/c/projects" "$T/s"
@@ -33,7 +34,6 @@ devcommit() { # name: a commit on develop
   git -C "$R" update-ref refs/heads/develop "$(git -C "$w" rev-parse HEAD)"; git -C "$R" worktree remove --force "$w"
 }
 setcmd() { jq --arg c "$1" '.test_command = $c' "$T/c/projects/app.json" > "$T/c/projects/app.new" && mv "$T/c/projects/app.new" "$T/c/projects/app.json"; }   # the project's test command
-tok() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 
 # --- 1. status says why the result is stale, and what to do
 $F start why >/dev/null 2>&1
@@ -76,6 +76,15 @@ setcmd 'echo some output; exit 3'
 out=$($F verify bad 2>&1); rc=$?
 [ $rc = 1 ] && grep -qx 'no failing test name in the output; its last lines:' <<<"$out" && grep -qx '  some output' <<<"$out" && [ "$(tail -n 1 <<<"$out")" = "log of the whole run: $lg" ] \
   && ok "a test command that is no runner: its last lines stand in, then the log" || no "plain command: $out"
+# the failure-line patterns any gate may print: ^FAIL( |:), ^FAILED: , ^logs of the failed steps: and the ^--- FAIL: of a Go test run
+setcmd 'printf "%s\n" "--- FAIL: TestParse (0.00s)" "FAIL: check two" "FAIL check three" "FAILED: step four" "logs of the failed steps: /logs/five"; exit 1'
+out=$($F verify bad 2>&1); rc=$?
+[ $rc = 1 ] && grep -qx 'failing tests:' <<<"$out" && grep -qx '  --- FAIL: TestParse (0.00s)' <<<"$out" && grep -qx '  FAIL: check two' <<<"$out" && grep -qx '  FAIL check three' <<<"$out" \
+  && grep -qx 'failing steps:' <<<"$out" && grep -qx '  step four' <<<"$out" && grep -qx 'logs of the failed steps: /logs/five' <<<"$out" && ! grep -q 'no failing test name' <<<"$out" \
+  && ok "--- FAIL: , FAIL: , FAIL , FAILED:  and logs of the failed steps: lines are all named" || no "failure-line patterns: $out"
+hlp=$($DA help feature verify 2>&1 | tr '\n' ' ' | tr -s ' ')
+grep -qF '^FAILED:' <<<"$hlp" && grep -qF '^FAIL( |:)' <<<"$hlp" && grep -qF '^--- FAIL:' <<<"$hlp" && grep -qF '^logs of the failed steps:' <<<"$hlp" \
+  && ok "the help of feature verify names the failure-line patterns" || no "help: $hlp"
 setcmd 'bash tests/run.sh -j 2'
 out=$($REL verify 0.9.0 2>&1); rc=$?
 [ $rc = 1 ] && grep -qx '  sh tests/test_bad.sh' <<<"$out" && [ "$(tail -n 1 <<<"$out")" = "log of the whole run: $T/s/suite-logs/app.release-0.9.0.log" ] && ok "release verify ends the same way" || no "release verify: $out"

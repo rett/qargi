@@ -37,6 +37,14 @@
       "default": "make doctor",
       "help": "the command that checks a checkout, one line per item"
     },
+    "unreleased_heading": {
+      "default": "## [Unreleased]",
+      "help": "the heading of the changelog section of the changes to come (the project's release.changelog.unreleased, with {version} replaced by the first version)"
+    },
+    "changelog_entry": {
+      "default": "under `[Unreleased]`",
+      "help": "where a changelog entry goes, as the contributor files say it: under the unreleased heading, as the next numbered item when the project numbers its entries (release.changelog.numbered)"
+    },
     "version": {
       "default": "0.1.0",
       "help": "the first version"

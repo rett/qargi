@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """The declared gates of a project (the answer `gates`) and the scan of its CI jobs.
 
-  gates: an ordered list of {name, command, tier}
+  gates: an ordered list of {name, command, tier, ci_jobs, covered_by}
     name     a label, unique in the list; a CI job of the same name (or id) is the job that runs the same check
     command  one command line, or a command as a list of words (the forms of test_command and release.test_command)
     tier     feature (run by `feature verify` and by `release verify`) or release (run by `release verify` only)
+    ci_jobs  optional: a list of CI job names or ids that run this gate's check under another name; the scan reports them as covered by the gate
+    covered_by  optional, on a feature gate: the name of a release gate whose command runs this gate's check too; `release verify` lists the gate as
+             covered by that one and does not run it (`feature verify` still does). When that release gate fails or is not reached, the covered gate counts as not run
+
+  ci.not_gates (an answer, optional): a list of CI job names or ids that are aggregate or publish jobs and not gates; the scan leaves them out.
 
   gates.py select ANSWERS TIER...     the gates of those tiers, the tiers in the order named and the gates of a tier in the order declared, as a JSON array of {name, tier, command}
                                       with the command as one line (a list of words is shell-quoted); exit 1 and the problem
@@ -15,10 +20,13 @@
                                       declare no gate (test_command stands then). Exit 1 as select when the gates are not valid.
   gates.py scan ANSWERS TREE          reads TREE/.github/workflows/*.yml and *.yaml and compares the jobs with the declared
                                       gate names; one tab-separated line per finding: KIND, FILE, JOB ID, NAME. KIND is
-                                      unmatched (a job that matches no gate name; NAME is its name: text, empty when it has
-                                      none or it is the id) or unknown (a job whose name cannot be read; JOB ID is empty for
-                                      a workflow whose jobs cannot be read). Exit 1 when a job is unmatched, 0 otherwise
-                                      (also when there is no workflow). Python standard library only.
+                                      unmatched (a job that matches no gate name and is neither listed in a gate's ci_jobs nor in
+                                      ci.not_gates; NAME is its name: text, empty when it has none or it is the id), covered (a job
+                                      listed in a gate's ci_jobs; NAME is the gate), missing (a name listed in ci_jobs or ci.not_gates
+                                      that no workflow has; FILE is "-", NAME is "ci.not_gates" or "gate NAME"; not reported when a
+                                      workflow or a job name cannot be read, as the name may be there) or unknown (a job whose name
+                                      cannot be read; JOB ID is empty for a workflow whose jobs cannot be read). Exit 1 when a job is
+                                      unmatched, 0 otherwise (also when there is no workflow). Python standard library only.
 
 A job matches a gate when the gate's name is the job's `name:` or its id. The parser is conservative: it reads the block layout
 of GitHub workflow files (the job ids under `jobs:` and the `name:` line at the top level of each job) and nothing else, and says
@@ -32,7 +40,7 @@ import shlex
 import sys
 
 TIERS = ("feature", "release")
-KEYS = ("name", "command", "tier")
+KEYS = ("name", "command", "tier", "ci_jobs", "covered_by")
 
 
 LINE_BREAKS = "\n\r\x0b\x0c\x1c\x1d\x1e\x85  "   # what str.splitlines() and a YAML 1.1 reader end a line at
@@ -87,26 +95,77 @@ def problems(gates):
             out.append("%s.command: one command line, or a command as a list of words (for example [\"make\", \"check\"]); not empty" % where)
         if g.get("tier") not in TIERS:
             out.append("%s.tier: feature (feature verify and release verify run it) or release (only release verify runs it)" % where)
+        if "ci_jobs" in g:
+            out.extend(job_list_problems(g["ci_jobs"], "%s.ci_jobs" % where, "the CI jobs (names or ids) that run this gate's check under another name"))
+    release = {g["name"] for g in gates if isinstance(g, dict) and g.get("tier") == "release" and isinstance(g.get("name"), str)}
+    for i, g in enumerate(gates):
+        if isinstance(g, dict) and "covered_by" in g:
+            c, where = g["covered_by"], "gates[%d].covered_by" % i
+            if g.get("tier") != "feature":
+                out.append("%s: only a feature gate is covered by a release gate (this gate's tier is not feature)" % where)
+            elif not isinstance(c, str) or c not in release:
+                out.append("%s: the name of a release gate (%s), not %s" % (where, ", ".join(sorted(release)) or "none is declared", json.dumps(c)))
     return out
 
 
-def declared(af):
-    """The valid gates of the answers file (a list; [] when the answer is absent or empty). Raises ValueError with the problems when it is not valid."""
+def job_list_problems(v, where, what):
+    """The problems of a list of CI job names or ids: non-empty strings with no control character and no space at either end, each once."""
+    if not (isinstance(v, list) and v):
+        return ["%s: a non-empty list of %s" % (where, what)]
+    out, seen = [], set()
+    for j, x in enumerate(v):
+        if not (isinstance(x, str) and x.strip() and x == x.strip() and not _ctl(x)):
+            out.append("%s[%d]: a non-empty job name or id with no control character and no space at either end" % (where, j))
+        elif x in seen:
+            out.append("%s[%d]: \"%s\" is listed twice" % (where, j, x))
+        else:
+            seen.add(x)
+    return out
+
+
+def ci_problems(ci):
+    """The problems of the answer `ci` (a list of strings; none when it is valid): an object whose only key is not_gates, the CI jobs that are not gates."""
+    if ci is None:
+        return []
+    if not isinstance(ci, dict):
+        return ["ci: an object like {not_gates: [\"publish\"]} (unknown key: only not_gates)"]
+    out = ["ci.%s: unknown key (not_gates)" % k for k in ci if k != "not_gates"]
+    if "not_gates" in ci:
+        out.extend(job_list_problems(ci["not_gates"], "ci.not_gates", "CI job names or ids that are aggregate or publish jobs, not gates"))
+    return out
+
+
+def _answers(af):
     try:
         with open(af, encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, ValueError) as e:
         raise ValueError("the answers %s cannot be read: %s" % (af, e))
-    gates = data.get("gates") if isinstance(data, dict) else None
+    return data if isinstance(data, dict) else {}
+
+
+def declared(af):
+    """The valid gates of the answers file (a list; [] when the answer is absent or empty). Raises ValueError with the problems when it is not valid."""
+    gates = _answers(af).get("gates")
     p = problems(gates)
     if p:
         raise ValueError("the answer gates is not valid:\n  " + "\n  ".join(p))
     return gates or []
 
 
+def not_gates(af):
+    """The CI jobs the answers list as not gates (ci.not_gates; [] when absent). Raises ValueError with the problems when the answer is not valid."""
+    ci = _answers(af).get("ci")
+    p = ci_problems(ci)
+    if p:
+        raise ValueError("the answer ci is not valid:\n  " + "\n  ".join(p))
+    return (ci or {}).get("not_gates") or []
+
+
 def select(gates, tiers):
     """The gates of the tiers, the tiers in the order named (feature gates, then release gates), each in the order declared."""
-    return [{"name": g["name"], "tier": g["tier"], "command": command_line(g["command"])} for t in tiers for g in gates if g["tier"] == t]
+    return [dict({"name": g["name"], "tier": g["tier"], "command": command_line(g["command"])}, **({"covered_by": g["covered_by"]} if "covered_by" in g else {}))
+            for t in tiers for g in gates if g["tier"] == t]
 
 
 def identity(gates, tiers):
@@ -208,11 +267,19 @@ def parse_jobs(text):
     return [(j[0], j[1]) for j in jobs] or None
 
 
-def scan(gates, tree):
-    """([(kind, file, job id, name)], unmatched count): kind is "unmatched" (a job no gate name matches; name is its `name:` text, "" when it has
-    none) or "unknown" (job id "" for a workflow whose jobs cannot be read; name "" for a job whose name cannot be read)."""
+def scan(gates, tree, not_gates=()):
+    """([(kind, file, job id, name)], unmatched count): kind is "unmatched" (a job no gate name matches, that no gate lists in ci_jobs and that
+    is not in not_gates; name is its `name:` text, "" when it has none), "covered" (a job a gate lists in ci_jobs; name is the gate),
+    "unknown" (job id "" for a workflow whose jobs cannot be read; name "" for a job whose name cannot be read) or, after the jobs,
+    "missing" (a name of ci_jobs or not_gates that no workflow has; file "-"; name "ci.not_gates" or "gate NAME"). Nothing is missing
+    when there is no workflow, and nothing is reported missing when a workflow or a job name cannot be read: the name may be there."""
     names = {g["name"] for g in gates}
-    found, bad = [], 0
+    covers = {}
+    for g in gates:
+        for j in g.get("ci_jobs") or []:
+            covers.setdefault(j, g["name"])
+    skip = set(not_gates)
+    found, bad, have, sure = [], 0, set(), True
     files = sorted(glob.glob(os.path.join(tree, ".github", "workflows", "*.yml")) + glob.glob(os.path.join(tree, ".github", "workflows", "*.yaml")))
     for f in files:
         rel = os.path.relpath(f, tree)
@@ -223,15 +290,29 @@ def scan(gates, tree):
             jobs = None
         if jobs is None:
             found.append(("unknown", rel, "", ""))
+            sure = False
             continue
         for jid, name in jobs:
+            have.add(jid)
+            if name:
+                have.add(name)
             if jid in names or (name and name in names):
                 continue
-            if name is None:
+            ref = next((x for x in (jid, name) if x and x in covers), None)
+            if ref:
+                found.append(("covered", rel, jid, covers[ref]))
+            elif jid in skip or (name and name in skip):
+                pass
+            elif name is None:
                 found.append(("unknown", rel, jid, ""))
+                sure = False
             else:
                 bad += 1
                 found.append(("unmatched", rel, jid, name if name != jid else ""))
+    if files and sure:
+        for g in gates:
+            found.extend(("missing", "-", j, "gate " + g["name"]) for j in g.get("ci_jobs") or [] if j not in have)
+        found.extend(("missing", "-", j, "ci.not_gates") for j in not_gates if j not in have)
     return found, bad
 
 
@@ -241,6 +322,7 @@ def main(argv):
         return 2
     try:
         gates = declared(argv[2])
+        skipped = not_gates(argv[2]) if argv[1] == "scan" else []
     except ValueError as e:
         print(e, file=sys.stderr)
         return 1
@@ -254,7 +336,7 @@ def main(argv):
         return 0
     if len(argv) != 4:
         return 2
-    found, bad = scan(gates, argv[3])
+    found, bad = scan(gates, argv[3], skipped)
     for row in found:
         print("\t".join(row))
     return 1 if bad else 0

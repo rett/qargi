@@ -10,7 +10,8 @@ ROOT=$PWD
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0
 trap 'rm -rf "$T" "$HERMETIC"' EXIT
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 
 # The tool under test: a copy of bin, lib and VERSION, with fixture packs and their manifest.
 mkdir -p "$T/tool/packs/skills"
@@ -26,7 +27,6 @@ shipped() { rm -rf "${SK:?}"/*; local n; for n in $NAMES; do mkpack "$n" "first 
 files_hash() { (cd "$1" && find . -type f ! -name .pack.json -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16); }
 # the content hash covers the declaration: every pack here declares ["any"]
 hash_of() { printf '%s\ncompatible_providers=%s\n' "$(files_hash "$1")" '["any"]' | sha256sum | cut -c1-16; }
-tok_of() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 fresh() { rm -rf "$T/c" "$T/s"; export QARGI_CONF=$T/c QARGI_STATE=$T/s; mkdir -p "$T/c/projects" "$T/s"; LIB=$T/c/packs; shipped; }
 proj() { jq -n --arg p "$1" '{schema:1,project:$p,repo:{url:"https://github.com/example/x",path:"",long_lived:["main"]},
   roles:{build:{base:"@dispatcher",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:[],skills:[]}},

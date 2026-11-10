@@ -7,13 +7,13 @@ cd "$(dirname "$0")/.." || exit 1
 . tests/hermetic.sh
 T=$(mktemp -d) && [ -n "$T" ] || exit 1   # an empty T would make the helpers below work in the checkout itself
 fail=0; DA=$PWD/bin/qargi
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_PROJECT=app
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
 mkdir -p "$HOME" "$T/c/projects"
 J=$T/s/ref-journal.jsonl; Z=0000000000000000000000000000000000000000
 UP="$DA upstream"
-tok() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 sha() { git -C "$R" rev-parse -q --verify "$1" 2>/dev/null || echo none; }
 # jhas REF-SUFFIX OLD NEW VERB: the journal holds a line for that ref going from OLD to NEW by VERB
 jhas() { [ -f "$J" ] && jq -c --arg r "$1" --arg o "$2" --arg n "$3" --arg v "$4" 'select((.ref | endswith($r)) and .old == $o and .new == $n and .verb == $v)' "$J" | grep -q .; }

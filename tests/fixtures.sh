@@ -1,5 +1,7 @@
 # shellcheck shell=bash
-# Sourced by a shell test, after hermetic.sh and after the test has set T (its temporary directory), fail=0 and DA (the qargi under test).
+# Sourced by a shell test, from the repository root (`. tests/fixtures.sh`) after hermetic.sh. Sourcing only defines functions: it sets no
+# option and no variable, changes no directory and runs nothing, so the line may stand wherever the test used to define ok and no. A helper
+# reads T (its temporary directory), fail=0 and DA (the qargi under test) when it runs, not when the file is sourced.
 # The helpers the tests re-implemented one by one: the report lines, a scratch repository, a bare origin, the machines (a clone of the
 # origin with its own home, conf and state), the git and ssh-keygen shims, and a poll that replaces a fixed sleep. A test that needs the
 # helper under another name or another body keeps its own; nothing here reads anything but the arguments and the variables named below.
@@ -15,6 +17,11 @@ no() { echo "FAIL $1"; fail=1; }
 out() { cat "$T/o" "$T/e"; }
 # tokof [TEXT]: the plan token of a plan printed by an owner verb, from TEXT or else from the last output ($T/o)
 tokof() { if [ $# -gt 0 ]; then sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' <<<"$1"; else sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' "$T/o"; fi; }
+# tok: the plan token of the plan printed on its standard input (`$DA verb | tok`). tok_of and tokp are the names older tests use for the
+# same filter. A test that wants another body for tokof (a pipe filter, say) defines it after sourcing this file.
+tok() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
+tok_of() { tok; }
+tokp() { tok; }
 
 # --- polling instead of sleeping
 # wait_until CMD [SECONDS]: runs CMD (a command line, evaluated; use a function for a loop, `return` and `exit` end the helper or the test)

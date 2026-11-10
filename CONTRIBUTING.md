@@ -42,7 +42,7 @@ directory is listed and the reverse, and each pack passes the library's review.
 line with its tier (`fast` or `full`), whether it may run beside others, its timeout, its time budget in seconds and,
 optionally, the globs of the files it covers. A new `tests/test_*` file gets a line there, and the runner fails when a test
 file is not listed or a listed file does not exist. The budget is the time the step takes on the reference machine; a step
-that takes more than 1.5 times its budget is reported, and a budget only shrinks (a step that grew is split).
+that takes more than 1.5 times its budget is reported; a budget is re-recorded from the last whole-suite run, rounded up by a tenth.
 
     bash tests/run.sh                  every step, as many at a time as there are CPUs (-j N; -j 1 is the serial run)
     bash tests/run.sh --tier fast      the fast tier: every area, about a minute
@@ -59,8 +59,8 @@ duration of a step (`--durations FILE`) or else its budget.
 
 Adding a step: put the test in `tests/`, add a line to `tests/suite.txt` with its tier (`fast` only for a step of a few seconds
 that covers an area the other fast steps do not), `par` unless it cannot run beside others, a timeout (several times the budget),
-its budget (the seconds it takes on a loaded eight-CPU machine, measured with `bash tests/run.sh --only 'tests/test_x.sh'`; a budget
-only shrinks, so a step that grew is split) and the `covers` globs of the files it tests. A pull request runs the fast tier and the
+its budget (the seconds it takes on a loaded eight-CPU machine, measured with `bash tests/run.sh --only 'tests/test_x.sh'`, rounded up by a
+tenth; it is re-recorded from the last whole-suite run) and the `covers` globs of the files it tests. A pull request runs the fast tier and the
 steps whose `covers` match the files it changed (or whose command names a changed file), so a `full` step without `covers` is
 checked only in the whole run.
 
@@ -86,6 +86,8 @@ never interleaved; the end of the output has the failed steps, the slowest ten a
 A test is safe to run next to other tests and next to another whole suite: it sources `tests/hermetic.sh` (a python test imports `hermetic`), which gives it a fresh HOME, TMPDIR, config and state, a fixed locale, time zone and umask, and git without the host's configuration, and it works only under `mktemp` directories, starts nothing it does not stop by pid (`spawn_bg`, `kill_bg`), waits for a condition with a deadline and not with a bare `sleep`, and binds port 0. `tests/test_hermetic.sh` runs `tests/hermetic_lint.py` over the tests and fails on a file that breaks one of its rules; a justified case carries `hermetic: allow RULE (reason)` on its line. The rules are `source` (the file sources `hermetic.sh` or imports `hermetic`), `tmp` (no literal `/tmp`, `/dev/shm` or `/run` path), `pgrep` (no `pkill`, `killall` or `pgrep -f`), `sleep` (no fixed wait outside a loop), `rm` (no `rm -r` of a directory the test did not make), `port` (no fixed TCP port), `lock` (no lock or socket outside the test's directory), `clock` (no difference of two clock readings compared with a constant) and `absent` (a grep that asserts something is absent needs a distinctive pattern: six or more characters, `-w` or `-x`, an anchor, or a character a temporary path does not hold, because a random temporary path in the output can contain a short token). `python3 tests/hermetic_lint.py` prints the findings.
 
 `tests/test_legacy_lint.py` keeps code for earlier versions out of `lib/` (qargi keeps no backwards compatibility): it fails when a file there holds the phrase `older record`, `migrat` or `earlier version`, unless `tests/legacy-allowlist.txt` names the file and the phrase with a reason. That list only shrinks.
+
+Prompt text is one paragraph per line: in `contract/`, `roles/`, `agents/`, `packs/skills/`, `skills/`, `provision/templates/` and `lib/providers/` a paragraph and a list item are each one physical line (a viewer narrower than a line wraps it whole), and `tests/test_prose_lint.py` fails on a line that continues the one before it or has trailing spaces.
 
 Test a branch from its own worktree with `bin/qargi`: once `install.sh --user` has recorded the installed copy it is a dev run with its own data under `.qargi/` ([Running a branch checkout](docs/install-and-upgrade/README.md#running-a-branch-checkout)). To test the guard or the hooks, put `<worktree>/bin` first on `PATH`: members call `qargi __guard` from `PATH`, which is otherwise the installed copy.
 

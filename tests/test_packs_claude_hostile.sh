@@ -259,7 +259,7 @@ g_root() {
   need "a state directory that is a symlink works, writing only below its target" '[ "$ARC" = 0 ] && [ -f "$T/real-state/render/alpha/claude-code/MANIFEST.json" ]'
   need "check passes" 'check'
   need "the launch line names the render" 'grep -q "^launch: claude --add-dir " <<<"$AOUT"'
-  need "nothing but claude, audit.log and sessions.json is next to it next to it" '[ -z "$(find "$T/real-state" -mindepth 1 -maxdepth 1 ! -name render ! -name audit.log ! -name sessions.json)" ]'
+  need "nothing but render, audit.log, its lock audit.log.lock and sessions.json is in the state directory" '[ -z "$(find "$T/real-state" -mindepth 1 -maxdepth 1 ! -name render ! -name audit.log ! -name audit.log.lock ! -name sessions.json)" ]'
   rm "$T/s"; mv "$T/real-state" "$T/s"; : "$before"
   endcase "the state directory is itself a symlink"
 

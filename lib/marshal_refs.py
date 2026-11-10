@@ -175,6 +175,12 @@ def read_one(repo, oid, name):
     rc, data, _, _ = run_git(repo, ["cat-file", "blob", blob], 30)
     if rc != 0 or len(data) > MAX_RECORD:
         return None, "record.json cannot be read"
+    return record_of(data, name)
+
+
+def record_of(data, name):
+    """The record in the bytes of a record.json -> (record dict, "") or (None, why): valid JSON, an object, `feature` is the ref's name,
+    no control character (the rules read_one and the batch read of read() share)."""
     try:
         rec = json.loads(data.decode("utf-8"))
     except (ValueError, RecursionError):
@@ -193,6 +199,11 @@ def commit_info(repo, oid):
     rc, out, _, _ = run_git(repo, ["cat-file", "commit", oid], 30)
     if rc != 0:
         return None
+    return commit_parts(out)
+
+
+def commit_parts(out):
+    """The parents and the message of the bytes of a commit object."""
     head, _, body = out.partition(b"\n\n")
     parents = [ln[7:].decode("ascii", "replace") for ln in head.split(b"\n") if ln.startswith(b"parent ")]
     return parents, body.decode("utf-8", "replace")
@@ -221,23 +232,117 @@ def chain(repo, oid, limit):
     return res
 
 
-def read(repo, check=None, verify=None, heads=None):
+def batch_lines(repo, mode, specs):
+    """One `git cat-file MODE` (--batch or --batch-check) over specs, an object name each -> a list in the order of specs: (type, the
+    object's bytes | its size) or None for an object that is not there; None when git failed or its answer is not what the format says."""
+    rc, out, _, _ = run_git(repo, ["cat-file", mode], 60, "".join(sp + "\n" for sp in specs).encode())
+    if rc != 0:
+        return None
+    res, pos = [], 0
+    for _ in specs:
+        end = out.find(b"\n", pos)
+        if end < 0:
+            return None
+        f, pos = out[pos:end].split(b" "), end + 1
+        if len(f) == 2 and f[1] in (b"missing", b"ambiguous"):
+            res.append(None)
+        elif len(f) == 3 and f[1] in (b"commit", b"tree", b"blob", b"tag") and f[2].isdigit():
+            size = int(f[2])
+            if mode == '--batch-check':
+                res.append((f[1], size))
+                continue
+            if out[pos + size:pos + size + 1] != b"\n":
+                return None
+            res.append((f[1], out[pos:pos + size]))
+            pos += size + 1
+        else:
+            return None
+    return res if pos == len(out) else None
+
+
+def tree_record(tree, hlen):
+    """The raw bytes of a tree object -> "" when it holds record.json as a regular file and nothing else, else why not (read_one's rules;
+    hlen is the length of an object id in bytes)."""
+    names, pos = [], 0
+    while pos < len(tree):
+        sp = tree.find(b" ", pos)
+        nul = tree.find(b"\0", sp + 1) if sp >= 0 else -1
+        if nul < 0 or nul + 1 + hlen > len(tree):
+            return "its tree cannot be read"
+        names.append((tree[pos:sp], tree[sp + 1:nul]))
+        pos = nul + 1 + hlen
+    if len(names) != 1 or names[0][1] != b"record.json":
+        return "its tree must hold record.json and nothing else"
+    if names[0][0] not in (b"100644", b"100755"):
+        return "record.json is not a regular file"
+    return ""
+
+
+def batch_records(repo, oids):
+    """The record.json bytes and the commit of every commit in oids, from two cat-file processes however many there are (the sizes of the
+    record.json files first, so that one over MAX_RECORD is never read; then the commits, trees and record.json files)
+    -> {oid: (record.json bytes or None, why it is none, (parents, message) or None)}, or None when git could not answer (the caller
+    reads one commit at a time). The reasons are the ones read_one gives."""
+    oids = list(dict.fromkeys(oids))
+    if not oids:
+        return {}
+    sizes = batch_lines(repo, '--batch-check', [o + ":record.json" for o in oids])
+    if sizes is None:
+        return None
+    small = [bool(z) and z[0] == b"blob" and z[1] <= MAX_RECORD for z in sizes]
+    objs = batch_lines(repo, '--batch', [sp for o, ok in zip(oids, small) for sp in ([o, o + "^{tree}"] + ([o + ":record.json"] if ok else []))])
+    if objs is None:
+        return None
+    res, i = {}, 0
+    for o, z, ok in zip(oids, sizes, small):
+        commit, tree = objs[i], objs[i + 1]
+        blob = objs[i + 2] if ok else None
+        i += 3 if ok else 2
+        why = "its tree cannot be read" if tree is None or tree[0] != b"tree" else tree_record(tree[1], len(o) // 2)
+        if not why and z is None:
+            why = "its tree must hold record.json and nothing else"                       # what read_one says of a tree whose blob is not there
+        if not why and not ok:
+            why = "record.json is over %d KiB" % (MAX_RECORD // 1024)
+        if not why and (blob is None or blob[0] != b"blob"):
+            why = "record.json cannot be read"
+        res[o] = (None if why else blob[1], why, commit_parts(commit[1]) if commit and commit[0] == b"commit" else None)
+    return res
+
+
+def read(repo, check=None, verify=None, heads=None, prefetch=None):
     """The valid records of the cache -> (features {name: (oid, rec)}, done {name: (oid, rec)}, ignored [(ref, why)]).
     check(rec) -> a reason or None adds the caller's own rules (status values, the shape of the lead).
     verify(kind, name, oid, rec, parents, message) -> a reason or None adds the signature rules (kind is features or done).
-    heads, when given, is filled with {ref: oid} for every ref of the cache, valid or not."""
+    heads, when given, is filled with {ref: oid} for every ref of the cache, valid or not.
+    prefetch(items), when given, is called once before the first verify with [(kind, name, oid, rec, parents, message)] for the records
+    verify is going to be called with (the ones that passed check), so that the work verify does can be done for all of them at once;
+    verify is still called for each, and decides.
+    The refs are listed with one for-each-ref and the objects of all of them read with two cat-file processes (batch_records), so the time
+    does not grow with the processes per ref; verify is still called for every record, on every read."""
     feats, done, ignored = {}, {}, []
     rc, out, _, _ = run_git(repo, ["for-each-ref", "--format=%(objectname) %(objecttype) %(refname)", "refs/qargi/features", "refs/qargi/done"], 30)
     if rc != 0:
         return feats, done, ignored
+    refs = []
     for ln in out.decode("utf-8", "replace").splitlines():
         parts = ln.split(" ", 2)
         if len(parts) != 3:
             continue
         oid, typ, ref = parts
         kind, _, name = ref[len("refs/qargi/"):].partition("/")
-        if kind not in ("features", "done"):
-            continue
+        if kind in ("features", "done"):
+            refs.append((oid, typ, ref, kind, name))
+    got = batch_records(repo, [oid for oid, typ, _, _, name in refs if typ == "commit" and name_ok(name) and OID_RE.fullmatch(oid)])
+    if prefetch is not None and verify is not None and got is not None:
+        items = []
+        for oid, typ, ref, kind, name in refs:
+            g = got.get(oid) if typ == "commit" and name_ok(name) else None
+            rec = record_of(g[0], name)[0] if g is not None and g[0] is not None and g[2] else None
+            if rec is not None and (check is None or not check(rec)):
+                items.append((kind, name, oid, rec, g[2][0], g[2][1]))
+        if items:
+            prefetch(items)
+    for oid, typ, ref, kind, name in refs:
         if heads is not None:
             heads[ref] = oid
         why = None
@@ -246,11 +351,15 @@ def read(repo, check=None, verify=None, heads=None):
         elif typ != "commit":
             why = "not a commit"
         else:
-            rec, why = read_one(repo, oid, name)
+            g = got.get(oid) if got is not None else None
+            if g is None:
+                rec, why = read_one(repo, oid, name)
+            else:
+                rec, why = record_of(g[0], name) if g[0] is not None else (None, g[1])
             if rec is not None and check is not None:
                 why = check(rec)
             if rec is not None and not why and verify is not None:
-                info = commit_info(repo, oid)
+                info = (g[2] if g is not None else commit_info(repo, oid))
                 why = verify(kind, name, oid, rec, info[0], info[1]) if info else "its commit cannot be read"
             if rec is not None and not why:
                 (feats if kind == "features" else done)[name] = (oid, rec)

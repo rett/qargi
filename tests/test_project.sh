@@ -59,6 +59,29 @@ chk "review.scrub: a bad word"      1 '.review={scrub:["ok",3]}'
 chk "review.trailer_policy: reject" 0 '.review={trailer_policy:"reject"}'
 chk "review.trailer_policy: none"   0 '.review={trailer_policy:"none"}'
 chk "review.trailer_policy: other"  1 '.review={trailer_policy:"warn"}'
+chk "review.scrub: null (unset)"    0 '.review={scrub:null}'
+chk "review.trailer_policy: null (unset)" 0 '.review={trailer_policy:null}'
+chk "review.keep_author: null (unset)" 0 '.review={keep_author:null}'
+chk "backlog.file: null (unset)"    0 '.backlog={file:null}'
+chk "gates: null (unset)"           0 '.gates=null'
+chk "backlog.file: empty"           1 '.backlog={file:""}'
+chk "backlog.archive: a directory"  0 '.backlog={file:"b.md",archive:"~/archive"}'
+chk "backlog.archive: null (unset)" 0 '.backlog={file:"b.md",archive:null}'
+chk "backlog.archive: empty"        1 '.backlog={file:"b.md",archive:""}'
+chk "backlog.archive: not a string" 1 '.backlog={file:"b.md",archive:3}'
+chk "backlog.section: a heading"    0 '.backlog={file:"b.md",section:"## Now"}'
+chk "backlog.section: only #s"      1 '.backlog={file:"b.md",section:"##"}'
+chk "backlog.section: a newline"    1 '.backlog={file:"b.md",section:"a\nb"}'
+chk "backlog: unknown key"          1 '.backlog={file:"b.md",dir:"x"}'
+chk "review.reject_trailers: keys"  0 '.review={trailer_policy:"reject",reject_trailers:["Signed-off-by","Change-Id","X-*"]}'
+chk "review.reject_trailers: null"  0 '.review={reject_trailers:null}'
+chk "review.reject_trailers: needs the policy" 1 '.review={reject_trailers:["Signed-off-by"]}'
+chk "review.reject_trailers: policy none" 1 '.review={trailer_policy:"none",reject_trailers:["Signed-off-by"]}'
+chk "review.reject_trailers: empty list" 1 '.review={trailer_policy:"reject",reject_trailers:[]}'
+chk "review.reject_trailers: not a list" 1 '.review={trailer_policy:"reject",reject_trailers:"Signed-off-by"}'
+chk "review.reject_trailers: a bad key" 1 '.review={trailer_policy:"reject",reject_trailers:["Signed off"]}'
+chk "review.reject_trailers: only a star" 1 '.review={trailer_policy:"reject",reject_trailers:["*"]}'
+chk "review.reject_trailers: a duplicate" 1 '.review={trailer_policy:"reject",reject_trailers:["Change-Id","change-id"]}'
 chk "worktrees.root: absolute"      0 '.worktrees={root:"/srv/worktrees"}'
 chk "worktrees.root: relative"      1 '.worktrees={root:"worktrees"}'
 chk "worktrees.root: empty"         1 '.worktrees={root:""}'
@@ -154,6 +177,16 @@ chk "release.test_command: empty"   1 '.release={test_command:[]}'
 chk "release.test_command: number"  1 '.release={test_command:5}'
 chk "release.preflight: text"       1 '.release={preflight:"make check"}'
 chk "release.preflight: empty list" 1 '.release={preflight:[]}'
+chk "release.hotfix_preflight: list" 0 '.release={hotfix_preflight:["make","check-hotfix","{version}"]}'
+chk "release.hotfix_preflight: line" 0 '.release={hotfix_preflight:"make check-hotfix"}'
+chk "release.hotfix_preflight: []"   1 '.release={hotfix_preflight:[]}'
+chk "release.hotfix_preflight: num"  1 '.release={hotfix_preflight:true}'
+chk "release.finish_check: a list"  0 '.release={finish_check:["make","check-release","{version}"]}'
+chk "release.finish_check: a line"  0 '.release={finish_check:"make check-release"}'
+chk "release.finish_check: empty"   1 '.release={finish_check:[]}'
+chk "release.finish_check: blank"   1 '.release={finish_check:" "}'
+chk "release.finish_check: 2 lines" 1 '.release={finish_check:"make a\nmake b"}'
+chk "release.finish_check: number"  1 '.release={finish_check:5}'
 chk "upstream: remote and branch"   0 '.upstream={remote:"upstream",branch:"main"}'
 chk "upstream: every key"           0 '.upstream={remote:"upstream",branch:"main",into:"vendor",overlay_check:["make","check"]}'
 chk "upstream: absent is fine"      0 'del(.upstream)'
@@ -273,7 +306,7 @@ echo "$base" > $T/ok.json; $DA project init demo --answers $T/ok.json --force >/
 grep -q 'role build: .*, provider tier/high' <<<"$out" && echo "ok   init says a role without a model takes its provider's tier" || { echo "FAIL init role line: $out"; fail=1; }
 out=$($DA project validate demo 2>&1); [ "$?" = 0 ] && grep -q '^finding: models.provider is not set' <<<"$out" && echo "ok   validate NAME reads the stored answers and reports the finding" || { echo "FAIL validate NAME: $out"; fail=1; }
 $DA project set demo models.provider.local claude-code >/dev/null 2>&1 && $DA project set demo models.provider.cloud claude-platform >/dev/null 2>&1 && out=$($DA project validate demo 2>&1) && ! grep -q '^finding:' <<<"$out" && echo "ok   project set models.provider clears the finding" || { echo "FAIL set provider: $out"; fail=1; }
-msg=$($DA project set demo git.author 'Example Author <author@example.com>' 2>&1); [ "$msg" = 'demo: git.author = "Example Author <author@example.com>"' ] && [ "$(jq -r .git.author $T/c/projects/demo.json)" = "Example Author <author@example.com>" ] && echo "ok   set git.author (a plain string, no provision note)" || { echo "FAIL set git.author: $msg"; fail=1; }
+msg=$($DA project set demo git.author 'Example Author <author@example.com>' 2>&1); msg=${msg%%$'\n'*}; [ "$msg" = 'demo: git.author = "Example Author <author@example.com>"' ] && [ "$(jq -r .git.author $T/c/projects/demo.json)" = "Example Author <author@example.com>" ] && echo "ok   set git.author (a plain string, no provision note)" || { echo "FAIL set git.author: $msg"; fail=1; }
 msg=$($DA project set demo git.author 'no email here' 2>&1); rc=$?; [ $rc != 0 ] && grep -q "git.author: a name and an email" <<<"$msg" && [ "$(jq -r .git.author $T/c/projects/demo.json)" = "Example Author <author@example.com>" ] && echo "ok   set refuses a git.author that is not Name <email>, nothing changed" || { echo "FAIL set bad git.author: rc=$rc $msg"; fail=1; }
 $DA project set demo review.keep_author true >/dev/null 2>&1 && [ "$(jq .review.keep_author $T/c/projects/demo.json)" = true ] && echo "ok   set review.keep_author true" || { echo "FAIL set review.keep_author"; fail=1; }
 msg=$($DA project set demo review.keep_author maybe 2>&1); rc=$?; [ $rc != 0 ] && grep -q "review.keep_author: true" <<<"$msg" && [ "$(jq .review.keep_author $T/c/projects/demo.json)" = true ] && echo "ok   set refuses a review.keep_author that is not true or false" || { echo "FAIL set bad keep_author: rc=$rc $msg"; fail=1; }
@@ -298,8 +331,8 @@ pnote release.after_steps '["publish"]' quiet
 pnote review.scrub scripts/scrub quiet
 pnote test_command true quiet
 # repo.detached and site.* are read where they are used (the branch guards, the release), not by a provision: no provision note
-msg=$($DA project set demo repo.detached '["gh-pages"]' 2>&1); [ "$msg" = 'demo: repo.detached = ["gh-pages"]' ] && echo "ok   set repo.detached says only what was set" || { echo "FAIL set repo.detached: $msg"; fail=1; }
-msg=$($DA project set demo site.enabled true 2>&1); [ "$msg" = 'demo: site.enabled = true' ] && echo "ok   set site.enabled says only what was set" || { echo "FAIL set site.enabled: $msg"; fail=1; }
+msg=$($DA project set demo repo.detached '["gh-pages"]' 2>&1); msg=${msg%%$'\n'*}; [ "$msg" = 'demo: repo.detached = ["gh-pages"]' ] && echo "ok   set repo.detached says only what was set" || { echo "FAIL set repo.detached: $msg"; fail=1; }
+msg=$($DA project set demo site.enabled true 2>&1); msg=${msg%%$'\n'*}; [ "$msg" = 'demo: site.enabled = true' ] && echo "ok   set site.enabled says only what was set" || { echo "FAIL set site.enabled: $msg"; fail=1; }
 $DA project set demo roles.build.effort turbo >/dev/null 2>&1 && { echo "FAIL set invalid accepted"; fail=1; } || echo "ok   set refuses an invalid value"
 [ "$(jq -r .roles.build.effort $T/c/projects/demo.json)" = high ] && echo "ok   refused set changed nothing" || { echo "FAIL set changed the file"; fail=1; }
 # marshal.lease_minutes is a project answer; the backend switch is not (it is set with a plan and an audit line by the marshal verbs)
@@ -331,6 +364,51 @@ for k in models.extensions models.accept_no_barrier.local; do
     { [ $rc != 0 ] && cmp -s $T/before.json $T/c/projects/demo.json; } && echo "ok   QARGI_GATED_STORE=1 opens nothing: $how project set $k is refused" || { echo "FAIL QARGI_GATED_STORE=1 $how project set $k (rc=$rc): $msg"; fail=1; }
   done
 done
+# set says what the answer was and writes an audit line; unset removes an answer with the same refusals, says what it was, and writes one
+AL=$T/s/audit.log; rm -f "$AL"
+$DA project set demo review.scrub null >/dev/null 2>&1
+msg=$($DA project set demo review.scrub scripts/scrub 2>&1)
+{ grep -qx 'was: null' <<<"$msg" && grep -q '"verb":"project:set"' "$AL" && grep -q 'demo review.scrub (was: null)' "$AL"; } && echo "ok   set prints was: and writes an audit line" || { echo "FAIL set was/audit: $msg"; fail=1; }
+msg=$($DA project set demo review.scrub scripts/other 2>&1); grep -qx 'was: "scripts/scrub"' <<<"$msg" && echo "ok   set prints the old value as JSON" || { echo "FAIL set was value: $msg"; fail=1; }
+msg=$($DA project set demo backlog.file /srv/b.md 2>&1); grep -qx 'was: (not set)' <<<"$msg" && echo "ok   set prints (not set) for a key that was absent" || { echo "FAIL set was absent: $msg"; fail=1; }
+rm -f "$AL"
+msg=$($DA project unset demo backlog.file 2>&1); rc=$?
+{ [ $rc = 0 ] && grep -qx 'demo: backlog.file removed' <<<"$msg" && grep -qx 'was: "/srv/b.md"' <<<"$msg" && ! jq -e '.backlog | has("file")' $T/c/projects/demo.json >/dev/null \
+  && grep -q '"verb":"project:unset"' "$AL" && [ "$(jq -r .detail "$AL")" = 'demo backlog.file (was: "/srv/b.md")' ]; } && echo "ok   unset removes the key, prints was: and writes an audit line" || { echo "FAIL unset (rc=$rc): $msg"; fail=1; }
+$DA project validate demo >/dev/null 2>&1 && echo "ok   the project is valid after unset" || { echo "FAIL validate after unset"; fail=1; }
+cp $T/c/projects/demo.json $T/before.json
+msg=$($DA project unset demo backlog.file 2>&1); rc=$?
+{ [ $rc != 0 ] && grep -q 'backlog.file is not set; nothing to remove' <<<"$msg" && cmp -s $T/before.json $T/c/projects/demo.json; } && echo "ok   unset of an absent key says so and changes nothing" || { echo "FAIL unset absent (rc=$rc): $msg"; fail=1; }
+msg=$($DA project unset nosuch backlog.file 2>&1); rc=$?; { [ $rc != 0 ] && grep -q "no project named 'nosuch'" <<<"$msg"; } && echo "ok   unset of an unknown project is refused" || { echo "FAIL unset unknown project: $msg"; fail=1; }
+msg=$($DA project unset demo 2>&1); rc=$?; { [ $rc = 2 ] && grep -q 'unset needs NAME PATH' <<<"$msg"; } && echo "ok   unset without a path is a usage error" || { echo "FAIL unset usage (rc=$rc): $msg"; fail=1; }
+msg=$($DA project unset demo 'Bad Path' 2>&1); rc=$?; { [ $rc != 0 ] && grep -q 'PATH: dotted keys' <<<"$msg"; } && echo "ok   unset takes a dotted path only" || { echo "FAIL unset path (rc=$rc): $msg"; fail=1; }
+# an answer the project needs: validate refuses, nothing changes
+for k in repo.url roles.build.base; do
+  msg=$($DA project unset demo "$k" 2>&1); rc=$?
+  { [ $rc != 0 ] && grep -q 'that would make the project invalid' <<<"$msg" && cmp -s $T/before.json $T/c/projects/demo.json; } && echo "ok   unset $k is refused by validate and changes nothing" || { echo "FAIL unset $k (rc=$rc): $msg"; fail=1; }
+done
+# the same gated paths as set, for every caller; and the marshal backend
+$DA project set demo marshal.lease_minutes 20 >/dev/null 2>&1; cp $T/c/projects/demo.json $T/before.json
+msg=$($DA project unset demo marshal.backend 2>&1); rc=$?; { [ $rc != 0 ] && grep -q 'marshal enable' <<<"$msg"; } && echo "ok   unset refuses marshal.backend and points to the marshal verbs" || { echo "FAIL unset marshal.backend (rc=$rc): $msg"; fail=1; }
+jq '.models.extensions=["x"] | .models.accept_no_barrier={local:{by:"a",at:"2026-11-02T00:00:00Z",reason:"r"}}' $T/c/projects/demo.json > $T/gated.json; cp $T/gated.json $T/c/projects/demo.json
+for kw in 'models.extensions|provider enable' 'models.extensions.0|provider enable' 'models.accept_no_barrier.local|provider accept' 'models.accept_no_barrier|provider accept' 'models|provider enable'; do
+  IFS='|' read -r k want <<<"$kw"
+  msg=$($DA project unset demo "$k" 2>&1); rc=$?
+  { [ $rc = 2 ] && grep -q "qargi $want" <<<"$msg" && cmp -s $T/gated.json $T/c/projects/demo.json; } && echo "ok   unset refuses $k with exit 2 and points to qargi $want" || { echo "FAIL unset $k (rc=$rc): $msg"; fail=1; }
+done
+cp $T/before.json $T/c/projects/demo.json
+# a member never runs it: from a member's run directory, or with the member mark in the environment
+$DA project set demo backlog.file /srv/b.md >/dev/null 2>&1; cp $T/c/projects/demo.json $T/before.json
+mkdir -p "$T/mrun/clone"; : > "$T/mrun/ability"; : > "$T/mrun/refs.before"; ROOT=$PWD
+msg=$(cd "$T/mrun/clone" && "$ROOT/bin/qargi" project unset demo backlog.file 2>&1); rc=$?
+{ [ $rc = 2 ] && grep -q 'not available in a member run' <<<"$msg" && cmp -s $T/before.json $T/c/projects/demo.json; } && echo "ok   unset is refused in a member's run directory" || { echo "FAIL unset in a run dir (rc=$rc): $msg"; fail=1; }
+msg=$(env "QARGI_MEMBER_""RUN=1" $DA project unset demo backlog.file 2>&1); rc=$?
+{ [ $rc = 2 ] && grep -q 'not available in a member run' <<<"$msg" && cmp -s $T/before.json $T/c/projects/demo.json; } && echo "ok   unset is refused with the member mark in the environment" || { echo "FAIL unset with the mark (rc=$rc): $msg"; fail=1; }
+# a check that cannot answer is a refusal, not "not a member": the same script from a copy of lib/ whose marshal_refs.py cannot be imported (python's message stays on stderr)
+cp -r lib "$T/lib2"; printf 'raise RuntimeError("broken")\n' > "$T/lib2/marshal_refs.py"
+msg=$(cd "$T" && "$T/lib2/project.sh" unset demo backlog.file 2>&1); rc=$?
+{ [ $rc = 2 ] && grep -q 'could not tell whether this is a member run' <<<"$msg" && grep -q 'broken' <<<"$msg" && cmp -s $T/before.json $T/c/projects/demo.json; } && echo "ok   unset is refused when the member check fails (fail closed)" || { echo "FAIL unset with a failing check (rc=$rc): $msg"; fail=1; }
+$DA project unset demo backlog.file >/dev/null 2>&1; cp $T/before.json $T/c/projects/demo.json
 # the store the gated verbs use (provider enable|disable|accept) takes only those two keys, and only what the answers' own validation accepts
 GA="python3 -I lib/gated_answers.py"; cp $T/c/projects/demo.json $T/before.json
 for kv in 'budget_cents|5' 'models.provider.local|"claude"' 'models|{}' 'roles.build.effort|"low"' 'models.accept_no_barrier.moon|{"by":"a","at":"2026-11-02T00:00:00Z","reason":"r"}' \
@@ -415,10 +493,10 @@ grep -qx "repo has its own .agent/skills (1 skill): qargi packs link hintp offer
 # One plan and one token for the lot; a worktree gets its links by running the verb inside it; nothing records the worktrees. A member's run
 # never applies, so work from the temporary directory (this test may itself run in one).
 DA=$PWD/bin/qargi
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 cd "$T" || exit 1
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 G="git -c user.name=t -c user.email=t@example.net"
-tokp() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 snap() { find "$@" \( -type l -printf 'L %p -> %l\n' \) -o \( -type f -printf 'F %p\n' \) -o \( -type d -printf 'D %p\n' \) 2>/dev/null | sort | sha256sum
          find "$@" -type f -print0 2>/dev/null | sort -z | xargs -0 -r sha256sum | sha256sum; }
 # a runtime defined by data alone: agents as TOML files linked one by one (entry-symlinks), memory in a directory named by a hash of the checkout

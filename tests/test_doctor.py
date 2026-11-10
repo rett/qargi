@@ -299,11 +299,145 @@ class WindowSource(Base):
         self.assertEqual(self.lines(out)["window-source"][0], "warn", out)
 
 
+class ProjectEnv(Base):
+    def setUp(self):
+        super().setUp()
+        shutil.rmtree(os.path.join(os.environ["QARGI_STATE"], "env"), ignore_errors=True)   # the state directory outlives a test
+        self.addCleanup(shutil.rmtree, os.path.join(os.environ["QARGI_STATE"], "env"), ignore_errors=True)
+
+    def record(self, doc, name="app"):
+        d = os.path.join(os.environ["QARGI_STATE"], "env")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, name + ".json"), "w") as f:
+            json.dump(doc, f)
+
+    def test_no_project_is_unknown(self):
+        status, text = self.lines(self.doctor()[1])["project-env"]
+        self.assertEqual(status, "unknown", text)
+
+    def test_never_run_is_unknown_and_names_the_verb(self):
+        self.project()
+        rc, out, _ = self.doctor("app")
+        status, text = self.lines(out)["project-env"]
+        self.assertEqual((rc, status), (0, "unknown"), out)
+        self.assertIn("project-env: never run", text)
+        self.assertIn("qargi env check --project app", text)
+
+    def test_a_record_without_a_check_is_never_run(self):
+        self.project()
+        self.record({"apply": {"time": "2026-11-01T00:00:00Z"}})
+        self.assertEqual(self.lines(self.doctor("app")[1])["project-env"][0], "unknown")
+
+    def test_the_last_verdict_and_time_are_shown(self):
+        self.project()
+        self.record({"check": {"verdict": "ENV OK", "time": "2026-11-09T10:00:00Z", "head": "abc1234def"}})
+        status, text = self.lines(self.doctor("app")[1])["project-env"]
+        self.assertEqual(status, "ok", text)
+        self.assertIn("project-env: last env check ENV OK at 2026-11-09T10:00:00Z", text)
+
+    def test_an_incomplete_verdict_warns(self):
+        self.project()
+        self.record({"check": {"verdict": "ENV INCOMPLETE: 2 missing", "time": "2026-11-09T10:00:00Z"}})
+        rc, out, _ = self.doctor("app", "--strict")
+        status, text = self.lines(out)["project-env"]
+        self.assertEqual((status, rc), ("warn", 1), out)
+        self.assertIn("last env check ENV INCOMPLETE: 2 missing at 2026-11-09T10:00:00Z", text)
+
+    def test_an_unreadable_record_is_unknown_never_a_failure(self):
+        self.project()
+        d = os.path.join(os.environ["QARGI_STATE"], "env")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "app.json"), "w") as f:
+            f.write("{not json")
+        rc, out, _ = self.doctor("app")
+        self.assertEqual((rc, self.lines(out)["project-env"][0]), (0, "unknown"), out)
+
+    def test_the_projects_code_is_never_run_and_nothing_is_written(self):
+        """The project's doctor command is a script that would leave a file; doctor reads the record and runs none of it."""
+        marker = os.path.join(self.t, "ran")
+        self.project(env={"doctor_command": ["sh", "-c", "touch " + marker]})
+        self.record({"check": {"verdict": "ENV OK", "time": "2026-11-09T10:00:00Z"}})
+        before = snapshot(os.environ["QARGI_STATE"])
+        self.doctor("app")
+        self.assertFalse(os.path.exists(marker))
+        self.assertEqual(snapshot(os.environ["QARGI_STATE"]), before)
+
+
+class Tools(Base):
+    """flock and timeout: a host without one is told so, since the locks of the finishing verbs and the bound on a remote question depend on them."""
+
+    def farm(self, leave_out):
+        """A PATH of links to every program of the usual bin directories except those named, so the doctor can run without them."""
+        d = os.path.join(self.t, "farm-" + "-".join(sorted(leave_out)))
+        os.makedirs(d, exist_ok=True)
+        for bindir in ("/usr/bin", "/bin"):
+            if os.path.isdir(bindir):
+                for n in os.listdir(bindir):
+                    if n not in leave_out and not os.path.lexists(os.path.join(d, n)):
+                        os.symlink(os.path.join(bindir, n), os.path.join(d, n))
+        return d
+
+    def test_both_found_is_ok(self):
+        rc, out, err = self.doctor()
+        self.assertEqual(self.lines(out)["tools"][0], "ok", out)
+        self.assertIn("flock and timeout found on PATH", out)
+
+    def test_a_missing_tool_warns_and_says_what_it_is_for(self):
+        for gone in ("flock", "timeout"):
+            e = dict(self.env, PATH=self.fakes + os.pathsep + self.farm({gone}))
+            r = subprocess.run([BIN, "doctor", "--json"], capture_output=True, text=True, env=e, stdin=subprocess.DEVNULL)
+            doc = json.loads(r.stdout)
+            tools = [c for c in doc["checks"] if c["name"] == "tools"][0]
+            self.assertEqual(tools["status"], "warn", (gone, tools))
+            self.assertIn("%s is not on PATH" % gone, tools["detail"])
+            self.assertEqual(tools["detail"].count("is not on PATH"), 1, tools)
+            self.assertTrue(any("make bootstrap" in f for f in tools["fix"]), tools)
+            self.assertEqual(r.returncode, 0, "a finding is no failure")
+            self.assertEqual(subprocess.run([BIN, "doctor", "--strict"], capture_output=True, text=True, env=e, stdin=subprocess.DEVNULL).returncode, 1)
+
+    def test_both_missing_are_named_together(self):
+        with mock.patch.object(D.shutil, "which", return_value=None):
+            c = D.check_tools()
+        self.assertEqual(c["status"], "warn")
+        self.assertIn("flock is not on PATH", c["detail"])
+        self.assertIn("timeout is not on PATH", c["detail"])
+
+
+class Checkout(unittest.TestCase):
+    """The tools list of the checkout (Makefile TOOLS, the bootstrap lines, AGENTS.md) keeps in step with what the doctor checks."""
+
+    def tools(self):
+        with open(os.path.join(ROOT, "Makefile"), encoding="utf-8") as f:
+            line = next(l for l in f if l.startswith("TOOLS :="))
+        return line.split(":=", 1)[1].split()
+
+    def test_flock_and_timeout_are_in_the_makefile_the_bootstrap_and_agents_md(self):
+        tools = self.tools()
+        for t, _ in D.TOOLS:
+            self.assertIn(t, tools)
+        with open(os.path.join(ROOT, "AGENTS.md"), encoding="utf-8") as f:
+            prereq = next(l for l in f if l.startswith("- Prerequisites:"))
+        for t in tools:
+            self.assertIn(t, prereq, "AGENTS.md lists the tool %s the Makefile checks" % t)
+        with open(os.path.join(ROOT, "Makefile"), encoding="utf-8") as f:
+            installs = [l for l in f if l.startswith("INSTALL :=")]
+        self.assertEqual(len(installs), 3)
+        for l in installs:
+            self.assertIn("util-linux", l)
+            self.assertIn("coreutils", l)
+
+    @unittest.skipUnless(shutil.which("make"), "make is not installed")
+    def test_make_doctor_has_a_line_for_each(self):
+        r = subprocess.run(["make", "-s", "doctor"], cwd=ROOT, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        for t, _ in D.TOOLS:
+            self.assertRegex(r.stdout, r"(?m)^(ok|missing): %s\b" % t)
+
+
 class Command(Base):
     def test_the_lines_are_status_name_detail_and_exit_is_zero(self):
         rc, out, err = self.doctor()
         self.assertEqual(rc, 0, err)
-        for name in ("remove-ipc", "guard", "shm", "window-source"):
+        for name in ("remove-ipc", "guard", "shm", "tools", "window-source", "project-env"):
             self.assertIn(name, self.lines(out))
         for line in out.splitlines():
             if not line.startswith("    "):
@@ -318,7 +452,7 @@ class Command(Base):
         rc, out, _ = self.doctor("--json", "--strict", FAKE_IPC="true")
         doc = json.loads(out)
         self.assertEqual((rc, doc["exit"], doc["warnings"], doc["strict"]), (1, 1, 1, True))
-        self.assertEqual([c["name"] for c in doc["checks"]], ["remove-ipc", "guard", "shm", "window-source"])
+        self.assertEqual([c["name"] for c in doc["checks"]], ["remove-ipc", "guard", "shm", "tools", "window-source", "project-env"])
         ipc = doc["checks"][0]
         self.assertEqual(ipc["status"], "warn")
         self.assertTrue(any("RemoveIPC=no" in line for line in ipc["fix"]))
@@ -404,7 +538,7 @@ class Command(Base):
     def test_help_describes_it(self):
         r = subprocess.run([BIN, "doctor", "--help"], capture_output=True, text=True, env=self.env)
         self.assertEqual(r.returncode, 0)
-        for word in ("--strict", "--json", "QARGI_BUSCTL", "RemoveIPC", "remove-ipc.conf"):
+        for word in ("--strict", "--json", "QARGI_BUSCTL", "RemoveIPC", "remove-ipc.conf", "project-env", "qargi env check"):
             self.assertIn(word, " ".join(r.stdout.split()), word)
 
 

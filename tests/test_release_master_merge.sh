@@ -10,7 +10,8 @@ cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 trap 'rm -rf "$T" "$HERMETIC"' EXIT
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
 export QARGI_PROJECT=app
@@ -37,7 +38,6 @@ git -C "$R" add -A && git -C "$R" commit -q -m one && git -C "$R" branch develop
 git -C "$R" checkout -q -b parked
 jq -n --arg p "$R" '{schema:1, project:"app", methodology:"gitflow", repo:{url:"https://github.com/acme/app", path:$p, long_lived:["master","develop"]}, test_command:"true"}' > "$T/c/projects/app.json"
 REL="$DA release"
-tok() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 rev() { git -C "$1" rev-parse -q --verify "$2" 2>/dev/null || echo none; }
 commit_on() { # BRANCH FILE: one commit on BRANCH, made in a temporary worktree
   local w; w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R" worktree add -q "$w" "$1"; echo "$2" > "$w/$2"; git -C "$w" add -A; git -C "$w" commit -q -m "add $2"; git -C "$R" worktree remove --force "$w"
@@ -127,9 +127,11 @@ rstart 0.3.2 --hotfix --allow-empty-notes && commit_on hotfix/0.3.2 fix2.txt && 
 d0=$(rev "$R" develop); r0=$(rev "$R" release/0.4.0); m0=$(rev "$R" master)
 out=$($REL finish 0.3.2 --hotfix 2>&1); t=$(tok <<<"$out")
 grep -q "merge tag 0.3.2 (the master merge commit) into release/0.4.0" <<<"$out" && ok "the plan names the open release branch as the second target" || no "hotfix to release plan: $out"
-$REL finish 0.3.2 --hotfix --plan "$t" --approved go >/dev/null 2>&1; rc=$?
+cout=$($REL finish 0.3.2 --hotfix --plan "$t" --approved go 2>&1); rc=$?
 cp=$T/s/conflicts/app-hotfix-0.3.2-into-release_0.4.0
 [ $rc = 3 ] && [ -d "$cp" ] && [ "$(rev "$R" master)" = "$m0" ] && [ "$(rev "$R" release/0.4.0)" = "$r0" ] && [ "$(rev "$R" refs/tags/0.3.2)" = none ] && ok "the conflict exits 3 with nothing moved and nothing tagged" || no "conflict rc=$rc"
+nmc=$(cut -d' ' -f3 "$cp.master")
+grep -q "qargi: merging tag 0.3.2 (the master merge commit ${nmc:0:7}) conflicts" <<<"$cout" && ok "the conflict message names the tag, not a bare sha" || no "conflict message: $cout"
 mh=$(git -C "$cp" rev-parse MERGE_HEAD 2>/dev/null || echo none)
 [ "$(git -C "$cp" rev-parse HEAD)" = "$r0" ] && [ "$mh" != none ] && [ "$(git -C "$R" log -1 --format=%s "$mh")" = "Merge branch 'hotfix/0.3.2'" ] && [ "$(git -C "$R" rev-parse "$mh^2")" = "$(rev "$R" hotfix/0.3.2)" ] \
   && ok "the parked worktree holds a merge of the master merge commit into the release branch" || no "parked merge: head=$(git -C "$cp" rev-parse HEAD) merge_head=$mh"
@@ -149,4 +151,13 @@ out=$($REL finish 0.4.0 --plan "$t" --approved go 2>&1); rc=$?; tg=$(rev "$R" "r
   && git -C "$R" merge-base --is-ancestor 0.3.2 develop && ok "finishing that release: develop gets the hotfix's tag too, master is not ahead, the trees are equal" || no "release after hotfix rc=$rc: $out"
 out=$($REL status 0.4.0 2>&1)
 grep -q "origin develop: .*(same)" <<<"$out" && ! grep -Eq "local is [0-9]+ ahead, [0-9]+ behind" <<<"$out" && ok "and release status reports no divergence" || no "final status: $out"
+
+# --- the bookkeeping file of the master merge commit is used only when it names a merge of this master and this branch head; any other is removed
+rstart 0.4.1 --hotfix --allow-empty-notes && commit_on hotfix/0.4.1 fix3.txt && rpush 0.4.1 --hotfix
+m0=$(rev "$R" master); hh=$(rev "$R" hotfix/0.4.1); bogus=$(rev "$R" develop); mf=$T/s/conflicts/app-hotfix-0.4.1-into-develop.master
+mkdir -p "$T/s/conflicts"; echo "$m0 $hh $bogus" > "$T/s/conflicts/app-hotfix-0.4.1-into-develop.master"
+t=$($REL finish 0.4.1 --hotfix | tok)
+out=$($REL finish 0.4.1 --hotfix --plan "$t" --approved go 2>&1); rc=$?; tg=$(rev "$R" "refs/tags/0.4.1^{commit}")
+[ $rc = 0 ] && [ "$tg" != "$bogus" ] && [ "$(git -C "$R" rev-list --parents -n 1 "$tg")" = "$tg $m0 $hh" ] && [ "$(rev "$R" master)" = "$tg" ] && [ "$(rev "$R" develop^2)" = "$tg" ] && [ ! -e "$mf" ] \
+  && ok "a file naming a commit that is not a merge of this master and this branch head is not used: the tag is on a new merge of them, and the file is gone" || no "bogus bookkeeping: rc=$rc tag=$tg: $out"
 exit $fail

@@ -3,7 +3,7 @@
 # A feature is as broad as you like (a theme, not a task): the lead merges the verified series of each related task into it,
 # and the whole test suite runs once, when the feature is complete. Nothing reaches develop before that.
 #
-#   feature.sh start NAME [--purpose TEXT] [--worktree] [--project P]
+#   feature.sh start NAME [--purpose TEXT] [--worktree] [--assume-unreachable-ok] [--project P]
 #                                                  feature/NAME from develop (a local branch); the purpose says what is related. --worktree also
 #                                                  makes its worktree at <worktrees.root>/feature/NAME and prints the path
 #   feature.sh list [--project P]                  the open features: purpose, distance from develop, and the files two features both change
@@ -24,15 +24,17 @@
 #                                                  both sides changed the same files, the message lists them and says to sync first. Refused, with
 #                                                  the runs listed, while a run of the feature is open (not cleaned, discarded, closed or merged).
 # The marshal (lib/marshal.sh) records who leads each feature: start makes you the lead, merge, sync, verify and finish ask it first
-# (another live lead: refused, nothing changes; an anonymous identity or an unreachable marshal only warns), verify and finish keep
+# (another live lead: refused, nothing changes; an anonymous identity only warns). With the shared refs backend a remote that cannot be
+# asked is a refusal too (exit 3, nothing changes) unless the verb is given --assume-unreachable-ok, which goes on and writes the audit
+# line marshal:unreachable-ok; a marshal that is missing or fails in some other way still only warns. verify and finish keep
 # your lease alive while they run, finish marks the record finished, and list and status show the lead.
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
-NAME_ARG='' EXTRA='' PROJ='' PLAN_ARG='' APPROVED='' KEEP='' RESOLVED='' PURPOSE='' WORKTREE=''
+NAME_ARG='' EXTRA='' PROJ='' PLAN_ARG='' APPROVED='' KEEP='' RESOLVED='' PURPOSE='' WORKTREE='' ASSUME_UNREACHABLE=''
 while [ $# -gt 0 ]; do
   case $1 in
-    --project) need_val "$1" $#; PROJ=$2; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;; --approved) need_val "$1" $#; APPROVED=$2; shift 2;; --keep) KEEP=1; shift;; --resolved) RESOLVED=1; shift;; --purpose) need_val "$1" $#; PURPOSE=$2; shift 2;; --worktree) WORKTREE=1; shift;;
+    --project) need_val "$1" $#; PROJ=$2; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;; --approved) need_val "$1" $#; APPROVED=$2; shift 2;; --keep) KEEP=1; shift;; --resolved) RESOLVED=1; shift;; --purpose) need_val "$1" $#; PURPOSE=$2; shift 2;; --worktree) WORKTREE=1; shift;; --assume-unreachable-ok) ASSUME_UNREACHABLE=1; shift;;
     -*) usage_die "unknown option $1";;
     *) if [ -z "$NAME_ARG" ]; then NAME_ARG=$1; else EXTRA=$1; fi; shift;;
   esac
@@ -44,6 +46,7 @@ if [ "$verb" = list ] || [ "$verb" = park ]; then NAME_ARG=-; fi
 case $NAME_ARG in master|develop) die "'$NAME_ARG' is a long-lived branch";; esac
 export RESOLVED
 [ -z "$WORKTREE" ] || [ "$verb" = start ] || die "--worktree belongs to feature start"
+case $verb in start|sync|merge|verify|finish) ;; *) [ -z "$ASSUME_UNREACHABLE" ] || die "--assume-unreachable-ok belongs to the verbs that ask the marshal first: feature start, sync, merge, verify and finish";; esac
 . "$(dirname "$0")/gitflow.sh"
 # shellcheck disable=SC2154  # PROJ and TESTCMD come from project_load
 project_load
@@ -104,7 +107,7 @@ run_warning() {
 # --applied-by-am) and an applied run whose branch is merged are not open. Nothing is changed.
 open_run_gate() {
   local out rc=0 d sl ro st n=0 lines=''
-  out=$(python3 -I "$(dirname "$0")/lead_usage.py" open-runs --state "$DA_STATE" --conf "$DA_CONF" --project "$PROJ" --feature "$1" </dev/null 2>/dev/null) || rc=$?
+  out=$(pymod lead_usage open-runs --state "$DA_STATE" --conf "$DA_CONF" --project "$PROJ" --feature "$1" </dev/null 2>/dev/null) || rc=$?
   [ "$rc" != 0 ] || return 0
   [ "$rc" = 1 ] || { echo "qargi: warning: could not list the open runs of feature/$1 (lead_usage.py exited $rc): finishing goes on without that check" >&2; return 0; }
   while IFS=$'\t' read -r d sl ro st cmd; do
@@ -221,10 +224,13 @@ case $verb in
         g rev-parse -q --verify "refs/remotes/origin/$BR" >/dev/null && die "origin/$BR was seen at the last fetch and origin cannot be asked now: fetch it or choose another name";;
     esac
     if [ -n "$WORKTREE" ]; then wtp=$WT_ROOT/$BR; [ ! -e "$wtp" ] || die "$wtp exists already: nothing was created"; fi
+    # the marshal keeps the record (purpose, started) and makes this identity the lead. It is asked first: a shared marshal that cannot be reached
+    # refuses the start (exit 3) before anything is made, unless --assume-unreachable-ok; any other failure leaves the feature without a record
+    mrc=0; marshal_flow marshal_start "$PROJ" "$NAME_ARG" "$PURPOSE" || mrc=$?
+    if [ "$mrc" = 3 ] && [ -z "$ASSUME_UNREACHABLE" ]; then marshal_unreachable_refuse "$NAME_ARG"; fi
     g branch "$BR" develop
     journal_ref "$REPO" "refs/heads/$BR" "" "$(sha_of "$BR")" feature:start
-    # the marshal keeps the record (purpose, started) and makes this identity the lead; the feature exists either way
-    marshal_start "$PROJ" "$NAME_ARG" "$PURPOSE" || echo "qargi: warning: the marshal record of $NAME_ARG was not written (see above); $BR exists" >&2
+    [ "$mrc" = 0 ] || echo "qargi: warning: the marshal record of $NAME_ARG was not written (see above); $BR exists" >&2
     echo "created $BR from develop ($(g rev-parse --short "$BR")); merge each verified task into it: qargi feature merge $NAME_ARG BRANCH"
     echo "tasks branch from here: dispatch them with --base $BR"
     if [ -n "$WORKTREE" ]; then

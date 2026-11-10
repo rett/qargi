@@ -9,7 +9,8 @@ cd "$(dirname "$0")/.." || exit 1
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0
 trap 'rm -rf "$T" "$HERMETIC"' EXIT
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 
 # the real manifest: every test file is listed, every listed file exists (--only with nothing matching runs no step)
 out=$(bash tests/run.sh --only '^no step has this command$' 2>&1); rc=$?

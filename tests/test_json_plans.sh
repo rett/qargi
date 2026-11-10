@@ -9,13 +9,13 @@ ROOT=$PWD
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0
 trap 'rm -rf "$T" "$HERMETIC"' EXIT
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 DA=$ROOT/bin/qargi
 export QARGI_CONF=$T/c QARGI_STATE=$T/s
 mkdir -p "$T/c/projects" "$T/s"
 LIB=$T/c/packs
 j() { jq -r "$1" <<<"$OUT"; }
-tok_of() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 empty_lib() { [ -z "$(ls -A "$LIB/skills" 2>/dev/null)" ]; }
 
 # --- 1. a plan: one JSON object with the plan text, the token, the command that applies it and the exit status

@@ -67,6 +67,27 @@ class Canon(unittest.TestCase):
         for kind in ("memory", "reference"):
             self.assertConverges(kind, {})
 
+    def test_a_store_that_cannot_be_read_is_unreachable_not_empty(self):
+        """detect(None) is "unreachable"; check and plan on a listing file that is missing or not a listing say so, advise no
+        `canon plan` and plan nothing."""
+        self.assertEqual(C.detect("memory", None)[0], "unreachable")
+        self.assertNotIn(C.detect("memory", {})[0], ("unreachable",))
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        for name, text in (("missing", None), ("garbage", "not json\n")):
+            path = os.path.join(d.name, name + ".jsonl")
+            if text is not None:
+                with open(path, "w") as f:
+                    f.write(text)
+            args = [sys.executable, os.path.join(LIB, "canon.py"), "check", "--kind", "memory", "--project", "demo", "--roles", "build", "--store", path]
+            r = subprocess.run(args, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 1, name)
+            self.assertTrue(r.stdout.startswith("unreachable: "), r.stdout)
+            self.assertNotIn("canon plan", r.stdout)
+            r = subprocess.run(args[:2] + ["plan"] + args[3:] + ["--seed", SEED], capture_output=True, text=True)
+            self.assertEqual((r.returncode, r.stdout), (1, ""), name)
+            self.assertTrue(r.stderr.startswith("unreachable: "), r.stderr)
+
     def test_empty_store_plans_the_full_seed_and_the_marker(self):
         """The set-up of an empty store: the seed's own files, nothing moved, the marker last. Tier init (`memory init`) and
         a new project's stores both start here."""

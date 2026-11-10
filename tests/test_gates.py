@@ -45,6 +45,51 @@ class Validation(unittest.TestCase):
         self.assertIn('"a" is used twice', p[0])
 
 
+class CiAnswers(unittest.TestCase):
+    """gates[].ci_jobs and the answer ci.not_gates: lists of job names or ids."""
+    def test_valid(self):
+        self.assertEqual(gates.problems([dict(G(), ci_jobs=["Unit tests", "unit-linux"])]), [])
+        self.assertEqual(gates.ci_problems(None), [])
+        self.assertEqual(gates.ci_problems({}), [])
+        self.assertEqual(gates.ci_problems({"not_gates": ["publish", "All checks"]}), [])
+
+    def test_each_problem_is_named(self):
+        for bad in ("unit", [], [""], [" x"], ["a", "a"], [5], ["a\nb"], {"a": 1}):
+            p = gates.problems([dict(G(), ci_jobs=bad)])
+            self.assertTrue(p and "gates[0].ci_jobs" in p[0], (bad, p))
+        for bad in ("publish", [], [""], ["x", "x"], [None], ["a\x85b"]):
+            p = gates.ci_problems({"not_gates": bad})
+            self.assertTrue(p and "ci.not_gates" in p[0], (bad, p))
+        self.assertIn("ci.other: unknown key", gates.ci_problems({"other": 1})[0])
+        self.assertTrue(gates.ci_problems(["publish"])[0].startswith("ci: an object"))
+
+
+class CoveredBy(unittest.TestCase):
+    """covered_by on a feature gate names a release gate."""
+    def test_valid(self):
+        self.assertEqual(gates.problems([dict(G("lint"), covered_by="ci"), G("ci", tier="release")]), [])
+        self.assertEqual(gates.problems([G("ci", tier="release"), dict(G("lint"), covered_by="ci")]), [])   # the order does not matter
+
+    def test_a_name_that_is_no_release_gate_is_refused(self):
+        for gs in ([dict(G("lint"), covered_by="ci")],                                              # no such gate
+                   [dict(G("lint"), covered_by="unit"), G("unit")],                                 # a feature gate
+                   [dict(G("lint"), covered_by="lint"), G("ci", tier="release")],                   # itself
+                   [dict(G("lint"), covered_by=5), G("ci", tier="release")],
+                   [dict(G("lint"), covered_by=["ci"]), G("ci", tier="release")],
+                   [dict(G("lint"), covered_by=None), G("ci", tier="release")]):
+            p = gates.problems(gs)
+            self.assertTrue(p and "gates[0].covered_by" in p[0] and "release gate" in p[0], (gs, p))
+
+    def test_only_a_feature_gate_is_covered(self):
+        p = gates.problems([dict(G("pack", tier="release"), covered_by="ci"), G("ci", tier="release")])
+        self.assertTrue(p and "gates[0].covered_by: only a feature gate" in p[0], p)
+
+    def test_select_carries_covered_by_only_when_set(self):
+        gs = [dict(G("lint"), covered_by="ci"), G("unit"), G("ci", tier="release")]
+        self.assertEqual([g.get("covered_by") for g in gates.select(gs, ["feature", "release"])], ["ci", None, None])
+        self.assertEqual(gates.select(gs, ["feature"])[1], {"name": "unit", "tier": "feature", "command": "make test"})
+
+
 class Selection(unittest.TestCase):
     def test_tiers_and_order(self):
         gs = [G("a"), G("b", tier="release"), G("c", ["make", "two words"])]
@@ -94,7 +139,7 @@ class Parsing(unittest.TestCase):
         self.assertEqual(self.jobs("jobs:\r\n  a:\r\n    name: A\r\n"), [("a", "A")])
 
 
-class Scan(unittest.TestCase):
+class Trees:
     def tree(self, files):
         d = tempfile.mkdtemp(dir=os.environ["TMPDIR"])
         self.addCleanup(lambda: subprocess.run(["rm", "-rf", d]))
@@ -104,6 +149,8 @@ class Scan(unittest.TestCase):
                 f.write(t)
         return d
 
+
+class Scan(Trees, unittest.TestCase):
     def test_matches_by_name_or_id(self):
         d = self.tree({"a.yml": "jobs:\n  test:\n    name: Unit\n  lint:\n    runs-on: x\n  extra:\n    name: Extra job\n  m:\n    name: ${{ x }}\n"})
         found, bad = gates.scan([G("Unit"), G("lint")], d)
@@ -126,6 +173,43 @@ class Scan(unittest.TestCase):
     def test_files_in_order(self):
         d = self.tree({"b.yml": "jobs:\n  two:\n    runs-on: x\n", "a.yml": "jobs:\n  one:\n    runs-on: x\n"})
         self.assertEqual([f[2] for f in gates.scan([], d)[0]], ["one", "two"])
+
+
+class ScanListed(Trees, unittest.TestCase):
+    """ci_jobs and ci.not_gates in the scan."""
+    WF = "jobs:\n  lint:\n    runs-on: x\n  unit-linux:\n    runs-on: x\n  unit-mac:\n    name: Unit (mac)\n  publish:\n    runs-on: x\n  all:\n    name: All checks\n"
+
+    def test_a_job_in_ci_jobs_is_covered_not_unmatched(self):
+        d = self.tree({"a.yml": self.WF})
+        found, bad = gates.scan([G("lint"), dict(G("unit"), ci_jobs=["unit-linux", "Unit (mac)"])], d, ["publish", "All checks"])
+        self.assertEqual(found, [("covered", ".github/workflows/a.yml", "unit-linux", "unit"), ("covered", ".github/workflows/a.yml", "unit-mac", "unit")])
+        self.assertEqual(bad, 0)
+
+    def test_not_gates_are_left_out_by_name_or_id(self):
+        d = self.tree({"a.yml": self.WF})
+        found, bad = gates.scan([G("lint")], d, ["publish", "All checks"])
+        self.assertEqual([f[2] for f in found], ["unit-linux", "unit-mac"])
+        self.assertTrue(all(f[0] == "unmatched" for f in found))
+        self.assertEqual(bad, 2)
+
+    def test_no_gate_declared_still_honours_not_gates(self):
+        d = self.tree({"a.yml": "jobs:\n  one:\n    runs-on: x\n  two:\n    runs-on: x\n"})
+        self.assertEqual(gates.scan([], d, ["one"])[1], 1)
+
+    def test_a_listed_name_no_workflow_has_is_missing(self):
+        d = self.tree({"a.yml": self.WF})
+        found, bad = gates.scan([G("lint"), dict(G("unit"), ci_jobs=["unit-linux", "unit-gone"])], d, ["publish", "ALL", "All checks", "gone"])
+        self.assertEqual([f for f in found if f[0] == "missing"],
+                         [("missing", "-", "unit-gone", "gate unit"), ("missing", "-", "ALL", "ci.not_gates"), ("missing", "-", "gone", "ci.not_gates")])
+
+    def test_missing_is_not_reported_when_a_name_cannot_be_read_or_without_workflow(self):
+        d = self.tree({"a.yml": "jobs:\n  one:\n    name: ${{ x }}\n"})
+        self.assertEqual([f[0] for f in gates.scan([], d, ["two"])[0]], ["unknown"])
+        d = self.tree({"x.yml": "jobs: {a: {}}\n"})
+        self.assertEqual([f[0] for f in gates.scan([], d, ["two"])[0]], ["unknown"])
+        d = tempfile.mkdtemp(dir=os.environ["TMPDIR"])
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", d]))
+        self.assertEqual(gates.scan([dict(G(), ci_jobs=["x"])], d, ["y"]), ([], 0))
 
 
 class Cli(unittest.TestCase):
@@ -162,6 +246,19 @@ class Cli(unittest.TestCase):
         p = self.run_cli({"gates": [G(), G()]}, "select", "feature")
         self.assertEqual(p.returncode, 1)
         self.assertIn("is used twice", p.stderr)
+
+    def test_scan_reads_not_gates_and_ci_jobs_from_the_answers(self):
+        d = tempfile.mkdtemp(dir=os.environ["TMPDIR"])
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", d]))
+        os.makedirs(os.path.join(d, ".github", "workflows"))
+        with open(os.path.join(d, ".github", "workflows", "a.yml"), "w") as f:
+            f.write("jobs:\n  lint:\n    runs-on: x\n  ci-all:\n    runs-on: x\n  other:\n    runs-on: x\n")
+        p = self.run_cli({"gates": [dict(G("lint"), ci_jobs=["other"])], "ci": {"not_gates": ["ci-all", "stale"]}}, "scan", d)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(p.stdout.splitlines(), ["covered\t.github/workflows/a.yml\tother\tlint", "missing\t-\tstale\tci.not_gates"])
+        p = self.run_cli({"gates": [G("lint")], "ci": {"not_gates": "ci-all"}}, "scan", d)
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("ci.not_gates", p.stderr)
 
 
 if __name__ == "__main__":

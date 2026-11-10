@@ -31,6 +31,12 @@ import shutil
 import subprocess
 import sys
 
+HERE = os.path.dirname(os.path.realpath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+import procenv as PE  # noqa: E402
+from procenv import clean_path  # noqa: E402,F401  (T.clean_path: the PATH a tool is looked up on)
+
 KINDS = ("go", "binary", "submodule")
 KEYS = {"go": ("kind", "name", "version"), "binary": ("kind", "name", "version", "url", "sha256"), "submodule": ("kind", "name", "path")}
 GO_PATH = re.compile(r"[A-Za-z0-9][A-Za-z0-9._~/-]{0,200}")
@@ -158,10 +164,6 @@ def label(t):
 
 # ---- where a tool is and what it is -------------------------------------------------------------------------------------------
 
-def clean_path():
-    return os.pathsep.join(p for p in os.environ.get("PATH", "").split(os.pathsep) if p.startswith("/")) or "/usr/bin:/bin"
-
-
 def go_bin_dir():
     """Where go install puts binaries: GOBIN, else GOPATH/bin, else ~/go/bin."""
     if os.environ.get("GOBIN"):
@@ -208,23 +210,17 @@ def go_version_of(file, go=None):
 
 
 def child_env():
-    env = {"PATH": clean_path(), "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "TERM": "dumb", "GIT_TERMINAL_PROMPT": "0"}
-    for k in ("HOME", "USER", "LOGNAME", "TMPDIR") + GO_KEEP:
-        if os.environ.get(k):
-            env[k] = os.environ[k]
-    return env
+    return PE.child_env(GO_KEEP)
 
 
 def submodule_state(repo, path):
     """' ' (at the recorded commit), '+' (another commit), '-' (not initialised), 'U' (conflicts), None (no such submodule), or False (not a work tree)."""
-    try:
-        r = subprocess.run(["git", "-c", "core.fsmonitor=false", "-C", repo, "submodule", "status", "--", path], capture_output=True, text=True,
-                           stdin=subprocess.DEVNULL, env=dict(child_env(), GIT_OPTIONAL_LOCKS="0"), timeout=60)
-    except (OSError, subprocess.SubprocessError):
+    rc, out, err = PE.git("submodule", "status", "--", path, repo=repo, timeout=60, env=dict(child_env(), GIT_OPTIONAL_LOCKS="0"))
+    if rc is None:
         return False
-    if r.returncode != 0:
-        return False if "not a git repository" in r.stderr else None
-    for ln in r.stdout.splitlines():
+    if rc != 0:
+        return False if "not a git repository" in err else None
+    for ln in out.splitlines():
         m = re.match(r"^([ +\-U])[0-9a-f]{40,64} (.+?)(?: \(.*\))?$", ln)
         if m and m.group(2) == path:
             return m.group(1)
@@ -319,12 +315,9 @@ def install_binary(t):
 
 def git(*args, cwd=None, git_dir=None):
     """(exit, stdout, stderr) of a git command: no prompt, no fsmonitor."""
-    cmd = ["git", "-c", "core.fsmonitor=false", "-c", "protocol.file.allow=always"] + (["--git-dir", git_dir] if git_dir else []) + list(args)
-    try:
-        r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=dict(child_env(), GIT_OPTIONAL_LOCKS="0"), timeout=GIT_TIMEOUT)
-    except (OSError, subprocess.SubprocessError) as e:
-        return 1, "", str(e)
-    return r.returncode, r.stdout.strip(), r.stderr.strip()
+    rc, out, err = PE.git(*args, cwd=cwd, git_dir=git_dir, config=("protocol.file.allow=always",), timeout=GIT_TIMEOUT,
+                          env=dict(child_env(), GIT_OPTIONAL_LOCKS="0"))
+    return (1 if rc is None else rc), out.strip(), (err if rc is None else err.strip())
 
 
 def gitmodules_names(clone):

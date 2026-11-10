@@ -6,7 +6,8 @@ cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
 T=$(mktemp -d); trap 'rm -rf "$T" "$HERMETIC"' EXIT; fail=0; DA=$PWD/bin/qargi
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 git init -q -b main "$T/r"; cd "$T/r" || exit 1
 git config user.name t; git config user.email t@example.net
 mkdir -p internal docs man; echo a > internal/a.go; echo a > docs/a.md; echo a > man/a.1; git add -A; git commit -q -m base; BASE=$(git rev-parse HEAD)
@@ -483,7 +484,7 @@ for tr in 'Co-Authored-By: Someone <someone@example.net>' 'co-authored-by: Someo
   R39=$(newrun trailbad); r0=$(refs_all)
   sed -i "s/^The manual and docs say what a name may hold\.\$/&\n\n$tr/" "$R39"/out/patches/0002-*.patch
   out=$($DA review check "$R39/out" 2>&1); rc=$?
-  { [ $rc = 1 ] && [ "$(scrubs "$out")" = 1 ] && grep -q "^scrub: FAIL review.trailer_policy is reject: [0-9a-f]* carries \"$tr\"\$" <<<"$out"; } \
+  { [ $rc = 1 ] && [ "$(scrubs "$out")" = 1 ] && grep -q "^scrub: FAIL review.trailer_policy is reject: [0-9a-f]\{12\} line 5 of its message carries \"$tr\"\$" <<<"$out"; } \
     && ok "trailer_policy reject fails a commit with the trailer '$tr'" || no "trailer '$tr': rc=$rc $out"
   [ "$(refs_all)" = "$r0" ] || no "left behind after a trailer: $(refs_all)"
   $DA local clean "$R39" --discard >/dev/null 2>&1 || rm -rf "$R39"
@@ -492,6 +493,50 @@ setans '.review.trailer_policy = "none"'; R40=$(newrun trailnone)
 sed -i 's/^The manual and docs say what a name may hold\.$/&\n\nCo-Authored-By: Someone <someone@example.net>/' "$R40"/out/patches/0002-*.patch
 out=$($DA review check "$R40/out" 2>&1); rc=$?
 { [ $rc = 0 ] && ! grep -q '^scrub:' <<<"$out"; } && ok "trailer_policy none (the default) lets the trailer pass and prints nothing more" || no "trailer none: rc=$rc $out"
+# review.reject_trailers: more trailer keys under the policy reject. The run's own copy in the registry holds them (local prepare copies the answers it
+# knows; the test puts the list there itself), and the verdict names the commit, the line of its message and the entry that matched
+setans '.review.trailer_policy = "reject"'
+setreg() { # RUN JSON-LIST: the registry's copy of review.reject_trailers for the run
+  jq -c --arg r "$(readlink -f "$1")" --argjson l "$2" 'if .run == $r then .answers.review.reject_trailers = $l else . end' "$T/s/local-runs.jsonl" > "$T/reg.new" \
+    && chmod 600 "$T/reg.new" && mv "$T/reg.new" "$T/s/local-runs.jsonl"
+}
+addtrailer() { sed -i "s/^The manual and docs say what a name may hold\.\$/&\n\n$2/" "$1"/out/patches/0002-*.patch; }
+R41=$(newrun rejextra); setreg "$R41" '["Signed-off-by","Change-Id","X-*"]'
+for kt in 'Signed-off-by: A <a@example.net>|Signed-off-by' 'change-id: I0123|Change-Id' 'X-Review-Note: later|X-\*'; do
+  tr=${kt%%|*}; key=${kt#*|}
+  R42=$(newrun rejextra2); setreg "$R42" '["Signed-off-by","Change-Id","X-*"]'; addtrailer "$R42" "$tr"
+  out=$($DA review check "$R42/out" 2>&1); rc=$?
+  { [ $rc = 1 ] && [ "$(scrubs "$out")" = 1 ] && grep -q "^scrub: FAIL review.reject_trailers names $key: [0-9a-f]\{12\} line 5 of its message carries \"$tr\"\$" <<<"$out"; } \
+    && ok "review.reject_trailers fails '$tr' and names the commit, the line and the entry" || no "reject_trailers '$tr': rc=$rc $out"
+  $DA local clean "$R42" --discard >/dev/null 2>&1 || rm -rf "$R42"
+done
+R43=$(newrun rejextra3); setreg "$R43" '["Signed-off-by"]'; addtrailer "$R43" 'Reviewed-by: B <b@example.net>'
+out=$($DA review check "$R43/out" 2>&1); rc=$?
+{ [ $rc = 0 ] && grep -qx 'scrub: ok' <<<"$out"; } && ok "a trailer the list does not name passes" || no "other trailer rc=$rc $out"
+R44=$(newrun rejextra4); setreg "$R44" '["Signed-off-by"]'; addtrailer "$R44" 'Co-Authored-By: C <c@example.net>'
+out=$($DA review check "$R44/out" 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q '^scrub: FAIL review.trailer_policy is reject: [0-9a-f]\{12\} line 5 of its message carries "Co-Authored-By' <<<"$out"; } && ok "the built-in two still fail, with the policy named" || no "built-in rc=$rc $out"
+R45=$(newrun rejextra5); setreg "$R45" '["bad key"]'
+out=$($DA review check "$R45/out" 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q '^scrub: FAIL review.reject_trailers has an entry that is no trailer key: ' <<<"$out"; } && ok "an entry that is no trailer key fails closed" || no "bad entry rc=$rc $out"
+setans '.review.trailer_policy = "none"'; R46=$(newrun rejextra6); setreg "$R46" '["Signed-off-by"]'; addtrailer "$R46" 'Signed-off-by: A <a@example.net>'
+out=$($DA review check "$R46/out" 2>&1); rc=$?
+{ [ $rc = 0 ] && ! grep -q '^scrub:' <<<"$out"; } && ok "the list counts only under the policy reject" || no "list without the policy rc=$rc $out"
+# end to end: local prepare copies review.reject_trailers into the run's registry line (the other tests above write the list into the registry themselves), so a
+# prepared run is held to it with nothing added by hand; an answer changed after prepare is not believed
+setans '.review.trailer_policy = "reject" | .review.reject_trailers = ["Signed-off-by", "X-*"]'
+R47=$(newrun rejprep); addtrailer "$R47" 'Signed-off-by: A <a@example.net>'
+[ "$(jq -c --arg r "$(readlink -f "$R47")" 'select(.run == $r) | .answers.review.reject_trailers' "$T/s/local-runs.jsonl")" = '["Signed-off-by","X-*"]' ] \
+  && ok "local prepare copies review.reject_trailers into the run's line of the registry" || no "registry copy: $(jq -c '.answers.review' "$T/s/local-runs.jsonl" | tail -1)"
+setans '.review.trailer_policy = "reject" | .review.reject_trailers = ["Change-Id"]'
+out=$($DA review check "$R47/out" 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q '^scrub: FAIL review.reject_trailers names Signed-off-by: [0-9a-f]\{12\} line 5 of its message carries "Signed-off-by: A <a@example.net>"$' <<<"$out"; } \
+  && ok "a prepared run is held to review.reject_trailers as it was at prepare (no registry edit), and a later change of the answer is not believed" || no "prepared reject_trailers: rc=$rc $out"
+R48=$(newrun rejprep2); addtrailer "$R48" 'X-Note: later'
+out=$($DA review check "$R48/out" 2>&1); rc=$?
+{ [ $rc = 0 ] && grep -qx 'scrub: ok' <<<"$out" && [ "$(jq -c --arg r "$(readlink -f "$R48")" 'select(.run == $r) | .answers.review.reject_trailers' "$T/s/local-runs.jsonl")" = '["Change-Id"]' ]; } \
+  && ok "a run prepared after the answer changed takes the new list" || no "second prepared run: rc=$rc $out"
+setans '.review.trailer_policy = "none"'
 # a report-only run (no patches) is not scrubbed
 setans '.review.scrub = "exit 1"'; mkdir -p "$T/rep2"; printf '# Findings\n\nnone\n\n# Checked\n\nnothing\n\nverdict: accept\n' > "$T/rep2/report.md"; printf '{"status":"DONE","commits":[]}\n' > "$T/rep2/manifest.json"
 out=$($DA review check "$T/rep2" 2>&1); rc=$?

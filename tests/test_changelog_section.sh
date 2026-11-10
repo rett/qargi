@@ -63,5 +63,8 @@ bash $S 1.2.0 "$T/c.md" "$H" >/dev/null 2>&1; [ $? = 1 ] && ok "a heading the te
 out=$(bash $S 1.2.0 "$T/c.md" '## [{version}] - {date}'); [ "$(tail -1 <<<"$out")" = "- the old thing" ] && ok "the Keep a Changelog template reads a Keep a Changelog file" || no "kac template: $out"
 out=$(bash $S 1.2.0 "$T/t.md" '# {version} ({date})' 2>&1); [ $? = 1 ] && ok "a template of another level does not match" || no "level: $out"
 grep -q "tags:" .github/workflows/release.yml && grep -q "verify-tag" .github/workflows/release.yml && grep -q "is-ancestor" .github/workflows/release.yml && ok "the workflow runs on tags, verifies the tag and checks master" || no "workflow shape"
+# the Unreleased section of the real changelog: a blank line stands before a header, never between two entries
+blank=$(awk '/^## /{u = ($0 ~ /^## \[Unreleased\]/)} u && prev == "" && /^- /{print NR} {prev = $0}' CHANGELOG.md)
+[ -z "$blank" ] && ok "CHANGELOG.md [Unreleased] has no blank line before an entry" || no "CHANGELOG.md [Unreleased]: a blank line before the entry at line $blank"
 shellcheck -x -S warning lib/changelog_section.sh tests/test_changelog_section.sh >/dev/null 2>&1 && ok "shellcheck clean" || no "shellcheck"
 exit $fail

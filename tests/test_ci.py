@@ -102,6 +102,9 @@ class Workflow(unittest.TestCase):
             self.assertGreaterEqual(self.doc["jobs"][name]["timeout-minutes"], need, "%s: the budgets ask for %d min" % (name, need))
         said = int(re.search(r"plans (\d+) s of budgets", text(WF)).group(1))   # the comment keeps up with the manifest, within 5 %
         self.assertLessEqual(abs(said - max(totals)), max(totals) * 0.05, "the comment says %d s, the manifest plans %d s" % (said, max(totals)))
+        total = sum(totals)                  # the other figure of the comment: all the budgets, one after the other
+        said_all = int(re.search(r"\(now (\d+) s x 1\.5 = \d+ min", text(WF)).group(1))
+        self.assertLessEqual(abs(said_all - total), total * 0.05, "the comment says %d s in all, the manifest plans %d s" % (said_all, total))
         for name, job in self.doc["jobs"].items():
             self.assertIsInstance(job.get("timeout-minutes"), int, name)
 
@@ -127,6 +130,31 @@ class Pins(unittest.TestCase):
         self.assertEqual(len(cache), 1)
         self.assertIn("inputs.packages", cache[0]["with"]["key"])
         self.assertEqual(sorted(a["inputs"]["packages"]["default"].split()), ["jq", "shellcheck"])
+
+
+class Manifest(unittest.TestCase):
+    def test_the_header_states_what_a_budget_is_and_not_that_it_only_shrinks(self):
+        head = " ".join(l.lstrip("# ") for l in text(os.path.join(ROOT, "tests", "suite.txt")).splitlines() if l.startswith("#"))
+        self.assertIn("a budget is the last recorded duration of the step on the reference machine, rounded up by a tenth; "
+                      "the run reports a step that takes more than 1.5x its budget", head)
+        self.assertNotIn("only shrinks", head)
+        for f in ("CONTRIBUTING.md", os.path.join("tests", "run.sh")):
+            self.assertNotRegex(text(os.path.join(ROOT, f)), r"[Bb]udgets? (only )?shrinks?\b", f)
+
+    def test_every_step_is_well_formed_a_budget_of_a_second_and_a_timeout_that_covers_the_slow_limit(self):
+        n = 0
+        for l in text(os.path.join(ROOT, "tests", "suite.txt")).splitlines():
+            if not l.strip() or l.lstrip().startswith("#"):
+                continue
+            f = [x.strip() for x in l.split("|")]
+            self.assertGreaterEqual(len(f), 5, l)
+            self.assertIn(f[0], ("fast", "full"), l)
+            self.assertIn(f[1], ("par", "serial"), l)
+            self.assertRegex(f[2] + f[3], r"^\d+$", l)
+            self.assertGreaterEqual(int(f[3]), 1, l)
+            self.assertGreaterEqual(int(f[2]), SLOW * int(f[3]), "the timeout is below the slow limit: " + l)
+            n += 1
+        self.assertGreater(n, 100)
 
 
 class Durations(unittest.TestCase):

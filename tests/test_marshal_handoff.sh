@@ -15,7 +15,8 @@ cd "$(dirname "$0")/.." || exit 1
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi; TOOL=$PWD
 trap 'jobs -p | xargs -r kill 2>/dev/null; rm -rf "$T" "$HERMETIC"' EXIT
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 export HOME=$T/home
 export QARGI_CONF=$T/c QARGI_STATE=$T/s GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
 export QARGI_PROJECT=app
@@ -32,7 +33,6 @@ commit_on() { # BRANCH FILE: one commit on BRANCH (in a temporary worktree)
 for n in f1 f2 f3 big1 big2 big3 big4 big5 big6 big7 big8; do git -C "$R" branch "feature/$n" develop; done
 commit_on feature/f1 a.txt; commit_on feature/f1 b.txt
 rec() { echo "$S/features/app-$1.json"; }
-out() { cat "$T/o" "$T/e"; }
 run() { "$@" >"$T/o" 2>"$T/e"; }             # run CMD...: stdout and stderr in $T/o and $T/e, the status returned
 H() { run "$DA" marshal handoff "$@"; }
 lineno() { grep -n -m1 -F -- "$1" "$T/o" | cut -d: -f1; }   # first line of the output that holds the text (empty: none)
@@ -143,6 +143,16 @@ grep -q "another test command" "$T/o" && ok "gates: a changed gate command does 
 jq 'del(.gates)' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"
 H f1; ! grep -q "== gates" "$T/o" && ok "gates: without gates the note has no gates section" || no "SPEC gates section without gates"
 H f1 --json; jq -e '.gates == []' "$T/o" >/dev/null && ok "gates: --json has an empty list without gates" || no "SPEC gates json without gates: $(jq -c .gates "$T/o")"
+
+# accepted deviations from the methodology (methodology_accepted, set by the lead) are printed apart from the open gaps; one whose gap is gone says so
+H f1; ! grep -q "== methodology deviations" "$T/o" && ok "deviations: without accepted deviations the note has no such section" || no "SPEC deviations absent"
+jq '.methodology_accepted = [{gap:"file: CONTRIBUTING.md", reason:"we keep the workflow in the wiki\u001b[31m", date:"2026-11-10"},{gap:"file: GONE.md", reason:"was once missing", date:"2026-10-01"}]' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"
+H f1; dl=$(secno "== methodology deviations"); ml=$(secno "== marshal record")
+{ [ -n "$dl" ] && [ "$dl" -lt "$ml" ] && grep -q "^  file: CONTRIBUTING.md (accepted: we keep the workflow in the wiki.*; 2026-11-10)$" "$T/o" \
+  && grep -q "^  file: GONE.md (accepted, no longer applies: was once missing; 2026-10-01)$" "$T/o" && grep -q "^open gaps: [1-9][0-9]* (qargi project attach app lists them)$" "$T/o" && ! grep -q $'\033' "$T/o"; } \
+  && ok "deviations: the note lists the accepted ones with their status, apart from the open gaps (a gone gap says so, the text is cleaned)" || no "SPEC deviations: $(sed -n '/== methodology deviations/,/== marshal/p' "$T/o")"
+H f1 --json; jq -e '.deviations.accepted | length == 2 and .[0].status == "accepted" and .[1].status == "accepted, no longer applies"' "$T/o" >/dev/null && ok "deviations: --json carries them" || no "SPEC deviations json: $(jq -c .deviations "$T/o")"
+jq 'del(.methodology_accepted)' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"
 
 # --- every open feature without NAME
 H; rc=$?

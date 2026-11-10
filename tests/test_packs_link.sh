@@ -9,8 +9,9 @@ ROOT=$PWD
 T=$(mktemp -d); fail=0
 # the verbs that change a checkout refuse inside a member run (a directory `qargi local prepare` made, at or above the working directory), and this
 # test may itself run in one: work from the temporary directory
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 cd "$T" || exit 1
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 export QARGI_CONF=$T/c QARGI_STATE=$T/s; mkdir -p "$T/c/projects" "$T/s"
 DA=$ROOT/bin/qargi
 R=$T/repo
@@ -20,7 +21,6 @@ proj() { jq -n --arg p "$1" --arg r "$2" '{schema:1,project:$p,repo:{url:"https:
 proj alpha "$R"
 D=$T/s/render/alpha/claude-code
 
-tok_of() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 seal() { local tok; tok=$($DA skill seal "$1" | tok_of); $DA skill seal "$1" --plan "$tok" --approved test >/dev/null; }
 mkskill() { $DA skill new "$1" --compatible any >/dev/null; sed -i "s/^description: .*/description: Use for $1./" "$T/c/packs/skills/$1/SKILL.md"; seal "$1"; }
 lk() { $DA packs link alpha "$@"; }
