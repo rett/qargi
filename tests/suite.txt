@@ -25,7 +25,7 @@ full | par | 432 | 72 | bash tests/test_conformance_selftest.sh
 full | par | 300 | 34 | python3 tests/test_tierplan.py | lib/tierplan.py
 fast | par | 300 | 18 | bash tests/test_tier_hook.sh
 full | par | 300 | 14 | bash tests/test_tier_packet.sh
-fast | par | 300 | 3 | python3 tests/test_help.py | lib/commands.py lib/help.py man/qargi.1 completions/*
+fast | par | 300 | 3 | python3 tests/test_help.py | lib/commands.py lib/help.py man/qargi.1 completions/* skills/qargi-verify/SKILL.md
 full | par | 360 | 60 | python3 tests/test_startup.py | bin/qargi lib/help.py lib/commands.py lib/cloud.py lib/paths.py
 full | par | 300 | 80 | python3 tests/test_site.py | lib/site.py lib/site_md.py lib/site/*
 full | par | 300 | 26 | python3 tests/test_membackend.py | lib/membackend.py
@@ -117,7 +117,7 @@ fast | par | 300 | 3 | bash tests/test_neutral.sh | *
 fast | par | 300 | 3 | bash tests/test_skill_budget.sh | skills/*/SKILL.md tests/skill-budget.txt
 fast | par | 300 | 3 | bash tests/test_prompts.sh | contract/* roles/*/ROLE.md agents/member.body.md packs/skills/* lib/providers/claude-code* skills/qargi-flow/SKILL.md skills/qargi-verify/SKILL.md
 fast | serial | 300 | 3 | bash tests/test_tool_copy.sh | install.sh tests/hermetic.sh tests/hermetic.py
-fast | par | 300 | 3 | bash tests/test_hermetic.sh | tests/hermetic.sh tests/hermetic.py
+fast | par | 300 | 3 | bash tests/test_hermetic.sh | tests/hermetic.sh tests/hermetic.py tests/hermetic_lint.py CONTRIBUTING.md
 fast | par | 300 | 11 | bash tests/test_gitflow_detached.sh
 fast | par | 300 | 12 | bash tests/test_local_report.sh | lib/local.sh lib/commands.py
 fast | par | 300 | 17 | bash tests/test_runner.sh | tests/run.sh tests/suite.txt
