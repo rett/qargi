@@ -79,12 +79,20 @@ dones=(
   # hermetic: allow tmp (text given to --done, a path the test never touches)
   'T=$(mktemp -d -p /dev/shm); mkdir $T/h; HOME=$T/h bash tests/run.sh'
   'HOME="$(mktemp -d)" bash tests/check.sh' '(cd lib && python3 -m pytest)' 'bash tests/check.sh && bash tests/check.sh' 'FOO=1 BAR=2 make test'
-  '! grep -q x README.md' 'env -i make test' 'tests/new_test.sh' 'bash tests/never_made.sh && true' 'make test | tail -n 5' 'FOO="a b" bash tests/check.sh')
+  '! grep -q x README.md' 'env -i make test' 'tests/new_test.sh' 'bash tests/never_made.sh && true' 'make test | tail -n 5' 'FOO="a b" bash tests/check.sh'
+  'make test 2>&1 | tail -n 5' 'make test >/dev/null || true' 'diff <(true) <(true)' 'f() { :; }; f && make test' 'if make test; then true; fi' 'echo "a; b > c" && make test'
+  'cd tests && ./not_here_after_cd.sh')
 for d in "${dones[@]}"; do
   n=$((n+1)); prep --slug "d$n" --task-file "$T/task.txt" --done "$d" --scope tests/new_test.sh >/dev/null 2>&1 && grep -qxF "DONE: $d" "$RUN/task.md" && ok "DONE '$d' is accepted" || no "DONE '$d' refused"
 done
 # what is plainly not a command line: prose (a sentence whose first word is a path that is not a script, one that bash cannot parse), and a script that is neither at BASE nor under a --scope path
-for d in 'OUT/report.md ends with a verdict line' "the review is done and it's right" 'the output (looks right)' 'tests/never_made.sh' 'bash tests/check.sh; then' 'FOO=1 nothingtorun'; do
+# A line that merely contains an operator is prose too: every command word is checked, not only the first of a simple command (a word that is no command in the middle of
+# a line, after ; & && || | or ( or $( ). 'coverage' is left out when the machine has such a command.
+prose=('OUT/report.md ends with a verdict line' "the review is done and it's right" 'the output (looks right)' 'tests/never_made.sh' 'bash tests/check.sh; then' 'FOO=1 nothingtorun'
+  'tests pass & lint is clean' 'speedup > 2x' 'make test && everything is clean' 'make test; the report has no errors' 'make test | nothingtoread' 'make test || nothing < in.txt'
+  'echo $(nothingtorun)' '(cd tests && nothingtorun)' '! nothingtorun' 'if nothingtorun; then true; fi' 'FOO=1 nothingtorun 2>&1' 'tests/never_made.sh && true')
+type -P coverage >/dev/null || prose+=('coverage > 80%')
+for d in "${prose[@]}"; do
   n=$((n+1)); before=$(runs); out=$($Q local prepare --repo "$R" --base main --scratch "$T" --slug "d$n" --task-file "$T/task.txt" --done "$d" --scope tests/new_test.sh 2>&1); rc=$?
   if [ $rc = 2 ] && [ "$(runs)" = "$before" ]; then ok "DONE '$d' is refused (usage error), and no run is made"; else no "DONE '$d': rc=$rc $out"; fi
 done

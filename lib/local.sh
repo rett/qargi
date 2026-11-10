@@ -447,16 +447,93 @@ render_warning() {
 # The task block, RUN/task.md, written by prepare for every runtime when --task-file is given: the lead hands the member its path unchanged.
 # taskblock_check TASKFILE DONE ROLE REPO BASE SCOPE... refuses, before anything is made: a task file that is a link, not a regular file, empty, over 1 MiB or with a NUL;
 # a DONE that is plainly not a command line (empty, several lines, or text bash -n cannot parse: a sentence with an apostrophe or a bracket); for a simple command
-# (one list of words, no operator) its first word, after any NAME=value words, must be an executable on PATH, a shell builtin or keyword, or a script path: a word
-# with a slash is a file of BASE (looked up in the object store of REPO at the tip of BASE, never in the lead's working tree), a file under a --scope path (the task
-# may create it) or an absolute file; a run of --repo-url cannot look and takes a relative path as given. A line with an operator (; & | < > ( ) or a backquote,
-# $( included) is accepted when bash -n parses it: only its syntax is checked, not its commands. A SCOPE path that is
+# the command words of the line must be real: the word that starts every simple command (after any NAME=value words and redirections, at the start of the line and after
+# ; & && || | ( or $( ) must be an executable on PATH, a shell builtin or keyword, or a script path. A line that merely contains an operator ("coverage > 80%",
+# "tests pass & lint is clean") is prose, and fails that rule: its first words are no commands. A word with a slash is looked up for the first command of the line only
+# (a later one may follow a cd): it is a file of BASE (looked up in the object store of REPO at the tip of BASE, never in the lead's working tree), a file under a
+# --scope path (the task may create it) or an absolute file; a run of --repo-url cannot look and takes a relative path as given. A word with $ or a backquote has
+# nothing to look up; quoted text, backquotes and ${ } are not read; only the command words are checked, never the arguments. A SCOPE path that is
 # empty, absolute, holds a space, a comma or `..`; and a task file or role text with a line of its own that starts SCOPE: (review check reads that line as the limit).
 TB_SCOPE_RE='^[[:space:]]*([-*][[:space:]]+)?SCOPE:'
-TB_OP_RE='[;&|<>()`]'   # a compound line, a substitution or a redirection
-TB_ASSIGN_RE=$'^[A-Za-z_][A-Za-z0-9_]*=("[^"]*"|\'[^\']*\'|[^[:space:]"\']*)[[:space:]]+(.*)$'   # NAME=value and the rest; a quoted value may hold spaces
+# TB_WORDS_PY: the command words of a DONE line, one per line. A small scanner (a quoted string, a backquoted one, ${ } and $(( )) are one word; ; & | < > ( ) end a
+# word; a redirection operator takes the next word as its target, a number before it is the file descriptor), then the rule: a word is a command word at the start of the
+# line and after a separator or an opening parenthesis, past NAME=value words and the keywords that a command follows (! { if then else elif do while until time). A name
+# the line defines (name() { ...; }) is no command word. What the scanner cannot read it leaves out: that only lets a line through, it never refuses one.
+TB_WORDS_PY='
+import re, sys
+s = sys.argv[1]
+OPS = ";&|<>"
+KEEP = {"!", "{", "if", "then", "else", "elif", "do", "while", "until", "time"}
+toks = []
+cur, has, i, n = "", False, 0, len(s)
+def flush():
+    global cur, has
+    if has:
+        toks.append(("w", cur))
+    cur, has = "", False
+while i < n:
+    c = s[i]
+    if c in " \t":
+        flush(); i += 1
+    elif c == "#" and not has:
+        break
+    elif c == chr(92):
+        cur += s[i + 1:i + 2]; has = True; i += 2
+    elif c == chr(39):
+        j = s.find(chr(39), i + 1); j = n if j < 0 else j
+        cur += s[i + 1:j]; has = True; i = j + 1
+    elif c == chr(34):
+        j = i + 1
+        while j < n and s[j] != chr(34):
+            j += 2 if s[j] == chr(92) else 1
+        cur += s[i + 1:j]; has = True; i = j + 1
+    elif c == "`":
+        j = s.find("`", i + 1); j = n if j < 0 else j
+        cur += s[i:j + 1]; has = True; i = j + 1
+    elif s.startswith("$((", i) or s.startswith("${", i):
+        e = "))" if s[i + 1] == "(" else "}"
+        j = s.find(e, i); j = n if j < 0 else j + len(e)
+        cur += s[i:j]; has = True; i = j
+    elif c == "$" and s.startswith("(", i + 1):
+        cur += "$"; has = True; flush(); i += 1
+    elif c in OPS:
+        if has and cur.isdigit() and c in "<>":
+            cur, has = "", False
+        flush()
+        j = i
+        while j < n and s[j] in OPS:
+            j += 1
+        run = s[i:j]; i = j
+        toks.append(("redir",) if ("<" in run or ">" in run) else ("sep",))
+    elif c == "(":
+        flush(); toks.append(("open",)); i += 1
+    elif c == ")":
+        flush(); toks.append(("close",)); i += 1
+    else:
+        cur += c; has = True; i += 1
+flush()
+out, cmd, pend, defined, k = [], True, False, set(), 0
+while k < len(toks):
+    t = toks[k]; k += 1
+    if t[0] == "redir":
+        pend = True
+    elif t[0] == "w":
+        w = t[1]
+        if pend:
+            pend = False
+        elif cmd and not re.match(r"[A-Za-z_][A-Za-z0-9_]*[+]?=", w) and w not in KEEP:
+            if k + 1 < len(toks) and toks[k][0] == "open" and toks[k + 1][0] == "close":
+                defined.add(w)
+            elif w and w not in defined:
+                out.append(w)
+            cmd = False
+    else:
+        pend = False
+        cmd = t[0] in ("sep", "open")
+print("\n".join(out))
+'
 taskblock_check() {
-  local f=$1 done=$2 role=$3 repo=$4 base=$5 s rd p ok w0 rest; shift 5
+  local f=$1 done=$2 role=$3 repo=$4 base=$5 s rd p ok w0 tw first; shift 5
   [ ! -L "$f" ] || die "--task-file $f is a link: give the file itself"
   [ -f "$f" ] || die "--task-file $f: no such file"
   grep -q '[^[:space:]]' "$f" || die "--task-file $f is empty: the task block needs the task"
@@ -466,32 +543,34 @@ taskblock_check() {
   [ -n "$done" ] || usage_die "--task-file needs --done COMMAND: the check that says the task is done, as a command (make test, bash tests/x.sh)"
   case $done in *$'\n'*) usage_die "--done is one command line, not several lines: put them in a script and give its path";; esac
   bash -n -c "$done" >/dev/null 2>&1 || usage_die "--done '$done' is not a command line: bash cannot parse it (it reads as prose)"
-  if ! [[ $done =~ $TB_OP_RE ]]; then   # a simple command; a compound line is accepted on its syntax alone
-    rest=$done
-    while [[ $rest =~ $TB_ASSIGN_RE ]]; do rest=${BASH_REMATCH[2]}; done
-    read -r w0 _ <<<"$rest"
-    [ -n "$w0" ] || usage_die "--done '$done' is not a command: it has no command word"
+  tw=$(python3 -I -c "$TB_WORDS_PY" "$done" 2>/dev/null) || die "could not read the --done line: python3 is needed to check it"
+  [ -n "$tw" ] || usage_die "--done '$done' is not a command: it has no command word"
+  first=1
+  while IFS= read -r w0; do
     case $w0 in
-      *'$'*) ;;   # a variable as the command word: there is nothing to look up
+      *'$'*|*'`'*) ;;   # a variable or a substitution as the command word: there is nothing to look up
       */*)
-        p=${w0#./}; ok=''
-        case $w0 in
-          /*) [ -f "$w0" ] && ok=1;;
-          *) if [ -z "$repo" ]; then ok=1
-             else
-               git -C "$repo" cat-file -e "refs/heads/$base:$p" 2>/dev/null && ok=1
-               for s in "$@"; do
-                 s=${s#./}; s=${s%/}
-                 # shellcheck disable=SC2053  # a --scope path may be a glob
-                 if [ "$p" = "$s" ] || [[ $p == "$s"/* ]] || [[ $p == $s ]]; then ok=1; fi
-               done
-             fi;;
-        esac
-        [ -n "$ok" ] || usage_die "--done '$done' is not a command: $w0 is not an existing script (it is not a file of $base, nor under a --scope path)";;
+        if [ -n "$first" ]; then   # a later command may follow a cd, so only the first one is looked up
+          p=${w0#./}; ok=''
+          case $w0 in
+            /*) [ -f "$w0" ] && ok=1;;
+            *) if [ -z "$repo" ]; then ok=1
+               else
+                 git -C "$repo" cat-file -e "refs/heads/$base:$p" 2>/dev/null && ok=1
+                 for s in "$@"; do
+                   s=${s#./}; s=${s%/}
+                   # shellcheck disable=SC2053  # a --scope path may be a glob
+                   if [ "$p" = "$s" ] || [[ $p == "$s"/* ]] || [[ $p == $s ]]; then ok=1; fi
+                 done
+               fi;;
+          esac
+          [ -n "$ok" ] || usage_die "--done '$done' is not a command: $w0 is not an existing script (it is not a file of $base, nor under a --scope path)"
+        fi;;
       *) type -P -- "$w0" >/dev/null || compgen -b -- "$w0" | grep -qx -- "$w0" || compgen -k -- "$w0" | grep -qx -- "$w0" \
            || usage_die "--done '$done' is not a command: $w0 is not an executable, a shell builtin or an existing script (it reads as prose)";;
     esac
-  fi
+    first=''
+  done <<<"$tw"
   for s in "$@"; do
     case $s in ''|/*|*[[:space:],]*|..|../*|*/..|*/../*) usage_die "--scope '$s': a path inside the repository, relative, with no space, comma or .. in it";; esac
   done
