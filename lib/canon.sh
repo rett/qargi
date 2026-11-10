@@ -42,6 +42,19 @@ kinds=${KIND:-"memory reference"}
 store_of() { jq -r --arg k "$1" '.memory[$k + "_store"] // ""' "$PCFG"; }
 
 dump() { mem_dump "$@"; }
+# probe STORE FILE -> the memories of STORE in FILE; when the store cannot be listed (ant missing, not logged in, no access) it sets WHY to the
+# reason and fails: an unreachable store is never an empty one, and nothing is planned from it.
+WHY=''
+probe() { WHY=$(dump "$1" 2>&1 >"$2") || { rm -f "$2"; return 1; }; }
+# reach_all -> every kind's store listed (probe), or one "unreachable: reason" line under its heading for each that is not; status 1 then
+reach_all() {
+  local k s t bad=0
+  for k in $kinds; do
+    s=$(store_of "$k"); [ -n "$s" ] || continue
+    t=$(mktemp); if probe "$s" "$t"; then rm -f "$t"; else echo "== $k store $s"; echo "unreachable: $WHY"; bad=1; fi
+  done
+  return "$bad"
+}
 
 show_plan() { # plan.json
   jq -r '"from \(.from_version) to canon version \(.to_version): \(.ops|length) step(s)"' "$1"
@@ -54,7 +67,7 @@ exec_ops() { mem_exec_ops "$@"; }
 make_plan() { # kind -> prints plan json path
   local k=$1 store; store=$(store_of "$k"); [ -n "$store" ] || die "the project has no $k store recorded"
   local tmp; tmp=$(mktemp -d)
-  dump "$store" > "$tmp/s.jsonl"
+  probe "$store" "$tmp/s.jsonl" || die "the $k store $store is unreachable: $WHY; nothing was planned"
   python3 -I "$PY" plan --kind "$k" --project "$PROJECT" --roles "$ROLES" \
     --store "$tmp/s.jsonl" --seed "$SEED" --today "$TODAY" > "$tmp/plan.json" || die "planning failed for $k"
   if [ "$(jq -r .from_version "$tmp/plan.json")" = unknown ] && [ "$verb" = apply ]; then
@@ -68,19 +81,21 @@ case $verb in
     rc=0
     for k in $kinds; do
       store=$(store_of "$k"); [ -n "$store" ] || { echo "$k: no store recorded"; continue; }
-      tmp=$(mktemp); dump "$store" > "$tmp"
-      echo "== $k store $store"
+      tmp=$(mktemp); echo "== $k store $store"
+      probe "$store" "$tmp" || { echo "unreachable: $WHY"; rc=1; continue; }
       python3 -I "$PY" check --kind "$k" --project "$PROJECT" --roles "$ROLES" --store "$tmp" || rc=1
       rm -f "$tmp"
     done
     exit $rc;;
   plan)
+    reach_all || die "a store is unreachable: nothing was planned"
     tok=$(for k in $kinds; do p=$(make_plan "$k"); jq -S -c .ops "$p"; done | plan_token)
     for k in $kinds; do echo "== $k"; p=$(make_plan "$k"); show_plan "$p"; done
     echo "plan token: $tok   (apply with: --plan $tok --approved \"...\")";;
   apply)
     [ -n "$APPROVED" ] || die "apply needs --approved \"<the user's go-ahead for the plan shown by: plan>\""
     ant_ok
+    reach_all || die "a store is unreachable: nothing was changed"
     tok=$(for k in $kinds; do p=$(make_plan "$k"); jq -S -c .ops "$p"; done | plan_token)
     need_plan_nested "$tok"; audit_log canon-apply "$PROJECT"
     for k in $kinds; do
@@ -99,7 +114,7 @@ case $verb in
     for part in reference memory; do
       [ -d "$RS/$part" ] || continue
       store=$(store_of "$part"); [ -n "$store" ] || { echo "the project has no $part store recorded"; continue; }
-      tmp=$(mktemp); dump "$store" > "$tmp"
+      tmp=$(mktemp); probe "$store" "$tmp" || die "the $part store $store is unreachable: $WHY; nothing was written"
       (cd "$RS/$part" && find . -type f | sort) | while IFS= read -r f; do
         rel=${f#./}; p="/roles/$ROLE/$rel"; [ "$ROLE" != shared ] || p="/shared/$rel"
         id=$(jq -r --arg p "$p" 'select(.path==$p)|.id' "$tmp")
@@ -150,7 +165,7 @@ case $verb in
     case $PATH_ARG in /roles/*/*) ;; *) die "--path must be /roles/<role>/<file>";; esac
     store=$(store_of "$KIND"); ant_ok; audit_log canon-promote "$PATH_ARG"
     dest="/shared/${PATH_ARG#/roles/*/}"
-    tmp=$(mktemp); dump "$store" > "$tmp"
+    tmp=$(mktemp); probe "$store" "$tmp" || die "the $KIND store $store is unreachable: $WHY; nothing was moved"
     id=$(jq -r --arg p "$PATH_ARG" 'select(.path==$p)|.id' "$tmp"); [ -n "$id" ] || die "no such file: $PATH_ARG"
     [ -z "$(jq -r --arg p "$dest" 'select(.path==$p)|.id' "$tmp")" ] || die "$dest already exists; merge by hand"
     ant beta:memory-stores:memories update --memory-store-id "$store" --memory-id "$id" --path "$dest" </dev/null >/dev/null || die "move failed"

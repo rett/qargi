@@ -76,6 +76,15 @@ setcmd 'echo some output; exit 3'
 out=$($F verify bad 2>&1); rc=$?
 [ $rc = 1 ] && grep -qx 'no failing test name in the output; its last lines:' <<<"$out" && grep -qx '  some output' <<<"$out" && [ "$(tail -n 1 <<<"$out")" = "log of the whole run: $lg" ] \
   && ok "a test command that is no runner: its last lines stand in, then the log" || no "plain command: $out"
+# the failure-line patterns any gate may print: ^FAIL( |:), ^FAILED: , ^logs of the failed steps: and the ^--- FAIL: of a Go test run
+setcmd 'printf "%s\n" "--- FAIL: TestParse (0.00s)" "FAIL: check two" "FAIL check three" "FAILED: step four" "logs of the failed steps: /logs/five"; exit 1'
+out=$($F verify bad 2>&1); rc=$?
+[ $rc = 1 ] && grep -qx 'failing tests:' <<<"$out" && grep -qx '  --- FAIL: TestParse (0.00s)' <<<"$out" && grep -qx '  FAIL: check two' <<<"$out" && grep -qx '  FAIL check three' <<<"$out" \
+  && grep -qx 'failing steps:' <<<"$out" && grep -qx '  step four' <<<"$out" && grep -qx 'logs of the failed steps: /logs/five' <<<"$out" && ! grep -q 'no failing test name' <<<"$out" \
+  && ok "--- FAIL: , FAIL: , FAIL , FAILED:  and logs of the failed steps: lines are all named" || no "failure-line patterns: $out"
+hlp=$($DA help feature verify 2>&1 | tr '\n' ' ' | tr -s ' ')
+grep -qF '^FAILED:' <<<"$hlp" && grep -qF '^FAIL( |:)' <<<"$hlp" && grep -qF '^--- FAIL:' <<<"$hlp" && grep -qF '^logs of the failed steps:' <<<"$hlp" \
+  && ok "the help of feature verify names the failure-line patterns" || no "help: $hlp"
 setcmd 'bash tests/run.sh -j 2'
 out=$($REL verify 0.9.0 2>&1); rc=$?
 [ $rc = 1 ] && grep -qx '  sh tests/test_bad.sh' <<<"$out" && [ "$(tail -n 1 <<<"$out")" = "log of the whole run: $T/s/suite-logs/app.release-0.9.0.log" ] && ok "release verify ends the same way" || no "release verify: $out"

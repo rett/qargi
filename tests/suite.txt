@@ -10,6 +10,7 @@
 
 fast | par | 300 | 8 | python3 tests/test_canon.py | lib/canon.sh lib/canon.py
 fast | par | 300 | 3 | bash tests/test_canon_audit.sh
+fast | par | 300 | 3 | bash tests/test_canon_reach.sh | lib/canon.sh lib/canon.py lib/lib.sh
 full | par | 300 | 20 | python3 tests/test_tiers.py | lib/tiers.py
 full | par | 300 | 31 | bash tests/test_models.sh
 full | par | 366 | 61 | bash tests/test_no_default_provider.sh
