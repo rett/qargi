@@ -17,7 +17,8 @@ ROOT=$PWD
 T=$(mktemp -d); fail=0
 export QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T TMPDIR=$T/tmp
 mkdir -p "$T/tmp" "$T/bin" "$T/c/projects" "$T/s"
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 skip() { echo "skip $1"; }
 DA=$ROOT/bin/qargi
 FIX=$ROOT/tests/open-providers
@@ -26,7 +27,6 @@ LIB=$T/c/packs/providers
 # a member run (a directory `qargi local prepare` made) may hold this test; the verbs that change a checkout refuse inside one
 cd "$T" || exit 1
 
-tokp() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 toml() { python3 -I -c 'import tomllib,sys,json; print(json.dumps(tomllib.load(open(sys.argv[1],"rb"))))' "$1" 2>&1; }
 mdfm() { # front matter of a markdown member as JSON: top-level keys, one level of nesting, the body
   python3 -I - "$1" <<'PY' 2>&1

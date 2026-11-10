@@ -22,7 +22,8 @@ cd "$(dirname "$0")/.." || exit 1
 ROOT=$PWD
 T=$(mktemp -d); fail=0
 trap 'rm -rf "$T" "$HERMETIC"' EXIT
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 RE='claude|anthropic|\bant\b|skilloverrides|\.claude|subagent'
 LIST=$ROOT/tests/neutral-allowlist.txt
 [ -f "$LIST" ] || { no "no $LIST"; exit 1; }

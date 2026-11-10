@@ -10,7 +10,8 @@ cd "$(dirname "$0")/.." || exit 1
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi
 trap 'rm -rf "$T" "$HERMETIC"' EXIT
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
 export QARGI_PROJECT=app QARGI_LEAD=lead-one
 mkdir -p "$HOME" "$T/c/projects" "$T/s"
@@ -35,7 +36,6 @@ devfile() { # path content: a commit on develop that adds a file
   mkdir -p "$(dirname "$w/$1")"; printf '%s\n' "$2" > "$w/$1"; git -C "$w" add -A; git -C "$w" commit -q -m "develop $1"
   git -C "$R" update-ref refs/heads/develop "$(git -C "$w" rev-parse HEAD)"; git -C "$R" worktree remove --force "$w"
 }
-tok() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 
 # --- 1. the answer is checked when it is set
 out=$($DA project set app gates '[{"name":"a","command":"true","tier":"feature"},{"name":"a","command":"true","tier":"release"}]' 2>&1); rc=$?

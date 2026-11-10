@@ -11,7 +11,8 @@ cd "$(dirname "$0")/.." || exit 1
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi; TOOL=$PWD
 trap 'jobs -p | xargs -r kill 2>/dev/null; rm -rf "$T" "$HERMETIC"' EXIT
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T/shm GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
 export QARGI_PROJECT=app
 S=$QARGI_STATE
@@ -30,7 +31,6 @@ jq -n --arg p "$R" '{schema:1, project:"app", methodology:"gitflow", repo:{url:"
 F="$DA feature"
 rec() { echo "$S/features/app-$1.json"; }
 j() { jq -r "$2" "$(rec "$1")"; }            # j NAME FILTER
-out() { cat "$T/o" "$T/e"; }
 run() { "$@" >"$T/o" 2>"$T/e"; }             # run CMD...: stdout and stderr in $T/o and $T/e, the status returned
 tip() { git -C "$R" rev-parse "$1"; }
 commit_on() { # BRANCH FILE: one commit on BRANCH (in a temporary worktree)
@@ -44,7 +44,6 @@ mkfeat() { # NAME LEAD: branch feature/NAME and, for a LEAD, a record led by it,
 }
 ttl() { jq --argjson n "$1" '.marshal.lease_minutes = $n' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"; }
 tc() { jq --arg c "$1" '.test_command = $c' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"; }
-tok() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 
 # --- start: the first wiring assertion (the record the marshal keeps appears with the branch)
 export QARGI_LEAD=alice

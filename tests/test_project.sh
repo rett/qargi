@@ -489,10 +489,10 @@ grep -qx "repo has its own .agent/skills (1 skill): qargi packs link hintp offer
 # One plan and one token for the lot; a worktree gets its links by running the verb inside it; nothing records the worktrees. A member's run
 # never applies, so work from the temporary directory (this test may itself run in one).
 DA=$PWD/bin/qargi
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 cd "$T" || exit 1
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 G="git -c user.name=t -c user.email=t@example.net"
-tokp() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 snap() { find "$@" \( -type l -printf 'L %p -> %l\n' \) -o \( -type f -printf 'F %p\n' \) -o \( -type d -printf 'D %p\n' \) 2>/dev/null | sort | sha256sum
          find "$@" -type f -print0 2>/dev/null | sort -z | xargs -0 -r sha256sum | sha256sum; }
 # a runtime defined by data alone: agents as TOML files linked one by one (entry-symlinks), memory in a directory named by a hash of the checkout

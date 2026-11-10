@@ -13,7 +13,8 @@ cd "$(dirname "$0")/.." || exit 1
 SRC=$PWD
 T=$(mktemp -d); fail=0
 mkdir -p "$T/tmp"; export TMPDIR=$T/tmp   # the exec-copy check below looks here, wherever the caller's TMPDIR points
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s
 unset QARGI_PROJECT
 mkdir -p "$HOME" "$T/c/projects" "$T/s"

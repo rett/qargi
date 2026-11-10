@@ -7,12 +7,12 @@ cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
 unset QARGI_PROJECT
 mkdir -p "$HOME" "$T/c"
 cd "$T" || exit 1   # a member run is told by the working directory: the checks below must not depend on where the suite was started
-tokof() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' <<<"$1"; }
 state() { # a fingerprint of everything a refusal or a plan must leave alone: refs, the checked-out branch, the working tree
   git -C "$1" for-each-ref; git -C "$1" symbolic-ref -q HEAD; git -C "$1" status --porcelain
   find "$1" -path "$1/.git" -prune -o -type f -print | sort | xargs cat | sha256sum

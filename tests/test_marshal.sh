@@ -9,7 +9,8 @@ cd "$(dirname "$0")/.." || exit 1
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi; TOOL=$PWD
 trap 'jobs -p | xargs -r kill 2>/dev/null; rm -rf "$T" "$HERMETIC"' EXIT
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 export HOME=$T/home TMPDIR=$T/tmp   # the temporary files of the verbs under test are this test's own
 export QARGI_CONF=$T/c QARGI_STATE=$T/home/.qargi/state GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
 export QARGI_PROJECT=app
@@ -33,7 +34,6 @@ rec() { echo "$S/features/app-$1.json"; }
 j() { jq -r "$2" "$(rec "$1")"; }            # j NAME FILTER
 # M NOW ARGS...: marshal at the injected time; stdout and stderr in $T/o and $T/e, exit status returned
 M() { local now=$1; shift; QARGI_MARSHAL_NOW=$now "$DA" marshal "$@" >"$T/o" 2>"$T/e"; }
-out() { cat "$T/o" "$T/e"; }
 t0=1000000; TTL=900   # the default ttl is 15 minutes
 
 # --- claim: the first marshal assertion (everything below needs it)

@@ -18,7 +18,8 @@ SRC=$PWD
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0
 trap 'rm -rf "$T" "$HERMETIC"' EXIT
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 
 # a probe test: sources hermetic.sh, makes T, (wipe) removes its TMPDIR as logind would, then does what test_flow.sh does with a
 # worktree directory: git -C "$w", which with an empty w runs in the current directory (the checkout)
