@@ -7,3 +7,4 @@
 # a hook runs it before every tool call of a member. The test measures about 60 ms there, about 115 ms when the tool has no bytecode.
 role list 260 # lowered from 350: twice the median of 130 ms with lib/role.py (one python process after the preamble)
 __guard 120 # enforced: twice the median of the development host
+marshal status --all --brief --no-fetch 500 # the target of the read speed work (tests/test_marshal_startup.py: 14 signed records, strict): median 380 ms on the development host, 600 ms with a git process per object and one signature after the other

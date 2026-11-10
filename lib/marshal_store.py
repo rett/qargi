@@ -129,6 +129,7 @@ class Ctx:
             raise Refuse("the lead identity %r is not valid (letters, digits and . _ @ : + - only, at most 128)" % self.id)
         self.user, self.host = user, host
         self._worktree = None
+        self.git_memo = None        # {git arguments: output} while a listing runs (gather): the repository is not changed meanwhile
         self.t = now()
 
     def path(self, name):
@@ -428,6 +429,7 @@ class Integrity:
         self.signers = os.path.join(ctx.state, "marshal", "%s.signers" % ctx.project)
         self.marks_path = os.path.join(ctx.state, "features", ".accepted-%s.json" % ctx.project)
         self.tags = {}
+        self.pre = {}
         self.notes = []
         self.steps = STEPS                                    # commits this read may still look at to find a record by identity
 
@@ -463,9 +465,32 @@ class Integrity:
         ok, why = S.verify(payload, armor, self.signers, signer)
         return ("signed", "") if ok else ("INVALID", why)
 
+    def prefetch(self, items, workers=8):
+        """classify for all the records of items [(kind, name, oid, rec, parents, message)] at once, in up to `workers` threads (a
+        verification is a wait for the key tool): the answers wait in self.pre, by (kind, name, oid), for verify, which takes each once. A
+        classify that raised leaves no answer: verify then does it itself, and raises as it would have."""
+        import threading
+        todo = list(items)
+
+        def work():
+            while True:
+                try:
+                    kind, name, oid, rec, parents, message = todo.pop()
+                except IndexError:
+                    return
+                try:
+                    self.pre[(kind, name, oid)] = self.classify(kind, name, rec, parents, message)
+                except Exception:
+                    pass
+        threads = [threading.Thread(target=work) for _ in range(min(workers, len(todo)))]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
     def verify(self, kind, name, oid, rec, parents, message):
         """The callback of marshal_refs.read: strict ignores what is not signed, advisory uses everything and only tags."""
-        tag, why = self.classify(kind, name, rec, parents, message)
+        tag, why = self.pre.pop((kind, name, oid), None) or self.classify(kind, name, rec, parents, message)
         self.tags[(kind, name)] = (tag, why, rec.get("signer") if tag == "signed" else None)
         if tag == "signed" or not self.strict:
             return None
@@ -653,7 +678,7 @@ class RefsBackend:
                 why = None if ok else w
             heads = self.heads = {}
             guard = Integrity(self, ctx) if self.integrity != "off" else None
-            feats, done, ignored = R.read(ctx.repo, sane, guard.verify if guard else None, heads)
+            feats, done, ignored = R.read(ctx.repo, sane, guard.verify if guard else None, heads, guard.prefetch if guard else None)
             bad = {r.rsplit("/", 1)[1] for r, _ in ignored if r.startswith("refs/qargi/features/") and R.name_ok(r.rsplit("/", 1)[1])}
             if guard:
                 view, based, bad = guard.settle(feats, done, ignored, heads, not self.member, ctx.name)
@@ -982,8 +1007,13 @@ def git_at(path, *args):
 def git(ctx, *args):
     if not ctx.repo:
         return None
+    if ctx.git_memo is not None and args in ctx.git_memo:
+        return ctx.git_memo[args]
     r = subprocess.run(["git", "-C", ctx.repo] + list(args), capture_output=True, text=True)
-    return r.stdout if r.returncode == 0 else None
+    out = r.stdout if r.returncode == 0 else None
+    if ctx.git_memo is not None:
+        ctx.git_memo[args] = out
+    return out
 
 
 def branch_exists(ctx, name):
@@ -1243,9 +1273,13 @@ def print_full(d, raw_lens):
 def gather(ctx, names):
     """-> [(name, describe dict, raw record)] after recording ghost transitions."""
     out, cache = [], {}
-    for n in names:
-        rec = ghost_fix(ctx, n, ctx.be.get(ctx, n))
-        out.append((n, describe(ctx, n, rec, cache), rec))
+    ctx.git_memo = {}
+    try:
+        for n in names:
+            rec = ghost_fix(ctx, n, ctx.be.get(ctx, n))
+            out.append((n, describe(ctx, n, rec, cache), rec))
+    finally:
+        ctx.git_memo = None
     return out
 
 
