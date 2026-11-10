@@ -42,7 +42,8 @@ class CleanPath(unittest.TestCase):
                 self.assertEqual(tools.clean_path(), LONG)
                 self.assertEqual(tools.child_env()["PATH"], LONG)
                 self.assertEqual(local_run.clean_path(), LONG)
-                self.assertEqual(local_run.child_env("/run", "/tmp/t", [])["PATH"], LONG)
+                run = os.path.join(tempfile.gettempdir(), "run")
+                self.assertEqual(local_run.child_env(run, os.path.join(run, "t"), [])["PATH"], LONG)
 
     def test_a_path_with_absolute_entries_is_the_same_everywhere(self):
         import env_apply, env_check, local_run, tools

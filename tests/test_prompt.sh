@@ -80,6 +80,8 @@ for pr in "" nocloud nosuchproj; do
   grep -qF "# Output files" <<<"$out" && ! grep -qF "# In a cloud run" <<<"$out" && ok "project '${pr:-none}': the contract without the cloud-only part" || no "project '${pr:-none}': $(grep -c 'cloud run' <<<"$out")"
 done
 grep -q "RUN_DIR" contract/contract.md contract/output-format.md && no "the contract names RUN_DIR" || ok "the contract and the output format do not name RUN_DIR as a place"
+# a member still learns where the run is when it must run `qargi local report`: from OUT (the run directory is OUT's parent), not from a name only a local task block has
+grep -qF 'qargi local report RUN --from NAME` (RUN: OUT'"'"'s parent)' contract/contract.md && ok "the contract names the run by OUT's parent for qargi local report" || no "the contract does not say which directory qargi local report takes"
 # an old registry entry (no prompt hash) and a local one
 jq -n '{"alpha-build":{location:"cloud",deployment_id:"depl_B",environment_id:"env_1",agent:{id:"agent_B",version_pinned:1,model:"claude-sonnet-5-5",effort:"high"}},
         "alpha-local":{location:"local",local:{agent_file:"/nonexistent/a.md",sha256:"x",model:"m",effort:null}}}' > "$T/c/instances.json"

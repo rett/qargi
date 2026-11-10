@@ -45,7 +45,7 @@ kinds=${KIND:-"memory reference"}
 store_of() { jq -r --arg k "$1" '.memory[$k + "_store"] // ""' "$PCFG"; }
 
 dump() { mem_dump "$@"; }
-# probe STORE FILE -> the memories of STORE in FILE; when the store cannot be listed (ant missing, not logged in, no access) it sets WHY to the
+# probe STORE FILE -> the memories of STORE in FILE; when the store cannot be listed (the cloud tool missing, not logged in, no access) it sets WHY to the
 # reason and fails: an unreachable store is never an empty one, and nothing is planned from it.
 WHY=''
 probe() { WHY=$(dump "$1" 2>&1 >"$2") || { rm -f "$2"; return 1; }; }

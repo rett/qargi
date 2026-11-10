@@ -22,6 +22,7 @@ case $1 in
   beta:memory-stores:memories)
     if [ "$2" = list ]; then
       if [ "$(cat "$FAKE/mode")" = fail ]; then printf '\nError: 403 forbidden for this key\nsecond line\n' >&2; exit 1; fi
+      if [ "$(cat "$FAKE/mode")" = silent ]; then exit 3; fi
       if [ "$(cat "$FAKE/mode")" = junk ]; then echo '{"type":"memory","id":"m1","path":"/junk.md","content":"x","content_sha256":"0"}'; fi
       exit 0
     fi
@@ -56,6 +57,12 @@ out=$(bin/qargi canon seed-role alpha --role build --approved go 2>&1); rc=$?
 [ "$rc" != 0 ] && grep -q 'unreachable' <<<"$out" && ! grep -qE 'memories (create|update)' "$FAKE/calls" \
   && ok "seed-role: refuses and writes nothing" || no "seed-role (rc=$rc): $out"
 
+# a list that fails with no error text is still unreachable, and the reason is the status in generic words (no vendor tool is named there)
+echo silent > "$FAKE/mode"
+out=$(bin/qargi canon check alpha --kind memory 2>&1); rc=$?
+[ "$rc" = 1 ] && [ "$(grep -c '^unreachable: the store list failed (status 3)$' <<<"$out")" = 1 ] \
+  && ok "check: a silent failure is 'unreachable: the store list failed (status 3)'" || no "silent (rc=$rc): $out"
+
 # a project with no store recorded checks clean (nothing to reach)
 out=$(bin/qargi canon check solo 2>&1); rc=$?
 [ "$rc" = 0 ] && grep -qF 'memory: no store recorded' <<<"$out" && ! grep -q unreachable <<<"$out" \
@@ -84,9 +91,10 @@ out=$(TMPDIR=$T/tmp bin/qargi canon plan solo 2>&1); rc=$?
 [ -z "$(left)" ] && ok "a project with no store: nothing left in TMPDIR" || no "solo tmp (rc=$rc, left: $(left)): $out"
 
 # a project with no store recorded: plan and apply stop with the reason and print no token, no jq error
+# (jq starts each of its errors with `jq:`; the bare name could sit in a random temporary path in the output)
 for v in "plan solo" "apply solo --plan x --approved go"; do
   out=$(bin/qargi canon $v 2>&1); rc=$?
-  [ "$rc" != 0 ] && grep -qF 'no memory store recorded' <<<"$out" && ! grep -qiE 'plan token|jq|Could not open' <<<"$out" \
+  [ "$rc" != 0 ] && grep -qF 'no memory store recorded' <<<"$out" && ! grep -qiE 'plan token|jq:|Could not open' <<<"$out" \
     && ok "${v%% *}: a project with no store stops with 'no store recorded', no token" || no "solo $v (rc=$rc): $out"
 done
 out=$(bin/qargi canon plan solo --kind reference 2>&1); rc=$?
