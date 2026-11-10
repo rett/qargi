@@ -961,8 +961,9 @@ COMMANDS = {
         "summary": "List and inspect the development and release methodologies",
         "desc": ("A methodology is the way a project is developed and released, as data: its branches, versioning and changelog, test tiers, "
                  "CI, release steps and deployment options, and the generic files a new project starts with. One ships with qargi (gitflow); "
-                 "add your own under ~/.qargi/config/methodologies/NAME/ (methodology.json and a scaffold/ directory). These verbs only read; "
-                 "qargi project new and adopt write, and only after a plan."),
+                 "add your own under ~/.qargi/config/methodologies/NAME/ (methodology.json and a scaffold/ directory). Today a methodology sets "
+                 "the files and parameters a project starts with and a few patterns; the feature, release and branch verbs name develop and master themselves. "
+                 "These verbs only read; qargi project new and adopt write, and only after a plan."),
         "scripts": ["methodology.py"],
         "verbs": {
             "list": verb("List the methodologies and where they live"),

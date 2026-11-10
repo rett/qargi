@@ -6,6 +6,8 @@ Qargi is a set of Claude Code skills and a CLI that dispatch one-off, task-scope
 reviewable patches. An agent works on one task in its own clone and is given no way to push (a git wrapper without credentials, and a guard that refuses the ordinary ways); the dispatching session verifies the result and applies it. Local
 members are the default and cloud agents are used only when you ask for them in that request; each runs on a runtime the project names for that surface.
 
+Requirements: Linux with bash, GNU coreutils and findutils, git, jq, python3 3.11 or newer, `flock` and `ssh-keygen` (the marshal's signed records). qargi uses GNU options throughout and nothing checks the platform before a verb runs, so another system is not supported. `make doctor` checks the tools of a checkout.
+
 ## Quick start
 
 ```sh
