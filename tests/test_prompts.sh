@@ -56,4 +56,13 @@ FL=skills/qargi-flow/SKILL.md
 has $FL 'qargi local prepare --role review --profile advisor' && has $FL 'full task block' && has $FL 'DONE "OUT/report.md ends with a verdict line"' && has $FL 'qargi review check OUT' && has $FL 'qargi local clean' && ok "the advisor sign-off prepares a review run, gives it a full task block, checks and closes it" || no "the advisor sign-off step of qargi-flow"
 ! has $FL 'spawn it on that file' && ok "the advisor is not spawned on a bare file" || no "qargi-flow still spawns the advisor on a file with no run"
 
+# P7: a local member has no reference store: the roles name it only under a MEMORY section; the six steps are the contract's, as a numbered list
+for r in build write; do
+  has roles/$r/ROLE.md "MEMORY section or a store is mounted, read the store's .roles/$r/INDEX.md" && ok "roles/$r/ROLE.md names the reference store only when there is a MEMORY section or a mounted store" || no "roles/$r/ROLE.md names the reference store unconditionally"
+done
+has $C 'Without a MEMORY section or a mounted store the task block, the contract and the repository are all your instructions' && ok "the contract says what a member without a store follows" || no "the contract's sentence for a member without a store"
+steps=$(awk '/^# Order of work/{f=1;next} /^# /{f=0} f && /^[1-6]\. /{printf "%s ", tolower($2)}' $C)
+[ "$steps" = "orient: baseline: implement check: commit report " ] && ok "the contract holds the six-step order of work as a numbered list (orient, baseline, implement, check, commit as you go, report)" || no "the contract's order of work: '$steps'"
+! grep -q 'Orient\.' provision/role-seeds/build/reference/workflow/workflow.md && ok "the build seed's workflow does not repeat the lifecycle" || no "the build seed repeats the lifecycle"
+
 exit $fail

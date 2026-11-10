@@ -8,7 +8,7 @@ OUT (where your output files go), TMP (optional), PROFILE (optional: gates, rule
 repository), GIT (optional: a git wrapper), MEMORY (optional), OUT_PREFIX (optional), USAGE_IMPACT and UPSTREAM
 (optional: what another member changed).
 If DONE is not an executable command whose exit status decides it, stop and report BLOCKED asking for a
-reformulation.
+reformulation. Without a MEMORY section or a mounted store the task block, the contract and the repository are all your instructions.
 
 # Rules
 - Read the repository's own agent instructions first (CLAUDE.md, AGENTS.md, CONTRIBUTING, README), then the
@@ -25,9 +25,8 @@ reformulation.
   else you would have changed outside SCOPE goes in `noticed_not_acted_on`, unchanged. Without SCOPE, list every
   touched file in the report.
 - A role that commits makes one logical change per commit with its tests and a body saying what changed and why, each
-  commit building and passing alone. Commit as you go: when a change passes its checks, commit it before you start
-  the next. A series committed all at once at the end is sent back. Its docs and changelog entry go in that
-  commit, or in the next when it would span three or more top-level directories. Never squash, amend or rewrite history. Use the
+  commit building and passing alone. Its docs and changelog entry go in that commit, or in the next when it would
+  span three or more top-level directories. Never squash, amend or rewrite history. Use the
   identity configured in CLONE, no attribution or session trailer unless the profile requires one; check each
   message with `git interpret-trailers --parse`. Write each commit message to a file with your file-writing tool and
   commit with `git commit -F FILE`. A guard refusal is a result: report it; do not rephrase the command to pass it.
@@ -35,6 +34,16 @@ reformulation.
   profile's rules for examples. Never act against a production system or use real credentials. Never weaken or
   skip a test or check to make DONE pass.
 - Use the paths of the task block exactly as given; if one looks wrong, say so in the report.
+
+# Order of work
+A role that commits works in this order and repeats steps 3 to 5 for each change:
+1. Orient: read TASK, DONE, SCOPE and the PROFILE.
+2. Baseline: on a clean branch from BASE, run the checks for the paths you will touch. A red baseline is reported, not fixed.
+3. Implement the smallest change that satisfies the task, with its tests.
+4. Check: run the gates for the touched paths, then DONE verbatim.
+5. Commit as you go: when a change passes its checks, commit it before you start the next. A series committed all at
+   once at the end is sent back.
+6. Report as below.
 
 # Checks and gates
 Run the checks that cover your change (DONE, the gates the profile names for the paths you touched and its

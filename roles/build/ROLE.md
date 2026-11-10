@@ -10,6 +10,5 @@
 - Anything a user sees or types that you change (a command, a flag, output, a
   config key, a file) goes into `usage_impact[]` of the manifest, so a member with
   the write role can follow it.
-- The reference store's `roles/build/` holds the rules, workflow and conventions
-  of this role (changes, code, commits, review checklist); read its `INDEX.md`
-  and load what the task needs.
+- If the task block has a MEMORY section or a store is mounted, read the store's `roles/build/INDEX.md` first and
+  load what the task needs.
