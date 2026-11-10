@@ -42,7 +42,7 @@ directory is listed and the reverse, and each pack passes the library's review.
 line with its tier (`fast` or `full`), whether it may run beside others, its timeout, its time budget in seconds and,
 optionally, the globs of the files it covers. A new `tests/test_*` file gets a line there, and the runner fails when a test
 file is not listed or a listed file does not exist. The budget is the time the step takes on the reference machine; a step
-that takes more than 1.5 times its budget is reported, and a budget only shrinks (a step that grew is split).
+that takes more than 1.5 times its budget is reported; a budget is re-recorded from the last whole-suite run, rounded up by a tenth.
 
     bash tests/run.sh                  every step, as many at a time as there are CPUs (-j N; -j 1 is the serial run)
     bash tests/run.sh --tier fast      the fast tier: every area, about a minute
@@ -59,8 +59,8 @@ duration of a step (`--durations FILE`) or else its budget.
 
 Adding a step: put the test in `tests/`, add a line to `tests/suite.txt` with its tier (`fast` only for a step of a few seconds
 that covers an area the other fast steps do not), `par` unless it cannot run beside others, a timeout (several times the budget),
-its budget (the seconds it takes on a loaded eight-CPU machine, measured with `bash tests/run.sh --only 'tests/test_x.sh'`; a budget
-only shrinks, so a step that grew is split) and the `covers` globs of the files it tests. A pull request runs the fast tier and the
+its budget (the seconds it takes on a loaded eight-CPU machine, measured with `bash tests/run.sh --only 'tests/test_x.sh'`, rounded up by a
+tenth; it is re-recorded from the last whole-suite run) and the `covers` globs of the files it tests. A pull request runs the fast tier and the
 steps whose `covers` match the files it changed (or whose command names a changed file), so a `full` step without `covers` is
 checked only in the whole run.
 

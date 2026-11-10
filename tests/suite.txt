@@ -2,9 +2,9 @@
 #   tier | mode | timeout s | budget s | command | covers (optional)
 # tier: fast (the quick run, `--tier fast`, about a minute) or full (only in the whole run). mode: par (may run beside other
 # steps) or serial (runs alone after the pool). timeout: the step is stopped after this many seconds and fails. budget: the
-# seconds the step takes on the reference machine; one that takes more than 1.5x its budget is reported, and a budget only
-# shrinks (a step that grew is split, not given more time). covers: globs of the files the step tests, space separated; it
-# lets a run be chosen by the files a change touches.
+# seconds the step takes on the reference machine; a budget is the last recorded duration of the step on the reference machine,
+# rounded up by a tenth; the run reports a step that takes more than 1.5x its budget. covers: globs of the files the step tests,
+# space separated; it lets a run be chosen by the files a change touches.
 # Every tests/test_* file is listed here and every tests/ path listed exists: tests/run.sh checks both in every run.
 # The command may not contain a `|`.
 
