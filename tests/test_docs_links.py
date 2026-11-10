@@ -148,6 +148,12 @@ class DocsTree(unittest.TestCase):
             if isinstance(verbs, dict):
                 self.assertTrue(words[2] in verbs, "not a verb: " + " ".join(words))
 
+    def test_providers_page_says_a_definition_that_does_not_load_stops_member_writes(self):
+        """The guard fails closed on a library definition it cannot load; the page says so and where a pack is drafted."""
+        text = " ".join(read(os.path.join(ROOT, "docs", "members-and-providers", "providers.md")).split())
+        for want in ("~/.qargi/config/packs/providers/NAME/", "fails closed", "does not load", "every call of a member that writes", "qargi provider check NAME"):
+            self.assertIn(want, text)
+
 
 class Checker(unittest.TestCase):
     """The checks catch what they claim to."""

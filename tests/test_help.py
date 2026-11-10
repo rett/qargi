@@ -125,6 +125,10 @@ class Render(unittest.TestCase):
                 if verb and verbs(cmd) and verb not in verbs(cmd):
                     self.fail("topic %s names qargi %s %s, which is not a verb" % (t, cmd, verb))
 
+    def test_no_help_topic_has_a_commands_name(self):
+        """`qargi help NAME` shows the topic first when NAME is one, so a topic named like a command would hide that command's help."""
+        self.assertEqual(sorted(set(C.TOPICS) & set(C.COMMANDS)), [])
+
     def test_the_guard_topic_is_listed_renders_and_is_in_the_man_page(self):
         self.assertIn("guard", C.TOPICS)
         title, paras = C.TOPICS["guard"]
