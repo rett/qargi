@@ -69,7 +69,7 @@ out=$(stage finish 0.2.0); rc=$?
 nm=$(git -C "$R" rev-parse master); nd=$(git -C "$R" rev-parse develop)
 [ "$(git -C "$R" rev-parse "$nm^1")" = "$m0" ] && [ "$(git -C "$R" rev-parse "$nm^2")" = "$rh" ] && [ "$(git -C "$R" rev-parse "$nm^{tree}")" = "$(git -C "$R" rev-parse "$rh^{tree}")" ] && ok "master: a --no-ff merge of the snapshot and the release branch, with the release tree" || no "master: $(git -C "$R" log -1 --format='%P' master)"
 [ "$(git -C "$R" rev-parse 'refs/tags/0.2.0^{commit}')" = "$nm" ] && [ "$(git -C "$R" show master:VERSION)" = 0.2.0 ] && ok "master carries the tag 0.2.0 and the version 0.2.0" || no "tag: $(git -C "$R" rev-parse -q --verify refs/tags/0.2.0)"
-[ "$(git -C "$R" rev-parse "$nd^1")" = "$d0" ] && [ "$(git -C "$R" rev-parse "$nd^2")" = "$rh" ] && ok "develop: a --no-ff merge of the release branch on its old head" || no "develop: $(git -C "$R" log -1 --format='%P' develop)"
+[ "$(git -C "$R" rev-parse "$nd^1")" = "$d0" ] && [ "$(git -C "$R" rev-parse "$nd^2")" = "$nm" ] && git -C "$R" merge-base --is-ancestor "$rh" develop && ok "develop: a --no-ff merge of the tagged master commit (which holds the release branch) on its old head" || no "develop: $(git -C "$R" log -1 --format='%P' develop)"
 [ "$(git -C "$R" show develop:b.txt)" = b ] && git -C "$R" cat-file -e develop:x.txt && git -C "$R" cat-file -e develop:c.txt && ok "develop keeps its own files" || no "develop lost files"
 ! git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && ok "the local release branch is gone" || no "release branch left behind"
 

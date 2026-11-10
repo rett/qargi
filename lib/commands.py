@@ -508,7 +508,8 @@ COMMANDS = {
         "summary": "Releases and hotfixes by the git-flow rules",
         "desc": ("release/<version> is cut from develop (a hotfix/<version> from master); its first commit bumps VERSION and dates the changelog and the man page. "
                  "It is pushed and a pull request into master runs CI on the commit that will be released. Finishing merges it into master with --no-ff, "
-                 "tags it, merges it into develop (a hotfix: into the open release branch, if there is one) with --no-ff and deletes it. A release starts only from "
+                 "tags that merge commit, merges the tagged master commit (not the branch a second time) into develop (a hotfix: into the open release branch, if there is one) with --no-ff, "
+                 "so master holds no merge commit that develop lacks, and deletes the branch. A release starts only from "
                  "a develop whose head passed the whole suite. Starting, pushing, merging, tagging and publishing need the plan token and an approval; signing needs your terminal. "
                  "The layout of what a release updates is the project's, set in its answers (all optional): release.version_file (the file that holds only the version; default VERSION; "
                  "none when there is no such file, and the version is then the changelog heading and the tag), release.changelog.unreleased (the heading of the changes to come, default "
@@ -585,15 +586,16 @@ COMMANDS = {
                               "as a new commit after the version bump and before the push, so CI runs on the joined head and release finish is an ordinary --no-ff merge. The tree of the branch must be the same "
                               "before and after (checked, with the parents of the commit); otherwise nothing moves and nothing is pushed. The plan token covers the join and master's head. "
                               "A branch that is checked out in a worktree with uncommitted changes is refused for the join."),
-            "finish": verb("After the checks pass: merge into master, tag, merge back, delete the branch, push", [("VERSION", "none")],
+            "finish": verb("After the checks pass: merge into master, tag, merge the tagged commit back, delete the branch, push", [("VERSION", "none")],
                            [PROJECT_OPT, HOTFIX_OPT, opt("--keep", "keep the branch"),
                             opt("--ignore-checks", "finish although the pull request's checks fail, are pending or cannot be read; WORDS are your reason, in your own words, recorded in the output and the audit log", "WORDS"),
                             PLAN, APPROVED, RESOLVED_OPT],
                            desc=("The plan lists the checks of the branch's pull request (gh pr checks: one line per check, pass, fail or pending) and refuses, without a token, while one fails or is pending, "
                                  "unless --ignore-checks WORDS is given; the plan token covers the words. A missing gh, no pull request or no checks is a warning in the plan, and the apply then refuses "
                                  "(the checks are read again) unless --ignore-checks is given. A clean worktree that release fix made is removed with the branch. "
-                                 "Merging back may conflict, usually over the version number (the model says so). Nothing moves then: resolve in the worktree "
-                                 "the message names, commit, and run the same command with --resolved. It refuses a branch whose manual page has an empty .TH date or version, "
+                                 "The second merge is of the master merge commit that carries the tag (message \"Merge tag 'VERSION' into develop\"); it may conflict, usually over the version number (the model says so). "
+                                 "Nothing moves then: resolve in the worktree "
+                                 "the message names, which holds a merge of that commit, commit, and run the same command with --resolved. It refuses a branch whose manual page has an empty .TH date or version, "
                                  "and, when release.version_file is none, one whose changelog has no section for VERSION. It also refuses, with the fix, a branch that shares no history with master (no merge base): "
                                  "run release push first, whose plan joins the history of master. " + REMOTE_NOTE + " "
                                  "When the answer release.after_steps lists steps (a string, or an object {name, command, who, evidence}; {version} replaced), it prints each as an 'after the release: [pending] NAME (WHO): COMMAND' line, never runs them, and "
