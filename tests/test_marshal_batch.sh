@@ -47,7 +47,7 @@ chmod +x "$T/countbin/git"
 case "$*" in
   *"-Y verify"*)
     printf 's %s\n' "$(date +%s%N)" >> "$TL"
-    [ -e "$DELAY" ] && sleep 0.3
+    [ -e "$DELAY" ] && sleep 0.3   # hermetic: allow sleep (the fake verifier is slow on purpose, so that verifications that overlap are seen; nothing waits for it)
     "$NEXT" "$@"; rc=$?
     printf 'e %s\n' "$(date +%s%N)" >> "$TL"; exit $rc;;
 esac

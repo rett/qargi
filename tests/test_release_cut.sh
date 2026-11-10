@@ -47,7 +47,7 @@ now() { echo 2026-01-01T00:00:00Z; }
 DA_STATE=$1; PROJ=app; . "$2"
 case $3 in
   intent) intent_write k '{"a":1}';;
-  journal) journal_line /tmp refs/heads/x "" abc123 test:verb "";;
+  journal) journal_line "$1" refs/heads/x "" abc123 test:verb "";;
 esac
 S
 for how in intent journal; do
