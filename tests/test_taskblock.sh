@@ -127,6 +127,33 @@ out=$($Q review check "$RUN/out" 2>&1); rc=$?
 jq '.scope = ["lib/", "docs/"]' "$RUN/out/manifest.json" > "$RUN/out/m.json" && mv "$RUN/out/m.json" "$RUN/out/manifest.json"
 $Q review check "$RUN/out" 2>&1 | grep -q 'outside SCOPE' && ok "the member's own scope[] does not widen the prepared SCOPE" || no "scope[] widened the limit"
 
+# --- the DONE of the task block is the check the lead set: review check fails a manifest whose done.command is another command (a missing one is a warning)
+sc doneok lib/a.sh
+out=$($Q review check "$RUN/out" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q 'WARN manifest has no done.command; the DONE of the task block is `bash tests/check.sh`' <<<"$out"; } && ok "a manifest with no done.command passes review check with a warning that names the DONE" || no "no done: rc=$rc $out"
+jq '.done = {command: "bash tests/check.sh", exit_code: 0}' "$RUN/out/manifest.json" > "$RUN/out/m.json" && mv "$RUN/out/m.json" "$RUN/out/manifest.json"
+out=$($Q review check "$RUN/out" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && ! grep -q 'done.command' <<<"$out"; } && ok "a manifest whose done.command is the DONE of the task block passes, with no warning" || no "same done: rc=$rc $out"
+jq '.done.command = "make test"' "$RUN/out/manifest.json" > "$RUN/out/m.json" && mv "$RUN/out/m.json" "$RUN/out/manifest.json"
+out=$($Q review check "$RUN/out" 2>&1); rc=$?
+{ [ "$rc" = 1 ] && grep -q 'FAIL the manifest.s done.command (`make test`) is not the DONE of the task block (`bash tests/check.sh`)' <<<"$out"; } && ok "a manifest whose done.command is another command fails review check, both commands named" || no "other done: rc=$rc $out"
+# a task text with a line of its own that starts DONE: is not mistaken for the DONE of the block
+printf 'Fix the thing.\nDONE: not the check\n\nMore text.\n' > "$T/task-done.txt"
+prep --slug donetext --task-file "$T/task-done.txt" --done 'bash tests/check.sh' --scope lib/ || no "prepare donetext"
+mkdir -p "$RUN/out/patches"; G=$RUN/git; C=$RUN/clone; mkdir -p "$C/lib"; echo x > "$C/lib/a.sh"; "$G" -C "$C" add -A; "$G" -C "$C" commit -q -m "change a file" -m "The file changes because the task says so."
+"$G" -C "$C" format-patch -q -o "$RUN/out/patches" "$BSHA..HEAD"; echo "# series" > "$RUN/out/series.md"
+"$G" -C "$C" log --format='%H%x09%s' "$BSHA..HEAD" | jq -R -s -c '[split("\n")[] | select(length>0) | split("\t") | {sha:.[0], subject:.[1]}] as $c
+  | {status:"DONE", done:{command:"bash tests/check.sh", exit_code:0}, commits:$c, commit_advice:($c|map(. + {why_separate:"x", depends_on:[], builds_alone:true})), patch_groups:[{name:"g", why:"one change", commits:($c|map(.sha))}]}' > "$RUN/out/manifest.json"
+out=$($Q review check "$RUN/out" 2>&1); rc=$?
+[ "$rc" = 0 ] && ok "a DONE: line in the task text does not stand for the DONE of the block" || no "done in task text: rc=$rc $out"
+# a run that returns no commits is held to the same command
+printf '%s\n' '{"status":"BLOCKED","blocked_reason":"no","commits":[],"done":{"command":"make test"}}' > "$RUN/out/manifest.json"; rm -rf "$RUN/out/patches"
+out=$($Q review check "$RUN/out" 2>&1); rc=$?
+{ [ "$rc" = 1 ] && grep -q 'is not the DONE of the task block' <<<"$out"; } && ok "a BLOCKED manifest with no commits is held to the DONE of the task block too" || no "blocked other done: rc=$rc $out"
+printf '%s\n' '{"status":"BLOCKED","blocked_reason":"no","commits":[],"done":{"command":"bash tests/check.sh"}}' > "$RUN/out/manifest.json"
+out=$($Q review check "$RUN/out" 2>&1); rc=$?
+[ "$rc" = 0 ] && ok "and passes with the same command" || no "blocked same done: rc=$rc $out"
+
 # --- the skills tell the lead to use the flags and to hand the member RUN/task.md, not to assemble a block
 grep -q -- '--task-file' skills/qargi-task/SKILL.md && grep -q -- '--done' skills/qargi-task/SKILL.md && ok "qargi-task has the lead call prepare with --task-file and --done" || no "qargi-task does not name the flags"
 grep -q 'RUN/task.md' skills/qargi-task/SKILL.md && ! grep -q 'ROLE_TEXT\|paste them into the task block' skills/qargi-task/SKILL.md && ok "qargi-task hands the member RUN/task.md; the hand assembly text is gone" || no "qargi-task still describes a hand-assembled block"

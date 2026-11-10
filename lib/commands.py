@@ -1293,6 +1293,7 @@ COMMANDS = {
                                 "A report-only run (a review) has no patches: it passes with a report.md (or PREFIXreport.md, as in a team run) that has a Findings section and whose last non-empty line is "
                                 "`verdict: accept` or `verdict: revise`, and the manifest.json (PREFIXmanifest.json) beside it; a missing manifest or verdict line fails, a missing Checked section warns. "
                                 "A patch, or a touched_paths entry of the manifest, outside SCOPE fails: SCOPE is the SCOPE line of RUN/task.md (beside OUT) when it records one, else the manifest's scope[]. "
+                                "A manifest whose done.command is not the DONE line of RUN/task.md (the check the lead set) fails, with both commands named; a manifest with no done.command warns. "
                                 "Commits dated within two minutes of each other (made in one batch at the end) warn: explain the warning in the report. "
                                 "Prints OK, WARN or FAIL lines and a summary; exit 1 when any line is FAIL (warnings alone exit 0). "
                                 "When the run is in the lead's registry and the project declared a take-in scrub, a series that passes is then scrubbed: the answer review.scrub (a command line or a list of words) "

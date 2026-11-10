@@ -3,6 +3,7 @@
 not one monolithic patch. Usage: review_check.py OUT [--allow-empty]   (exit 1 on any FAIL, 2 on a usage error)
 OUT is the member's output directory (RUN/out; given RUN, whose out directory exists, it checks RUN/out): it holds manifest.json and the patches in OUT/patches/*.patch, the one place `review apply` reads them from.
 SCOPE is a hard limit: the SCOPE line of RUN/task.md (beside OUT) when it records one, else the manifest's scope[]; a patch outside it fails.
+The DONE line of RUN/task.md is the check the lead set: a manifest whose done.command is another command fails (a missing done.command is a warning).
 A review run has no patches: report.md (or PREFIXreport.md) with a Findings heading and a last line `verdict: accept` or `verdict: revise`, with manifest.json beside it, is its deliverable."""
 import fnmatch, glob, json, os, re, sys
 from email.utils import parsedate_to_datetime
@@ -18,6 +19,33 @@ fails, warns, notes = [], [], []
 F = lambda m: fails.append("FAIL " + m)
 W = lambda m: warns.append("WARN " + m)
 N = lambda m: notes.append("NOTE " + m)
+def task_done(out):
+    """The command of the `DONE:` line of the run's task block (RUN/task.md, beside OUT; the guard keeps a member from writing it), or None. The block puts the line after
+    the task text and before PROFILE: or BASE:, so the last `DONE:` line followed by a blank line and one of those is the lead's, whatever the task or the profile say."""
+    try:
+        lines = open(os.path.join(os.path.dirname(os.path.abspath(out)), "task.md"), errors="replace").read().split("\n")
+    except OSError:
+        return None
+    found = None
+    for k, l in enumerate(lines):
+        if l.startswith("DONE: ") and k + 2 < len(lines) and lines[k + 1] == "" and (lines[k + 2] == "PROFILE:" or lines[k + 2].startswith("BASE: ")):
+            found = l[len("DONE: "):]
+    return found
+
+def done_problem(man, out):
+    """None, or ("FAIL"|"WARN", text): the manifest's done.command against the DONE line of the task block (nothing to compare when the run has no task block)."""
+    want = task_done(out)
+    if want is None:
+        return None
+    d = man.get("done") if isinstance(man, dict) else None
+    got = d.get("command") if isinstance(d, dict) else None
+    short = lambda t: t if len(t) <= 80 else t[:77] + "..."
+    if not isinstance(got, str) or not got.strip():
+        return ("WARN", "manifest has no done.command; the DONE of the task block is `%s`" % short(want))
+    if got.strip() != want.strip():
+        return ("FAIL", "the manifest's done.command (`%s`) is not the DONE of the task block (`%s`): run the check the lead set, verbatim, and quote it" % (short(got.strip()), short(want.strip())))
+    return None
+
 # a run directory (RUN_DIR) was given where OUT (RUN_DIR/out) is meant: use its out directory, unless the directory is an OUT itself
 if os.path.isdir(os.path.join(run, "out")) and not os.path.isdir(os.path.join(run, "patches")) and not os.path.exists(os.path.join(run, "manifest.json")):
     run = os.path.join(run, "out")
@@ -51,6 +79,9 @@ if not patches:
     except Exception:
         m0 = None
     if m0 is not None and m0.get("commits") == [] and (allow_empty or m0.get("status") == "BLOCKED"):
+        dp = done_problem(m0, run)
+        if dp and dp[0] == "FAIL":
+            print("FAIL " + dp[1]); print("1 fail, 0 warn"); sys.exit(1)
         print("OK no commits (status %s)%s" % (m0.get("status"), ": " + m0["blocked_reason"] if m0.get("blocked_reason") else "")); sys.exit(0)
     print("FAIL no patches found in %s, and no report.md (or PREFIXreport.md) with a Findings section" % run); sys.exit(1)
 try:
@@ -112,6 +143,10 @@ if scope:
     outside = sorted(p for p in touched if p and not in_scope(p, scope))
     if outside:
         F("%d path(s) outside SCOPE (%s): %s; stop with BLOCKED naming the path, or list the change under noticed_not_acted_on" % (len(outside), ", ".join(scope), ", ".join(outside[:8]) + (" ..." if len(outside) > 8 else "")))
+
+dp = done_problem(man, run) if man else None
+if dp:
+    (F if dp[0] == "FAIL" else W)(dp[1])
 
 if man:
     commits = man.get("commits", [])
