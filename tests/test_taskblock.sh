@@ -120,5 +120,8 @@ $Q review check "$RUN/out" 2>&1 | grep -q 'outside SCOPE' && ok "the member's ow
 grep -q -- '--task-file' skills/qargi-task/SKILL.md && grep -q -- '--done' skills/qargi-task/SKILL.md && ok "qargi-task has the lead call prepare with --task-file and --done" || no "qargi-task does not name the flags"
 grep -q 'RUN/task.md' skills/qargi-task/SKILL.md && ! grep -q 'ROLE_TEXT\|paste them into the task block' skills/qargi-task/SKILL.md && ok "qargi-task hands the member RUN/task.md; the hand assembly text is gone" || no "qargi-task still describes a hand-assembled block"
 grep -q 'RUN_DIR/task.md' skills/qargi-verify/SKILL.md && ok "qargi-verify compares the manifest and the DONE check with RUN_DIR/task.md" || no "qargi-verify does not name task.md"
+# the DONE the qargi-flow skill gives the advisor is a command prepare accepts (it was a sentence, which prepare refuses)
+fd=$(sed -n "s/.*--done '\([^']*\)'.*/\1/p" skills/qargi-flow/SKILL.md | head -1)
+[ -n "$fd" ] && PATH=$PWD/bin:$PATH prep --slug flowdone --task-file "$T/task.txt" --done "$fd" >/dev/null 2>&1 && grep -qxF "DONE: $fd" "$RUN/task.md" && ok "the DONE of the advisor sign-off in qargi-flow ('$fd') is accepted by prepare" || no "the advisor DONE of qargi-flow ('$fd') is not a command prepare accepts"
 
 exit $fail

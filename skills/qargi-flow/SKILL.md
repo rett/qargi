@@ -36,7 +36,7 @@ review; `qargi methodology show gitflow` prints the model.
    **Advisor sign-off** (before `feature finish`): write the combined diff to a scratch file: the feature diff stat from
    `qargi feature status NAME`, each task's report line, the gate and suite verdicts, and the line "do not run the test suite while a feature verify is running".
    Prepare a review run (`qargi local prepare --role review --profile advisor`, then as `/qargi-task` says) and dispatch it with a full
-   task block: TASK "review this diff for the risk", the diff path, DONE "OUT/report.md ends with a verdict line". Take it in with
+   task block: TASK "review this diff for the risk", the diff path, `--done 'qargi review check ../out'` (run from the clone; it fails a report with no manifest or verdict line). Take it in with
    `qargi review check OUT`, close it with `qargi local clean`, and finish only after reading its verdict.
 5. **Release** when the user says develop is ready: `qargi release start VERSION` (refuses unless develop's head passed the
    whole suite; the first commit bumps VERSION and dates the changelog; bump any other file that carries the version; only minor

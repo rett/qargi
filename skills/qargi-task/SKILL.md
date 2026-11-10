@@ -40,7 +40,7 @@ A profile holds a repository's gates, rules and coordinator review steps, in `~/
 
 1. Write the task to a scratch file with your file tool, then
    `qargi local prepare --repo <repo> --base <base> --slug <slug> --scratch <scratchpad> --role <role> --task-file <file> --done "<command>" [--scope <path>]... [--profile <profile>]`
-   makes the run: a clone on `agent/<slug>` of a bare copy with no remote, an output directory, a credential-less `git` wrapper and `RUN/task.md`. It refuses a prose DONE (its first word must be an executable, a builtin or an existing script) and an empty or linked task file. It prints `TASK_FILE`, `RUN`, `MEMBER`, `MODEL`, `EFFORT` and the paths.
+   makes the run: a clone on `agent/<slug>` of a bare copy with no remote, an output directory, a credential-less `git` wrapper and `RUN/task.md`. It refuses a prose DONE (its first word must be an executable, a builtin or a BASE script) and an empty or linked task file. It prints `TASK_FILE`, `RUN`, `MEMBER`, `MODEL`, `EFFORT` and the paths.
    The executor sees only the committed memory. For a private repository not checked out here, use `--repo-url URL --credential-file FILE` in place of `--repo`.
 2. Start the member as the project's local runtime says (`qargi provider show RUNTIME`), handing it the path of `RUN/task.md`: read it and follow it.
    - **In-session runtime.** Take MEMBER, MODEL and EFFORT from step 1 (or `qargi agent for <role> [--profile NAME]`). Spawn it as `qargi provider notes spawn` says, with that brief plus
