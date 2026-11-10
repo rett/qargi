@@ -5,9 +5,10 @@ holds (unknown command, verb and option, a missing project, no repository, a bad
 the ones lib/help.py show prints); every module under lib/ imports, and every lazily imported part of help.py and cloud.py
 runs; the resolved arguments, the exported binding, the current directory, the umask and the exit code of a failed preamble
 are what they were. `qargi __guard` (run on every tool call of a member) loads guard.py as an imported module, so its bytecode is cached,
-and answers byte for byte as the script did, also from a tool that is read-only. `qargi role list` is timed against tests/startup-budget.txt (the median of 20 runs; a ceiling only warns,
-a machine under load is no failure; shrink-only: a ceiling above its value at the merge base with origin/develop needs a
-`# raised: reason` comment). Offline; temporary state.
+and answers byte for byte as the script did, also from a tool that is read-only. `qargi role list` and `qargi __guard` are timed
+against tests/startup-budget.txt (the median of 20 runs; a ceiling only warns, a machine under load is no failure, except one whose
+line says `enforced`: the guard's, which fails when the median stays above it in three measurements; shrink-only: a ceiling above
+its value at the merge base with origin/develop needs a `# raised: reason` comment). Offline; temporary state.
 Run: python3 tests/test_startup.py
      python3 tests/test_startup.py --dump BIN     the goldens as BIN (a bin/qargi) prints them, as JSON: regenerate the fixture
                                                   with the repository's own, or compare two checkouts"""
@@ -480,13 +481,31 @@ class Guard(unittest.TestCase):
         self.assertIn("guard", r.stderr)
 
 
+def enforced(comment):
+    """True for a budget line whose comment says `enforced`: its ceiling fails the test, it does not only warn."""
+    return re.search(r"\benforced\b", comment) is not None
+
+
+def median_ms(times):
+    times = sorted(times)
+    return (times[len(times) // 2 - 1] + times[len(times) // 2]) / 2 if len(times) % 2 == 0 else times[len(times) // 2]
+
+
 class Budget(unittest.TestCase):
     def test_the_budget_file_is_well_formed(self):
         with open(BUDGET) as f:
             b = read_budget(f.read())
         self.assertIn("role list", b)
+        self.assertIn("__guard", b)
+        self.assertFalse(enforced(b["role list"][1]))
+        self.assertTrue(enforced(b["__guard"][1]), "the guard's ceiling is the one that fails")
         with self.assertRaises(ValueError):
             read_budget("role list fast\n")
+
+    def test_the_enforced_mark(self):
+        self.assertTrue(enforced(" enforced: a hook runs it on every tool call"))
+        self.assertFalse(enforced(" raised: a new lookup"))
+        self.assertFalse(enforced(" unenforced"))
 
     def test_the_raised_check(self):
         old = read_budget("a 10\nb 10\nc 10\nd 10\ne 10\n")
@@ -522,6 +541,35 @@ class Budget(unittest.TestCase):
         got = (times[RUNS // 2 - 1] + times[RUNS // 2]) / 2
         print("startup: qargi role list median %.0f ms over %d runs (ceiling %d ms)%s" % (got, RUNS, ceiling, "" if got <= ceiling else
               "\nWARNING: over the ceiling of tests/startup-budget.txt (a loaded machine, or startup got slower: measure it again alone)"), file=sys.stderr)
+
+    def test_the_guard_against_its_ceiling(self):
+        """`qargi __guard` answering a harmless call, from a tool whose lib/ is compiled (what install.sh --user and qargi upgrade leave): the median of
+        RUNS runs against its ceiling, which is about twice the median on the development host. Unlike the others this one fails: a hook runs the
+        guard before every tool call of every member, so the cost is paid hundreds of times a task. It fails only when the median is over in three
+        measurements in a row, so a machine under load does not (the best of them is compared)."""
+        with open(BUDGET) as f:
+            ceiling, comment = read_budget(f.read())["__guard"]
+        self.assertTrue(enforced(comment))
+        tool = GuardTool()
+        try:
+            tool.compile()
+            stdin = call("true")
+            self.assertEqual(tool.guard(stdin).returncode, 0)
+            medians = []
+            for _ in range(3):
+                times = []
+                for _ in range(RUNS):
+                    t0 = time.perf_counter()
+                    tool.guard(stdin)
+                    times.append((time.perf_counter() - t0) * 1000)
+                medians.append(median_ms(times))
+                if medians[-1] <= ceiling:
+                    break
+        finally:
+            tool.close()
+        print("startup: qargi __guard median %s ms over %d runs (ceiling %d ms)" % (", ".join("%.0f" % m for m in medians), RUNS, ceiling), file=sys.stderr)
+        self.assertLessEqual(min(medians), ceiling, "qargi __guard takes a median of %.0f ms, over the ceiling of %d ms in tests/startup-budget.txt "
+                             "(it was about half that on the development host): something made the guard's start-up slower" % (min(medians), ceiling))
 
 
 if __name__ == "__main__":
