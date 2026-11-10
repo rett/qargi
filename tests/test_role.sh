@@ -38,6 +38,35 @@ printf '{"class":"sudo"}\n' > "$T/c/roles/probe/role.json"
 $DA role check probe >/dev/null 2>&1 && no "an unknown class passed" || ok "an unknown class fails the check"
 printf '{"class":"write","description":"Poke."}\n' > "$T/c/roles/probe/role.json"
 
+# the verbs are one python process (lib/role.py) and read role.json themselves: a jq that records its calls is never run
+mkdir -p "$T/fakejq"; printf '#!/bin/sh\necho "$*" >> "%s/jq.log"\nexec jq "$@"\n' "$T" > "$T/fakejq/jq"; sed -i "s|^exec jq|exec $(command -v jq)|" "$T/fakejq/jq"; chmod 755 "$T/fakejq/jq"
+for v in "list" "show audit" "prompt audit" "check" "check audit"; do PATH=$T/fakejq:$PATH $DA role $v >/dev/null 2>&1; done
+[ ! -e "$T/jq.log" ] && ok "role list, show, prompt and check start no jq" || no "jq was started: $(cat "$T/jq.log")"
+[ -f lib/role.py ] && [ ! -e lib/role.sh ] && ok "the verbs are lib/role.py; lib/role.sh is gone" || no "lib/role.py / lib/role.sh"
+
+# a role.json that is odd keeps the output it always gave (these once went through jq): an array, null, a number, an object, several values, nothing
+mkdir -p "$T/c/roles/odd"; echo x > "$T/c/roles/odd/ROLE.md"
+oddfile() { printf '%s' "$1" > "$T/c/roles/odd/role.json"; }
+oddfile '{"class":"read-only","description":42}'
+[ "$($DA role list | grep '^odd ')" = "odd          read-only  user      42" ] && [ "$($DA role show odd 2>/dev/null | sed -n 4p)" = "" ] && ok "a description that is a number is listed as it is, and show prints no description line for it" || no "number description: $($DA role show odd 2>&1 | head -5)"
+oddfile '{"class":"write","description":false}'
+[ "$($DA role show odd | sed -n 4p)" = "description: " ] && ok "a false description reads as none" || no "false description"
+oddfile 'null'
+[ "$($DA role list | grep '^odd ')" = "odd          write      user      " ] && ! $DA role check odd >/dev/null && [ "$($DA role check odd)" = "odd: role.json is not valid JSON" ] && ok "a role.json of null lists as write and fails the check" || no "null role.json"
+oddfile '[1,2]'
+out=$($DA role check odd 2>/dev/null); [ "$out" = "odd: class must be write or read-only (got 'none')" ] && ok "a role.json that is an array has no class" || no "array role.json: $out"
+oddfile '{"class":"write"} {"class":"read-only"}'
+[ "$($DA role check odd)" = "$(printf "odd: class must be write or read-only (got 'write\nread-only')")" ] && ok "a role.json with two values reads the class of both" || no "two values: $($DA role check odd)"
+oddfile ''
+[ "$($DA role check odd)" = "odd: role.json is not valid JSON" ] && ok "an empty role.json is not valid JSON" || no "empty role.json"
+oddfile '{"class":"write"'
+[ "$($DA role check odd 2>/dev/null)" = "odd: role.json is not valid JSON" ] && $DA role list >/dev/null 2>&1 && ok "a role.json that does not parse fails the check and the list goes on" || no "broken role.json"
+# a name with a blank is two roles to check; an empty argument is all of them
+[ "$($DA role check "build review")" = "roles: ok" ] && [ "$($DA role check "")" != "" ] && ok "role check takes a list of names in one argument and an empty argument means all" || no "check with a list"
+$DA role prompt >/dev/null 2>&1; [ $? = 2 ] && $DA role show build extra >/dev/null 2>&1 && ok "a missing NAME is a usage error (2) and a further argument is ignored" || no "prompt without NAME"
+$DA role show nosuch >/dev/null 2>&1; [ $? = 1 ] && ok "an unknown role is exit 1" || no "show nosuch"
+rm -rf "$T/c/roles/odd"
+
 # members serve roles of yours; the class decides the guard
 $DA agent add looker --project pbase --roles audit >/dev/null 2>&1 && grep -q 'command: qargi __guard --class read-only$' "$T/repop/.claude/agents/looker.md" && ok "a member of only read-only roles is read-only by class" || no "looker"
 $DA agent add mixed --project pbase --roles audit,probe >/dev/null 2>&1 && ! grep -q -- '--class' "$T/repop/.claude/agents/mixed.md" && ok "a member with a write role names no class" || no "mixed"
