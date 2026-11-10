@@ -441,6 +441,24 @@ class Check(Base):
             f.write("a b c\n")
         self.assertEqual(self.check()[0], 1)
 
+    def test_bookkeeping_is_not_a_merge_that_waits(self):
+        """The .master file of a release finish (kept beside a parked worktree, and left by a finish that stopped after writing it) and the records of finish-intent/ are
+        bookkeeping, not a merge to resolve: they do not make a compact unsafe. A parked worktree (a directory) and the .done mark of a resolved merge still do."""
+        os.makedirs(os.path.join(self.state, "conflicts"))
+        os.makedirs(os.path.join(self.state, "finish-intent"))
+        with open(os.path.join(self.state, "conflicts", "app-release-0.2.0-into-develop.master"), "w") as f:
+            f.write("a b c\n")
+        with open(os.path.join(self.state, "finish-intent", "app-release-0.2.0.json"), "w") as f:
+            f.write("{}\n")
+        os.makedirs(os.path.join(self.state, "finish-intent", "app-release-0.2.0.json.run"))
+        rc, out, _ = self.check()
+        self.assertEqual((rc, "a merge waits" in out), (0, False), out)
+        os.makedirs(os.path.join(self.state, "conflicts", "app-release-0.2.0-into-develop"))                  # the parked worktree of the same merge
+        rc, out, _ = self.check()
+        self.assertEqual(rc, 1)
+        self.assertIn("a merge waits to be resolved or applied (app-release-0.2.0-into-develop under", out)
+        self.assertNotIn(".master", out)
+
     def test_a_whole_suite_run_in_progress_is_not_safe_and_a_dead_pid_is_ignored(self):
         os.makedirs(os.path.join(self.state, "busy"))
         pidf = os.path.join(self.state, "busy", "app.verify.lc.pid")
