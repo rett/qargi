@@ -5,17 +5,18 @@
 .PHONY: bootstrap doctor
 
 # ssh-keygen (OpenSSH) signs and verifies the marshal's records; the test suite runs it. It has no version option, so the doctor reads ssh -V.
-TOOLS := bash git jq shellcheck python3 ssh-keygen
+# flock (util-linux) keeps two runs of a finishing verb apart and timeout (coreutils) bounds a question put to a remote; `qargi doctor` warns when either is missing.
+TOOLS := bash git jq shellcheck python3 ssh-keygen flock timeout
 PYTHON_MIN := 3.11
 
 # The distribution, read from /etc/os-release (its ID and ID_LIKE words); the line that installs is the one that starts with sudo.
 OS_IDS := $(shell . /etc/os-release 2>/dev/null && echo "$$ID $$ID_LIKE")
 ifneq (,$(filter arch,$(OS_IDS)))
-INSTALL := sudo pacman -S --needed --noconfirm bash git jq shellcheck python openssh
+INSTALL := sudo pacman -S --needed --noconfirm bash git jq shellcheck python openssh util-linux coreutils
 else ifneq (,$(filter debian ubuntu,$(OS_IDS)))
-INSTALL := sudo apt-get install -y bash git jq shellcheck python3 openssh-client
+INSTALL := sudo apt-get install -y bash git jq shellcheck python3 openssh-client util-linux coreutils
 else ifneq (,$(filter fedora rhel,$(OS_IDS)))
-INSTALL := sudo dnf install -y bash git jq ShellCheck python3 openssh-clients
+INSTALL := sudo dnf install -y bash git jq ShellCheck python3 openssh-clients util-linux coreutils
 endif
 
 bootstrap:

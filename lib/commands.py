@@ -745,6 +745,8 @@ COMMANDS = {
                  "an orphan or on less than 10% free (QARGI_DOCTOR_MIN_FREE moves the limit, in percent). "
                  "window-source: where the context-window table of the project's local runtime comes from (its definition, or the answer lead.context_window, which overrides it) "
                  "and whether each model id its roles name is in the table; an id that is not there warns, since its window is only assumed. "
+                 "tools: flock (the locks of the finishing verbs and the ref journal) and timeout (the bound on a question put to a remote) are on PATH; a missing one warns and names what it is for and "
+                 "the package that has it (util-linux, coreutils; make bootstrap installs both). "
                  "project-env: the last qargi env check recorded for the project in state/env/PROJECT.json, as 'last env check VERDICT at TIME' (a warning when the verdict is not ENV OK; "
                  "unknown, 'never run', when none was recorded). It only reads that record and never runs the project's code: qargi env check is what runs the project's doctor and records the result. "
                  "--json prints {project, checks: [{name, status, detail, fix}], warnings, strict, exit}."),
