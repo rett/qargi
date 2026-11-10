@@ -228,7 +228,7 @@ link_args() { # validates --scope/--project/--role, prints the link as JSON
     project) [ -f "$DA_CONF/projects/$PROJECT.json" ] || usage_die "project scope needs --project with stored answers"; jq -nc --arg k "$1" --arg p "$PROJECT" '{pack:$k, scope:"project", project:$p}';;
     project-role) [ -f "$DA_CONF/projects/$PROJECT.json" ] && valid_role "$ROLE" || usage_die "project-role scope needs --project (with stored answers) and --role"
                   jq -nc --arg k "$1" --arg p "$PROJECT" --arg r "$ROLE" '{pack:$k, scope:"project-role", project:$p, role:$r}';;
-    *) die "--scope user|user-role|project|project-role";;
+    *) usage_die "--scope user|user-role|project|project-role";;
   esac
 }
 
@@ -565,8 +565,8 @@ if [ "$KIND" = packs ]; then
       # Read-only and evaluated from the links when called: the index of what the role has enabled, or one pack's text and
       # the library path of its files. Refuses what render refuses (a pack that fails its review or changed since approved).
       PRJ=${PROJECT:-$(python3 -I "$(dirname "$(readlink -f "$0")")/help.py" infer)}; ROL=$ROLE; LN=${ARGS[0]:-}
-      [ -n "$PRJ" ] || die "load: name the project with --project P (none was inferred from here)"
-      valid_role "$ROL" || die "load: --role is one of: $DA_ROLES"
+      [ -n "$PRJ" ] || usage_die "load: name the project with --project P (none was inferred from here)"
+      valid_role "$ROL" || usage_die "load: --role is one of: $DA_ROLES"
       vet() { # kind name -> dies unless the pack is sound; sets P
         P=$(item_path "$1" "$2"); [ -e "$P" ] || die "attached pack $1:$2 is not in the library"
         review "$1" "$P" >/dev/null || die "pack $1:$2 fails its review (qargi $1 check $PRJ $ROL)"
@@ -674,7 +674,7 @@ case "$VERB" in
       [ -f "$WORK" ] || die "a tool source is a JSON file"
       NAME=${NAME:-$(jq -r .name "$WORK" 2>/dev/null)}; cp "$WORK" "$T/stage"
     fi
-    valid_slug "$NAME" || die "cannot work out a valid name; pass --name"
+    valid_slug "$NAME" || usage_die "cannot work out a valid name; pass --name"
     [ -z "$(ls "$PACKS/skills/$NAME" "$PACKS/tools/$NAME.json" 2>/dev/null)" ] || die "$NAME already exists in the library (names are unique; pass --name or remove the old one)"
     echo "== review of $KIND $NAME from $SRCREC"
     [ -z "${IGNORED_REC:-}" ] || echo "note: the source's top-level .pack.json is qargi's own record of a library pack: it is ignored and not copied (the pack gets a new record from this import)"
@@ -705,7 +705,7 @@ case "$VERB" in
     src=$(jq -r '.source // "created"' "$(record_of "$P")" 2>/dev/null); write_record "$P" "$KIND" "$src" "$COMPAT"; echo "sealed $KIND $NAME (content $TOK)";;
   link|unlink)
     NAME=${ARGS[0]:-}; P=$(item_path "$KIND" "$NAME"); [ -e "$P" ] || die "no such $KIND in the library"
-    L=$(link_args "$KIND:$NAME")
+    L=$(link_args "$KIND:$NAME") || exit $?   # a usage error in the scope ends the verb with its status, not only the substitution
     if [ "$VERB" = link ]; then
       review "$KIND" "$P" >/dev/null || die "the pack fails its review: qargi $KIND show $NAME"
       want=$(jq -r '.sha256 // ""' "$(record_of "$P")" 2>/dev/null)

@@ -111,8 +111,8 @@ out=$(QARGI_DRY_RUN=1 "$YES" start alpha-reviewer --role build --asked "x" 2>&1)
 [ $rc != 0 ] && grep -q "write class" <<<"$out" && ! jq -e . <<<"$out" >/dev/null 2>&1 && ok "a write role on the reviewer base is refused" || no "build on reviewer (rc=$rc): $out"
 out=$(QARGI_DRY_RUN=1 "$YES" start alpha-worker --role build --profile review --asked "x" 2>&1); rc=$?
 [ $rc != 0 ] && grep -q "review" <<<"$out" && ! jq -e . <<<"$out" >/dev/null 2>&1 && ok "a profile of the other class is refused" || no "review profile on worker (rc=$rc): $out"
-out=$(QARGI_DRY_RUN=1 "$YES" start alpha-worker --role nosuch --asked "x" 2>&1); [ $? != 0 ] && grep -q -- "--role: a role of" <<<"$out" && ok "an unknown role is refused" || no "unknown role"
-out=$(QARGI_DRY_RUN=1 "$YES" start alpha-worker --role lead --asked "x" 2>&1); [ $? != 0 ] && grep -q -- "--role: a role of" <<<"$out" && ok "lead is not a role of a base" || no "lead role"
+out=$(QARGI_DRY_RUN=1 "$YES" start alpha-worker --role nosuch --asked "x" 2>&1); rc=$?; [ $rc = 2 ] && grep -q -- "--role: a role of" <<<"$out" && ok "an unknown role is a usage error (exit 2)" || no "unknown role (rc=$rc)"
+out=$(QARGI_DRY_RUN=1 "$YES" start alpha-worker --role lead --asked "x" 2>&1); rc=$?; [ $rc = 2 ] && grep -q -- "--role: a role of" <<<"$out" && ok "lead is not a role of a base (a usage error, exit 2)" || no "lead role (rc=$rc)"
 out=$(QARGI_DRY_RUN=1 "$YES" start alpha-worker --profile test --asked "x" 2>&1); rc=$?
 { [ $rc != 0 ] && grep -q 'need --role' <<<"$out"; } && ok "--profile without --role is refused: a base without a role is the standby session, as before" || no "profile without role (rc=$rc): $out"
 out=$(QARGI_DRY_RUN=1 "$YES" start alpha-build --role build --asked "x" 2>&1); rc=$?

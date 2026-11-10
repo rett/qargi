@@ -109,7 +109,7 @@ no_base_opts() { # name: an instance of one role has its role in its name
 base_resolve() {
   local name=$1 proj=${1%%-*} base=${1#*-} bclass rclass res rc=0 args
   bclass=$(base_class "$base")
-  [ "$BROLE" != lead ] && valid_role "$BROLE" || die "--role: a role of: $DA_ROLES"
+  [ "$BROLE" != lead ] && valid_role "$BROLE" || usage_die "--role: a role of: $DA_ROLES"
   rclass=$(instance_class "$BROLE")
   [ "$rclass" = "$bclass" ] || die "the $BROLE role is of the $rclass class, and $name is the $bclass base: start it on $proj-$([ "$rclass" = write ] && echo worker || echo reviewer)"
   args=(for "$BROLE" --surface cloud --project "$proj" --json)
@@ -266,7 +266,7 @@ mark() {
   if [ -n "$WHY" ]; then
     [ "$st" != pending ] || die "--why goes with applied or rejected"
     jq -e --arg w "$WHY" '.codes | index($w)' "$(dirname "$(readlink -f "$0")")/reasons.json" >/dev/null \
-      || die "--why is one of: $(jq -r '.codes | join(", ")' "$(dirname "$(readlink -f "$0")")/reasons.json")"
+      || usage_die "--why is one of: $(jq -r '.codes | join(", ")' "$(dirname "$(readlink -f "$0")")/reasons.json")"
   fi
   json_update "$TRK" '.[$s].review_state = $r | .[$s].review_reason = (if $w == "" then null else $w end)
       | .[$s].reviewed_at = (if $r == "pending" then null else $t end)' --arg s "$sid" --arg r "$st" --arg w "$WHY" --arg t "$(now)"

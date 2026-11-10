@@ -744,7 +744,7 @@ case $verb in
     branch_exists "$BASE" || die "no $BASE branch to start from"
     g rev-parse -q --verify "refs/tags/$VER" >/dev/null && die "the tag $VER exists already"
     [ -n "$DATE" ] || DATE=$(date +%F)
-    printf '%s' "$DATE" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' || die "--date YYYY-MM-DD"
+    printf '%s' "$DATE" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' || usage_die "--date YYYY-MM-DD"
     # the start step is planned by the verb itself, so its refusals (a develop that did not pass verify, an empty changelog) come before a token does
     sargs=(start "$VER" --project "$PROJ" --date "$DATE"); [ -z "$HOTFIX" ] || sargs+=(--hotfix); [ -z "$ALLOW_EMPTY" ] || sargs+=(--allow-empty-notes)
     src=0; sout=$(bash "$0" "${sargs[@]}" 2>&1 </dev/null) || src=$?
@@ -797,7 +797,7 @@ case $verb in
       [ "$v" = "$(sha_of develop) pass" ] || die "the whole suite has no passing run at the head of develop (qargi release verify $VER); run it at the checkpoint, then start"
     fi
     date_given=$DATE; [ -n "$DATE" ] || DATE=$(date +%F)
-    printf '%s' "$DATE" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' || die "--date YYYY-MM-DD"
+    printf '%s' "$DATE" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' || usage_die "--date YYYY-MM-DD"
     b0=$(sha_of "$BASE")
     worktree "$BASE"
     git -C "$WT" checkout -q --detach "$b0"

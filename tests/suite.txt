@@ -129,6 +129,7 @@ fast | par | 300 | 17 | bash tests/test_runner.sh | tests/run.sh tests/suite.txt
 fast | par | 300 | 10 | python3 tests/test_ci.py | .github/* tests/run.sh tests/suite.txt tests/durations.txt
 fast | par | 300 | 3 | python3 tests/test_docs_links.py | README.md CONTRIBUTING.md docs/*
 fast | par | 300 | 2 | python3 tests/test_legacy_lint.py | lib/* tests/legacy-allowlist.txt
+fast | par | 300 | 2 | python3 tests/test_usage_exit.py | lib/*.sh tests/test_usage_exit.py
 full | serial | 300 | 150 | shellcheck -x -S warning lib/*.sh lib/conformance/*.sh bin/qargi install.sh tests/*.sh
 fast | par | 300 | 14 | bash tests/test_json_plans.sh | bin/qargi lib/jsonplan.py lib/help.py lib/commands.py
 fast | par | 300 | 1 | python3 tests/test_gates.py | lib/gates.py
