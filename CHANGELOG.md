@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- `qargi branch prune` counts the remote-tracking branch `origin/BRANCH` of each `repo.detached` branch as a place a branch is merged into (with the same `--no-ff` rule), because a detached branch that origin changes only through a pull request lags behind origin locally; `--remote` now fetches before it reads the history, not after. `docs/flow/git-flow.md` (Detached branches) and the `qargi-flow` skill describe that flow: a short-lived `agent/pr-SLUG` branch cut from `origin/BRANCH` in a worktree, `local prepare --base` on it, `review apply`, a fast-forward, a push, and a pull request merged with a merge commit; a squash or rebase merge leaves no merge commit and its branches are deleted by hand.
+
 ## [0.2.9] - 2026-11-09
 
 ### Added

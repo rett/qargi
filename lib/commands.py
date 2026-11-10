@@ -405,7 +405,10 @@ COMMANDS = {
         "scripts": ["branch.sh"],
         "verbs": {
             "prune": verb("List, or with the token and an approval delete, the merged agent/* and feature/* branches and their worktrees", [],
-                          [PROJECT_OPT, opt("--remote", "also the merged agent/* and feature/* branches on origin"), PLAN, APPROVED],
+                          [PROJECT_OPT, opt("--remote", "also the merged agent/* and feature/* branches on origin (fetches first)"), PLAN, APPROVED],
+                          desc=("A branch is merged when it was merged with --no-ff into develop, into a branch of repo.long_lived or repo.detached or the remote-tracking branch origin/BRANCH of a detached one "
+                                "(a detached branch that origin changes only through a pull request lags behind it locally; fetch first, --remote does), or, for an agent branch, into an open feature. "
+                                "A branch that only sits at a tip was never merged and is kept."),
                           examples=["qargi branch prune", "qargi branch prune --remote --plan TOKEN --approved \"yes, prune them\""]),
         },
     },

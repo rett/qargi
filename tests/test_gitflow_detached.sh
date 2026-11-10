@@ -102,5 +102,20 @@ out=$($F merge docs-site agent/guide --plan "$t" --approved "take the guide" 2>&
 $DA local verify "$r" >/dev/null 2>&1 && ok "and local verify still accepts the run" || no "verify: $($DA local verify "$r" 2>&1)"
 out=$($DA local clean "$r" 2>&1); rc=$?
 [ $rc = 0 ] && [ ! -e "$r" ] && ok "and local clean removes the run" || no "clean rc=$rc: $out"
+
+# --- a detached branch that origin changes only through a pull request: the lead's branch is short-lived and the merge happens on origin, so the
+# local detached branch lags behind origin/docs-site; prune takes the remote-tracking branch of the detached branch as a place a branch is merged into
+C=$T/pr-clone; git clone -q "$T/origin.git" "$C" 2>/dev/null
+git -C "$C" checkout -q -b agent/pr-page origin/docs-site; echo pr > "$C/pr.md"; git -C "$C" add -A; git -C "$C" commit -q -m "docs: a page through a pull request"
+git -C "$C" push -q origin agent/pr-page
+git -C "$C" checkout -q -b agent/pr-open origin/docs-site; echo open > "$C/open.md"; git -C "$C" add -A; git -C "$C" commit -q -m "docs: not yet merged"
+git -C "$C" push -q origin agent/pr-open
+git -C "$C" checkout -q -B docs-site origin/docs-site; git -C "$C" merge -q --no-ff -m "Merge pull request: a page" agent/pr-page; git -C "$C" push -q origin docs-site
+git -C "$R" fetch -q origin; git -C "$R" branch --no-track agent/pr-page origin/agent/pr-page; git -C "$R" branch --no-track agent/pr-open origin/agent/pr-open
+git -C "$R" merge-base --is-ancestor agent/pr-page origin/docs-site && ! git -C "$R" merge-base --is-ancestor agent/pr-page docs-site && ok "(setup) the pull request is merged on origin; the local detached branch lacks it" || no "setup pr"
+out=$($DA branch prune 2>&1)
+grep -q "delete local agent/pr-page ([0-9a-f]*, merged into origin/docs-site)" <<<"$out" && ! grep -q "agent/pr-open" <<<"$out" && ok "prune plans the branch merged into origin/docs-site by a pull request, and keeps the one that is not merged" || no "prune plan: $out"
+t=$(tok <<<"$out"); out=$($DA branch prune --plan "$t" --approved "clear the merged ones" 2>&1)
+git -C "$R" rev-parse -q --verify refs/heads/agent/pr-page >/dev/null && no "prune kept the merged branch: $out" || { git -C "$R" rev-parse -q --verify refs/heads/agent/pr-open >/dev/null && ok "and with the token deletes it, leaving the unmerged branch" || no "prune deleted the unmerged branch: $out"; }
 rm -rf "$T"
 exit $fail
