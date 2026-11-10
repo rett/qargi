@@ -4,7 +4,8 @@ counted with a python3 shim on PATH; its output on the paths it owns is byte for
 holds (unknown command, verb and option, a missing project, no repository, a bad cloud binding, and the help pages, which are
 the ones lib/help.py show prints); every module under lib/ imports, and every lazily imported part of help.py and cloud.py
 runs; the resolved arguments, the exported binding, the current directory, the umask and the exit code of a failed preamble
-are what they were. `qargi role list` is timed against tests/startup-budget.txt (the median of 20 runs; a ceiling only warns,
+are what they were. `qargi __guard` (run on every tool call of a member) loads guard.py as an imported module, so its bytecode is cached,
+and answers byte for byte as the script did, also from a tool that is read-only. `qargi role list` is timed against tests/startup-budget.txt (the median of 20 runs; a ceiling only warns,
 a machine under load is no failure; shrink-only: a ceiling above its value at the merge base with origin/develop needs a
 `# raised: reason` comment). Offline; temporary state.
 Run: python3 tests/test_startup.py
@@ -345,6 +346,138 @@ class Preamble(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(os.stat(h.conf).st_mode), 0o700)           # what lib.sh does on its own, unchanged
         finally:
             h.close()
+
+
+def call(command, tool="Bash"):
+    """One tool call as the hook protocol delivers it (JSON on standard input)."""
+    return json.dumps({"tool_name": tool, "tool_input": {"command": command}, "cwd": "/"})
+
+
+class GuardTool:
+    """A copy of bin/ and lib/ in a fresh directory, without bytecode: the tool as a checkout installed with sudo is, until it is compiled."""
+
+    def __init__(self):
+        self.t = tempfile.mkdtemp(prefix="guardtool.")
+        self.home = os.path.join(self.t, "home")
+        os.makedirs(self.home)
+        for d in ("bin", "lib"):
+            shutil.copytree(os.path.join(ROOT, d), os.path.join(self.t, d), ignore=shutil.ignore_patterns("__pycache__"))
+        self.bin = os.path.join(self.t, "bin", "qargi")
+        self.lib = os.path.join(self.t, "lib")
+
+    def env(self, **more):
+        """What a hook has: little more than a PATH (python3 is found on it)."""
+        return dict({"PATH": os.environ["PATH"], "HOME": self.home}, **more)
+
+    def guard(self, stdin, *args, env=None):
+        return subprocess.run([self.bin, "__guard", *args], input=stdin, capture_output=True, text=True, env=self.env() if env is None else env)
+
+    def script(self, stdin, *args, env=None):
+        """The guard the way bin/qargi ran it before: guard.py as a script."""
+        return subprocess.run([sys.executable, "-I", os.path.join(self.lib, "guard.py"), *args], input=stdin, capture_output=True, text=True,
+                              env=self.env() if env is None else env)
+
+    def pyc(self):
+        d = os.path.join(self.lib, "__pycache__")
+        return sorted(n for n in (os.listdir(d) if os.path.isdir(d) else []) if n.startswith("guard.") and n.endswith(".pyc"))
+
+    def compile(self):
+        """What install.sh --user and qargi upgrade do."""
+        subprocess.run([sys.executable, "-I", "-m", "compileall", "-q", self.lib], check=True)
+
+    def close(self):
+        for d, dirs, _ in os.walk(self.t):
+            for x in dirs:
+                os.chmod(os.path.join(d, x), 0o755)
+        os.chmod(self.t, 0o755)
+        shutil.rmtree(self.t, True)
+
+
+class Guard(unittest.TestCase):
+    """bin/qargi runs the guard as an imported module (python compiles a script on every run and caches only what it imports: the 235 KB
+    guard.py took more than half of the 100 ms of every tool call), and everything the script did is what it still does."""
+
+    def setUp(self):
+        self.tool = GuardTool()
+
+    def tearDown(self):
+        self.tool.close()
+
+    CALLS = [("a harmless call", call("true")), ("git push", call("git push origin HEAD")), ("a Write", json.dumps({"tool_name": "Write", "tool_input": {"file_path": "/nonexistent/x", "content": "a"}, "cwd": "/"})),
+             ("empty input", ""), ("not JSON", "{"), ("not UTF-8 text", "\xff"), ("JSON that is no call", "[1, 2]")]
+
+    def test_it_answers_as_the_script_did(self):
+        """The same exit status, standard output and standard error as `python3 -I lib/guard.py`, for the options too (a class, a provider that is not
+        there, a class that is not one, an option without its value) and the stdin of a hook."""
+        for opts in ((), ("--class", "read-only"), ("--class", "write"), ("--class", "nosuch"), ("--class",), ("--provider", "nosuch"), ("--provider",)):
+            for what, stdin in self.CALLS:
+                a, b = self.tool.guard(stdin, *opts), self.tool.script(stdin, *opts)
+                self.assertEqual((a.returncode, a.stdout, a.stderr), (b.returncode, b.stdout, b.stderr), (what, opts))
+        self.assertEqual(self.tool.guard(call("true")).returncode, 0)
+        r = self.tool.guard(call("git push origin HEAD"))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("qargi guard:", r.stderr)
+
+    def test_the_arguments_after_the_guard_reach_it(self):
+        """sys.argv of the module is what the script had (the lib directory the dispatcher passes is taken off): a read-only member may not write."""
+        stdin = json.dumps({"tool_name": "Write", "tool_input": {"file_path": os.path.join(self.tool.home, "x"), "content": "a"}, "cwd": self.tool.home})
+        plain, ro = self.tool.guard(stdin), self.tool.guard(stdin, "--class", "read-only")
+        self.assertEqual(plain.returncode, 0, plain.stderr)
+        self.assertEqual(ro.returncode, 2)
+        self.assertIn("read-only", ro.stderr)
+        self.assertEqual(self.tool.guard(call("true"), "--class", "nosuch").returncode, 2)
+
+    def test_it_is_imported_so_its_bytecode_is_cached(self):
+        """Run with bytecode allowed, the dispatcher leaves guard's compiled form next to the source (a script never gets one)."""
+        self.assertEqual(self.tool.pyc(), [])
+        self.assertEqual(self.tool.script(call("true"), env=self.tool.env()).returncode, 0)
+        self.assertEqual(self.tool.pyc(), [], "python cached a script")
+        self.assertEqual(self.tool.guard(call("true"), env=self.tool.env()).returncode, 0)
+        self.assertEqual(len(self.tool.pyc()), 1, "the guard was not imported: its bytecode was not cached")
+
+    def test_compiled_by_the_installer_it_runs_from_the_bytecode(self):
+        """install.sh --user and qargi upgrade compile lib/ (compileall); the guard then loads that bytecode and does not compile again."""
+        self.tool.compile()
+        before = {n: os.stat(os.path.join(self.tool.lib, "__pycache__", n)).st_mtime_ns for n in self.tool.pyc()}
+        self.assertEqual(len(before), 1)
+        self.assertEqual(self.tool.guard(call("true")).returncode, 0)
+        self.assertEqual(self.tool.guard(call("git push origin HEAD")).returncode, 2)
+        self.assertEqual({n: os.stat(os.path.join(self.tool.lib, "__pycache__", n)).st_mtime_ns for n in self.tool.pyc()}, before)
+        with open(os.path.join(self.tool.lib, "guard.py"), "a") as f:   # a source that changed is compiled again, not run from stale bytecode
+            f.write("\nSTALE_CHECK = True\n")
+        r = subprocess.run([self.tool.bin, "__guard"], input=call("true"), capture_output=True, text=True, env=self.tool.env())
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root writes anywhere")
+    def test_a_read_only_tool_still_answers_and_stays_untouched(self):
+        """The tool as sudo installs it: nothing can be written next to the source, there is no bytecode, and the guard answers all the same."""
+        for d, dirs, files in os.walk(self.tool.t):
+            if os.path.abspath(d) == self.tool.home:
+                dirs[:] = []
+                continue
+            for x in dirs + files:
+                p = os.path.join(d, x)
+                if not os.path.islink(p):
+                    os.chmod(p, os.stat(p).st_mode & 0o555)
+        os.chmod(os.path.join(self.tool.t, "lib"), 0o555)
+        os.chmod(os.path.join(self.tool.t, "bin"), 0o555)
+        r = self.tool.guard(call("true"), env=self.tool.env())
+        self.assertEqual((r.returncode, r.stderr), (0, ""))
+        self.assertEqual(self.tool.guard(call("git push origin HEAD")).returncode, 2)
+        self.assertEqual(self.tool.pyc(), [])
+        self.assertFalse(os.path.exists(os.path.join(self.tool.lib, "__pycache__")))
+
+    def test_a_missing_or_broken_module_refuses_as_a_script_that_cannot_run_does(self):
+        """A guard that cannot be loaded is no allow: the exit status is not 0 (the hook then blocks), as it was for a script that did not parse."""
+        with open(os.path.join(self.tool.lib, "guard.py"), "w") as f:
+            f.write("def main(:\n")
+        r = self.tool.guard(call("true"))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("SyntaxError", r.stderr)
+        os.remove(os.path.join(self.tool.lib, "guard.py"))
+        r = self.tool.guard(call("true"))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("guard", r.stderr)
 
 
 class Budget(unittest.TestCase):

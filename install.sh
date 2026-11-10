@@ -215,6 +215,14 @@ if [ -n "$copy" ] && [ "$mode" = user ]; then
   echo "copied the tool to $data"
 fi
 
+# The bytecode of the tool, compiled now, as you, beside the source: the guard (qargi __guard, run on every tool call of a member) is imported
+# from lib/ (bin/qargi), and python caches only what it imports. A tool you cannot write to (a checkout installed with sudo) is compiled by
+# the one who can: qargi upgrade does it through sudo; after a first install, run the command below once. Without the bytecode the tool runs
+# as before and the guard starts slower (about twice as long). Nothing is written outside the tool's own lib/ (its __pycache__ directories).
+if [ "$mode" = user ] && ! python3 -I -m compileall -q "$src/lib" >/dev/null 2>&1; then
+  echo "note: the bytecode of $src/lib was not compiled (the tool is read-only for you), so qargi __guard starts slower; once, as the owner: sudo python3 -I -m compileall -q $src/lib" >&2
+fi
+
 mk "$skdir"
 for s in $skills; do
   rm -rf "${skdir:?}/$s"

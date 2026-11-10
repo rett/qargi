@@ -135,15 +135,31 @@ inst2 --user --uninstall >/dev/null 2>&1
 
 # --- the skills directories come from the runtime's definition ---
 TL=$T/tool; copy_tool "$ROOT" "$TL"; cp "$ROOT/install.sh" "$TL/"; mkdir -p "$TL/completions" "$TL/man"; cp "$ROOT"/completions/* "$TL/completions/"; cp "$ROOT/man/qargi.1" "$TL/man/"
+find "$TL" -name __pycache__ -prune -exec rm -rf {} +   # a copy of a checkout that ran has bytecode: the install below must be what makes it
 sed -i 's#"user_dir": "~/.claude/skills"#"user_dir": "~/.alt/skills"#; s#"project_dir": ".claude/skills"#"project_dir": ".alt/skills"#' "$TL/lib/providers/claude-code.json"
 H3=$T/h3; P3=$T/proj3; mkdir -p "$H3" "$P3"; git init -q "$P3"
 out=$(HOME=$H3 XDG_CONFIG_HOME=$H3/.config bash "$TL/install.sh" --user 2>&1); rc=$?
 { [ "$rc" = 0 ] && [ -L "$H3/.alt/skills/qargi-task" ] && [ ! -e "$H3/.claude" ]; } && ok "--user takes the user skills directory from the runtime's definition" || no "user layout (rc=$rc): $out"
 out=$(HOME=$H3 bash "$TL/install.sh" --project "$P3" 2>&1); rc=$?
 { [ "$rc" = 0 ] && [ -L "$P3/.alt/skills/qargi-task" ] && [ ! -e "$P3/.claude" ] && grep -qx "/.alt/skills/qargi-task" "$P3/.git/info/exclude"; } && ok "--project takes the project skills directory from it, and hides that one" || no "project layout (rc=$rc): $out"
+ls "$TL"/lib/__pycache__/guard.*.pyc >/dev/null 2>&1 && ok "--user compiles the tool's lib/ (bin/qargi imports the guard from it on every tool call, and python caches only an imported module)" || no "--user left no bytecode of the guard in $TL/lib"
 HOME=$H3 bash "$TL/install.sh" --project "$P3" --uninstall >/dev/null 2>&1
 HOME=$H3 XDG_CONFIG_HOME=$H3/.config bash "$TL/install.sh" --user --uninstall >/dev/null 2>&1
 { [ ! -e "$P3/.alt" ] && [ ! -e "$H3/.alt" ] && ! grep -q "alt/skills" "$P3/.git/info/exclude"; } && ok "and the uninstalls follow it" || no "uninstall with a changed layout left: $(find "$H3" "$P3" -path "$P3/.git" -prune -o -name '*alt*' -print)"
+
+# --- a tool the user cannot write to (a checkout installed with sudo): the install still works, says the bytecode was not compiled, and writes nothing into the tool ---
+if [ "$(id -u)" != 0 ]; then
+  RO=$T/ro; H6=$T/h6; mkdir -p "$H6"; copy_tool "$ROOT" "$RO"; cp "$ROOT/install.sh" "$RO/"; mkdir -p "$RO/completions" "$RO/man"; cp "$ROOT"/completions/* "$RO/completions/"; cp "$ROOT/man/qargi.1" "$RO/man/"
+  find "$RO" -name __pycache__ -prune -exec rm -rf {} +
+  chmod -R a-w "$RO"
+  out=$(HOME=$H6 XDG_CONFIG_HOME=$H6/.config QARGI_CONF=$H6/qconf bash "$RO/install.sh" --user 2>&1); rc=$?
+  nopyc=$(find "$RO" -name __pycache__ | head -1)
+  { [ "$rc" = 0 ] && [ -z "$nopyc" ] && echo "$out" | grep -q "bytecode of $RO/lib was not compiled" && echo "$out" | grep -q "sudo python3 -I -m compileall -q $RO/lib"; } && ok "a read-only tool is installed, with a note on how to compile it, and nothing is written into it" || no "read-only tool (rc=$rc, pycache: $nopyc): $out"
+  guard_rc=0; printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git push origin HEAD"},"cwd":"/"}' | HOME=$H6 QARGI_CONF=$H6/qconf "$RO/bin/qargi" __guard >/dev/null 2>&1 || guard_rc=$?
+  [ "$guard_rc" = 2 ] && ok "and the guard of a read-only tool still answers (without cached bytecode)" || no "guard of a read-only tool: exit $guard_rc"
+  HOME=$H6 XDG_CONFIG_HOME=$H6/.config QARGI_CONF=$H6/qconf bash "$RO/install.sh" --user --uninstall >/dev/null 2>&1
+  chmod -R u+w "$RO" "$H6"   # the packs seeded from the tool keep its mode
+fi
 
 # --- the config directory (~/.qargi/config) a project install made goes with its uninstall once it is empty, and only then ---
 H4=$T/h4; P4=$T/proj4; mkdir -p "$H4" "$P4"; git init -q "$P4"

@@ -153,6 +153,52 @@ class T(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("no installed tool", r.stderr)
 
+    def with_lib(self, version):
+        os.makedirs(os.path.join(self.origin, "lib"), exist_ok=True)
+        with open(os.path.join(self.origin, "lib", "mod.py"), "w") as f:
+            f.write("X = %r\n" % version)
+        self.commit(version, "with lib " + version)
+
+    def apply_upgrade(self):
+        tok = [l.split()[2] for l in self.q("--branch", "develop").stdout.splitlines() if l.startswith("plan token")][0]
+        return self.q("--branch", "develop", "--plan", tok, "--approved", "go")
+
+    def test_the_root_owned_checkout_is_compiled_through_sudo(self):
+        """A checkout the user cannot write to: the git writes and the bytecode of lib/ (bin/qargi imports the guard from it) go through QARGI_SUDO,
+        before install.sh --user runs; a failed compile is a note, not a failure of the upgrade."""
+        log = os.path.join(self.t, "sudo.log")
+        stub = os.path.join(self.t, "sudo")
+        with open(stub, "w") as f:                                   # a sudo that notes its command, and lets the (not really root-owned) checkout be written
+            f.write('#!/bin/sh\necho "$*" >> "$QARGI_TEST_SUDO"\nchmod u+w "$QARGI_TEST_TOOL/.git"\ncase "$*" in *compileall*) [ -z "$QARGI_TEST_NOCOMPILE" ] || exit 1;; esac\n"$@"; rc=$?\nchmod a-w "$QARGI_TEST_TOOL/.git"\nexit $rc\n')
+        os.chmod(stub, 0o755)
+        self.with_lib("0.2.0")
+        self.env.update(QARGI_SUDO=stub, QARGI_TEST_SUDO=log, QARGI_TEST_TOOL=self.tool)
+        os.chmod(os.path.join(self.tool, ".git"), 0o555)
+        try:
+            r = self.apply_upgrade()
+            self.assertEqual(r.returncode, 0, r.stderr)
+            with open(log) as f:
+                calls = f.read().splitlines()
+            self.assertTrue(any("git" in c and "merge" in c for c in calls), calls)
+            self.assertTrue(any(c.endswith("python3 -I -m compileall -q %s" % os.path.join(self.tool, "lib")) for c in calls), calls)
+            self.assertTrue(any(n.startswith("mod.") for n in os.listdir(os.path.join(self.tool, "lib", "__pycache__"))))
+            with open(self.mark) as f:
+                self.assertIn("--user", f.read())                    # install.sh --user ran after it
+            self.with_lib("0.3.0")
+            self.env["QARGI_TEST_NOCOMPILE"] = "1"
+            r = self.apply_upgrade()
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("bytecode", r.stderr)
+            self.assertIn("upgraded", r.stdout)
+        finally:
+            os.chmod(os.path.join(self.tool, ".git"), 0o755)
+
+    def test_a_checkout_the_user_can_write_is_left_to_install_sh(self):
+        self.with_lib("0.2.0")
+        r = self.apply_upgrade()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.tool, "lib", "__pycache__")))   # install.sh --user compiles it (a stub here)
+
     def test_guard_refuses_members(self):
         for cmd in ("qargi upgrade --branch develop", "bash lib/upgrade.sh --tag v1"):
             r = subprocess.run([BIN, "__guard"], input=json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": self.t}),

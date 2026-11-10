@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- `qargi __guard`, the hook command a member runs before every tool call, loads `lib/guard.py` as an imported module instead of running it as a script, so python reuses its compiled form (a script is compiled on every run: the 235 KB guard took more than half of each call). A harmless `ls` call takes a median of 48 ms instead of 105 ms, a `Write` call 60 ms instead of 118 ms (20 runs, minimal environment). The exit status, standard output and standard error, the options and the refusal messages are unchanged. `install.sh --user` compiles the tool's `lib/` as you (`compileall`), and `qargi upgrade` compiles the root-owned checkout through `QARGI_SUDO` before it relinks; nothing is written outside the tool's own `__pycache__` directories. A tool you cannot write to and that nobody compiled (a first `sudo git clone` install) works as before, only slower: `install.sh --user` says so and prints the one command that compiles it.
+
 ## [0.2.8] - 2026-11-09
 
 ### Fixed
