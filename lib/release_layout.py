@@ -23,7 +23,7 @@ Answers, under `release` in the project's answers file (every one optional; the 
 
   release_layout.py problems REL_JSON                  the problems of those answers (a JSON object on the command line); one per line
   release_layout.py changelog FILE VER DATE ALLOW AF [KIND]  check and rewrite the changelog for a release; exit 1 with the reason. KIND hotfix: a
-                               changelog with no unreleased heading gets the released heading, empty, above the newest heading of that level (it prints heading-added)
+                               changelog with no unreleased heading, when release.changelog.unreleased carries {version}, gets the released heading, empty, above the newest heading of that level (it prints heading-added)
   release_layout.py manpage FILE NAME VER DATE OLD     set the .TH date and version of a manual page; exit 1 with the reason
   release_layout.py th-empty FILE...                   print each manual page whose .TH line has no date or no version (exit 1 if any)
   release_layout.py has-section FILE VER AF            exit 0 when the changelog has a released section for VER
@@ -183,8 +183,9 @@ def cmd_changelog(argv):
     t = open(path, encoding="utf-8").read()
     released = rel.replace("{version}", ver).replace("{date}", date)
     m = find_unreleased(t, unrel)
-    if not m and hotfix:
-        # a hotfix is cut from master; a project whose unreleased heading carries the version renames it at a release, so master has none. The branch
+    if not m and hotfix and "{version}" in unrel:
+        # a hotfix is cut from master; only a project whose unreleased heading carries {version} renames it at a release, so only there master has none (any other
+        # layout that lacks it is refused below, as a release is). The branch
         # brings the items: the heading is added empty, and `release finish` refuses until the branch has entries under it
         open(path, "w", encoding="utf-8").write(add_released_heading(t, released, level(unrel)))
         print("heading-added")

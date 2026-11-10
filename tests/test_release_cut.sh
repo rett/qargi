@@ -292,4 +292,14 @@ rstart 0.1.1 --hotfix --date 2026-05-06 >/dev/null 2>&1
 out=$($REL finish 0.1.1 --hotfix 2>&1); rc=$?
 [ "$rc" = 0 ] && ! grep -q "changelog check" <<<"$out" && [ -n "$(tok <<<"$out")" ] && ok "hotfix finish: a branch with no CHANGELOG.md is not checked" || no "finish without a changelog: rc=$rc $out"
 
+# --- the heading is added only for an unreleased template that carries {version}: any other layout whose master lacks it is refused for a hotfix too
+mk nover
+git -C "$R" checkout -q master; printf '# Changelog\n\n## [0.1.0] - 2026-01-01\n\n- first\n' > "$R/CHANGELOG.md"
+git -C "$R" commit -q -am "no unreleased heading" && git -C "$R" branch -f develop master && git -C "$R" checkout -q parked
+out=$($REL start 0.1.1 --hotfix --allow-empty-notes 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "has no '## \[Unreleased\]' section to release. Fix: add one" <<<"$out" && ! git -C "$R" rev-parse -q --verify refs/heads/hotfix/0.1.1 >/dev/null && ok "default layout: a master without '## [Unreleased]' is refused for a hotfix (add one), also with --allow-empty-notes" || no "default layout, no heading: rc=$rc $out"
+jq '.release = {changelog: {unreleased: "## Next"}}' "$T/c/projects/nover.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/nover.json"
+out=$($REL start 0.1.1 --hotfix 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "has no '## Next' section to release" <<<"$out" && ok "an unreleased template without {version}: a hotfix on a master without that heading is refused" || no "template without version: rc=$rc $out"
+
 exit $fail
