@@ -94,4 +94,9 @@ out=$($Q review check "$RUN/out" 2>&1); rc=$?
 jq '.scope = ["lib/", "docs/"]' "$RUN/out/manifest.json" > "$RUN/out/m.json" && mv "$RUN/out/m.json" "$RUN/out/manifest.json"
 $Q review check "$RUN/out" 2>&1 | grep -q 'outside SCOPE' && ok "the member's own scope[] does not widen the prepared SCOPE" || no "scope[] widened the limit"
 
+# --- the skills tell the lead to use the flags and to hand the member RUN/task.md, not to assemble a block
+grep -q -- '--task-file' skills/qargi-task/SKILL.md && grep -q -- '--done' skills/qargi-task/SKILL.md && ok "qargi-task has the lead call prepare with --task-file and --done" || no "qargi-task does not name the flags"
+grep -q 'RUN/task.md' skills/qargi-task/SKILL.md && ! grep -q 'ROLE_TEXT\|paste them into the task block' skills/qargi-task/SKILL.md && ok "qargi-task hands the member RUN/task.md; the hand assembly text is gone" || no "qargi-task still describes a hand-assembled block"
+grep -q 'RUN_DIR/task.md' skills/qargi-verify/SKILL.md && ok "qargi-verify compares the manifest and the DONE check with RUN_DIR/task.md" || no "qargi-verify does not name task.md"
+
 exit $fail

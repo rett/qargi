@@ -12,15 +12,15 @@ Gates come from the repository's profile alone (`~/.qargi/config/profiles/<repo>
 
 For each run:
 
-1. `qargi local verify RUN_DIR` (a cloud collect has none). A change in the real repository's refs means the agent pushed or wrote there: stop and tell the user. A pass arms the run for your merges.
-2. `qargi review check RUN_DIR/out` (OUT; or a cloud collect directory): one numbered patch per commit, a matching manifest and `series.md`. A FAIL goes back to the agent. A read-only run with no report in OUT gave it in its final message: `qargi review save RUN_DIR` stores it.
-3. `manifest.json`: base SHA equals the current base; `done.exit_code`; gate verdict lines; touched paths inside SCOPE; status DONE.
+1. `qargi local verify RUN_DIR`. A change in the real repository's refs means the agent pushed or wrote there: stop and tell the user. A pass arms the run for merges.
+2. `qargi review check RUN_DIR/out` (or a cloud collect directory): one numbered patch per commit, a matching manifest and `series.md`, paths inside SCOPE. A FAIL goes back to the agent. A read-only run with no report in OUT gave it in its final message: `qargi review save RUN_DIR` stores it.
+3. `manifest.json`: base SHA equals the current base; `done.command` is the DONE of `RUN_DIR/task.md`, with `done.exit_code`; gate verdict lines; status DONE.
 4. Read each commit's diff on its own, with the agent's commit advice: one logical change with its tests, docs and changelog entry. Run the profile's private-name or secret scrub on the patches and grep commit messages for private names and trailers (`git interpret-trailers`). Refuse on a hit.
 
 ## 2. Apply and check
 
 - Local: `qargi review apply RUN_DIR` makes `agent/<slug>` (the slug it prints) in a temporary worktree at the run's base. Cloud: `git am --3way` the `*.patch` files in name order on a scratch base checkout.
-- Rebuild the generated files the profile names, run its gates yourself (trust only their verdict lines), then the DONE command verbatim. Check each commit builds.
+- Rebuild the generated files the profile names, run its gates yourself (trust only their verdict lines), then the DONE of `RUN_DIR/task.md` verbatim. Check each commit builds.
 - Anything the profile marks for a second-model review gets one first.
 
 ## 3. Report, then merge
