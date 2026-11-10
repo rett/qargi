@@ -242,6 +242,10 @@ project_load
 # status started (the branch is being made), built (the branch is at `tip`; the remaining steps are not all done), done. A run that finds it started or built
 # does not die at "the branch exists already": a started apply left a branch that is only the base plus some of the patches, which is removed and made again;
 # a built one is finished from the record (apply_record), the patches are not read again. steps lists the ones of apply_record that are done.
+# The path rule is shared with `qargi local clean RUN` (apply_state_drop in local.sh), which removes the record of a run it cleans: apply/RUN-ID.json. The temporary
+# directories of an apply carry the run's id in their names (apply-in.RUN-ID.XXXXXX holds the copy of the patches, apply-wt.RUN-ID.XXXXXX the worktree), so the ones
+# an apply that was killed leaves are attributed to their run by clean, and to none by `local clean --orphans`.
+apply_rec_file() { printf '%s/apply/%s.json' "$DA_STATE" "${1##*/}"; }   # RUN
 apply_mark() { json_update "$amark" '.steps = ((.steps + [$s]) | unique)' --arg s "$1"; }   # STEP
 apply_marked() { jq -e --arg s "$1" '.steps | index($s) != null' "$amark" >/dev/null 2>&1; }
 # apply_record -> the steps after the branch is built: the journal line, the audit line, the scrub record, the `applied` file of the run (and of its saved copy), the
@@ -329,7 +333,7 @@ case $verb in
     marshal_touch_run "$RUN"   # the lead's apply keeps its lease on the feature the run is based on
     [ "$(run_class "$RUN")" != read-only ] \
       || die "$RUN is a read-only run ($(cat "$SRC/ability" 2>/dev/null || echo review)): its product is a report, never patches. Read $SRC/out/report.md; nothing was applied"
-    appid=${RUN##*/}; amark=$DA_STATE/apply/$appid.json
+    appid=${RUN##*/}; amark=$(apply_rec_file "$RUN")
     if [ -e "$amark" ] || [ -L "$amark" ]; then apply_resume; fi   # a record of an earlier apply of this run: refuse, finish it or clear what it left
     [ ! -L "$SRC/applied" ] && { [ ! -e "$SRC/applied" ] || [ -f "$SRC/applied" ]; } || die "$SRC/applied is a link or not a plain file: a member put it there (look at the run; nothing was applied)"
     [ ! -f "$SRC/applied" ] || die "this run was applied already ($(cut -d' ' -f1 "$SRC/applied")): qargi feature merge, then qargi local clean $RUN"
@@ -355,7 +359,7 @@ case $verb in
     # The patches are the files of out/patches, copied once into a directory of the lead's own (the run directory is a member's to write, and a member's process
     # may still be alive): the hash of the series, the scrub and git am all read that copy, so what was scrubbed is what is applied. A link that took the place of a
     # file in the meantime is copied as a link and refused. Read as a list, so a name with a space or a newline in it stays one name.
-    AP=$(mktemp -d "$DA_STATE/apply-in.XXXXXX") || die "could not make a temporary directory in $DA_STATE for the patches"
+    AP=$(mktemp -d "$DA_STATE/apply-in.$appid.XXXXXX") || die "could not make a temporary directory in $DA_STATE for the patches"
     trap 'on_exit; [ -z "${AP:-}" ] || rm -rf -- "$AP"' EXIT
     mkdir "$AP/patches" || die "could not make a directory for the patches in $AP"
     n=0
@@ -387,11 +391,11 @@ case $verb in
     # is true or neither identity exists; the committer is the one above. What the member wrote is recorded in the ref journal and the audit log.
     pick_author
     # the apply record is made before the branch is, in the lead's state (made exclusively: a second apply of the run finds it)
-    mkdir -p "$DA_STATE/apply"
+    mkdir -p "$(dirname "$amark")"
     ( set -C; umask 077; jq -nc --arg run "$RUN" --arg src "$SRC" --arg b "$BRANCH" --arg base "$sha" --arg at "$(now)" \
         '{schema:1, run:$run, src:$src, branch:$b, base:$base, status:"started", steps:[], at:$at}' > "$amark" ) 2>/dev/null \
       || die "could not make the apply record $amark (is another apply of $RUN under way?): nothing was applied"
-    WT=$(mktemp -d "$DA_STATE/apply-wt.XXXXXX")
+    WT=$(mktemp -d "$DA_STATE/apply-wt.$appid.XXXXXX")
     g worktree add -q -b "$BRANCH" "$WT" "$sha" 2>/dev/null || { rm -rf "$WT"; WT=''; rm -f "$amark" "$amark.lock"; die "could not make a temporary worktree for $BRANCH"; }
     fail=''
     apply_series "$WT" "${patches[@]}"
