@@ -64,7 +64,7 @@
 17 bash tests/conformance.sh claude-code
 9 bash tests/test_team.sh
 17 bash tests/test_linker.sh
-12 bash tests/test_role.sh
+15 bash tests/test_role.sh
 13 bash tests/test_release_gh.sh
 11 bash tests/test_attach.sh
 12 bash tests/test_local_report.sh

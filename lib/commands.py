@@ -280,7 +280,7 @@ COMMANDS = {
                  "Four ship with qargi: build, write, review and test (review is read-only). Add your own under ~/.qargi/config/roles/NAME/: "
                  "a name of one lower-case token, never lead. The class decides what the guard allows a member (read-only: nothing in the clone "
                  "changes); the text of a role cannot change it. A task block carries the role's text; a cloud agent of the role has it in its system prompt."),
-        "scripts": ["role.sh"],
+        "scripts": ["role.py"],
         "verbs": {
             "list": verb("List the roles, their class and where they live"),
             "show": verb("Print a role: its class, description and instructions", [("NAME", "workrole")]),
