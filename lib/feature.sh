@@ -377,7 +377,9 @@ case $verb in
       '{schema:1, verb:"feature:finish", project:$project, name:$name, pushed:$pushed, refs:[{ref:"refs/heads/develop", local_old:$d0, origin_old:$rd0, new:$m}],
         ctx:{head:$h, keep:$keep, pushd:$pushd, pushwhy:$pushwhy, rdel:$rdel, k:$k}, done:[]}')"
     if [ -n "$pushd" ]; then
-      g push -q --atomic origin "$MERGED:refs/heads/develop" || { intent_clear "feature-$NAME_ARG"; die "the push failed; nothing was changed locally or on origin (run it again)"; }
+      # a push that exits non-zero may still have reached origin (the answer was lost): the record stays, and the next run asks origin
+      g push -q --atomic origin "$MERGED:refs/heads/develop" \
+        || die "the push reported a failure, and origin may hold the merge anyway (develop here was not moved): run qargi feature finish $NAME_ARG again; it asks origin, then completes the finish or starts it over"
     fi
     feature_finish_tail;;
   *) usage_die "usage: qargi feature start|list|park|sync|merge|status|verify|finish NAME [BRANCH] [--project P]";;

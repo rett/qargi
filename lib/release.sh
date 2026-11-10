@@ -893,9 +893,10 @@ case $verb in
     tagsha=$(g rev-parse "refs/tags/$VER")
     intent_update "$KIND-$VER" '.refs[2].new = $t' --arg t "$tagsha"
     if [ -n "$PUSHED" ]; then
-      # all or none: the push comes before any local branch moves, so a failure changes nothing
+      # all or none, and the push comes before any local branch moves. A push that exits non-zero may still have reached origin (the answer was
+      # lost), so the record and the local tag stay: the next run asks origin and completes the finish, or drops the tag and starts over
       if ! g push -q --atomic origin "$nm:refs/heads/master" "$ns:refs/heads/$second" "refs/tags/$VER"; then
-        g tag -d "$VER" >/dev/null 2>&1; intent_clear "$KIND-$VER"; die "the push failed; nothing was changed locally or on origin (run it again)"
+        die "the push reported a failure, and origin may hold the release anyway (master and $second here were not moved; the local tag $VER and the record of this finish are kept): run qargi release finish $VER${HOTFIX:+ --hotfix} again; it asks origin, then completes the finish or drops the tag and starts it over"
       fi
     fi
     release_finish_tail;;
