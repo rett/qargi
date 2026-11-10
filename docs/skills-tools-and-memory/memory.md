@@ -41,7 +41,13 @@ A move deletes nothing: the original is archived under `/_archive/<date>/` of th
 tier, the copy records its origin, and the index row follows the note. A note that is also
 in a third tier, or an existing store that is not a standard one, is refused. qargi never
 commits the repo tier: it is written into your checkout, so review and commit it, or ignore
-it in git.
+it in git. The plan names the branch checked out there, which is where the files must be
+committed (a member's clone is made from the committed branch). If the checkout is on the
+wrong branch, `--worktree DIR` on `init repo` (or on a `move` that has the repo tier at one end)
+writes the tier into `DIR` instead, another worktree of the same repository, at the same path
+inside it; the plan then says to commit it on the branch checked out in `DIR`, for example the
+integration branch. `DIR` must be the top of a work tree of the project's repository, and the
+option is refused for any other tier.
 
 The session-start hook shows the tiers, highest first, then the README of the highest tier
 that has one, each tier's indexes and the notes marked `always`, with size caps and a list of

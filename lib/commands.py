@@ -58,6 +58,7 @@ HOOK_REC = ("Reads the hook's JSON on stdin and appends one small line to the ru
             "(ids, times, names and hashes; never command, message or error text). It always exits 0 at once, even on malformed input, "
             "so it cannot block an agent. Register it with qargi supervise hooks.")
 ASKED = opt("--asked", "the request, in your words, that names the cloud instance; recorded in the audit log", "REQUEST")
+WORKTREE = opt("--worktree", "write the repo tier into DIR, another worktree of the project's repository (the same path inside it), instead of its checkout; the plan says on which branch to commit it", "DIR", "dir")
 PLAN = opt("--plan", "the plan token printed by the same command without --approved", "TOKEN")
 APPROVED = opt("--approved", "your go-ahead for exactly that plan, in your words; recorded in the audit log", "WORDS")
 EXEC = opt("--approve-exec", "name every executable the pack holds, separated by commas, to approve running them", "NAMES")
@@ -1309,17 +1310,21 @@ COMMANDS = {
                                 "README.md and INDEX.md repeat per tier and are fine). A tier that does not exist (memory init creates it) or cannot be reached is information, not a failure. "
                                 "Exit 1 when anything failed.")),
             "init": verb("Create a memory tier (repo, project, shared or system) as an empty store of the standard layout", [("TIER", "none")],
-                         [PROJECT_OPT, PLAN, APPROVED],
+                         [PROJECT_OPT, WORKTREE, PLAN, APPROVED],
                          desc=("Without --approved it shows what would be created and a plan token and changes nothing. It refuses a tier that holds files that are not "
                                "a standard store, one whose place overlaps another tier, a repo tier outside the checkout, and the cloud tier (provision creates that). "
-                               "The repo tier is written inside your repository checkout: qargi never commits it, so review it and commit or ignore it yourself. "
+                               "The repo tier is written inside your repository checkout: qargi never commits it, so review it and commit or ignore it yourself; the plan names the branch checked out "
+                               "there, which is where the files must be committed. --worktree DIR writes the repo tier into another worktree of the repository instead (the same path inside it), "
+                               "and the plan then names the branch of that worktree; it is refused for any other tier. "
                                "A tier that is already set up says so and exits 0.")),
             "move": verb("Move notes from one tier to another, with the original archived in the first", [("PATH", "none")],
                          [PROJECT_OPT, opt("--from", "the tier the notes are in", "TIER", ("repo", "cloud", "project", "shared", "system")),
-                          opt("--to", "the tier they go to", "TIER", ("repo", "cloud", "project", "shared", "system")), PLAN, APPROVED],
+                          opt("--to", "the tier they go to", "TIER", ("repo", "cloud", "project", "shared", "system")), WORKTREE, PLAN, APPROVED],
                          desc=("PATH is one note (ending in .md) or a folder prefix under shared/ or roles/ROLE/. Only notes move, never indexes. A note must live in one tier, "
                                "so it refuses a path that is also in another tier. Nothing is deleted: the original goes to /_archive/<date>/ of the first tier and each copy "
-                               "records its origin. Without --approved it prints the plan and its token and changes nothing; a tier whose notes changed since the plan is refused.")),
+                               "records its origin. Without --approved it prints the plan and its token and changes nothing; a tier whose notes changed since the plan is refused. "
+                               "A move that has the repo tier at one end warns where its files must be committed, and --worktree DIR (refused when neither end is the repo tier) uses the repo tier "
+                               "of that worktree of the repository instead of the checkout's.")),
             "split": verb("Copy the notes a selector picks into another store, optionally archiving the originals", [("FROM", "file"), ("TO", "file")],
                           [PREFIX, ROLE_SEL, NOTE_KIND, opt("--archive", "move the originals to /_archive/<date>/ in FROM (with their origin in Sources:)"), PLAN, APPROVED],
                           desc="At least one of --prefix, --role and --note-kind is needed; a note must match every one given. Notes already in TO are left; a different one goes to /_conflicts/<date>/ in TO.",

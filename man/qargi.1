@@ -3510,11 +3510,16 @@ the project, instead of the one inferred from here.
 .BI "init " "TIER"
 Create a memory tier (repo, project, shared or system) as an empty store of the standard layout.
 .br
-Without \-\-approved it shows what would be created and a plan token and changes nothing. It refuses a tier that holds files that are not a standard store, one whose place overlaps another tier, a repo tier outside the checkout, and the cloud tier (provision creates that). The repo tier is written inside your repository checkout: qargi never commits it, so review it and commit or ignore it yourself. A tier that is already set up says so and exits 0.
+Without \-\-approved it shows what would be created and a plan token and changes nothing. It refuses a tier that holds files that are not a standard store, one whose place overlaps another tier, a repo tier outside the checkout, and the cloud tier (provision creates that). The repo tier is written inside your repository checkout: qargi never commits it, so review it and commit or ignore it yourself; the plan names the branch checked out there, which is where the files must be committed. \-\-worktree DIR writes the repo tier into another worktree of the repository instead (the same path inside it), and the plan then names the branch of that worktree; it is refused for any other tier. A tier that is already set up says so and exits 0.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
 the project, instead of the one inferred from here.
+.RE
+.RS
+.TP
+.BI "\-\-worktree " "DIR"
+write the repo tier into DIR, another worktree of the project's repository (the same path inside it), instead of its checkout; the plan says on which branch to commit it.
 .RE
 .RS
 .TP
@@ -3532,7 +3537,7 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .BI "move " "PATH"
 Move notes from one tier to another, with the original archived in the first.
 .br
-PATH is one note (ending in .md) or a folder prefix under shared/ or roles/ROLE/. Only notes move, never indexes. A note must live in one tier, so it refuses a path that is also in another tier. Nothing is deleted: the original goes to /_archive/<date>/ of the first tier and each copy records its origin. Without \-\-approved it prints the plan and its token and changes nothing; a tier whose notes changed since the plan is refused.
+PATH is one note (ending in .md) or a folder prefix under shared/ or roles/ROLE/. Only notes move, never indexes. A note must live in one tier, so it refuses a path that is also in another tier. Nothing is deleted: the original goes to /_archive/<date>/ of the first tier and each copy records its origin. Without \-\-approved it prints the plan and its token and changes nothing; a tier whose notes changed since the plan is refused. A move that has the repo tier at one end warns where its files must be committed, and \-\-worktree DIR (refused when neither end is the repo tier) uses the repo tier of that worktree of the repository instead of the checkout's.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -3547,6 +3552,11 @@ the tier the notes are in.
 .TP
 .BI "\-\-to " "TIER"
 the tier they go to.
+.RE
+.RS
+.TP
+.BI "\-\-worktree " "DIR"
+write the repo tier into DIR, another worktree of the project's repository (the same path inside it), instead of its checkout; the plan says on which branch to commit it.
 .RE
 .RS
 .TP
