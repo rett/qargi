@@ -3,7 +3,7 @@
 (lib/env_check.py, lib/env_apply.py, lib/local_run.py, lib/tools.py). Offline; no project, no network.
 Run: python3 tests/test_procenv.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
-import os, subprocess, sys, time, unittest
+import hashlib, json, os, shutil, socket, subprocess, sys, tempfile, time, unittest
 from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -107,6 +107,81 @@ class Now(unittest.TestCase):
         import discover
         self.assertFalse(hasattr(discover, "now"))
         self.assertRegex(discover.approval(), r" at \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
+
+
+class PlanToken(unittest.TestCase):
+    def test_it_is_twelve_hex_digits_of_the_sha256_of_the_parts(self):
+        self.assertEqual(PE.plan_token("a"), hashlib.sha256(b"a").hexdigest()[:12])
+        self.assertEqual(PE.plan_token("a", "b", "c"), hashlib.sha256(b"a\nb\nc").hexdigest()[:12])
+        self.assertEqual(PE.plan_token("é"), hashlib.sha256("é".encode("utf-8")).hexdigest()[:12])
+        self.assertNotEqual(PE.plan_token("a", "b"), PE.plan_token("ab"))
+
+    def test_it_is_the_token_the_approvals_library_makes(self):
+        from conformance import library as L
+        for parts in (("x",), ("verb", "name", "kind"), ("", "")):
+            self.assertEqual(PE.plan_token(*parts), L.token_of(*parts))
+
+    def test_env_apply_makes_its_token_with_it(self):
+        import env_apply
+        ctx = {"dry": "make -n bootstrap", "boot": "make bootstrap", "repo": "/r", "head": "abc", "tools": []}
+        want = PE.plan_token(json.dumps({"dry_run_output": "out", "dry_run_command": "make -n bootstrap", "bootstrap_command": "make bootstrap",
+                                         "repo": "/r", "head": "abc", "host": socket.gethostname(), "tools": []}, sort_keys=True))
+        self.assertEqual(env_apply.token_of("out", ctx), want)
+
+
+class Audit(unittest.TestCase):
+    def setUp(self):
+        self.state = tempfile.mkdtemp(prefix="procenv-state.")
+        self.addCleanup(shutil.rmtree, self.state, True)
+        self.log = os.path.join(self.state, "audit.log")
+
+    def lines(self):
+        with open(self.log) as f:
+            return [json.loads(ln) for ln in f.read().splitlines()]
+
+    def test_the_line_has_the_fields_and_the_order_the_log_always_had(self):
+        PE.audit("env:apply", "make bootstrap", approved="go ahead", state=self.state)
+        with open(self.log) as f:
+            text = f.read()
+        row = self.lines()[0]
+        self.assertEqual(list(row), ["ts", "verb", "detail", "asked", "approved", "nested"])
+        self.assertEqual((row["verb"], row["detail"], row["asked"], row["approved"], row["nested"]), ("env:apply", "make bootstrap", "", "go ahead", False))
+        self.assertRegex(row["ts"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
+        self.assertTrue(text.endswith("}\n") and text.count("\n") == 1)
+
+    def test_a_line_of_the_supervisor_carries_its_origin_last(self):
+        PE.audit("supervise:waiting", "k run next", asked="why", origin="supervisor", ts="2026-01-02T03:04:05Z", state=self.state)
+        row = self.lines()[0]
+        self.assertEqual(list(row), ["ts", "verb", "detail", "asked", "approved", "nested", "origin"])
+        self.assertEqual((row["ts"], row["asked"], row["approved"], row["origin"]), ("2026-01-02T03:04:05Z", "why", "", "supervisor"))
+
+    def test_lines_are_appended_and_the_file_is_private(self):
+        PE.audit("a", "1", state=self.state)
+        PE.audit("b", "2", state=self.state)
+        self.assertEqual([r["verb"] for r in self.lines()], ["a", "b"])
+        self.assertEqual(os.stat(self.log).st_mode & 0o777, 0o600)
+        os.chmod(self.log, 0o644)
+        PE.audit("c", "3", state=self.state)
+        self.assertEqual(os.stat(self.log).st_mode & 0o777, 0o600)
+
+    def test_the_state_directory_is_made_and_is_the_default(self):
+        inner = os.path.join(self.state, "not", "yet")
+        PE.audit("a", "1", state=inner)
+        self.assertTrue(os.path.isfile(os.path.join(inner, "audit.log")))
+        with mock.patch.dict(os.environ, {"QARGI_STATE": self.state}):
+            PE.audit("d", "4")
+        self.assertEqual([r["verb"] for r in self.lines()], ["d"])
+
+    def test_env_apply_and_supervise_write_through_it(self):
+        import env_apply, supervise
+        with mock.patch.dict(os.environ, {"QARGI_STATE": self.state}):
+            env_apply.audit("env:apply", "detail", {"--approved": "words"})
+        row = self.lines()[0]
+        self.assertEqual((row["verb"], row["approved"], "origin" in row), ("env:apply", "words", False))
+        with mock.patch.object(supervise, "STATE", self.state):
+            supervise.audit("supervise:looping", "k r next", "2026-02-03T04:05:06Z", "ask")
+        row = self.lines()[1]
+        self.assertEqual((row["ts"], row["verb"], row["asked"], row["approved"], row["origin"]), ("2026-02-03T04:05:06Z", "supervise:looping", "ask", "", "supervisor"))
 
 
 def defined_in(name, *funcs):

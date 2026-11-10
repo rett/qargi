@@ -8,9 +8,13 @@ directory there first, so it works as a script and as a module):
                         DEFAULT_PATH when nothing is left
   pass_env(names)       {name: value} of the names that are set and not empty in the caller's environment
   now(t=None)           the time stamp of the record, UTC, `2026-01-02T03:04:05Z`, of the epoch seconds t or of now
+  plan_token(*parts)    the token of a plan: the first 12 hex digits of the sha256 of the parts joined by newlines
+  audit(verb, detail, ...)  one line in STATE/audit.log: ts, verb, detail, asked, approved, nested (and origin when given)
   child_env(keep=())    the base environment of a child: PATH (clean_path), LANG and LC_ALL C.UTF-8, TERM dumb, GIT_TERMINAL_PROMPT 0, and
                         HOME, USER, LOGNAME, TMPDIR and the names in keep when the caller has them
 """
+import hashlib
+import json
 import os
 import time
 
@@ -40,3 +44,31 @@ def child_env(keep=()):
 def now(t=None):
     """The time stamp qargi writes in its records: UTC, to the second, `2026-01-02T03:04:05Z`; of the epoch seconds t, else of now."""
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
+
+
+def plan_token(*parts):
+    """The token that names a plan: the first 12 hex digits of the sha256 of the parts (text) joined by newlines."""
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:12]
+
+
+def audit(verb, detail, *, asked="", approved="", origin=None, ts=None, state=None):
+    """Append one line to audit.log in the state directory (state, else the one qargi uses; mode 600; the directory is made when it is not
+    there): {"ts", "verb", "detail", "asked", "approved", "nested": false} and, for a line written by the supervisor, "origin". One write, so
+    lines of two processes do not mix."""
+    if state is None:
+        import paths
+        state = paths.state()
+    line = {"ts": ts or now(), "verb": verb, "detail": detail, "asked": asked, "approved": approved, "nested": False}
+    if origin:
+        line["origin"] = origin
+    os.makedirs(state, exist_ok=True)
+    f = os.path.join(state, "audit.log")
+    fd = os.open(f, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    try:
+        os.write(fd, (json.dumps(line) + "\n").encode())
+    finally:
+        os.close(fd)
+    try:
+        os.chmod(f, 0o600)
+    except OSError:
+        pass

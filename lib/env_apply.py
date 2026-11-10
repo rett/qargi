@@ -81,7 +81,7 @@ def vis(s):
 
 
 def library():
-    from conformance import library as L          # the existing helpers of the approvals: token_of, exec_names, audit
+    from conformance import library as L          # the existing helpers of the approvals: exec_names, Failure
     return L
 
 
@@ -220,8 +220,7 @@ def analyse(text):
 
 
 def token_of(text, ctx):
-    L = library()
-    return L.token_of(json.dumps({"dry_run_output": text, "dry_run_command": ctx["dry"], "bootstrap_command": ctx["boot"], "repo": ctx["repo"],
+    return PE.plan_token(json.dumps({"dry_run_output": text, "dry_run_command": ctx["dry"], "bootstrap_command": ctx["boot"], "repo": ctx["repo"],
                                   "head": ctx["head"], "host": socket.gethostname(), "tools": ctx["tools"]}, sort_keys=True))
 
 
@@ -347,7 +346,7 @@ def install(todo, ctx):
 
 
 def audit(verb, detail, opts):
-    library().audit(verb, detail, {"--approved": opts.get("--approved", "")})
+    PE.audit(verb, detail, approved=opts.get("--approved", ""))
 
 
 def record_name(ctx):
