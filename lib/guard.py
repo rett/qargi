@@ -215,7 +215,7 @@ git subcommands that change the tree or the repository. A target the shell would
 substitution) is refused when it could name a record file of the run (`> abilit?`, `> $F`, `cp x $D/ability`) or, for a command that makes or replaces
 its file, whenever a variable or a substitution builds the name; a glob that can name a protected location is refused for a write. A directory that only lies above a protected location or the run
 (/tmp, $HOME) is refused as an mv destination only when something moved into it is, holds or has the name of the place (fits_beside), and always with -T. Under the read-only class the
-variables a read-only tool takes its programs and options from (PATH, GIT_*, PAGER, BASH_ENV, RIPGREP_CONFIG_PATH, LD_* ...) are not set, and a write to
+variables a read-only tool takes its programs and options from (PATH, GIT_*, PAGER, BASH_ENV, RIPGREP_CONFIG_PATH, LD_* ...) may not be assigned (the member runs with the ones it was given), and a write to
 a git configuration or hook file (GIT_PLACE: ~/.gitconfig, ~/.config/git, .git/config, .git/hooks, .git/modules, .git/worktrees, config.worktree, info/attributes) in a
 command that also runs git is refused for every member.
 The run: a directory is a run when it holds ability and refs.before, or the clone and out directories beside any file of the record (RUN_CONTROL), and it is not
@@ -1729,6 +1729,8 @@ RESTRICTED_ENV = {"PATH", "ENV", "BASH_ENV", "IFS", "HOME", "SHELL", "SHELLOPTS"
                   "SSH_ASKPASS", "XDG_CONFIG_HOME", "PROMPT_COMMAND", "RIPGREP_CONFIG_PATH", "NODE_OPTIONS", "RUBYOPT", "PERL5OPT", "PYTHONSTARTUP", "PYTHONPATH",
                   "EXINIT", "VIMINIT", "GREP_OPTIONS", "BROWSER", "PERL5LIB", "RUBYLIB", "NODE_PATH"}
 RESTRICTED_ENV_PREFIX = ("GIT_", "LD_", "BASH_", "RIPGREP_")   # what a read-only tool reads its programs and options from
+RESTRICTED_MSG = ("under the read-only class %s may not be assigned (inline, env, export, declare ...): the tools it runs read their programs and options from it, "
+                  "so a read-only member runs with the %s it was given. A build, vet or test command with the environment it was given is not refused; leave the assignment out")
 ASSIGNMENT = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)(?:\[[^=]*\])?\+?=")
 NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
@@ -1882,7 +1884,7 @@ def review_segment(toks, i, here, text=""):
     if reading(run_dir(here)):                               # what a read-only tool runs or reads its options from is not set by a member
         bad = next((n for n in env_names(toks, i) if restricted_name(n)), None)
         if bad:
-            return OwnReason("under the read-only class %s is not set: the tools it runs read their programs and options from it" % bad)
+            return OwnReason(RESTRICTED_MSG % (bad, bad))
     ro = reading(run_dir(here))
     src_last = None                                          # cp -t DIR SRC: write_targets names SRC too (as it always did); it is read, not written
     if prog in COPIERS and prog != "rsync" and any(cluster_value(toks[i + 1:], n, "t") is not None or toks[i + 1 + n].startswith("--target-directory") for n in range(len(toks) - i - 1)):

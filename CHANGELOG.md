@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- The refusal of a restricted environment variable under the read-only class (`PATH`, `TMPDIR`, `HOME`, `GIT_*`, `LD_*`, `PAGER`, `BASH_ENV` ...) says what it is for: a read-only member may not assign the name (inline, with `env`, `export` or `declare`) and runs with the one it was given; a build, vet or test command with that environment is not refused. It read "TMPDIR is not set", which read as if the variable were missing from the environment of a command that only uses it. The rule is the same; only the wording changed.
+
 ## [0.2.9] - 2026-11-09
 
 ### Added

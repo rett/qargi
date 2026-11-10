@@ -3958,6 +3958,22 @@ class RunRecord(HookCase):
             self.assertEqual(self.call("Bash", {"command": c}).returncode, 0, c)
         self.assertEqual(self.call("Bash", {"command": "PATH=. ls"}, None, None).returncode, 0)               # a member that writes is not held to it
 
+    def test_the_refusal_of_an_assignment_says_a_read_only_member_may_not_assign_and_runs_with_the_one_it_was_given(self):
+        """The refusal is for the command that ASSIGNS a restricted name (inline, env, export ...); it must not read as if the variable were missing from the
+        environment of a command that only uses it. Every name of RESTRICTED_ENV and a name of each prefix gets the same sentence."""
+        g = self.J.m
+        names = sorted(g.RESTRICTED_ENV) + [p + "X" for p in g.RESTRICTED_ENV_PREFIX]
+        cmds = [f % n for n in names for f in ("%s=x ls", "export %s=x", "env %s=x ls")]
+        got = list(self.table(cmds))
+        wrong = [(c, r.stderr.strip()[:120]) for c, r in got if r.returncode != 2 or "is not set" in r.stderr]
+        self.assertEqual(wrong, [])
+        for c, r in got:
+            name = c.split("=")[0].split()[-1]
+            self.assertIn("read-only class %s may not be assigned" % name, r.stderr, c)
+            self.assertIn("runs with the %s it was given" % name, r.stderr, c)
+        for c in ("go build ./...", "go vet ./...", "go test ./...", "cargo test", "make test", "echo $TMPDIR", "ls $TMPDIR", "cat $PATH"):
+            self.assertEqual(self.call("Bash", {"command": c}).returncode, 0, c)
+
     # --- configuration and hooks of git, written by a command that also runs git
     GIT_PLACES = ("echo '[core]' > ~/.gitconfig; git log", "echo x >> ~/.config/git/config && git status", "echo x > ~/.config/git/attributes; git log", "echo x > .git/hooks/post-checkout; git status",
                   "echo x > .git/config; git log", "printf x | tee ~/.gitconfig; git log", "cp /etc/hostname ~/.gitconfig && git status", "git status; echo x >| ~/.gitconfig",
