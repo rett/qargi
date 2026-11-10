@@ -42,6 +42,11 @@ rev() { git -C "$1" rev-parse -q --verify "$2" 2>/dev/null || echo none; }
 commit_on() { # BRANCH FILE: one commit on BRANCH, made in a temporary worktree
   local w; w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R" worktree add -q "$w" "$1"; echo "$2" > "$w/$2"; git -C "$w" add -A; git -C "$w" commit -q -m "add $2"; git -C "$R" worktree remove --force "$w"
 }
+hotfix_commit() { # BRANCH FILE: commit_on, and an entry under the heading of the hotfix's version (finish refuses a hotfix whose changelog section is empty)
+  local w v=${1#hotfix/}; w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R" worktree add -q "$w" "$1"; echo "$2" > "$w/$2"
+  awk -v h="## [$v]" 'index($0, h) == 1 { print; print ""; print "- the fix"; next } { print }' "$w/CHANGELOG.md" > "$w/CL.new" && mv "$w/CL.new" "$w/CHANGELOG.md"
+  git -C "$w" add -A; git -C "$w" commit -q -m "add $2"; git -C "$R" worktree remove --force "$w"
+}
 merge_on() { # BRANCH FROM MESSAGE [TAG]: a --no-ff merge of FROM into BRANCH in a temporary worktree, tagged TAG when given
   local w; w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R" worktree add -q "$w" "$1"; git -C "$w" merge -q --no-ff -m "$3" "$2"
   [ -z "${4:-}" ] || git -C "$w" tag -a "$4" -m "$4"; git -C "$R" worktree remove --force "$w"
@@ -112,7 +117,7 @@ out=$($REL finish 0.3.0 --plan "$t3" --approved "go on" 2>&1); rc=$?
 [ "$(jq -rs '[.[] | select(.verb == "release:finish")] | length' "$T/s/audit.log")" = 2 ] && ok "the audit line of each release is written once" || no "audit: $(cat "$T/s/audit.log")"
 
 # --- a hotfix with no release open: master merge and tag, then the tagged master commit into develop
-$REL verify 0.3.1 >/dev/null 2>&1; rstart 0.3.1 --hotfix --allow-empty-notes && commit_on hotfix/0.3.1 fix1.txt && rpush 0.3.1 --hotfix
+$REL verify 0.3.1 >/dev/null 2>&1; rstart 0.3.1 --hotfix --allow-empty-notes && hotfix_commit hotfix/0.3.1 fix1.txt && rpush 0.3.1 --hotfix
 d0=$(rev "$R" develop); out=$($REL finish 0.3.1 --hotfix 2>&1); t=$(tok <<<"$out")
 grep -q "merge tag 0.3.1 (the master merge commit) into develop" <<<"$out" && ok "the hotfix plan says the master merge commit is merged into develop" || no "hotfix plan: $out"
 out=$($REL finish 0.3.1 --hotfix --plan "$t" --approved go 2>&1); rc=$?; tg=$(rev "$R" "refs/tags/0.3.1^{commit}")
@@ -123,7 +128,7 @@ out=$($REL finish 0.3.1 --hotfix --plan "$t" --approved go 2>&1); rc=$?; tg=$(re
 
 # --- a hotfix with a release open goes into the release branch; the version conflict exits 3, parks a merge of the master commit and resumes
 $REL verify 0.4.0 >/dev/null 2>&1; rstart 0.4.0 --date 2026-01-04 --allow-empty-notes && rpush 0.4.0
-rstart 0.3.2 --hotfix --allow-empty-notes && commit_on hotfix/0.3.2 fix2.txt && rpush 0.3.2 --hotfix
+rstart 0.3.2 --hotfix --allow-empty-notes && hotfix_commit hotfix/0.3.2 fix2.txt && rpush 0.3.2 --hotfix
 d0=$(rev "$R" develop); r0=$(rev "$R" release/0.4.0); m0=$(rev "$R" master)
 out=$($REL finish 0.3.2 --hotfix 2>&1); t=$(tok <<<"$out")
 grep -q "merge tag 0.3.2 (the master merge commit) into release/0.4.0" <<<"$out" && ok "the plan names the open release branch as the second target" || no "hotfix to release plan: $out"
@@ -153,7 +158,7 @@ out=$($REL status 0.4.0 2>&1)
 grep -q "origin develop: .*(same)" <<<"$out" && ! grep -Eq "local is [0-9]+ ahead, [0-9]+ behind" <<<"$out" && ok "and release status reports no divergence" || no "final status: $out"
 
 # --- the bookkeeping file of the master merge commit is used only when it names a merge of this master and this branch head; any other is removed
-rstart 0.4.1 --hotfix --allow-empty-notes && commit_on hotfix/0.4.1 fix3.txt && rpush 0.4.1 --hotfix
+rstart 0.4.1 --hotfix --allow-empty-notes && hotfix_commit hotfix/0.4.1 fix3.txt && rpush 0.4.1 --hotfix
 m0=$(rev "$R" master); hh=$(rev "$R" hotfix/0.4.1); bogus=$(rev "$R" develop); mf=$T/s/conflicts/app-hotfix-0.4.1-into-develop.master
 mkdir -p "$T/s/conflicts"; echo "$m0 $hh $bogus" > "$T/s/conflicts/app-hotfix-0.4.1-into-develop.master"
 t=$($REL finish 0.4.1 --hotfix | tok)

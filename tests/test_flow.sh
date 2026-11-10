@@ -154,7 +154,7 @@ $REL verify 0.3.0 >/dev/null 2>&1; rstart 0.3.0 --allow-empty-notes >/dev/null 2
 out=$($REL start 0.2.1 --hotfix --allow-empty-notes 2>&1)
 grep -q "create hotfix/0.2.1 from master" <<<"$out" && grep -q -- "qargi release start 0.2.1 --hotfix --allow-empty-notes --plan $(tok <<<"$out") --approved" <<<"$out" && ! git -C "$R" rev-parse -q --verify refs/heads/hotfix/0.2.1 >/dev/null && ok "a hotfix start prints its plan from master and its apply line too" || no "hotfix plan: $out"
 rstart 0.2.1 --hotfix --allow-empty-notes >/dev/null 2>&1 && [ "$(git -C "$R" rev-parse hotfix/0.2.1~1)" = "$(git -C "$R" rev-parse master)" ] && ok "a hotfix is cut from master" || no "hotfix start"
-w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R" worktree add -q "$w" hotfix/0.2.1; echo fix > "$w/fix.txt"; git -C "$w" add -A; git -C "$w" commit -q -m "the fix"; git -C "$R" worktree remove --force "$w"
+w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R" worktree add -q "$w" hotfix/0.2.1; echo fix > "$w/fix.txt"; awk '/^## \[0[.]2[.]1\]/ { print; print ""; print "- the fix"; next } { print }' "$w/CHANGELOG.md" > "$w/CL.new" && mv "$w/CL.new" "$w/CHANGELOG.md"; git -C "$w" add -A; git -C "$w" commit -q -m "the fix"; git -C "$R" worktree remove --force "$w"
 t=$($REL push 0.2.1 --hotfix | tok); $REL push 0.2.1 --hotfix --plan "$t" --approved go >/dev/null 2>&1
 d2=$(git -C "$R" rev-parse develop); r2=$(git -C "$R" rev-parse release/0.3.0); m2=$(git -C "$R" rev-parse master)
 t=$($REL finish 0.2.1 --hotfix | tok); $REL finish 0.2.1 --hotfix --plan "$t" --approved go >/dev/null 2>&1; rc=$?

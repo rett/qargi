@@ -818,7 +818,7 @@ case $verb in
       if [ "$KIND" = hotfix ]; then pre_line="preflight (release.$pk): not run now: $BASE does not have the content this hotfix brings. It runs in a copy of $BR when you push, before anything is pushed (a non-zero exit refuses the push): $(answer_text "$pk")"
       else run_preflight "$WT"; pre_line="preflight (release.preflight): passed on $BASE (at ${b0:0:7}); it runs again in a copy of $BR when you push"; fi
     fi
-    oldver=''
+    oldver=''; cl_line=''
     if [ "$VFILE" != none ]; then
       if [ -f "$WT/$VFILE" ]; then oldver=$(tr -d '[:space:]' < "$WT/$VFILE"); echo "$VER" > "$WT/$VFILE"; git -C "$WT" add -- "$VFILE"
       elif [ "$VFILE_SET" = true ]; then die "release.version_file: $VFILE is not a file at the head of $BASE (set it to none when the project has no version file)"; fi
@@ -830,7 +830,8 @@ case $verb in
       git -C "$WT" add "$mp"
     done < <(man_pages_at "$b0")
     if [ -f "$WT/CHANGELOG.md" ]; then
-      python3 -I "$RL" changelog "$WT/CHANGELOG.md" "$VER" "$DATE" "$ALLOW_EMPTY" "$af" || exit 1
+      cl_out=$(python3 -I "$RL" changelog "$WT/CHANGELOG.md" "$VER" "$DATE" "$ALLOW_EMPTY" "$af" "$KIND") || exit 1
+      [ "$cl_out" != heading-added ] || cl_line="CHANGELOG.md: $BASE has no unreleased heading, so the heading for $VER was added with no entries; the changes of this hotfix are recorded under it on $BR, and release finish refuses until there are entries under it (the push preflight, when the project sets one, is its own)"
       git -C "$WT" add CHANGELOG.md
     fi
     # the plan: the branch, where it is cut from, the bump commit and the files it changes (all made in the temporary worktree above, so a refusal comes
@@ -841,6 +842,7 @@ case $verb in
     bl='none (an empty commit)'; [ -z "$bumped" ] || bl=$(printf '%s' "$bumped" | paste -sd, - | sed 's/,/, /g')
     echo "files the commit changes: $bl"
     echo "the version becomes $VER${oldver:+ (was $oldver)} and the changelog (and a man page) is dated $DATE"
+    [ -z "$cl_line" ] || echo "$cl_line"
     [ -z "$pre_line" ] || echo "$pre_line"
     hn=$(hotfix_develop_note) && echo "warning: $hn"
     if [ -z "$APPROVED" ]; then
@@ -1008,6 +1010,17 @@ case $verb in
       g show "$BR:CHANGELOG.md" > "$ftmp/changelog"
       python3 -I "$RL" has-section "$ftmp/changelog" "$VER" "$af" || { rm -rf "$ftmp"; die "release.version_file is none and the CHANGELOG.md of $BR has no released section for $VER (release.changelog.released)"; }
     fi
+    # a hotfix brings its own changelog entries (start may have added the heading empty): the section of the version must hold some, whatever the layout.
+    # A normal release was checked at start; a branch with no CHANGELOG.md is not checked
+    if [ "$KIND" = hotfix ] && g cat-file -e "$BR:CHANGELOG.md" 2>/dev/null; then
+      g show "$BR:CHANGELOG.md" | tr -d '\r' > "$ftmp/changelog"   # a CRLF file: a blank line is not an entry
+      rtmpl=$(jq -r '(.release? // {}).changelog.released // ""' "$af")
+      if ! bash "$(dirname "$0")/changelog_section.sh" "$VER" "$ftmp/changelog" "$rtmpl" >/dev/null 2>&1; then
+        rhead=$rtmpl; [ -n "$rhead" ] || rhead='## [{version}] - {date}'
+        rhead=${rhead//\{version\}/$VER}; rhead=${rhead%%\{date\}*}; rhead=$(printf '%s' "$rhead" | sed -e 's/[[:space:]:,(–—-]*$//')
+        rm -rf "$ftmp"; die "the CHANGELOG.md of $BR has no entries under '$rhead' (the section is missing or empty): a hotfix brings its own. Fix: record the entries under that heading on $BR (qargi release fix $VER --hotfix makes the worktree), commit, then finish. Nothing was changed"
+      fi
+    fi
     # a manual page that leaves with an empty .TH date or version (a regenerated page that lost what `start` set) is not released
     emptyth=''
     while IFS= read -r mp; do
@@ -1039,6 +1052,7 @@ case $verb in
     echo "finish $KIND $VER of $PROJ: merge $BR into master with --no-ff, tag $VER on it, merge tag $VER (the master merge commit) into $second with --no-ff${KEEP:+, keep $BR}$([ -n "$KEEP" ] || echo ", delete $BR"), push master, $second and the tag together (all or none)"
     remote_report "$BR"; remote_report master; remote_report "$second"
     show_incoming master "$BR"; backlog_note master "$BR"
+    if [ "$KIND" = hotfix ] && g cat-file -e "$BR:CHANGELOG.md" 2>/dev/null; then echo "changelog check (built in): the CHANGELOG.md of $BR has entries under the heading of $VER (checked above; a refusal changes nothing)"; fi
     ! has_answer finish_check || echo "finish check (release.finish_check, run in a copy of $BR once this plan is approved, before anything is merged, tagged or pushed; a non-zero exit refuses): $(answer_text finish_check)"
     if g remote get-url origin >/dev/null 2>&1; then   # the checks of the pull request at the head being released
       pr_checks_print "$BR"

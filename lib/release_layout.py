@@ -22,7 +22,8 @@ Answers, under `release` in the project's answers file (every one optional; the 
                                plan is approved and before any merge, tag or push; a non-zero exit refuses with nothing moved (default: none)
 
   release_layout.py problems REL_JSON                  the problems of those answers (a JSON object on the command line); one per line
-  release_layout.py changelog FILE VER DATE ALLOW AF   check and rewrite the changelog for a release; exit 1 with the reason
+  release_layout.py changelog FILE VER DATE ALLOW AF [KIND]  check and rewrite the changelog for a release; exit 1 with the reason. KIND hotfix: a
+                               changelog with no unreleased heading, when release.changelog.unreleased carries {version}, gets the released heading, empty, above the first heading that follows the released template (else the first of that level) (it prints heading-added)
   release_layout.py manpage FILE NAME VER DATE OLD     set the .TH date and version of a manual page; exit 1 with the reason
   release_layout.py th-empty FILE...                   print each manual page whose .TH line has no date or no version (exit 1 if any)
   release_layout.py has-section FILE VER AF            exit 0 when the changelog has a released section for VER
@@ -167,11 +168,45 @@ def section_end(rest, lvl):
     return n.start() if n else len(rest)
 
 
+def headings_of_level(t, lvl):
+    """(offset, line) of each heading of exactly level lvl, in order, leaving out the lines inside a fenced code block (a line that starts with ```)."""
+    out, pos, fenced = [], 0, False
+    for line in t.splitlines(True):
+        if line.lstrip(" ").startswith("```"):
+            fenced = not fenced
+        elif not fenced and line.startswith("#" * lvl + " "):
+            out.append((pos, line.rstrip("\r\n")))
+        pos += len(line)
+    return out
+
+
+def add_released_heading(t, released, lvl, rel_template, nl="\n"):
+    """t with the released heading, an empty section, above the first heading of level lvl that follows the released template (any version, any date),
+    else above the first heading of that level (a `## Format` note above the sections is not the place), else at the end. Headings in fenced code are
+    not looked at. nl is the newline the file uses."""
+    hs = headings_of_level(t, lvl)
+    pat = re.compile(heading_re(rel_template))
+    at = next((o for o, line in hs if pat.match(line)), hs[0][0] if hs else None)
+    if at is None:
+        return t + ("" if not t or t.endswith(nl + nl) else nl if t.endswith("\n") else nl + nl) + released + nl
+    return t[:at] + released + nl + nl + t[at:]
+
+
 def cmd_changelog(argv):
     path, ver, date, allow, af = argv[:5]
+    hotfix = len(argv) > 5 and argv[5] == "hotfix"
     unrel, rel = templates(load_release(af))
-    t = open(path, encoding="utf-8").read()
+    t = open(path, encoding="utf-8", newline="").read()   # newline="": a file with CRLF keeps its line endings
+    nl = "\r\n" if "\r\n" in t else "\n"
+    released = rel.replace("{version}", ver).replace("{date}", date)
     m = find_unreleased(t, unrel)
+    if not m and hotfix and "{version}" in unrel:
+        # a hotfix is cut from master; only a project whose unreleased heading carries {version} renames it at a release, so only there master has none (any other
+        # layout that lacks it is refused below, as a release is). The branch
+        # brings the items: the heading is added empty, and `release finish` refuses until the branch has entries under it
+        open(path, "w", encoding="utf-8", newline="").write(add_released_heading(t, released, level(unrel), rel, nl))
+        print("heading-added")
+        return 0
     if not m:
         sys.exit("qargi: %s has no '%s' section to release. Fix: add one with the changes of this release, then start again."
                  % (os.path.basename(path), unrel))
@@ -179,13 +214,13 @@ def cmd_changelog(argv):
     if not allow and not [l for l in body.split("\n") if l.strip() and not l.startswith("#")]:
         sys.exit("qargi: %s has nothing under '%s'. Fix: record the changes of this release there (or pass --allow-empty-notes to release without notes), then start again."
                  % (os.path.basename(path), unrel))
-    released = rel.replace("{version}", ver).replace("{date}", date)
-    head = m.group(0).rstrip("\n")
+    head = m.group(0).rstrip("\r\n")
+    eol = nl if m.group(0).endswith("\n") else ""
     if "{version}" in unrel:        # the unreleased heading carries the version: it is renamed, nothing is kept
-        new = t[:m.start()] + released + ("\n" if m.group(0).endswith("\n") else "") + t[m.end():]
+        new = t[:m.start()] + released + eol + t[m.end():]
     else:
-        new = t[:m.start()] + head + "\n\n" + released + ("\n" if m.group(0).endswith("\n") else "") + t[m.end():]
-    open(path, "w", encoding="utf-8").write(new)
+        new = t[:m.start()] + head + nl + nl + released + eol + t[m.end():]
+    open(path, "w", encoding="utf-8", newline="").write(new)
     return 0
 
 
@@ -310,7 +345,7 @@ def main(argv):
         found = problems(rel)
         print("\n".join(found))
         return 1 if found else 0
-    if cmd == "changelog" and len(rest) == 5:
+    if cmd == "changelog" and len(rest) in (5, 6):
         return cmd_changelog(rest)
     if cmd == "manpage" and len(rest) == 5:
         return cmd_manpage(rest)
