@@ -625,7 +625,7 @@ WRAP
       SRC=$RUN
     fi
     # a read-only run's product is a report, never patches: patches in its output are not to be applied or accepted
-    if [ "$(run_class "$RUN" "$SRC")" = read-only ] && [ -n "$(find "$SRC/out" -maxdepth 2 \( -name '*.patch' -o -name run.bundle \) 2>/dev/null | head -1)" ]; then
+    if [ "$(run_class "$RUN")" = read-only ] && [ -n "$(find "$SRC/out" -maxdepth 2 \( -name '*.patch' -o -name run.bundle \) 2>/dev/null | head -1)" ]; then
       echo "qargi: $RUN is a read-only run ($(cat "$SRC/ability" 2>/dev/null || echo review)) and its output holds patches. A read-only run's product is a report, never patches: read $SRC/out/report.md, and do not apply or accept the patches." >&2
       exit 2
     fi
@@ -643,7 +643,7 @@ WRAP
       fi
     fi
     # a read-only run's product is its report: none in OUT is said (a note; the refs verdict below is the exit status), with the likely cause
-    if [ -z "$SAVED" ] && [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ] && [ "$(run_class "$RUN" "$SRC")" = read-only ] && ! out_has_report "$RUN/out"; then
+    if [ -z "$SAVED" ] && [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ] && [ "$(run_class "$RUN")" = read-only ] && ! out_has_report "$RUN/out"; then
       echo "qargi: note: OUT of the read-only run $RUN holds no report (report.md or NAME-report.md). $NOREPORT_CAUSE" >&2
     fi
     reg_load; crc=0; NOREC=$NOREC check_run "$RUN" "$SRC" || crc=$?
@@ -718,7 +718,7 @@ WRAP
         echo "plan token: $otok   (apply with: qargi local clean --orphans --days $DAYS --plan $otok --approved \"...\")"
         exit 0
       fi
-      QARGI_NESTED='' need_plan "$otok"   # a caller that is itself approved (QARGI_NESTED) has not approved this removal: the token is always needed
+      need_plan "$otok"   # the token is always needed (need_plan ignores QARGI_NESTED)
       rm_n=0; rk_n=0
       for ent in "${orph[@]}"; do
         e=${ent% *}; reg_load

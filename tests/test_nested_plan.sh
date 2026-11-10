@@ -21,15 +21,18 @@ cd "$T" || exit 1   # a verb that changes the marshal refuses to run inside a me
 tok() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 
 # --- static: need_plan does not read QARGI_NESTED, and need_plan_nested is called in canon.sh and nowhere else, so a nested environment cannot
-# skip a token through a call site that forgot to clear the variable. (lib/local.sh still carries one redundant clear; it is harmless.)
+# skip a token through a call site that forgot to clear the variable. lib/local.sh is covered like the other files.
 msg=''
 body=$(sed -n '/^need_plan() {/,/^}/p' "$SRC/lib/lib.sh")
 { [ -n "$body" ] && ! grep -q QARGI_NESTED <<<"$body"; } || msg="$msg need_plan in lib/lib.sh reads QARGI_NESTED (or was not found);"
 nested=$(grep -nE '(^|[^_A-Za-z])need_plan_nested[[:space:]]+"' "$SRC"/lib/*.sh "$SRC"/bin/* 2>/dev/null | grep -vE "^[^:]*:[0-9]+:[[:space:]]*#")
 { [ "$(grep -c . <<<"$nested")" = 1 ] && grep -q "lib/canon.sh:" <<<"$nested"; } || msg="$msg need_plan_nested is not called in canon.sh alone: $nested;"
 n_all=$(grep -hE '(^|[^_A-Za-z])need_plan "' "$SRC"/lib/*.sh "$SRC"/bin/* 2>/dev/null | grep -cvE "^[[:space:]]*#")
-left=$(grep -nE "(unset QARGI_NESTED|QARGI_NESTED='' need_plan)" "$SRC"/lib/*.sh "$SRC"/bin/* 2>/dev/null | grep -vE "^[^:]*:[0-9]+:[[:space:]]*#" | grep -v "lib/local.sh:")
+left=$(grep -nE "(unset QARGI_NESTED|QARGI_NESTED='' need_plan)" "$SRC"/lib/*.sh "$SRC"/bin/* 2>/dev/null | grep -vE "^[^:]*:[0-9]+:[[:space:]]*#")
 [ -z "$left" ] || msg="$msg a redundant clear of the variable is left: $left;"
+# run_class takes the run alone (the registry decides the class): no call hands it a second word it would ignore
+rc2=$(grep -nE 'run_class "[^"]*" ' "$SRC"/lib/*.sh "$SRC"/bin/* 2>/dev/null | grep -vE "^[^:]*:[0-9]+:[[:space:]]*#")
+[ -z "$rc2" ] || msg="$msg run_class is given a second argument it ignores: $rc2;"
 [ "$n_all" -ge 30 ] && [ -z "$msg" ] && ok "static: need_plan ignores QARGI_NESTED, need_plan_nested is used in canon apply only, and no call site clears the variable" || no "static need_plan check: $msg (calls found: $n_all)"
 # the two functions, run: a wrong token dies in need_plan under the variable; need_plan_nested lets the nested call through, and checks without it
 fn=$(QARGI_NESTED=1 PLAN_ARG=000000000000 bash -c '. "$1"/lib/lib.sh; (need_plan abc123) >/dev/null 2>&1; a=$?; (need_plan_nested abc123) >/dev/null 2>&1; b=$?; unset QARGI_NESTED; (need_plan_nested abc123) >/dev/null 2>&1; c=$?; echo "$a $b $c"' _ "$SRC")
