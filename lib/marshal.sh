@@ -7,6 +7,9 @@
 #   marshal.sh claim NAME --as-successor-of ID   continue as the lead after a restart: the record's lead is ID, its lease is stale, and its
 #                                                host, OS user and work tree are this session's (refused otherwise; audited as marshal:succession).
 #                                                marshal_start (feature start) does the same on its own; status and check name the command
+#   marshal.sh claim|check NAME [--assume-unreachable-ok]   with the shared refs backend, a remote that cannot be reached is a refusal (exit 3, the message says what
+#                                                could not be reached and why; nothing is changed). The flag lets the verb go on (a claim stays provisional, a check
+#                                                answers from the cache) and records marshal:unreachable-ok in the audit log. The shell API below never refuses for this.
 #   marshal.sh handoff [NAME] [--project P] [--as ID] [--write FILE] [--json]   the note a fresh session starts from (read only, lib/marshal_handoff.py)
 #   marshal.sh enable [--project P] [--plan TOKEN --approved WORDS]   switch this machine to the shared refs backend
 #   marshal.sh disable [--project P] [--plan TOKEN --approved WORDS]   switch back to the local records (with integrity on: plan, then apply)
@@ -127,20 +130,31 @@ marshal_hold_start() { # PROJ NAME
   MARSHAL_HOLD_PID=$!
 }
 
+# marshal_override_audit FILE RC: the lines marshal_store.py wrote into FILE (QARGI_MARSHAL_OVERRIDE_OUT) because a verb went on although the remote was
+# not reached (--assume-unreachable-ok) become audit lines marshal:unreachable-ok, when the verb succeeded; FILE is removed. No file, nothing to do.
+marshal_override_audit() {
+  local f=$1 rc=$2 l
+  [ -n "$f" ] || return 0
+  if [ "$rc" = 0 ] && [ -s "$f" ]; then
+    while IFS= read -r l; do audit_log "marshal:unreachable-ok" "$l"; done < "$f"
+  fi
+  rm -f "$f"
+}
+
 marshal_main() {
   set -eu
   # the options of this call are the only source of the approval and the plan token; a value inherited from the environment is not
   # (feature.sh and cred.sh do the same)
   APPROVED='' PLAN_ARG=''
   local verb=${1:-}; shift || true
-  local usage="usage: qargi marshal claim|status|set|check|renew|release|take|takeover|finish [NAME] [--project P] [--as ID] [--as-successor-of ID] [--goal T] [--plan T] [--note T] [--status S] [--approved WORDS] [--all] [--history] [--brief] [--json] [--no-fetch]
+  local usage="usage: qargi marshal claim|status|set|check|renew|release|take|takeover|finish [NAME] [--project P] [--as ID] [--as-successor-of ID] [--goal T] [--plan T] [--note T] [--status S] [--approved WORDS] [--all] [--history] [--brief] [--json] [--no-fetch] [--assume-unreachable-ok]
        qargi marshal handoff [NAME] [--project P] [--as ID] [--write FILE] [--json]
        qargi marshal enable [--project P] [--integrity off|advisory|strict] [--plan TOKEN --approved WORDS] | disable [--project P] [--plan TOKEN --approved WORDS]
        qargi marshal key init [--principal P] [--plan TOKEN --approved WORDS]
        qargi marshal signers add --line L | remove PRINCIPAL [--project P] [--plan TOKEN --approved WORDS] | list [--project P]
        qargi marshal resign NAME [--project P] [--plan TOKEN --approved WORDS]
        qargi marshal forget NAME [--project P] [--plan TOKEN --approved WORDS]"
-  local name='' PROJ='' as='' all='' brief='' json='' history='' nofetch='' want sub='' line='' principal='' integ=''
+  local name='' PROJ='' as='' all='' brief='' json='' history='' nofetch='' assume='' want sub='' line='' principal='' integ=''
   local -a opt=()
   case $verb in
     key) sub=${1:-}; [ "$sub" = init ] || { echo "qargi: $usage" >&2; exit 2; }; shift;;
@@ -156,11 +170,11 @@ marshal_main() {
     signers) want=' --project --line --plan --approved ';;
     resign|forget) want=' --project --plan --approved ';;
     disable) want=' --project --plan --approved ';;
-    claim) want=' --project --as --goal --as-successor-of ';;
+    claim) want=' --project --as --goal --as-successor-of --assume-unreachable-ok ';;
     status) want=' --project --as --all --history --brief --json --no-fetch ';;
     handoff) want=' --project --as --write --json ';;
     set) want=' --project --as --goal --plan --note --status ';;
-    check) want=' --project --as --no-fetch ';;
+    check) want=' --project --as --no-fetch --assume-unreachable-ok ';;
     renew|take|finish) want=' --project --as ';;
     release) want=' --project --as --note ';;
     takeover) want=' --project --as --approved ';;
@@ -168,9 +182,9 @@ marshal_main() {
   esac
   while [ $# -gt 0 ]; do
     case $1 in
-      --all|--history|--brief|--json|--no-fetch)
+      --all|--history|--brief|--json|--no-fetch|--assume-unreachable-ok)
         case $want in *" $1 "*) ;; *) echo "qargi: unknown option $1 for marshal $verb; $usage" >&2; exit 2;; esac
-        case $1 in --all) all=1;; --history) history=1;; --brief) brief=1;; --json) json=1;; --no-fetch) nofetch=1;; esac; shift;;
+        case $1 in --all) all=1;; --history) history=1;; --brief) brief=1;; --json) json=1;; --no-fetch) nofetch=1;; --assume-unreachable-ok) assume=1;; esac; shift;;
       --*)
         case $want in *" $1 "*) ;; *) echo "qargi: unknown option $1 for marshal $verb; $usage" >&2; exit 2;; esac
         [ $# -ge 2 ] || { echo "qargi: $1 needs a value; $usage" >&2; exit 2; }
@@ -354,12 +368,20 @@ marshal_main() {
     rm -f "$af"
     exit "$rc"
   fi
+  # claim and check ask the remote of the shared records. When it cannot be reached they refuse (exit 3, saying what could not be reached and why)
+  # unless the lead gave --assume-unreachable-ok: then they go on (a claim stays provisional, a check answers from the cache) and an audit line
+  # marshal:unreachable-ok records it. The shell API below (marshal_start, marshal_check) never refuses for this: the flow verbs keep going.
+  local ovf=''
+  case $verb in claim|check)
+    if [ -n "$assume" ]; then ovf=$(mktemp "$DA_STATE/.marshal-override.XXXXXX"); else opt+=(--need-remote); fi;;
+  esac
   if [ "$verb" = claim ]; then
     local crc=0 caf
     caf=$(mktemp "$DA_STATE/.marshal-audit.XXXXXX")
-    QARGI_MARSHAL_AUDIT_OUT=$caf marshal_py "$PROJ" claim "${opt[@]}" || crc=$?
+    QARGI_MARSHAL_AUDIT_OUT=$caf QARGI_MARSHAL_OVERRIDE_OUT=$ovf marshal_py "$PROJ" claim "${opt[@]}" || crc=$?
     if [ "$crc" = 0 ] && [ -s "$caf" ]; then audit_log "marshal:succession" "$(cat "$caf")"; fi
     rm -f "$caf"
+    marshal_override_audit "$ovf" "$crc"
     exit "$crc"
   fi
   if [ "$verb" = handoff ]; then
@@ -371,6 +393,12 @@ marshal_main() {
       case " ${opt[*]} " in *" --write "*) lead_advice;; *) lead_advice >&2;; esac
     fi
     exit "$hrc"
+  fi
+  if [ "$verb" = check ]; then
+    local krc=0
+    QARGI_MARSHAL_OVERRIDE_OUT=$ovf marshal_py "$PROJ" check "${opt[@]}" || krc=$?
+    marshal_override_audit "$ovf" "$krc"
+    exit "$krc"
   fi
   marshal_py "$PROJ" "$verb" "${opt[@]}"
 }

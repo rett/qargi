@@ -50,8 +50,12 @@ switches the project from the local records to the shared ones. Each record is t
 remote `origin` (ordinary branches and tags are never touched), a claim is a create-only push so two machines cannot both win, every
 update is a push that must still match what was fetched, and `feature finish` moves the record to `refs/qargi/done/NAME`. A lease is
 judged on the taker's own clock: a record that stayed unchanged for the ttl, as that machine observed it, may be taken over with your
-words; other machines' clocks are never compared. When the remote cannot be reached the verbs use the last fetched copy and say
-"remote not checked", and a claim made then is marked provisional until it reaches the remote. It is off by default, the guard
+words; other machines' clocks are never compared. When the remote cannot be reached, `marshal claim` and `marshal check` refuse
+(exit 3, "remote not checked (why)"), saying what could not be reached and why, and change nothing: a claim made without the remote would be a
+guess about who else leads the feature. If you know better, `--assume-unreachable-ok` lets them go on (a claim is marked provisional until it
+reaches the remote, a check answers from the last fetched copy) and the audit log records it as `marshal:unreachable-ok`. `marshal status`
+shows the last fetched copy with the same notice, the flow verbs that ask the marshal first (`feature start`, merge, finish) still warn and go
+on, and every other change of a record needs the remote and has no override. It is off by default, the guard
 refuses a member run the verbs that enable, disable or push it, `project set` refuses the `marshal.*` keys except `marshal.lease_minutes`, and `qargi marshal disable` goes
 back to the local records (the refs on the remote stay). Whether your Git host accepts the `refs/qargi/*` namespace is yours to check
 on a scratch repository before enabling it on a real one.

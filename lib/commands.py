@@ -77,6 +77,7 @@ GLOBAL_OPTS = [opt("--json", "print the result as one JSON object with the verb,
 PROJECT_OPT = opt("--project", "the project, instead of the one inferred from here", "PROJECT", "project")
 MEMBER_PROJECT_OPT = opt("--project", "the project the member belongs to (default: the one in effect when it has the member, else the only project that has it)", "PROJECT", "project")
 AS_OPT = opt("--as", "act as this lead identity (default: the session id in QARGI_LEAD, else user@host)", "ID")
+UNREACHABLE_OPT = opt("--assume-unreachable-ok", "go on although the remote of the shared records cannot be reached (a claim stays provisional, a check answers from the cache); recorded as marshal:unreachable-ok in the audit log")
 RESOLVED_OPT = opt("--resolved", "use the merge you resolved and committed in the conflict worktree")
 REMOTE_NOTE = ("It asks the live origin with git ls-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, "
                "and says 'remote not checked' when origin cannot be reached.")
@@ -324,14 +325,17 @@ COMMANDS = {
                  "marshal enable switches the project to the shared backend, where each record is a commit on refs/qargi/features/NAME of the remote "
                  "origin so several machines and people see the same leads (takeover then waits for the record to stay unchanged for the ttl as seen by "
                  "the taker's own clock). Only the lead pushes those refs; a member run cannot. "
-                 "Exit status 3 means the remote could not be checked (the cache was used). Records can be signed: one key per lead machine, a signers file per project "
+                 "Exit status 3 means the remote could not be checked. claim and check then refuse, saying what could not be reached (the records of the project on the remote) and why, and change nothing; "
+                 "with --assume-unreachable-ok they go on (a claim stays provisional until a later verb completes or drops it, a check answers from what this machine fetched last) and the audit log gets a marshal:unreachable-ok line. "
+                 "status shows the cache with a 'remote not checked' notice, and the verbs of the flow that ask the marshal first (feature start, merge, finish, ...) still warn and go on, as before. "
+                 "Every other change of a shared record (set, renew, release, take, takeover, finish, resign) needs the remote and exits 3 without it; there is no override for those. Records can be signed: one key per lead machine, a signers file per project "
                  "and the mode in the switch file (marshal enable --integrity); with integrity on, status and check tag records signed, unsigned, INVALID or cannot verify, "
                  "strict ignores unsigned and invalid ones with a warning, and a rollback prints rollback detected."),
         "scripts": ["marshal.sh", "marshal_store.py", "marshal_refs.py"],
         "verbs": {
             "claim": verb("Become the lead of feature NAME (creates the record; refuses when another lead holds it)", [("NAME", "none")],
                           [PROJECT_OPT, AS_OPT, opt("--goal", "what the feature is to achieve", "TEXT"),
-                           opt("--as-successor-of", "continue as the lead after a restart: the old lead's id (see marshal handoff)", "ID")],
+                           opt("--as-successor-of", "continue as the lead after a restart: the old lead's id (see marshal handoff)", "ID"), UNREACHABLE_OPT],
                           desc=("With --as-successor-of ID you take over from the lead ID without the owner's words when that lead's lease is stale and its host, OS user and "
                                 "work tree are yours (a restart gives the session a new id and nothing else that tells it apart). The record keeps its goal, plan and note and "
                                 "names the succession; it is audited as marshal:succession. Any other case is refused: the owner's marshal takeover covers it. "
@@ -346,8 +350,8 @@ COMMANDS = {
                         [PROJECT_OPT, AS_OPT, opt("--goal", "the goal", "TEXT"), opt("--plan", "the plan, free text or a checklist", "TEXT"), opt("--note", "a note for the next reader", "TEXT"),
                          opt("--status", "planned, active, blocked or verifying", "STATE", ("planned", "active", "blocked", "verifying"))]),
             "check": verb("Before starting work or changing a plan: is the feature free for you, is anything else in its way (exit 1: refuse; warnings go to stderr)", [("[NAME]", "none")],
-                          [PROJECT_OPT, AS_OPT, opt("--no-fetch", "read the cache of the shared refs only, do not fetch (the session hook uses it)")],
-                          desc="This verb only reads; it renews no lease. The commands of the flow that ask the marshal first (feature merge, sync, status, verify and finish; local prepare, verify and clean; review check and apply) renew the lease of their own lead as they ask."),
+                          [PROJECT_OPT, AS_OPT, opt("--no-fetch", "read the cache of the shared refs only, do not fetch (the session hook uses it)"), UNREACHABLE_OPT],
+                          desc="With the shared refs backend it asks the remote and refuses (exit 3) when it cannot be reached, unless --assume-unreachable-ok. This verb only reads; it renews no lease. The commands of the flow that ask the marshal first (feature merge, sync, status, verify and finish; local prepare, verify and clean; review check and apply) renew the lease of their own lead as they ask."),
             "renew": verb("Renew your lease on a feature (long verbs and the lead's other commands on the feature do this themselves)", [("NAME", "none")], [PROJECT_OPT, AS_OPT]),
             "release": verb("Give the feature up, leaving a handoff note; it has no lead until someone takes it", [("NAME", "none")],
                             [PROJECT_OPT, AS_OPT, opt("--note", "what the next lead must know", "TEXT")],
