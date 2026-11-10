@@ -31,7 +31,7 @@ reflog expire and delete, hash-object -w, unpack-objects and git lfs included).
 
 Skills: only a person, through qargi's own skills, changes a skill, so the guard refuses a member
   - the lead's runs and agents: qargi local run|prepare|verify|close|clean (`local clean --discard` removes another run with no token), agent remove, project new,
-    review apply, team run and task;
+    review apply|save, team run and task;
   - the verbs that change one: qargi skill|tool new|import|seal|remove|unlink|link|enable|disable, qargi skill accept|unaccept
     (they record which skills the owner accepts, in <packs>/accepted.json), qargi discover
     install, qargi packs apply|seed|link|unlink, qargi project link|unlink (they link the project's skills, agents and memory into the
@@ -274,7 +274,7 @@ MEMORY_READ = ("tiers", "check", "get", "lint")
 PROVIDER_READ = ("", "list", "show", "effective", "require-barrier", "skills-dirs", "of", "layout", "require-skills", "launch", "addenda", "notes", "model")   # the provider verbs that only read; the rest, and any verb added later, change the definitions or run code (check, adapter-run)
 BUILT_VERB_AREAS = {"skill", "tool", "packs", "discover", "project", "local", "cloud", "memory"}   # a verb the shell builds in these is refused: one of the verbs that change something may be what it builds
 ENV_LEAD = ("plan", "apply")                                   # the verbs of qargi env that run a project's commands (lib/env_apply.py)
-LEAD_VERBS = {("local", "clean"), ("local", "close"), ("local", "prepare"), ("local", "verify"), ("agent", "remove"), ("project", "new"), ("review", "apply"), ("team", "run")}   # the lead's runs and agents: `local clean --discard` removes another run with no token
+LEAD_VERBS = {("local", "clean"), ("local", "close"), ("local", "prepare"), ("local", "verify"), ("agent", "remove"), ("project", "new"), ("review", "apply"), ("review", "save"), ("team", "run")}   # the lead's runs and agents: `local clean --discard` removes another run with no token
 MEMORY_NOTE = "propose it in your report"
 MARSHAL_READ = ("status", "check", "handoff")                # handoff only reads; with --write it makes a file and is refused (skill_verb)
 MARSHAL_SIGNING = {"key": "manages the marshal's signing key", "signers": "manages the marshal's allowed signers",

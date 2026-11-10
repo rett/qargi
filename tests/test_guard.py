@@ -682,6 +682,20 @@ class Skills(HookCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
+    def test_refuses_review_save_to_a_member(self):
+        """qargi review save stores a report in a run's OUT for the lead and writes the run's manifest: the lead's, declared in LEAD_VERBS like review apply.
+        Reading the reviews (review check) and talking about it stays allowed."""
+        for form in ("qargi review save %s", "/opt/q/bin/qargi review save %s", "sudo qargi review save %s", "bash -c 'qargi review save %s'", "env FOO=1 qargi review save %s",
+                     "cd src && qargi review save %s", "true && qargi review save %s", "qargi 'review' 'save' %s", "xargs qargi review save %s"):
+            for tail in ("/tmp/r < msg.md", "/tmp/r --force"):
+                c = form % tail
+                r = self.bash(c)
+                self.assertEqual(r.returncode, 2, c)
+                self.assertIn("qargi review save is the lead's", r.stderr, c)
+        for c in ("echo qargi review save", "grep -n 'review save' lib/commands.py", "qargi review check /tmp/r"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
     def test_refuses_provider_accept_to_a_member(self):
         for form in ("qargi provider accept claude --surface cloud --no-barrier --asked x", "/opt/q/bin/qargi provider accept claude --surface local --no-barrier",
                      "sudo qargi provider accept nobarrier", "bash -c 'qargi provider accept claude --surface cloud'", "env FOO=1 qargi provider accept x",

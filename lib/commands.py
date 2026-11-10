@@ -1205,6 +1205,14 @@ COMMANDS = {
                                 "review.trailer_policy reject fails any commit whose message has a Co-Authored-By or Generated-with trailer (none, the default, checks nothing). One more line says scrub: ok, or "
                                 "scrub: FAIL and the first lines of the output (scrub: not run when the series check failed), and a failing scrub exits 1. The checkout is a shared clone, so no branch, tag or worktree entry "
                                 "is made in the repository. Both answers are the run's own copy taken by local prepare; with neither set nothing changes. A member's guard refuses setting them, and a member's own check (the member mark that local run sets is in its environment) does not run the scrub: it says scrub: not run (a member's check; the lead's check runs it) and does not fail.")),
+            "save": verb("Store the final message of a read-only run (standard input) as RUN/out/report.md, with a minimal manifest.json", [("RUN", "dir", True)],
+                         [opt("--force", "replace a report.md that is there already")],
+                         desc=("For a read-only run (review, advisor, auditor) whose member could not write its report with a file tool: the member puts the whole report in its final message and the lead "
+                               "stores that message, so no shell text is involved. The message is read from standard input (qargi review save RUN < message.md) and written as RUN/out/report.md; "
+                               "a report.md that is there already is kept unless --force. When OUT has no manifest.json one is written: status DONE, the run's base branch and commit, commits [] and the report "
+                               "in artifacts (a manifest the member wrote is kept). Prints what it wrote and the qargi review check command to run next; the check, not this verb, decides whether the report has the "
+                               "required form. Refused for a directory that is not a run in the lead's registry, for a run that is not read-only (a build run returns patches), for a run directory or OUT that is a "
+                               "link, for an empty message, and from a member (the guard refuses the verb; so does the verb itself when the member mark is set).")),
             "apply": verb("Apply a collected, checked run to a task branch of the repository", [("RUN_DIR", "dir", True)],
                           [PROJECT_OPT, opt("--branch", "the branch to create (default agent/<slug> of the run)", "BRANCH", "branch"),
                            opt("--from-saved", "apply the copy local verify saved of a passed run whose directory is gone (ID: qargi.XXXXXX), with the same checks", "ID")],
