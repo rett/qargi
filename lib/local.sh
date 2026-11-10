@@ -133,7 +133,7 @@ journal_steps() {
 
 # save_run RUN -> a copy of what a passed run returned, in the lead's state: $DA_STATE/runs/<run id>/ holds out/ (the run's OUT, links copied as links,
 # never followed), run.bundle (when the run directory has one beside OUT), the snapshots and records verify and apply read (refs.before, verified,
-# started, ability, class, profile, applied) and record.json (the registry's line). Made in a temporary directory and renamed into place; a failure is a
+# started, ability, class, profile, applied, task.md: its SCOPE line is the limit review check applies) and record.json (the registry's line). Made in a temporary directory and renamed into place; a failure is a
 # warning, never a failure of verify.
 save_run() {
   local run id d tmp f rr
@@ -142,7 +142,7 @@ save_run() {
   { mkdir -p "$DA_STATE/runs" && tmp=$(mktemp -d "$DA_STATE/runs/.save.XXXXXX"); } || { echo "qargi: warning: could not save a copy of $run in $DA_STATE/runs" >&2; return 0; }
   if cp -R --no-dereference --preserve=mode,timestamps -- "$run/out" "$tmp/out" 2>/dev/null; then
     [ ! -f "$run/run.bundle" ] || [ -L "$run/run.bundle" ] || cp -- "$run/run.bundle" "$tmp/run.bundle"
-    for f in refs.before verified started ability class profile applied; do [ ! -f "$run/$f" ] || [ -L "$run/$f" ] || cp -- "$run/$f" "$tmp/$f"; done
+    for f in refs.before verified started ability class profile applied task.md; do [ ! -f "$run/$f" ] || [ -L "$run/$f" ] || cp -- "$run/$f" "$tmp/$f"; done
     rr=$(readlink -m -- "$run"); printf '%s\n' "${LRUNS[$rr]:-}" > "$tmp/record.json"
     if [ ! -L "$d" ] && rm -rf --one-file-system -- "$d" && mv -T -- "$tmp" "$d"; then echo "saved a copy of the run's output in $d (qargi review apply --from-saved $id applies it if the run directory is lost)"; return 0; fi
   fi

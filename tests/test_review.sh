@@ -110,9 +110,10 @@ A=$T/app; git init -q -b master "$A"; git -C "$A" config user.name lead; git -C 
 mkdir -p "$A/internal" "$A/docs" "$A/man"; echo a > "$A/internal/a.go"; echo a > "$A/docs/a.md"; echo a > "$A/man/a.1"
 git -C "$A" add -A; git -C "$A" commit -q -m base; git -C "$A" branch develop; git -C "$A" checkout -q -b parked
 jq -n --arg p "$A" '{schema:1, project:"app", methodology:"gitflow", repo:{url:"https://github.com/acme/app", path:$p, long_lived:["master","develop"]}, test_command:"true"}' > "$T/c/projects/app.json"
+NR_ARGS=()   # more arguments for the prepare of newrun
 newrun() { # slug -> RUN (prepared, with a two-commit series collected into OUT)
   local out r c b
-  out=$($DA local prepare --repo "$A" --base develop --slug "$1" --scratch "$T/scr") || return 1
+  out=$($DA local prepare --repo "$A" --base develop --slug "$1" --scratch "$T/scr" ${NR_ARGS[@]+"${NR_ARGS[@]}"}) || return 1
   r=$(echo "$out" | sed -n 's/^RUN=//p'); c=$r/clone; b=$(git -C "$c" rev-parse HEAD)
   ( cd "$c" || exit 1; export GIT_AUTHOR_NAME=agent GIT_AUTHOR_EMAIL=agent@example.invalid GIT_COMMITTER_NAME=agent GIT_COMMITTER_EMAIL=agent@example.invalid
     echo b >> internal/a.go; git add -A; mk "names: accept periods" "The pattern now allows single periods between runs." "2026-10-27T10:00:00"
@@ -318,6 +319,15 @@ out=$($DA review apply --from-saved "$IS" 2>&1); rc=$?
 { [ $rc = 0 ] && [ "$(git -C "$A" rev-list --count "$dev..agent/saved1")" = 2 ] && grep -q "applied 2 patch(es)" <<<"$out" && read -r ab at _ < "$SS/applied" \
   && [ "$ab" = agent/saved1 ] && [ "$at" = "$(git -C "$A" rev-parse agent/saved1)" ] && grep -q "^local refs/heads/agent/saved1 " "$SS/refs.before"; } \
   && ok "--from-saved applies the saved series on agent/<slug> at the run's base and records it in the saved copy" || no "from-saved apply: rc=$rc $out"
+# the saved copy keeps the run's task block, so the SCOPE it recorded is still the limit when the run directory is gone
+printf 'Touch the names only.\n' > "$T/task-saved.txt"
+NR_ARGS=(--task-file "$T/task-saved.txt" --done true --scope internal/); RT=$(newrun savedscope); NR_ARGS=(); IT=$(basename "$RT"); ST=$T/s/runs/$IT
+out=$($DA review check "$RT/out" 2>&1); [ $? = 1 ] && grep -q "outside SCOPE (internal/)" <<<"$out" || no "(setup) the series does not break SCOPE: $out"
+$DA local verify "$RT" >/dev/null 2>&1
+[ -f "$ST/task.md" ] && grep -q '^SCOPE: internal/$' "$ST/task.md" && ok "the saved copy of a run holds its task block (task.md)" || no "saved copy has no task.md: $(ls "$ST" 2>&1)"
+rm -rf "$RT"
+out=$($DA review apply --from-saved "$IT" 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "outside SCOPE" <<<"$out" && ! git -C "$A" rev-parse -q --verify agent/savedscope >/dev/null && ok "--from-saved applies nothing that breaks the SCOPE of the run's task block" || no "from-saved scope: rc=$rc $out"
 out=$($DA review apply --from-saved "$IS" --branch agent/again 2>&1); rc=$?
 [ $rc != 0 ] && grep -q "applied already" <<<"$out" && ! git -C "$A" rev-parse -q --verify agent/again >/dev/null && ok "and refuses to apply it twice" || no "from-saved twice: rc=$rc $out"
 RS2=$(newrun saved2); IS2=$(basename "$RS2"); $DA local verify "$RS2" >/dev/null 2>&1; rm -rf "$RS2"
