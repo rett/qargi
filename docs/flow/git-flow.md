@@ -101,7 +101,12 @@ refusal changes nothing.
    `applied` file of its directory is removed, and a re-run after a death finishes or redoes the apply. `release status` and `release
    verify` work as for features. `release status` shows the checks of the pull request and, after the finish, what
    is left (tag on origin, GitHub release, assets, signatures); `release finish` lists the checks and refuses
-   while one fails or is pending, unless `--ignore-checks "<your words>"`. To fix a failed check, `qargi release
+   while one fails or is pending, unless `--ignore-checks "<your words>"`. The optional answer `release.finish_check` (a command
+   line, or a command as a list of words, `{version}` replaced; `QARGI_RELEASE_VERSION` is set) is the project's last word before
+   anything moves: the finish plan and the `release plan` cut plan list it, and once the plan is approved `release finish` runs it
+   in a copy of the branch, before any merge, tag or push. A non-zero exit refuses with the tail of its output and nothing moved
+   (no ref here or on origin, no tag, no record). It is off unless set, and a member may not set it (`project set` refuses every
+   `release.*` answer). To fix a failed check, `qargi release
    fix VERSION` makes a worktree on the release branch and `release fix VERSION --push` pushes the fix to the open
    pull request.
    Pushing the tag publishes the GitHub release through the workflow; for a tag that predates it,
@@ -139,7 +144,10 @@ refusal changes nothing.
    `release push` and `release finish --hotfix` (master is merged and tagged as above; the tagged master commit is then merged
    into the open release branch instead of develop, if there is one). `release.preflight` does not run at the start of a hotfix: it is cut
    from master, which cannot have the content the hotfix brings; the plan of `release start --hotfix` says so, and `release push` runs
-   the preflight in a copy of the branch before anything is pushed, so the fix must be committed first.
+   the preflight in a copy of the branch before anything is pushed, so the fix must be committed first. The optional answer
+   `release.hotfix_preflight` (a command line or a list of words, `{version}` replaced) is what `release push` runs for a hotfix
+   instead of `release.preflight`, for a project whose stored preflight needs more than a hotfix brings or does not suit it; the
+   plan of `start --hotfix` and of `push` name the answer that runs. A release (not a hotfix) never runs it.
 6. One plan and one approval for the whole cut. `qargi release plan VERSION [--hotfix] [--date D] [--keep]` prints the plan of every
    step (start; push when there is an origin; finish; site when `site.enabled`; publish, optional) with what moves, and one token.
    `release plan VERSION --plan TOKEN --approved "<your words>"` records the approval once (the words, the plan, an audit line `release:cut`)
@@ -157,7 +165,10 @@ refusal changes nothing.
 Merging into develop or master, starting a release, pushing and tagging each print a plan and a token first; apply it
 with `--plan TOKEN --approved "<your words>"`. A merge that conflicts changes nothing and exits 3,
 naming a worktree with the merge in progress: resolve and commit there, then run the same command
-with `--resolved`.
+with `--resolved`. The second merge of `release finish` takes the master merge commit that carries the tag, so its conflict message
+names the tag (`merging tag VERSION (the master merge commit abc1234) conflicts`); that commit is kept in a `.master` file beside the
+worktree and a run with `--resolved` uses it only when it is a merge of exactly the current master and the release branch head
+(any other file is removed and the merge made anew).
 
 ## Detached branches
 
@@ -254,7 +265,8 @@ nothing, so it takes no token. `add` and `done` are the lead's: a member's guard
 
 `feature finish` and `release finish` add a line to their plans, `backlog items named in these commits: ID, ...`, for the open items
 whose id appears (as a whole slug) in the messages of the commits being merged. It is information: it is not part of the token and
-nothing is done with it. With `backlog.file` unset, or its file missing, nothing is printed.
+nothing is done with it. With `backlog.file` unset, or its file missing, nothing is printed. With `backlog.section` set, only the items under
+that heading are looked for (a heading the file lacks names nothing).
 
 ## The worktree root
 

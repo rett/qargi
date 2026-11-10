@@ -37,6 +37,37 @@ rm -rf "$T/farm"; mkdir "$T/farm"; for f in /usr/bin/*; do [ "${f##*/}" = flock 
 out=$(PATH=$HERMETIC/bin:$T/farm $REL finish 0.2.0 2>&1); rc=$?
 [ "$rc" = 1 ] && grep -q "flock command (util-linux) is not installed" <<<"$out" && ok "no flock command: the verb says it is not installed" || no "missing flock: rc=$rc $out"
 out=$($REL finish 0.2.0 2>&1); grep -q "could not take the lock" <<<"$out" && no "an ordinary finish was refused by the lock: $out" || ok "with flock the lock is taken as before (the verb goes on to its own checks)"
+# the intent record and the ref journal take the same kind of lock: the functions of lib/gitflow.sh, run as they are
+LIBD=${DA%/bin/qargi}/lib
+{ sed -n '/^intent_file()/,/^intent_unlock()/p' "$LIBD/gitflow.sh"; sed -n '/^journal_line()/,/^}/p' "$LIBD/gitflow.sh"; } > "$T/lockfns.sh"
+cat > "$T/lockrun.sh" <<'S'
+set -u
+die() { echo "die: $*"; exit 1; }
+now() { echo 2026-01-01T00:00:00Z; }
+DA_STATE=$1; PROJ=app; . "$2"
+case $3 in
+  intent) intent_write k '{"a":1}';;
+  journal) journal_line /tmp refs/heads/x "" abc123 test:verb "";;
+esac
+S
+for how in intent journal; do
+  rm -rf "$T/ls"; mkdir -p "$T/ls"
+  out=$(PATH=$T/bin:$PATH bash "$T/lockrun.sh" "$T/ls" "$T/lockfns.sh" $how 2>&1); rc=$?
+  if [ $how = intent ]; then
+    [ "$rc" = 1 ] && grep -q "die: could not take the lock for the intent record .*flock on .* failed.*nothing was changed" <<<"$out" && [ ! -e "$T/ls/finish-intent/app-k.json" ] && ok "intent_write: a flock that fails ends the verb, says so, and writes no record" || no "intent_write failing flock: rc=$rc $out"
+  else
+    grep -q "warning: the ref journal could not be written for refs/heads/x (test:verb): flock on .* failed" <<<"$out" && ok "the ref journal: a flock that fails is a warning that names the flock" || no "journal failing flock: rc=$rc $out"
+  fi
+  out=$(PATH=$HERMETIC/bin:$T/farm bash "$T/lockrun.sh" "$T/ls" "$T/lockfns.sh" $how 2>&1); rc=$?
+  if [ $how = intent ]; then
+    [ "$rc" = 1 ] && grep -q "die: could not take the lock for the intent record .*flock command (util-linux) is not installed" <<<"$out" && [ ! -e "$T/ls/finish-intent/app-k.json" ] && ok "intent_write: no flock command, the verb says it is not installed" || no "intent_write missing flock: rc=$rc $out"
+  else
+    grep -q "warning: the ref journal could not be written for refs/heads/x (test:verb): the flock command (util-linux) is not installed" <<<"$out" && ok "the ref journal: no flock command, the warning says it is not installed" || no "journal missing flock: rc=$rc $out"
+  fi
+  out=$(bash "$T/lockrun.sh" "$T/ls" "$T/lockfns.sh" $how 2>&1); rc=$?
+  if [ $how = intent ]; then [ "$rc" = 0 ] && [ "$(cat "$T/ls/finish-intent/app-k.json")" = '{"a":1}' ] && ok "intent_write with flock writes the record as before" || no "intent_write: rc=$rc $out"
+  else [ "$rc" = 0 ] && [ -z "$out" ] && [ "$(jq -r .ref "$T/ls/ref-journal.jsonl")" = refs/heads/x ] && ok "the ref journal with flock writes its line as before" || no "journal: rc=$rc $out"; fi
+done
 
 # --- the bookkeeping file of a merge a finish parked belongs to the release that was given up: starting the version again removes it
 mk stale
@@ -62,6 +93,23 @@ t=$($REL push 0.1.1 --hotfix | tok); out=$($REL push 0.1.1 --hotfix --plan "$t" 
 w=$($REL fix 0.1.1 --hotfix | sed -n 's/^worktree: //p'); echo fixed > "$w/FIXED"; git -C "$w" add FIXED && git -C "$w" commit -q -m "the fix"
 t=$($REL push 0.1.1 --hotfix | tok); out=$($REL push 0.1.1 --hotfix --plan "$t" --approved go 2>&1); rc=$?
 [ "$rc" = 0 ] && [ -n "$(git -C "$R" ls-remote origin refs/heads/hotfix/0.1.1)" ] && ok "push after the fix: the preflight passes in the copy of the branch and the branch is pushed" || no "push after the fix: rc=$rc $out"
+
+# --- release.hotfix_preflight: what push runs for a hotfix instead of release.preflight (a release keeps release.preflight; start runs neither for a hotfix)
+mk hot2 with-origin
+jq '.release = {preflight: ["false"], hotfix_preflight: ["test", "-f", "FIXED"]}' "$T/c/projects/hot2.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/hot2.json"
+out=$($REL start 0.1.1 --hotfix 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q "preflight (release.hotfix_preflight): not run now: master does not have the content this hotfix brings. It runs in a copy of hotfix/0.1.1 when you push, before anything is pushed (a non-zero exit refuses the push): test -f FIXED" <<<"$out" \
+  && ok "hotfix start: the plan names release.hotfix_preflight, not release.preflight, as the check that runs at push" || no "hotfix_preflight plan: rc=$rc $out"
+out=$(rstart 0.1.1 --hotfix 2>&1); rc=$?
+[ "$rc" = 0 ] && git -C "$R" rev-parse -q --verify refs/heads/hotfix/0.1.1 >/dev/null && ok "hotfix start runs neither preflight (release.preflight would refuse it)" || no "hotfix_preflight start: rc=$rc $out"
+out=$($REL push 0.1.1 --hotfix 2>&1); t=$(tok <<<"$out")
+grep -q "^preflight (release.hotfix_preflight, run in a copy of hotfix/0.1.1 before the push): test -f FIXED" <<<"$out" && ok "the push plan of a hotfix lists release.hotfix_preflight" || no "hotfix push plan: $out"
+out=$($REL push 0.1.1 --hotfix --plan "$t" --approved go 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "release.hotfix_preflight failed (exit 1): test -f FIXED" <<<"$out" && [ -z "$(git -C "$R" ls-remote origin refs/heads/hotfix/0.1.1)" ] && ok "push of a hotfix before the fix: release.hotfix_preflight refuses it, nothing is pushed" || no "hotfix push before the fix: rc=$rc $out"
+w=$($REL fix 0.1.1 --hotfix | sed -n 's/^worktree: //p'); echo fixed > "$w/FIXED"; git -C "$w" add FIXED && git -C "$w" commit -q -m "the fix"
+t=$($REL push 0.1.1 --hotfix | tok); out=$($REL push 0.1.1 --hotfix --plan "$t" --approved go 2>&1); rc=$?
+[ "$rc" = 0 ] && [ -n "$(git -C "$R" ls-remote origin refs/heads/hotfix/0.1.1)" ] && ok "after the fix release.hotfix_preflight passes (release.preflight, which always fails here, is not run) and the branch is pushed" || no "hotfix push after the fix: rc=$rc $out"
+out=$($REL start 0.1.2 2>&1); grep -q "release.preflight failed" <<<"$out" && ok "a release (not a hotfix) still runs release.preflight, not release.hotfix_preflight" || no "release start with hotfix_preflight set: $out"
 
 # --- the cut: one plan and one approval for start, push, finish and publish
 printf '#!/usr/bin/env bash\necho "$*" >> "%s/gh.log"\ncase "$*" in *"pr create"*) echo https://example.net/acme/x/pull/1;; *"release view"*) echo "release not found" >&2; exit 1;; esac\n' "$T" > "$T/gh"
@@ -112,5 +160,31 @@ t=$($REL push 0.2.0 | tok); out=$($REL push 0.2.0 --plan "$t" --approved "pushin
 git -C "$R" update-ref refs/heads/master "$(git -C "$R" commit-tree -p master -m moved 'master^{tree}')"
 out=$($REL finish 0.2.0 --plan "$ct" 2>&1); rc=$?
 [ "$rc" != 0 ] && grep -q "does not cover finish" <<<"$out" && grep -q "master is at" <<<"$out" && ! git -C "$R" rev-parse -q --verify refs/tags/0.2.0 >/dev/null && ok "master moved since the plan: finish under the cut is refused, nothing is tagged" || no "finish after master moved: rc=$rc $out"
+
+# --- release.finish_check: run by finish in a copy of the branch once the plan is approved, before anything is merged, tagged or pushed; the plans list it
+printf '#!/usr/bin/env bash\necho "$PWD $1 ${QARGI_RELEASE_VERSION:-} $(cat VERSION)" >> "%s/fc.log"\nif [ -f "%s/fc.fail" ]; then echo "finish check boom"; exit 5; fi\n' "$T" "$T" > "$T/fc.sh"
+mk fcheck with-origin
+jq --arg s "$T/fc.sh" '.release = {finish_check: ["bash", $s, "{version}"]}' "$T/c/projects/fcheck.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/fcheck.json"
+out=$($REL start 0.2.0 --date 2026-03-04 2>&1); rc=$?   # every release verb that relies on the release answers checks them first
+[ "$rc" = 0 ] && grep -q "^plan token: " <<<"$out" && ok "release.finish_check is a release answer (the plan of start is made: no verb refuses the answer)" || no "release.finish_check is not a known release answer: rc=$rc $out"
+out=$($REL plan 0.2.0 --date 2026-03-04 2>&1)
+grep -q "release.finish_check runs in a copy of the branch first, before anything is merged, tagged or pushed (a non-zero exit refuses): bash $T/fc.sh {version}" <<<"$out" && ok "the plan of the cut lists the finish check" || no "cut plan: $out"
+rstart 0.2.0 --date 2026-03-04 >/dev/null 2>&1; t=$($REL push 0.2.0 | tok); $REL push 0.2.0 --plan "$t" --approved go >/dev/null 2>&1
+out=$($REL finish 0.2.0 2>&1); t=$(tok <<<"$out")
+grep -q "^finish check (release.finish_check, run in a copy of release/0.2.0 once this plan is approved, before anything is merged, tagged or pushed; a non-zero exit refuses): bash $T/fc.sh {version}" <<<"$out" && [ ! -e "$T/fc.log" ] && ok "the finish plan lists the check and runs nothing" || no "finish plan: $out"
+refs() { { git -C "$R" for-each-ref refs/heads refs/tags; git -C "$O" for-each-ref; } | md5sum; }   # the local branches and tags, and every ref of origin
+before=$(refs); touch "$T/fc.fail"
+out=$($REL finish 0.2.0 --plan "$t" --approved go 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "release.finish_check failed (exit 5)" <<<"$out" && grep -q "finish check boom" <<<"$out" && grep -q "nothing was merged, tagged or pushed" <<<"$out" && [ "$before" = "$(refs)" ] \
+  && [ -z "$(ls "$T/s/finish-intent" 2>/dev/null)" ] && ok "a failing finish check refuses with the tail of its output; no ref moved here or on origin, no tag, no record" || no "failing finish check: rc=$rc $out"
+rm -f "$T/fc.fail"
+out=$($REL finish 0.2.0 --plan "$t" --approved go 2>&1); rc=$?
+read -r cwd arg envv ver < <(tail -1 "$T/fc.log")
+[ "$rc" = 0 ] && git -C "$R" rev-parse -q --verify refs/tags/0.2.0 >/dev/null && [ "$arg" = 0.2.0 ] && [ "$envv" = 0.2.0 ] && [ "$ver" = 0.2.0 ] && [ "$cwd" != "$R" ] && [ ! -e "$cwd" ] \
+  && ok "a passing finish check lets the finish go on; it ran in a temporary copy of the branch (its VERSION is the release's), {version} replaced, QARGI_RELEASE_VERSION set" || no "passing finish check: rc=$rc cwd=$cwd arg=$arg $out"
+mk fcline
+jq '.release = {finish_check: "test -f VERSION && echo {version} > /dev/null"}' "$T/c/projects/fcline.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/fcline.json"
+out=$($REL start 0.2.0 --date 2026-03-04 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q "^plan token: " <<<"$out" && ok "release.finish_check may be a command line" || no "a command line is refused: rc=$rc $out"
 
 exit $fail

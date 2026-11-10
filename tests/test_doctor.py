@@ -363,11 +363,81 @@ class ProjectEnv(Base):
         self.assertEqual(snapshot(os.environ["QARGI_STATE"]), before)
 
 
+class Tools(Base):
+    """flock and timeout: a host without one is told so, since the locks of the finishing verbs and the bound on a remote question depend on them."""
+
+    def farm(self, leave_out):
+        """A PATH of links to every program of the usual bin directories except those named, so the doctor can run without them."""
+        d = os.path.join(self.t, "farm-" + "-".join(sorted(leave_out)))
+        os.makedirs(d, exist_ok=True)
+        for bindir in ("/usr/bin", "/bin"):
+            if os.path.isdir(bindir):
+                for n in os.listdir(bindir):
+                    if n not in leave_out and not os.path.lexists(os.path.join(d, n)):
+                        os.symlink(os.path.join(bindir, n), os.path.join(d, n))
+        return d
+
+    def test_both_found_is_ok(self):
+        rc, out, err = self.doctor()
+        self.assertEqual(self.lines(out)["tools"][0], "ok", out)
+        self.assertIn("flock and timeout found on PATH", out)
+
+    def test_a_missing_tool_warns_and_says_what_it_is_for(self):
+        for gone in ("flock", "timeout"):
+            e = dict(self.env, PATH=self.fakes + os.pathsep + self.farm({gone}))
+            r = subprocess.run([BIN, "doctor", "--json"], capture_output=True, text=True, env=e, stdin=subprocess.DEVNULL)
+            doc = json.loads(r.stdout)
+            tools = [c for c in doc["checks"] if c["name"] == "tools"][0]
+            self.assertEqual(tools["status"], "warn", (gone, tools))
+            self.assertIn("%s is not on PATH" % gone, tools["detail"])
+            self.assertEqual(tools["detail"].count("is not on PATH"), 1, tools)
+            self.assertTrue(any("make bootstrap" in f for f in tools["fix"]), tools)
+            self.assertEqual(r.returncode, 0, "a finding is no failure")
+            self.assertEqual(subprocess.run([BIN, "doctor", "--strict"], capture_output=True, text=True, env=e, stdin=subprocess.DEVNULL).returncode, 1)
+
+    def test_both_missing_are_named_together(self):
+        with mock.patch.object(D.shutil, "which", return_value=None):
+            c = D.check_tools()
+        self.assertEqual(c["status"], "warn")
+        self.assertIn("flock is not on PATH", c["detail"])
+        self.assertIn("timeout is not on PATH", c["detail"])
+
+
+class Checkout(unittest.TestCase):
+    """The tools list of the checkout (Makefile TOOLS, the bootstrap lines, AGENTS.md) keeps in step with what the doctor checks."""
+
+    def tools(self):
+        with open(os.path.join(ROOT, "Makefile"), encoding="utf-8") as f:
+            line = next(l for l in f if l.startswith("TOOLS :="))
+        return line.split(":=", 1)[1].split()
+
+    def test_flock_and_timeout_are_in_the_makefile_the_bootstrap_and_agents_md(self):
+        tools = self.tools()
+        for t, _ in D.TOOLS:
+            self.assertIn(t, tools)
+        with open(os.path.join(ROOT, "AGENTS.md"), encoding="utf-8") as f:
+            prereq = next(l for l in f if l.startswith("- Prerequisites:"))
+        for t in tools:
+            self.assertIn(t, prereq, "AGENTS.md lists the tool %s the Makefile checks" % t)
+        with open(os.path.join(ROOT, "Makefile"), encoding="utf-8") as f:
+            installs = [l for l in f if l.startswith("INSTALL :=")]
+        self.assertEqual(len(installs), 3)
+        for l in installs:
+            self.assertIn("util-linux", l)
+            self.assertIn("coreutils", l)
+
+    @unittest.skipUnless(shutil.which("make"), "make is not installed")
+    def test_make_doctor_has_a_line_for_each(self):
+        r = subprocess.run(["make", "-s", "doctor"], cwd=ROOT, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        for t, _ in D.TOOLS:
+            self.assertRegex(r.stdout, r"(?m)^(ok|missing): %s\b" % t)
+
+
 class Command(Base):
     def test_the_lines_are_status_name_detail_and_exit_is_zero(self):
         rc, out, err = self.doctor()
         self.assertEqual(rc, 0, err)
-        for name in ("remove-ipc", "guard", "shm", "window-source", "project-env"):
+        for name in ("remove-ipc", "guard", "shm", "tools", "window-source", "project-env"):
             self.assertIn(name, self.lines(out))
         for line in out.splitlines():
             if not line.startswith("    "):
@@ -382,7 +452,7 @@ class Command(Base):
         rc, out, _ = self.doctor("--json", "--strict", FAKE_IPC="true")
         doc = json.loads(out)
         self.assertEqual((rc, doc["exit"], doc["warnings"], doc["strict"]), (1, 1, 1, True))
-        self.assertEqual([c["name"] for c in doc["checks"]], ["remove-ipc", "guard", "shm", "window-source", "project-env"])
+        self.assertEqual([c["name"] for c in doc["checks"]], ["remove-ipc", "guard", "shm", "tools", "window-source", "project-env"])
         ipc = doc["checks"][0]
         self.assertEqual(ipc["status"], "warn")
         self.assertTrue(any("RemoveIPC=no" in line for line in ipc["fix"]))

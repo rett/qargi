@@ -40,12 +40,12 @@ journal_line() { # REPO REF OLD NEW VERB URL [WHY]: one line; with URL a ref of 
   ref=$2 old=${3:-$zero} new=${4:-$zero} verb=$5
   repo=$(readlink -f "$1" 2>/dev/null) || repo=$1
   [ -n "${DA_STATE:-}" ] && case $ref in refs/heads/?*|refs/tags/?*) ;; *) false;; esac \
-    && ( umask 077; flock 9 && jq -nc --arg at "$(now)" --argjson ep "$(date +%s)" --arg v "$verb" --arg p "${PROJ:-}" --arg r "$repo" \
+    && ( umask 077; flock 9 || exit 4; jq -nc --arg at "$(now)" --argjson ep "$(date +%s)" --arg v "$verb" --arg p "${PROJ:-}" --arg r "$repo" \
            --arg ref "$ref" --arg o "$old" --arg n "$new" --arg by "$(id -un 2>/dev/null || echo unknown)@$(hostname 2>/dev/null || echo unknown)" \
            --arg u "$6" --arg w "${7:-}" \
            '{at:$at, epoch:$ep, verb:$v, project:$p, repo:$r, ref:$ref, old:$o, new:$n, by:$by}
             + (if $u == "" then {} else {remote:"origin", url:$u} end) + (if $w == "" then {} else {why:$w} end)' >> "$f" ) 9> "$f.lock" \
-    || echo "qargi: warning: the ref journal could not be written for $ref ($verb); a later 'qargi local verify' of a run prepared before this may not accept the change" >&2
+    || echo "qargi: warning: the ref journal could not be written for $ref ($verb)$([ $? != 4 ] || { command -v flock >/dev/null 2>&1 && echo ": flock on $f.lock failed" || echo ": the flock command (util-linux) is not installed"; }); a later 'qargi local verify' of a run prepared before this may not accept the change" >&2
   return 0
 }
 # remote_was BRANCH -> what origin had for BRANCH as far as this repository knows: the remote-tracking ref (current after a fetch)
@@ -397,13 +397,14 @@ gates_line() {
 wcommit() { git -C "$WT" commit -q "$@" || die "the commit failed (is a git user.name and user.email set?)"; }
 
 
-# merge_step INTO_SHA FROM KEY MESSAGE -> MERGED (the merge commit); a --no-ff merge made in a temporary worktree.
+# merge_step INTO_SHA FROM KEY MESSAGE [LABEL] -> MERGED (the merge commit); a --no-ff merge made in a temporary worktree.
 # On a conflict nothing moves: the worktree is kept as the place to resolve it (STATE/conflicts/PROJ-KEY) with the merge in
 # progress, the conflicted files are listed and the command exits 3. Resolve and commit there, then run the same command with
 # --resolved: the commit is used if it is a merge of exactly INTO_SHA and FROM, with nothing left unmerged. Running the command
-# again without --resolved while a resolution is waiting is refused, not overwritten.
+# again without --resolved while a resolution is waiting is refused, not overwritten. LABEL (default FROM) is what the messages call FROM: a commit
+# that is only a sha, like the tagged master merge commit, is named by its tag.
 merge_step() {
-  local into=$1 from=$2 key=$3 msg=$4 dir from_sha files out donef di df dm
+  local into=$1 from=$2 key=$3 msg=$4 label=${5:-$2} dir from_sha files out donef di df dm
   dir=$DA_STATE/conflicts/$PROJ-$key; donef=$dir.done
   from_sha=$(g rev-parse "$from")
   if [ -n "${RESOLVED:-}" ]; then
@@ -413,7 +414,7 @@ merge_step() {
       [ -z "$(git -C "$dir" diff --name-only --diff-filter=U)" ] && [ ! -f "$(git -C "$dir" rev-parse --git-path MERGE_HEAD)" ] \
         || die "the merge in $dir is not finished: resolve the conflicts, git add them, git commit, then run this again with --resolved"
       [ "$(git -C "$dir" rev-parse HEAD^1 2>/dev/null)" = "$into" ] && [ "$(git -C "$dir" rev-parse HEAD^2 2>/dev/null)" = "$from_sha" ] \
-        || die "the commit in $dir is not a merge of $from into the current head (the branches moved, or it is not a merge commit): remove it with git worktree remove --force $dir and start over"
+        || die "the commit in $dir is not a merge of $label into the current head (the branches moved, or it is not a merge commit): remove it with git worktree remove --force $dir and start over"
       MERGED=$(git -C "$dir" rev-parse HEAD)
       printf '%s %s %s\n' "$into" "$from_sha" "$MERGED" > "$donef"
       g worktree remove --force "$dir" >/dev/null 2>&1 || rm -rf "$dir"
@@ -430,9 +431,9 @@ merge_step() {
   files=$(git -C "$WT" diff --name-only --diff-filter=U)
   if [ -z "$files" ]; then cleanup; die "merging $from failed without a conflict: $out"; fi
   mkdir -p "$DA_STATE/conflicts"
-  g worktree move "$WT" "$dir" >/dev/null 2>&1 || { cleanup; die "the merge of $from conflicts, and the worktree to resolve it in could not be kept; nothing was changed"; }
+  g worktree move "$WT" "$dir" >/dev/null 2>&1 || { cleanup; die "the merge of $label conflicts, and the worktree to resolve it in could not be kept; nothing was changed"; }
   WT=''
-  echo "qargi: merging $from conflicts. Nothing was changed. Conflicted files:" >&2
+  echo "qargi: merging $label conflicts. Nothing was changed. Conflicted files:" >&2
   echo "$files" | sed 's/^/  /' >&2
   echo "Resolve them in $dir (the merge is in progress there): edit, git add, git commit." >&2
   echo "Then run the same command again with --resolved. (git worktree remove --force $dir abandons it.)" >&2
@@ -454,7 +455,16 @@ intent_has() { [ -f "$(intent_file "$1")" ]; }
 intent_write() { # KEY JSON: create or replace the record, atomically, under its lock
   local f; f=$(intent_file "$1")
   mkdir -p "$(dirname "$f")" && chmod 700 "$(dirname "$f")" 2>/dev/null
-  ( umask 077; flock 9; printf '%s\n' "$2" > "$f.tmp" && mv -f "$f.tmp" "$f" ) 9> "$f.lock" || die "could not write the intent record $f: nothing was changed"
+  # a flock that failed (or is not installed) took no lock: say so, never write as if it had (status 4, as in pid_lock)
+  ( umask 077; flock 9 || exit 4; printf '%s\n' "$2" > "$f.tmp" && mv -f "$f.tmp" "$f" ) 9> "$f.lock" || {
+    [ $? != 4 ] || flock_die "the intent record $f" "$f.lock"
+    die "could not write the intent record $f: nothing was changed"
+  }
+}
+# flock_die WHAT LOCKFILE: ends the verb after a flock that took no lock, saying whether the command is missing or the lock failed
+flock_die() {
+  command -v flock >/dev/null 2>&1 || die "could not take the lock for $1: the flock command (util-linux) is not installed, so two runs could not be kept apart; nothing was changed"
+  die "could not take the lock for $1: flock on $2 failed (does that directory's file system support locks?); nothing was changed"
 }
 # A pid lock: a directory with the pid of its holder (and a token naming that process, so a pid given to another process later is not taken for it) in it,
 # held while a verb runs, so a second verb of the same kind never mistakes the record of a running one for one that was cut off. A lock whose process is
@@ -594,11 +604,13 @@ backlog_file() {
   printf '%s\n' "$f"
 }
 # backlog_note BASE BRANCH -> informational, for a finish plan: the open backlog items whose id the messages of the commits BRANCH brings into BASE
-# name. Prints nothing when backlog.file is unset or its file is missing or unreadable; it never fails and never acts.
+# name, among the items of the list under the heading backlog.section when that is set. Prints nothing when backlog.file is unset or its file is missing
+# or unreadable (or has no such heading); it never fails and never acts.
 backlog_note() {
-  local f ids
+  local f ids bs
   f=$(backlog_path) && [ -n "$f" ] && [ -f "$f" ] || return 0
-  ids=$(g log --format='%B' "$1..$2" 2>/dev/null | python3 -I "$(dirname "$0")/backlog.py" named "$f" 2>/dev/null) || return 0
+  bs=$(jq -r '.backlog.section // ""' "$af" 2>/dev/null) || bs=''
+  ids=$(g log --format='%B' "$1..$2" 2>/dev/null | python3 -I "$(dirname "$0")/backlog.py" named "$f" ${bs:+--section "$bs"} 2>/dev/null) || return 0
   [ -z "$ids" ] || echo "  backlog items named in these commits: $ids"
 }
 project_load() { # PROJ (or inferred) -> af, REPO, TESTCMD, METH

@@ -39,6 +39,8 @@
 #   release.sh finish VERSION [--hotfix] [--keep] [--ignore-checks WORDS] [--plan T --approved W]
 #                                           after the checks pass: merge, tag, back-merge, delete the branch, push. The plan lists the pull request's checks
 #                                           and refuses while one fails or is pending, unless --ignore-checks gives, in the person's words, why (recorded).
+#                                           With the answer release.finish_check (a command line or a list of words, {version} replaced) the plan lists it, and once
+#                                           the plan is approved it runs in a copy of the branch before any merge, tag or push; a non-zero exit refuses, nothing moved.
 #                                           Then it prints the steps of the answer release.after_steps ({version} replaced) as "after the release: [pending]
 #                                           NAME (WHO): COMMAND" lines, never runs them, and records them as pending in STATE/release/PROJECT-VERSION.after.json
 #                                           ({schema: 2, steps: [{name, command, who, evidence_hint, state, done_at, evidence}]}) for `status`, which shows
@@ -91,7 +93,7 @@
 # The layout of what a release updates is the project's: the answers release.version_file (default VERSION; none: the project has no such file),
 # release.changelog.unreleased and .released (heading templates; default '## [Unreleased]' and '## [{version}] - {date}'), release.man_pages (default
 # man/*.1), release.version_files (other files that carry the version; checked, never bumped), release.test_command (what `verify` runs; default test_command) and release.preflight (an argv list, {version} replaced, run by `start` and
-# `push` before they change anything; a non-zero exit refuses; for a hotfix `start` does not run it, master lacking the content the hotfix brings, and `push` does, in a copy of the branch). lib/release_layout.py checks and applies them.
+# `push` before they change anything; a non-zero exit refuses; for a hotfix `start` does not run it, master lacking the content the hotfix brings, and `push` does, in a copy of the branch). release.hotfix_preflight (the same forms) is what `push` runs for a hotfix instead of release.preflight. lib/release_layout.py checks and applies them.
 #
 # Options for all: --project P, --date D. Pushing, merging and tagging need the plan token and an approval.
 . "$(dirname "$0")/lib.sh"
@@ -503,15 +505,30 @@ man_pages_at() {
   if jq -e '(.release? // {}) | has("man_pages")' "$af" >/dev/null 2>&1; then jq -r '.release.man_pages[]' "$af"
   else g ls-tree -r --name-only "$1" | grep -E '(^|/)man[0-9]?/[^/]+\.[1-9]$' || true; fi
 }
-# run_preflight DIR: release.preflight (an argv list, {version} replaced) runs in DIR, with no shell and no input; a non-zero exit ends the verb
-# with the tail of its output. It runs before the verb changes anything.
-run_preflight() {
-  local pre=() out rc=0
-  mapfile -d '' -t pre < <(jq -j --arg v "$VER" '(.release? // {}) | (.preflight // [])[] | split("{version}") | join($v), "\u0000"' "$af")
-  [ "${#pre[@]}" -gt 0 ] || return 0
-  out=$(run_clean "$1" "${pre[@]}" </dev/null 2>&1) || rc=$?
-  [ "$rc" = 0 ] || die "release.preflight failed (exit $rc): ${pre[*]}"$'\n'"$(printf '%s\n' "$out" | tail -n 15 | sed 's/^/  | /')"$'\n'"nothing was changed"
+# has_answer KEY -> whether the release answer KEY (release.KEY) is set
+has_answer() { jq -e --arg k "$1" '(.release? // {}) | has($k)' "$af" >/dev/null 2>&1; }
+# answer_text KEY -> the release answer KEY as one line for a plan: the words of a list, the text of a command line ({version} is replaced when it runs)
+answer_text() { jq -r --arg k "$1" '.release[$k] | if type == "array" then join(" ") else . end' "$af"; }
+# run_answer KEY DIR NOTHING -> release.KEY (a list of words, run without a shell, or a command line, run by bash -c; {version} replaced in either, and
+# QARGI_RELEASE_VERSION set) runs in DIR with no input; a non-zero exit ends the verb with the tail of its output and NOTHING (what was not done)
+run_answer() {
+  local cmd=() out rc=0
+  if [ "$(jq -r --arg k "$1" '.release[$k] | type' "$af")" = array ]; then
+    mapfile -d '' -t cmd < <(jq -j --arg k "$1" --arg v "$VER" '.release[$k][] | split("{version}") | join($v), "\u0000"' "$af")
+  else cmd=(bash -c "$(jq -r --arg k "$1" --arg v "$VER" '.release[$k] | split("{version}") | join($v)' "$af")"); fi
+  [ "${#cmd[@]}" -gt 0 ] || return 0
+  out=$(run_clean "$2" env QARGI_RELEASE_VERSION="$VER" "${cmd[@]}" </dev/null 2>&1) || rc=$?
+  [ "$rc" = 0 ] || die "release.$1 failed (exit $rc): ${cmd[*]}"$'\n'"$(printf '%s\n' "$out" | tail -n 15 | sed 's/^/  | /')"$'\n'"$3"
 }
+# preflight_key -> the answer that is the preflight of this verb: for a hotfix release.hotfix_preflight when it is set (the stored preflight may need content
+# only the fix has, or not suit a hotfix), else release.preflight; nothing when neither is set
+preflight_key() {
+  if [ "$KIND" = hotfix ] && has_answer hotfix_preflight; then echo hotfix_preflight
+  elif has_answer preflight; then echo preflight; fi
+}
+# run_preflight DIR: the preflight (preflight_key; an argv list, or a command line run by bash -c; {version} replaced) runs in DIR with no input; a non-zero
+# exit ends the verb with the tail of its output. It runs before the verb changes anything.
+run_preflight() { local k; k=$(preflight_key); [ -z "$k" ] || run_answer "$k" "$1" "nothing was changed"; }
 
 # --- the pull request and its CI checks (read-only calls through $GH)
 # pr_checks BRANCH -> PRC_STATE (pass|failing|pending|nopr|nochecks|noauth|nogh|unchecked), PRC_LINES ("name: pass|fail|pending|skipped" per check),
@@ -750,7 +767,7 @@ case $verb in
       echo "$n. push: push $BR to origin and open the pull request into master, so CI runs on the commit that will be released (a branch that shares no history with master is joined first). The cut covers the branch as start leaves it; a fix committed on it before the push is pushed with the push's own plan (release fix --push), and the cut goes on from there."
     else echo "$n. push: not in this cut: the repository has no origin remote, so no CI runs; finish then needs a passing local whole-suite run at the head (qargi release verify $VER${HOTFIX:+ --hotfix})"; fi
     n=3
-    echo "$n. finish: merge $BR into master with --no-ff (master is at ${msha:0:7}), tag $VER on that merge commit, merge the tag commit into $second with --no-ff$([ -n "$KEEP" ] && echo ", keep $BR" || echo ", delete $BR"), then push master, $second and the tag together (all or none). THIS IS THE PUSH AND TAG GATE: the approval words you give record that you released it. Needs the pull request's checks passed (a failing or pending check is refused; --ignore-checks \"...\" at the call, in your own words, is recorded) and the branch still at the head that was pushed."
+    echo "$n. finish: merge $BR into master with --no-ff (master is at ${msha:0:7}), tag $VER on that merge commit, merge the tag commit into $second with --no-ff$([ -n "$KEEP" ] && echo ", keep $BR" || echo ", delete $BR"), then push master, $second and the tag together (all or none). THIS IS THE PUSH AND TAG GATE: the approval words you give record that you released it. Needs the pull request's checks passed (a failing or pending check is refused; --ignore-checks \"...\" at the call, in your own words, is recorded) and the branch still at the head that was pushed.$(! has_answer finish_check || echo " release.finish_check runs in a copy of the branch first, before anything is merged, tagged or pushed (a non-zero exit refuses): $(answer_text finish_check).")"
     if [ -n "$site" ]; then echo "4. site: build the documentation site of the tag $VER and commit it on $SITE_BR (nothing is pushed)"; fi
     if [ -n "$pubown" ]; then echo "5. publish (optional): create the GitHub release of tag $VER with the changelog section as notes. The project attaches release files (release.assets or release.sign), whose hashes exist only after the tag: publish takes its own plan, and so is outside this cut's token"
     else echo "5. publish (optional): create the GitHub release of tag $VER with the changelog section as notes; skip it when the tag's release workflow publishes the release"; fi
@@ -789,8 +806,9 @@ case $verb in
     # fix, its changelog entry, what a project's own check looks for), so release.preflight cannot pass there: it runs in a copy of the branch at `push`,
     # where it already runs, once the fix is committed (the plan says so)
     pre_line=''
-    if jq -e '(.release? // {}) | has("preflight")' "$af" >/dev/null 2>&1; then
-      if [ "$KIND" = hotfix ]; then pre_line="preflight (release.preflight): not run now: $BASE does not have the content this hotfix brings. It runs in a copy of $BR when you push, before anything is pushed (a non-zero exit refuses the push): $(jq -r '.release.preflight | join(" ")' "$af")"
+    pk=$(preflight_key)
+    if [ -n "$pk" ]; then
+      if [ "$KIND" = hotfix ]; then pre_line="preflight (release.$pk): not run now: $BASE does not have the content this hotfix brings. It runs in a copy of $BR when you push, before anything is pushed (a non-zero exit refuses the push): $(answer_text "$pk")"
       else run_preflight "$WT"; pre_line="preflight (release.preflight): passed on $BASE (at ${b0:0:7}); it runs again in a copy of $BR when you push"; fi
     fi
     oldver=''
@@ -925,7 +943,7 @@ case $verb in
       echo "join the history of master: merge master into the release branch keeping the release tree (-s ours --allow-unrelated-histories), as a new commit on $BR before the push; the tree of $BR must be the same before and after (checked: the branch does not move otherwise), and master must still be at ${msha:0:7}; the lead's hooks and signing do not run on it"
       jb=$(join_blocker "$BR"); [ -z "$jb" ] || echo "warning: $jb"
     fi
-    jq -e '(.release? // {}) | has("preflight")' "$af" >/dev/null 2>&1 && echo "preflight (release.preflight, run in a copy of $BR before the push): $(jq -r '.release.preflight | join(" ")' "$af")"
+    pk=$(preflight_key); [ -z "$pk" ] || echo "preflight (release.$pk, run in a copy of $BR before the push): $(answer_text "$pk")"
     notes_report
     remote_report "$BR"
     pw=$(wt_of "$BR"); [ -z "$pw" ] || [ -z "$(git -C "$pw" status --porcelain 2>/dev/null)" ] || echo "warning: $pw has uncommitted changes: only what is committed on $BR is pushed"
@@ -1014,6 +1032,7 @@ case $verb in
     echo "finish $KIND $VER of $PROJ: merge $BR into master with --no-ff, tag $VER on it, merge tag $VER (the master merge commit) into $second with --no-ff${KEEP:+, keep $BR}$([ -n "$KEEP" ] || echo ", delete $BR"), push master, $second and the tag together (all or none)"
     remote_report "$BR"; remote_report master; remote_report "$second"
     show_incoming master "$BR"; backlog_note master "$BR"
+    ! has_answer finish_check || echo "finish check (release.finish_check, run in a copy of $BR once this plan is approved, before anything is merged, tagged or pushed; a non-zero exit refuses): $(answer_text finish_check)"
     if g remote get-url origin >/dev/null 2>&1; then   # the checks of the pull request at the head being released
       pr_checks_print "$BR"
       rw=$(remote_was "$BR"); [ -z "$rw" ] || [ "$rw" = "$h" ] || echo "warning: origin/$BR was at ${rw:0:7} at the last fetch, not at the head ${h:0:7} that is released: those checks may be of an older commit (qargi release push, then wait for the checks)"
@@ -1047,6 +1066,9 @@ case $verb in
       echo "note: no origin remote, so no CI ran on $BR; the local whole-suite run stands in" >&2
     fi
     need_free master "$second"; need_free_wt "$BR"   # a clean worktree that qargi made for the fix may hold BR: it is removed below
+    # release.finish_check: the project's last word before anything moves, in a copy of the branch head that is released; it comes before the stale record
+    # is dropped, so a refusal leaves everything (the record, the tag it made) as it was
+    if has_answer finish_check; then worktree "$h"; run_answer finish_check "$WT" "nothing was merged, tagged or pushed"; cleanup; fi
     if [ -n "${STALE_REC:-}" ]; then intent_drop "$KIND-$VER"; echo "note: an earlier finish of $VER stopped before anything reached origin or moved here; its tag and record are removed and this one starts again" >&2; fi
     m0=$(sha_of master); s0=$(sha_of "$second")
     rm0=$(remote_was master); rs0=$(remote_was "$second"); rb0=$(remote_was "$BR")   # what origin has (fetched above): where the journal lines of the pushes start
@@ -1055,10 +1077,15 @@ case $verb in
     # A conflict in the second merge parks a worktree that holds a merge of that commit, so the commit is kept in a file beside it and a run with
     # --resolved uses the same one (a new merge of the branch into master would be another commit)
     mfile=$DA_STATE/conflicts/$PROJ-$k2.master; nm=''
-    if [ -f "$mfile" ] && read -r mi mh mm < "$mfile" && [ "$mi" = "$m0" ] && [ "$mh" = "$h" ] && g cat-file -e "$mm^{commit}" 2>/dev/null; then nm=$mm; fi
+    # the commit in the file is used only when it is what it says: a merge of exactly this master (m0) and this branch head (h), nothing else; a file
+    # that says otherwise (hand-edited, left by another release, the commit gone) is removed and the merge is made anew
+    if [ -f "$mfile" ]; then
+      if read -r mi mh mm < "$mfile" && [ "$mi" = "$m0" ] && [ "$mh" = "$h" ] && [ "$(g rev-list --parents -n 1 "$mm" 2>/dev/null)" = "$mm $m0 $h" ]; then nm=$mm
+      else rm -f -- "$mfile"; fi
+    fi
     if [ -z "$nm" ]; then merge_step "$m0" "refs/heads/$BR" "$k1" "Merge branch '$BR'"; nm=$MERGED; fi
     mkdir -p "$DA_STATE/conflicts"; printf '%s %s %s\n' "$m0" "$h" "$nm" > "$mfile"
-    merge_step "$s0" "$nm" "$k2" "Merge tag '$VER' into $second"
+    merge_step "$s0" "$nm" "$k2" "Merge tag '$VER' into $second" "tag $VER (the master merge commit ${nm:0:7})"
     ns=$MERGED
     # the intent record comes before the tag and the push: a death after the push is finished by the next run (release_finish_resume)
     PUSHED=''; g remote get-url origin >/dev/null 2>&1 && PUSHED=1

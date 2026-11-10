@@ -11,6 +11,8 @@ The command does not fail on a finding: exit 0, or 1 with --strict when any chec
                  there (lib/orphans.sh, the listing `qargi local clean --orphans` prints).
   window-source  where the context-window table of the project's runtime comes from (its definition, or the answer
                  lead.context_window) and whether each model id the project's roles name is in it.
+  tools          flock and timeout are on PATH: flock keeps two runs of a finishing verb, and the writers of the ref journal and the records, apart;
+                 timeout bounds the questions put to a remote. A missing one warns, with what each is for and the package that has it.
   project-env    the last `qargi env check` recorded for the project (state/env/PROJECT.json): `last env check <verdict> at <time>`, a
                  warning when that verdict is not ENV OK, `unknown  never run` when none was recorded. It only reads the record: the
                  project's doctor is never run here (qargi env check runs it).
@@ -167,6 +169,23 @@ def check_guard(project):
         return check(name, "warn", detail + ", but the members of project %s are not current: %s" % (project, ", ".join("%s %s" % s for s in states)),
                      ["fix: qargi agent refresh %s --project %s" % (m, project) for m, _ in states])
     return check(name, "ok", detail + "; the members of project %s are current" % project)
+
+
+# ---------------------------------------------------------------------------------------------------------------- tools
+
+# the programs qargi's scripts call that a minimal host may lack: name, what qargi uses it for
+TOOLS = (("flock", "the locks of the finishing verbs and the writers of the ref journal and the records"),
+         ("timeout", "the bound on a question put to a remote"))
+
+
+def check_tools():
+    name = "tools"
+    missing = [(t, why) for t, why in TOOLS if shutil.which(t) is None]
+    if not missing:
+        return check(name, "ok", "%s found on PATH" % " and ".join(t for t, _ in TOOLS))
+    detail = "; ".join("%s is not on PATH (%s)" % (t, why) for t, why in missing)
+    fix = ["fix: install %s (util-linux has flock, coreutils has timeout; make bootstrap installs both), or put the directory that has it on PATH" % " and ".join(t for t, _ in missing)]
+    return check(name, "warn", detail, fix)
 
 
 # ---------------------------------------------------------------------------------------------------------------- shm
@@ -329,7 +348,7 @@ def main(argv):
     if project is False:
         print("qargi doctor: no stored project '%s'" % names[0], file=sys.stderr)
         return 2
-    checks = [check_remove_ipc(), check_guard(project), check_shm(), check_window_source(project), check_project_env(project)]
+    checks = [check_remove_ipc(), check_guard(project), check_shm(), check_tools(), check_window_source(project), check_project_env(project)]
     warns = sum(1 for c in checks if c["status"] == "warn")
     code = 1 if strict and warns else 0
     if as_json:

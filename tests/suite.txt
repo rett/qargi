@@ -37,7 +37,7 @@ full | par | 300 | 29 | bash tests/test_session_profiles.sh | lib/session*.sh
 fast | par | 300 | 4 | python3 tests/test_report.py | lib/report.py
 fast | par | 300 | 4 | python3 tests/test_noticed.py | lib/noticed.py
 full | par | 300 | 32 | python3 tests/test_env.py | lib/env.py lib/env_check.py lib/procenv.py
-fast | par | 300 | 20 | python3 tests/test_doctor.py | lib/doctor.py lib/orphans.sh lib/local.sh
+fast | par | 300 | 20 | python3 tests/test_doctor.py | lib/doctor.py lib/orphans.sh lib/local.sh Makefile AGENTS.md
 full | par | 300 | 48 | python3 tests/test_env_apply.py | lib/env*.py lib/procenv.py
 fast | par | 300 | 3 | python3 tests/test_tools.py | lib/tools.py lib/procenv.py
 fast | par | 300 | 3 | python3 tests/test_procenv.py | lib/procenv.py lib/env_check.py lib/env_apply.py lib/local_run.py lib/tools.py lib/discover.py lib/supervise.py
