@@ -36,7 +36,7 @@ qargi backlog list                              # the open items of the backlog 
 | [Members and providers](docs/members-and-providers/README.md) | Members and the guard, choosing models, providers and runtimes |
 | [Skills, tools and memory](docs/skills-tools-and-memory/README.md) | The skills and the command, packs in a local session, memory tiers, moving memory, finding tools |
 | [Reference](docs/reference/README.md) | Help, the manual page, completion, command conventions |
-| [Development](docs/development/README.md) | Setting up a checkout, tests, contributing |
+| [Development](docs/development/README.md) | Setting up a checkout, tests, contributing, the [architecture](docs/development/architecture.md) |
 
 The overview of the documentation is [docs/README.md](docs/README.md). Task-oriented guides are on the documentation site, <https://qargi.rettware.com/>.
 `man qargi` is the complete reference (`qargi help` lists the commands by task; `qargi help --man | man -l -` if the page is not installed).

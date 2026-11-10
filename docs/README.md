@@ -35,6 +35,6 @@ request.
 | [Members and providers](members-and-providers/README.md) | Members and the guard, choosing models, providers and runtimes |
 | [Skills, tools and memory](skills-tools-and-memory/README.md) | The skills and the command, skills and tools in a local session, baseline packs, memory tiers, splitting, merging and moving memory, finding tools |
 | [Reference](reference/README.md) | Help, the manual page, completion, command conventions |
-| [Development](development/README.md) | Setting up a checkout, tests, contributing |
+| [Development](development/README.md) | Setting up a checkout, tests, contributing, the [architecture](development/architecture.md) |
 
 The task-oriented guides are on the documentation site, <https://qargi.rettware.com/>.
