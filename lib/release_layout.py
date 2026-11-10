@@ -196,15 +196,15 @@ def cmd_changelog(argv):
     path, ver, date, allow, af = argv[:5]
     hotfix = len(argv) > 5 and argv[5] == "hotfix"
     unrel, rel = templates(load_release(af))
-    t = open(path, encoding="utf-8").read()
-    nl = "\n"
+    t = open(path, encoding="utf-8", newline="").read()   # newline="": a file with CRLF keeps its line endings
+    nl = "\r\n" if "\r\n" in t else "\n"
     released = rel.replace("{version}", ver).replace("{date}", date)
     m = find_unreleased(t, unrel)
     if not m and hotfix and "{version}" in unrel:
         # a hotfix is cut from master; only a project whose unreleased heading carries {version} renames it at a release, so only there master has none (any other
         # layout that lacks it is refused below, as a release is). The branch
         # brings the items: the heading is added empty, and `release finish` refuses until the branch has entries under it
-        open(path, "w", encoding="utf-8").write(add_released_heading(t, released, level(unrel), rel, nl))
+        open(path, "w", encoding="utf-8", newline="").write(add_released_heading(t, released, level(unrel), rel, nl))
         print("heading-added")
         return 0
     if not m:
@@ -214,13 +214,13 @@ def cmd_changelog(argv):
     if not allow and not [l for l in body.split("\n") if l.strip() and not l.startswith("#")]:
         sys.exit("qargi: %s has nothing under '%s'. Fix: record the changes of this release there (or pass --allow-empty-notes to release without notes), then start again."
                  % (os.path.basename(path), unrel))
-    head = m.group(0).rstrip("\n")
+    head = m.group(0).rstrip("\r\n")
     eol = nl if m.group(0).endswith("\n") else ""
     if "{version}" in unrel:        # the unreleased heading carries the version: it is renamed, nothing is kept
         new = t[:m.start()] + released + eol + t[m.end():]
     else:
         new = t[:m.start()] + head + nl + nl + released + eol + t[m.end():]
-    open(path, "w", encoding="utf-8").write(new)
+    open(path, "w", encoding="utf-8", newline="").write(new)
     return 0
 
 

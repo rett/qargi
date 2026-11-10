@@ -318,4 +318,19 @@ git -C "$R" checkout -q master; printf '# Changelog\n\n## Notes\n\n- x\n' > "$R/
 rstart 1.0.1 --hotfix --date 2026-05-06 >/dev/null 2>&1
 git -C "$R" show hotfix/1.0.1:CHANGELOG.md | cmp -s - <(printf '# Changelog\n\n## 1.0.1 (2026-05-06)\n\n## Notes\n\n- x\n') && ok "hotfix start: with no heading that follows the released template the heading goes above the first of its level" || no "fallback placement: $(git -C "$R" show hotfix/1.0.1:CHANGELOG.md 2>&1)"
 
+# --- CRLF: a changelog with Windows line endings keeps them (the heading is added with the file's own newline, a renamed or inserted heading too), and
+# a blank line of such a file under the new heading is not an entry for the finish check
+mk crlf
+jq '.release = {changelog: {unreleased: "## {version} (unreleased)", released: "## {version} ({date})"}}' "$T/c/projects/crlf.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/crlf.json"
+git -C "$R" checkout -q master; printf '# Changelog\r\n\r\n## 1.0.0 (2026-01-01)\r\n\r\n- first\r\n' > "$R/CHANGELOG.md"
+git -C "$R" commit -q -am "crlf" && git -C "$R" branch -f develop master && git -C "$R" checkout -q parked
+rstart 1.0.1 --hotfix --date 2026-05-06 >/dev/null 2>&1
+git -C "$R" show hotfix/1.0.1:CHANGELOG.md | cmp -s - <(printf '# Changelog\r\n\r\n## 1.0.1 (2026-05-06)\r\n\r\n## 1.0.0 (2026-01-01)\r\n\r\n- first\r\n') && ok "CRLF changelog: the added heading uses CRLF and no line ending changes" || no "crlf added heading: $(git -C "$R" show hotfix/1.0.1:CHANGELOG.md 2>&1 | od -c | head -5)"
+out=$($REL finish 1.0.1 --hotfix 2>&1); [ "$?" = 1 ] && grep -q "has no entries under '## 1.0.1'" <<<"$out" && ok "CRLF changelog: an empty section is refused by the finish check (a bare CR is not an entry)" || no "crlf finish: $out"
+mk crlf2
+git -C "$R" checkout -q master; printf '# Changelog\r\n\r\n## [Unreleased]\r\n\r\n### Added\r\n- a thing\r\n' > "$R/CHANGELOG.md"
+git -C "$R" commit -q -am "crlf" && git -C "$R" branch -f develop master && git -C "$R" checkout -q parked
+rstart 0.1.1 --hotfix --date 2026-05-06 >/dev/null 2>&1
+git -C "$R" show hotfix/0.1.1:CHANGELOG.md | cmp -s - <(printf '# Changelog\r\n\r\n## [Unreleased]\r\n\r\n## [0.1.1] - 2026-05-06\r\n\r\n### Added\r\n- a thing\r\n') && ok "CRLF changelog, default layout: the released heading is inserted with CRLF and nothing else changes" || no "crlf default layout: $(git -C "$R" show hotfix/0.1.1:CHANGELOG.md 2>&1 | od -c | head -8)"
+
 exit $fail

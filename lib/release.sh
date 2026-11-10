@@ -1013,7 +1013,7 @@ case $verb in
     # a hotfix brings its own changelog entries (start may have added the heading empty): the section of the version must hold some, whatever the layout.
     # A normal release was checked at start; a branch with no CHANGELOG.md is not checked
     if [ "$KIND" = hotfix ] && g cat-file -e "$BR:CHANGELOG.md" 2>/dev/null; then
-      g show "$BR:CHANGELOG.md" > "$ftmp/changelog"
+      g show "$BR:CHANGELOG.md" | tr -d '\r' > "$ftmp/changelog"   # a CRLF file: a blank line is not an entry
       rtmpl=$(jq -r '(.release? // {}).changelog.released // ""' "$af")
       if ! bash "$(dirname "$0")/changelog_section.sh" "$VER" "$ftmp/changelog" "$rtmpl" >/dev/null 2>&1; then
         rhead=$rtmpl; [ -n "$rhead" ] || rhead='## [{version}] - {date}'
