@@ -27,9 +27,8 @@
 # Every path an install writes (links, copied files and the directories it had to create) is recorded in an install manifest
 # next to install.json (<live config>/install.manifest for --user, project-N.manifest for --project DIR). --uninstall removes
 # exactly what the manifest lists and nothing else: a file you added inside a copied skill is kept, and so is ~/.qargi (the live config
-# directory and its parents go only when the install made them and they are empty once the manifest is removed). An
-# install without a manifest (made by an older install.sh) cannot be told apart from your own files, so --uninstall says so and
-# removes only the fixed paths this script writes, and only with --force.
+# directory and its parents go only when the install made them and they are empty once the manifest is removed). Without a manifest
+# --uninstall removes nothing and says so (exit 1), with or without --force.
 #
 # --user also records the tool it installed in <live config>/install.json (~/.qargi/config, or QARGI_CONF /
 # QARGI_HOME when set; --uninstall removes it). A checkout run from any other place is then a dev run that keeps its data
@@ -161,22 +160,8 @@ if [ -n "$uninstall" ]; then
     remove_recorded "$mf" say
     rm -f "$mf"
   else
-    echo "qargi: no install manifest at $mf, so I cannot tell what an earlier install wrote (it predates the manifest, or was removed)"
-    legacy=("${paths[@]}")
-    if [ "$mode" = user ] && [ -f "$liveconf/install.json" ]; then
-      root=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("tool_root",""))' "$liveconf/install.json" 2>/dev/null || true)
-      [ -z "$root" ] || [ "$root" != "$data" ] || [ "$data" = "$here" ] || legacy+=("$data")
-    fi
-    found=()
-    for p in "${legacy[@]}"; do if [ -e "$p" ] || [ -L "$p" ]; then found+=("$p"); fi; done
-    if [ ${#found[@]} -eq 0 ]; then echo "nothing of the fixed paths is there"
-    elif [ -z "$force" ]; then
-      echo "nothing removed; these fixed paths exist and may be yours:"; printf '  %s\n' "${found[@]}"
-      echo "--uninstall --force removes exactly them (the skills, the command, the man page, the completions and, when install.json says it was installed there, $data)"
-      exit 1
-    else
-      for p in "${found[@]}"; do rm -rf "$p"; echo "removed $p"; done
-    fi
+    echo "qargi: no install manifest at $mf, so nothing is recorded to remove and nothing was removed (the manifest lists every path an install wrote; without it your files cannot be told from ours)" >&2
+    exit 1
   fi
   if [ -n "$exclude_file" ] && [ -f "$exclude_file" ]; then
     grep -v -x -F "$entries" "$exclude_file" > "$exclude_file.tmp" || true
@@ -213,6 +198,14 @@ if [ -n "$copy" ] && [ "$mode" = user ]; then
   for d in $tool_dirs; do cp -r "$here/$d" "$data/"; done
   rec_contents "$data"
   echo "copied the tool to $data"
+fi
+
+# The bytecode of the tool, compiled now, as you, beside the source: the guard (qargi __guard, run on every tool call of a member) is imported
+# from lib/ (bin/qargi), and python caches only what it imports. A tool you cannot write to (a checkout installed with sudo) is compiled by
+# the one who can: qargi upgrade does it through sudo; after a first install, run the command below once. Without the bytecode the tool runs
+# as before and the guard starts slower (about twice as long). Nothing is written outside the tool's own lib/ (its __pycache__ directories).
+if [ "$mode" = user ] && ! python3 -I -m compileall -q "$src/lib" >/dev/null 2>&1; then
+  echo "note: the bytecode of $src/lib was not compiled (the tool is read-only for you), so qargi __guard starts slower; once, as the owner: sudo python3 -I -m compileall -q $src/lib" >&2
 fi
 
 mk "$skdir"

@@ -4,9 +4,11 @@ counted with a python3 shim on PATH; its output on the paths it owns is byte for
 holds (unknown command, verb and option, a missing project, no repository, a bad cloud binding, and the help pages, which are
 the ones lib/help.py show prints); every module under lib/ imports, and every lazily imported part of help.py and cloud.py
 runs; the resolved arguments, the exported binding, the current directory, the umask and the exit code of a failed preamble
-are what they were. `qargi role list` is timed against tests/startup-budget.txt (the median of 20 runs; a ceiling only warns,
-a machine under load is no failure; shrink-only: a ceiling above its value at the merge base with origin/develop needs a
-`# raised: reason` comment). Offline; temporary state.
+are what they were. `qargi __guard` (run on every tool call of a member) loads guard.py as an imported module, so its bytecode is cached,
+and answers byte for byte as the script did, also from a tool that is read-only. `qargi role list` and `qargi __guard` are timed
+against tests/startup-budget.txt (the median of 20 runs; a ceiling only warns, a machine under load is no failure, except one whose
+line says `enforced`: the guard's, which fails when the median stays above it in three measurements; shrink-only: a ceiling above
+its value at the merge base with origin/develop needs a `# raised: reason` comment). Offline; temporary state.
 Run: python3 tests/test_startup.py
      python3 tests/test_startup.py --dump BIN     the goldens as BIN (a bin/qargi) prints them, as JSON: regenerate the fixture
                                                   with the repository's own, or compare two checkouts"""
@@ -347,13 +349,164 @@ class Preamble(unittest.TestCase):
             h.close()
 
 
+def call(command, tool="Bash"):
+    """One tool call as the hook protocol delivers it (JSON on standard input)."""
+    return json.dumps({"tool_name": tool, "tool_input": {"command": command}, "cwd": "/"})
+
+
+class GuardTool:
+    """A copy of bin/ and lib/ in a fresh directory, without bytecode: the tool as a checkout installed with sudo is, until it is compiled."""
+
+    def __init__(self):
+        self.t = tempfile.mkdtemp(prefix="guardtool.")
+        self.home = os.path.join(self.t, "home")
+        os.makedirs(self.home)
+        for d in ("bin", "lib"):
+            shutil.copytree(os.path.join(ROOT, d), os.path.join(self.t, d), ignore=shutil.ignore_patterns("__pycache__"))
+        self.bin = os.path.join(self.t, "bin", "qargi")
+        self.lib = os.path.join(self.t, "lib")
+
+    def env(self, **more):
+        """What a hook has: little more than a PATH (python3 is found on it)."""
+        path = os.pathsep.join(d for d in os.environ["PATH"].split(os.pathsep) if d != os.path.join(hermetic.ROOT, "bin"))  # the hermetic python3 wrapper adds -B
+        return dict({"PATH": path, "HOME": self.home}, **more)
+
+    def guard(self, stdin, *args, env=None):
+        return subprocess.run([self.bin, "__guard", *args], input=stdin, capture_output=True, text=True, env=self.env() if env is None else env)
+
+    def script(self, stdin, *args, env=None):
+        """The guard the way bin/qargi ran it before: guard.py as a script."""
+        return subprocess.run([sys.executable, "-I", os.path.join(self.lib, "guard.py"), *args], input=stdin, capture_output=True, text=True,
+                              env=self.env() if env is None else env)
+
+    def pyc(self):
+        d = os.path.join(self.lib, "__pycache__")
+        return sorted(n for n in (os.listdir(d) if os.path.isdir(d) else []) if n.startswith("guard.") and n.endswith(".pyc"))
+
+    def compile(self):
+        """What install.sh --user and qargi upgrade do."""
+        subprocess.run([sys.executable, "-I", "-m", "compileall", "-q", self.lib], check=True)
+
+    def close(self):
+        for d, dirs, _ in os.walk(self.t):
+            for x in dirs:
+                os.chmod(os.path.join(d, x), 0o755)
+        os.chmod(self.t, 0o755)
+        shutil.rmtree(self.t, True)
+
+
+class Guard(unittest.TestCase):
+    """bin/qargi runs the guard as an imported module (python compiles a script on every run and caches only what it imports: the 235 KB
+    guard.py took more than half of the 100 ms of every tool call), and everything the script did is what it still does."""
+
+    def setUp(self):
+        self.tool = GuardTool()
+
+    def tearDown(self):
+        self.tool.close()
+
+    CALLS = [("a harmless call", call("true")), ("git push", call("git push origin HEAD")), ("a Write", json.dumps({"tool_name": "Write", "tool_input": {"file_path": "/nonexistent/x", "content": "a"}, "cwd": "/"})),
+             ("empty input", ""), ("not JSON", "{"), ("not UTF-8 text", "\xff"), ("JSON that is no call", "[1, 2]")]
+
+    def test_it_answers_as_the_script_did(self):
+        """The same exit status, standard output and standard error as `python3 -I lib/guard.py`, for the options too (a class, a provider that is not
+        there, a class that is not one, an option without its value) and the stdin of a hook."""
+        for opts in ((), ("--class", "read-only"), ("--class", "write"), ("--class", "nosuch"), ("--class",), ("--provider", "nosuch"), ("--provider",)):
+            for what, stdin in self.CALLS:
+                a, b = self.tool.guard(stdin, *opts), self.tool.script(stdin, *opts)
+                self.assertEqual((a.returncode, a.stdout, a.stderr), (b.returncode, b.stdout, b.stderr), (what, opts))
+        self.assertEqual(self.tool.guard(call("true")).returncode, 0)
+        r = self.tool.guard(call("git push origin HEAD"))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("qargi guard:", r.stderr)
+
+    def test_the_arguments_after_the_guard_reach_it(self):
+        """sys.argv of the module is what the script had (the lib directory the dispatcher passes is taken off): a read-only member may not write."""
+        stdin = json.dumps({"tool_name": "Write", "tool_input": {"file_path": os.path.join(self.tool.home, "x"), "content": "a"}, "cwd": self.tool.home})
+        plain, ro = self.tool.guard(stdin), self.tool.guard(stdin, "--class", "read-only")
+        self.assertEqual(plain.returncode, 0, plain.stderr)
+        self.assertEqual(ro.returncode, 2)
+        self.assertIn("read-only", ro.stderr)
+        self.assertEqual(self.tool.guard(call("true"), "--class", "nosuch").returncode, 2)
+
+    def test_it_is_imported_so_its_bytecode_is_cached(self):
+        """Run with bytecode allowed, the dispatcher leaves guard's compiled form next to the source (a script never gets one)."""
+        self.assertEqual(self.tool.pyc(), [])
+        self.assertEqual(self.tool.script(call("true"), env=self.tool.env()).returncode, 0)
+        self.assertEqual(self.tool.pyc(), [], "python cached a script")
+        self.assertEqual(self.tool.guard(call("true"), env=self.tool.env()).returncode, 0)
+        self.assertEqual(len(self.tool.pyc()), 1, "the guard was not imported: its bytecode was not cached")
+
+    def test_compiled_by_the_installer_it_runs_from_the_bytecode(self):
+        """install.sh --user and qargi upgrade compile lib/ (compileall); the guard then loads that bytecode and does not compile again."""
+        self.tool.compile()
+        before = {n: os.stat(os.path.join(self.tool.lib, "__pycache__", n)).st_mtime_ns for n in self.tool.pyc()}
+        self.assertEqual(len(before), 1)
+        self.assertEqual(self.tool.guard(call("true")).returncode, 0)
+        self.assertEqual(self.tool.guard(call("git push origin HEAD")).returncode, 2)
+        self.assertEqual({n: os.stat(os.path.join(self.tool.lib, "__pycache__", n)).st_mtime_ns for n in self.tool.pyc()}, before)
+        with open(os.path.join(self.tool.lib, "guard.py"), "a") as f:   # a source that changed is compiled again, not run from stale bytecode
+            f.write("\nSTALE_CHECK = True\n")
+        r = subprocess.run([self.tool.bin, "__guard"], input=call("true"), capture_output=True, text=True, env=self.tool.env())
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root writes anywhere")
+    def test_a_read_only_tool_still_answers_and_stays_untouched(self):
+        """The tool as sudo installs it: nothing can be written next to the source, there is no bytecode, and the guard answers all the same."""
+        for d, dirs, files in os.walk(self.tool.t):
+            if os.path.abspath(d) == self.tool.home:
+                dirs[:] = []
+                continue
+            for x in dirs + files:
+                p = os.path.join(d, x)
+                if not os.path.islink(p):
+                    os.chmod(p, os.stat(p).st_mode & 0o555)
+        os.chmod(os.path.join(self.tool.t, "lib"), 0o555)
+        os.chmod(os.path.join(self.tool.t, "bin"), 0o555)
+        r = self.tool.guard(call("true"), env=self.tool.env())
+        self.assertEqual((r.returncode, r.stderr), (0, ""))
+        self.assertEqual(self.tool.guard(call("git push origin HEAD")).returncode, 2)
+        self.assertEqual(self.tool.pyc(), [])
+        self.assertFalse(os.path.exists(os.path.join(self.tool.lib, "__pycache__")))
+
+    def test_a_missing_or_broken_module_refuses_as_a_script_that_cannot_run_does(self):
+        """A guard that cannot be loaded is no allow: the exit status is not 0 (the hook then blocks), as it was for a script that did not parse."""
+        with open(os.path.join(self.tool.lib, "guard.py"), "w") as f:
+            f.write("def main(:\n")
+        r = self.tool.guard(call("true"))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("SyntaxError", r.stderr)
+        os.remove(os.path.join(self.tool.lib, "guard.py"))
+        r = self.tool.guard(call("true"))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("guard", r.stderr)
+
+
+def enforced(comment):
+    """True for a budget line whose comment says `enforced`: its ceiling fails the test, it does not only warn."""
+    return re.search(r"\benforced\b", comment) is not None
+
+
+def median_ms(times):
+    times = sorted(times)
+    return (times[len(times) // 2 - 1] + times[len(times) // 2]) / 2 if len(times) % 2 == 0 else times[len(times) // 2]
+
+
 class Budget(unittest.TestCase):
     def test_the_budget_file_is_well_formed(self):
         with open(BUDGET) as f:
             b = read_budget(f.read())
         self.assertIn("role list", b)
+        self.assertIn("__guard", b)
+        self.assertFalse(enforced(b["role list"][1]))
+        self.assertTrue(enforced(b["__guard"][1]), "the guard's ceiling is the one that fails")
         with self.assertRaises(ValueError):
             read_budget("role list fast\n")
+
+    def test_the_enforced_mark(self):
+        self.assertTrue(enforced(" enforced: a hook runs it on every tool call"))
+        self.assertFalse(enforced(" raised: a new lookup"))
+        self.assertFalse(enforced(" unenforced"))
 
     def test_the_raised_check(self):
         old = read_budget("a 10\nb 10\nc 10\nd 10\ne 10\n")
@@ -389,6 +542,35 @@ class Budget(unittest.TestCase):
         got = (times[RUNS // 2 - 1] + times[RUNS // 2]) / 2
         print("startup: qargi role list median %.0f ms over %d runs (ceiling %d ms)%s" % (got, RUNS, ceiling, "" if got <= ceiling else
               "\nWARNING: over the ceiling of tests/startup-budget.txt (a loaded machine, or startup got slower: measure it again alone)"), file=sys.stderr)
+
+    def test_the_guard_against_its_ceiling(self):
+        """`qargi __guard` answering a harmless call, from a tool whose lib/ is compiled (what install.sh --user and qargi upgrade leave): the median of
+        RUNS runs against its ceiling, which is about twice the median on the development host. Unlike the others this one fails: a hook runs the
+        guard before every tool call of every member, so the cost is paid hundreds of times a task. It fails only when the median is over in three
+        measurements in a row, so a machine under load does not (the best of them is compared)."""
+        with open(BUDGET) as f:
+            ceiling, comment = read_budget(f.read())["__guard"]
+        self.assertTrue(enforced(comment))
+        tool = GuardTool()
+        try:
+            tool.compile()
+            stdin = call("true")
+            self.assertEqual(tool.guard(stdin).returncode, 0)
+            medians = []
+            for _ in range(3):
+                times = []
+                for _ in range(RUNS):
+                    t0 = time.perf_counter()
+                    tool.guard(stdin)
+                    times.append((time.perf_counter() - t0) * 1000)
+                medians.append(median_ms(times))
+                if medians[-1] <= ceiling:
+                    break
+        finally:
+            tool.close()
+        print("startup: qargi __guard median %s ms over %d runs (ceiling %d ms)" % (", ".join("%.0f" % m for m in medians), RUNS, ceiling), file=sys.stderr)
+        self.assertLessEqual(min(medians), ceiling, "qargi __guard takes a median of %.0f ms, over the ceiling of %d ms in tests/startup-budget.txt "
+                             "(it was about half that on the development host): something made the guard's start-up slower" % (min(medians), ceiling))
 
 
 if __name__ == "__main__":

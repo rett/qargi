@@ -2,8 +2,9 @@
 """Checks that an agent's output is a series of change-specific patches with their context,
 not one monolithic patch. Usage: review_check.py OUT [--allow-empty]   (exit 1 on any FAIL, 2 on a usage error)
 OUT is the member's output directory (RUN/out; given RUN, whose out directory exists, it checks RUN/out): it holds manifest.json and the patches in OUT/patches/*.patch, the one place `review apply` reads them from.
-A review run has no patches: report.md (or PREFIXreport.md) with a Findings heading is its deliverable."""
-import glob, json, os, re, sys
+SCOPE is a hard limit: the SCOPE line of RUN/task.md (beside OUT) when it records one, else the manifest's scope[]; a patch outside it fails.
+A review run has no patches: report.md (or PREFIXreport.md) with a Findings heading and a last line `verdict: accept` or `verdict: revise`, with manifest.json beside it, is its deliverable."""
+import fnmatch, glob, json, os, re, sys
 from email.utils import parsedate_to_datetime
 
 args = [a for a in sys.argv[1:] if not a.startswith("--")]
@@ -29,7 +30,22 @@ if not patches:
     for rep in sorted(glob.glob(os.path.join(run, "*report.md"))):
         text = open(rep, errors="replace").read()
         if text.strip() and re.search(r"(?mi)^#+\s*findings\b", text):
-            print("OK report-only run: %s holds a Findings section (%d chars)" % (os.path.basename(rep), len(text))); sys.exit(0)
+            # the report is `# Findings`, `# Checked`, and a last line `verdict: accept` or `verdict: revise`; manifest.json travels with it
+            base = os.path.basename(rep)
+            last = [l.strip() for l in text.splitlines() if l.strip()][-1]
+            try:
+                json.load(open(os.path.join(run, base[:-len("report.md")] + "manifest.json")))
+            except Exception as e:
+                F("%s: %smanifest.json missing or unreadable (%s); a report-only run returns report.md and manifest.json" % (base, base[:-len("report.md")], e))
+            if not re.fullmatch(r"verdict: (accept|revise)", last):
+                F("%s: the last line must be `verdict: accept` or `verdict: revise` (it is: %s)" % (base, last[:60]))
+            if not re.search(r"(?mi)^#+\s*checked\b", text):
+                W("%s: no `# Checked` section (what you ran with its exit status; what you only read)" % base)
+            if fails:
+                print("\n".join(fails + warns)); print("%d fail, %d warn" % (len(fails), len(warns))); sys.exit(1)
+            print("OK report-only run: %s holds a Findings section and ends with its verdict (%d chars)" % (base, len(text)))
+            if warns: print("\n".join(warns))
+            sys.exit(0)
     try:
         m0 = json.load(open(os.path.join(run, "manifest.json")))
     except Exception:
@@ -51,6 +67,7 @@ for p in patches:
     head, _, rest = t.partition("\n---\n")
     body = head.split("\n\n", 1)[1].strip() if "\n\n" in head else ""
     files = re.findall(r"(?m)^diff --git a/(\S+) b/", t)
+    renamed = re.findall(r"(?m)^diff --git a/\S+ b/(\S+)$", t)   # the new name of a rename or copy is a touched path too
     changed = len(re.findall(r"(?m)^[+-](?![+-]{2} )", t))
     areas = {f.split("/")[0] for f in files}
     ts = None
@@ -58,7 +75,7 @@ for p in patches:
         try: ts = parsedate_to_datetime(date.group(1)).timestamp()
         except Exception: pass
     info.append({"name": os.path.basename(p), "subject": subj.group(1).strip() if subj else "", "body": body,
-                 "files": files, "changed": changed, "areas": areas, "ts": ts})
+                 "files": files, "paths": set(files) | set(renamed), "changed": changed, "areas": areas, "ts": ts})
 
 n = len(info)
 nums = [re.match(r"(\d{4})-", i["name"]) for i in info]
@@ -68,6 +85,34 @@ for i in info:
     if not i["subject"]: F("%s: no subject" % i["name"])
     if not i["body"]:
         F("%s: the commit message has no body; each commit must say what changed and why, so its context travels with it" % i["name"])
+
+def task_scope(out):
+    """The paths of the `SCOPE:` line of the run's task block (RUN/task.md, beside OUT; the guard keeps a member from writing it), or None."""
+    try:
+        text = open(os.path.join(os.path.dirname(os.path.abspath(out)), "task.md"), errors="replace").read()
+    except OSError:
+        return None
+    m = re.search(r"(?m)^[ \t]*(?:[-*][ \t]+)?SCOPE:[ \t]*(.*)$", text)
+    paths = [p for p in re.split(r"[,\s]+", m.group(1)) if p] if m else []
+    return None if paths in ([], ["none"]) else paths
+
+def in_scope(path, scope):
+    for s in scope:
+        s = s[2:] if s.startswith("./") else s
+        if any(c in s for c in "*?["):
+            if fnmatch.fnmatchcase(path, s): return True
+        elif path == s.rstrip("/") or path.startswith(s.rstrip("/") + "/"): return True
+    return False
+
+# SCOPE is a hard limit: the scope of the task block when it records one, else the manifest's scope[]; no patch may touch a path outside it
+scope = task_scope(run) or [str(s) for s in (man.get("scope") if isinstance(man.get("scope"), list) else [])]
+if scope:
+    listed = man.get("touched_paths") if isinstance(man.get("touched_paths"), list) else []
+    touched = {f for i in info for f in i["paths"]} | {str(t.get("path", "") if isinstance(t, dict) else t) for t in listed}
+    outside = sorted(p for p in touched if p and not in_scope(p, scope))
+    if outside:
+        F("%d path(s) outside SCOPE (%s): %s; stop with BLOCKED naming the path, or list the change under noticed_not_acted_on" % (len(outside), ", ".join(scope), ", ".join(outside[:8]) + (" ..." if len(outside) > 8 else "")))
+
 if man:
     commits = man.get("commits", [])
     if len(commits) != n: F("manifest lists %d commit(s) but there are %d patch(es): one patch per commit" % (len(commits), n))
@@ -100,7 +145,7 @@ if n > 1:
         W("%s holds %d%% of the changed lines across %d areas: check it is one change, not several combined" % (big["name"], 100 * big["changed"] // total, len(big["areas"])))
 ts = [i["ts"] for i in info if i["ts"]]
 if n >= 3 and len(ts) == n and max(ts) - min(ts) < 120:
-    N("all %d commits are dated within %d seconds: they may have been made in one batch at the end; make sure each one really stands alone and its message records the reasoning at that step" % (n, int(max(ts) - min(ts))))
+    W("all %d commits are dated within %d seconds: they look made in one batch at the end, and the contract says to commit as you go; make sure each one really stands alone and its message records the reasoning at that step" % (n, int(max(ts) - min(ts))))
 
 for i in info:
     print("%s  %s  (%d file(s), %d changed line(s))" % (i["name"], i["subject"][:70], len(i["files"]), i["changed"]))

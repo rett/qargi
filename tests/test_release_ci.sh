@@ -52,8 +52,8 @@ out=$($REL fix 0.2.0 2>&1); rc=$?
 [ $rc = 0 ] && grep -qx "worktree: $WTP" <<<"$out" && grep -q "checked out in $WTP already" <<<"$out" && ok "a second fix names the same worktree" || no "fix again: rc=$rc $out"
 out=$($REL fix 9.9.9 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "no branch release/9.9.9" <<<"$out" && ok "fix of a branch that does not exist is refused" || no "fix nothing: rc=$rc $out"
-out=$(rstart 0.2.0 --push 2>&1); rc=$?
-[ $rc = 1 ] && grep -q -- "--push belongs to release fix" <<<"$out" && ok "--push belongs to fix alone" || no "start --push: rc=$rc $out"
+out=$($REL start 0.2.0 --push 2>&1); rc=$?
+[ $rc = 2 ] && grep -q -- "--push belongs to release fix" <<<"$out" && ok "--push belongs to fix alone" || no "start --push: rc=$rc $out"
 
 # --- push opens the pull request the first time, and updates it when it is open
 : > "$T/gh.log"; rm -f "$T/pr.num"
@@ -102,9 +102,9 @@ setchecks 8 "build${tab}pending${tab}0${tab}https://example.net/1
 out=$($REL finish 0.2.0 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "are pending" <<<"$out" && grep -q -- "--ignore-checks" <<<"$out" && ok "a pending check refuses the plan and names the way past" || no "finish pending: rc=$rc $out"
 out=$($REL finish 0.2.0 --ignore-checks "" 2>&1); rc=$?
-[ $rc = 1 ] && grep -q "needs the reason" <<<"$out" && ok "--ignore-checks needs words" || no "ignore empty: rc=$rc $out"
-out=$(rstart 0.2.0 --ignore-checks x 2>&1); rc=$?
-[ $rc = 1 ] && grep -q "belongs to release finish" <<<"$out" && ok "--ignore-checks belongs to finish alone" || no "start ignore: rc=$rc $out"
+[ $rc = 2 ] && grep -q "needs the reason" <<<"$out" && ok "--ignore-checks needs words" || no "ignore empty: rc=$rc $out"
+out=$($REL start 0.2.0 --ignore-checks x 2>&1); rc=$?
+[ $rc = 2 ] && grep -q "belongs to release finish" <<<"$out" && ok "--ignore-checks belongs to finish alone" || no "start ignore: rc=$rc $out"
 out=$($REL finish 0.2.0 --ignore-checks "the docs job is known to be slow" 2>&1); rc=$?
 t=$(tok <<<"$out")
 [ $rc = 0 ] && [ -n "$t" ] && grep -q "ignored on your word: the docs job is known to be slow" <<<"$out" && grep -q -- '--ignore-checks "the docs job is known to be slow"' <<<"$out" && ok "with --ignore-checks the plan goes on, and the apply line carries the words" || no "finish ignore plan: rc=$rc $out"

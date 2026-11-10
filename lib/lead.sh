@@ -25,13 +25,13 @@ case $verb in
     ctx_args=() ctx_proj=''
     while [ $# -gt 0 ]; do
       case $1 in
-        --project) [ $# -ge 2 ] || die "--project needs a value"; ctx_proj=$2; shift 2;;
+        --project) [ $# -ge 2 ] || usage_die "--project needs a value"; ctx_proj=$2; shift 2;;
         --session|--transcript)
-          [ "$verb" = usage ] || die "compact-check takes no $1"
-          [ $# -ge 2 ] || die "$1 needs a value"; ctx_args+=("$1" "$2"); shift 2;;
+          [ "$verb" = usage ] || usage_die "compact-check takes no $1"
+          [ $# -ge 2 ] || usage_die "$1 needs a value"; ctx_args+=("$1" "$2"); shift 2;;
         --json) ctx_args+=("$1"); shift;;
-        --advise) [ "$verb" = compact-check ] || die "usage takes no --advise"; ctx_args+=("$1"); shift;;
-        *) die "usage: qargi lead usage [--project P] [--session ID | --transcript FILE] [--json]; qargi lead compact-check [--project P] [--advise] [--json]";;
+        --advise) [ "$verb" = compact-check ] || usage_die "usage takes no --advise"; ctx_args+=("$1"); shift;;
+        *) usage_die "usage: qargi lead usage [--project P] [--session ID | --transcript FILE] [--json]; qargi lead compact-check [--project P] [--advise] [--json]";;
       esac
     done
     [ -n "$ctx_proj" ] || ctx_proj=$(python3 -I "$(dirname "$0")/help.py" infer)

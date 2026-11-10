@@ -73,7 +73,7 @@ $DA local prepare --repo "$T/repo" --base main --slug a4 --scratch "$T/scr" --ro
 # a cloud agent of your role gets its text; a read-only role has no edit tool by default
 . lib/lib.sh
 agent_prompt audit | grep -q "List the dependencies." && ok "the cloud prompt of a role carries its text" || no "prompt text"
-tools_off audit "" | grep -q edit && ! tools_off probe "" | grep -q edit && ok "a read-only class turns the edit tool off in the cloud" || no "tools_off"
+tools_off audit "" | grep -qw edit && ! tools_off probe "" | grep -qw edit && ok "a read-only class turns the edit tool off in the cloud" || no "tools_off"
 
 rm -rf "$T"
 [ $fail = 0 ] && echo "role tests passed" || { echo "role tests FAILED"; exit 1; }

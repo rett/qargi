@@ -261,7 +261,7 @@ stop() {
 
 mark() {
   local sid=${POS[0]:-} st=${POS[1]:-}
-  case $st in applied|rejected|pending) ;; *) die "mark SID applied|rejected|pending [--why CODE]";; esac
+  case $st in applied|rejected|pending) ;; *) usage_die "mark SID applied|rejected|pending [--why CODE]";; esac
   jq -e --arg s "$sid" 'has($s)' "$TRK" >/dev/null || die "session $sid is not tracked"
   if [ -n "$WHY" ]; then
     [ "$st" != pending ] || die "--why goes with applied or rejected"

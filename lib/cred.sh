@@ -103,7 +103,7 @@ case $verb in
     echo "plan: store the token in $dest (mode 600); create the vault $PROJECT-vault-lead with a bearer credential for the GitHub tool; attach it to the lead's deployment; record it in the project answers (lead.push)"
     tok_plan=$(printf '%s|%s|%s' "$PROJECT" "$slug" "$dest" | plan_token)
     if [ -z "$APPROVED" ]; then echo "plan token: $tok_plan   (apply with: --plan $tok_plan --approved \"<the user's go-ahead>\" --asked \"...\"; nothing was changed)"; exit 0; fi
-    need_asked; ant_ok; QARGI_NESTED='' need_plan "$tok_plan"; audit_log credential-setup "$PROJECT lead-push $slug"
+    need_asked; ant_ok; need_plan "$tok_plan"; audit_log credential-setup "$PROJECT lead-push $slug"
     mkdir -p "$(dirname "$dest")"; chmod 700 "$(dirname "$dest")"
     ( umask 077; printf '%s' "$tok" > "$dest" ); chmod 600 "$dest"
     vname=$PROJECT-vault-lead
@@ -111,8 +111,9 @@ case $verb in
     if [ -z "$vid" ]; then vid=$(ant beta:vaults create --display-name "$vname" </dev/null 2>/dev/null | jq -r '.id // empty'); fi
     [ -n "$vid" ] || die "could not create the vault $vname (the token file is stored at $dest)"
     old=$(ant beta:vaults:credentials list --vault-id "$vid" </dev/null 2>/dev/null | jq -r 'select((.archived_at // null) == null) | .id')
-    jq -nc --arg t "$tok" --arg u "https://api.githubcopilot.com/mcp/" --arg n "$PROJECT lead: GitHub write token" \
-      '{display_name: $n, auth: {type: "static_bearer", mcp_server_url: $u, token: $t}}' \
+    # the token goes to jq on standard input (an argument is readable in the process list), as the raw text it is
+    printf '%s' "$tok" | jq -Rsc --arg u "https://api.githubcopilot.com/mcp/" --arg n "$PROJECT lead: GitHub write token" \
+      '{display_name: $n, auth: {type: "static_bearer", mcp_server_url: $u, token: .}}' \
       | ant beta:vaults:credentials create --vault-id "$vid" >/dev/null 2>&1 || die "could not store the credential in $vid"
     for c in $old; do ant beta:vaults:credentials archive --vault-id "$vid" --credential-id "$c" </dev/null >/dev/null 2>&1 || true; done   # a rotation replaces the old one
     cur=$(jq -c '.lead.push // {}' "$PCFG")

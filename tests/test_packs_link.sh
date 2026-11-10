@@ -248,6 +248,7 @@ out=$(lk 2>&1)
 # the names the offers carry (the last element of the path of an import, the name after `skill link`), matched by what an unusual name adds and
 # only there: the paths of the offers come from mktemp, and any short word (nl, esc) can be in ten random characters
 offered() { grep -E 'qargi skill (import|link) ' <<<"$1" | sed -E 's#.*qargi skill import (.*/)?##; s#.*qargi skill link ##'; }
+# hermetic: allow absent (offered() keeps the name after the last slash: no temporary path is left to hold a token)
 clean_offers() { ! offered "$1" | grep -qE 'PWNED|semi|nlline|esc.?\[31m|sp ace' && grep -qE "qargi skill import .*/fine'?\$" <<<"$1"; }
 clean_offers "$out" && ok "link plan: no offer for an unusual name, the offer for a usual one stays" || no "offers: $out"
 ! LC_ALL=C tr -d '\n' <<<"$out" | grep -q '[[:cntrl:]]' && ok "link plan: no control character is printed" || no "control characters in the link plan"

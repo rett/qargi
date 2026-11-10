@@ -25,14 +25,14 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # The time limit of a job (timeout-minutes), from the time budgets of tests/suite.txt:
-#   a shard plans 920 s of budgets (the sum of the budgets of its steps; the four shards are within a few seconds of each other);
+#   a shard plans 930 s of budgets (the sum of the budgets of its steps; the four shards are within a few seconds of each other);
 #   a step over 1.5 times its budget is reported as slow, so a shard that runs its steps one after the other and every one of them
-#     at the slow limit takes 1.5 x 920 s = 1380 s (23.0 min); a shard runs its steps in parallel, so this is a ceiling;
+#     at the slow limit takes 1.5 x 930 s = 1395 s (23.3 min); a shard runs its steps in parallel, so this is a ceiling;
 #   checkout, packages and the git identity take well under 10 min, taken as 10 min;
-#   1380 s + 600 s = 1980 s = 33.0 min, rounded up to the next 5 minutes: 35 min.
+#   1395 s + 600 s = 1995 s = 33.3 min, rounded up to the next 5 minutes: 35 min.
 # The pull request job runs at most as much as one shard of the whole suite (the fast tier plus the steps its changed files cover,
 # on a runner with several CPUs), so it has the same 35 min. The first version of this workflow gave the whole suite in one job
-# 30 min, which is less than its budgets add up to (3294 s x 1.5 = 82 min one after the other), and the job was cancelled.
+# 30 min, which is less than the budgets add up to (now 3717 s x 1.5 = 93 min one after the other), and the job was cancelled.
 # tests/test_ci.py recomputes the limit from the manifest and fails when the limit here falls below it.
 jobs:
   pr:

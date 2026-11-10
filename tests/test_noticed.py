@@ -29,7 +29,7 @@ class Base(unittest.TestCase):
         return os.path.join(self.t, name)
 
     def ingest(self, sid, d):
-        return subprocess.run([sys.executable, "-I", os.path.join(ROOT, "lib", "noticed.py"), "ingest", sid, d], capture_output=True, text=True, env=self.env)
+        return subprocess.run(["python3", "-I", os.path.join(ROOT, "lib", "noticed.py"), "ingest", sid, d], capture_output=True, text=True, env=self.env)
 
     def events(self):
         return N.read_events(os.path.join(self.state, "events.jsonl"))

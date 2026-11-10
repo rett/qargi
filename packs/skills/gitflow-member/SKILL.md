@@ -13,7 +13,7 @@ description: Your part of a git-flow project as a member: work on agent/<slug> f
 
 ## Never
 - Commit to, merge into, rebase or reset `develop`, `master`, `release/*`, `hotfix/*` or BASE.
-- Run merge, pull, push, tag or `git stash`; set work aside in a WIP commit.
+- Run merge, pull, push or tag.
 
 ## BASE moved, or conflicts
 - Do not rebase or merge to catch up: report that BASE moved (old and new sha) or which files conflict.
@@ -24,8 +24,6 @@ description: Your part of a git-flow project as a member: work on agent/<slug> f
 
 ## Commits
 - One logical change per commit. The message says what changed and why; add a body.
-- Stay inside SCOPE; report a change you need outside it.
-- The guard cuts a command at every ; && || | and newline, quotes included: write the message to a file and commit with `git commit -F FILE`; a qargi verb, push or tag in command-line text is refused.
 
 ## Releases and hotfixes
 - `VERSION`, changelog dates and tags are the lead's.

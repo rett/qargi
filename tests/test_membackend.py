@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Memory backends, the ops executor and split/merge/copy/migrate on random stores. Offline: directories, JSONL
+"""Memory backends, the ops executor and split/merge/copy/canon plan on random stores. Offline: directories, JSONL
 dumps and a fake `ant`. The invariants are checked over many seeded random stores, on both reference backends.
 Run: python3 tests/test_membackend.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
@@ -677,12 +677,12 @@ class Planning(Stores):
         self.assertNotIn("WARN /_archive/%s/roles/build/guide.md" % TODAY, r.stdout)
         self.assertNotIn("FAIL", r.stdout)
 
-    def test_migrate_reuses_the_canon_plan(self):
-        """memplan.migrate is the canon's own plan for a store: for an empty store, the seed and the marker."""
+    def test_canon_plan_reuses_the_canon_plan(self):
+        """memplan.canon_plan is the canon's own plan for a store: for an empty store, the seed and the marker."""
         for kind in self.kinds:
             b = self.store(kind, {})
             mems = b.list()
-            plan = P.migrate(mems, C.LATEST, "memory", "demo", ["build", "write"], SEED, TODAY)
+            plan = P.canon_plan(mems, "memory", "demo", ["build", "write"], SEED, TODAY)
             direct = C.make_plan("memory", mems, "demo", ["build", "write"], SEED, TODAY)
             self.assertEqual(plan["from_version"], "empty")
             self.assertEqual([o["op"] for o in plan["target"]["ops"]], [o["op"] for o in direct["ops"]])
@@ -691,12 +691,10 @@ class Planning(Stores):
             self.assertEqual(self.snap(b), want)
             self.assertIn("/CANON.md", want)
             self.assertIn("/roles/write/INDEX.md", want)
-            again = P.migrate(b.list(), C.LATEST, "memory", "demo", ["build", "write"], SEED, TODAY)
+            again = P.canon_plan(b.list(), "memory", "demo", ["build", "write"], SEED, TODAY)
             self.assertEqual(again["target"]["ops"], [])                         # idempotent
-            with self.assertRaises(ValueError):
-                P.migrate(mems, 1, "memory", "demo", ["build"], SEED, TODAY)
             fresh = self.store(kind, {})
-            plan = P.migrate(fresh.list(), C.LATEST, "memory", "demo", ["build", "write"], SEED, TODAY)
+            plan = P.canon_plan(fresh.list(), "memory", "demo", ["build", "write"], SEED, TODAY)
             fresh.create("/README.md", "written meanwhile")
             with self.assertRaises(B.StaleError):                                # a set-up planned on an empty store is refused once it is not
                 B.apply_ops(fresh, plan["target"]["ops"], plan["target"]["expect"], dry_run=False)

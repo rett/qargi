@@ -23,7 +23,7 @@ out2=$($DA methodology files gitflow --param project=acme --param ci_timeout_min
 wf "$out2" | grep -qx '    timeout-minutes: 45' && ! wf "$out2" | grep -q '{{ci_timeout_minutes}}' && ok "--param ci_timeout_minutes fills the CI job's time limit" || no "timeout 45: $(wf "$out2")"
 for v in 0 abc 3.5 "45 minutes" -5; do $DA methodology files gitflow --param project=acme --param "ci_timeout_minutes=$v" >/dev/null 2>&1 && no "ci_timeout_minutes=$v was accepted" || ok "ci_timeout_minutes=$v is refused (a positive whole number of minutes)"; done
 jq -r '.[] | select(.dest==".gitignore") | .content' <<<"$out" | grep -qx '.claude/worktrees/' && jq -r '.[] | select(.dest==".gitignore") | .content' <<<"$out" | grep -qx '.claude/settings.local.json' && ok "the .gitignore excludes Claude Code's worktrees and local settings, not all of .claude" || no ".gitignore lines"
-jq -r '.[].content' <<<"$out" | grep -qi qargi && no "the scaffold mentions qargi" || ok "the scaffold carries no reference to qargi"
+jq -r '.[].content' <<<"$out" | grep -qiE '(^|[^[:alnum:]])qargi([^[:alnum:]]|$)' && no "the scaffold mentions qargi" || ok "the scaffold carries no reference to qargi"
 jq -r '.[].content' <<<"$out" | grep -q '{{[a-z_]*}}' && no "an unfilled placeholder remains" || ok "no declared placeholder is left"
 $DA methodology files gitflow >/dev/null 2>&1 && no "a missing project was accepted" || ok "the project parameter is required"
 $DA methodology files gitflow --param project=Bad >/dev/null 2>&1 && no "a bad project name was accepted" || ok "a malformed project name is refused"

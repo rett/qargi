@@ -59,7 +59,7 @@ class T(unittest.TestCase):
             return f.read().splitlines()
 
     def for_args(self, *words):
-        r = subprocess.run([sys.executable, "-I", os.path.join(ROOT, "lib", "cloud.py"), "for-args", *words], capture_output=True, text=True, env=self.env, stdin=subprocess.DEVNULL)
+        r = subprocess.run(["python3", "-I", os.path.join(ROOT, "lib", "cloud.py"), "for-args", *words], capture_output=True, text=True, env=self.env, stdin=subprocess.DEVNULL)
         return r.stdout.split("\n")[0]
 
     def test_an_instance_name_finds_its_project_by_any_role(self):

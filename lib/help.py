@@ -270,7 +270,7 @@ def man(date_from=None):
         w(".TP")
         w('.BI "%s " "%s"' % (esc(op["flag"]), esc(op["arg"])) if op["arg"] else ".B " + esc(op["flag"]))
         w(esc(op["help"] + "."))
-    for t in ("concepts", "approvals", "guard", "naming", "memory", "push"):
+    for t in ("concepts", "approvals", "guard", "naming", "memory-stores", "push"):
         title, paras = C.TOPICS[t]
         w(".SH " + t.upper())
         for i, p in enumerate(paras):

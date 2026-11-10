@@ -71,6 +71,30 @@ jq '.project = "alpha3" | del(.models)' "$T/c/projects/alpha.json" > "$T/c/proje
 out3=$($DA team brief alpha3 code-docs --task t --done d --base feature/x 2>&1); rc3=$?
 [ $rc3 != 0 ] && ! echo "$out3" | grep -q "^TEAM" && ok "a project with no cloud runtime gets no brief (no runtime is assumed)" || no "brief without a runtime: rc=$rc3 $out3"
 rm -f "$T/c/projects/alpha3.json"
+# the review member's DONE holds what `review check` requires of a report-only run (a hosted member has no qargi, so it is plain tools): the Findings heading, the last
+# line `verdict: accept|revise` and the prefixed manifest. It is run on files in a directory the cloud runtime names, and agrees with `review check` on each case.
+RO=$T/rout; mkdir -p "$RO"
+fake_runtime "$PWD" "$T/tool" doneplat cloud ".notes = {\"output-dir\": \"$RO\", \"clone-dir\": \"/srv/clones\"}"
+jq '.project = "alpha4" | .models.provider.cloud = "doneplat"' "$T/c/projects/alpha.json" > "$T/c/projects/alpha4.json"
+rdone=$("$T/tool/bin/qargi" team brief alpha4 code-docs --task t --done d --base feature/x 2>&1 | awk '/^- role: review/{f=1} f && /^  DONE: /{sub(/^  DONE: /, ""); print; exit}')
+rm -f "$T/c/projects/alpha4.json"
+GOODR='# Findings\n\nnone\n\n# Checked\n\nnothing\n\nverdict: accept\n'
+donecase() { # NAME REPORT MANIFEST (a manifest of "-" is none) WANT (0 or 1): the DONE and review check both say WANT
+  local d=0 c=0
+  rm -f "$RO"/review--report.md "$RO"/review--manifest.json
+  printf "$2" > "$RO/review--report.md"; [ "$3" = "-" ] || printf '%s\n' "$3" > "$RO/review--manifest.json"
+  bash -c "$rdone" >/dev/null 2>&1 || d=1
+  $DA review check "$RO" >/dev/null 2>&1 || c=1
+  [ "$d" = "$4" ] && [ "$c" = "$4" ] && ok "the review DONE: $1" || no "the review DONE ($1): DONE=$d review check=$c, wanted $4"
+}
+[ -n "$rdone" ] && ok "(setup) the brief of a cloud runtime that names its output directory gives the review member a DONE" || no "no review DONE: $rdone"
+donecase "a report with a Findings heading, the verdict line and a manifest passes" "$GOODR" '{"status":"DONE","commits":[]}' 0
+donecase "a report with no manifest fails" "$GOODR" - 1
+donecase "a manifest that is not JSON fails" "$GOODR" 'not json' 1
+donecase "a report whose last line is not the verdict fails" '# Findings\n\nnone\n\nverdict: accept\n\nthanks\n' '{"status":"DONE"}' 1
+donecase "a verdict other than accept or revise fails" '# Findings\n\nnone\n\nverdict: ready\n' '{"status":"DONE"}' 1
+donecase "a report with no Findings heading fails" '# Review\n\nlooks fine\n\nverdict: accept\n' '{"status":"DONE"}' 1
+donecase "revise, a trailing blank line and trailing blanks on the verdict pass" '# Findings\n\n- low x\n\n# Checked\n\nread\n\nverdict: revise  \n\n' '{"status":"DONE"}' 0
 echo "$out" | grep -A6 "role: review" | grep -q "BASE: feature/x" && ok "the review member reviews the build base" || no "review base"
 $DA team brief alpha code-docs --task t --done d >/dev/null 2>&1 && no "a brief without a base was made while the build base is @dispatcher" || ok "a brief needs --base while the build base is @dispatcher"
 $DA team brief alpha nosuch --task t --done d --base b >/dev/null 2>&1 && no "unknown team accepted" || ok "an unknown team is refused"
@@ -99,7 +123,7 @@ add f1 '{"status":"DONE"}' "/mnt/session/outputs/build--manifest.json"
 add f2 'patch one' "/mnt/session/outputs/build--0001-names-accept-periods.patch"
 add f3 '{"status":"DONE"}' "/mnt/session/outputs/write--manifest.json"
 add f4 'patch write' "/mnt/session/outputs/write--0001-docs-describe.patch"
-add f5 '# Review\n\n## Findings\n\nnone\n' "/mnt/session/outputs/review--report.md"
+add f5 '# Findings\n\nnone\n\n# Checked\n\nnothing\n\nverdict: accept\n' "/mnt/session/outputs/review--report.md"
 add f6 '{"status":"DONE"}' "/mnt/session/outputs/review--manifest.json"
 add f7 '{"team":"code-docs","members":[],"verdict":"accept","rounds":1}' "/mnt/session/outputs/lead--team.json"
 add f8 'summary' "/mnt/session/outputs/lead--summary.md"
@@ -123,7 +147,7 @@ QARGI_CONF=$T/c QARGI_STATE=$T/s "$T/tool/bin/qargi" collect sesn_k "$T/known" >
 
 # --- the team check
 rm -rf "$T/chk"; mkdir -p "$T/chk/review" "$T/chk/lead"
-printf '# Review\n\n## Findings\n\nnone\n' > "$T/chk/review/report.md"
+printf '# Findings\n\nnone\n\n# Checked\n\nnothing\n\nverdict: accept\n' > "$T/chk/review/report.md"; printf '{"status":"DONE","commits":[]}\n' > "$T/chk/review/manifest.json"
 $DA team check "$T/chk" >/dev/null 2>&1 && no "a team without team.json passed" || ok "a team run without the lead's team.json fails"
 echo '{"team":"code-docs","members":[],"verdict":"revise","rounds":2}' > "$T/chk/lead/team.json"
 out=$($DA team check "$T/chk" 2>&1); echo "$out" | grep -q "did not reach accept" && ok "a team that did not reach accept is flagged" || no "check: $out"

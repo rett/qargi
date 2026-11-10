@@ -16,7 +16,6 @@ here=$(dirname "$(readlink -f "$0")")
 # the plan the token names, and every store is checked against the notes the plan read before the first change.
 store_verbs() {
   v=$1; shift
-  unset QARGI_NESTED   # a caller that is itself approved has not approved this plan: the token is always needed
   [ $# -ge 2 ] || usage_die "usage: memory.sh $v FROM TO [options]"
   FROM=$1 TO=$2; shift 2
   PREFIX=() ROLE='' NKIND='' ARCHIVE='' POLICY=conflicts PLAN_ARG='' APPROVED=''

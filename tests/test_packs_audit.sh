@@ -129,7 +129,7 @@ rm -rf "$US/ex-user" "$US/ex-local" "$US/ex-deny" "$CS/ex-proj"
 
 # --- accepted and drifted (the acceptances file read as the verbs write it)
 H=$(chash "$CS/mine")
-printf '{"user": {}, "projects": {"alpha": {"mine": {"sha256": "%s", "path": "x", "approved": "t", "at": "2026-01-01T00:00:00Z"}}}}\n' "$H" > "$ACC"
+printf '{"user": {}, "projects": {"alpha": {"mine": {"sha256": "%s", "path": "x", "approved": "t", "at": "2026-01-01T00:00:00Z", "resource": "skills", "provider": "claude-code"}}}}\n' "$H" > "$ACC"
 [ "$(st mine)" = accepted ] && ok "a skill listed with the same name and content hash is accepted" || no "accepted: $(line mine)"
 [ "$(st mine beta)" = accepted ] && no "a project acceptance reached another project" || ok "a project acceptance is for that project only"
 echo edit >> "$CS/mine/SKILL.md"
@@ -139,7 +139,7 @@ grep -q "qargi skill accept alpha mine" <<<"$out" && ok "a drifted skill offers 
 printf '{"skillOverrides": {"mine": "off"}}\n' > "$R/.claude/settings.json"
 chk >/dev/null; [ "$?" = 0 ] && [ "$(st mine)" = excluded ] && ok "a drifted skill that is excluded is not a finding" || no "excluded drifted"
 rm -f "$R/.claude/settings.json"
-printf '{"user": {"mine": {"sha256": "%s"}}, "projects": {}}\n' "$(chash "$CS/mine")" > "$ACC"
+printf '{"user": {"mine": {"sha256": "%s", "resource": "skills", "provider": "claude-code"}}, "projects": {}}\n' "$(chash "$CS/mine")" > "$ACC"
 [ "$(st mine)" = accepted ] && [ "$(st mine beta)" = accepted ] && ok "a user acceptance reaches every project" || no "user scope"
 printf 'garbage' > "$ACC"; out=$(chk); rc=$?
 grep -q "note: cannot read $ACC" <<<"$out" && [ "$(st mine)" = unmanaged ] && [ "$rc" = 0 ] && ok "an unreadable acceptances file is noted and accepts nothing" || no "bad accepted.json: rc=$rc $out"
@@ -271,6 +271,7 @@ out=$(chk)
 # unusual names are matched by what they add (the control characters are printed as nothing), and only in these names: the paths of the offers
 # come from mktemp, and any short word (nl, esc, "bt ") can be in ten random characters
 offered() { grep -E 'qargi skill (import|link|accept) ' <<<"$1" | sed -E 's#.*qargi skill import (.*/)?##; s#.*qargi skill (link|accept [^ ]+) ##'; }
+# hermetic: allow absent (offered() keeps the name after the last slash: no temporary path is left to hold a token)
 clean_offers() { ! offered "$1" | grep -qE 'PWNED|nlline|esc.?\[31m|user \$\(' && grep -qE "qargi skill accept ${2:-alpha} fine\$" <<<"$1"; }
 clean_offers "$out" && ok "no offer carries an unusual name; the usual one keeps its offers" || no "offers: $out"
 ! LC_ALL=C tr -d '\n' <<<"$out" | grep -q '[[:cntrl:]]' && ok "the section prints no control character" || no "control characters in the section"
@@ -362,7 +363,7 @@ $PYA store accept "$ACC" project alpha mine aaaaaaaaaaaaaaaa "$CS/mine" x 2026-0
 rm -f "$ACC"
 
 # --- text a hand-edited accepted.json puts in the unaccept plan has no control character; a name is a name only in full
-jq -n '{user:{},projects:{alpha:{evil:{sha256:"0123456789abcdef", path:"/p\u001b[31mred", approved:"ok\n== forged line\u0007", at:"t\u0000x"}}}}' > "$ACC"
+jq -n '{user:{},projects:{alpha:{evil:{sha256:"0123456789abcdef", path:"/p\u001b[31mred", approved:"ok\n== forged line\u0007", at:"t\u0000x", resource:"skills", provider:"claude-code"}}}}' > "$ACC"
 out=$(ua alpha evil); tok=$(tok_of <<<"$out")
 [ -n "$tok" ] && ! LC_ALL=C tr -d '\n' <<<"$out" | grep -q '[[:cntrl:]]' && [ "$(grep -c '^== forged' <<<"$out")" = 0 ] && grep -q "approved: ok== forged line" <<<"$out" \
   && ok "the unaccept plan prints the stored path, time and approval without control characters" || no "unaccept control characters: $out"
@@ -438,7 +439,7 @@ out=$($DA skill accept alpha mine 2>&1); rc=$?
 [ "$rc" = 2 ] && [ "$out" = "qargi: project alpha has no provider: set one with qargi project set alpha models.provider NAME" ] && ok "no models.provider: the audit is refused with exit 2 and the fix" || no "no provider: rc=$rc $out"
 
 # --- schema 2 providers: the exclusion forms (settings-key with a nested pointer and a TOML file, config-list, deny-list, none, adapter)
-# and the acceptances (a record names its resource and provider; an older record counts as the project's provider's). Definitions
+# and the acceptances (a record names its resource and provider; one that lacks either counts for no provider). Definitions
 # are schema 2 files of the tool copy, made from claude's own; qargi only reads the configuration files, and the test checks that.
 python3 -I -c 'import sys, json; sys.path.insert(0, sys.argv[1] + "/lib"); import provider; d = provider.definition("claude-code", "local"); d["adapter"] = None; print(json.dumps(d))' "$ROOT" > "$T/v2base.json"
 mkv2() { jq --arg n "$1" ".provider = \$n | .resources.skills.project_dir = \".sk/skills\" | .resources.skills.user_dir = \"~/.sk/skills\" | $2" "$T/v2base.json" > "$TOOL/lib/providers/$1.json"; }
@@ -521,7 +522,16 @@ audit ptk; [ "$(fst sk-c)" = unmanaged ] && ok "an acceptance made for another p
 printf '{"user": {"sk-c": {"sha256": "%s", "resource": "agents", "provider": "tomlkey"}}, "projects": {}}\n' "$H3" > "$ACC"
 audit ptk; [ "$(fst sk-c)" = unmanaged ] && ok "an acceptance made for another resource does not count" || no "other resource: $(fline sk-c)"
 printf '{"user": {"sk-c": {"sha256": "%s"}}, "projects": {}}\n' "$H3" > "$ACC"
-audit ptk; a1=$(fst sk-c); audit pcl; [ "$a1" = accepted ] && [ "$(fst sk-c)" = accepted ] && ok "an older record (no resource, no provider) counts as skills of the project's provider" || no "older record: $a1 $(fline sk-c)"
+audit ptk; a1=$(fst sk-c); audit pcl; [ "$a1" = unmanaged ] && [ "$(fst sk-c)" = unmanaged ] && ok "a record with no resource and no provider is nobody's: no project's provider counts it" || no "record without provider: $a1 $(fline sk-c)"
+printf '{"user": {"sk-c": {"sha256": "%s", "resource": "skills"}}, "projects": {}}\n' "$H3" > "$ACC"
+audit ptk; a1=$(fst sk-c); printf '{"user": {"sk-c": {"sha256": "%s", "provider": "tomlkey"}}, "projects": {}}\n' "$H3" > "$ACC"; audit ptk
+[ "$a1" = unmanaged ] && [ "$(fst sk-c)" = unmanaged ] && ok "nor does a record that lacks only its provider, or only its resource" || no "record half named: $a1 $(fline sk-c)"
+$PYT acceptance "$ACC" user ptk sk-c >/dev/null 2>&1; arc=$?; before=$(cat "$ACC"); $PYT store unaccept "$ACC" user ptk sk-c >/dev/null 2>&1; urc=$?
+[ "$arc" = 1 ] && [ "$urc" != 0 ] && [ "$before" = "$(cat "$ACC")" ] && ok "acceptance says it is not accepted, unaccept refuses, and the record is left as it is" || no "record without provider: acceptance=$arc unaccept=$urc $(cat "$ACC")"
+$PYT store accept "$ACC" user ptk sk-c "$H3" "$R3/.sk/skills/sk-c" x 2026-01-01T00:00:00Z >/dev/null 2>&1
+jq -e --arg h "$H3" '.user["sk-c"] == {sha256: $h, provider: "tomlkey"} and (.user["skills/tomlkey/sk-c"] | .sha256 == $h and .provider == "tomlkey" and .resource == "skills")' "$ACC" >/dev/null \
+  && ok "an accept next to such a record is stored under resource/provider/name, and the record is not rewritten" || no "accept next to a record without a resource: $(cat "$ACC")"
+audit ptk; [ "$(fst sk-c)" = accepted ] && ok "(and counts)" || no "accepted beside: $(fline sk-c)"
 printf '{"user": {"sk-c": {"sha256": "%s", "resource": "skills", "provider": "someoneelse"}}, "projects": {}}\n' "$H3" > "$ACC"
 $PYT store accept "$ACC" user ptk sk-c "$H3" "$R3/.sk/skills/sk-c" x 2026-01-01T00:00:00Z >/dev/null 2>&1
 jq -e --arg h "$H3" '.user["sk-c"].provider == "someoneelse" and (.user["skills/tomlkey/sk-c"] | .sha256 == $h and .provider == "tomlkey" and .resource == "skills")' "$ACC" >/dev/null \

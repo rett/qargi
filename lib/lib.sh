@@ -88,15 +88,13 @@ class_abilities() { # BASE [PROJECT_JSON] -> a JSON array: the abilities of a ba
   jq -nc --arg b "$1" --slurpfile d "$_QARGI_DEFAULTS" --argjson p "$([ -n "$f" ] && cat "$f" || echo '{}')" \
     '(($d[0].bases[$b].abilities // []) + [($p.profiles // {})[] | select(.base == $b) | (.abilities // [])[]]) | unique' 2>/dev/null || echo '[]'
 }
-# run_class RUN [FILE_DIR] -> the class of a local run: write or read-only. The lead's registry says (prepare records it: the run directory is a member's to
-# write, and a class file there would let a write run pass for a read-only one); only a record that has none (a run prepared by an earlier version) falls
-# back to FILE_DIR/class (default RUN/class), and a run with neither counts as write, never as read-only.
+# run_class RUN -> the class of a local run: write or read-only. The lead's registry says (prepare records it: the run directory is a member's to
+# write, and a class file there would let a write run pass for a read-only one); a run the registry does not name, or names with no class, counts as
+# write, never as read-only. Nothing in the run directory is read.
 run_class() {
   local c
   reg_has "$1" || reg_load
   c=$(reg_get "$1" class)
-  case $c in write|read-only) echo "$c"; return 0;; esac
-  c=$(cat -- "${2:-$1}/class" 2>/dev/null) || c=''
   case $c in write|read-only) echo "$c"; return 0;; esac
   echo write
 }
@@ -119,7 +117,7 @@ out_has_report() {
 #   reg_edit DIR drop|cleaned   rewrites the registry under its lock: drops the lines of DIR, or marks them cleaned (a time), mode 600
 # The line also holds what prepare took from the lead's answers, the one copy that verify, clean and review apply believe: the class of the run (class:
 # write or read-only), the stored project of its repository (project) and answers, an object with the answers that decide what verification accepts (runs.owned_refs, repo.long_lived,
-# repo.parking_branch, git.author, review.keep_author, review.scrub, review.trailer_policy). A record without answers is an older run (see run_answers).
+# repo.parking_branch, git.author, review.keep_author, review.scrub, review.trailer_policy).
 # A path is compared by its real path; the run directory of a line may be gone (a reboot that emptied a tmpfs, a clean), and the path is then
 # taken as written, resolved as far as it exists (readlink -m).
 declare -gA LRUNS=()   # -g: lib.sh is sourced from inside a function by some callers
@@ -162,11 +160,11 @@ reg_mark() {
   ) 9> "$f.lock" 2>/dev/null || true
 }
 reg_record() {
-  RUN_REPO='' RUN_URL='' RUN_CRED='' RUN_PROJ='' RUN_ANS=''
+  RUN_REPO='' RUN_URL='' RUN_CRED='' RUN_ANS=''
   reg_has "$1" || { echo "qargi: $1 is not in the lead's registry ($DA_STATE/local-runs.jsonl): only a run made by qargi local prepare on this machine is trusted" >&2; return 1; }
   RUN_REPO=$(reg_get "$1" repo); RUN_URL=$(reg_get "$1" url); RUN_CRED=$(reg_get "$1" cred)
-  RUN_PROJ=$(reg_get "$1" project); RUN_ANS=$(reg_json "$1" 'if (.answers | type) == "object" then .answers else empty end')
-  [ -n "$RUN_REPO" ] || [ -n "$RUN_URL" ] || { echo "qargi: the lead's registry names no repository for $1 (a run prepared by an earlier version): it cannot be verified" >&2; return 1; }
+  RUN_ANS=$(reg_json "$1" 'if (.answers | type) == "object" then .answers else empty end')
+  [ -n "$RUN_REPO" ] || [ -n "$RUN_URL" ] || { echo "qargi: the lead's registry names no repository for $1: it cannot be verified" >&2; return 1; }
 }
 reg_id() {
   local d hit='' n=0
@@ -191,7 +189,7 @@ reg_edit() {
     done < "$f" > "$tmp" && chmod 600 "$tmp" && mv -f -- "$tmp" "$f" || { rm -f "$tmp"; exit 1; }
   ) 9> "$f.lock"
 }
-# run_record RUN -> 0 and sets RUN_REPO, RUN_URL, RUN_CRED, RUN_PROJ and RUN_ANS from the registry (reg_load first); 1 with the reason on stderr when the registry does not
+# run_record RUN -> 0 and sets RUN_REPO, RUN_URL, RUN_CRED and RUN_ANS from the registry (reg_load first); 1 with the reason on stderr when the registry does not
 # name the run, names no repository for it, or the run directory's own repo.path, repo.url or cred.path (which a member can write) differ from it or are not
 # plain files. verify, clean, run and review apply take the repository, the URL and the credential path from these variables and from nothing else: git run
 # in a repository a member chose reads its configuration (core.sshCommand, credential.helper ...), and a URL and a credential path chosen by a member send
@@ -223,19 +221,15 @@ project_of() {
   return 0
 }
 # run_answers -> prints (JSON) the answers that decide what verification accepts for the run reg_record/run_record just read: the snapshot prepare took into
-# the lead's registry (RUN_ANS), never the stored project's file, which anything running as the lead's user can write or add a decoy of. An older record
-# has no snapshot: the stored project of its repository is read as before (the record's project when it names one, else the first project whose repo.path is it).
+# the lead's registry (RUN_ANS), never the stored project's file, which anything running as the lead's user can write or add a decoy of. A record
+# with no snapshot prints nothing.
 run_answers() {
-  local pj
-  if [ -n "${RUN_ANS:-}" ]; then printf '%s\n' "$RUN_ANS"; return 0; fi
-  pj=${RUN_PROJ:-}; [ -n "$pj" ] || pj=$(project_of "${RUN_REPO:-}" "${RUN_URL:-}")
-  if valid_project "$pj"; then cat -- "$DA_CONF/projects/$pj.json" 2>/dev/null || true; fi
+  [ -z "${RUN_ANS:-}" ] || printf '%s\n' "$RUN_ANS"
   return 0
 }
-# run_project RUN -> the stored project a registered run was made for (reg_load first): the one prepare recorded; an older record is looked up by its repository
+# run_project RUN -> the stored project a registered run was made for (reg_load first): the one prepare recorded
 run_project() {
-  if [ -n "$(reg_json "$1" 'if (.answers | type) == "object" then 1 else empty end')" ]; then reg_get "$1" project
-  else project_of "$(reg_get "$1" repo)" "$(reg_get "$1" url)"; fi
+  reg_get "$1" project
 }
 DA_ROLES=${QARGI_ROLES:-$(role_names | tr '\n' ' ' | sed 's/ $//')}
 valid_project() { printf '%s' "$1" | grep -Eq '^[a-z][a-z0-9]{0,23}$'; }
@@ -360,18 +354,21 @@ run_clean() { # DIR COMMAND...: runs a command in DIR without the project's clou
 audit_log() { # verb [detail]
   local f=$DA_STATE/audit.log
   # AUDIT_ORIGIN (set by the supervisor only) adds an origin field, so its lines can be told from the owner's
-  jq -nc --arg t "$(now)" --arg v "$1" --arg d "${2:-}" --arg a "${ASKED:-}" --arg p "${APPROVED:-}" --arg n "${QARGI_NESTED:-}" --arg o "${AUDIT_ORIGIN:-}" \
+  jq -nc --arg t "$(now)" --arg v "$1" --arg d "${2:-}" --arg a "${ASKED:-}" --arg p "${APPROVED:-}" --arg n "${NESTED_SKIPPED:-}" --arg o "${AUDIT_ORIGIN:-}" \
     '{ts:$t, verb:$v, detail:$d, asked:$a, approved:$p, nested:($n != "")} + (if $o == "" then {} else {origin:$o} end)' >> "$f"
   chmod 600 "$f" 2>/dev/null || true
 }
 
 # An approval applies to the plan the user saw: plans print a token (a hash of what
 # would be done) and apply must be given that token. Calls nested inside an approved
-# apply (provisioning seeding its stores) skip it.
+# apply (provisioning seeding its stores) may skip it, through need_plan_nested alone.
 plan_token() { sha256sum | cut -c1-12; }
-need_plan() { # expected-token; the caller's --plan value is $PLAN_ARG
-  [ -z "${QARGI_NESTED:-}" ] || return 0
+need_plan() { # expected-token; the caller's --plan value is $PLAN_ARG; always checked, whatever the environment holds
   [ "${PLAN_ARG:-}" = "$1" ] || die "the plan changed or --plan is missing: run the plan, show it to the user, then apply exactly that with --plan $1"
+}
+need_plan_nested() { # as need_plan, but a call nested in an approved apply (QARGI_NESTED set) skips the check; canon apply only
+  [ -z "${QARGI_NESTED:-}" ] || { NESTED_SKIPPED=1; return 0; }   # the audit line says "nested" only when the check was skipped
+  need_plan "$1"
 }
 
 need_asked() {
@@ -509,7 +506,7 @@ agent_prompt() { # role [project]
 
 # The hashes that say whether a cloud agent's prompt is out of date, with no cloud call. sha is the hash of the whole
 # rendered prompt (what refresh-prompt would push); skill is the hash of the files that change most, the contract as the prompt carries it
-# (cloud_contract: contract/ and the cloud runtime's addenda) and the role text (roles/<role>/ROLE.md); the key keeps its name "skill" so recorded stamps stay valid. Prints {sha, skill}.
+# (cloud_contract: contract/ and the cloud runtime's addenda) and the role text (roles/<role>/ROLE.md). Prints {sha, skill}.
 prompt_stamp() { # role project
   # the prompt and the contract are rendered into variables first (a trailing x keeps the final newlines for the hash): a pipeline inside $(...)
   # cannot report the status of its first stage, and the hash of a partial prompt (an addendum that cannot be read) must never be recorded
@@ -521,8 +518,8 @@ prompt_stamp() { # role project
 }
 
 # prompt_state INSTANCE: current | stale skill | stale prompt | unknown | none. Compares the prompt rendered now with the
-# hash recorded when the agent was provisioned or last refreshed. A registry entry with no hash (made before it was
-# recorded, or by init) is unknown, never stale; a local instance has no cloud prompt (none).
+# hash recorded when the agent was provisioned or last refreshed. A registry entry with no hash is
+# unknown, never stale; a local instance has no cloud prompt (none).
 prompt_state() {
   local n=$1 rec old oldk cur
   rec=$(jq -c --arg n "$n" '.[$n] // empty' "$REG" 2>/dev/null)

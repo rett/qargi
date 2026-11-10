@@ -82,7 +82,7 @@ case $verb in
     [ -n "$APPROVED" ] || die "apply needs --approved \"<the user's go-ahead for the plan shown by: plan>\""
     ant_ok
     tok=$(for k in $kinds; do p=$(make_plan "$k"); jq -S -c .ops "$p"; done | plan_token)
-    need_plan "$tok"; audit_log canon-apply "$PROJECT"
+    need_plan_nested "$tok"; audit_log canon-apply "$PROJECT"
     for k in $kinds; do
       echo "== $k"; p=$(make_plan "$k"); show_plan "$p"
       [ "$(jq '.ops|length' "$p")" = 0 ] && { echo "nothing to do"; continue; }

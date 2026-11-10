@@ -37,6 +37,9 @@ set -u
 # hermetic: nothing of the caller's cloud binding or qargi setup reaches the tests, and HOME is a fresh directory
 # (each test also scrubs itself, see tests/hermetic.sh and tests/hermetic.py)
 for _v in $(compgen -e); do case $_v in ANTHROPIC_*|QARGI_*) unset "$_v";; esac; done
+# python writes no bytecode into the checkout from the steps: tests/hermetic.py is imported before it can say so itself
+# (python3 -I ignores this variable; the python3 of tests/hermetic.sh and tests/hermetic.py adds -B)
+export PYTHONDONTWRITEBYTECODE=1
 SUITE_TMP=${TMPDIR:-/tmp}   # the caller's temporary directory: WORK is made in it, and its top level is watched (dirset below)
 WORK=$(mktemp -d) || exit 1
 HOME=$WORK/home; export HOME; mkdir -p "$HOME" "$WORK/out"

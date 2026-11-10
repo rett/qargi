@@ -230,9 +230,9 @@ class Usage(Base):
         self.assertIn("context: unknown (", out)
 
     def test_usage_refuses_unknown_options(self):
-        self.assertEqual(self.run_cli("lead", "usage", "--advise")[0], 1)
-        self.assertEqual(self.run_cli("lead", "compact-check", "--session", "x")[0], 1)
-        self.assertEqual(self.run_cli("lead", "usage", "--bogus")[0], 1)
+        self.assertEqual(self.run_cli("lead", "usage", "--advise")[0], 2)
+        self.assertEqual(self.run_cli("lead", "compact-check", "--session", "x")[0], 2)
+        self.assertEqual(self.run_cli("lead", "usage", "--bogus")[0], 2)
 
     def test_it_writes_nothing(self):
         self.transcript("s1", [turn(1, 1000, 0)])

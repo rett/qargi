@@ -4,6 +4,7 @@
 # compares every ref of the real repository (and of its remote) before and after.
 #
 #   local.sh prepare (--repo DIR | --repo-url URL [--credential-file FILE]) --base BRANCH --slug SLUG --scratch DIR [--role R] [--profile NAME]
+#                                        [--task-file F --done CMD [--scope PATH]...]   (writes RUN/task.md, the task block, for every runtime: taskblock_write)
 #                                        (the submodules the role declares in roles.R.tools are checked out in the clone from the lead's
 #                                        copy of their objects, offline, and printed as SUBMODULES=path,...; lib/tools.py)
 #   local.sh verify RUN_DIR
@@ -46,7 +47,7 @@
 
 # NOREPORT_CAUSE: the likely reason OUT holds no report. A runtime can refuse a member's write tool for a report file (the member is told to return findings as
 # text), and the file then never reaches OUT: the member is not late, it is blocked. verify and clean name it where they find OUT without a report.
-NOREPORT_CAUSE="A runtime can refuse a member's write tool for a report file, so the file never reaches OUT: tell the member to write its OUT files (report, manifest, series) with the shell, a heredoc, and to collect again."
+NOREPORT_CAUSE="A runtime can refuse a member's write tool for a report file, so the file never reaches OUT. The member writes its OUT files (report, manifest, series) with its file tool; a read-only member whose file tool is refused returns the report as its final message, and the lead stores it with: qargi review save RUN < MESSAGE"
 
 # drop_qargi_refs -> stdin without the refs under refs/qargi/ (lines "local REF SHA" and "remote SHA REF"). The marshal refs backend
 # keeps its records there and the lead's renewer fetches and pushes them during a run; that is not an agent push. Only that
@@ -132,7 +133,7 @@ journal_steps() {
 
 # save_run RUN -> a copy of what a passed run returned, in the lead's state: $DA_STATE/runs/<run id>/ holds out/ (the run's OUT, links copied as links,
 # never followed), run.bundle (when the run directory has one beside OUT), the snapshots and records verify and apply read (refs.before, verified,
-# started, ability, class, profile, applied) and record.json (the registry's line). Made in a temporary directory and renamed into place; a failure is a
+# started, ability, class, profile, applied, task.md: its SCOPE line is the limit review check applies) and record.json (the registry's line). Made in a temporary directory and renamed into place; a failure is a
 # warning, never a failure of verify.
 save_run() {
   local run id d tmp f rr
@@ -141,7 +142,7 @@ save_run() {
   { mkdir -p "$DA_STATE/runs" && tmp=$(mktemp -d "$DA_STATE/runs/.save.XXXXXX"); } || { echo "qargi: warning: could not save a copy of $run in $DA_STATE/runs" >&2; return 0; }
   if cp -R --no-dereference --preserve=mode,timestamps -- "$run/out" "$tmp/out" 2>/dev/null; then
     [ ! -f "$run/run.bundle" ] || [ -L "$run/run.bundle" ] || cp -- "$run/run.bundle" "$tmp/run.bundle"
-    for f in refs.before verified started ability class profile applied; do [ ! -f "$run/$f" ] || [ -L "$run/$f" ] || cp -- "$run/$f" "$tmp/$f"; done
+    for f in refs.before verified started ability class profile applied task.md; do [ ! -f "$run/$f" ] || [ -L "$run/$f" ] || cp -- "$run/$f" "$tmp/$f"; done
     rr=$(readlink -m -- "$run"); printf '%s\n' "${LRUNS[$rr]:-}" > "$tmp/record.json"
     if [ ! -L "$d" ] && rm -rf --one-file-system -- "$d" && mv -T -- "$tmp" "$d"; then echo "saved a copy of the run's output in $d (qargi review apply --from-saved $id applies it if the run directory is lost)"; return 0; fi
   fi
@@ -153,6 +154,69 @@ saved_of() { local d=$DA_STATE/runs/${1##*/}; case ${1##*/} in qargi.??????) ;; 
 # scrub_ok_drop RUN: remove the record `review check` keeps for a run whose take-in scrub passed (scrub_ok/RUN-ID in the lead's state, the path rule of
 # scrub_ok_file in review.sh): a run that was checked and never applied leaves it, and clean removes the run
 scrub_ok_drop() { local id=${1##*/}; case $id in qargi.??????) rm -f -- "$DA_STATE/scrub_ok/$id";; esac; return 0; }
+# apply_tmp_rm DIR: remove a temporary directory a killed `review apply` left directly under the state (apply-in.* holds the copy of the patches, apply-wt.* the worktree that
+# held the branch). Only a real directory (never a link) whose real path is directly under the real state directory is removed, on its own file system; a worktree is
+# pruned from the repository that owns it afterwards, so the branch it held is free again. Returns 1 and removes nothing for anything else.
+apply_tmp_rm() {
+  local d=$1 rp sr gc=''
+  [ -d "$d" ] && [ ! -L "$d" ] || return 1
+  rp=$(realpath -- "$d" 2>/dev/null) && sr=$(realpath -- "$DA_STATE" 2>/dev/null) && [ "$(dirname -- "$rp")" = "$sr" ] || return 1
+  if [ -f "$rp/.git" ]; then gc=$(git -C "$rp" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || gc=''; fi
+  rm -rf --one-file-system -- "$rp" || return 1
+  if [ -n "$gc" ]; then git --git-dir="$gc" worktree prune >/dev/null 2>&1 || true; fi
+  return 0
+}
+# apply_state_drop RUN: remove what `review apply` keeps in the lead's state for a run that clean removes: its apply record (apply/RUN-ID.json, the path rule of
+# apply_rec_file in review.sh, and the locks beside it) and the temporary directories of an apply that was killed, which carry the run's id in their names
+# (apply-in.RUN-ID.*, apply-wt.RUN-ID.*). Quoted names, no link followed (rm -f on a link removes the link; a link in place of a directory is left alone and said).
+apply_state_drop() {
+  local id=${1##*/} d
+  case $id in qargi.??????) ;; *) return 0;; esac
+  rm -f -- "$DA_STATE/apply/$id.json" "$DA_STATE/apply/$id.json.lock"
+  rm -rf -- "$DA_STATE/apply/$id.json.run"   # the pid lock of an apply (a directory with the pid in it)
+  for d in "$DA_STATE"/apply-in."$id".* "$DA_STATE"/apply-wt."$id".*; do
+    [ -e "$d" ] || [ -L "$d" ] || continue
+    apply_tmp_rm "$d" || echo "qargi: warning: could not remove $d, a temporary directory of a killed review apply of $id" >&2
+  done
+  return 0
+}
+# apply_orphan_scan DAYS: the apply-in.* and apply-wt.* directories directly under the state that no run of the registry accounts for, listed like orphan_scan lists the
+# qargi-run.* ones (kept ... / orphan ...); sets AORPH_LIST ("PATH MTIME"), AORPH_KEPT and AORPH_TOTAL (reg_load first). A name that carries a run's id belongs to that run
+# while the registry still has it (clean RUN removes it): kept. One whose run is cleaned or unknown, or a name with no id, is an orphan once it and everything in it
+# is older than DAYS days (an apply under way is new).
+apply_orphan_scan() {
+  local days=$1 sr e nowe cutoff mt age base id live
+  AORPH_LIST=(); AORPH_KEPT=0; AORPH_TOTAL=0
+  sr=$(realpath -- "$DA_STATE" 2>/dev/null) || return 0
+  nowe=$(date +%s); cutoff=$((nowe - days * 86400))
+  for e in "$sr"/apply-in.* "$sr"/apply-wt.*; do
+    [ -e "$e" ] || [ -L "$e" ] || continue
+    AORPH_TOTAL=$((AORPH_TOTAL + 1))
+    if [ -L "$e" ] || [ ! -d "$e" ]; then echo "kept $e: not a directory review apply makes (a link or a file)"; AORPH_KEPT=$((AORPH_KEPT + 1)); continue; fi
+    mt=$(stat -c %Y -- "$e" 2>/dev/null) || mt=''
+    [[ $mt =~ ^[0-9]{1,12}$ ]] || { echo "kept $e: its age cannot be read"; AORPH_KEPT=$((AORPH_KEPT + 1)); continue; }
+    age=$(( (nowe - mt) / 86400 ))
+    live=$(apply_dir_run "$e")
+    if [ -n "$live" ]; then echo "kept $e (${age}d old): left by an apply of the run $live, which clean $live removes"; AORPH_KEPT=$((AORPH_KEPT + 1)); continue; fi
+    if [ ! -O "$e" ]; then echo "kept $e (${age}d old): not owned by this user"; AORPH_KEPT=$((AORPH_KEPT + 1)); continue; fi
+    if [ "$mt" -gt "$cutoff" ] || [ -n "$(find "$e" -xdev -newermt "@$cutoff" -print -quit 2>/dev/null)" ]; then
+      echo "kept $e (${age}d old): it or something in it changed within ${days} day(s)"; AORPH_KEPT=$((AORPH_KEPT + 1)); continue
+    fi
+    base=${e##*/}; id=''
+    case $base in apply-in.qargi.??????.??????|apply-wt.qargi.??????.??????) id=${base#apply-??.}; id=${id%.??????};; esac
+    echo "orphan $e (${age}d old, $([ -n "$id" ] && echo "its run $id is cleaned or not in the registry" || echo "named by no run"))"; AORPH_LIST+=("$e $mt")
+  done
+  return 0
+}
+# apply_dir_run PATH -> the run directory of the registry (not cleaned) whose id is in the name of an apply-in.RUN-ID.* / apply-wt.RUN-ID.* directory, else nothing (reg_load first)
+apply_dir_run() {
+  local base=${1##*/} id='' d
+  case $base in apply-in.qargi.??????.??????|apply-wt.qargi.??????.??????) id=${base#apply-??.}; id=${id%.??????};; *) return 0;; esac
+  for d in ${LRUNS_ORDER[@]+"${LRUNS_ORDER[@]}"}; do
+    [ "${d##*/}" = "$id" ] && [ -z "$(reg_get "$d" cleaned)" ] && { printf '%s\n' "$d"; return 0; }
+  done
+  return 0
+}
 # gone_runs SCR -> the runs of the registry (reg_load first) directly under SCR (a real path; every run of the registry when empty) whose directory is
 # gone and that clean did not remove: a reboot emptied a tmpfs, or the directory was removed by hand
 gone_runs() {
@@ -379,12 +443,86 @@ render_warning() {
   return 0
 }
 
+# The task block, RUN/task.md, written by prepare for every runtime when --task-file is given: the lead hands the member its path unchanged.
+# taskblock_check TASKFILE DONE ROLE REPO BASE SCOPE... refuses, before anything is made: a task file that is a link, not a regular file, empty, over 1 MiB or with a NUL;
+# a DONE that is plainly not a command line (empty, several lines, or text bash -n cannot parse: a sentence with an apostrophe or a bracket); for a simple command
+# (one list of words, no operator) its first word, after any NAME=value words, must be an executable on PATH, a shell builtin or keyword, or a script path: a word
+# with a slash is a file of BASE (looked up in the object store of REPO at the tip of BASE, never in the lead's working tree), a file under a --scope path (the task
+# may create it) or an absolute file; a run of --repo-url cannot look and takes a relative path as given. A line with an operator (; & | < > ( ) or a backquote,
+# $( included) is accepted when bash -n parses it: only its syntax is checked, not its commands. A SCOPE path that is
+# empty, absolute, holds a space, a comma or `..`; and a task file or role text with a line of its own that starts SCOPE: (review check reads that line as the limit).
+TB_SCOPE_RE='^[[:space:]]*([-*][[:space:]]+)?SCOPE:'
+TB_OP_RE='[;&|<>()`]'   # a compound line, a substitution or a redirection
+TB_ASSIGN_RE=$'^[A-Za-z_][A-Za-z0-9_]*=("[^"]*"|\'[^\']*\'|[^[:space:]"\']*)[[:space:]]+(.*)$'   # NAME=value and the rest; a quoted value may hold spaces
+taskblock_check() {
+  local f=$1 done=$2 role=$3 repo=$4 base=$5 s rd p ok w0 rest; shift 5
+  [ ! -L "$f" ] || die "--task-file $f is a link: give the file itself"
+  [ -f "$f" ] || die "--task-file $f: no such file"
+  grep -q '[^[:space:]]' "$f" || die "--task-file $f is empty: the task block needs the task"
+  [ "$(wc -c < "$f")" -le 1048576 ] || die "--task-file $f is over 1 MiB"
+  [ "$(tr -d '\000' < "$f" | wc -c)" = "$(wc -c < "$f")" ] || die "--task-file $f holds a NUL byte: it must be text"
+  ! grep -Eq "$TB_SCOPE_RE" "$f" || die "--task-file $f has a line that starts SCOPE:, which review check would read as the limit: give the paths with --scope"
+  [ -n "$done" ] || usage_die "--task-file needs --done COMMAND: the check that says the task is done, as a command (make test, bash tests/x.sh)"
+  case $done in *$'\n'*) usage_die "--done is one command line, not several lines: put them in a script and give its path";; esac
+  bash -n -c "$done" >/dev/null 2>&1 || usage_die "--done '$done' is not a command line: bash cannot parse it (it reads as prose)"
+  if ! [[ $done =~ $TB_OP_RE ]]; then   # a simple command; a compound line is accepted on its syntax alone
+    rest=$done
+    while [[ $rest =~ $TB_ASSIGN_RE ]]; do rest=${BASH_REMATCH[2]}; done
+    read -r w0 _ <<<"$rest"
+    [ -n "$w0" ] || usage_die "--done '$done' is not a command: it has no command word"
+    case $w0 in
+      *'$'*) ;;   # a variable as the command word: there is nothing to look up
+      */*)
+        p=${w0#./}; ok=''
+        case $w0 in
+          /*) [ -f "$w0" ] && ok=1;;
+          *) if [ -z "$repo" ]; then ok=1
+             else
+               git -C "$repo" cat-file -e "refs/heads/$base:$p" 2>/dev/null && ok=1
+               for s in "$@"; do
+                 s=${s#./}; s=${s%/}
+                 # shellcheck disable=SC2053  # a --scope path may be a glob
+                 if [ "$p" = "$s" ] || [[ $p == "$s"/* ]] || [[ $p == $s ]]; then ok=1; fi
+               done
+             fi;;
+        esac
+        [ -n "$ok" ] || usage_die "--done '$done' is not a command: $w0 is not an existing script (it is not a file of $base, nor under a --scope path)";;
+      *) type -P -- "$w0" >/dev/null || compgen -b -- "$w0" | grep -qx -- "$w0" || compgen -k -- "$w0" | grep -qx -- "$w0" \
+           || usage_die "--done '$done' is not a command: $w0 is not an executable, a shell builtin or an existing script (it reads as prose)";;
+    esac
+  fi
+  for s in "$@"; do
+    case $s in ''|/*|*[[:space:],]*|..|../*|*/..|*/../*) usage_die "--scope '$s': a path inside the repository, relative, with no space, comma or .. in it";; esac
+  done
+  rd=$(role_dir "$role") || die "no role named $role (qargi role list)"
+  ! grep -Eq "$TB_SCOPE_RE" "$rd/ROLE.md" || die "the text of role $role has a line that starts SCOPE:, which review check would read as the limit"
+}
+
+# taskblock_write RUN ROLE CLASS REPO URL BASE BSHA TMP DONE TASKFILE SCOPE...: RUN/task.md, the sections in a fixed order: ROLE, ABILITY (the role's text), TASK,
+# DONE, PROFILE (the repository's profile, CONFIG/profiles/<repository>.md, when there is one), BASE, BASE_SHA, SCOPE (paths comma separated; none without any), then the paths.
+taskblock_write() {
+  local run=$1 role=$2 class=$3 repo=$4 url=$5 base=$6 bsha=$7 tmpd=$8 done=$9 f=${10} name pf rd out s sc=''; shift 10
+  for s in "$@"; do s=${s#./}; sc+="${sc:+, }$s"; done
+  rd=$(role_dir "$role"); out=$run/task.md.new
+  if [ -n "$repo" ]; then name=$(basename -- "$repo"); else name=${url%/}; name=${name##*/}; name=${name%.git}; fi
+  pf=$DA_CONF/profiles/$name.md
+  {
+    printf 'ROLE: %s (class %s)\n\nABILITY:\n' "$role" "$class"; cat "$rd/ROLE.md"
+    printf '\nTASK:\n'; cat "$f"
+    printf '\nDONE: %s\n' "$done"
+    if [ -n "$name" ] && [ -f "$pf" ] && [ ! -L "$pf" ] && grep -q '[^[:space:]]' "$pf" && ! grep -Eq "$TB_SCOPE_RE" "$pf"; then printf '\nPROFILE:\n'; cat "$pf"; fi
+    printf '\nBASE: %s\nBASE_SHA: %s\nSCOPE: %s\nRUN_DIR: %s\nCLONE: %s/clone\nOUT: %s/out\nTMP: %s\nGIT: %s/git\nCONTRACT: %s/contract\n' \
+      "$base" "$bsha" "${sc:-none}" "$run" "$run" "$run" "$tmpd" "$run" "$run"
+  } > "$out" && mv -f "$out" "$run/task.md"
+}
+
 verb=${1:-}; shift || true
 case $verb in
   prepare)
-    REPO='' URL='' CRED='' BASE='' SLUG='' SCR='' ROLE=build PROFILE=''
+    REPO='' URL='' CRED='' BASE='' SLUG='' SCR='' ROLE=build PROFILE='' TASKF='' DONE='' SCOPES=()
     while [ $# -gt 0 ]; do
-      case $1 in --repo) need_val "$1" $#; REPO=$2; shift 2;; --repo-url) need_val "$1" $#; URL=$2; shift 2;; --credential-file) need_val "$1" $#; CRED=$2; shift 2;; --base) need_val "$1" $#; BASE=$2; shift 2;; --slug) need_val "$1" $#; SLUG=$2; shift 2;; --scratch) need_val "$1" $#; SCR=$2; shift 2;; --role) need_val "$1" $#; ROLE=$2; shift 2;; --profile) need_val "$1" $#; PROFILE=$2; shift 2;; *) usage_die "unknown option $1";; esac
+      case $1 in --repo) need_val "$1" $#; REPO=$2; shift 2;; --repo-url) need_val "$1" $#; URL=$2; shift 2;; --credential-file) need_val "$1" $#; CRED=$2; shift 2;; --base) need_val "$1" $#; BASE=$2; shift 2;; --slug) need_val "$1" $#; SLUG=$2; shift 2;; --scratch) need_val "$1" $#; SCR=$2; shift 2;; --role) need_val "$1" $#; ROLE=$2; shift 2;; --profile) need_val "$1" $#; PROFILE=$2; shift 2;;
+        --task-file) need_val "$1" $#; TASKF=$2; shift 2;; --done) need_val "$1" $#; DONE=$2; shift 2;; --scope) need_val "$1" $#; SCOPES+=("$2"); shift 2;; *) usage_die "unknown option $1";; esac
     done
     if [ -n "$URL" ]; then
       [ -z "$REPO" ] || usage_die "give --repo or --repo-url, not both"
@@ -407,6 +545,12 @@ case $verb in
     valid_slug "$SLUG" || die "--slug: lower-case letters, digits and '-'"
     [ -n "$BASE" ] && [ -d "$SCR" ] || usage_die "prepare needs --base BRANCH and --scratch DIR"
     SCR=$(readlink -f -- "$SCR")   # an absolute run directory: the registry and every later verb name it from any working directory
+    # the task block (RUN/task.md) is written when --task-file is given; every check of its inputs is made here, before anything is made
+    if [ -n "$TASKF" ]; then
+      taskblock_check "$TASKF" "$DONE" "$ROLE" "${REPO:-}" "$BASE" ${SCOPES[@]+"${SCOPES[@]}"}
+    else
+      { [ -z "$DONE" ] && [ ${#SCOPES[@]} = 0 ]; } || usage_die "--done and --scope go with --task-file: they are written to the task block it makes"
+    fi
     # a tmpfs (a ramfs) is emptied by a reboot: the clone, the commits and the output of a run there are lost
     case $(stat -f -c %T -- "$SCR" 2>/dev/null) in
       tmpfs|ramfs) echo "qargi: warning: --scratch $SCR is on a tmpfs: a reboot loses the run (its clone, commits and output). Prefer a directory on disk, for example ~/.cache/qargi-runs; a passing verify saves a copy of the output in $DA_STATE/runs" >&2;;
@@ -457,8 +601,9 @@ case $verb in
     esac
     RUN=$(mktemp -d "$SCR/qargi.XXXXXX")
     mkdir -p "$RUN/out" "$RUN/home" "$RUN/contract"
-    # the member reads the contract from the run: the core's files, then the runtime's addenda as one more file (CONTRACT below)
-    cp "$(prompt_root)/contract/"*.md "$RUN/contract/" || die "could not copy the contract"
+    # the member reads the contract from the run: the core's files (the texts, and manifest.example.json that output-format.md points at), then the runtime's addenda
+    # as one more file (CONTRACT below)
+    cp "$(prompt_root)/contract/"*.md "$(prompt_root)/contract/manifest.example.json" "$RUN/contract/" || die "could not copy the contract"
     [ -z "$ADDENDA" ] || printf '%s\n' "$ADDENDA" > "$RUN/contract/runtime-addenda.md"
     # a private temporary directory for the run's test sandboxes, on tmpfs when there is one; `clean` removes it, so a run
     # leaves nothing behind in /dev/shm and parallel runs never touch each other's files
@@ -487,6 +632,7 @@ case $verb in
     git -C "$RUN/clone" remote set-url --push origin DISABLED
     git -C "$RUN/clone" rev-parse --verify -q "origin/$BASE" >/dev/null || die "no branch $BASE in the repository"
     git -C "$RUN/clone" checkout -q -b "agent/$SLUG" "origin/$BASE"
+    BSHA=$(git -C "$RUN/clone" rev-parse "origin/$BASE")
     # the submodules the role declares (roles.ROLE.tools, kind submodule) are checked out in the clone from the lead's copy of their objects,
     # offline (lib/tools.py checkout): a commit that is not on this host, or a run cloned from a URL, is a note on stderr and nothing is fetched
     SUBS='' SPROJ=$(project_of "$REPO" "$URL")
@@ -511,6 +657,9 @@ WRAP
        + (if $ru == "" then {repo:$rp} else {url:$ru} + (if $rc == "" then {} else {cred:$rc} end) end)' | ( umask 077; flock 9 && cat >> "$DA_STATE/local-runs.jsonl" ) 9> "$DA_STATE/local-runs.jsonl.lock"
     chmod 600 "$DA_STATE/local-runs.jsonl" 2>/dev/null || true
     render_warning "$REPO" "$URL"
+    if [ -n "$TASKF" ]; then
+      taskblock_write "$RUN" "$ROLE" "$CLASS" "$REPO" "$URL" "$BASE" "$BSHA" "$TMPD" "$DONE" "$TASKF" ${SCOPES[@]+"${SCOPES[@]}"} || die "could not write $RUN/task.md"
+    fi
     echo "RUN=$RUN"
     echo "ROLE=$ROLE"
     echo "CLASS=$CLASS"
@@ -520,10 +669,11 @@ WRAP
     echo "OUT=$RUN/out"
     echo "TMP=$TMPD"
     echo "GIT=$RUN/git"
-    BSHA=$(git -C "$RUN/clone" rev-parse "origin/$BASE")
     echo "BASE_SHA=$BSHA"
     echo "CONTRACT=$RUN/contract"
     [ -z "$SUBS" ] || echo "$SUBS"
+    [ -z "$TASKF" ] || [ -z "$SUBS" ] || printf 'SUBMODULES: %s\n' "${SUBS#SUBMODULES=}" >> "$RUN/task.md"
+    [ -z "$TASKF" ] || echo "TASK_FILE=$RUN/task.md"
     echo
     echo "TASK-BLOCK PATHS"
     echo "RUN_DIR=$RUN"
@@ -544,6 +694,7 @@ WRAP
       [ -z "$REPO" ] || [ -z "$prel" ] || pargs+=(--checkout "$REPO")
       if pkt=$(timeout 8 python3 -I "$tc" packet "${pargs[@]}" </dev/null) && [ -n "$pkt" ]; then
         printf '\nTASK-BLOCK MEMORY\n%s\n' "$pkt"
+        [ -z "$TASKF" ] || printf '\nMEMORY:\n%s\n' "$pkt" >> "$RUN/task.md"   # after SCOPE: the member's block carries the packet the lead no longer pastes
       fi
     fi;;
   verify)
@@ -560,7 +711,7 @@ WRAP
       SRC=$RUN
     fi
     # a read-only run's product is a report, never patches: patches in its output are not to be applied or accepted
-    if [ "$(run_class "$RUN" "$SRC")" = read-only ] && [ -n "$(find "$SRC/out" -maxdepth 2 \( -name '*.patch' -o -name run.bundle \) 2>/dev/null | head -1)" ]; then
+    if [ "$(run_class "$RUN")" = read-only ] && [ -n "$(find "$SRC/out" -maxdepth 2 \( -name '*.patch' -o -name run.bundle \) 2>/dev/null | head -1)" ]; then
       echo "qargi: $RUN is a read-only run ($(cat "$SRC/ability" 2>/dev/null || echo review)) and its output holds patches. A read-only run's product is a report, never patches: read $SRC/out/report.md, and do not apply or accept the patches." >&2
       exit 2
     fi
@@ -578,7 +729,7 @@ WRAP
       fi
     fi
     # a read-only run's product is its report: none in OUT is said (a note; the refs verdict below is the exit status), with the likely cause
-    if [ -z "$SAVED" ] && [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ] && [ "$(run_class "$RUN" "$SRC")" = read-only ] && ! out_has_report "$RUN/out"; then
+    if [ -z "$SAVED" ] && [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ] && [ "$(run_class "$RUN")" = read-only ] && ! out_has_report "$RUN/out"; then
       echo "qargi: note: OUT of the read-only run $RUN holds no report (report.md or NAME-report.md). $NOREPORT_CAUSE" >&2
     fi
     reg_load; crc=0; NOREC=$NOREC check_run "$RUN" "$SRC" || crc=$?
@@ -646,14 +797,20 @@ WRAP
       orphan_scan "$oroot" "$DAYS"   # lib/orphans.sh: the listing, which qargi doctor reads too
       orph=(${ORPH_LIST[@]+"${ORPH_LIST[@]}"}); okept=$ORPH_KEPT; ototal=$ORPH_TOTAL
       echo "$ototal qargi-run.* director(ies) under $oroot: ${#orph[@]} orphaned for more than $DAYS day(s), $okept kept"
-      if [ "${#orph[@]}" = 0 ]; then echo "plan: nothing to remove under $oroot"; exit 0; fi
-      otok=$({ printf '%s\n%s\n' "$oroot" "$DAYS"; printf '%s\n' "${orph[@]}"; } | plan_token)
+      # and the temporary directories of a killed `review apply` (apply-in.*, apply-wt.*) in the state that no run accounts for: the ones of a run still in the registry are
+      # that run's (clean RUN removes them), so what is listed here is attributed to no live run
+      reg_load; apply_orphan_scan "$DAYS"; aorph=(${AORPH_LIST[@]+"${AORPH_LIST[@]}"})
+      if [ "$AORPH_TOTAL" != 0 ]; then echo "$AORPH_TOTAL apply-in.* and apply-wt.* director(ies) under $(realpath -- "$DA_STATE"): ${#aorph[@]} orphaned for more than $DAYS day(s), $AORPH_KEPT kept"; fi
+      if [ "$(( ${#orph[@]} + ${#aorph[@]} ))" = 0 ]; then echo "plan: nothing to remove under $oroot"; exit 0; fi
+      otok=$({ printf '%s\n%s\n' "$oroot" "$DAYS"; if [ "${#orph[@]}" != 0 ]; then printf '%s\n' "${orph[@]}"; fi
+               if [ "${#aorph[@]}" != 0 ]; then printf 'state\n'; printf '%s\n' "${aorph[@]}"; fi; } | plan_token)
       if [ -z "$APPROVED" ]; then
-        echo "plan: remove ${#orph[@]} orphaned director(ies) under $oroot (the ones marked orphan above); nothing changed"
+        if [ "${#aorph[@]}" = 0 ]; then echo "plan: remove ${#orph[@]} orphaned director(ies) under $oroot (the ones marked orphan above); nothing changed"
+        else echo "plan: remove $(( ${#orph[@]} + ${#aorph[@]} )) orphaned director(ies): ${#orph[@]} under $oroot and ${#aorph[@]} under the state directory (the ones marked orphan above); nothing changed"; fi
         echo "plan token: $otok   (apply with: qargi local clean --orphans --days $DAYS --plan $otok --approved \"...\")"
         exit 0
       fi
-      QARGI_NESTED='' need_plan "$otok"   # a caller that is itself approved (QARGI_NESTED) has not approved this removal: the token is always needed
+      need_plan "$otok"   # the token is always needed (need_plan ignores QARGI_NESTED)
       rm_n=0; rk_n=0
       for ent in "${orph[@]}"; do
         e=${ent% *}; reg_load
@@ -662,6 +819,12 @@ WRAP
         named=''; for d in ${LRUNS_ORDER[@]+"${LRUNS_ORDER[@]}"}; do t=$(reg_get "$d" tmpdir); if [ -n "$t" ] && [ "$(readlink -m -- "$t")" = "$e" ]; then named=$d; fi; done
         if [ -L "$e" ] || [ "$rp" != "$e" ] || [ "$(dirname -- "$rp")" != "$oroot" ] || [ -n "$named" ]; then echo "kept $e: it changed since the plan"; rk_n=$((rk_n + 1)); continue; fi
         if rm -rf --one-file-system -- "$rp"; then echo "removed $e"; rm_n=$((rm_n + 1)); else echo "kept $e: it could not be removed"; rk_n=$((rk_n + 1)); fi
+      done
+      for ent in ${aorph[@]+"${aorph[@]}"}; do
+        e=${ent% *}; reg_load
+        # checked again at the moment of removal: still a real directory directly under the state, and no live run of the registry accounts for it now
+        if [ -L "$e" ] || [ ! -d "$e" ] || [ ! -O "$e" ] || [ -n "$(apply_dir_run "$e")" ]; then echo "kept $e: it changed since the plan"; rk_n=$((rk_n + 1)); continue; fi
+        if apply_tmp_rm "$e"; then echo "removed $e"; rm_n=$((rm_n + 1)); else echo "kept $e: it could not be removed"; rk_n=$((rk_n + 1)); fi
       done
       audit_log "local:clean-orphans" "$oroot $rm_n removed $rk_n kept (older than $DAYS day(s))"
       echo "removed $rm_n orphaned director(ies), kept $rk_n"
@@ -744,6 +907,7 @@ WRAP
       fi
       [ -z "$sv" ] || rm -rf --one-file-system -- "$sv"
       scrub_ok_drop "$RUN"
+      apply_state_drop "$RUN"   # the apply record, and what a killed apply of the run left in the state
       reg_edit "$RUN" drop || die "could not drop the record of $RUN from $DA_STATE/local-runs.jsonl"
       echo "dropped the record of $RUN (directory gone)${sv:+ and its saved copy $sv}"
       exit 0
@@ -815,6 +979,7 @@ WRAP
     rm -rf --one-file-system -- "$RUN"
     sv=$(saved_of "$RUN"); [ -z "$sv" ] || rm -rf --one-file-system -- "$sv"   # the copy verify saved: the work is merged, or dropped on purpose
     scrub_ok_drop "$RUN"   # the record of a passed scrub that review check kept for a run never applied
+    apply_state_drop "$RUN"   # the apply record of the run, and the temporary directories of a killed apply of it
     reg_edit "$rrun" cleaned || echo "qargi: warning: could not mark $RUN cleaned in $DA_STATE/local-runs.jsonl (report and list may show it as directory gone)" >&2
     [ -z "$acc" ] || printf '%s\n' "$acc"
     echo "cleaned $RUN${rt:+ and $rt}";;
