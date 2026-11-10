@@ -25,8 +25,8 @@ from an installed copy."""
 import os
 import sys
 
-if not sys.flags.isolated:                       # run directly or through the shebang: re-run isolated, stdin and arguments kept
-    os.execv(sys.executable, [sys.executable, "-I", os.path.abspath(__file__)] + sys.argv[1:])
+if not sys.flags.isolated:                       # run directly or through the shebang: re-run isolated, stdin and arguments kept (and no bytecode when this process writes none)
+    os.execv(sys.executable, [sys.executable, "-I"] + (["-B"] if sys.dont_write_bytecode else []) + [os.path.abspath(__file__)] + sys.argv[1:])
 
 import json  # noqa: E402
 import re  # noqa: E402

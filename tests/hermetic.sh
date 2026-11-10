@@ -9,8 +9,8 @@
 # its own, in the repository or in GIT_AUTHOR_*, as it did when HOME was a fresh directory); no
 # GIT_DIR, GIT_WORK_TREE, SSH_AUTH_SOCK, SSH_ASKPASS, PYTHONPATH or PYTHONSTARTUP; python writes no bytecode into the source tree
 # (PYTHONDONTWRITEBYTECODE is ignored under `python3 -I`, which qargi's scripts and the tests use throughout, so the first `python3` on PATH
-# is a wrapper that adds -B; tests/test_hermetic.sh checks that a run leaves no __pycache__; one gap is left in lib/: the provider adapters and
-# lib/conformance/cases.py start themselves again with sys.executable -I, which has no -B, so the conformance suite still writes bytecode there)
+# is a wrapper that adds -B; tests/test_hermetic.sh checks that a run, the conformance suite included, leaves no __pycache__: the provider adapters, the
+# guard command they run and lib/conformance/cases.py start python again with sys.executable -I and pass -B on when the process that starts them has it)
 # and reads no user site; output has no colour, 80 columns, a dumb terminal. A test overrides any of this after sourcing (most set their
 # own QARGI_CONF, QARGI_STATE, HOME and a fake ant). The temporary directory is removed when the test exits. tests/hermetic.py is the
 # same environment for the python tests.
