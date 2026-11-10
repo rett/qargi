@@ -3,16 +3,16 @@
 # A raised ceiling carries a comment on its line, `PATH N # raised: reason` (the test checks it against the merge base with origin/develop). `lib/providers/NAME.json:notes` is the topic texts of a runtime's notes.
 agents/member.body.md 118
 agents/member.md 183
-contract/contract.md 763 # raised: the report-writing rule (file tool, no shell text, final-message fallback) and the guard-refusal rule, stated once here and removed from the addendum, the notes and gitflow-member; for review
+contract/contract.md 791 # raised: the report-writing rule (file tool, no shell text, final-message fallback) and the guard-refusal rule, stated once here and removed from the addendum, the notes and gitflow-member; for review; never stash and what to do instead (a worktree of BASE, restore) in place of a WIP commit
 contract/output-format.md 276
 lib/providers/claude-code.json:notes 301 # lowered: the member-out topic no longer sends a member to a shell heredoc
 lib/providers/claude-code/local-run.md 51 # lowered: a refused Write of a report file is answered by the final message, not a heredoc
 lib/providers/claude-platform.json:notes 2
 lib/providers/claude-platform/cloud-run.md 61
 packs/skills/docs-site-member/SKILL.md 163 # raised: two rules: no line starts with <, and run the render check before reporting; for the lead's review
-packs/skills/gitflow-member/SKILL.md 249 # lowered: the commit-message and guard line lives in the contract only
+packs/skills/gitflow-member/SKILL.md 240 # lowered: the commit-message and stash lines live in the contract only
 packs/skills/keep-a-changelog/SKILL.md 344 # raised: one rule on numbered items (unnumbered bullet, the lead renumbers), kept here only; for the lead's review
-packs/skills/qargi-contributing/SKILL.md 88 # lowered: the commit-message line lives in the contract only
+packs/skills/qargi-contributing/SKILL.md 77 # lowered: the commit-message and stash lines live in the contract only
 packs/skills/review-findings/SKILL.md 136
 packs/skills/secrets-scan/SKILL.md 93
 packs/skills/shellcheck-gate/SKILL.md 358 # raised: two lines of guidance (a disable names the shellcheck version that introduced the code; the project's own lint severity wins); for the lead's review

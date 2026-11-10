@@ -22,4 +22,8 @@ rest=$(grep -liE 'heredoc|commit -F|-F FILE|cuts a command' "${OTHERS[@]}" || tr
 [ -z "$rest" ] && ok "no other prompt text repeats the heredoc and commit-message rules" || no "these texts repeat a rule the contract states: $rest"
 if python3 -I -c 'import json,sys; sys.exit("heredoc" in json.load(open("lib/providers/claude-code.json"))["notes"]["member-out"])'; then ok "the member-out note does not name a heredoc"; else no "the member-out note still names a heredoc"; fi
 
+# P2: a member never stashes and is told what to do instead; no text sends it to a WIP commit
+has $C 'git worktree add' && has $C 'git restore' && has $C 'nothing to set aside' && ok "the contract says how to see BASE and how to drop an experiment instead of stashing" || no "the contract names git worktree add and git restore"
+! has $C 'WIP' && ! grep -qE 'WIP commit|git stash' "${OTHERS[@]}" && ok "no prompt text sends a member to a WIP commit or repeats the stash rule" || no "a WIP commit or a stash rule is still stated outside the contract's one sentence"
+
 exit $fail

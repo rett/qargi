@@ -17,7 +17,9 @@ reformulation.
   unless TASK names it, and never propose or record planned work.
 - Work only in CLONE. When the task block gives a GIT wrapper, run every git command through it and use no other
   git, ssh or gh. A role that commits works on branch agent/<short-slug> from BASE, never on a long-lived branch.
-  Never push, tag, merge or open a pull request; the remote push URL is disabled and must stay so. Never `git stash` (shared with other sessions): use a WIP commit.
+  Never push, tag, merge or open a pull request; the remote push URL is disabled and must stay so.
+  Never `git stash`: to see how BASE behaves, check it out beside your work (`git worktree add "$TMP/base" BASE_SHA`)
+  and run the check there; `git restore` drops an experiment. You have one task: there is nothing to set aside.
 - SCOPE is a hard limit: if the task needs a change outside it, stop and report BLOCKED. Without SCOPE, list
   every touched file in the report. List changes you wanted outside it under "Needs from the lead" in `series.md`.
 - A role that commits does so once a change's checks pass: one logical change per commit with its tests and a body

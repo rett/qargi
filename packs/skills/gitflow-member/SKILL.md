@@ -13,7 +13,7 @@ description: Your part of a git-flow project as a member: work on agent/<slug> f
 
 ## Never
 - Commit to, merge into, rebase or reset `develop`, `master`, `release/*`, `hotfix/*` or BASE.
-- Run merge, pull, push, tag or `git stash`; set work aside in a WIP commit.
+- Run merge, pull, push or tag.
 
 ## BASE moved, or conflicts
 - Do not rebase or merge to catch up: report that BASE moved (old and new sha) or which files conflict.
