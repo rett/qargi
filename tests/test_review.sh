@@ -80,6 +80,7 @@ mkdir -p "$T/rep"; out=$($DA review check "$T/rep" 2>&1); [ $? = 1 ] && ok "a ru
 GOOD_REP='# Findings\n\nnone\n\n# Checked\n\nbuild, exit 0\n\nverdict: accept\n'
 printf '{"status":"DONE","commits":[],"artifacts":[{"path":"report.md","kind":"report"}]}\n' > "$T/rep/manifest.json"
 printf "$GOOD_REP" > "$T/rep/report.md"
+# hermetic: allow absent (WARN is a word review check prints only for a warning; its output of a passing report names no random path in a way that holds it)
 out=$($DA review check "$T/rep" 2>&1); [ $? = 0 ] && echo "$out" | grep -q "OK report-only" && ! echo "$out" | grep -q "WARN" && ok "a report with Findings, Checked, a last verdict line and a manifest passes as a review run" || no "report run: $out"
 printf '# Review\n\nlooks fine\n' > "$T/rep/report.md"
 $DA review check "$T/rep" >/dev/null 2>&1; [ $? = 1 ] && ok "a report without a Findings section is refused" || no "report without findings"
