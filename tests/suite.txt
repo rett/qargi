@@ -128,3 +128,4 @@ fast | par | 300 | 1 | python3 tests/test_backlog.py | lib/backlog.py
 full | par | 300 | 14 | bash tests/test_backlog.sh | lib/backlog.py lib/backlog.sh lib/gitflow.sh lib/feature.sh lib/release.sh lib/project.sh
 fast | par | 300 | 8 | bash tests/test_nested_plan.sh | lib/lib.sh lib/branch.sh lib/cred.sh lib/marshal.sh lib/project.sh lib/provider.sh lib/registry.sh
 full | par | 300 | 20 | bash tests/test_resume.sh | lib/release.sh lib/feature.sh lib/gitflow.sh lib/review.sh
+full | par | 300 | 20 | bash tests/test_resume_push.sh | lib/release.sh lib/feature.sh lib/gitflow.sh

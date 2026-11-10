@@ -133,7 +133,7 @@ journal_steps() {
 
 # save_run RUN -> a copy of what a passed run returned, in the lead's state: $DA_STATE/runs/<run id>/ holds out/ (the run's OUT, links copied as links,
 # never followed), run.bundle (when the run directory has one beside OUT), the snapshots and records verify and apply read (refs.before, verified,
-# started, ability, class, profile, applied) and record.json (the registry's line). Made in a temporary directory and renamed into place; a failure is a
+# started, ability, class, profile, applied, task.md: its SCOPE line is the limit review check applies) and record.json (the registry's line). Made in a temporary directory and renamed into place; a failure is a
 # warning, never a failure of verify.
 save_run() {
   local run id d tmp f rr
@@ -142,7 +142,7 @@ save_run() {
   { mkdir -p "$DA_STATE/runs" && tmp=$(mktemp -d "$DA_STATE/runs/.save.XXXXXX"); } || { echo "qargi: warning: could not save a copy of $run in $DA_STATE/runs" >&2; return 0; }
   if cp -R --no-dereference --preserve=mode,timestamps -- "$run/out" "$tmp/out" 2>/dev/null; then
     [ ! -f "$run/run.bundle" ] || [ -L "$run/run.bundle" ] || cp -- "$run/run.bundle" "$tmp/run.bundle"
-    for f in refs.before verified started ability class profile applied; do [ ! -f "$run/$f" ] || [ -L "$run/$f" ] || cp -- "$run/$f" "$tmp/$f"; done
+    for f in refs.before verified started ability class profile applied task.md; do [ ! -f "$run/$f" ] || [ -L "$run/$f" ] || cp -- "$run/$f" "$tmp/$f"; done
     rr=$(readlink -m -- "$run"); printf '%s\n' "${LRUNS[$rr]:-}" > "$tmp/record.json"
     if [ ! -L "$d" ] && rm -rf --one-file-system -- "$d" && mv -T -- "$tmp" "$d"; then echo "saved a copy of the run's output in $d (qargi review apply --from-saved $id applies it if the run directory is lost)"; return 0; fi
   fi
@@ -167,12 +167,13 @@ apply_tmp_rm() {
   return 0
 }
 # apply_state_drop RUN: remove what `review apply` keeps in the lead's state for a run that clean removes: its apply record (apply/RUN-ID.json, the path rule of
-# apply_rec_file in review.sh, and the lock beside it) and the temporary directories of an apply that was killed, which carry the run's id in their names
+# apply_rec_file in review.sh, and the locks beside it) and the temporary directories of an apply that was killed, which carry the run's id in their names
 # (apply-in.RUN-ID.*, apply-wt.RUN-ID.*). Quoted names, no link followed (rm -f on a link removes the link; a link in place of a directory is left alone and said).
 apply_state_drop() {
   local id=${1##*/} d
   case $id in qargi.??????) ;; *) return 0;; esac
   rm -f -- "$DA_STATE/apply/$id.json" "$DA_STATE/apply/$id.json.lock"
+  rm -rf -- "$DA_STATE/apply/$id.json.run"   # the pid lock of an apply (a directory with the pid in it)
   for d in "$DA_STATE"/apply-in."$id".* "$DA_STATE"/apply-wt."$id".*; do
     [ -e "$d" ] || [ -L "$d" ] || continue
     apply_tmp_rm "$d" || echo "qargi: warning: could not remove $d, a temporary directory of a killed review apply of $id" >&2
@@ -443,13 +444,18 @@ render_warning() {
 }
 
 # The task block, RUN/task.md, written by prepare for every runtime when --task-file is given: the lead hands the member its path unchanged.
-# taskblock_check TASKFILE DONE ROLE REPO SCOPE... refuses, before anything is made: a task file that is a link, not a regular file, empty, over 1 MiB or with a NUL;
-# a DONE that is not a command (its first word, after any NAME=value words, must be an executable on PATH, a shell builtin or keyword, or an existing script path:
-# a word with a slash is a file of the repository, or an absolute one; a run of --repo-url cannot look and takes a relative path as given); a SCOPE path that is
+# taskblock_check TASKFILE DONE ROLE REPO BASE SCOPE... refuses, before anything is made: a task file that is a link, not a regular file, empty, over 1 MiB or with a NUL;
+# a DONE that is plainly not a command line (empty, several lines, or text bash -n cannot parse: a sentence with an apostrophe or a bracket); for a simple command
+# (one list of words, no operator) its first word, after any NAME=value words, must be an executable on PATH, a shell builtin or keyword, or a script path: a word
+# with a slash is a file of BASE (looked up in the object store of REPO at the tip of BASE, never in the lead's working tree), a file under a --scope path (the task
+# may create it) or an absolute file; a run of --repo-url cannot look and takes a relative path as given. A line with an operator (; & | < > ( ) or a backquote,
+# $( included) is accepted when bash -n parses it: only its syntax is checked, not its commands. A SCOPE path that is
 # empty, absolute, holds a space, a comma or `..`; and a task file or role text with a line of its own that starts SCOPE: (review check reads that line as the limit).
 TB_SCOPE_RE='^[[:space:]]*([-*][[:space:]]+)?SCOPE:'
+TB_OP_RE='[;&|<>()`]'   # a compound line, a substitution or a redirection
+TB_ASSIGN_RE=$'^[A-Za-z_][A-Za-z0-9_]*=("[^"]*"|\'[^\']*\'|[^[:space:]"\']*)[[:space:]]+(.*)$'   # NAME=value and the rest; a quoted value may hold spaces
 taskblock_check() {
-  local f=$1 done=$2 role=$3 repo=$4 w s rd; shift 4
+  local f=$1 done=$2 role=$3 repo=$4 base=$5 s rd p ok w0 rest; shift 5
   [ ! -L "$f" ] || die "--task-file $f is a link: give the file itself"
   [ -f "$f" ] || die "--task-file $f: no such file"
   grep -q '[^[:space:]]' "$f" || die "--task-file $f is empty: the task block needs the task"
@@ -458,16 +464,33 @@ taskblock_check() {
   ! grep -Eq "$TB_SCOPE_RE" "$f" || die "--task-file $f has a line that starts SCOPE:, which review check would read as the limit: give the paths with --scope"
   [ -n "$done" ] || usage_die "--task-file needs --done COMMAND: the check that says the task is done, as a command (make test, bash tests/x.sh)"
   case $done in *$'\n'*) usage_die "--done is one command line, not several lines: put them in a script and give its path";; esac
-  read -r -a w <<<"$done"
-  while [ ${#w[@]} -gt 0 ] && [[ ${w[0]} =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; do w=("${w[@]:1}"); done
-  [ ${#w[@]} -gt 0 ] || usage_die "--done '$done' is not a command: it has no command word"
-  case ${w[0]} in
-    */*) if [ -n "$repo" ]; then case ${w[0]} in /*) [ -f "${w[0]}" ];; *) [ -f "$repo/${w[0]}" ];; esac
-         else case ${w[0]} in /*) [ -f "${w[0]}" ];; *) true;; esac; fi \
-           || usage_die "--done '$done' is not a command: ${w[0]} is not an existing script";;
-    *) type -P -- "${w[0]}" >/dev/null || compgen -b -- "${w[0]}" | grep -qx -- "${w[0]}" || compgen -k -- "${w[0]}" | grep -qx -- "${w[0]}" \
-         || usage_die "--done '$done' is not a command: ${w[0]} is not an executable, a shell builtin or an existing script (it reads as prose)";;
-  esac
+  bash -n -c "$done" >/dev/null 2>&1 || usage_die "--done '$done' is not a command line: bash cannot parse it (it reads as prose)"
+  if ! [[ $done =~ $TB_OP_RE ]]; then   # a simple command; a compound line is accepted on its syntax alone
+    rest=$done
+    while [[ $rest =~ $TB_ASSIGN_RE ]]; do rest=${BASH_REMATCH[2]}; done
+    read -r w0 _ <<<"$rest"
+    [ -n "$w0" ] || usage_die "--done '$done' is not a command: it has no command word"
+    case $w0 in
+      *'$'*) ;;   # a variable as the command word: there is nothing to look up
+      */*)
+        p=${w0#./}; ok=''
+        case $w0 in
+          /*) [ -f "$w0" ] && ok=1;;
+          *) if [ -z "$repo" ]; then ok=1
+             else
+               git -C "$repo" cat-file -e "refs/heads/$base:$p" 2>/dev/null && ok=1
+               for s in "$@"; do
+                 s=${s#./}; s=${s%/}
+                 # shellcheck disable=SC2053  # a --scope path may be a glob
+                 if [ "$p" = "$s" ] || [[ $p == "$s"/* ]] || [[ $p == $s ]]; then ok=1; fi
+               done
+             fi;;
+        esac
+        [ -n "$ok" ] || usage_die "--done '$done' is not a command: $w0 is not an existing script (it is not a file of $base, nor under a --scope path)";;
+      *) type -P -- "$w0" >/dev/null || compgen -b -- "$w0" | grep -qx -- "$w0" || compgen -k -- "$w0" | grep -qx -- "$w0" \
+           || usage_die "--done '$done' is not a command: $w0 is not an executable, a shell builtin or an existing script (it reads as prose)";;
+    esac
+  fi
   for s in "$@"; do
     case $s in ''|/*|*[[:space:],]*|..|../*|*/..|*/../*) usage_die "--scope '$s': a path inside the repository, relative, with no space, comma or .. in it";; esac
   done
@@ -524,7 +547,7 @@ case $verb in
     SCR=$(readlink -f -- "$SCR")   # an absolute run directory: the registry and every later verb name it from any working directory
     # the task block (RUN/task.md) is written when --task-file is given; every check of its inputs is made here, before anything is made
     if [ -n "$TASKF" ]; then
-      taskblock_check "$TASKF" "$DONE" "$ROLE" "${REPO:-}" ${SCOPES[@]+"${SCOPES[@]}"}
+      taskblock_check "$TASKF" "$DONE" "$ROLE" "${REPO:-}" "$BASE" ${SCOPES[@]+"${SCOPES[@]}"}
     else
       { [ -z "$DONE" ] && [ ${#SCOPES[@]} = 0 ]; } || usage_die "--done and --scope go with --task-file: they are written to the task block it makes"
     fi

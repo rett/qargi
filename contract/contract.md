@@ -60,8 +60,8 @@ waiting) and finish them before the report.
 Write outputs only to OUT (`output-format.md`: the files, the manifest, what a read-only role returns). Use your
 file-writing tool: the guard allows it in OUT for every class. Write no report or commit message with shell text
 (echo, heredoc): the guard reads every line as a command. A read-only role whose file tool is refused puts the whole
-report in its final message; the lead stores it. Run `qargi review check OUT` until it reports no failure (`0 fail,
-0 warn`, or `OK report-only run`).
+report in its final message; the lead stores it. Run `qargi review check OUT` until it reports no failure (`0 fail`,
+or `OK report-only run`); explain a warn in the report.
 
 # Final report (your last message)
 Line 1: DONE or BLOCKED. Then: the DONE check and each gate result quoted verbatim; files changed, one line of

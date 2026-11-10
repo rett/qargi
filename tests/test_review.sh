@@ -59,6 +59,8 @@ git reset -q --hard "$BASE"
 for k in 1 2 3; do echo "$k" >> "internal/f$k.go"; git add -A; mk "step $k" "Why step $k happened." "2026-10-27T12:00:0$k"; done
 run batch; manifest "$T/batch"; echo "# s" > "$T/batch/series.md"
 out=$($DA review check "$T/batch" 2>&1); rc=$?; [ $rc = 0 ] && echo "$out" | grep -q "WARN all 3 commits.*one batch" && echo "$out" | grep -q "0 fail, 1 warn" && ok "commits made within seconds of each other are a warning, not a note, and do not fail the series" || no "batch warning: rc=$rc $out"
+# the warning cannot be cleared without rewriting history, which the contract forbids: the contract asks for no failure and an explained warning, not for 0 warn
+CT=${DA%/bin/qargi}/contract/contract.md; ! grep -q '0 warn' "$CT" && grep -q 'reports no failure' "$CT" && grep -q 'explain a warn in the report' "$CT" && ok "the contract asks for no failure and an explained warning, not for 0 warn" || no "the contract still asks for 0 warn"
 
 # missing commit advice / groups are warnings
 cp -r "$T/good" "$T/nogroups"; jq 'del(.patch_groups) | del(.commit_advice)' "$T/nogroups/manifest.json" > "$T/nogroups/m.json" && mv "$T/nogroups/m.json" "$T/nogroups/manifest.json"
@@ -110,9 +112,10 @@ A=$T/app; git init -q -b master "$A"; git -C "$A" config user.name lead; git -C 
 mkdir -p "$A/internal" "$A/docs" "$A/man"; echo a > "$A/internal/a.go"; echo a > "$A/docs/a.md"; echo a > "$A/man/a.1"
 git -C "$A" add -A; git -C "$A" commit -q -m base; git -C "$A" branch develop; git -C "$A" checkout -q -b parked
 jq -n --arg p "$A" '{schema:1, project:"app", methodology:"gitflow", repo:{url:"https://github.com/acme/app", path:$p, long_lived:["master","develop"]}, test_command:"true"}' > "$T/c/projects/app.json"
+NR_ARGS=()   # more arguments for the prepare of newrun
 newrun() { # slug -> RUN (prepared, with a two-commit series collected into OUT)
   local out r c b
-  out=$($DA local prepare --repo "$A" --base develop --slug "$1" --scratch "$T/scr") || return 1
+  out=$($DA local prepare --repo "$A" --base develop --slug "$1" --scratch "$T/scr" ${NR_ARGS[@]+"${NR_ARGS[@]}"}) || return 1
   r=$(echo "$out" | sed -n 's/^RUN=//p'); c=$r/clone; b=$(git -C "$c" rev-parse HEAD)
   ( cd "$c" || exit 1; export GIT_AUTHOR_NAME=agent GIT_AUTHOR_EMAIL=agent@example.invalid GIT_COMMITTER_NAME=agent GIT_COMMITTER_EMAIL=agent@example.invalid
     echo b >> internal/a.go; git add -A; mk "names: accept periods" "The pattern now allows single periods between runs." "2026-10-27T10:00:00"
@@ -144,6 +147,10 @@ mkdir -p "$T/shim"; REALGIT=$(command -v git); export REALGIT
 cat > "$T/shim/git" <<'S'
 #!/usr/bin/env bash
 "$REALGIT" "$@"; rc=$?
+# PAUSE_AFTER: wait inside the verb, once the real git ran, until $PAUSE_GO exists ($PAUSE_FLAG tells the test the verb is there)
+if [ -n "${PAUSE_AFTER:-}" ] && [ ! -e "${PAUSE_FLAG:-/nonexistent}" ]; then
+  case " $* " in *"$PAUSE_AFTER"*) : > "$PAUSE_FLAG"; while [ ! -e "$PAUSE_GO" ]; do sleep 0.1; done;; esac
+fi
 if [ -n "${DIE_AFTER:-}" ] && [ ! -e "${DIE_FLAG:-/nonexistent}" ]; then
   case " $* " in *"$DIE_AFTER"*) : > "$DIE_FLAG"; kill -9 "$PPID";; esac
 fi
@@ -177,6 +184,38 @@ PATH=$T/shim:$PATH DIE_AFTER="log --reverse" DIE_FLAG=$T/die-3 $DA review apply 
 git -C "$A" update-ref refs/heads/agent/moved "$dev"
 out=$($DA review apply "$R9" 2>&1); rc=$?
 [ $rc != 0 ] && grep -q "built agent/moved at" <<<"$out" && grep -q "is at" <<<"$out" && [ ! -e "$R9/applied" ] && ok "a branch that is not where the record says it was built is refused, precisely" || no "moved: rc=$rc $out"
+# (4) two applies of one run: the second is refused while the first is under way and touches nothing (it used to remove the first one's worktree and branch);
+# the first finishes. The first is held inside, right after its branch and worktree were made, by the shim.
+R12=$(newrun conc); id12=${R12##*/}; rec12=$T/s/apply/$id12.json
+PATH=$T/shim:$PATH PAUSE_AFTER="worktree add -q -b agent/conc" PAUSE_FLAG=$T/p-flag PAUSE_GO=$T/p-go $DA review apply "$R12" > "$T/conc1.out" 2>&1 &
+cpid=$!
+for _ in $(seq 100); do [ -e "$T/p-flag" ] && break; sleep 0.1; done
+wt12=$(git -C "$A" worktree list --porcelain | sed -n 's/^worktree \(.*apply-wt.*\)/\1/p')
+rp=$(jq -r .pid "$rec12" 2>/dev/null)
+[ -e "$T/p-flag" ] && [[ $rp =~ ^[0-9]+$ ]] && kill -0 "$rp" 2>/dev/null && [ -n "$(jq -r .ptoken "$rec12")" ] && [ -n "$wt12" ] \
+  && ok "(setup) the first apply is held inside: its record says started and carries its pid and start token, its worktree exists" || no "setup conc: flag=$([ -e "$T/p-flag" ] && echo yes || echo no) pid=$rp $(cat "$rec12" 2>&1)"
+out=$($DA review apply "$R12" 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "another apply of .* is running (process" <<<"$out" && [ -d "$wt12" ] && git -C "$A" rev-parse -q --verify agent/conc >/dev/null && [ "$(jq -r .status "$rec12")" = started ] && [ "$(jq -r .pid "$rec12")" = "$rp" ] \
+  && ok "a second apply of the run is refused while the first is alive, and removes neither its worktree, its branch nor its record" || no "second apply: rc=$rc $out"
+: > "$T/p-go"; wait "$cpid"; rc1=$?
+[ $rc1 = 0 ] && [ "$(jq -r .status "$rec12")" = "done" ] && [ "$(git -C "$A" rev-list --count "$dev..agent/conc")" = 2 ] && [ -f "$R12/applied" ] && [ ! -d "$rec12.run" ] \
+  && ok "the first apply then finishes: two commits on the branch, the record done, its lock removed" || no "first apply: rc=$rc1 $(cat "$T/conc1.out")"
+# (5) the record of a dead process is resumed (test 1 above); one whose process is alive is not, even with no lock directory: only a pid that is gone, or
+# that now belongs to another process (its start token differs), counts as a death
+R13=$(newrun livepid); id13=${R13##*/}; rec13=$T/s/apply/$id13.json
+PATH=$T/shim:$PATH DIE_AFTER="worktree add -q -b agent/livepid" DIE_FLAG=$T/die-5 $DA review apply "$R13" >/dev/null 2>&1
+git -C "$A" worktree prune
+dp=$(jq -r .pid "$rec13"); kill -0 "$dp" 2>/dev/null && no "setup livepid: the killed apply's pid $dp is alive"
+sleep 60 & sp=$!
+read -ra st < <(sed 's/^.*) //' "/proc/$sp/stat")   # the start time of the sleep: field 22 of stat, the 20th after the name
+jq --argjson p "$sp" --arg t "${st[19]}" '.pid = $p | .ptoken = $t' "$rec13" > "$T/rec13.json" && cp "$T/rec13.json" "$rec13"; rm -rf "$rec13.run"
+out=$($DA review apply "$R13" 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "another apply of .* is under way (process $sp" <<<"$out" && git -C "$A" rev-parse -q --verify agent/livepid >/dev/null && [ "$(jq -r .status "$rec13")" = started ] \
+  && ok "a started record whose process is alive is refused even with no lock directory, and nothing is removed" || no "live record: rc=$rc $out"
+jq '.ptoken = "1"' "$rec13" > "$T/rec13.json" && cp "$T/rec13.json" "$rec13"   # the pid now names another process than the one that made the record
+out=$($DA review apply "$R13" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "cut off while making agent/livepid" <<<"$out" && [ "$(jq -r .status "$rec13")" = "done" ] && ok "and a pid whose start token differs is a dead apply: it is resumed" || no "reused pid: rc=$rc $out"
+kill "$sp" 2>/dev/null; wait "$sp" 2>/dev/null
 # `local clean RUN` removes the apply record of the run and what a killed apply of it left in the state (its apply-in.RUN-ID.* and apply-wt.RUN-ID.* directories and the
 # worktree), and nothing of another run; `local clean --orphans` lists and removes the ones no run of the registry accounts for
 id9=${R9##*/}
@@ -184,11 +223,11 @@ astate() { find "$T/s" -maxdepth 1 \( -name "apply-in.$1.*" -o -name "apply-wt.$
 [ -f "$T/s/apply/$id9.json" ] && [ "$(astate "$id9")" = 1 ] && ok "(setup) the killed apply of a run left its record and a temporary directory named with the run's id in the state" || no "setup clean: $(ls -A "$T/s")"
 R10=$(newrun wtleft); id10=${R10##*/}
 PATH=$T/shim:$PATH DIE_AFTER="worktree add -q -b agent/wtleft" DIE_FLAG=$T/die-4 $DA review apply "$R10" >/dev/null 2>&1
-[ -e "$T/die-4" ] && [ -f "$T/s/apply/$id10.json" ] && [ "$(astate "$id10")" = 2 ] && [ "$(git -C "$A" worktree list | wc -l)" = 2 ] \
+[ -e "$T/die-4" ] && [ -f "$T/s/apply/$id10.json" ] && [ -d "$T/s/apply/$id10.json.run" ] && [ "$(astate "$id10")" = 2 ] && [ "$(git -C "$A" worktree list | wc -l)" = 2 ] \
   && ok "(setup) an apply killed after its worktree was made leaves the record, the patch copy, the worktree directory and the registered worktree" || no "setup wt: $(ls -A "$T/s"; git -C "$A" worktree list)"
 mkdir "$T/outside"; echo keep > "$T/outside/f"; ln -s "$T/outside" "$T/s/apply-in.$id10.link"   # a link in the name of a temporary directory: removed by no one's rm -r
 out=$($DA local clean "$R10" --discard 2>&1); rc=$?
-{ [ $rc = 0 ] && [ ! -e "$R10" ] && [ ! -e "$T/s/apply/$id10.json" ] && [ -z "$(find "$T/s" -maxdepth 1 \( -name "apply-in.$id10.*" -o -name "apply-wt.$id10.*" \) ! -name '*.link')" ] \
+{ [ $rc = 0 ] && [ ! -e "$R10" ] && [ ! -e "$T/s/apply/$id10.json" ] && [ ! -e "$T/s/apply/$id10.json.run" ] && [ -z "$(find "$T/s" -maxdepth 1 \( -name "apply-in.$id10.*" -o -name "apply-wt.$id10.*" \) ! -name '*.link')" ] \
   && [ "$(git -C "$A" worktree list | wc -l)" = 1 ] && [ -L "$T/s/apply-in.$id10.link" ] && [ "$(cat "$T/outside/f")" = keep ]; } \
   && ok "clean removes the apply record, the patch copy and the worktree of a killed apply of the run (and prunes the worktree), and follows no link" || no "clean wt: rc=$rc $out $(ls -A "$T/s")"
 { [ -f "$T/s/apply/$id9.json" ] && [ "$(astate "$id9")" = 1 ] && [ -d "$R9" ]; } && ok "and leaves the record and the directory of another run alone" || no "other run: $(ls -A "$T/s" "$T/s/apply")"
@@ -282,6 +321,15 @@ out=$($DA review apply --from-saved "$IS" 2>&1); rc=$?
 { [ $rc = 0 ] && [ "$(git -C "$A" rev-list --count "$dev..agent/saved1")" = 2 ] && grep -q "applied 2 patch(es)" <<<"$out" && read -r ab at _ < "$SS/applied" \
   && [ "$ab" = agent/saved1 ] && [ "$at" = "$(git -C "$A" rev-parse agent/saved1)" ] && grep -q "^local refs/heads/agent/saved1 " "$SS/refs.before"; } \
   && ok "--from-saved applies the saved series on agent/<slug> at the run's base and records it in the saved copy" || no "from-saved apply: rc=$rc $out"
+# the saved copy keeps the run's task block, so the SCOPE it recorded is still the limit when the run directory is gone
+printf 'Touch the names only.\n' > "$T/task-saved.txt"
+NR_ARGS=(--task-file "$T/task-saved.txt" --done true --scope internal/); RT=$(newrun savedscope); NR_ARGS=(); IT=$(basename "$RT"); ST=$T/s/runs/$IT
+out=$($DA review check "$RT/out" 2>&1); [ $? = 1 ] && grep -q "outside SCOPE (internal/)" <<<"$out" || no "(setup) the series does not break SCOPE: $out"
+$DA local verify "$RT" >/dev/null 2>&1
+[ -f "$ST/task.md" ] && grep -q '^SCOPE: internal/$' "$ST/task.md" && ok "the saved copy of a run holds its task block (task.md)" || no "saved copy has no task.md: $(ls "$ST" 2>&1)"
+rm -rf "$RT"
+out=$($DA review apply --from-saved "$IT" 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "outside SCOPE" <<<"$out" && ! git -C "$A" rev-parse -q --verify agent/savedscope >/dev/null && ok "--from-saved applies nothing that breaks the SCOPE of the run's task block" || no "from-saved scope: rc=$rc $out"
 out=$($DA review apply --from-saved "$IS" --branch agent/again 2>&1); rc=$?
 [ $rc != 0 ] && grep -q "applied already" <<<"$out" && ! git -C "$A" rev-parse -q --verify agent/again >/dev/null && ok "and refuses to apply it twice" || no "from-saved twice: rc=$rc $out"
 RS2=$(newrun saved2); IS2=$(basename "$RS2"); $DA local verify "$RS2" >/dev/null 2>&1; rm -rf "$RS2"

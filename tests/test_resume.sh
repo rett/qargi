@@ -93,14 +93,20 @@ git -C "$O" update-ref refs/heads/master "$(rev "$O" refs/heads/develop)"
 out=$($REL finish 0.3.0 2>&1); rc=$?
 [ $rc != 0 ] && grep -q "origin refs/heads/master is" <<<"$out" && [ "$(rev "$R" master)" = "$m0" ] && [ -f "$INTENT/app-release-0.3.0.json" ] \
   && ok "when origin holds another master the finish is refused, the ref is named and nothing changes" || no "differs: rc=$rc $out"
+grep -qF "rm $INTENT/app-release-0.3.0.json" <<<"$out" && grep -qF "git -C $R tag -d 0.3.0" <<<"$out" && [ "$(rev "$R" refs/tags/0.3.0)" != none ] \
+  && ok "and the advice to give the record up names both commands: remove the record and the dead run's local tag" || no "advice: $out"
 # --- origin at the old values: the push never happened, the record and the tag are dropped and the finish starts again
 git -C "$O" update-ref refs/heads/master "$rm0"; git -C "$O" update-ref refs/heads/develop "$rd0"; git -C "$O" tag -d 0.3.0 >/dev/null
 out=$($REL finish 0.3.0 2>&1); rc=$?; t=$(tok <<<"$out")
-[ $rc = 0 ] && [ -n "$t" ] && grep -q "stopped before anything reached origin" <<<"$out" && [ ! -e "$INTENT/app-release-0.3.0.json" ] && [ "$(rev "$R" refs/tags/0.3.0)" = none ] && [ "$(rev "$R" master)" = "$m0" ] \
-  && ok "origin at the old values: the tag and the record are dropped and a fresh plan is made" || no "stale: rc=$rc $out"
+oldtag=$(rev "$R" refs/tags/0.3.0)
+[ $rc = 0 ] && [ -n "$t" ] && grep -q "stopped before anything reached origin" <<<"$out" && grep -q "removed when this plan is applied" <<<"$out" && [ "$(rev "$R" master)" = "$m0" ] \
+  && ok "origin at the old values: a fresh plan is made and says the old tag and record are removed when it is applied" || no "stale: rc=$rc $out"
+[ -e "$INTENT/app-release-0.3.0.json" ] && [ "$oldtag" != none ] && ok "a plan alone removes neither the tag nor the record" || no "the plan removed the tag or the record: tag=$oldtag $(ls "$INTENT")"
+out=$($REL finish 0.3.0 --plan 000000000000 --approved go 2>&1); rc=$?
+[ $rc != 0 ] && [ -e "$INTENT/app-release-0.3.0.json" ] && [ "$(rev "$R" refs/tags/0.3.0)" = "$oldtag" ] && ok "an apply with a wrong token removes neither the tag nor the record" || no "wrong token removed: rc=$rc $out"
 $REL finish 0.3.0 --plan "$t" --approved go >/dev/null 2>&1
 [ "$(rev "$R" master)" = "$(rev "$O" refs/heads/master)" ] && [ "$(rev "$R" master)" != "$m0" ] && [ "$(rev "$O" refs/tags/0.3.0)" != none ] && [ ! -e "$INTENT/app-release-0.3.0.json" ] \
-  && ok "and that finish goes through" || no "stale then finish: master=$(rev "$R" master) origin=$(rev "$O" refs/heads/master)"
+  && ok "and the apply drops them and that finish goes through" || no "stale then finish: master=$(rev "$R" master) origin=$(rev "$O" refs/heads/master)"
 # --- a finish that is running is not mistaken for one that was cut off: its lock names a live process, a dead one is taken over
 $F start busy >/dev/null 2>&1
 sleep 60 & sp=$!
@@ -110,4 +116,21 @@ out=$($F finish busy 2>&1); rc=$?
 kill "$sp"; wait "$sp" 2>/dev/null
 out=$($F finish busy 2>&1); rc=$?
 [ $rc != 0 ] && ! grep -q "another finish" <<<"$out" && [ ! -d "$INTENT/app-feature-busy.json.run" ] && ok "and once that process is gone the lock is taken over and removed at exit" || no "lock dead: rc=$rc $out"
+# --- two takers of a stale lock cannot both get it: twelve verbs find a lock whose process is gone, at the same moment; one holds it (the others find its live
+# pid and stop), and none enters while another holds it. The functions are the ones of lib/gitflow.sh (from intent_file to intent_unlock), run as they are.
+sed -n '/^intent_file()/,/^intent_unlock()/p' lib/gitflow.sh > "$T/lockfns.sh"
+cat > "$T/racer.sh" <<'R'
+set -u
+die() { exit 7; }
+DA_STATE=$1; PROJ=app; . "$2"
+while [ ! -e "$3" ]; do :; done
+intent_lock race-key
+echo "in $$" >> "$4"; sleep 0.5; echo out >> "$4"; intent_unlock
+R
+RL=$T/race/finish-intent/app-race-key.json.run; mkdir -p "$RL"; true & dead=$!; wait "$dead"; echo "$dead" > "$RL/pid"
+for _ in $(seq 12); do bash "$T/racer.sh" "$T/race" "$T/lockfns.sh" "$T/race.gate" "$T/race.log" 2>/dev/null & done
+sleep 1; : > "$T/race.gate"; wait
+nin=$(grep -c '^in ' "$T/race.log" 2>/dev/null); nin=${nin:-0}
+[ "$nin" = 1 ] && [ "$(grep -c '^out' "$T/race.log")" = 1 ] && ok "of twelve verbs that find the same stale lock exactly one takes it" || no "stale lock race: $(tr '\n' ' ' < "$T/race.log")"
+[ ! -d "$RL" ] || no "its lock is left behind"
 exit $fail

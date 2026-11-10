@@ -283,9 +283,16 @@ apply_record() {
 }
 # apply_resume -> a marker of this run exists (amark): done, refuse; built, finish it; started, remove what it left and go on (the caller then applies the series again)
 apply_resume() {
-  local st mb mbase cur wt
+  local st mb mbase cur wt pid ptoken
   st=$(jq -r '.status' "$amark" 2>/dev/null) || st=''
   mb=$(jq -r '.branch' "$amark" 2>/dev/null) || mb=''
+  # the process that made the record (its pid and start time) is still running: that apply is under way, not cut off (the lock above says the same; the record
+  # is the second witness, for a lock directory that was removed). Only a record whose process is gone is resumed.
+  if [ "$st" = started ] || [ "$st" = built ]; then
+    pid=$(jq -r '.pid // empty' "$amark" 2>/dev/null) || pid=''; ptoken=$(jq -r '.ptoken // empty' "$amark" 2>/dev/null) || ptoken=''
+    [ -n "$pid" ] || die "$amark has no process id, so I cannot tell whether the apply that made it is still running: remove it if you are sure it is not. Nothing was changed"
+    ! proc_alive "$pid" "$ptoken" || die "another apply of $RUN is under way (process $pid, $amark): nothing was changed"
+  fi
   case $st in
     done) die "this run was applied already ($mb at $(jq -r '.tip' "$amark" | cut -c1-12)): qargi feature merge, then qargi local clean $RUN";;
     built)
@@ -334,6 +341,9 @@ case $verb in
     [ "$(run_class "$RUN")" != read-only ] \
       || die "$RUN is a read-only run ($(cat "$SRC/ability" 2>/dev/null || echo review)): its product is a report, never patches. Read $SRC/out/report.md; nothing was applied"
     appid=${RUN##*/}; amark=$(apply_rec_file "$RUN")
+    # one apply of a run at a time: a second one finds the lock of the first (a pid lock, like the finishing verbs') and stops before it touches the record,
+    # the branch or the worktree; the lock of an apply that was killed is taken over
+    pid_lock "$amark.run" "apply of $RUN"
     if [ -e "$amark" ] || [ -L "$amark" ]; then apply_resume; fi   # a record of an earlier apply of this run: refuse, finish it or clear what it left
     [ ! -L "$SRC/applied" ] && { [ ! -e "$SRC/applied" ] || [ -f "$SRC/applied" ]; } || die "$SRC/applied is a link or not a plain file: a member put it there (look at the run; nothing was applied)"
     [ ! -f "$SRC/applied" ] || die "this run was applied already ($(cut -d' ' -f1 "$SRC/applied")): qargi feature merge, then qargi local clean $RUN"
@@ -393,7 +403,8 @@ case $verb in
     # the apply record is made before the branch is, in the lead's state (made exclusively: a second apply of the run finds it)
     mkdir -p "$(dirname "$amark")"
     ( set -C; umask 077; jq -nc --arg run "$RUN" --arg src "$SRC" --arg b "$BRANCH" --arg base "$sha" --arg at "$(now)" \
-        '{schema:1, run:$run, src:$src, branch:$b, base:$base, status:"started", steps:[], at:$at}' > "$amark" ) 2>/dev/null \
+        --arg pid "$$" --arg ptoken "$(proc_token $$)" \
+        '{schema:1, run:$run, src:$src, branch:$b, base:$base, status:"started", steps:[], at:$at, pid:($pid|tonumber), ptoken:$ptoken}' > "$amark" ) 2>/dev/null \
       || die "could not make the apply record $amark (is another apply of $RUN under way?): nothing was applied"
     WT=$(mktemp -d "$DA_STATE/apply-wt.$appid.XXXXXX")
     g worktree add -q -b "$BRANCH" "$WT" "$sha" 2>/dev/null || { rm -rf "$WT"; WT=''; rm -f "$amark" "$amark.lock"; die "could not make a temporary worktree for $BRANCH"; }

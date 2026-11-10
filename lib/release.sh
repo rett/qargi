@@ -472,7 +472,7 @@ release_finish_resume() {
   echo "  steps already done: $(jq -r '.done | if length == 0 then "none" else join(", ") end' "$f")"
   if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release finish $VER${HOTFIX:+ --hotfix} --plan $tok --approved \"...\")"; exit 0; fi
   need_plan "$tok"
-  [ -n "$tagsha" ] || die "the record of the interrupted finish has no tag: remove $f and start again"
+  [ -n "$tagsha" ] || die "the record of the interrupted finish has no tag: $(intent_remove_advice "$key"), then start again"
   if [ -z "$(g rev-parse -q --verify "refs/tags/$VER" 2>/dev/null || true)" ]; then
     [ -n "$PUSHED" ] && g fetch -q origin "refs/tags/$VER:refs/tags/$VER" 2>/dev/null || die "the tag $VER is missing here and could not be fetched from origin"
   fi
@@ -793,14 +793,16 @@ case $verb in
     if intent_has "$KIND-$VER"; then
       intent_probe "$KIND-$VER"
       if [ "$IP" = old ]; then
-        intent_drop "$KIND-$VER"; echo "note: an earlier finish of $VER stopped before anything reached origin or moved here; its tag and record are removed and this one starts again" >&2
+        # its tag and record are removed with the apply (after the plan token is checked), never by a plan alone; the tag is checked now to be the one it made
+        STALE_REC=1; intent_drop "$KIND-$VER" --check
+        if [ -z "$APPROVED" ]; then echo "note: an earlier finish of $VER stopped before anything reached origin or moved here; its tag and record are removed when this plan is applied" >&2; fi
       else
         release_finish_resume; exit 0
       fi
     fi
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR"
     branch_exists master && branch_exists develop || die "git-flow needs a master and a develop branch"
-    g rev-parse -q --verify "refs/tags/$VER" >/dev/null && die "the tag $VER exists already"
+    [ -n "${STALE_REC:-}" ] || ! g rev-parse -q --verify "refs/tags/$VER" >/dev/null || die "the tag $VER exists already"   # a stale finish's own tag is dropped at the apply
     rel_valid
     ftmp=$(mktemp -d "$DA_STATE/.release-chk.XXXXXX")
     if [ "$VFILE" != none ]; then
@@ -873,6 +875,7 @@ case $verb in
       echo "note: no origin remote, so no CI ran on $BR; the local whole-suite run stands in" >&2
     fi
     need_free master "$second"; need_free_wt "$BR"   # a clean worktree that qargi made for the fix may hold BR: it is removed below
+    if [ -n "${STALE_REC:-}" ]; then intent_drop "$KIND-$VER"; echo "note: an earlier finish of $VER stopped before anything reached origin or moved here; its tag and record are removed and this one starts again" >&2; fi
     m0=$(sha_of master); s0=$(sha_of "$second")
     rm0=$(remote_was master); rs0=$(remote_was "$second"); rb0=$(remote_was "$BR")   # what origin has (fetched above): where the journal lines of the pushes start
     k1="$KIND-$VER-into-master"; k2="$KIND-$VER-into-${second//\//_}"
@@ -893,9 +896,10 @@ case $verb in
     tagsha=$(g rev-parse "refs/tags/$VER")
     intent_update "$KIND-$VER" '.refs[2].new = $t' --arg t "$tagsha"
     if [ -n "$PUSHED" ]; then
-      # all or none: the push comes before any local branch moves, so a failure changes nothing
+      # all or none, and the push comes before any local branch moves. A push that exits non-zero may still have reached origin (the answer was
+      # lost), so the record and the local tag stay: the next run asks origin and completes the finish, or drops the tag and starts over
       if ! g push -q --atomic origin "$nm:refs/heads/master" "$ns:refs/heads/$second" "refs/tags/$VER"; then
-        g tag -d "$VER" >/dev/null 2>&1; intent_clear "$KIND-$VER"; die "the push failed; nothing was changed locally or on origin (run it again)"
+        die "the push reported a failure, and origin may hold the release anyway (master and $second here were not moved; the local tag $VER and the record of this finish are kept): run qargi release finish $VER${HOTFIX:+ --hotfix} again; it asks origin, then completes the finish or drops the tag and starts it over"
       fi
     fi
     release_finish_tail;;

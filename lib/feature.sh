@@ -319,7 +319,9 @@ case $verb in
     if intent_has "feature-$NAME_ARG"; then
       intent_probe "feature-$NAME_ARG"
       if [ "$IP" = old ]; then
-        intent_drop "feature-$NAME_ARG"; echo "note: an earlier finish of $NAME_ARG stopped before anything reached origin or moved here; its record is removed and this one starts again" >&2
+        # the record is removed with the apply (after the plan token is checked), never by a plan alone
+        STALE_REC=1
+        if [ -z "$APPROVED" ]; then echo "note: an earlier finish of $NAME_ARG stopped before anything reached origin or moved here; its record is removed when this plan is applied" >&2; fi
       else
         feature_finish_resume; exit 0
       fi
@@ -365,6 +367,7 @@ case $verb in
     show_incoming develop "$BR"; backlog_note develop "$BR"
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi feature finish $NAME_ARG${KEEP:+ --keep} --plan $tok --approved \"...\")"; exit 0; fi
     need_plan "$tok"
+    if [ -n "${STALE_REC:-}" ]; then intent_drop "feature-$NAME_ARG"; echo "note: an earlier finish of $NAME_ARG stopped before anything reached origin or moved here; its record is removed and this one starts again" >&2; fi
     need_free develop
     need_free_wt "$BR"
     hold_begin "$NAME_ARG"
@@ -377,7 +380,9 @@ case $verb in
       '{schema:1, verb:"feature:finish", project:$project, name:$name, pushed:$pushed, refs:[{ref:"refs/heads/develop", local_old:$d0, origin_old:$rd0, new:$m}],
         ctx:{head:$h, keep:$keep, pushd:$pushd, pushwhy:$pushwhy, rdel:$rdel, k:$k}, done:[]}')"
     if [ -n "$pushd" ]; then
-      g push -q --atomic origin "$MERGED:refs/heads/develop" || { intent_clear "feature-$NAME_ARG"; die "the push failed; nothing was changed locally or on origin (run it again)"; }
+      # a push that exits non-zero may still have reached origin (the answer was lost): the record stays, and the next run asks origin
+      g push -q --atomic origin "$MERGED:refs/heads/develop" \
+        || die "the push reported a failure, and origin may hold the merge anyway (develop here was not moved): run qargi feature finish $NAME_ARG again; it asks origin, then completes the finish or starts it over"
     fi
     feature_finish_tail;;
   *) usage_die "usage: qargi feature start|list|park|sync|merge|status|verify|finish NAME [BRANCH] [--project P]";;
