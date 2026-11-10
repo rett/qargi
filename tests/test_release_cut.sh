@@ -302,4 +302,20 @@ jq '.release = {changelog: {unreleased: "## Next"}}' "$T/c/projects/nover.json" 
 out=$($REL start 0.1.1 --hotfix 2>&1); rc=$?
 [ "$rc" = 1 ] && grep -q "has no '## Next' section to release" <<<"$out" && ok "an unreleased template without {version}: a hotfix on a master without that heading is refused" || no "template without version: rc=$rc $out"
 
+# --- where the added heading goes: above the first heading that follows the released template (any version and date), not above a `## Format` note, and
+# not by a heading inside a fenced block; a file with no trailing newline keeps none; with no heading of the template it goes above the first of the level;
+# --allow-empty-notes changes nothing on this path
+mk place
+jq '.release = {changelog: {unreleased: "## {version} (unreleased)", released: "## {version} ({date})"}}' "$T/c/projects/place.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/place.json"
+git -C "$R" checkout -q master; printf '# Changelog\n\n## Format\n\nan entry is a bullet\n\n```\n## 9.9.9 (2020-01-01)\n```\n\n## 1.0.0 (2026-01-01)\n\n- first' > "$R/CHANGELOG.md"
+git -C "$R" commit -q -am "a note above the sections, a fenced heading, no trailing newline" && git -C "$R" branch -f develop master && git -C "$R" checkout -q parked
+rstart 1.0.1 --hotfix --allow-empty-notes --date 2026-05-06 >/dev/null 2>&1
+git -C "$R" show hotfix/1.0.1:CHANGELOG.md | cmp -s - <(printf '# Changelog\n\n## Format\n\nan entry is a bullet\n\n```\n## 9.9.9 (2020-01-01)\n```\n\n## 1.0.1 (2026-05-06)\n\n## 1.0.0 (2026-01-01)\n\n- first') \
+  && ok "hotfix start: the heading goes above the first version section, not above '## Format' or a fenced heading; no trailing newline is added; --allow-empty-notes is the same" || no "placement: $(git -C "$R" show hotfix/1.0.1:CHANGELOG.md 2>&1)"
+mk place2
+jq '.release = {changelog: {unreleased: "## {version} (unreleased)", released: "## {version} ({date})"}}' "$T/c/projects/place2.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/place2.json"
+git -C "$R" checkout -q master; printf '# Changelog\n\n## Notes\n\n- x\n' > "$R/CHANGELOG.md"; git -C "$R" commit -q -am "no version heading" && git -C "$R" branch -f develop master && git -C "$R" checkout -q parked
+rstart 1.0.1 --hotfix --date 2026-05-06 >/dev/null 2>&1
+git -C "$R" show hotfix/1.0.1:CHANGELOG.md | cmp -s - <(printf '# Changelog\n\n## 1.0.1 (2026-05-06)\n\n## Notes\n\n- x\n') && ok "hotfix start: with no heading that follows the released template the heading goes above the first of its level" || no "fallback placement: $(git -C "$R" show hotfix/1.0.1:CHANGELOG.md 2>&1)"
+
 exit $fail
