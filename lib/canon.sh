@@ -36,6 +36,9 @@ PCFG=$DA_CONF/projects/$PROJECT.json
 [ -f "$PCFG" ] || die "no stored answers for $PROJECT: run /qargi-project first"
 ROLES=$(jq -r '([.roles | keys[]] + (if ((.teams // {}) | length) > 0 then ["lead"] else [] end)) | join(",")' "$PCFG")
 TODAY=$(date -u +%F)
+# every temporary file and directory of a verb lives under WORK, which is removed when the verb ends, by its status or by die
+WORK=$(mktemp -d) || die "cannot make a temporary directory"
+trap 'rm -rf "$WORK"' EXIT
 case $KIND in ''|memory|reference) ;; *) die "--kind memory|reference";; esac
 kinds=${KIND:-"memory reference"}
 
@@ -51,7 +54,7 @@ reach_all() {
   local k s t bad=0
   for k in $kinds; do
     s=$(store_of "$k"); [ -n "$s" ] || continue
-    t=$(mktemp); if probe "$s" "$t"; then rm -f "$t"; else echo "== $k store $s"; echo "unreachable: $WHY"; bad=1; fi
+    t=$(mktemp -p "$WORK"); if probe "$s" "$t"; then rm -f "$t"; else echo "== $k store $s"; echo "unreachable: $WHY"; bad=1; fi
   done
   return "$bad"
 }
@@ -66,7 +69,7 @@ exec_ops() { mem_exec_ops "$@"; }
 
 make_plan() { # kind -> prints plan json path
   local k=$1 store; store=$(store_of "$k"); [ -n "$store" ] || die "the project has no $k store recorded"
-  local tmp; tmp=$(mktemp -d)
+  local tmp; tmp=$(mktemp -d -p "$WORK")
   probe "$store" "$tmp/s.jsonl" || die "the $k store $store is unreachable: $WHY; nothing was planned"
   python3 -I "$PY" plan --kind "$k" --project "$PROJECT" --roles "$ROLES" \
     --store "$tmp/s.jsonl" --seed "$SEED" --today "$TODAY" > "$tmp/plan.json" || die "planning failed for $k"
@@ -81,7 +84,7 @@ case $verb in
     rc=0
     for k in $kinds; do
       store=$(store_of "$k"); [ -n "$store" ] || { echo "$k: no store recorded"; continue; }
-      tmp=$(mktemp); echo "== $k store $store"
+      tmp=$(mktemp -p "$WORK"); echo "== $k store $store"
       probe "$store" "$tmp" || { echo "unreachable: $WHY"; rc=1; continue; }
       python3 -I "$PY" check --kind "$k" --project "$PROJECT" --roles "$ROLES" --store "$tmp" || rc=1
       rm -f "$tmp"
@@ -89,17 +92,21 @@ case $verb in
     exit $rc;;
   plan)
     reach_all || die "a store is unreachable: nothing was planned"
-    tok=$(for k in $kinds; do p=$(make_plan "$k"); jq -S -c .ops "$p"; done | plan_token)
-    for k in $kinds; do echo "== $k"; p=$(make_plan "$k"); show_plan "$p"; done
+    declare -A plan=()
+    for k in $kinds; do plan[$k]=$(make_plan "$k"); done
+    tok=$(for k in $kinds; do jq -S -c .ops "${plan[$k]}"; done | plan_token)
+    for k in $kinds; do echo "== $k"; show_plan "${plan[$k]}"; done
     echo "plan token: $tok   (apply with: --plan $tok --approved \"...\")";;
   apply)
     [ -n "$APPROVED" ] || die "apply needs --approved \"<the user's go-ahead for the plan shown by: plan>\""
     ant_ok
     reach_all || die "a store is unreachable: nothing was changed"
-    tok=$(for k in $kinds; do p=$(make_plan "$k"); jq -S -c .ops "$p"; done | plan_token)
+    declare -A plan=()
+    for k in $kinds; do plan[$k]=$(make_plan "$k"); done
+    tok=$(for k in $kinds; do jq -S -c .ops "${plan[$k]}"; done | plan_token)
     need_plan_nested "$tok"; audit_log canon-apply "$PROJECT"
     for k in $kinds; do
-      echo "== $k"; p=$(make_plan "$k"); show_plan "$p"
+      p=${plan[$k]}; echo "== $k"; show_plan "$p"
       [ "$(jq '.ops|length' "$p")" = 0 ] && { echo "nothing to do"; continue; }
       exec_ops "$(store_of "$k")" "$p"
     done
@@ -114,7 +121,7 @@ case $verb in
     for part in reference memory; do
       [ -d "$RS/$part" ] || continue
       store=$(store_of "$part"); [ -n "$store" ] || { echo "the project has no $part store recorded"; continue; }
-      tmp=$(mktemp); probe "$store" "$tmp" || die "the $part store $store is unreachable: $WHY; nothing was written"
+      tmp=$(mktemp -p "$WORK"); probe "$store" "$tmp" || die "the $part store $store is unreachable: $WHY; nothing was written"
       (cd "$RS/$part" && find . -type f | sort) | while IFS= read -r f; do
         rel=${f#./}; p="/roles/$ROLE/$rel"; [ "$ROLE" != shared ] || p="/shared/$rel"
         id=$(jq -r --arg p "$p" 'select(.path==$p)|.id' "$tmp")
@@ -165,7 +172,7 @@ case $verb in
     case $PATH_ARG in /roles/*/*) ;; *) die "--path must be /roles/<role>/<file>";; esac
     store=$(store_of "$KIND"); ant_ok; audit_log canon-promote "$PATH_ARG"
     dest="/shared/${PATH_ARG#/roles/*/}"
-    tmp=$(mktemp); probe "$store" "$tmp" || die "the $KIND store $store is unreachable: $WHY; nothing was moved"
+    tmp=$(mktemp -p "$WORK"); probe "$store" "$tmp" || die "the $KIND store $store is unreachable: $WHY; nothing was moved"
     id=$(jq -r --arg p "$PATH_ARG" 'select(.path==$p)|.id' "$tmp"); [ -n "$id" ] || die "no such file: $PATH_ARG"
     [ -z "$(jq -r --arg p "$dest" 'select(.path==$p)|.id' "$tmp")" ] || die "$dest already exists; merge by hand"
     ant beta:memory-stores:memories update --memory-store-id "$store" --memory-id "$id" --path "$dest" </dev/null >/dev/null || die "move failed"
