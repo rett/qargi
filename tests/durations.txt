@@ -123,3 +123,5 @@
 17 bash tests/test_resume_push.sh
 25 bash tests/test_release_master_merge.sh
 25 bash tests/test_release_cut.sh
+3 python3 tests/test_marshal_batch.py
+27 bash tests/test_marshal_batch.sh
