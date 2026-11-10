@@ -91,9 +91,10 @@ out=$(TMPDIR=$T/tmp bin/qargi canon plan solo 2>&1); rc=$?
 [ -z "$(left)" ] && ok "a project with no store: nothing left in TMPDIR" || no "solo tmp (rc=$rc, left: $(left)): $out"
 
 # a project with no store recorded: plan and apply stop with the reason and print no token, no jq error
+# (jq starts each of its errors with `jq:`; the bare name could sit in a random temporary path in the output)
 for v in "plan solo" "apply solo --plan x --approved go"; do
   out=$(bin/qargi canon $v 2>&1); rc=$?
-  [ "$rc" != 0 ] && grep -qF 'no memory store recorded' <<<"$out" && ! grep -qiE 'plan token|jq|Could not open' <<<"$out" \
+  [ "$rc" != 0 ] && grep -qF 'no memory store recorded' <<<"$out" && ! grep -qiE 'plan token|jq:|Could not open' <<<"$out" \
     && ok "${v%% *}: a project with no store stops with 'no store recorded', no token" || no "solo $v (rc=$rc): $out"
 done
 out=$(bin/qargi canon plan solo --kind reference 2>&1); rc=$?
