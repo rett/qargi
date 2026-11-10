@@ -116,6 +116,11 @@ class DocsTree(unittest.TestCase):
         self.assertLessEqual(n, README_MAX_LINES, "README.md has %d lines; the detail belongs in docs/" % n)
         self.assertIn("https://qargi.rettware.com/", read(os.path.join(ROOT, "README.md")))
 
+    def test_readme_requirements_name_the_tools_qargi_calls(self):
+        line = next(l for l in read(os.path.join(ROOT, "README.md")).split("\n") if l.startswith("Requirements:"))
+        for tool in ("bash", "GNU coreutils", "`timeout`", "findutils", "git", "jq", "python3", "`flock`", "`ssh-keygen`"):
+            self.assertIn(tool, line)
+
     def test_documentation_table(self):
         rows = table_rows(os.path.join(ROOT, "README.md"))
         self.assertTrue(rows, "README.md has no table under '## Documentation'")
