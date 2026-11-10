@@ -152,4 +152,21 @@ out=$($REL finish 0.5.0 2>&1); rc=$?; t2=$(tok <<<"$out")
 [ $rc = 0 ] && [ -n "$t2" ] && grep -q "stopped before anything reached origin" <<<"$out" && ok "the re-run finds origin unchanged and plans afresh" || no "release bad re-run: rc=$rc $out"
 out=$($REL finish 0.5.0 --plan "$t2" --approved go 2>&1); rc=$?
 [ $rc = 0 ] && [ "$(rev "$R" master)" = "$(rev "$O" refs/heads/master)" ] && [ "$(rev "$R" master)" != "$m0" ] && [ "$(rev "$O" refs/tags/0.5.0)" != none ] && [ ! -e "$INTENT/app-release-0.5.0.json" ] && ok "and that release goes through" || no "release bad apply: rc=$rc $out"
+# --- two takers of a stale lock cannot both get it: twelve verbs find a lock whose process is gone, at the same moment; one holds it (the others find its live
+# pid and stop), and none enters while another holds it. The functions are the ones of lib/gitflow.sh (from intent_file to intent_unlock), run as they are.
+sed -n '/^intent_file()/,/^intent_unlock()/p' lib/gitflow.sh > "$T/lockfns.sh"
+cat > "$T/racer.sh" <<'R'
+set -u
+die() { exit 7; }
+DA_STATE=$1; PROJ=app; . "$2"
+while [ ! -e "$3" ]; do :; done
+intent_lock race-key
+echo "in $$" >> "$4"; sleep 0.5; echo out >> "$4"; intent_unlock
+R
+RL=$T/race/finish-intent/app-race-key.json.run; mkdir -p "$RL"; sleep 0 & dead=$!; wait "$dead"; echo "$dead" > "$RL/pid"
+for _ in $(seq 12); do bash "$T/racer.sh" "$T/race" "$T/lockfns.sh" "$T/race.gate" "$T/race.log" 2>/dev/null & done
+sleep 1; : > "$T/race.gate"; wait
+nin=$(grep -c '^in ' "$T/race.log" 2>/dev/null); nin=${nin:-0}
+[ "$nin" = 1 ] && [ "$(grep -c '^out' "$T/race.log")" = 1 ] && ok "of twelve verbs that find the same stale lock exactly one takes it" || no "stale lock race: $(tr '\n' ' ' < "$T/race.log")"
+[ ! -d "$RL" ] || no "its lock is left behind"
 exit $fail

@@ -431,21 +431,30 @@ intent_write() { # KEY JSON: create or replace the record, atomically, under its
   mkdir -p "$(dirname "$f")" && chmod 700 "$(dirname "$f")" 2>/dev/null
   ( umask 077; flock 9; printf '%s\n' "$2" > "$f.tmp" && mv -f "$f.tmp" "$f" ) 9> "$f.lock" || die "could not write the intent record $f: nothing was changed"
 }
-# intent_lock KEY -> a lock directory (FILE.run with the pid of this verb in it) held while a finish of KEY runs, so a second finish of the same name
-# never mistakes the record of a running one for one that was cut off. A lock whose pid is gone (a death) is taken over; the exit trap removes it.
-# (Not flock on an inherited descriptor: the lease renewer the verb starts would outlive a killed verb and keep it.)
+# A pid lock: a directory with the pid of its holder (and a token naming that process, so a pid given to another process later is not taken for it) in it,
+# held while a verb runs, so a second verb of the same kind never mistakes the record of a running one for one that was cut off. A lock whose process is
+# gone (a death) is taken over; the exit trap removes it. The check "is the holder gone" and the replacement are one step under a short flock on the
+# directory's `.pidlock` (held in a subshell nothing outlives), so two takers of a stale lock cannot both get it: the second finds the first's live lock.
+# (Not flock held for the verb's whole run: the lease renewer the verb starts would inherit the descriptor, outlive a killed verb and keep it.)
 INTENT_LOCK=''
-intent_lock() {
-  local f d pid; f=$(intent_file "$1"); d=$f.run
-  mkdir -p "$(dirname "$f")" && chmod 700 "$(dirname "$f")" 2>/dev/null
-  until mkdir "$d" 2>/dev/null; do
-    pid=$(cat "$d/pid" 2>/dev/null || true)
-    if [ -n "$pid" ]; then kill -0 "$pid" 2>/dev/null || { rm -rf "$d"; continue; }
-    elif [ -z "$(find "$d" -maxdepth 0 -newermt '-10 seconds' 2>/dev/null)" ]; then rm -rf "$d"; continue; fi   # no pid yet: a lock made in the last seconds is being taken
-    die "another finish of $1 is running (process ${pid:-unknown}, $d); nothing was changed"
-  done
-  echo "$$" > "$d/pid"; INTENT_LOCK=$d
+proc_token() { local s a; s=$(cat "/proc/$1/stat" 2>/dev/null) || return 0; read -ra a <<<"${s##*) }"; echo "${a[19]:-}"; }   # PID -> its start time (field 22 of /proc/PID/stat)
+proc_alive() { local t; kill -0 "$1" 2>/dev/null || return 1; [ -n "${2:-}" ] || return 0; t=$(proc_token "$1"); [ -z "$t" ] || [ "$t" = "$2" ]; }   # PID [TOKEN]
+# pid_lock DIR WHAT -> takes the lock directory DIR for this verb (INTENT_LOCK is DIR, which the exit trap removes); dies "another WHAT is running" when its holder lives
+pid_lock() {
+  local d=$1 rc=0 out
+  mkdir -p "$(dirname "$d")" && chmod 700 "$(dirname "$d")" 2>/dev/null
+  out=$( ( flock 9
+    if ! mkdir "$d" 2>/dev/null; then
+      pid='' tok=''; { read -r pid tok <"$d/pid"; } 2>/dev/null || true
+      if [ -n "$pid" ]; then
+        if proc_alive "$pid" "$tok"; then echo "$pid"; exit 3; fi
+      elif [ -n "$(find "$d" -maxdepth 0 -newermt '-10 seconds' 2>/dev/null)" ]; then echo unknown; exit 3; fi   # no pid yet: a lock made in the last seconds is being taken
+      rm -rf -- "$d"; mkdir "$d" || exit 1
+    fi
+    echo "$$ $(proc_token $$)" > "$d/pid" ) 9>"$(dirname "$d")/.pidlock" ) || rc=$?
+  case $rc in 0) INTENT_LOCK=$d;; 3) die "another $2 is running (process $out, $d); nothing was changed";; *) die "could not take the lock $d";; esac
 }
+intent_lock() { pid_lock "$(intent_file "$1").run" "finish of $1"; }   # KEY
 intent_unlock() { [ -z "$INTENT_LOCK" ] || rm -rf "$INTENT_LOCK"; INTENT_LOCK=''; }
 intent_get() { jq -r "$2" "$(intent_file "$1")"; }   # KEY JQ_FILTER
 intent_update() { # KEY JQ_FILTER [jq args]: rewrite the record in place, under its lock
