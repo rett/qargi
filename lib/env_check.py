@@ -96,12 +96,8 @@ def run(argv, cwd, timeout):
 
 def git(repo, *args):
     """(exit, stdout) of a git command in repo: no prompt, no optional lock, no pager."""
-    env = dict(PE.child_env(), GIT_OPTIONAL_LOCKS="0")
-    try:
-        r = subprocess.run(["git", "-c", "core.fsmonitor=false", "-C", repo] + list(args), capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env, timeout=30)
-    except (OSError, subprocess.SubprocessError):
-        return 1, ""
-    return r.returncode, r.stdout
+    rc, out, _ = PE.git(*args, repo=repo)
+    return (1 if rc is None else rc), out
 
 
 # ---- the project's doctor --------------------------------------------------------------------------------------------

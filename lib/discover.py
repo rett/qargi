@@ -23,7 +23,8 @@ import getpass, glob, json, os, re, subprocess, sys, tempfile, urllib.parse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import paths as P  # noqa: E402  where the data lives
 import packs_compat as C  # noqa: E402  whether a project's provider can use a pack
-import procenv as PE  # noqa: E402  the time stamp, the audit line
+import procenv as PE  # noqa: E402  the time stamp
+from procenv import die  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -67,11 +68,6 @@ SKILLS_URL = "https://github.com/anthropics/skills"
 
 def F(name):
     return "--" + name
-
-
-def die(msg, code=1):
-    print("qargi: " + msg, file=sys.stderr)
-    raise SystemExit(code)
 
 
 def jload(path, default):

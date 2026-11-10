@@ -184,6 +184,82 @@ class Audit(unittest.TestCase):
         self.assertEqual((row["ts"], row["verb"], row["asked"], row["approved"], row["origin"]), ("2026-02-03T04:05:06Z", "supervise:looping", "ask", "", "supervisor"))
 
 
+class Die(unittest.TestCase):
+    def run_die(self, *args):
+        code = "import sys; sys.path.insert(0, %r); import procenv; procenv.die(*%r)" % (LIB, args)
+        return subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+
+    def test_it_says_qargi_and_leaves_with_the_status(self):
+        r = self.run_die("no such thing")
+        self.assertEqual((r.returncode, r.stdout, r.stderr), (1, "", "qargi: no such thing\n"))
+        r = self.run_die("usage: x", 2)
+        self.assertEqual((r.returncode, r.stdout, r.stderr), (2, "", "qargi: usage: x\n"))
+
+    def test_discover_says_it_the_same_way(self):
+        import discover
+        self.assertIs(discover.die, PE.die)
+        env = {"PATH": "/usr/bin:/bin", "HOME": os.environ["HOME"], "QARGI_CONF": os.environ.get("QARGI_CONF", "/nonexistent"), "QARGI_STATE": os.environ.get("QARGI_STATE", "/nonexistent")}
+        r = subprocess.run([sys.executable, "-I", os.path.join(LIB, "discover.py"), "show", "no-such-entry"], capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env)
+        self.assertEqual((r.returncode, r.stdout), (1, ""))
+        self.assertTrue(r.stderr.startswith("qargi: no entry 'no-such-entry'"), r.stderr)
+
+
+class Git(unittest.TestCase):
+    def setUp(self):
+        self.t = tempfile.mkdtemp(prefix="procenv-git.")
+        self.addCleanup(shutil.rmtree, self.t, True)
+        self.repo = os.path.join(self.t, "repo")
+        os.makedirs(self.repo)
+        subprocess.run(["git", "init", "-q", self.repo], check=True, capture_output=True)
+
+    def test_exit_stdout_and_stderr_as_git_wrote_them(self):
+        rc, out, err = PE.git("rev-parse", "--git-dir", repo=self.repo)
+        self.assertEqual((rc, out, err), (0, ".git\n", ""))
+        rc, out, err = PE.git("rev-parse", "HEAD", repo=self.repo)
+        self.assertNotEqual(rc, 0)
+        self.assertIn("HEAD", err)
+
+    def test_repo_cwd_and_git_dir_choose_the_repository(self):
+        self.assertEqual(PE.git("rev-parse", "--show-toplevel", repo=self.repo)[1], os.path.realpath(self.repo) + "\n")
+        self.assertEqual(PE.git("rev-parse", "--show-toplevel", cwd=self.repo)[1], os.path.realpath(self.repo) + "\n")
+        self.assertEqual(PE.git("rev-parse", "--is-bare-repository", git_dir=os.path.join(self.repo, ".git"))[1], "false\n")
+
+    def test_the_environment_has_no_prompt_and_no_optional_lock_and_none_of_the_callers_secrets(self):
+        with mock.patch.dict(os.environ, {"SECRET_X": "hunter2"}):
+            rc, out, _ = PE.git("e", repo=self.repo, config=("alias.e=!env",))
+        self.assertEqual(rc, 0)
+        lines = out.splitlines()
+        self.assertIn("GIT_TERMINAL_PROMPT=0", lines)
+        self.assertIn("GIT_OPTIONAL_LOCKS=0", lines)
+        self.assertNotIn("SECRET_X=hunter2", lines)
+        rc, out, _ = PE.git("e", repo=self.repo, config=("alias.e=!env",), env={"PATH": "/usr/bin:/bin", "ONLY_THIS": "1"})
+        self.assertIn("ONLY_THIS=1", out.splitlines())
+        self.assertNotIn("GIT_OPTIONAL_LOCKS=0", out.splitlines())
+
+    def test_a_git_that_cannot_run_or_takes_too_long_has_no_exit_status(self):
+        rc, out, err = PE.git("status", env={"PATH": "/nonexistent"})
+        self.assertEqual((rc, out), (None, ""))
+        self.assertTrue(err)
+        rc, out, err = PE.git("s", repo=self.repo, config=("alias.s=!sleep 5",), timeout=0.2)
+        self.assertEqual((rc, out), (None, ""))
+        self.assertTrue(err)
+
+    def test_env_check_and_tools_keep_their_shapes(self):
+        import env_check, tools
+        self.assertEqual(env_check.git(self.repo, "rev-parse", "--git-dir"), (0, ".git\n"))
+        rc, out = env_check.git(self.repo, "rev-parse", "HEAD")
+        self.assertNotEqual(rc, 0)
+        with mock.patch.dict(os.environ, {"PATH": "/nonexistent"}):
+            self.assertEqual(env_check.git(self.repo, "status"), (1, ""))
+            self.assertEqual(tools.git("status", cwd=self.repo)[:2], (1, ""))
+            self.assertIs(tools.submodule_state(self.repo, "vendor/x"), False)
+        self.assertEqual(tools.git("rev-parse", "--git-dir", cwd=self.repo), (0, ".git", ""))
+        gd = os.path.join(self.repo, ".git")
+        self.assertEqual(tools.git("rev-parse", "--git-dir", git_dir=gd)[:2], (0, gd))
+        self.assertIsNone(tools.submodule_state(self.repo, "vendor/x"))
+        self.assertIs(tools.submodule_state(self.t, "vendor/x"), False)       # not a git work tree
+
+
 def defined_in(name, *funcs):
     """The names of funcs that the source file lib/NAME.py defines at the top level."""
     import ast
@@ -195,7 +271,7 @@ def defined_in(name, *funcs):
 class NoCopies(unittest.TestCase):
     def test_the_modules_define_no_copy_of_a_shared_helper(self):
         want = {"env_check": ("clean_path", "child_env", "now"), "env_apply": ("clean_path", "now"), "local_run": ("clean_path", "now"),
-                "tools": ("clean_path", "now"), "supervise": ("now",), "discover": ("now",)}
+                "tools": ("clean_path", "now"), "supervise": ("now",), "discover": ("now", "die")}
         for name, funcs in want.items():
             self.assertEqual(defined_in(name, *funcs), [], "lib/%s.py defines its own copy" % name)
 

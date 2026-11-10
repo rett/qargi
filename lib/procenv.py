@@ -10,12 +10,17 @@ directory there first, so it works as a script and as a module):
   now(t=None)           the time stamp of the record, UTC, `2026-01-02T03:04:05Z`, of the epoch seconds t or of now
   plan_token(*parts)    the token of a plan: the first 12 hex digits of the sha256 of the parts joined by newlines
   audit(verb, detail, ...)  one line in STATE/audit.log: ts, verb, detail, asked, approved, nested (and origin when given)
+  die(msg, code=1)      `qargi: MSG` on standard error and the exit status code
+  git(*args, repo=, cwd=, git_dir=, config=, timeout=, env=)
+                        (exit, stdout, stderr) of a git command with no prompt, no optional lock and no fsmonitor; the exit is None when git did not run
   child_env(keep=())    the base environment of a child: PATH (clean_path), LANG and LC_ALL C.UTF-8, TERM dumb, GIT_TERMINAL_PROMPT 0, and
                         HOME, USER, LOGNAME, TMPDIR and the names in keep when the caller has them
 """
 import hashlib
 import json
 import os
+import subprocess
+import sys
 import time
 
 DEFAULT_PATH = "/usr/local/bin:/usr/bin:/bin"
@@ -72,3 +77,28 @@ def audit(verb, detail, *, asked="", approved="", origin=None, ts=None, state=No
         os.chmod(f, 0o600)
     except OSError:
         pass
+
+
+def die(msg, code=1):
+    """Say `qargi: MSG` on standard error and leave with the exit status code."""
+    print("qargi: " + msg, file=sys.stderr)
+    raise SystemExit(code)
+
+
+def git(*args, repo=None, cwd=None, git_dir=None, config=(), timeout=30, env=None):
+    """(exit, stdout, stderr) of `git ARGS`, the output as git wrote it: standard input closed, no prompt (child_env), no optional lock, no
+    fsmonitor; repo is `-C repo`, git_dir is `--git-dir`, config a list of `key=value` for `-c`, env replaces the environment. A git that
+    cannot be run or is too slow is (None, "", the reason)."""
+    cmd = ["git", "-c", "core.fsmonitor=false"]
+    for c in config:
+        cmd += ["-c", c]
+    if repo:
+        cmd += ["-C", repo]
+    if git_dir:
+        cmd += ["--git-dir", git_dir]
+    try:
+        r = subprocess.run(cmd + list(args), cwd=cwd, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=timeout,
+                           env=env if env is not None else dict(child_env(), GIT_OPTIONAL_LOCKS="0"))
+    except (OSError, subprocess.SubprocessError) as e:
+        return None, "", str(e)
+    return r.returncode, r.stdout, r.stderr

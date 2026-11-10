@@ -215,14 +215,12 @@ def child_env():
 
 def submodule_state(repo, path):
     """' ' (at the recorded commit), '+' (another commit), '-' (not initialised), 'U' (conflicts), None (no such submodule), or False (not a work tree)."""
-    try:
-        r = subprocess.run(["git", "-c", "core.fsmonitor=false", "-C", repo, "submodule", "status", "--", path], capture_output=True, text=True,
-                           stdin=subprocess.DEVNULL, env=dict(child_env(), GIT_OPTIONAL_LOCKS="0"), timeout=60)
-    except (OSError, subprocess.SubprocessError):
+    rc, out, err = PE.git("submodule", "status", "--", path, repo=repo, timeout=60, env=dict(child_env(), GIT_OPTIONAL_LOCKS="0"))
+    if rc is None:
         return False
-    if r.returncode != 0:
-        return False if "not a git repository" in r.stderr else None
-    for ln in r.stdout.splitlines():
+    if rc != 0:
+        return False if "not a git repository" in err else None
+    for ln in out.splitlines():
         m = re.match(r"^([ +\-U])[0-9a-f]{40,64} (.+?)(?: \(.*\))?$", ln)
         if m and m.group(2) == path:
             return m.group(1)
@@ -317,12 +315,9 @@ def install_binary(t):
 
 def git(*args, cwd=None, git_dir=None):
     """(exit, stdout, stderr) of a git command: no prompt, no fsmonitor."""
-    cmd = ["git", "-c", "core.fsmonitor=false", "-c", "protocol.file.allow=always"] + (["--git-dir", git_dir] if git_dir else []) + list(args)
-    try:
-        r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=dict(child_env(), GIT_OPTIONAL_LOCKS="0"), timeout=GIT_TIMEOUT)
-    except (OSError, subprocess.SubprocessError) as e:
-        return 1, "", str(e)
-    return r.returncode, r.stdout.strip(), r.stderr.strip()
+    rc, out, err = PE.git(*args, cwd=cwd, git_dir=git_dir, config=("protocol.file.allow=always",), timeout=GIT_TIMEOUT,
+                          env=dict(child_env(), GIT_OPTIONAL_LOCKS="0"))
+    return (1 if rc is None else rc), out.strip(), (err if rc is None else err.strip())
 
 
 def gitmodules_names(clone):
