@@ -264,6 +264,7 @@ lib/paths.py:the ant CLI keeps its login
 
 # secret patterns that scrub or refuse a pack, a memory note or a canon note: the prefix of a vendor's API key is the thing looked for
 lib/packs.sh:sk-ant-
+lib/packs_check.py:sk-ant-
 lib/memory.sh:sk-ant-
 lib/canon.py:sk-ant-
 lib/conformance/review.py:sk-ant-

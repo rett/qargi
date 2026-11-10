@@ -69,6 +69,7 @@ export PLAN_ARG ASKED
 PROVPY=$(dirname "$(readlink -f "$0")")/provider.py
 COMPATPY=$(dirname "$(readlink -f "$0")")/packs_compat.py
 REVIEWPY=$(dirname "$(readlink -f "$0")")/conformance/review.py
+CHECKPY=$(dirname "$(readlink -f "$0")")/packs_check.py   # the per-pack work of check and list in one process: hash, review, compatibility
 
 # The provider of a project serves a verb only when its descriptor says so (lib/provider.py layout, require-skills): a null layout
 # field or an unverified skills capability ends the verb here with exit 3 and "provider NAME has no FACILITY: WOULD".
@@ -205,19 +206,15 @@ none_linked() { # project
 # part of the approved content), stays in CP_OK so that it fails loudly where it is used (its review, its drift check), and "any"
 # needs no provider at all.
 compat_filter() { # project role surfaces
-  local e k n P c why rc want
+  local kind a b c
   CP_OK=(); CP_SKIP=()
-  while read -r e; do
-    [ -n "$e" ] || continue; k=${e%%:*}; n=${e#*:}; P=$(item_path "$k" "$n"); c=''
-    [ ! -e "$P" ] || c=$(compat_of "$P")
-    if [ -n "$c" ] && [ "$c" != '["any"]' ]; then
-      want=$(jq -r '.sha256 // ""' "$(record_of "$P")" 2>/dev/null)
-      [ -z "$want" ] || [ "$want" = "$(content_hash "$P" 2>/dev/null)" ] || { CP_OK+=("$e"); continue; }
-      rc=0; why=$(python3 -I "$COMPATPY" check "$1" "$3" "$c" --conf "$DA_CONF") || rc=$?
-      if [ "$rc" = 1 ]; then CP_SKIP+=("$k"$'\t'"$n"$'\t'"$why"); continue; fi
-    fi
-    CP_OK+=("$e")
-  done < <(effective "$1" "$2")
+  # one process for all the packs (packs_check.py filter, the rules above): "ok<TAB>kind:name" or "skip<TAB>kind<TAB>name<TAB>why" per pack
+  while IFS=$'\t' read -r kind a b c; do
+    case $kind in
+      ok) CP_OK+=("$a");;
+      skip) CP_SKIP+=("$a"$'\t'"$b"$'\t'"$c");;
+    esac
+  done < <(effective "$1" "$2" | python3 -I "$CHECKPY" filter "$1" "$3" "$PACKS" "$DA_CONF")
 }
 skip_say() { # prefix: one line per CP_SKIP entry
   local x k n why
@@ -241,7 +238,7 @@ set_off() { # project role json-array
 
 # The render target: the facts only this script knows (links, review, hashes) go to packs_render.py as one JSON file.
 rn_inputs() { # project outfile
-  local prj=$1 out=$2 roles r e k n P want rv rows cpj x why
+  local prj=$1 out=$2 roles r e k n rows x why
   [ -f "$DA_CONF/projects/$prj.json" ] || die "no stored answers for project '$prj'"
   roles=$(jq -r '.roles | keys[]' "$DA_CONF/projects/$prj.json" | grep -vx lead)
   # the render is for the local surface; a pack the provider of that surface cannot use is left out and noted (skipped)
@@ -255,16 +252,8 @@ rn_inputs() { # project outfile
     done
   done
   : > "$out.rows"
-  while read -r r e; do
-    [ -n "$e" ] || continue; k=${e%%:*}; n=${e#*:}; P=$(item_path "$k" "$n")
-    if [ -e "$P" ]; then
-      want=$(jq -r '.sha256 // ""' "$(record_of "$P")" 2>/dev/null); cpj=$(compat_of "$P")
-      # an unreadable file makes the pack fail its review (and keeps sha256sum's complaints off the screen)
-      if [ -z "$(find "$P" ! -readable -print -quit 2>/dev/null)" ] && review "$k" "$P" >/dev/null 2>&1; then rv=true; else rv=false; fi
-      jq -nc --arg k "$k" --arg n "$n" --arg p "$P" --arg h "$(content_hash "$P" 2>/dev/null)" --arg a "$want" --argjson rv "$rv" --arg r "$r" --argjson c "${cpj:-null}" \
-        '{kind:$k,name:$n,path:$p,sha256:$h,approved:$a,review_ok:$rv,exists:true,role:$r,compatible_providers:$c}' >> "$out.rows"
-    else jq -nc --arg k "$k" --arg n "$n" --arg r "$r" '{kind:$k,name:$n,path:"",sha256:"",approved:"",review_ok:false,exists:false,role:$r,compatible_providers:null}' >> "$out.rows"; fi
-  done <<<"$rows"
+  # the facts of each pack (path, content hash, approved hash, whether its review passes; an unreadable file fails it), one process for all of them
+  printf '%s' "$rows" | python3 -I "$CHECKPY" rows "$PACKS" "$out.rows"
   jq -s --arg p "$prj" --arg v "$PROV" --arg s "$DA_STATE" --arg h "$HOME" --arg c "$(jq -r '.repo.path // ""' "$DA_CONF/projects/$prj.json")" --argjson none "$(jq -c '.packs.none == true' "$DA_CONF/projects/$prj.json")" --slurpfile sk "$out.skips" '
     {project:$p, provider:$v, state:$s, home:$h, checkout:$c, packs_none:$none,
      packs: (group_by(.kind+":"+.name) | map({kind:.[0].kind, name:.[0].name, path:.[0].path, sha256:.[0].sha256, approved:.[0].approved,
@@ -276,19 +265,10 @@ rn_inputs() { # project outfile
 # hashes them with strict_hash (links, modes and empty directories count; content_hash is the library's approval hash and does not see
 # them), the shell adds the library's approval of the same name and the acceptances file, and the script judges.
 au_inputs() { # ccinputs outfile: the render inputs plus every visible skill (scan hashes it with strict_hash) and the library's approval of its name
-  local cc=$1 out=$2 skills='[]' line n lh la lib
+  local cc=$1 out=$2
   python3 -I "$(dirname "$(readlink -f "$0")")/packs_audit.py" scan "$cc" "$out.scan" || return 1
-  while IFS= read -r line; do
-    n=$(jq -r .name <<<"$line")
-    lib=null
-    if [ -d "$PACKS/skills/$n" ] && [ ! -L "$PACKS/skills/$n" ]; then
-      lh=$(content_hash "$PACKS/skills/$n" 2>/dev/null </dev/null) || lh=''
-      la=$(jq -r '.sha256 // ""' "$(record_of "$PACKS/skills/$n")" 2>/dev/null) || la=''
-      lib=$(jq -nc --arg h "$lh" --arg a "$la" '{hash:$h, approved:$a}')
-    fi
-    skills=$(jq -c --argjson e "$line" --argjson l "$lib" '. + [$e + {lib:$l}]' <<<"$skills")
-  done < <(jq -c '.[]' "$out.scan")
-  jq --argjson s "$skills" --arg a "$PACKS/accepted.json" '. + {skills:$s, accepted:$a}' "$cc" > "$out"
+  # the library's hash and approval of each name, one process for all the skills (packs_check.py audit)
+  python3 -I "$CHECKPY" audit "$PACKS" "$cc" "$out.scan" "$out" || { rm -f "$out.scan"; return 1; }
   rm -f "$out.scan"
 }
 au_report() { # ccinputs workdir: print the section; the status is 1 when a skill is drifted
@@ -705,14 +685,10 @@ case "$VERB" in
     P=$(item_path "$KIND" "$NAME"); mv "$T/stage" "$P"; write_record "$P" "$KIND" "$SRCREC" "$COMPAT"
     echo "stored $KIND $NAME (content $TOK); link it to a scope to attach it";;
   list)
-    PRJ=${ARGS[0]:-}; ROL=${ARGS[1]:-}
-    for f in "$PACKS/${KIND}s"/*; do
-      [ -e "$f" ] || continue; case $f in *.pack.json) continue;; esac; n=$(basename "$f" .json); mark=''
-      [ -z "$PRJ" ] || [ -z "$ROL" ] || { effective "$PRJ" "$ROL" | grep -qx "$KIND:$n" && mark='  [attached to '$PRJ/$ROL']'; }
-      lk=$(jq -r --arg k "$KIND:$n" '[.links[] | select(.pack==$k) | .scope + (if .project then ":"+.project else "" end) + (if .role then "/"+.role else "" end)] | join(", ")' "$LINKS")
-      cl=$(compat_of "$f"); cl=$(jq -r 'if type == "array" then join(", ") elif . == null then "NOT DECLARED" else "invalid" end' <<<"${cl:-null}" 2>/dev/null || echo invalid)
-      echo "$n   links: ${lk:-none}   compatible: $cl$mark"
-    done;;
+    PRJ=${ARGS[0]:-}; ROL=${ARGS[1]:-}; lopts=()
+    # one process lists them all (packs_check.py list); the packs the role gets are asked of effective once, not once per pack
+    [ -z "$PRJ" ] || [ -z "$ROL" ] || lopts=(--attached "$(effective "$PRJ" "$ROL")" --label "$PRJ/$ROL")
+    python3 -I "$CHECKPY" list "$KIND" "$PACKS" ${lopts[@]+"${lopts[@]}"};;
   show)
     NAME=${ARGS[0]:-}; P=$(item_path "$KIND" "$NAME"); [ -e "$P" ] || die "no such $KIND in the library"
     echo "path: $P"; jq . "$(record_of "$P")" 2>/dev/null; jq -r --arg k "$KIND:$NAME" '.links[] | select(.pack==$k) | "link: " + tostring' "$LINKS"; review "$KIND" "$P" || true;;
@@ -754,13 +730,10 @@ case "$VERB" in
     PRJ=${ARGS[0]:-}; ROL=${ARGS[1]:-}; rc=0; any=''
     compat_filter "$PRJ" "$ROL" local,cloud
     skip_say '' | grep "^skipped $KIND " | sed 's/^skipped /skip /' || true
-    for e in ${CP_OK[@]+"${CP_OK[@]}"}; do
-      [ "${e%%:*}" = "$KIND" ] || continue; any=1; n=${e#*:}; P=$(item_path "$KIND" "$n")
-      if [ ! -e "$P" ]; then echo "FAIL $e: linked but not in the library"; rc=1; continue; fi
-      want=$(jq -r '.sha256 // ""' "$(record_of "$P")" 2>/dev/null); have=$(content_hash "$P")
-      if [ -n "$want" ] && [ "$want" != "$have" ]; then echo "FAIL $e: content changed since it was approved (drift: $want -> $have); review it and re-import"; rc=1; fi
-      if out=$(review "$KIND" "$P" 2>&1); then echo "ok   $e"; else echo "$out" | grep -E '^FAIL' | sed "s/^/$e: /"; rc=1; fi
-    done
+    names=()
+    for e in ${CP_OK[@]+"${CP_OK[@]}"}; do [ "${e%%:*}" = "$KIND" ] && names+=("${e#*:}"); done
+    # drift and review of every pack, one process (packs_check.py check)
+    if [ "${#names[@]}" -gt 0 ]; then any=1; python3 -I "$CHECKPY" check "$KIND" "$PACKS" "${names[@]}" || rc=1; fi
     if [ -n "$any" ]; then :
     elif none_linked "$PRJ"; then echo "no pack is linked to any role of $PRJ"
     else echo "no $KIND packs reach $PRJ/$ROL"; fi

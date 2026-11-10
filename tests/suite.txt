@@ -83,6 +83,7 @@ full | par | 300 | 15 | bash tests/test_taskblock.sh | lib/local.sh lib/review_c
 fast | par | 300 | 3 | bash tests/test_cred.sh | lib/cred.sh
 full | par | 480 | 80 | bash tests/test_packs.sh | lib/packs.sh
 full | par | 300 | 42 | bash tests/test_packs_seed.sh | lib/packs*.sh lib/packs*.py
+fast | par | 300 | 4 | python3 tests/test_packs_check.py | lib/packs*.sh lib/packs*.py lib/conformance/review.py
 full | par | 882 | 147 | bash tests/test_packs_render.sh | lib/packs*.sh lib/packs*.py
 full | par | 804 | 134 | bash tests/test_packs_link.sh | lib/packs*.sh lib/packs*.py
 fast | par | 300 | 13 | bash tests/test_linker.sh | lib/linker.py
