@@ -259,5 +259,93 @@ class Install(Base):
         self.assertEqual(self.record()["tool_root"], ROOT)
 
 
+class RecordedToolRoot(Base):
+    """paths.installed_tool_root reads install.json once while it is unchanged (the guard asks it dozens of times in one call) and returns
+    what it always did: the real path of the recorded tool root, or None."""
+
+    def setUp(self):
+        super().setUp()
+        sys.path.insert(0, os.path.join(ROOT, "lib"))
+        import paths
+        self.paths = paths
+        self.conf = os.path.join(self.t, "conf")
+        os.makedirs(self.conf)
+        self.rec = os.path.join(self.conf, "install.json")
+        self.tool_dir = os.path.join(self.t, "tool")
+        os.makedirs(self.tool_dir)
+        self.link = os.path.join(self.t, "link")
+        os.symlink(self.tool_dir, self.link)
+        old = {k: os.environ.get(k) for k in CLEAN + ("HOME",)}
+        self.addCleanup(lambda: [os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v) for k, v in old.items()])
+        for k in CLEAN:
+            os.environ.pop(k, None)
+        os.environ.update(HOME=self.home, QARGI_CONF=self.conf)
+
+    def write(self, doc):
+        with open(self.rec, "w") as f:
+            f.write(doc if isinstance(doc, str) else json.dumps(doc))
+
+    def reads(self, n=5):
+        """The answers of n calls, and how many times the file was opened for them."""
+        import builtins
+        real, opened = builtins.open, []
+
+        def counting(p, *a, **k):
+            if str(p).endswith("install.json"):
+                opened.append(p)
+            return real(p, *a, **k)
+        builtins.open = counting
+        try:
+            got = [self.paths.installed_tool_root() for _ in range(n)]
+        finally:
+            builtins.open = real
+        return got, len(opened)
+
+    def test_it_reads_the_record_once_and_returns_the_real_path(self):
+        self.write({"tool_root": self.link})
+        got, opened = self.reads()
+        self.assertEqual(got, [self.tool_dir] * 5)                   # the link is resolved, as before
+        self.assertEqual(opened, 1)
+        self.assertEqual(self.reads(3), ([self.tool_dir] * 3, 0))     # nothing changed: not read again
+
+    def test_a_changed_removed_or_moved_record_is_seen_at_once(self):
+        self.assertEqual(self.reads(2), ([None, None], 0))            # no record
+        self.write({"tool_root": self.tool_dir})
+        self.assertEqual(self.reads(2)[0], [self.tool_dir] * 2)
+        other = os.path.join(self.t, "other")
+        os.makedirs(other)
+        self.write({"tool_root": other})                              # rewritten in place (a different size)
+        self.assertEqual(self.reads(2)[0], [other] * 2)
+        self.write({"tool_root": self.tool_dir})                      # rewritten with the same size is a new mtime/ctime
+        self.assertEqual(self.reads(2)[0], [self.tool_dir] * 2)
+        os.remove(self.rec)
+        self.assertEqual(self.reads(2), ([None, None], 0))
+        self.write("{not json")                                       # unreadable: None, and read again each time (nothing is kept for it)
+        self.assertEqual(self.reads(2), ([None, None], 2))
+        self.write({"tool_root": ""})
+        self.assertEqual(self.reads(1)[0], [None])
+        self.write([1])
+        self.assertEqual(self.reads(1)[0], [None])
+        self.write({"tool_root": self.tool_dir})
+        moved = os.path.join(self.t, "conf2")                         # another configuration directory is another record
+        os.makedirs(moved)
+        os.environ["QARGI_CONF"] = moved
+        self.assertEqual(self.reads(2), ([None, None], 0))
+        os.environ["QARGI_CONF"] = self.conf
+        self.assertEqual(self.reads(2)[0], [self.tool_dir] * 2)
+
+    def test_what_follows_from_it_is_unchanged(self):
+        """dev_run compares the record with this checkout; a record for another checkout makes this one a dev run until it changes."""
+        self.write({"tool_root": os.path.join(self.t, "elsewhere")})
+        os.environ.pop("QARGI_CONF")
+        os.environ["HOME"] = self.home
+        os.makedirs(os.path.join(self.home, ".qargi", "config"))
+        self.rec = os.path.join(self.home, ".qargi", "config", "install.json")
+        self.write({"tool_root": os.path.join(self.t, "elsewhere")})
+        self.assertTrue(self.paths.dev_run())
+        self.write({"tool_root": self.paths.tool_root()})
+        self.assertFalse(self.paths.dev_run())
+
+
 if __name__ == "__main__":
     unittest.main()

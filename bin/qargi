@@ -13,7 +13,11 @@ area=${1:-}; [ -n "$area" ] || usage; shift
 case $area in
   help|-h|--help) exec python3 -I "$help" show "$@";;
   __complete) exec python3 -I "$help" complete "$@";;
-  __guard) exec python3 -I "$lib/guard.py" "$@";;
+  # The guard runs on every tool call of a member, so its start-up is the one that counts: guard.py is imported, not run as a script (python
+  # compiles a script on every run, a cache only an imported module gets: 235 KB, about 60 ms). The cache is the __pycache__ next to the
+  # source, which install.sh --user and qargi upgrade fill (compileall); where the tool is read-only and nothing filled it, python skips the
+  # write and the guard compiles as before, only slower. sys.argv is what the script had: the lib directory taken off the front.
+  __guard) exec python3 -I -c 'import sys; sys.path.insert(0, sys.argv.pop(1)); import guard; sys.exit(guard.main())' "$lib" "$@";;
   version) cat "$root/VERSION"; exit 0;;
 esac
 # --json on any verb: the plan (or the output) as one JSON object (lib/jsonplan.py runs the call again without it). The marker says this

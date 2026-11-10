@@ -75,6 +75,9 @@ audit_log upgrade "$label $(g rev-parse --short "$new_sha")"
 if [ "$mode" = ff ]; then gw merge --quiet --ff-only "$ref" || die "could not fast-forward $root"
 elif [ -n "$TAG" ]; then gw checkout --quiet --detach "$ref" || die "could not check out $label"
 else gw checkout --quiet -B "$BRANCH" "$ref" || die "could not check out $label"; fi
+# the bytecode of the root-owned checkout (the guard is imported from it on every tool call of a member: bin/qargi): compiled by the one who owns it,
+# as the git writes are; install.sh --user compiles the rest as you. Only compiles: nothing of the checkout is run. Not fatal: the tool runs without it, slower.
+if [ -n "$SUDO" ]; then $SUDO python3 -I -m compileall -q "$root/lib" >/dev/null 2>&1 || echo "qargi: note: the bytecode of $root/lib was not compiled, so qargi __guard starts slower (run: $SUDO python3 -I -m compileall -q $root/lib)" >&2; fi
 "$root/install.sh" --user || die "the checkout moved but install.sh --user failed; run $root/install.sh --user yourself"
 echo "upgraded $root to $label $(g rev-parse --short HEAD) (approved: $APPROVED)"
 if ! members_shape_ok; then shape_warning; exit 0; fi

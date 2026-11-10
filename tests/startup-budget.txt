@@ -1,5 +1,9 @@
 # Startup ceilings of the dispatcher (tests/test_startup.py): `COMMAND MAX_MS`, the median wall time of 20 runs of `qargi COMMAND`
 # in a hermetic home, in milliseconds. Generous (about twice the median the test measures on the development host), so a loaded
 # machine does not fail it; shrink-only: lower a ceiling when startup gets faster, and a ceiling above its value at the merge base
-# with origin/develop needs `# raised: reason` on its line.
+# with origin/develop needs `# raised: reason` on its line. A ceiling only warns, except one whose line says `enforced`: the test
+# fails when the median is over it in three measurements in a row.
+# __guard is timed answering a harmless call from a tool whose lib/ is compiled (what install.sh --user and qargi upgrade leave);
+# a hook runs it before every tool call of a member. The test measures about 60 ms there, about 115 ms when the tool has no bytecode.
 role list 350
+__guard 120 # enforced: twice the median of the development host
