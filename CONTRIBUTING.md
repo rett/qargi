@@ -87,7 +87,7 @@ A test is safe to run next to other tests and next to another whole suite: it so
 
 `tests/test_legacy_lint.py` keeps code for earlier versions out of `lib/` (qargi keeps no backwards compatibility): it fails when a file there holds the phrase `older record`, `migrat` or `earlier version`, unless `tests/legacy-allowlist.txt` names the file and the phrase with a reason. That list only shrinks.
 
-Prompt text is one paragraph per line: in `contract/`, `roles/`, `agents/` and `packs/skills/` a paragraph and a list item are each one physical line (a viewer narrower than a line wraps it whole), and `tests/test_prose_lint.py` fails on a line that continues the one before it or has trailing spaces.
+Prompt text is one paragraph per line: in `contract/`, `roles/`, `agents/`, `packs/skills/`, `skills/`, `provision/templates/` and `lib/providers/` a paragraph and a list item are each one physical line (a viewer narrower than a line wraps it whole), and `tests/test_prose_lint.py` fails on a line that continues the one before it or has trailing spaces.
 
 Test a branch from its own worktree with `bin/qargi`: once `install.sh --user` has recorded the installed copy it is a dev run with its own data under `.qargi/` ([Running a branch checkout](docs/install-and-upgrade/README.md#running-a-branch-checkout)). To test the guard or the hooks, put `<worktree>/bin` first on `PATH`: members call `qargi __guard` from `PATH`, which is otherwise the installed copy.
 

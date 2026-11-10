@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prompt text is one paragraph per line. The texts a member or the lead loads (contract/*.md, roles/*/*.md, agents/*.md,
-packs/skills/*/*.md) are hard-wrapped nowhere: a paragraph, a list item, is ONE physical line, so a viewer narrower than the
-text wraps it whole instead of showing ragged fragments. Outside front matter and fenced code, a line fails when the line before
+packs/skills/*/*.md, skills/*/*.md, provision/templates/*.md, lib/providers/*/*.md) are hard-wrapped nowhere: a paragraph, a
+list item, is ONE physical line, so a viewer narrower than the text wraps it whole instead of showing ragged fragments. Outside front matter and fenced code, a line fails when the line before
 it is non-blank prose or a list item and the line itself is not blank, a heading, a list item, a table row, a quote or a fence;
 a line with trailing spaces fails too. The lint is unit-tested on fixtures, then run over the directories.
 Offline. Run: python3 tests/test_prose_lint.py"""
@@ -10,7 +10,8 @@ import glob, os, re, sys, unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # The texts under the rule, as globs relative to the repository root.
-GLOBS = ["contract/*.md", "roles/*/*.md", "agents/*.md", "packs/skills/*/*.md"]
+GLOBS = ["contract/*.md", "roles/*/*.md", "agents/*.md", "packs/skills/*/*.md", "skills/*/*.md", "provision/templates/*.md",
+         "lib/providers/*/*.md"]
 
 FENCE = re.compile(r"^\s*(```+|~~~+)")
 HEADING = re.compile(r"^\s{0,3}#{1,6}(\s|$)")

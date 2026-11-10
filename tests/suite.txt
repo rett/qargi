@@ -133,4 +133,4 @@ full | par | 300 | 14 | bash tests/test_backlog.sh | lib/backlog.py lib/backlog.
 fast | par | 300 | 8 | bash tests/test_nested_plan.sh | lib/lib.sh lib/branch.sh lib/cred.sh lib/marshal.sh lib/project.sh lib/provider.sh lib/registry.sh
 full | par | 300 | 20 | bash tests/test_resume.sh | lib/release.sh lib/feature.sh lib/gitflow.sh lib/review.sh
 full | par | 300 | 20 | bash tests/test_resume_push.sh | lib/release.sh lib/feature.sh lib/gitflow.sh
-fast | par | 300 | 1 | python3 tests/test_prose_lint.py | contract/*.md roles/*/*.md agents/*.md packs/skills/*/*.md tests/test_prose_lint.py
+fast | par | 300 | 1 | python3 tests/test_prose_lint.py | contract/*.md roles/*/*.md agents/*.md packs/skills/*/*.md skills/*/*.md provision/templates/*.md lib/providers/*/*.md tests/test_prose_lint.py
