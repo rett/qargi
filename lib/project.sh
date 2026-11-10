@@ -57,6 +57,14 @@
 PROJ_DIR=$DA_CONF/projects
 verb=${1:-}; shift || true
 
+# accepted_lines JSON INDENT LEAD: the lead's accepted deviations (JSON .accepted), apart from the open gaps
+accepted_lines() {
+  if [ "$(jq -r '.accepted | length' <<<"$1")" != 0 ]; then
+    echo "$3accepted deviations (set by the lead in methodology_accepted; not open gaps):"
+    jq -r --arg i "$2" '.accepted[] | "\($i)- \(.gap) (\(.status): \(.reason); \(.date))"' <<<"$1"
+  fi
+}
+
 # provision_reads PATH: succeeds when a provision reads the answer at PATH (or an answer below it: setting an object sets what it holds). The one
 # list of them, taken from where provision reads the answers (lib/provision.sh, the helpers in lib/lib.sh it calls, lib/provider.py and lib/packs.sh
 # render); a key that is not here is read where it is used (the branch guards, the release, review apply, the lead's context, ...), never by a provision.
@@ -206,6 +214,17 @@ if isinstance(bkl, dict) and "file" in bkl:
     bf = bkl["file"]
     need(isinstance(bf, str) and bf.strip() and not any(ord(ch) < 32 or ord(ch) == 127 for ch in bf),
          "backlog.file: the path of a markdown file of items written '- [some-id] text', an absolute path, ~/... or a path relative to the repository; no control characters")
+# methodology_accepted: the lead's accepted deviations from the methodology (optional), a list of {gap, reason, date}: gap is "KIND: WHAT" as `qargi project
+# attach` prints a gap (file: CONTRIBUTING.md, branch: develop, env: doctor target), reason says why it is accepted, date is YYYY-MM-DD. attach, adopt and
+# marshal handoff print them apart from the open gaps; adopt leaves an accepted file or branch out of what it writes. The lead sets it; a member may not
+ma = c.get("methodology_accepted", [])
+def _line(v, n):
+    return isinstance(v, str) and v.strip() and len(v) <= n and all(ch.isprintable() for ch in v)
+need(isinstance(ma, list) and len(ma) <= 100 and all(
+        isinstance(x, dict) and set(x) == {"gap", "reason", "date"} and _line(x["gap"], 300) and re.fullmatch(r"[a-z]+: \S.*", x["gap"])
+        and _line(x["reason"], 500) and isinstance(x["date"], str) and re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", x["date"]) for x in ma)
+     and (not isinstance(ma, list) or len({x["gap"] for x in ma if isinstance(x, dict)}) == len([x for x in ma if isinstance(x, dict)])),
+     "methodology_accepted: a list of at most 100 distinct {gap, reason, date}: gap as attach prints it (\"file: CONTRIBUTING.md\", \"branch: develop\"), reason one line, date YYYY-MM-DD")
 # worktrees.root: where qargi makes worktrees (ROOT/<branch>); an absolute path (or ~/...), not inside the repository
 wts = c.get("worktrees", {})
 need(isinstance(wts, dict) and set(wts) <= {"root"}, "worktrees: an object like {root: \"/path\"}")
@@ -689,6 +708,7 @@ PY
     echo
     echo "gaps against the $meth methodology (nothing is changed in the repository; qargi project adopt $n closes the safe ones as a branch to review):"
     jq -r 'if (.gaps | length) == 0 then "  none" else .gaps[] | "  - \(.kind): \(.what) (\(.why))" end' <<<"$det"
+    accepted_lines "$det" "  " ""
     if [ "$(jq -r '.info | length' <<<"$det")" != 0 ]; then
       echo "noted, not gaps (nothing to close):"
       jq -r '.info[] | "  - \(.kind): \(.what) (\(.why))"' <<<"$det"
@@ -757,6 +777,7 @@ PY
         echo "  left for you to judge (changed by nothing here):"
         jq -r '.left[] | "    - \(.kind): \(.what) (\(.why))"' <<<"$plan"
       fi
+      accepted_lines "$plan" "    " "  "
     }
     if [ "$(jq -r '.instructions | length' <<<"$plan")" != 0 ]; then
       echo "  the repository's own instructions (adopt edits no existing file):"
@@ -800,6 +821,11 @@ PY
     # the shared marshal backend is a machine switch with a plan and an audit line, never an answer of the project file
     case $path in marshal.lease_minutes) ;; marshal|marshal.*) die "$path is not a project answer: only marshal.lease_minutes is; to switch the shared backend use 'qargi marshal enable' or 'qargi marshal disable'";; esac
     jq empty >/dev/null 2>&1 <<<"$val" || val=$(jq -Rn --arg v "$val" '$v')
+    # the accepted deviations are the lead's decision (they take a gap out of the open ones): a member run may not record them
+    case $path in methodology_accepted|methodology_accepted.*)
+      if [ -n "${QARGI_MEMBER_RUN:-}" ] || python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import marshal_refs; sys.exit(0 if marshal_refs.in_member_run() else 1)' "$(dirname "$(readlink -f "$0")")"; then
+        echo "qargi: $path records a deviation from the methodology that the lead accepts, and is not set in a member run: propose the entry (gap, reason, date) in your report" >&2; exit 2
+      fi;; esac
     # the answers that decide what an agent may run on (extensions) and which surface may go without a read-only barrier (accept_no_barrier) are
     # changed with a plan token and an approval, by their own verbs; this verb has neither, so it refuses them (also as keys of a whole models
     # object), for every caller and always. Those verbs store them through lib/gated_answers.py, which this verb never calls and nothing a

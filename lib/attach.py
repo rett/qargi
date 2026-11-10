@@ -315,9 +315,30 @@ def _agreed(models):
     return next(iter(models)) if len(models) == 1 else None
 
 
+def gap_id(g):
+    """How a gap is named in methodology_accepted: 'KIND: WHAT' (as attach prints it)."""
+    return "%s: %s" % (g["kind"], g["what"])
+
+
+def accepted_entries(answers):
+    """The usable entries of the answers' methodology_accepted: [{gap, reason, date}] (project validation reports a list that is not valid)."""
+    ma = (answers or {}).get("methodology_accepted") if isinstance(answers, dict) else None
+    out = []
+    for x in ma if isinstance(ma, list) else []:
+        if isinstance(x, dict) and isinstance(x.get("gap"), str) and x["gap"].strip():
+            out.append({"gap": ENV.clean(x["gap"], 300), "reason": ENV.clean(x.get("reason") or "", 500), "date": ENV.clean(x.get("date") or "", 10)})
+    return out
+
+
+def accepted_status(entries, present):
+    """The entries with their status: 'accepted' while the gap is still there (its id is in present), else 'accepted, no longer applies'."""
+    return [dict(e, status="accepted" if e["gap"] in present else "accepted, no longer applies") for e in entries]
+
+
 def detect(d, name=None, methodology="gitflow", provider=None, release=None, answers=None):
     """release: the `release` answers of the project when it has any (its version file and changelog headings are looked for, not the defaults).
     answers: the project's stored answers when it has any (release is then theirs, and their env commands are in effect)."""
+    ans_in = answers
     if isinstance(answers, dict) and release is None:
         release = answers.get("release")
     release = release if isinstance(release, dict) else {}
@@ -410,7 +431,10 @@ def detect(d, name=None, methodology="gitflow", provider=None, release=None, ans
         gaps.append({"kind": "tags", "what": "tags", "why": "the existing tags are not semantic versions"})
     if not ci:
         gaps.append({"kind": "ci", "what": ".github/workflows", "why": "no CI workflow was found"})
-    return {"found": found, "answers": answers, "gaps": gaps, "info": info, "questions": questions, "methodology": methodology}
+    acc = accepted_entries(ans_in)
+    open_gaps = [g for g in gaps if gap_id(g) not in {e["gap"] for e in acc}]
+    return {"found": found, "answers": answers, "gaps": open_gaps, "info": info, "accepted": accepted_status(acc, {gap_id(g) for g in gaps}),
+            "questions": questions, "methodology": methodology}
 
 
 class Refuse(Exception):
@@ -529,6 +553,11 @@ def adopt_plan(project, answers_file, methodology=None):
     integ_sha = sha_of(integ) or base_sha
     adopt_branch = "agent/adopt-" + methodology
     adopt_exists = bool(git(d, "rev-parse", "--verify", "-q", "refs/heads/" + adopt_branch) or git(d, "rev-parse", "--verify", "-q", "refs/remotes/origin/" + adopt_branch))
+    acc = accepted_entries(answers)       # the lead's accepted deviations: a gap named there is not open, and adopt writes nothing for it
+    accepted_ids = {e["gap"] for e in acc}
+    universe = {gap_id(g) for g in det["gaps"]} | {e["gap"] for e in det["accepted"] if e["status"] == "accepted"}   # every gap this plan knows, to tell an accepted one that is gone
+    universe |= {"branch: %s" % b["name"] for b in branches}
+    branches = [b for b in branches if "branch: %s" % b["name"] not in accepted_ids]
     tree = Tree(d, integ_sha)
     lower = {p.lower() for p in tree.files | tree.dirs}
     ev = env_view(m, tree, d, answers)
@@ -569,7 +598,10 @@ def adopt_plan(project, answers_file, methodology=None):
             why = "the same document exists under another name"
         if why:
             skipped.append({"what": dest, "why": why})
+        elif "file: %s" % dest in accepted_ids:
+            universe.add("file: %s" % dest)
         else:
+            universe.add("file: %s" % dest)
             item = dict(item, content=drop_absent(item["content"]))
             if dest == "AGENTS.md" and tree.exists("CLAUDE.md"):
                 item["content"] = section_only(item["content"])   # the repository keeps its instructions in its own CLAUDE.md: only what environment detection reads is added
@@ -595,6 +627,8 @@ def adopt_plan(project, answers_file, methodology=None):
                                     "git switch %s && git merge -s ours --allow-unrelated-histories %s (keeps the tree of %s)" % (a, b, a, b)})
     if any(f["dest"] == ci.get("file") for f in files):   # the template replaces the "no CI" gap; its content is still the owner's to judge
         left = [g for g in left if g["kind"] != "ci"] + [{"kind": "ci", "what": ci["file"], "why": "written from the template: check that its steps fit this project"}]
+    universe |= {gap_id(g) for g in left}
+    left = [g for g in left if gap_id(g) not in accepted_ids]
     basis = {
         "project": project, "methodology": methodology, "repo": d, "base": {"name": base_name, "sha": base_sha},
         "heads": sorted(heads), "integration": {"name": integ, "sha": integ_sha},
@@ -602,7 +636,7 @@ def adopt_plan(project, answers_file, methodology=None):
         "files": [{"dest": f["dest"], "sha256": hashlib.sha256(f["content"].encode()).hexdigest()} for f in files],
     }
     return {"project": project, "methodology": methodology, "path": d, "base": basis["base"], "integration": basis["integration"],
-            "branches": branches, "adopt_branch": adopt_branch, "adopt_exists": adopt_exists, "files": files, "skipped": skipped, "left": left, "info": info, "instructions": instructions,
+            "branches": branches, "adopt_branch": adopt_branch, "adopt_exists": adopt_exists, "files": files, "skipped": skipped, "left": left, "info": info, "instructions": instructions, "accepted": accepted_status(acc, universe),
             "nothing_to_do": not branches and not files, "basis": basis}
 
 

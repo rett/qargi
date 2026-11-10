@@ -106,6 +106,13 @@ merge. Until the verbs read the branch roles from the file, treat `gitflow` as t
   to add). `qargi project adopt PROJECT --show` prints everything the plan token covers: the refs, the branches, and the
   full content of each file to write.
 
+  A deviation you accept on purpose is recorded by the lead in the answer `methodology_accepted`, a list of
+  `{gap, reason, date}` with the gap written as attach prints it (`file: CONTRIBUTING.md`, `branch: develop`, `env: doctor
+  target`): `qargi project set NAME methodology_accepted '[{"gap":"file: CONTRIBUTING.md","reason":"the workflow is in the
+  wiki","date":"2026-11-10"}]'`. A member run may not set it. `project attach`, `project adopt` and `marshal handoff` print the
+  accepted deviations apart from the open gaps; adopt writes no accepted file and creates no accepted branch; an accepted
+  deviation whose gap is gone reads "accepted, no longer applies".
+
 Each prints a plan and a token; they write only when you apply it with `--plan TOKEN --approved "<your
 words>"` (`qargi help approvals`). With `--json` on any of these (or any other gated verb) the plan comes as one JSON object,
 `{"verb", "plan", "token", "apply", "exit"}`, so a lead reads the token and the command that applies it instead of scraping the text; `apply`

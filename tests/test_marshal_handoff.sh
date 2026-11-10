@@ -144,6 +144,16 @@ jq 'del(.gates)' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/
 H f1; ! grep -q "== gates" "$T/o" && ok "gates: without gates the note has no gates section" || no "SPEC gates section without gates"
 H f1 --json; jq -e '.gates == []' "$T/o" >/dev/null && ok "gates: --json has an empty list without gates" || no "SPEC gates json without gates: $(jq -c .gates "$T/o")"
 
+# accepted deviations from the methodology (methodology_accepted, set by the lead) are printed apart from the open gaps; one whose gap is gone says so
+H f1; ! grep -q "== methodology deviations" "$T/o" && ok "deviations: without accepted deviations the note has no such section" || no "SPEC deviations absent"
+jq '.methodology_accepted = [{gap:"file: CONTRIBUTING.md", reason:"we keep the workflow in the wiki\u001b[31m", date:"2026-11-10"},{gap:"file: GONE.md", reason:"was once missing", date:"2026-10-01"}]' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"
+H f1; dl=$(secno "== methodology deviations"); ml=$(secno "== marshal record")
+{ [ -n "$dl" ] && [ "$dl" -lt "$ml" ] && grep -q "^  file: CONTRIBUTING.md (accepted: we keep the workflow in the wiki.*; 2026-11-10)$" "$T/o" \
+  && grep -q "^  file: GONE.md (accepted, no longer applies: was once missing; 2026-10-01)$" "$T/o" && grep -q "^open gaps: [1-9][0-9]* (qargi project attach app lists them)$" "$T/o" && ! grep -q $'\033' "$T/o"; } \
+  && ok "deviations: the note lists the accepted ones with their status, apart from the open gaps (a gone gap says so, the text is cleaned)" || no "SPEC deviations: $(sed -n '/== methodology deviations/,/== marshal/p' "$T/o")"
+H f1 --json; jq -e '.deviations.accepted | length == 2 and .[0].status == "accepted" and .[1].status == "accepted, no longer applies"' "$T/o" >/dev/null && ok "deviations: --json carries them" || no "SPEC deviations json: $(jq -c .deviations "$T/o")"
+jq 'del(.methodology_accepted)' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"
+
 # --- every open feature without NAME
 H; rc=$?
 n=$(grep -c '^feature [a-z0-9-]*$' "$T/o")

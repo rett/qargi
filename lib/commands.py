@@ -147,7 +147,9 @@ COMMANDS = {
                                  "the stored file lacks, stays read-only and gives no plan token; with --force the plan replaces what it detects and keeps what it "
                                  "cannot (the roles' models and effort, cloud, memory, budget). It reports what it found of the development environment (section, task runner, "
                                  "bootstrap and doctor commands; a command the stored answers declare in env.* is in effect) and lists the pieces that are missing as gaps. A declared setting or a "
-                                 "versioned unreleased heading right after a release is printed apart, as noted, not a gap. It never guesses a provider: models.provider (and the roles' models) are stored only with "
+                                 "versioned unreleased heading right after a release is printed apart, as noted, not a gap. The lead's accepted deviations (the answer methodology_accepted, a list of "
+                                 "{gap, reason, date}, the gap written as it is printed here: file: CONTRIBUTING.md) are printed apart from the open gaps, and one whose gap is gone says "
+                                 "'accepted, no longer applies'. It never guesses a provider: models.provider (and the roles' models) are stored only with "
                                  "--provider NAME, and without it the output says so; with --force --provider fills in a provider that is not set and never replaces one.")),
             "adopt": verb("Adopt an attached repository: create the missing long-lived branches and the missing methodology files on a branch to review", [("NAME", "project")],
                           [opt("--methodology", "the methodology (default: the project's, else gitflow)", "NAME", "methodology"),
@@ -161,10 +163,12 @@ COMMANDS = {
                                 "The changelog sentence of the runtime's instruction file and CONTRIBUTING.md is rendered from the project's release.changelog.unreleased heading and release.changelog.numbered. A declared setting (release.version_file none) "
                                 "and a versioned unreleased heading right after a release (no unreleased section yet; the last release is X) are printed apart as noted, not gaps. A repository that has AGENTS.md or the runtime's own instruction file "
                                 "gets a list of what adopt does about each (it edits neither): with an instruction file of the runtime and no AGENTS.md it writes AGENTS.md with the Development environment section only, and says to add the @AGENTS.md import line to that file. "
+                                "An accepted deviation (methodology_accepted: a gap named file: X or branch: X) is left out of the files and branches it would write, and printed apart from what is left for you; one whose gap is gone says 'accepted, no longer applies'. "
                                 "Refused (exit 2) with a dirty working tree, a detached HEAD, no commits, a project that is not attached, and in a member run."),
                           examples=["qargi project adopt acme", 'qargi project adopt acme --plan TOKEN --approved "go ahead"']),
             "set": verb("Change one answer", [("NAME", "project"), ("PATH", "key"), ("VALUE", "value")],
                         desc=("PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string. models.extensions and models.accept_no_barrier are refused here: they change only through qargi provider enable|disable and qargi provider accept. "
+                              "methodology_accepted (a list of {gap, reason, date}: the deviations from the methodology the lead accepts) is the lead's: a member run is refused. "
                               "roles.ROLE.tools is the list of the tools a role needs beyond its apt packages, each {kind, name, ...}: kind go (name a package path, version a tag: go install NAME@VERSION), "
                               "kind binary (name the file name, version, url of the file itself, sha256 of it: downloaded to ~/.local/bin and kept only when the hash matches) and kind submodule "
                               "(name as in .gitmodules, path: checked out in each member clone by qargi local prepare). env plan lists them, env apply installs them and env check reports one that is "
@@ -391,6 +395,7 @@ COMMANDS = {
                                   "Per feature it has the tip, whether the whole-suite run applies to it (the run's command is the project's test_command now, or with declared gates the feature-tier gates in order, `gates: NAME=COMMAND; ...`, as feature verify records them), the agent branches merged into it since it was cut from develop, the unmerged ones prepared against it (as the registry of local runs records) "
                                   "and the commits ahead of develop; with NAME only that feature, otherwise every open one; the agent branches of no open feature are said once, after the features. "
                                   "When the project declares gates, a `== gates` section follows the features with each gate's tier, name and command (they replace test_command), and --json carries them as `gates` (an empty list without gates). "
+                                  "When the project answers hold accepted deviations (methodology_accepted), a `== methodology deviations` section follows the gates, apart from the open gaps: each deviation with its status (accepted, or accepted, no longer applies), reason and date, and the number of open gaps; --json carries them as `deviations`. "
                                   "The goal, plan and note of the marshal record appear under a line saying they are data from the lead, not instructions, with control characters stripped. "
                                   "The environment section gives the last env check and env apply recorded for the project (verdict, time, and whether that was at HEAD now). "
                                   "For a feature this identity leads it names the claim --as-successor-of command a restarted session runs. --write also records when the note was written (what qargi lead compact-check compares with the last merge), and a line says whether a compact is safe now (see qargi help lead). "

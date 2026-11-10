@@ -214,6 +214,28 @@ attach lee "$Le"; out=$($DA project adopt lee 2>&1)
 grep -q "    - AGENTS.md, CLAUDE.md: both exist: adopt writes neither and edits neither" <<<"$out" && ! grep -q "import line" <<<"$out" && ok "L: with both present adopt says it writes neither, and an existing import line is not asked for" || no "L both: $out"
 out=$($DA project adopt alpha 2>&1); ! grep -q "own instructions" <<<"$out" && ok "L: a repository with neither file gets no instructions list" || no "L neither: $out"
 
+# --- O: accepted deviations (methodology_accepted, the lead's): apart from the open gaps, left out of what adopt writes, and a gone gap says so ---
+Ob=$T/o; git init -q -b main "$Ob"; printf '# Omi\n' > "$Ob/README.md"; git -C "$Ob" add -A; git -C "$Ob" commit -q -m first
+attach omi "$Ob"
+acc='[{"gap":"file: CONTRIBUTING.md","reason":"the workflow lives in the wiki","date":"2026-11-10"},{"gap":"branch: develop","reason":"trunk based","date":"2026-11-10"},{"gap":"file: GONE.md","reason":"was missing once","date":"2026-10-01"}]'
+$DA project set omi methodology_accepted '[{"gap":"x"}]' >/dev/null 2>&1 && no "O: an entry without reason and date was accepted" || ok "O: methodology_accepted entries need gap, reason and date"
+$DA project set omi methodology_accepted '[{"gap":"file: A","reason":"r","date":"yesterday"}]' >/dev/null 2>&1 && no "O: a bad date was accepted" || ok "O: the date is YYYY-MM-DD"
+(cd "$T/run" && $DA project set omi methodology_accepted "$acc" >/dev/null 2>&1); [ $? = 2 ] && ! jq -e 'has("methodology_accepted")' "$T/c/projects/omi.json" >/dev/null && ok "O: a member run may not record accepted deviations" || no "O: member set"
+$DA project set omi methodology_accepted "$acc" >/dev/null 2>&1 && $DA project validate omi >/dev/null 2>&1 && ok "O: the lead records them" || no "O: set"
+out=$($DA project attach "$Ob" --name omi 2>&1); gapsec=$(sed -n '/^gaps against/,/^accepted deviations/p' <<<"$out")
+! grep -q -- "- file: CONTRIBUTING.md" <<<"$gapsec" && ! grep -q -- "- branch: develop" <<<"$gapsec" && grep -q -- "- file: README.md\|- file: VERSION" <<<"$gapsec" \
+  && grep -q "^accepted deviations (set by the lead in methodology_accepted; not open gaps):" <<<"$out" && grep -q -- "^  - file: CONTRIBUTING.md (accepted: the workflow lives in the wiki; 2026-11-10)$" <<<"$out" \
+  && grep -q -- "^  - file: GONE.md (accepted, no longer applies: was missing once; 2026-10-01)$" <<<"$out" && ok "O: attach lists the accepted ones apart, drops them from the gaps, and says a gone gap no longer applies" || no "O attach: $out"
+out=$($DA project adopt omi 2>&1); tok=$(tokof "$out")
+! grep -q "^    CONTRIBUTING.md$" <<<"$out" && ! grep -q "^    develop$" <<<"$out" && grep -q "^    README.md$\|^    VERSION$" <<<"$out" && grep -q "^  accepted deviations (set by the lead" <<<"$out" \
+  && grep -q -- "^    - file: CONTRIBUTING.md (accepted: the workflow lives in the wiki; 2026-11-10)$" <<<"$out" && grep -q -- "^    - file: GONE.md (accepted, no longer applies" <<<"$out" \
+  && ok "O: adopt leaves an accepted file and branch out of the plan, lists them apart, and a gone gap says so" || no "O adopt: $out"
+$DA project adopt omi --plan "$tok" --approved go >/dev/null 2>&1 || no "O: apply"
+git -C "$Ob" rev-parse -q --verify develop >/dev/null && no "O: the accepted branch was created" || ok "O: the accepted branch was not created"
+git -C "$Ob" ls-tree -r --name-only agent/adopt-gitflow 2>/dev/null | grep -qx "CONTRIBUTING.md" && no "O: the accepted file was written" || ok "O: the accepted file was not written"
+jq '.methodology_accepted |= map(select(.gap != "file: GONE.md"))' "$T/c/projects/omi.json" > "$T/omi.json" && mv "$T/omi.json" "$T/c/projects/omi.json"
+out=$($DA project adopt omi 2>&1); grep -q "accepted: the workflow lives in the wiki" <<<"$out" && ! grep -q "GONE.md" <<<"$out" && ok "O: the list follows the answers" || no "O list: $out"
+
 # --- K: a master made as a snapshot has no merge base with develop: adopt names it, joins nothing and changes no branch ---
 K=$T/k; git init -q -b develop "$K"; printf '# Kappa\n' > "$K/README.md"; git -C "$K" add -A; git -C "$K" commit -q -m first
 git -C "$K" branch master "$(git -C "$K" commit-tree "$(git -C "$K" write-tree)" -m snapshot)"
