@@ -11,6 +11,7 @@ if ! command -v marshal_check >/dev/null 2>&1; then
   else
     marshal_start() { return 127; }; marshal_check() { return 127; }; marshal_finish() { return 127; }
     marshal_hold_start() { :; }; marshal_hold_stop() { :; }; marshal_touch() { :; }; marshal_touch_run() { :; }
+    marshal_override_audit() { [ -z "$1" ] || rm -f "$1"; }
   fi
 fi
 
@@ -631,13 +632,31 @@ project_load() { # PROJ (or inferred) -> af, REPO, TESTCMD, METH
   RDIR=$DA_STATE/releases; mkdir -p "$RDIR"
 }
 
-# marshal_gate NAME -> asks the marshal whether this identity may change feature NAME. Only an explicit refusal (status 1, the
-# message already printed) ends the verb with exit 1 and changes nothing; warnings pass through on stderr, and any other failure
-# (script missing, an exception) is a warning too: an unreachable marshal never blocks work.
+# marshal_flow FUNC ARGS...: runs the shell API function FUNC (marshal_check or marshal_start) for a flow verb. Unless the lead gave --assume-unreachable-ok
+# (ASSUME_UNREACHABLE, set by the verb's option parsing) it adds --need-remote: a shared marshal whose remote cannot be asked is then an exit 3 and nothing
+# is changed. With the flag the verb goes on, and what marshal_store.py wrote into the override file becomes an audit line marshal:unreachable-ok. A project
+# whose marshal is local (the default) or off never reaches a remote and is not affected either way.
+marshal_flow() {
+  local ovf='' frc=0
+  if [ -n "${ASSUME_UNREACHABLE:-}" ]; then ovf=$(mktemp "$DA_STATE/.marshal-override.XXXXXX" 2>/dev/null) || ovf=''
+  else set -- "$@" --need-remote; fi
+  QARGI_MARSHAL_OVERRIDE_OUT=$ovf "$@" || frc=$?
+  [ -z "$ovf" ] || marshal_override_audit "$ovf" "$frc"
+  return "$frc"
+}
+# marshal_unreachable_refuse NAME: the end of a flow verb that could not ask the marshal (exit 3, nothing changed; the marshal's own message, printed
+# before, says what could not be reached and why). It names the flag of the flow verbs: the marshal's message names the one of qargi marshal check.
+marshal_unreachable_refuse() {
+  echo "qargi: feature ${verb:-the verb} $1 is refused: the marshal could not be asked, so it is not known whether another lead holds $1. If you know none does, run it again with --assume-unreachable-ok (audited as marshal:unreachable-ok)" >&2
+  exit 3
+}
+# marshal_gate NAME -> asks the marshal whether this identity may change feature NAME. An explicit refusal (status 1, the message already printed) ends the
+# verb with exit 1 and changes nothing; so does a shared marshal whose remote cannot be asked (status 3, exit 3) unless --assume-unreachable-ok was given
+# (marshal_flow). Warnings pass through on stderr, and any other failure (script missing, an exception) is a warning too.
 marshal_gate() {
   local rc=0 err
   err=$(mktemp "$DA_STATE/.marshal-gate.XXXXXX" 2>/dev/null) || err=/dev/null
-  marshal_check "$PROJ" "$1" 2>"$err" || rc=$?
+  marshal_flow marshal_check "$PROJ" "$1" 2>"$err" || rc=$?
   if [ "$err" != /dev/null ]; then
     cat "$err" >&2
     if [ "$rc" = 1 ] && grep -q '^Traceback' "$err"; then rc=70; fi   # an exception also exits 1, but it is not a refusal
@@ -645,6 +664,7 @@ marshal_gate() {
   fi
   [ "$rc" -ne 0 ] || return 0
   [ "$rc" -ne 1 ] || exit 1
+  if [ "$rc" = 3 ] && [ -z "${ASSUME_UNREACHABLE:-}" ]; then marshal_unreachable_refuse "$1"; fi
   echo "qargi: warning: the marshal could not be asked (status $rc); going on" >&2
 }
 # hold_begin NAME / hold_end -> the lease of NAME is renewed while a long step runs. An interrupt leaves through the EXIT trap,

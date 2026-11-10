@@ -42,13 +42,17 @@
 #
 # Shell API for other scripts (source this file after lib.sh; each function takes the project name first, so it needs
 # no project_load, and uses the identity above):
-#   marshal_start PROJ NAME PURPOSE   create or refresh the record when a feature starts, the current identity leads it;
+#   marshal_start PROJ NAME PURPOSE [--need-remote]
+#                                     create or refresh the record when a feature starts, the current identity leads it;
 #                                     returns 1 and prints the refusal when another lead holds it
-#   marshal_check PROJ NAME           returns 1 and prints the refusal when another LIVE lead holds NAME or when
+#   marshal_check PROJ NAME [--need-remote]
+#                                     returns 1 and prints the refusal when another LIVE lead holds NAME or when
 #                                     NAME has neither a branch feature/NAME nor a record; warnings
 #                                     (stale lead, anonymous identity, overlapping files, no lead) go to stderr; stdout stays empty.
 #                                     When this identity leads NAME it also renews the lease (once a third of it has passed, even when
-#                                     it lapsed: nobody else holds the feature), so every verb of the lead that asks keeps it alive
+#                                     it lapsed: nobody else holds the feature), so every verb of the lead that asks keeps it alive.
+#                                     Without --need-remote a shared backend whose remote cannot be asked is a warning; with it, the
+#                                     exit status is 3 and nothing changes (the flow verbs pass it: marshal_gate in gitflow.sh)
 #   marshal_touch PROJ NAME           the renewal alone: silent, never fails (verbs that do not gate, such as feature status)
 #   marshal_touch_run RUN             the same for the feature that the local run RUN is based on, from the lead's registry (local verify,
 #                                     clean, review check and apply, where there is no feature name on the command line)
@@ -80,14 +84,14 @@ marshal_py() { # PROJ VERB [args...]
   pymod marshal_store "$verb" --state "$DA_STATE" --conf "$DA_CONF" --project "$proj" --repo "$(marshal_repo "$proj")" --ttl "$(marshal_ttl "$proj")" "$@"
 }
 
-marshal_start() { # a restarted session of the same lead (host, user, work tree; stale lease) continues without a takeover; that is audited
+marshal_start() { # PROJ NAME PURPOSE [EXTRA...]: a restarted session of the same lead (host, user, work tree; stale lease) continues without a takeover; that is audited
   local af rc=0
   af=$(mktemp "$DA_STATE/.marshal-audit.XXXXXX") || af=/dev/null
-  QARGI_MARSHAL_AUDIT_OUT=$af marshal_py "$1" start "$2" --purpose "${3:-}" >/dev/null || rc=$?
+  QARGI_MARSHAL_AUDIT_OUT=$af marshal_py "$1" start "$2" --purpose "${3:-}" "${@:4}" >/dev/null || rc=$?
   if [ "$af" != /dev/null ]; then if [ "$rc" = 0 ] && [ -s "$af" ]; then audit_log "marshal:succession" "$(cat "$af")"; fi; rm -f "$af"; fi
   return "$rc"
 }
-marshal_check() { marshal_py "$1" check "$2" --renew >/dev/null; }
+marshal_check() { marshal_py "$1" check "$2" --renew "${@:3}" >/dev/null; }   # PROJ NAME [EXTRA...]: the flow verbs add --need-remote (marshal_flow in gitflow.sh)
 marshal_touch() { marshal_py "$1" check "$2" --renew >/dev/null 2>&1 || true; }
 marshal_touch_run() { # RUN: renew the lease of the feature that the local run RUN is based on (feature/NAME), when this identity leads it
   local base proj
@@ -370,7 +374,7 @@ marshal_main() {
   fi
   # claim and check ask the remote of the shared records. When it cannot be reached they refuse (exit 3, saying what could not be reached and why)
   # unless the lead gave --assume-unreachable-ok: then they go on (a claim stays provisional, a check answers from the cache) and an audit line
-  # marshal:unreachable-ok records it. The shell API below (marshal_start, marshal_check) never refuses for this: the flow verbs keep going.
+  # marshal:unreachable-ok records it. The shell API below (marshal_start, marshal_check) refuses only with --need-remote, which the flow verbs pass (marshal_gate in gitflow.sh).
   local ovf=''
   case $verb in claim|check)
     if [ -n "$assume" ]; then ovf=$(mktemp "$DA_STATE/.marshal-override.XXXXXX"); else opt+=(--need-remote); fi;;

@@ -53,9 +53,11 @@ judged on the taker's own clock: a record that stayed unchanged for the ttl, as 
 words; other machines' clocks are never compared. When the remote cannot be reached, `marshal claim` and `marshal check` refuse
 (exit 3, "remote not checked (why)"), saying what could not be reached and why, and change nothing: a claim made without the remote would be a
 guess about who else leads the feature. If you know better, `--assume-unreachable-ok` lets them go on (a claim is marked provisional until it
-reaches the remote, a check answers from the last fetched copy) and the audit log records it as `marshal:unreachable-ok`. `marshal status`
-shows the last fetched copy with the same notice, the flow verbs that ask the marshal first (`feature start`, merge, finish) still warn and go
-on, and every other change of a record needs the remote and has no override. It is off by default, the guard
+reaches the remote, a check answers from the last fetched copy) and the audit log records it as `marshal:unreachable-ok`. The flow verbs
+that ask the marshal first (`feature start`, `sync`, `merge`, `verify` and `finish`) refuse the same way (exit 3, nothing changed, the message names the flag) and
+take the same `--assume-unreachable-ok`, which lets the verb go on and writes the same audit line `marshal:unreachable-ok`; a project whose marshal is local
+(the default) never reaches a remote and is not affected. `marshal status`
+shows the last fetched copy with the same notice, and every other change of a record needs the remote and has no override. It is off by default, the guard
 refuses a member run the verbs that enable, disable or push it, `project set` refuses the `marshal.*` keys except `marshal.lease_minutes`, and `qargi marshal disable` goes
 back to the local records (the refs on the remote stay). Whether your Git host accepts the `refs/qargi/*` namespace is yours to check
 on a scratch repository before enabling it on a real one.
