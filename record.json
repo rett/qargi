@@ -4,19 +4,13 @@
  "goal": "Q21: hotfix start without an unreleased changelog heading",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "arc-qargi",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-10T19:59:45Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-10T22:36:59Z",
- "finished_at": null,
+ "finished_at": "2026-11-10T22:37:21Z",
  "updated_by": "arc-qargi",
- "rev": 21,
- "updated_at": "2026-11-10T22:36:59Z",
+ "rev": 22,
+ "updated_at": "2026-11-10T22:37:21Z",
  "feature": "hotfixstart",
  "project": "qargi"
 }
