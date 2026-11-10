@@ -2,7 +2,7 @@
   "schema": 1,
   "name": "gitflow",
   "version": 1,
-  "description": "Git-flow: master (production, every commit tagged) and develop (integration); feature branches from develop merged back with --no-ff; release/<version> branches from develop, merged into master (tagged) and back into develop; hotfix/<version> branches from master, merged into master (tagged) and develop (or the open release branch). Targeted checks per task, the whole suite at checkpoints, a Keep a Changelog file, CI on a pull request into master before the finish.",
+  "description": "Git-flow: master (production, every commit tagged) and develop (integration); feature branches from develop merged back with --no-ff; release/<version> branches from develop, merged into master (tagged); the tagged master commit is then merged into develop; hotfix/<version> branches from master, merged into master (tagged) and develop (or the open release branch). Targeted checks per task, the whole suite at checkpoints, a Keep a Changelog file, CI on a pull request into master before the finish.",
   "params": {
     "project": {
       "required": true,
@@ -80,7 +80,7 @@
     "when the feature is complete, run the whole suite once on it, then merge it into develop with --no-ff and delete it; develop sees one merge per feature",
     "when you say develop is ready: start release/<version> from develop; the first commit bumps the version and dates the changelog; only minor fixes follow",
     "push the release branch and open a pull request into master; CI runs on exactly the commit that will be released. A master created as a snapshot of the code has no merge base with develop (git refuses to merge unrelated histories): before the push, merge master into the release branch with -s ours --allow-unrelated-histories, which keeps the release tree, so the later merge into master is an ordinary --no-ff merge; qargi release push does this in its plan and checks that the tree is unchanged",
-    "when CI passes: merge release/<version> into master with --no-ff, tag it, merge it into develop with --no-ff, delete the branch",
+    "when CI passes: merge release/<version> into master with --no-ff, tag it, merge that tagged master commit into develop with --no-ff, delete the branch",
     "a critical fix to production is a hotfix/<version> branch from master, finished the same way (into the open release branch instead of develop when one exists)"
   ],
   "after_release": [
