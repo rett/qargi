@@ -121,6 +121,12 @@ class DocsTree(unittest.TestCase):
         for tool in ("bash", "GNU coreutils", "`timeout`", "findutils", "git", "jq", "python3", "`flock`", "`ssh-keygen`"):
             self.assertIn(tool, line)
 
+    def test_the_skills_page_names_the_answers_and_verbs_of_the_lead(self):
+        text = read(os.path.join(ROOT, "docs", "skills-tools-and-memory", "README.md"))
+        for name in ("backlog.archive", "backlog.section", "review.reject_trailers", "ci.not_gates", "methodology_accepted", "project unset",
+                     "backlog add", "backlog done", "local report", "release plan", "project adopt PROJECT --show"):
+            self.assertIn(name, text)
+
     def test_documentation_table(self):
         rows = table_rows(os.path.join(ROOT, "README.md"))
         self.assertTrue(rows, "README.md has no table under '## Documentation'")
