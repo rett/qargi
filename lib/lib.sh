@@ -360,18 +360,21 @@ run_clean() { # DIR COMMAND...: runs a command in DIR without the project's clou
 audit_log() { # verb [detail]
   local f=$DA_STATE/audit.log
   # AUDIT_ORIGIN (set by the supervisor only) adds an origin field, so its lines can be told from the owner's
-  jq -nc --arg t "$(now)" --arg v "$1" --arg d "${2:-}" --arg a "${ASKED:-}" --arg p "${APPROVED:-}" --arg n "${QARGI_NESTED:-}" --arg o "${AUDIT_ORIGIN:-}" \
+  jq -nc --arg t "$(now)" --arg v "$1" --arg d "${2:-}" --arg a "${ASKED:-}" --arg p "${APPROVED:-}" --arg n "${NESTED_SKIPPED:-}" --arg o "${AUDIT_ORIGIN:-}" \
     '{ts:$t, verb:$v, detail:$d, asked:$a, approved:$p, nested:($n != "")} + (if $o == "" then {} else {origin:$o} end)' >> "$f"
   chmod 600 "$f" 2>/dev/null || true
 }
 
 # An approval applies to the plan the user saw: plans print a token (a hash of what
 # would be done) and apply must be given that token. Calls nested inside an approved
-# apply (provisioning seeding its stores) skip it.
+# apply (provisioning seeding its stores) may skip it, through need_plan_nested alone.
 plan_token() { sha256sum | cut -c1-12; }
-need_plan() { # expected-token; the caller's --plan value is $PLAN_ARG
-  [ -z "${QARGI_NESTED:-}" ] || return 0
+need_plan() { # expected-token; the caller's --plan value is $PLAN_ARG; always checked, whatever the environment holds
   [ "${PLAN_ARG:-}" = "$1" ] || die "the plan changed or --plan is missing: run the plan, show it to the user, then apply exactly that with --plan $1"
+}
+need_plan_nested() { # as need_plan, but a call nested in an approved apply (QARGI_NESTED set) skips the check; canon apply only
+  [ -z "${QARGI_NESTED:-}" ] || { NESTED_SKIPPED=1; return 0; }   # the audit line says "nested" only when the check was skipped
+  need_plan "$1"
 }
 
 need_asked() {

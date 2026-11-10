@@ -14,7 +14,6 @@ usage() { echo "usage: qargi memory init TIER | move PATH --from TIER --to TIER 
 
 v=${1:-}; shift || true
 case $v in init|move) ;; *) usage;; esac
-unset QARGI_NESTED   # a caller that is itself approved has not approved this plan: the token is always needed
 ARG1='' FROM='' TO='' PROJECT='' PLAN_ARG='' APPROVED=''
 export PLAN_ARG
 while [ $# -gt 0 ]; do
