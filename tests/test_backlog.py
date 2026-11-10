@@ -40,6 +40,55 @@ class Parse(unittest.TestCase):
         self.assertEqual(seen["aa"], [1, 3])
 
 
+class Section(unittest.TestCase):
+    TEXT = "# T\n\n- [top] before\n\n## Now\n\n- [aa] one\n### Deeper\n- [bb] two\n```\n## Not a heading\n```\n- [cc] three\n\n## Later\n\n- [dd] four\n\n# Other\n- [ee] five\n"
+
+    def test_only_the_list_under_the_heading_holds_items(self):
+        got = B.parse(self.TEXT.split("\n"), "Now")
+        self.assertEqual([i["id"] for i in got], ["aa", "bb", "cc"])   # a deeper heading and a fenced line belong to it, ## Later ends it
+        self.assertEqual([i["id"] for i in B.parse(self.TEXT.split("\n"), "## Later")], ["dd"])   # the name may carry its #s
+        self.assertEqual([i["id"] for i in B.parse(self.TEXT.split("\n"))], ["top", "aa", "bb", "cc", "dd", "ee"])
+
+    def test_a_higher_heading_ends_it_and_a_missing_heading_is_an_error(self):
+        self.assertEqual([i["id"] for i in B.parse(self.TEXT.split("\n"), "Later")], ["dd"])
+        with self.assertRaises(B.BacklogError):
+            B.parse(self.TEXT.split("\n"), "Absent")
+        with self.assertRaises(B.BacklogError):
+            B.parse(self.TEXT.split("\n"), "Not a heading")   # inside a code fence
+
+    def test_the_archive_option(self):
+        os.environ["QARGI_NOW"] = "2026-11-08"
+        try:
+            B.OPTS["archive"] = None
+            self.assertEqual(B.archive_path("/x/backlog.md"), "/x/backlog-archive-2026-11.md")
+            B.OPTS["archive"] = "/y/archives"
+            self.assertEqual(B.archive_path("/x/backlog.md"), "/y/archives/backlog-archive-2026-11.md")
+            B.OPTS["archive"] = "/y/all.md"
+            self.assertEqual(B.archive_path("/x/backlog.md"), "/y/all.md")
+        finally:
+            B.OPTS["archive"] = None
+            del os.environ["QARGI_NOW"]
+
+    def test_named_ignores_items_outside_the_section_and_a_missing_heading(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "backlog.md")
+            with open(path, "w") as f:
+                f.write(self.TEXT)
+            def named(section):
+                B.OPTS["section"] = section
+                old, old_out = sys.stdin, sys.stdout
+                sys.stdin, sys.stdout = io.StringIO("top aa dd"), io.StringIO()
+                try:
+                    B.cmd_named(path)
+                    return sys.stdout.getvalue().strip()
+                finally:
+                    sys.stdin, sys.stdout = old, old_out
+                    B.OPTS["section"] = None
+            self.assertEqual(named(None), "top, aa, dd")
+            self.assertEqual(named("Now"), "aa")
+            self.assertEqual(named("Absent"), "")
+
+
 class Named(unittest.TestCase):
     def named(self, backlog, messages):
         with tempfile.TemporaryDirectory() as d:

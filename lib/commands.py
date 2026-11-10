@@ -467,7 +467,10 @@ COMMANDS = {
                  "(so a task-list box '- [x] text' is no id), with the indented lines after it. Any other top-level list line is an item without an id and is listed as unnumbered; "
                  "headings, paragraphs and fenced code blocks are not items. feature finish and release finish print a plan line, 'backlog items named in these commits: ID, ...', "
                  "for the open items whose id the messages of the commits being merged contain; it is information only and nothing is done, and nothing is printed when backlog.file "
-                 "is unset or its file is missing."),
+                 "is unset or its file is missing. backlog.section names a heading of the file (its text, with or without the #s): only the list under it holds items, up to the next "
+                 "heading of the same or a higher level (a deeper heading belongs to it); a heading the file lacks is an error for the verbs. "
+                 "backlog.archive says where the archive goes: a directory (created when absent; a ~/ or relative path works as for the file) that receives NAME-archive-YYYY-MM.md, "
+                 "or a path ending in .md for one archive file whatever the month; by default the archive is beside the backlog file."),
         "scripts": ["backlog.sh"],
         "verbs": {
             "list": verb("List the open items with their ids; an item without an id is shown as '-', a duplicated id is flagged", [],
@@ -477,7 +480,7 @@ COMMANDS = {
             "done": verb("Move an item, with the evidence and the date, to the archive file beside the backlog and remove it from the backlog, with the token and an approval", [("ID", "none")],
                          [PROJECT_OPT, opt("--evidence", "the words that show the item is done (they are archived with the item and the date)", "TEXT"), PLAN, APPROVED],
                          desc=("The plan shows the item and the file it goes to. Applied, the item (as written, with its indented lines), the date and the evidence are appended to "
-                               "NAME-archive-YYYY-MM.md in the directory of the backlog file (NAME is the backlog file's name without .md; the archive is created when absent), "
+                               "NAME-archive-YYYY-MM.md in the directory of the backlog file, or where backlog.archive says (NAME is the backlog file's name without .md; the archive is created when absent), "
                                "and then the item is removed from the backlog. Nothing is deleted without the plan. Refused when the id is not there, or is used by more than one item "
                                "(make the ids unique first). Not available in a member run."),
                          examples=["qargi backlog done fix-names --evidence \"merged, suite green\"",

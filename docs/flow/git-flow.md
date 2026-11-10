@@ -191,6 +191,12 @@ instance. An item is a top-level list line written `- [ID] text` (or `* [ID] tex
 and hyphens, two characters or more (a task-list box such as `- [x] text` is no id), with the indented lines after it. Any other
 top-level list line is an item without an id; headings, paragraphs and fenced code blocks are not items.
 
+Two optional answers shape the file's use. `backlog.section` is the text of a heading of the file (with or without its `#`s; `Now`
+or `## Now`): only the list under that heading holds items, up to the next heading of the same or a higher level (a deeper heading
+belongs to the section), and a heading the file lacks is an error. `backlog.archive` says where the archives go: a directory
+(created when absent; an absolute path, `~/...` or a path relative to the repository) that receives `NAME-archive-YYYY-MM.md`, or a
+path ending in `.md` for one archive file whatever the month. Without it the archive is beside the backlog file.
+
 `qargi backlog list [--json]` shows the open items with their ids, an item without an id as unnumbered (`-`) and a duplicated id
 flagged. `qargi backlog done ID --evidence "<text>"` prints a plan with a token: the item as written and the archive file it goes
 to. With `--plan TOKEN --approved "<your words>"` it appends the item, the date and the evidence to `NAME-archive-YYYY-MM.md` in the

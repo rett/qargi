@@ -149,6 +149,63 @@ $DA project set app backlog.file '~/bl.md' >/dev/null 2>&1
 bl list 2>&1 | grep -q '^  home-item  under home$' && ok "a path under the home directory (tilde slash) is taken from it" || no "home"
 rm -rf "$R/docs"
 
+# --- 5b. backlog.section: only the list under the heading holds items; backlog.archive: where the archive goes
+SF=$T/mem/sect.md; AD=$T/mem/arch
+cat > "$SF" <<'EOF'
+# Backlog
+
+- [top-one] above every section
+
+## Now
+
+- [now-one] first of now
+### Detail
+
+- [now-deep] under a deeper heading, still in Now
+
+## Later
+
+- [later-one] in Later
+EOF
+$DA project set app backlog.file "$SF" >/dev/null 2>&1
+out=$($DA project set app backlog.section '## Now' 2>&1); rc=$?
+[ $rc = 0 ] && [ "$(jq -r .backlog.section "$P")" = "## Now" ] && ok "backlog.section is stored" || no "set section rc=$rc: $out"
+out=$(bl list 2>&1)
+grep -q ': 2 open items$' <<<"$out" && grep -q '^  now-one  *first of now$' <<<"$out" && grep -q '^  now-deep  *under a deeper heading' <<<"$out" && ! grep -q 'top-one\|later-one' <<<"$out" \
+  && ok "list shows only the items under the section (a deeper heading belongs to it, the next heading of its level ends it)" || no "section list: $out"
+out=$(bl list --json 2>&1); jq -e '.section == "## Now" and (.items | map(.id)) == ["now-one","now-deep"]' <<<"$out" >/dev/null && ok "list --json names the section" || no "section json: $out"
+out=$(bldone later-one --evidence e 2>&1); rc=$?
+[ $rc = 1 ] && grep -q 'no open item \[later-one\]' <<<"$out" && ok "done refuses an item outside the section" || no "outside the section rc=$rc: $out"
+$DA project set app backlog.section Missing >/dev/null 2>&1
+out=$(bl list 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "no heading 'Missing' in the backlog file (backlog.section)" <<<"$out" && ok "a heading that is not in the file is an error" || no "missing heading rc=$rc: $out"
+$DA project set app backlog.section Now >/dev/null 2>&1
+export QARGI_NOW=2026-11-08
+out=$(bldone now-one --evidence "finished" 2>&1); t=$(tok <<<"$out")
+bldone now-one --evidence "finished" --plan "$t" --approved go >/dev/null 2>&1
+{ ! grep -q now-one "$SF" && grep -q 'top-one' "$SF" && grep -q 'later-one' "$SF" && [ -f "$T/mem/sect-archive-2026-11.md" ]; } && ok "done removes the item of the section and archives it beside the file" || no "section done: $(cat "$SF")"
+# the archive in a directory of its own (created), named as before; a relative path is taken from the repository; a name ending in .md is the one archive file
+$DA project set app backlog.archive "$AD" >/dev/null 2>&1
+out=$(bldone now-deep --evidence "second" 2>&1); t=$(tok <<<"$out")
+grep -q "into $AD/sect-archive-2026-11.md" <<<"$out" && ok "the plan names the archive in backlog.archive" || no "archive plan: $out"
+bldone now-deep --evidence "second" --plan "$t" --approved go >/dev/null 2>&1
+{ [ -f "$AD/sect-archive-2026-11.md" ] && grep -q '^### 2026-11-08: now-deep$' "$AD/sect-archive-2026-11.md" && grep -q '^# sect archive 2026-11$' "$AD/sect-archive-2026-11.md"; } && ok "the archive directory is created and holds the monthly file" || no "archive dir: $(ls -R "$AD")"
+cat > "$SF" <<'EOF'
+## Now
+
+- [one-aa] first
+- [one-bb] second
+EOF
+$DA project set app backlog.archive "$T/mem/all.md" >/dev/null 2>&1
+for i in one-aa one-bb; do
+  out=$(bldone "$i" --evidence "ev $i" 2>&1); t=$(tok <<<"$out"); bldone "$i" --evidence "ev $i" --plan "$t" --approved go >/dev/null 2>&1
+done
+[ "$(grep -c '^### ' "$T/mem/all.md")" = 2 ] && grep -q '^# all$' "$T/mem/all.md" && ok "a backlog.archive ending in .md is the one archive file, whatever the month" || no "one archive file: $(cat "$T/mem/all.md")"
+$DA project set app backlog.archive "$(printf 'a\nb')" >/dev/null 2>&1 && no "a control character in backlog.archive accepted" || ok "backlog.archive refuses a control character"
+$DA project set app backlog.section '##' >/dev/null 2>&1 && no "an empty heading accepted" || ok "backlog.section refuses a heading with no text"
+unset QARGI_NOW
+jq 'del(.backlog.archive, .backlog.section)' "$P" > "$P.new" && mv "$P.new" "$P"
+
 # --- 6. feature finish names the open items the commits mention (information only)
 $DA project set app backlog.file "$MEM" >/dev/null 2>&1
 printf -- '# Backlog\n\n- [add-cache] Cache the lookups\n- [late-one] The last one\n- [never-named] Nobody mentions it\n- [ci] a short id\n- plain\n' > "$MEM"

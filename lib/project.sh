@@ -226,11 +226,23 @@ bad.extend(_gates.problems(c.get("gates")))
 # backlog.file: the markdown file of the project's backlog (optional; qargi backlog): a path, ~/... or relative to the repository; it may be outside it
 bkl = c.get("backlog", {})
 if isinstance(bkl, dict): bkl = {k: v for k, v in bkl.items() if v is not None}
-need(isinstance(bkl, dict) and set(bkl) <= {"file"}, "backlog: an object like {file: \"/path/backlog.md\"} (unknown key: only file)")
+# backlog.archive: where the archived items go (a directory, or a path ending in .md for one archive file; default: beside the file);
+# backlog.section: a heading of the file: only the list under it holds items
+need(isinstance(bkl, dict) and set(bkl) <= {"file", "archive", "section"}, "backlog: an object like {file: \"/path/backlog.md\", archive: \"/path/archive\", section: \"Now\"} (unknown key: only file, archive, section)")
 if isinstance(bkl, dict) and "file" in bkl:
     bf = bkl["file"]
     need(isinstance(bf, str) and bf.strip() and not any(ord(ch) < 32 or ord(ch) == 127 for ch in bf),
          "backlog.file: the path of a markdown file of items written '- [some-id] text', an absolute path, ~/... or a path relative to the repository; no control characters")
+if isinstance(bkl, dict):
+    noctl = lambda t: not any(ord(ch) < 32 or ord(ch) == 127 for ch in t)
+    if "archive" in bkl:
+        ba = bkl["archive"]
+        need(isinstance(ba, str) and ba.strip() and noctl(ba),
+             "backlog.archive: the directory the archived items go to (files NAME-archive-YYYY-MM.md), or a path ending in .md for one archive file; an absolute path, ~/... or a path relative to the repository; no control characters")
+    if "section" in bkl:
+        bs = bkl["section"]
+        need(isinstance(bs, str) and re.sub(r"^#{1,6}(?:[ \t]+|$)", "", bs.strip()).strip() and noctl(bs),
+             "backlog.section: the text of a heading of the backlog file (with or without its #s): only the list under it holds items; no control characters")
 # worktrees.root: where qargi makes worktrees (ROOT/<branch>); an absolute path (or ~/...), not inside the repository
 wts = c.get("worktrees", {})
 need(isinstance(wts, dict) and set(wts) <= {"root"}, "worktrees: an object like {root: \"/path\"}")

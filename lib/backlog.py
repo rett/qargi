@@ -18,6 +18,14 @@ Headings, paragraphs and anything inside a fenced code block are not items.
                                        (NAME-archive-YYYY-MM.md, created when absent), then remove the item from FILE
   backlog.py named FILE                read commit messages on standard input; print the ids of the open items they name, comma separated
 
+Two options, given anywhere after the verb (the verb's script reads them from the project's answers backlog.archive and backlog.section):
+  --section HEADING    only the list under the heading HEADING holds items: from that heading to the next heading of the same or a higher
+                       level (a deeper heading and what follows it belong to the section). HEADING is the heading's text, with or without
+                       the leading #s (a heading is a line of 1 to 6 #s, a space and the text, outside a code fence). A file with no such
+                       heading is an error for every verb but named, which prints nothing
+  --archive PATH       an absolute path: a name ending in .md is the one archive file (all months, appended); anything else is a directory
+                       (created when absent) that receives NAME-archive-YYYY-MM.md. Without it the archive is beside FILE
+
 The date is today's (local), or the day of QARGI_NOW when that is set (tests). Exit 1 with a message on standard error for anything it
 cannot do; nothing is written then.
 """
@@ -31,6 +39,8 @@ from datetime import date
 
 ID_FORM = re.compile(r"^\[([a-z0-9][a-z0-9-]*[a-z0-9])\] +(\S.*)$")
 FENCE = re.compile(r"^\s*(```|~~~)")
+HEADING = re.compile(r"^(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$")
+OPTS = {"section": None, "archive": None}   # --section and --archive of the call (main sets them; the functions below read them)
 MARKER = re.compile(r"^[-*] +(\S.*)$")
 
 
@@ -48,9 +58,35 @@ def read_lines(path):
         raise BacklogError("%s is not UTF-8 text" % path)
 
 
-def parse(lines):
+def heading_text(section):
+    """The text of a section name given with or without its leading #s."""
+    return re.sub(r"^#{1,6}(?:[ \t]+|$)", "", section.strip()).strip()
+
+
+def section_range(lines, section):
+    """The slice (lo, hi) of line indexes under the first heading whose text is SECTION, up to the next heading of the same or a higher
+    level; BacklogError when there is none. Headings inside a code fence are none."""
+    want, fenced, found = heading_text(section), False, None
+    for i, ln in enumerate(lines):
+        if FENCE.match(ln):
+            fenced = not fenced
+            continue
+        m = None if fenced else HEADING.match(ln)
+        if not m:
+            continue
+        if found is not None and len(m.group(1)) <= found[1]:
+            return found[0], i
+        if found is None and m.group(2) == want:
+            found = (i + 1, len(m.group(1)))
+    if found is None:
+        raise BacklogError("no heading '%s' in the backlog file (backlog.section)" % want)
+    return found[0], len(lines)
+
+
+def parse(lines, section=None):
     """The items of a file's lines: dicts with id (or None), line (1-based), start and end (slice of lines), text (the first line, without
-    the id form) and full (all the item's lines, as written)."""
+    the id form) and full (all the item's lines, as written). With a section only the list under that heading holds items."""
+    lo, hi = section_range(lines, section) if section else (0, len(lines))
     items, fenced, i, n = [], False, 0, len(lines)
     while i < n:
         ln = lines[i]
@@ -58,7 +94,7 @@ def parse(lines):
             fenced = not fenced
             i += 1
             continue
-        m = None if fenced else MARKER.match(ln)
+        m = None if fenced or not lo <= i < hi else MARKER.match(ln)
         if not m:
             i += 1
             continue
@@ -99,6 +135,11 @@ def archive_path(path):
     real = os.path.realpath(path)
     d, name = os.path.split(real)
     stem = name[:-3] if name.endswith(".md") and len(name) > 3 else name
+    if OPTS["archive"]:
+        a = os.path.abspath(OPTS["archive"])
+        if a.endswith(".md"):
+            return a
+        d = a
     return os.path.join(d, "%s-archive-%s.md" % (stem, today().strftime("%Y-%m")))
 
 
@@ -118,7 +159,7 @@ def pick(path, ident):
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]*[a-z0-9]", ident):
         raise BacklogError("ID: a lowercase slug of letters, digits and hyphens, two characters or more (got %r)" % ident)
     lines = read_lines(path)
-    items = parse(lines)
+    items = parse(lines, OPTS["section"])
     hits = [it for it in items if it["id"] == ident]
     if not hits:
         raise BacklogError("no open item [%s] in %s (qargi backlog list shows them)" % (ident, path))
@@ -142,10 +183,10 @@ def entry_text(item, evidence, day):
 
 
 def cmd_list(path, as_json):
-    items = parse(read_lines(path))
+    items = parse(read_lines(path), OPTS["section"])
     dup, seen = duplicates(items)
     if as_json:
-        print(json.dumps({"file": path, "items": [{"id": it["id"], "line": it["line"], "text": it["text"], "full": "\n".join(it["full"]),
+        print(json.dumps({"file": path, "section": OPTS["section"], "items": [{"id": it["id"], "line": it["line"], "text": it["text"], "full": "\n".join(it["full"]),
                                                    "duplicate": it["id"] in dup} for it in items], "duplicates": dup}, indent=2))
         return 0
     if not items:
@@ -210,7 +251,11 @@ def cmd_apply(path, ident, evidence):
     if os.path.exists(arch):
         with open(arch, encoding="utf-8") as f:
             existing = f.read()
-    head = "" if existing else "# %s archive %s\n\n" % (os.path.basename(arch)[:-len("-archive-YYYY-MM.md")], day.strftime("%Y-%m"))
+    base = os.path.basename(arch)
+    named = re.match(r"(.*)-archive-\d{4}-\d{2}\.md$", base)   # the monthly file; an archive file of its own name is titled by that name
+    title = "%s archive %s" % (named.group(1), day.strftime("%Y-%m")) if named else re.sub(r"\.md$", "", base)
+    head = "" if existing else "# %s\n\n" % title
+    os.makedirs(os.path.dirname(arch), exist_ok=True)
     sep = "" if not existing or existing.endswith("\n\n") else ("\n" if existing.endswith("\n") else "\n\n")
     with open(arch, "a", encoding="utf-8") as f:   # the archive first: an interruption then leaves the item in both files, never in neither
         f.write(head + sep + entry)
@@ -228,7 +273,13 @@ def cmd_apply(path, ident, evidence):
 def cmd_named(path):
     msgs = sys.stdin.read()
     names = []
-    for it in parse(read_lines(path)):
+    try:
+        found = parse(read_lines(path), OPTS["section"])
+    except BacklogError:
+        if OPTS["section"]:   # informational: a heading that is not there names nothing, it is no failure
+            return 0
+        raise
+    for it in found:
         ident = it["id"]
         if ident and ident not in names and re.search(r"(?<![a-z0-9-])%s(?![a-z0-9-])" % re.escape(ident), msgs):
             names.append(ident)
@@ -237,8 +288,24 @@ def cmd_named(path):
     return 0
 
 
+def options(argv):
+    """argv without --section and --archive (set in OPTS); a missing value or an empty one is a BacklogError."""
+    out, i = [], 0
+    while i < len(argv):
+        if argv[i] in ("--section", "--archive"):
+            if i + 1 >= len(argv) or not argv[i + 1].strip():
+                raise BacklogError("%s needs a value" % argv[i])
+            OPTS[argv[i][2:]] = argv[i + 1]
+            i += 2
+        else:
+            out.append(argv[i])
+            i += 1
+    return out
+
+
 def main(argv):
     try:
+        argv = options(argv)
         cmd, rest = (argv[0] if argv else ""), argv[1:]
         if cmd == "list" and len(rest) in (1, 2) and (len(rest) == 1 or rest[1] == "--json"):
             return cmd_list(rest[0], len(rest) == 2)
