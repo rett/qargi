@@ -22,6 +22,7 @@ case $1 in
   beta:memory-stores:memories)
     if [ "$2" = list ]; then
       if [ "$(cat "$FAKE/mode")" = fail ]; then printf '\nError: 403 forbidden for this key\nsecond line\n' >&2; exit 1; fi
+      if [ "$(cat "$FAKE/mode")" = silent ]; then exit 3; fi
       if [ "$(cat "$FAKE/mode")" = junk ]; then echo '{"type":"memory","id":"m1","path":"/junk.md","content":"x","content_sha256":"0"}'; fi
       exit 0
     fi
@@ -55,6 +56,12 @@ grep -qE 'memories (create|update)|memory-versions' "$FAKE/calls" && no "somethi
 out=$(bin/qargi canon seed-role alpha --role build --approved go 2>&1); rc=$?
 [ "$rc" != 0 ] && grep -q 'unreachable' <<<"$out" && ! grep -qE 'memories (create|update)' "$FAKE/calls" \
   && ok "seed-role: refuses and writes nothing" || no "seed-role (rc=$rc): $out"
+
+# a list that fails with no error text is still unreachable, and the reason is the status in generic words (no vendor tool is named there)
+echo silent > "$FAKE/mode"
+out=$(bin/qargi canon check alpha --kind memory 2>&1); rc=$?
+[ "$rc" = 1 ] && [ "$(grep -c '^unreachable: the store list failed (status 3)$' <<<"$out")" = 1 ] \
+  && ok "check: a silent failure is 'unreachable: the store list failed (status 3)'" || no "silent (rc=$rc): $out"
 
 # a project with no store recorded checks clean (nothing to reach)
 out=$(bin/qargi canon check solo 2>&1); rc=$?
