@@ -10,8 +10,9 @@ ROOT=$PWD
 T=$(mktemp -d); fail=0
 # the engine refuses inside a member run (a directory `qargi local prepare` made, at or above the working directory), and this test may
 # itself run in one: work from the temporary directory
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 cd "$T" || exit 1
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 STATE=$T/s; mkdir -p "$STATE"
 G="git -c user.name=t -c user.email=t@example.net"
 R=$T/repo
@@ -42,7 +43,6 @@ K=agents M=dir-symlink CO=$R DEST=.rt/agents SRC=$STATE/render/alpha/rt/agents
 spec() { jq -n --arg kind "$K" --arg mode "$M" --arg dest "$DEST" --arg src "$SRC" --arg co "$CO" --arg st "$STATE" \
            '{kind:$kind,project:"alpha",checkout:$co,dest:$dest,source:$src,mode:$mode,state:$st}' > "$T/spec.json"; }
 drv() { python3 -I "$T/drv.py" "$ROOT/lib" "$@"; }
-tok_of() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 pl() { spec; drv plan "$1" "$T/spec.json"; }                          # plan
 ap() { spec; drv apply "$1" "$T/spec.json" "$2"; }                    # apply with a token
 ptok() { pl "$1" 2>&1 | tok_of; }

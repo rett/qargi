@@ -8,7 +8,8 @@ ROOT=$PWD
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 export QARGI_CONF=$T/c QARGI_STATE=$T/s HOME=$T/h
 mkdir -p "$T/c/projects" "$T/c/profiles" "$T/s" "$T/h"
 DA=$ROOT/bin/qargi

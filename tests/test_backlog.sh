@@ -8,7 +8,8 @@ cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
 export QARGI_PROJECT=app QARGI_LEAD=lead-one
 mkdir -p "$HOME" "$T/c/projects" "$T/bin" "$T/mem"
@@ -27,7 +28,6 @@ $DA project template app | jq --arg p "$R" '.repo.url = "https://github.com/acme
 F="$DA feature"; REL="$DA release"
 bl() { "$DA" backlog "$@"; }
 bldone() { bl 'done' "$@"; }   # quoted: shellcheck takes a bare done after a word for the keyword
-tok() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 sum() { sha256sum "$@" 2>/dev/null | cut -d' ' -f1 | tr '\n' ' '; }
 MEM=$T/mem/backlog.md
 write_backlog() { cat > "$MEM" <<'EOF'

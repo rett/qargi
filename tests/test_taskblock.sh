@@ -9,7 +9,8 @@ cd "$(dirname "$0")/.." || exit 1
 T=$(mktemp -d); trap 'rm -rf "$T" "$HERMETIC"' EXIT; fail=0
 export QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T
 Q=$PWD/bin/qargi; GOLD=$PWD/tests/golden
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 R=$T/fixrepo
 git init -q -b main "$R" && mkdir -p "$R/tests" && printf '#!/bin/sh\nexit 0\n' > "$R/tests/check.sh" && chmod +x "$R/tests/check.sh"
 git -C "$R" add -A && git -C "$R" -c user.name=t -c user.email=t@example.net commit -q -m one

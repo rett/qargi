@@ -7,7 +7,8 @@ cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
 export QARGI_PROJECT=app QARGI_RUN_TMP=$T
 mkdir -p "$HOME" "$T/c/projects"
@@ -19,7 +20,6 @@ git -C "$R" push -q origin master develop docs-site
 git -C "$R" checkout -q -b parked
 jq -n --arg p "$R" '{schema:1, project:"app", methodology:"gitflow", repo:{url:"https://github.com/acme/app", path:$p, long_lived:["master","develop","docs-site"], detached:["docs-site"]}, roles:{build:{base:"@dispatcher",push:{mode:"none"}, effort:"medium"}}, models:{provider:{local:"claude-code",cloud:"claude-platform"}}, budget_cents:500, memory:{}, test_command:"true"}' > "$T/c/projects/app.json"
 F="$DA feature"
-tok() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 task() { # name base file: agent/NAME cut from BASE with one commit adding FILE
   git -C "$R" branch "agent/$1" "$2"; local w; w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R" worktree add -q "$w" "agent/$1"
   echo "$1" > "$w/$3"; git -C "$w" add -A; git -C "$w" commit -q -m "task $1"; git -C "$R" worktree remove --force "$w"

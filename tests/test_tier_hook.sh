@@ -12,7 +12,8 @@ cd "$(dirname "$0")/.." || exit 1
 [ -z "${TMP:-}" ] || export TMPDIR=$TMP
 T=$(mktemp -d); fail=0
 trap 'rm -rf "$T" "$HERMETIC"' EXIT
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 export QARGI_HOME=$T/qh QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_CANON_FIXTURE_DIR=$T/fix
 mkdir -p "$T/c/projects" "$T/s" "$T/root/bin"
 cp -r lib "$T/root/lib"

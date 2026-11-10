@@ -7,7 +7,8 @@ cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
 fail=0
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 C=contract/contract.md
 has() { tr '\n' ' ' < "$1" | tr -s ' ' | grep -qiE -- "$2"; }   # has FILE PATTERN: the file holds the pattern, line breaks read as spaces (case ignored)
 # the files a member's prompt is made of, apart from the contract

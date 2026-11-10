@@ -12,13 +12,13 @@ cd "$(dirname "$0")/.." || exit 1
 . tests/hermetic.sh
 SRC=$PWD
 T=$(mktemp -d); fail=0; DA=$SRC/bin/qargi
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T FAKE=$T/fake GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
 unset QARGI_PROJECT
 mkdir -p "$HOME" "$T/c/projects" "$T/s" "$T/bin" "$FAKE"
 trap 'rm -rf "$T" "$HERMETIC"' EXIT
 cd "$T" || exit 1   # a verb that changes the marshal refuses to run inside a member run, which is where this checkout may be
-tok() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 
 # --- static: need_plan does not read QARGI_NESTED, and need_plan_nested is called in canon.sh and nowhere else, so a nested environment cannot
 # skip a token through a call site that forgot to clear the variable. lib/local.sh is covered like the other files.

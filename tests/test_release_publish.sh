@@ -7,7 +7,8 @@ cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
 mkdir -p "$HOME" "$T/c/projects"
 REL="$DA release"
@@ -64,7 +65,6 @@ mode missing; out=$(QARGI_PROJECT=norigin $REL status 0.1.0 2>&1); rc=$?
 [ $rc = 0 ] && [ ! -s "$T/gh.log" ] && ok "a repository without origin is not asked about GitHub" || no "no origin: rc=$rc $out $(cat "$T/gh.log")"
 
 # --- publish
-tok() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 mode missing; out=$($REL publish 0.1.0 2>&1); rc=$?; t=$(tok <<<"$out")
 c=$(git -C "$R" rev-parse --short "0.1.0^{commit}")
 [ $rc = 0 ] && [ -n "$t" ] && grep -q "$c" <<<"$out" && grep -q -- "- first thing" <<<"$out" && grep -q 'release create 0.1.0 --verify-tag --title "relpub 0.1.0" --notes-file' <<<"$out" && ok "the plan shows the tag, its commit, the notes and the command" || no "plan: rc=$rc $out"
