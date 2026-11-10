@@ -105,3 +105,4 @@
 14 bash tests/test_backlog.sh
 5 bash tests/test_nested_plan.sh
 1 python3 tests/test_legacy_lint.py
+16 bash tests/test_resume.sh

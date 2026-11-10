@@ -237,6 +237,78 @@ done
 # shellcheck disable=SC2154  # PROJ comes from project_load
 project_load
 
+# The apply marker. A run is applied once, and what says so is a record in the lead's own state, $DA_STATE/apply/RUNID.json, not the file `applied` in the run directory
+# (a member's to write, and kept only because local.sh reads it). The record is made (exclusively) before the branch is, and says how far the apply got:
+# status started (the branch is being made), built (the branch is at `tip`; the remaining steps are not all done), done. A run that finds it started or built
+# does not die at "the branch exists already": a started apply left a branch that is only the base plus some of the patches, which is removed and made again;
+# a built one is finished from the record (apply_record), the patches are not read again. steps lists the ones of apply_record that are done.
+apply_mark() { json_update "$amark" '.steps = ((.steps + [$s]) | unique)' --arg s "$1"; }   # STEP
+apply_marked() { jq -e --arg s "$1" '.steps | index($s) != null' "$amark" >/dev/null 2>&1; }
+# apply_record -> the steps after the branch is built: the journal line, the audit line, the scrub record, the `applied` file of the run (and of its saved copy), the
+# snapshot the run is compared against; the marker is `done` last. Reads RUN SRC SAVED BRANCH sha tip AUTH_LINE npatch amark (set by the apply, or from the marker).
+apply_record() {
+  local rec
+  apply_marked journal || { journal_line "$REPO" "refs/heads/$BRANCH" "" "$tip" review:apply '' "$AUTH_LINE"; apply_mark journal; }
+  apply_marked audit || { audit_log "review:apply" "$RUN $BRANCH ${tip:0:12}: $AUTH_LINE"; apply_mark audit; }
+  echo "applied $npatch patch(es) on $BRANCH, from ${sha:0:12} to ${tip:0:12}:"
+  g log --reverse --format='  %h %s' "$sha..$tip"
+  echo "$AUTH_LINE"
+  scrub_ok_clear "$RUN"
+  # The run directory is a member's to write: what is recorded there is written in the lead's state directory and renamed into place (mv -T replaces a link
+  # that stands in the name, it never writes through it).
+  if ! apply_marked run_file; then
+    rec=$(mktemp "$DA_STATE/apply-rec.XXXXXX") || die "could not record the application in $SRC: $BRANCH was made at ${tip:0:12}; write 'agent/... TIP NOW' to $SRC/applied by hand"
+    printf '%s %s %s\n' "$BRANCH" "$tip" "$(now)" > "$rec" && mv -T -- "$rec" "$SRC/applied" || { rm -f "$rec"; die "could not write $SRC/applied ($BRANCH was made at ${tip:0:12})"; }
+    apply_mark run_file
+  fi
+  # the branch is a change `local verify` would report: record it in the snapshot the run is compared against
+  if ! apply_marked snapshot; then
+    if grep -q '^local ' "$SRC/refs.before"; then
+      rec=$(mktemp "$DA_STATE/apply-rec.XXXXXX") || die "could not record the branch in the snapshot of $SRC"
+      { { grep '^local ' "$SRC/refs.before" | grep -v "^local refs/heads/$BRANCH " || true; echo "local refs/heads/$BRANCH $tip"; } | sort; grep -v '^local ' "$SRC/refs.before" || true; } > "$rec" \
+        && mv -T -- "$rec" "$SRC/refs.before" || { rm -f "$rec"; die "could not update the snapshot $SRC/refs.before"; }
+    fi
+    apply_mark snapshot
+  fi
+  # a run applied from its directory: the saved copy records it too, so it is never applied twice
+  if [ -z "$SAVED" ] && [ -d "$DA_STATE/runs/${RUN##*/}" ] && [ ! -L "$DA_STATE/runs/${RUN##*/}" ]; then cp -- "$SRC/applied" "$DA_STATE/runs/${RUN##*/}/applied" 2>/dev/null || true; fi
+  json_update "$amark" '.status = "done"'
+  echo "next:"
+  echo "  qargi feature merge NAME $BRANCH    (NAME: the feature this task belongs to)"
+  echo "  qargi local clean $RUN${SAVED:+   (its directory is gone: once the work is merged, clean drops its record and the saved copy)}"
+}
+# apply_resume -> a marker of this run exists (amark): done, refuse; built, finish it; started, remove what it left and go on (the caller then applies the series again)
+apply_resume() {
+  local st mb mbase cur wt
+  st=$(jq -r '.status' "$amark" 2>/dev/null) || st=''
+  mb=$(jq -r '.branch' "$amark" 2>/dev/null) || mb=''
+  case $st in
+    done) die "this run was applied already ($mb at $(jq -r '.tip' "$amark" | cut -c1-12)): qargi feature merge, then qargi local clean $RUN";;
+    built)
+      BRANCH=$mb; tip=$(jq -r '.tip' "$amark"); sha=$(jq -r '.base' "$amark"); AUTH_LINE=$(jq -r '.auth_line' "$amark"); npatch=$(jq -r '.npatch' "$amark")
+      cur=$(sha_of "$BRANCH")
+      [ "$cur" = "$tip" ] || die "an earlier apply of $RUN built $BRANCH at ${tip:0:12} and was cut off before it finished, but $BRANCH is $([ -n "$cur" ] && echo "at ${cur:0:12}" || echo gone) now: look at it; when it is right, remove $amark (and write $SRC/applied) by hand. Nothing was changed"
+      echo "an earlier apply of $RUN was cut off after $BRANCH was built at ${tip:0:12}: finishing it (the patches are not applied again)"
+      apply_record; exit 0;;
+    started)
+      mbase=$(jq -r '.base' "$amark")
+      cur=$(sha_of "$mb")
+      if [ -n "$cur" ]; then
+        g merge-base --is-ancestor "$mbase" "$cur" 2>/dev/null \
+          || die "an earlier apply of $RUN was cut off while making $mb, but $mb is not the base ${mbase:0:12} plus patches (it is at ${cur:0:12}): look at it; delete it and remove $amark when it is not wanted. Nothing was changed"
+        # the temporary worktree of the cut-off apply (the lead's own, under the state directory) still holds the branch: it goes first
+        wt=$(held "$mb")
+        case $wt in "$DA_STATE"/apply-wt.*) g worktree remove --force "$wt" >/dev/null 2>&1 || true; rm -rf -- "$wt";; esac
+        g worktree prune 2>/dev/null || true
+        g branch -D "$mb" >/dev/null 2>&1 || die "could not remove $mb, which an earlier apply of $RUN left half made: git branch -D $mb, then run again"
+        echo "an earlier apply of $RUN was cut off while making $mb (${cur:0:12}): removed it, applying the series again"
+      fi
+      rm -f "$amark" "$amark.lock"
+      ;;
+    *) die "$amark is not a record of an apply (status '$st'): remove it if you are sure the run was not applied. Nothing was changed";;
+  esac
+}
+
 case $verb in
   apply)
     lib=$(dirname "$0")
@@ -257,6 +329,8 @@ case $verb in
     marshal_touch_run "$RUN"   # the lead's apply keeps its lease on the feature the run is based on
     [ "$(run_class "$RUN")" != read-only ] \
       || die "$RUN is a read-only run ($(cat "$SRC/ability" 2>/dev/null || echo review)): its product is a report, never patches. Read $SRC/out/report.md; nothing was applied"
+    appid=${RUN##*/}; amark=$DA_STATE/apply/$appid.json
+    if [ -e "$amark" ] || [ -L "$amark" ]; then apply_resume; fi   # a record of an earlier apply of this run: refuse, finish it or clear what it left
     [ ! -L "$SRC/applied" ] && { [ ! -e "$SRC/applied" ] || [ -f "$SRC/applied" ]; } || die "$SRC/applied is a link or not a plain file: a member put it there (look at the run; nothing was applied)"
     [ ! -f "$SRC/applied" ] || die "this run was applied already ($(cut -d' ' -f1 "$SRC/applied")): qargi feature merge, then qargi local clean $RUN"
     reg_load; [ -z "$(reg_get "$RUN" closed)" ] || die "this run was closed ($(reg_get "$RUN" closed_by)): its patches were applied by hand. qargi local clean $RUN removes it; nothing was applied"
@@ -312,38 +386,26 @@ case $verb in
     # the author of the applied commits: the lead's (answer git.author, else the repository's user.name/user.email), unless the answer review.keep_author
     # is true or neither identity exists; the committer is the one above. What the member wrote is recorded in the ref journal and the audit log.
     pick_author
+    # the apply record is made before the branch is, in the lead's state (made exclusively: a second apply of the run finds it)
+    mkdir -p "$DA_STATE/apply"
+    ( set -C; umask 077; jq -nc --arg run "$RUN" --arg src "$SRC" --arg b "$BRANCH" --arg base "$sha" --arg at "$(now)" \
+        '{schema:1, run:$run, src:$src, branch:$b, base:$base, status:"started", steps:[], at:$at}' > "$amark" ) 2>/dev/null \
+      || die "could not make the apply record $amark (is another apply of $RUN under way?): nothing was applied"
     WT=$(mktemp -d "$DA_STATE/apply-wt.XXXXXX")
-    g worktree add -q -b "$BRANCH" "$WT" "$sha" 2>/dev/null || { rm -rf "$WT"; WT=''; die "could not make a temporary worktree for $BRANCH"; }
+    g worktree add -q -b "$BRANCH" "$WT" "$sha" 2>/dev/null || { rm -rf "$WT"; WT=''; rm -f "$amark" "$amark.lock"; die "could not make a temporary worktree for $BRANCH"; }
     fail=''
     apply_series "$WT" "${patches[@]}"
     tip=$(git -C "$WT" rev-parse HEAD)
     cleanup
     if [ -n "$fail" ]; then
       g branch -D "$BRANCH" >/dev/null 2>&1 || true
+      rm -f "$amark" "$amark.lock"
       die "$failmsg; the worktree and $BRANCH were removed, nothing else changed"
     fi
     if [ "$AUTH_MODE" = reset ]; then AUTH_LINE="author reset to $AUTH ($AUTH_SRC); member author recorded in the ref journal: $MEMBERS"
     else AUTH_LINE="author kept as the member's ($AUTH_SRC): $MEMBERS"; fi
-    journal_line "$REPO" "refs/heads/$BRANCH" "" "$tip" review:apply '' "$AUTH_LINE"
-    audit_log "review:apply" "$RUN $BRANCH ${tip:0:12}: $AUTH_LINE"
-    echo "applied ${#patches[@]} patch(es) on $BRANCH, from ${sha:0:12} to ${tip:0:12}:"
-    g log --reverse --format='  %h %s' "$sha..$tip"
-    echo "$AUTH_LINE"
-    scrub_ok_clear "$RUN"
-    # The run directory is a member's to write: what is recorded there is written in the lead's state directory and renamed into place (mv -T replaces a link
-    # that stands in the name, it never writes through it).
-    rec=$(mktemp "$DA_STATE/apply-rec.XXXXXX") || die "could not record the application in $SRC: $BRANCH was made at ${tip:0:12}; write 'agent/... TIP NOW' to $SRC/applied by hand"
-    printf '%s %s %s\n' "$BRANCH" "$tip" "$(now)" > "$rec" && mv -T -- "$rec" "$SRC/applied" || { rm -f "$rec"; die "could not write $SRC/applied ($BRANCH was made at ${tip:0:12})"; }
-    # the branch is a change `local verify` would report: record it in the snapshot the run is compared against
-    if grep -q '^local ' "$SRC/refs.before"; then
-      rec=$(mktemp "$DA_STATE/apply-rec.XXXXXX") || die "could not record the branch in the snapshot of $SRC"
-      { { grep '^local ' "$SRC/refs.before"; echo "local refs/heads/$BRANCH $tip"; } | sort; grep -v '^local ' "$SRC/refs.before" || true; } > "$rec" \
-        && mv -T -- "$rec" "$SRC/refs.before" || { rm -f "$rec"; die "could not update the snapshot $SRC/refs.before"; }
-    fi
-    # a run applied from its directory: the saved copy records it too, so it is never applied twice
-    if [ -z "$SAVED" ] && [ -d "$DA_STATE/runs/${RUN##*/}" ] && [ ! -L "$DA_STATE/runs/${RUN##*/}" ]; then cp -- "$SRC/applied" "$DA_STATE/runs/${RUN##*/}/applied" 2>/dev/null || true; fi
-    echo "next:"
-    echo "  qargi feature merge NAME $BRANCH    (NAME: the feature this task belongs to)"
-    echo "  qargi local clean $RUN${SAVED:+   (its directory is gone: once the work is merged, clean drops its record and the saved copy)}";;
+    json_update "$amark" '.status = "built" | .tip = $t | .auth_line = $a | .npatch = ($n | tonumber)' --arg t "$tip" --arg a "$AUTH_LINE" --arg n "${#patches[@]}"
+    npatch=${#patches[@]}
+    apply_record;;
   *) usage_die "usage: qargi review check OUT [--allow-empty] | qargi review save RUN [--force] < MESSAGE | qargi review apply RUN_DIR|--from-saved ID [--branch BRANCH] [--project P]";;
 esac
