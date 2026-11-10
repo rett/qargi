@@ -47,7 +47,7 @@
 
 # NOREPORT_CAUSE: the likely reason OUT holds no report. A runtime can refuse a member's write tool for a report file (the member is told to return findings as
 # text), and the file then never reaches OUT: the member is not late, it is blocked. verify and clean name it where they find OUT without a report.
-NOREPORT_CAUSE="A runtime can refuse a member's write tool for a report file, so the file never reaches OUT: tell the member to write its OUT files (report, manifest, series) with the shell, a heredoc, and to collect again."
+NOREPORT_CAUSE="A runtime can refuse a member's write tool for a report file, so the file never reaches OUT. The member writes its OUT files (report, manifest, series) with its file tool; a read-only member whose file tool is refused returns the report as its final message, and the lead stores it with: qargi review save RUN < MESSAGE"
 
 # drop_qargi_refs -> stdin without the refs under refs/qargi/ (lines "local REF SHA" and "remote SHA REF"). The marshal refs backend
 # keeps its records there and the lead's renewer fetches and pushes them during a run; that is not an agent push. Only that

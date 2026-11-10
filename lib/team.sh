@@ -38,7 +38,10 @@ brief() {
   local outd clnd
   outd=$(cloud_note "$project" output-dir) && clnd=$(cloud_note "$project" clone-dir) \
     || die "the brief needs the cloud runtime of project $project to name its output-dir and clone-dir (notes of its definition)"
-  local rdone="test -s $outd/review--report.md && grep -qiE '^#+ *findings' $outd/review--report.md"
+  # the review member's DONE is what `qargi review check` requires of a report-only run, in plain tools (a hosted member has no qargi): the report has a Findings
+  # heading and its last non-empty line is `verdict: accept` or `verdict: revise`, and the manifest beside it (same prefix) is a JSON file
+  local rrep="$outd/review--report.md" rman="$outd/review--manifest.json" rdone
+  rdone="test -s $rrep && grep -qiE '^#+ *findings' $rrep && grep -v '^[[:space:]]*\$' $rrep | tail -n 1 | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*\$//' | grep -qxE 'verdict: (accept|revise)' && test -s $rman && python3 -m json.tool $rman >/dev/null"
   printf 'TEAM: %s\nTASK: %s\n' "$team" "$task"
   jq -r --arg t "$team" '.teams[$t] | "STANDARDS: " + ((.standards // []) | if length == 0 then "none" else join(", ") end) + "\nMAX_ROUNDS: \(.max_rounds // 2)"' "$f"
   echo "MEMBERS:"
