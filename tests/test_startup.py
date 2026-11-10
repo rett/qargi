@@ -368,7 +368,8 @@ class GuardTool:
 
     def env(self, **more):
         """What a hook has: little more than a PATH (python3 is found on it)."""
-        return dict({"PATH": os.environ["PATH"], "HOME": self.home}, **more)
+        path = os.pathsep.join(d for d in os.environ["PATH"].split(os.pathsep) if d != os.path.join(hermetic.ROOT, "bin"))  # the hermetic python3 wrapper adds -B
+        return dict({"PATH": path, "HOME": self.home}, **more)
 
     def guard(self, stdin, *args, env=None):
         return subprocess.run([self.bin, "__guard", *args], input=stdin, capture_output=True, text=True, env=self.env() if env is None else env)
