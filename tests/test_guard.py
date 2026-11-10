@@ -698,6 +698,23 @@ class Skills(HookCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
+    def test_refuses_project_unset_whatever_the_path_to_a_member_that_carries_no_mark(self):
+        """project unset in its readable form is refused by the guard itself, whatever the path (the refusal of lib/project.sh needs the member's run directory or
+        mark, which a member started some other way, after a cd, does not carry): it removes gates, review.scrub, release.finish_check and the other answers whose
+        set is refused, and it has no plan token. The class of the hook (none or read-only) does not matter; show, list and look-alikes stay open."""
+        for path in ("gates", "release.finish_check", "methodology_accepted", "review.scrub", "review.trailer_policy", "ci.not_gates", "runs.owned_refs", "budget_cents"):
+            for form in ("qargi project unset p %s", "cd / && qargi project unset p %s", "sudo qargi project unset p %s", "bash -c 'qargi project unset p %s'",
+                         "env FOO=1 qargi project unset p %s", "./lib/project.sh unset p %s", "bash lib/project.sh unset p %s"):
+                c = form % path
+                for args in ([], ["--class", "read-only"]):
+                    r = self.hook(args, {"tool_name": "Bash", "tool_input": {"command": c}, "cwd": "/"}, {"HOME": self.home, "QARGI_CONF": self.conf})
+                    self.assertEqual(r.returncode, 2, (c, args))
+                    self.assertIn("qargi project unset removes an answer of the project the lead runs on", r.stderr, (c, args))
+                    self.assertIn("propose the removal in your report", r.stderr, (c, args))
+        for c in ("echo qargi project unset p gates", "qargi project show p", "qargi project list", "grep -n unset lib/project.sh", "qargi project set p budget_cents 500"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
     def test_refuses_project_set_of_the_author_answers_to_a_member(self):
         """git.author and review.keep_author decide whose name qargi review apply puts on a member's commits, and review.scrub (a command the lead runs)
         and review.trailer_policy what qargi review check does with a returned series: they are the lead's, so project set refuses them, whole or by a dotted path, in the forms the other lead-only answers are refused in. Look-alikes (gitx, reviews, review_x)

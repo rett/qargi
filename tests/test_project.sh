@@ -404,6 +404,10 @@ msg=$(cd "$T/mrun/clone" && "$ROOT/bin/qargi" project unset demo backlog.file 2>
 { [ $rc = 2 ] && grep -q 'not available in a member run' <<<"$msg" && cmp -s $T/before.json $T/c/projects/demo.json; } && echo "ok   unset is refused in a member's run directory" || { echo "FAIL unset in a run dir (rc=$rc): $msg"; fail=1; }
 msg=$(env "QARGI_MEMBER_""RUN=1" $DA project unset demo backlog.file 2>&1); rc=$?
 { [ $rc = 2 ] && grep -q 'not available in a member run' <<<"$msg" && cmp -s $T/before.json $T/c/projects/demo.json; } && echo "ok   unset is refused with the member mark in the environment" || { echo "FAIL unset with the mark (rc=$rc): $msg"; fail=1; }
+# a check that cannot answer is a refusal, not "not a member": the same script from a copy of lib/ whose marshal_refs.py cannot be imported (python's message stays on stderr)
+cp -r lib "$T/lib2"; printf 'raise RuntimeError("broken")\n' > "$T/lib2/marshal_refs.py"
+msg=$(cd "$T" && "$T/lib2/project.sh" unset demo backlog.file 2>&1); rc=$?
+{ [ $rc = 2 ] && grep -q 'could not tell whether this is a member run' <<<"$msg" && grep -q 'broken' <<<"$msg" && cmp -s $T/before.json $T/c/projects/demo.json; } && echo "ok   unset is refused when the member check fails (fail closed)" || { echo "FAIL unset with a failing check (rc=$rc): $msg"; fail=1; }
 $DA project unset demo backlog.file >/dev/null 2>&1; cp $T/before.json $T/c/projects/demo.json
 # the store the gated verbs use (provider enable|disable|accept) takes only those two keys, and only what the answers' own validation accepts
 GA="python3 -I lib/gated_answers.py"; cp $T/c/projects/demo.json $T/before.json

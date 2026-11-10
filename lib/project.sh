@@ -919,9 +919,14 @@ PY
     n=${1:-}; path=${2:-}
     [ $# -eq 2 ] && [ -n "$path" ] || usage_die "unset needs NAME PATH (for example: unset $n backlog.file)"
     [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"
-    if python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import marshal_refs; sys.exit(0 if marshal_refs.in_member_run() else 1)' "$(dirname "$(readlink -f "$0")")" 2>/dev/null; then
-      echo "qargi: project unset is not available in a member run: it removes an answer of the project the lead runs on; propose the removal in your report" >&2; exit 2
-    fi
+    # the check answers 0 (a member run) or 3 (not one); any other status (python missing, the module unreadable, a traceback) is a failure to tell,
+    # and an unknown caller is refused (fail closed), with python's own message left on stderr
+    mrc=0; python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import marshal_refs; sys.exit(0 if marshal_refs.in_member_run() else 3)' "$(dirname "$(readlink -f "$0")")" || mrc=$?
+    case $mrc in
+      3) ;;
+      0) echo "qargi: project unset is not available in a member run: it removes an answer of the project the lead runs on; propose the removal in your report" >&2; exit 2;;
+      *) echo "qargi: project unset could not tell whether this is a member run (the check failed with status $mrc); refused: it removes an answer of the project the lead runs on" >&2; exit 2;;
+    esac
     printf '%s' "$path" | grep -Eq '^[a-z_][a-z0-9_.]*$' || die "PATH: dotted keys such as roles.write.effort"
     case $path in marshal.lease_minutes) ;; marshal|marshal.*) die "$path is not a project answer: only marshal.lease_minutes is; to switch the shared backend use 'qargi marshal enable' or 'qargi marshal disable'";; esac
     was=$(answer_was "$PROJ_DIR/$n.json" "$path")

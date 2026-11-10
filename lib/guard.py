@@ -3038,6 +3038,8 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         return MemoryReason("qargi memory %s changes a memory tier and is not available to an agent; %s" % (which, MEMORY_NOTE))
     if area == "project" and verb in ("link", "unlink"):
         return "qargi project %s changes what the checkout and the runtime's memory directory load (skills, agents, memory) and is not available to an agent" % verb
+    if area == "project" and verb == "unset":
+        return "qargi project unset removes an answer of the project the lead runs on (the answers qargi project set refuses a member are among them, and unset has no plan token) and is not available to an agent: propose the removal in your report"
     if area == "project" and verb == "init":
         return "qargi project init stores a whole answers file (the models answers that choose the runtime and what counts as a barrier among them) and is not available to an agent"
     if area == "project" and verb == "set":
