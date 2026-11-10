@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+"""The small helpers that several qargi modules need to start a child process or write a line of the record, in one place.
+
+A library; it does nothing when run. Modules import it by its sibling name once lib/ is on sys.path (every module that does puts its own
+directory there first, so it works as a script and as a module):
+
+  clean_path()          the caller's PATH with empty and relative entries dropped (a command is never looked up in the working directory);
+                        DEFAULT_PATH when nothing is left
+  pass_env(names)       {name: value} of the names that are set and not empty in the caller's environment
+  child_env(keep=())    the base environment of a child: PATH (clean_path), LANG and LC_ALL C.UTF-8, TERM dumb, GIT_TERMINAL_PROMPT 0, and
+                        HOME, USER, LOGNAME, TMPDIR and the names in keep when the caller has them
+"""
+import os
+
+DEFAULT_PATH = "/usr/local/bin:/usr/bin:/bin"
+BASE_KEEP = ("HOME", "USER", "LOGNAME", "TMPDIR")
+
+
+def clean_path():
+    """The caller's PATH without empty and relative entries: a command is never looked up in the working directory."""
+    parts = [p for p in os.environ.get("PATH", "").split(os.pathsep) if p.startswith("/")]
+    return os.pathsep.join(parts) or DEFAULT_PATH
+
+
+def pass_env(names):
+    """{name: value} for each of names that the caller's environment sets to a non-empty value."""
+    return {k: os.environ[k] for k in names if os.environ.get(k)}
+
+
+def child_env(keep=()):
+    """The base environment of a child process: a clean PATH, a fixed locale and terminal, no git prompt, and only the names listed above
+    (and in keep) from the caller's environment."""
+    env = {"PATH": clean_path(), "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "TERM": "dumb", "GIT_TERMINAL_PROMPT": "0"}
+    env.update(pass_env(BASE_KEEP + tuple(keep)))
+    return env

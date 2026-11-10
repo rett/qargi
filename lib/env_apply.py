@@ -48,12 +48,12 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 import env as E  # noqa: E402
 import paths as P  # noqa: E402
+import procenv as PE  # noqa: E402
 import tools as T  # noqa: E402
 
 CAP = 1024 * 1024
 TIMEOUT = 120
 KEEP = ("HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TZ", "TMPDIR")
-DEFAULT_PATH = "/usr/local/bin:/usr/bin:/bin"
 PRIVILEGED = ("sudo", "doas", "pkexec", "su", "run0")
 WRAPPERS = ("sudo", "doas", "pkexec", "run0", "env", "command", "nohup", "time", "exec", "nice", "ionice", "setsid", "timeout")
 SHELLS = ("sh", "bash", "dash", "zsh", "ksh")
@@ -94,9 +94,8 @@ def timeout():
 
 
 def child_env():
-    env = {k: os.environ[k] for k in KEEP if os.environ.get(k)}
-    path = [d for d in os.environ.get("PATH", DEFAULT_PATH).split(os.pathsep) if d.startswith("/")]
-    env["PATH"] = os.pathsep.join(path) or DEFAULT_PATH
+    env = PE.pass_env(KEEP)
+    env["PATH"] = PE.clean_path()
     return env
 
 

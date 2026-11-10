@@ -52,6 +52,7 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import provider as P  # noqa: E402
 import paths  # noqa: E402
+from procenv import clean_path  # noqa: E402
 
 _print = print
 
@@ -223,12 +224,6 @@ def child_env(run, tmp, passed):
         if n in os.environ:
             env[n] = os.environ[n]
     return env
-
-
-def clean_path():
-    """The caller's PATH without empty and relative entries (a command is never looked up in the working directory)."""
-    parts = [p for p in os.environ.get("PATH", "").split(os.pathsep) if p.startswith("/")]
-    return os.pathsep.join(parts) or "/usr/local/bin:/usr/bin:/bin"
 
 
 def env_names(disp, runtime):

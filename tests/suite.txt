@@ -36,10 +36,11 @@ full | par | 300 | 32 | bash tests/test_session.sh | lib/session.sh
 full | par | 300 | 29 | bash tests/test_session_profiles.sh | lib/session*.sh
 fast | par | 300 | 4 | python3 tests/test_report.py | lib/report.py
 fast | par | 300 | 4 | python3 tests/test_noticed.py | lib/noticed.py
-full | par | 300 | 32 | python3 tests/test_env.py | lib/env.py
+full | par | 300 | 32 | python3 tests/test_env.py | lib/env.py lib/env_check.py lib/procenv.py
 fast | par | 300 | 20 | python3 tests/test_doctor.py | lib/doctor.py lib/orphans.sh lib/local.sh
-full | par | 300 | 48 | python3 tests/test_env_apply.py | lib/env*.py
-fast | par | 300 | 3 | python3 tests/test_tools.py | lib/tools.py
+full | par | 300 | 48 | python3 tests/test_env_apply.py | lib/env*.py lib/procenv.py
+fast | par | 300 | 3 | python3 tests/test_tools.py | lib/tools.py lib/procenv.py
+fast | par | 300 | 3 | python3 tests/test_procenv.py | lib/procenv.py lib/env_check.py lib/env_apply.py lib/local_run.py lib/tools.py
 fast | par | 300 | 5 | python3 tests/test_cloud.py | lib/cloud.py
 fast | par | 300 | 5 | python3 tests/test_upgrade.py | lib/upgrade.sh
 full | par | 300 | 33 | python3 tests/test_supervise.py | lib/supervise.sh lib/supervise.py
@@ -78,7 +79,7 @@ full | par | 408 | 68 | bash tests/test_project.sh | lib/project.sh lib/owned_re
 fast | par | 300 | 4 | bash tests/test_project_profile.sh | lib/project_profile.py
 full | par | 564 | 94 | bash tests/test_local.sh | lib/local.sh
 full | par | 300 | 20 | bash tests/test_local_concurrency.sh | lib/local.sh lib/lib.sh
-full | par | 342 | 57 | bash tests/test_local_run.sh | lib/local*.sh lib/local*.py
+full | par | 342 | 57 | bash tests/test_local_run.sh | lib/local*.sh lib/local*.py lib/procenv.py
 full | par | 300 | 15 | bash tests/test_taskblock.sh | lib/local.sh lib/review_check.py roles/*/ROLE.md tests/golden/taskblock-*.md
 fast | par | 300 | 3 | bash tests/test_cred.sh | lib/cred.sh
 full | par | 480 | 80 | bash tests/test_packs.sh | lib/packs.sh
