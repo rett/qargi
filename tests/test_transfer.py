@@ -319,6 +319,49 @@ class Import(Env):
         self.assertNotIn("would add or change", r.stderr)
         self.assertEqual(jd(os.path.join(conf, "projects", "alpha.json"))["models"], {"provider": "claude-code", "extensions": ["kept-ext"]})
 
+    def test_the_archive_cannot_set_the_answers_a_member_may_not_set(self):
+        # ci.not_gates, methodology_accepted, review.reject_trailers, backlog.archive and backlog.section are refused to a member by the guard; an archive is untrusted data too
+        src = os.path.join(self.conf, "projects", "alpha.json")
+        doc = jd(src)
+        accepted = [{"gap": "file: X", "reason": "r", "date": "2026-01-01"}]
+        doc.update({"ci": {"not_gates": ["hidden"]}, "methodology_accepted": accepted, "review": {"keep_author": True, "reject_trailers": ["Signed-off-by"]},
+                    "backlog": {"file": "BACKLOG.md", "archive": "elsewhere", "section": "Open"}})
+        self.write(src, json.dumps(doc))
+        a = self.export()
+        t, conf, state, fake = self.target()
+        # a machine that stores none: those keys are left out, the rest of the answers comes in
+        r = self.run_import(a, ["config", "alpha", "2", "y"], env=t)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        got = jd(os.path.join(conf, "projects", "alpha.json"))
+        self.assertNotIn("not_gates", got.get("ci", {}))
+        self.assertNotIn("methodology_accepted", got)
+        self.assertEqual(got["review"], {"keep_author": True})
+        self.assertEqual(got["backlog"], {"file": "BACKLOG.md"})
+        for k in ("ci.not_gates", "methodology_accepted", "review.reject_trailers", "backlog.archive", "backlog.section"):
+            self.assertIn(k, r.stderr)
+        self.assertEqual(got["repo"], {"path": "/x/alpha"})
+        # a machine that stores its own: they stay, the archive's are not added (a list may lose entries, as here methodology_accepted, none gains one)
+        own = {"project": "alpha", "ci": {"not_gates": ["publish", "other"]}, "methodology_accepted": accepted + [{"gap": "file: Y", "reason": "r", "date": "2026-01-02"}],
+               "review": {"reject_trailers": ["Reviewed-by"]}, "backlog": {"archive": "mine", "section": "Mine"}}
+        self.write(os.path.join(conf, "projects", "alpha.json"), json.dumps(own))
+        r = self.run_import(a, ["config", "alpha", "2", "y"], env=t)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        got = jd(os.path.join(conf, "projects", "alpha.json"))
+        self.assertEqual(got["ci"], own["ci"])
+        self.assertEqual(got["methodology_accepted"], accepted)               # only drops an entry of the stored list
+        self.assertEqual(got["review"]["reject_trailers"], ["Reviewed-by"])
+        self.assertEqual((got["backlog"]["archive"], got["backlog"]["section"]), ("mine", "Mine"))
+        # the same values as stored need no note, and narrowing is allowed
+        doc.update({"ci": {"not_gates": ["publish"]}, "methodology_accepted": accepted[:0], "review": {"reject_trailers": ["Reviewed-by"]}, "backlog": {"archive": "mine"}})
+        self.write(src, json.dumps(doc))
+        a2 = self.export("b.tar.gz")
+        r = self.run_import(a2, ["config", "alpha", "2", "y"], env=t)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertNotIn("would add or change", r.stderr)
+        got = jd(os.path.join(conf, "projects", "alpha.json"))
+        self.assertEqual(got["ci"], {"not_gates": ["publish"]})
+        self.assertEqual(got["backlog"], {"archive": "mine"})
+
     def test_replace_removes_what_the_archive_lacks_only_after_typing_replace(self):
         a = self.export()
         t, conf, state, fake = self.target()
