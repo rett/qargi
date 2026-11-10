@@ -18,7 +18,7 @@
 . "$(dirname "$0")/lib.sh"
 
 # scrub_declared RUN -> 0 when the lead's registry holds, for the run, a take-in scrub (review.scrub) or a trailer policy (review.trailer_policy reject).
-# The answers are the copy `local prepare` took into the registry, never the stored project's file; a run with no copy (an older record) has none.
+# The answers are the copy `local prepare` took into the registry, never the stored project's file; a run with no copy has none.
 # SCRUB_CMD gets the command (a JSON string or list of words), SCRUB_TRAILERS the policy.
 scrub_declared() {
   local a
@@ -177,15 +177,14 @@ if [ "$verb" = save ]; then
   echo "next: qargi review check $SOUT"
   exit 0
 fi
-# pick_author: AUTH_MODE (reset | keep), AUTH ("Name <email>") and AUTH_SRC (where it comes from, or why the member's author stays) from the stored answers.
+# pick_author: AUTH_MODE (reset | keep), AUTH ("Name <email>") and AUTH_SRC (where it comes from, or why the member's author stays) from the run's answers.
 # review.keep_author true keeps the member's author; else git.author, else the repository's user.name/user.email; with none of them the member's stays.
 # Both answers are checked as `project validate` checks them: a hand-edited file that breaks them is refused before anything is applied.
 AUTH_RE='^([^<>]*[^<>[:space:]]) <([^<>[:space:]@]+@[^<>[:space:]@]+)>$'
-# shellcheck disable=SC2154  # af comes from project_load
 pick_author() {
   local keep a n e aj
-  # the answers are the run's own, taken into the lead's registry at prepare (run_record: RUN_ANS); a run of an older record reads the stored file
-  if [ -n "${RUN_ANS:-}" ]; then aj=$RUN_ANS; else aj=$(cat -- "$af" 2>/dev/null) || aj='{}'; fi
+  # the answers are the run's own, taken into the lead's registry at prepare (run_record: RUN_ANS); the stored file is not read
+  aj=${RUN_ANS:-}; [ -n "$aj" ] || aj='{}'
   keep=$(jq -r '(.review // {}) | .keep_author // false | if type == "boolean" then tostring else "bad" end' <<<"$aj" 2>/dev/null) || keep=bad
   [ "$keep" != bad ] || die "review.keep_author in the answers of $PROJ is not true or false (qargi project set $PROJ review.keep_author true); nothing was applied"
   a=$(jq -r '(.git // {}) | .author // "" | if type == "string" then . else error("not a string") end' <<<"$aj" 2>/dev/null) \
@@ -256,7 +255,7 @@ case $verb in
     fi
     [ -f "$SRC/refs.before" ] && [ -d "$SRC/out" ] || usage_die "apply needs a RUN dir made by qargi local prepare"
     marshal_touch_run "$RUN"   # the lead's apply keeps its lease on the feature the run is based on
-    [ "$(run_class "$RUN" "$SRC")" != read-only ] \
+    [ "$(run_class "$RUN")" != read-only ] \
       || die "$RUN is a read-only run ($(cat "$SRC/ability" 2>/dev/null || echo review)): its product is a report, never patches. Read $SRC/out/report.md; nothing was applied"
     [ ! -L "$SRC/applied" ] && { [ ! -e "$SRC/applied" ] || [ -f "$SRC/applied" ]; } || die "$SRC/applied is a link or not a plain file: a member put it there (look at the run; nothing was applied)"
     [ ! -f "$SRC/applied" ] || die "this run was applied already ($(cut -d' ' -f1 "$SRC/applied")): qargi feature merge, then qargi local clean $RUN"

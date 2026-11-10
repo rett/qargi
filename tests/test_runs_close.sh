@@ -370,14 +370,14 @@ R=$(mkrun ro-patches feature/ro review); mkdir -p "$R/out/patches"; echo x > "$R
 out=$(verify "$R"); rc=$?
 [ $rc = 2 ] && grep -q "is a read-only run" <<<"$out" && ok "a read-only run's patches are refused though a member set the class file to write" || no "ro with patches: rc=$rc $out"
 $DA local clean "$R" --discard >/dev/null 2>&1
-# a record with no class (a run prepared by an earlier version) falls back to the file, and with neither counts as a run of work
+# a record with no class counts as a run of work, whatever file the run directory holds: only the registry says (no fallback to the class file)
 R=$(mkrun oldrec feature/ro); echo "# report" > "$R/out/report.md"; rm -f "$R/class"
 jq -c --arg r "$R" 'if .run == $r then del(.class) else . end' "$T/s/local-runs.jsonl" > "$T/reg.new" && mv "$T/reg.new" "$T/s/local-runs.jsonl"
 out=$($DA local clean "$R" 2>&1); rc=$?
-[ $rc = 1 ] && grep -q "holds no manifest" <<<"$out" && ok "an older record with no class and no class file is a run of work, not a read-only one" || no "no class at all: rc=$rc $out"
+[ $rc = 1 ] && grep -q "holds no manifest" <<<"$out" && ok "a record with no class and no class file is a run of work, not a read-only one" || no "no class at all: rc=$rc $out"
 echo read-only > "$R/class"
 out=$($DA local clean "$R" 2>&1); rc=$?
-[ $rc = 0 ] && ok "an older record falls back to the class file" || no "old record file fallback: rc=$rc $out"
+[ $rc = 1 ] && grep -q "holds no manifest" <<<"$out" && ok "a record with no class does not fall back to a class file in the run directory" || no "class file believed: rc=$rc $out"
 # what counts as a report: a regular file named report.md or NAME-report.md directly in OUT, for clean and for compact-check alike
 R=$(mkrun rep-kinds feature/ro review)
 ln -s /etc/hostname "$R/out/report.md"

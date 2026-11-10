@@ -25,9 +25,8 @@ files, the directories it had to create) in `install.manifest` beside
 `install.json`, and `--uninstall` removes exactly those, copies included, and
 nothing else: a file of yours inside a copied skill is kept, and so is `~/.qargi`,
 unless the install made its `config` directory and nothing else is left in it.
-An install made before the manifest existed cannot be told from your own files;
-`--uninstall` says so and removes only the fixed paths it writes, and only with
-`--force`. An existing real directory is never replaced without `--force`. The
+Without the manifest `--uninstall` removes nothing and says so (exit status 1),
+with or without `--force`. An existing real directory is never replaced without `--force`. The
 skills directories come from the definition of the runtime whose session loads the
 skills (`--runtime NAME`, default `claude-code`: `~/.claude/skills`); a runtime
 with none is refused. Install at one level only. The command is

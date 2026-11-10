@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Memory planning: split, merge, copy and migrate, as pure functions from stores to steps.
+"""Memory planning: split, merge, copy and the canon plan, as pure functions from stores to steps.
 
 A store is a mapping {path: {id, path, content, content_sha256}} (what a backend lists, what canon.py reads).
 Every function returns a plan: {"target": {"ops", "expect"}, "source": {...}, "notes": [...]}, where ops are
@@ -302,11 +302,9 @@ def split(store, selector, target, move=False, today=None, label="source", fits=
     return plan
 
 
-def migrate(store, to_version, kind, project, roles, seed, today=None):
+def canon_plan(store, kind, project, roles, seed, today=None):
     """The canon's own plan for a store (canon.make_plan), with the digests it was computed from.
-    Only the current canon version is a target. -> plan with a "target" (the store itself) and notes"""
-    if to_version != C.LATEST:
-        raise ValueError("this qargi migrates to canon %d only" % C.LATEST)
+    -> plan with a "target" (the store itself) and notes"""
     today = today or today_utc()
     p = C.make_plan(kind, store, project, roles, seed, today)
     byid = {m["id"]: path for path, m in store.items() if m.get("id")}

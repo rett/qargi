@@ -121,7 +121,7 @@ class Canon(unittest.TestCase):
     def test_unknown_layout_is_reported(self):
         self.assertEqual(plan("memory", {"/stuff/x.md": "x"})["from_version"], "unknown")
 
-    def test_layouts_older_than_canon_2_are_not_migrated(self):
+    def test_layouts_older_than_canon_2_are_unknown(self):
         """The chains from the layouts before the canon, the draft marker and canon 1 are gone: such a store is
         reported as unknown and nothing is planned (a hand-made layout is the owner's to move or import)."""
         old = {"before the canon, memory": ("memory", {"/README.md": "# old\n", "/sandbox/a.md": "# a\n", "/repos/demo/INDEX.md": "x"}),

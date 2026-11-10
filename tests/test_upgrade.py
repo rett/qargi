@@ -82,36 +82,22 @@ class T(unittest.TestCase):
                     if k not in ("QARGI_CONF", "QARGI_STATE")}
         return path
 
-    def test_old_members_file_is_warned_about(self):
-        """An agents.json of an earlier shape makes every agent verb refuse; the plan says so and says what to do, and changes nothing."""
+    def test_upgrade_says_nothing_about_the_shape_of_the_members_file(self):
+        """The plan and the apply neither read the shape of agents.json nor warn about it (no migration aid for an older shape), and leave the file alone."""
         old = json.dumps({"worker": {"abilities": ["build"], "file": "/x/worker.md", "project": None, "seq": 1}})
-        path = self.old_home(old)
-        self.commit("0.2.0", "second change")
-        before = self.head()
-        r = self.q("--branch", "develop")
-        self.assertEqual(r.returncode, 0, r.stderr)
-        out = r.stdout + r.stderr
-        self.assertIn("agents.json", out)
-        self.assertIn(path, out)
-        self.assertIn("every agent verb refuses", out)
-        self.assertIn("agent add NAME --project P", out)
-        self.assertIn("plan token", r.stdout)                         # the plan is still the plan
-        self.assertEqual(self.head(), before)
-        self.assertEqual(open(path).read(), old)                      # the file is neither moved nor rewritten
-        tok = [l.split()[2] for l in r.stdout.splitlines() if l.startswith("plan token")][0]
-        r = self.q("--branch", "develop", "--plan", tok, "--approved", "go")
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("every agent verb refuses", r.stdout + r.stderr)  # and after the upgrade, where the refresh list would have been
-        self.assertNotIn("qargi agent refresh", r.stdout)
-        self.assertEqual(open(path).read(), old)
-
-    def test_current_members_file_is_not_warned_about(self):
-        for body in ('{"schema": 2, "projects": {}}', "{}", json.dumps({"schema": 2, "projects": {"alpha": {"forge": {}}}})):
-            self.old_home(body)
-            self.commit("0.%d.0" % (len(body) + 2), "next " + body)
+        for n, body in enumerate((old, '{"schema": 2, "projects": {}}', "{}")):
+            path = self.old_home(body)
+            self.commit("0.%d.0" % (n + 2), "next %d" % n)
             r = self.q("--branch", "develop")
             self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("plan token", r.stdout)
+            self.assertNotIn("agents.json", r.stdout + r.stderr, body)
+            tok = [l.split()[2] for l in r.stdout.splitlines() if l.startswith("plan token")][0]
+            r = self.q("--branch", "develop", "--plan", tok, "--approved", "go")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertNotIn("agents.json", r.stdout + r.stderr, body)
             self.assertNotIn("every agent verb refuses", r.stdout + r.stderr, body)
+            self.assertEqual(open(path).read(), body)
             subprocess.run(["rm", "-rf", os.path.join(self.t, "h")], check=True)
 
     def test_default_branch_is_the_current_one(self):
