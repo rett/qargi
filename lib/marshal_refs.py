@@ -309,11 +309,14 @@ def batch_records(repo, oids):
     return res
 
 
-def read(repo, check=None, verify=None, heads=None):
+def read(repo, check=None, verify=None, heads=None, prefetch=None):
     """The valid records of the cache -> (features {name: (oid, rec)}, done {name: (oid, rec)}, ignored [(ref, why)]).
     check(rec) -> a reason or None adds the caller's own rules (status values, the shape of the lead).
     verify(kind, name, oid, rec, parents, message) -> a reason or None adds the signature rules (kind is features or done).
     heads, when given, is filled with {ref: oid} for every ref of the cache, valid or not.
+    prefetch(items), when given, is called once before the first verify with [(kind, name, oid, rec, parents, message)] for the records
+    verify is going to be called with (the ones that passed check), so that the work verify does can be done for all of them at once;
+    verify is still called for each, and decides.
     The refs are listed with one for-each-ref and the objects of all of them read with two cat-file processes (batch_records), so the time
     does not grow with the processes per ref; verify is still called for every record, on every read."""
     feats, done, ignored = {}, {}, []
@@ -330,6 +333,15 @@ def read(repo, check=None, verify=None, heads=None):
         if kind in ("features", "done"):
             refs.append((oid, typ, ref, kind, name))
     got = batch_records(repo, [oid for oid, typ, _, _, name in refs if typ == "commit" and name_ok(name) and OID_RE.fullmatch(oid)])
+    if prefetch is not None and verify is not None and got is not None:
+        items = []
+        for oid, typ, ref, kind, name in refs:
+            g = got.get(oid) if typ == "commit" and name_ok(name) else None
+            rec = record_of(g[0], name)[0] if g is not None and g[0] is not None and g[2] else None
+            if rec is not None and (check is None or not check(rec)):
+                items.append((kind, name, oid, rec, g[2][0], g[2][1]))
+        if items:
+            prefetch(items)
     for oid, typ, ref, kind, name in refs:
         if heads is not None:
             heads[ref] = oid

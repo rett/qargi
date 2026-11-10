@@ -40,6 +40,24 @@ exec "$NEXT" "$@"
 SHIM
 } > "$T/countbin/git"
 chmod +x "$T/countbin/git"
+# countbin/ssh-keygen times every verification (start and end, in ns, in $T/verify.times) and, while $T/sk.delay exists, makes it take 0.3 s
+{
+  printf '#!/usr/bin/env bash\nTL=%q NEXT=%q DELAY=%q\n' "$T/verify.times" "$T/shimbin/ssh-keygen" "$T/sk.delay"
+  cat <<'SHIM'
+case "$*" in
+  *"-Y verify"*)
+    printf 's %s\n' "$(date +%s%N)" >> "$TL"
+    [ -e "$DELAY" ] && sleep 0.3
+    "$NEXT" "$@"; rc=$?
+    printf 'e %s\n' "$(date +%s%N)" >> "$TL"; exit $rc;;
+esac
+exec "$NEXT" "$@"
+SHIM
+} > "$T/countbin/ssh-keygen"
+chmod +x "$T/countbin/ssh-keygen"
+maxrun() { # the most verifications that ran at the same time, from $T/verify.times
+  sort -k2 -n "$T/verify.times" | awk '$1 == "s" { n++; if (n > m) m = n } $1 == "e" { n-- } END { print m + 0 }'
+}
 export PATH=$T/countbin:$T/shimbin:$PATH
 gcount() { grep -c "^$1\$" "$GLOG"; }                                   # git processes of a subcommand since the last reset
 gall() { wc -l < "$GLOG"; }
@@ -99,6 +117,13 @@ grep '^f[0-9]' "$T/o" | cmp -s - "$T/o.want" && ok "the 14 lines of the brief li
 [ "$(gcount worktree)" = 1 ] && [ "$(gall)" -le 45 ] \
   && ok "git is started $(gall) times for 14 features (the work trees are listed once, not per feature)" \
   || no "a listing of 14 features must start at most 45 git processes and list the work trees once (worktree $(gcount worktree), all $(gall)): $(sort "$GLOG" | uniq -c | tr '\n' ' ')"
+
+# the verifications of one read run at the same time (each is a wait for the key tool); made slow, 14 of them one after the other would take 4 s
+: > "$T/verify.times"; : > "$T/sk.delay"; gcount0
+XE a marshal status --all --brief --no-fetch; rc=$?; rm -f "$T/sk.delay"
+[ $rc = 0 ] && cmp -s "$T/o" "$T/o.first" && [ "$(vcount)" = 14 ] && [ "$(maxrun)" -ge 4 ] \
+  && ok "the 14 verifications of a read overlap in time (at most $(maxrun) at once), each record verified once, the output the same" \
+  || no "verifications must overlap: rc=$rc, count $(vcount), most at once $(maxrun), output differs: $(diff "$T/o.first" "$T/o")"
 
 # ============================================================ (2) every read verifies again; a record changed after a read is refused by the next
 gcount0

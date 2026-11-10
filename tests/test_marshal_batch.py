@@ -6,11 +6,12 @@ records, the same ignored refs with the same reasons in the same order, and veri
 every record on every read (nothing is remembered between reads, so a record that was changed in between is judged again). Offline.
 Run: python3 tests/test_marshal_batch.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
-import json, os, shutil, subprocess, sys, tempfile, unittest
+import json, os, shutil, subprocess, sys, tempfile, threading, types, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, '..', 'lib'))
 import marshal_refs as R  # noqa: E402
+import marshal_store as M  # noqa: E402
 
 GIT_ENV = dict(os.environ, GIT_AUTHOR_NAME='t', GIT_AUTHOR_EMAIL='t@example.net', GIT_COMMITTER_NAME='t', GIT_COMMITTER_EMAIL='t@example.net')
 
@@ -216,6 +217,30 @@ class Batch(unittest.TestCase):
         self.assertEqual(got['child'][0], [self.oids['refs/qargi/features/alpha']])
         self.assertEqual(got['alpha'], ([], 'marshal: alpha rev 1\n\nsignature goes here\n'))
 
+    def test_prefetch_gets_the_records_that_passed_check_once_before_any_verify(self):
+        events = []
+        check = lambda r: 'check says no' if r.get('feature') == 'beta' else None
+        verify = lambda kind, name, oid, record, parents, message: events.append(('verify', kind, name, oid, parents, message))
+        prefetch = lambda items: events.append(('prefetch', [(k, n, o, r, p, m) for k, n, o, r, p, m in items]))
+        with_pre = R.read(self.repo.dir, check, verify, None, prefetch)
+        self.assertEqual([e[0] for e in events].count('prefetch'), 1)
+        self.assertEqual(events[0][0], 'prefetch')
+        items = events[0][1]
+        self.assertEqual(sorted(n for _, n, *_ in items), ['alpha', 'child', 'delta', 'edge', 'exe', 'gamma'])      # beta did not pass check
+        calls = [e[1:] for e in events[1:]]
+        self.assertEqual(sorted(calls), sorted((k, n, o, p, m) for k, n, o, _, p, m in items))                  # verify is still called for each, with the same
+        self.assertEqual(with_pre, R.read(self.repo.dir, check, lambda *a: None))
+        events.clear()
+        R.read(self.repo.dir, check, None, None, prefetch)                                                        # nothing to verify: nothing to prefetch
+        self.assertEqual(events, [])
+        real = R.batch_records
+        R.batch_records = lambda *a: None
+        try:
+            R.read(self.repo.dir, check, verify, None, prefetch)                                                  # read one at a time: no records at hand
+        finally:
+            R.batch_records = real
+        self.assertEqual([e[0] for e in events].count('prefetch'), 0)
+
     def test_git_that_cannot_answer_in_a_batch_falls_back_to_one_ref_at_a_time(self):
         real = R.run_git
 
@@ -257,6 +282,56 @@ class Batch(unittest.TestCase):
         self.assertEqual(R.tree_record(ent(b'100644', b'record.json') + ent(b'100644', b'z'), 20), 'its tree must hold record.json and nothing else')
         self.assertEqual(R.tree_record(ent(b'100644', b'record.json')[:-3], 20), 'its tree cannot be read')
         self.assertEqual(R.tree_record(b'100644 record.json', 20), 'its tree cannot be read')
+
+
+class Prefetch(unittest.TestCase):
+    """Integrity.prefetch: the signatures of a read are verified at the same time, and verify still judges every record on every call."""
+
+    def guard(self):
+        return M.Integrity(types.SimpleNamespace(R=R, integrity='strict'), types.SimpleNamespace(state='/nonexistent', project='p'))
+
+    def items(self, n):
+        return [('features', 'f%d' % i, 'o%d' % i, {'signer': 'x'}, [], 'm') for i in range(n)]
+
+    def test_the_verifications_run_at_the_same_time(self):
+        g = self.guard()
+        barrier = threading.Barrier(4)
+        g.classify = lambda kind, name, rec, parents, message: (barrier.wait(5), ('signed', ''))[1]     # four wait for each other, or time out
+        g.prefetch(self.items(4))
+        self.assertEqual(sorted(g.pre), [('features', 'f%d' % i, 'o%d' % i) for i in range(4)])
+
+    def test_verify_takes_each_answer_once_and_then_verifies_itself(self):
+        g, calls = self.guard(), []
+        g.classify = lambda kind, name, rec, parents, message: (calls.append(name), ('signed', ''))[1]
+        g.prefetch(self.items(3))
+        self.assertEqual(sorted(calls), ['f0', 'f1', 'f2'])
+        self.assertIsNone(g.verify('features', 'f1', 'o1', {'signer': 'x'}, [], 'm'))
+        self.assertEqual(len(calls), 3)                                                                 # the answer was used
+        self.assertIsNone(g.verify('features', 'f1', 'o1', {'signer': 'x'}, [], 'm'))
+        self.assertEqual(len(calls), 4)                                                                 # a second call verifies again
+        self.assertEqual(g.tags[('features', 'f1')], ('signed', '', 'x'))
+        self.assertIsNone(g.verify('features', 'f1', 'other-oid', {'signer': 'x'}, [], 'm'))              # an answer is for one commit only
+        self.assertEqual(len(calls), 5)
+
+    def test_a_refusal_is_the_one_verify_would_have_given(self):
+        g = self.guard()
+        g.classify = lambda kind, name, rec, parents, message: ('INVALID', 'signature does not verify')
+        g.prefetch(self.items(1))
+        self.assertEqual(g.verify('features', 'f0', 'o0', {'signer': 'x'}, [], 'm'), 'not accepted (integrity strict): INVALID: signature does not verify')
+        self.assertEqual(g.tags[('features', 'f0')], ('INVALID', 'signature does not verify', None))
+
+    def test_a_verification_that_raises_leaves_no_answer(self):
+        g = self.guard()
+
+        def classify(kind, name, rec, parents, message):
+            if name == 'f1':
+                raise RuntimeError('boom')
+            return 'signed', ''
+        g.classify = classify
+        g.prefetch(self.items(3))
+        self.assertEqual(sorted(n for _, n, _ in g.pre), ['f0', 'f2'])
+        with self.assertRaises(RuntimeError):
+            g.verify('features', 'f1', 'o1', {'signer': 'x'}, [], 'm')
 
 
 if __name__ == '__main__':
