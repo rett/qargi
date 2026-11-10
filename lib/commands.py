@@ -1239,6 +1239,7 @@ COMMANDS = {
                                 "(a feature finish since the run was prepared, for one) are no change and are named in its output. It also refuses a run whose clone holds commits that were "
                                 "never applied (review apply) or whose applied tip is on no branch but agent/* in the repository (feature merge first), so "
                                 "finished work is not deleted by mistake. --discard is the deliberate way past all of these; it still refuses anything that prepare did not make. "
+                                "It also refuses, --discard or not, a run whose review apply is running (the apply holds a pid lock in the lead's state, apply/RUN-ID.json.run); a lock whose process is gone does not block, and clean removes it. "
                                 "A run cleaned with --applied needs a RUN/applied record and a repository path in the registry (a run of a repository URL is kept); --applied takes no RUN_DIR and no --discard. "
                                 "A cleaned run keeps its line in the registry, marked cleaned: marshal status and handoff list it as cleaned, never as an open task. "
                                 "--stale DAYS --scratch DIR is a plan first: it prints each finished run older than DAYS days and changes nothing; with --yes each is cleaned exactly as clean RUN would, "

@@ -181,6 +181,23 @@ apply_state_drop() {
   done
   return 0
 }
+# apply_lock_holder RUN -> prints the pid of the process that holds the review-apply lock of RUN (apply/RUN-ID.json.run in the state, the pid lock of review.sh: the directory
+# holds `pid` with the pid and the process's start time) and returns 0 when that process is running; "unknown" and 0 when the lock was made in the last seconds and holds no
+# pid yet (it is being taken); 1 for no lock, for a pid that is gone and for a pid that was reused by another process (the start time differs): a stale lock never blocks.
+apply_lock_holder() {
+  local id=${1##*/} d pid='' tok='' s a t
+  case $id in qargi.??????) ;; *) return 1;; esac
+  d=$DA_STATE/apply/$id.json.run
+  [ -d "$d" ] && [ ! -L "$d" ] || return 1
+  { read -r pid tok < "$d/pid"; } 2>/dev/null || true
+  if [ -z "$pid" ]; then [ -n "$(find "$d" -maxdepth 0 -newermt '-10 seconds' 2>/dev/null)" ] && { echo unknown; return 0; }; return 1; fi
+  [[ $pid =~ ^[0-9]{1,10}$ ]] && kill -0 "$pid" 2>/dev/null || return 1
+  if [ -n "$tok" ]; then   # the start time (field 22 of /proc/PID/stat) tells the process that took the lock from a later one with the same pid
+    s=$(cat "/proc/$pid/stat" 2>/dev/null) || return 1; read -ra a <<<"${s##*) }"; t=${a[19]:-}
+    [ -z "$t" ] || [ "$t" = "$tok" ] || return 1
+  fi
+  echo "$pid"
+}
 # apply_orphan_scan DAYS: the apply-in.* and apply-wt.* directories directly under the state that no run of the registry accounts for, listed like orphan_scan lists the
 # qargi-run.* ones (kept ... / orphan ...); sets AORPH_LIST ("PATH MTIME"), AORPH_KEPT and AORPH_TOTAL (reg_load first). A name that carries a run's id belongs to that run
 # while the registry still has it (clean RUN removes it): kept. One whose run is cleaned or unknown, or a name with no id, is an orphan once it and everything in it
@@ -971,6 +988,8 @@ WRAP
     RUN=$CLEAN_RUN
     while [ "${RUN%/}" != "$RUN" ] && [ "$RUN" != / ]; do RUN=${RUN%/}; done   # a trailing slash makes rm -rf follow a link
     marshal_touch_run "$RUN"   # the lead's clean keeps its lease on the feature the run is based on
+    # a run whose review apply is under way is not removed, --discard or not: the apply reads the run's files and its saved copy, and writes the branch and the record
+    if aph=$(apply_lock_holder "$RUN"); then die "a review apply of $RUN is running (process $aph, $DA_STATE/apply/${RUN##*/}.json.run); nothing was removed: let it finish, then clean again"; fi
     if [ -n "$RUN" ] && [ ! -e "$RUN" ] && [ ! -L "$RUN" ]; then
       # the run directory is gone (a reboot that emptied a tmpfs, or removed by hand): only the registry's record and the saved copy are left
       case ${RUN##*/} in qargi.??????) ;; *) usage_die "clean needs a RUN dir made by prepare";; esac
