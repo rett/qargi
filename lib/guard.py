@@ -1938,7 +1938,8 @@ def conf_dirs(P, home):
 
 _RESOURCE_DIRS = []
 # The directories of Claude Code, the runtime qargi was built for. They are held whatever the library says: a definition of that name that
-# clashes with the shipped one (or is broken) is skipped below, and its directories must not drop out of the protection with it.
+# clashes with the shipped one (or is broken) does not load, and resource_dirs below does not skip it: it raises Unreadable, so a call that needs the roots
+# is refused until the library is fixed. These two are the directories held in every case, and no definition can take them out.
 CLAUDE_RESOURCE_DIRS = ((".claude", "skills"), (".claude", "agents")), ("~/.claude/skills", "~/.claude/agents")
 
 
