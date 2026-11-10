@@ -358,7 +358,7 @@ sed -i 's/^The manual and docs say what a name may hold\.$/&\n\nCo-Authored-By: 
 out=$($DA review check "$R40/out" 2>&1); rc=$?
 { [ $rc = 0 ] && ! grep -q '^scrub:' <<<"$out"; } && ok "trailer_policy none (the default) lets the trailer pass and prints nothing more" || no "trailer none: rc=$rc $out"
 # a report-only run (no patches) is not scrubbed
-setans '.review.scrub = "exit 1"'; mkdir -p "$T/rep2"; printf '# R\n\n## Findings\n\nnone\n' > "$T/rep2/report.md"
+setans '.review.scrub = "exit 1"'; mkdir -p "$T/rep2"; printf '# Findings\n\nnone\n\n# Checked\n\nnothing\n\nverdict: accept\n' > "$T/rep2/report.md"; printf '{"status":"DONE","commits":[]}\n' > "$T/rep2/manifest.json"
 out=$($DA review check "$T/rep2" 2>&1); rc=$?
 { [ $rc = 0 ] && ! grep -q '^scrub:' <<<"$out"; } && ok "a report-only run is not scrubbed" || no "report scrub: rc=$rc $out"
 # a member's own check (the member mark in its environment) neither runs the command nor makes the checkout, and does not fail for it
