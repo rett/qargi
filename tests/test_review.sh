@@ -25,6 +25,21 @@ out=$($DA review check "$T/good" 2>&1); rc=$?
 [ $rc = 0 ] && ok "a series of change-specific patches with messages passes" || { no "good series: $out"; }
 echo "$out" | grep -q "within" && no "a spread-out series was flagged as a batch" || ok "commits made over time are not flagged as a batch"
 
+# SCOPE is a hard limit: the manifest's scope[], or the SCOPE of the run's task block (RUN/task.md) when it records one
+cp -r "$T/good" "$T/scok"; jq '.scope = ["internal/", "docs", "man/*.1"]' "$T/scok/manifest.json" > "$T/scok/m.json" && mv "$T/scok/m.json" "$T/scok/manifest.json"
+out=$($DA review check "$T/scok" 2>&1); [ $? = 0 ] && ok "a series inside the manifest's scope[] (a directory, a directory without a slash, a glob) passes" || no "scope ok: $out"
+cp -r "$T/good" "$T/scbad"; jq '.scope = ["internal/"]' "$T/scbad/manifest.json" > "$T/scbad/m.json" && mv "$T/scbad/m.json" "$T/scbad/manifest.json"
+out=$($DA review check "$T/scbad" 2>&1); [ $? = 1 ] && echo "$out" | grep -q "FAIL 2 path(s) outside SCOPE (internal/): docs/a.md, man/a.1" && ok "a series that touches paths outside the manifest's scope[] is refused, the paths named" || no "scope bad: $out"
+cp -r "$T/good" "$T/sctp"; jq '.scope = ["internal/", "docs/", "man/"] | .touched_paths = [{path: "README.md", reason: "x"}]' "$T/sctp/manifest.json" > "$T/sctp/m.json" && mv "$T/sctp/m.json" "$T/sctp/manifest.json"
+out=$($DA review check "$T/sctp" 2>&1); [ $? = 1 ] && echo "$out" | grep -q "outside SCOPE.*README.md" && ok "a touched_paths entry outside the scope is refused too" || no "scope touched_paths: $out"
+mkdir -p "$T/sctask"; cp -r "$T/good" "$T/sctask/out"; printf 'TASK: x\nSCOPE: internal/, docs/\nDONE: true\n' > "$T/sctask/task.md"
+out=$($DA review check "$T/sctask/out" 2>&1); [ $? = 1 ] && echo "$out" | grep -q "outside SCOPE (internal/, docs/): man/a.1" && ok "the SCOPE of the run's task block is the limit, the manifest has none" || no "scope task block: $out"
+jq '.scope = ["internal/", "docs/", "man/"]' "$T/sctask/out/manifest.json" > "$T/sctask/m.json" && mv "$T/sctask/m.json" "$T/sctask/out/manifest.json"
+$DA review check "$T/sctask/out" 2>&1 | grep -q "outside SCOPE" && ok "a member's wider scope[] does not widen the task block's SCOPE" || no "scope task block wins"
+printf 'TASK: x\nSCOPE: none\n' > "$T/sctask/task.md"
+out=$($DA review check "$T/sctask/out" 2>&1); [ $? = 0 ] && ok "a task block with SCOPE: none leaves the manifest's scope[] as the limit" || no "scope none: $out"
+$DA review check "$T/good" 2>&1 | grep -q "outside SCOPE" && no "a series with no scope was checked against one" || ok "without a recorded scope nothing is checked against one"
+
 # one monolithic patch over three areas
 git reset -q --soft "$BASE"; mk "all the work" "everything" "2026-10-27T11:00:00"
 run mono; manifest "$T/mono"; echo "# s" > "$T/mono/series.md"
@@ -43,7 +58,7 @@ out=$($DA review check "$T/mismatch" 2>&1); [ $? = 1 ] && echo "$out" | grep -q 
 git reset -q --hard "$BASE"
 for k in 1 2 3; do echo "$k" >> "internal/f$k.go"; git add -A; mk "step $k" "Why step $k happened." "2026-10-27T12:00:0$k"; done
 run batch; manifest "$T/batch"; echo "# s" > "$T/batch/series.md"
-$DA review check "$T/batch" 2>&1 | grep -q "NOTE.*batch" && ok "commits made within seconds of each other are noted" || no "batch note"
+out=$($DA review check "$T/batch" 2>&1); rc=$?; [ $rc = 0 ] && echo "$out" | grep -q "WARN all 3 commits.*one batch" && echo "$out" | grep -q "0 fail, 1 warn" && ok "commits made within seconds of each other are a warning, not a note, and do not fail the series" || no "batch warning: rc=$rc $out"
 
 # missing commit advice / groups are warnings
 cp -r "$T/good" "$T/nogroups"; jq 'del(.patch_groups) | del(.commit_advice)' "$T/nogroups/manifest.json" > "$T/nogroups/m.json" && mv "$T/nogroups/m.json" "$T/nogroups/manifest.json"
@@ -62,16 +77,31 @@ mkdir -p "$T/outwins/out"; cp -r "$T/good/." "$T/outwins/"
 out=$($DA review check "$T/outwins" 2>&1); rc=$?; [ $rc = 0 ] && ! echo "$out" | grep -q "NOTE checked" && ok "a directory that holds patches itself is checked as it is, even with a subdirectory named out" || no "out wins: rc=$rc $out"
 # a review run returns a report instead of patches
 mkdir -p "$T/rep"; out=$($DA review check "$T/rep" 2>&1); [ $? = 1 ] && ok "a run with neither patches nor a report is refused" || no "empty run: $out"
-printf '# Review\n\n## Findings\n\nnone\n' > "$T/rep/report.md"
-out=$($DA review check "$T/rep" 2>&1); [ $? = 0 ] && echo "$out" | grep -q "report-only" && ok "a report with a Findings section passes as a review run" || no "report run: $out"
+GOOD_REP='# Findings\n\nnone\n\n# Checked\n\nbuild, exit 0\n\nverdict: accept\n'
+printf '{"status":"DONE","commits":[],"artifacts":[{"path":"report.md","kind":"report"}]}\n' > "$T/rep/manifest.json"
+printf "$GOOD_REP" > "$T/rep/report.md"
+out=$($DA review check "$T/rep" 2>&1); [ $? = 0 ] && echo "$out" | grep -q "OK report-only" && ! echo "$out" | grep -q "WARN" && ok "a report with Findings, Checked, a last verdict line and a manifest passes as a review run" || no "report run: $out"
 printf '# Review\n\nlooks fine\n' > "$T/rep/report.md"
 $DA review check "$T/rep" >/dev/null 2>&1; [ $? = 1 ] && ok "a report without a Findings section is refused" || no "report without findings"
-# in a team run every file in OUT starts with the member's prefix: review--report.md is the report
-rm -f "$T/rep/report.md"; printf '# Review\n\n## Findings\n\nnone\n' > "$T/rep/review--report.md"
+printf '# Findings\n\nnone\n\n# Checked\n\nbuild\n' > "$T/rep/report.md"
+out=$($DA review check "$T/rep" 2>&1); [ $? = 1 ] && echo "$out" | grep -q "last line must be .verdict: accept. or .verdict: revise." && ok "a report that does not end with the verdict line is refused" || no "no verdict: $out"
+printf '# Findings\n\nnone\n\nverdict: accept\n\n# Checked\n\nbuild\n' > "$T/rep/report.md"
+$DA review check "$T/rep" 2>&1 | grep -q "FAIL.*last line" && ok "a verdict line that is not the last line is refused" || no "verdict not last"
+printf '# Findings\n\nnone\n\n# Checked\n\nbuild\n\nverdict: ready\n' > "$T/rep/report.md"
+$DA review check "$T/rep" 2>&1 | grep -q "FAIL.*last line" && ok "a verdict other than accept or revise is refused" || no "verdict ready"
+printf '# Findings\n\nnone\n\nverdict: revise\n' > "$T/rep/report.md"
+out=$($DA review check "$T/rep" 2>&1); [ $? = 0 ] && echo "$out" | grep -q "WARN.*Checked" && ok "a report without a Checked section passes with a warning" || no "no Checked: $out"
+printf "$GOOD_REP" > "$T/rep/report.md"; mv "$T/rep/manifest.json" "$T/rep/m.json"
+out=$($DA review check "$T/rep" 2>&1); [ $? = 1 ] && echo "$out" | grep -q "manifest.json missing" && ok "a report-only run without manifest.json is refused" || no "no manifest: $out"
+mv "$T/rep/m.json" "$T/rep/manifest.json"
+# in a team run every file in OUT starts with the member's prefix: review--report.md is the report, review--manifest.json its manifest
+rm -f "$T/rep/report.md"; printf "$GOOD_REP" > "$T/rep/review--report.md"
+out=$($DA review check "$T/rep" 2>&1); [ $? = 1 ] && echo "$out" | grep -q "review--manifest.json missing" && ok "a prefixed report needs the member's prefixed manifest" || no "prefixed report, plain manifest: $out"
+mv "$T/rep/manifest.json" "$T/rep/review--manifest.json"
 out=$($DA review check "$T/rep" 2>&1); [ $? = 0 ] && echo "$out" | grep -q "report-only.*review--report.md" && ok "a report with an OUT_PREFIX (review--report.md) passes as a review run" || no "prefixed report: $out"
 printf '# Review\n\nlooks fine\n' > "$T/rep/review--report.md"
 $DA review check "$T/rep" >/dev/null 2>&1; [ $? = 1 ] && ok "a prefixed report without a Findings section is refused" || no "prefixed report without findings"
-rm -f "$T/rep/review--report.md"
+rm -f "$T/rep/review--report.md" "$T/rep/review--manifest.json"
 # --- qargi review apply: a collected, checked run becomes a task branch of the real repository
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T/shm QARGI_PROJECT=app
 mkdir -p "$HOME" "$T/c/projects" "$T/shm" "$T/scr"
@@ -328,7 +358,7 @@ sed -i 's/^The manual and docs say what a name may hold\.$/&\n\nCo-Authored-By: 
 out=$($DA review check "$R40/out" 2>&1); rc=$?
 { [ $rc = 0 ] && ! grep -q '^scrub:' <<<"$out"; } && ok "trailer_policy none (the default) lets the trailer pass and prints nothing more" || no "trailer none: rc=$rc $out"
 # a report-only run (no patches) is not scrubbed
-setans '.review.scrub = "exit 1"'; mkdir -p "$T/rep2"; printf '# R\n\n## Findings\n\nnone\n' > "$T/rep2/report.md"
+setans '.review.scrub = "exit 1"'; mkdir -p "$T/rep2"; printf '# Findings\n\nnone\n\n# Checked\n\nnothing\n\nverdict: accept\n' > "$T/rep2/report.md"; printf '{"status":"DONE","commits":[]}\n' > "$T/rep2/manifest.json"
 out=$($DA review check "$T/rep2" 2>&1); rc=$?
 { [ $rc = 0 ] && ! grep -q '^scrub:' <<<"$out"; } && ok "a report-only run is not scrubbed" || no "report scrub: rc=$rc $out"
 # a member's own check (the member mark in its environment) neither runs the command nor makes the checkout, and does not fail for it

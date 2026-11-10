@@ -1,0 +1,31 @@
+{
+  "status": "DONE",
+  "blocked_reason": "",
+  "task": "one line: what was asked",
+  "branch": "agent/example",
+  "base": {"branch": "feature/example", "sha": "0000000000000000000000000000000000000000"},
+  "scope": ["src/", "tests/"],
+  "done": {"command": "make test", "exit_code": 0, "output_tail": "the last lines of the command's output"},
+  "gates": [
+    {"name": "lint", "command": "make lint", "result": "pass", "exit_code": 0, "verdict_line": "lint: 0 problems"},
+    {"name": "secret scan", "command": "none installed", "result": "not run", "exit_code": null, "verdict_line": "not run: the scanner is not installed"}
+  ],
+  "commits": [
+    {"sha": "1111111111111111111111111111111111111111", "subject": "Names: accept periods in a user name"}
+  ],
+  "commit_advice": [
+    {"sha": "1111111111111111111111111111111111111111", "subject": "Names: accept periods in a user name", "why_separate": "one behaviour change with its test", "depends_on": [], "builds_alone": true}
+  ],
+  "patch_groups": [
+    {"name": "periods in names", "why": "the one change the series makes", "commits": ["1111111111111111111111111111111111111111"]}
+  ],
+  "touched_paths": [
+    {"path": "src/names.go", "reason": "the pattern now allows a period"},
+    {"path": "tests/names_test.go", "reason": "the test that fails without it"}
+  ],
+  "deviations": [],
+  "noticed_not_acted_on": [],
+  "artifacts": [],
+  "usage_impact": [],
+  "environment": {"tool versions": "git 2.x", "test_user": "unprivileged"}
+}
