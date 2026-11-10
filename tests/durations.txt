@@ -113,6 +113,7 @@
 16 bash tests/test_resume.sh
 13 bash tests/test_taskblock.sh
 1 python3 tests/test_legacy_lint.py
+1 python3 tests/test_usage_exit.py
 1 bash tests/test_prompts.sh
 25 python3 tests/test_doctor.py
 20 bash tests/test_release_checks.sh
