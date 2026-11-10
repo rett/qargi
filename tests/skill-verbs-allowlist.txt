@@ -1,2 +1,1 @@
 # `qargi X Y` examples that name no command or verb of lib/commands.py. Sorted; delete a line when its example is fixed.
-qargi review save
