@@ -6,6 +6,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `qargi project unset NAME PATH` removes one answer of a project. It refuses what `project set` refuses (the marshal backend; `models.extensions` and `models.accept_no_barrier`, also inside a whole `models` object, with exit 2 and the verb that takes a plan token), refuses a key that is not set, refuses the removal of an answer the project needs (validate runs first and the file is not touched), and is refused in a member run (the run directory or the member mark in the environment) with exit 2.
+
+### Changed
+- `qargi project set` prints `was: OLD` after its line (the JSON the answer held, or `(not set)` for an absent key) and, like `project unset`, writes an audit line (`project:set` and `project:unset`, with the path and the old value, cut at 200 characters). `set` wrote none before.
+- A null stored for an optional answer is the same as not set, for every optional answer: `project validate` accepted it for `gates` and `git.author` and refused it for `review.scrub`, `review.trailer_policy`, `review.keep_author` and `backlog.file`. It now accepts it for all of them (the readers already treated a null as unset); `qargi project unset` removes the key itself. The help of `project set` says so.
+
 ## [0.2.9] - 2026-11-09
 
 ### Added
