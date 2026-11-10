@@ -254,7 +254,7 @@ out=$($REL start 1.0.1 --hotfix --date 2026-05-06 2>&1); rc=$?
 out=$(rstart 1.0.1 --hotfix --date 2026-05-06 2>&1); rc=$?
 cl=$(git -C "$R" show hotfix/1.0.1:CHANGELOG.md 2>&1)
 [ "$rc" = 0 ] && [ "$cl" = "$(printf '# Changelog\n\n## 1.0.1 (2026-05-06)\n\n## 1.0.0 (2026-01-01)\n\n- first')" ] && ok "hotfix start: the branch's changelog has the new heading, empty, above the newest one" || no "hotfix start without the heading: rc=$rc $out; $cl"
-[ "$(git -C "$R" show master:CHANGELOG.md | grep -c 1.0.1)" = 0 ] && ok "master's changelog is untouched" || no "master changed"
+[ "$(git -C "$R" show master:CHANGELOG.md | grep -c '^## 1[.]0[.]1 (')" = 0 ] && ok "master's changelog is untouched" || no "master changed"
 # no heading of that level at all: the heading goes to the end
 mk nohead2
 jq '.release = {changelog: {unreleased: "## {version} (unreleased)", released: "## {version} ({date})"}}' "$T/c/projects/nohead2.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/nohead2.json"
