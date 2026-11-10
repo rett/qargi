@@ -88,6 +88,7 @@
 9 bash tests/test_marshal_hook.sh
 2 python3 tests/test_help.py
 1 python3 tests/test_tools.py
+1 python3 tests/test_procenv.py
 1 python3 tests/role_seed_sim.py shared
 2 bash tests/test_methodology.sh
 1 bash tests/test_verify_env.sh
