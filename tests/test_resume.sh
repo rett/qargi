@@ -95,6 +95,8 @@ git -C "$O" update-ref refs/heads/master "$(rev "$O" refs/heads/develop)"
 out=$($REL finish 0.3.0 2>&1); rc=$?
 [ $rc != 0 ] && grep -q "origin refs/heads/master is" <<<"$out" && [ "$(rev "$R" master)" = "$m0" ] && [ -f "$INTENT/app-release-0.3.0.json" ] \
   && ok "when origin holds another master the finish is refused, the ref is named and nothing changes" || no "differs: rc=$rc $out"
+grep -qF "rm $INTENT/app-release-0.3.0.json" <<<"$out" && grep -qF "git -C $R tag -d 0.3.0" <<<"$out" && [ "$(rev "$R" refs/tags/0.3.0)" != none ] \
+  && ok "and the advice to give the record up names both commands: remove the record and the dead run's local tag" || no "advice: $out"
 # --- origin at the old values: the push never happened, the record and the tag are dropped and the finish starts again
 git -C "$O" update-ref refs/heads/master "$rm0"; git -C "$O" update-ref refs/heads/develop "$rd0"; git -C "$O" tag -d 0.3.0 >/dev/null
 out=$($REL finish 0.3.0 2>&1); rc=$?; t=$(tok <<<"$out")

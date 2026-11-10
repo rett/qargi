@@ -472,7 +472,7 @@ release_finish_resume() {
   echo "  steps already done: $(jq -r '.done | if length == 0 then "none" else join(", ") end' "$f")"
   if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release finish $VER${HOTFIX:+ --hotfix} --plan $tok --approved \"...\")"; exit 0; fi
   need_plan "$tok"
-  [ -n "$tagsha" ] || die "the record of the interrupted finish has no tag: remove $f and start again"
+  [ -n "$tagsha" ] || die "the record of the interrupted finish has no tag: $(intent_remove_advice "$key"), then start again"
   if [ -z "$(g rev-parse -q --verify "refs/tags/$VER" 2>/dev/null || true)" ]; then
     [ -n "$PUSHED" ] && g fetch -q origin "refs/tags/$VER:refs/tags/$VER" 2>/dev/null || die "the tag $VER is missing here and could not be fetched from origin"
   fi

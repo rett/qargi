@@ -489,9 +489,9 @@ intent_probe() {
       else diff+=$'\n'"  $ref is ${cur:-absent} here; the interrupted finish expected ${lo:-absent} or ${new:-an unrecorded value}"; fi
     fi
   done < <(jq -r '.refs[] | "\(.ref)|\(.local_old)|\(.origin_old)|\(.new)"' "$f")
-  [ -z "$diff" ] || die "an interrupted finish ($key) left a record, and the refs are not as it left them:$diff"$'\n'"Nothing was changed. Look at origin and at the branches; when the state is what you want, remove $f"
+  [ -z "$diff" ] || die "an interrupted finish ($key) left a record, and the refs are not as it left them:$diff"$'\n'"Nothing was changed. Look at origin and at the branches; when the state is what you want, $(intent_remove_advice "$key")"
   if [ "$pushed" = true ]; then
-    if [ "$nn" = "$n" ]; then IP=new; elif [ "$no" = "$n" ]; then IP=old; else die "an interrupted finish ($key) left a record, and origin holds some of its refs but not all (the push is atomic, so something else changed them). Nothing was changed. Look at origin; then remove $f"; fi
+    if [ "$nn" = "$n" ]; then IP=new; elif [ "$no" = "$n" ]; then IP=old; else die "an interrupted finish ($key) left a record, and origin holds some of its refs but not all (the push is atomic, so something else changed them). Nothing was changed. Look at origin; then $(intent_remove_advice "$key")"; fi
   elif [ "$no" = "$n" ]; then IP=old
   else IP=local; fi
 }
@@ -507,6 +507,19 @@ intent_drop() {
     else die "$ref exists and is not the tag the interrupted finish made ($cur): nothing was changed"; fi
   done < <(jq -r '.refs[] | select(.ref | startswith("refs/tags/")) | "\(.ref)|\(.new)|\(.commit // "")"' "$f")
   [ -n "$check" ] || intent_clear "$key"
+}
+# intent_remove_advice KEY -> the words that tell a person to give the record up: the command that removes the file and, when the dead run left its tag here (the one the
+# record names), the command that removes the tag too, so the next finish does not die at "the tag exists already"; a tag that is not the record's is said to be left alone
+intent_remove_advice() {
+  local key=$1 f ref new commit cur out
+  f=$(intent_file "$key"); out="remove it with: rm $(printf '%q' "$f")"
+  while IFS='|' read -r ref new commit; do
+    cur=$(g rev-parse -q --verify "$ref" 2>/dev/null || true); [ -n "$cur" ] || continue
+    if [ "$cur" = "$new" ] || { [ -n "$commit" ] && [ "$(g rev-parse -q --verify "$ref^{commit}" 2>/dev/null || true)" = "$commit" ]; }; then
+      out+=" and the tag the interrupted finish made here: git -C $(printf '%q' "$REPO") tag -d $(printf '%q' "${ref#refs/tags/}") (check first that origin has no such tag)"
+    else out+="; the tag ${ref#refs/tags/} here is not the one it made, so leave it"; fi
+  done < <(jq -r '.refs[] | select(.ref | startswith("refs/tags/")) | "\(.ref)|\(.new)|\(.commit // "")"' "$f" 2>/dev/null)
+  printf '%s' "$out"
 }
 # move_ref REF NEW OLD -> update-ref REF to NEW from OLD; done already (REF is NEW) is not an error; any other value is
 move_ref() {
