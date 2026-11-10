@@ -12,7 +12,7 @@ members of a team share one directory.
 manifest.json, required keys: status (DONE|BLOCKED), base {branch, sha}, done {command, exit_code,
 output_tail}, gates[] {name, command, result pass|fail|not run, exit_code, verdict_line verbatim},
 commits[] {sha, subject}, scope[] (SCOPE as the task block gives it; empty without one) and
-touched_paths[] {path, reason}. `qargi review check` fails a patch that touches a path outside SCOPE.
+touched_paths[] {path, reason}. `qargi review check` fails a patch that touches a path outside SCOPE. See manifest.example.json beside this file.
 Other keys, when they apply: blocked_reason, task, branch, commit_advice[] {sha, subject,
 why_separate, depends_on[], builds_alone}, patch_groups[] {name, why, commits[]} (related commits
 grouped under the one change they implement, so a change is reviewed with its context),

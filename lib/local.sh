@@ -578,8 +578,9 @@ case $verb in
     esac
     RUN=$(mktemp -d "$SCR/qargi.XXXXXX")
     mkdir -p "$RUN/out" "$RUN/home" "$RUN/contract"
-    # the member reads the contract from the run: the core's files, then the runtime's addenda as one more file (CONTRACT below)
-    cp "$(prompt_root)/contract/"*.md "$RUN/contract/" || die "could not copy the contract"
+    # the member reads the contract from the run: the core's files (the texts, and manifest.example.json that output-format.md points at), then the runtime's addenda
+    # as one more file (CONTRACT below)
+    cp "$(prompt_root)/contract/"*.md "$(prompt_root)/contract/manifest.example.json" "$RUN/contract/" || die "could not copy the contract"
     [ -z "$ADDENDA" ] || printf '%s\n' "$ADDENDA" > "$RUN/contract/runtime-addenda.md"
     # a private temporary directory for the run's test sandboxes, on tmpfs when there is one; `clean` removes it, so a run
     # leaves nothing behind in /dev/shm and parallel runs never touch each other's files
