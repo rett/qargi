@@ -26,4 +26,15 @@ if python3 -I -c 'import json,sys; sys.exit("heredoc" in json.load(open("lib/pro
 has $C 'git worktree add' && has $C 'git restore' && has $C 'nothing to set aside' && ok "the contract says how to see BASE and how to drop an experiment instead of stashing" || no "the contract names git worktree add and git restore"
 ! has $C 'WIP' && ! grep -qE 'WIP commit|git stash' "${OTHERS[@]}" && ok "no prompt text sends a member to a WIP commit or repeats the stash rule" || no "a WIP commit or a stash rule is still stated outside the contract's one sentence"
 
+# P3: SCOPE is one instruction (stay inside; BLOCKED naming the path; the rest in noticed_not_acted_on), checked by `review check`
+has $C 'SCOPE lists the only paths' && has $C 'git diff --name-only BASE_SHA' && has $C 'report BLOCKED naming the path' && has $C 'noticed_not_acted_on' && ok "the contract gives one SCOPE instruction: compare, BLOCKED naming the path, noticed_not_acted_on" || no "the contract's SCOPE instruction"
+! grep -rqE 'Needs from the lead|SCOPE is a hard limit' contract packs/skills roles agents && ok "no second SCOPE instruction (Needs from the lead, a hard limit) is left" || no "a second SCOPE instruction is left"
+! grep -qE 'Stay inside SCOPE' packs/skills/gitflow-member/SKILL.md && ok "gitflow-member leaves SCOPE to the contract" || no "gitflow-member repeats the SCOPE rule"
+
+# P9: the manifest's required keys are named in the output format and shown in the example
+req=$(python3 -I -c 'import re; t=open("contract/output-format.md").read(); m=re.search(r"required keys: (.*?)Other keys", t, re.S); print(" ".join(re.findall(r"\b(status|base|done|gates|commits|scope|touched_paths)\b", m.group(1))))')
+want="status base done gates commits scope touched_paths"
+[ "$req" = "$want" ] && ok "the output format names the required manifest keys ($want)" || no "required keys in the output format: '$req'"
+if python3 -I -c 'import json,sys; m=json.load(open("contract/manifest.example.json")); sys.exit(0 if all(k in m for k in sys.argv[1:]) and m["status"] in ("DONE","BLOCKED") and m["gates"] and m["commits"] else 1)' $want; then ok "contract/manifest.example.json is valid and holds every required key"; else no "contract/manifest.example.json is missing a required key"; fi
+
 exit $fail

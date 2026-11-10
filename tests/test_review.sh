@@ -25,6 +25,21 @@ out=$($DA review check "$T/good" 2>&1); rc=$?
 [ $rc = 0 ] && ok "a series of change-specific patches with messages passes" || { no "good series: $out"; }
 echo "$out" | grep -q "within" && no "a spread-out series was flagged as a batch" || ok "commits made over time are not flagged as a batch"
 
+# SCOPE is a hard limit: the manifest's scope[], or the SCOPE of the run's task block (RUN/task.md) when it records one
+cp -r "$T/good" "$T/scok"; jq '.scope = ["internal/", "docs", "man/*.1"]' "$T/scok/manifest.json" > "$T/scok/m.json" && mv "$T/scok/m.json" "$T/scok/manifest.json"
+out=$($DA review check "$T/scok" 2>&1); [ $? = 0 ] && ok "a series inside the manifest's scope[] (a directory, a directory without a slash, a glob) passes" || no "scope ok: $out"
+cp -r "$T/good" "$T/scbad"; jq '.scope = ["internal/"]' "$T/scbad/manifest.json" > "$T/scbad/m.json" && mv "$T/scbad/m.json" "$T/scbad/manifest.json"
+out=$($DA review check "$T/scbad" 2>&1); [ $? = 1 ] && echo "$out" | grep -q "FAIL 2 path(s) outside SCOPE (internal/): docs/a.md, man/a.1" && ok "a series that touches paths outside the manifest's scope[] is refused, the paths named" || no "scope bad: $out"
+cp -r "$T/good" "$T/sctp"; jq '.scope = ["internal/", "docs/", "man/"] | .touched_paths = [{path: "README.md", reason: "x"}]' "$T/sctp/manifest.json" > "$T/sctp/m.json" && mv "$T/sctp/m.json" "$T/sctp/manifest.json"
+out=$($DA review check "$T/sctp" 2>&1); [ $? = 1 ] && echo "$out" | grep -q "outside SCOPE.*README.md" && ok "a touched_paths entry outside the scope is refused too" || no "scope touched_paths: $out"
+mkdir -p "$T/sctask"; cp -r "$T/good" "$T/sctask/out"; printf 'TASK: x\nSCOPE: internal/, docs/\nDONE: true\n' > "$T/sctask/task.md"
+out=$($DA review check "$T/sctask/out" 2>&1); [ $? = 1 ] && echo "$out" | grep -q "outside SCOPE (internal/, docs/): man/a.1" && ok "the SCOPE of the run's task block is the limit, the manifest has none" || no "scope task block: $out"
+jq '.scope = ["internal/", "docs/", "man/"]' "$T/sctask/out/manifest.json" > "$T/sctask/m.json" && mv "$T/sctask/m.json" "$T/sctask/out/manifest.json"
+$DA review check "$T/sctask/out" 2>&1 | grep -q "outside SCOPE" && ok "a member's wider scope[] does not widen the task block's SCOPE" || no "scope task block wins"
+printf 'TASK: x\nSCOPE: none\n' > "$T/sctask/task.md"
+out=$($DA review check "$T/sctask/out" 2>&1); [ $? = 0 ] && ok "a task block with SCOPE: none leaves the manifest's scope[] as the limit" || no "scope none: $out"
+$DA review check "$T/good" 2>&1 | grep -q "outside SCOPE" && no "a series with no scope was checked against one" || ok "without a recorded scope nothing is checked against one"
+
 # one monolithic patch over three areas
 git reset -q --soft "$BASE"; mk "all the work" "everything" "2026-10-27T11:00:00"
 run mono; manifest "$T/mono"; echo "# s" > "$T/mono/series.md"

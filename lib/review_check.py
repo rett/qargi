@@ -2,8 +2,9 @@
 """Checks that an agent's output is a series of change-specific patches with their context,
 not one monolithic patch. Usage: review_check.py OUT [--allow-empty]   (exit 1 on any FAIL, 2 on a usage error)
 OUT is the member's output directory (RUN/out; given RUN, whose out directory exists, it checks RUN/out): it holds manifest.json and the patches in OUT/patches/*.patch, the one place `review apply` reads them from.
+SCOPE is a hard limit: the SCOPE line of RUN/task.md (beside OUT) when it records one, else the manifest's scope[]; a patch outside it fails.
 A review run has no patches: report.md (or PREFIXreport.md) with a Findings heading is its deliverable."""
-import glob, json, os, re, sys
+import fnmatch, glob, json, os, re, sys
 from email.utils import parsedate_to_datetime
 
 args = [a for a in sys.argv[1:] if not a.startswith("--")]
@@ -51,6 +52,7 @@ for p in patches:
     head, _, rest = t.partition("\n---\n")
     body = head.split("\n\n", 1)[1].strip() if "\n\n" in head else ""
     files = re.findall(r"(?m)^diff --git a/(\S+) b/", t)
+    renamed = re.findall(r"(?m)^diff --git a/\S+ b/(\S+)$", t)   # the new name of a rename or copy is a touched path too
     changed = len(re.findall(r"(?m)^[+-](?![+-]{2} )", t))
     areas = {f.split("/")[0] for f in files}
     ts = None
@@ -58,7 +60,7 @@ for p in patches:
         try: ts = parsedate_to_datetime(date.group(1)).timestamp()
         except Exception: pass
     info.append({"name": os.path.basename(p), "subject": subj.group(1).strip() if subj else "", "body": body,
-                 "files": files, "changed": changed, "areas": areas, "ts": ts})
+                 "files": files, "paths": set(files) | set(renamed), "changed": changed, "areas": areas, "ts": ts})
 
 n = len(info)
 nums = [re.match(r"(\d{4})-", i["name"]) for i in info]
@@ -68,6 +70,34 @@ for i in info:
     if not i["subject"]: F("%s: no subject" % i["name"])
     if not i["body"]:
         F("%s: the commit message has no body; each commit must say what changed and why, so its context travels with it" % i["name"])
+
+def task_scope(out):
+    """The paths of the `SCOPE:` line of the run's task block (RUN/task.md, beside OUT; the guard keeps a member from writing it), or None."""
+    try:
+        text = open(os.path.join(os.path.dirname(os.path.abspath(out)), "task.md"), errors="replace").read()
+    except OSError:
+        return None
+    m = re.search(r"(?m)^[ \t]*(?:[-*][ \t]+)?SCOPE:[ \t]*(.*)$", text)
+    paths = [p for p in re.split(r"[,\s]+", m.group(1)) if p] if m else []
+    return None if paths in ([], ["none"]) else paths
+
+def in_scope(path, scope):
+    for s in scope:
+        s = s[2:] if s.startswith("./") else s
+        if any(c in s for c in "*?["):
+            if fnmatch.fnmatchcase(path, s): return True
+        elif path == s.rstrip("/") or path.startswith(s.rstrip("/") + "/"): return True
+    return False
+
+# SCOPE is a hard limit: the scope of the task block when it records one, else the manifest's scope[]; no patch may touch a path outside it
+scope = task_scope(run) or [str(s) for s in (man.get("scope") if isinstance(man.get("scope"), list) else [])]
+if scope:
+    listed = man.get("touched_paths") if isinstance(man.get("touched_paths"), list) else []
+    touched = {f for i in info for f in i["paths"]} | {str(t.get("path", "") if isinstance(t, dict) else t) for t in listed}
+    outside = sorted(p for p in touched if p and not in_scope(p, scope))
+    if outside:
+        F("%d path(s) outside SCOPE (%s): %s; stop with BLOCKED naming the path, or list the change under noticed_not_acted_on" % (len(outside), ", ".join(scope), ", ".join(outside[:8]) + (" ..." if len(outside) > 8 else "")))
+
 if man:
     commits = man.get("commits", [])
     if len(commits) != n: F("manifest lists %d commit(s) but there are %d patch(es): one patch per commit" % (len(commits), n))

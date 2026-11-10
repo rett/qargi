@@ -9,12 +9,13 @@ change group it belongs to, why, which checks it passed), run.bundle
 (every command with its exit status, in order). If OUT_PREFIX is given, start the name of every
 file you write to OUT with it (build--manifest.json): outputs are collected by base name and the
 members of a team share one directory.
-manifest.json keys: status (DONE|BLOCKED), blocked_reason, task, commit_advice[] {sha, subject,
+manifest.json, required keys: status (DONE|BLOCKED), base {branch, sha}, done {command, exit_code,
+output_tail}, gates[] {name, command, result pass|fail|not run, exit_code, verdict_line verbatim},
+commits[] {sha, subject}, scope[] (SCOPE as the task block gives it; empty without one) and
+touched_paths[] {path, reason}. `qargi review check` fails a patch that touches a path outside SCOPE.
+Other keys, when they apply: blocked_reason, task, branch, commit_advice[] {sha, subject,
 why_separate, depends_on[], builds_alone}, patch_groups[] {name, why, commits[]} (related commits
 grouped under the one change they implement, so a change is reviewed with its context),
-base {branch, sha}, branch, scope[], done {command, exit_code, output_tail},
-gates[] {name, command, result pass|fail|not run, exit_code, verdict_line
-verbatim}, commits[] {sha, subject}, touched_paths[] {path, reason},
 deviations[], noticed_not_acted_on[], artifacts[] {path, kind: report|log|other} (deliverables
 that are not patches), usage_impact[] {kind: command|flag|output|config|file, before, after, where}
 (required when you change something a user sees or types), on_top_of {run, head_sha} and, per commit,

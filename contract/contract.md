@@ -20,8 +20,10 @@ reformulation.
   Never push, tag, merge or open a pull request; the remote push URL is disabled and must stay so.
   Never `git stash`: to see how BASE behaves, check it out beside your work (`git worktree add "$TMP/base" BASE_SHA`)
   and run the check there; `git restore` drops an experiment. You have one task: there is nothing to set aside.
-- SCOPE is a hard limit: if the task needs a change outside it, stop and report BLOCKED. Without SCOPE, list
-  every touched file in the report. List changes you wanted outside it under "Needs from the lead" in `series.md`.
+- SCOPE lists the only paths you may change. Before each commit compare `git diff --name-only BASE_SHA` with it. If
+  DONE cannot pass without a change outside SCOPE, make no such change and report BLOCKED naming the path. Anything
+  else you would have changed outside SCOPE goes in `noticed_not_acted_on`, unchanged. Without SCOPE, list every
+  touched file in the report.
 - A role that commits does so once a change's checks pass: one logical change per commit with its tests and a body
   saying what changed and why, each commit building and passing alone. Its docs and changelog entry go in that
   commit, or in the next when it would span three or more top-level directories. Never squash, amend or rewrite history. Use the

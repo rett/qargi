@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `qargi review check` fails a patch series that touches a path outside SCOPE: the `SCOPE:` line of the run's task block (`RUN/task.md`, which a member cannot write) when it records one, else the manifest's `scope[]`; a rename's new name and the manifest's `touched_paths[]` count too. The contract tells a member to compare `git diff --name-only BASE_SHA` with SCOPE before each commit, to report BLOCKED naming the path when DONE needs a change outside it, and to put anything else under `noticed_not_acted_on`; the "Needs from the lead" instruction is gone. `contract/output-format.md` names the manifest's required keys (status, base, done, gates, commits, scope, touched_paths) and `contract/manifest.example.json` shows a complete manifest
+
 ### Changed
 - The member contract no longer says "never stash: use a WIP commit", which collided with the rules against rewriting history and for commits that pass alone. It says to check BASE out beside the work with `git worktree add` to see how BASE behaves, to `git restore` an experiment, and that a one-task member has nothing to set aside; the `gitflow-member` and `qargi-contributing` packs drop their copies
 - The member contract says once how to write a report and a commit message: with the file-writing tool, never with shell text (echo, heredoc), and a commit with `git commit -F FILE`; a read-only role whose file tool is refused puts the whole report in its final message, and a guard refusal is reported, not rephrased. The shell-heredoc fallback and the copies of the commit-message rule are gone from the contract, the `gitflow-member` and `qargi-contributing` packs, the Claude Code addendum and its `member-out` note; `qargi-verify` tells the lead to store such a report with `qargi review save`

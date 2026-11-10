@@ -24,7 +24,6 @@ description: Your part of a git-flow project as a member: work on agent/<slug> f
 
 ## Commits
 - One logical change per commit. The message says what changed and why; add a body.
-- Stay inside SCOPE; report a change you need outside it.
 
 ## Releases and hotfixes
 - `VERSION`, changelog dates and tags are the lead's.
