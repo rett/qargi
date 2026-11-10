@@ -75,7 +75,11 @@ refusal changes nothing.
    the bump commit changes) and a token first, and applies with `--plan TOKEN --approved "<your words>"`, which also writes the
    audit log line. `qargi release push VERSION` opens the pull
    request into master so CI runs on the commit to be released; `qargi release finish VERSION`
-   merges into master, tags, merges back into develop and pushes. Both finishing verbs (`feature finish`, `release
+   merges the release branch into master (`--no-ff`) and tags that merge commit, then merges the tagged master commit into develop
+   (`--no-ff`, message `Merge tag 'VERSION' into develop`) and pushes. Master therefore holds no merge commit that develop lacks:
+   the release's commits and every earlier master merge reach develop through that one merge, GitHub shows develop not behind
+   master, and `git describe` on develop reaches the release tag. History already on master is not rewritten; the first finish
+   of this shape brings the earlier master-only merge commits into develop. Both finishing verbs (`feature finish`, `release
    finish`) write an intent record under the state (`finish-intent/`) before they push, and remove it when the last
    step is done. If the process dies after the push, run the same command again: it asks origin, and when origin
    holds exactly what the record intended it shows the local steps left (move the branches, delete the branch, the
@@ -116,8 +120,8 @@ refusal changes nothing.
    member's guard refuses it. `release status VERSION` then shows `[done] NAME (WHO, TIME, evidence: TEXT)` and, last, the
    pending steps; the owner's read `waits for the owner: run COMMAND`. The record is kept across sessions.
 5. A hotfix is the same with `--hotfix`: `qargi release start VERSION --hotfix` (from master), then
-   `release push` and `release finish --hotfix` (into the open release branch instead of develop,
-   if there is one).
+   `release push` and `release finish --hotfix` (master is merged and tagged as above; the tagged master commit is then merged
+   into the open release branch instead of develop, if there is one).
 
 Merging into develop or master, starting a release, pushing and tagging each print a plan and a token first; apply it
 with `--plan TOKEN --approved "<your words>"`. A merge that conflicts changes nothing and exits 3,

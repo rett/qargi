@@ -39,12 +39,12 @@ review; `qargi methodology show gitflow` prints the model.
    task block: TASK "review this diff for the risk", the diff path, `--done 'qargi review check ../out'` (run from the clone; it fails a report with no manifest or verdict line). Take it in with
    `qargi review check OUT`, close it with `qargi local clean`, and finish only after reading its verdict.
 5. **Release** when the user says develop is ready: `qargi release start VERSION` (refuses unless develop's head passed the
-   whole suite; the first commit bumps VERSION and dates the changelog; bump any other file that carries the version; only minor
-   fixes belong here), `qargi release push VERSION` (opens the pull request into master, so CI runs on the release commit),
-   wait for its checks, then `qargi release finish VERSION`: master `--no-ff`, an annotated tag, develop `--no-ff`,
+   whole suite; the first commit bumps VERSION and dates the changelog; bump other files that carry the version; only minor
+   fixes belong here), `qargi release push VERSION` (opens the pull request into master, so CI runs on the release),
+   wait for its checks, then `qargi release finish VERSION`: master `--no-ff` and tagged, develop `--no-ff` from that merge commit,
    branch deleted, master, develop and the tag pushed together. `release finish` refuses while a pull request
    check fails or is pending; `--ignore-checks "<the user's words>"` overrides, on the user's words only. To fix: `qargi release fix VERSION`
-   (a worktree on the release branch), commit, then `release fix VERSION --push`.
+   (a worktree of the branch), commit, then `release fix VERSION --push`.
    A master that shares no history with the release branch is joined by `release push` (a plan line; the tree is unchanged).
    The project's `release.after_steps` are recorded as pending by `release finish`; once one is done (or the owner did it),
    `qargi release step VERSION NAME [--evidence TEXT]` marks it, and `release status` shows what is still pending. It changes only the record.
