@@ -372,14 +372,23 @@ def busy(state, project):
     return out
 
 
+MERGE_KINDS = ("feature", "detached", "release", "hotfix")   # the KIND of an entry PROJECT-KIND-... that lib/gitflow.sh merge_step parks (feature.sh and release.sh build the keys)
+
+
+def mine(name, project):
+    """True when the entry NAME of the conflicts directory is a merge of PROJECT: PROJECT-KIND-... with a KIND that qargi parks. The prefix PROJECT- alone would also take the
+    merges of a project whose name continues after a hyphen (app-web for app)."""
+    return name.startswith(project + "-") and name[len(project) + 1:].split("-", 1)[0] in MERGE_KINDS
+
+
 def conflicts(state, project):
-    """The merges of the project that wait: a parked worktree (a directory under STATE/conflicts, PROJECT-KEY) or the mark of one that was resolved and is not applied
+    """The merges of the project that wait: a parked worktree (a directory under STATE/conflicts, PROJECT-KIND-NAME: see mine) or the mark of one that was resolved and is not applied
     yet (PROJECT-KEY.done). The other files there are bookkeeping, not a merge: the .master file of a release finish (the master merge commit its second merge takes, kept
     beside the worktree when that merge conflicts, and left by a finish that stopped after it), so it is not listed; nor is anything outside this directory, such as the
     records of finish-intent/."""
     d = os.path.join(state, "conflicts")
     try:
-        return sorted(n for n in os.listdir(d) if n.startswith(project + "-") and (n.endswith(".done") or os.path.isdir(os.path.join(d, n))))
+        return sorted(n for n in os.listdir(d) if mine(n, project) and (n.endswith(".done") or os.path.isdir(os.path.join(d, n))))
     except OSError:
         return []
 

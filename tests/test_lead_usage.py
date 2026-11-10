@@ -6,6 +6,8 @@ import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import json, os, re, subprocess, sys, tempfile, time, unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "lib"))
+import lead_usage  # noqa: E402
 BIN = os.path.join(ROOT, "bin", "qargi")
 LEADPY = os.path.join(ROOT, "lib", "lead_usage.py")
 GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.net", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.net"}
@@ -441,6 +443,22 @@ class Check(Base):
             f.write("a b c\n")
         self.assertEqual(self.check()[0], 1)
 
+    def test_a_merge_of_another_project_whose_name_starts_with_this_one_does_not_wait_here(self):
+        """An entry is PROJECT-KIND-...: the project app owns app-feature-*, app-detached-*, app-release-* and app-hotfix-*, not app-web-feature-x (the merges of a project
+        called app-web), whether it is a parked worktree or the .done mark of a resolved merge."""
+        for n in ("app-web-feature-x", "app-web-release-0.2.0-into-develop", "app-webfeature-y"):
+            os.makedirs(os.path.join(self.state, "conflicts", n))
+            with open(os.path.join(self.state, "conflicts", n + ".done"), "w") as f:
+                f.write("a b c\n")
+        rc, out, _ = self.check()
+        self.assertEqual((rc, "a merge waits" in out), (0, False), out)
+        self.assertEqual(lead_usage.conflicts(self.state, "app"), [])
+        own = ("app-feature-lc-merge-agent_x", "app-detached-develop-merge-agent_x", "app-release-0.2.0-into-master", "app-hotfix-0.1.1-into-develop")
+        for n in own:
+            os.makedirs(os.path.join(self.state, "conflicts", n))
+        self.assertEqual(lead_usage.conflicts(self.state, "app"), sorted(own))
+        self.assertEqual(lead_usage.conflicts(self.state, "app-web"), ["app-web-feature-x", "app-web-feature-x.done", "app-web-release-0.2.0-into-develop", "app-web-release-0.2.0-into-develop.done"])
+
     def test_bookkeeping_is_not_a_merge_that_waits(self):
         """The .master file of a release finish (kept beside a parked worktree, and left by a finish that stopped after writing it) and the records of finish-intent/ are
         bookkeeping, not a merge to resolve: they do not make a compact unsafe. A parked worktree (a directory) and the .done mark of a resolved merge still do."""
@@ -509,7 +527,7 @@ class Check(Base):
     def test_every_reason_is_listed(self):
         self.run_dir("r1")
         self.git("branch", "release/0.2.0", "develop")
-        os.makedirs(os.path.join(self.state, "conflicts", "app-x"))
+        os.makedirs(os.path.join(self.state, "conflicts", "app-feature-x"))
         rc, out, _ = self.check()
         self.assertEqual(rc, 1)
         self.assertEqual(out.count("\n  - "), 3, out)
