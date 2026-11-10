@@ -20,6 +20,10 @@ refusal changes nothing.
      rights in a throw-away checkout of the applied series (`BASE..tip`, the commit the run's base branch had when it was prepared,
      then the patches with `git am`), with the range in `QARGI_SCRUB_BASE` and `QARGI_SCRUB_TIP`. `review.trailer_policy` is `none`
      (default) or `reject`, which fails any commit whose message carries a `Co-Authored-By` or `Generated with` style trailer.
+     `review.reject_trailers` adds trailer keys to those two under `reject` (a list such as `["Signed-off-by", "Change-Id", "X-*"]`:
+     letters, digits and hyphens, `*` for any run of them; a list while the policy is not `reject` is refused when it is set). A
+     failing verdict names the commit, the line of its message and what matched, for example
+     `scrub: FAIL review.reject_trailers names Signed-off-by: 1a2b3c4d5e6f line 5 of its message carries "Signed-off-by: ..."`.
    - The scrub output gains one line, `scrub: ok` or `scrub: FAIL` with the first lines of what the command (or the policy) said,
      and a failing scrub fails the check (exit 1). Nothing is made in your repository: no branch, tag or worktree entry is left
      behind. With neither answer set, nothing changes. Both answers are the run's own copy taken at `local prepare`, as `git.author`
@@ -228,12 +232,25 @@ instance. An item is a top-level list line written `- [ID] text` (or `* [ID] tex
 and hyphens, two characters or more (a task-list box such as `- [x] text` is no id), with the indented lines after it. Any other
 top-level list line is an item without an id; headings, paragraphs and fenced code blocks are not items.
 
+Two optional answers shape the file's use. `backlog.section` is the text of a heading of the file (with or without its `#`s; `Now`
+or `## Now`): only the list under that heading holds items, up to the next heading of the same or a higher level (a deeper heading
+belongs to the section), and a heading the file lacks is an error. `backlog.archive` says where the archives go: a directory
+(created when absent; an absolute path, `~/...` or a path relative to the repository) that receives `NAME-archive-YYYY-MM.md`, or a
+path ending in `.md` for one archive file whatever the month. Without it the archive is beside the backlog file.
+
 `qargi backlog list [--json]` shows the open items with their ids, an item without an id as unnumbered (`-`) and a duplicated id
 flagged. `qargi backlog done ID --evidence "<text>"` prints a plan with a token: the item as written and the archive file it goes
 to. With `--plan TOKEN --approved "<your words>"` it appends the item, the date and the evidence to `NAME-archive-YYYY-MM.md` in the
 directory of the backlog file (`NAME` is the file's name without `.md`; the archive is created when absent), then removes the item
 from the backlog, and writes an audit log line. Nothing is deleted without the plan, and an id that is missing or used by more than
-one item is refused. `done` is the lead's: a member's guard refuses it, and `list` only reads.
+one item is refused. `done` takes several ids (`qargi backlog done ID1 ID2 --evidence "<text>"`): one plan lists every item, one
+token covers the batch, the same evidence is archived with each id, and an id that is missing, used by more than one item or named
+twice refuses the whole batch before any plan is printed.
+
+`qargi backlog add ID "text" [--detail "more words"]` appends the item `- [ID] text` (the detail as indented lines under it) at the
+end of the list, of the `backlog.section` list when that is set, and writes an audit log line. It refuses an id that is not a
+slug and an id that is already an item anywhere in the file, and then does not touch the file. It adds one line and removes
+nothing, so it takes no token. `add` and `done` are the lead's: a member's guard refuses them, and `list` only reads.
 
 `feature finish` and `release finish` add a line to their plans, `backlog items named in these commits: ID, ...`, for the open items
 whose id appears (as a whole slug) in the messages of the commits being merged. It is information: it is not part of the token and

@@ -58,6 +58,7 @@ HOOK_REC = ("Reads the hook's JSON on stdin and appends one small line to the ru
             "(ids, times, names and hashes; never command, message or error text). It always exits 0 at once, even on malformed input, "
             "so it cannot block an agent. Register it with qargi supervise hooks.")
 ASKED = opt("--asked", "the request, in your words, that names the cloud instance; recorded in the audit log", "REQUEST")
+WORKTREE = opt("--worktree", "write the repo tier into DIR, another worktree of the project's repository (the same path inside it), instead of its checkout; the plan says on which branch to commit it", "DIR", "dir")
 PLAN = opt("--plan", "the plan token printed by the same command without --approved", "TOKEN")
 APPROVED = opt("--approved", "your go-ahead for exactly that plan, in your words; recorded in the audit log", "WORDS")
 EXEC = opt("--approve-exec", "name every executable the pack holds, separated by commas, to approve running them", "NAMES")
@@ -182,11 +183,22 @@ COMMANDS = {
                               "backlog.file is the markdown file of the project's backlog (qargi backlog); a path outside the repository is fine. "
                               "git.author ('Name <email>') is the author qargi review apply gives the commits it applies, and review.keep_author true keeps the member's author instead; "
                               "review.scrub (a command line or a list of words) is run by qargi review check (and by qargi review apply, unless a passing check recorded the same series) on the applied series with the range in QARGI_SCRUB_BASE and QARGI_SCRUB_TIP, and review.trailer_policy reject fails a commit with a "
-                              "Co-Authored-By or Generated-with trailer (none is the default); a member's guard refuses setting them. "
+                              "Co-Authored-By or Generated-with trailer (none is the default); review.reject_trailers is a list of further trailer keys (letters, digits and hyphens, * for any run of them, for example "
+                              "[\"Signed-off-by\", \"X-*\"]) refused under the policy reject (setting it while the policy is not reject is refused), and the failing verdict names the commit, the line of its "
+                              "message and the entry that matched; a member's guard refuses setting them. "
                               "runs.owned_refs is a list of glob patterns for the refs a runtime or harness creates in the repository, which local verify and clean accept and name (see local verify); "
-                              "the guard refuses it to a member too."),
+                              "the guard refuses it to a member too. "
+                              "It prints the new value and then 'was: OLD' (the JSON the answer held, or '(not set)' when the key was absent) and writes an audit line (project:set, with the old value). "
+                              "A null stored for an optional answer (git.author, gates, review.*, backlog.*) is the same as not set, and project validate accepts it; qargi project unset removes the key itself."),
                         examples=["qargi project set acme roles.write.effort high", "qargi project set acme packs.none true", "qargi project set acme git.author 'Example Author <author@example.com>'",
                                   "qargi project set acme roles.test.tools '[{\"kind\":\"go\",\"name\":\"acme.test/ci\",\"version\":\"v1.2.0\"}]'"]),
+            "unset": verb("Remove one answer", [("NAME", "project"), ("PATH", "key")],
+                          desc=("PATH is dotted, as for set. Prints 'was: OLD' (the JSON the answer held) and writes an audit line (project:unset, with the old value). It refuses what set refuses: "
+                                "the marshal backend (marshal.backend: qargi marshal enable|disable) and models.extensions and models.accept_no_barrier, also as keys of a whole models object (exit 2: "
+                                "qargi provider enable|disable and qargi provider accept take a plan token and an approval). A key that is not set is an error and changes nothing, and so is the removal of an answer the "
+                                "project needs (repo.url, a role's base): validate refuses it and the file is not touched. A member never runs it: it is refused in a member's run directory "
+                                "or with the member mark in the environment (exit 2); propose the removal in the report."),
+                          examples=["qargi project unset acme backlog.file", "qargi project unset acme review.scrub"]),
             "show": verb("Print the stored answers and what they mean", [("NAME", "project")],
                          desc=("The answers go to standard output as JSON (so they can be piped). When the project declares gates, which replace the test command in feature verify and release verify, "
                                "they are listed on standard error (tier, name, command, the feature tier first).")),
@@ -474,27 +486,38 @@ COMMANDS = {
         },
     },
     "backlog": {
-        "summary": "The project's backlog: list its open items, move a done one to the dated archive",
+        "summary": "The project's backlog: list, add, and archive the done ones",
         "desc": ("The backlog is a markdown file that the project answer backlog.file names (a path: ~/ works, a relative path is taken from the repository, "
                  "and the file may live outside it, in a memory store for instance; qargi project set PROJECT backlog.file PATH). "
                  "An item is a top-level list line written '- [ID] text' (or '* [ID] text'), ID a lowercase slug of letters, digits and hyphens, two characters or more "
                  "(so a task-list box '- [x] text' is no id), with the indented lines after it. Any other top-level list line is an item without an id and is listed as unnumbered; "
                  "headings, paragraphs and fenced code blocks are not items. feature finish and release finish print a plan line, 'backlog items named in these commits: ID, ...', "
                  "for the open items whose id the messages of the commits being merged contain; it is information only and nothing is done, and nothing is printed when backlog.file "
-                 "is unset or its file is missing."),
+                 "is unset or its file is missing. backlog.section names a heading of the file (its text, with or without the #s): only the list under it holds items, up to the next "
+                 "heading of the same or a higher level (a deeper heading belongs to it); a heading the file lacks is an error for the verbs. "
+                 "backlog.archive says where the archive goes: a directory (created when absent; a ~/ or relative path works as for the file) that receives NAME-archive-YYYY-MM.md, "
+                 "or a path ending in .md for one archive file whatever the month; by default the archive is beside the backlog file."),
         "scripts": ["backlog.sh"],
         "verbs": {
             "list": verb("List the open items with their ids; an item without an id is shown as '-', a duplicated id is flagged", [],
                          [PROJECT_OPT, opt("--json", "print the file, the items (id, line, text, full text, duplicate) and the duplicated ids as one JSON object")],
                          desc="Read only, so a member may run it. Exit 1 when backlog.file is unset or its file is missing.",
                          examples=["qargi backlog list", "qargi backlog list --json"]),
-            "done": verb("Move an item, with the evidence and the date, to the archive file beside the backlog and remove it from the backlog, with the token and an approval", [("ID", "none")],
-                         [PROJECT_OPT, opt("--evidence", "the words that show the item is done (they are archived with the item and the date)", "TEXT"), PLAN, APPROVED],
-                         desc=("The plan shows the item and the file it goes to. Applied, the item (as written, with its indented lines), the date and the evidence are appended to "
-                               "NAME-archive-YYYY-MM.md in the directory of the backlog file (NAME is the backlog file's name without .md; the archive is created when absent), "
-                               "and then the item is removed from the backlog. Nothing is deleted without the plan. Refused when the id is not there, or is used by more than one item "
+            "add": verb("Add an item: '- [ID] TEXT' at the end of the list, of the section when backlog.section is set", [("ID", "none"), ("TEXT", "none")],
+                        [PROJECT_OPT, opt("--detail", "more words for the item, written as indented lines under it (one line of the option per line of the item)", "TEXT")],
+                        desc=("ID is a lowercase slug (letters, digits and hyphens, two characters or more); an id that is no slug, or is already an item anywhere in the file (also outside "
+                              "the section), is refused (exit 1) and the file is not touched. TEXT is one line; --detail may span lines. The item is written at once (no plan: it adds a line and "
+                              "removes nothing) and an audit line is kept. Lead only: a member's guard refuses every backlog verb but list; report the item in the task output instead."),
+                        examples=["qargi backlog add fix-names \"Rename the two helpers that share a name\"", "qargi backlog add fix-names \"Rename the helpers\" --detail \"They differ in case only.\""]),
+            "done": verb("Move items, with the evidence and the date, to the archive file beside the backlog and remove them from the backlog, with the token and an approval", [("ID", "none"), ("[ID...]", "none")],
+                         [PROJECT_OPT, opt("--evidence", "the words that show the items are done (they are archived with each item and the date)", "TEXT"), PLAN, APPROVED],
+                         desc=("Several ids make one batch: one plan listing every item, one token for the whole batch, and the same evidence archived with each id; the batch applies together "
+                               "(the archive is written once, then the backlog), and an id that is not there, is used by more than one item, or is named twice refuses the whole batch with no plan. "
+                               "The plan shows the items and the file they go to. Applied, each item (as written, with its indented lines), the date and the evidence are appended to "
+                               "NAME-archive-YYYY-MM.md in the directory of the backlog file, or where backlog.archive says (NAME is the backlog file's name without .md; the archive is created when absent), "
+                               "and then the items are removed from the backlog. Nothing is deleted without the plan. Refused when the id is not there, or is used by more than one item "
                                "(make the ids unique first). Not available in a member run."),
-                         examples=["qargi backlog done fix-names --evidence \"merged, suite green\"",
+                         examples=["qargi backlog done fix-names --evidence \"merged, suite green\"", "qargi backlog done fix-names add-cache --evidence \"merged in feature/names, suite green\"",
                                    "qargi backlog done fix-names --evidence \"merged, suite green\" --plan TOKEN --approved \"yes\""]),
         },
     },
@@ -719,6 +742,8 @@ COMMANDS = {
                  "an orphan or on less than 10% free (QARGI_DOCTOR_MIN_FREE moves the limit, in percent). "
                  "window-source: where the context-window table of the project's local runtime comes from (its definition, or the answer lead.context_window, which overrides it) "
                  "and whether each model id its roles name is in the table; an id that is not there warns, since its window is only assumed. "
+                 "project-env: the last qargi env check recorded for the project in state/env/PROJECT.json, as 'last env check VERDICT at TIME' (a warning when the verdict is not ENV OK; "
+                 "unknown, 'never run', when none was recorded). It only reads that record and never runs the project's code: qargi env check is what runs the project's doctor and records the result. "
                  "--json prints {project, checks: [{name, status, detail, fix}], warnings, strict, exit}."),
         "scripts": ["doctor.py", "orphans.sh"],
         "usage": [("PROJECT", "project", True)],
@@ -754,7 +779,8 @@ COMMANDS = {
                                 "submodule that is not initialised or at another commit, are missing items. It adds, read-only, whether the checkout "
                                 "loads the project's skills, agents and memory, whether the members are current (STALE, DRIFT), packs check and memory check. "
                                 "The last line is ENV OK or ENV INCOMPLETE: N missing (...); exit status 0, 1 or 2 (usage, no such project, no repository). "
-                                "The verdict, HEAD, time and commands are recorded under check in state/env/PROJECT.json (mode 600, the other keys are kept); no command output is."),
+                                "The verdict, HEAD, time and commands are recorded under check in state/env/PROJECT.json (mode 600, the other keys are kept); no command output is. "
+                                "qargi doctor PROJECT shows that record as its project-env line (it reads it and runs nothing of the project's)."),
                           examples=["qargi env check", "qargi env check --project acme --timeout 60", "qargi env check --repo ~/src/acme --json"]),
             "plan": verb("Run the dry run of the bootstrap, show it grouped by privilege, print a plan token (the lead's; runs project code)", [],
                          [PROJECT_OPT, opt("--repo", "the repository directory (default: the project's repo.path, else the repository around here)", "DIR", "dir"),
@@ -1339,17 +1365,21 @@ COMMANDS = {
                                 "README.md and INDEX.md repeat per tier and are fine). A tier that does not exist (memory init creates it) or cannot be reached is information, not a failure. "
                                 "Exit 1 when anything failed.")),
             "init": verb("Create a memory tier (repo, project, shared or system) as an empty store of the standard layout", [("TIER", "none")],
-                         [PROJECT_OPT, PLAN, APPROVED],
+                         [PROJECT_OPT, WORKTREE, PLAN, APPROVED],
                          desc=("Without --approved it shows what would be created and a plan token and changes nothing. It refuses a tier that holds files that are not "
                                "a standard store, one whose place overlaps another tier, a repo tier outside the checkout, and the cloud tier (provision creates that). "
-                               "The repo tier is written inside your repository checkout: qargi never commits it, so review it and commit or ignore it yourself. "
+                               "The repo tier is written inside your repository checkout: qargi never commits it, so review it and commit or ignore it yourself; the plan names the branch checked out "
+                               "there, which is where the files must be committed. --worktree DIR writes the repo tier into another worktree of the repository instead (the same path inside it), "
+                               "and the plan then names the branch of that worktree; it is refused for any other tier. "
                                "A tier that is already set up says so and exits 0.")),
             "move": verb("Move notes from one tier to another, with the original archived in the first", [("PATH", "none")],
                          [PROJECT_OPT, opt("--from", "the tier the notes are in", "TIER", ("repo", "cloud", "project", "shared", "system")),
-                          opt("--to", "the tier they go to", "TIER", ("repo", "cloud", "project", "shared", "system")), PLAN, APPROVED],
+                          opt("--to", "the tier they go to", "TIER", ("repo", "cloud", "project", "shared", "system")), WORKTREE, PLAN, APPROVED],
                          desc=("PATH is one note (ending in .md) or a folder prefix under shared/ or roles/ROLE/. Only notes move, never indexes. A note must live in one tier, "
                                "so it refuses a path that is also in another tier. Nothing is deleted: the original goes to /_archive/<date>/ of the first tier and each copy "
-                               "records its origin. Without --approved it prints the plan and its token and changes nothing; a tier whose notes changed since the plan is refused.")),
+                               "records its origin. Without --approved it prints the plan and its token and changes nothing; a tier whose notes changed since the plan is refused. "
+                               "A move that has the repo tier at one end warns where its files must be committed, and --worktree DIR (refused when neither end is the repo tier) uses the repo tier "
+                               "of that worktree of the repository instead of the checkout's.")),
             "split": verb("Copy the notes a selector picks into another store, optionally archiving the originals", [("FROM", "file"), ("TO", "file")],
                           [PREFIX, ROLE_SEL, NOTE_KIND, opt("--archive", "move the originals to /_archive/<date>/ in FROM (with their origin in Sources:)"), PLAN, APPROVED],
                           desc="At least one of --prefix, --role and --note-kind is needed; a note must match every one given. Notes already in TO are left; a different one goes to /_conflicts/<date>/ in TO.",

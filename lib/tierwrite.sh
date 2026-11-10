@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Write a memory tier (memory.sh dispatches here):
-#   tierwrite.sh init TIER [--project P] [--plan TOKEN --approved "..."]
-#   tierwrite.sh move PATH --from TIER --to TIER [--project P] [--plan TOKEN --approved "..."]
+#   tierwrite.sh init TIER [--project P] [--worktree DIR] [--plan TOKEN --approved "..."]
+#   tierwrite.sh move PATH --from TIER --to TIER [--project P] [--worktree DIR] [--plan TOKEN --approved "..."]
+# --worktree DIR writes the repo tier into DIR, another work tree of the project's repository, instead of its checkout (the plan says where to commit).
 # TIER is repo, project, shared or system for init (the cloud tier is created by qargi provision); move also takes cloud.
 # Without --approved this prints the plan and its token and changes nothing. The write happens only for the plan the
 # token names, and every tier is checked against the notes the plan read before the first change (lib/tierplan.py).
@@ -10,15 +11,16 @@
 
 here=$(dirname "$(readlink -f "$0")")
 
-usage() { echo "usage: qargi memory init TIER | move PATH --from TIER --to TIER   [--project P] [--plan TOKEN --approved \"...\"]" >&2; exit 2; }
+usage() { echo "usage: qargi memory init TIER | move PATH --from TIER --to TIER   [--project P] [--worktree DIR] [--plan TOKEN --approved \"...\"]" >&2; exit 2; }
 
 v=${1:-}; shift || true
 case $v in init|move) ;; *) usage;; esac
-ARG1='' FROM='' TO='' PROJECT='' PLAN_ARG='' APPROVED=''
+ARG1='' FROM='' TO='' PROJECT='' WORKTREE='' PLAN_ARG='' APPROVED=''
 export PLAN_ARG
 while [ $# -gt 0 ]; do
   case $1 in
     --project) need_val "$1" $#; PROJECT=$2; shift 2;;
+    --worktree) need_val "$1" $#; WORKTREE=$2; shift 2;;
     --from) need_val "$1" $#; FROM=$2; shift 2;;
     --to) need_val "$1" $#; TO=$2; shift 2;;
     --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
@@ -40,6 +42,7 @@ if [ -z "${QARGI_CANON_FIXTURE_DIR:-}" ] && { [ "$FROM" = cloud ] || [ "$TO" = c
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 args=(--out "$tmp/plan.json")
 [ -z "$PROJECT" ] || args+=(--project "$PROJECT")
+[ -z "$WORKTREE" ] || args+=(--worktree "$WORKTREE")
 if [ "$v" = init ]; then
   python3 -I "$here/tierplan.py" plan-init "$ARG1" "${args[@]}"; rc=$?
 else

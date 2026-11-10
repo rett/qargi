@@ -240,7 +240,14 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .BI "set " "[NAME] PATH VALUE"
 Change one answer.
 .br
-PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string. models.extensions and models.accept_no_barrier are refused here: they change only through qargi provider enable|disable and qargi provider accept. methodology_accepted (a list of {gap, reason, date}: the deviations from the methodology the lead accepts) is the lead's: a member run is refused. roles.ROLE.tools is the list of the tools a role needs beyond its apt packages, each {kind, name, ...}: kind go (name a package path, version a tag: go install NAME@VERSION), kind binary (name the file name, version, url of the file itself, sha256 of it: downloaded to ~/.local/bin and kept only when the hash matches) and kind submodule (name as in .gitmodules, path: checked out in each member clone by qargi local prepare). env plan lists them, env apply installs them and env check reports one that is missing or wrong; a member's guard refuses setting them (and a whole role), as it refuses release.*, test_command, gates, env.*, site.* and backlog.*. backlog.file is the markdown file of the project's backlog (qargi backlog); a path outside the repository is fine. git.author ('Name <email>') is the author qargi review apply gives the commits it applies, and review.keep_author true keeps the member's author instead; review.scrub (a command line or a list of words) is run by qargi review check (and by qargi review apply, unless a passing check recorded the same series) on the applied series with the range in QARGI_SCRUB_BASE and QARGI_SCRUB_TIP, and review.trailer_policy reject fails a commit with a Co\-Authored\-By or Generated\-with trailer (none is the default); a member's guard refuses setting them. runs.owned_refs is a list of glob patterns for the refs a runtime or harness creates in the repository, which local verify and clean accept and name (see local verify); the guard refuses it to a member too.
+PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string. models.extensions and models.accept_no_barrier are refused here: they change only through qargi provider enable|disable and qargi provider accept. methodology_accepted (a list of {gap, reason, date}: the deviations from the methodology the lead accepts) is the lead's: a member run is refused. roles.ROLE.tools is the list of the tools a role needs beyond its apt packages, each {kind, name, ...}: kind go (name a package path, version a tag: go install NAME@VERSION), kind binary (name the file name, version, url of the file itself, sha256 of it: downloaded to ~/.local/bin and kept only when the hash matches) and kind submodule (name as in .gitmodules, path: checked out in each member clone by qargi local prepare). env plan lists them, env apply installs them and env check reports one that is missing or wrong; a member's guard refuses setting them (and a whole role), as it refuses release.*, test_command, gates, env.*, site.* and backlog.*. backlog.file is the markdown file of the project's backlog (qargi backlog); a path outside the repository is fine. git.author ('Name <email>') is the author qargi review apply gives the commits it applies, and review.keep_author true keeps the member's author instead; review.scrub (a command line or a list of words) is run by qargi review check (and by qargi review apply, unless a passing check recorded the same series) on the applied series with the range in QARGI_SCRUB_BASE and QARGI_SCRUB_TIP, and review.trailer_policy reject fails a commit with a Co\-Authored\-By or Generated\-with trailer (none is the default); review.reject_trailers is a list of further trailer keys (letters, digits and hyphens, * for any run of them, for example ["Signed\-off\-by", "X\-*"]) refused under the policy reject (setting it while the policy is not reject is refused), and the failing verdict names the commit, the line of its message and the entry that matched; a member's guard refuses setting them. runs.owned_refs is a list of glob patterns for the refs a runtime or harness creates in the repository, which local verify and clean accept and name (see local verify); the guard refuses it to a member too. It prints the new value and then 'was: OLD' (the JSON the answer held, or '(not set)' when the key was absent) and writes an audit line (project:set, with the old value). A null stored for an optional answer (git.author, gates, review.*, backlog.*) is the same as not set, and project validate accepts it; qargi project unset removes the key itself.
+.RE
+.RS
+.TP
+.BI "unset " "[NAME] PATH"
+Remove one answer.
+.br
+PATH is dotted, as for set. Prints 'was: OLD' (the JSON the answer held) and writes an audit line (project:unset, with the old value). It refuses what set refuses: the marshal backend (marshal.backend: qargi marshal enable|disable) and models.extensions and models.accept_no_barrier, also as keys of a whole models object (exit 2: qargi provider enable|disable and qargi provider accept take a plan token and an approval). A key that is not set is an error and changes nothing, and so is the removal of an answer the project needs (repo.url, a role's base): validate refuses it and the file is not touched. A member never runs it: it is refused in a member's run directory or with the member mark in the environment (exit 2); propose the removal in the report.
 .RE
 .RS
 .TP
@@ -991,7 +998,7 @@ print the result as JSON.
 .B check
 Run the project's doctor, add the qargi layer (links, members, packs, memory) and print ENV OK or ENV INCOMPLETE.
 .br
-A member may run it. It RUNS THE PROJECT'S CODE: the doctor command (env.doctor_command, else the doctor or check target) is run once, without a shell, in the repository, with standard input closed and a minimal environment, so the repository is as trusted as it is for test_command. Its lines are read: one that begins with missing, fail, error, not ok, stale, [x] or a cross mark, or ends with missing, not found or not installed, is a missing item; one that begins with expected or contains an env.known_failures entry is expected and not red; a non\-zero exit with no such line is one missing item. With no doctor command a built\-in minimum runs: submodules initialised, tags present when the repository has a remote and releases, and every tool a pin file names found on PATH, answering \-\-version and matching the pin's major.minor (this runs TOOL \-\-version). For a stored project it then checks the tools the roles declare (roles.ROLE.tools): a go tool or a binary that is not installed, is another version (go version \-m) or another file (sha256) or sits in a directory PATH lacks, and a declared submodule that is not initialised or at another commit, are missing items. It adds, read\-only, whether the checkout loads the project's skills, agents and memory, whether the members are current (STALE, DRIFT), packs check and memory check. The last line is ENV OK or ENV INCOMPLETE: N missing (...); exit status 0, 1 or 2 (usage, no such project, no repository). The verdict, HEAD, time and commands are recorded under check in state/env/PROJECT.json (mode 600, the other keys are kept); no command output is.
+A member may run it. It RUNS THE PROJECT'S CODE: the doctor command (env.doctor_command, else the doctor or check target) is run once, without a shell, in the repository, with standard input closed and a minimal environment, so the repository is as trusted as it is for test_command. Its lines are read: one that begins with missing, fail, error, not ok, stale, [x] or a cross mark, or ends with missing, not found or not installed, is a missing item; one that begins with expected or contains an env.known_failures entry is expected and not red; a non\-zero exit with no such line is one missing item. With no doctor command a built\-in minimum runs: submodules initialised, tags present when the repository has a remote and releases, and every tool a pin file names found on PATH, answering \-\-version and matching the pin's major.minor (this runs TOOL \-\-version). For a stored project it then checks the tools the roles declare (roles.ROLE.tools): a go tool or a binary that is not installed, is another version (go version \-m) or another file (sha256) or sits in a directory PATH lacks, and a declared submodule that is not initialised or at another commit, are missing items. It adds, read\-only, whether the checkout loads the project's skills, agents and memory, whether the members are current (STALE, DRIFT), packs check and memory check. The last line is ENV OK or ENV INCOMPLETE: N missing (...); exit status 0, 1 or 2 (usage, no such project, no repository). The verdict, HEAD, time and commands are recorded under check in state/env/PROJECT.json (mode 600, the other keys are kept); no command output is. qargi doctor PROJECT shows that record as its project\-env line (it reads it and runs nothing of the project's).
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -1076,7 +1083,7 @@ allow a plan that has privileged lines (sudo, doas, ...).
 .B qargi doctor
 Check this host for what makes qargi fail quietly: logind, the guard, /dev/shm, the window table.
 .PP
-Read\-only, and a member may run it. It prints one line per check, `ok|warn|unknown  name: detail`, and after a warning the indented lines that say what you can do; it changes nothing and runs none of the fixes. It does not fail on a finding: the exit status is 0, or 1 with \-\-strict when any check warns (2 for a usage error or a project that is not stored). A check that cannot be made (no logind, a tool that is missing, no project) says unknown, never warn. The project is the one named, else the one in effect; without one the checks that need it say unknown. The checks: remove\-ipc: the logind setting RemoveIPC (busctl; QARGI_BUSCTL names another program) with the user's linger (loginctl; QARGI_LOGINCTL); with RemoveIPC on and no linger, logind removes the user's IPC objects, among them what lives in /dev/shm, when the last session ends, and the warning prints the drop\-in /etc/systemd/logind.conf.d/remove\-ipc.conf (`[Login]`, `RemoveIPC=no`) with `sudo systemctl reload systemd\-logind`, or `loginctl enable\-linger USER`. guard: `qargi` is found on PATH and `qargi __guard` answers as the guard does (it allows a harmless call and refuses git push), and with a project, no member is missing, stale or edited (the states of qargi agent list). shm: the free space under /dev/shm (QARGI_RUN_TMP moves it) and the orphaned qargi\-run.* directories there, the listing of qargi local clean \-\-orphans; it warns on an orphan or on less than 10% free (QARGI_DOCTOR_MIN_FREE moves the limit, in percent). window\-source: where the context\-window table of the project's local runtime comes from (its definition, or the answer lead.context_window, which overrides it) and whether each model id its roles name is in the table; an id that is not there warns, since its window is only assumed. \-\-json prints {project, checks: [{name, status, detail, fix}], warnings, strict, exit}.
+Read\-only, and a member may run it. It prints one line per check, `ok|warn|unknown  name: detail`, and after a warning the indented lines that say what you can do; it changes nothing and runs none of the fixes. It does not fail on a finding: the exit status is 0, or 1 with \-\-strict when any check warns (2 for a usage error or a project that is not stored). A check that cannot be made (no logind, a tool that is missing, no project) says unknown, never warn. The project is the one named, else the one in effect; without one the checks that need it say unknown. The checks: remove\-ipc: the logind setting RemoveIPC (busctl; QARGI_BUSCTL names another program) with the user's linger (loginctl; QARGI_LOGINCTL); with RemoveIPC on and no linger, logind removes the user's IPC objects, among them what lives in /dev/shm, when the last session ends, and the warning prints the drop\-in /etc/systemd/logind.conf.d/remove\-ipc.conf (`[Login]`, `RemoveIPC=no`) with `sudo systemctl reload systemd\-logind`, or `loginctl enable\-linger USER`. guard: `qargi` is found on PATH and `qargi __guard` answers as the guard does (it allows a harmless call and refuses git push), and with a project, no member is missing, stale or edited (the states of qargi agent list). shm: the free space under /dev/shm (QARGI_RUN_TMP moves it) and the orphaned qargi\-run.* directories there, the listing of qargi local clean \-\-orphans; it warns on an orphan or on less than 10% free (QARGI_DOCTOR_MIN_FREE moves the limit, in percent). window\-source: where the context\-window table of the project's local runtime comes from (its definition, or the answer lead.context_window, which overrides it) and whether each model id its roles name is in the table; an id that is not there warns, since its window is only assumed. project\-env: the last qargi env check recorded for the project in state/env/PROJECT.json, as 'last env check VERDICT at TIME' (a warning when the verdict is not ENV OK; unknown, 'never run', when none was recorded). It only reads that record and never runs the project's code: qargi env check is what runs the project's doctor and records the result. \-\-json prints {project, checks: [{name, status, detail, fix}], warnings, strict, exit}.
 .RS
 .nf
 qargi doctor [PROJECT]
@@ -2810,9 +2817,9 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .RE
 .TP
 .B qargi backlog
-The project's backlog: list its open items, move a done one to the dated archive.
+The project's backlog: list, add, and archive the done ones.
 .PP
-The backlog is a markdown file that the project answer backlog.file names (a path: ~/ works, a relative path is taken from the repository, and the file may live outside it, in a memory store for instance; qargi project set PROJECT backlog.file PATH). An item is a top\-level list line written '\- [ID] text' (or '* [ID] text'), ID a lowercase slug of letters, digits and hyphens, two characters or more (so a task\-list box '\- [x] text' is no id), with the indented lines after it. Any other top\-level list line is an item without an id and is listed as unnumbered; headings, paragraphs and fenced code blocks are not items. feature finish and release finish print a plan line, 'backlog items named in these commits: ID, ...', for the open items whose id the messages of the commits being merged contain; it is information only and nothing is done, and nothing is printed when backlog.file is unset or its file is missing.
+The backlog is a markdown file that the project answer backlog.file names (a path: ~/ works, a relative path is taken from the repository, and the file may live outside it, in a memory store for instance; qargi project set PROJECT backlog.file PATH). An item is a top\-level list line written '\- [ID] text' (or '* [ID] text'), ID a lowercase slug of letters, digits and hyphens, two characters or more (so a task\-list box '\- [x] text' is no id), with the indented lines after it. Any other top\-level list line is an item without an id and is listed as unnumbered; headings, paragraphs and fenced code blocks are not items. feature finish and release finish print a plan line, 'backlog items named in these commits: ID, ...', for the open items whose id the messages of the commits being merged contain; it is information only and nothing is done, and nothing is printed when backlog.file is unset or its file is missing. backlog.section names a heading of the file (its text, with or without the #s): only the list under it holds items, up to the next heading of the same or a higher level (a deeper heading belongs to it); a heading the file lacks is an error for the verbs. backlog.archive says where the archive goes: a directory (created when absent; a ~/ or relative path works as for the file) that receives NAME\-archive\-YYYY\-MM.md, or a path ending in .md for one archive file whatever the month; by default the archive is beside the backlog file.
 .RS
 .TP
 .B list
@@ -2832,10 +2839,27 @@ print the file, the items (id, line, text, full text, duplicate) and the duplica
 .RE
 .RS
 .TP
-.BI "done " "ID"
-Move an item, with the evidence and the date, to the archive file beside the backlog and remove it from the backlog, with the token and an approval.
+.BI "add " "ID TEXT"
+Add an item: '\- [ID] TEXT' at the end of the list, of the section when backlog.section is set.
 .br
-The plan shows the item and the file it goes to. Applied, the item (as written, with its indented lines), the date and the evidence are appended to NAME\-archive\-YYYY\-MM.md in the directory of the backlog file (NAME is the backlog file's name without .md; the archive is created when absent), and then the item is removed from the backlog. Nothing is deleted without the plan. Refused when the id is not there, or is used by more than one item (make the ids unique first). Not available in a member run.
+ID is a lowercase slug (letters, digits and hyphens, two characters or more); an id that is no slug, or is already an item anywhere in the file (also outside the section), is refused (exit 1) and the file is not touched. TEXT is one line; \-\-detail may span lines. The item is written at once (no plan: it adds a line and removes nothing) and an audit line is kept. Lead only: a member's guard refuses every backlog verb but list; report the item in the task output instead.
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
+.RE
+.RS
+.TP
+.BI "\-\-detail " "TEXT"
+more words for the item, written as indented lines under it (one line of the option per line of the item).
+.RE
+.RE
+.RS
+.TP
+.BI "done " "ID [ID...]"
+Move items, with the evidence and the date, to the archive file beside the backlog and remove them from the backlog, with the token and an approval.
+.br
+Several ids make one batch: one plan listing every item, one token for the whole batch, and the same evidence archived with each id; the batch applies together (the archive is written once, then the backlog), and an id that is not there, is used by more than one item, or is named twice refuses the whole batch with no plan. The plan shows the items and the file they go to. Applied, each item (as written, with its indented lines), the date and the evidence are appended to NAME\-archive\-YYYY\-MM.md in the directory of the backlog file, or where backlog.archive says (NAME is the backlog file's name without .md; the archive is created when absent), and then the items are removed from the backlog. Nothing is deleted without the plan. Refused when the id is not there, or is used by more than one item (make the ids unique first). Not available in a member run.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -2844,7 +2868,7 @@ the project, instead of the one inferred from here.
 .RS
 .TP
 .BI "\-\-evidence " "TEXT"
-the words that show the item is done (they are archived with the item and the date).
+the words that show the items are done (they are archived with each item and the date).
 .RE
 .RS
 .TP
@@ -3572,11 +3596,16 @@ the project, instead of the one inferred from here.
 .BI "init " "TIER"
 Create a memory tier (repo, project, shared or system) as an empty store of the standard layout.
 .br
-Without \-\-approved it shows what would be created and a plan token and changes nothing. It refuses a tier that holds files that are not a standard store, one whose place overlaps another tier, a repo tier outside the checkout, and the cloud tier (provision creates that). The repo tier is written inside your repository checkout: qargi never commits it, so review it and commit or ignore it yourself. A tier that is already set up says so and exits 0.
+Without \-\-approved it shows what would be created and a plan token and changes nothing. It refuses a tier that holds files that are not a standard store, one whose place overlaps another tier, a repo tier outside the checkout, and the cloud tier (provision creates that). The repo tier is written inside your repository checkout: qargi never commits it, so review it and commit or ignore it yourself; the plan names the branch checked out there, which is where the files must be committed. \-\-worktree DIR writes the repo tier into another worktree of the repository instead (the same path inside it), and the plan then names the branch of that worktree; it is refused for any other tier. A tier that is already set up says so and exits 0.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
 the project, instead of the one inferred from here.
+.RE
+.RS
+.TP
+.BI "\-\-worktree " "DIR"
+write the repo tier into DIR, another worktree of the project's repository (the same path inside it), instead of its checkout; the plan says on which branch to commit it.
 .RE
 .RS
 .TP
@@ -3594,7 +3623,7 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .BI "move " "PATH"
 Move notes from one tier to another, with the original archived in the first.
 .br
-PATH is one note (ending in .md) or a folder prefix under shared/ or roles/ROLE/. Only notes move, never indexes. A note must live in one tier, so it refuses a path that is also in another tier. Nothing is deleted: the original goes to /_archive/<date>/ of the first tier and each copy records its origin. Without \-\-approved it prints the plan and its token and changes nothing; a tier whose notes changed since the plan is refused.
+PATH is one note (ending in .md) or a folder prefix under shared/ or roles/ROLE/. Only notes move, never indexes. A note must live in one tier, so it refuses a path that is also in another tier. Nothing is deleted: the original goes to /_archive/<date>/ of the first tier and each copy records its origin. Without \-\-approved it prints the plan and its token and changes nothing; a tier whose notes changed since the plan is refused. A move that has the repo tier at one end warns where its files must be committed, and \-\-worktree DIR (refused when neither end is the repo tier) uses the repo tier of that worktree of the repository instead of the checkout's.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -3609,6 +3638,11 @@ the tier the notes are in.
 .TP
 .BI "\-\-to " "TIER"
 the tier they go to.
+.RE
+.RS
+.TP
+.BI "\-\-worktree " "DIR"
+write the repo tier into DIR, another worktree of the project's repository (the same path inside it), instead of its checkout; the plan says on which branch to commit it.
 .RE
 .RS
 .TP

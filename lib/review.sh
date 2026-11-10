@@ -19,15 +19,33 @@
 
 # scrub_declared RUN -> 0 when the lead's registry holds, for the run, a take-in scrub (review.scrub) or a trailer policy (review.trailer_policy reject).
 # The answers are the copy `local prepare` took into the registry, never the stored project's file; a run with no copy has none.
-# SCRUB_CMD gets the command (a JSON string or list of words), SCRUB_TRAILERS the policy.
+# SCRUB_CMD gets the command (a JSON string or list of words), SCRUB_TRAILERS the policy, SCRUB_EXTRA the trailer keys review.reject_trailers adds to the
+# built-in two (a JSON list of strings; they count only under the policy reject).
 scrub_declared() {
   local a
-  SCRUB_CMD='' SCRUB_TRAILERS=none
+  SCRUB_CMD='' SCRUB_TRAILERS=none SCRUB_EXTRA='[]'
   reg_load; reg_has "$1" || return 1
   a=$(reg_json "$1" 'if (.answers | type) == "object" then .answers else empty end'); [ -n "$a" ] || return 1
   SCRUB_CMD=$(jq -c '(.review? // {}) | objects | .scrub // empty' <<<"$a" 2>/dev/null) || SCRUB_CMD=''
   SCRUB_TRAILERS=$(jq -r '(.review? // {}) | objects | .trailer_policy // "none"' <<<"$a" 2>/dev/null) || SCRUB_TRAILERS=none
+  SCRUB_EXTRA=$(jq -c '(.review? // {}) | objects | .reject_trailers // [] | if type == "array" then . else ["?"] end' <<<"$a" 2>/dev/null) || SCRUB_EXTRA='["?"]'
   [ -n "$SCRUB_CMD" ] || [ "$SCRUB_TRAILERS" = reject ]
+}
+# scrub_trailer_hit MESSAGE -> prints "LINE:TEXT<TAB>WHY" for the first line of the commit message that the trailer policy rejects (the built-in two: a co-author
+# and a generated-with trailer; then each key of review.reject_trailers, a trailer key of letters, digits and hyphens where * stands for any run of them), the
+# line counted from the first line of the message; prints nothing when none is. A key that is no such thing is not guessed at: it is a hit that says so.
+scrub_trailer_hit() {
+  local hit k ere
+  hit=$(grep -inE -m1 '^[^[:alnum:]]*(co-authored-by[[:space:]]*:|generated[ -](with|by)([^[:alnum:]]|$))' <<<"$1" || true)
+  if [ -n "$hit" ]; then printf '%s\treview.trailer_policy is reject\n' "$hit"; return 0; fi
+  while IFS= read -r k; do
+    [ -n "$k" ] || continue
+    if ! [[ $k =~ ^[A-Za-z0-9*-]+$ ]]; then printf '1:%s\treview.reject_trailers has an entry that is no trailer key\n' "$k"; return 0; fi
+    ere=${k//\*/[A-Za-z0-9-]*}
+    hit=$(grep -inE -m1 "^[^[:alnum:]]*($ere)[[:space:]]*:" <<<"$1" || true)
+    if [ -n "$hit" ]; then printf '%s\treview.reject_trailers names %s\n' "$hit" "$k"; return 0; fi
+  done < <(jq -r '.[]? | tostring' <<<"$SCRUB_EXTRA" 2>/dev/null)
+  return 0
 }
 # scrub_first_lines TEXT -> the first three non-empty lines of TEXT on one line, joined with ' | ', control characters dropped, at most 300 characters
 scrub_first_lines() {
@@ -46,7 +64,7 @@ scrub_run() {
   return "$rc"
 }
 scrub_in() {
-  local run=$1 out=$2 tmp=$3 files=$4 repo base sha tip c hit text rc=0 p
+  local run=$1 out=$2 tmp=$3 files=$4 repo base sha tip c hit why text rc=0 p
   local -a patches=() cmd
   repo=$(reg_get "$run" repo); base=$(reg_get "$run" base)
   [ -n "$repo" ] || { echo "scrub: FAIL the registry names no local repository for the run"; return 1; }
@@ -66,8 +84,11 @@ scrub_in() {
   tip=$(git -C "$tmp/t" rev-parse HEAD)
   if [ "$SCRUB_TRAILERS" = reject ]; then
     while IFS= read -r c; do
-      hit=$(git -C "$tmp/t" log -1 --format=%B "$c" | grep -iE -m1 '^[^[:alnum:]]*(co-authored-by[[:space:]]*:|generated[ -](with|by)([^[:alnum:]]|$))' || true)
-      if [ -n "$hit" ]; then echo "scrub: FAIL review.trailer_policy is reject: ${c:0:12} carries \"$(scrub_first_lines "$hit")\""; return 1; fi
+      hit=$(scrub_trailer_hit "$(git -C "$tmp/t" log -1 --format=%B "$c")")
+      if [ -n "$hit" ]; then
+        why=${hit#*$'\t'}; hit=${hit%%$'\t'*}
+        echo "scrub: FAIL $why: ${c:0:12} line ${hit%%:*} of its message carries \"$(scrub_first_lines "${hit#*:}")\""; return 1
+      fi
     done < <(git -C "$tmp/t" rev-list --reverse "$sha..$tip")
   fi
   if [ -n "$SCRUB_CMD" ]; then
@@ -79,11 +100,11 @@ scrub_in() {
   echo "scrub: ok"
 }
 # The verdict of a passing scrub is recorded for the series it passed. scrub_series_hash OUT -> the sha256 of the names and contents of OUT/patches/*.patch in order,
-# then of the declared scrub (SCRUB_CMD and SCRUB_TRAILERS, so a changed command is never taken as passed). The record is the lead's, in its state directory (the run
+# then of the declared scrub (SCRUB_CMD, SCRUB_TRAILERS and SCRUB_EXTRA, so a changed command or trailer list is never taken as passed). The record is the lead's, in its state directory (the run
 # directory is a member's to write, and the saved copy of a run has none): scrub_ok/RUN-ID holds that hash. `review check` writes it when the scrub passes and removes
 # it when the scrub or the check fails; `review apply` skips the scrub when the record names the series it is about to apply, and runs it otherwise.
 scrub_series_hash() {
-  { ( cd "$1/patches" 2>/dev/null && find . -maxdepth 1 -name '*.patch' -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum ); printf '%s\n%s\n' "$SCRUB_CMD" "$SCRUB_TRAILERS"; } \
+  { ( cd "$1/patches" 2>/dev/null && find . -maxdepth 1 -name '*.patch' -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum ); printf '%s\n%s\n%s\n' "$SCRUB_CMD" "$SCRUB_TRAILERS" "$SCRUB_EXTRA"; } \
     | sha256sum | cut -d' ' -f1
 }
 scrub_ok_file() { printf '%s/scrub_ok/%s' "$DA_STATE" "${1##*/}"; }

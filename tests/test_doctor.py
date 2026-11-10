@@ -299,11 +299,75 @@ class WindowSource(Base):
         self.assertEqual(self.lines(out)["window-source"][0], "warn", out)
 
 
+class ProjectEnv(Base):
+    def setUp(self):
+        super().setUp()
+        shutil.rmtree(os.path.join(os.environ["QARGI_STATE"], "env"), ignore_errors=True)   # the state directory outlives a test
+        self.addCleanup(shutil.rmtree, os.path.join(os.environ["QARGI_STATE"], "env"), ignore_errors=True)
+
+    def record(self, doc, name="app"):
+        d = os.path.join(os.environ["QARGI_STATE"], "env")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, name + ".json"), "w") as f:
+            json.dump(doc, f)
+
+    def test_no_project_is_unknown(self):
+        status, text = self.lines(self.doctor()[1])["project-env"]
+        self.assertEqual(status, "unknown", text)
+
+    def test_never_run_is_unknown_and_names_the_verb(self):
+        self.project()
+        rc, out, _ = self.doctor("app")
+        status, text = self.lines(out)["project-env"]
+        self.assertEqual((rc, status), (0, "unknown"), out)
+        self.assertIn("project-env: never run", text)
+        self.assertIn("qargi env check --project app", text)
+
+    def test_a_record_without_a_check_is_never_run(self):
+        self.project()
+        self.record({"apply": {"time": "2026-11-01T00:00:00Z"}})
+        self.assertEqual(self.lines(self.doctor("app")[1])["project-env"][0], "unknown")
+
+    def test_the_last_verdict_and_time_are_shown(self):
+        self.project()
+        self.record({"check": {"verdict": "ENV OK", "time": "2026-11-09T10:00:00Z", "head": "abc1234def"}})
+        status, text = self.lines(self.doctor("app")[1])["project-env"]
+        self.assertEqual(status, "ok", text)
+        self.assertIn("project-env: last env check ENV OK at 2026-11-09T10:00:00Z", text)
+
+    def test_an_incomplete_verdict_warns(self):
+        self.project()
+        self.record({"check": {"verdict": "ENV INCOMPLETE: 2 missing", "time": "2026-11-09T10:00:00Z"}})
+        rc, out, _ = self.doctor("app", "--strict")
+        status, text = self.lines(out)["project-env"]
+        self.assertEqual((status, rc), ("warn", 1), out)
+        self.assertIn("last env check ENV INCOMPLETE: 2 missing at 2026-11-09T10:00:00Z", text)
+
+    def test_an_unreadable_record_is_unknown_never_a_failure(self):
+        self.project()
+        d = os.path.join(os.environ["QARGI_STATE"], "env")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "app.json"), "w") as f:
+            f.write("{not json")
+        rc, out, _ = self.doctor("app")
+        self.assertEqual((rc, self.lines(out)["project-env"][0]), (0, "unknown"), out)
+
+    def test_the_projects_code_is_never_run_and_nothing_is_written(self):
+        """The project's doctor command is a script that would leave a file; doctor reads the record and runs none of it."""
+        marker = os.path.join(self.t, "ran")
+        self.project(env={"doctor_command": ["sh", "-c", "touch " + marker]})
+        self.record({"check": {"verdict": "ENV OK", "time": "2026-11-09T10:00:00Z"}})
+        before = snapshot(os.environ["QARGI_STATE"])
+        self.doctor("app")
+        self.assertFalse(os.path.exists(marker))
+        self.assertEqual(snapshot(os.environ["QARGI_STATE"]), before)
+
+
 class Command(Base):
     def test_the_lines_are_status_name_detail_and_exit_is_zero(self):
         rc, out, err = self.doctor()
         self.assertEqual(rc, 0, err)
-        for name in ("remove-ipc", "guard", "shm", "window-source"):
+        for name in ("remove-ipc", "guard", "shm", "window-source", "project-env"):
             self.assertIn(name, self.lines(out))
         for line in out.splitlines():
             if not line.startswith("    "):
@@ -318,7 +382,7 @@ class Command(Base):
         rc, out, _ = self.doctor("--json", "--strict", FAKE_IPC="true")
         doc = json.loads(out)
         self.assertEqual((rc, doc["exit"], doc["warnings"], doc["strict"]), (1, 1, 1, True))
-        self.assertEqual([c["name"] for c in doc["checks"]], ["remove-ipc", "guard", "shm", "window-source"])
+        self.assertEqual([c["name"] for c in doc["checks"]], ["remove-ipc", "guard", "shm", "window-source", "project-env"])
         ipc = doc["checks"][0]
         self.assertEqual(ipc["status"], "warn")
         self.assertTrue(any("RemoveIPC=no" in line for line in ipc["fix"]))
@@ -404,7 +468,7 @@ class Command(Base):
     def test_help_describes_it(self):
         r = subprocess.run([BIN, "doctor", "--help"], capture_output=True, text=True, env=self.env)
         self.assertEqual(r.returncode, 0)
-        for word in ("--strict", "--json", "QARGI_BUSCTL", "RemoveIPC", "remove-ipc.conf"):
+        for word in ("--strict", "--json", "QARGI_BUSCTL", "RemoveIPC", "remove-ipc.conf", "project-env", "qargi env check"):
             self.assertIn(word, " ".join(r.stdout.split()), word)
 
 

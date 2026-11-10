@@ -12,7 +12,12 @@
 #   project.sh set NAME PATH VALUE        change one answer, e.g. budget_cents 2500 or
 #                                         roles.write.effort high (VALUE is JSON, or a plain string). The provider has one runtime
 #                                         per surface: models.provider.local NAME / models.provider.cloud NAME set one (a single
-#                                         name already there is kept for the surface you do not set)
+#                                         name already there is kept for the surface you do not set). Prints "was: OLD" ((not set) when the
+#                                         key was absent) and writes an audit line
+#   project.sh unset NAME PATH            remove one answer: the same refusals as set (the marshal backend, the answers that take a plan
+#                                         token), refused in a member run, "was: OLD" and an audit line; an answer the project needs is
+#                                         refused by validate and nothing changes. A null stored for an optional answer (git.author, gates,
+#                                         review.*, backlog.*) is the same as not set; unset removes the key itself
 #   project.sh new NAME [--methodology M] [--dir D] [--url U] [--deployment ID] [--param k=v] [--plan T --approved W]
 #                       [--provider NAME | --provider-local NAME --provider-cloud NAME]
 #                                         create a project directory with a git repository and the methodology's generic files;
@@ -82,6 +87,23 @@ provision_reads() {
     cloud|cloud.*) return 0;;                                                   # the cloud profile and workspace every cloud call runs under
   esac
   return 1
+}
+
+# gated_path PATH JSON -> prints, and succeeds, when PATH is an answer that only a plan token and an approval may change (the verb that does is
+# named); JSON is the value being stored there (set) or the one being removed (unset). A whole models object counts when it holds those keys.
+gated_path() {
+  case $1 in
+    models.extensions|models.extensions.*) echo "qargi provider enable PROJECT EXTENSION (and disable)"; return 0;;
+    models.accept_no_barrier|models.accept_no_barrier.*) echo "qargi provider accept NAME --surface S --no-barrier"; return 0;;
+    models) if jq -e 'type == "object" and (has("extensions") or has("accept_no_barrier"))' >/dev/null 2>&1 <<<"$2"; then
+              echo "qargi provider enable PROJECT EXTENSION, qargi provider accept NAME --surface S --no-barrier (models.extensions and models.accept_no_barrier are set by them)"; return 0; fi;;
+  esac
+  return 1
+}
+
+# answer_was FILE PATH -> the JSON the answer holds now, or the words (not set) when the key is not in the file (a null stored there is null)
+answer_was() {
+  jq -r --arg p "$2" '($p | split(".")) as $q | if any(paths; . == $q) then (try getpath($q) catch null | tojson) else "(not set)" end' "$1"
 }
 
 set_note() { # project path json-value -> what `set` adds to its line: the provision note, for the answers a provision reads (provision_reads)
@@ -193,8 +215,10 @@ if isinstance(gt, dict) and gt.get("author") is not None:
          "git.author: a name and an email as 'Name <email>' (for example Example Author <author@example.com>), no control characters")
 # review.scrub: the command qargi review check runs in a temporary checkout of the applied series (a command line, or a list of words), with the range in
 # QARGI_SCRUB_BASE and QARGI_SCRUB_TIP; review.trailer_policy: none (default) or reject (a commit with a co-author or generated-with trailer fails the check)
+# A null stored for an optional answer is the same as not set (as for gates and git.author): review.* and backlog.* drop their null keys here
 rvw = c.get("review", {})
-need(isinstance(rvw, dict) and set(rvw) <= {"keep_author", "scrub", "trailer_policy"}, "review: an object like {keep_author: false, scrub: \"scripts/scrub\", trailer_policy: \"none\"} (unknown key: only keep_author, scrub, trailer_policy)")
+if isinstance(rvw, dict): rvw = {k: v for k, v in rvw.items() if v is not None}
+need(isinstance(rvw, dict) and set(rvw) <= {"keep_author", "scrub", "trailer_policy", "reject_trailers"}, "review: an object like {keep_author: false, scrub: \"scripts/scrub\", trailer_policy: \"none\", reject_trailers: [\"Signed-off-by\"]} (unknown key: only keep_author, scrub, trailer_policy, reject_trailers)")
 if isinstance(rvw, dict):
     need(isinstance(rvw.get("keep_author", False), bool), "review.keep_author: true (qargi review apply keeps the member's author on the applied commits) or false (default: the author is reset to git.author)")
     if "scrub" in rvw:
@@ -203,6 +227,13 @@ if isinstance(rvw, dict):
         need((isinstance(sc, str) and sc.strip() and not ctl(sc)) or (isinstance(sc, list) and sc and all(isinstance(x, str) and x and "\x00" not in x for x in sc)),
              "review.scrub: the command qargi review check runs on the applied series, one command line or a list of words (for example [\"scripts/scrub\"]); it gets the range in QARGI_SCRUB_BASE and QARGI_SCRUB_TIP")
     need(rvw.get("trailer_policy", "none") in ("none", "reject"), "review.trailer_policy: none (default) or reject (a commit with a Co-Authored-By or Generated-with trailer fails qargi review check)")
+    # review.reject_trailers: trailer keys added to the built-in two under the policy reject (letters, digits, hyphens; * stands for any run of them)
+    if "reject_trailers" in rvw:
+        rt = rvw["reject_trailers"]
+        keys_ok = isinstance(rt, list) and rt and all(isinstance(x, str) and re.fullmatch(r"[A-Za-z0-9*-]+", x) and re.search(r"[A-Za-z0-9]", x) for x in rt)
+        need(keys_ok and len({x.lower() for x in rt}) == len(rt),
+             "review.reject_trailers: a list of distinct trailer keys to refuse besides Co-Authored-By and Generated-with, each of letters, digits and hyphens where * stands for any run of them (for example [\"Signed-off-by\", \"Change-Id\", \"X-*\"])")
+        need(rvw.get("trailer_policy", "none") == "reject", "review.reject_trailers: it adds to the built-in two under review.trailer_policy reject, which is not set (qargi project set PROJECT review.trailer_policy reject first)")
 # gates: the declared gates (optional), an ordered list of {name, command, tier}: feature verify runs the feature tier, release verify the feature
 # tier then the release tier, and the CI jobs of a release are compared with the names (lib/gates.py)
 import gates as _gates
@@ -211,11 +242,24 @@ bad.extend(_gates.problems(c.get("gates")))
 bad.extend(_gates.ci_problems(c.get("ci")))
 # backlog.file: the markdown file of the project's backlog (optional; qargi backlog): a path, ~/... or relative to the repository; it may be outside it
 bkl = c.get("backlog", {})
-need(isinstance(bkl, dict) and set(bkl) <= {"file"}, "backlog: an object like {file: \"/path/backlog.md\"} (unknown key: only file)")
+if isinstance(bkl, dict): bkl = {k: v for k, v in bkl.items() if v is not None}
+# backlog.archive: where the archived items go (a directory, or a path ending in .md for one archive file; default: beside the file);
+# backlog.section: a heading of the file: only the list under it holds items
+need(isinstance(bkl, dict) and set(bkl) <= {"file", "archive", "section"}, "backlog: an object like {file: \"/path/backlog.md\", archive: \"/path/archive\", section: \"Now\"} (unknown key: only file, archive, section)")
 if isinstance(bkl, dict) and "file" in bkl:
     bf = bkl["file"]
     need(isinstance(bf, str) and bf.strip() and not any(ord(ch) < 32 or ord(ch) == 127 for ch in bf),
          "backlog.file: the path of a markdown file of items written '- [some-id] text', an absolute path, ~/... or a path relative to the repository; no control characters")
+if isinstance(bkl, dict):
+    noctl = lambda t: not any(ord(ch) < 32 or ord(ch) == 127 for ch in t)
+    if "archive" in bkl:
+        ba = bkl["archive"]
+        need(isinstance(ba, str) and ba.strip() and noctl(ba),
+             "backlog.archive: the directory the archived items go to (files NAME-archive-YYYY-MM.md), or a path ending in .md for one archive file; an absolute path, ~/... or a path relative to the repository; no control characters")
+    if "section" in bkl:
+        bs = bkl["section"]
+        need(isinstance(bs, str) and re.sub(r"^#{1,6}(?:[ \t]+|$)", "", bs.strip()).strip() and noctl(bs),
+             "backlog.section: the text of a heading of the backlog file (with or without its #s): only the list under it holds items; no control characters")
 # methodology_accepted: the lead's accepted deviations from the methodology (optional), a list of {gap, reason, date}: gap is "KIND: WHAT" as `qargi project
 # attach` prints a gap (file: CONTRIBUTING.md, branch: develop, env: doctor target), reason says why it is accepted, date is YYYY-MM-DD. attach, adopt and
 # marshal handoff print them apart from the open gaps; adopt leaves an accepted file or branch out of what it writes. The lead sets it; a member may not
@@ -832,13 +876,7 @@ PY
     # changed with a plan token and an approval, by their own verbs; this verb has neither, so it refuses them (also as keys of a whole models
     # object), for every caller and always. Those verbs store them through lib/gated_answers.py, which this verb never calls and nothing a
     # caller sets (an environment variable, an option) can reach from here
-    gated=''
-    case $path in
-      models.extensions|models.extensions.*) gated="qargi provider enable PROJECT EXTENSION (and disable)";;
-      models.accept_no_barrier|models.accept_no_barrier.*) gated="qargi provider accept NAME --surface S --no-barrier";;
-      models) jq -e 'type == "object" and (has("extensions") or has("accept_no_barrier"))' >/dev/null 2>&1 <<<"$val" \
-                && gated="qargi provider enable PROJECT EXTENSION, qargi provider accept NAME --surface S --no-barrier (models.extensions and models.accept_no_barrier are set by them)";;
-    esac
+    gated=$(gated_path "$path" "$val") || gated=''
     [ -z "$gated" ] || { echo "qargi: $path is not set with project set: it changes what an agent may run on or accepts a surface with no read-only barrier, so it takes a plan token and an approval: $gated" >&2; exit 2; }
     # a runtime that exists but does not serve that surface cannot be what the project runs there: refused (exit 2), as attach and new refuse it,
     # before anything is changed. A name with no definition, an ambiguous family or a clash is stored with a finding, as before
@@ -862,6 +900,7 @@ PY
     # nothing else changes) or stays unset when there was none
     carry=''
     case $path in models.provider.*) jq -e '(try .models.provider catch null) | type == "string" and test("\\S")' "$PROJ_DIR/$n.json" >/dev/null 2>&1 && carry=$(jq -r '.models.provider | gsub("^\\s+|\\s+$"; "")' "$PROJ_DIR/$n.json");; esac
+    was=$(answer_was "$PROJ_DIR/$n.json" "$path")
     tmp=$(mktemp "$PROJ_DIR/.set.XXXXXX")
     jq --argjson v "$val" --arg p "$path" --arg carry "$carry" '
       (if ($p | startswith("models.provider.")) and ((try .models.provider catch null) | type) == "string"
@@ -869,8 +908,33 @@ PY
       | setpath($p | split("."); $v)' "$PROJ_DIR/$n.json" > "$tmp"
     out=$(validate "$tmp") || { echo "$out" >&2; rm -f "$tmp"; die "that would make the project invalid; nothing changed"; }
     chmod 600 "$tmp"; mv "$tmp" "$PROJ_DIR/$n.json"
+    audit_log "project:set" "$n $path (was: ${was:0:200})"
     echo "$n: $path = $val$(set_note "$n" "$path" "$val")"
+    echo "was: $was"
     [ -z "$carry" ] || echo "note: models.provider was the single name '$carry'; it is now one name per surface, and the surface you did not set keeps '$carry'"
+    case $path in models.provider|models.provider.*) no_provider "$PROJ_DIR/$n.json" "$n" || true;; esac;;
+  unset)
+    # remove one answer; the same refusals as set (the marshal backend, the answers that take a plan token), and a member never runs it: its guard
+    # may not name this verb, so the refusal is made here, from the member's run directory or its marked environment
+    n=${1:-}; path=${2:-}
+    [ $# -eq 2 ] && [ -n "$path" ] || usage_die "unset needs NAME PATH (for example: unset $n backlog.file)"
+    [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"
+    if python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import marshal_refs; sys.exit(0 if marshal_refs.in_member_run() else 1)' "$(dirname "$(readlink -f "$0")")" 2>/dev/null; then
+      echo "qargi: project unset is not available in a member run: it removes an answer of the project the lead runs on; propose the removal in your report" >&2; exit 2
+    fi
+    printf '%s' "$path" | grep -Eq '^[a-z_][a-z0-9_.]*$' || die "PATH: dotted keys such as roles.write.effort"
+    case $path in marshal.lease_minutes) ;; marshal|marshal.*) die "$path is not a project answer: only marshal.lease_minutes is; to switch the shared backend use 'qargi marshal enable' or 'qargi marshal disable'";; esac
+    was=$(answer_was "$PROJ_DIR/$n.json" "$path")
+    gated=$(gated_path "$path" "$was") || gated=''
+    [ -z "$gated" ] || { echo "qargi: $path is not removed with project unset: it changes what an agent may run on or accepts a surface with no read-only barrier, so it takes a plan token and an approval: $gated" >&2; exit 2; }
+    [ "$was" != "(not set)" ] || die "$n: $path is not set; nothing to remove"
+    tmp=$(mktemp "$PROJ_DIR/.set.XXXXXX")
+    jq --arg p "$path" 'delpaths([$p | split(".")])' "$PROJ_DIR/$n.json" > "$tmp"
+    out=$(validate "$tmp") || { echo "$out" >&2; rm -f "$tmp"; die "that would make the project invalid (an answer it needs); nothing changed"; }
+    chmod 600 "$tmp"; mv "$tmp" "$PROJ_DIR/$n.json"
+    audit_log "project:unset" "$n $path (was: ${was:0:200})"
+    echo "$n: $path removed$(set_note "$n" "$path" "$was")"
+    echo "was: $was"
     case $path in models.provider|models.provider.*) no_provider "$PROJ_DIR/$n.json" "$n" || true;; esac;;
   link|unlink)
     # the project's resources, linked from where qargi keeps them: the plan first (one token for all), the change only for that plan. A link
@@ -911,5 +975,5 @@ PY
     af=''
     if [ -n "$n" ]; then af=$PROJ_DIR/$n.json; [ -f "$af" ] || die "no project named '$n' (see: project list)"; fi
     exec python3 -I "$(dirname "$(readlink -f "$0")")/project_profile.py" check "$DA_CONF" "$af" "${pf/#\~/$HOME}";;
-  *) usage_die "usage: project.sh template|init|new|attach|adopt|set|link|unlink|show|list|validate|profile ...";;
+  *) usage_die "usage: project.sh template|init|new|attach|adopt|set|unset|link|unlink|show|list|validate|profile ...";;
 esac

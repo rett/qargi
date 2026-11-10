@@ -11,6 +11,9 @@ The command does not fail on a finding: exit 0, or 1 with --strict when any chec
                  there (lib/orphans.sh, the listing `qargi local clean --orphans` prints).
   window-source  where the context-window table of the project's runtime comes from (its definition, or the answer
                  lead.context_window) and whether each model id the project's roles name is in it.
+  project-env    the last `qargi env check` recorded for the project (state/env/PROJECT.json): `last env check <verdict> at <time>`, a
+                 warning when that verdict is not ENV OK, `unknown  never run` when none was recorded. It only reads the record: the
+                 project's doctor is never run here (qargi env check runs it).
 
 A check that cannot be made (no logind, no tool, no project) is `unknown`, never a warning. Only reads: no file is written, no
 directory is removed, nothing is changed on the host."""
@@ -254,6 +257,31 @@ def check_window_source(project):
     return check(name, "ok", table + "; %d model id%s checked" % (len(ids), "" if len(ids) == 1 else "s"))
 
 
+def check_project_env(project):
+    """The last `qargi env check` recorded for the project (state/env/PROJECT.json, key check): its verdict and time. It only reads that file:
+    the project's own doctor is never run here, that is what qargi env check does."""
+    name = "project-env"
+    if not project:
+        return check(name, "unknown", "no project (name one, or run inside its repository): the record belongs to the project")
+    fix = ["fix: qargi env check --project %s runs the project's doctor and records the result (it runs the project's code, so it is not part of this command)" % clean(project, 80)]
+    rec = os.path.join(PA.state(), "env", project + ".json")
+    try:
+        with open(rec) as f:
+            doc = json.load(f)
+    except FileNotFoundError:
+        return check(name, "unknown", "never run", fix)
+    except (OSError, ValueError) as e:
+        return check(name, "unknown", "the record %s cannot be read: %s" % (where(rec), clean(e.__class__.__name__)), fix)
+    last = doc.get("check") if isinstance(doc, dict) else None
+    if not isinstance(last, dict) or not isinstance(last.get("verdict"), str) or not last["verdict"].strip():
+        return check(name, "unknown", "never run", fix)
+    when = clean(last.get("time") or "an unknown time", 40)
+    head = last.get("head")
+    detail = "last env check %s at %s%s" % (clean(last["verdict"], 120), when, " (HEAD %s)" % clean(head, 12) if isinstance(head, str) and head else "")
+    good = last["verdict"].strip() == "ENV OK"
+    return check(name, "ok" if good else "warn", detail, [] if good else fix)
+
+
 # ---------------------------------------------------------------------------------------------------------------- main
 
 def project_of(arg):
@@ -301,7 +329,7 @@ def main(argv):
     if project is False:
         print("qargi doctor: no stored project '%s'" % names[0], file=sys.stderr)
         return 2
-    checks = [check_remove_ipc(), check_guard(project), check_shm(), check_window_source(project)]
+    checks = [check_remove_ipc(), check_guard(project), check_shm(), check_window_source(project), check_project_env(project)]
     warns = sum(1 for c in checks if c["status"] == "warn")
     code = 1 if strict and warns else 0
     if as_json:
