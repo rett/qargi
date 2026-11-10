@@ -48,6 +48,7 @@ review; `qargi methodology show gitflow` prints the model.
    A master that shares no history with the release branch is joined by `release push` (a plan line; the tree is unchanged).
    The project's `release.after_steps` are recorded as pending by `release finish`; once one is done (or the owner did it),
    `qargi release step VERSION NAME [--evidence TEXT]` marks it, and `release status` shows what is still pending. It changes only the record.
+   One plan for the whole cut: `qargi release plan VERSION` prints every step and one token; `--plan TOKEN --approved "<the user's words>"` approves it once, then `start`, `push`, `finish`, `site`, `publish` each take `--plan TOKEN` alone. A step whose state changed is refused and takes its own plan.
 6. **Hotfix** a critical bug in production: `qargi release start VERSION --hotfix` (from master), fix, `release push`,
    `release finish --hotfix` (merges into the open release branch instead of develop when one exists).
 

@@ -121,7 +121,22 @@ refusal changes nothing.
    pending steps; the owner's read `waits for the owner: run COMMAND`. The record is kept across sessions.
 5. A hotfix is the same with `--hotfix`: `qargi release start VERSION --hotfix` (from master), then
    `release push` and `release finish --hotfix` (master is merged and tagged as above; the tagged master commit is then merged
-   into the open release branch instead of develop, if there is one).
+   into the open release branch instead of develop, if there is one). `release.preflight` does not run at the start of a hotfix: it is cut
+   from master, which cannot have the content the hotfix brings; the plan of `release start --hotfix` says so, and `release push` runs
+   the preflight in a copy of the branch before anything is pushed, so the fix must be committed first.
+6. One plan and one approval for the whole cut. `qargi release plan VERSION [--hotfix] [--date D] [--keep]` prints the plan of every
+   step (start; push when there is an origin; finish; site when `site.enabled`; publish, optional) with what moves, and one token.
+   `release plan VERSION --plan TOKEN --approved "<your words>"` records the approval once (the words, the plan, an audit line `release:cut`)
+   in `<state>/release/PROJECT-VERSION.cut.json`. Each step is then its own verb with `--plan TOKEN` alone: `release start`, `push`,
+   `finish`, `site`, `publish`; the words are the record's and are on that step's audit line, and each step prints the next. A step
+   runs only when what the plan fixed still holds: `start` finds its own plan as it was frozen, `push` the branch where `start` left it,
+   `finish` the branch where `push` left it (the head the checks ran on), master and the second target as planned and `--keep` as planned,
+   `site` and `publish` the tag on the commit `finish` tagged; `publish` is outside the token when release files are attached
+   (`release.assets`, `release.sign`: their hashes exist only after the tag). Otherwise it is refused before anything moves, and the step
+   is run with its own plan and approval (a fix committed after `start` is pushed that way, with `release fix --push`); the cut
+   records that and goes on from the new state. `finish` is still the push and tag gate: the approval words are the owner's, and
+   `--ignore-checks "<words>"` at the call is recorded as before. `release plan VERSION` again, and `release status`, show which
+   steps ran; `--again` discards the record. The single verbs and their own tokens work as before.
 
 Merging into develop or master, starting a release, pushing and tagging each print a plan and a token first; apply it
 with `--plan TOKEN --approved "<your words>"`. A merge that conflicts changes nothing and exits 3,
