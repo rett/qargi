@@ -29,8 +29,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$NAME" ] && [ -n "$SURFACE" ] || usage_die "$usage"
-[ -n "$NOBAR" ] || die "say what you accept: --no-barrier (running a read-only role on $SURFACE without a read-only barrier). $usage"
-[ -n "$ASKED" ] || die "--asked \"<your words>\" is required: they are recorded as the reason. $usage"
+[ -n "$NOBAR" ] || usage_die "say what you accept: --no-barrier (running a read-only role on $SURFACE without a read-only barrier). $usage"
+[ -n "$ASKED" ] || usage_die "--asked \"<your words>\" is required: they are recorded as the reason. $usage"
 [ -z "$APPROVED" ] || [ -n "$PLAN_ARG" ] || usage_die "--approved needs --plan TOKEN, the token the plan printed"
 
 [ -n "$PROJ" ] || PROJ=$(python3 -I "$here/help.py" infer)
