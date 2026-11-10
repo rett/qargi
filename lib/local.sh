@@ -47,7 +47,7 @@
 
 # NOREPORT_CAUSE: the likely reason OUT holds no report. A runtime can refuse a member's write tool for a report file (the member is told to return findings as
 # text), and the file then never reaches OUT: the member is not late, it is blocked. verify and clean name it where they find OUT without a report.
-NOREPORT_CAUSE="A runtime can refuse a member's write tool for a report file, so the file never reaches OUT: tell the member to write its OUT files (report, manifest, series) with the shell, a heredoc, and to collect again."
+NOREPORT_CAUSE="A runtime can refuse a member's write tool for a report file, so the file never reaches OUT. The member writes its OUT files (report, manifest, series) with its file tool; a read-only member whose file tool is refused returns the report as its final message, and the lead stores it with: qargi review save RUN < MESSAGE"
 
 # drop_qargi_refs -> stdin without the refs under refs/qargi/ (lines "local REF SHA" and "remote SHA REF"). The marshal refs backend
 # keeps its records there and the lead's renewer fetches and pushes them during a run; that is not an agent push. Only that
@@ -154,6 +154,68 @@ saved_of() { local d=$DA_STATE/runs/${1##*/}; case ${1##*/} in qargi.??????) ;; 
 # scrub_ok_drop RUN: remove the record `review check` keeps for a run whose take-in scrub passed (scrub_ok/RUN-ID in the lead's state, the path rule of
 # scrub_ok_file in review.sh): a run that was checked and never applied leaves it, and clean removes the run
 scrub_ok_drop() { local id=${1##*/}; case $id in qargi.??????) rm -f -- "$DA_STATE/scrub_ok/$id";; esac; return 0; }
+# apply_tmp_rm DIR: remove a temporary directory a killed `review apply` left directly under the state (apply-in.* holds the copy of the patches, apply-wt.* the worktree that
+# held the branch). Only a real directory (never a link) whose real path is directly under the real state directory is removed, on its own file system; a worktree is
+# pruned from the repository that owns it afterwards, so the branch it held is free again. Returns 1 and removes nothing for anything else.
+apply_tmp_rm() {
+  local d=$1 rp sr gc=''
+  [ -d "$d" ] && [ ! -L "$d" ] || return 1
+  rp=$(realpath -- "$d" 2>/dev/null) && sr=$(realpath -- "$DA_STATE" 2>/dev/null) && [ "$(dirname -- "$rp")" = "$sr" ] || return 1
+  if [ -f "$rp/.git" ]; then gc=$(git -C "$rp" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || gc=''; fi
+  rm -rf --one-file-system -- "$rp" || return 1
+  if [ -n "$gc" ]; then git --git-dir="$gc" worktree prune >/dev/null 2>&1 || true; fi
+  return 0
+}
+# apply_state_drop RUN: remove what `review apply` keeps in the lead's state for a run that clean removes: its apply record (apply/RUN-ID.json, the path rule of
+# apply_rec_file in review.sh, and the lock beside it) and the temporary directories of an apply that was killed, which carry the run's id in their names
+# (apply-in.RUN-ID.*, apply-wt.RUN-ID.*). Quoted names, no link followed (rm -f on a link removes the link; a link in place of a directory is left alone and said).
+apply_state_drop() {
+  local id=${1##*/} d
+  case $id in qargi.??????) ;; *) return 0;; esac
+  rm -f -- "$DA_STATE/apply/$id.json" "$DA_STATE/apply/$id.json.lock"
+  for d in "$DA_STATE"/apply-in."$id".* "$DA_STATE"/apply-wt."$id".*; do
+    [ -e "$d" ] || [ -L "$d" ] || continue
+    apply_tmp_rm "$d" || echo "qargi: warning: could not remove $d, a temporary directory of a killed review apply of $id" >&2
+  done
+  return 0
+}
+# apply_orphan_scan DAYS: the apply-in.* and apply-wt.* directories directly under the state that no run of the registry accounts for, listed like orphan_scan lists the
+# qargi-run.* ones (kept ... / orphan ...); sets AORPH_LIST ("PATH MTIME"), AORPH_KEPT and AORPH_TOTAL (reg_load first). A name that carries a run's id belongs to that run
+# while the registry still has it (clean RUN removes it): kept. One whose run is cleaned or unknown, or a name with no id, is an orphan once it and everything in it
+# is older than DAYS days (an apply under way is new).
+apply_orphan_scan() {
+  local days=$1 sr e nowe cutoff mt age base id live
+  AORPH_LIST=(); AORPH_KEPT=0; AORPH_TOTAL=0
+  sr=$(realpath -- "$DA_STATE" 2>/dev/null) || return 0
+  nowe=$(date +%s); cutoff=$((nowe - days * 86400))
+  for e in "$sr"/apply-in.* "$sr"/apply-wt.*; do
+    [ -e "$e" ] || [ -L "$e" ] || continue
+    AORPH_TOTAL=$((AORPH_TOTAL + 1))
+    if [ -L "$e" ] || [ ! -d "$e" ]; then echo "kept $e: not a directory review apply makes (a link or a file)"; AORPH_KEPT=$((AORPH_KEPT + 1)); continue; fi
+    mt=$(stat -c %Y -- "$e" 2>/dev/null) || mt=''
+    [[ $mt =~ ^[0-9]{1,12}$ ]] || { echo "kept $e: its age cannot be read"; AORPH_KEPT=$((AORPH_KEPT + 1)); continue; }
+    age=$(( (nowe - mt) / 86400 ))
+    live=$(apply_dir_run "$e")
+    if [ -n "$live" ]; then echo "kept $e (${age}d old): left by an apply of the run $live, which clean $live removes"; AORPH_KEPT=$((AORPH_KEPT + 1)); continue; fi
+    if [ ! -O "$e" ]; then echo "kept $e (${age}d old): not owned by this user"; AORPH_KEPT=$((AORPH_KEPT + 1)); continue; fi
+    if [ "$mt" -gt "$cutoff" ] || [ -n "$(find "$e" -xdev -newermt "@$cutoff" -print -quit 2>/dev/null)" ]; then
+      echo "kept $e (${age}d old): it or something in it changed within ${days} day(s)"; AORPH_KEPT=$((AORPH_KEPT + 1)); continue
+    fi
+    base=${e##*/}; id=''
+    case $base in apply-in.qargi.??????.??????|apply-wt.qargi.??????.??????) id=${base#apply-??.}; id=${id%.??????};; esac
+    echo "orphan $e (${age}d old, $([ -n "$id" ] && echo "its run $id is cleaned or not in the registry" || echo "named by no run"))"; AORPH_LIST+=("$e $mt")
+  done
+  return 0
+}
+# apply_dir_run PATH -> the run directory of the registry (not cleaned) whose id is in the name of an apply-in.RUN-ID.* / apply-wt.RUN-ID.* directory, else nothing (reg_load first)
+apply_dir_run() {
+  local base=${1##*/} id='' d
+  case $base in apply-in.qargi.??????.??????|apply-wt.qargi.??????.??????) id=${base#apply-??.}; id=${id%.??????};; *) return 0;; esac
+  for d in ${LRUNS_ORDER[@]+"${LRUNS_ORDER[@]}"}; do
+    [ "${d##*/}" = "$id" ] && [ -z "$(reg_get "$d" cleaned)" ] && { printf '%s\n' "$d"; return 0; }
+  done
+  return 0
+}
 # gone_runs SCR -> the runs of the registry (reg_load first) directly under SCR (a real path; every run of the registry when empty) whose directory is
 # gone and that clean did not remove: a reboot emptied a tmpfs, or the directory was removed by hand
 gone_runs() {
@@ -516,8 +578,9 @@ case $verb in
     esac
     RUN=$(mktemp -d "$SCR/qargi.XXXXXX")
     mkdir -p "$RUN/out" "$RUN/home" "$RUN/contract"
-    # the member reads the contract from the run: the core's files, then the runtime's addenda as one more file (CONTRACT below)
-    cp "$(prompt_root)/contract/"*.md "$RUN/contract/" || die "could not copy the contract"
+    # the member reads the contract from the run: the core's files (the texts, and manifest.example.json that output-format.md points at), then the runtime's addenda
+    # as one more file (CONTRACT below)
+    cp "$(prompt_root)/contract/"*.md "$(prompt_root)/contract/manifest.example.json" "$RUN/contract/" || die "could not copy the contract"
     [ -z "$ADDENDA" ] || printf '%s\n' "$ADDENDA" > "$RUN/contract/runtime-addenda.md"
     # a private temporary directory for the run's test sandboxes, on tmpfs when there is one; `clean` removes it, so a run
     # leaves nothing behind in /dev/shm and parallel runs never touch each other's files
@@ -625,7 +688,7 @@ WRAP
       SRC=$RUN
     fi
     # a read-only run's product is a report, never patches: patches in its output are not to be applied or accepted
-    if [ "$(run_class "$RUN" "$SRC")" = read-only ] && [ -n "$(find "$SRC/out" -maxdepth 2 \( -name '*.patch' -o -name run.bundle \) 2>/dev/null | head -1)" ]; then
+    if [ "$(run_class "$RUN")" = read-only ] && [ -n "$(find "$SRC/out" -maxdepth 2 \( -name '*.patch' -o -name run.bundle \) 2>/dev/null | head -1)" ]; then
       echo "qargi: $RUN is a read-only run ($(cat "$SRC/ability" 2>/dev/null || echo review)) and its output holds patches. A read-only run's product is a report, never patches: read $SRC/out/report.md, and do not apply or accept the patches." >&2
       exit 2
     fi
@@ -643,7 +706,7 @@ WRAP
       fi
     fi
     # a read-only run's product is its report: none in OUT is said (a note; the refs verdict below is the exit status), with the likely cause
-    if [ -z "$SAVED" ] && [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ] && [ "$(run_class "$RUN" "$SRC")" = read-only ] && ! out_has_report "$RUN/out"; then
+    if [ -z "$SAVED" ] && [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ] && [ "$(run_class "$RUN")" = read-only ] && ! out_has_report "$RUN/out"; then
       echo "qargi: note: OUT of the read-only run $RUN holds no report (report.md or NAME-report.md). $NOREPORT_CAUSE" >&2
     fi
     reg_load; crc=0; NOREC=$NOREC check_run "$RUN" "$SRC" || crc=$?
@@ -711,14 +774,20 @@ WRAP
       orphan_scan "$oroot" "$DAYS"   # lib/orphans.sh: the listing, which qargi doctor reads too
       orph=(${ORPH_LIST[@]+"${ORPH_LIST[@]}"}); okept=$ORPH_KEPT; ototal=$ORPH_TOTAL
       echo "$ototal qargi-run.* director(ies) under $oroot: ${#orph[@]} orphaned for more than $DAYS day(s), $okept kept"
-      if [ "${#orph[@]}" = 0 ]; then echo "plan: nothing to remove under $oroot"; exit 0; fi
-      otok=$({ printf '%s\n%s\n' "$oroot" "$DAYS"; printf '%s\n' "${orph[@]}"; } | plan_token)
+      # and the temporary directories of a killed `review apply` (apply-in.*, apply-wt.*) in the state that no run accounts for: the ones of a run still in the registry are
+      # that run's (clean RUN removes them), so what is listed here is attributed to no live run
+      reg_load; apply_orphan_scan "$DAYS"; aorph=(${AORPH_LIST[@]+"${AORPH_LIST[@]}"})
+      if [ "$AORPH_TOTAL" != 0 ]; then echo "$AORPH_TOTAL apply-in.* and apply-wt.* director(ies) under $(realpath -- "$DA_STATE"): ${#aorph[@]} orphaned for more than $DAYS day(s), $AORPH_KEPT kept"; fi
+      if [ "$(( ${#orph[@]} + ${#aorph[@]} ))" = 0 ]; then echo "plan: nothing to remove under $oroot"; exit 0; fi
+      otok=$({ printf '%s\n%s\n' "$oroot" "$DAYS"; if [ "${#orph[@]}" != 0 ]; then printf '%s\n' "${orph[@]}"; fi
+               if [ "${#aorph[@]}" != 0 ]; then printf 'state\n'; printf '%s\n' "${aorph[@]}"; fi; } | plan_token)
       if [ -z "$APPROVED" ]; then
-        echo "plan: remove ${#orph[@]} orphaned director(ies) under $oroot (the ones marked orphan above); nothing changed"
+        if [ "${#aorph[@]}" = 0 ]; then echo "plan: remove ${#orph[@]} orphaned director(ies) under $oroot (the ones marked orphan above); nothing changed"
+        else echo "plan: remove $(( ${#orph[@]} + ${#aorph[@]} )) orphaned director(ies): ${#orph[@]} under $oroot and ${#aorph[@]} under the state directory (the ones marked orphan above); nothing changed"; fi
         echo "plan token: $otok   (apply with: qargi local clean --orphans --days $DAYS --plan $otok --approved \"...\")"
         exit 0
       fi
-      QARGI_NESTED='' need_plan "$otok"   # a caller that is itself approved (QARGI_NESTED) has not approved this removal: the token is always needed
+      need_plan "$otok"   # the token is always needed (need_plan ignores QARGI_NESTED)
       rm_n=0; rk_n=0
       for ent in "${orph[@]}"; do
         e=${ent% *}; reg_load
@@ -727,6 +796,12 @@ WRAP
         named=''; for d in ${LRUNS_ORDER[@]+"${LRUNS_ORDER[@]}"}; do t=$(reg_get "$d" tmpdir); if [ -n "$t" ] && [ "$(readlink -m -- "$t")" = "$e" ]; then named=$d; fi; done
         if [ -L "$e" ] || [ "$rp" != "$e" ] || [ "$(dirname -- "$rp")" != "$oroot" ] || [ -n "$named" ]; then echo "kept $e: it changed since the plan"; rk_n=$((rk_n + 1)); continue; fi
         if rm -rf --one-file-system -- "$rp"; then echo "removed $e"; rm_n=$((rm_n + 1)); else echo "kept $e: it could not be removed"; rk_n=$((rk_n + 1)); fi
+      done
+      for ent in ${aorph[@]+"${aorph[@]}"}; do
+        e=${ent% *}; reg_load
+        # checked again at the moment of removal: still a real directory directly under the state, and no live run of the registry accounts for it now
+        if [ -L "$e" ] || [ ! -d "$e" ] || [ ! -O "$e" ] || [ -n "$(apply_dir_run "$e")" ]; then echo "kept $e: it changed since the plan"; rk_n=$((rk_n + 1)); continue; fi
+        if apply_tmp_rm "$e"; then echo "removed $e"; rm_n=$((rm_n + 1)); else echo "kept $e: it could not be removed"; rk_n=$((rk_n + 1)); fi
       done
       audit_log "local:clean-orphans" "$oroot $rm_n removed $rk_n kept (older than $DAYS day(s))"
       echo "removed $rm_n orphaned director(ies), kept $rk_n"
@@ -809,6 +884,7 @@ WRAP
       fi
       [ -z "$sv" ] || rm -rf --one-file-system -- "$sv"
       scrub_ok_drop "$RUN"
+      apply_state_drop "$RUN"   # the apply record, and what a killed apply of the run left in the state
       reg_edit "$RUN" drop || die "could not drop the record of $RUN from $DA_STATE/local-runs.jsonl"
       echo "dropped the record of $RUN (directory gone)${sv:+ and its saved copy $sv}"
       exit 0
@@ -880,6 +956,7 @@ WRAP
     rm -rf --one-file-system -- "$RUN"
     sv=$(saved_of "$RUN"); [ -z "$sv" ] || rm -rf --one-file-system -- "$sv"   # the copy verify saved: the work is merged, or dropped on purpose
     scrub_ok_drop "$RUN"   # the record of a passed scrub that review check kept for a run never applied
+    apply_state_drop "$RUN"   # the apply record of the run, and the temporary directories of a killed apply of it
     reg_edit "$rrun" cleaned || echo "qargi: warning: could not mark $RUN cleaned in $DA_STATE/local-runs.jsonl (report and list may show it as directory gone)" >&2
     [ -z "$acc" ] || printf '%s\n' "$acc"
     echo "cleaned $RUN${rt:+ and $rt}";;

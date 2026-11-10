@@ -80,6 +80,7 @@ mkdir -p "$T/rep"; out=$($DA review check "$T/rep" 2>&1); [ $? = 1 ] && ok "a ru
 GOOD_REP='# Findings\n\nnone\n\n# Checked\n\nbuild, exit 0\n\nverdict: accept\n'
 printf '{"status":"DONE","commits":[],"artifacts":[{"path":"report.md","kind":"report"}]}\n' > "$T/rep/manifest.json"
 printf "$GOOD_REP" > "$T/rep/report.md"
+# hermetic: allow absent (WARN is a word review check prints only for a warning; its output of a passing report names no random path in a way that holds it)
 out=$($DA review check "$T/rep" 2>&1); [ $? = 0 ] && echo "$out" | grep -q "OK report-only" && ! echo "$out" | grep -q "WARN" && ok "a report with Findings, Checked, a last verdict line and a manifest passes as a review run" || no "report run: $out"
 printf '# Review\n\nlooks fine\n' > "$T/rep/report.md"
 $DA review check "$T/rep" >/dev/null 2>&1; [ $? = 1 ] && ok "a report without a Findings section is refused" || no "report without findings"
@@ -176,6 +177,45 @@ PATH=$T/shim:$PATH DIE_AFTER="log --reverse" DIE_FLAG=$T/die-3 $DA review apply 
 git -C "$A" update-ref refs/heads/agent/moved "$dev"
 out=$($DA review apply "$R9" 2>&1); rc=$?
 [ $rc != 0 ] && grep -q "built agent/moved at" <<<"$out" && grep -q "is at" <<<"$out" && [ ! -e "$R9/applied" ] && ok "a branch that is not where the record says it was built is refused, precisely" || no "moved: rc=$rc $out"
+# `local clean RUN` removes the apply record of the run and what a killed apply of it left in the state (its apply-in.RUN-ID.* and apply-wt.RUN-ID.* directories and the
+# worktree), and nothing of another run; `local clean --orphans` lists and removes the ones no run of the registry accounts for
+id9=${R9##*/}
+astate() { find "$T/s" -maxdepth 1 \( -name "apply-in.$1.*" -o -name "apply-wt.$1.*" \) | wc -l; }
+[ -f "$T/s/apply/$id9.json" ] && [ "$(astate "$id9")" = 1 ] && ok "(setup) the killed apply of a run left its record and a temporary directory named with the run's id in the state" || no "setup clean: $(ls -A "$T/s")"
+R10=$(newrun wtleft); id10=${R10##*/}
+PATH=$T/shim:$PATH DIE_AFTER="worktree add -q -b agent/wtleft" DIE_FLAG=$T/die-4 $DA review apply "$R10" >/dev/null 2>&1
+[ -e "$T/die-4" ] && [ -f "$T/s/apply/$id10.json" ] && [ "$(astate "$id10")" = 2 ] && [ "$(git -C "$A" worktree list | wc -l)" = 2 ] \
+  && ok "(setup) an apply killed after its worktree was made leaves the record, the patch copy, the worktree directory and the registered worktree" || no "setup wt: $(ls -A "$T/s"; git -C "$A" worktree list)"
+mkdir "$T/outside"; echo keep > "$T/outside/f"; ln -s "$T/outside" "$T/s/apply-in.$id10.link"   # a link in the name of a temporary directory: removed by no one's rm -r
+out=$($DA local clean "$R10" --discard 2>&1); rc=$?
+{ [ $rc = 0 ] && [ ! -e "$R10" ] && [ ! -e "$T/s/apply/$id10.json" ] && [ -z "$(find "$T/s" -maxdepth 1 \( -name "apply-in.$id10.*" -o -name "apply-wt.$id10.*" \) ! -name '*.link')" ] \
+  && [ "$(git -C "$A" worktree list | wc -l)" = 1 ] && [ -L "$T/s/apply-in.$id10.link" ] && [ "$(cat "$T/outside/f")" = keep ]; } \
+  && ok "clean removes the apply record, the patch copy and the worktree of a killed apply of the run (and prunes the worktree), and follows no link" || no "clean wt: rc=$rc $out $(ls -A "$T/s")"
+{ [ -f "$T/s/apply/$id9.json" ] && [ "$(astate "$id9")" = 1 ] && [ -d "$R9" ]; } && ok "and leaves the record and the directory of another run alone" || no "other run: $(ls -A "$T/s" "$T/s/apply")"
+rm -f "$T/s/apply-in.$id10.link"
+out=$($DA local clean "$R9" --discard 2>&1); rc=$?
+{ [ $rc = 0 ] && [ ! -e "$T/s/apply/$id9.json" ] && [ "$(astate "$id9")" = 0 ] && [ ! -e "$R9" ]; } && ok "clean of a run whose apply was cut off after the branch was built removes its record and patch copy too" || no "clean built: rc=$rc $out"
+# a run that was applied: its record (status done) goes with it
+R11=$(newrun donerec); id11=${R11##*/}
+$DA review apply "$R11" >/dev/null 2>&1; [ "$(jq -r .status "$T/s/apply/$id11.json" 2>/dev/null)" = "done" ] || no "setup done record"
+out=$($DA local clean "$R11" --discard 2>&1); rc=$?
+{ [ $rc = 0 ] && [ ! -e "$R11" ] && [ ! -e "$T/s/apply/$id11.json" ]; } && ok "clean of an applied run removes its apply record" || no "clean done: rc=$rc $out"
+# --orphans: temporary directories of a killed apply that no run accounts for
+mkapp() { mkdir -p "$T/s/$1" && echo x > "$T/s/$1/f" && touch -d "$2 days ago" "$T/s/$1/f" "$T/s/$1"; }   # NAME DAYS_OLD
+mkapp apply-in.AAAAAA 6; mkapp apply-wt.qargi.zzzzzz.BBBBBB 6; mkapp apply-in.qargi.yyyyyy.CCCCCC 0
+idl=${R8##*/}; mkapp "apply-in.$idl.DDDDDD" 6   # a run of the registry that is not cleaned: its directory is its run's
+ln -s "$T/outside" "$T/s/apply-wt.EEEEEE"
+orphc() { QARGI_RUN_TMP=$T/shm $DA local clean --orphans "$@" 2>&1; }
+out=$(orphc); rc=$?; otok=$(sed -n 's/^plan token: \([0-9a-f]*\) .*/\1/p' <<<"$out")
+{ [ $rc = 0 ] && [ -n "$otok" ] && grep -q "^orphan .*/apply-in.AAAAAA (6d old, named by no run)" <<<"$out" && grep -q "^orphan .*/apply-wt.qargi.zzzzzz.BBBBBB (6d old, its run qargi.zzzzzz is cleaned or not in the registry)" <<<"$out" \
+  && grep -q "^kept .*/apply-in.qargi.yyyyyy.CCCCCC (0d old): it or something in it changed" <<<"$out" && grep -q "^kept .*/apply-in.$idl.DDDDDD (6d old): left by an apply of the run .*$idl, which clean" <<<"$out" \
+  && grep -q "^kept .*/apply-wt.EEEEEE: not a directory review apply makes" <<<"$out" && grep -q "2 orphaned for more than 2 day" <<<"$out" && [ -d "$T/s/apply-in.AAAAAA" ] && [ -d "$T/s/apply-wt.qargi.zzzzzz.BBBBBB" ]; } \
+  && ok "clean --orphans lists the apply directories no run accounts for, with the plan token, and removes nothing" || no "apply orphans plan: rc=$rc $out"
+out=$(orphc --plan 000000000000 --approved go); rc=$?
+{ [ $rc != 0 ] && [ -d "$T/s/apply-in.AAAAAA" ]; } && ok "a wrong token removes none of them" || no "apply orphans wrong token: rc=$rc $out"
+out=$(orphc --plan "$otok" --approved "go on"); rc=$?
+{ [ $rc = 0 ] && [ ! -e "$T/s/apply-in.AAAAAA" ] && [ ! -e "$T/s/apply-wt.qargi.zzzzzz.BBBBBB" ] && [ -d "$T/s/apply-in.qargi.yyyyyy.CCCCCC" ] && [ -d "$T/s/apply-in.$idl.DDDDDD" ] && [ -L "$T/s/apply-wt.EEEEEE" ] && [ -f "$T/outside/f" ]; } \
+  && ok "with the token and the words they are removed; a recent one, a live run's and a link stay" || no "apply orphans apply: rc=$rc $out"
 rm -rf "$T"/s/apply-in.* "$T"/s/apply-wt.*   # what the killed runs left in the state directory
 
 R2=$(newrun failing); rm -f "$R2/out/manifest.json"

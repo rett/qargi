@@ -125,6 +125,12 @@ n=$(find "$T/pyc" -name '*.pyc' | wc -l)
 rm -rf "$T/pyc"; copy_tool "$SRC" "$T/pyc" bin lib tests; find "$T/pyc" -name __pycache__ -prune -exec rm -rf {} +
 out=$(cd / && env -i PATH="${PATH#"$HERMETIC/bin:"}" HOME="$T" PYTHONDONTWRITEBYTECODE=1 python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import hermetic, subprocess; subprocess.run(["python3", "-I", "-c", "import sys; sys.path.insert(0, sys.argv[2]); import help", "x", sys.argv[2]])' "$T/pyc/tests" "$T/pyc/lib" 2>&1)
 [ "$(find "$T/pyc" -name '*.pyc' | wc -l)" = 0 ] && ok "no bytecode: a python test (hermetic.py) and what it starts with python3 -I write no __pycache__" || no "hermetic.py bytecode: $(find "$T/pyc" -name '*.pyc' | head -3) $out"
+# the conformance suite starts the adapters and the guard again with sys.executable -I (lib/providers/*/adapter, lib/conformance/cases.py): they pass -B on when the
+# process that starts them has it, so the suite, run here through the hermetic python3, leaves no bytecode in lib/. The control is the same suite with -B taken
+# from the process (the real python3 under -I), which does write: the check can fail.
+rm -rf "$T/pyc"; copy_tool "$SRC" "$T/pyc" bin lib tests agents; find "$T/pyc" -name __pycache__ -prune -exec rm -rf {} +
+for p in claude-code claude-platform; do (cd "$T/pyc" && bash lib/conformance/run.sh "$p" >"$T/conf-$p.txt" 2>&1); done
+[ "$(find "$T/pyc/lib" -name '*.pyc' | wc -l)" = 0 ] && grep -q '^ok' "$T/conf-claude-code.txt" && ok "no bytecode: the conformance suite of the shipped runtimes writes no __pycache__ under lib/" || no "conformance bytecode: $(find "$T/pyc/lib" -name '*.pyc' | head -3) $(grep -c '^FAIL' "$T"/conf-*.txt)"
 
 # 8. the lint: the tests pass it; every rule finds its sample, and a clean sample is left alone
 lint=$(python3 -I tests/hermetic_lint.py tests 2>&1); rc=$?

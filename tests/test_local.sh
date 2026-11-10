@@ -105,12 +105,13 @@ blk=$(sed '1,/^TASK-BLOCK PATHS$/d' <<<"$out")
   && [ "$(sed -n 's/^GIT=//p' <<<"$blk")" = "$P1/git" ] && [ "$(sed -n 's/^TMP=//p' <<<"$blk")" = "$(cat "$P1/tmpdir")" ] \
   && [ "$(sed -n 's/^BASE_SHA=//p' <<<"$blk")" = "$(git -C "$T/r3" rev-parse develop)" ] && ok "the block holds RUN_DIR, CLONE, OUT, TMP, GIT and BASE_SHA" || no "block: $blk"
 CTD=$(sed -n 's/^CONTRACT=//p' <<<"$blk")
-[ -n "$CTD" ] && [ "$CTD" = "$P1/contract" ] && cmp -s "$CTD/contract.md" contract/contract.md && cmp -s "$CTD/output-format.md" contract/output-format.md && [ "$(grep -c '^CONTRACT=' <<<"$blk")" = 1 ] \
-  && ok "the block names the run's contract directory (CONTRACT=, a copy of contract.md and output-format.md)" || no "CONTRACT: '$CTD' in $blk"
+[ -n "$CTD" ] && [ "$CTD" = "$P1/contract" ] && cmp -s "$CTD/contract.md" contract/contract.md && cmp -s "$CTD/output-format.md" contract/output-format.md && cmp -s "$CTD/manifest.example.json" contract/manifest.example.json && [ "$(grep -c '^CONTRACT=' <<<"$blk")" = 1 ] \
+  && ok "the block names the run's contract directory (CONTRACT=, a copy of contract.md, output-format.md and manifest.example.json)" || no "CONTRACT: '$CTD' in $blk"
+grep -q "manifest.example.json beside this file" "$CTD/output-format.md" && ok "and the output format points at the example that sits beside it in the run" || no "the output format does not point at manifest.example.json"
 top=$(sed '/^$/,$d' <<<"$out")
 [ "$(sed -n 's/^CONTRACT=//p' <<<"$top")" = "$P1/contract" ] && ! grep -q '^ABILITY=' <<<"$top" \
   && ok "the eval-able block names CONTRACT too, and no longer prints the retired ABILITY alias" || no "eval block: $top"
-[ "$(ls "$CTD")" = "$(printf 'contract.md\noutput-format.md')" ] && ok "a repository that is in no project gets no runtime addendum (no runtime is assumed)" || no "contract dir without a project: $(ls "$CTD")"
+[ "$(ls "$CTD")" = "$(printf 'contract.md\nmanifest.example.json\noutput-format.md')" ] && ok "a repository that is in no project gets no runtime addendum (no runtime is assumed)" || no "contract dir without a project: $(ls "$CTD")"
 # a repository of a stored project: the contract directory also holds the addenda of the project's local runtime
 out=$(./bin/qargi local prepare --repo "$T/r" --base main --slug adn --scratch "$T"); PA=$(runof <<<"$out")
 CTA=$(sed -n 's/^CONTRACT=//p' <<<"$out" | tail -1)   # the paths block's (the first block names it too)
@@ -481,7 +482,7 @@ out=$(mk4 gh1); rcg=$?; out="$out$(cat "$T/err")"
   && ok "a local provider that is set but does not resolve: prepare fails with the reason, and makes no run" || no "unresolved provider (rc=$rcg): $out"
 setmodels '{"provider":{"cloud":"claude-platform"}}'
 out=$(mk4 gh2); rcg=$?; GH2=$(runof <<<"$out")
-{ [ $rcg = 0 ] && [ "$(ls "$GH2/contract")" = "$(printf 'contract.md\noutput-format.md')" ]; } && ok "no local provider set: prepare goes on with the core's contract alone" || no "no local provider (rc=$rcg): $out"
+{ [ $rcg = 0 ] && [ "$(ls "$GH2/contract")" = "$(printf 'contract.md\nmanifest.example.json\noutput-format.md')" ]; } && ok "no local provider set: prepare goes on with the core's contract alone" || no "no local provider (rc=$rcg): $out"
 setmodels '{"provider":"claude-code"}'
 
 # prepare --profile: the resolver is asked before any clone; the run records the profile

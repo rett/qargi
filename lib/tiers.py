@@ -228,7 +228,7 @@ def _canon_check(name, t, lst, project, roles):
         with os.fdopen(fd, "w") as f:
             for p in sorted(lst):
                 f.write(json.dumps({"type": "memory", "id": lst[p].get("id", ""), "path": p, "content": lst[p]["content"]}) + "\n")
-        r = subprocess.run([sys.executable, "-I", os.path.join(HERE, "canon.py"), "check", "--kind", "memory", "--project", pa,
+        r = subprocess.run([sys.executable, "-I"] + (["-B"] if sys.dont_write_bytecode else []) + [os.path.join(HERE, "canon.py"), "check", "--kind", "memory", "--project", pa,
                             '--roles', rcsv, '--store', dump], capture_output=True, text=True)
     finally:
         try:

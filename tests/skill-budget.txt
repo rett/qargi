@@ -4,7 +4,7 @@
 agents/member.body.md 126 # raised: the read-only sentence says the guard is best-effort, not a sandbox
 agents/member.md 191 # raised: the same sentence, kept in step with the body
 contract/contract.md 978 # raised: the report-writing rule (file tool, no shell text, final-message fallback) and the guard-refusal rule, stated once here and removed from the addendum, the notes and gitflow-member; for review; never stash and what to do instead (a worktree of BASE, restore) in place of a WIP commit; SCOPE as one instruction (compare, BLOCKED naming the path, noticed_not_acted_on); log each check and report only what was run (not run is never pass); commit as you go; the six-step order of work as a numbered list, and what a member without a store follows
-contract/output-format.md 318 # raised: the manifest's required keys named apart from the optional ones; scope[] checked by review check; the read-only report's shape (Findings, Checked, a last verdict line)
+contract/output-format.md 323 # raised: the manifest's required keys named apart from the optional ones; scope[] checked by review check; the read-only report's shape (Findings, Checked, a last verdict line); one sentence pointing at manifest.example.json, which a run's contract directory now carries
 lib/providers/claude-code.json:notes 301 # lowered: the member-out topic no longer sends a member to a shell heredoc
 lib/providers/claude-code/local-run.md 51 # lowered: a refused Write of a report file is answered by the final message, not a heredoc
 lib/providers/claude-platform.json:notes 2

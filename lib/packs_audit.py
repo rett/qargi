@@ -42,9 +42,9 @@ Called by packs.sh, which holds the facts only the shell knows (the library) in 
   packs_audit.py store accept|unaccept FILE SCOPE PROJECT NAME [HASH PATH APPROVED AT]   the only writer of accepted.json
 
 An acceptance belongs to a resource (skills) and a provider (the project's): the record says so ({sha256, path, approved, at,
-resource, provider}). It is stored under NAME, where the older records are; when that slot holds another provider's acceptance (a
-user acceptance reaches every project, and projects differ in provider), under "resource/provider/NAME". A record with no provider
-is an older one and counts as the project's provider's.
+resource, provider}). It is stored under NAME; when that slot holds another provider's acceptance (a user acceptance reaches every
+project, and projects differ in provider), under "resource/provider/NAME". A record that lacks its resource or its provider is
+nobody's: it accepts nothing (the skill shows as not accepted, `acceptance` and `unaccept` say so), and is left as it is.
 
 Settings files are only ever read. accepted.json is written atomically (temporary file, then rename), mode 600. `store` refuses in a
 member run (a directory `qargi local prepare` made, at or above the working directory) and writes only <conf>/packs/accepted.json,
@@ -379,16 +379,16 @@ RESOURCE = "skills"
 
 
 def acceptance_key(table, resource, prov, name):
-    """The key of the acceptance of this resource item for this provider in a table, or None. A record is stored under the name
-    (where acceptances have always been), or under "resource/provider/name" when another provider's record holds the name. A record
-    with no resource or provider is an older one: it counts as skills of the provider asking."""
+    """The key of the acceptance of this resource item for this provider in a table, or None. A record is stored under the name,
+    or under "resource/provider/name" when another provider's record holds the name. A record counts only when it names this
+    resource and this provider: one that lacks either is nobody's."""
     k = "%s/%s/%s" % (resource, prov, name)
     if isinstance(table.get(k), dict):
         return k
     r = table.get(name)
     if not isinstance(r, dict):
         return None
-    if prov is None or (r.get("resource", resource) == resource and r.get("provider", prov) == prov):
+    if prov is None or (r.get("resource") == resource and r.get("provider") == prov):
         return name
     return None
 
