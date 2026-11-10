@@ -37,7 +37,7 @@ skills/qargi-providers/definition.md 631
 skills/qargi-providers/verify.md 494
 skills/qargi-provision/SKILL.md 396
 skills/qargi-session/SKILL.md 926 # raised: two lines on local runs (no clean needed before the next feature finish; before a reboot apply verified runs or use the saved copy)
-skills/qargi-task/SKILL.md 829 # lowered: the task block is written by local prepare, so the hand-assembly list and the paste step are gone
+skills/qargi-task/SKILL.md 839 # raised: names the keys local prepare prints (ROLE, CLASS, PROFILE, CONTRACT); the hand-assembly list and the paste step stay gone
 skills/qargi-task/cloud.md 760
 skills/qargi-task/local-run.md 196 # lowered: prepare writes RUN/task.md
 skills/qargi-team/SKILL.md 894
