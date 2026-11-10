@@ -469,7 +469,7 @@ release_finish_tail() {
   lead_advice
   if ! intent_marked "$key" after; then after_steps_record; intent_mark "$key" after; fi
   after_release
-  cut_done finish "$h" "$nm"   # the commit the tag is on: site and publish are held to it
+  cut_done finish "$h" "$nm"   # the commit the tag is on: site is held to it
   cut_next
   intent_clear "$key"
 }
@@ -644,30 +644,41 @@ post_release() {
   return 0
 }
 
-# ---- the cut: one plan and one approval for the whole ceremony (start, push, finish, site, publish)
+# ---- the cut: one plan and one approval for the whole ceremony (start, push, finish, site); publish is not in it, it has its own plan
 # `plan VERSION` prints the plan of every step and ONE token. `plan VERSION --plan T --approved WORDS` records the approval once, with the plan's facts, in
 # CUTREC. After that each step is its own verb with `--plan T` alone: the words are the record's (the audit lines carry them), and the step runs only
 # when what the cut fixed still holds (cut_why): start when its own plan is the one the cut froze; push when the branch is where start left it;
-# finish when the branch is where push left it (the head CI saw), master and the second target are as planned and --keep is as planned; site and
-# publish when the tag is the commit finish tagged (publish also only when no release file is attached: their hashes exist only after the tag). A step that
-# no longer matches is refused before anything moves and is run with its own plan and approval; the cut records that, and goes on from the new state.
+# finish when the branch is where push left it (the head CI saw), master and the second target are as planned and --keep is as planned; site when the tag
+# is the commit finish tagged. publish is outside the cut: what it creates (the notes, the release files, whose hashes exist only after the tag) is shown by
+# its own plan, so the cut token is refused for it. A step that no longer matches is refused before anything moves and is run with its own plan and
+# approval; the cut records that, and goes on from the new state.
 # Every step that ran, by the cut or by its own plan, is recorded in CUTREC (.done.STEP = {at, via, head, commit}); `plan` and `status` show where the cut is.
 CUTREC=$DA_STATE/release/$PROJ-$VER.cut.json
 CUT=''
 cut_get() { jq -r "$1" "$CUTREC" 2>/dev/null; }
 # cut_load: sets CUT=1 when --plan names the token of the approved cut of VER and the verb is a step of it; the approval words, the date, --allow-empty-notes
-# and --keep are then the cut's. Dies on a token of a cut that is not approved, on a step the cut does not have and on a kind that differs.
+# and --keep are then the cut's. Dies on a token of a cut that is not approved, on a step the cut does not have, on a kind that differs, in a member run or under
+# QARGI_NESTED (the words are the owner's), and on a --plan that is not the token of the recorded cut (without --approved: a step's own plan is not a cut's step).
+cut_lead_only() { # WHAT: exit 2 in a member run or under QARGI_NESTED (the lead's, with the owner's words)
+  python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import marshal_refs as m; sys.exit(2 if m.in_member_run() else 0)' "$(dirname "$0")" && [ -z "${QARGI_NESTED:-}" ] \
+    || { echo "qargi: $1 is not available in a member run or a nested call: it is the lead's, with the owner's words" >&2; exit 2; }
+}
 cut_load() {
   local rk
   [ -n "$PLAN_ARG" ] && [ -f "$CUTREC" ] || return 0
   case $verb in start|push|finish|site|publish) ;; *) return 0;; esac
-  jq -e --arg t "$PLAN_ARG" '.token == $t' "$CUTREC" >/dev/null 2>&1 || return 0
+  if ! jq -e --arg t "$PLAN_ARG" '.token == $t' "$CUTREC" >/dev/null 2>&1; then
+    [ -n "$APPROVED" ] || die "a cut of $VER is recorded and $PLAN_ARG is not its token: nothing was changed (qargi release plan $VER${HOTFIX:+ --hotfix} shows the cut and its token; a step's own plan takes --approved)"
+    return 0
+  fi
+  [ "$verb" != publish ] || die "the cut $PLAN_ARG of $VER does not cover publish: run publish with its own plan (qargi release publish $VER, then --plan and --approved): its notes and release files are shown by that plan, not by the cut's"
   [ -z "$APPROVED" ] || die "$PLAN_ARG is the token of the whole cut of $VER, whose approval is recorded: run this step with --plan $PLAN_ARG alone (without --approved), or with the token of the step's own plan and --approved"
   [ -n "$(cut_get '.approval.words // empty')" ] || die "the cut $PLAN_ARG of $VER is not approved: qargi release plan $VER${HOTFIX:+ --hotfix} --plan $PLAN_ARG --approved \"...\""
   jq -e --arg s "$verb" '.steps | index($s) != null' "$CUTREC" >/dev/null || die "the cut $PLAN_ARG of $VER has no $verb step (its steps: $(cut_get '.steps | join(", ")')): run $verb with its own plan"
   case $verb in start|push|finish)
     rk=$(cut_get .kind); [ "$rk" = "$KIND" ] || die "the cut $PLAN_ARG is the cut of a $rk of $VER: run it$([ "$rk" = hotfix ] && echo ' with --hotfix' || echo ' without --hotfix')";;
   esac
+  cut_lead_only "running a step under the cut of a release (its approval words are the owner's)"
   CUT=1
   APPROVED=$(cut_get .approval.words)
   [ -n "$DATE" ] || DATE=$(cut_get '.date // empty')
@@ -679,10 +690,10 @@ cut_load() {
   fi
 }
 # cut_why STEP OWN_TOKEN -> prints why the cut may not stand in for this step now (nothing when it may). It reads what the verb has at that point:
-# h and second (push, finish), tc (site, publish), assets (publish).
+# h and second (push, finish), tc (site).
 cut_why() {
   local s=$1 tok=$2 need='' p anchor
-  case $s in push) need=start;; finish) need="start$(jq -e '.steps | index("push") != null' "$CUTREC" >/dev/null && echo ' push')";; site|publish) need=finish;; esac
+  case $s in push) need=start;; finish) need="start$(jq -e '.steps | index("push") != null' "$CUTREC" >/dev/null && echo ' push')";; site) need=finish;; esac
   for p in $need; do
     jq -e --arg p "$p" '.done[$p] != null' "$CUTREC" >/dev/null || { echo "the step $p of the cut is not done yet (qargi release plan $VER shows where the cut is)"; return 0; }
   done
@@ -694,9 +705,8 @@ cut_why() {
       if [ "$h" != "$anchor" ]; then echo "$BR is at ${h:0:7}, not at ${anchor:0:7} where the cut left it (the head the pull request's checks ran on): something was committed on it"
       elif [ "$(sha_of master)" != "$(cut_get .master_sha)" ]; then echo "master is at $(sha_of master | cut -c1-7), not at $(cut_get .master_sha | cut -c1-7) where the plan showed it"
       elif [ "$second" != "$(cut_get .second)" ]; then echo "the second merge goes into $second, the plan said $(cut_get .second)"; fi;;
-    site|publish)
-      [ "$tc" = "$(cut_get '.done.finish.commit // empty')" ] || echo "the tag $VER is at ${tc:0:7}, not the commit ($(cut_get '.done.finish.commit // empty' | cut -c1-7)) that the cut's finish tagged"
-      if [ "$s" = publish ] && { [ "${#assets[@]}" -gt 0 ] || sign_configured; }; then echo "release files are attached or signed (their hashes exist only after the tag, so the cut could not show them): publish takes its own plan"; fi;;
+    site)
+      [ "$tc" = "$(cut_get '.done.finish.commit // empty')" ] || echo "the tag $VER is at ${tc:0:7}, not the commit ($(cut_get '.done.finish.commit // empty' | cut -c1-7)) that the cut's finish tagged";;
   esac
 }
 # step_gate STEP OWN_TOKEN: the check before a step moves anything: its own plan token, or under the cut what cut_why allows
@@ -721,8 +731,8 @@ cut_next() {
   local n tk
   [ -f "$CUTREC" ] || return 0
   n=$(jq -r '. as $r | [.steps[] | select($r.done[.] == null)] | first // empty' "$CUTREC"); tk=$(cut_get .token)
-  if [ -z "$n" ]; then echo "the cut $tk of $VER is complete: every step is done"; return 0; fi
-  echo "next in the cut $tk: qargi release $n $VER$({ [ "$n" = site ] || [ "$n" = publish ]; } || echo "${HOTFIX:+ --hotfix}") --plan $tk$([ "$n" != publish ] || echo '   (publish is optional: skip it when the tag'"'"'s release workflow publishes the GitHub release)')"
+  if [ -z "$n" ]; then echo "the cut $tk of $VER is complete: every step is done (publish is not in the cut: qargi release publish $VER has its own plan, and is not needed when the tag's release workflow publishes the GitHub release)"; return 0; fi
+  echo "next in the cut $tk: qargi release $n $VER$([ "$n" = site ] || echo "${HOTFIX:+ --hotfix}") --plan $tk"
 }
 # cut_report: the cut of VER in one block for plan and status (nothing when no cut is recorded)
 cut_report() {
@@ -756,9 +766,8 @@ case $verb in
     if [ "$KIND" = hotfix ]; then rels=$(open_release); [ "$(printf '%s' "$rels" | grep -c . || true)" != 1 ] || second=$rels; fi
     haspush=''; g remote get-url origin >/dev/null 2>&1 && haspush=1
     site=''; site_answers 2>/dev/null && [ "$SITE_ON" = true ] && site=1
-    pubown=''; if sign_configured || jq -e '(.release? // {}) | (has("assets") or has("assets_command"))' "$af" >/dev/null 2>&1; then pubown=1; fi
-    steps="start${haspush:+ push} finish${site:+ site} publish"
-    tok=$(printf '%s\n' "$PROJ" "$KIND" "$VER" "$DATE" "$KEEP" "$ALLOW_EMPTY" "$BR" "$BASE" "$b0" "$msha" "$second" "$steps" "$pubown" "$stok" | plan_token)
+    steps="start${haspush:+ push} finish${site:+ site}"
+    tok=$(printf '%s\n' "$PROJ" "$KIND" "$VER" "$DATE" "$KEEP" "$ALLOW_EMPTY" "$BR" "$BASE" "$b0" "$msha" "$second" "$steps" "$stok" | plan_token)
     echo "cut $KIND $VER of $PROJ: one plan and one approval for the whole ceremony. Approve it once; then run each step with --plan $tok alone (the words are recorded once), and each step is refused, before anything moves, if what this plan fixed no longer holds."
     echo "1. start: create $BR from $BASE and bump the version (nothing is pushed). Its own plan:"
     grep -v '^plan token:' <<<"$sout" | sed 's/^/     /'
@@ -769,15 +778,13 @@ case $verb in
     n=3
     echo "$n. finish: merge $BR into master with --no-ff (master is at ${msha:0:7}), tag $VER on that merge commit, merge the tag commit into $second with --no-ff$([ -n "$KEEP" ] && echo ", keep $BR" || echo ", delete $BR"), then push master, $second and the tag together (all or none). THIS IS THE PUSH AND TAG GATE: the approval words you give record that you released it. Needs the pull request's checks passed (a failing or pending check is refused; --ignore-checks \"...\" at the call, in your own words, is recorded) and the branch still at the head that was pushed.$(! has_answer finish_check || echo " release.finish_check runs in a copy of the branch first, before anything is merged, tagged or pushed (a non-zero exit refuses): $(answer_text finish_check).")"
     if [ -n "$site" ]; then echo "4. site: build the documentation site of the tag $VER and commit it on $SITE_BR (nothing is pushed)"; fi
-    if [ -n "$pubown" ]; then echo "5. publish (optional): create the GitHub release of tag $VER with the changelog section as notes. The project attaches release files (release.assets or release.sign), whose hashes exist only after the tag: publish takes its own plan, and so is outside this cut's token"
-    else echo "5. publish (optional): create the GitHub release of tag $VER with the changelog section as notes; skip it when the tag's release workflow publishes the release"; fi
+    echo "publish is not in this cut: it creates the GitHub release of tag $VER with the changelog section as notes (and the release files, whose hashes exist only after the tag), and has its own plan after finish (qargi release publish $VER); skip it when the tag's release workflow publishes the release"
     echo "recorded in $CUTREC: the approval words, and each step as it runs; qargi release plan $VER${HOTFIX:+ --hotfix} (and release status) shows where the cut is, and a step can be run again after a refusal"
     if [ -z "$APPROVED" ]; then
       echo "plan token: $tok   (approve the whole cut once with: qargi release plan $VER${HOTFIX:+ --hotfix} --date $DATE${KEEP:+ --keep}${ALLOW_EMPTY:+ --allow-empty-notes} --plan $tok --approved \"...\")"
       exit 0
     fi
-    python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import marshal_refs as m; sys.exit(2 if m.in_member_run() else 0)' "$(dirname "$0")" && [ -z "${QARGI_NESTED:-}" ] \
-      || { echo "qargi: approving the cut of a release is not available in a member run or a nested call: it is the lead's, with the owner's words" >&2; exit 2; }
+    cut_lead_only "approving the cut of a release"
     need_plan "$tok"
     mkdir -p "$DA_STATE/release"
     jq -n --arg p "$PROJ" --arg v "$VER" --arg k "$KIND" --arg tok "$tok" --arg at "$(now)" --arg date "$DATE" --arg keep "$KEEP" --arg ae "$ALLOW_EMPTY" --arg b0 "$b0" --arg m "$msha" \
@@ -1277,7 +1284,7 @@ case $verb in
     echo "run: $GH -R $(repo_slug) release create $VER --verify-tag --title \"$title\" --notes-file NOTES$([ "${#assets[@]}" -eq 0 ] || printf ' %s' "${assets[@]}")"
     echo "(--verify-tag: the tag must already be on origin; NOTES holds the text above)"
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release publish $VER --plan $tok --approved \"...\")"; exit 0; fi
-    step_gate publish "$tok"
+    need_plan "$tok"
     case $GHS in
       missing) ;;
       nogh) die "gh is not installed: create the release by hand, or run the release workflow by hand with this tag";;
@@ -1286,7 +1293,6 @@ case $verb in
     esac
     out=$("$GH" -R "$(repo_slug)" release create "$VER" --verify-tag --title "$title" --notes-file "$notes" "${assets[@]}" 2>&1 </dev/null) || die "gh release create failed for tag $VER: $out"
     audit_log "release:publish" "$PROJ $VER${assets[0]:+ (${#assets[@]} asset(s))}"
-    cut_done publish "" "$tc"
     echo "published the release of tag $VER: $out"
     cut_next;;
   site)

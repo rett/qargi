@@ -111,41 +111,61 @@ t=$($REL push 0.1.1 --hotfix | tok); out=$($REL push 0.1.1 --hotfix --plan "$t" 
 [ "$rc" = 0 ] && [ -n "$(git -C "$R" ls-remote origin refs/heads/hotfix/0.1.1)" ] && ok "after the fix release.hotfix_preflight passes (release.preflight, which always fails here, is not run) and the branch is pushed" || no "hotfix push after the fix: rc=$rc $out"
 out=$($REL start 0.1.2 2>&1); grep -q "release.preflight failed" <<<"$out" && ok "a release (not a hotfix) still runs release.preflight, not release.hotfix_preflight" || no "release start with hotfix_preflight set: $out"
 
-# --- the cut: one plan and one approval for start, push, finish and publish
+# --- the cut: one plan and one approval for start, push, finish and site (publish has its own plan)
 printf '#!/usr/bin/env bash\necho "$*" >> "%s/gh.log"\ncase "$*" in *"pr create"*) echo https://example.net/acme/x/pull/1;; *"release view"*) echo "release not found" >&2; exit 1;; esac\n' "$T" > "$T/gh"
 cutstate() { jq -r '[.steps[] as $s | $s + ":" + (if .done[$s] then "done" else "pending" end)] | join(" ")' "$T/s/release/$QARGI_PROJECT-0.2.0.cut.json"; }
 mk cut with-origin
 : > "$T/gh.log"
 out=$($REL plan 0.2.0 --date 2026-03-04 2>&1); ct=$(tok <<<"$out")
 [ -n "$ct" ] && grep -q "^1. start: create release/0.2.0 from develop" <<<"$out" && grep -q "^2. push: push release/0.2.0 to origin" <<<"$out" && grep -q "^3. finish: merge release/0.2.0 into master" <<<"$out" \
-  && grep -q "THIS IS THE PUSH AND TAG GATE" <<<"$out" && grep -q "^5. publish (optional)" <<<"$out" && ok "plan: one plan lists every step with what moves, and one token" || no "cut plan: $out"
+  && grep -q "THIS IS THE PUSH AND TAG GATE" <<<"$out" && grep -q "^publish is not in this cut: .*has its own plan after finish" <<<"$out" && ! grep -q "^[0-9]*\. publish" <<<"$out" && ok "plan: one plan lists every step with what moves, and one token; publish is named as outside the cut" || no "cut plan: $out"
 [ ! -e "$T/s/release/cut-0.2.0.cut.json" ] && ! git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && ok "plan: a plan alone records and changes nothing" || no "the plan changed something"
 out=$($REL start 0.2.0 --date 2026-03-04 --plan "$ct" 2>&1); ! git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && ok "a token of the cut with no approval recorded is no approval: start only prints its plan" || no "start applied without an approval: $out"
 out=$($REL plan 0.2.0 --date 2026-03-04 --plan wrongtoken --approved "ship it" 2>&1); rc=$?
 [ "$rc" != 0 ] && [ ! -e "$T/s/release/cut-0.2.0.cut.json" ] && ok "approving the cut with another token is refused" || no "wrong token approved: rc=$rc $out"
 out=$($REL plan 0.2.0 --date 2026-03-04 --plan "$ct" --approved "ship it" 2>&1); rc=$?
-[ "$rc" = 0 ] && [ "$(cutstate)" = "start:pending push:pending finish:pending publish:pending" ] && [ "$(jq -r '.approval.words' "$T/s/release/cut-0.2.0.cut.json")" = "ship it" ] && grep -q "next in the cut $ct: qargi release start 0.2.0 --plan $ct" <<<"$out" \
+[ "$rc" = 0 ] && [ "$(cutstate)" = "start:pending push:pending finish:pending" ] && [ "$(jq -r '.approval.words' "$T/s/release/cut-0.2.0.cut.json")" = "ship it" ] && grep -q "next in the cut $ct: qargi release start 0.2.0 --plan $ct" <<<"$out" \
   && grep -c '"verb":"release:cut"' "$T/s/audit.log" | grep -qx 1 && ok "approving records the words once, the steps and an audit line, and names the next step" || no "approval: rc=$rc $out; $(cat "$T/s/release/cut-0.2.0.cut.json" 2>&1)"
 out=$($REL start 0.2.0 --date 2026-03-04 --plan "$ct" --approved again 2>&1); rc=$?
 [ "$rc" != 0 ] && grep -q "whose approval is recorded" <<<"$out" && ok "a step under the cut takes no words of its own" || no "start with --approved under the cut: rc=$rc $out"
+mkdir -p "$T/memberrun"; : > "$T/memberrun/ability"; : > "$T/memberrun/refs.before"   # what qargi local prepare leaves in a member's run directory
+out=$(cd "$T/memberrun" && $REL start 0.2.0 --date 2026-03-04 --plan "$ct" 2>&1); rc=$?
+[ "$rc" = 2 ] && grep -q "running a step under the cut of a release .* is not available in a member run" <<<"$out" && ! git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && [ "$(cutstate)" = "start:pending push:pending finish:pending" ] \
+  && ok "a step under the cut is refused in a member run (the recorded words are the owner's): exit 2, nothing created, nothing recorded" || no "start under the cut in a member run: rc=$rc $out"
+out=$(QARGI_NESTED=1 $REL start 0.2.0 --date 2026-03-04 --plan "$ct" 2>&1); rc=$?
+[ "$rc" = 2 ] && ! git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && ok "a step under the cut is refused in a nested call too" || no "start under the cut, nested: rc=$rc $out"
+out=$($REL start 0.2.0 --date 2026-03-04 --plan wrongtoken 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "a cut of 0.2.0 is recorded and wrongtoken is not its token" <<<"$out" && ! grep -q "^plan token:" <<<"$out" && ! git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null \
+  && ok "a --plan that is not the recorded cut's token (and no --approved) dies and names that a cut is recorded, and prints no plan" || no "start with a wrong token: rc=$rc $out"
+out=$($REL push 0.2.0 --plan wrongtoken 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "is recorded and wrongtoken is not its token" <<<"$out" && ok "the same for push" || no "push with a wrong token: rc=$rc $out"
 out=$($REL start 0.2.0 --date 2026-04-05 --plan "$ct" 2>&1); rc=$?
 [ "$rc" != 0 ] && grep -q "does not cover start" <<<"$out" && ! git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && ok "start under the cut with another date: refused before anything is created" || no "start with another date: rc=$rc $out"
 out=$($REL start 0.2.0 --plan "$ct" 2>&1); rc=$?
-[ "$rc" = 0 ] && git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && [ "$(git -C "$R" show release/0.2.0:CHANGELOG.md | grep -c '^## \[0.2.0\] - 2026-03-04')" = 1 ] && [ "$(cutstate)" = "start:done push:pending finish:pending publish:pending" ] \
+[ "$rc" = 0 ] && git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && [ "$(git -C "$R" show release/0.2.0:CHANGELOG.md | grep -c '^## \[0.2.0\] - 2026-03-04')" = 1 ] && [ "$(cutstate)" = "start:done push:pending finish:pending" ] \
   && grep -q "next in the cut $ct: qargi release push 0.2.0 --plan $ct" <<<"$out" && grep '"verb":"release:start"' "$T/s/audit.log" | grep -q '"approved":"ship it"' \
   && ok "start --plan alone runs the step: the date is the cut's, the audit line carries the recorded words, the cut shows the step done" || no "start under the cut: rc=$rc $out; $(cutstate)"
 out=$($REL finish 0.2.0 --plan "$ct" 2>&1); rc=$?
 [ "$rc" != 0 ] && grep -q "the step push of the cut is not done yet" <<<"$out" && ok "finish before push: refused, naming the step" || no "finish before push: rc=$rc $out"
 out=$($REL push 0.2.0 --plan "$ct" 2>&1); rc=$?
-[ "$rc" = 0 ] && [ -n "$(git -C "$R" ls-remote origin refs/heads/release/0.2.0)" ] && grep -q "pr create" "$T/gh.log" && [ "$(cutstate)" = "start:done push:done finish:pending publish:pending" ] && ok "push --plan alone pushes the branch and opens the pull request" || no "push under the cut: rc=$rc $out"
+[ "$rc" = 0 ] && [ -n "$(git -C "$R" ls-remote origin refs/heads/release/0.2.0)" ] && grep -q "pr create" "$T/gh.log" && [ "$(cutstate)" = "start:done push:done finish:pending" ] && ok "push --plan alone pushes the branch and opens the pull request" || no "push under the cut: rc=$rc $out"
 out=$($REL finish 0.2.0 --plan "$ct" --keep 2>&1); rc=$?
 [ "$rc" != 0 ] && grep -q "planned without --keep" <<<"$out" && ok "finish --keep under a cut planned without it is refused" || no "finish --keep: rc=$rc $out"
 out=$($REL finish 0.2.0 --plan "$ct" 2>&1); rc=$?
-[ "$rc" = 0 ] && git -C "$R" rev-parse -q --verify refs/tags/0.2.0 >/dev/null && [ -n "$(git -C "$R" ls-remote origin refs/tags/0.2.0)" ] && [ "$(cutstate)" = "start:done push:done finish:done publish:pending" ] \
+[ "$rc" = 0 ] && git -C "$R" rev-parse -q --verify refs/tags/0.2.0 >/dev/null && [ -n "$(git -C "$R" ls-remote origin refs/tags/0.2.0)" ] && [ "$(cutstate)" = "start:done push:done finish:done" ] \
   && grep '"verb":"release:finish"' "$T/s/audit.log" | grep -q '"approved":"ship it"' && ok "finish --plan alone merges, tags and pushes; the recorded words are on its audit line" || no "finish under the cut: rc=$rc $out"
-out=$($REL status 0.2.0 2>&1); grep -q "^  finish: done" <<<"$out" && grep -q "^  publish: pending" <<<"$out" && ok "status shows where the cut is" || no "status: $out"
+out=$($REL status 0.2.0 2>&1); grep -q "^  finish: done" <<<"$out" && ! grep -q "^  publish:" <<<"$out" && ok "status shows where the cut is, and publish is not one of its steps" || no "status: $out"
+n=$(wc -l < "$T/gh.log")
 out=$($REL publish 0.2.0 --plan "$ct" 2>&1); rc=$?
-[ "$rc" = 0 ] && grep -q "release create 0.2.0" "$T/gh.log" && [ "$(cutstate)" = "start:done push:done finish:done publish:done" ] && grep -q "is complete" <<<"$out" && ok "publish --plan alone creates the GitHub release; the cut is complete" || no "publish under the cut: rc=$rc $out"
+[ "$rc" = 1 ] && grep -q "the cut $ct of 0.2.0 does not cover publish: run publish with its own plan" <<<"$out" && [ "$(wc -l < "$T/gh.log")" = "$n" ] && ok "publish with the token of the cut is refused, and nothing is published" || no "publish under the cut: rc=$rc $out"
+out=$($REL publish 0.2.0 --plan "$ct" --approved "again" 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "does not cover publish" <<<"$out" && [ "$(wc -l < "$T/gh.log")" = "$n" ] && ok "publish is refused the cut token with --approved too" || no "publish with the cut token and words: rc=$rc $out"
+out=$($REL publish 0.2.0 --plan wrongtoken 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "is recorded and wrongtoken is not its token" <<<"$out" && ok "publish with another token and no words dies too" || no "publish with a wrong token: rc=$rc $out"
+t=$($REL publish 0.2.0 | tok); out=$($REL publish 0.2.0 --plan "$t" --approved "publish it" 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q "release create 0.2.0" "$T/gh.log" && [ "$(cutstate)" = "start:done push:done finish:done" ] && [ "$(jq -r '.done.publish // "none"' "$T/s/release/cut-0.2.0.cut.json")" = none ] \
+  && grep '"verb":"release:publish"' "$T/s/audit.log" | grep -q '"approved":"publish it"' && ok "publish by its own plan and approval creates the GitHub release; the cut does not record it" || no "publish by its own plan: rc=$rc $out"
+out=$($REL plan 0.2.0 2>&1); grep -q "is complete: every step is done (publish is not in the cut" <<<"$out" && ok "the cut is complete without publish, and says publish has its own plan" || no "complete: $out"
 out=$($REL plan 0.2.0 2>&1); grep -q "is recorded already" <<<"$out" && grep -q "^  start: done" <<<"$out" && ok "plan on a recorded cut shows it and plans nothing new" || no "plan again: $out"
 
 # a fix committed after the cut left the branch: push and finish refuse the cut token; the fix goes by its own plan and the cut goes on from there
@@ -186,5 +206,38 @@ mk fcline
 jq '.release = {finish_check: "test -f VERSION && echo {version} > /dev/null"}' "$T/c/projects/fcline.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/fcline.json"
 out=$($REL start 0.2.0 --date 2026-03-04 2>&1); rc=$?
 [ "$rc" = 0 ] && grep -q "^plan token: " <<<"$out" && ok "release.finish_check may be a command line" || no "a command line is refused: rc=$rc $out"
+
+# --- site stays in the cut: start, finish and site under one token; publish with that token is refused (a project with no origin: no push step)
+ROOT=${DA%/bin/qargi}
+R=$T/cutsite; git init -q -b master "$R"
+cp -r "$ROOT/lib" "$R/lib"; cp "$ROOT/LICENSE" "$ROOT/README.md" "$R/"; echo 0.5.0 > "$R/VERSION"
+printf '# Changelog\n\n## [Unreleased]\n\n## [0.5.0] - 2026-03-01\n\n### Added\n- the first thing\n' > "$R/CHANGELOG.md"
+git -C "$R" add -A && git -C "$R" commit -q -m one && git -C "$R" tag -a 0.5.0 -m 0.5.0 && git -C "$R" branch develop && git -C "$R" checkout -q develop
+printf '# Changelog\n\n## [Unreleased]\n\n### Added\n- a second thing\n\n## [0.5.0] - 2026-03-01\n\n### Added\n- the first thing\n' > "$R/CHANGELOG.md"
+git -C "$R" commit -q -am two
+git -C "$R" checkout -q --orphan gh-pages && git -C "$R" rm -rq --cached . && git -C "$R" clean -fdxq
+mkdir -p "$R/site"; cp -r "$ROOT/tests/fixtures/site/pages" "$ROOT/tests/fixtures/site/static" "$ROOT/tests/fixtures/site/site.json" "$R/site/"
+echo "hand pages and site configuration" > "$R/README.md"
+git -C "$R" add -A && git -C "$R" commit -q -m "Site: the hand pages" && git -C "$R" checkout -q -f -b parked develop
+jq -n --arg p "$R" '{schema:1, project:"cutsite", methodology:"gitflow", test_command:"true", site:{enabled:true},
+  repo:{url:"https://github.com/acme/cutsite", path:$p, long_lived:["master","develop","gh-pages"], detached:["gh-pages"]}}' > "$T/c/projects/cutsite.json"
+export QARGI_PROJECT=cutsite
+sstate() { jq -r '[.steps[] as $s | $s + ":" + (if .done[$s] then "done" else "pending" end)] | join(" ")' "$T/s/release/cutsite-0.6.0.cut.json"; }
+$REL verify 0.6.0 >/dev/null 2>&1
+out=$($REL plan 0.6.0 --date 2026-04-01 2>&1); st=$(tok <<<"$out")
+grep -q "^4. site: build the documentation site of the tag 0.6.0" <<<"$out" && grep -q "^publish is not in this cut" <<<"$out" && ! grep -q "^[0-9]*\. publish" <<<"$out" && ok "site plan: site is a step of the cut, publish is not" || no "site cut plan: $out"
+$REL plan 0.6.0 --date 2026-04-01 --plan "$st" --approved "ship the site too" >/dev/null 2>&1
+[ "$(sstate)" = "start:pending finish:pending site:pending" ] && ok "the recorded cut has start, finish and site (no origin, no push)" || no "site cut steps: $(sstate)"
+$REL start 0.6.0 --plan "$st" >/dev/null 2>&1; $REL verify 0.6.0 >/dev/null 2>&1
+out=$($REL finish 0.6.0 --plan "$st" 2>&1); rc=$?
+[ "$rc" = 0 ] && git -C "$R" rev-parse -q --verify refs/tags/0.6.0 >/dev/null && [ "$(sstate)" = "start:done finish:done site:pending" ] && ok "finish under the cut with a site step: the tag is made and the cut goes on to site" || no "site cut finish: rc=$rc $out; $(sstate)"
+S0=$(git -C "$R" rev-parse gh-pages)
+out=$($REL publish 0.6.0 --plan "$st" 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "does not cover publish: run publish with its own plan" <<<"$out" && ok "publish with the token of a cut that has a site step is refused too" || no "site cut publish: rc=$rc $out"
+out=$(cd "$T/memberrun" && $REL site 0.6.0 --plan "$st" 2>&1); rc=$?
+[ "$rc" = 2 ] && [ "$(git -C "$R" rev-parse gh-pages)" = "$S0" ] && ok "site under the cut is refused in a member run: the site branch did not move" || no "site under the cut in a member run: rc=$rc $out"
+out=$($REL site 0.6.0 --plan "$st" 2>&1); rc=$?
+[ "$rc" = 0 ] && [ "$(git -C "$R" rev-parse gh-pages)" != "$S0" ] && [ "$(sstate)" = "start:done finish:done site:done" ] && grep '"verb":"release:site"' "$T/s/audit.log" | grep -q '"approved":"ship the site too"' && grep -q "is complete" <<<"$out" \
+  && ok "site --plan alone builds the site on the site branch with the recorded words, and the cut is complete" || no "site under the cut: rc=$rc $out; $(sstate)"
 
 exit $fail
