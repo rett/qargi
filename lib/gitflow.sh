@@ -40,12 +40,12 @@ journal_line() { # REPO REF OLD NEW VERB URL [WHY]: one line; with URL a ref of 
   ref=$2 old=${3:-$zero} new=${4:-$zero} verb=$5
   repo=$(readlink -f "$1" 2>/dev/null) || repo=$1
   [ -n "${DA_STATE:-}" ] && case $ref in refs/heads/?*|refs/tags/?*) ;; *) false;; esac \
-    && ( umask 077; flock 9 && jq -nc --arg at "$(now)" --argjson ep "$(date +%s)" --arg v "$verb" --arg p "${PROJ:-}" --arg r "$repo" \
+    && ( umask 077; flock 9 || exit 4; jq -nc --arg at "$(now)" --argjson ep "$(date +%s)" --arg v "$verb" --arg p "${PROJ:-}" --arg r "$repo" \
            --arg ref "$ref" --arg o "$old" --arg n "$new" --arg by "$(id -un 2>/dev/null || echo unknown)@$(hostname 2>/dev/null || echo unknown)" \
            --arg u "$6" --arg w "${7:-}" \
            '{at:$at, epoch:$ep, verb:$v, project:$p, repo:$r, ref:$ref, old:$o, new:$n, by:$by}
             + (if $u == "" then {} else {remote:"origin", url:$u} end) + (if $w == "" then {} else {why:$w} end)' >> "$f" ) 9> "$f.lock" \
-    || echo "qargi: warning: the ref journal could not be written for $ref ($verb); a later 'qargi local verify' of a run prepared before this may not accept the change" >&2
+    || echo "qargi: warning: the ref journal could not be written for $ref ($verb)$([ $? != 4 ] || { command -v flock >/dev/null 2>&1 && echo ": flock on $f.lock failed" || echo ": the flock command (util-linux) is not installed"; }); a later 'qargi local verify' of a run prepared before this may not accept the change" >&2
   return 0
 }
 # remote_was BRANCH -> what origin had for BRANCH as far as this repository knows: the remote-tracking ref (current after a fetch)
@@ -454,7 +454,16 @@ intent_has() { [ -f "$(intent_file "$1")" ]; }
 intent_write() { # KEY JSON: create or replace the record, atomically, under its lock
   local f; f=$(intent_file "$1")
   mkdir -p "$(dirname "$f")" && chmod 700 "$(dirname "$f")" 2>/dev/null
-  ( umask 077; flock 9; printf '%s\n' "$2" > "$f.tmp" && mv -f "$f.tmp" "$f" ) 9> "$f.lock" || die "could not write the intent record $f: nothing was changed"
+  # a flock that failed (or is not installed) took no lock: say so, never write as if it had (status 4, as in pid_lock)
+  ( umask 077; flock 9 || exit 4; printf '%s\n' "$2" > "$f.tmp" && mv -f "$f.tmp" "$f" ) 9> "$f.lock" || {
+    [ $? != 4 ] || flock_die "the intent record $f" "$f.lock"
+    die "could not write the intent record $f: nothing was changed"
+  }
+}
+# flock_die WHAT LOCKFILE: ends the verb after a flock that took no lock, saying whether the command is missing or the lock failed
+flock_die() {
+  command -v flock >/dev/null 2>&1 || die "could not take the lock for $1: the flock command (util-linux) is not installed, so two runs could not be kept apart; nothing was changed"
+  die "could not take the lock for $1: flock on $2 failed (does that directory's file system support locks?); nothing was changed"
 }
 # A pid lock: a directory with the pid of its holder (and a token naming that process, so a pid given to another process later is not taken for it) in it,
 # held while a verb runs, so a second verb of the same kind never mistakes the record of a running one for one that was cut off. A lock whose process is
@@ -594,11 +603,13 @@ backlog_file() {
   printf '%s\n' "$f"
 }
 # backlog_note BASE BRANCH -> informational, for a finish plan: the open backlog items whose id the messages of the commits BRANCH brings into BASE
-# name. Prints nothing when backlog.file is unset or its file is missing or unreadable; it never fails and never acts.
+# name, among the items of the list under the heading backlog.section when that is set. Prints nothing when backlog.file is unset or its file is missing
+# or unreadable (or has no such heading); it never fails and never acts.
 backlog_note() {
-  local f ids
+  local f ids bs
   f=$(backlog_path) && [ -n "$f" ] && [ -f "$f" ] || return 0
-  ids=$(g log --format='%B' "$1..$2" 2>/dev/null | python3 -I "$(dirname "$0")/backlog.py" named "$f" 2>/dev/null) || return 0
+  bs=$(jq -r '.backlog.section // ""' "$af" 2>/dev/null) || bs=''
+  ids=$(g log --format='%B' "$1..$2" 2>/dev/null | python3 -I "$(dirname "$0")/backlog.py" named "$f" ${bs:+--section "$bs"} 2>/dev/null) || return 0
   [ -z "$ids" ] || echo "  backlog items named in these commits: $ids"
 }
 project_load() { # PROJ (or inferred) -> af, REPO, TESTCMD, METH

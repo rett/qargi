@@ -494,7 +494,7 @@ COMMANDS = {
                  "headings, paragraphs and fenced code blocks are not items. feature finish and release finish print a plan line, 'backlog items named in these commits: ID, ...', "
                  "for the open items whose id the messages of the commits being merged contain; it is information only and nothing is done, and nothing is printed when backlog.file "
                  "is unset or its file is missing. backlog.section names a heading of the file (its text, with or without the #s): only the list under it holds items, up to the next "
-                 "heading of the same or a higher level (a deeper heading belongs to it); a heading the file lacks is an error for the verbs. "
+                 "heading of the same or a higher level (a deeper heading belongs to it), also for that plan line; a heading the file lacks is an error for the verbs and names nothing in the plan line. "
                  "backlog.archive says where the archive goes: a directory (created when absent; a ~/ or relative path works as for the file) that receives NAME-archive-YYYY-MM.md, "
                  "or a path ending in .md for one archive file whatever the month; by default the archive is beside the backlog file."),
         "scripts": ["backlog.sh"],

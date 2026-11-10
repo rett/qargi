@@ -37,6 +37,37 @@ rm -rf "$T/farm"; mkdir "$T/farm"; for f in /usr/bin/*; do [ "${f##*/}" = flock 
 out=$(PATH=$HERMETIC/bin:$T/farm $REL finish 0.2.0 2>&1); rc=$?
 [ "$rc" = 1 ] && grep -q "flock command (util-linux) is not installed" <<<"$out" && ok "no flock command: the verb says it is not installed" || no "missing flock: rc=$rc $out"
 out=$($REL finish 0.2.0 2>&1); grep -q "could not take the lock" <<<"$out" && no "an ordinary finish was refused by the lock: $out" || ok "with flock the lock is taken as before (the verb goes on to its own checks)"
+# the intent record and the ref journal take the same kind of lock: the functions of lib/gitflow.sh, run as they are
+LIBD=${DA%/bin/qargi}/lib
+{ sed -n '/^intent_file()/,/^intent_unlock()/p' "$LIBD/gitflow.sh"; sed -n '/^journal_line()/,/^}/p' "$LIBD/gitflow.sh"; } > "$T/lockfns.sh"
+cat > "$T/lockrun.sh" <<'S'
+set -u
+die() { echo "die: $*"; exit 1; }
+now() { echo 2026-01-01T00:00:00Z; }
+DA_STATE=$1; PROJ=app; . "$2"
+case $3 in
+  intent) intent_write k '{"a":1}';;
+  journal) journal_line /tmp refs/heads/x "" abc123 test:verb "";;
+esac
+S
+for how in intent journal; do
+  rm -rf "$T/ls"; mkdir -p "$T/ls"
+  out=$(PATH=$T/bin:$PATH bash "$T/lockrun.sh" "$T/ls" "$T/lockfns.sh" $how 2>&1); rc=$?
+  if [ $how = intent ]; then
+    [ "$rc" = 1 ] && grep -q "die: could not take the lock for the intent record .*flock on .* failed.*nothing was changed" <<<"$out" && [ ! -e "$T/ls/finish-intent/app-k.json" ] && ok "intent_write: a flock that fails ends the verb, says so, and writes no record" || no "intent_write failing flock: rc=$rc $out"
+  else
+    grep -q "warning: the ref journal could not be written for refs/heads/x (test:verb): flock on .* failed" <<<"$out" && ok "the ref journal: a flock that fails is a warning that names the flock" || no "journal failing flock: rc=$rc $out"
+  fi
+  out=$(PATH=$HERMETIC/bin:$T/farm bash "$T/lockrun.sh" "$T/ls" "$T/lockfns.sh" $how 2>&1); rc=$?
+  if [ $how = intent ]; then
+    [ "$rc" = 1 ] && grep -q "die: could not take the lock for the intent record .*flock command (util-linux) is not installed" <<<"$out" && [ ! -e "$T/ls/finish-intent/app-k.json" ] && ok "intent_write: no flock command, the verb says it is not installed" || no "intent_write missing flock: rc=$rc $out"
+  else
+    grep -q "warning: the ref journal could not be written for refs/heads/x (test:verb): the flock command (util-linux) is not installed" <<<"$out" && ok "the ref journal: no flock command, the warning says it is not installed" || no "journal missing flock: rc=$rc $out"
+  fi
+  out=$(bash "$T/lockrun.sh" "$T/ls" "$T/lockfns.sh" $how 2>&1); rc=$?
+  if [ $how = intent ]; then [ "$rc" = 0 ] && [ "$(cat "$T/ls/finish-intent/app-k.json")" = '{"a":1}' ] && ok "intent_write with flock writes the record as before" || no "intent_write: rc=$rc $out"
+  else [ "$rc" = 0 ] && [ -z "$out" ] && [ "$(jq -r .ref "$T/ls/ref-journal.jsonl")" = refs/heads/x ] && ok "the ref journal with flock writes its line as before" || no "journal: rc=$rc $out"; fi
+done
 
 # --- the bookkeeping file of a merge a finish parked belongs to the release that was given up: starting the version again removes it
 mk stale

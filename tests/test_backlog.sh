@@ -280,6 +280,19 @@ $DA project set app backlog.file "$T/mem/gone.md" >/dev/null 2>&1
 out=$($F finish bl 2>&1); rc=$?
 [ $rc = 0 ] && ! grep -q 'backlog' <<<"$out" && [ "$(tok <<<"$out")" = "$t1" ] && ok "file missing: no line and no failure" || no "missing: rc=$rc $out"
 $DA project set app backlog.file "$MEM" >/dev/null 2>&1
+# backlog.section: only the list under the heading holds items, so the plan names only the commits' ids that are in it
+cp "$MEM" "$T/mem/plain.md"
+printf -- '# Backlog\n\n## Now\n\n- [add-cache] Cache the lookups\n\n## Later\n\n- [late-one] The last one\n- [never-named] Nobody mentions it\n' > "$MEM"
+$DA project set app backlog.section Now >/dev/null 2>&1
+out=$($F finish bl 2>&1); grep -qx '  backlog items named in these commits: add-cache' <<<"$out" && ok "backlog.section: the finish plan names only the items under the heading" || no "section Now: $out"
+$DA project set app backlog.section '## Later' >/dev/null 2>&1
+out=$($F finish bl 2>&1); grep -qx '  backlog items named in these commits: late-one' <<<"$out" && ok "backlog.section may be written with its #s" || no "section Later: $out"
+$DA project set app backlog.section Missing >/dev/null 2>&1
+out=$($F finish bl 2>&1); rc=$?
+[ $rc = 0 ] && ! grep -q 'backlog items' <<<"$out" && [ -n "$(tok <<<"$out")" ] && ok "a heading that is not in the file names nothing and fails nothing" || no "section Missing: rc=$rc $out"
+jq 'del(.backlog.section)' "$P" > "$P.new" && mv "$P.new" "$P"
+out=$($F finish bl 2>&1); grep -qx '  backlog items named in these commits: add-cache, late-one' <<<"$out" && ok "without the section both lists are read" || no "section unset: $out"
+cp "$T/mem/plain.md" "$MEM"
 bldone add-cache --evidence "finished" --plan "$(bldone add-cache --evidence finished | tok)" --approved go >/dev/null 2>&1
 out=$($F finish bl 2>&1); grep -qx '  backlog items named in these commits: late-one' <<<"$out" && ok "an item that was done is open no longer" || no "after done: $out"
 t=$(tok <<<"$out"); $F finish bl --plan "$t" --approved go >/dev/null 2>&1 && [ "$(git -C "$R" rev-list --count "$d0..develop")" -gt 0 ] && ok "the finish itself goes on as before" || no "finish apply"

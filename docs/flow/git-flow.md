@@ -262,7 +262,8 @@ nothing, so it takes no token. `add` and `done` are the lead's: a member's guard
 
 `feature finish` and `release finish` add a line to their plans, `backlog items named in these commits: ID, ...`, for the open items
 whose id appears (as a whole slug) in the messages of the commits being merged. It is information: it is not part of the token and
-nothing is done with it. With `backlog.file` unset, or its file missing, nothing is printed.
+nothing is done with it. With `backlog.file` unset, or its file missing, nothing is printed. With `backlog.section` set, only the items under
+that heading are looked for (a heading the file lacks names nothing).
 
 ## The worktree root
 
