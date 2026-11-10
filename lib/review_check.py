@@ -130,7 +130,7 @@ if n > 1:
         W("%s holds %d%% of the changed lines across %d areas: check it is one change, not several combined" % (big["name"], 100 * big["changed"] // total, len(big["areas"])))
 ts = [i["ts"] for i in info if i["ts"]]
 if n >= 3 and len(ts) == n and max(ts) - min(ts) < 120:
-    N("all %d commits are dated within %d seconds: they may have been made in one batch at the end; make sure each one really stands alone and its message records the reasoning at that step" % (n, int(max(ts) - min(ts))))
+    W("all %d commits are dated within %d seconds: they look made in one batch at the end, and the contract says to commit as you go; make sure each one really stands alone and its message records the reasoning at that step" % (n, int(max(ts) - min(ts))))
 
 for i in info:
     print("%s  %s  (%d file(s), %d changed line(s))" % (i["name"], i["subject"][:70], len(i["files"]), i["changed"]))

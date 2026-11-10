@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.." || exit 1
 fail=0
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 C=contract/contract.md
-has() { grep -qiE -- "$2" "$1"; }                     # has FILE PATTERN: the file holds the pattern (case ignored)
+has() { tr '\n' ' ' < "$1" | tr -s ' ' | grep -qiE -- "$2"; }   # has FILE PATTERN: the file holds the pattern, line breaks read as spaces (case ignored)
 # the files a member's prompt is made of, apart from the contract
 OTHERS=(contract/output-format.md roles/*/ROLE.md agents/member.body.md packs/skills/*/SKILL.md lib/providers/claude-code/local-run.md)
 
@@ -36,5 +36,9 @@ req=$(python3 -I -c 'import re; t=open("contract/output-format.md").read(); m=re
 want="status base done gates commits scope touched_paths"
 [ "$req" = "$want" ] && ok "the output format names the required manifest keys ($want)" || no "required keys in the output format: '$req'"
 if python3 -I -c 'import json,sys; m=json.load(open("contract/manifest.example.json")); sys.exit(0 if all(k in m for k in sys.argv[1:]) and m["status"] in ("DONE","BLOCKED") and m["gates"] and m["commits"] else 1)' $want; then ok "contract/manifest.example.json is valid and holds every required key"; else no "contract/manifest.example.json is missing a required key"; fi
+
+# P4: claims and cadence
+has $C 'Record each check in `log.txt`' && has $C 'Report only what you ran' && has $C '`not run` with the reason, never `pass`' && ok "the contract says to log each check, report only what was run, and that an unrun check is not run, never pass" || no "the contract's rule on recording and claiming checks"
+has $C 'Commit as you go' && has $C 'sent back' && ok "the contract says to commit as you go and that a batch at the end is sent back" || no "the contract's commit-as-you-go rule"
 
 exit $fail

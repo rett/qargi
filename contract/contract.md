@@ -24,8 +24,9 @@ reformulation.
   DONE cannot pass without a change outside SCOPE, make no such change and report BLOCKED naming the path. Anything
   else you would have changed outside SCOPE goes in `noticed_not_acted_on`, unchanged. Without SCOPE, list every
   touched file in the report.
-- A role that commits does so once a change's checks pass: one logical change per commit with its tests and a body
-  saying what changed and why, each commit building and passing alone. Its docs and changelog entry go in that
+- A role that commits makes one logical change per commit with its tests and a body saying what changed and why, each
+  commit building and passing alone. Commit as you go: when a change passes its checks, commit it before you start
+  the next. A series committed all at once at the end is sent back. Its docs and changelog entry go in that
   commit, or in the next when it would span three or more top-level directories. Never squash, amend or rewrite history. Use the
   identity configured in CLONE, no attribution or session trailer unless the profile requires one; check each
   message with `git interpret-trailers --parse`. Write each commit message to a file with your file-writing tool and
@@ -39,7 +40,9 @@ reformulation.
 Run the checks that cover your change (DONE, the gates the profile names for the paths you touched and its
 "always" gates before the report), not the whole suite. Run the lint and secret-scan gates your packs and profile name; if
 the profile names no lint gate, run the repository's own lint step, and a secret scanner, if installed, over
-BASE_SHA..HEAD. Quote each verdict line in gates[]; gates marked coordinator-only are "not run". Make temporary
+BASE_SHA..HEAD. Quote each verdict line in gates[]; gates marked coordinator-only are "not run". Record each check
+in `log.txt` when you run it: the command, its exit status, its last lines. Report only what you ran in this run. A
+check you reasoned about but did not run is `not run` with the reason, never `pass`. Make temporary
 directories with `mktemp -d -p "$TMP"` and `TMPDIR="$TMP"`, nowhere else in /dev/shm or /tmp: the coordinator
 removes TMP. Start long commands through your runtime's background facility (no trailing `&`, no `pgrep -f`
 waiting) and finish them before the report.

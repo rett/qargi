@@ -3,7 +3,7 @@
 # A raised ceiling carries a comment on its line, `PATH N # raised: reason` (the test checks it against the merge base with origin/develop). `lib/providers/NAME.json:notes` is the topic texts of a runtime's notes.
 agents/member.body.md 118
 agents/member.md 183
-contract/contract.md 810 # raised: the report-writing rule (file tool, no shell text, final-message fallback) and the guard-refusal rule, stated once here and removed from the addendum, the notes and gitflow-member; for review; never stash and what to do instead (a worktree of BASE, restore) in place of a WIP commit; SCOPE as one instruction (compare, BLOCKED naming the path, noticed_not_acted_on)
+contract/contract.md 875 # raised: the report-writing rule (file tool, no shell text, final-message fallback) and the guard-refusal rule, stated once here and removed from the addendum, the notes and gitflow-member; for review; never stash and what to do instead (a worktree of BASE, restore) in place of a WIP commit; SCOPE as one instruction (compare, BLOCKED naming the path, noticed_not_acted_on); log each check and report only what was run (not run is never pass); commit as you go
 contract/output-format.md 305 # raised: the manifest's required keys named apart from the optional ones; scope[] checked by review check
 lib/providers/claude-code.json:notes 301 # lowered: the member-out topic no longer sends a member to a shell heredoc
 lib/providers/claude-code/local-run.md 51 # lowered: a refused Write of a report file is answered by the final message, not a heredoc
