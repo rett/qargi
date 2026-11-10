@@ -36,11 +36,23 @@ def live_conf():
     return os.environ.get("QARGI_CONF") or os.path.join(live_root(), "config")
 
 
+_RECORDED = {}                # install.json path -> (what stat says of it, the tool_root it holds): the record is read once while it is unchanged
+
+
 def installed_tool_root():
-    """The tool root install.sh recorded, or None (no record, or one that cannot be read)."""
+    """The tool root install.sh recorded, or None (no record, or one that cannot be read). The guard asks dozens of times in one call (every
+    path it classifies asks for the protected roots): the file is read again only when it changed (its inode, size and times), so a record
+    that is rewritten, replaced or removed is seen at once, and a configuration directory that moves (QARGI_CONF, QARGI_HOME, HOME) is another file."""
+    path = os.path.join(live_conf(), "install.json")
     try:
-        with open(os.path.join(live_conf(), "install.json")) as f:
-            t = json.load(f).get("tool_root")
+        st = os.stat(path)
+        sig = (st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+        hit = _RECORDED.get(path)
+        if hit is None or hit[0] != sig:
+            with open(path) as f:
+                t = json.load(f).get("tool_root")
+            hit = _RECORDED[path] = (sig, t)
+        t = hit[1]
     except (OSError, ValueError, AttributeError):
         return None
     return os.path.realpath(t) if isinstance(t, str) and t else None
