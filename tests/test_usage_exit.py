@@ -80,5 +80,72 @@ class MissingArgument(unittest.TestCase):
                              "empty instance name; pass --name", env=env)
 
 
+class OptionValue(unittest.TestCase):
+    """A value an option cannot take is a usage error: exit 2 with the message, nothing changed."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.t = tempfile.mkdtemp()
+        cls.repo = os.path.join(cls.t, "repo")
+        git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-C", cls.repo]
+        os.mkdir(cls.repo)
+        for argv in (["init", "-q", "-b", "develop"], ["commit", "-q", "--allow-empty", "-m", "init"], ["branch", "master"]):
+            subprocess.run(git + argv, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        os.makedirs(os.path.join(os.environ["QARGI_CONF"], "projects"), exist_ok=True)
+        with open(os.path.join(os.environ["QARGI_CONF"], "projects", "demo.json"), "w") as f:
+            json.dump({"schema": 1, "project": "demo", "repo": {"url": "https://github.com/example/demo", "path": cls.repo, "long_lived": ["main"]},
+                       "roles": {"build": {"base": "main", "push": {"mode": "none"}}},
+                       "models": {"provider": {"local": "claude-code", "cloud": "claude-platform"}}, "memory": {}, "budget_cents": 500}, f)
+        os.makedirs(os.environ["QARGI_STATE"], exist_ok=True)
+        with open(os.path.join(os.environ["QARGI_STATE"], "sessions.json"), "w") as f:
+            json.dump({"sesn_x": {}}, f)
+
+    @classmethod
+    def tearDownClass(cls):
+        subprocess.run(["rm", "-rf", cls.t])
+
+    def assertUsage(self, argv, text):
+        rc, out = qargi(*argv)
+        self.assertEqual(rc, 2, "%s -> %s" % (" ".join(argv), out))
+        self.assertIn(text, out)
+
+    def test_canon_kind_and_path(self):
+        self.assertUsage(["canon", "check", "demo", "--kind", "bogus"], "--kind memory|reference")
+        self.assertUsage(["canon", "promote", "demo", "--kind", "memory", "--path", "bogus", "--approved", "x"], "--path must be /roles/")
+
+    def test_agent_add_effort_model_and_roles(self):
+        self.assertUsage(["agent", "add", "forge", "--effort", "bogus", "--project", "demo"], "--effort low|medium")
+        self.assertUsage(["agent", "add", "forge", "--model", "BAD!", "--project", "demo"], "--model: a model alias or id")
+        self.assertUsage(["agent", "add", "forge", "--roles", "nosuch", "--project", "demo"], "--roles: a comma-separated list of roles")
+
+    def test_agent_for_profile_and_surface(self):
+        self.assertUsage(["agent", "for", "build", "--profile", "BAD", "--project", "demo"], "--profile: a profile name")
+        self.assertUsage(["agent", "for", "build", "--surface", "bogus", "--project", "demo"], "--surface: local or cloud")
+
+    def test_instances_init_effort_model_and_budget(self):
+        self.assertUsage(["instances", "init", "--location", "local", "--name", "x", "--effort", "bogus"], "--effort low|medium")
+        self.assertUsage(["instances", "init", "--location", "local", "--name", "x", "--model", "BAD!"], "--model: a model alias or id")
+        self.assertUsage(["instances", "init", "--location", "local", "--name", "x", "--budget", "abc"], "--budget CENTS must be a whole number")
+
+    def test_provision_plan_budget_and_networking(self):
+        self.assertUsage(["provision", "plan", "demo-build", "--budget", "abc"], "--budget CENTS must be a whole number")
+        self.assertUsage(["provision", "plan", "demo-build", "--networking", "bogus"], "--networking unrestricted|limited")
+
+    def test_packs_scope_and_load_role(self):
+        rc, out = qargi("skill", "new", "scopetest", "--compatible", "any")
+        self.assertEqual(rc, 0, out)
+        self.assertUsage(["skill", "link", "scopetest", "--scope", "bogus"], "--scope user|user-role|project|project-role")
+        self.assertUsage(["packs", "load", "--project", "demo", "--role", "nosuch"], "load: --role is one of")
+
+    def test_session_mark_why_is_one_of_the_codes(self):
+        self.assertUsage(["mark", "sesn_x", "applied", "--why", "bogus"], "--why is one of: wrong-scope")
+
+    def test_watch_warn_is_a_whole_percent(self):
+        self.assertUsage(["watch", "sesn_x", "--warn", "x"], "--warn is a whole percent")
+
+    def test_release_plan_date_is_a_date(self):
+        self.assertUsage(["release", "plan", "9.9.9", "--date", "x", "--project", "demo"], "--date YYYY-MM-DD")
+
+
 if __name__ == "__main__":
     unittest.main()

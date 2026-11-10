@@ -100,8 +100,8 @@ if [ -z "$MODEL" ]; then   # the balanced model of the project's provider on the
 fi
 if is_base "$ROLE"; then EFFORT=${EFFORT:-medium}; fi   # a base runs the balanced tier at medium effort until a session overrides it
 EFFORT=${EFFORT:-high}; BUDGET=${BUDGET:-500}
-case $BUDGET in ''|*[!0-9]*) die "--budget CENTS must be a whole number";; esac
-case $NETWORKING in unrestricted|limited) ;; *) die "--networking unrestricted|limited";; esac
+case $BUDGET in ''|*[!0-9]*) usage_die "--budget CENTS must be a whole number";; esac
+case $NETWORKING in unrestricted|limited) ;; *) usage_die "--networking unrestricted|limited";; esac
 # a read-only role needs a read-only barrier on the cloud surface, or the project's recorded acceptance that there is none
 [ "$(instance_class "$ROLE")" != read-only ] || barrier_guard cloud "$PROJECT"
 ant_ok

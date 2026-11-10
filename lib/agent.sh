@@ -393,7 +393,7 @@ add() {
   bc=$(jq -r --arg n "$n" '.bases[$n].class // empty' "$DEFAULTS")   # a base name takes the abilities of its class only
   [ -z "$bc" ] || [ -n "$ROLES" ] || ROLES=$(jq -r --arg n "$n" '.bases[$n].abilities | join(",")' "$DEFAULTS")
   for a in $(printf '%s' "${ROLES:-build,write,review,test}" | tr ',' ' '); do
-    [ "$a" != lead ] && valid_role "$a" || die "--roles: a comma-separated list of roles ($DA_ROLES; qargi role list)"
+    [ "$a" != lead ] && valid_role "$a" || usage_die "--roles: a comma-separated list of roles ($DA_ROLES; qargi role list)"
     [ -z "$bc" ] || [ "$(role_class "$a")" = "$bc" ] || die "--roles: $n is a base of the $bc class; $a is $(role_class "$a")"
     case ",$list," in *",$a,"*) ;; *) list=${list:+$list,}$a;; esac
   done
@@ -408,8 +408,8 @@ add() {
     [ -z "$ORIG_EFFORT" ] || echo "qargi: note: effort ignored ($prov has no effort control)" >&2
     EFFORT=''
   fi
-  printf '%s' "$MODEL" | grep -Eq '^[a-z0-9][a-z0-9.-]*$' || die "--model: a model alias or id (letters, digits, . -)"
-  case $EFFORT in ''|low|medium|high|xhigh|max) ;; *) die "--effort low|medium|high|xhigh|max";; esac
+  printf '%s' "$MODEL" | grep -Eq '^[a-z0-9][a-z0-9.-]*$' || usage_die "--model: a model alias or id (letters, digits, . -)"
+  case $EFFORT in ''|low|medium|high|xhigh|max) ;; *) usage_die "--effort low|medium|high|xhigh|max";; esac
   r=$(render_member "$n" "$list" "$MODEL" "$EFFORT" "$prov" "$PROJ") || exit 1
   dir=$(agents_dir "$PROJ" "$r") || exit 1; file=$dir/$(jq -r .path <<<"$r")
   [ ! -e "$file" ] && [ ! -L "$file" ] || die "$file exists already; choose another name or remove it first"
@@ -748,12 +748,12 @@ case $verb in
   for)
     a=${POS[0]:-}
     [ -n "$a" ] && [ "$a" != lead ] && valid_role "$a" || usage_die "usage: qargi agent for ROLE [--profile P] [--project P] [--json]   (a role of: $DA_ROLES)"
-    [ -z "$PROFILE" ] || printf '%s' "$PROFILE" | grep -Eq '^[a-z][a-z0-9-]{0,30}$' || die "--profile: a profile name (lower-case letters, digits and '-', at most 31)"
+    [ -z "$PROFILE" ] || printf '%s' "$PROFILE" | grep -Eq '^[a-z][a-z0-9-]{0,30}$' || usage_die "--profile: a profile name (lower-case letters, digits and '-', at most 31)"
     [ -n "$PROJ" ] || PROJ=$(python3 -I "$root/lib/help.py" infer)
     case $SURFACE in
       ''|local) resolve_for "$a" "$PROFILE" "$PROJ";;
       cloud) [ -n "$PROJ" ] || PROJ=$(python3 -I "$root/lib/help.py" infer); resolve_cloud "$a" "$PROFILE" "$PROJ";;
-      *) die "--surface: local or cloud";;
+      *) usage_die "--surface: local or cloud";;
     esac;;
   *) usage_die "usage: qargi agent add|list|models|rename|refresh|remove|for ...";;
 esac

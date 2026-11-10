@@ -44,10 +44,10 @@ while [ $# -gt 0 ]; do
 done
 
 export PLAN_ARG
-case $EFFORT in ''|low|medium|high|xhigh|max) ;; *) die "--effort low|medium|high|xhigh|max";; esac
-[ -z "$MODEL" ] || printf '%s' "$MODEL" | grep -Eq '^[a-z0-9][a-z0-9.-]*$' || die "--model: a model alias or id (letters, digits, . -)"
+case $EFFORT in ''|low|medium|high|xhigh|max) ;; *) usage_die "--effort low|medium|high|xhigh|max";; esac
+[ -z "$MODEL" ] || printf '%s' "$MODEL" | grep -Eq '^[a-z0-9][a-z0-9.-]*$' || usage_die "--model: a model alias or id (letters, digits, . -)"
 
-case $BUDGET in ''|*[!0-9]*) [ -z "$BUDGET" ] || die "--budget CENTS must be a whole number";; esac
+case $BUDGET in ''|*[!0-9]*) [ -z "$BUDGET" ] || usage_die "--budget CENTS must be a whole number";; esac
 
 slug() { printf '%s' "$1" | tr '[:upper:] _' '[:lower:]--' | tr -cd 'a-z0-9-' | sed 's/--*/-/g; s/^-//; s/-$//'; }
 

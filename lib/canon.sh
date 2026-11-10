@@ -39,7 +39,7 @@ TODAY=$(date -u +%F)
 # every temporary file and directory of a verb lives under WORK, which is removed when the verb ends, by its status or by die
 WORK=$(mktemp -d) || die "cannot make a temporary directory"
 trap 'rm -rf "$WORK"' EXIT
-case $KIND in ''|memory|reference) ;; *) die "--kind memory|reference";; esac
+case $KIND in ''|memory|reference) ;; *) usage_die "--kind memory|reference";; esac
 kinds=${KIND:-"memory reference"}
 
 store_of() { jq -r --arg k "$1" '.memory[$k + "_store"] // ""' "$PCFG"; }
@@ -172,7 +172,7 @@ case $verb in
   promote)
     [ -n "$KIND" ] && [ -n "$PATH_ARG" ] || usage_die "promote needs --kind K --path /roles/R/..."
     [ -n "$APPROVED" ] || die "promote needs --approved \"<go-ahead>\""
-    case $PATH_ARG in /roles/*/*) ;; *) die "--path must be /roles/<role>/<file>";; esac
+    case $PATH_ARG in /roles/*/*) ;; *) usage_die "--path must be /roles/<role>/<file>";; esac
     store=$(store_of "$KIND"); ant_ok; audit_log canon-promote "$PATH_ARG"
     dest="/shared/${PATH_ARG#/roles/*/}"
     tmp=$(mktemp -p "$WORK"); probe "$store" "$tmp" || die "the $KIND store $store is unreachable: $WHY; nothing was moved"
