@@ -26,7 +26,7 @@ out=$($DA project new acme --dir "$D" --param test_command="make check" --deploy
 [ "$(git -C "$D" branch --show-current)" = develop ] && git -C "$D" rev-parse -q --verify master >/dev/null && ok "master and develop exist and work starts on develop" || no "branches: $(git -C "$D" branch -a)"
 [ "$(git -C "$D" log --oneline | wc -l)" = 1 ] && [ -z "$(git -C "$D" status --porcelain)" ] && ok "one first commit and a clean tree" || no "history"
 grep -q 'run: make check' "$D/.github/workflows/test.yml" && grep -qx '0.1.0' "$D/VERSION" && ok "the parameters are filled in" || no "params"
-grep -rqi qargi "$D" --exclude-dir=.git && no "the project mentions qargi" || ok "nothing in the project mentions qargi"
+grep -rqiE '(^|[^[:alnum:]])qargi([^[:alnum:]]|$)' "$D" --exclude-dir=.git && no "the project mentions qargi" || ok "nothing in the project mentions qargi"
 [ "$(head -1 "$D/CLAUDE.md")" = "@AGENTS.md" ] && grep -qx '## Development environment' "$D/AGENTS.md" && grep -q '`make bootstrap`' "$D/AGENTS.md" && grep -q '`make -n bootstrap`' "$D/AGENTS.md" \
   && grep -q '`make doctor`' "$D/AGENTS.md" && grep -q '`make check`' "$D/AGENTS.md" && ok "CLAUDE.md imports AGENTS.md, which has the Development environment section with the project's commands" || no "AGENTS.md: $(cat "$D/AGENTS.md")"
 dout=$(make -C "$D" doctor 2>&1); drc=$?

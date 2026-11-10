@@ -54,7 +54,7 @@ n0=$(git -C "$U" rev-list --count develop..release/0.2.0); [ "$n0" = 1 ] && ok "
 # --- finish before the join refuses with the fix and changes nothing
 m0=$(git -C "$U" rev-parse master)
 out=$($REL finish 0.2.0 2>&1); rc=$?
-[ $rc = 1 ] && grep -q "share no history" <<<"$out" && grep -q "Run qargi release push 0.2.0" <<<"$out" && ! grep -q "fatal\|plan token" <<<"$out" && ok "finish refuses before the join and names the fix" || no "finish before the join: rc=$rc $out"
+[ $rc = 1 ] && grep -q "share no history" <<<"$out" && grep -q "Run qargi release push 0.2.0" <<<"$out" && ! grep -qE "(^|[^[:alnum:]])fatal([^[:alnum:]]|$)|plan token" <<<"$out" && ok "finish refuses before the join and names the fix" || no "finish before the join: rc=$rc $out"
 
 # --- push: the plan lists the join; the token covers it
 out=$($REL push 0.2.0 2>&1); t=$(tok <<<"$out")
@@ -79,7 +79,7 @@ out=$($REL push 0.2.0 2>&1); ! grep -q "join the history" <<<"$out" && ok "a sec
 
 # --- the finish is an ordinary --no-ff merge
 out=$($REL finish 0.2.0 2>&1); t=$(tok <<<"$out")
-! grep -q "fatal\|no merge base\|share no history" <<<"$out" && grep -Eq "files changed: [0-9]+ file" <<<"$out" && ok "the finish plan names the files" || no "finish plan: $out"
+! grep -qE "(^|[^[:alnum:]])fatal([^[:alnum:]]|$)|no merge base|share no history" <<<"$out" && grep -Eq "files changed: [0-9]+ file" <<<"$out" && ok "the finish plan names the files" || no "finish plan: $out"
 out=$($REL finish 0.2.0 --plan "$t" --approved go 2>&1); rc=$?
 nm=$(git -C "$U" rev-parse master)
 [ $rc = 0 ] && [ "$(git -C "$U" rev-parse "$nm^1")" = "$m0" ] && [ "$(git -C "$U" rev-parse "$nm^2")" = "$h1" ] && [ "$(git -C "$U" rev-parse "$nm^{tree}")" = "$tree0" ] && git -C "$U" rev-parse -q --verify refs/tags/0.2.0 >/dev/null \

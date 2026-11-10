@@ -7,8 +7,11 @@
 # locale, time zone and umask are fixed (LANG=C.UTF-8, TZ=UTC, umask 022); git reads no configuration of the host or the user
 # (GIT_CONFIG_GLOBAL=/dev/null, GIT_CONFIG_NOSYSTEM=1) and has a default branch name from the environment (no identity: a test that commits sets
 # its own, in the repository or in GIT_AUTHOR_*, as it did when HOME was a fresh directory); no
-# GIT_DIR, GIT_WORK_TREE, SSH_AUTH_SOCK, SSH_ASKPASS, PYTHONPATH or PYTHONSTARTUP; python writes no bytecode into the source tree and
-# reads no user site; output has no colour, 80 columns, a dumb terminal. A test overrides any of this after sourcing (most set their
+# GIT_DIR, GIT_WORK_TREE, SSH_AUTH_SOCK, SSH_ASKPASS, PYTHONPATH or PYTHONSTARTUP; python writes no bytecode into the source tree
+# (PYTHONDONTWRITEBYTECODE is ignored under `python3 -I`, which qargi's scripts and the tests use throughout, so the first `python3` on PATH
+# is a wrapper that adds -B; tests/test_hermetic.sh checks that a run leaves no __pycache__; one gap is left in lib/: the provider adapters and
+# lib/conformance/cases.py start themselves again with sys.executable -I, which has no -B, so the conformance suite still writes bytecode there)
+# and reads no user site; output has no colour, 80 columns, a dumb terminal. A test overrides any of this after sourcing (most set their
 # own QARGI_CONF, QARGI_STATE, HOME and a fake ant). The temporary directory is removed when the test exits. tests/hermetic.py is the
 # same environment for the python tests.
 # A test stops when mktemp fails (exit status 1, or 143 when the call is inside $(...)): the directory it makes its files in is gone
@@ -31,6 +34,12 @@ for _t in ant claude; do
   chmod 755 "$HERMETIC/bin/$_t"
 done
 unset _t
+# the wrapper: the real python3 with -B. `python3 -I` ignores PYTHONDONTWRITEBYTECODE, and every qargi script and test starts that way.
+if _py=$(command -v python3); then
+  printf '#!/bin/sh\nexec %s -B "$@"\n' "'$_py'" > "$HERMETIC/bin/python3"
+  chmod 755 "$HERMETIC/bin/python3"
+fi
+unset _py
 export HOME=$HERMETIC/home QARGI_CONF=$HERMETIC/conf QARGI_STATE=$HERMETIC/state PATH=$HERMETIC/bin:$PATH
 export XDG_CONFIG_HOME=$HERMETIC/home/.config XDG_STATE_HOME=$HERMETIC/home/.local/state
 # what the test and the verbs it runs make with mktemp goes into the test's own temporary directory (HERMETIC), removed with it; the

@@ -31,7 +31,7 @@ out=$(./bin/qargi local prepare --repo "$T/r" --base main --slug old --scratch "
 git -C "$CLONE" push -q "$T/remote.git" agent/demo 2>/dev/null   # a bypass with plain git
 ./bin/qargi local verify "$RUN" >/dev/null 2>&1 && no "verify missed a push to the remote" || ok "verify catches a push to the remote"
 [ "$(jq -r 'select(.slug=="demo") | .run' "$T/s/local-runs.jsonl")" = "$RUN" ] && [ "$(wc -l < "$T/s/local-runs.jsonl")" = 2 ] && ok "prepare registers each run (one line, run directory, slug, ability, base, start)" || no "registry: $(cat "$T/s/local-runs.jsonl")"
-grep -qi 'token\|secret' "$T/s/local-runs.jsonl" && no "the registry holds a secret" || ok "the registry holds a repository path and no token"
+grep -qiE '(^|[^[:alnum:]])token([^[:alnum:]]|$)|secret' "$T/s/local-runs.jsonl" && no "the registry holds a secret" || ok "the registry holds a repository path and no token"
 [ "$(jq -r 'select(.slug=="demo") | .tmpdir' "$T/s/local-runs.jsonl")" = "$TMP" ] && [ "$(jq -r 'select(.slug=="demo") | .slug' "$T/s/local-runs.jsonl")" = demo ] \
   && ok "the registry names each run's temporary directory (and its slug): the lead's record of what clean removes" || no "registry tmpdir: $(cat "$T/s/local-runs.jsonl")"
 # a submodule the role declares (roles.build.tools, kind submodule) is checked out in the clone from the lead's copy, offline, push disabled
@@ -498,7 +498,7 @@ done
 [ "$(jq -r 'select(.slug=="pf1") | .profile' "$T/s/local-runs.jsonl")" = advisor ] && ok "the run line carries the profile" || no "jsonl profile"
 n1=$(find "$T" -maxdepth 1 -name 'qargi.*' | wc -l)
 out=$($Q local prepare --repo "$T/r" --base main --slug pf2 --scratch "$T" --role build --profile auditor 2>&1); rcp=$?
-[ "$rcp" != 0 ] && grep -q 'read-only' <<<"$out" && [ "$(find "$T" -maxdepth 1 -name 'qargi.*' | wc -l)" = "$n1" ] && ! grep -q pf2 "$T/s/local-runs.jsonl" \
+[ "$rcp" != 0 ] && grep -q 'read-only' <<<"$out" && [ "$(find "$T" -maxdepth 1 -name 'qargi.*' | wc -l)" = "$n1" ] && ! grep -qw pf2 "$T/s/local-runs.jsonl" \
   && ok "a profile of the wrong class dies with the resolver's reason and leaves no run directory" || no "class conflict: $rcp $out"
 out=$($Q local prepare --repo "$T/r" --base main --slug pf3 --scratch "$T" --role build 2>&1); P3=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out")
 grep -qx 'PROFILE=build' <<<"$out" && ! grep -q '^MODEL=' <<<"$out" && [ ! -e "$P3/profile" ] && [ "$(jq -r 'select(.slug=="pf3") | .profile' "$T/s/local-runs.jsonl")" = build ] \

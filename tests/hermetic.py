@@ -3,7 +3,8 @@ It makes the test independent of the caller, with the environment of tests/herme
 or QARGI_* variable gets through, HOME, TMPDIR and qargi's config and state are fresh directories under one temporary directory (ROOT,
 removed at exit; what tempfile makes goes into ROOT/tmp), and the first `ant` and `claude` on PATH are stubs that fail, so a test that
 did not bring its own fake cannot reach the real tools. The locale, time zone and umask are fixed, git reads no configuration of the
-host or the user and has a default branch name (no identity: a test that commits sets its own), and python writes no bytecode. A test can still build its own
+host or the user and has a default branch name (no identity: a test that commits sets its own), and python writes no bytecode (the first
+`python3` on PATH is a wrapper that adds -B, because PYTHONDONTWRITEBYTECODE is ignored under `python3 -I`, which qargi's scripts use). A test can still build its own
 environment from os.environ and override any of it."""
 import atexit
 import os
@@ -28,6 +29,12 @@ for _t in ("ant", "claude"):
     with open(_p, "w") as _f:
         _f.write('#!/bin/sh\necho "hermetic test: the real %s is not available; put a fake first on PATH" >&2\nexit 127\n' % _t)
     os.chmod(_p, 0o755)
+# the wrapper: the real python3 with -B (`python3 -I` ignores PYTHONDONTWRITEBYTECODE, and every qargi script starts that way)
+_py = shutil.which("python3")
+if _py:
+    with open(os.path.join(ROOT, "bin", "python3"), "w") as _f:
+        _f.write("#!/bin/sh\nexec '%s' -B \"$@\"\n" % _py)
+    os.chmod(os.path.join(ROOT, "bin", "python3"), 0o755)
 os.environ.update(HOME=os.path.join(ROOT, "home"), QARGI_CONF=os.path.join(ROOT, "conf"), QARGI_STATE=os.path.join(ROOT, "state"),
                   XDG_CONFIG_HOME=os.path.join(ROOT, "home", ".config"), XDG_STATE_HOME=os.path.join(ROOT, "home", ".local", "state"),
                   PATH=os.path.join(ROOT, "bin") + os.pathsep + os.environ.get("PATH", ""))

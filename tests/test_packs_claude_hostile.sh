@@ -300,7 +300,7 @@ g_root() {
   echo '{"stale":true}' > "$T/s/render/alpha/.claude-code.new/MANIFEST.json"
   try_apply; D=$(Dp)
   need "apply works" '[ "$ARC" = 0 ]'
-  need "nothing from the crashed staging directory is in the render" '[ ! -e "$D/hooks" ] && [ ! -e "$D/.claude/skills/ghost" ] && ! grep -q stale "$D/MANIFEST.json"'
+  need "nothing from the crashed staging directory is in the render" '[ ! -e "$D/hooks" ] && [ ! -e "$D/.claude/skills/ghost" ] && ! grep -q \"stale\" "$D/MANIFEST.json"'
   need "the staging directory is gone afterwards" '[ ! -e "$T/s/render/alpha/.claude-code.new" ]'
   need "check passes" 'check'
   endcase ".claude-code.new left behind by a crash (full of junk) is discarded"

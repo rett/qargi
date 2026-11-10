@@ -88,7 +88,7 @@ out=$($REL push 0.2.0 --plan "$t" --approved go 2>&1)
 mk nfnone; seal nfnone
 rstart 0.2.0 >/dev/null 2>&1
 out=$($REL push 0.2.0 2>&1)
-! grep -q "notes" <<<"$out" && ok "no notes_file, no check" || no "no notes answer: $out"
+! grep -qE "(^|[^[:alnum:]])notes([^[:alnum:]]|$)" <<<"$out" && ok "no notes_file, no check" || no "no notes answer: $out"
 
 shellcheck -x -S warning tests/test_release_checks.sh >/dev/null 2>&1 && ok "shellcheck clean" || no "shellcheck"
 rm -rf "$T"; exit $fail

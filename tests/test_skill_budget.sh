@@ -278,6 +278,6 @@ sys.exit(1 if bad else 0)
 PY
 # the member pack uses the word gates for the declared gates only (the lead's), and calls the checks of the profile for the touched paths what they are
 gfirst=$(sed -n '/^## Checks/,/^## /p' packs/skills/gitflow-member/SKILL.md | sed -n 2p)
-grep -q 'the DONE check and the PROFILE checks' <<<"$gfirst" && ! grep -qi 'gate' <<<"$gfirst" \
+grep -q 'the DONE check and the PROFILE checks' <<<"$gfirst" && ! grep -qiE '(^|[^[:alnum:]])gates?([^[:alnum:]]|$)' <<<"$gfirst" \
   && ok "gitflow-member: the first Checks line names the PROFILE checks and does not call them gates" || no "gitflow-member: the first Checks line calls the profile's checks something else, or gates: $gfirst"
 exit $fail

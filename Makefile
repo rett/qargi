@@ -4,17 +4,18 @@
 #   make doctor         one line per tool; non-zero when one is missing or too old
 .PHONY: bootstrap doctor
 
-TOOLS := bash git jq shellcheck python3
+# ssh-keygen (OpenSSH) signs and verifies the marshal's records; the test suite runs it. It has no version option, so the doctor reads ssh -V.
+TOOLS := bash git jq shellcheck python3 ssh-keygen
 PYTHON_MIN := 3.11
 
 # The distribution, read from /etc/os-release (its ID and ID_LIKE words); the line that installs is the one that starts with sudo.
 OS_IDS := $(shell . /etc/os-release 2>/dev/null && echo "$$ID $$ID_LIKE")
 ifneq (,$(filter arch,$(OS_IDS)))
-INSTALL := sudo pacman -S --needed --noconfirm bash git jq shellcheck python
+INSTALL := sudo pacman -S --needed --noconfirm bash git jq shellcheck python openssh
 else ifneq (,$(filter debian ubuntu,$(OS_IDS)))
-INSTALL := sudo apt-get install -y bash git jq shellcheck python3
+INSTALL := sudo apt-get install -y bash git jq shellcheck python3 openssh-client
 else ifneq (,$(filter fedora rhel,$(OS_IDS)))
-INSTALL := sudo dnf install -y bash git jq ShellCheck python3
+INSTALL := sudo dnf install -y bash git jq ShellCheck python3 openssh-clients
 endif
 
 bootstrap:
@@ -28,7 +29,8 @@ doctor:
 	@rc=0; \
 	for t in $(TOOLS); do \
 	  if command -v $$t >/dev/null 2>&1; then \
-	    echo "ok: $$t $$($$t --version 2>&1 | grep -Eo '[0-9]+(\.[0-9]+)+' | head -n 1)"; \
+	    case $$t in ssh-keygen) v=$$(ssh -V 2>&1);; *) v=$$($$t --version 2>&1);; esac; \
+	    echo "ok: $$t $$(echo "$$v" | grep -Eo '[0-9]+(\.[0-9]+)+' | head -n 1)"; \
 	  else \
 	    echo "missing: $$t is not installed"; rc=1; \
 	  fi; \

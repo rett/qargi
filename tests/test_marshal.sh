@@ -129,7 +129,7 @@ git -C "$R" worktree remove --force "$T/wt-f1"
 # ghost: a record whose branch is gone, and an old record without the new keys
 jq -n '{feature:"ghost", project:"app", status:"active", rev:1, lead:null}' > "$(rec ghost)"
 jq -n '{feature:"donefeat", project:"app", status:"finished", rev:3, lead:null}' > "$(rec donefeat)"
-M $t0 status --all; ! grep -q ghost "$T/o" && ! grep -q donefeat "$T/o" && ! grep -q "branch gone" "$T/o" && grep -q "^feature f1 of" "$T/o" && ok "status --all: by default neither a ghost nor a finished record is listed" || no "SPEC ghost hidden: $(out)"
+M $t0 status --all; ! grep -qw ghost "$T/o" && ! grep -q donefeat "$T/o" && ! grep -q "branch gone" "$T/o" && grep -q "^feature f1 of" "$T/o" && ok "status --all: by default neither a ghost nor a finished record is listed" || no "SPEC ghost hidden: $(out)"
 [ "$(j ghost .status)" = abandoned ] && ok "the ghost reconciliation still records the record as abandoned" || no "SPEC ghost recorded: $(cat "$(rec ghost)")"
 M $t0 status --all --brief; ! grep -Eq "^(ghost|donefeat) " "$T/o" && ok "status --all --brief: open features only" || no "SPEC brief hides history: $(out)"
 M $t0 status --all --json; jq -e '[.features[].feature] | (index("ghost") == null) and (index("donefeat") == null) and (index("f1") != null)' "$T/o" >/dev/null 2>&1 && ok "status --all --json: open features only" || no "SPEC json hides history: $(out)"
@@ -144,7 +144,7 @@ M $t0 status --history; [ $? = 2 ] && ok "status --history without --all is a us
 M $t0 check; ! grep -Eq "^(ghost|donefeat) " "$T/o" && ok "check without NAME lists open features only" || no "SPEC check lists open: $(out)"
 # check of a name that is neither a branch nor a record
 M $t0 check nosuchfeat --as bob; rc=$?
-[ $rc = 1 ] && grep -q "qargi: no feature nosuchfeat in app (no branch feature/nosuchfeat and no record)" "$T/e" && ! grep -qi free "$T/o" && ok "check: an unknown name exits 1 with the 'no feature' message" || no "SPEC check unknown: rc=$rc $(out)"
+[ $rc = 1 ] && grep -q "qargi: no feature nosuchfeat in app (no branch feature/nosuchfeat and no record)" "$T/e" && ! grep -qiw free "$T/o" && ok "check: an unknown name exits 1 with the 'no feature' message" || no "SPEC check unknown: rc=$rc $(out)"
 M $t0 check old --as bob; rc=$?
 [ $rc = 0 ] && grep -qi free "$T/o" && ok "check: a branch without a record stays free" || no "SPEC check branch only: rc=$rc $(out)"
 jq -n '{purpose:"legacy", started:"2026-01-01T00:00:00Z"}' > "$(rec old)"

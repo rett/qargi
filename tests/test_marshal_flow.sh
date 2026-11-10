@@ -148,7 +148,7 @@ prep alice feature/p1 pt2; rc=$?
 prep bob feature/p2 pt3; rc=$?
 [ $rc = 0 ] && grep -qi "no lead" "$T/e" && ok "prepare: an unled feature is allowed with a 'no lead' warning" || no "SPEC prepare, unled: rc=$rc $(out)"
 prep bob develop pt4; rc=$?
-[ $rc = 0 ] && ! grep -qi "lead" "$T/e" && ok "prepare: --base develop is unaffected" || no "prepare develop: rc=$rc $(out)"
+[ $rc = 0 ] && ! grep -qiw "lead" "$T/e" && ok "prepare: --base develop is unaffected" || no "prepare develop: rc=$rc $(out)"
 
 # --- a feature that does not exist is refused by the gate; start still makes a brand-new one; need_free says how to free a branch
 run $F merge nosuch-$$ agent/t3; rc=$?

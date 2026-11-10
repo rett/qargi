@@ -85,7 +85,7 @@ jq -n '{"alpha-build":{location:"cloud",deployment_id:"depl_B",environment_id:"e
         "alpha-local":{location:"local",local:{agent_file:"/nonexistent/a.md",sha256:"x",model:"m",effort:null}}}' > "$T/c/instances.json"
 
 # unknown, not stale
-$DA instances list 2>&1 | grep -q STALE && no "an entry without a hash was marked STALE" || ok "an entry with no recorded hash is not marked STALE in the list"
+$DA instances list 2>&1 | grep -qw STALE && no "an entry without a hash was marked STALE" || ok "an entry with no recorded hash is not marked STALE in the list"
 $DA instances show alpha-build 2>&1 | grep -q "PROMPT: unknown" && ok "show says the prompt state is unknown" || no "show unknown: $($DA instances show alpha-build 2>&1 | tail -4)"
 $DA instances show alpha-local 2>&1 | grep -q "PROMPT" && no "a local instance got a prompt line" || ok "a local instance has no prompt state"
 
@@ -100,7 +100,7 @@ out=$($DA instances refresh-prompt alpha-build --if-stale 2>&1); rc=$?
 n2=$(wc -l < "$FAKE/ant.log")
 [ $rc = 0 ] && echo "$out" | grep -q "unchanged since it was last rendered.*nothing done" && [ "$n1" = "$n2" ] && ok "--if-stale on a current prompt says so and makes no cloud call" || no "current: rc=$rc n=$n1/$n2 $out"
 $DA instances show alpha-build 2>&1 | grep -q "PROMPT: current" && ok "show says the prompt is current" || no "show current"
-$DA instances list 2>&1 | grep -q STALE && no "current prompt marked STALE" || ok "list does not mark a current prompt"
+$DA instances list 2>&1 | grep -qw STALE && no "current prompt marked STALE" || ok "list does not mark a current prompt"
 
 # the skill changes: stale, and the part is named
 echo "A new rule added to the build skill." >> "$T/copy/roles/build/ROLE.md"

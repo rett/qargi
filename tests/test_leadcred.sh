@@ -63,7 +63,7 @@ FAKE_REPOS=3 FAKE_WRITE_OTHERS=true $S --from-file "$T/tokfile" >/dev/null 2>&1 
 FAKE_REPOS=3 FAKE_WRITE_OTHERS=true $S --from-file "$T/tokfile" --allow-more-repos >/dev/null 2>&1 && ok "…unless that is accepted knowingly" || no "allow-more-repos refused"
 
 out=$($S --from-file "$T/tokfile" 2>&1); tok=$(echo "$out" | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p')
-[ -n "$tok" ] && [ ! -e "$T/c/credentials/alpha-lead-push" ] && ! grep -q vault "$FAKE/ant.log" 2>/dev/null && ok "without --approved it checks and prints a plan, and changes nothing" || no "plan: $out"
+[ -n "$tok" ] && [ ! -e "$T/c/credentials/alpha-lead-push" ] && ! grep -qw vault "$FAKE/ant.log" 2>/dev/null && ok "without --approved it checks and prints a plan, and changes nothing" || no "plan: $out"
 $S --from-file "$T/tokfile" --asked "user: yes" --approved "user: yes" --plan 000000000000 >/dev/null 2>&1 && no "a wrong plan token was accepted" || ok "a wrong plan token is refused"
 $S --from-file "$T/tokfile" --approved "user: yes" --plan "$tok" >/dev/null 2>&1 && no "applied without --asked" || ok "applying needs --asked"
 out=$($S --from-file "$T/tokfile" --asked "user: yes" --approved "user: yes" --plan "$tok" 2>&1); [ $? = 0 ] && ok "apply succeeds" || no "apply: $out"

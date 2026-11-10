@@ -271,6 +271,7 @@ out=$(chk)
 # unusual names are matched by what they add (the control characters are printed as nothing), and only in these names: the paths of the offers
 # come from mktemp, and any short word (nl, esc, "bt ") can be in ten random characters
 offered() { grep -E 'qargi skill (import|link|accept) ' <<<"$1" | sed -E 's#.*qargi skill import (.*/)?##; s#.*qargi skill (link|accept [^ ]+) ##'; }
+# hermetic: allow absent (offered() keeps the name after the last slash: no temporary path is left to hold a token)
 clean_offers() { ! offered "$1" | grep -qE 'PWNED|nlline|esc.?\[31m|user \$\(' && grep -qE "qargi skill accept ${2:-alpha} fine\$" <<<"$1"; }
 clean_offers "$out" && ok "no offer carries an unusual name; the usual one keeps its offers" || no "offers: $out"
 ! LC_ALL=C tr -d '\n' <<<"$out" | grep -q '[[:cntrl:]]' && ok "the section prints no control character" || no "control characters in the section"
