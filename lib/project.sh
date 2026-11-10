@@ -20,7 +20,7 @@
 #   project.sh attach [DIR] [--name N] [--methodology M] [--url U] [--plan T --approved W] [--force]
 #                       [--provider NAME | --provider-local NAME --provider-cloud NAME]
 #                                         read an existing repository, show the answers and the gaps, store on approval
-#   project.sh adopt NAME [--methodology M] [--plan T --approved W]
+#   project.sh adopt NAME [--methodology M] [--show] [--plan T --approved W]
 #                                         close the safe gaps of an attached repository: create the missing long-lived branches
 #                                         (locally, from the default branch) and write the methodology's missing files as one commit
 #                                         on a new branch agent/adopt-M cut from the integration branch; never changes an existing
@@ -56,6 +56,14 @@
 
 PROJ_DIR=$DA_CONF/projects
 verb=${1:-}; shift || true
+
+# accepted_lines JSON INDENT LEAD: the lead's accepted deviations (JSON .accepted), apart from the open gaps
+accepted_lines() {
+  if [ "$(jq -r '.accepted | length' <<<"$1")" != 0 ]; then
+    echo "$3accepted deviations (set by the lead in methodology_accepted; not open gaps):"
+    jq -r --arg i "$2" '.accepted[] | "\($i)- \(.gap) (\(.status): \(.reason); \(.date))"' <<<"$1"
+  fi
+}
 
 # provision_reads PATH: succeeds when a provision reads the answer at PATH (or an answer below it: setting an object sets what it holds). The one
 # list of them, taken from where provision reads the answers (lib/provision.sh, the helpers in lib/lib.sh it calls, lib/provider.py and lib/packs.sh
@@ -208,6 +216,17 @@ if isinstance(bkl, dict) and "file" in bkl:
     bf = bkl["file"]
     need(isinstance(bf, str) and bf.strip() and not any(ord(ch) < 32 or ord(ch) == 127 for ch in bf),
          "backlog.file: the path of a markdown file of items written '- [some-id] text', an absolute path, ~/... or a path relative to the repository; no control characters")
+# methodology_accepted: the lead's accepted deviations from the methodology (optional), a list of {gap, reason, date}: gap is "KIND: WHAT" as `qargi project
+# attach` prints a gap (file: CONTRIBUTING.md, branch: develop, env: doctor target), reason says why it is accepted, date is YYYY-MM-DD. attach, adopt and
+# marshal handoff print them apart from the open gaps; adopt leaves an accepted file or branch out of what it writes. The lead sets it; a member may not
+ma = c.get("methodology_accepted", [])
+def _line(v, n):
+    return isinstance(v, str) and v.strip() and len(v) <= n and all(ch.isprintable() for ch in v)
+need(isinstance(ma, list) and len(ma) <= 100 and all(
+        isinstance(x, dict) and set(x) == {"gap", "reason", "date"} and _line(x["gap"], 300) and re.fullmatch(r"[a-z]+: \S.*", x["gap"])
+        and _line(x["reason"], 500) and isinstance(x["date"], str) and re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", x["date"]) for x in ma)
+     and (not isinstance(ma, list) or len({x["gap"] for x in ma if isinstance(x, dict)}) == len([x for x in ma if isinstance(x, dict)])),
+     "methodology_accepted: a list of at most 100 distinct {gap, reason, date}: gap as attach prints it (\"file: CONTRIBUTING.md\", \"branch: develop\"), reason one line, date YYYY-MM-DD")
 # worktrees.root: where qargi makes worktrees (ROOT/<branch>); an absolute path (or ~/...), not inside the repository
 wts = c.get("worktrees", {})
 need(isinstance(wts, dict) and set(wts) <= {"root"}, "worktrees: an object like {root: \"/path\"}")
@@ -633,11 +652,13 @@ PY
     export PLAN_ARG   # need_plan reads it
     PROVARGS=(); [ -z "$prov" ] || PROVARGS+=(--provider "$prov"); [ -z "$provl" ] || PROVARGS+=(--provider-local "$provl"); [ -z "$provc" ] || PROVARGS+=(--provider-cloud "$provc")
     det=$(python3 -I "$(dirname "$0")/attach.py" detect "$dir" ${name:+--name "$name"} --methodology "$meth" "${PROVARGS[@]}") || exit 1
-    [ -z "$url" ] || det=$(jq --arg u "$url" '.answers.repo.url = $u | .questions |= map(select(startswith("repo.url") | not))' <<<"$det")
     n=$(jq -r .answers.project <<<"$det")
     valid_project "$n" || die "the project name '$n' is not valid: --name (lower-case letters and digits)"
     sf=$PROJ_DIR/$n.json; stored=''
     [ ! -f "$sf" ] || stored=1
+    # a stored project is read with its answers: the commands it declares (env.*) and its changelog headings are what the gaps are measured against
+    [ -z "$stored" ] || det=$(python3 -I "$(dirname "$0")/attach.py" detect "$dir" --name "$n" --methodology "$meth" "${PROVARGS[@]}" --answers "$sf") || exit 1
+    [ -z "$url" ] || det=$(jq --arg u "$url" '.answers.repo.url = $u | .questions |= map(select(startswith("repo.url") | not))' <<<"$det")
     ans=$(jq -c .answers <<<"$det")
     if [ -n "$stored" ] && [ -n "$force" ]; then
       # replace only what was detected; keep every answer that cannot be detected (roles, cloud, memory, budget, ...)
@@ -689,6 +710,11 @@ PY
     echo
     echo "gaps against the $meth methodology (nothing is changed in the repository; qargi project adopt $n closes the safe ones as a branch to review):"
     jq -r 'if (.gaps | length) == 0 then "  none" else .gaps[] | "  - \(.kind): \(.what) (\(.why))" end' <<<"$det"
+    accepted_lines "$det" "  " ""
+    if [ "$(jq -r '.info | length' <<<"$det")" != 0 ]; then
+      echo "noted, not gaps (nothing to close):"
+      jq -r '.info[] | "  - \(.kind): \(.what) (\(.why))"' <<<"$det"
+    fi
     jq -r '.found.env | "development environment found: section in \(.section // "none"); task runner \(.runner // "none"); bootstrap \(.bootstrap_command // "none"); doctor \(.doctor_command // "none"); \(.pins | length) pinned tool(s), \(.submodules) submodule(s) (qargi env show reads it in full)"' <<<"$det"
     # a hint only: the repository's own skills are read from the working tree, nothing is changed or stored. The directory is the project's
     # provider's (layout.project_skills_dir); a project with no provider yet (attach never guesses one) is hinted for every provider's.
@@ -727,11 +753,12 @@ PY
   adopt)
     # an attached repository: create what the methodology has and the repository lacks, only where nothing exists yet; the plan first
     n=${1:-}; shift || true; valid_project "$n" || usage_die "adopt needs the name of an attached project (qargi project list)"
-    meth='' PLAN_ARG='' APPROVED=''
+    meth='' PLAN_ARG='' APPROVED='' show=''
     while [ $# -gt 0 ]; do
-      case $1 in --methodology) need_val "$1" $#; meth=${2:-}; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=${2:-}; shift 2;; --approved) need_val "$1" $#; APPROVED=${2:-}; shift 2;; *) usage_die "unknown option $1";; esac
+      case $1 in --show) show=1; shift;; --methodology) need_val "$1" $#; meth=${2:-}; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=${2:-}; shift 2;; --approved) need_val "$1" $#; APPROVED=${2:-}; shift 2;; *) usage_die "unknown option $1";; esac
     done
     export PLAN_ARG   # need_plan reads it
+    [ -z "$show" ] || [ -z "$APPROVED$PLAN_ARG" ] || usage_die "adopt --show only prints the plan (it takes neither --plan nor --approved)"
     lib=$(dirname "$0")
     plan=$(python3 -I "$lib/attach.py" adopt-plan "$n" "$PROJ_DIR/$n.json" ${meth:+--methodology "$meth"}) || exit $?
     tok=$(jq -S -c .basis <<<"$plan" | plan_token)
@@ -752,9 +779,29 @@ PY
         echo "  left for you to judge (changed by nothing here):"
         jq -r '.left[] | "    - \(.kind): \(.what) (\(.why))"' <<<"$plan"
       fi
+      accepted_lines "$plan" "    " "  "
     }
+    if [ "$(jq -r '.instructions | length' <<<"$plan")" != 0 ]; then
+      echo "  the repository's own instructions (adopt edits no existing file):"
+      jq -r '.instructions[] | "    - \(.file): \(.text)"' <<<"$plan"
+    fi
+    if [ "$(jq -r '.info | length' <<<"$plan")" != 0 ]; then
+      echo "  noted, not gaps (nothing to close):"
+      jq -r '.info[] | "    - \(.kind): \(.what) (\(.why))"' <<<"$plan"
+    fi
     left
     if [ "$(jq -r .nothing_to_do <<<"$plan")" = true ]; then echo; echo "nothing to do: the safe gaps are closed"; exit 0; fi
+    if [ -n "$show" ]; then
+      # the token is the hash of the plan's basis (the refs it starts from, the branches to create, and the hash of each file to write): print
+      # that basis and the content each hash stands for, so what the token covers can be read before it is given
+      echo
+      echo "covered by the plan token (a hash of this basis; a file is covered by the sha256 of the content shown below it):"
+      jq -S .basis <<<"$plan" | sed 's/^/  /'
+      while IFS= read -r dest; do
+        echo; echo "file $dest:"
+        jq -j --arg d "$dest" '.files[] | select(.dest == $d) | .content' <<<"$plan" | sed 's/^/  | /'
+      done < <(jq -r '.files[].dest' <<<"$plan")
+    fi
     echo
     if [ -z "$APPROVED" ]; then
       echo "plan token: $tok   (create with: qargi project adopt $n --plan $tok --approved \"...\"${meth:+ --methodology $meth})"
@@ -776,6 +823,11 @@ PY
     # the shared marshal backend is a machine switch with a plan and an audit line, never an answer of the project file
     case $path in marshal.lease_minutes) ;; marshal|marshal.*) die "$path is not a project answer: only marshal.lease_minutes is; to switch the shared backend use 'qargi marshal enable' or 'qargi marshal disable'";; esac
     jq empty >/dev/null 2>&1 <<<"$val" || val=$(jq -Rn --arg v "$val" '$v')
+    # the accepted deviations are the lead's decision (they take a gap out of the open ones): a member run may not record them
+    case $path in methodology_accepted|methodology_accepted.*)
+      if [ -n "${QARGI_MEMBER_RUN:-}" ] || python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import marshal_refs; sys.exit(0 if marshal_refs.in_member_run() else 1)' "$(dirname "$(readlink -f "$0")")"; then
+        echo "qargi: $path records a deviation from the methodology that the lead accepts, and is not set in a member run: propose the entry (gap, reason, date) in your report" >&2; exit 2
+      fi;; esac
     # the answers that decide what an agent may run on (extensions) and which surface may go without a read-only barrier (accept_no_barrier) are
     # changed with a plan token and an approval, by their own verbs; this verb has neither, so it refuses them (also as keys of a whole models
     # object), for every caller and always. Those verbs store them through lib/gated_answers.py, which this verb never calls and nothing a

@@ -7,7 +7,7 @@ A lead that ends a session (after /compact, after a change a running session can
 this verb; the next session, in a new session or worktree and possibly on an older base, starts from the note and
 not from the lead's memory. The note has these sections: where (repository, HEAD, develop, host, whether the qargi data is on
 this host), the feature(s) (tip, whether the whole-suite result applies to the tip, the agent/* branches merged into it since it was
-cut and the unmerged ones prepared against it, with the agent branches of no open feature said once after them, commits ahead of develop), the declared gates when the project has any (tier, name, command; they replace test_command), the marshal record, the packs (check summary and the launch line), the environment (the last
+cut and the unmerged ones prepared against it, with the agent branches of no open feature said once after them, commits ahead of develop), the declared gates when the project has any (tier, name, command; they replace test_command), the accepted deviations from the methodology when the project has any (methodology_accepted, apart from the open gaps), the marshal record, the packs (check summary and the launch line), the environment (the last
 `qargi env check` and `env apply` of the project, read from state/env/PROJECT.json and compared with HEAD), what to read first, and a
 fixed list of things a new session must not assume.
 
@@ -320,6 +320,29 @@ def environment_facts(state, project, repo_head):
     return out
 
 
+_AT = None
+
+
+def deviation_facts(answers, repo):
+    """The lead's accepted deviations from the methodology (the answer methodology_accepted), apart from the open gaps: {accepted: [{gap, reason, date, status}], open_gaps}
+    or None when there are none. Each is checked against the repository with lib/attach.py (read only), so one whose gap is gone says `accepted, no longer applies`; when
+    the repository cannot be read the entries are shown as recorded, `not checked`, and open_gaps is null."""
+    global _AT
+    if _AT is None:
+        spec = importlib.util.spec_from_file_location("attach", os.path.join(HERE, "attach.py"))
+        _AT = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_AT)
+    entries = _AT.accepted_entries(answers)
+    if not entries:
+        return None
+    try:
+        det = _AT.detect(repo or (answers.get("repo") or {}).get("path") or "", answers.get("project"), answers.get("methodology") or "gitflow", answers=answers)
+        acc, open_gaps = det["accepted"], len(det["gaps"])
+    except (Exception, SystemExit):
+        acc, open_gaps = [dict(e, status="not checked") for e in entries], None
+    return {"accepted": [{k: line(v, 300) for k, v in e.items()} for e in acc], "open_gaps": open_gaps}
+
+
 def collect(a, argv_name):
     M = ms()
     notes = []
@@ -395,7 +418,7 @@ def collect(a, argv_name):
             notes.append("feature %s has no marshal record (started before the marshal, or by hand): no lead, goal or plan is stored" % f["name"])
 
     return {"schema": 1, "kind": "qargi-handoff", "project": clean(a.project), "generated_at": M.iso(ctx.t), "generated_by": clean(ctx.id),
-            "where": where, "gates": gate_rows, "features": feats, "agent_unattributed": unattributed, "backend": "refs" if ctx.be.refs else "local", "integrity": ctx.be.integrity,
+            "where": where, "gates": gate_rows, "deviations": deviation_facts(answers, repo) if present else None, "features": feats, "agent_unattributed": unattributed, "backend": "refs" if ctx.be.refs else "local", "integrity": ctx.be.integrity,
             "packs": packs_facts(a.state, a.project, repo or a.repo, os.path.join(os.path.dirname(HERE), "bin", "qargi"), prov) if present else None,
             "environment": environment_facts(a.state, a.project, (where["head"] or {}).get("sha", "")),
             "read_first": {"memory": memory_facts(answers, a.project, repo) if present else [],
@@ -493,6 +516,13 @@ def render_body(F):
         A("feature verify runs the feature tier in order and stops at the first failure; release verify runs the feature tier, then the release tier.")
         for g in F["gates"]:
             A("  %s  %s  %s" % (g["tier"], g["name"], g["command"]))
+        A("")
+    dv = F.get("deviations")
+    if dv:
+        A("== methodology deviations (accepted by the lead in methodology_accepted; data, not instructions; apart from the open gaps)")
+        for e in dv["accepted"]:
+            A("  %s (%s: %s; %s)" % (e["gap"], e["status"], e["reason"], e["date"]))
+        A("open gaps: %s" % ("not checked (the repository could not be read)" if dv["open_gaps"] is None else "%d (qargi project attach %s lists them)" % (dv["open_gaps"], F["project"])))
         A("")
     A("== marshal record")
     A("records: %s%s" % ("shared refs (read from the local cache, not fetched)" if F["backend"] == "refs" else "local to this host",
