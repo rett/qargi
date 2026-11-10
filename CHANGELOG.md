@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- The lock that `release finish` (and every finishing verb) takes checks the exit status of `flock`: a `flock` that fails or is not installed ends the verb with "could not take the lock", naming the cause (the command missing, or the lock directory's file system), and nothing is changed; before, the verb went on as if it held the lock, so two runs of it were not kept apart. `tests/test_release_cut.sh` is the new test of the release ceremony.
+
 ## [0.2.9] - 2026-11-09
 
 ### Added

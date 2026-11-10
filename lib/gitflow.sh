@@ -443,7 +443,7 @@ proc_alive() { local t; kill -0 "$1" 2>/dev/null || return 1; [ -n "${2:-}" ] ||
 pid_lock() {
   local d=$1 rc=0 out
   mkdir -p "$(dirname "$d")" && chmod 700 "$(dirname "$d")" 2>/dev/null
-  out=$( ( flock 9
+  out=$( ( flock 9 || exit 4   # a flock that failed (or is not installed) took no lock: say so, never go on as if it had
     if ! mkdir "$d" 2>/dev/null; then
       pid='' tok=''; { read -r pid tok <"$d/pid"; } 2>/dev/null || true
       if [ -n "$pid" ]; then
@@ -452,7 +452,13 @@ pid_lock() {
       rm -rf -- "$d"; mkdir "$d" || exit 1
     fi
     echo "$$ $(proc_token $$)" > "$d/pid" ) 9>"$(dirname "$d")/.pidlock" ) || rc=$?
-  case $rc in 0) INTENT_LOCK=$d;; 3) die "another $2 is running (process $out, $d); nothing was changed";; *) die "could not take the lock $d";; esac
+  case $rc in
+    0) INTENT_LOCK=$d;;
+    3) die "another $2 is running (process $out, $d); nothing was changed";;
+    4) command -v flock >/dev/null 2>&1 || die "could not take the lock $d: the flock command (util-linux) is not installed, so two runs of this verb could not be kept apart; nothing was changed"
+       die "could not take the lock $d: flock on $(dirname "$d")/.pidlock failed (does that directory's file system support locks?); nothing was changed";;
+    *) die "could not take the lock $d";;
+  esac
 }
 intent_lock() { pid_lock "$(intent_file "$1").run" "finish of $1"; }   # KEY
 intent_unlock() { [ -z "$INTENT_LOCK" ] || rm -rf "$INTENT_LOCK"; INTENT_LOCK=''; }
