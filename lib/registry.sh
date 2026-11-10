@@ -81,7 +81,7 @@ init_cloud() {
     echo "agent updated to v$(jq -r .version <<<"$ag"); deployment now pins v$(jq -r .agent.version <<<"$d")"
   fi
   name=${NAME:-$(slug "$(jq -r '.name' <<<"$d")")}
-  [ -n "$name" ] || die "empty instance name; pass --name"
+  [ -n "$name" ] || usage_die "empty instance name; pass --name"
   split_instance "$name"
   rec=$(jq -n --argjson d "$d" --argjson ag "$ag" --arg t "$(now)" '{
       location: "cloud", created: $t, deployment_id: $d.id,

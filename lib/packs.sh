@@ -565,7 +565,7 @@ if [ "$KIND" = packs ]; then
       # Read-only and evaluated from the links when called: the index of what the role has enabled, or one pack's text and
       # the library path of its files. Refuses what render refuses (a pack that fails its review or changed since approved).
       PRJ=${PROJECT:-$(python3 -I "$(dirname "$(readlink -f "$0")")/help.py" infer)}; ROL=$ROLE; LN=${ARGS[0]:-}
-      [ -n "$PRJ" ] || die "load: name the project with --project P (none was inferred from here)"
+      [ -n "$PRJ" ] || usage_die "load: name the project with --project P (none was inferred from here)"
       valid_role "$ROL" || die "load: --role is one of: $DA_ROLES"
       vet() { # kind name -> dies unless the pack is sound; sets P
         P=$(item_path "$1" "$2"); [ -e "$P" ] || die "attached pack $1:$2 is not in the library"
@@ -674,7 +674,7 @@ case "$VERB" in
       [ -f "$WORK" ] || die "a tool source is a JSON file"
       NAME=${NAME:-$(jq -r .name "$WORK" 2>/dev/null)}; cp "$WORK" "$T/stage"
     fi
-    valid_slug "$NAME" || die "cannot work out a valid name; pass --name"
+    valid_slug "$NAME" || usage_die "cannot work out a valid name; pass --name"
     [ -z "$(ls "$PACKS/skills/$NAME" "$PACKS/tools/$NAME.json" 2>/dev/null)" ] || die "$NAME already exists in the library (names are unique; pass --name or remove the old one)"
     echo "== review of $KIND $NAME from $SRCREC"
     [ -z "${IGNORED_REC:-}" ] || echo "note: the source's top-level .pack.json is qargi's own record of a library pack: it is ignored and not copied (the pack gets a new record from this import)"
