@@ -4646,6 +4646,54 @@ class FifthReview(HookCase):
         for f in ("ability", "class", "tmpdir"):
             self.assertEqual(self.call("Write", {"file_path": os.path.join(self.run_dir, f)}, None, "read-only").returncode, 2, f)
 
+    def test_a_write_to_the_tmp_the_registry_names_is_matched_to_its_run_by_the_path_not_by_the_directory_of_the_call(self):
+        """TMP is usually below /dev/shm, away from the run directory: a call made from a directory that is in no run (cd elsewhere, a tool that starts in the home)
+        found no run and was refused as NO_RUN. The registry names the run a TMP belongs to, so the path finds it; everything else stays refused."""
+        tmp = os.path.join(self.t, "shm-tmp")
+        os.makedirs(tmp)
+        plain = os.path.join(self.t, "plain")                                  # a directory that holds no run's record
+        os.makedirs(plain)
+        elsewhere = os.path.join(self.t, "elsewhere")
+        os.makedirs(elsewhere)
+        reg = os.path.join(self.state, "local-runs.jsonl")
+        away = os.path.join(self.t, "plain")                               # the working directory of the call: in no run
+        cmds = ["echo x > %s/n" % tmp, "cp r %s/" % tmp, "git log > %s/l" % tmp, "mkdir %s/d" % tmp, "touch %s/n" % tmp, "sort -o %s/s f" % tmp]
+        with open(reg, "w") as f:
+            f.write(json.dumps({"run": self.run_dir, "tmpdir": tmp}) + "\n")
+        self.assertEqual(self.not_allowed(cmds, away, "read-only"), [])
+        for tool in ("Write", "Edit"):
+            self.assertEqual(self.call(tool, {"file_path": os.path.join(tmp, "n")}, away, "read-only").returncode, 0, tool)
+        refused = ["echo x > %s/n" % elsewhere, "echo x > %s/n" % self.t, "echo x > %s/../n" % tmp, "echo x > %s" % os.path.join(self.run_dir, "ability"),
+                   "echo x > %s/a.go" % self.clone, "cp r %s" % elsewhere, "echo x > %s.other/n" % tmp, "rm -rf %s/.." % tmp, "echo x > /tmp/qargi-zzz"]
+        self.assertEqual(self.not_refused(refused, away, "read-only"), [])
+        for f in (os.path.join(elsewhere, "n"), os.path.join(self.t, "n"), os.path.join(tmp + ".other", "n")):
+            self.assertEqual(self.call("Write", {"file_path": f}, away, "read-only").returncode, 2, f)
+        # fail closed: a registry that names a directory which is no run, one that is unreadable or does not name this tmpdir, and no registry at all
+        for entry in ({"run": plain, "tmpdir": tmp}, {"run": os.path.join(self.t, "gone"), "tmpdir": tmp}, {"run": self.run_dir, "tmpdir": elsewhere}, {"run": self.run_dir, "tmpdir": "relative/tmp"},
+                      {"run": self.run_dir}, {"tmpdir": tmp}, {"run": 7, "tmpdir": tmp}):
+            with open(reg, "w") as f:
+                f.write("not json\n" + json.dumps(entry) + "\n")
+            r = self.call("Bash", {"command": "echo x > %s/n" % tmp}, away, "read-only")
+            self.assertEqual(r.returncode, 2, entry)
+            self.assertIn("no run directory", r.stderr)
+        os.unlink(reg)
+        r = self.call("Write", {"file_path": os.path.join(tmp, "n")}, away, "read-only")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("no run directory", r.stderr)
+        r = self.call("Bash", {"command": "echo x > %s/n" % tmp}, away, "read-only")
+        self.assertEqual(r.returncode, 2)
+        # a member of another run, called from inside it, is held to its own OUT and TMP as before
+        with open(reg, "w") as f:
+            f.write(json.dumps({"run": self.run_dir, "tmpdir": tmp}) + "\n")
+        other = os.path.join(self.t, "run2")
+        for d in ("clone", "out"):
+            os.makedirs(os.path.join(other, d))
+        for name in ("ability", "refs.before"):
+            with open(os.path.join(other, name), "w") as f:
+                f.write("review\n" if name == "ability" else "")
+        self.assertEqual(self.not_refused(["echo x > %s/n" % tmp], os.path.join(other, "clone"), "read-only"), [])
+        self.assertEqual(self.not_allowed(["echo x > %s/out/r.md" % other], os.path.join(other, "clone"), "read-only"), [])
+
     # --- G7: a cd the guard cannot read leaves the directory unknown, and a relative write after it is refused
     def test_a_cd_to_a_directory_the_guard_cannot_name_makes_a_relative_write_unreadable(self):
         s = os.path.dirname(self.skill)

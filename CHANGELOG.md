@@ -9,6 +9,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 - The refusal of a restricted environment variable under the read-only class (`PATH`, `TMPDIR`, `HOME`, `GIT_*`, `LD_*`, `PAGER`, `BASH_ENV` ...) says what it is for: a read-only member may not assign the name (inline, with `env`, `export` or `declare`) and runs with the one it was given; a build, vet or test command with that environment is not refused. It read "TMPDIR is not set", which read as if the variable were missing from the environment of a command that only uses it. The rule is the same; only the wording changed.
 
+### Fixed
+- A write by a read-only member to its run's temporary directory (TMP, usually below `/dev/shm`) is matched to its run by the path, through the lead's registry of local runs, when the call's working directory is in no run. It was refused as "no run directory is found from this directory" (a Go test run from elsewhere, a redirection after a `cd`). Every other refusal is kept: a path outside OUT and TMP, a registry line that names no run, a relative or missing directory, a path beside or above the registered directory.
+
 ## [0.2.9] - 2026-11-09
 
 ### Added
