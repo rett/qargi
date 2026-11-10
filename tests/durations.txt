@@ -129,3 +129,4 @@
 27 bash tests/test_marshal_batch.sh
 9 python3 tests/test_marshal_startup.py
 0 python3 tests/test_prose_lint.py
+8 bash tests/test_audit_lock.sh

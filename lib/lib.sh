@@ -357,10 +357,19 @@ run_clean() { # DIR COMMAND...: runs a command in DIR without the project's clou
 # said>": the quote is stored in the tracker so the choice is auditable.
 # Every approval-gated or cloud-driving verb leaves an append-only line here.
 audit_log() { # verb [detail]
-  local f=$DA_STATE/audit.log
+  local f=$DA_STATE/audit.log line rc=0
   # AUDIT_ORIGIN (set by the supervisor only) adds an origin field, so its lines can be told from the owner's
-  jq -nc --arg t "$(now)" --arg v "$1" --arg d "${2:-}" --arg a "${ASKED:-}" --arg p "${APPROVED:-}" --arg n "${NESTED_SKIPPED:-}" --arg o "${AUDIT_ORIGIN:-}" \
-    '{ts:$t, verb:$v, detail:$d, asked:$a, approved:$p, nested:($n != "")} + (if $o == "" then {} else {origin:$o} end)' >> "$f"
+  line=$(jq -nc --arg t "$(now)" --arg v "$1" --arg d "${2:-}" --arg a "${ASKED:-}" --arg p "${APPROVED:-}" --arg n "${NESTED_SKIPPED:-}" --arg o "${AUDIT_ORIGIN:-}" \
+    '{ts:$t, verb:$v, detail:$d, asked:$a, approved:$p, nested:($n != "")} + (if $o == "" then {} else {origin:$o} end)') || return 1
+  # one whole line, appended under an exclusive flock on audit.log.lock beside the log (the python writers take the same lock); a flock
+  # that failed (or is not installed) took no lock: say so and write nothing, as pid_lock does
+  ( umask 077; flock 9 || exit 4; printf '%s\n' "$line" >> "$f" ) 9> "$f.lock" || rc=$?
+  case $rc in
+    0) ;;
+    4) command -v flock >/dev/null 2>&1 || die "could not take the lock $f.lock: the flock command (util-linux) is not installed, so two writers of the audit log could not be kept apart; nothing was written"
+       die "could not take the lock $f.lock: flock on $f.lock failed (does that directory's file system support locks?); nothing was written";;
+    *) die "could not append to the audit log $f";;
+  esac
   chmod 600 "$f" 2>/dev/null || true
 }
 

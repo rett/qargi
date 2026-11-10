@@ -13,6 +13,7 @@ import datetime, getpass, hashlib, io, json, os, re, shutil, subprocess, sys, ta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import paths as P  # noqa: E402  where the data lives
+import procenv as PE  # noqa: E402  the locked append to the audit log
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -143,10 +144,8 @@ def pick(items, prompt, default):
 
 def audit(verb, detail, approved=""):
     os.makedirs(STATE, mode=0o700, exist_ok=True)
-    f = os.path.join(STATE, "audit.log")
-    with open(f, "a") as fh:
-        fh.write(json.dumps({"ts": now(), "verb": verb, "detail": detail, "asked": "", "approved": approved, "nested": False}) + "\n")
-    os.chmod(f, 0o600)
+    line = json.dumps({"ts": now(), "verb": verb, "detail": detail, "asked": "", "approved": approved, "nested": False}) + "\n"
+    PE.append_locked(os.path.join(STATE, "audit.log"), line.encode())
 
 
 # --- files and the cloud -------------------------------------------------------------------------------------------
@@ -746,8 +745,7 @@ def apply_plan(plan, archive, projects):
         elif path == "state/audit.log":
             have = set((read(os.path.join(STATE, "audit.log")) or b"").decode("utf-8", "replace").splitlines())
             new = [l for l in archive[path][0].decode("utf-8", "replace").splitlines() if l not in have]
-            with open(os.path.join(STATE, "audit.log"), "a") as fh:
-                fh.write("".join(l + "\n" for l in new))
+            PE.append_locked(os.path.join(STATE, "audit.log"), "".join(l + "\n" for l in new).encode())
         else:
             target = {"config": CONF, "credentials": CONF, "definitions": os.path.join(STATE, "definitions"), "state": STATE}[comp]
             full = os.path.join(target, "credentials/" + rest if comp == "credentials" else rest)

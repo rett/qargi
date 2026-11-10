@@ -41,6 +41,7 @@ if LIB not in sys.path:
     sys.path.insert(0, LIB)
 import provider as P  # noqa: E402                         (lib/provider.py puts itself in sys.modules under this name when it is the script)
 import gated_answers as GA  # noqa: E402
+import procenv as PE  # noqa: E402  the locked append to the audit log
 from conformance import review as R  # noqa: E402
 
 _print = print
@@ -91,12 +92,7 @@ def audit(verb, detail, opts):
     os.makedirs(d, exist_ok=True)
     f = os.path.join(d, "audit.log")
     line = {"ts": now(), "verb": verb, "detail": detail, "asked": opts.get("--asked", ""), "approved": opts.get("--approved", ""), "nested": False}
-    with open(f, "a") as fh:
-        fh.write(json.dumps(line) + "\n")
-    try:
-        os.chmod(f, 0o600)
-    except OSError:
-        pass
+    PE.append_locked(f, (json.dumps(line) + "\n").encode())
 
 
 def parse(args, valued=(), flags=()):
