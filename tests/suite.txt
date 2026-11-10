@@ -27,6 +27,7 @@ fast | par | 300 | 18 | bash tests/test_tier_hook.sh
 full | par | 300 | 14 | bash tests/test_tier_packet.sh
 fast | par | 300 | 3 | python3 tests/test_help.py | lib/commands.py lib/help.py man/qargi.1 completions/* skills/qargi-verify/SKILL.md
 full | par | 360 | 60 | python3 tests/test_startup.py | bin/qargi lib/help.py lib/commands.py lib/cloud.py lib/paths.py
+full | par | 300 | 24 | python3 tests/test_startup_modules.py | bin/qargi lib/lib.sh lib/provider.py lib/marshal_store.py lib/help.py lib/gates.py lib/lead_usage.py
 full | par | 300 | 80 | python3 tests/test_site.py | lib/site.py lib/site_md.py lib/site/*
 full | par | 300 | 26 | python3 tests/test_membackend.py | lib/membackend.py
 full | par | 300 | 30 | python3 tests/test_transfer.py | lib/transfer.py

@@ -109,7 +109,7 @@ busy_end() { [ -z "$BUSY" ] || rm -f "$BUSY"; BUSY=''; }
 # lead_advice [--feature NAME]: the one line of the stage verbs (feature finish, the last merge of a feature, release finish, marshal handoff):
 # the lead's context in use and whether a compact is safe now (lib/lead_usage.py). Fail-soft: it never changes the status of the verb.
 lead_advice() {
-  python3 -I "$(dirname "${BASH_SOURCE[0]}")/lead_usage.py" advice --state "$DA_STATE" --conf "$DA_CONF" --project "${PROJ:-}" "$@" 2>/dev/null || true
+  pymod lead_usage advice --state "$DA_STATE" --conf "$DA_CONF" --project "${PROJ:-}" "$@" 2>/dev/null || true
 }
 on_exit() { marshal_hold_stop; busy_end; cleanup; intent_unlock; }
 trap on_exit EXIT   # the lease renewer never outlives the verb, whatever way it ended
@@ -224,11 +224,11 @@ detached_mix() {
 gates_load() {
   local out rc=0
   GATES=''
-  out=$(python3 -I "$(dirname "$0")/gates.py" select "$af" "$@" 2>&1) || rc=$?
+  out=$(pymod gates select "$af" "$@" 2>&1) || rc=$?
   [ "$rc" = 0 ] || die "$out"
   [ -n "$out" ] || return 0
   GATES=$out
-  TESTCMD=$(python3 -I "$(dirname "$0")/gates.py" identity "$af" "$@") || die "the gates of the answers cannot be read"   # the one place the identity is built (lib/gates.py)
+  TESTCMD=$(pymod gates identity "$af" "$@") || die "the gates of the answers cannot be read"   # the one place the identity is built (lib/gates.py)
 }
 # gates_need TIERS -> refuses when gates are declared and none has those tiers (a verify of nothing would pass)
 gates_need() { [ "${GATES:-}" != "[]" ] || die "the answer gates declares no gate of tier $1: add one (qargi project set $PROJ gates '[...]'); there is nothing to run"; }
@@ -614,7 +614,7 @@ backlog_note() {
   [ -z "$ids" ] || echo "  backlog items named in these commits: $ids"
 }
 project_load() { # PROJ (or inferred) -> af, REPO, TESTCMD, METH
-  [ -n "$PROJ" ] || PROJ=$(python3 -I "$(dirname "$0")/help.py" infer)
+  [ -n "$PROJ" ] || PROJ=$(pymod help infer)
   af=$DA_CONF/projects/$PROJ.json
   [ -f "$af" ] || die "no stored answers for '$PROJ': qargi project attach DIR, or --project"
   REPO=$(jq -r '.repo.path // ""' "$af"); REPO=${REPO/#\~/$HOME}
