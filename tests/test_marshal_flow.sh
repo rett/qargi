@@ -212,6 +212,9 @@ run $F verify un7; rc=$?
 [ $rc = 3 ] && [ ! -e "$T/suite-ran2" ] && grep -q -- "--assume-unreachable-ok" "$T/e" && ok "unreachable: feature verify is refused and the suite did not run" || no "SPEC unreachable verify: rc=$rc $(out)"
 run $F finish un7; rc=$?
 [ $rc = 3 ] && grep -q -- "--assume-unreachable-ok" "$T/e" && ok "unreachable: feature finish is refused" || no "SPEC unreachable finish: rc=$rc $(out)"
+run $F start un8 --purpose "not made"; rc=$?
+[ $rc = 3 ] && ! git -C "$R" rev-parse -q --verify feature/un8 >/dev/null && [ ! -e "$(rec un8)" ] && grep -q -- "--assume-unreachable-ok" "$T/e" \
+  && ok "unreachable: feature start is refused (exit 3) before the branch or the record is made" || no "SPEC unreachable start: rc=$rc $(out)"
 [ "$(wc -l < "$AUD")" = "$a1" ] && ok "unreachable: a refusal writes no audit line" || no "a refusal was audited: $(tail -n +"$((a1 + 1))" "$AUD")"
 run $F list; rc=$?
 [ $rc = 0 ] && ok "unreachable: a read (feature list) is not refused" || no "feature list with an unreachable marshal: rc=$rc $(out)"
@@ -224,6 +227,9 @@ tail -n +"$((a1 + 1))" "$AUD" | grep -q '"verb":"marshal:unreachable-ok"' && tai
 b=$(tip feature/un7)
 run $F sync un7 --assume-unreachable-ok; rc=$?
 [ $rc = 0 ] && [ "$(tip feature/un7)" != "$b" ] && ok "--assume-unreachable-ok: feature sync goes on" || no "sync with the flag: rc=$rc $(out)"
+run $F start un9 --assume-unreachable-ok; rc=$?
+[ $rc = 0 ] && git -C "$R" rev-parse -q --verify feature/un9 >/dev/null && grep -q "app un9 verb=start remote=origin" "$AUD" \
+  && ok "--assume-unreachable-ok: feature start makes the branch and audits the override (verb=start)" || no "start with the flag: rc=$rc $(out); $(tail -n 2 "$AUD")"
 mend_origin; unset QARGI_REMOTE_TIMEOUT
 
 [ "$fail" = 0 ] && echo "marshal flow: all passed" || echo "marshal flow: FAILED"

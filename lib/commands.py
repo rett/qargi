@@ -301,8 +301,8 @@ COMMANDS = {
         "scripts": ["feature.sh"],
         "verbs": {
             "start": verb("Cut feature/NAME from develop", [("NAME", "none")], [PROJECT_OPT, opt("--purpose", "what the feature is about; related work only goes into one feature", "TEXT"),
-                                                  opt("--worktree", "also make the feature's worktree at <worktrees.root>/feature/NAME and print its path")],
-                          desc="Refuses a name origin already has (asked live with git ls-remote), so another person's branch is not shadowed; fetch it instead. Refuses the name of a detached branch (repo.detached)."),
+                                                  opt("--worktree", "also make the feature's worktree at <worktrees.root>/feature/NAME and print its path"), FLOW_UNREACHABLE_OPT],
+                          desc="Refuses a name origin already has (asked live with git ls-remote), so another person's branch is not shadowed; fetch it instead. Refuses the name of a detached branch (repo.detached). The marshal record is made before the branch: " + FLOW_UNREACHABLE_NOTE),
             "list": verb("List the open features: purpose, distance from develop, and the files two features both change", [], [PROJECT_OPT],
                          desc=("Several features can be open at once. Two that change the same file will conflict whichever lands second: keep related work in one feature, unrelated work in another. "
                                "It also flags each worktree of the project outside the worktree root (answers worktrees.root, default <state>/worktrees/PROJECT) with the git worktree move that "
@@ -357,7 +357,7 @@ COMMANDS = {
                  "the taker's own clock). Only the lead pushes those refs; a member run cannot. "
                  "Exit status 3 means the remote could not be checked. claim and check then refuse, saying what could not be reached (the records of the project on the remote) and why, and change nothing; "
                  "with --assume-unreachable-ok they go on (a claim stays provisional until a later verb completes or drops it, a check answers from what this machine fetched last) and the audit log gets a marshal:unreachable-ok line. "
-                 "The verbs of the flow that ask the marshal first (feature sync, merge, verify and finish) do the same and take the same flag: they refuse with exit 3 and change nothing, and with --assume-unreachable-ok go on and write the same audit line. "
+                 "The verbs of the flow that ask the marshal first (feature start, sync, merge, verify and finish) do the same and take the same flag: they refuse with exit 3 and change nothing, and with --assume-unreachable-ok go on and write the same audit line. "
                  "status shows the cache with a 'remote not checked' notice. "
                  "Every other change of a shared record (set, renew, release, take, takeover, finish, resign) needs the remote and exits 3 without it; there is no override for those. Records can be signed: one key per lead machine, a signers file per project "
                  "and the mode in the switch file (marshal enable --integrity); with integrity on, status and check tag records signed, unsigned, INVALID or cannot verify, "

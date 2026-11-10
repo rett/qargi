@@ -54,7 +54,7 @@ words; other machines' clocks are never compared. When the remote cannot be reac
 (exit 3, "remote not checked (why)"), saying what could not be reached and why, and change nothing: a claim made without the remote would be a
 guess about who else leads the feature. If you know better, `--assume-unreachable-ok` lets them go on (a claim is marked provisional until it
 reaches the remote, a check answers from the last fetched copy) and the audit log records it as `marshal:unreachable-ok`. The flow verbs
-that ask the marshal first (`feature sync`, `merge`, `verify` and `finish`) refuse the same way (exit 3, nothing changed, the message names the flag) and
+that ask the marshal first (`feature start`, `sync`, `merge`, `verify` and `finish`) refuse the same way (exit 3, nothing changed, the message names the flag) and
 take the same `--assume-unreachable-ok`, which lets the verb go on and writes the same audit line `marshal:unreachable-ok`; a project whose marshal is local
 (the default) never reaches a remote and is not affected. `marshal status`
 shows the last fetched copy with the same notice, and every other change of a record needs the remote and has no override. It is off by default, the guard

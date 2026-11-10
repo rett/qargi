@@ -632,7 +632,7 @@ project_load() { # PROJ (or inferred) -> af, REPO, TESTCMD, METH
   RDIR=$DA_STATE/releases; mkdir -p "$RDIR"
 }
 
-# marshal_flow FUNC ARGS...: runs the shell API function FUNC (marshal_check) for a flow verb. Unless the lead gave --assume-unreachable-ok
+# marshal_flow FUNC ARGS...: runs the shell API function FUNC (marshal_check or marshal_start) for a flow verb. Unless the lead gave --assume-unreachable-ok
 # (ASSUME_UNREACHABLE, set by the verb's option parsing) it adds --need-remote: a shared marshal whose remote cannot be asked is then an exit 3 and nothing
 # is changed. With the flag the verb goes on, and what marshal_store.py wrote into the override file becomes an audit line marshal:unreachable-ok. A project
 # whose marshal is local (the default) or off never reaches a remote and is not affected either way.

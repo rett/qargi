@@ -3,7 +3,7 @@
 # A feature is as broad as you like (a theme, not a task): the lead merges the verified series of each related task into it,
 # and the whole test suite runs once, when the feature is complete. Nothing reaches develop before that.
 #
-#   feature.sh start NAME [--purpose TEXT] [--worktree] [--project P]
+#   feature.sh start NAME [--purpose TEXT] [--worktree] [--assume-unreachable-ok] [--project P]
 #                                                  feature/NAME from develop (a local branch); the purpose says what is related. --worktree also
 #                                                  makes its worktree at <worktrees.root>/feature/NAME and prints the path
 #   feature.sh list [--project P]                  the open features: purpose, distance from develop, and the files two features both change
@@ -46,7 +46,7 @@ if [ "$verb" = list ] || [ "$verb" = park ]; then NAME_ARG=-; fi
 case $NAME_ARG in master|develop) die "'$NAME_ARG' is a long-lived branch";; esac
 export RESOLVED
 [ -z "$WORKTREE" ] || [ "$verb" = start ] || die "--worktree belongs to feature start"
-case $verb in sync|merge|verify|finish) ;; *) [ -z "$ASSUME_UNREACHABLE" ] || die "--assume-unreachable-ok belongs to the verbs that ask the marshal first: feature sync, merge, verify and finish";; esac
+case $verb in start|sync|merge|verify|finish) ;; *) [ -z "$ASSUME_UNREACHABLE" ] || die "--assume-unreachable-ok belongs to the verbs that ask the marshal first: feature start, sync, merge, verify and finish";; esac
 . "$(dirname "$0")/gitflow.sh"
 # shellcheck disable=SC2154  # PROJ and TESTCMD come from project_load
 project_load
@@ -224,10 +224,13 @@ case $verb in
         g rev-parse -q --verify "refs/remotes/origin/$BR" >/dev/null && die "origin/$BR was seen at the last fetch and origin cannot be asked now: fetch it or choose another name";;
     esac
     if [ -n "$WORKTREE" ]; then wtp=$WT_ROOT/$BR; [ ! -e "$wtp" ] || die "$wtp exists already: nothing was created"; fi
+    # the marshal keeps the record (purpose, started) and makes this identity the lead. It is asked first: a shared marshal that cannot be reached
+    # refuses the start (exit 3) before anything is made, unless --assume-unreachable-ok; any other failure leaves the feature without a record
+    mrc=0; marshal_flow marshal_start "$PROJ" "$NAME_ARG" "$PURPOSE" || mrc=$?
+    if [ "$mrc" = 3 ] && [ -z "$ASSUME_UNREACHABLE" ]; then marshal_unreachable_refuse "$NAME_ARG"; fi
     g branch "$BR" develop
     journal_ref "$REPO" "refs/heads/$BR" "" "$(sha_of "$BR")" feature:start
-    # the marshal keeps the record (purpose, started) and makes this identity the lead; the feature exists either way
-    marshal_start "$PROJ" "$NAME_ARG" "$PURPOSE" || echo "qargi: warning: the marshal record of $NAME_ARG was not written (see above); $BR exists" >&2
+    [ "$mrc" = 0 ] || echo "qargi: warning: the marshal record of $NAME_ARG was not written (see above); $BR exists" >&2
     echo "created $BR from develop ($(g rev-parse --short "$BR")); merge each verified task into it: qargi feature merge $NAME_ARG BRANCH"
     echo "tasks branch from here: dispatch them with --base $BR"
     if [ -n "$WORKTREE" ]; then

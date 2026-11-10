@@ -42,7 +42,8 @@
 #
 # Shell API for other scripts (source this file after lib.sh; each function takes the project name first, so it needs
 # no project_load, and uses the identity above):
-#   marshal_start PROJ NAME PURPOSE   create or refresh the record when a feature starts, the current identity leads it;
+#   marshal_start PROJ NAME PURPOSE [--need-remote]
+#                                     create or refresh the record when a feature starts, the current identity leads it;
 #                                     returns 1 and prints the refusal when another lead holds it
 #   marshal_check PROJ NAME [--need-remote]
 #                                     returns 1 and prints the refusal when another LIVE lead holds NAME or when
@@ -83,10 +84,10 @@ marshal_py() { # PROJ VERB [args...]
   pymod marshal_store "$verb" --state "$DA_STATE" --conf "$DA_CONF" --project "$proj" --repo "$(marshal_repo "$proj")" --ttl "$(marshal_ttl "$proj")" "$@"
 }
 
-marshal_start() { # a restarted session of the same lead (host, user, work tree; stale lease) continues without a takeover; that is audited
+marshal_start() { # PROJ NAME PURPOSE [EXTRA...]: a restarted session of the same lead (host, user, work tree; stale lease) continues without a takeover; that is audited
   local af rc=0
   af=$(mktemp "$DA_STATE/.marshal-audit.XXXXXX") || af=/dev/null
-  QARGI_MARSHAL_AUDIT_OUT=$af marshal_py "$1" start "$2" --purpose "${3:-}" >/dev/null || rc=$?
+  QARGI_MARSHAL_AUDIT_OUT=$af marshal_py "$1" start "$2" --purpose "${3:-}" "${@:4}" >/dev/null || rc=$?
   if [ "$af" != /dev/null ]; then if [ "$rc" = 0 ] && [ -s "$af" ]; then audit_log "marshal:succession" "$(cat "$af")"; fi; rm -f "$af"; fi
   return "$rc"
 }
