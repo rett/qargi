@@ -3,7 +3,7 @@
 (lib/env_check.py, lib/env_apply.py, lib/local_run.py, lib/tools.py). Offline; no project, no network.
 Run: python3 tests/test_procenv.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
-import os, subprocess, sys, unittest
+import os, subprocess, sys, time, unittest
 from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -81,6 +81,48 @@ class ChildEnv(unittest.TestCase):
             env = env_apply.child_env()
         self.assertEqual((env["TZ"], env["LANG"]), ("UTC", "de_DE.UTF-8"))      # passed on as they are, not fixed
         self.assertTrue(set(env) <= set(env_apply.KEEP) | {"PATH"})
+
+
+class Now(unittest.TestCase):
+    def test_the_stamp_is_utc_to_the_second(self):
+        self.assertEqual(PE.now(0), "1970-01-01T00:00:00Z")
+        self.assertEqual(PE.now(1700000000), "2023-11-14T22:13:20Z")
+        self.assertEqual(PE.now(1700000000.9), "2023-11-14T22:13:20Z")
+        self.assertRegex(PE.now(), r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
+
+    def test_it_is_UTC_whatever_the_zone(self):
+        was = os.environ.get("TZ")
+        try:
+            os.environ["TZ"] = "Asia/Tokyo"
+            time.tzset()
+            self.assertEqual(PE.now(0), "1970-01-01T00:00:00Z")
+        finally:
+            if was is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = was
+            time.tzset()
+
+    def test_discover_keeps_no_copy_of_it(self):
+        import discover
+        self.assertFalse(hasattr(discover, "now"))
+        self.assertRegex(discover.approval(), r" at \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
+
+
+def defined_in(name, *funcs):
+    """The names of funcs that the source file lib/NAME.py defines at the top level."""
+    import ast
+    with open(os.path.join(LIB, name + ".py")) as f:
+        tree = ast.parse(f.read())
+    return sorted(n.name for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in funcs)
+
+
+class NoCopies(unittest.TestCase):
+    def test_the_modules_define_no_copy_of_a_shared_helper(self):
+        want = {"env_check": ("clean_path", "child_env", "now"), "env_apply": ("clean_path", "now"), "local_run": ("clean_path", "now"),
+                "tools": ("clean_path", "now"), "supervise": ("now",), "discover": ("now",)}
+        for name, funcs in want.items():
+            self.assertEqual(defined_in(name, *funcs), [], "lib/%s.py defines its own copy" % name)
 
 
 class AsScriptAndModule(unittest.TestCase):

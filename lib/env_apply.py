@@ -437,7 +437,7 @@ def apply(argv):
         print("%s: %s" % (T.label(t), "installed" if trc == 0 else "FAILED"), flush=True)
         for ln in msg.splitlines():
             print("  " + vis(ln))
-    f = write_record(ctx, {"time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "seconds": round(time.time() - t0, 1), "exit": rc, "command": ctx["boot"],
+    f = write_record(ctx, {"time": PE.now(), "seconds": round(time.time() - t0, 1), "exit": rc, "command": ctx["boot"],
                            "dry_run_command": ctx["dry"], "token": tok, "head": ctx["head"], "host": socket.gethostname(), "repo": ctx["repo"],
                            "dry_run_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), "allow_root": bool(priv),
                            "tools": [{"kind": t["kind"], "name": t["name"], "version": t.get("version"), "exit": trc} for t, trc, _ in done]})

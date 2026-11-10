@@ -7,10 +7,12 @@ directory there first, so it works as a script and as a module):
   clean_path()          the caller's PATH with empty and relative entries dropped (a command is never looked up in the working directory);
                         DEFAULT_PATH when nothing is left
   pass_env(names)       {name: value} of the names that are set and not empty in the caller's environment
+  now(t=None)           the time stamp of the record, UTC, `2026-01-02T03:04:05Z`, of the epoch seconds t or of now
   child_env(keep=())    the base environment of a child: PATH (clean_path), LANG and LC_ALL C.UTF-8, TERM dumb, GIT_TERMINAL_PROMPT 0, and
                         HOME, USER, LOGNAME, TMPDIR and the names in keep when the caller has them
 """
 import os
+import time
 
 DEFAULT_PATH = "/usr/local/bin:/usr/bin:/bin"
 BASE_KEEP = ("HOME", "USER", "LOGNAME", "TMPDIR")
@@ -33,3 +35,8 @@ def child_env(keep=()):
     env = {"PATH": clean_path(), "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "TERM": "dumb", "GIT_TERMINAL_PROMPT": "0"}
     env.update(pass_env(BASE_KEEP + tuple(keep)))
     return env
+
+
+def now(t=None):
+    """The time stamp qargi writes in its records: UTC, to the second, `2026-01-02T03:04:05Z`; of the epoch seconds t, else of now."""
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))

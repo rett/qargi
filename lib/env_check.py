@@ -476,7 +476,7 @@ def record(project, d, repo, verdict, code, expected, missing, command, builtin_
     dest = os.path.join(P.state(), "env")
     os.makedirs(dest, mode=0o700, exist_ok=True)
     entry = {"repo": repo, "head": head.strip() if rc == 0 else "",
-           "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "verdict": verdict.split(" (")[0], "exit": code,
+           "time": PE.now(), "verdict": verdict.split(" (")[0], "exit": code,
            "missing": len(missing), "expected": expected, "doctor_command": command, "builtin_minimum": builtin_used,
            "dry_run_command": d["commands"]["dry_run_command"]["command"]}
     final = os.path.join(dest, project + ".json")

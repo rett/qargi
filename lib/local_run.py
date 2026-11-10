@@ -52,6 +52,7 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import provider as P  # noqa: E402
 import paths  # noqa: E402
+import procenv as PE  # noqa: E402
 from procenv import clean_path  # noqa: E402
 
 _print = print
@@ -546,7 +547,7 @@ def run_it(plan, run):
         outcome = plan["exit"].get(str(code), plan["exit"].get("*", "failed"))
     rec = {"runtime": plan["runtime"], "class": plan["class"], "argv": plan["argv"], "command_from": plan["exe_from"], "cwd": plan["cwd"],
            "model": plan["model"], "effort_native": plan["effort_native"], "prompt_via": plan["via"], "timeout_s": plan["timeout_s"],
-           "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started)), "seconds": round(time.time() - started, 1),
+           "started": PE.now(started), "seconds": round(time.time() - started, 1),
            "exit": code, "timed_out": timed_out, "outcome": outcome, "transcript": os.path.join(out, "transcript")}
     write_private(dispatch, json.dumps(rec, indent=2, sort_keys=True) + "\n")
     print("RUNTIME=" + plan["runtime"])

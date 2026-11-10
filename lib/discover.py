@@ -18,11 +18,12 @@ Every pack declares the providers that can use it (compatible_providers: runtime
 say so (its compatible_providers); install takes it from there, from --compatible LIST, or asks. recommend leaves out, with a note, an
 entry whose declaration the project's provider is not on, and install refuses it for a project it does not fit.
 """
-import datetime, getpass, glob, json, os, re, subprocess, sys, tempfile, urllib.parse
+import getpass, glob, json, os, re, subprocess, sys, tempfile, urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import paths as P  # noqa: E402  where the data lives
 import packs_compat as C  # noqa: E402  whether a project's provider can use a pack
+import procenv as PE  # noqa: E402  the time stamp, the audit line
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -71,10 +72,6 @@ def F(name):
 def die(msg, code=1):
     print("qargi: " + msg, file=sys.stderr)
     raise SystemExit(code)
-
-
-def now():
-    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def jload(path, default):
@@ -443,7 +440,7 @@ def pick_scope(e, opts, project, role):
 
 
 def approval():
-    return "interactive: confirmed at the terminal by %s at %s" % (getpass.getuser(), now())
+    return "interactive: confirmed at the terminal by %s at %s" % (getpass.getuser(), PE.now())
 
 
 def step_import(kind, source_args, name):
