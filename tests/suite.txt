@@ -117,6 +117,7 @@ fast | par | 300 | 3 | bash tests/test_prompts.sh | contract/* roles/*/ROLE.md a
 fast | serial | 300 | 3 | bash tests/test_tool_copy.sh | install.sh tests/hermetic.sh tests/hermetic.py
 fast | par | 300 | 3 | bash tests/test_hermetic.sh | tests/hermetic.sh tests/hermetic.py
 fast | par | 300 | 11 | bash tests/test_gitflow_detached.sh
+fast | par | 300 | 12 | bash tests/test_local_report.sh | lib/local.sh lib/commands.py
 fast | par | 300 | 17 | bash tests/test_runner.sh | tests/run.sh tests/suite.txt
 fast | par | 300 | 10 | python3 tests/test_ci.py | .github/* tests/run.sh tests/suite.txt tests/durations.txt
 fast | par | 300 | 3 | python3 tests/test_docs_links.py | README.md CONTRIBUTING.md docs/*

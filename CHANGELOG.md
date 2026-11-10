@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `qargi local report RUN [--findings] [--from FILE] [--force]`: a read-only member's own way to put its report into OUT when its runtime refuses the file tool for `report.md`. The member writes the text under another name in OUT with its file tool and runs the verb with `--from NAME`, or gives it on standard input; the verb writes `OUT/report.md` (`--findings`: `OUT/findings.md`, which `review check` does not read as a report) and, when OUT has none, a minimal `manifest.json` that names it. It reads only standard input or a regular file under OUT (a link, a path that leaves OUT, a file over one megabyte and an empty report are refused), writes only in the OUT of a read-only run that the lead's registry names, keeps a report that is there unless `--force`, refuses a build run and, with the member mark set, any run but the member's own. It is not `review save` (the lead's, which stores a final message): the guard needs no change, because `local report` is on none of its lists of the lead's verbs. The member contract says to use it when the file tool is refused for `report.md`.
+
 ### Changed
 - `qargi branch prune` counts the remote-tracking branch `origin/BRANCH` of each `repo.detached` branch as a place a branch is merged into (with the same `--no-ff` rule), because a detached branch that origin changes only through a pull request lags behind origin locally; `--remote` now fetches before it reads the history, not after. `docs/flow/git-flow.md` (Detached branches) and the `qargi-flow` skill describe that flow: a short-lived `agent/pr-SLUG` branch cut from `origin/BRANCH` in a worktree, `local prepare --base` on it, `review apply`, a fast-forward, a push, and a pull request merged with a merge commit; a squash or rebase merge leaves no merge commit and its branches are deleted by hand.
 

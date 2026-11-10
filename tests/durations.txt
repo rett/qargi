@@ -67,7 +67,8 @@
 12 bash tests/test_role.sh
 13 bash tests/test_release_gh.sh
 11 bash tests/test_attach.sh
-8 bash tests/test_gitflow_detached.sh
+12 bash tests/test_local_report.sh
+11 bash tests/test_gitflow_detached.sh
 6 bash tests/test_provider_notes.sh
 4 python3 tests/test_upgrade.py
 6 bash tests/test_changelog_renumber.sh

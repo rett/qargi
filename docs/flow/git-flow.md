@@ -43,6 +43,10 @@ refusal changes nothing.
      closes it; a read-only run, an advisor or a review that returned a `report.md` and no patches, closes with a plain
      `qargi local clean RUN`. A run whose patches you applied by hand (`git am`) is closed with
      `qargi local close RUN --applied-by-am`.
+   - A read-only member whose runtime refuses its file tool for `report.md` writes the text under another name in OUT and runs
+     `qargi local report RUN --from NAME` itself: that writes `OUT/report.md` and a minimal `manifest.json` and nothing outside OUT,
+     refuses a build run, a run your registry does not name and, with the member mark set, any run but its own. A member whose
+     writes are all refused returns the report as its final message, and you store it with `qargi review save RUN < MESSAGE`.
    - Keep `--scratch` on disk (prepare warns about a tmpfs, which a reboot empties). A passing verify also saves the run's output in
      `<state>/runs/`, and `qargi review apply --from-saved ID` applies it when the run directory is gone (`local list` shows such
      a run as directory gone).

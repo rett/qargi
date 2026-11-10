@@ -1194,6 +1194,17 @@ COMMANDS = {
                                 "A clean marks the run's record cleaned and removes its saved copy."),
                           examples=["qargi local clean --applied --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch --yes",
                                     "qargi local clean --orphans --days 3", "qargi local clean --orphans --days 3 --plan TOKEN --approved \"remove them\""]),
+            "report": verb("A read-only member's own way to write its report: standard input, or a file under OUT, as RUN/out/report.md with a minimal manifest.json", [("RUN", "dir", True)],
+                           [opt("--findings", "write RUN/out/findings.md instead of report.md"), opt("--from", "read the report from this file under OUT (a relative name is relative to OUT) instead of standard input", "FILE", "file"),
+                            opt("--force", "replace a report that is there already")],
+                           desc=("For a read-only run whose member's file tool is refused for a report file: the member writes its text with its file tool under another name in OUT (draft.txt) and runs this verb itself, "
+                                 "with the RUN_DIR of its task block, so the report reaches OUT without shell text (echo, heredoc). The report is read from a regular file under OUT (--from) or from standard input (qargi local report RUN < report.md); "
+                                 "a link, a path that leaves OUT, a file over one megabyte and an empty report are refused. A report that is there already is kept unless --force. "
+                                 "When OUT has no manifest.json one is written (status DONE, the run's base branch and commit, commits [] and the report in artifacts); a manifest the member wrote is kept. "
+                                 "Prints what it wrote and the qargi review check command to run next; the check, not this verb, decides whether the report has the required form. "
+                                 "It is not review save, which is the lead's and stores a member's final message: it works in a read-only run that the lead's registry names, only inside that run's OUT, "
+                                 "and with the member mark set (qargi local run) only in the member's own run. A build run is refused (its product is patches). "
+                                 "findings.md is not a report review check reads: it is for a member that writes its findings apart from the report.")),
             "list": verb("List the local runs: role, slug, age, whether applied and merged", [],
                          [opt("--scratch", "the directory the runs were prepared in (default: the runs of the registry that still exist)", "DIR", "dir")],
                          desc=("Read-only. One row per run: ROLE, SLUG, AGE, APPLIED (RUN/applied exists: review apply ran; closed for a run closed with close --applied-by-am), MERGED (the applied tip is on a branch other than agent/*; ? for a run of a repository URL) and RUN. "
