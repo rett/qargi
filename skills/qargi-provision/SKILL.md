@@ -6,16 +6,7 @@ argument-hint: plan|apply|add-reference NAME ...
 
 # /qargi-provision
 
-`NAME` is `<project>-<role>` (`--project P --role R`, role defaults to `build`, from a fixed list) or
-a base, `<project>-worker` (class write) or `<project>-reviewer` (read-only, which needs the
-project's `qargi provider accept NAME --surface cloud --no-barrier` first, because the cloud has no
-read-only barrier). The environment, `<project>-environment`, is shared by the roles of the project and holds the
-packages of all enabled roles; the memory stores belong to the project: `<project>-memory` and
-`<project>-reference`. New stores are created in the canon layout and each enabled role's skeleton is
-seeded (the project's stored answers must exist). Existing stores of those names are attached (the
-plan says so), not duplicated; `--memory-store ID` / `--reference-store ID` name them explicitly.
-Files and the lock stay in the state directory, outside any repository. Resources created
-in the Console or by hand cannot be adopted: this creates new ones.
+`NAME` is `<project>-<role>` (`--project P --role R`, role defaults to `build`, from a fixed list) or a base, `<project>-worker` (class write) or `<project>-reviewer` (read-only, which needs the project's `qargi provider accept NAME --surface cloud --no-barrier` first, because the cloud has no read-only barrier). The environment, `<project>-environment`, is shared by the roles of the project and holds the packages of all enabled roles; the memory stores belong to the project: `<project>-memory` and `<project>-reference`. New stores are created in the canon layout and each enabled role's skeleton is seeded (the project's stored answers must exist). Existing stores of those names are attached (the plan says so), not duplicated; `--memory-store ID` / `--reference-store ID` name them explicitly. Files and the lock stay in the state directory, outside any repository. Resources created in the Console or by hand cannot be adopted: this creates new ones.
 
 | Verb | Command | Notes |
 |---|---|---|
@@ -23,11 +14,6 @@ in the Console or by hand cannot be adopted: this creates new ones.
 | apply | `qargi provision apply NAME [same options] --asked "..." --approved "<the user's go-ahead for that plan>"` | Creates the resources, seeds the recipes and reference stores, attaches the reference store read-only, registers the instance. `--approved` is the user's approval, not yours. |
 | add-reference | `qargi provision add-reference NAME --asked "..." --approved "..."` | Adds `<NAME>-reference` (read-only) to an existing instance. |
 
-Defaults come from the project's stored answers (`/qargi-project`): the role's model, effort,
-packages and hosted skills, the budget (cents, set on the deployment) and the memory stores;
-flags override them. Without stored answers: the cloud runtime's balanced tier, effort high, budget 500. Models and effort
-can also be chosen at `init` (`/qargi-instances`).
+Defaults come from the project's stored answers (`/qargi-project`): the role's model, effort, packages and hosted skills, the budget (cents, set on the deployment) and the memory stores; flags override them. Without stored answers: the cloud runtime's balanced tier, effort high, budget 500. Models and effort can also be chosen at `init` (`/qargi-instances`).
 
-The lead (`PROJECT-lead`) is provisioned after its members: the role agents named in the project's
-teams must be registered first, and the lead is pinned to their current versions (a new member
-version means updating the lead behind a plan). Its prompt carries the project's team definitions.
+The lead (`PROJECT-lead`) is provisioned after its members: the role agents named in the project's teams must be registered first, and the lead is pinned to their current versions (a new member version means updating the lead behind a plan). Its prompt carries the project's team definitions.

@@ -13,17 +13,13 @@ Run this before you report DONE. A shell finding that reaches the whole-suite ru
 ## Run
 - From the repository root: `shellcheck -x -S warning FILES...`. A `.shellcheckrc` there applies on its own.
 - If the project profile names a different lint command, the profile wins; report the difference. A severity the project configures itself beats `-S warning`.
-- shellcheck prints nothing when it passes, so print your own verdict line:
-  `shellcheck -x -S warning $FILES && echo "shellcheck: 0 findings in $(echo $FILES | wc -w) files"`
-- Record it in the report's `gates[]`:
-  `{"name": "shellcheck", "command": "shellcheck -x -S warning ...", "result": "pass", "exit_code": 0, "verdict_line": "shellcheck: 0 findings in 3 files"}`
+- shellcheck prints nothing when it passes, so print your own verdict line: `shellcheck -x -S warning $FILES && echo "shellcheck: 0 findings in $(echo $FILES | wc -w) files"`
+- Record it in the report's `gates[]`: `{"name": "shellcheck", "command": "shellcheck -x -S warning ...", "result": "pass", "exit_code": 0, "verdict_line": "shellcheck: 0 findings in 3 files"}`
 - shellcheck not installed: set `result` to `not run`, give the reason, and never write `pass`.
 
 ## Fix, do not silence
 - Fix the code. Add no new `# shellcheck disable=` unless the finding is a proven false positive.
-- A disable is one line, names the code, and gives a reason, for example
-  `# shellcheck disable=SC2034 # read by the sourcing script`.
-  Mention each one in the report. A disable for a newly introduced code names the shellcheck version that introduced it.
+- A disable is one line, names the code, and gives a reason, for example `# shellcheck disable=SC2034 # read by the sourcing script`. Mention each one in the report. A disable for a newly introduced code names the shellcheck version that introduced it.
 - For a file sourced by a computed path, tell shellcheck where it is: `# shellcheck source=lib/common.sh`.
 
 ## Existing findings
