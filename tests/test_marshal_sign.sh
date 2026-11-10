@@ -5,7 +5,9 @@
 # the ssh-keygen shim can make a verification hang). Forged, replayed, rewound and tampered records are written with git plumbing
 # straight to the scratch origin; the test signs forged records itself, with ssh-keygen, from the format of the spec (an independent
 # implementation of the payload, which is also how the test checks that a record qargi signed verifies). Nothing leaves the temp dir.
-# Run: tests/test_marshal_sign.sh
+# Run: tests/test_marshal_sign.sh [PART]
+# PART picks what runs (the suite runs the three parts as three steps, to shorten the longest one): main (the cases (1) to (15)),
+# review-a (the review-fix cases (16a) to (16c)), review-b (the review-fix cases (16d) to (16f)); without PART, all of them at once.
 #
 # Interfaces beyond the spec's wording that this test ASSUMES (the commit message of this file lists them as well):
 #   - the owner verbs `marshal key init`, `marshal signers add|remove` and `marshal enable --integrity MODE` work like `marshal enable`:
@@ -34,6 +36,8 @@
 #   - the verification of a record gives up in well under 60 seconds when ssh-keygen hangs (the test hangs it for 60 s and allows 90).
 #   - the "member run" and the exit status 2 with "member" on stderr are the ones of test_marshal_refs.sh.
 set -u
+PART=${1:-all}
+case $PART in all|main|review-a|review-b) ;; *) echo "usage: tests/test_marshal_sign.sh [all|main|review-a|review-b]" >&2; exit 2;; esac
 cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
@@ -205,7 +209,7 @@ strict_ignored() {
 # ============================================================ (16) the review-fix cases run in a world of their own, at the same time as the cases (1) to (15)
 # Their machines, features and origin are their own (a second scratch directory with its own origin, shims and logs), so nothing of one
 # run is seen by the other; the lines they print are shown at the end, where the cases were, and their status is added to the test's.
-s16() {
+s16_setup() {
 # ============================================================ (16) fixes found by the adversarial review: the machines
 # wa and wb are strict machines with their own keys, wc is advisory with a key, wk advisory without one (it writes unsigned records);
 # every one of them trusts the three keys. Each case below is a scenario that was a hole before it was closed.
@@ -229,6 +233,8 @@ junk() { # REF JQFILTER: an unsigned commit on top of REF's head (no sig_v, no s
 markof() { jq -c --arg n "$2" '.[$n] // empty' "$(S "$1")/features/.accepted-app.json" 2>/dev/null; }     # MACHINE NAME: the high-water mark of a feature
 anc() { OG merge-base --is-ancestor "$1" "$2"; }                                                          # OLD NEW: OLD is NEW or one of its ancestors
 
+}
+s16_a() {
 # ------------------------------------------------------------ (16a) strict: junk on top of newer valid records must not hide them
 XE wa marshal claim f1 --as alice --goal g1 >/dev/null 2>&1
 XE wb marshal status f1 >/dev/null 2>&1                                  # wb's mark is rev 1 and stays there while wa works
@@ -285,6 +291,8 @@ XE wa marshal finish f5 --as alice; rc=$?; DONE2=$(oref $D5)
 XE wb marshal status f5; rc=$?
 { [ -z "$(markof wb f5)" ] && ! grep -qiwE 'warn(ing|ed|s)?' "$T/e"; } && ok "finish: the legitimate done record (its features oid is the accepted oid) clears the mark, without a warning" || no "SPEC the matching done clears the mark (mark '$(markof wb f5)'): $(cat "$T/e")"
 
+}
+s16_b() {
 # ------------------------------------------------------------ (16d) a record is what its signature covers, not the oid of the commit that carries it
 XE wa marshal claim f6 --as alice --goal g6 >/dev/null 2>&1; XE wb marshal status f6 >/dev/null 2>&1
 XE wa marshal set f6 --as alice --goal g6b >/dev/null 2>&1; R6=$(oref $F/f6)
@@ -360,11 +368,21 @@ mode wd advisory; cp "$(EN wd)" "$T/en.wd.before"
 ( cd "$T/run16/work" && XE wd marshal disable --plan 000000000000 --approved w ); r2=$?
 { [ $r1 = 2 ] && [ $r2 = 2 ] && grep -qi member <<<"$e1" && cmp -s "$(EN wd)" "$T/en.wd.before"; } && ok "member: disable, even with a token and words, exits 2 and leaves the switch alone" || no "SPEC member run: disable (rc $r1 $r2): $e1"
 }
+s16() { s16_setup; case $PART in all|review-a) s16_a;; esac; case $PART in all|review-b) s16_b;; esac; }
+S16PID=
+if [ "$PART" != main ]; then
 W=$T/w16; mkdir -p "$W/m" "$W/shimbin"; cp "$T/sigtool.py" "$W/sigtool.py"
 ( T=$W; ORIGIN=$T/origin.git; LOG=$T/shim.log; SKLOG=$T/sshk.log; : > "$LOG"; : > "$SKLOG"; : > "$T/ste"
   git_shim "$T/shimbin" "$LOG" "$REALGIT"; sshk_shim "$T/shimbin" "$SKLOG" "$REALSSHK" "$T/sk.slow"; PATH=$T/shimbin:$PATH
   make_origin "$ORIGIN"; fail=0; s16; echo "$fail" > "$T/fail" ) > "$T/s16.out" 2>&1 &
 S16PID=$!
+fi
+if [ "$PART" = review-a ] || [ "$PART" = review-b ]; then    # the review-fix world only: its result is the result
+  wait "$S16PID"; cat "$T/s16.out"; [ "$(cat "$T/w16/fail" 2>/dev/null)" = 0 ] || { [ -e "$T/w16/fail" ] || echo "FAIL the review-fix cases ($PART) did not finish"; fail=1; }
+  echo
+  [ $fail = 0 ] && echo "marshal signing ($PART): all ok" || echo "marshal signing ($PART): FAILURES"
+  exit $fail
+fi
 
 make_machine a; make_machine km
 fb off1 s1 s2 tmo tamlead tamrev tamstat cpsrc cpk2 cppx rp1 tmj tmj2 tmr tw3 st1 rsg1 del1 fin1 rot1 rot2 rv1 rv2 sl1
@@ -713,7 +731,9 @@ grep -q -- '-Y sign' "$SKLOG" && grep -q -- '-Y verify' "$SKLOG" && ! grep -E --
 [ "$(stat -c %a "$(KEY a)" 2>/dev/null)" = 600 ] && [ "$(stat -c %a "$(KEY b)" 2>/dev/null)" = 600 ] && ok "key: both key files are still mode 0600 after all the runs" || no "SPEC key mode 0600: $(stat -c %a "$(KEY a)" "$(KEY b)" 2>&1)"
 
 # ============================================================ (16) the review fixes: the result of the world they ran in
-wait "$S16PID"; cat "$T/s16.out"; [ "$(cat "$T/w16/fail" 2>/dev/null)" = 0 ] || { [ -e "$T/w16/fail" ] || echo "FAIL the review-fix cases (16) did not finish"; fail=1; }
+if [ "$PART" != main ]; then
+  wait "$S16PID"; cat "$T/s16.out"; [ "$(cat "$T/w16/fail" 2>/dev/null)" = 0 ] || { [ -e "$T/w16/fail" ] || echo "FAIL the review-fix cases (16) did not finish"; fail=1; }
+fi
 
 echo
 [ $fail = 0 ] && echo "marshal signing: all ok" || echo "marshal signing: FAILURES"

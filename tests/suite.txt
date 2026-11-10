@@ -90,7 +90,9 @@ full | par | 300 | 24 | bash tests/test_marshal_flow.sh | lib/marshal*.sh lib/ma
 full | par | 300 | 20 | bash tests/test_marshal_lease.sh | lib/marshal*.sh lib/marshal*.py lib/review.sh lib/local.sh lib/feature.sh
 full | par | 474 | 79 | bash tests/test_marshal_handoff.sh | lib/marshal*.sh lib/marshal*.py
 full | par | 744 | 124 | bash tests/test_marshal_refs.sh | lib/marshal*.sh lib/marshal*.py
-full | par | 1842 | 307 | bash tests/test_marshal_sign.sh | lib/marshal*.sh lib/marshal*.py
+full | par | 1476 | 246 | bash tests/test_marshal_sign.sh main | lib/marshal*.sh lib/marshal*.py
+full | par | 300 | 26 | bash tests/test_marshal_sign.sh review-a | lib/marshal*.sh lib/marshal*.py
+full | par | 300 | 35 | bash tests/test_marshal_sign.sh review-b | lib/marshal*.sh lib/marshal*.py
 fast | par | 300 | 3 | python3 tests/test_marshal_sign_unit.py | lib/marshal*.sh lib/marshal*.py
 full | par | 300 | 15 | bash tests/test_marshal_forget.sh | lib/marshal*.sh lib/marshal*.py
 fast | par | 300 | 8 | bash tests/test_marshal_hook.sh | lib/marshal*.sh lib/marshal*.py
