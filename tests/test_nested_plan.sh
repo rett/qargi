@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# A caller that is itself approved (QARGI_NESTED set) has not approved this plan: need_plan skips its check when QARGI_NESTED is set, so every
-# call site of it is written `QARGI_NESTED='' need_plan ...`, and a nested environment never skips a plan token. One verb that needs a plan
+# need_plan always checks the plan token, whatever the environment holds; need_plan_nested is the one variant that honours QARGI_NESTED (a
+# call nested in an approved apply), and only canon apply uses it (provisioning runs it that way). Static: need_plan_nested is called in
+# one place only, need_plan itself does not read QARGI_NESTED, and no call site clears the variable any more. Dynamic: one verb that needs a plan
 # for each file that calls it (branch, marshal, project, provider, registry, provision, cred), each run with QARGI_NESTED=1 and no token, then a wrong one:
 # refused (exit not 0, "the plan changed or --plan is missing") and nothing changed. The sites of release, local, feature, upstream and backlog
-# are tested in their own tests; canon apply is the one verb that honours QARGI_NESTED (provisioning runs it that way) and is not tested here.
+# are tested in their own tests; canon apply is the one verb that honours QARGI_NESTED and is not tested here.
 # Offline (fake ant, curl, git). Run: tests/test_nested_plan.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -19,27 +20,23 @@ trap 'rm -rf "$T" "$HERMETIC"' EXIT
 cd "$T" || exit 1   # a verb that changes the marshal refuses to run inside a member run, which is where this checkout may be
 tok() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 
-# --- static: every call of need_plan in lib/ and bin/ is written QARGI_NESTED='' need_plan, or is one of the few sites below, so a future call
-# that forgets the prefix is found here and not by a user. The sites that are not prefixed (the file, how many, why):
-#   canon.sh      1  canon apply honours the variable: provisioning runs it nested after its own plan check, and the guard refuses an agent that sets it
-#   memory.sh     1  the verb unsets QARGI_NESTED first
-#   tierwrite.sh  1  the script unsets QARGI_NESTED first
-#   packs.sh      1  the write verbs unset QARGI_NESTED first
-#   project.sh    1  project link unsets QARGI_NESTED first
-ALLOW="canon.sh:1 memory.sh:1 tierwrite.sh:1 packs.sh:1 project.sh:1"
-UNSETS="memory.sh tierwrite.sh packs.sh project.sh"
-bare=$(grep -nE '(^|[^_A-Za-z])need_plan "' "$SRC"/lib/*.sh "$SRC"/bin/* 2>/dev/null | grep -vE "^[^:]*:[0-9]+:[[:space:]]*#" | grep -v "QARGI_NESTED='' need_plan" | grep -v "lib/lib.sh:")
-n_all=$(grep -hE '(^|[^_A-Za-z])need_plan "' "$SRC"/lib/*.sh "$SRC"/bin/* 2>/dev/null | grep -cvE "^[[:space:]]*#")
+# --- static: need_plan does not read QARGI_NESTED, and need_plan_nested is called in canon.sh and nowhere else, so a nested environment cannot
+# skip a token through a call site that forgot to clear the variable. lib/local.sh is covered like the other files.
 msg=''
-for f in $(sed -E 's#^.*/([^/:]*):[0-9]+:.*#\1#' <<<"$bare" | sort -u); do
-  case " $ALLOW " in *" $f:"*) ;; *) msg="$msg $f (not on the list)";; esac
-done
-for a in $ALLOW; do
-  f=${a%%:*}; want=${a##*:}
-  [ "$(grep -cE "/$f:" <<<"$bare")" = "$want" ] || msg="$msg $f (has $(grep -cE "/$f:" <<<"$bare") unprefixed, the list says $want)"
-done
-for f in $UNSETS; do grep -vE '^[[:space:]]*#' "$SRC/lib/$f" | grep -q 'unset QARGI_NESTED' || msg="$msg $f (no unset QARGI_NESTED)"; done
-[ "$n_all" -ge 30 ] && [ -z "$msg" ] && ok "static: every need_plan call in lib/ is prefixed QARGI_NESTED='' or is on the short list (canon apply, and the verbs that unset it first)" || no "static need_plan check: $msg (calls found: $n_all); unprefixed: $bare"
+body=$(sed -n '/^need_plan() {/,/^}/p' "$SRC/lib/lib.sh")
+{ [ -n "$body" ] && ! grep -q QARGI_NESTED <<<"$body"; } || msg="$msg need_plan in lib/lib.sh reads QARGI_NESTED (or was not found);"
+nested=$(grep -nE '(^|[^_A-Za-z])need_plan_nested[[:space:]]+"' "$SRC"/lib/*.sh "$SRC"/bin/* 2>/dev/null | grep -vE "^[^:]*:[0-9]+:[[:space:]]*#")
+{ [ "$(grep -c . <<<"$nested")" = 1 ] && grep -q "lib/canon.sh:" <<<"$nested"; } || msg="$msg need_plan_nested is not called in canon.sh alone: $nested;"
+n_all=$(grep -hE '(^|[^_A-Za-z])need_plan "' "$SRC"/lib/*.sh "$SRC"/bin/* 2>/dev/null | grep -cvE "^[[:space:]]*#")
+left=$(grep -nE "(unset QARGI_NESTED|QARGI_NESTED='' need_plan)" "$SRC"/lib/*.sh "$SRC"/bin/* 2>/dev/null | grep -vE "^[^:]*:[0-9]+:[[:space:]]*#")
+[ -z "$left" ] || msg="$msg a redundant clear of the variable is left: $left;"
+# run_class takes the run alone (the registry decides the class): no call hands it a second word it would ignore
+rc2=$(grep -nE 'run_class "[^"]*" ' "$SRC"/lib/*.sh "$SRC"/bin/* 2>/dev/null | grep -vE "^[^:]*:[0-9]+:[[:space:]]*#")
+[ -z "$rc2" ] || msg="$msg run_class is given a second argument it ignores: $rc2;"
+[ "$n_all" -ge 30 ] && [ -z "$msg" ] && ok "static: need_plan ignores QARGI_NESTED, need_plan_nested is used in canon apply only, and no call site clears the variable" || no "static need_plan check: $msg (calls found: $n_all)"
+# the two functions, run: a wrong token dies in need_plan under the variable; need_plan_nested lets the nested call through, and checks without it
+fn=$(QARGI_NESTED=1 PLAN_ARG=000000000000 bash -c '. "$1"/lib/lib.sh; (need_plan abc123) >/dev/null 2>&1; a=$?; (need_plan_nested abc123) >/dev/null 2>&1; b=$?; unset QARGI_NESTED; (need_plan_nested abc123) >/dev/null 2>&1; c=$?; echo "$a $b $c"' _ "$SRC")
+[ "$fn" = "1 0 1" ] && ok "need_plan refuses a wrong token under QARGI_NESTED; need_plan_nested skips it there and checks without it" || no "need_plan / need_plan_nested: got '$fn', wanted '1 0 1'"
 MSG="the plan changed or --plan is missing"
 # refused CMD...: run the command, with its output in $out; true when it exited not 0 and asked for the token
 refused() { out=$("$@" 2>&1); rc=$?; [ $rc != 0 ] && grep -q "$MSG" <<<"$out"; }

@@ -72,7 +72,7 @@ prep() { QARGI_MARSHAL_NOW=$1 "$DA" local prepare --repo "$R" --base feature/r1 
 prep $((t0 + 10)) rt1; rc=$?
 RUN=$(sed -n 's/^RUN=//p' "$T/o")
 [ $rc = 0 ] && [ -d "$RUN" ] && ok "prepare: a run based on the feature" || no "prepare: rc=$rc $(out)"
-printf '# Report\n\n## Findings\n\nnone\n' > "$RUN/out/report.md"
+printf '# Findings\n\nnone\n\n# Checked\n\nnothing\n\nverdict: accept\n' > "$RUN/out/report.md"; printf '{"status":"DONE","commits":[]}\n' > "$RUN/out/manifest.json"
 at $((t0 + 500)) "$DA" review check "$RUN"; rc=$?
 [ $rc = 0 ] && [ "$(j r1 .renewed_at)" = "$(iso $((t0 + 500)))" ] && ok "review check given the run directory (not its out) renews the lease of that run's feature" || no "SPEC review check RUN_DIR renews: rc=$rc $(out) $(j r1 .renewed_at)"
 at $((t0 + 1000)) "$DA" review check "$RUN/out"; rc=$?

@@ -25,7 +25,7 @@ NEEDS_INPUT = ("requires_action", "budget_reached", "retries_exhausted")
 NOT_SETTLED = ("running", "rescheduling", "unknown")
 
 LOCAL_LIMITS = [
-    "local runs are known from the directories qargi local prepare made; a run made before the registry existed is found only through --runs-root",
+    "local runs are known from the directories qargi local prepare made; a run the registry does not list is found only through --runs-root",
     "'still changing' means a file in the run (output or clone) changed within the stale window: the agent, or a background command it left running, is probably still working",
     "a run can end its turn while its own background command still runs and report again later; a quiet run is only possibly stalled",
     "a local run has no cost record and no review state; this section cannot say whether its work was applied",

@@ -16,5 +16,5 @@
 - In a team run you get USAGE_IMPACT and the build series (UPSTREAM): update the
   documentation for every impact item, name each change's commit in `for_group`,
   and list what only code can fix in `handoff_to_build[]`.
-- Follow `roles/write/writing/` of the reference store and the approved example
-  values (`shared/conventions/examples.md`).
+- If the task block has a MEMORY section or a store is mounted, read the store's `roles/write/INDEX.md` first, follow
+  `roles/write/writing/` and the approved example values (`shared/conventions/examples.md`).

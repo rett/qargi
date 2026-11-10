@@ -10,7 +10,7 @@ The approval gate (token, audit log, --approved) is in tierwrite.sh; this module
 same steps memplan.py uses (create, update, marker, archive), so nothing is ever deleted and every store is checked
 against the notes the plan read before the first change (membackend.apply_ops). The target is written first.
 
-init writes the canon-2 seed (memplan.migrate on an empty store) into one directory tier. It refuses a directory
+init writes the canon-2 seed (memplan.canon_plan on an empty store) into one directory tier. It refuses a directory
 that has other content, a repo tier that leaves its checkout, and locations that overlap another tier's.
 
 move copies notes from one tier to another and archives the originals (/_archive/<date>/<path>), moving their index
@@ -164,7 +164,7 @@ def plan_init(tier_name, project_arg, today):
     for o in T.resolve(a, project):
         if o["tier"] != tier_name and o["kind"] == "dir" and o["location"] and nests(me, real(o["location"])):
             raise Refused("tier %s at %s overlaps tier %s at %s" % (tier_name, loc, o["tier"], o["location"]))
-    plan = M.migrate(held, C.LATEST, "memory", pa, roles, seed_dir(), today)
+    plan = M.canon_plan(held, "memory", pa, roles, seed_dir(), today)
     plan.update(verb="init", tier=tier_name, stores={"target": loc}, needs_ant=False, private={"target": tier_name in PRIVATE})
     if repo:
         plan["warning"] = repo_warning(repo, rel)

@@ -8,20 +8,18 @@ argument-hint: "<task>" --done "<check>" [--instance NAME] [--base B] [--scope P
 
 A **role** says what a task is for (`qargi role list`): build, write, review and test ship with
 qargi; add your own in `~/.qargi/config/roles/NAME/`. Its
-**class** (write or read-only) is what the guard enforces; its text cannot change that. A **member** is a
+**class** (write or read-only) is what the guard checks; its text cannot change it. A **member** is a
 local agent you named and gave roles (`qargi agent add`), written by the project's local runtime from
 one member definition (`/qargi-instances`); an **instance** is a registered cloud agent of
-one role (see `/qargi-instances`). All
-of them obey the contract in `contract/contract.md`: one task,
+one role. All
+of them obey `contract/contract.md`: one task,
 own clone, patches back, never push, no backlog.
 
 ## Quick form
 
 `/qargi-task "<task>" --done "<executable check>" [--role ROLE] [--instance NAME] [--base BRANCH] [--scope PATHS]`
 
-If the first argument is not a session verb (`send`, `start`, `status`, `watch`, `collect`, `stop`, `close`: load `cloud.md`), it is a task: build the
-task block and dispatch it to the member that serves the task's role (`qargi agent for ROLE`, whose first word is the member). `--role` defaults to build; take it from the
-user's words. Inside a feature, use `--base feature/NAME` and run `qargi marshal check NAME` first; `/qargi-flow` owns the rest.
+If the first argument is not a session verb (`send`, `start`, `status`, `watch`, `collect`, `stop`, `close`: load `cloud.md`), it is a task: dispatch it to the member that serves its role (`qargi agent for ROLE`, whose first word is the member). `--role` defaults to build. Inside a feature, use `--base feature/NAME` and run `qargi marshal check NAME` first; `/qargi-flow` owns the rest.
 
 ## Hard rules
 
@@ -31,30 +29,26 @@ user's words. Inside a feature, use `--base feature/NAME` and run `qargi marshal
 
 ## Task block
 
-ROLE (`ROLE: build (class write)`; the class is `qargi role show ROLE`'s), ROLE_TEXT (locally
-`qargi role prompt ROLE`, inlined), TASK, DONE (executable check; if the user
-gave prose, get an executable form first), PROFILE (the text of the repository's profile, inlined), BASE (default:
-the dispatching session's branch; explicit if that is master or develop), base
-SHA, SCOPE (hard limit, optional), OUT (a cloud run's: cloud.md), CLONE, TMP and CONTRACT (the contract files; local runs: `prepare`'s).
+`qargi local prepare` writes a local run's task block, `RUN/task.md` (it prints `ROLE`, `CLASS`, `PROFILE`, `CONTRACT` and the paths; the file holds the role text, TASK, DONE, BASE, SCOPE); never write one by hand. BASE defaults to the dispatching session's branch; name it if that is master or develop. DONE is a command; if the user
+gave prose, get an executable form first. A cloud task block (cloud.md) has the same sections.
 
 ## Profiles
 
-A profile holds a repository's gates, rules and coordinator review steps, in `~/.qargi/config/profiles/<name>.md` (`<name>` is the repository directory's name), never in the project. Inline its text as PROFILE (`qargi project profile check` lints it). `--profile` on `send` and `local prepare` is the role's model profile, not this file. No profile is fine; nothing qargi related is added to a project's committed files.
+A profile holds a repository's gates, rules and coordinator review steps, in `~/.qargi/config/profiles/<name>.md` (`<name>` is the repository directory's name), never in the project. `prepare` inlines its text as PROFILE (`qargi project profile check` lints it). `--profile` on `send` and `local prepare` is the role's model profile, not this file. No profile is fine; nothing qargi related is added to a project's committed files.
 
 ## Local flow
 
-1. `qargi local prepare --repo <repo> --base <base> --slug <slug> --scratch <scratchpad> --role <role> [--profile <profile>]`
-   makes the run: a clone on `agent/<slug>` of a bare copy with no remote, an output directory and a credential-less `git` wrapper. It prints `RUN`, `ROLE`, `CLASS`, `CLONE`, `OUT`, `TMP`, `GIT`,
-   `BASE_SHA`, `CONTRACT`, `PROFILE`, `MEMBER`, `MODEL` and `EFFORT`, then the TASK-BLOCK sections (`PATHS`, and `MEMORY` inside a registered project): paste them into the task block verbatim.
-   A warning about uncommitted memory: the executor sees only the committed copy. For a private repository not checked out here, use `--repo-url URL --credential-file FILE` in place of `--repo`.
-2. Start the member as the project's local runtime says (`qargi provider show RUNTIME`).
-   - **In-session runtime.** Take MEMBER, MODEL and EFFORT from step 1 (or `qargi agent for <role> [--profile NAME]`). Spawn it as `qargi provider notes spawn` says, with the task block plus
-     `CLONE`, `OUT`, `GIT`, `BASE_SHA` and `CONTRACT`. No member serves the role: ask the user to add
+1. Write the task to a scratch file with your file tool, then
+   `qargi local prepare --repo <repo> --base <base> --slug <slug> --scratch <scratchpad> --role <role> --task-file <file> --done "<command>" [--scope <path>]... [--profile <profile>]`
+   makes the run: a clone on `agent/<slug>` of a bare copy with no remote, an output directory, a credential-less `git` wrapper and `RUN/task.md`. It refuses a prose DONE (its first word must be an executable, a builtin or a BASE script) and an empty or linked task file. It prints `TASK_FILE`, `RUN`, `MEMBER`, `MODEL`, `EFFORT` and the paths.
+   The executor sees only the committed memory. For a private repository not checked out here, use `--repo-url URL --credential-file FILE` in place of `--repo`.
+2. Start the member as the project's local runtime says (`qargi provider show RUNTIME`), handing it the path of `RUN/task.md`: read it and follow it.
+   - **In-session runtime.** Take MEMBER, MODEL and EFFORT from step 1 (or `qargi agent for <role> [--profile NAME]`). Spawn it as `qargi provider notes spawn` says, with that brief plus
+     the four paths (`CLONE`, `OUT`, `GIT`, `BASE_SHA`) if the runtime needs them. No member serves the role: ask the user to add
      one (`qargi agent add NAME --roles <role> --project P`), never use another agent type. A member `qargi agent list` shows `STALE` or `DRIFT` is out of date: tell the user, and `qargi agent refresh NAME` only with their go-ahead.
    - **Command runtime** (`dispatch.mode` is command: a headless CLI, no member file): load `local-run.md`.
 3. When it reports, run `qargi local verify <RUN>` first: a change in the real repository's refs means stop and tell the user.
-4. Then `/qargi-verify` on `OUT`.
-5. Take-in (apply, merge, `qargi local clean`) is `/qargi-verify`'s sequence.
+4. Then `/qargi-verify` on `OUT`: it takes the work in.
 
 ## Parallel tasks
 

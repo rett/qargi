@@ -81,13 +81,8 @@ prov_need() { # project would field...: prov_of, then the refusals above
   for f; do python3 -I "$PROVPY" layout "$PROV" "$f" --would "$would" >/dev/null || exit $?; done
 }
 case $KIND in skill|tool|packs) ;; *) usage_die "usage: packs.sh skill|tool|packs <verb> ...";; esac
-# Changing a skill needs a present person (library/SPEC.md, "Who may modify a skill"): a caller that is itself approved
-# (QARGI_NESTED) has not approved this change, so the write verbs never honour it and the token is always required.
-# No caller nests them: discover.py already clears it, and provisioning only renders.
-case $KIND:$VERB in
-  skill:new|skill:import|skill:seal|skill:remove|skill:link|skill:unlink|skill:enable|skill:disable|skill:accept|skill:unaccept|\
-  tool:new|tool:import|tool:seal|tool:remove|tool:link|tool:unlink|tool:enable|tool:disable|packs:apply|packs:seed|packs:link|packs:unlink) unset QARGI_NESTED;;
-esac
+# Changing a skill needs a present person (library/SPEC.md, "Who may modify a skill"): need_plan always checks the token, so
+# no environment variable stands in for it here.
 need_token() { # expected-token; never empty, and never skipped
   [ -n "${1:-}" ] || die "internal error: no plan token to check; nothing was changed"
   need_plan "$1"

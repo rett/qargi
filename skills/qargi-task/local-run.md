@@ -2,9 +2,9 @@ Load when dispatch.mode is command.
 
 # Local run through a command runtime
 
-A command runtime is a headless CLI: there is no member file, so there is nothing to spawn. `qargi provider show RUNTIME` shows its `dispatch.mode`.
+A command runtime is a headless CLI: there is no member file, so nothing to spawn. `qargi provider show RUNTIME` shows its `dispatch.mode`.
 
-1. Save the task block to `RUN/task.md`.
+1. `prepare --task-file` wrote the task block, `RUN/task.md`.
 2. Check the command with `qargi local run RUN --dry-run`: it prints the argv, the working directory and the prompt, and runs nothing.
 3. Run `qargi local run RUN [--task FILE] [--model TIER|ID] [--effort LEVEL] [--timeout S]`. `--again` runs a second time in the same run.
 

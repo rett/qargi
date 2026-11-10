@@ -8,8 +8,8 @@ work of agents gathers in the same way: tasks go out, patches come back for revi
 and what was learned is kept in memory.
 
 Qargi is a set of Claude Code skills and a CLI that dispatch one-off, task-scoped
-development tasks to sandboxed agents and take the work back as reviewable patches. An agent
-works on one task in its own clone and never pushes; the dispatching session
+development tasks to agents and take the work back as reviewable patches. An agent
+works on one task in its own clone and is given no way to push; the dispatching session
 verifies the result and applies it.
 
 Two kinds of agent do the work, each on a **runtime** the project names for that surface (see
@@ -35,6 +35,6 @@ request.
 | [Members and providers](members-and-providers/README.md) | Members and the guard, choosing models, providers and runtimes |
 | [Skills, tools and memory](skills-tools-and-memory/README.md) | The skills and the command, skills and tools in a local session, baseline packs, memory tiers, splitting, merging and moving memory, finding tools |
 | [Reference](reference/README.md) | Help, the manual page, completion, command conventions |
-| [Development](development/README.md) | Setting up a checkout, tests, contributing |
+| [Development](development/README.md) | Setting up a checkout, tests, contributing, the [architecture](development/architecture.md) |
 
 The task-oriented guides are on the documentation site, <https://qargi.rettware.com/>.

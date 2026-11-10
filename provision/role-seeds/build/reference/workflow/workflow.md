@@ -6,13 +6,7 @@ Sources: qargi seed
 
 ## Contents
 
-### Lifecycle
-1. **Orient.** Read TASK, DONE, SCOPE and PROFILE and the repository's own instructions; load only the notes the task needs.
-2. **Baseline.** On a clean branch from BASE, run the checks for the paths you will touch. Know what is green first; a red baseline is reported, not fixed.
-3. **Implement** the smallest change that satisfies the task, with its tests, docs and changelog entry.
-4. **Check.** Run the gates for the touched paths while you work and the always-gates before reporting; run DONE verbatim.
-5. **Commit as you go,** one logical change per commit, reasoning in the body.
-6. **Report** per the contract, and propose reference updates instead of editing the store.
+The order of work (orient, baseline, implement, check, commit as you go, report) is in the contract. Load only the notes the task needs, and propose reference updates in the report instead of editing the store.
 
 ### Definition of done, by kind of change
 - **Bug fix:** a test that failed before and passes now; the cause is fixed, not the symptom; neighbouring code with the same flaw is named in the report.

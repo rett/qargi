@@ -48,8 +48,9 @@ commits "$R" a1.go; rm -f "$R/verified"
 out=$(verify "$R"); rc=$?
 [ $rc = 1 ] && grep -q "OUT is empty: the member did not collect" <<<"$out" && grep -q "ls OUT/patches" <<<"$out" && ok "verify fails fast, naming the missing collect, when the clone has commits and OUT is empty" || no "uncollected: rc=$rc $out"
 [ ! -f "$R/verified" ] && ok "and records nothing" || no "verified written for an uncollected run"
-grep -q "refuse a member's write tool for a report file" <<<"$out" && grep -q "write its OUT files (report, manifest, series) with the shell, a heredoc" <<<"$out" \
-  && ok "verify of an OUT with no report names the likely cause: a refused write tool, and the shell as the way round" || no "verify cause: $out"
+grep -q "refuse a member's write tool for a report file" <<<"$out" && grep -q "writes its OUT files (report, manifest, series) with its file tool" <<<"$out" && ! grep -qi "heredoc" <<<"$out" \
+  && ok "verify of an OUT with no report names the likely cause: a refused write tool" || no "verify cause: $out"
+grep -q "returns the report as its final message, and the lead stores it with: qargi review save RUN" <<<"$out" && ok "and the way round: the final message, stored with qargi review save" || no "verify cause way round: $out"
 grep -q "refs: unchanged by the run" <<<"$out" && grep -q "clean RUN --discard" <<<"$out" && ok "it still compares the refs, says so next to the message, and keeps verify required" || no "uncollected refs line: $out"
 git -C "$A" branch stray-by-run develop
 out=$(verify "$R"); rc=$?
@@ -332,9 +333,9 @@ out=$($F finish ro 2>&1); grep -q "open run" <<<"$out" && no "a cleaned read-onl
 R=$(mkrun ro-noreport feature/ro review)
 out=$($DA local clean "$R" 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "holds no manifest" <<<"$out" && grep -q "report.md" <<<"$out" && [ -d "$R" ] && ok "a read-only run with no report is still refused, and the message says what closes it" || no "read-only no report: rc=$rc $out"
-grep -q "refuse a member's write tool for a report file" <<<"$out" && grep -q "with the shell, a heredoc" <<<"$out" && ok "clean of an OUT with no report names the cause too" || no "clean cause: $out"
+grep -q "refuse a member's write tool for a report file" <<<"$out" && grep -q "returns the report as its final message, and the lead stores it with: qargi review save RUN" <<<"$out" && ok "clean of an OUT with no report names the cause too" || no "clean cause: $out"
 out=$(verify "$R"); rc=$?
-grep -q "qargi: note: OUT of the read-only run $R holds no report" <<<"$out" && grep -q "with the shell, a heredoc" <<<"$out" && ok "verify of a read-only run whose OUT holds no report says so, with the cause (a note: the exit status is the refs verdict)" || no "verify read-only no report: rc=$rc $out"
+grep -q "qargi: note: OUT of the read-only run $R holds no report" <<<"$out" && grep -q "returns the report as its final message, and the lead stores it with: qargi review save RUN" <<<"$out" && ! grep -qi "heredoc" <<<"$out" && ok "verify of a read-only run whose OUT holds no report says so, with the cause (a note: the exit status is the refs verdict)" || no "verify read-only no report: rc=$rc $out"
 out=$($DA lead compact-check --project app 2>&1)
 grep -q "close it: qargi local clean $R (once the member has written OUT/report.md" <<<"$out" && ok "its closing command waits for the report" || no "closing without report: $out"
 echo "# report" > "$R/out/report.md"; git -C "$A" branch ro-stray develop
@@ -370,14 +371,14 @@ R=$(mkrun ro-patches feature/ro review); mkdir -p "$R/out/patches"; echo x > "$R
 out=$(verify "$R"); rc=$?
 [ $rc = 2 ] && grep -q "is a read-only run" <<<"$out" && ok "a read-only run's patches are refused though a member set the class file to write" || no "ro with patches: rc=$rc $out"
 $DA local clean "$R" --discard >/dev/null 2>&1
-# a record with no class (a run prepared by an earlier version) falls back to the file, and with neither counts as a run of work
+# a record with no class counts as a run of work, whatever file the run directory holds: only the registry says (no fallback to the class file)
 R=$(mkrun oldrec feature/ro); echo "# report" > "$R/out/report.md"; rm -f "$R/class"
 jq -c --arg r "$R" 'if .run == $r then del(.class) else . end' "$T/s/local-runs.jsonl" > "$T/reg.new" && mv "$T/reg.new" "$T/s/local-runs.jsonl"
 out=$($DA local clean "$R" 2>&1); rc=$?
-[ $rc = 1 ] && grep -q "holds no manifest" <<<"$out" && ok "an older record with no class and no class file is a run of work, not a read-only one" || no "no class at all: rc=$rc $out"
+[ $rc = 1 ] && grep -q "holds no manifest" <<<"$out" && ok "a record with no class and no class file is a run of work, not a read-only one" || no "no class at all: rc=$rc $out"
 echo read-only > "$R/class"
 out=$($DA local clean "$R" 2>&1); rc=$?
-[ $rc = 0 ] && ok "an older record falls back to the class file" || no "old record file fallback: rc=$rc $out"
+[ $rc = 1 ] && grep -q "holds no manifest" <<<"$out" && ok "a record with no class does not fall back to a class file in the run directory" || no "class file believed: rc=$rc $out"
 # what counts as a report: a regular file named report.md or NAME-report.md directly in OUT, for clean and for compact-check alike
 R=$(mkrun rep-kinds feature/ro review)
 ln -s /etc/hostname "$R/out/report.md"

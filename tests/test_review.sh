@@ -25,6 +25,21 @@ out=$($DA review check "$T/good" 2>&1); rc=$?
 [ $rc = 0 ] && ok "a series of change-specific patches with messages passes" || { no "good series: $out"; }
 echo "$out" | grep -q "within" && no "a spread-out series was flagged as a batch" || ok "commits made over time are not flagged as a batch"
 
+# SCOPE is a hard limit: the manifest's scope[], or the SCOPE of the run's task block (RUN/task.md) when it records one
+cp -r "$T/good" "$T/scok"; jq '.scope = ["internal/", "docs", "man/*.1"]' "$T/scok/manifest.json" > "$T/scok/m.json" && mv "$T/scok/m.json" "$T/scok/manifest.json"
+out=$($DA review check "$T/scok" 2>&1); [ $? = 0 ] && ok "a series inside the manifest's scope[] (a directory, a directory without a slash, a glob) passes" || no "scope ok: $out"
+cp -r "$T/good" "$T/scbad"; jq '.scope = ["internal/"]' "$T/scbad/manifest.json" > "$T/scbad/m.json" && mv "$T/scbad/m.json" "$T/scbad/manifest.json"
+out=$($DA review check "$T/scbad" 2>&1); [ $? = 1 ] && echo "$out" | grep -q "FAIL 2 path(s) outside SCOPE (internal/): docs/a.md, man/a.1" && ok "a series that touches paths outside the manifest's scope[] is refused, the paths named" || no "scope bad: $out"
+cp -r "$T/good" "$T/sctp"; jq '.scope = ["internal/", "docs/", "man/"] | .touched_paths = [{path: "README.md", reason: "x"}]' "$T/sctp/manifest.json" > "$T/sctp/m.json" && mv "$T/sctp/m.json" "$T/sctp/manifest.json"
+out=$($DA review check "$T/sctp" 2>&1); [ $? = 1 ] && echo "$out" | grep -q "outside SCOPE.*README.md" && ok "a touched_paths entry outside the scope is refused too" || no "scope touched_paths: $out"
+mkdir -p "$T/sctask"; cp -r "$T/good" "$T/sctask/out"; printf 'TASK: x\nSCOPE: internal/, docs/\nDONE: true\n' > "$T/sctask/task.md"
+out=$($DA review check "$T/sctask/out" 2>&1); [ $? = 1 ] && echo "$out" | grep -q "outside SCOPE (internal/, docs/): man/a.1" && ok "the SCOPE of the run's task block is the limit, the manifest has none" || no "scope task block: $out"
+jq '.scope = ["internal/", "docs/", "man/"]' "$T/sctask/out/manifest.json" > "$T/sctask/m.json" && mv "$T/sctask/m.json" "$T/sctask/out/manifest.json"
+$DA review check "$T/sctask/out" 2>&1 | grep -q "outside SCOPE" && ok "a member's wider scope[] does not widen the task block's SCOPE" || no "scope task block wins"
+printf 'TASK: x\nSCOPE: none\n' > "$T/sctask/task.md"
+out=$($DA review check "$T/sctask/out" 2>&1); [ $? = 0 ] && ok "a task block with SCOPE: none leaves the manifest's scope[] as the limit" || no "scope none: $out"
+$DA review check "$T/good" 2>&1 | grep -q "outside SCOPE" && no "a series with no scope was checked against one" || ok "without a recorded scope nothing is checked against one"
+
 # one monolithic patch over three areas
 git reset -q --soft "$BASE"; mk "all the work" "everything" "2026-10-27T11:00:00"
 run mono; manifest "$T/mono"; echo "# s" > "$T/mono/series.md"
@@ -43,7 +58,9 @@ out=$($DA review check "$T/mismatch" 2>&1); [ $? = 1 ] && echo "$out" | grep -q 
 git reset -q --hard "$BASE"
 for k in 1 2 3; do echo "$k" >> "internal/f$k.go"; git add -A; mk "step $k" "Why step $k happened." "2026-10-27T12:00:0$k"; done
 run batch; manifest "$T/batch"; echo "# s" > "$T/batch/series.md"
-$DA review check "$T/batch" 2>&1 | grep -q "NOTE.*batch" && ok "commits made within seconds of each other are noted" || no "batch note"
+out=$($DA review check "$T/batch" 2>&1); rc=$?; [ $rc = 0 ] && echo "$out" | grep -q "WARN all 3 commits.*one batch" && echo "$out" | grep -q "0 fail, 1 warn" && ok "commits made within seconds of each other are a warning, not a note, and do not fail the series" || no "batch warning: rc=$rc $out"
+# the warning cannot be cleared without rewriting history, which the contract forbids: the contract asks for no failure and an explained warning, not for 0 warn
+CT=${DA%/bin/qargi}/contract/contract.md; ! grep -q '0 warn' "$CT" && grep -q 'reports no failure' "$CT" && grep -q 'explain a warn in the report' "$CT" && ok "the contract asks for no failure and an explained warning, not for 0 warn" || no "the contract still asks for 0 warn"
 
 # missing commit advice / groups are warnings
 cp -r "$T/good" "$T/nogroups"; jq 'del(.patch_groups) | del(.commit_advice)' "$T/nogroups/manifest.json" > "$T/nogroups/m.json" && mv "$T/nogroups/m.json" "$T/nogroups/manifest.json"
@@ -62,16 +79,32 @@ mkdir -p "$T/outwins/out"; cp -r "$T/good/." "$T/outwins/"
 out=$($DA review check "$T/outwins" 2>&1); rc=$?; [ $rc = 0 ] && ! echo "$out" | grep -q "NOTE checked" && ok "a directory that holds patches itself is checked as it is, even with a subdirectory named out" || no "out wins: rc=$rc $out"
 # a review run returns a report instead of patches
 mkdir -p "$T/rep"; out=$($DA review check "$T/rep" 2>&1); [ $? = 1 ] && ok "a run with neither patches nor a report is refused" || no "empty run: $out"
-printf '# Review\n\n## Findings\n\nnone\n' > "$T/rep/report.md"
-out=$($DA review check "$T/rep" 2>&1); [ $? = 0 ] && echo "$out" | grep -q "report-only" && ok "a report with a Findings section passes as a review run" || no "report run: $out"
+GOOD_REP='# Findings\n\nnone\n\n# Checked\n\nbuild, exit 0\n\nverdict: accept\n'
+printf '{"status":"DONE","commits":[],"artifacts":[{"path":"report.md","kind":"report"}]}\n' > "$T/rep/manifest.json"
+printf "$GOOD_REP" > "$T/rep/report.md"
+# hermetic: allow absent (WARN is a word review check prints only for a warning; its output of a passing report names no random path in a way that holds it)
+out=$($DA review check "$T/rep" 2>&1); [ $? = 0 ] && echo "$out" | grep -q "OK report-only" && ! echo "$out" | grep -q "WARN" && ok "a report with Findings, Checked, a last verdict line and a manifest passes as a review run" || no "report run: $out"
 printf '# Review\n\nlooks fine\n' > "$T/rep/report.md"
 $DA review check "$T/rep" >/dev/null 2>&1; [ $? = 1 ] && ok "a report without a Findings section is refused" || no "report without findings"
-# in a team run every file in OUT starts with the member's prefix: review--report.md is the report
-rm -f "$T/rep/report.md"; printf '# Review\n\n## Findings\n\nnone\n' > "$T/rep/review--report.md"
+printf '# Findings\n\nnone\n\n# Checked\n\nbuild\n' > "$T/rep/report.md"
+out=$($DA review check "$T/rep" 2>&1); [ $? = 1 ] && echo "$out" | grep -q "last line must be .verdict: accept. or .verdict: revise." && ok "a report that does not end with the verdict line is refused" || no "no verdict: $out"
+printf '# Findings\n\nnone\n\nverdict: accept\n\n# Checked\n\nbuild\n' > "$T/rep/report.md"
+$DA review check "$T/rep" 2>&1 | grep -q "FAIL.*last line" && ok "a verdict line that is not the last line is refused" || no "verdict not last"
+printf '# Findings\n\nnone\n\n# Checked\n\nbuild\n\nverdict: ready\n' > "$T/rep/report.md"
+$DA review check "$T/rep" 2>&1 | grep -q "FAIL.*last line" && ok "a verdict other than accept or revise is refused" || no "verdict ready"
+printf '# Findings\n\nnone\n\nverdict: revise\n' > "$T/rep/report.md"
+out=$($DA review check "$T/rep" 2>&1); [ $? = 0 ] && echo "$out" | grep -q "WARN.*Checked" && ok "a report without a Checked section passes with a warning" || no "no Checked: $out"
+printf "$GOOD_REP" > "$T/rep/report.md"; mv "$T/rep/manifest.json" "$T/rep/m.json"
+out=$($DA review check "$T/rep" 2>&1); [ $? = 1 ] && echo "$out" | grep -q "manifest.json missing" && ok "a report-only run without manifest.json is refused" || no "no manifest: $out"
+mv "$T/rep/m.json" "$T/rep/manifest.json"
+# in a team run every file in OUT starts with the member's prefix: review--report.md is the report, review--manifest.json its manifest
+rm -f "$T/rep/report.md"; printf "$GOOD_REP" > "$T/rep/review--report.md"
+out=$($DA review check "$T/rep" 2>&1); [ $? = 1 ] && echo "$out" | grep -q "review--manifest.json missing" && ok "a prefixed report needs the member's prefixed manifest" || no "prefixed report, plain manifest: $out"
+mv "$T/rep/manifest.json" "$T/rep/review--manifest.json"
 out=$($DA review check "$T/rep" 2>&1); [ $? = 0 ] && echo "$out" | grep -q "report-only.*review--report.md" && ok "a report with an OUT_PREFIX (review--report.md) passes as a review run" || no "prefixed report: $out"
 printf '# Review\n\nlooks fine\n' > "$T/rep/review--report.md"
 $DA review check "$T/rep" >/dev/null 2>&1; [ $? = 1 ] && ok "a prefixed report without a Findings section is refused" || no "prefixed report without findings"
-rm -f "$T/rep/review--report.md"
+rm -f "$T/rep/review--report.md" "$T/rep/review--manifest.json"
 # --- qargi review apply: a collected, checked run becomes a task branch of the real repository
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T/shm QARGI_PROJECT=app
 mkdir -p "$HOME" "$T/c/projects" "$T/shm" "$T/scr"
@@ -79,9 +112,10 @@ A=$T/app; git init -q -b master "$A"; git -C "$A" config user.name lead; git -C 
 mkdir -p "$A/internal" "$A/docs" "$A/man"; echo a > "$A/internal/a.go"; echo a > "$A/docs/a.md"; echo a > "$A/man/a.1"
 git -C "$A" add -A; git -C "$A" commit -q -m base; git -C "$A" branch develop; git -C "$A" checkout -q -b parked
 jq -n --arg p "$A" '{schema:1, project:"app", methodology:"gitflow", repo:{url:"https://github.com/acme/app", path:$p, long_lived:["master","develop"]}, test_command:"true"}' > "$T/c/projects/app.json"
+NR_ARGS=()   # more arguments for the prepare of newrun
 newrun() { # slug -> RUN (prepared, with a two-commit series collected into OUT)
   local out r c b
-  out=$($DA local prepare --repo "$A" --base develop --slug "$1" --scratch "$T/scr") || return 1
+  out=$($DA local prepare --repo "$A" --base develop --slug "$1" --scratch "$T/scr" ${NR_ARGS[@]+"${NR_ARGS[@]}"}) || return 1
   r=$(echo "$out" | sed -n 's/^RUN=//p'); c=$r/clone; b=$(git -C "$c" rev-parse HEAD)
   ( cd "$c" || exit 1; export GIT_AUTHOR_NAME=agent GIT_AUTHOR_EMAIL=agent@example.invalid GIT_COMMITTER_NAME=agent GIT_COMMITTER_EMAIL=agent@example.invalid
     echo b >> internal/a.go; git add -A; mk "names: accept periods" "The pattern now allows single periods between runs." "2026-10-27T10:00:00"
@@ -100,6 +134,128 @@ echo "$out" | grep -q "names: accept periods" && echo "$out" | grep -q "feature 
   && ok "no other ref, the checkout or a worktree was changed" || no "side effects"
 read -r ab at _ < "$R1/applied"; [ "$ab" = agent/names ] && [ "$at" = "$(git -C "$A" rev-parse agent/names)" ] && $DA local verify "$R1" >/dev/null 2>&1 && ok "the application is recorded in the run and local verify still accepts it" || no "applied record"
 $DA review apply "$R1" >/dev/null 2>&1 && no "a run was applied twice" || ok "a run that was applied is refused"
+
+# the record that a run was applied is in the lead's state, not only in the run directory (a member's to write): a deleted `applied` file does not make the run appliable again
+[ "$(jq -r '.status' "$T/s/apply/${R1##*/}.json" 2>/dev/null)" = "done" ] && ok "the apply record is in the state directory and says done" || no "apply record: $(cat "$T/s/apply/${R1##*/}.json" 2>&1)"
+cp "$R1/applied" "$T/applied.keep"; rm -f "$R1/applied"
+out=$($DA review apply "$R1" 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "applied already" <<<"$out" && ok "a run whose applied file a member removed is still refused as applied" || no "removed applied file: rc=$rc $out"
+cp "$T/applied.keep" "$R1/applied"
+
+# a death in the middle of an apply is recoverable: a git shim kills the verb right after the Nth matching git call
+mkdir -p "$T/shim"; REALGIT=$(command -v git); export REALGIT
+cat > "$T/shim/git" <<'S'
+#!/usr/bin/env bash
+"$REALGIT" "$@"; rc=$?
+# PAUSE_AFTER: wait inside the verb, once the real git ran, until $PAUSE_GO exists ($PAUSE_FLAG tells the test the verb is there)
+if [ -n "${PAUSE_AFTER:-}" ] && [ ! -e "${PAUSE_FLAG:-/nonexistent}" ]; then
+  case " $* " in *"$PAUSE_AFTER"*) : > "$PAUSE_FLAG"; while [ ! -e "$PAUSE_GO" ]; do sleep 0.1; done;; esac
+fi
+if [ -n "${DIE_AFTER:-}" ] && [ ! -e "${DIE_FLAG:-/nonexistent}" ]; then
+  case " $* " in *"$DIE_AFTER"*) : > "$DIE_FLAG"; kill -9 "$PPID";; esac
+fi
+exit $rc
+S
+chmod +x "$T/shim/git"
+# (1) after the branch was made, before the patches: the branch is only the base; the re-run removes it and applies the series
+R7=$(newrun halfway)
+PATH=$T/shim:$PATH DIE_AFTER="worktree add -q -b agent/halfway" DIE_FLAG=$T/die-1 $DA review apply "$R7" >/dev/null 2>&1; rc=$?
+[ $rc != 0 ] && [ -e "$T/die-1" ] && git -C "$A" rev-parse -q --verify agent/halfway >/dev/null && [ ! -e "$R7/applied" ] && [ "$(jq -r .status "$T/s/apply/${R7##*/}.json")" = started ] \
+  && ok "(setup) a death after the branch was made leaves the branch, no applied file and a record that says started" || no "setup 1: rc=$rc $(cat "$T/s/apply/${R7##*/}.json" 2>&1)"
+git -C "$A" worktree prune
+out=$($DA review apply "$R7" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "cut off while making agent/halfway" <<<"$out" && [ "$(git -C "$A" rev-list --count "$dev..agent/halfway")" = 2 ] && [ -f "$R7/applied" ] && [ "$(jq -r .status "$T/s/apply/${R7##*/}.json")" = "done" ] \
+  && ok "the re-run removes the half-made branch, applies the series and records it" || no "re-run 1: rc=$rc $out"
+# (2) after the branch was built and the journal and audit lines were written, before the run's own files: the re-run finishes without applying again
+R8=$(newrun built)
+PATH=$T/shim:$PATH DIE_AFTER="log --reverse" DIE_FLAG=$T/die-2 $DA review apply "$R8" >/dev/null 2>&1; rc=$?
+tip=$(git -C "$A" rev-parse agent/built)
+[ $rc != 0 ] && [ -e "$T/die-2" ] && [ ! -e "$R8/applied" ] && [ "$(jq -r .status "$T/s/apply/${R8##*/}.json")" = built ] && [ "$(jq -r .tip "$T/s/apply/${R8##*/}.json")" = "$tip" ] \
+  && ok "(setup) a death after the branch was built leaves a record that says built, with the tip" || no "setup 2: rc=$rc $(cat "$T/s/apply/${R8##*/}.json" 2>&1)"
+out=$($DA review apply "$R8" 2>&1); rc=$?
+read -r ab at _ < "$R8/applied" 2>/dev/null
+[ $rc = 0 ] && grep -q "finishing it" <<<"$out" && [ "$(git -C "$A" rev-parse agent/built)" = "$tip" ] && [ "$ab" = agent/built ] && [ "$at" = "$tip" ] && [ "$(jq -r .status "$T/s/apply/${R8##*/}.json")" = "done" ] \
+  && $DA local verify "$R8" >/dev/null 2>&1 && ok "the re-run finishes from the record: the branch is as it was, the run records it, local verify accepts it" || no "re-run 2: rc=$rc $out"
+[ "$(jq -rs '[.[] | select(.verb == "review:apply" and (.detail | startswith("'"$R8"' ")))] | length' "$T/s/audit.log")" = 1 ] && [ "$(jq -rs '[.[] | select(.verb == "review:apply" and .ref == "refs/heads/agent/built")] | length' "$T/s/ref-journal.jsonl")" = 1 ] \
+  && ok "and the audit line and the journal line are written once" || no "audit/journal counts"
+# (3) the branch moved after it was built: the re-run refuses and says so
+R9=$(newrun moved)
+PATH=$T/shim:$PATH DIE_AFTER="log --reverse" DIE_FLAG=$T/die-3 $DA review apply "$R9" >/dev/null 2>&1
+git -C "$A" update-ref refs/heads/agent/moved "$dev"
+out=$($DA review apply "$R9" 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "built agent/moved at" <<<"$out" && grep -q "is at" <<<"$out" && [ ! -e "$R9/applied" ] && ok "a branch that is not where the record says it was built is refused, precisely" || no "moved: rc=$rc $out"
+# (4) two applies of one run: the second is refused while the first is under way and touches nothing (it used to remove the first one's worktree and branch);
+# the first finishes. The first is held inside, right after its branch and worktree were made, by the shim.
+R12=$(newrun conc); id12=${R12##*/}; rec12=$T/s/apply/$id12.json
+PATH=$T/shim:$PATH PAUSE_AFTER="worktree add -q -b agent/conc" PAUSE_FLAG=$T/p-flag PAUSE_GO=$T/p-go $DA review apply "$R12" > "$T/conc1.out" 2>&1 &
+cpid=$!
+for _ in $(seq 100); do [ -e "$T/p-flag" ] && break; sleep 0.1; done
+wt12=$(git -C "$A" worktree list --porcelain | sed -n 's/^worktree \(.*apply-wt.*\)/\1/p')
+rp=$(jq -r .pid "$rec12" 2>/dev/null)
+[ -e "$T/p-flag" ] && [[ $rp =~ ^[0-9]+$ ]] && kill -0 "$rp" 2>/dev/null && [ -n "$(jq -r .ptoken "$rec12")" ] && [ -n "$wt12" ] \
+  && ok "(setup) the first apply is held inside: its record says started and carries its pid and start token, its worktree exists" || no "setup conc: flag=$([ -e "$T/p-flag" ] && echo yes || echo no) pid=$rp $(cat "$rec12" 2>&1)"
+out=$($DA review apply "$R12" 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "another apply of .* is running (process" <<<"$out" && [ -d "$wt12" ] && git -C "$A" rev-parse -q --verify agent/conc >/dev/null && [ "$(jq -r .status "$rec12")" = started ] && [ "$(jq -r .pid "$rec12")" = "$rp" ] \
+  && ok "a second apply of the run is refused while the first is alive, and removes neither its worktree, its branch nor its record" || no "second apply: rc=$rc $out"
+: > "$T/p-go"; wait "$cpid"; rc1=$?
+[ $rc1 = 0 ] && [ "$(jq -r .status "$rec12")" = "done" ] && [ "$(git -C "$A" rev-list --count "$dev..agent/conc")" = 2 ] && [ -f "$R12/applied" ] && [ ! -d "$rec12.run" ] \
+  && ok "the first apply then finishes: two commits on the branch, the record done, its lock removed" || no "first apply: rc=$rc1 $(cat "$T/conc1.out")"
+# (5) the record of a dead process is resumed (test 1 above); one whose process is alive is not, even with no lock directory: only a pid that is gone, or
+# that now belongs to another process (its start token differs), counts as a death
+R13=$(newrun livepid); id13=${R13##*/}; rec13=$T/s/apply/$id13.json
+PATH=$T/shim:$PATH DIE_AFTER="worktree add -q -b agent/livepid" DIE_FLAG=$T/die-5 $DA review apply "$R13" >/dev/null 2>&1
+git -C "$A" worktree prune
+dp=$(jq -r .pid "$rec13"); kill -0 "$dp" 2>/dev/null && no "setup livepid: the killed apply's pid $dp is alive"
+sleep 60 & sp=$!
+read -ra st < <(sed 's/^.*) //' "/proc/$sp/stat")   # the start time of the sleep: field 22 of stat, the 20th after the name
+jq --argjson p "$sp" --arg t "${st[19]}" '.pid = $p | .ptoken = $t' "$rec13" > "$T/rec13.json" && cp "$T/rec13.json" "$rec13"; rm -rf "$rec13.run"
+out=$($DA review apply "$R13" 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "another apply of .* is under way (process $sp" <<<"$out" && git -C "$A" rev-parse -q --verify agent/livepid >/dev/null && [ "$(jq -r .status "$rec13")" = started ] \
+  && ok "a started record whose process is alive is refused even with no lock directory, and nothing is removed" || no "live record: rc=$rc $out"
+jq '.ptoken = "1"' "$rec13" > "$T/rec13.json" && cp "$T/rec13.json" "$rec13"   # the pid now names another process than the one that made the record
+out=$($DA review apply "$R13" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "cut off while making agent/livepid" <<<"$out" && [ "$(jq -r .status "$rec13")" = "done" ] && ok "and a pid whose start token differs is a dead apply: it is resumed" || no "reused pid: rc=$rc $out"
+kill "$sp" 2>/dev/null; wait "$sp" 2>/dev/null
+# `local clean RUN` removes the apply record of the run and what a killed apply of it left in the state (its apply-in.RUN-ID.* and apply-wt.RUN-ID.* directories and the
+# worktree), and nothing of another run; `local clean --orphans` lists and removes the ones no run of the registry accounts for
+id9=${R9##*/}
+astate() { find "$T/s" -maxdepth 1 \( -name "apply-in.$1.*" -o -name "apply-wt.$1.*" \) | wc -l; }
+[ -f "$T/s/apply/$id9.json" ] && [ "$(astate "$id9")" = 1 ] && ok "(setup) the killed apply of a run left its record and a temporary directory named with the run's id in the state" || no "setup clean: $(ls -A "$T/s")"
+R10=$(newrun wtleft); id10=${R10##*/}
+PATH=$T/shim:$PATH DIE_AFTER="worktree add -q -b agent/wtleft" DIE_FLAG=$T/die-4 $DA review apply "$R10" >/dev/null 2>&1
+[ -e "$T/die-4" ] && [ -f "$T/s/apply/$id10.json" ] && [ -d "$T/s/apply/$id10.json.run" ] && [ "$(astate "$id10")" = 2 ] && [ "$(git -C "$A" worktree list | wc -l)" = 2 ] \
+  && ok "(setup) an apply killed after its worktree was made leaves the record, the patch copy, the worktree directory and the registered worktree" || no "setup wt: $(ls -A "$T/s"; git -C "$A" worktree list)"
+mkdir "$T/outside"; echo keep > "$T/outside/f"; ln -s "$T/outside" "$T/s/apply-in.$id10.link"   # a link in the name of a temporary directory: removed by no one's rm -r
+out=$($DA local clean "$R10" --discard 2>&1); rc=$?
+{ [ $rc = 0 ] && [ ! -e "$R10" ] && [ ! -e "$T/s/apply/$id10.json" ] && [ ! -e "$T/s/apply/$id10.json.run" ] && [ -z "$(find "$T/s" -maxdepth 1 \( -name "apply-in.$id10.*" -o -name "apply-wt.$id10.*" \) ! -name '*.link')" ] \
+  && [ "$(git -C "$A" worktree list | wc -l)" = 1 ] && [ -L "$T/s/apply-in.$id10.link" ] && [ "$(cat "$T/outside/f")" = keep ]; } \
+  && ok "clean removes the apply record, the patch copy and the worktree of a killed apply of the run (and prunes the worktree), and follows no link" || no "clean wt: rc=$rc $out $(ls -A "$T/s")"
+{ [ -f "$T/s/apply/$id9.json" ] && [ "$(astate "$id9")" = 1 ] && [ -d "$R9" ]; } && ok "and leaves the record and the directory of another run alone" || no "other run: $(ls -A "$T/s" "$T/s/apply")"
+rm -f "$T/s/apply-in.$id10.link"
+out=$($DA local clean "$R9" --discard 2>&1); rc=$?
+{ [ $rc = 0 ] && [ ! -e "$T/s/apply/$id9.json" ] && [ "$(astate "$id9")" = 0 ] && [ ! -e "$R9" ]; } && ok "clean of a run whose apply was cut off after the branch was built removes its record and patch copy too" || no "clean built: rc=$rc $out"
+# a run that was applied: its record (status done) goes with it
+R11=$(newrun donerec); id11=${R11##*/}
+$DA review apply "$R11" >/dev/null 2>&1; [ "$(jq -r .status "$T/s/apply/$id11.json" 2>/dev/null)" = "done" ] || no "setup done record"
+out=$($DA local clean "$R11" --discard 2>&1); rc=$?
+{ [ $rc = 0 ] && [ ! -e "$R11" ] && [ ! -e "$T/s/apply/$id11.json" ]; } && ok "clean of an applied run removes its apply record" || no "clean done: rc=$rc $out"
+# --orphans: temporary directories of a killed apply that no run accounts for
+mkapp() { mkdir -p "$T/s/$1" && echo x > "$T/s/$1/f" && touch -d "$2 days ago" "$T/s/$1/f" "$T/s/$1"; }   # NAME DAYS_OLD
+mkapp apply-in.AAAAAA 6; mkapp apply-wt.qargi.zzzzzz.BBBBBB 6; mkapp apply-in.qargi.yyyyyy.CCCCCC 0
+idl=${R8##*/}; mkapp "apply-in.$idl.DDDDDD" 6   # a run of the registry that is not cleaned: its directory is its run's
+ln -s "$T/outside" "$T/s/apply-wt.EEEEEE"
+orphc() { QARGI_RUN_TMP=$T/shm $DA local clean --orphans "$@" 2>&1; }
+out=$(orphc); rc=$?; otok=$(sed -n 's/^plan token: \([0-9a-f]*\) .*/\1/p' <<<"$out")
+{ [ $rc = 0 ] && [ -n "$otok" ] && grep -q "^orphan .*/apply-in.AAAAAA (6d old, named by no run)" <<<"$out" && grep -q "^orphan .*/apply-wt.qargi.zzzzzz.BBBBBB (6d old, its run qargi.zzzzzz is cleaned or not in the registry)" <<<"$out" \
+  && grep -q "^kept .*/apply-in.qargi.yyyyyy.CCCCCC (0d old): it or something in it changed" <<<"$out" && grep -q "^kept .*/apply-in.$idl.DDDDDD (6d old): left by an apply of the run .*$idl, which clean" <<<"$out" \
+  && grep -q "^kept .*/apply-wt.EEEEEE: not a directory review apply makes" <<<"$out" && grep -q "2 orphaned for more than 2 day" <<<"$out" && [ -d "$T/s/apply-in.AAAAAA" ] && [ -d "$T/s/apply-wt.qargi.zzzzzz.BBBBBB" ]; } \
+  && ok "clean --orphans lists the apply directories no run accounts for, with the plan token, and removes nothing" || no "apply orphans plan: rc=$rc $out"
+out=$(orphc --plan 000000000000 --approved go); rc=$?
+{ [ $rc != 0 ] && [ -d "$T/s/apply-in.AAAAAA" ]; } && ok "a wrong token removes none of them" || no "apply orphans wrong token: rc=$rc $out"
+out=$(orphc --plan "$otok" --approved "go on"); rc=$?
+{ [ $rc = 0 ] && [ ! -e "$T/s/apply-in.AAAAAA" ] && [ ! -e "$T/s/apply-wt.qargi.zzzzzz.BBBBBB" ] && [ -d "$T/s/apply-in.qargi.yyyyyy.CCCCCC" ] && [ -d "$T/s/apply-in.$idl.DDDDDD" ] && [ -L "$T/s/apply-wt.EEEEEE" ] && [ -f "$T/outside/f" ]; } \
+  && ok "with the token and the words they are removed; a recent one, a live run's and a link stay" || no "apply orphans apply: rc=$rc $out"
+rm -rf "$T"/s/apply-in.* "$T"/s/apply-wt.*   # what the killed runs left in the state directory
 
 R2=$(newrun failing); rm -f "$R2/out/manifest.json"
 out=$($DA review apply "$R2" 2>&1); rc=$?; [ $rc != 0 ] && echo "$out" | grep -q FAIL && ! git -C "$A" rev-parse -q --verify agent/failing >/dev/null && ok "a failing review check refuses and creates no branch" || no "failing check: $out"
@@ -165,6 +321,15 @@ out=$($DA review apply --from-saved "$IS" 2>&1); rc=$?
 { [ $rc = 0 ] && [ "$(git -C "$A" rev-list --count "$dev..agent/saved1")" = 2 ] && grep -q "applied 2 patch(es)" <<<"$out" && read -r ab at _ < "$SS/applied" \
   && [ "$ab" = agent/saved1 ] && [ "$at" = "$(git -C "$A" rev-parse agent/saved1)" ] && grep -q "^local refs/heads/agent/saved1 " "$SS/refs.before"; } \
   && ok "--from-saved applies the saved series on agent/<slug> at the run's base and records it in the saved copy" || no "from-saved apply: rc=$rc $out"
+# the saved copy keeps the run's task block, so the SCOPE it recorded is still the limit when the run directory is gone
+printf 'Touch the names only.\n' > "$T/task-saved.txt"
+NR_ARGS=(--task-file "$T/task-saved.txt" --done true --scope internal/); RT=$(newrun savedscope); NR_ARGS=(); IT=$(basename "$RT"); ST=$T/s/runs/$IT
+out=$($DA review check "$RT/out" 2>&1); [ $? = 1 ] && grep -q "outside SCOPE (internal/)" <<<"$out" || no "(setup) the series does not break SCOPE: $out"
+$DA local verify "$RT" >/dev/null 2>&1
+[ -f "$ST/task.md" ] && grep -q '^SCOPE: internal/$' "$ST/task.md" && ok "the saved copy of a run holds its task block (task.md)" || no "saved copy has no task.md: $(ls "$ST" 2>&1)"
+rm -rf "$RT"
+out=$($DA review apply --from-saved "$IT" 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "outside SCOPE" <<<"$out" && ! git -C "$A" rev-parse -q --verify agent/savedscope >/dev/null && ok "--from-saved applies nothing that breaks the SCOPE of the run's task block" || no "from-saved scope: rc=$rc $out"
 out=$($DA review apply --from-saved "$IS" --branch agent/again 2>&1); rc=$?
 [ $rc != 0 ] && grep -q "applied already" <<<"$out" && ! git -C "$A" rev-parse -q --verify agent/again >/dev/null && ok "and refuses to apply it twice" || no "from-saved twice: rc=$rc $out"
 RS2=$(newrun saved2); IS2=$(basename "$RS2"); $DA local verify "$RS2" >/dev/null 2>&1; rm -rf "$RS2"
@@ -328,7 +493,7 @@ sed -i 's/^The manual and docs say what a name may hold\.$/&\n\nCo-Authored-By: 
 out=$($DA review check "$R40/out" 2>&1); rc=$?
 { [ $rc = 0 ] && ! grep -q '^scrub:' <<<"$out"; } && ok "trailer_policy none (the default) lets the trailer pass and prints nothing more" || no "trailer none: rc=$rc $out"
 # a report-only run (no patches) is not scrubbed
-setans '.review.scrub = "exit 1"'; mkdir -p "$T/rep2"; printf '# R\n\n## Findings\n\nnone\n' > "$T/rep2/report.md"
+setans '.review.scrub = "exit 1"'; mkdir -p "$T/rep2"; printf '# Findings\n\nnone\n\n# Checked\n\nnothing\n\nverdict: accept\n' > "$T/rep2/report.md"; printf '{"status":"DONE","commits":[]}\n' > "$T/rep2/manifest.json"
 out=$($DA review check "$T/rep2" 2>&1); rc=$?
 { [ $rc = 0 ] && ! grep -q '^scrub:' <<<"$out"; } && ok "a report-only run is not scrubbed" || no "report scrub: rc=$rc $out"
 # a member's own check (the member mark in its environment) neither runs the command nor makes the checkout, and does not fail for it
@@ -421,4 +586,38 @@ cp "$AF0" "$AF"; R57=$(newrun applynone)
 out=$($DA review apply "$R57" 2>&1); rc=$?
 { [ $rc = 0 ] && ! grep -q '^scrub:' <<<"$out"; } && ok "with no declared scrub apply prints no scrub line" || no "apply none: rc=$rc $out"
 cp "$AF0" "$AF"
+# --- review save: the final message of a read-only run, stored by the lead as OUT/report.md
+setans '.models = {provider: {local: "claude-code", cloud: "claude-platform"}}'   # a read-only run is looked up through the project's provider
+rorun() { $DA local prepare --repo "$A" --base develop --slug "$1" --scratch "$T/scr" --role review | sed -n 's/^RUN=//p'; }
+MSG=$T/message.md; printf '# Findings\n\nnone: if n > 0 the line is fine\n\ngit push is only text here\n\nverdict: accept\n' > "$MSG"
+RV1=$(rorun savea)
+out=$($DA review save "$RV1" < "$MSG" 2>&1); rc=$?
+{ [ $rc = 0 ] && cmp -s "$MSG" "$RV1/out/report.md" && grep -q "wrote $RV1/out/report.md" <<<"$out" && grep -q "wrote $RV1/out/manifest.json" <<<"$out" && grep -q "review check $RV1/out" <<<"$out"; } \
+  && ok "review save stores the message as OUT/report.md, writes a manifest and says what it wrote" || no "save: rc=$rc $out"
+{ [ "$(jq -r '.status' "$RV1/out/manifest.json")" = DONE ] && [ "$(jq -c '.commits' "$RV1/out/manifest.json")" = '[]' ] && [ "$(jq -r '.base.branch' "$RV1/out/manifest.json")" = develop ] \
+  && [ "$(jq -r '.base.sha' "$RV1/out/manifest.json")" = "$(git -C "$A" rev-parse develop)" ] && jq -e '.done and .gates == [] and .touched_paths == [] and .artifacts[0].kind == "report"' "$RV1/out/manifest.json" >/dev/null; } \
+  && ok "the minimal manifest has status, base, done, gates, commits [] and touched_paths" || no "save manifest: $(cat "$RV1/out/manifest.json")"
+out=$($DA review check "$RV1/out" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "report-only run" <<<"$out" && ok "review check accepts what review save stored" || no "save then check: rc=$rc $out"
+out=$($DA review save "$RV1" < "$MSG" 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q "exists already" <<<"$out"; } && ok "review save does not overwrite a report" || no "save overwrite: rc=$rc $out"
+printf '# Findings\n\nsecond\n' | $DA review save "$RV1" --force >/dev/null 2>&1; grep -q second "$RV1/out/report.md" && [ -z "$(find "$RV1/out" -name '.*' -type f)" ] \
+  && ok "review save --force replaces it and leaves no temporary file" || no "save --force"
+jq '.status = "BLOCKED"' "$RV1/out/manifest.json" > "$T/m.json" && cp "$T/m.json" "$RV1/out/manifest.json"; printf '# Findings\n\nthird\n' | $DA review save "$RV1" --force >/dev/null 2>&1
+[ "$(jq -r '.status' "$RV1/out/manifest.json")" = BLOCKED ] && ok "a manifest that is there is kept" || no "save kept manifest"
+RV2=$(rorun saveb); out=$($DA review save "$RV2" < /dev/null 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q "empty" <<<"$out" && [ ! -e "$RV2/out/report.md" ] && [ -z "$(find "$RV2/out" -name '.*' -type f)" ]; } && ok "an empty message is refused and writes nothing" || no "save empty: rc=$rc $out"
+RB=$(newrun savebuild); out=$($DA review save "$RB" < "$MSG" 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q "not a read-only run" <<<"$out" && [ ! -e "$RB/out/report.md" ]; } && ok "review save refuses a build run" || no "save build: rc=$rc $out"
+mv "$RV2/out" "$RV2/out.real"; mkdir "$T/elsewhere"; ln -s "$T/elsewhere" "$RV2/out"
+out=$($DA review save "$RV2" < "$MSG" 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q "link" <<<"$out" && [ -z "$(ls -A "$T/elsewhere")" ]; } && ok "review save refuses a run whose OUT is a link and writes nothing through it" || no "save symlinked out: rc=$rc $out"
+rm "$RV2/out"; mv "$RV2/out.real" "$RV2/out"; ln -s "$RV2" "$T/runlink"
+out=$($DA review save "$T/runlink" < "$MSG" 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q "not a run directory" <<<"$out" && [ ! -e "$RV2/out/report.md" ]; } && ok "review save refuses a link to a run directory" || no "save symlinked run: rc=$rc $out"
+cp -r "$RV2" "$T/qargi.copy12"; out=$($DA review save "$T/qargi.copy12" < "$MSG" 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q "registry" <<<"$out"; } && ok "review save refuses a directory the lead's registry does not name" || no "save unregistered: rc=$rc $out"
+out=$(QARGI_MEMBER_RUN=$RV2 $DA review save "$RV2" < "$MSG" 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q "lead's" <<<"$out" && [ ! -e "$RV2/out/report.md" ]; } && ok "review save with the member mark set is refused" || no "save as member: rc=$rc $out"
+$DA review save >/dev/null 2>&1; [ $? = 2 ] && ok "review save with no RUN is a usage error" || no "save usage"
 exit $fail

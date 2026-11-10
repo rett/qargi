@@ -65,6 +65,7 @@ fast | par | 300 | 12 | bash tests/test_release_gh.sh | lib/release*.sh lib/rele
 full | par | 300 | 12 | bash tests/test_release_ci.sh | lib/release*.sh lib/release*.py lib/gitflow.sh
 full | par | 300 | 15 | bash tests/test_release_checks.sh | lib/release*.sh lib/release*.py
 full | par | 300 | 12 | bash tests/test_release_unrelated.sh | lib/release*.sh lib/release*.py lib/gitflow.sh
+full | par | 300 | 25 | bash tests/test_release_master_merge.sh | lib/release*.sh lib/release*.py lib/gitflow.sh
 full | par | 300 | 12 | bash tests/test_release_snapshot_cycle.sh | lib/release*.sh lib/release*.py lib/gitflow.sh
 full | par | 300 | 7 | bash tests/test_release_after_steps.sh | lib/release*.sh lib/release*.py
 full | par | 300 | 12 | bash tests/test_release_assets.sh | lib/release*.sh lib/release*.py
@@ -76,6 +77,7 @@ fast | par | 300 | 4 | bash tests/test_project_profile.sh | lib/project_profile.
 full | par | 564 | 94 | bash tests/test_local.sh | lib/local.sh
 full | par | 300 | 20 | bash tests/test_local_concurrency.sh | lib/local.sh lib/lib.sh
 full | par | 342 | 57 | bash tests/test_local_run.sh | lib/local*.sh lib/local*.py
+full | par | 300 | 15 | bash tests/test_taskblock.sh | lib/local.sh lib/review_check.py roles/*/ROLE.md tests/golden/taskblock-*.md
 fast | par | 300 | 3 | bash tests/test_cred.sh | lib/cred.sh
 full | par | 480 | 80 | bash tests/test_packs.sh | lib/packs.sh
 full | par | 300 | 42 | bash tests/test_packs_seed.sh | lib/packs*.sh lib/packs*.py
@@ -90,7 +92,9 @@ full | par | 300 | 24 | bash tests/test_marshal_flow.sh | lib/marshal*.sh lib/ma
 full | par | 300 | 20 | bash tests/test_marshal_lease.sh | lib/marshal*.sh lib/marshal*.py lib/review.sh lib/local.sh lib/feature.sh
 full | par | 474 | 79 | bash tests/test_marshal_handoff.sh | lib/marshal*.sh lib/marshal*.py
 full | par | 744 | 124 | bash tests/test_marshal_refs.sh | lib/marshal*.sh lib/marshal*.py
-full | par | 1842 | 307 | bash tests/test_marshal_sign.sh | lib/marshal*.sh lib/marshal*.py
+full | par | 1476 | 246 | bash tests/test_marshal_sign.sh main | lib/marshal*.sh lib/marshal*.py
+full | par | 300 | 26 | bash tests/test_marshal_sign.sh review-a | lib/marshal*.sh lib/marshal*.py
+full | par | 300 | 35 | bash tests/test_marshal_sign.sh review-b | lib/marshal*.sh lib/marshal*.py
 fast | par | 300 | 3 | python3 tests/test_marshal_sign_unit.py | lib/marshal*.sh lib/marshal*.py
 full | par | 300 | 15 | bash tests/test_marshal_forget.sh | lib/marshal*.sh lib/marshal*.py
 fast | par | 300 | 8 | bash tests/test_marshal_hook.sh | lib/marshal*.sh lib/marshal*.py
@@ -109,12 +113,14 @@ fast | par | 300 | 3 | python3 tests/role_seed_sim.py test
 full | par | 438 | 73 | bash tests/test_open_providers.sh
 fast | par | 300 | 3 | bash tests/test_neutral.sh | *
 fast | par | 300 | 3 | bash tests/test_skill_budget.sh | skills/*/SKILL.md tests/skill-budget.txt
+fast | par | 300 | 3 | bash tests/test_prompts.sh | contract/* roles/*/ROLE.md agents/member.body.md packs/skills/* lib/providers/claude-code* skills/qargi-flow/SKILL.md skills/qargi-verify/SKILL.md
 fast | serial | 300 | 3 | bash tests/test_tool_copy.sh | install.sh tests/hermetic.sh tests/hermetic.py
 fast | par | 300 | 3 | bash tests/test_hermetic.sh | tests/hermetic.sh tests/hermetic.py
 fast | par | 300 | 11 | bash tests/test_gitflow_detached.sh
 fast | par | 300 | 17 | bash tests/test_runner.sh | tests/run.sh tests/suite.txt
 fast | par | 300 | 10 | python3 tests/test_ci.py | .github/* tests/run.sh tests/suite.txt tests/durations.txt
 fast | par | 300 | 3 | python3 tests/test_docs_links.py | README.md CONTRIBUTING.md docs/*
+fast | par | 300 | 2 | python3 tests/test_legacy_lint.py | lib/* tests/legacy-allowlist.txt
 full | serial | 300 | 150 | shellcheck -x -S warning lib/*.sh lib/conformance/*.sh bin/qargi install.sh tests/*.sh
 fast | par | 300 | 14 | bash tests/test_json_plans.sh | bin/qargi lib/jsonplan.py lib/help.py lib/commands.py
 fast | par | 300 | 1 | python3 tests/test_gates.py | lib/gates.py
@@ -122,3 +128,5 @@ full | par | 300 | 19 | bash tests/test_gates.sh | lib/gates.py lib/gitflow.sh l
 fast | par | 300 | 1 | python3 tests/test_backlog.py | lib/backlog.py
 full | par | 300 | 14 | bash tests/test_backlog.sh | lib/backlog.py lib/backlog.sh lib/gitflow.sh lib/feature.sh lib/release.sh lib/project.sh
 fast | par | 300 | 8 | bash tests/test_nested_plan.sh | lib/lib.sh lib/branch.sh lib/cred.sh lib/marshal.sh lib/project.sh lib/provider.sh lib/registry.sh
+full | par | 300 | 20 | bash tests/test_resume.sh | lib/release.sh lib/feature.sh lib/gitflow.sh lib/review.sh
+full | par | 300 | 20 | bash tests/test_resume_push.sh | lib/release.sh lib/feature.sh lib/gitflow.sh

@@ -7,7 +7,8 @@
 # The same file holds the other checks of a hermetic suite: the environment hermetic.sh and hermetic.py build, spawn_bg and kill_bg, and the
 # lint (tests/hermetic_lint.py) that fails when a test file does not source tests/hermetic.sh (or import hermetic), names a literal /tmp,
 # /dev/shm or /run path, kills by pattern (pkill, killall, pgrep -f), waits with a bare sleep outside a poll loop, removes a directory it
-# did not make, binds a fixed TCP port, keeps a lock or socket outside its directory, or compares a wall-clock difference with a constant.
+# did not make, binds a fixed TCP port, keeps a lock or socket outside its directory, compares a wall-clock difference with a constant, or
+# asserts that a short token (under six characters, not a whole word or anchored) is absent from output that holds a random temporary path.
 # A justified case carries `hermetic: allow RULE (reason)` on its line or the line above.
 # Run: tests/test_hermetic.sh
 set -u
@@ -108,18 +109,42 @@ pid=$(cat "$T/bg.pid" 2>/dev/null)
 for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
 [ "$rc" = 0 ] && [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null && ok "spawn_bg: the process it started is killed by pid when the test ends" || { no "spawn_bg: rc=$rc pid=$pid"; kill "$pid" 2>/dev/null; }
 
+# 7b. python writes no bytecode into the source tree: python3 -I ignores PYTHONDONTWRITEBYTECODE, so the python3 first on PATH is a wrapper
+#     that adds -B. A copy of bin/ and lib/ is run through qargi verbs that import lib modules (the help preamble); nothing may appear in it.
+#     The control runs the same verb with the real python3 (the caller's PATH, the variable set as the suite sets it): it does write, so the
+#     check can fail. python tests: the same in hermetic.py, started as tests/run.sh starts a step (PYTHONDONTWRITEBYTECODE=1, which lets the
+#     python3 that imports hermetic.py skip its own bytecode; started by hand it writes tests/__pycache__, which git ignores).
+copy_tool "$SRC" "$T/pyc" bin lib
+find "$T/pyc" -name __pycache__ -prune -exec rm -rf {} +
+"$T/pyc/bin/qargi" role list >/dev/null 2>&1; "$T/pyc/bin/qargi" project list >/dev/null 2>&1
+n=$(find "$T/pyc" -name '*.pyc' | wc -l)
+[ "$n" = 0 ] && [ "$(command -v python3)" = "$HERMETIC/bin/python3" ] && ok "no bytecode: running qargi verbs through the hermetic python3 writes no __pycache__" || no "bytecode: $n files, python3 is $(command -v python3): $(find "$T/pyc" -name '*.pyc' | head -3)"
+PATH=${PATH#"$HERMETIC/bin:"} PYTHONDONTWRITEBYTECODE=1 "$T/pyc/bin/qargi" role list >/dev/null 2>&1
+n=$(find "$T/pyc" -name '*.pyc' | wc -l)
+[ "$n" -gt 0 ] && ok "no bytecode: the control (the real python3 with PYTHONDONTWRITEBYTECODE=1 under -I) does write, so the check can fail" || no "control wrote no bytecode: the check proves nothing"
+rm -rf "$T/pyc"; copy_tool "$SRC" "$T/pyc" bin lib tests; find "$T/pyc" -name __pycache__ -prune -exec rm -rf {} +
+out=$(cd / && env -i PATH="${PATH#"$HERMETIC/bin:"}" HOME="$T" PYTHONDONTWRITEBYTECODE=1 python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import hermetic, subprocess; subprocess.run(["python3", "-I", "-c", "import sys; sys.path.insert(0, sys.argv[2]); import help", "x", sys.argv[2]])' "$T/pyc/tests" "$T/pyc/lib" 2>&1)
+[ "$(find "$T/pyc" -name '*.pyc' | wc -l)" = 0 ] && ok "no bytecode: a python test (hermetic.py) and what it starts with python3 -I write no __pycache__" || no "hermetic.py bytecode: $(find "$T/pyc" -name '*.pyc' | head -3) $out"
+# the conformance suite starts the adapters and the guard again with sys.executable -I (lib/providers/*/adapter, lib/conformance/cases.py): they pass -B on when the
+# process that starts them has it, so the suite, run here through the hermetic python3, leaves no bytecode in lib/. The control is the same suite with -B taken
+# from the process (the real python3 under -I), which does write: the check can fail.
+rm -rf "$T/pyc"; copy_tool "$SRC" "$T/pyc" bin lib tests agents; find "$T/pyc" -name __pycache__ -prune -exec rm -rf {} +
+for p in claude-code claude-platform; do (cd "$T/pyc" && bash lib/conformance/run.sh "$p" >"$T/conf-$p.txt" 2>&1); done
+[ "$(find "$T/pyc/lib" -name '*.pyc' | wc -l)" = 0 ] && grep -q '^ok' "$T/conf-claude-code.txt" && ok "no bytecode: the conformance suite of the shipped runtimes writes no __pycache__ under lib/" || no "conformance bytecode: $(find "$T/pyc/lib" -name '*.pyc' | head -3) $(grep -c '^FAIL' "$T"/conf-*.txt)"
+
 # 8. the lint: the tests pass it; every rule finds its sample, and a clean sample is left alone
 lint=$(python3 -I tests/hermetic_lint.py tests 2>&1); rc=$?
 [ "$rc" = 0 ] && [ -z "$lint" ] && ok "lint: no test file breaks a rule" || no "lint of the tests: $lint"
 lint=$(python3 -I tests/hermetic_lint.py tests/fixtures/hermetic-lint 2>&1)
 for want in test_nosource.sh:source test_py.py:source test_tmp.sh:tmp test_pgrep.sh:pgrep test_sleep.sh:sleep test_py.py:sleep test_rm.sh:rm \
-            test_port.sh:port test_lock.sh:lock test_clock.sh:clock test_py.py:clock; do
+            test_port.sh:port test_lock.sh:lock test_clock.sh:clock test_py.py:clock test_absent.sh:absent; do
   grep -q "^${want%%:*}:[0-9]*: ${want##*:}:" <<<"$lint" && ok "lint: ${want%%:*} breaks rule ${want##*:}" || no "lint misses ${want%%:*} / ${want##*:}: $lint"
 done
 [ "$(grep -c '^test_tmp.sh:' <<<"$lint")" = 3 ] && [ "$(grep -c '^test_pgrep.sh:' <<<"$lint")" = 3 ] && [ "$(grep -c '^test_rm.sh:' <<<"$lint")" = 3 ] \
   && ok "lint: each line of a sample is found (three shared places, three ways to kill by pattern, three directories not made by the test)" || no "lint: lines found: $lint"
+[ "$(grep -c '^test_absent.sh:' <<<"$lint")" = 7 ] && ok "lint: each of the seven short absent tokens of a sample is found (! grep, && no, a count of 0, an empty capture, one alternative of a pattern)" || no "lint: absent lines found: $lint"
 grep -q '^test_clean.sh\|^test_pyclean.py' <<<"$lint" && no "lint flags a clean sample: $(grep '^test_clean\|^test_pyclean' <<<"$lint")" \
-  || ok "lint: a poll loop, an allowed line, a comment and a quoted command are not findings"
+  || ok "lint: a poll loop, an allowed line, a comment, a quoted command and a short token that is present, whole-word, anchored, hyphenated or long are not findings"
 
 [ $fail = 0 ] && echo "hermetic: all passed"
 exit $fail

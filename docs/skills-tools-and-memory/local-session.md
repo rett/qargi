@@ -18,7 +18,7 @@ The plan refuses, writing nothing, a skill whose `SKILL.md` name differs from it
 
 - Applying a render writes nothing into a repository or into `~/.claude`: it lives in the state directory only. Only the links you apply (`packs link`, `project link`) put anything in a checkout.
 - Role scoping is advisory here: Claude Code cannot hold a session to one role's skills, so the render is the union over the project's roles.
-- A member cannot change the render: the guard refuses its writes under `state/render/`. Only you apply it.
+- The guard refuses a member's ordinary writes under `state/render/`; only you apply the render, and `local verify` is the backstop.
 - A tool whose pack lists vault credentials (`vault_ids`) cannot authenticate locally; the plan names it and you configure its credentials yourself.
 
 ## Baseline packs
@@ -28,10 +28,10 @@ qargi ships seven skills of its own in `packs/` (listed in `packs/baseline.json`
 - `shellcheck-gate`: lint every shell file you add or change with shellcheck and quote the verdict among the gates.
 - `keep-a-changelog`: record each user-visible change under Unreleased in `CHANGELOG.md`, in the same commit.
 - `gitflow-member`: a member's part of a git-flow project (its own `agent/<slug>` branch, no merges, only the checks that cover its change).
-- `review-findings`: how a reviewer writes findings (severity order, `file:line`, one-sentence defect, failure scenario, `CONFIRMED` or `PLAUSIBLE`, no patches).
+- `review-findings`: how a reviewer writes findings (most severe first, each marked `high`, `medium` or `low`; per finding the `file:line`, a one-sentence defect, a failure scenario and the evidence; a closing `verdict: accept` or `verdict: revise`; a suggested fix only as a fenced diff, no patches).
 - `secrets-scan`: run a secret scanner over your commits before the report, if one is installed, and quote its verdict among the gates; the lead scans again.
-- `docs-site-member`: work on a documentation branch that shares no history with the main branches, based on that branch and never merged into a long-lived one.
-- `qargi-contributing`: habits for a member who changes qargi itself (quoting, commit messages, sleep, stash, fail-first tests, shrink-only ceilings, targeted tests).
+- `docs-site-member`: work on a documentation branch that shares no history with the main branches, based on that branch and never merged into a long-lived one; no line starts with `<`, and the project's render check runs before the report.
+- `qargi-contributing`: habits for a member who changes qargi itself (quoting in Python scripts and in `echo`, no foreground `sleep`, fail-first tests, shrink-only ceilings, targeted tests only). The commit-message and stash rules are in the member contract, not here.
 
 Install and upgrade add the ones your library lacks with `qargi packs seed --install`, which needs no token and links nothing. `qargi packs seed` shows a plan (one line per pack: `add`, `update`, `current` or `kept`) and a plan token; `--plan TOKEN --approved "<your words>"` applies it, adding missing packs and replacing a copy you never edited when qargi ships a newer text. A copy you edited and sealed, or a pack of your own with the same name, is kept and never overwritten. To take the shipped version of an edited pack again, unlink it, remove it (`qargi skill remove NAME`) and seed.
 

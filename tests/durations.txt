@@ -19,7 +19,9 @@
 126 bash tests/test_conformance_selftest.sh
 73 bash tests/test_local_run.sh
 55 bash tests/test_marshal.sh
-370 bash tests/test_marshal_sign.sh
+279 bash tests/test_marshal_sign.sh main
+30 bash tests/test_marshal_sign.sh review-a
+39 bash tests/test_marshal_sign.sh review-b
 43 python3 tests/test_env_apply.py
 49 bash tests/test_journal.sh
 21 bash tests/test_runs_close.sh
@@ -104,3 +106,17 @@
 1 python3 tests/test_backlog.py
 14 bash tests/test_backlog.sh
 5 bash tests/test_nested_plan.sh
+16 bash tests/test_resume.sh
+13 bash tests/test_taskblock.sh
+1 python3 tests/test_legacy_lint.py
+1 bash tests/test_prompts.sh
+25 python3 tests/test_doctor.py
+20 bash tests/test_release_checks.sh
+22 bash tests/test_release_unrelated.sh
+8 bash tests/test_release_snapshot_cycle.sh
+18 bash tests/test_local_concurrency.sh
+20 bash tests/test_marshal_lease.sh
+0 python3 tests/test_docs_links.py
+15 bash tests/test_json_plans.sh
+17 bash tests/test_resume_push.sh
+25 bash tests/test_release_master_merge.sh

@@ -380,7 +380,7 @@ def write_record(ctx, entry):
 
 def check_after(ctx):
     """Run `env check` (the project's doctor, so project code, as the bootstrap was) and return its exit status."""
-    cmd = [sys.executable, "-I", os.path.join(HERE, "env.py"), "check", "--repo", ctx["repo"]] + (["--project", ctx["project"]] if ctx["project"] else [])
+    cmd = [sys.executable, "-I"] + (["-B"] if sys.dont_write_bytecode else []) + [os.path.join(HERE, "env.py"), "check", "--repo", ctx["repo"]] + (["--project", ctx["project"]] if ctx["project"] else [])
     print("running: qargi env check", flush=True)
     return subprocess.run(cmd, cwd=ctx["repo"], env=dict(os.environ)).returncode
 

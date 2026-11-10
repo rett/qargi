@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""qargi __guard: a PreToolUse hook for the local members' Bash, Edit, Write, NotebookEdit, Read and Grep tools. Reads the hook's
+"""qargi __guard: a PreToolUse hook for the local members' Bash, Monitor, Edit, Write, NotebookEdit, Read and Grep tools. Reads the hook's
 JSON on stdin and refuses (exit 2, reason on stderr) what would publish, reach out or change a skill. A barrier, not
 proof: a second barrier beside the git wrapper (which has no credentials) and `qargi local verify`; an agent that goes
 out of its way can still get around it, which is why verify exists.
@@ -31,7 +31,7 @@ reflog expire and delete, hash-object -w, unpack-objects and git lfs included).
 
 Skills: only a person, through qargi's own skills, changes a skill, so the guard refuses a member
   - the lead's runs and agents: qargi local run|prepare|verify|close|clean (`local clean --discard` removes another run with no token), agent remove, project new,
-    review apply, team run and task;
+    review apply|save, team run and task;
   - the verbs that change one: qargi skill|tool new|import|seal|remove|unlink|link|enable|disable, qargi skill accept|unaccept
     (they record which skills the owner accepts, in <packs>/accepted.json), qargi discover
     install, qargi packs apply|seed|link|unlink, qargi project link|unlink (they link the project's skills, agents and memory into the
@@ -117,6 +117,8 @@ Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The 
     record) that `qargi review apply --from-saved` applies: decided like features/, reading stays allowed;
   - a write under the scrub_ok/ directory of the state, where `qargi review check` records the series whose declared take-in scrub passed and
     `qargi review apply` skips the scrub for a series recorded there: found and decided like features/, reading stays allowed;
+  - a write under the finish-intent/ and apply/ directories of the state, where the finishing verbs of a feature and a release keep the record a re-run
+    completes from after a death, and `qargi review apply` keeps the record of the apply it is making: found and decided like scrub_ok/, reading stays allowed;
   - a write under the handoff/ and busy/ directories of the state, where `marshal handoff --write` records when the note was written and
     feature verify and release verify record the whole-suite run in progress: `qargi lead compact-check` reads them. Found and decided
     like features/, reading stays allowed. `qargi lead usage` and `compact-check` only read and stay allowed;
@@ -274,7 +276,7 @@ MEMORY_READ = ("tiers", "check", "get", "lint")
 PROVIDER_READ = ("", "list", "show", "effective", "require-barrier", "skills-dirs", "of", "layout", "require-skills", "launch", "addenda", "notes", "model")   # the provider verbs that only read; the rest, and any verb added later, change the definitions or run code (check, adapter-run)
 BUILT_VERB_AREAS = {"skill", "tool", "packs", "discover", "project", "local", "cloud", "memory"}   # a verb the shell builds in these is refused: one of the verbs that change something may be what it builds
 ENV_LEAD = ("plan", "apply")                                   # the verbs of qargi env that run a project's commands (lib/env_apply.py)
-LEAD_VERBS = {("local", "clean"), ("local", "close"), ("local", "prepare"), ("local", "verify"), ("agent", "remove"), ("project", "new"), ("review", "apply"), ("team", "run")}   # the lead's runs and agents: `local clean --discard` removes another run with no token
+LEAD_VERBS = {("local", "clean"), ("local", "close"), ("local", "prepare"), ("local", "verify"), ("agent", "remove"), ("project", "new"), ("review", "apply"), ("review", "save"), ("team", "run")}   # the lead's runs and agents: `local clean --discard` removes another run with no token
 MEMORY_NOTE = "propose it in your report"
 MARSHAL_READ = ("status", "check", "handoff")                # handoff only reads; with --write it makes a file and is refused (skill_verb)
 MARSHAL_SIGNING = {"key": "manages the marshal's signing key", "signers": "manages the marshal's allowed signers",
@@ -1316,22 +1318,32 @@ def run_refusal(full, here):
     return None
 
 
+class Unreadable(Exception):
+    """A file the guard decides on exists and cannot be read: the call is refused with this message (main), not judged as if the file said nothing."""
+
+
+def run_file(run, name):
+    """The text of a run directory's class or ability file: empty when there is none (a run made before the file existed counts as a write run), and an
+    Unreadable error when the file is there and cannot be read (a directory, a mode that bars it, a loop of links): that must not read as 'not read-only'."""
+    path = os.path.join(run, name)
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except (FileNotFoundError, NotADirectoryError):
+        return ""
+    except OSError as e:
+        raise Unreadable("the %s file of the run %s cannot be read (%s), so the guard cannot tell whether the run is read-only; refusing the call until the run directory is fixed"
+                         % (name, run, e.strerror or type(e).__name__)) from e
+
+
 @functools.cache
 def run_class(run):
-    try:
-        with open(os.path.join(run, "class")) as f:
-            return f.read().strip()
-    except OSError:
-        return ""
+    return run_file(run, "class")
 
 
 @functools.cache                                     # the files do not change while one command is judged
 def ability_of(run):
-    try:
-        with open(os.path.join(run, "ability")) as f:
-            return f.read().strip()
-    except OSError:
-        return ""
+    return run_file(run, "ability")
 
 
 def inside(path, base):
@@ -1926,7 +1938,8 @@ def conf_dirs(P, home):
 
 _RESOURCE_DIRS = []
 # The directories of Claude Code, the runtime qargi was built for. They are held whatever the library says: a definition of that name that
-# clashes with the shipped one (or is broken) is skipped below, and its directories must not drop out of the protection with it.
+# clashes with the shipped one (or is broken) does not load, and resource_dirs below does not skip it: it raises Unreadable, so a call that needs the roots
+# is refused until the library is fixed. These two are the directories held in every case, and no definition can take them out.
 CLAUDE_RESOURCE_DIRS = ((".claude", "skills"), (".claude", "agents")), ("~/.claude/skills", "~/.claude/agents")
 
 
@@ -1935,8 +1948,8 @@ def resource_dirs():
     library's, every surface), and those of Claude Code. project: tuples of path components (".claude/skills" is (".claude", "skills")),
     found anywhere in a path; user: real directories below the home. A path that cannot be one (absolute, with .., a user path not below
     ~/) is left out. Read once per call of the hook. A definition that does not load (unreadable, a name clash, a name that disagrees with
-    its directory) is skipped with one note on standard error: its directories are unknown, but one broken file of the library must not
-    make the guard refuse every write, and the roots of the definitions that do load stay (the roots only add up)."""
+    its directory) leaves directories the guard cannot know, so a call that needs the roots (one that writes, or reads a protected place) is refused
+    with a message naming the definitions and the cause (Unreadable); a call that needs no roots (ls, git status) is not asked."""
     if not _RESOURCE_DIRS:
         provider = _provider()
         home = os.path.expanduser("~")
@@ -1961,7 +1974,8 @@ def resource_dirs():
                     if isinstance(u, str) and u.startswith("~/") and len(u) > 2 and os.path.join(home, u[2:]) not in user:
                         user.append(os.path.join(home, u[2:]))
         if skipped:
-            print("qargi guard: provider definitions skipped, their skills and agents directories are not protected: %s" % "; ".join(skipped), file=sys.stderr)
+            raise Unreadable("provider definitions that do not load: %s; the guard cannot tell which skills and agents directories they name, so it cannot tell whether this call "
+                             "reaches one; refusing the call until the library is fixed (qargi provider check NAME, or remove the definition)" % "; ".join(skipped))
         _RESOURCE_DIRS.append((project, user))
     return _RESOURCE_DIRS[0]
 
@@ -2004,6 +2018,7 @@ def _protected_roots():
     roots.update(lead_state_roots(P, home))
     roots.update(saved_runs_roots(P, home))
     roots.update(scrub_ok_roots(P, home))
+    roots.update(resume_roots(P, home))
     roots.update(journal_roots(P, home))
     roots.update(memory_roots(P, home))
     roots.update(lead_roots(home) | lead_files(home))
@@ -2074,6 +2089,12 @@ def scrub_ok_roots(P=None, home=None):
     """The scrub_ok/ directory of the state: the record `qargi review check` writes for the series whose declared scrub passed, which `qargi review apply` takes
     as the scrub done. A member must not write one (it could name a series that never passed)."""
     return state_sub("scrub_ok", P, home)
+
+
+def resume_roots(P=None, home=None):
+    """The finish-intent/ and apply/ directories of the state: the records the resumable verbs keep (the finishing verbs of a feature and a release write finish-intent/
+    before their first push, review apply writes apply/ before it makes the branch), which a re-run completes from. A member must not plant or change one."""
+    return state_sub("finish-intent", P, home) | state_sub("apply", P, home)
 
 
 def switch_roots(P=None, home=None):
@@ -2149,6 +2170,9 @@ def refusal_text(what, dest, root):
     if root in scrub_ok_roots():
         return OwnReason("%s on %s would change %s, the lead's record of the series whose declared scrub passed (review apply skips the scrub for a series "
                          "recorded there); a member does not write it" % (what, dest, root))
+    if root in resume_roots():
+        return OwnReason("%s on %s would change %s, the lead's record of a finishing verb or of an apply that a re-run completes from (finish-intent/ and apply/); "
+                         "a member does not write it" % (what, dest, root))
     if root in switch_roots() and name.endswith(".signers"):
         return MarshalReason("%s on %s would change %s, the marshal's allowed signers (the keys whose records are accepted); %s"
                              % (what, dest, root, MARSHAL_NOTE))
@@ -3196,7 +3220,7 @@ CLAUDE_HOOK = {
     "input": "json-stdin", "tool_pointer": "/tool_name", "command_pointer": "/tool_input/command", "cwd_pointer": "/cwd",
     "path_pointers": {"write": ["/tool_input/file_path", "/tool_input/notebook_path"],
                       "read": ["/tool_input/file_path", "/tool_input/notebook_path", "/tool_input/path"]},
-    "tool_names": {"shell": ["Bash"], "write": ["Edit", "Write", "NotebookEdit"], "read": ["Read"], "search": ["Grep"]},
+    "tool_names": {"shell": ["Bash", "Monitor"], "write": ["Edit", "Write", "NotebookEdit"], "read": ["Read"], "search": ["Grep"]},   # Monitor starts a shell command in the background: its `command` is judged as Bash's is
     "deny": {"exit": 2, "stream": "stderr"}, "allow": {"exit": 0},
 }
 
@@ -3441,8 +3465,11 @@ def decide(hook):
         return refuse(hook, "qargi guard: the input is not valid UTF-8, so the guard cannot read the call; refusing it.")
     try:
         data = json.loads(text)
-    except ValueError:
-        return hook["allow"]["exit"]                      # decodes but is no JSON: not a call to judge (as before)
+    except ValueError as e:
+        # empty or cut-off input (a hook killed or truncated on the way, a runtime that sent nothing) is a call the guard cannot read, not a call to let through:
+        # the hook is only ever run on a tool call, and every protocol it supports sends JSON
+        what = "is empty" if not text.strip() else "is not valid JSON (%s)" % str(e).splitlines()[0][:100]
+        return refuse(hook, "qargi guard: the hook input %s, so the guard cannot read the call; refusing it." % what)
     why = judge(parse_call(hook, data))
     return refuse(hook, why) if why else hook["allow"]["exit"]
 
@@ -3466,6 +3493,8 @@ def main():
     CLASS = cls
     try:
         return decide(hook)
+    except Unreadable as e:                               # a run file the guard decides on cannot be read: the message names it
+        return refuse(hook, "qargi guard: %s." % e)
     except Exception as e:                                # fail closed: a guard that cannot decide refuses
         return refuse(hook, "qargi guard: internal error (%s: %s); refusing the call because the guard could not check it."
                       % (type(e).__name__, e))

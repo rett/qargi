@@ -317,7 +317,7 @@ def barrier_hook(doc, directory, name, sealed, usable):
                     put_pointer(payload, hook["cwd_pointer"], tc["cwd"])
             except (KeyError, TypeError, IndexError):
                 return {"barrier-hook": result("fail", "the hook data lacks the pointers it needs (tool_pointer, command_pointer, path_pointers, cwd_pointer)")}
-            cmd = [sys.executable, "-I", guard, "--provider", name] + (["--class", "read-only"] if row["class"] == "read-only" else [])
+            cmd = [sys.executable, "-I"] + (["-B"] if sys.dont_write_bytecode else []) + [guard, "--provider", name] + (["--class", "read-only"] if row["class"] == "read-only" else [])
             r = subprocess.run(cmd, input=json.dumps(payload), capture_output=True, text=True, env=env, cwd=clone, timeout=60)
             n += 1
             d_exit = deny.get("exit", 2)

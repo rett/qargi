@@ -101,7 +101,7 @@ a=$(steps "$(R -j 1 --shuffle 5)" | tr '\n' ' '); b=$(steps "$(R -j 1 --shuffle 
 [ "$(awk '{print $NF}' <<<"$a")" = "tests/test_a6.sh" ] && ok "the serial step is still last when shuffled" || no "shuffle serial: $a"
 grep -q 'shuffle seed 5,' <<<"$(R -j 1 --shuffle 5)" && ok "the seed is in the summary" || no "seed in summary"
 out=$(R -j 1 --only 'a1|a6' --repeat 3)
-[ "$(grep -c '^== sh tests/test_a1.sh' <<<"$out")" = 3 ] && grep -q '^== sh tests/test_a1.sh (run 3 of 3)$' <<<"$out" && [ "$(steps "$out" | tail -3 | grep -c a6)" = 3 ] && ok "--repeat 3 runs each step three times, the serial ones last" || no "repeat: $out"
+[ "$(grep -c '^== sh tests/test_a1.sh' <<<"$out")" = 3 ] && grep -q '^== sh tests/test_a1.sh (run 3 of 3)$' <<<"$out" && [ "$(steps "$out" | tail -3 | grep -c 'test_a6\.sh')" = 3 ] && ok "--repeat 3 runs each step three times, the serial ones last" || no "repeat: $out"
 
 # the processes of a step
 printf '#!/bin/sh\nsleep 3211\n' > "$S/tests/test_hang.sh"

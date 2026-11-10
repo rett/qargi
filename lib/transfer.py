@@ -545,7 +545,7 @@ def read_tar(raw):
     for p in files:
         mode = listed[p].get("mode")
         if mode is None:
-            die("%s has no mode in the manifest (an archive made by an older qargi): export it again" % p)
+            die("%s has no mode in the manifest: refusing the archive" % p)
         if not isinstance(mode, str) or not re.fullmatch(r"0[67]00", mode):
             die("%s has a mode that is not valid (%r): refusing the archive" % (p, str(mode)[:20]))
         out[p] = (files[p], listed[p].get("project"), mode == "0700" and p.startswith("config/packs/"))

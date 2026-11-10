@@ -18,6 +18,12 @@ The rules (each test file: tests/test_*.sh, tests/test_*.py, tests/conformance.s
   lock    a lock or socket path outside the test's directory (/var/lock, /var/run, $XDG_RUNTIME_DIR, flock or bind on an absolute path).
   clock   a difference of two readings of the wall clock ($SECONDS, date +%s, time.time()) compared with a constant: it fails on a slow
           host. Wait for a condition with a deadline, or use the deadline hook of the code under test.
+  absent  a grep used as an absence assertion (`! grep`, `grep ... && no`, `[ "$(grep -c ...)" = 0 ]`, `[ -z "$(... | grep ...)" ]`) whose
+          literal pattern is shorter than six characters and has nothing that makes it distinctive. The output searched usually
+          holds a random temporary path (mktemp makes letters and digits), and any short token can occur in it: the test then fails
+          now and then, and only when it should pass. Distinctive: six or more characters, -w or -x, an anchor (^ or $), a character
+          that a path does not hold (a space, a colon, a quote, a bracket, an equals sign), or a hyphen or underscore in four or more
+          characters. Otherwise assert on a longer value, with -w, or on the structure (jq, a field).
 A justified case is allowed with a comment on the line or the line above: `hermetic: allow RULE[,RULE] (the reason)`; a whole file with
 `hermetic: allow-file RULE[,RULE] (the reason)` in its first 40 lines (for data that only looks like a path, such as the commands a
 guard test judges)."""
@@ -25,7 +31,7 @@ import os
 import re
 import sys
 
-RULES = ("source", "tmp", "pgrep", "sleep", "rm", "port", "lock", "clock")
+RULES = ("source", "tmp", "pgrep", "sleep", "rm", "port", "lock", "clock", "absent")
 ALLOW = re.compile(r"hermetic: allow(-file)? ([a-z,]+)")
 
 
@@ -68,6 +74,79 @@ SLEEP_PY = re.compile(r"^\s*time\.sleep\(([0-9][0-9.]*)\)")
 PGREP = re.compile(r"\b(pkill|pgrep)\b[^|;&\n]*?\s-[A-Za-z]*f")
 RM = re.compile(r"""(?:^|[;&|(]|\bthen\b|\bdo\b)\s*rm\s+((?:-[A-Za-z]+\s+)+)([^;&|<>)]*)""")
 RM_BAD = re.compile(r"""^["']?(\$\{?TMPDIR\}?|\$\{?HOME\}?|~|/[^$"']*)["']?/?$""")
+
+
+GREP = re.compile(r"""\bgrep\b(?P<opts>(?:\s+-[A-Za-z0-9]+|\s+--[a-z-]+(?:=\S+)?)*)\s+(?:-e\s+)?(?:(?P<q>["'])(?P<pat>(?:\\.|(?!(?P=q)).)*)(?P=q)|(?P<bare>[^\s"'|;&<>()$-][^\s|;&<>()]*))""")
+SEGMENT = re.compile(r"&&|\|\||;|\{|\(|\bthen\b|\bdo\b")
+NEGATED = re.compile(r"^\s*(?:(?:if|elif|while|until)\s+)?!")
+AND_NO = re.compile(r"^[^;|]*?&&\s*(?:no|fail)\b")
+COUNT_ZERO = re.compile(r"""^[^)]*\)"?\s*(?:=|==|-eq)\s*"?0\b""")
+EMPTY_CAPTURE = re.compile(r"""-z\s+"?\$\([^)]*$""")
+
+
+def alternatives(pat):
+    """The alternatives of a grep pattern, split at the top level of its groups (`a|b`, `a\\|b`, `(a|b)`): each one is a token that must not occur."""
+    parts, cur, depth, i = [], "", 0, 0
+    while i < len(pat):
+        c = pat[i]
+        two = pat[i:i + 2]
+        if two in ("\\|", "\\(", "\\)"):
+            if two == "\\|" and depth == 0:
+                parts.append(cur)
+                cur = ""
+            else:
+                cur += two
+                depth += (two == "\\(") - (two == "\\)")
+            i += 2
+            continue
+        if c == "[":    # a bracket expression is one item
+            j = pat.find("]", i + 2)
+            j = len(pat) - 1 if j < 0 else j
+            cur += pat[i:j + 1]
+            i = j + 1
+            continue
+        if c == "|" and depth == 0:
+            parts.append(cur)
+            cur = ""
+        else:
+            cur += c
+            depth += (c == "(") - (c == ")")
+        i += 1
+    parts.append(cur)
+    out = []
+    for a in parts:
+        g = re.fullmatch(r"\\?\((.*)\\?\)", a)
+        if g and g.group(1).count("(") == g.group(1).count(")"):
+            out += alternatives(g.group(1))    # a whole alternative that is one group: its own alternatives
+        else:
+            out.append(a)
+    return out
+
+
+def short_absent(line):
+    """The short, indistinctive literal patterns of the greps in line that assert something is absent."""
+    found = []
+    for m in GREP.finditer(line):
+        pre = line[:m.start()]
+        post = line[m.end():]
+        opts = m.group("opts")
+        absent = (NEGATED.match(SEGMENT.split(pre)[-1]) or AND_NO.match(post) or EMPTY_CAPTURE.search(pre)
+                  or ("c" in opts.replace("--", "") and COUNT_ZERO.match(post)))
+        if not absent:
+            continue
+        pat = m.group("pat") if m.group("q") else m.group("bare")
+        if m.group("q") == '"':
+            pat = pat.replace("\\$", "$")    # inside double quotes \$ is a plain $ for grep: an end anchor
+        if re.search(r"(?<!\\)\$[\w{(]", pat):
+            continue    # a variable: its length is not known here
+        if re.search(r"\s-[A-Za-z]*[wx]", opts) or re.search(r"(?<!\\)[\^$]", pat):
+            continue    # a whole word or line, or an anchor: nothing in a path's random part matches
+        for alt in alternatives(pat):
+            lit = alt.replace("\\", "")
+            if len(lit) >= 6 or re.search(r"[ ,:=!@#%&~<>'\"]", lit) or not re.search(r"[A-Za-z0-9]", lit) or (len(lit) >= 4 and re.search(r"[_-]", lit)):
+                continue
+            found.append(alt)
+    return found
 
 
 def tmp_hit(line):
@@ -120,6 +199,9 @@ def lint(path):
             add(i, "lock", "a lock or socket path outside the test's directory: " + line.strip()[:100])
         if (CLOCK_PY if py else CLOCK_SH).search(line):
             add(i, "clock", "a wall-clock difference against a constant: " + line.strip()[:100])
+        if not py and "grep" in line:
+            for pat in short_absent(line):
+                add(i, "absent", "a short pattern (%s) asserted absent: a random temporary path in the output can hold it: %s" % (pat, line.strip()[:100]))
         if PGREP.search(line) or re.search(r"\b(pkill|killall)\b", line):
             add(i, "pgrep", "pkill/pgrep with -f matches other runs' processes: " + line.strip()[:100])
         m = RM.search(line)

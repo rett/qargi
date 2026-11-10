@@ -138,6 +138,18 @@ class Render(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
         self.assertIn("local verify", r.stdout)
 
+    def test_review_check_help_and_the_review_role_state_the_report_only_rule(self):
+        # what review_check.py requires of a report-only run: the manifest beside the report, a closing verdict line, SCOPE as a hard limit, a batch warning
+        r = subprocess.run([BIN, "help", "review", "check"], capture_output=True, text=True, stdin=subprocess.DEVNULL, env=dict(os.environ, QARGI_HOME=tempfile.mkdtemp()))
+        self.assertEqual(r.returncode, 0)
+        text = " ".join(r.stdout.split())
+        for needle in ("last non-empty line is `verdict: accept` or `verdict: revise`", "manifest.json", "outside SCOPE fails", "RUN/task.md", "warn"):
+            self.assertIn(needle, text)
+        self.assertNotIn("instead of patches", text)
+        role = slurp(os.path.join(ROOT, "roles", "review", "ROLE.md"))
+        self.assertIn("closing verdict line", role)
+        self.assertNotIn("DONE checks that the report has a Findings section", role)
+
     # verbs the guard refuses that the topic need not name, each with the reason: none yet
     GUARD_TOPIC_EXEMPT = {}
 

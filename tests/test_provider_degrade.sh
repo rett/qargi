@@ -104,7 +104,7 @@ out=$("$DA" agent add gjudge --roles review --project gamma 2>&1); rc=$?
 # 2. provision: the plan of a read-only role, cloud
 out=$("$DA" provision plan --project alpha --role review 2>&1); rc=$?
 refused "provision plan: a read-only role is refused where cloud has no barrier" "$rc" "$out" nobarrier-cloud cloud alpha
-grep -q 'apply' "$FAKE/ant.log" 2>/dev/null && no "ant was called" || ok "and the cloud was not asked"
+grep -qw 'apply' "$FAKE/ant.log" 2>/dev/null && no "ant was called" || ok "and the cloud was not asked"
 "$DA" provision plan --project alpha --role build >/dev/null 2>&1 && ok "a write role provisions as before" || no "build plan refused"
 out=$("$DA" provision plan --project gamma --role review 2>&1); rc=$?
 refused "provision plan: claude has no cloud barrier either" "$rc" "$out" claude-platform cloud gamma

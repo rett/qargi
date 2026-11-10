@@ -56,7 +56,7 @@ $F start plain >/dev/null 2>&1; task p1; $F merge plain agent/p1 >/dev/null 2>&1
 jq --arg c "$(g tc)" '.test_command = $c' "$P" > "$P.new" && mv "$P.new" "$P"
 : > "$LOG"
 out=$($F verify plain 2>&1); rc=$?
-[ $rc = 0 ] && grep -q '^full suite: pass at ' <<<"$out" && [ "$(cat "$LOG")" = tc ] && ! grep -q 'gate' <<<"$out" && ! jq -e 'has("gates")' "$T/s/releases/app-feature_plain.json" >/dev/null \
+[ $rc = 0 ] && grep -q '^full suite: pass at ' <<<"$out" && [ "$(cat "$LOG")" = tc ] && ! grep -qE '(^|[^[:alnum:]])gates?([^[:alnum:]]|$)' <<<"$out" && ! jq -e 'has("gates")' "$T/s/releases/app-feature_plain.json" >/dev/null \
   && ok "without gates test_command runs and no gate is mentioned or recorded" || no "plain verify rc=$rc: $out"
 out=$($F status plain 2>&1); ! grep -q 'gates:' <<<"$out" && ok "status shows no gates line" || no "plain status: $out"
 

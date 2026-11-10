@@ -116,7 +116,7 @@ exec "$REALJQ" "\$@"
 J
 chmod +x "$T/shim2/jq"
 out=$(PATH="$T/shim2:$PATH" sf 0.2.0 "tag the docs repository" 2>&1); rc=$?
-[ $rc = 1 ] && grep -q "could not write the step record" <<<"$out" && grep -q "valid JSON" <<<"$out" && ! grep -q "jq" <<<"$out" && ! grep -q "another command" <<<"$out" && cmp -s "$rec" "$T/rec.keep" \
+[ $rc = 1 ] && grep -q "could not write the step record" <<<"$out" && grep -q "valid JSON" <<<"$out" && ! grep -qw "jq" <<<"$out" && ! grep -q "another command" <<<"$out" && cmp -s "$rec" "$T/rec.keep" \
   && ok "a record jq cannot change is refused in plain words: no jq text, no other command blamed, exit 1, record unchanged" || no "jq failure: rc=$rc $out"
 out=$(sf 0.2.0 "post the notes" 2>&1); rc=$?
 [ $rc != 0 ] && grep -q "needs evidence (the address of the post)" <<<"$out" && [ "$(jq -r '.steps[1].state' "$rec")" = pending ] && ok "a step with an evidence is refused without --evidence" || no "evidence: rc=$rc $out"

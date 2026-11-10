@@ -77,9 +77,8 @@ for f in lib/*.sh; do
   done
 done
 
-# an unknown option is a usage error, exit 2, on every verb of every script (lib/release.sh has its own work in hand)
+# an unknown option is a usage error, exit 2, on every verb of every script
 for b in "${!SCRIPTS[@]}"; do
-  [ "$b" != release.sh ] || continue
   IFS='|' read -ra verbs <<<"${SCRIPTS[$b]}"
   hit=''
   for v in "${verbs[@]}"; do
@@ -100,5 +99,5 @@ missing_arg() { # "verb words": no argument it needs -> exit 2 and a message
   out=$(timeout 10 ./bin/qargi $1 2>&1 </dev/null); rc=$?
   if [ "$rc" = 2 ] && [ -n "$out" ]; then ok "exit 2: $1 (no argument)"; else no "$1 (no argument): exit $rc: $out"; fi
 }
-for w in "watch" "collect" "instances show" "instances remove" "project set demo" "team check" "agent rename" "agent refresh" "agent remove" "memory get" "provider accept" "role show"; do missing_arg "$w"; done
+for w in "watch" "collect" "instances show" "instances remove" "project set demo" "team check" "agent rename" "agent refresh" "agent remove" "release start" "mark" "discover show" "discover install" "memory get" "provider accept" "role show"; do missing_arg "$w"; done
 exit $fail
