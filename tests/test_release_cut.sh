@@ -267,4 +267,70 @@ out=$($REL start 0.1.1 --hotfix 2>&1); rc=$?
 [ "$rc" = 0 ] && ! grep -q "has no unreleased heading" <<<"$out" && rstart 0.1.1 --hotfix --date 2026-05-06 >/dev/null 2>&1 \
   && [ "$(git -C "$R" show hotfix/0.1.1:CHANGELOG.md)" = "$(printf '# Changelog\n\n## [Unreleased]\n\n## [0.1.1] - 2026-05-06\n\n### Added\n- a thing')" ] && ok "default layout: the hotfix start is as before (the section is kept, the released heading is added)" || no "default layout hotfix: rc=$rc $out"
 
+# --- the finish of a hotfix refuses (at its plan too, before anything moves) while the branch's changelog has no entries under the heading of the
+# version; a branch with no CHANGELOG.md is not checked
+mk hfin
+jq '.release = {changelog: {unreleased: "## {version} (unreleased)", released: "## {version} ({date})"}}' "$T/c/projects/hfin.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/hfin.json"
+git -C "$R" checkout -q master; printf '# Changelog\n\n## 1.0.0 (2026-01-01)\n\n- first\n' > "$R/CHANGELOG.md"
+git -C "$R" commit -q -am "no unreleased heading" && git -C "$R" branch -f develop master && git -C "$R" checkout -q parked
+rstart 1.0.1 --hotfix --date 2026-05-06 >/dev/null 2>&1
+m0=$(git -C "$R" rev-parse master)
+out=$($REL finish 1.0.1 --hotfix 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "the CHANGELOG.md of hotfix/1.0.1 has no entries under '## 1.0.1'" <<<"$out" && grep -q "record the entries under that heading on hotfix/1.0.1" <<<"$out" && ! grep -q "plan token" <<<"$out" \
+  && ok "hotfix finish: an empty section of the version is refused at the plan, naming the file, the heading and the fix" || no "finish with the empty section: rc=$rc $out"
+w=$($REL fix 1.0.1 --hotfix | sed -n 's/^worktree: //p')
+printf '# Changelog\n\n## 1.0.1 (2026-05-06)\n\n- the fix\n\n## 1.0.0 (2026-01-01)\n\n- first\n' > "$w/CHANGELOG.md"; git -C "$w" commit -q -am "record the fix"
+out=$($REL finish 1.0.1 --hotfix 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q "changelog check (built in)" <<<"$out" && [ -n "$(tok <<<"$out")" ] && ok "hotfix finish: with an entry committed under the heading the plan is made, and says the check is built in" || no "finish with an entry: rc=$rc $out"
+[ "$(git -C "$R" rev-parse master)" = "$m0" ] && ! git -C "$R" rev-parse -q --verify refs/tags/1.0.1 >/dev/null && ok "hotfix finish: the refusals changed nothing (master, no tag)" || no "the refused finish moved something"
+$REL verify 1.0.1 --hotfix >/dev/null 2>&1; t=$(tok <<<"$out")
+out=$($REL finish 1.0.1 --hotfix --plan "$t" --approved go 2>&1); rc=$?
+[ "$rc" = 0 ] && git -C "$R" rev-parse -q --verify refs/tags/1.0.1 >/dev/null && ok "hotfix finish: applied once the entry is there (tagged)" || no "finish apply: rc=$rc $out"
+mk hnofile
+git -C "$R" checkout -q master; git -C "$R" rm -q CHANGELOG.md; git -C "$R" commit -q -m "no changelog" && git -C "$R" branch -f develop master && git -C "$R" checkout -q parked
+rstart 0.1.1 --hotfix --date 2026-05-06 >/dev/null 2>&1
+out=$($REL finish 0.1.1 --hotfix 2>&1); rc=$?
+[ "$rc" = 0 ] && ! grep -q "changelog check" <<<"$out" && [ -n "$(tok <<<"$out")" ] && ok "hotfix finish: a branch with no CHANGELOG.md is not checked" || no "finish without a changelog: rc=$rc $out"
+
+# --- the heading is added only for an unreleased template that carries {version}: any other layout whose master lacks it is refused for a hotfix too
+mk nover
+git -C "$R" checkout -q master; printf '# Changelog\n\n## [0.1.0] - 2026-01-01\n\n- first\n' > "$R/CHANGELOG.md"
+git -C "$R" commit -q -am "no unreleased heading" && git -C "$R" branch -f develop master && git -C "$R" checkout -q parked
+out=$($REL start 0.1.1 --hotfix --allow-empty-notes 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "has no '## \[Unreleased\]' section to release. Fix: add one" <<<"$out" && ! git -C "$R" rev-parse -q --verify refs/heads/hotfix/0.1.1 >/dev/null && ok "default layout: a master without '## [Unreleased]' is refused for a hotfix (add one), also with --allow-empty-notes" || no "default layout, no heading: rc=$rc $out"
+jq '.release = {changelog: {unreleased: "## Next"}}' "$T/c/projects/nover.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/nover.json"
+out=$($REL start 0.1.1 --hotfix 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "has no '## Next' section to release" <<<"$out" && ok "an unreleased template without {version}: a hotfix on a master without that heading is refused" || no "template without version: rc=$rc $out"
+
+# --- where the added heading goes: above the first heading that follows the released template (any version and date), not above a `## Format` note, and
+# not by a heading inside a fenced block; a file with no trailing newline keeps none; with no heading of the template it goes above the first of the level;
+# --allow-empty-notes changes nothing on this path
+mk place
+jq '.release = {changelog: {unreleased: "## {version} (unreleased)", released: "## {version} ({date})"}}' "$T/c/projects/place.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/place.json"
+git -C "$R" checkout -q master; printf '# Changelog\n\n## Format\n\nan entry is a bullet\n\n```\n## 9.9.9 (2020-01-01)\n```\n\n## 1.0.0 (2026-01-01)\n\n- first' > "$R/CHANGELOG.md"
+git -C "$R" commit -q -am "a note above the sections, a fenced heading, no trailing newline" && git -C "$R" branch -f develop master && git -C "$R" checkout -q parked
+rstart 1.0.1 --hotfix --allow-empty-notes --date 2026-05-06 >/dev/null 2>&1
+git -C "$R" show hotfix/1.0.1:CHANGELOG.md | cmp -s - <(printf '# Changelog\n\n## Format\n\nan entry is a bullet\n\n```\n## 9.9.9 (2020-01-01)\n```\n\n## 1.0.1 (2026-05-06)\n\n## 1.0.0 (2026-01-01)\n\n- first') \
+  && ok "hotfix start: the heading goes above the first version section, not above '## Format' or a fenced heading; no trailing newline is added; --allow-empty-notes is the same" || no "placement: $(git -C "$R" show hotfix/1.0.1:CHANGELOG.md 2>&1)"
+mk place2
+jq '.release = {changelog: {unreleased: "## {version} (unreleased)", released: "## {version} ({date})"}}' "$T/c/projects/place2.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/place2.json"
+git -C "$R" checkout -q master; printf '# Changelog\n\n## Notes\n\n- x\n' > "$R/CHANGELOG.md"; git -C "$R" commit -q -am "no version heading" && git -C "$R" branch -f develop master && git -C "$R" checkout -q parked
+rstart 1.0.1 --hotfix --date 2026-05-06 >/dev/null 2>&1
+git -C "$R" show hotfix/1.0.1:CHANGELOG.md | cmp -s - <(printf '# Changelog\n\n## 1.0.1 (2026-05-06)\n\n## Notes\n\n- x\n') && ok "hotfix start: with no heading that follows the released template the heading goes above the first of its level" || no "fallback placement: $(git -C "$R" show hotfix/1.0.1:CHANGELOG.md 2>&1)"
+
+# --- CRLF: a changelog with Windows line endings keeps them (the heading is added with the file's own newline, a renamed or inserted heading too), and
+# a blank line of such a file under the new heading is not an entry for the finish check
+mk crlf
+jq '.release = {changelog: {unreleased: "## {version} (unreleased)", released: "## {version} ({date})"}}' "$T/c/projects/crlf.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/crlf.json"
+git -C "$R" checkout -q master; printf '# Changelog\r\n\r\n## 1.0.0 (2026-01-01)\r\n\r\n- first\r\n' > "$R/CHANGELOG.md"
+git -C "$R" commit -q -am "crlf" && git -C "$R" branch -f develop master && git -C "$R" checkout -q parked
+rstart 1.0.1 --hotfix --date 2026-05-06 >/dev/null 2>&1
+git -C "$R" show hotfix/1.0.1:CHANGELOG.md | cmp -s - <(printf '# Changelog\r\n\r\n## 1.0.1 (2026-05-06)\r\n\r\n## 1.0.0 (2026-01-01)\r\n\r\n- first\r\n') && ok "CRLF changelog: the added heading uses CRLF and no line ending changes" || no "crlf added heading: $(git -C "$R" show hotfix/1.0.1:CHANGELOG.md 2>&1 | od -c | head -5)"
+out=$($REL finish 1.0.1 --hotfix 2>&1); [ "$?" = 1 ] && grep -q "has no entries under '## 1.0.1'" <<<"$out" && ok "CRLF changelog: an empty section is refused by the finish check (a bare CR is not an entry)" || no "crlf finish: $out"
+mk crlf2
+git -C "$R" checkout -q master; printf '# Changelog\r\n\r\n## [Unreleased]\r\n\r\n### Added\r\n- a thing\r\n' > "$R/CHANGELOG.md"
+git -C "$R" commit -q -am "crlf" && git -C "$R" branch -f develop master && git -C "$R" checkout -q parked
+rstart 0.1.1 --hotfix --date 2026-05-06 >/dev/null 2>&1
+git -C "$R" show hotfix/0.1.1:CHANGELOG.md | cmp -s - <(printf '# Changelog\r\n\r\n## [Unreleased]\r\n\r\n## [0.1.1] - 2026-05-06\r\n\r\n### Added\r\n- a thing\r\n') && ok "CRLF changelog, default layout: the released heading is inserted with CRLF and nothing else changes" || no "crlf default layout: $(git -C "$R" show hotfix/0.1.1:CHANGELOG.md 2>&1 | od -c | head -8)"
+
 exit $fail
