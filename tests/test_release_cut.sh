@@ -37,4 +37,13 @@ out=$(PATH=$HERMETIC/bin:$T/farm $REL finish 0.2.0 2>&1); rc=$?
 [ "$rc" = 1 ] && grep -q "flock command (util-linux) is not installed" <<<"$out" && ok "no flock command: the verb says it is not installed" || no "missing flock: rc=$rc $out"
 out=$($REL finish 0.2.0 2>&1); grep -q "could not take the lock" <<<"$out" && no "an ordinary finish was refused by the lock: $out" || ok "with flock the lock is taken as before (the verb goes on to its own checks)"
 
+# --- the bookkeeping file of a merge a finish parked belongs to the release that was given up: starting the version again removes it
+mk stale
+CF=$T/s/conflicts; mkdir -p "$CF"
+for f in release-0.2.0-into-develop.master release-0.2.0-into-develop.done release-0.2.0-into-master.done release-0.3.0-into-develop.master hotfix-0.2.0-into-develop.master; do echo "x y z" > "$CF/stale-$f"; done
+out=$($REL start 0.2.0 2>&1); [ -e "$CF/stale-release-0.2.0-into-develop.master" ] && ok "a plan alone removes nothing" || no "the plan removed the bookkeeping file: $out"
+rstart 0.2.0 --date 2026-03-04 >/dev/null 2>&1 || no "stale: start failed: $(rstart 0.2.0 2>&1)"
+left=$(ls "$CF" | sort | paste -sd' ')
+[ "$left" = "stale-hotfix-0.2.0-into-develop.master stale-release-0.3.0-into-develop.master" ] && ok "start removes the .master and .done files of the release it starts, and no other" || no "left in conflicts: $left"
+
 exit $fail

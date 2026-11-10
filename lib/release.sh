@@ -10,7 +10,8 @@
 #   release.sh start VERSION [--hotfix]     branch from develop (master for a hotfix); the first commit bumps VERSION and dates
 #                                           the changelog and man page. A release starts only from a develop whose head passed `verify`.
 #                                           Without --plan and --approved it prints the plan (branch, base, files bumped) and a token; with them it applies
-#                                           and writes a line of the audit log.
+#                                           and writes a line of the audit log, and removes the bookkeeping files (STATE/conflicts/PROJECT-KIND-VERSION-into-*.master and
+#                                           .done) that an earlier, given-up finish of the same version left.
 #                                           Preflight: a man page's .TH date and version are set too, and a CHANGELOG.md needs
 #                                           content under '## [Unreleased]' (--allow-empty-notes waives that); otherwise it refuses.
 #                                           A release (not a hotfix) then lists the features merged into develop since the previous tag.
@@ -660,6 +661,9 @@ case $verb in
       exit 0
     fi
     need_plan "$tok"
+    # the bookkeeping of an earlier finish of this version (the master merge commit it parked, the merges resolved but not applied) belongs to a
+    # release that was given up: the branch is new, so none of it can be used any more. Only files; a merge still waiting in a worktree is the lead's to remove.
+    rm -f -- "$DA_STATE/conflicts/$PROJ-$KIND-$VER-into-"*.master "$DA_STATE/conflicts/$PROJ-$KIND-$VER-into-"*.done
     wcommit --allow-empty -m "Bumped version number to $VER"
     g update-ref "refs/heads/$BR" "$(git -C "$WT" rev-parse HEAD)" "" || die "could not create $BR"
     audit_log "release:start" "$PROJ $BR"

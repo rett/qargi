@@ -8,6 +8,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 - The lock that `release finish` (and every finishing verb) takes checks the exit status of `flock`: a `flock` that fails or is not installed ends the verb with "could not take the lock", naming the cause (the command missing, or the lock directory's file system), and nothing is changed; before, the verb went on as if it held the lock, so two runs of it were not kept apart. `tests/test_release_cut.sh` is the new test of the release ceremony.
+- `qargi release start` removes the bookkeeping files (`STATE/conflicts/PROJECT-release-VERSION-into-*.master` and `.done`, or `hotfix-` for a hotfix) that an earlier finish of the same version parked and that were never used again when that release was given up; before, they stayed for good, and a file in that directory is what the lead's compact check reads as a merge waiting to be resolved. Only files are removed, never a merge waiting in a worktree. A plan alone removes nothing.
 
 ## [0.2.9] - 2026-11-09
 
