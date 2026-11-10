@@ -11,10 +11,11 @@ gets its members back with `qargi agent refresh NAME --project P`; `agent list` 
 beside a member that is `MISSING`, `STALE` or `DRIFT`. The runtime's definition says how (`renderers.agent`)
 and which of its own tools the neutral names (shell, read, edit, write, search, monitor, skill, ...)
 become. For Claude Code a member may call `Bash`, `Read`, `Edit`, `Write`,
-`Grep`, `Glob`, `Monitor`, `TaskStop`, `ToolSearch` and `Skill`, and every Bash, Edit,
-Write and NotebookEdit call passes `qargi __guard` (a runtime states its own hook protocol, or has
+`Grep`, `Glob`, `Monitor`, `TaskStop`, `ToolSearch` and `Skill`, and every call of `Bash`, `Monitor`, `Edit`, `Write`, `NotebookEdit`, `Read` and `Grep` passes `qargi __guard`
+(a runtime states its own hook protocol, or has
 none: then a read-only run needs its declared barrier or your acceptance, and `qargi local verify`
-is the proof). The guard refuses `git push`, `gh`,
+is the proof). A `Monitor` command is judged exactly as a `Bash` command is; `Glob`, `TaskStop`,
+`ToolSearch` and `Skill` are not hooked, since they run no command and change no file. The guard refuses `git push`, `gh`,
 `ssh`, `scp`, `sftp` and changes to a git remote. It also makes review read-only as a
 rule rather than a missing tool: a member that only reviews names its class in the hook
 command of its definition, and `qargi local prepare --role review` records the role

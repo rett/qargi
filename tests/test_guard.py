@@ -198,20 +198,27 @@ class Guard(HookCase):
                   "go test ./... && go vet ./...", "grep -n 'git push' file", "make gate-go", "gitleaks git --log-opts A..B"):
             self.assertEqual(self.guard(c).returncode, 0, c)
 
-    def test_bad_input_is_not_a_block(self):
-        r = self.hook([], "not json")
-        self.assertEqual(r.returncode, 0)
-        self.assertEqual(self.guard("").returncode, 0)
+    def test_input_that_is_empty_or_no_json_is_refused_and_names_the_cause(self):
+        """The hook is run on a tool call and every protocol it supports sends JSON: empty or cut-off input is a call the guard cannot read, so it refuses
+        (exit status 2 and one line on standard error for the Claude Code protocol), whatever the call would have been."""
+        for payload, cause in (("", "is empty"), ("  \n", "is empty"), (b"", "is empty"), ("not json", "is not valid JSON"), (b"plain text", "is not valid JSON"),
+                               ('{"tool_name": "Bash", "tool_input": {"command": "git pu', "is not valid JSON"), ('{"tool_name": "Bash", "tool_input": ', "is not valid JSON"),
+                               ("é not json".encode(), "is not valid JSON")):
+            r = self.hook([], payload)
+            self.assertEqual(r.returncode, 2, payload)
+            self.assertEqual(r.stdout, "", payload)
+            self.assertEqual(r.stderr.count("\n"), 1, r.stderr)
+            self.assertIn("the hook input " + cause, r.stderr, payload)
+            self.assertIn("refusing it", r.stderr, payload)
+        self.assertEqual(self.guard("").returncode, 0)                       # an empty command is a call; empty input is not
 
-    def test_input_that_cannot_be_decoded_is_refused_and_text_that_is_no_json_is_not(self):
+    def test_input_that_cannot_be_decoded_is_refused(self):
         for payload in (b"\xff\xfe\x80", b'{"tool_input": {"command": "ls \xff"}}', b'{"tool_input": {"command": "ls"}}\xc3'):
             r = self.hook([], payload)
             self.assertEqual(r.returncode, 2, payload)
             self.assertEqual(r.stdout, "", payload)
             self.assertEqual(r.stderr.count("\n"), 1, r.stderr)
             self.assertIn("not valid UTF-8", r.stderr, payload)
-        for payload in ("plain text", b"plain text", "\u00e9 not json".encode(), ""):
-            self.assertEqual(self.hook([], payload), Verdict(0, "", ""), payload)
         self.assertEqual(self.guard("ls"), Verdict(0, "", ""))
         self.assertEqual(self.hook([], {"tool_input": {"command": "caf\u00e9"}}), Verdict(0, "", ""))
         self.assertEqual(self.guard("git push").returncode, 2)
@@ -223,10 +230,49 @@ class Guard(HookCase):
         with open(os.path.join(d, "member.md")) as f:
             text = f.read()
         self.assertIn('command: "qargi __guard{{GUARD_ARGS}}"', text)
-        self.assertIn('matcher: "Bash|Edit|Write|NotebookEdit|Read|Grep"', text)
+        self.assertIn('matcher: "Bash|Monitor|Edit|Write|NotebookEdit|Read|Grep"', text)
         tools = [l for l in text.splitlines() if l.startswith("tools:")][0]
         for t in ("Edit", "Write", "Monitor", "ToolSearch", "Skill"):
             self.assertIn(t, tools)
+
+    def test_a_monitor_call_is_judged_like_a_bash_command(self):
+        """Monitor runs a shell command in the background and a member has the tool, so its `command` goes through the same code as a Bash command's."""
+        for c in ("git push", "git push origin main", "cd a && git push", "gh pr list", "ssh host ls", "git remote add o u", "qargi local clean /tmp/r --discard",
+                  "qargi project set p gates x", "tail -f x.log; git push"):
+            b = self.hook([], {"tool_name": "Bash", "tool_input": {"command": c}, "cwd": os.getcwd()})
+            m = self.hook([], {"tool_name": "Monitor", "tool_input": {"command": c, "description": "watch", "timeout_ms": 60000, "persistent": False}, "cwd": os.getcwd()})
+            self.assertEqual(b.returncode, 2, c)
+            self.assertEqual(m, b, c)
+        for c in ("tail -f build.log", "ls -la", "git status", "grep -n x f"):
+            m = self.hook([], {"tool_name": "Monitor", "tool_input": {"command": c}, "cwd": os.getcwd()})
+            self.assertEqual(m, Verdict(0, "", ""), c)
+
+    def test_the_tools_the_hook_matches_are_the_tools_the_guard_judges_and_the_docs_list_exactly_them(self):
+        """One list of guarded tools in four places: the hook matcher of the member template and of the Claude Code definition, the tool names of the guard's hook
+        data (the definition's barrier.hook and the guard's own copy of it), and the members page."""
+        root = os.path.join(os.path.dirname(BIN), "..")
+        with open(os.path.join(root, "lib", "providers", "claude-code.json")) as f:
+            doc = json.load(f)
+        matchers = [h["matcher"] for field in doc["renderers"]["agent"]["fields"] if isinstance(field.get("value"), dict)
+                    for h in field["value"].get("PreToolUse", [])]
+        with open(os.path.join(root, "agents", "member.md")) as f:
+            matchers += [l.split('"')[1] for l in f.read().splitlines() if l.strip().startswith("- matcher:")]
+        self.assertEqual(len(matchers), 2, matchers)
+        names = [t for ts in doc["barrier"]["hook"]["tool_names"].values() for t in ts]
+        for m in matchers:
+            self.assertEqual(sorted(m.split("|")), sorted(names), m)
+        self.assertIn("Monitor", names)
+        self.assertEqual(doc["barrier"]["hook"], self.m_hook(), "the guard's own copy of the Claude Code hook data is the definition's")
+        with open(os.path.join(root, "docs", "members-and-providers", "README.md")) as f:
+            page = " ".join(f.read().split())
+        listed = ", ".join("`%s`" % t for t in matchers[0].split("|")[:-1]) + " and `%s`" % matchers[0].split("|")[-1]
+        self.assertIn("every call of " + listed + " passes `qargi __guard`", page)
+
+    def m_hook(self):
+        """CLAUDE_HOOK of guard.py, read as the data it is."""
+        r = subprocess.run([sys.executable, "-I", "-c", "import sys, json; sys.path.insert(0, sys.argv[1]); import guard; print(json.dumps(guard.CLAUDE_HOOK))", LIBDIR],
+                           capture_output=True, text=True, check=True)
+        return json.loads(r.stdout)
 
 
 class Review(HookCase):
@@ -290,6 +336,17 @@ class Review(HookCase):
         r = self.call("Bash", {"command": "echo x > src/a.go"})
         self.assertIn("writes its report to OUT", r.stderr)
 
+    def test_review_holds_a_monitor_command_to_the_same_rules_as_a_bash_command(self):
+        self.ability("review")
+        for tool, inp in self.writes():
+            if tool == "Bash":
+                r = self.call("Monitor", dict(inp, description="watch"))
+                self.assertEqual(r, self.call(tool, inp), inp)
+                self.assertEqual(r.returncode, 2, (inp, r.stderr))
+        for tool, inp in self.reads():
+            if tool == "Bash":
+                self.assertEqual(self.call("Monitor", dict(inp, description="watch")).returncode, 0, inp)
+
     def test_review_may_read_and_write_its_report(self):
         self.ability("review")
         for tool, inp in self.reads():
@@ -308,6 +365,34 @@ class Review(HookCase):
             self.assertEqual(r.returncode, 2, (tool, inp, r.stderr))
         for tool, inp in self.reads():
             self.assertEqual(self.call(tool, inp, None, "--class", "read-only").returncode, 0, (tool, inp))
+
+    def test_a_run_file_that_exists_and_cannot_be_read_refuses_the_call_and_names_it(self):
+        """A class or ability file that cannot be read (here a directory stands where the file is: it fails the same way for every user, root included)
+        must not read as 'not read-only': the calls that ask for the class are refused with one line naming the file and the cause. A file that is not
+        there at all is still a run without that file (a write run), and the class in the hook still holds whatever the files say."""
+        for name, other in (("ability", "class"), ("class", "ability")):
+            path = os.path.join(self.run, name)
+            for f in ("ability", "class"):
+                if os.path.isfile(os.path.join(self.run, f)):
+                    os.remove(os.path.join(self.run, f))
+            if other == "ability":
+                self.ability("build")
+            os.mkdir(path)
+            for tool, inp in self.writes():
+                r = self.call(tool, inp)
+                self.assertEqual(r.returncode, 2, (name, tool, inp, r.stderr))
+                self.assertIn("the %s file of the run" % name, r.stderr, (tool, inp))
+                self.assertIn("cannot be read", r.stderr, (tool, inp))
+                self.assertIn("refusing the call", r.stderr, (tool, inp))
+                self.assertEqual(r.stderr.count("\n"), 1, r.stderr)
+            for tool, inp in self.writes():                      # the class in the hook does not ask the file: it refuses as it always did
+                self.assertEqual(self.call(tool, inp, None, "--class", "read-only").returncode, 2, (tool, inp))
+            os.rmdir(path)
+        for f in ("ability", "class"):                           # neither file there: a write run, as before
+            if os.path.isfile(os.path.join(self.run, f)):
+                os.remove(os.path.join(self.run, f))
+        for tool, inp in self.writes() + self.reads():
+            self.assertEqual(self.call(tool, inp).returncode, 0, (tool, inp))
 
     def test_a_member_cannot_change_the_run_record(self):
         self.ability("review")
@@ -679,6 +764,20 @@ class Skills(HookCase):
                 self.assertEqual(r.returncode, 2, c)
                 self.assertIn("qargi review apply is the lead's", r.stderr, c)
         for c in ("echo qargi review apply", "grep -n 'review apply' lib/commands.py", "qargi review check /tmp/r", "git log --grep 'review apply'"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_refuses_review_save_to_a_member(self):
+        """qargi review save stores a report in a run's OUT for the lead and writes the run's manifest: the lead's, declared in LEAD_VERBS like review apply.
+        Reading the reviews (review check) and talking about it stays allowed."""
+        for form in ("qargi review save %s", "/opt/q/bin/qargi review save %s", "sudo qargi review save %s", "bash -c 'qargi review save %s'", "env FOO=1 qargi review save %s",
+                     "cd src && qargi review save %s", "true && qargi review save %s", "qargi 'review' 'save' %s", "xargs qargi review save %s"):
+            for tail in ("/tmp/r < msg.md", "/tmp/r --force"):
+                c = form % tail
+                r = self.bash(c)
+                self.assertEqual(r.returncode, 2, c)
+                self.assertIn("qargi review save is the lead's", r.stderr, c)
+        for c in ("echo qargi review save", "grep -n 'review save' lib/commands.py", "qargi review check /tmp/r"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
@@ -2338,44 +2437,39 @@ class ProviderRoots(HookCase):
         self.assertEqual(self.bash("echo y > /etc/skills/x; echo y > relative/agents/m; echo y > %s/up/skills/x" % self.t).returncode, 0)
         self.refused("echo y > ~/.only/skills/x")
 
-    def test_a_definition_that_cannot_be_read_is_skipped_with_a_note_and_the_others_still_protect(self):
-        # one broken definition in the library must not make the guard refuse every write: its directories are unknown, the rest are not
+    def refused_for_definitions(self, r, *names):
+        """A call refused because a provider definition does not load: one line that names each definition and what to do."""
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertEqual(r.stderr.count("\n"), 1, r.stderr)
+        self.assertIn("provider definitions that do not load", r.stderr)
+        self.assertIn("refusing the call until the library is fixed", r.stderr)
+        for n in names:
+            self.assertIn(n, r.stderr)
+
+    def test_a_definition_that_cannot_be_read_refuses_the_calls_that_need_the_roots_and_names_it(self):
+        # a definition that does not load leaves directories the guard cannot know: a call that reaches for the roots is refused, naming each one
         self.define("fakecli", self.FAKECLI)
         self.define("garbled", None, raw="{not json")
         self.define("wrongname", None, raw=json.dumps(runtime("someone-else", resources={"skills": {"project_dir": ".elsewhere/skills"}})))
-        r = self.bash("echo y > %s/notes.txt" % self.proj)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stderr.count("qargi guard: "), 1, r.stderr)                 # one note, not one per definition or per path
-        self.assertIn("skipped", r.stderr)
-        self.assertIn("garbled", r.stderr)
-        self.assertIn("wrongname", r.stderr)
-        self.assertEqual(self.call("Write", {"file_path": os.path.join(self.proj, "notes.txt")}).returncode, 0)
+        for r in (self.bash("echo y > %s/notes.txt" % self.proj), self.call("Write", {"file_path": os.path.join(self.proj, "notes.txt")}),
+                  self.bash("echo y > ~/.fakecli/skills/x/SKILL.md"), self.bash("echo y > ~/.claude/skills/x/SKILL.md")):
+            self.refused_for_definitions(r, "garbled", "wrongname")
         for c in ("ls -la", "cat %s/notes.txt" % self.proj, "git status", "echo hi"):              # a call that writes nowhere needs no roots
             r = self.bash(c)
             self.assertEqual((r.returncode, r.stderr), (0, ""), c)
         self.assertEqual(self.bash("git push").returncode, 2)
-        # the definitions that load keep their roots, and so does Claude Code
-        for c in ("echo y > ~/.fakecli/skills/x/SKILL.md", "echo y > %s/.fake/agents/m.toml" % self.proj, "echo y > ~/.claude/skills/x/SKILL.md",
-                  "echo y > %s/.claude/skills/p/SKILL.md" % self.proj, "rm -rf %s/.claude" % self.proj):
-            self.refused(c)
-        self.assertEqual(self.call("Write", {"file_path": os.path.join(self.proj, ".fake", "agents", "m.toml")}).returncode, 2)
 
-    def test_the_claude_directories_stay_protected_when_their_definition_clashes_or_is_broken(self):
-        # a library definition with the name of a shipped one makes both unusable (a clash); the Claude Code directories are still held
+    def test_a_definition_that_clashes_with_a_shipped_one_refuses_the_calls_that_need_the_roots(self):
+        # a library definition with the name of a shipped one makes both unusable (a clash); the Claude Code directories are held in the roots all the same
         self.define("claude-code", {"skills": {"project_dir": ".other/skills", "items": "dir-per-item"}})
-        r = self.bash("echo y > %s/notes.txt" % self.proj)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("claude-code", r.stderr)
-        for c in ("echo y > ~/.claude/skills/x/SKILL.md", "echo y > ~/.claude/agents/m.md", "echo y > %s/.claude/skills/p/SKILL.md" % self.proj,
-                  "echo y > %s/.claude/agents/m.md" % self.proj, "rm -rf %s/.claude" % self.proj):
-            self.refused(c)
+        self.refused_for_definitions(self.bash("echo y > %s/notes.txt" % self.proj), "claude-code")
+        self.refused_for_definitions(self.bash("echo y > ~/.claude/skills/x/SKILL.md"), "claude-code")
+        self.assertEqual(self.bash("ls -la").returncode, 0)
 
-    def test_a_name_defined_twice_is_skipped_with_a_note_too(self):
+    def test_a_name_defined_twice_refuses_the_calls_that_need_the_roots_too(self):
         self.define("claude", {})                                         # the shipped provider's name
-        r = self.bash("echo y > %s/notes.txt" % self.proj)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("defined twice", r.stderr)
-        self.refused("echo y > %s/.claude/skills/p/SKILL.md" % self.proj)
+        self.refused_for_definitions(self.bash("echo y > %s/notes.txt" % self.proj), "defined twice")
+        self.refused_for_definitions(self.bash("echo y > %s/.claude/skills/p/SKILL.md" % self.proj), "defined twice")
 
 
 class RuntimeRender(HookCase):
@@ -4731,9 +4825,9 @@ class SubprocessContract(unittest.TestCase):
         self.assertTrue(r.stdout.startswith("qargi guard: ") and r.stdout.count("\n") == 1, r)
         self.assertEqual(cli("ls"), Verdict(0, "", ""))
 
-    def test_input_that_is_no_call_passes_and_input_the_guard_cannot_read_is_refused(self):
-        for payload in ("not json", "", "{\"tool_name\": \"Bash\""):
-            self.assertEqual(self.verdict([], payload), Verdict(0, "", ""), payload)
+    def test_input_the_guard_cannot_read_is_refused(self):
+        for payload, cause in (("not json", "is not valid JSON"), ("", "is empty"), ("{\"tool_name\": \"Bash\"", "is not valid JSON")):
+            self.refusal(self.verdict([], payload), payload, "the hook input " + cause)
         for inp in ({"tool_name": "Bash", "tool_input": {"command": 7}}, {"tool_name": "Bash", "tool_input": "ls"}, {"tool_name": "Edit", "tool_input": {"file_path": ["a"]}},
                     ["not", "an", "object"]):
             self.refusal(self.verdict([], inp), inp, "qargi guard: internal error")

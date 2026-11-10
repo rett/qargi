@@ -10,6 +10,8 @@
 #       for a run whose directory is gone (a reboot that emptied a tmpfs); the same checks: review check of the saved OUT, local verify
 #       --saved ID (the refs against the saved snapshot), the lead's registry for the repository, slug and base. Refused while the run
 #       directory still exists (apply that), and once applied (the saved copy records it, as RUN/applied does).
+#   review.sh save RUN [--force]                              the final message of a read-only run (standard input) stored as RUN/out/report.md, with a minimal
+#       manifest.json when OUT has none; the lead's, for a member whose file tool was refused. No overwrite of a report without --force.
 #
 # The branch is made in a temporary worktree of the project's repository (repo.path), so the user's checkout is never touched;
 # no ref other than the new branch changes. A patch that does not apply removes the worktree and the branch again.
@@ -123,6 +125,57 @@ if [ "$verb" = check ]; then
     [ "$rc" = 0 ] || scrub_ok_clear "$SRUN"
   fi
   exit "$rc"
+fi
+if [ "$verb" = save ]; then
+  # qargi review save RUN [--force]: a read-only run whose member returned its report as its final message (its file tool refused, or it has none): the lead
+  # stores the message from standard input as RUN/out/report.md, with a minimal manifest.json when OUT has none. No shell text of the member is involved.
+  SRUN='' FORCE=''
+  for a in "$@"; do
+    case $a in
+      --force) FORCE=1;;
+      -*) usage_die "unknown option $a (usage: qargi review save RUN [--force] < MESSAGE)";;
+      *) [ -z "$SRUN" ] || usage_die "unexpected argument $a (usage: qargi review save RUN [--force] < MESSAGE)"; SRUN=$a;;
+    esac
+  done
+  [ -n "${SRUN%/}" ] || usage_die "usage: qargi review save RUN [--force] < MESSAGE (the member's final message on standard input)"
+  [ -z "${QARGI_MEMBER_RUN:-}" ] || die "qargi review save is the lead's: a member returns its report in its final message and the lead stores it"
+  SRUN=${SRUN%/}
+  [ -d "$SRUN" ] && [ ! -L "$SRUN" ] || die "$SRUN is not a run directory (a link, or no such directory): nothing was written"
+  RUN=$(readlink -f -- "$SRUN") || die "no such run directory: $SRUN"
+  SOUT=$RUN/out
+  { [ -f "$RUN/refs.before" ] && [ -f "$RUN/ability" ] && case ${RUN##*/} in qargi.??????) true;; *) false;; esac; } \
+    || die "$RUN is not a run prepared by qargi local prepare: nothing was written"
+  reg_load; reg_has "$RUN" || die "the lead's registry names no run $RUN (a directory a member made is not one): nothing was written"
+  [ "$(run_class "$RUN")" = read-only ] \
+    || die "$RUN is not a read-only run ($(cat "$RUN/ability" 2>/dev/null || echo build)): its product is patches, and the lead takes them in with qargi local verify; nothing was written"
+  [ -d "$SOUT" ] && [ ! -L "$SOUT" ] || die "$SOUT is a link or not a directory: a member put it there (look at the run); nothing was written"
+  [ ! -t 0 ] || usage_die "give the member's final message on standard input: qargi review save $SRUN < message.md"
+  MSG=$(mktemp "$SOUT/.report.XXXXXX") || die "could not write in $SOUT: nothing was written"
+  MAN=''
+  trap 'rm -f -- "${MSG:-}" "${MAN:-}"' EXIT
+  cat > "$MSG" || die "could not read the message from standard input: nothing was written"
+  grep -q '[^[:space:]]' "$MSG" || die "the message on standard input is empty: nothing was written"
+  [ -z "$(tail -c 1 "$MSG")" ] || echo >> "$MSG"
+  if [ -z "$FORCE" ] && { [ -e "$SOUT/report.md" ] || [ -L "$SOUT/report.md" ]; }; then
+    die "$SOUT/report.md exists already: nothing was written (--force replaces it)"
+  fi
+  chmod 644 "$MSG"; mv -T -- "$MSG" "$SOUT/report.md" || die "could not write $SOUT/report.md"
+  echo "wrote $SOUT/report.md ($(wc -c < "$SOUT/report.md" | tr -d ' ') bytes)"
+  if [ -e "$SOUT/manifest.json" ] || [ -L "$SOUT/manifest.json" ]; then
+    echo "kept $SOUT/manifest.json (the member wrote one)"
+  else
+    sbase=$(reg_get "$RUN" base)
+    sha=$(awk -v b="refs/heads/$sbase" '$1=="local" && $2==b {print $3}' "$RUN/refs.before" 2>/dev/null | head -n 1)
+    MAN=$(mktemp "$SOUT/.manifest.XXXXXX") || die "could not write the manifest in $SOUT"
+    jq -n --arg b "$sbase" --arg s "$sha" --arg slug "$(reg_get "$RUN" slug)" --arg role "$(reg_get "$RUN" ability)" \
+      '{status:"DONE", blocked_reason:"", task:("read-only run " + $role + " " + $slug + ": the report is the final message, stored by the lead (qargi review save)"),
+        base:{branch:$b, sha:$s}, branch:"", scope:[], done:{command:"", exit_code:null, output_tail:""}, gates:[], commits:[], touched_paths:[],
+        artifacts:[{path:"report.md", kind:"report"}]}' > "$MAN" || die "could not make the manifest"
+    chmod 644 "$MAN"; mv -T -- "$MAN" "$SOUT/manifest.json" || die "could not write $SOUT/manifest.json"
+    echo "wrote $SOUT/manifest.json (status DONE, commits: [])"
+  fi
+  echo "next: qargi review check $SOUT"
+  exit 0
 fi
 # pick_author: AUTH_MODE (reset | keep), AUTH ("Name <email>") and AUTH_SRC (where it comes from, or why the member's author stays) from the stored answers.
 # review.keep_author true keeps the member's author; else git.author, else the repository's user.name/user.email; with none of them the member's stays.
@@ -293,5 +346,5 @@ case $verb in
     echo "next:"
     echo "  qargi feature merge NAME $BRANCH    (NAME: the feature this task belongs to)"
     echo "  qargi local clean $RUN${SAVED:+   (its directory is gone: once the work is merged, clean drops its record and the saved copy)}";;
-  *) usage_die "usage: qargi review check OUT [--allow-empty] | qargi review apply RUN_DIR|--from-saved ID [--branch BRANCH] [--project P]";;
+  *) usage_die "usage: qargi review check OUT [--allow-empty] | qargi review save RUN [--force] < MESSAGE | qargi review apply RUN_DIR|--from-saved ID [--branch BRANCH] [--project P]";;
 esac

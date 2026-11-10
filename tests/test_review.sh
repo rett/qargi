@@ -451,4 +451,38 @@ cp "$AF0" "$AF"; R57=$(newrun applynone)
 out=$($DA review apply "$R57" 2>&1); rc=$?
 { [ $rc = 0 ] && ! grep -q '^scrub:' <<<"$out"; } && ok "with no declared scrub apply prints no scrub line" || no "apply none: rc=$rc $out"
 cp "$AF0" "$AF"
+# --- review save: the final message of a read-only run, stored by the lead as OUT/report.md
+setans '.models = {provider: {local: "claude-code", cloud: "claude-platform"}}'   # a read-only run is looked up through the project's provider
+rorun() { $DA local prepare --repo "$A" --base develop --slug "$1" --scratch "$T/scr" --role review | sed -n 's/^RUN=//p'; }
+MSG=$T/message.md; printf '# Findings\n\nnone: if n > 0 the line is fine\n\ngit push is only text here\n\nverdict: accept\n' > "$MSG"
+RV1=$(rorun savea)
+out=$($DA review save "$RV1" < "$MSG" 2>&1); rc=$?
+{ [ $rc = 0 ] && cmp -s "$MSG" "$RV1/out/report.md" && grep -q "wrote $RV1/out/report.md" <<<"$out" && grep -q "wrote $RV1/out/manifest.json" <<<"$out" && grep -q "review check $RV1/out" <<<"$out"; } \
+  && ok "review save stores the message as OUT/report.md, writes a manifest and says what it wrote" || no "save: rc=$rc $out"
+{ [ "$(jq -r '.status' "$RV1/out/manifest.json")" = DONE ] && [ "$(jq -c '.commits' "$RV1/out/manifest.json")" = '[]' ] && [ "$(jq -r '.base.branch' "$RV1/out/manifest.json")" = develop ] \
+  && [ "$(jq -r '.base.sha' "$RV1/out/manifest.json")" = "$(git -C "$A" rev-parse develop)" ] && jq -e '.done and .gates == [] and .touched_paths == [] and .artifacts[0].kind == "report"' "$RV1/out/manifest.json" >/dev/null; } \
+  && ok "the minimal manifest has status, base, done, gates, commits [] and touched_paths" || no "save manifest: $(cat "$RV1/out/manifest.json")"
+out=$($DA review check "$RV1/out" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "report-only run" <<<"$out" && ok "review check accepts what review save stored" || no "save then check: rc=$rc $out"
+out=$($DA review save "$RV1" < "$MSG" 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q "exists already" <<<"$out"; } && ok "review save does not overwrite a report" || no "save overwrite: rc=$rc $out"
+printf '# Findings\n\nsecond\n' | $DA review save "$RV1" --force >/dev/null 2>&1; grep -q second "$RV1/out/report.md" && [ -z "$(find "$RV1/out" -name '.*' -type f)" ] \
+  && ok "review save --force replaces it and leaves no temporary file" || no "save --force"
+jq '.status = "BLOCKED"' "$RV1/out/manifest.json" > "$T/m.json" && cp "$T/m.json" "$RV1/out/manifest.json"; printf '# Findings\n\nthird\n' | $DA review save "$RV1" --force >/dev/null 2>&1
+[ "$(jq -r '.status' "$RV1/out/manifest.json")" = BLOCKED ] && ok "a manifest that is there is kept" || no "save kept manifest"
+RV2=$(rorun saveb); out=$($DA review save "$RV2" < /dev/null 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q "empty" <<<"$out" && [ ! -e "$RV2/out/report.md" ] && [ -z "$(find "$RV2/out" -name '.*' -type f)" ]; } && ok "an empty message is refused and writes nothing" || no "save empty: rc=$rc $out"
+RB=$(newrun savebuild); out=$($DA review save "$RB" < "$MSG" 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q "not a read-only run" <<<"$out" && [ ! -e "$RB/out/report.md" ]; } && ok "review save refuses a build run" || no "save build: rc=$rc $out"
+mv "$RV2/out" "$RV2/out.real"; mkdir "$T/elsewhere"; ln -s "$T/elsewhere" "$RV2/out"
+out=$($DA review save "$RV2" < "$MSG" 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q "link" <<<"$out" && [ -z "$(ls -A "$T/elsewhere")" ]; } && ok "review save refuses a run whose OUT is a link and writes nothing through it" || no "save symlinked out: rc=$rc $out"
+rm "$RV2/out"; mv "$RV2/out.real" "$RV2/out"; ln -s "$RV2" "$T/runlink"
+out=$($DA review save "$T/runlink" < "$MSG" 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q "not a run directory" <<<"$out" && [ ! -e "$RV2/out/report.md" ]; } && ok "review save refuses a link to a run directory" || no "save symlinked run: rc=$rc $out"
+cp -r "$RV2" "$T/qargi.copy12"; out=$($DA review save "$T/qargi.copy12" < "$MSG" 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q "registry" <<<"$out"; } && ok "review save refuses a directory the lead's registry does not name" || no "save unregistered: rc=$rc $out"
+out=$(QARGI_MEMBER_RUN=$RV2 $DA review save "$RV2" < "$MSG" 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q "lead's" <<<"$out" && [ ! -e "$RV2/out/report.md" ]; } && ok "review save with the member mark set is refused" || no "save as member: rc=$rc $out"
+$DA review save >/dev/null 2>&1; [ $? = 2 ] && ok "review save with no RUN is a usage error" || no "save usage"
 exit $fail

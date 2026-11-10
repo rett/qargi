@@ -3336,6 +3336,18 @@ accept a manifest with no commits (a team member that was blocked or had nothing
 .RE
 .RS
 .TP
+.BI "save " "[RUN]"
+Store the final message of a read\-only run (standard input) as RUN/out/report.md, with a minimal manifest.json.
+.br
+For a read\-only run (review, advisor, auditor) whose member could not write its report with a file tool: the member puts the whole report in its final message and the lead stores that message, so no shell text is involved. The message is read from standard input (qargi review save RUN < message.md) and written as RUN/out/report.md; a report.md that is there already is kept unless \-\-force. When OUT has no manifest.json one is written: status DONE, the run's base branch and commit, commits [] and the report in artifacts (a manifest the member wrote is kept). Prints what it wrote and the qargi review check command to run next; the check, not this verb, decides whether the report has the required form. Refused for a directory that is not a run in the lead's registry, for a run that is not read\-only (a build run returns patches), for a run directory or OUT that is a link, for an empty message, and from a member (the guard refuses the verb; so does the verb itself when the member mark is set).
+.RS
+.TP
+.B \-\-force
+replace a report.md that is there already.
+.RE
+.RE
+.RS
+.TP
 .BI "apply " "[RUN_DIR]"
 Apply a collected, checked run to a task branch of the repository.
 .br
