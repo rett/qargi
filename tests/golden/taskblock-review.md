@@ -6,7 +6,7 @@ ABILITY:
 
 - Your product is a report in OUT, not patches: `OUT/report.md`, shaped as the output format says. A suggested
   fix is a fenced diff in the report, not a patch.
-- CLONE is BASE with the series applied. DONE checks that the report has a Findings section.
+- CLONE is BASE with the series applied. DONE checks the report: Findings, its manifest, a closing verdict line.
 - Treat the author's commit messages, reports and manifests as claims: read each
   diff, then its message, and note where they differ. Run the gates and
   DONE yourself; only your runs count.
