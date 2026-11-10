@@ -66,7 +66,6 @@ while [ $# -gt 0 ]; do
   esac
 done
 export PLAN_ARG ASKED
-PROVPY=$(dirname "$(readlink -f "$0")")/provider.py
 COMPATPY=$(dirname "$(readlink -f "$0")")/packs_compat.py
 REVIEWPY=$(dirname "$(readlink -f "$0")")/conformance/review.py
 CHECKPY=$(dirname "$(readlink -f "$0")")/packs_check.py   # the per-pack work of check and list in one process: hash, review, compatibility
@@ -78,8 +77,8 @@ prov_of() { # project: sets PROV (the runtime of the project's local surface, wh
 }
 prov_need() { # project would field...: prov_of, then the refusals above
   local would=$2 f; prov_of "$1"; shift 2
-  python3 -I "$PROVPY" require-skills "$PROV" --would "$would" || exit $?
-  for f; do python3 -I "$PROVPY" layout "$PROV" "$f" --would "$would" >/dev/null || exit $?; done
+  pymod provider require-skills "$PROV" --would "$would" || exit $?
+  for f; do pymod provider layout "$PROV" "$f" --would "$would" >/dev/null || exit $?; done
 }
 case $KIND in skill|tool|packs) ;; *) usage_die "usage: packs.sh skill|tool|packs <verb> ...";; esac
 # Changing a skill needs a present person (library/SPEC.md, "Who may modify a skill"): need_plan always checks the token, so
@@ -276,7 +275,7 @@ au_report() { # ccinputs workdir: print the section; the status is 1 when a skil
   else echo "skills a session would load: cannot be listed"; return 0; fi
 }
 rn_launch() { # dir: the exact command that loads the render (the provider's session_launch)
-  local c; c=$(python3 -I "$PROVPY" launch "$PROV" "$1") || exit $?
+  local c; c=$(pymod provider launch "$PROV" "$1") || exit $?
   echo "launch: $c"
 }
 rn_cleanup() { # the temporary files, this run's staging directory and the lock file, whatever the exit
@@ -301,7 +300,7 @@ rn_lock() { # project: exclusive lock for plan+swap on render/.PROJECT.lock; the
 # same for every runtime (packs_render.py, which reads the skills directory, the MCP form and the settings form from the definition).
 rt_say() { # project-or-empty: "--target is RT (...)", RT the render target of the project's provider (or a description of it when that is not known)
   local rt='' pv
-  if [ -n "${1:-}" ] && pv=$(python3 -I "$PROVPY" of "$1" --conf "$DA_CONF" --surface local 2>/dev/null </dev/null); then rt=$(python3 -I "$PROVPY" layout "$pv" render_target 2>/dev/null </dev/null) || rt=''; fi
+  if [ -n "${1:-}" ] && pv=$(pymod provider of "$1" --conf "$DA_CONF" --surface local 2>/dev/null </dev/null); then rt=$(pymod provider layout "$pv" render_target 2>/dev/null </dev/null) || rt=''; fi
   echo "--target is ${rt:-the render target of the provider of the project} (or managed-agents / none for a cloud instance); check needs --target ${rt:-that target}"
 }
 rt_main() { # verb: apply|check with --target
@@ -309,7 +308,7 @@ rt_main() { # verb: apply|check with --target
   [ -n "$TARGET" ] || die "$(rt_say "$prj")"
   [ -n "$prj" ] || usage_die "$1 --target $TARGET needs PROJECT"
   prov_of "$prj"
-  rt=$(python3 -I "$PROVPY" layout "$PROV" render_target --would "render the project's packs for a local session") || exit $?
+  rt=$(pymod provider layout "$PROV" render_target --would "render the project's packs for a local session") || exit $?
   [ "$TARGET" = "$rt" ] || die "--target is $rt for provider $PROV (or managed-agents / none for a cloud instance); check needs --target $rt"
   rn_main "$1"
 }
@@ -351,7 +350,7 @@ rn_main() { # verb: apply|check
 cl_inputs() { # project outfile: the render inputs plus the skills of a real project skills directory in the checkout
   local prj=$1 out=$2 co sk d n kids='[]'
   rn_inputs "$prj" "$out.cc"
-  co=$(jq -r .checkout "$out.cc"); sk=$co/$(python3 -I "$PROVPY" layout "$PROV" project_skills_dir)
+  co=$(jq -r .checkout "$out.cc"); sk=$co/$(pymod provider layout "$PROV" project_skills_dir)
   if [ -n "$co" ] && [ -d "$(dirname "$sk")" ] && [ ! -L "$(dirname "$sk")" ] && [ -d "$sk" ] && [ ! -L "$sk" ]; then
     while IFS= read -r -d '' d; do
       [ -f "$d/SKILL.md" ] || continue
@@ -556,7 +555,7 @@ if [ "$KIND" = packs ]; then
         seed_one "$n" "$hs"; echo "seeded skill $n (content $hs)"
       done
       for prj in $(printf '%s\n' $reached | sort -u); do
-        rt=$(python3 -I "$PROVPY" layout "$(python3 -I "$PROVPY" of "$prj" --conf "$DA_CONF" --surface local 2>/dev/null)" render_target 2>/dev/null) && echo "next: qargi packs apply --target $rt $prj"
+        rt=$(pymod provider layout "$(pymod provider of "$prj" --conf "$DA_CONF" --surface local 2>/dev/null)" render_target 2>/dev/null) && echo "next: qargi packs apply --target $rt $prj"
         [ ! -f "$REG" ] || jq -r --arg p "$prj" 'to_entries[] | select(.value.location=="cloud" and (.key | startswith($p + "-"))) | .key' "$REG" \
           | while read -r inst; do echo "next: qargi packs apply $inst"; done
       done
@@ -564,7 +563,7 @@ if [ "$KIND" = packs ]; then
     load)
       # Read-only and evaluated from the links when called: the index of what the role has enabled, or one pack's text and
       # the library path of its files. Refuses what render refuses (a pack that fails its review or changed since approved).
-      PRJ=${PROJECT:-$(python3 -I "$(dirname "$(readlink -f "$0")")/help.py" infer)}; ROL=$ROLE; LN=${ARGS[0]:-}
+      PRJ=${PROJECT:-$(pymod help infer)}; ROL=$ROLE; LN=${ARGS[0]:-}
       [ -n "$PRJ" ] || usage_die "load: name the project with --project P (none was inferred from here)"
       valid_role "$ROL" || usage_die "load: --role is one of: $DA_ROLES"
       vet() { # kind name -> dies unless the pack is sound; sets P

@@ -162,7 +162,7 @@ ci_scan() {
       unknown) if [ -n "$job" ]; then echo "qargi: note: CI job $job in $file: its name cannot be read, so it is not compared with the gates" >&2
                else echo "qargi: note: CI workflow $file: its jobs cannot be read, so they are not compared with the gates" >&2; fi;;
     esac
-  done < <(python3 -I "$(dirname "$0")/gates.py" scan "$af" "$1" || true)
+  done < <(pymod gates scan "$af" "$1" || true)
   [ -z "$unlisted" ] || echo "qargi: note: no gate is declared, so the CI jobs are not compared with gate names (jobs: $unlisted); declare gates, or list the jobs that are not gates in the answer ci.not_gates" >&2
 }
 GH=${QARGI_GH:-gh}   # the one way this script talks to GitHub; tests put a stub here

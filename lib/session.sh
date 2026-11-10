@@ -134,7 +134,7 @@ base_idle_session() {
 }
 
 start_base() { # name: creates the session (or prints the request, with QARGI_DRY_RUN) and tracks it
-  local name=$1 proj=${1%%-*} i dep cf prov system sha req body out rc=0 sid padapter
+  local name=$1 proj=${1%%-*} i dep cf prov system sha req body out rc=0 sid
   i=$(cloud_inst "$name") || exit 1
   base_resolve "$name"
   ant_ok
@@ -143,8 +143,7 @@ start_base() { # name: creates the session (or prints the request, with QARGI_DR
   sha=$(printf '%s' "$system" | sha256sum | cut -c1-16)
   prov=$(project_provider "$proj" cloud) || exit $?   # no default provider: a project with none for the cloud surface is refused (exit 2)
   # the adapter is found by lib/provider.py, whatever the runtime is (shipped, or a library pack: that one only as a sealed private copy)
-  padapter=$QARGI_TOOL/lib/provider.py
-  python3 -I "$padapter" adapter-run "$prov" cloud start-session --check || die "the provider '$prov' has no adapter that can build a session request"
+  pymod provider adapter-run "$prov" cloud start-session --check || die "the provider '$prov' has no adapter that can build a session request"
   dep=$(ant beta:deployments retrieve --deployment-id "$(jq -r .deployment_id <<<"$i")" </dev/null 2>/dev/null) || die "cannot read the deployment"
   cf=$(cred_file "$proj")
   # the request of the adapter: the deployment's agent, environment, resources (and the repository), vaults, initial events and budget
@@ -157,7 +156,7 @@ start_base() { # name: creates the session (or prints the request, with QARGI_DR
         metadata: {deployment_id: $d.id}, accept_no_barrier: $accept}
         + (if $d.initial_events then {initial_events: $d.initial_events} else {} end)
         + (if $d.budget then {budget: $d.budget} else {} end)') || die "could not build the session request"
-  out=$(printf '%s' "$req" | python3 -I "$padapter" adapter-run "$prov" cloud start-session) || rc=$?
+  out=$(printf '%s' "$req" | pymod provider adapter-run "$prov" cloud start-session) || rc=$?
   if [ "$rc" != 0 ]; then
     echo "qargi: the $prov adapter did not build the session (exit $rc): $(jq -r '.error // empty' <<<"$out" 2>/dev/null)" >&2
     exit "$rc"

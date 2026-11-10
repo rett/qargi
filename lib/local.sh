@@ -437,9 +437,9 @@ render_warning() {
     rp=$(jq -r '.repo.path // ""' "$f" 2>/dev/null); rp=${rp/#\~/$HOME}; ru=$(jq -r '.repo.url // ""' "$f" 2>/dev/null)
     if [ -n "$1" ]; then [ -n "$rp" ] && [ "$(readlink -f "$rp")" = "$(readlink -f "$1")" ] || continue
     else [ -n "$ru" ] && [ "${ru%.git}" = "${2%.git}" ] || continue; fi
-    rc=0; pv=$(python3 -I "$(dirname "$0")/provider.py" of "$prj" --conf "$DA_CONF" --surface local 2>/dev/null </dev/null) || rc=$?
+    rc=0; pv=$(pymod provider of "$prj" --conf "$DA_CONF" --surface local 2>/dev/null </dev/null) || rc=$?
     if [ "$rc" = 2 ]; then   # the render is the local surface's: an object that names only a cloud runtime is the same as none
-      pe=$(python3 -I "$(dirname "$0")/provider.py" of "$prj" --conf "$DA_CONF" --surface local 2>&1 </dev/null) || true
+      pe=$(pymod provider of "$prj" --conf "$DA_CONF" --surface local 2>&1 </dev/null) || true
       case $pe in
         *"has no local provider"*) echo "note: project $prj has no local provider (qargi project set $prj models.provider.local NAME); the render check was skipped" >&2;;
         *) echo "note: project $prj has no provider (qargi project set $prj models.provider NAME); the render check was skipped" >&2;;
@@ -448,7 +448,7 @@ render_warning() {
     fi
     # the render of a runtime is that runtime's; a project that has moved to another runtime has no render of it to check here
     [ "$rc" = 0 ] && [ "$pv" = "$(basename "$d")" ] || continue
-    rt=$(python3 -I "$(dirname "$0")/provider.py" layout "$pv" render_target 2>/dev/null </dev/null) || return 0
+    rt=$(pymod provider layout "$pv" render_target 2>/dev/null </dev/null) || return 0
     rc=0; out=$("$(dirname "$0")/packs.sh" packs check --target "$rt" '--render-only' "$prj" 2>&1) || rc=$?
     [ "$rc" != 0 ] && [ "$rc" != 3 ] || return 0
     lb=$(python3 -I "$(dirname "$0")/packs_render.py" label "$pv" 2>/dev/null </dev/null) || lb=$pv
@@ -678,7 +678,7 @@ case $verb in
     if [ -n "$CPJ" ]; then
       # a provider that is set but does not resolve is refused here, not left out of the contract
       CPROV=$(project_provider_if_set "$CPJ" local) || die "the local provider of project $CPJ does not resolve, so the contract addenda of its runtime cannot be added; nothing was made (qargi project show $CPJ)"
-      [ -z "$CPROV" ] || ADDENDA=$(python3 -I "$(dirname "$0")/provider.py" addenda "$CPROV" local </dev/null) || die "could not read the contract addenda of the local runtime $CPROV (qargi provider check $CPROV)"
+      [ -z "$CPROV" ] || ADDENDA=$(pymod provider addenda "$CPROV" local </dev/null) || die "could not read the contract addenda of the local runtime $CPROV (qargi provider check $CPROV)"
     fi
     LEAD=''
     case $BASE in

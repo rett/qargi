@@ -14,6 +14,7 @@
 104 bash tests/test_open_providers.sh
 83 bash tests/test_project.sh
 60 python3 tests/test_startup.py
+24 python3 tests/test_startup_modules.py
 102 python3 tests/test_guard.py
 95 bash tests/test_no_default_provider.sh
 126 bash tests/test_conformance_selftest.sh

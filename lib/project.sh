@@ -113,7 +113,7 @@ set_note() { # project path json-value -> what `set` adds to its line: the provi
 
 gates_lines() { # ANSWERS_FILE -> with declared gates, a heading and one line each (tier, name, command); nothing when none is declared or they are not valid (validate says so)
   local sel
-  sel=$(python3 -I "$(dirname "$(readlink -f "$0")")/gates.py" select "$1" feature release 2>/dev/null) || return 0
+  sel=$(pymod gates select "$1" feature release 2>/dev/null) || return 0
   [ -n "$sel" ] || return 0
   echo "declared gates (they replace the test command: feature verify and release verify run them in order and stop at the first failure):"
   jq -r '.[] | "  \(.tier)  \(.name)  \(.command)" + (if .covered_by then "  (release verify: covered by \(.covered_by))" else "" end)' <<<"$sel"
@@ -762,7 +762,7 @@ PY
     jq -r '.found.env | "development environment found: section in \(.section // "none"); task runner \(.runner // "none"); bootstrap \(.bootstrap_command // "none"); doctor \(.doctor_command // "none"); \(.pins | length) pinned tool(s), \(.submodules) submodule(s) (qargi env show reads it in full)"' <<<"$det"
     # a hint only: the repository's own skills are read from the working tree, nothing is changed or stored. The directory is the project's
     # provider's (layout.project_skills_dir); a project with no provider yet (attach never guesses one) is hinted for every provider's.
-    plib=$(dirname "$0"); pv=''; [ -z "$stored" ] || pv=$(python3 -I "$plib/provider.py" of "$n" --conf "$DA_CONF" --surface local 2>/dev/null </dev/null) || pv=''
+    pv='';[ -z "$stored" ] || pv=$(pymod provider of "$n" --conf "$DA_CONF" --surface local 2>/dev/null </dev/null) || pv=''
     while IFS= read -r sd; do
       [ -n "$sd" ] || continue
       rs=$(jq -r .found.path <<<"$det")/$sd
@@ -770,7 +770,7 @@ PY
         ns=$(find "$rs" -mindepth 2 -maxdepth 2 -name SKILL.md -type f | wc -l)
         if [ "$ns" -gt 0 ]; then echo "repo has its own $sd ($ns skill$([ "$ns" -eq 1 ] || echo s)): qargi packs link $n offers to use the library's instead and shows which are new"; fi
       fi
-    done < <(python3 -I "$plib/provider.py" skills-dirs $pv 2>/dev/null </dev/null)
+    done < <(pymod provider skills-dirs $pv 2>/dev/null </dev/null)
     qs=$(jq -r --arg st "$stored" 'if $st == "" then .questions[] else empty end' <<<"$det")
     if [ -n "$qs" ]; then echo; echo "questions:"; sed 's/^/  - /' <<<"$qs"; fi
     echo
@@ -971,7 +971,7 @@ PY
     while [ $# -gt 0 ]; do
       case $1 in --profile) need_val "$1" $#; pf=$2; shift 2;; -*) usage_die "unknown option $1";; *) [ -z "$n" ] || usage_die "profile check takes one project name"; n=$1; shift;; esac
     done
-    [ -n "$n" ] || n=$(python3 -I "$(dirname "$(readlink -f "$0")")/help.py" infer 2>/dev/null) || n=''
+    [ -n "$n" ] || n=$(pymod help infer 2>/dev/null) || n=''
     af=''
     if [ -n "$n" ]; then af=$PROJ_DIR/$n.json; [ -f "$af" ] || die "no project named '$n' (see: project list)"; fi
     exec python3 -I "$(dirname "$(readlink -f "$0")")/project_profile.py" check "$DA_CONF" "$af" "${pf/#\~/$HOME}";;

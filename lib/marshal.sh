@@ -77,7 +77,7 @@ marshal_repo() { # PROJ -> the repository path of the answers (REPO when the cal
 }
 marshal_py() { # PROJ VERB [args...]
   local proj=$1 verb=$2; shift 2
-  python3 -I "$MARSHAL_LIB/marshal_store.py" "$verb" --state "$DA_STATE" --conf "$DA_CONF" --project "$proj" --repo "$(marshal_repo "$proj")" --ttl "$(marshal_ttl "$proj")" "$@"
+  pymod marshal_store "$verb" --state "$DA_STATE" --conf "$DA_CONF" --project "$proj" --repo "$(marshal_repo "$proj")" --ttl "$(marshal_ttl "$proj")" "$@"
 }
 
 marshal_start() { # a restarted session of the same lead (host, user, work tree; stale lease) continues without a takeover; that is audited

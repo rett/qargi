@@ -104,7 +104,7 @@ run_warning() {
 # --applied-by-am) and an applied run whose branch is merged are not open. Nothing is changed.
 open_run_gate() {
   local out rc=0 d sl ro st n=0 lines=''
-  out=$(python3 -I "$(dirname "$0")/lead_usage.py" open-runs --state "$DA_STATE" --conf "$DA_CONF" --project "$PROJ" --feature "$1" </dev/null 2>/dev/null) || rc=$?
+  out=$(pymod lead_usage open-runs --state "$DA_STATE" --conf "$DA_CONF" --project "$PROJ" --feature "$1" </dev/null 2>/dev/null) || rc=$?
   [ "$rc" != 0 ] || return 0
   [ "$rc" = 1 ] || { echo "qargi: warning: could not list the open runs of feature/$1 (lead_usage.py exited $rc): finishing goes on without that check" >&2; return 0; }
   while IFS=$'\t' read -r d sl ro st cmd; do

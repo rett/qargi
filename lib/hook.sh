@@ -37,7 +37,7 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "$PRJ" ]; then   # the project whose repository contains the current directory
-  PRJ=$(python3 -I "$(dirname "$(readlink -f "$0")")/help.py" infer)
+  PRJ=$(pymod help infer)
 fi
 [ -n "$PRJ" ] || exit 0
 PCFG=$DA_CONF/projects/$PRJ.json

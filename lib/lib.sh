@@ -22,6 +22,14 @@ TRK=$DA_STATE/sessions.json
 MEMBERS_FILE=$DA_CONF/agents.json   # the members you named (qargi agent add): {"schema": 2, "projects": {PROJECT: {NAME: {roles, file, model, effort, ...}}}}
 export BETA=managed-agents-2026-04-01
 
+# pymod MODULE ARGS...: runs lib/MODULE.py's main() with ARGS, as `python3 -I lib/MODULE.py ARGS` does, and answers with its exit status. The module is
+# imported, not run as a script: python compiles a script on every run and caches only what it imports (the __pycache__ next to the source, which
+# install.sh --user and qargi upgrade fill), so the large modules start faster. Only provider, marshal_store, help, gates and lead_usage are run this way;
+# bin/qargi holds the same text (tests/test_startup.py checks that they agree). sys.argv is what the script had (argv[0] the module's path); gates.main
+# takes the whole argv, the others take it without the name.
+PYMOD_SRC='import sys; sys.path.insert(0, sys.argv.pop(1)); m = __import__(sys.argv.pop(1)); sys.argv[0] = m.__file__; sys.exit(m.main(sys.argv if m.__name__ == "gates" else sys.argv[1:]))'
+pymod() { python3 -I -c "$PYMOD_SRC" "$QARGI_TOOL/lib" "$@"; }
+
 # The first load makes the directories (mode 700) and the three files. DA_NOSETUP, set in the environment of a read-only caller (qargi doctor and the
 # scripts it runs), skips all of it: nothing is created or changed, and a file that is not there stays not there.
 if [ -z "${DA_NOSETUP:-}" ]; then
@@ -254,7 +262,7 @@ split_instance() {
 #   prov=$(project_provider "$p" local) || exit $?
 project_provider() { # project-or-empty [surface]
   local p
-  p=$(python3 -I "$(dirname "${BASH_SOURCE[0]}")/provider.py" of "${1:-}" --conf "$DA_CONF" ${2:+--surface "$2"} </dev/null) || return $?
+  p=$(pymod provider of "${1:-}" --conf "$DA_CONF" ${2:+--surface "$2"} </dev/null) || return $?
   printf '%s' "$p" | grep -Eq '^[a-z][a-z0-9-]*$' || { echo "qargi: models.provider '$p' is not a provider name (lower-case letters, digits and '-')" >&2; return 1; }
   echo "$p"
 }
@@ -264,7 +272,7 @@ project_provider() { # project-or-empty [surface]
 # leaving out what the runtime would have added.
 project_provider_if_set() { # project-or-empty surface
   local p
-  p=$(python3 -I "$(dirname "${BASH_SOURCE[0]}")/provider.py" of-if-set "${1:-}" --conf "$DA_CONF" --surface "$2" </dev/null) || return $?
+  p=$(pymod provider of-if-set "${1:-}" --conf "$DA_CONF" --surface "$2" </dev/null) || return $?
   [ -z "$p" ] || printf '%s' "$p" | grep -Eq '^[a-z][a-z0-9-]*$' || { echo "qargi: models.provider '$p' is not a provider name (lower-case letters, digits and '-')" >&2; return 1; }
   [ -z "$p" ] || echo "$p"
 }
@@ -272,7 +280,7 @@ project_provider_if_set() { # project-or-empty surface
 # clone-dir: where a hosted session keeps its outputs and its clones). The core names no hosted directory; the runtime's definition does.
 # Prints the text; on failure (no cloud runtime for the project, or it has no such topic) prints the reason on stderr and returns its status.
 cloud_note() { # project topic
-  python3 -I "$(dirname "${BASH_SOURCE[0]}")/provider.py" notes "$2" --project "$1" --surface cloud </dev/null
+  pymod provider notes "$2" --project "$1" --surface cloud </dev/null
 }
 # barrier_guard SURFACE PROJECT-or-empty: a read-only role is about to run on SURFACE. Exits 2 with the reason and the
 # `qargi provider accept` command when the project's provider has no read-only barrier there and the project did not accept
@@ -280,7 +288,7 @@ cloud_note() { # project topic
 barrier_guard() {
   local rc=0 prov
   prov=$(project_provider "${2:-}" "$1") || exit $?   # no default provider: a project with none for this surface is refused here (exit 2)
-  python3 -I "$(dirname "${BASH_SOURCE[0]}")/provider.py" require-barrier "$prov" "$1" ${2:+--project "$2"} || rc=$?
+  pymod provider require-barrier "$prov" "$1" ${2:+--project "$2"} || rc=$?
   [ "$rc" = 0 ] || exit "$rc"
 }
 
@@ -502,7 +510,7 @@ cloud_contract() { # [project]
   cat "$ct/contract.md" "$ct/output-format.md" || return 1
   prov=$(project_provider_if_set "${1:-}" cloud) || { echo "qargi: the prompt of a cloud agent of project ${1:-} cannot be made: its cloud provider does not resolve, so the contract addenda of its runtime would be left out" >&2; return 1; }
   [ -n "$prov" ] || return 0
-  python3 -I "$(dirname "${BASH_SOURCE[0]}")/provider.py" addenda "$prov" cloud
+  pymod provider addenda "$prov" cloud
 }
 
 agent_prompt() { # role [project]

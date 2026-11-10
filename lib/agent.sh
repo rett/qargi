@@ -263,7 +263,7 @@ member_project() { # name -> the project whose member NAME is: --project, else t
   fi
   held=$(jq -r --arg n "$n" '(.projects // {}) | to_entries[] | select(.value[$n] != null) | .key' "$MEMBERS_FILE")
   [ -n "$held" ] || die "no member named $n (qargi agent list)"
-  cur=$(python3 -I "$root/lib/help.py" infer)
+  cur=$(pymod help infer)
   if [ -n "$cur" ]; then
     grep -qx -- "$cur" <<<"$held" && { echo "$cur"; return 0; }
     echo "qargi: no member named $n in project $cur, the project in effect; it is a member of $(tr '\n' ' ' <<<"$held" | sed 's/ $//; s/ /, /g'): give --project NAME" >&2
@@ -325,7 +325,7 @@ tier_model() { # provider tier -> the provider's model id on the local surface (
 }
 
 adapter_run() { # provider surface verb < request -> the adapter's answer on stdout, its exit status; lib/provider.py finds it (a library pack's only as a sealed private copy)
-  python3 -I "$root/lib/provider.py" adapter-run "$@"
+  pymod provider adapter-run "$@"
 }
 
 default_for() { # project ability field provider -> the project's answer for it, else the table's value (a tier is resolved through the project's provider)
@@ -489,7 +489,7 @@ role_classes() { # -> {role: class} for every role (a role without a readable cl
 models() { # the bases, the profiles with the project's own merged in, the escalation and the registered members
   local proj=$PROJ pf prov pd tiers aliases rc out noeff=false st
   if [ -n "$proj" ]; then [ -f "$DA_CONF/projects/$proj.json" ] || die "no stored answers for $proj"
-  else proj=$(python3 -I "$root/lib/help.py" infer); fi   # no project at all is refused just below, by provider_for: the provider is the project's
+  else proj=$(pymod help infer); fi   # no project at all is refused just below, by provider_for: the provider is the project's
   pf=$(pf_json "$proj")
   prov=$(provider_for "$proj" local) || exit $?   # the members are local
   pd=$(pdesc "$prov" local) || exit 1
@@ -579,7 +579,7 @@ resolve_for() { # role profile-or-empty project-or-empty -> prints the answer, o
   code=$(jq -r .code <<<"$res")
   if [ "$code" != 0 ]; then echo "qargi: $(jq -r .err <<<"$res")" >&2; exit "$code"; fi
   # a provider that cannot set the model per dispatch runs the member's own model and no other
-  ov=$(python3 -I "$root/lib/provider.py" effective "$prov" local per_dispatch_model_override ${proj:+--project "$proj"} 2>/dev/null) || ov=no
+  ov=$(pymod provider effective "$prov" local per_dispatch_model_override ${proj:+--project "$proj"} 2>/dev/null) || ov=no
   if [ "$ov" = no ]; then
     mem=$(jq -r .out.member <<<"$res"); mm=$(jq -r --arg p "$proj" --arg m "$mem" '.projects[$p][$m].model // ""' "$MEMBERS_FILE")
     want=$(jq -r '.out.model // .out.model_id // ""' <<<"$res")
@@ -634,10 +634,10 @@ resolve_cloud() { # role profile-or-empty project -> prints INSTANCE MODEL EFFOR
   [ -n "$model" ] || die "the $prof profile resolves to no model on the $prov provider"
   # the base instance takes the model and the effort of the session as overrides: only when the provider is verified to honour them.
   # There is no fallback to an instance of the role (<project>-build ...): such an instance is addressed by its name (qargi send NAME).
-  ov=$(python3 -I "$root/lib/provider.py" effective "$prov" cloud per_dispatch_model_override --project "$proj" 2>/dev/null) || ov=no
+  ov=$(pymod provider effective "$prov" cloud per_dispatch_model_override --project "$proj" 2>/dev/null) || ov=no
   [ "$ov" = yes ] && ovm=yes
   if [ -n "$effort" ]; then
-    ov=$(python3 -I "$root/lib/provider.py" effective "$prov" cloud per_dispatch_effort_override --project "$proj" 2>/dev/null) || ov=no
+    ov=$(pymod provider effective "$prov" cloud per_dispatch_effort_override --project "$proj" 2>/dev/null) || ov=no
     [ "$ov" = yes ] || ove=no
   fi
   [ "$ovm" = yes ] || why=per_dispatch_model_override
@@ -665,7 +665,7 @@ resolve_cloud() { # role profile-or-empty project -> prints INSTANCE MODEL EFFOR
 # The records checked are those of the project the verb is about (--project, else the project in effect; `list` without --project shows every project, so it
 # checks every one): one hand-broken record of another project does not stop the work of this one.
 scope=$PROJ
-[ "$verb" = list ] || [ -n "$scope" ] || scope=$(python3 -I "$root/lib/help.py" infer 2>/dev/null) || scope=''
+[ "$verb" = list ] || [ -n "$scope" ] || scope=$(pymod help infer 2>/dev/null) || scope=''
 members_shape_ok || { echo "qargi: agents.json is not in the current shape: move it aside and add the members again (qargi agent add NAME --project P)" >&2; exit 2; }
 bad=$(jq -r --arg scope "$scope" '(.projects // {}) | to_entries[] | select($scope == "" or .key == $scope) | .key as $p | .value | to_entries[] | .key as $n | .value
     | (if (.roles | type) != "array" or (.roles | length) == 0 or (.roles | any(type != "string")) then "roles (a non-empty list of role names)"
@@ -749,10 +749,10 @@ case $verb in
     a=${POS[0]:-}
     [ -n "$a" ] && [ "$a" != lead ] && valid_role "$a" || usage_die "usage: qargi agent for ROLE [--profile P] [--project P] [--json]   (a role of: $DA_ROLES)"
     [ -z "$PROFILE" ] || printf '%s' "$PROFILE" | grep -Eq '^[a-z][a-z0-9-]{0,30}$' || usage_die "--profile: a profile name (lower-case letters, digits and '-', at most 31)"
-    [ -n "$PROJ" ] || PROJ=$(python3 -I "$root/lib/help.py" infer)
+    [ -n "$PROJ" ] || PROJ=$(pymod help infer)
     case $SURFACE in
       ''|local) resolve_for "$a" "$PROFILE" "$PROJ";;
-      cloud) [ -n "$PROJ" ] || PROJ=$(python3 -I "$root/lib/help.py" infer); resolve_cloud "$a" "$PROFILE" "$PROJ";;
+      cloud) [ -n "$PROJ" ] || PROJ=$(pymod help infer); resolve_cloud "$a" "$PROFILE" "$PROJ";;
       *) usage_die "--surface: local or cloud";;
     esac;;
   *) usage_die "usage: qargi agent add|list|models|rename|refresh|remove|for ...";;
