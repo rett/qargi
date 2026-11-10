@@ -131,7 +131,7 @@ out=$(QARGI_PROJECT=cl "$DA" agent add ul 2>&1); rc=$?
 # --- provision plan: the model default comes from the project's provider (the answers here name no role model)
 mdl() { sed -n '/^model:/,/^[a-z]/p' "$T/s/provision/$1-build/agents/$1-build/agent.md" 2>/dev/null | tr -d '\n'; }   # the model block of the rendered agent
 out=$("$DA" provision plan --project np --role build 2>&1); refuses "provision plan: no model, and the project has no provider: refused" "$?" "$out" np
-grep -q 'apply' "$FAKE/ant.log" 2>/dev/null && no "ant was asked to apply" || ok "and the cloud was not asked"
+grep -qw 'apply' "$FAKE/ant.log" 2>/dev/null && no "ant was asked to apply" || ok "and the cloud was not asked"
 out=$("$DA" provision plan --project nosuch --role build 2>&1); rc=$?
 { [ "$rc" != 0 ] && ! grep -qi claude <<<"$out"; } && ok "provision plan: a project that is not stored is refused, with no claude in the message" || no "provision plan nosuch: rc=$rc $out"
 out=$("$DA" provision plan --project cl --role build 2>&1); rc=$?

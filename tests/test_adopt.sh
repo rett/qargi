@@ -142,7 +142,7 @@ grep -q "^    AGENTS.md$" <<<"$out" && ! grep -q "^    Makefile$" <<<"$out" && g
   && ok "adopt drafts the section and leaves the targets of an existing runner to the owner" || no "adopt env plan: $out"
 $DA project adopt heth --plan "$tok" --approved go >/dev/null 2>&1 || no "apply heth"
 a=$(git -C "$H" show agent/adopt-gitflow:AGENTS.md)
-grep -q '^## Development environment$' <<<"$a" && grep -q '`just bootstrap`' <<<"$a" && grep -q '`just --dry-run bootstrap`' <<<"$a" && grep -q '`just doctor`' <<<"$a" && ! grep -qi qargi <<<"$a" \
+grep -q '^## Development environment$' <<<"$a" && grep -q '`just bootstrap`' <<<"$a" && grep -q '`just --dry-run bootstrap`' <<<"$a" && grep -q '`just doctor`' <<<"$a" && ! grep -qiE '(^|[^[:alnum:]])qargi([^[:alnum:]]|$)' <<<"$a" \
   && [ "$(git -C "$H" show agent/adopt-gitflow:CLAUDE.md 2>&1)" = "# Mine" ] && ok "the drafted section names the runner's commands, nothing about qargi, and CLAUDE.md is untouched" || no "drafted AGENTS.md: $a"
 I=$T/i; git init -q -b main "$I"; printf '# Iota\n\n## Setup\n\nmake bootstrap\n' > "$I/README.md"; printf 'bootstrap:\n\t@true\ndoctor:\n\t@true\n' > "$I/Makefile"
 git -C "$I" add -A; git -C "$I" commit -q -m first

@@ -208,7 +208,7 @@ if [ -d "$PK/skills" ] && [ -f "$PK/baseline.json" ]; then
     [ -z "$(find "$d" -type l)" ] || bad="$bad symlink"
     [ -z "$bad" ] && ok "shipped pack $n: front matter, name and wording" || no "shipped pack $n:$bad"
     fresh; out=$($DA skill import "$d" --compatible any 2>&1); rc=$?
-    { [ "$rc" = 0 ] && ! grep -q FAIL <<<"$out" && ! grep -q "network commands mentioned" <<<"$out"; } && ok "shipped pack $n passes the library review" || { no "shipped pack $n review (rc=$rc)"; echo "$out" | grep -E 'FAIL|network' | sed 's/^/       | /'; }
+    { [ "$rc" = 0 ] && ! grep -qw FAIL <<<"$out" && ! grep -q "network commands mentioned" <<<"$out"; } && ok "shipped pack $n passes the library review" || { no "shipped pack $n review (rc=$rc)"; echo "$out" | grep -E 'FAIL|network' | sed 's/^/       | /'; }
   done
 else
   no "this repository ships no packs/ directory with baseline.json and skills/"

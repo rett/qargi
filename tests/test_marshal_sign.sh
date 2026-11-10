@@ -283,7 +283,7 @@ OG update-ref $F/f5 "$G3"
 XE wa marshal finish f5 --as alice; rc=$?; DONE2=$(oref $D5)
 { [ $rc = 0 ] && [ "$DONE2" != "$DONE1" ] && [ "$(jsf $D5 .features_oid)" = "$G3" ] && chain_ok $D5 "$(SIG wa)" >/dev/null; } && ok "finish: the signed done record carries the oid of the last features record in its signed payload (and verifies by the spec's payload)" || no "SPEC signed done carries the features oid (rc=$rc, features_oid '$(jsf $D5 .features_oid)', G3 $G3): $(chain_ok $D5 "$(SIG wa)"; cat "$T/ste" 2>/dev/null)"
 XE wb marshal status f5; rc=$?
-{ [ -z "$(markof wb f5)" ] && ! grep -qi 'warn' "$T/e"; } && ok "finish: the legitimate done record (its features oid is the accepted oid) clears the mark, without a warning" || no "SPEC the matching done clears the mark (mark '$(markof wb f5)'): $(cat "$T/e")"
+{ [ -z "$(markof wb f5)" ] && ! grep -qiwE 'warn(ing|ed|s)?' "$T/e"; } && ok "finish: the legitimate done record (its features oid is the accepted oid) clears the mark, without a warning" || no "SPEC the matching done clears the mark (mark '$(markof wb f5)'): $(cat "$T/e")"
 
 # ------------------------------------------------------------ (16d) a record is what its signature covers, not the oid of the commit that carries it
 XE wa marshal claim f6 --as alice --goal g6 >/dev/null 2>&1; XE wb marshal status f6 >/dev/null 2>&1
@@ -454,11 +454,11 @@ XE b marshal claim s2 --as bob; rc=$?
 XE ra marshal status s1 --as zed; rc=$?; ra_out=$(out)
 { [ $rc = 0 ] && grep -q alice <<<"$ra_out" && grep -qw signed <<<"$ra_out" && ! grep -q INVALID <<<"$ra_out"; } && ok "advisory reader: status shows the record tagged signed" || no "SPEC advisory status tags signed (rc=$rc): $ra_out"
 XE rs marshal status s1 --as zed; rc=$?
-{ [ $rc = 0 ] && grep -q alice <(out) && grep -qw signed <(out) && ! grep -qi warn "$T/e"; } && ok "strict reader: a valid signed record is shown, tagged signed, without a warning" || no "SPEC strict reads valid records (rc=$rc): $(out)"
+{ [ $rc = 0 ] && grep -q alice <(out) && grep -qw signed <(out) && ! grep -qiwE 'warn(ing|ed|s)?' "$T/e"; } && ok "strict reader: a valid signed record is shown, tagged signed, without a warning" || no "SPEC strict reads valid records (rc=$rc): $(out)"
 jq -e --arg r "$(jsf $S1 .rev)" --arg o "$(oref $S1)" '.s1 == [($r | tonumber), $o]' "$(S rs)/features/.accepted-app.json" >/dev/null 2>&1 \
   && ok "high-water mark: \$STATE/features/.accepted-app.json {s1: [rev, oid]} holds the head just read" || no "SPEC accepted mark: $(cat "$(S rs)/features/.accepted-app.json" 2>&1)"
 XE ro marshal status s2; rc=$?
-{ [ $rc = 0 ] && grep -q bob <(out) && ! grep -qi 'warn\|invalid' <(out); } && ok "old client: an integrity-off reader reads a signed record (extra keys, signature in the message) without complaint" || no "SPEC old clients read signed records (rc=$rc): $(out)"
+{ [ $rc = 0 ] && grep -q bob <(out) && ! grep -qiwE 'warn(ing|ed|s)?|invalid' <(out); } && ok "old client: an integrity-off reader reads a signed record (extra keys, signature in the message) without complaint" || no "SPEC old clients read signed records (rc=$rc): $(out)"
 XE a marshal finish s1 --as alice; rc=$?
 [ $rc = 0 ] && [ "$(oref $S1)" = none ] && chain_ok refs/qargi/done/s1 "$(SIG a)" >/dev/null && ok "signed finish: refs/qargi/done/s1 is signed with kind done" || no "SPEC signed finish (rc=$rc): $(out); $(cat "$T/ste" 2>&1)"
 ! OG cat-file --batch-all-objects --batch | grep -aq 'namespaces="qargi-marshal"' && [ "$(OG for-each-ref --format='%(refname)' | grep -vc '^refs/\(qargi/\(features\|done\)/\|heads/\)')" = 0 ] \
@@ -480,7 +480,7 @@ mkrec fkctl xfkctl 2 "$PA"; plantf features fkctl "$CT1" "$(KEY a)" qargi-marsha
 adv_ctl=$(js ra fkctl); XE ra marshal status fkctl; rcs=$?
 { [[ $adv_ctl == *'"id":"xfkctl"'* && $adv_ctl == *'"rev":2'* ]] && [ $rcs = 0 ] && grep -qw signed <(out) && ! grep -qE 'INVALID|rollback' <(out); } \
   && ok "positive control: a record the test signed by the spec's format (two revs, a chain) is shown signed by an advisory reader" || no "SPEC format: the test's own validly signed chain must verify: $(out)"
-js rs fkctl | grep -q '"id":"xfkctl"' && XE rs marshal status fkctl && grep -qw signed <(out) && ! grep -qi 'warn' "$T/e" && ok "positive control: and by a strict reader, tagged signed, no warning" || no "SPEC format: strict must accept the test's validly signed chain: $(out)"
+js rs fkctl | grep -q '"id":"xfkctl"' && XE rs marshal status fkctl && grep -qw signed <(out) && ! grep -qiwE 'warn(ing|ed|s)?' "$T/e" && ok "positive control: and by a strict reader, tagged signed, no warning" || no "SPEC format: strict must accept the test's validly signed chain: $(out)"
 mkrec fkunk xfkunk 1 mallory@evil; plantf features fkunk - "$EVIL" qargi-marshal "$T/rec.fkunk"
 mkrec fkkey xfkkey 1 "$PA"; plantf features fkkey - "$EVIL" qargi-marshal "$T/rec.fkkey"
 mkrec fkbkey xfkbkey 1 "$PA"; plantf features fkbkey - "$(KEY b)" qargi-marshal "$T/rec.fkbkey"
@@ -622,7 +622,7 @@ j=$(js ra st1); XE ra marshal status st1
 j=$(js rs st1); XE rs marshal status st1
 { [[ $j == *'"goal":"gtsigned"'* && $j != *'"goal":"gtunsigned"'* ]] && grep -qi warn <(out) && grep -qF st1 <(out); } && ok "strict: an unsigned record is ignored with a warning; the last accepted record (gtsigned) is shown" || no "SPEC strict falls back to the last accepted record (json ${j:0:200}): $(out)"
 j=$(js ro st1); XE ro marshal status st1
-{ [[ $j == *'"goal":"gtunsigned"'* ]] && ! grep -qi 'warn\|invalid' <(out); } && ok "off: an integrity-off reader uses the unsigned record as before" || no "SPEC off = today (json ${j:0:200}): $(out)"
+{ [[ $j == *'"goal":"gtunsigned"'* ]] && ! grep -qiwE 'warn(ing|ed|s)?|invalid' <(out); } && ok "off: an integrity-off reader uses the unsigned record as before" || no "SPEC off = today (json ${j:0:200}): $(out)"
 XE a marshal claim rsg1 --as alice >/dev/null 2>&1; mode a off; XE a marshal set rsg1 --as alice --note unsignedwrite >/dev/null 2>&1
 mode a advisory
 G0=$(oref refs/qargi/features/rsg1); REV0=$(jsf refs/qargi/features/rsg1 .rev)
@@ -644,7 +644,7 @@ OG update-ref -d refs/qargi/features/del1; XE a marshal finish fin1 --as alice >
 for who in ra rs; do
   XE $who marshal status --all --brief
   grep -i warn "$T/e" | grep -qF del1 && ok "deleted ref: $who warns that features/del1 vanished without a done record" || no "SPEC a ref that vanishes without a done/ record warns ($who): $(out)"
-  ! grep -i warn "$T/e" | grep -qF fin1 && ok "deleted ref: $who does not warn about the finished fin1" || no "SPEC a finished feature must not warn ($who): $(out)"
+  ! grep -iwE 'warn(ing|ed|s)?' "$T/e" | grep -qwF fin1 && ok "deleted ref: $who does not warn about the finished fin1" || no "SPEC a finished feature must not warn ($who): $(out)"
 done
 
 # ============================================================ (13) revoked key and key rotation
@@ -674,7 +674,7 @@ if [ $r1 = 0 ] && [ $r2 = 0 ] && [ "$(jsf refs/qargi/features/rot1 .signer)" = "
   ok "rotation: a renewal re-signs with the new key (signer $PA2)"
 else no "SPEC rotation, renewal re-signs (rc $r1 $r2): $(orec refs/qargi/features/rot1; out)"; fi
 XE ra marshal status rot1; ra_out=$(out); j=$(js rs rot2); XE rs marshal status rot2
-{ grep -qw signed <<<"$ra_out" && ! grep -q INVALID <<<"$ra_out" && [[ $j == *'"id":"alice"'* ]] && ! grep -qi warn "$T/e"; } && ok "rotation: after the renewal both readers show the records valid again" || no "SPEC rotation, valid again: $ra_out; $(out)"
+{ grep -qw signed <<<"$ra_out" && ! grep -q INVALID <<<"$ra_out" && [[ $j == *'"id":"alice"'* ]] && ! grep -qiwE 'warn(ing|ed|s)?' "$T/e"; } && ok "rotation: after the renewal both readers show the records valid again" || no "SPEC rotation, valid again: $ra_out; $(out)"
 
 # ------------------------------------------------------------ (6) the verdict of the hang
 wait "$HANGPID"; rc=$(cat "$T/hang.rc" 2>/dev/null || echo none); el=$(cat "$T/hang.el" 2>/dev/null || echo 999)

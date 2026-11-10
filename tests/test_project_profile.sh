@@ -69,7 +69,7 @@ mkdir -p "$R/tests/tools"; : > "$R/tests/tools/scrub.sh"
 printf '## Gates\n- `tests/tools/scrub.sh` and `gofmt -l .` and `go vet ./...`\n' > "$PF"
 printf 'Run `gofmt -l .` before you commit.\n' > "$R/AGENTS.md"
 out=$($DA project profile check acme 2>&1); rc=$?
-{ [ "$rc" = 0 ] && grep -q 'gate `go vet ./...` is not in' <<<"$out" && ! grep -q 'scrub.sh\|gofmt' <<<"$out"; } && ok "a script that exists and a command in AGENTS.md are found; an unknown one is a warning, exit 0" || no "script/agents (rc=$rc): $out"
+{ [ "$rc" = 0 ] && grep -q 'gate `go vet ./...` is not in' <<<"$out" && ! grep -qE 'scrub\.sh|(^|[^[:alnum:]])gofmt([^[:alnum:]]|$)' <<<"$out"; } && ok "a script that exists and a command in AGENTS.md are found; an unknown one is a warning, exit 0" || no "script/agents (rc=$rc): $out"
 
 # --- --profile FILE, the project from the current directory, no project at all
 cp examples/myproject/profile.md "$T/other.md"

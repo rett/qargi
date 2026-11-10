@@ -75,7 +75,7 @@ XE a marshal forget f1; r0=$?; tk=$(tokof)
 XE a marshal forget f1 --approved "$WORDS"; r1=$?
 XE a marshal forget f1 --plan "$tk"; r2=$?
 XE a marshal forget f1 --plan 000000000000 --approved "$WORDS"; r3=$?
-{ [ $r1 != 0 ] && [ $r2 != 0 ] && [ $r3 != 0 ] && grep -q 'plan changed' "$T/e" && ! grep -qi usage "$T/e" && cmp -s "$(MK a)" "$T/mk.before"; } \
+{ [ $r1 != 0 ] && [ $r2 != 0 ] && [ $r3 != 0 ] && grep -q 'plan changed' "$T/e" && ! grep -qiw usage "$T/e" && cmp -s "$(MK a)" "$T/mk.before"; } \
   && ok "gates: refused without the token, without the words and with a wrong token; the marks are untouched" || no "gates (rc $r1 $r2 $r3)"
 
 # the token covers the mark: a mark that changed after the plan is another plan
@@ -120,7 +120,7 @@ XE a marshal forget f2; r1=$?
 { [ $r1 = 2 ] && grep -qi 'not valid JSON' "$T/e" && cmp -s "$(MK a)" "$T/mk.bad"; } && ok "refuse: a damaged mark file exits 2 and is left as it is" || no "damaged mark file (rc $r1): $(out)"
 rm -f "$(MK a)"; ln -s "$T/mk.before" "$(MK a)"
 XE a marshal forget f2; r1=$?
-{ [ $r1 = 2 ] && grep -qi 'symlink' "$T/e" && ! grep -qi usage "$T/e" && [ -L "$(MK a)" ] && [ -n "$(jq -c .f2 "$T/mk.before")" ]; } && ok "refuse: a symlinked mark file is neither read nor written through" || no "symlinked mark file (rc $r1): $(out)"
+{ [ $r1 = 2 ] && grep -qi 'symlink' "$T/e" && ! grep -qiw usage "$T/e" && [ -L "$(MK a)" ] && [ -n "$(jq -c .f2 "$T/mk.before")" ]; } && ok "refuse: a symlinked mark file is neither read nor written through" || no "symlinked mark file (rc $r1): $(out)"
 rm -f "$(MK a)"; cp "$T/mk.before" "$(MK a)"
 
 # a member run

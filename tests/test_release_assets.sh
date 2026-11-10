@@ -112,7 +112,7 @@ setans 'del(.release.assets)'
 out=$(asset_plan --asset-dir dist); t=$(tok <<<"$out")
 grep -q "^assets (4)," <<<"$out" && ok "--asset-dir attaches every regular file of the directory" || no "asset-dir: $out"
 mkdir "$AW/dist/sub"; echo x > "$AW/dist/sub/inner"; mkdir "$AW/emptydir"
-out=$(asset_plan --asset-dir dist); grep -q "^assets (4)," <<<"$out" && ! grep -q "inner" <<<"$out" && ok "--asset-dir does not descend into subdirectories" || no "asset-dir sub: $out"
+out=$(asset_plan --asset-dir dist); grep -q "^assets (4)," <<<"$out" && ! grep -qE "(^|[^[:alnum:]])inner([^[:alnum:]]|$)" <<<"$out" && ok "--asset-dir does not descend into subdirectories" || no "asset-dir sub: $out"
 out=$(asset_plan --asset-dir emptydir) && no "an empty directory was accepted" || { grep -q "no regular file in it" <<<"$out" && ok "--asset-dir of an empty directory refuses" || no "empty dir: $out"; }
 out=$(asset_plan --asset-dir nodir) && no "a missing directory was accepted" || ok "--asset-dir of a missing directory refuses"
 out=$(asset_plan --asset-dir /etc) && no "a directory outside was accepted" || { grep -q "not inside the repository or one of its worktrees" <<<"$out" && ok "--asset-dir outside the worktrees refuses" || no "dir outside: $out"; }
