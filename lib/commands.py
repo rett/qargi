@@ -89,7 +89,9 @@ GATES_NOTE = ("Declared gates: the project answer gates is an ordered list of {n
               "Absent, test_command (release.test_command for a release) is run, as before. Declared, the gates run instead and test_command is not also run (a gate whose command is the same runs it): "
               "feature verify runs the gates of tier feature in order and release verify the feature tier, then the release tier, each stopping at the first failure (the rest are listed as not run). "
               "The verdict line is still 'full suite: pass|fail at SHA', and the run record and the status lines list each gate with its result. "
-              "A gate may also list ci_jobs, the CI jobs (names or ids) that run its check under another name: the CI scan of release verify reports them as covered by the gate.")
+              "A gate may also list ci_jobs, the CI jobs (names or ids) that run its check under another name: the CI scan of release verify reports them as covered by the gate. "
+              "A feature gate may name a release gate in covered_by when that gate's command runs the same check: release verify then lists the gate as covered by it and does not run it "
+              "(its result is 'covered by NAME' when NAME passed, 'not run' when NAME failed or was not reached); feature verify still runs it. The name must be a release gate.")
 OTHER_RUNS_NOTE = ("Before it starts it warns on standard error, and goes on, when another suite may be running: a whole-suite run of the project in progress, a local run "
                    "of the repository with a file changed in the last QARGI_ACTIVE_MINUTES minutes (default 10), or a tests/run.sh process in the repository (Linux).")
 TAG_NOTE = ("When the tag VERSION exists it also warns about a tag that has no GitHub release (asked with a read-only gh release view, through QARGI_GH, default gh; "

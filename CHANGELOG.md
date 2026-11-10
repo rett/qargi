@@ -8,6 +8,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 - The CI scan of `qargi release verify` can be told which jobs are not unmatched. A gate may carry `ci_jobs`, a list of CI job names or ids that run its check under another name: the scan reports each as a note, `covered by gate NAME`, and does not warn. The new answer `ci.not_gates` is a list of job names or ids that are aggregate or publish jobs and not gates; the scan leaves them out. A name listed in either that no workflow has is a warning, unless a workflow or a job name could not be read. `--strict` counts neither covered nor listed jobs. `project validate` and `project set` check both lists (non-empty names, each once).
+- A feature gate may carry `covered_by: NAME`, NAME being a release-tier gate whose command runs the same check. `qargi release verify` lists the gate as `covered by NAME` and does not run it; its result in the run record and the `gates:` line is `covered by NAME` when NAME passed, and `not run` when NAME failed or was not reached. `qargi feature verify` still runs it. `project validate` and `project set` refuse a `covered_by` that names no release gate (or that is on a release gate), naming the entry.
 
 ### Changed
 - With workflows and no gate declared, the CI scan of `qargi release verify` prints one note naming all the jobs (`no gate is declared, so the CI jobs are not compared with gate names (jobs: ...)`) instead of a warning for each job. `--strict` still refuses, its message saying that no gate is declared.

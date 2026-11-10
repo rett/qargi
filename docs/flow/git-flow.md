@@ -70,6 +70,10 @@ refusal changes nothing.
    `verify` runs the gates in order; the CI workflow of the scaffold makes each gate its own job and the jobs run in parallel. A feature-tier
    gate's job runs on every pull request; a release-tier gate's job runs only on a pull request from a `release/` or `hotfix/` branch (and
    when the workflow is started by hand), as only `release verify` runs that gate.
+   A feature gate whose check a release gate runs as well (a release gate that builds and tests everything, say) may carry
+   `"covered_by": "NAME"`, NAME being a release-tier gate (`project set` and `project validate` refuse any other name). `feature verify` still
+   runs the gate; `release verify` lists it as `covered by NAME` and does not run it, and its result in the record and the `gates:` line is
+   `covered by NAME` when NAME passed, and `not run` when NAME failed or was not reached because an earlier gate failed.
 4. `qargi release start VERSION` cuts `release/VERSION` from develop (only from a head that passed the
    suite) and bumps `VERSION` and the changelog date. Like the pushes and merges it prints a plan (the branch, the base, the files
    the bump commit changes) and a token first, and applies with `--plan TOKEN --approved "<your words>"`, which also writes the

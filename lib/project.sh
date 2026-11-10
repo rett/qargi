@@ -86,7 +86,7 @@ gates_lines() { # ANSWERS_FILE -> with declared gates, a heading and one line ea
   sel=$(python3 -I "$(dirname "$(readlink -f "$0")")/gates.py" select "$1" feature release 2>/dev/null) || return 0
   [ -n "$sel" ] || return 0
   echo "declared gates (they replace the test command: feature verify and release verify run them in order and stop at the first failure):"
-  jq -r '.[] | "  \(.tier)  \(.name)  \(.command)"' <<<"$sel"
+  jq -r '.[] | "  \(.tier)  \(.name)  \(.command)" + (if .covered_by then "  (release verify: covered by \(.covered_by))" else "" end)' <<<"$sel"
 }
 
 validate() { # file -> prints problems, exit 1 if any

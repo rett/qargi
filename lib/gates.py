@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """The declared gates of a project (the answer `gates`) and the scan of its CI jobs.
 
-  gates: an ordered list of {name, command, tier, ci_jobs}
+  gates: an ordered list of {name, command, tier, ci_jobs, covered_by}
     name     a label, unique in the list; a CI job of the same name (or id) is the job that runs the same check
     command  one command line, or a command as a list of words (the forms of test_command and release.test_command)
     tier     feature (run by `feature verify` and by `release verify`) or release (run by `release verify` only)
     ci_jobs  optional: a list of CI job names or ids that run this gate's check under another name; the scan reports them as covered by the gate
+    covered_by  optional, on a feature gate: the name of a release gate whose command runs this gate's check too; `release verify` lists the gate as
+             covered by that one and does not run it (`feature verify` still does). When that release gate fails or is not reached, the covered gate counts as not run
 
   ci.not_gates (an answer, optional): a list of CI job names or ids that are aggregate or publish jobs and not gates; the scan leaves them out.
 
@@ -38,7 +40,7 @@ import shlex
 import sys
 
 TIERS = ("feature", "release")
-KEYS = ("name", "command", "tier", "ci_jobs")
+KEYS = ("name", "command", "tier", "ci_jobs", "covered_by")
 
 
 LINE_BREAKS = "\n\r\x0b\x0c\x1c\x1d\x1e\x85  "   # what str.splitlines() and a YAML 1.1 reader end a line at
@@ -95,6 +97,14 @@ def problems(gates):
             out.append("%s.tier: feature (feature verify and release verify run it) or release (only release verify runs it)" % where)
         if "ci_jobs" in g:
             out.extend(job_list_problems(g["ci_jobs"], "%s.ci_jobs" % where, "the CI jobs (names or ids) that run this gate's check under another name"))
+    release = {g["name"] for g in gates if isinstance(g, dict) and g.get("tier") == "release" and isinstance(g.get("name"), str)}
+    for i, g in enumerate(gates):
+        if isinstance(g, dict) and "covered_by" in g:
+            c, where = g["covered_by"], "gates[%d].covered_by" % i
+            if g.get("tier") != "feature":
+                out.append("%s: only a feature gate is covered by a release gate (this gate's tier is not feature)" % where)
+            elif not isinstance(c, str) or c not in release:
+                out.append("%s: the name of a release gate (%s), not %s" % (where, ", ".join(sorted(release)) or "none is declared", json.dumps(c)))
     return out
 
 
@@ -154,7 +164,8 @@ def not_gates(af):
 
 def select(gates, tiers):
     """The gates of the tiers, the tiers in the order named (feature gates, then release gates), each in the order declared."""
-    return [{"name": g["name"], "tier": g["tier"], "command": command_line(g["command"])} for t in tiers for g in gates if g["tier"] == t]
+    return [dict({"name": g["name"], "tier": g["tier"], "command": command_line(g["command"])}, **({"covered_by": g["covered_by"]} if "covered_by" in g else {}))
+            for t in tiers for g in gates if g["tier"] == t]
 
 
 def identity(gates, tiers):

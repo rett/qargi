@@ -64,6 +64,32 @@ class CiAnswers(unittest.TestCase):
         self.assertTrue(gates.ci_problems(["publish"])[0].startswith("ci: an object"))
 
 
+class CoveredBy(unittest.TestCase):
+    """covered_by on a feature gate names a release gate."""
+    def test_valid(self):
+        self.assertEqual(gates.problems([dict(G("lint"), covered_by="ci"), G("ci", tier="release")]), [])
+        self.assertEqual(gates.problems([G("ci", tier="release"), dict(G("lint"), covered_by="ci")]), [])   # the order does not matter
+
+    def test_a_name_that_is_no_release_gate_is_refused(self):
+        for gs in ([dict(G("lint"), covered_by="ci")],                                              # no such gate
+                   [dict(G("lint"), covered_by="unit"), G("unit")],                                 # a feature gate
+                   [dict(G("lint"), covered_by="lint"), G("ci", tier="release")],                   # itself
+                   [dict(G("lint"), covered_by=5), G("ci", tier="release")],
+                   [dict(G("lint"), covered_by=["ci"]), G("ci", tier="release")],
+                   [dict(G("lint"), covered_by=None), G("ci", tier="release")]):
+            p = gates.problems(gs)
+            self.assertTrue(p and "gates[0].covered_by" in p[0] and "release gate" in p[0], (gs, p))
+
+    def test_only_a_feature_gate_is_covered(self):
+        p = gates.problems([dict(G("pack", tier="release"), covered_by="ci"), G("ci", tier="release")])
+        self.assertTrue(p and "gates[0].covered_by: only a feature gate" in p[0], p)
+
+    def test_select_carries_covered_by_only_when_set(self):
+        gs = [dict(G("lint"), covered_by="ci"), G("unit"), G("ci", tier="release")]
+        self.assertEqual([g.get("covered_by") for g in gates.select(gs, ["feature", "release"])], ["ci", None, None])
+        self.assertEqual(gates.select(gs, ["feature"])[1], {"name": "unit", "tier": "feature", "command": "make test"})
+
+
 class Selection(unittest.TestCase):
     def test_tiers_and_order(self):
         gs = [G("a"), G("b", tier="release"), G("c", ["make", "two words"])]
