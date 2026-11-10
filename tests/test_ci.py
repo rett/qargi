@@ -102,6 +102,9 @@ class Workflow(unittest.TestCase):
             self.assertGreaterEqual(self.doc["jobs"][name]["timeout-minutes"], need, "%s: the budgets ask for %d min" % (name, need))
         said = int(re.search(r"plans (\d+) s of budgets", text(WF)).group(1))   # the comment keeps up with the manifest, within 5 %
         self.assertLessEqual(abs(said - max(totals)), max(totals) * 0.05, "the comment says %d s, the manifest plans %d s" % (said, max(totals)))
+        total = sum(totals)                  # the other figure of the comment: all the budgets, one after the other
+        said_all = int(re.search(r"\(now (\d+) s x 1\.5 = \d+ min", text(WF)).group(1))
+        self.assertLessEqual(abs(said_all - total), total * 0.05, "the comment says %d s in all, the manifest plans %d s" % (said_all, total))
         for name, job in self.doc["jobs"].items():
             self.assertIsInstance(job.get("timeout-minutes"), int, name)
 

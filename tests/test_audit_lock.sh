@@ -16,7 +16,7 @@ T=$(mktemp -d); fail=0
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T
 mkdir -p "$HOME" "$T/c" "$T/s"
-trap 'rm -rf "$T" "$HERMETIC"' EXIT
+trap 'kill_bg; rm -rf "$T" "$HERMETIC"' EXIT
 LOG=$T/s/audit.log
 
 # one write by the writer KIND (sh, procenv, transfer, library) of the line VERB with DETAIL
@@ -78,13 +78,16 @@ EOF
 [ "$(stat -c %a "$LOG")" = 600 ] && [ -e "$LOG.lock" ] && ok "the log is mode 600 and the lock file audit.log.lock is beside it" || no "log mode $(stat -c %a "$LOG"), lock file $([ -e "$LOG.lock" ] && echo present || echo missing)"
 
 # --- 2. the lock is taken: a held lock keeps every writer from writing
-rm -f "$LOG"
-( flock 9; : > "$T/held"; sleep 3 ) 9> "$LOG.lock" &
-holder=$!
+rm -f "$LOG" "$T/held" "$T/release"
+# the holder takes the lock, says so, and keeps it until the test makes the file release (or 30 s pass); the EXIT trap ends it by pid
+spawn_bg bash -c 'flock 9; : > "$1/held"; for _ in $(seq 300); do [ -e "$1/release" ] && break; sleep 0.1; done' _ "$T" 9> "$T/s/audit.log.lock"
+holder=$SPAWNED_PID
 for _ in $(seq 100); do [ -e "$T/held" ] && break; sleep 0.1; done
+[ -e "$T/held" ] || no "the lock holder did not take the lock"
 for k in "${kinds[@]}"; do write_line "$k" "held-$k" d & done
 sleep 1.2
 before=$([ -e "$LOG" ] && wc -l < "$LOG" || echo 0)
+: > "$T/release"
 wait "$holder"; wait
 after=$(wc -l < "$LOG")
 [ "$before" = 0 ] && [ "$after" = 4 ] && ok "all four writers wait for a held lock, then each writes its line" || no "lines while the lock was held: $before, after it was let go: $after (want 0, 4)"

@@ -3,7 +3,7 @@
 (lib/env_check.py, lib/env_apply.py, lib/local_run.py, lib/tools.py). Offline; no project, no network.
 Run: python3 tests/test_procenv.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
-import hashlib, json, os, shutil, socket, subprocess, sys, tempfile, time, unittest
+import hashlib, json, os, shutil, signal, socket, subprocess, sys, tempfile, time, unittest
 from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -241,9 +241,27 @@ class Git(unittest.TestCase):
         rc, out, err = PE.git("status", env={"PATH": "/nonexistent"})
         self.assertEqual((rc, out), (None, ""))
         self.assertTrue(err)
-        rc, out, err = PE.git("s", repo=self.repo, config=("alias.s=!sleep 5",), timeout=0.2)
+        # git is killed at the timeout, the alias it started (a shell that becomes `sleep 5`) is not: the alias writes its pid, and the
+        # test ends it, whatever the outcome, so no process is left running after the test
+        pidfile = os.path.join(self.t, "alias.pid")
+        self.addCleanup(self.end_alias, pidfile)
+        rc, out, err = PE.git("s", repo=self.repo, config=("alias.s=!echo $$ > '%s'; exec sleep 5" % pidfile,), timeout=0.2)
         self.assertEqual((rc, out), (None, ""))
         self.assertTrue(err)
+
+    @staticmethod
+    def end_alias(pidfile):
+        """Ends the process the alias of the test above left behind: waits (up to 3 s) for the pid it writes, then kills it."""
+        for _ in range(60):
+            if os.path.exists(pidfile) and os.path.getsize(pidfile):
+                break
+            time.sleep(0.05)
+        else:
+            return          # the alias never ran (git was stopped first): nothing was left
+        try:
+            os.kill(int(open(pidfile).read()), signal.SIGKILL)
+        except (ProcessLookupError, ValueError):
+            pass
 
     def test_env_check_and_tools_keep_their_shapes(self):
         import env_check, tools
