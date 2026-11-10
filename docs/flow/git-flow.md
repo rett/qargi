@@ -20,6 +20,10 @@ refusal changes nothing.
      rights in a throw-away checkout of the applied series (`BASE..tip`, the commit the run's base branch had when it was prepared,
      then the patches with `git am`), with the range in `QARGI_SCRUB_BASE` and `QARGI_SCRUB_TIP`. `review.trailer_policy` is `none`
      (default) or `reject`, which fails any commit whose message carries a `Co-Authored-By` or `Generated with` style trailer.
+     `review.reject_trailers` adds trailer keys to those two under `reject` (a list such as `["Signed-off-by", "Change-Id", "X-*"]`:
+     letters, digits and hyphens, `*` for any run of them; a list while the policy is not `reject` is refused when it is set). A
+     failing verdict names the commit, the line of its message and what matched, for example
+     `scrub: FAIL review.reject_trailers names Signed-off-by: 1a2b3c4d5e6f line 5 of its message carries "Signed-off-by: ..."`.
    - The scrub output gains one line, `scrub: ok` or `scrub: FAIL` with the first lines of what the command (or the policy) said,
      and a failing scrub fails the check (exit 1). Nothing is made in your repository: no branch, tag or worktree entry is left
      behind. With neither answer set, nothing changes. Both answers are the run's own copy taken at `local prepare`, as `git.author`

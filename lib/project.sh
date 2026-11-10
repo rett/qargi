@@ -210,7 +210,7 @@ if isinstance(gt, dict) and gt.get("author") is not None:
 # A null stored for an optional answer is the same as not set (as for gates and git.author): review.* and backlog.* drop their null keys here
 rvw = c.get("review", {})
 if isinstance(rvw, dict): rvw = {k: v for k, v in rvw.items() if v is not None}
-need(isinstance(rvw, dict) and set(rvw) <= {"keep_author", "scrub", "trailer_policy"}, "review: an object like {keep_author: false, scrub: \"scripts/scrub\", trailer_policy: \"none\"} (unknown key: only keep_author, scrub, trailer_policy)")
+need(isinstance(rvw, dict) and set(rvw) <= {"keep_author", "scrub", "trailer_policy", "reject_trailers"}, "review: an object like {keep_author: false, scrub: \"scripts/scrub\", trailer_policy: \"none\", reject_trailers: [\"Signed-off-by\"]} (unknown key: only keep_author, scrub, trailer_policy, reject_trailers)")
 if isinstance(rvw, dict):
     need(isinstance(rvw.get("keep_author", False), bool), "review.keep_author: true (qargi review apply keeps the member's author on the applied commits) or false (default: the author is reset to git.author)")
     if "scrub" in rvw:
@@ -219,6 +219,13 @@ if isinstance(rvw, dict):
         need((isinstance(sc, str) and sc.strip() and not ctl(sc)) or (isinstance(sc, list) and sc and all(isinstance(x, str) and x and "\x00" not in x for x in sc)),
              "review.scrub: the command qargi review check runs on the applied series, one command line or a list of words (for example [\"scripts/scrub\"]); it gets the range in QARGI_SCRUB_BASE and QARGI_SCRUB_TIP")
     need(rvw.get("trailer_policy", "none") in ("none", "reject"), "review.trailer_policy: none (default) or reject (a commit with a Co-Authored-By or Generated-with trailer fails qargi review check)")
+    # review.reject_trailers: trailer keys added to the built-in two under the policy reject (letters, digits, hyphens; * stands for any run of them)
+    if "reject_trailers" in rvw:
+        rt = rvw["reject_trailers"]
+        keys_ok = isinstance(rt, list) and rt and all(isinstance(x, str) and re.fullmatch(r"[A-Za-z0-9*-]+", x) and re.search(r"[A-Za-z0-9]", x) for x in rt)
+        need(keys_ok and len({x.lower() for x in rt}) == len(rt),
+             "review.reject_trailers: a list of distinct trailer keys to refuse besides Co-Authored-By and Generated-with, each of letters, digits and hyphens where * stands for any run of them (for example [\"Signed-off-by\", \"Change-Id\", \"X-*\"])")
+        need(rvw.get("trailer_policy", "none") == "reject", "review.reject_trailers: it adds to the built-in two under review.trailer_policy reject, which is not set (qargi project set PROJECT review.trailer_policy reject first)")
 # gates: the declared gates (optional), an ordered list of {name, command, tier}: feature verify runs the feature tier, release verify the feature
 # tier then the release tier, and the CI jobs of a release are compared with the names (lib/gates.py)
 import gates as _gates
