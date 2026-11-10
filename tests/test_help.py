@@ -253,6 +253,16 @@ class Render(unittest.TestCase):
         self.assertIn("release.hotfix_preflight", slurp(os.path.join(LIB, "release_sign.py")).split('"""')[1], "the header of lib/release_sign.py does not list the layout answers")
         self.assertIn("release.finish_check", slurp(os.path.join(LIB, "release_sign.py")).split('"""')[1])
 
+    def test_the_registry_comment_of_lib_sh_lists_the_review_answers_the_registry_copy_keeps(self):
+        """lib/local.sh copies owns([...]) of the review answers into the registry line; the comment in lib/lib.sh names each of them."""
+        m = re.search(r'review: \(at\(\.review\) \| owns\(\[([^\]]*)\]\)', slurp(os.path.join(LIB, "local.sh")))
+        self.assertTrue(m, "the review answers kept in the registry line moved in lib/local.sh: update this test")
+        kept = re.findall(r'"([a-z_]+)"', m.group(1))
+        self.assertGreaterEqual(len(kept), 4)
+        comment = " ".join(l for l in slurp(os.path.join(LIB, "lib.sh")).splitlines() if l.startswith("#"))
+        for k in kept:
+            self.assertIn("review." + k, comment, "the comment in lib/lib.sh does not name review.%s" % k)
+
     def test_the_approvals_topic_states_the_rules_the_skills_point_at(self):
         text = " ".join(C.TOPICS["approvals"][1])
         for needle in ("covers the plan", "recorded, not verified", "Never allow-list", "A member never applies"):

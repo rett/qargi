@@ -117,7 +117,7 @@ out_has_report() {
 #   reg_edit DIR drop|cleaned   rewrites the registry under its lock: drops the lines of DIR, or marks them cleaned (a time), mode 600
 # The line also holds what prepare took from the lead's answers, the one copy that verify, clean and review apply believe: the class of the run (class:
 # write or read-only), the stored project of its repository (project) and answers, an object with the answers that decide what verification accepts (runs.owned_refs, repo.long_lived,
-# repo.parking_branch, git.author, review.keep_author, review.scrub, review.trailer_policy).
+# repo.parking_branch, git.author, review.keep_author, review.scrub, review.trailer_policy, review.reject_trailers).
 # A path is compared by its real path; the run directory of a line may be gone (a reboot that emptied a tmpfs, a clean), and the path is then
 # taken as written, resolved as far as it exists (readlink -m).
 declare -gA LRUNS=()   # -g: lib.sh is sourced from inside a function by some callers
