@@ -20,7 +20,7 @@
 #   project.sh attach [DIR] [--name N] [--methodology M] [--url U] [--plan T --approved W] [--force]
 #                       [--provider NAME | --provider-local NAME --provider-cloud NAME]
 #                                         read an existing repository, show the answers and the gaps, store on approval
-#   project.sh adopt NAME [--methodology M] [--plan T --approved W]
+#   project.sh adopt NAME [--methodology M] [--show] [--plan T --approved W]
 #                                         close the safe gaps of an attached repository: create the missing long-lived branches
 #                                         (locally, from the default branch) and write the methodology's missing files as one commit
 #                                         on a new branch agent/adopt-M cut from the integration branch; never changes an existing
@@ -731,11 +731,12 @@ PY
   adopt)
     # an attached repository: create what the methodology has and the repository lacks, only where nothing exists yet; the plan first
     n=${1:-}; shift || true; valid_project "$n" || usage_die "adopt needs the name of an attached project (qargi project list)"
-    meth='' PLAN_ARG='' APPROVED=''
+    meth='' PLAN_ARG='' APPROVED='' show=''
     while [ $# -gt 0 ]; do
-      case $1 in --methodology) need_val "$1" $#; meth=${2:-}; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=${2:-}; shift 2;; --approved) need_val "$1" $#; APPROVED=${2:-}; shift 2;; *) usage_die "unknown option $1";; esac
+      case $1 in --show) show=1; shift;; --methodology) need_val "$1" $#; meth=${2:-}; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=${2:-}; shift 2;; --approved) need_val "$1" $#; APPROVED=${2:-}; shift 2;; *) usage_die "unknown option $1";; esac
     done
     export PLAN_ARG   # need_plan reads it
+    [ -z "$show" ] || [ -z "$APPROVED$PLAN_ARG" ] || usage_die "adopt --show only prints the plan (it takes neither --plan nor --approved)"
     lib=$(dirname "$0")
     plan=$(python3 -I "$lib/attach.py" adopt-plan "$n" "$PROJ_DIR/$n.json" ${meth:+--methodology "$meth"}) || exit $?
     tok=$(jq -S -c .basis <<<"$plan" | plan_token)
@@ -757,12 +758,27 @@ PY
         jq -r '.left[] | "    - \(.kind): \(.what) (\(.why))"' <<<"$plan"
       fi
     }
+    if [ "$(jq -r '.instructions | length' <<<"$plan")" != 0 ]; then
+      echo "  the repository's own instructions (adopt edits no existing file):"
+      jq -r '.instructions[] | "    - \(.file): \(.text)"' <<<"$plan"
+    fi
     if [ "$(jq -r '.info | length' <<<"$plan")" != 0 ]; then
       echo "  noted, not gaps (nothing to close):"
       jq -r '.info[] | "    - \(.kind): \(.what) (\(.why))"' <<<"$plan"
     fi
     left
     if [ "$(jq -r .nothing_to_do <<<"$plan")" = true ]; then echo; echo "nothing to do: the safe gaps are closed"; exit 0; fi
+    if [ -n "$show" ]; then
+      # the token is the hash of the plan's basis (the refs it starts from, the branches to create, and the hash of each file to write): print
+      # that basis and the content each hash stands for, so what the token covers can be read before it is given
+      echo
+      echo "covered by the plan token (a hash of this basis; a file is covered by the sha256 of the content shown below it):"
+      jq -S .basis <<<"$plan" | sed 's/^/  /'
+      while IFS= read -r dest; do
+        echo; echo "file $dest:"
+        jq -j --arg d "$dest" '.files[] | select(.dest == $d) | .content' <<<"$plan" | sed 's/^/  | /'
+      done < <(jq -r '.files[].dest' <<<"$plan")
+    fi
     echo
     if [ -z "$APPROVED" ]; then
       echo "plan token: $tok   (create with: qargi project adopt $n --plan $tok --approved \"...\"${meth:+ --methodology $meth})"

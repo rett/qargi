@@ -155,8 +155,8 @@ grep -q "^    AGENTS.md$" <<<"$out" && ! grep -q "^    Makefile$" <<<"$out" && g
   && ok "adopt drafts the section and leaves the targets of an existing runner to the owner" || no "adopt env plan: $out"
 $DA project adopt heth --plan "$tok" --approved go >/dev/null 2>&1 || no "apply heth"
 a=$(git -C "$H" show agent/adopt-gitflow:AGENTS.md)
-grep -q '^## Development environment$' <<<"$a" && grep -q '`just bootstrap`' <<<"$a" && grep -q '`just --dry-run bootstrap`' <<<"$a" && grep -q '`just doctor`' <<<"$a" && ! grep -qiE '(^|[^[:alnum:]])qargi([^[:alnum:]]|$)' <<<"$a" \
-  && [ "$(git -C "$H" show agent/adopt-gitflow:CLAUDE.md 2>&1)" = "# Mine" ] && ok "the drafted section names the runner's commands, nothing about qargi, and CLAUDE.md is untouched" || no "drafted AGENTS.md: $a"
+grep -q '^## Development environment$' <<<"$a" && grep -q 'git, just,' <<<"$a" && ! grep -q 'bootstrap`\|doctor`' <<<"$a" && ! grep -q '@@' <<<"$a" && ! grep -qiE '(^|[^[:alnum:]])qargi([^[:alnum:]]|$)' <<<"$a" \
+  && [ "$(git -C "$H" show agent/adopt-gitflow:CLAUDE.md 2>&1)" = "# Mine" ] && ok "the drafted section names the runner but no bootstrap or doctor command the repository lacks, nothing about qargi, and CLAUDE.md is untouched" || no "drafted AGENTS.md: $a"
 # the environment gaps are measured against the effective environment: a command the answers declare (env.bootstrap_command) is not a missing target
 H3=$T/h3; git init -q -b main "$H3"; printf 'default:\n    @true\n' > "$H3/justfile"; git -C "$H3" add -A; git -C "$H3" commit -q -m first
 attach heth3 "$H3"
@@ -178,6 +178,41 @@ J=$T/j; git init -q -b main "$J"; printf '# Jot\n' > "$J/AGENTS.md"; printf 'doc
 attach jot "$J"
 out=$($DA project adopt jot 2>&1)
 grep -q "env: Development environment section (not written" <<<"$out" && grep -q "env: bootstrap target (not written" <<<"$out" && ! grep -q "env: doctor target" <<<"$out" && ok "an AGENTS.md without the section and a Makefile without bootstrap are listed, not edited" || no "adopt jot: $out"
+
+# --- L: the repository's own instructions: said, not edited; the changelog sentence follows the project's headings; --show prints what the token covers ---
+Lb=$T/l; git init -q -b main "$Lb"; printf '# Lam\n' > "$Lb/README.md"; git -C "$Lb" add -A; git -C "$Lb" commit -q -m first
+attach lam "$Lb"
+jq '.release = {changelog: {unreleased: "## Next", released: "## {version}", numbered: true}}' "$T/c/projects/lam.json" > "$T/lam.json" && mv "$T/lam.json" "$T/c/projects/lam.json"
+out=$($DA project adopt lam --show 2>&1); tok=$(tokof "$out")
+grep -q "^covered by the plan token" <<<"$out" && grep -q "^file CONTRIBUTING.md:$" <<<"$out" && grep -q '^  | - Every user-visible change gets a changelog entry as the next numbered item under `Next`, in the same commit as the change\.$' <<<"$out" \
+  && grep -q '^  | ## Next$' <<<"$out" && ! grep -q 'Unreleased' <<<"$out" && ok "L: --show prints the content of each file, and the changelog sentence and the new changelog follow release.changelog (heading Next, numbered)" || no "L show: $out"
+sum=$(sed -n '/^file VERSION:$/,/^$/p' <<<"$out" | sed -n 's/^  | //p' | sha256sum | cut -d' ' -f1)
+grep -q "\"dest\": \"VERSION\"" <<<"$out" && grep -q "\"sha256\": \"$sum\"" <<<"$out" && ok "L: the sha256 in the basis the token covers is that of the content shown" || no "L sha: $sum"
+$DA project adopt lam --show --approved go >/dev/null 2>&1; [ $? = 2 ] && ok "L: --show with --approved is a usage error" || no "L show approved"
+$DA project adopt lam --plan "$tok" --approved go >/dev/null 2>&1 || no "L apply"
+c=$(git -C "$Lb" show agent/adopt-gitflow:CLAUDE.md); k=$(git -C "$Lb" show agent/adopt-gitflow:CHANGELOG.md)
+grep -q 'entry as the next numbered item under `Next`, in the same commit\.' <<<"$c" && ! grep -q 'Unreleased' <<<"$c" && grep -q '^## Next$' <<<"$k" && ! grep -q 'Unreleased' <<<"$k" && ok "L: the CLAUDE.md written says where entries go from the stored headings" || no "L claude: $c"
+jq 'del(.release)' "$T/c/projects/lam.json" > "$T/lam.json" && mv "$T/lam.json" "$T/c/projects/lam.json"
+M2=$T/m2; git init -q -b main "$M2"; printf '# Mu\n' > "$M2/README.md"; git -C "$M2" add -A; git -C "$M2" commit -q -m first
+attach mu "$M2"; out=$($DA project adopt mu --show 2>&1)
+grep -q '^  | - Every user-visible change gets a changelog entry under `\[Unreleased\]`, in the same commit as the change\.$' <<<"$out" && grep -q '^  | ## \[Unreleased\]$' <<<"$out" && ok "L: without release answers the sentence and the heading are the Keep a Changelog ones" || no "L default: $out"
+grep -q 'make bootstrap' <<<"$out" && grep -q 'make doctor' <<<"$out" && ok "L: a repository with no task runner still gets the conventional commands (the Makefile written has the targets)" || no "L conventional: $out"
+# a CLAUDE.md of its own and no AGENTS.md: AGENTS.md gets the environment section only, and the import line is for the owner
+Lc=$T/lc; git init -q -b main "$Lc"; printf '# Mine\n\nmy rules\n' > "$Lc/CLAUDE.md"; git -C "$Lc" add -A; git -C "$Lc" commit -q -m first
+attach lcc "$Lc"; out=$($DA project adopt lcc 2>&1); tok=$(tokof "$out")
+grep -q "the repository's own instructions (adopt edits no existing file):" <<<"$out" && grep -q "    - CLAUDE.md: exists and is not edited; adopt writes AGENTS.md with its Development environment section only" <<<"$out" \
+  && grep -q '    - CLAUDE.md: has no `@AGENTS.md` import line: add it' <<<"$out" && ok "L: a CLAUDE.md of its own is named, with what adopt writes and the import line left to the owner" || no "L claude only: $out"
+$DA project adopt lcc --plan "$tok" --approved go >/dev/null 2>&1 || no "L apply lcc"
+a=$(git -C "$Lc" show agent/adopt-gitflow:AGENTS.md)
+grep -q '^## Development environment$' <<<"$a" && ! grep -q 'Instructions for coding agents' <<<"$a" && [ "$(git -C "$Lc" show agent/adopt-gitflow:CLAUDE.md)" = "$(printf '# Mine\n\nmy rules')" ] && ok "L: that AGENTS.md is the environment section only, and CLAUDE.md is as it was" || no "L agents: $a"
+# an AGENTS.md of its own, CLAUDE.md missing / both present
+Ld=$T/ld; git init -q -b main "$Ld"; printf '# Mine\n\n## Development environment\n\nmake bootstrap\n' > "$Ld/AGENTS.md"; git -C "$Ld" add -A; git -C "$Ld" commit -q -m first
+attach ldd "$Ld"; out=$($DA project adopt ldd 2>&1)
+grep -q "    - AGENTS.md: exists and is not edited; adopt writes CLAUDE.md, which imports it (@AGENTS.md)" <<<"$out" && ! grep -q "import line" <<<"$out" && ok "L: an AGENTS.md of its own is named, and the CLAUDE.md written imports it" || no "L agents only: $out"
+Le=$T/le; git init -q -b main "$Le"; printf '# A\n' > "$Le/AGENTS.md"; printf '@AGENTS.md\n' > "$Le/CLAUDE.md"; git -C "$Le" add -A; git -C "$Le" commit -q -m first
+attach lee "$Le"; out=$($DA project adopt lee 2>&1)
+grep -q "    - AGENTS.md, CLAUDE.md: both exist: adopt writes neither and edits neither" <<<"$out" && ! grep -q "import line" <<<"$out" && ok "L: with both present adopt says it writes neither, and an existing import line is not asked for" || no "L both: $out"
+out=$($DA project adopt alpha 2>&1); ! grep -q "own instructions" <<<"$out" && ok "L: a repository with neither file gets no instructions list" || no "L neither: $out"
 
 # --- K: a master made as a snapshot has no merge base with develop: adopt names it, joins nothing and changes no branch ---
 K=$T/k; git init -q -b develop "$K"; printf '# Kappa\n' > "$K/README.md"; git -C "$K" add -A; git -C "$K" commit -q -m first

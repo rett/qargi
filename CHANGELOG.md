@@ -6,7 +6,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `qargi project adopt NAME --show` prints, with the plan, everything the plan token covers: the refs it starts from, the branches to create, and the full content of each file to write (the sha256 in the basis is that of the content shown). It changes nothing and takes neither `--plan` nor `--approved`.
+- `qargi project adopt` lists the repository's own agent instructions (`CLAUDE.md`, `AGENTS.md`) and what it does about each, in the plan (`instructions` in the plan JSON): it edits neither; with a `CLAUDE.md` and no `AGENTS.md` it writes an `AGENTS.md` that holds the Development environment section only, and says that the `@AGENTS.md` import line in `CLAUDE.md` is for the owner to add.
+- The gitflow scaffold has the parameters `unreleased_heading` and `changelog_entry`.
+
 ### Changed
+- The changelog sentence of the `CLAUDE.md` and `CONTRIBUTING.md` that `project adopt` writes, and the heading of a new `CHANGELOG.md`, follow the project's `release.changelog.unreleased` heading and `release.changelog.numbered` ("as the next numbered item under `Next`"), where the scaffold said `[Unreleased]` always. The files of a project without release answers are as before.
+- The `AGENTS.md` that `project adopt` writes names only the bootstrap, dry-run and doctor commands the repository has or declares (`env.*` in the answers); a line for a command it lacks (a task runner without the conventional targets) is left out.
 - `qargi project attach` and `qargi project adopt` print a declared setting, or a state that is not a problem, apart from the gaps, under "noted, not gaps (nothing to close)": `release.version_file none` (no `VERSION` is planned, and it is no longer listed under "left for you to judge"), and a changelog whose unreleased heading carries the version (`release.changelog.unreleased` with `{version}`) that has none right after a release ("no unreleased section yet; the last release is X"; before, a format gap). The plan JSON of adopt has an `info` list for them, and so has the detection JSON of attach.
 
 ### Fixed

@@ -146,16 +146,22 @@ COMMANDS = {
                                  "the feature tier first) and says they replace the detected test command. If answers are already stored it shows stored against detected, lists the fields "
                                  "the stored file lacks, stays read-only and gives no plan token; with --force the plan replaces what it detects and keeps what it "
                                  "cannot (the roles' models and effort, cloud, memory, budget). It reports what it found of the development environment (section, task runner, "
-                                 "bootstrap and doctor commands) and lists the pieces that are missing as gaps. It never guesses a provider: models.provider (and the roles' models) are stored only with "
+                                 "bootstrap and doctor commands; a command the stored answers declare in env.* is in effect) and lists the pieces that are missing as gaps. A declared setting or a "
+                                 "versioned unreleased heading right after a release is printed apart, as noted, not a gap. It never guesses a provider: models.provider (and the roles' models) are stored only with "
                                  "--provider NAME, and without it the output says so; with --force --provider fills in a provider that is not set and never replaces one.")),
             "adopt": verb("Adopt an attached repository: create the missing long-lived branches and the missing methodology files on a branch to review", [("NAME", "project")],
-                          [opt("--methodology", "the methodology (default: the project's, else gitflow)", "NAME", "methodology"), PLAN, APPROVED],
+                          [opt("--methodology", "the methodology (default: the project's, else gitflow)", "NAME", "methodology"),
+                           opt("--show", "also print everything the plan token covers: the refs it starts from, the branches, and the full content of each file to write (changes nothing; not with --plan)"), PLAN, APPROVED],
                           desc=("Prints the plan and a token: the local branches it would create (at the default branch tip; main stands for master; none is moved) and the files from the "
                                 "methodology that do not exist, written as one commit on agent/adopt-NAME cut from develop. With --plan and --approved it creates exactly that. Existing "
                                 "branches and files are never changed, nothing is pushed or checked out, and a second run finds nothing to do. Changelog format, tag format and CI content "
                                 "are listed as left for you, and so are the bootstrap and doctor targets a repository with a task runner lacks (an existing file is not edited), and long-lived branches "
                                 "that share no history (a master made as a snapshot has no merge base with develop): none is joined here, and the line says that release push joins the history of master. "
-                                "The AGENTS.md section it drafts names the repository's own runner. Refused (exit 2) with a dirty working tree, a detached HEAD, no commits, a project that is not attached, and in a member run."),
+                                "The AGENTS.md section it drafts names the repository's own runner and only the bootstrap, dry-run and doctor commands the repository has or declares (env.* in the answers); a line for a command it lacks is left out. "
+                                "The changelog sentence of the runtime's instruction file and CONTRIBUTING.md is rendered from the project's release.changelog.unreleased heading and release.changelog.numbered. A declared setting (release.version_file none) "
+                                "and a versioned unreleased heading right after a release (no unreleased section yet; the last release is X) are printed apart as noted, not gaps. A repository that has AGENTS.md or the runtime's own instruction file "
+                                "gets a list of what adopt does about each (it edits neither): with an instruction file of the runtime and no AGENTS.md it writes AGENTS.md with the Development environment section only, and says to add the @AGENTS.md import line to that file. "
+                                "Refused (exit 2) with a dirty working tree, a detached HEAD, no commits, a project that is not attached, and in a member run."),
                           examples=["qargi project adopt acme", 'qargi project adopt acme --plan TOKEN --approved "go ahead"']),
             "set": verb("Change one answer", [("NAME", "project"), ("PATH", "key"), ("VALUE", "value")],
                         desc=("PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string. models.extensions and models.accept_no_barrier are refused here: they change only through qargi provider enable|disable and qargi provider accept. "

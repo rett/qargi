@@ -94,7 +94,8 @@ def env_view(m, tree, root, answers=None):
     The environment is the effective one (lib/env.py effective): a command the project's answers declare (env.bootstrap_command, env.doctor_command) is in effect, so the
     target it stands for is not a gap.
     found: the summary detect reports; skip: the scaffold destinations that are not written or listed because the piece they hold exists
-    elsewhere; gaps: the pieces that are missing and that no scaffold file will supply; params: the scaffold parameters that fit the runner."""
+    elsewhere; gaps: the pieces that are missing and that no scaffold file will supply; params: the scaffold parameters that fit the runner;
+    missing: the roles (bootstrap, doctor) with no command at all, whose command no scaffold line may then name."""
     envd = ENV.effective(root, answers, TreeRepo(tree, root))
     tg = envd["targets"]
     runner = envd["runner"] or (envd["runners"][0]["runner"] if envd["runners"] else None) or "make"
@@ -117,19 +118,20 @@ def env_view(m, tree, root, answers=None):
                 skip[item["dest"]] = True
             elif not tree.exists(item["dest"]):
                 writes.add("targets")
-    gaps = []
+    gaps, missing = [], set()
     if not envd["section"] and "section" not in writes:
         gaps.append({"kind": "env", "what": "Development environment section",
                      "why": "no section headed Development environment, Environment or Setup in AGENTS.md or README.md; add one that names the bootstrap and doctor commands"})
     if "targets" not in writes:
         for role in ("bootstrap", "doctor"):
             if not tg[role] and not (envd["commands"][role + "_command"]["source"] or "").startswith("answers:"):
+                missing.add(role)
                 files = ", ".join(r["file"] for r in envd["runners"]) or "a Makefile"
                 gaps.append({"kind": "env", "what": "%s target" % role, "why": "none (%s) in %s; add one" % (" or ".join(ENV.WANTED[role]), files)})
     found = {"section": (envd["section"] or {}).get("file"), "runner": envd["runner"], "bootstrap_command": envd["commands"]["bootstrap_command"]["command"],
              "doctor_command": envd["commands"]["doctor_command"]["command"], "pins": ["%s %s" % (p["tool"], p["version"]) for p in envd["pins"]],
              "submodules": len(envd["submodules"])}
-    return {"found": found, "skip": skip, "gaps": gaps, "params": params}
+    return {"found": found, "skip": skip, "gaps": gaps, "params": params, "missing": missing, "section_file": section_file}
 
 
 def read(t, rel):
@@ -462,6 +464,52 @@ def no_merge_base(d, a, b):
     return subprocess.run(["git", "-C", d, "merge-base", a, b], capture_output=True).returncode == 1
 
 
+ABSENT = "@@ABSENT@@"   # stands for a command the repository lacks while the scaffold is rendered; a line that holds it is dropped, so no file names a command that does not exist
+
+
+def changelog_params(release):
+    """The scaffold parameters that say how the project's changelog is laid out: unreleased_heading (the heading a new changelog starts with) and
+    changelog_entry (the sentence part that says where an entry goes: its release.changelog.unreleased heading and release.changelog.numbered)."""
+    unrel, _ = RLAY.templates(release)
+    cl = (release or {}).get("changelog")
+    numbered = isinstance(cl, dict) and cl.get("numbered") is True
+    where = "under the unreleased heading (`%s`)" % unrel if "{version}" in unrel else "under `%s`" % unrel.lstrip("#").strip()
+    return {"unreleased_heading": unrel.replace("{version}", "0.1.0"), "changelog_entry": ("as the next numbered item " if numbered else "") + where}
+
+
+def drop_absent(text):
+    """text without the lines that name a command the repository lacks."""
+    return "".join(l for l in text.splitlines(True) if ABSENT not in l)
+
+
+def section_only(text):
+    """An AGENTS.md reduced to its title and the Development environment section (the part the environment detection reads)."""
+    lines = text.splitlines(True)
+    at = next((i for i, l in enumerate(lines) if re.match(r"## +Development environment\s*$", l)), None)
+    if at is None:
+        return text
+    return "".join(lines[:1] + ["\n"] + lines[at:]) if lines and lines[0].startswith("# ") else "".join(lines[at:])
+
+
+def instruction_notes(tree, written):
+    """[{file, text}]: what the repository's own agent instructions (CLAUDE.md, AGENTS.md) are, and what adopt does about them. No existing file is edited."""
+    a, c = tree.exists("AGENTS.md"), tree.exists("CLAUDE.md")
+    if not (a or c):
+        return []
+    notes = []
+    imports = bool(re.search(r"(?m)^@AGENTS\.md\s*$", tree.read("CLAUDE.md"))) if c else False
+    if a and c:
+        notes.append({"file": "AGENTS.md, CLAUDE.md", "text": "both exist: adopt writes neither and edits neither"})
+    elif a:
+        notes.append({"file": "AGENTS.md", "text": "exists and is not edited; adopt %s" % ("writes CLAUDE.md, which imports it (@AGENTS.md)" if "CLAUDE.md" in written else "writes no CLAUDE.md")})
+    else:
+        notes.append({"file": "CLAUDE.md", "text": "exists and is not edited; adopt %s" % (
+            "writes AGENTS.md with its Development environment section only (the environment detection reads AGENTS.md or README.md)" if "AGENTS.md" in written else "writes no AGENTS.md")})
+    if c and (a or "AGENTS.md" in written) and not imports:
+        notes.append({"file": "CLAUDE.md", "text": "has no `@AGENTS.md` import line: add it, so a session that reads CLAUDE.md gets AGENTS.md"})
+    return notes
+
+
 def adopt_plan(project, answers_file, methodology=None):
     answers, d = adopt_checks(answers_file, project)
     methodology = methodology or answers.get("methodology") or "gitflow"
@@ -486,6 +534,10 @@ def adopt_plan(project, answers_file, methodology=None):
     ev = env_view(m, tree, d, answers)
     params = {"project": project}
     params.update({k: v for k, v in ev["params"].items() if k in (m.get("params") or {})})
+    for role, ks in (("bootstrap", ("bootstrap_command", "dry_run_command")), ("doctor", ("doctor_command",))):
+        if role in ev["missing"]:
+            params.update({k: ABSENT for k in ks if k in (m.get("params") or {})})
+    params.update({k: v for k, v in changelog_params(answers.get("release")).items() if k in (m.get("params") or {})})
     if answers.get("test_command") and "test_command" in (m.get("params") or {}) and "\n" not in answers["test_command"]:
         params["test_command"] = answers["test_command"]
     if answers.get("gates") and "gates" in (m.get("params") or {}) and not M.G.problems(answers["gates"]):
@@ -518,9 +570,13 @@ def adopt_plan(project, answers_file, methodology=None):
         if why:
             skipped.append({"what": dest, "why": why})
         else:
+            item = dict(item, content=drop_absent(item["content"]))
+            if dest == "AGENTS.md" and tree.exists("CLAUDE.md"):
+                item["content"] = section_only(item["content"])   # the repository keeps its instructions in its own CLAUDE.md: only what environment detection reads is added
             files.append(item)
     if adopt_exists:
         files = []
+    instructions = instruction_notes(tree, {f["dest"] for f in files})
     info = det["info"] + declared       # what the changelog or the answers say is so: not gaps, so not left for you to judge
     left = [g for g in det["gaps"] if g["kind"] in ("format", "tags", "ci")]
     left += [dict(g, why="not written: " + g["why"]) for g in ev["gaps"]]
@@ -546,7 +602,7 @@ def adopt_plan(project, answers_file, methodology=None):
         "files": [{"dest": f["dest"], "sha256": hashlib.sha256(f["content"].encode()).hexdigest()} for f in files],
     }
     return {"project": project, "methodology": methodology, "path": d, "base": basis["base"], "integration": basis["integration"],
-            "branches": branches, "adopt_branch": adopt_branch, "adopt_exists": adopt_exists, "files": files, "skipped": skipped, "left": left, "info": info,
+            "branches": branches, "adopt_branch": adopt_branch, "adopt_exists": adopt_exists, "files": files, "skipped": skipped, "left": left, "info": info, "instructions": instructions,
             "nothing_to_do": not branches and not files, "basis": basis}
 
 
