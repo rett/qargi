@@ -4,19 +4,13 @@
  "goal": "0.2.10 tacctl Q1-Q20 batch",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "arc-qargi",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-10T09:05:06Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-10T19:05:08Z",
- "finished_at": null,
+ "finished_at": "2026-11-10T19:06:06Z",
  "updated_by": "arc-qargi",
- "rev": 32,
- "updated_at": "2026-11-10T19:05:08Z",
+ "rev": 33,
+ "updated_at": "2026-11-10T19:06:06Z",
  "feature": "rel0210",
  "project": "qargi"
 }
