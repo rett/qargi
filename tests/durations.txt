@@ -77,6 +77,7 @@
 1 python3 tests/test_noticed.py
 8 python3 tests/test_render.py
 1 bash tests/test_canon_audit.sh
+1 bash tests/test_canon_reach.sh
 3 bash tests/test_project_profile.sh
 3 bash tests/test_new.sh
 10 python3 tests/test_canon.py

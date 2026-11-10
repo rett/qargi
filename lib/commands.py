@@ -1311,7 +1311,8 @@ COMMANDS = {
     "canon": {
         "summary": "Bring a project's two memory stores to the standard layout and keep them there",
         "desc": ("The canon fixes the layout and the note format of both stores (shared/ and roles/<role>/, a header on every note, an "
-                 "index with a Load column). plan and apply set up an empty store and keep a current one current; a store of an older layout or canon version is reported as unknown and not changed."),
+                 "index with a Load column). plan and apply set up an empty store and keep a current one current; a store of an older layout or canon version is reported as unknown and not changed. "
+                 "A store that cannot be listed (ant missing, not logged in, no access) is reported as `unreachable: <reason>`, exits 1 and is never taken for an empty one: no plan is advised or made for it, and apply, seed-role and promote write nothing. A project with no store recorded checks clean."),
         "scripts": ["canon.sh"],
         "verbs": {
             "check": verb("Report conformance and the version of each store", [("PROJECT", "project")], [KIND]),

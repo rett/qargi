@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# qargi canon check|plan|apply when a store cannot be listed: an unreachable store is reported as "unreachable: <reason>" and is never
+# taken for an empty one (nothing is advised, planned or written from it); a project with no store recorded checks clean; a reachable
+# empty store is still an empty store. Hermetic, offline: a fake `ant` whose list fails or succeeds as FAKE/mode says.
+# Run: tests/test_canon_reach.sh
+set -u
+cd "$(dirname "$0")/.." || exit 1
+# shellcheck source=hermetic.sh
+. tests/hermetic.sh
+T=$(mktemp -d); fail=0
+ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s FAKE=$T/fake
+unset QARGI_PROJECT
+mkdir -p "$HOME" "$T/c/projects" "$T/s" "$T/bin" "$FAKE"
+trap 'rm -rf "$T" "$HERMETIC"' EXIT
+
+cat > "$T/bin/ant" <<'EOS'
+#!/usr/bin/env bash
+echo "$*" >> "$FAKE/calls"
+case $1 in
+  auth) exit 0;;
+  beta:memory-stores:memories)
+    if [ "$2" = list ]; then
+      if [ "$(cat "$FAKE/mode")" = fail ]; then printf '\nError: 403 forbidden for this key\nsecond line\n' >&2; exit 1; fi
+      exit 0
+    fi
+    exit 0;;
+  *) echo '{}';;
+esac
+EOS
+chmod 755 "$T/bin/ant"; export PATH=$T/bin:$PATH
+
+role='{"base":"main","push":{"mode":"none"},"model":"claude-sonnet-5-5","effort":"high","apt":[],"skills":[]}'
+jq -n --argjson r "$role" '{schema:1,project:"alpha",repo:{url:"https://github.com/example/alpha",long_lived:["main"]},
+  roles:{build:$r},memory:{memory_store:"memstore_01",reference_store:"memstore_02"},budget_cents:500}' > "$T/c/projects/alpha.json"
+jq -n --argjson r "$role" '{schema:1,project:"solo",repo:{url:"https://github.com/example/solo",long_lived:["main"]},
+  roles:{build:$r},budget_cents:500}' > "$T/c/projects/solo.json"
+
+echo fail > "$FAKE/mode"; : > "$FAKE/calls"
+out=$(bin/qargi canon check alpha 2>&1); rc=$?
+[ "$rc" = 1 ] && ok "check: exit 1 when the stores cannot be listed" || no "check exit $rc: $out"
+[ "$(grep -c '^unreachable: Error: 403 forbidden for this key$' <<<"$out")" = 2 ] \
+  && ok "check: one 'unreachable: <reason>' line for each store, the first line of the error" || no "check lines: $out"
+grep -qi 'canon plan\|empty store\|FAIL /CANON.md' <<<"$out" && no "check advised a plan for an unreachable store: $out" || ok "check: no plan advised, no empty store reported"
+
+out=$(bin/qargi canon plan alpha 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q '^unreachable: Error: 403' <<<"$out" && ! grep -qE '^  (create|update|move|mark)' <<<"$out" \
+  && ok "plan: refuses, names the reason, plans nothing" || no "plan (rc=$rc): $out"
+
+out=$(bin/qargi canon apply alpha --plan x --approved go 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q '^unreachable: Error: 403' <<<"$out" && ok "apply: refuses with the reason" || no "apply (rc=$rc): $out"
+grep -qE 'memories (create|update)|memory-versions' "$FAKE/calls" && no "something was written: $(cat "$FAKE/calls")" || ok "apply: nothing was written"
+
+out=$(bin/qargi canon seed-role alpha --role build --approved go 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q 'unreachable' <<<"$out" && ! grep -qE 'memories (create|update)' "$FAKE/calls" \
+  && ok "seed-role: refuses and writes nothing" || no "seed-role (rc=$rc): $out"
+
+# a project with no store recorded checks clean (nothing to reach)
+out=$(bin/qargi canon check solo 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -qF 'memory: no store recorded' <<<"$out" && ! grep -q unreachable <<<"$out" \
+  && ok "a local-only project checks clean" || no "solo (rc=$rc): $out"
+
+# a store that lists fine and is empty is an empty store: the plan is advised
+echo ok > "$FAKE/mode"
+out=$(bin/qargi canon check alpha --kind memory 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q 'canon plan' <<<"$out" && ! grep -q unreachable <<<"$out" \
+  && ok "a reachable empty store still reports the plan" || no "empty (rc=$rc): $out"
+
+exit $fail

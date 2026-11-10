@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `qargi canon check|plan|apply|seed-role|promote` no longer take a store that cannot be listed (ant missing, not logged in, no access) for an empty one. A failing list is an error: `check` prints `unreachable: <reason>` under each such store, as `memory tiers` does, and exits 1 without advising `canon plan`; `plan` and `apply` refuse and make no plan; `seed-role` and `promote` write nothing. Before, the list failure was discarded, so `check` said the store was empty and told you to plan, and `plan` offered to create the whole seed over a store that already held notes. A project with no store recorded still checks clean. `mem_dump` returns 1 and the first line of the error on standard error when the list fails.
+
 ## [0.2.9] - 2026-11-09
 
 ### Added

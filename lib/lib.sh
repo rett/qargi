@@ -292,8 +292,13 @@ mem_index() {
 # mem_dump STORE: JSON lines of every memory of a store, with content (QARGI_CANON_FIXTURE_DIR replaces the cloud in tests).
 mem_dump() {
   if [ -n "${QARGI_CANON_FIXTURE_DIR:-}" ]; then cat "$QARGI_CANON_FIXTURE_DIR/$1.jsonl"; return; fi
-  ant beta:memory-stores:memories list --memory-store-id "$1" --path-prefix / --view full --max-items -1 </dev/null 2>/dev/null \
-    | jq -c 'select(.type=="memory") | {type, id, path, content, content_sha256}'
+  local out err why rc=0
+  err=$(mktemp) || return 1
+  out=$(ant beta:memory-stores:memories list --memory-store-id "$1" --path-prefix / --view full --max-items -1 </dev/null 2>"$err") || rc=$?
+  why=$(grep -v '^[[:space:]]*$' "$err" | head -1 | cut -c1-160); rm -f "$err"
+  # a failing list is not an empty store: status 1 and the reason on standard error
+  [ "$rc" = 0 ] || { echo "${why:-ant failed (status $rc)}" >&2; return 1; }
+  jq -c 'select(.type=="memory") | {type, id, path, content, content_sha256}' <<<"$out"
 }
 
 # mem_exec_ops STORE PLAN_JSON: run a plan's steps ({ops: [move|create|update|marker]}) against a store, in order;

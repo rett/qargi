@@ -63,7 +63,10 @@ def setup_paths(roles):
 def detect(kind, mems, roles=None):
     """-> (state, why). state is LATEST (conforms), "empty" (no memories, or only the first files of a set-up that was
     interrupted before it wrote the marker: it is set up from the seed) or "unknown" (a marker this qargi does not read,
-    or no marker). Without `roles` a store with no marker is empty only when it holds no memories."""
+    or no marker). Without `roles` a store with no marker is empty only when it holds no memories. `mems` None is a store
+    that could not be read: "unreachable", which is neither empty nor unknown, so nothing is advised or planned for it."""
+    if mems is None:
+        return "unreachable", "the store could not be listed"
     if "/CANON.md" in mems:
         d = parse_marker(mems["/CANON.md"]["content"])
         try:
@@ -278,9 +281,21 @@ def make_plan(kind, mems, project, roles, seed, today):
     return out
 
 
+def read_store(path):
+    """-> (memories, "") or (None, why): the listing file of a store, None when it cannot be read or is not a listing."""
+    try:
+        return load(path), ""
+    except (OSError, ValueError, KeyError, AttributeError) as e:
+        return None, (str(e).splitlines() or [type(e).__name__])[0][:120]
+
+
 def cmd_plan(a):
     today = a.today or datetime.datetime.now(datetime.timezone.utc).date().isoformat()
-    print(json.dumps(make_plan(a.kind, load(a.store), a.project, a.roles.split(","), a.seed, today)))
+    mems, bad = read_store(a.store)
+    if detect(a.kind, mems)[0] == "unreachable":
+        print("unreachable: %s" % bad, file=sys.stderr)
+        return 1
+    print(json.dumps(make_plan(a.kind, mems, a.project, a.roles.split(","), a.seed, today)))
     return 0
 
 
@@ -369,9 +384,12 @@ def notes_check(kind, mems, roles, F, W):
 
 
 def cmd_check(a):
-    mems = load(a.store)
+    mems, bad = read_store(a.store)
     roles = a.roles.split(",")
     ver, why = detect(a.kind, mems, roles)
+    if ver == "unreachable":   # readability first: nothing else is judged, and `canon plan` is not advised for a store that cannot be read
+        print("unreachable: %s" % bad)
+        return 1
     fails, warns = [], []
     F = lambda p, s: fails.append("FAIL %s: %s" % (p, s))
     W = lambda p, s: warns.append("WARN %s: %s" % (p, s))
