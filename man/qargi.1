@@ -3108,6 +3108,7 @@ print the argv, the working directory and the prompt, and run nothing.
 .B prepare
 Make the clone and the wrapper for a local agent.
 .br
+With \-\-task\-file, prepare writes RUN/task.md, the task block, for every runtime, and prints TASK_FILE=RUN/task.md; the lead hands the member that path unchanged. Its sections, in this order: ROLE (with the class), ABILITY (the role's text), TASK (the file), DONE, PROFILE (the text of the repository's profile, ~/.qargi/config/profiles/<repository>.md, when there is one), BASE, BASE_SHA, SCOPE (one line, the paths comma separated, or none), RUN_DIR, CLONE, OUT, TMP, GIT, CONTRACT, then SUBMODULES and MEMORY when there are any. Every input is checked before anything is made, and a refusal makes no run. Without the flag no task.md is written and nothing else changes.
 Prints KEY=value lines: RUN, ROLE, CLASS, PROFILE (the role's own unless \-\-profile), MEMBER, MODEL and EFFORT (only with \-\-profile), CLONE, OUT, TMP, GIT, BASE_SHA, CONTRACT (the run's own copy of the member contract, with the contract addenda of the project's local runtime as runtime\-addenda.md) and, when the role declares submodules (roles.ROLE.tools, kind submodule) and the clone got them, SUBMODULES=path,... Each declared submodule is checked out in the clone from the lead's copy of its objects (the checkout at REPO/PATH, else the modules directory), offline: a mirror with no remote under RUN/sub and git submodule update from it, push URL disabled. A commit the lead's copy lacks, a submodule not initialised there, or a run made with \-\-repo\-url, is a note on stderr; nothing is fetched. Then a blank line and a TASK\-BLOCK PATHS block (RUN_DIR, CLONE, OUT, TMP, GIT, BASE_SHA, CONTRACT) to copy into the task, and in a stored project a TASK\-BLOCK MEMORY block. A caller that evals the output must stop at the blank line.
 When the project (found by matching the repository against the stored answers) has a render for its local runtime (packs apply \-\-target RUNTIME) that has drifted, prepare also prints a WARNING block to stderr with the findings and the fix, packs apply \-\-target RUNTIME PROJECT. The run goes on, and stdout and the TASK\-BLOCK PATHS block are unchanged.
 A \-\-scratch on a tmpfs (/dev/shm, often /tmp) is warned about on stderr: a reboot empties it and loses the run (its clone, commits and output); prefer a directory on disk, such as ~/.cache/qargi\-runs.
@@ -3150,6 +3151,21 @@ the task's role, written to RUN/ability, with its class in RUN/class and in your
 .TP
 .BI "\-\-profile " "NAME"
 the profile to dispatch under (for example advisor or auditor for review); resolved before any clone, refused when its class does not fit the role, recorded in RUN/profile and printed with MEMBER, MODEL and EFFORT.
+.RE
+.RS
+.TP
+.BI "\-\-task\-file " "FILE"
+the file with the task: prepare then writes the whole task block to RUN/task.md for every runtime (refused when the file is empty, not a regular file, a link, over 1 MiB, or has a line that starts SCOPE:); needs \-\-done.
+.RE
+.RS
+.TP
+.BI "\-\-done " "COMMAND"
+the check that says the task is done, as one command line (with \-\-task\-file). Refused when it is not a command: its first word, after any NAME=value words, must be an executable on PATH, a shell builtin or keyword, or an existing script (a word with a slash is a file of the repository or an absolute one; with \-\-repo\-url a relative path is taken as given).
+.RE
+.RS
+.TP
+.BI "\-\-scope " "PATH"
+a path the task may change, relative, with no space, comma or .. in it (repeat for several; a directory, a file or a glob); written as the SCOPE: line, which qargi review check applies as the limit. Without it the line says none (with \-\-task\-file).
 .RE
 .RE
 .RS
