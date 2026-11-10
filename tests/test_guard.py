@@ -2387,44 +2387,39 @@ class ProviderRoots(HookCase):
         self.assertEqual(self.bash("echo y > /etc/skills/x; echo y > relative/agents/m; echo y > %s/up/skills/x" % self.t).returncode, 0)
         self.refused("echo y > ~/.only/skills/x")
 
-    def test_a_definition_that_cannot_be_read_is_skipped_with_a_note_and_the_others_still_protect(self):
-        # one broken definition in the library must not make the guard refuse every write: its directories are unknown, the rest are not
+    def refused_for_definitions(self, r, *names):
+        """A call refused because a provider definition does not load: one line that names each definition and what to do."""
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertEqual(r.stderr.count("\n"), 1, r.stderr)
+        self.assertIn("provider definitions that do not load", r.stderr)
+        self.assertIn("refusing the call until the library is fixed", r.stderr)
+        for n in names:
+            self.assertIn(n, r.stderr)
+
+    def test_a_definition_that_cannot_be_read_refuses_the_calls_that_need_the_roots_and_names_it(self):
+        # a definition that does not load leaves directories the guard cannot know: a call that reaches for the roots is refused, naming each one
         self.define("fakecli", self.FAKECLI)
         self.define("garbled", None, raw="{not json")
         self.define("wrongname", None, raw=json.dumps(runtime("someone-else", resources={"skills": {"project_dir": ".elsewhere/skills"}})))
-        r = self.bash("echo y > %s/notes.txt" % self.proj)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stderr.count("qargi guard: "), 1, r.stderr)                 # one note, not one per definition or per path
-        self.assertIn("skipped", r.stderr)
-        self.assertIn("garbled", r.stderr)
-        self.assertIn("wrongname", r.stderr)
-        self.assertEqual(self.call("Write", {"file_path": os.path.join(self.proj, "notes.txt")}).returncode, 0)
+        for r in (self.bash("echo y > %s/notes.txt" % self.proj), self.call("Write", {"file_path": os.path.join(self.proj, "notes.txt")}),
+                  self.bash("echo y > ~/.fakecli/skills/x/SKILL.md"), self.bash("echo y > ~/.claude/skills/x/SKILL.md")):
+            self.refused_for_definitions(r, "garbled", "wrongname")
         for c in ("ls -la", "cat %s/notes.txt" % self.proj, "git status", "echo hi"):              # a call that writes nowhere needs no roots
             r = self.bash(c)
             self.assertEqual((r.returncode, r.stderr), (0, ""), c)
         self.assertEqual(self.bash("git push").returncode, 2)
-        # the definitions that load keep their roots, and so does Claude Code
-        for c in ("echo y > ~/.fakecli/skills/x/SKILL.md", "echo y > %s/.fake/agents/m.toml" % self.proj, "echo y > ~/.claude/skills/x/SKILL.md",
-                  "echo y > %s/.claude/skills/p/SKILL.md" % self.proj, "rm -rf %s/.claude" % self.proj):
-            self.refused(c)
-        self.assertEqual(self.call("Write", {"file_path": os.path.join(self.proj, ".fake", "agents", "m.toml")}).returncode, 2)
 
-    def test_the_claude_directories_stay_protected_when_their_definition_clashes_or_is_broken(self):
-        # a library definition with the name of a shipped one makes both unusable (a clash); the Claude Code directories are still held
+    def test_a_definition_that_clashes_with_a_shipped_one_refuses_the_calls_that_need_the_roots(self):
+        # a library definition with the name of a shipped one makes both unusable (a clash); the Claude Code directories are held in the roots all the same
         self.define("claude-code", {"skills": {"project_dir": ".other/skills", "items": "dir-per-item"}})
-        r = self.bash("echo y > %s/notes.txt" % self.proj)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("claude-code", r.stderr)
-        for c in ("echo y > ~/.claude/skills/x/SKILL.md", "echo y > ~/.claude/agents/m.md", "echo y > %s/.claude/skills/p/SKILL.md" % self.proj,
-                  "echo y > %s/.claude/agents/m.md" % self.proj, "rm -rf %s/.claude" % self.proj):
-            self.refused(c)
+        self.refused_for_definitions(self.bash("echo y > %s/notes.txt" % self.proj), "claude-code")
+        self.refused_for_definitions(self.bash("echo y > ~/.claude/skills/x/SKILL.md"), "claude-code")
+        self.assertEqual(self.bash("ls -la").returncode, 0)
 
-    def test_a_name_defined_twice_is_skipped_with_a_note_too(self):
+    def test_a_name_defined_twice_refuses_the_calls_that_need_the_roots_too(self):
         self.define("claude", {})                                         # the shipped provider's name
-        r = self.bash("echo y > %s/notes.txt" % self.proj)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("defined twice", r.stderr)
-        self.refused("echo y > %s/.claude/skills/p/SKILL.md" % self.proj)
+        self.refused_for_definitions(self.bash("echo y > %s/notes.txt" % self.proj), "defined twice")
+        self.refused_for_definitions(self.bash("echo y > %s/.claude/skills/p/SKILL.md" % self.proj), "defined twice")
 
 
 class RuntimeRender(HookCase):

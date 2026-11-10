@@ -1945,8 +1945,8 @@ def resource_dirs():
     library's, every surface), and those of Claude Code. project: tuples of path components (".claude/skills" is (".claude", "skills")),
     found anywhere in a path; user: real directories below the home. A path that cannot be one (absolute, with .., a user path not below
     ~/) is left out. Read once per call of the hook. A definition that does not load (unreadable, a name clash, a name that disagrees with
-    its directory) is skipped with one note on standard error: its directories are unknown, but one broken file of the library must not
-    make the guard refuse every write, and the roots of the definitions that do load stay (the roots only add up)."""
+    its directory) leaves directories the guard cannot know, so a call that needs the roots (one that writes, or reads a protected place) is refused
+    with a message naming the definitions and the cause (Unreadable); a call that needs no roots (ls, git status) is not asked."""
     if not _RESOURCE_DIRS:
         provider = _provider()
         home = os.path.expanduser("~")
@@ -1971,7 +1971,8 @@ def resource_dirs():
                     if isinstance(u, str) and u.startswith("~/") and len(u) > 2 and os.path.join(home, u[2:]) not in user:
                         user.append(os.path.join(home, u[2:]))
         if skipped:
-            print("qargi guard: provider definitions skipped, their skills and agents directories are not protected: %s" % "; ".join(skipped), file=sys.stderr)
+            raise Unreadable("provider definitions that do not load: %s; the guard cannot tell which skills and agents directories they name, so it cannot tell whether this call "
+                             "reaches one; refusing the call until the library is fixed (qargi provider check NAME, or remove the definition)" % "; ".join(skipped))
         _RESOURCE_DIRS.append((project, user))
     return _RESOURCE_DIRS[0]
 
