@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2154  # af, REPO, PROJ, TESTCMD come from gitflow.sh (project_load)
 # Releases and hotfixes, by the usual git-flow rules (long-lived master and develop, short-lived release and hotfix branches):
-#   release/<version>  from develop, merged into master (tagged) and back into develop, then deleted
-#   hotfix/<version>   from master,  merged into master (tagged) and into develop, or into the open release branch
+#   release/<version>  from develop, merged into master (tagged); that tagged master merge commit is then merged into develop; then deleted
+#   hotfix/<version>   from master,  merged into master (tagged); that master merge commit is then merged into develop, or into the open release branch
 # The merges are --no-ff. The commands are those the model lists, done in temporary worktrees; a branch moves only after
 # every merge has succeeded, so a conflict leaves everything as it was. Between start and finish the branch is pushed
 # and a pull request into master runs CI on the commit that will be released.
@@ -432,7 +432,7 @@ release_finish_tail() {
     move_ref refs/heads/master "$nm" "$m0" && move_ref "refs/heads/$second" "$ns" "$s0" || die "origin has the release but master or $second moved locally meanwhile: git fetch origin, then check master and $second against origin"
     journal_ref "$REPO" refs/heads/master "$m0" "$nm" "$KIND:finish"
     journal_ref "$REPO" "refs/heads/$second" "$s0" "$ns" "$KIND:finish"
-    merge_forget "$k1" "$k2"
+    merge_forget "$k1" "$k2"; rm -f "$DA_STATE/conflicts/$PROJ-$k2.master"
     intent_mark "$key" refs
   fi
   if [ -z "$KEEP" ] && ! intent_marked "$key" branch; then
@@ -442,7 +442,7 @@ release_finish_tail() {
   fi
   if ! intent_marked "$key" audit; then audit_log "release:finish" "$PROJ $VER${IGNORED:+ checks ignored: $IGNORE_CHECKS}"; intent_mark "$key" audit; fi
   [ -z "$IGNORED" ] || echo "checks ignored on your word: $IGNORE_CHECKS"
-  echo "merged $BR into master (tagged $VER) and into $second${KEEP:+; kept $BR}$([ -n "$KEEP" ] || echo "; deleted $BR")"
+  echo "merged $BR into master (tagged $VER), then tag $VER (the master merge commit ${nm:0:7}) into $second (${ns:0:7})${KEEP:+; kept $BR}$([ -n "$KEEP" ] || echo "; deleted $BR")"
   [ "$second" != develop ] || parking_follow
   if [ -n "$PUSHED" ]; then
     if [ -z "$KEEP" ] && [ -n "$rb0" ]; then
@@ -839,7 +839,7 @@ case $verb in
       die "$second and $BR share no history (no merge base): git would refuse to merge them (unrelated histories). Usually the first release is not finished yet, and its push joins the history of master (qargi release push VERSION): finish that release first, or join them by hand. Nothing was changed"
     fi
     tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$second" "$(sha_of master)" "$(sha_of "$second")" "$KEEP" "$IGNORE_CHECKS" | plan_token)
-    echo "finish $KIND $VER of $PROJ: merge $BR into master with --no-ff, tag $VER on it, merge $BR into $second with --no-ff${KEEP:+, keep $BR}$([ -n "$KEEP" ] || echo ", delete $BR"), push master, $second and the tag together (all or none)"
+    echo "finish $KIND $VER of $PROJ: merge $BR into master with --no-ff, tag $VER on it, merge tag $VER (the master merge commit) into $second with --no-ff${KEEP:+, keep $BR}$([ -n "$KEEP" ] || echo ", delete $BR"), push master, $second and the tag together (all or none)"
     remote_report "$BR"; remote_report master; remote_report "$second"
     show_incoming master "$BR"; backlog_note master "$BR"
     if g remote get-url origin >/dev/null 2>&1; then   # the checks of the pull request at the head being released
@@ -879,9 +879,14 @@ case $verb in
     m0=$(sha_of master); s0=$(sha_of "$second")
     rm0=$(remote_was master); rs0=$(remote_was "$second"); rb0=$(remote_was "$BR")   # what origin has (fetched above): where the journal lines of the pushes start
     k1="$KIND-$VER-into-master"; k2="$KIND-$VER-into-${second//\//_}"
-    merge_step "$m0" "refs/heads/$BR" "$k1" "Merge branch '$BR'"
-    nm=$MERGED
-    merge_step "$s0" "refs/heads/$BR" "$k2" "Merge branch '$BR' into $second"
+    # the second merge takes the master merge commit (the one that is tagged), not the branch: master then carries no merge commit that $second lacks.
+    # A conflict in the second merge parks a worktree that holds a merge of that commit, so the commit is kept in a file beside it and a run with
+    # --resolved uses the same one (a new merge of the branch into master would be another commit)
+    mfile=$DA_STATE/conflicts/$PROJ-$k2.master; nm=''
+    if [ -f "$mfile" ] && read -r mi mh mm < "$mfile" && [ "$mi" = "$m0" ] && [ "$mh" = "$h" ] && g cat-file -e "$mm^{commit}" 2>/dev/null; then nm=$mm; fi
+    if [ -z "$nm" ]; then merge_step "$m0" "refs/heads/$BR" "$k1" "Merge branch '$BR'"; nm=$MERGED; fi
+    mkdir -p "$DA_STATE/conflicts"; printf '%s %s %s\n' "$m0" "$h" "$nm" > "$mfile"
+    merge_step "$s0" "$nm" "$k2" "Merge tag '$VER' into $second"
     ns=$MERGED
     # the intent record comes before the tag and the push: a death after the push is finished by the next run (release_finish_resume)
     PUSHED=''; g remote get-url origin >/dev/null 2>&1 && PUSHED=1
