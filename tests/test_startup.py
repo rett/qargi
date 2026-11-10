@@ -252,15 +252,20 @@ class Processes(unittest.TestCase):
             return r, f.read().splitlines()
 
     def test_exactly_one_python_process_before_the_verb(self):
-        for argv in (("role", "list"), ("role", "show", "build")):                 # the verb runs no python: the preamble is all there is
+        for argv in (("role", "list"), ("role", "show", "build")):                 # the verb is one python process of its own (lib/role.py), after the preamble
             r, py = self.starts(*argv)
             self.assertEqual(r.returncode, 0, argv)
-            self.assertEqual(len(py), 1, (argv, py))
+            self.assertEqual(len(py), 2, (argv, py))
             self.assertIn("preamble", py[0])
-        for argv in (("nosuch",), ("lead", "status"), ("role", "nosuchverb")):     # the dispatcher's errors: the preamble, nothing else
+            self.assertIn("import role;", py[1])                                     # imported, as the guard is, so its bytecode is cached
+            self.assertNotIn("preamble", py[1])
+        for argv in (("nosuch",), ("lead", "status")):                             # the dispatcher's errors: the preamble, nothing else
             r, py = self.starts(*argv, cwd=self.h.t)
             self.assertEqual(r.returncode, 2, argv)
             self.assertEqual(len(py), 1, (argv, py))
+        r, py = self.starts("role", "nosuchverb", cwd=self.h.t)                    # the verb's own usage error: the preamble, then role.py
+        self.assertEqual((r.returncode, len(py)), (2, 2), py)
+        self.assertEqual(r.stderr, "qargi: usage: qargi role list|show|prompt|check ...\n")
         r, py = self.starts("project", "show", "alpha", cwd=self.h.repo)          # a verb that runs python of its own: the preamble is first and once
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("preamble", py[0])

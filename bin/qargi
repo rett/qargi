@@ -63,7 +63,7 @@ case $area in
   credential) exec "$lib/cred.sh" "$@";;
   local) exec "$lib/local.sh" "$@";;
   agent) exec "$lib/agent.sh" "$@";;
-  role) exec "$lib/role.sh" "$@";;
+  role) exec python3 -I -c 'import sys; sys.path.insert(0, sys.argv.pop(1)); import role; sys.exit(role.main())' "$lib" "$@";;
   feature) exec "$lib/feature.sh" "$@";;
   marshal) exec "$lib/marshal.sh" "$@";;
   release) exec "$lib/release.sh" "$@";;

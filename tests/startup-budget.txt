@@ -5,5 +5,5 @@
 # fails when the median is over it in three measurements in a row.
 # __guard is timed answering a harmless call from a tool whose lib/ is compiled (what install.sh --user and qargi upgrade leave);
 # a hook runs it before every tool call of a member. The test measures about 60 ms there, about 115 ms when the tool has no bytecode.
-role list 350
+role list 260 # lowered from 350: twice the median of 130 ms with lib/role.py (one python process after the preamble)
 __guard 120 # enforced: twice the median of the development host
