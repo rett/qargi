@@ -24,8 +24,7 @@ description: Record every user-visible change in CHANGELOG.md under Unreleased, 
 
 Example, under `### Changed`:
 
-    - `report --json` now prints the verdict under `result`, not `status` (breaking: update scripts
-      that read `status`).
+    - `report --json` now prints the verdict under `result`, not `status` (breaking: update scripts that read `status`).
 
 ## Never (as a member)
 - Add a version heading, put a date on Unreleased, or move entries into a release.

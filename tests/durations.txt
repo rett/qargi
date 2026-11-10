@@ -123,3 +123,4 @@
 17 bash tests/test_resume_push.sh
 25 bash tests/test_release_master_merge.sh
 25 bash tests/test_release_cut.sh
+0 python3 tests/test_prose_lint.py
