@@ -137,6 +137,17 @@ class Durations(unittest.TestCase):
             self.assertRegex(l, r"^\d+ \S.*$")
         self.assertEqual(len(lines), len(set(l.split(" ", 1)[1] for l in lines)), "a command twice")
 
+    def test_every_step_of_the_suite_has_a_row_and_every_row_a_step(self):
+        # a step with no row counts as its budget in the shard plan, which unbalances the shards of the CI run
+        steps = set()
+        for l in text(os.path.join(ROOT, "tests", "suite.txt")).splitlines():
+            l = l.strip()
+            if l and not l.startswith("#"):
+                steps.add(l.split("|")[4].strip())
+        rows = set(l.split(" ", 1)[1] for l in text(os.path.join(ROOT, "tests", "durations.txt")).splitlines() if l.strip())
+        self.assertEqual(sorted(steps - rows), [], "steps of tests/suite.txt with no row in tests/durations.txt")
+        self.assertEqual(sorted(rows - steps), [], "rows of tests/durations.txt with no step in tests/suite.txt")
+
     def test_four_shards_by_the_durations_are_balanced_within_1_3(self):
         t = shard_totals("--durations", "tests/durations.txt")
         self.assertTrue(all(t), t)
