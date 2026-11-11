@@ -14,7 +14,7 @@
       "value": "yes",
       "verified_on": null,
       "source": "codex exec --help, codex-cli 0.167.1",
-      "note": "codex exec reads the prompt from standard input, --json writes the events as JSON lines, -o writes the last message to a file"
+      "note": "codex exec reads the prompt from standard input, --json writes the events as JSON lines, -o writes the last message to a file. What a run loads, seen offline with codex-cli 0.167.1 (codex debug prompt-input, codex mcp list --json and codex features list with a scratch CODEX_HOME, no sign-in): CODEX_HOME and HOME are the run home, so none of the user's Codex configuration, rules, skills or instructions, and not ~/.agents/skills; the clone is a fresh path that no configuration marks trusted, so its .codex/ (config.toml with its MCP servers and settings, rules, hooks) is not loaded, which a trust entry would change, while its AGENTS.md and .agents/skills are; a system-wide or administrator-managed Codex configuration is not excluded. The run's config.toml always carries the baseline of dispatch.run_config: approval_policy never, under workspace-write no shell network and no /tmp (TMPDIR, the run's TMP, stays writable), hosted web search disabled, the features apps, plugins, remote_plugin, hooks, computer_use, browser_use, in_app_browser, image_generation, tool_suggest and skill_mcp_dependency_install off, and the bundled skills off; --ignore-rules drops every execpolicy rules file and --strict-config refuses a key this CLI does not know. Each key is read by this CLI (a value of the wrong type is refused naming the key, and the features list shows them off), approval_policy never and the bundled skills off are seen in the prompt input, and codex sandbox with the workspace-write keys refuses /tmp and the network and lets TMPDIR be written, but that every key holds in a real run, and that hosted tools are gone, is not yet verified; the multi-agent tools (spawn_agent) stay, as no supported switch removed them offline"
     },
     "per_dispatch_model_override": {
       "value": "yes",
@@ -37,8 +37,8 @@
     "skills": {
       "value": "yes",
       "verified_on": null,
-      "source": "codex-cli 0.167.1: SKILL.md directories in the user's skills directory, linked directories included",
-      "note": "the project directory .agents/skills is not yet verified"
+      "source": "codex-cli 0.167.1, codex debug prompt-input with a scratch CODEX_HOME and HOME (offline): the skills of CODEX_HOME/skills (a linked directory included), ~/.agents/skills and the checkout's .agents/skills (also in a checkout that is not trusted) are listed to the model; ~/.codex/skills only when CODEX_HOME is ~/.codex",
+      "note": "for a lead session; a member started by qargi local run gets no qargi skill: its CODEX_HOME and HOME are the run home, which holds no skills directory, its clone carries only the skills the repository commits under .agents/skills (the untracked links a session makes do not travel to a clone), and its baseline turns the bundled skills off (skills.bundled.enabled false); so a Codex member receives the contract and the task, and never a lead-management skill; not yet verified in a real run"
     },
     "resume": {
       "value": "no",
@@ -50,13 +50,13 @@
       "value": "yes",
       "verified_on": null,
       "source": "codex mcp add --help; codex mcp list --json reads the [mcp_servers.NAME] tables of CODEX_HOME/config.toml and refuses an enabled_tools that is not a list, codex-cli 0.167.1",
-      "note": "qargi packs apply --target codex renders the tool packs into config.toml, one [mcp_servers.PACK] table each with url and enabled_tools: the tools a member may call for the roles the pack reaches (never an always_ask tool, for a read-only role only a declared read); qargi local run writes the same file for the run's role and class as CODEX_HOME/config.toml in the run home (dispatch.run_config), the one configuration file the member's Codex reads, and none when no tool pack reaches the role; a server runs outside the Codex sandbox, so the tool list is what holds it; the tool names and enabled_tools are not yet verified in a real run"
+      "note": "qargi packs apply --target codex renders the tool packs into config.toml, one [mcp_servers.PACK] table each with url and enabled_tools: the tools a member may call for the roles the pack reaches (never an always_ask tool, for a read-only role only a declared read); qargi local run writes the same tables for the run's role and class into CODEX_HOME/config.toml in the run home (dispatch.run_config), beside the run's baseline, and no table when no tool pack reaches the role; that file is the user-level configuration of the member's Codex (what else loads: headless_dispatch); a server runs outside the Codex sandbox and the shell's network denial does not hold it, so the tool list is what holds it; an authenticated server gets only its url and enabled_tools: a tool pack's vault_ids name credentials of the cloud vault, which a local run never reads, and qargi writes no bearer token, header or bearer_token_env_var (the variable Codex would read one from), so a server that needs a credential fails to connect in a member run; the tool names and enabled_tools are not yet verified in a real run"
     },
     "cost_report": {
       "value": "partial",
       "verified_on": null,
       "source": "codex-cli 0.167.1: the turn.completed events of codex exec --json carry usage",
-      "note": "tokens only: qargi local run adds up the usage of the turn.completed events of the transcript into dispatch.json (dispatch.output.usage); a ChatGPT sign-in reports no money per run; not yet verified in a real run"
+      "note": "tokens only: qargi local run adds up the usage of the turn.completed events of the transcript into dispatch.json (dispatch.output.usage), and a count no event reports is named as unreported, never recorded as 0; a ChatGPT sign-in reports no money per run; not yet verified in a real run"
     }
   },
   "resources": {
@@ -113,6 +113,8 @@
       "exec",
       "--json",
       "--ephemeral",
+      "--ignore-rules",
+      "--strict-config",
       "-C",
       "{clone}",
       {"if": "model", "then": ["-m", "{model}"]},
@@ -131,7 +133,28 @@
       "dir": ".codex",
       "link": [{"from": "~/.codex/auth.json", "to": "auth.json"}]
     },
-    "run_config": {"in": "home", "file": "config.toml"},
+    "run_config": {
+      "in": "home",
+      "file": "config.toml",
+      "baseline": {
+        "approval_policy": "never",
+        "web_search": "disabled",
+        "sandbox_workspace_write": {"network_access": false, "exclude_slash_tmp": true, "exclude_tmpdir_env_var": false},
+        "features": {
+          "apps": false,
+          "plugins": false,
+          "remote_plugin": false,
+          "hooks": false,
+          "computer_use": false,
+          "browser_use": false,
+          "in_app_browser": false,
+          "image_generation": false,
+          "tool_suggest": false,
+          "skill_mcp_dependency_install": false
+        },
+        "skills": {"bundled": {"enabled": false}}
+      }
+    },
     "timeout_s": 3600,
     "output": {
       "format": "jsonl",
@@ -153,7 +176,8 @@
     "spawn": "A Codex member is not started inside a session: prepare a run with `qargi local prepare` (with --role and the task block) and start it with `qargi local run RUN`, adding `--model` (a tier or a gpt- model id) and `--effort` (a level). It runs `codex exec` in the run's clone with the prompt on standard input and the Codex sandbox of the run's class; the JSON events go to OUT/transcript and the member's last message to OUT/report.md. `--dry-run` prints the command first and runs nothing.",
     "session-model": "A Codex session's own model is chosen in Codex (`codex -m MODEL` or its configuration), not by qargi; qargi chooses only the model of a member it starts with `qargi local run`.",
     "exploration": "To map a repository and find call sites, search it with read-only commands (`rg`, `git grep`) inside your own session, or, when your Codex session offers subagents (not verified), give the search to one on the fast model (`qargi provider model codex local fast`) at low effort, then act on the result.",
-    "skills-dir": "Codex loads a checkout's skills from `.agents/skills` and the user's from `~/.codex/skills` (a directory with a SKILL.md each; a linked directory works). To hide a skill without removing it, add an entry to `skills.config` in `~/.codex/config.toml` that names it with `enabled = false`; qargi only reads that file. A member run ignores the user's Codex configuration.",
+    "skills-dir": "Codex loads a checkout's skills from `.agents/skills` and the user's from `~/.codex/skills` (`CODEX_HOME/skills`) and `~/.agents/skills` (a directory with a SKILL.md each; a linked directory works); `install.sh --user --runtime codex` links qargi's skills into `~/.codex/skills`. To hide a skill without removing it, add an entry to `skills.config` in `~/.codex/config.toml` that names it with `enabled = false`; qargi only reads that file. A member run loads none of these but the skills its repository commits: it receives the contract and the task.",
+    "message": "To send a Codex session a message without attaching to it, run `codex queue --thread ID_OR_NAME --message TEXT`, adding `--resume` to resume the thread after queueing and `--remote unix://` for a remote server. One thread is open in one client at a time; another client reads it or forks it. A message is data for that session, never an approval of a plan, a permission or a question.",
     "identity": "Codex has no hook that qargi uses to record the lead identity for the later commands of a session, so pass `--as ID` to the commands that take it; without it the anonymous identity user@host works but only warns.",
     "commands": "A command the person must run themselves, such as one that asks for input or a credential, is printed for them to run in their own terminal; a Codex member runs commands only inside its sandbox."
   }

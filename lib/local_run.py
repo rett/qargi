@@ -37,19 +37,22 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
                        kept in memory, never printed or recorded); otherwise it is kept as NAME.from-run (mode 600) in the run home, which
                        qargi local list and verify name and qargi local clean removes. A variable env set in the lead's environment to another
                        directory than the links' sources is a note. provider.home_problems states the rules.
-  dispatch.run_config  {in: home|run, file}: the MCP file of the run, rendered when the run starts from resources.mcp (lib/packs_render.py
-                       run_config) for the run's role, as the lead's registry records it (never a file of the run directory), and the run's
-                       class: each server lists the tools a member may call (lib/packs_mcp.py: never an always_ask tool, under the read-only
-                       class only a declared read). in home: RUN/home/DIR/FILE, the run home of dispatch.home, which a runtime reads by itself;
-                       in run: RUN/config/FILE. {run_config} is its path, empty when no tool pack gives the role a tool: then nothing is written
-                       and a file of that name left there is removed. It is written without following a link a member may have put in the run
-                       directory. --dry-run prints its path and the tool names (RUN_CONFIG=, RUN_CONFIG_TOOLS=), never its content.
+  dispatch.run_config  {in: home|run, file, baseline}: the configuration file of the run, rendered when the run starts in the format of
+                       resources.mcp: the baseline (the definition's own settings, the same for every run) at its root, and the MCP servers
+                       from resources.mcp (lib/packs_render.py run_config) for the run's role, as the lead's registry records it (never a file
+                       of the run directory), and the run's class: each server lists the tools a member may call (lib/packs_mcp.py: never an
+                       always_ask tool, under the read-only class only a declared read). in home: RUN/home/DIR/FILE, the run home of
+                       dispatch.home, which a runtime reads by itself; in run: RUN/config/FILE. {run_config} is its path. Without a baseline it
+                       is empty when no tool pack gives the role a tool: then nothing is written and a file of that name left there is removed.
+                       It is written without following a link a member may have put in the run directory. --dry-run prints its path, the tool
+                       names and the baseline (RUN_CONFIG=, RUN_CONFIG_TOOLS=, RUN_CONFIG_BASELINE=), never the servers' addresses.
   dispatch.timeout_s   the bound (default 1800, at most 86400); --timeout replaces it.
   dispatch.exit        {"0": "ok", "*": "failed"}: the exit status -> outcome ok|failed|refused|transport.
   dispatch.output      {format: text|jsonl, usage: {select, skip, tokens, fields, model}}: with usage (jsonl only), when the run ends every line
                        of OUT/transcript that is a JSON object the rule selects (and does not skip) is a report of the tokens the runtime
                        used; each field of the object at `tokens` is added up over those lines, and the sums go to dispatch.json (usage:
-                       events, tokens, model) and to a USAGE= line. Only whole numbers count; a line that is not JSON is passed over.
+                       events, tokens, model) and to a USAGE= line. Only whole numbers count; a line that is not JSON is passed over. A field
+                       that no such line reports is left out of tokens and named in unreported (absent is not zero).
 Placeholders (the closed set): member, model, effort_native, prompt_file, prompt_arg, clone, run_dir, out_dir, project, run_config, final_message
 (and the short names effort, out, prompt). agent_file and session_id belong to runtimes with agent files and to resume; they are refused here.
 A path of the run in the argv ({clone}, {out_dir}, {run_dir}, alone or followed by a path such as {clone}/.git) stays inside its directory and, where it
@@ -76,7 +79,7 @@ the author qargi) and TMPDIR of the run, plus QARGI_MEMBER_RUN (the run director
 member changes to), PATH, the env_pass names and the variable of dispatch.home. It runs in its own session without a shell, its standard output goes
 to OUT/transcript and its standard error to OUT/transcript.err, and a process group that outlives the bound is killed. A record of what ran is
 written to RUN/dispatch.json (argv, class, model, outcome; never an environment value): when the run starts (outcome running, with the process ids of
-the runner and, once started, of the member), and again when it ends, whatever ended it: the member's exit, the bound, a run home, MCP file or
+the runner and, once started, of the member), and again when it ends, whatever ended it: the member's exit, the bound, a run home, configuration file or
 transcript that cannot be made (refused, with the error), a command that cannot be started (transport), or SIGINT, SIGTERM or SIGHUP to the runner
 (interrupted, with the signal: the member's process group is stopped, TERM then KILL, and the run home's links are removed). SIGKILL leaves the start
 record: the next start of the run refuses while that runner or its member still runs (the member is found by QARGI_MEMBER_RUN in its environment),
@@ -599,12 +602,39 @@ def write_back(real, data):
         os.close(dfd)
 
 
-# ---- the MCP file of the run (dispatch.run_config) -----------------------------------------------------------------------------------
+# ---- the configuration file of the run (dispatch.run_config) -------------------------------------------------------------------------
+
+def merge_into(doc, add, where=""):
+    """Put every key of add into doc, objects key by key; a key both set to something other than two objects is a refusal (the rules of
+    provider.run_config_problems keep the baseline out of the servers' place, so this is the last check, not the first)."""
+    for k, v in add.items():
+        if k in doc and isinstance(doc[k], dict) and isinstance(v, dict):
+            merge_into(doc[k], v, where + "/" + k)
+        elif k in doc:
+            fail("the baseline of the run's configuration file and its MCP servers both set %s/%s" % (where, k))
+        else:
+            doc[k] = v
+
+
+def config_bytes(mcp, baseline, data):
+    """The bytes of the run's file: the MCP servers (data, bytes in the format of resources.mcp, or None) with the baseline at the root, written in that
+    format (the TOML writer of lib/packs_render.py, or JSON); None when there is neither."""
+    if not baseline:
+        return data
+    import copy
+    import packs_render
+    fmt = (mcp or {}).get("format", "json")
+    doc = copy.deepcopy(baseline)
+    if data is not None:
+        import tomllib
+        merge_into(doc, tomllib.loads(data.decode("utf-8")) if fmt == "toml" else json.loads(data))
+    return packs_render.toml_dumps(doc) if fmt == "toml" else (json.dumps(doc, indent=2, sort_keys=True) + "\n").encode()
+
 
 def plan_run_config(disp, doc, run, home, project, cls, runtime):
-    """None, or the MCP file of the run: {in, file, path, data (bytes or None: no tool for the run, the file is removed), tools, servers, role, note}.
-    The role is the one the lead's registry records for the run; the class is the run's. The rules are provider.run_config_problems. Nothing is
-    written here."""
+    """None, or the configuration file of the run: {in, file, path, data (bytes or None: no baseline and no tool for the run, the file is removed),
+    tools, servers, role, baseline, note}. The role is the one the lead's registry records for the run; the class is the run's. The rules are
+    provider.run_config_problems. Nothing is written here."""
     rc = disp.get("run_config")
     if rc is None:
         return None
@@ -612,25 +642,33 @@ def plan_run_config(disp, doc, run, home, project, cls, runtime):
     if bad:
         fail("%s of %s" % (bad[0], runtime))
     where = home["path"] if rc["in"] == "home" else os.path.join(run, CONFIG_DIR)
-    plan = {"in": rc["in"], "file": rc["file"], "path": os.path.join(where, rc["file"]), "data": None, "tools": [], "servers": {}, "role": None, "note": None}
-    role = registry_line(run).get("ability")
-    if not isinstance(role, str) or not role:
-        plan["note"] = "the lead's registry names no role for this run, so it is given no MCP tool"
-        return plan
-    plan["role"] = role
+    mcp = (doc.get("resources") or {}).get("mcp")
+    base = rc.get("baseline") or None
+    plan = {"in": rc["in"], "file": rc["file"], "path": os.path.join(where, rc["file"]), "data": None, "tools": [], "servers": {}, "role": None,
+            "baseline": base, "note": None}
     import packs_mcp
     import packs_render
+    role = registry_line(run).get("ability")
+    got = None
+    if not isinstance(role, str) or not role:
+        plan["note"] = "the lead's registry names no role for this run, so it is given no MCP tool"
+    else:
+        plan["role"] = role
+        try:
+            got = packs_render.run_config(paths.conf(), project, [role], {role: cls == "read-only"}, mcp)
+        except (packs_mcp.McpError, ValueError, OSError) as e:      # the links, the answers or a pack cannot be read: no run is started from a guess
+            fail("the MCP file of the run (dispatch.run_config of %s) cannot be made: %s" % (runtime, e))
+        if got:
+            plan.update(tools=got["tools"], servers=got["servers"])
     try:
-        got = packs_render.run_config(paths.conf(), project, [role], {role: cls == "read-only"}, (doc.get("resources") or {}).get("mcp"))
-    except (packs_mcp.McpError, ValueError, OSError) as e:          # the links, the answers or a pack cannot be read: no run is started from a guess
-        fail("the MCP file of the run (dispatch.run_config of %s) cannot be made: %s" % (runtime, e))
-    if got:
-        plan.update(data=got["data"], tools=got["tools"], servers=got["servers"])
+        plan["data"] = config_bytes(mcp, base, got["data"] if got else None)
+    except ValueError as e:                                          # a value the writer does not write, or a file that does not read back
+        fail("the configuration file of the run (dispatch.run_config of %s) cannot be made: %s" % (runtime, e))
     return plan
 
 
 def config_dir_fd(run, plan, home):
-    """A descriptor of the directory of the run's MCP file, made when missing, opened part by part without following a link (home_dir_fd for the run
+    """A descriptor of the directory of the run's configuration file, made when missing, opened part by part without following a link (home_dir_fd for the run
     home; RUN/config otherwise)."""
     if plan["in"] == "home":
         return home_dir_fd(run, home, True)
@@ -643,14 +681,14 @@ def config_dir_fd(run, plan, home):
         try:
             return os.open(CONFIG_DIR, O_DIR, dir_fd=fd)
         except OSError as e:
-            fail("%s is not a plain directory of the run; the MCP file of the run goes there and nowhere else (%s)" % (os.path.join(run, CONFIG_DIR), e.strerror or e))
+            fail("%s is not a plain directory of the run; the configuration file of the run goes there and nowhere else (%s)" % (os.path.join(run, CONFIG_DIR), e.strerror or e))
     finally:
         os.close(fd)
 
 
 def put_run_config(run, plan, home):
-    """Write the run's MCP file (mode 600, a new or regular file of its own, never through a link), or, with no tool for the run, remove a file of
-    that name left there (a link or a regular file; anything else is a refusal), so the runtime reads none."""
+    """Write the run's configuration file (mode 600, a new or regular file of its own, never through a link), or, with no baseline and no tool for the
+    run, remove a file of that name left there (a link or a regular file; anything else is a refusal), so the runtime reads none."""
     fd = config_dir_fd(run, plan, home)
     try:
         try:
@@ -658,7 +696,7 @@ def put_run_config(run, plan, home):
         except FileNotFoundError:
             st = None
         if st is not None and not (stat.S_ISREG(st.st_mode) or stat.S_ISLNK(st.st_mode)):
-            fail("%s is in the place of the run's MCP file and is not a file; remove it, or the run is refused" % plan["path"])
+            fail("%s is in the place of the run's configuration file and is not a file; remove it, or the run is refused" % plan["path"])
         if st is not None and (stat.S_ISLNK(st.st_mode) or st.st_nlink != 1 or plan["data"] is None):
             os.unlink(plan["file"], dir_fd=fd)                  # a link or a second name is never written through
         if plan["data"] is None:
@@ -940,6 +978,8 @@ def dry(plan, run):
         else:
             print("RUN_CONFIG=" + rc["path"])
         print("RUN_CONFIG_TOOLS=" + ",".join(rc["tools"]))
+        if rc["baseline"]:                                 # the definition's own settings, the same for every run of the runtime
+            print("RUN_CONFIG_BASELINE=" + json.dumps(rc["baseline"], sort_keys=True, separators=(",", ":")))
     print("PROMPT_VIA=" + plan["via"])
     print("PROMPT_FILE=" + plan["prompt_file"])
     print("TRANSCRIPT=" + os.path.join(run, "out", "transcript"))
@@ -956,12 +996,13 @@ USAGE_SCAN_MAX = 256 * 1024 * 1024    # bytes of a transcript read for the usage
 
 
 def read_usage(path, rule):
-    """{events, tokens: {field: sum}, model?, note?} of the transcript at path under the usage rule of dispatch.output, or None when it cannot
-    be read as a file of the run (it is opened without following a link or waiting for a writer, as a regular file only). A line counts when it
-    is a JSON object whose select pointers all have their values, none of whose skip pointers has its value, and whose tokens pointer is an
-    object; each field that is a whole number of at least 0 is added. model: the last text at the model pointer, when the rule has one."""
+    """{events, tokens: {field: sum}, unreported?, model?, note?} of the transcript at path under the usage rule of dispatch.output, or None when it
+    cannot be read as a file of the run (it is opened without following a link or waiting for a writer, as a regular file only). A line counts when
+    it is a JSON object whose select pointers all have their values, none of whose skip pointers has its value, and whose tokens pointer is an
+    object; each field that is a whole number of at least 0 is added. A field that no counted line reports is left out of tokens and named in
+    unreported: absent is not zero. model: the last text at the model pointer, when the rule has one."""
     fields = list(rule["fields"])
-    sums, events, model, read, note = {f: 0 for f in fields}, 0, None, 0, None
+    sums, events, model, read, note = {}, 0, None, 0, None
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError:
@@ -992,14 +1033,16 @@ def read_usage(path, rule):
                 for k in fields:
                     n = counts.get(k)
                     if isinstance(n, int) and not isinstance(n, bool) and n >= 0:
-                        sums[k] += n
+                        sums[k] = sums.get(k, 0) + n
                 if rule.get("model"):
                     m = pointer(rec, rule["model"])
                     if isinstance(m, str) and m:
                         model = m[:80]
     finally:
         os.close(fd)
-    got = {"events": events, "tokens": sums}
+    got = {"events": events, "tokens": {f: sums[f] for f in fields if f in sums}}
+    if events and len(sums) < len(fields):
+        got["unreported"] = [f for f in fields if f not in sums]
     if rule.get("model"):
         got["model"] = model
     if note:
@@ -1012,8 +1055,9 @@ def usage_line(u):
         return "USAGE=unknown: the transcript could not be read as a file of the run"
     if not u["events"]:
         return "USAGE=none: no line of the transcript is a usage report of the runtime (dispatch.output.usage)"
-    return "USAGE=%s (%d event%s%s)" % (" ".join("%s=%d" % kv for kv in u["tokens"].items()), u["events"], "" if u["events"] == 1 else "s",
-                                       "; " + u["note"] if u.get("note") else "")
+    return "USAGE=%s (%d event%s%s%s)" % (" ".join("%s=%d" % kv for kv in u["tokens"].items()) or "unreported", u["events"], "" if u["events"] == 1 else "s",
+                                         "; not reported, so not counted: " + ",".join(u["unreported"]) if u.get("unreported") else "",
+                                         "; " + u["note"] if u.get("note") else "")
 
 
 INTERRUPT = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
@@ -1566,7 +1610,7 @@ def run_it(plan, run):
             if proc is not None:
                 kill_group(proc)
                 code = proc.returncode
-        except Stop as e:                                # the run home, the MCP file, the transcripts or the report could not be made as the run needs
+        except Stop as e:                                # the run home, the configuration file, the transcripts or the report could not be made as the run needs
             outcome, error, stop_code = "refused", str(e), e.code
     finally:
         sig.armed = False
@@ -1601,6 +1645,8 @@ def run_it(plan, run):
     rc = plan["run_config"]
     if rc:                                                 # names only, never the file
         rec["run_config"] = {"file": rc["path"] if rc["data"] is not None else None, "role": rc["role"], "tools": rc["tools"]}
+        if rc["baseline"]:
+            rec["run_config"]["baseline"] = rc["baseline"]
     if report:
         rec["report"] = report
     if manifest:

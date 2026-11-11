@@ -50,6 +50,9 @@
 #  13  the command gets HOME=RUN/home, no variable of the caller that env_pass does not name, and with dispatch.home its variable at
 #      RUN/home/DIR with each link there while it runs (a file of the hermetic home holding a sentinel) and gone after; the sentinel
 #      and the source paths are in no output, record or transcript, and the caller's home is unchanged
+#  14  with dispatch.run_config.baseline, a write run and a read-only one (as in 12) each get the run's configuration file holding the
+#      baseline and nothing else (no tool pack reaches a role in the hermetic home), read back in the format of resources.mcp, found by
+#      the command in its run home while it runs (in: home), and recorded in RUN/dispatch.json; whether the runtime honours a key is live
 # A case whose verb the adapter does not implement (exit 3) is skipped. A mutated copy of the tool tree (the descriptor
 # changed, the adapter run from the copy) tests what the definition of the runtime cannot show on its own: an effort
 # with no control (changed where the models live: the catalog the definition references, or the definition itself), a surface that
@@ -493,6 +496,8 @@ case10() {
 CMD0=$(jq -r '.dispatch.argv[0] // empty | strings' "$DESC")
 HOMEENV=$(jq -r '.dispatch.home.env // empty | strings' "$DESC")
 HOMEREL=$(jq -r '.dispatch.home.dir // empty | strings' "$DESC")
+CFGIN=$(jq -r '.dispatch.run_config.in // empty | strings' "$DESC")
+CFGFILE=$(jq -r '.dispatch.run_config.file // empty | strings' "$DESC")
 CBIN=$W/cbin
 CRUN=""; CRC=0; COUT=""
 pycases() {   # PYTHON-CODE ARG...: the code with sys.argv[1] the lib of this suite (lib/conformance/cases.py is `cases`) and the descriptor as doc
@@ -510,6 +515,9 @@ stub_ready() {   # the wrapper named argv[0] first on PATH: it records its envir
     if [[ $HOMEENV =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
       printf 'd=$(printenv %s)\n' "$HOMEENV"
       printf "for f in \"\$d\"/* \"\$d\"/.[!.]*; do [ ! -L \"\$f\" ] || echo \"\${f##*/}\"; done > '%s'\n" "$W/cmd.home"
+      if [ "$CFGIN" = home ] && [[ $CFGFILE =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]]; then   # the run's configuration file as the command finds it
+        printf "[ ! -f \"\$d/%s\" ] || cp \"\$d/%s\" '%s'\n" "$CFGFILE" "$CFGFILE" "$W/cmd.cfg"
+      fi
     fi
     printf "QARGI_STUB_LOG='%s' exec '%s' \"\$@\"\n" "$W/cmd.log" "$STUB"
   } > "$CBIN/$CMD0" && chmod 755 "$CBIN/$CMD0"
@@ -527,7 +535,7 @@ cmdrun() {   # CLASS LIB: one run of LIB/local_run.py of the class with the stub
   : > "$CRUN/refs.before"; : > "$CRUN/clone/src/a.go"
   if [ "$cls" = write ]; then printf 'build\n' > "$CRUN/ability"; else printf 'review\n' > "$CRUN/ability"; fi
   printf 'TASK: conformance task\nDONE: true\n' > "$CRUN/task.md"
-  : > "$W/cmd.log"; rm -f "$W/cmd.env" "$W/cmd.home"
+  : > "$W/cmd.log"; rm -f "$W/cmd.env" "$W/cmd.home" "$W/cmd.cfg"
   COUT=$(CONFORMANCE_CALLER_SECRET=caller-$$ PATH="$CBIN:$PATH" python3 -I "$2/local_run.py" "$CRUN" --project conformance --runtime "$NAME" --class "$cls" 2>"$W/cmd.err"); CRC=$?
 }
 cmd_skip() {   # why case 12 or 13 cannot run, or nothing
@@ -638,12 +646,45 @@ case13() {
   finish 13 "$title"
 }
 
+case14() {
+  begin
+  local title="every run's configuration file holds the baseline" why cls lib f got want fmt runs=""
+  if [ "$(jq -r '.dispatch.run_config.baseline | type' "$DESC" 2>/dev/null)" != object ]; then nothing "dispatch.run_config has no baseline"; finish 14 "$title"; return; fi
+  why=$(cmd_skip)
+  if [ -n "$why" ]; then nothing "$why"; finish 14 "$title"; return; fi
+  stub_ready || { ran; problem "internal: could not put the stub in place of $CMD0"; finish 14 "$title"; return; }
+  want=$(jq -cS .dispatch.run_config.baseline "$DESC"); fmt=$(jq -r '.resources.mcp.format // "json"' "$DESC")
+  for cls in write read-only; do
+    lib=$TOOL/lib
+    if [ "$cls" = read-only ] && [ "$(eff local read_only_barrier)" = no ]; then
+      if [ "$(jq -r '.capabilities.read_only_barrier.value // "no"' "$DESC")" = no ]; then note "no read-only run: read_only_barrier is no"; continue; fi
+      mutate ".capabilities.read_only_barrier.verified_on = \"$(date +%F)\"" || { ran; problem "internal: could not make a changed copy of the tool tree"; continue; }
+      lib=$W/mut/lib
+    fi
+    cmdrun "$cls" "$lib"; ran
+    if [ "$CRC" != 0 ]; then problem "$cls: qargi local run exited $CRC: $(tail -2 "$W/cmd.err" | paste -sd' ' - | cut -c1-200)"; continue; fi
+    if [ "$CFGIN" = home ]; then f=$CRUN/home/$HOMEREL/$CFGFILE; else f=$CRUN/config/$CFGFILE; fi
+    # no tool pack reaches a role in the hermetic home, so the file is the baseline and nothing else, in the format of resources.mcp
+    if ! got=$(python3 -I -c 'import json, sys, tomllib
+data = open(sys.argv[1], "rb").read()
+print(json.dumps(tomllib.loads(data.decode()) if sys.argv[2] == "toml" else json.loads(data), sort_keys=True, separators=(",", ":")))' "$f" "$fmt" 2>/dev/null); then
+      problem "$cls: the run's configuration file ${f#"$CRUN"/} is missing or cannot be read as $fmt"; continue
+    fi
+    [ "$got" = "$want" ] || problem "$cls: the run's configuration file is not the baseline alone: $(cut -c1-200 <<<"$got")"
+    jq -e --argjson b "$want" '.run_config.baseline == $b' "$CRUN/dispatch.json" >/dev/null 2>&1 || problem "$cls: RUN/dispatch.json does not record the baseline (run_config.baseline)"
+    if [ "$CFGIN" = home ] && ! cmp -s "$f" "$W/cmd.cfg"; then problem "$cls: the command did not find the file in its run home while it ran"; fi
+    runs="$runs $cls"
+  done
+  [ -z "$runs" ] || note "runs:$runs; each got the baseline, $(jq -r 'keys | length' <<<"$want") top-level keys"
+  finish 14 "$title"
+}
+
 echo "conformance: $NAME (${AD_REL:-no adapter}${MODE:+, dispatch $MODE})"
 if [ -n "$AD_REL" ] && [ ! -x "$ADAPTER" ]; then echo "FAIL [0] the adapter $AD_REL does not exist or is not executable"; exit 1; fi
 if [ ! -x "$STUB" ]; then echo "FAIL [0] no stub at $STUB (an executable; see tests/providers/lib/stub.py)"; exit 1; fi
 if [ -n "$AD_REL" ]; then case1; case2; case3; case4; case5; case6; case7; case8; case9; case10
 else echo "skip [-] the adapter cases 1 to 10: $NAME has no adapter (adapter is null in its descriptor)"; fi
-if [ "$MODE" = command ]; then case11; case12; case13
-else echo "skip [-] the command cases 11 to 13: $NAME is not a command runtime (dispatch.mode is ${MODE:-not set})"; fi
+if [ "$MODE" = command ]; then case11; case12; case13; case14
+else echo "skip [-] the command cases 11 to 14: $NAME is not a command runtime (dispatch.mode is ${MODE:-not set})"; fi
 echo "conformance: $NAME: $nok ok, $nfail FAIL, $nskip skip"
 [ "$nfail" = 0 ]

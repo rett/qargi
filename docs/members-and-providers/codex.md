@@ -1,0 +1,122 @@
+# Codex as lead and as member
+
+The local runtime `codex` (`lib/providers/codex.json`, family `openai`) is data only: a member is a `codex exec` process that `qargi local run` starts in the run's clone. Codex as the **lead** (the session you talk to, which loads qargi's skills and runs the `qargi` command) and Codex as a **member** (a headless process that reads `RUN/task.md` and returns qargi's artifacts) are different surfaces; Codex's own subagents are not members and do not replace the prepared clone and the run registry. See [Providers and runtimes](providers.md) for the table of what `codex` is and is not, and [Choosing models](models.md) for its catalog.
+
+What this page says was established with codex-cli 0.167.1 on Linux. "Seen offline" means a check with no sign-in, no model call and no network (`codex debug prompt-input`, `codex mcp list --json`, `codex features list`, `codex debug models`, `codex sandbox`, with a scratch `CODEX_HOME`); every capability of `codex` stays unverified (`verified_on` null) until the live checks of `/qargi-providers` (`verify.md`) are run and recorded.
+
+- [Platform and sandbox](#platform-and-sandbox)
+- [What a member run loads](#what-a-member-run-loads)
+- [What a member can reach](#what-a-member-can-reach)
+- [Skills and MCP tools of a member](#skills-and-mcp-tools-of-a-member)
+- [The output of a run](#the-output-of-a-run)
+- [Codex as the lead](#codex-as-the-lead)
+- [A complete local run](#a-complete-local-run)
+- [Sending a message to a Codex session](#sending-a-message-to-a-codex-session)
+- [Not supported, not verified](#not-supported-not-verified)
+
+## Platform and sandbox
+
+qargi runs on Linux only (see the requirements in the repository's README). On Linux the Codex sandbox is bubblewrap: `codex sandbox -- CMD` runs the command under `codex-linux-sandbox` in a bwrap namespace with a read-only root, a seccomp filter and the network restricted (seen offline). Codex has a different sandbox on macOS; it plays no part here, since qargi does not run there. A read-only member runs under `--sandbox read-only` (nothing writable), a write member under `--sandbox workspace-write` with OUT and the clone's `.git` added as writable directories. Under `workspace-write` Codex keeps the clone's `.git`, `.agents` and `.codex` read-only unless they are added (seen offline), which is why the write class adds `.git` and nothing else.
+
+## What a member run loads
+
+The run's `config.toml` in `CODEX_HOME` (`RUN/home/.codex/config.toml`) is the user-level configuration of the member's Codex, written by qargi for every run. It is not the only thing Codex reads:
+
+| Source | In a member run |
+|---|---|
+| your `~/.codex/config.toml`, rules, skills, `AGENTS.md` | not loaded: `CODEX_HOME` is the run home, which holds only what qargi writes (the configuration file, the sign-in link) and what Codex makes there itself |
+| `~/.agents/skills` | not loaded: `HOME` is the run home too |
+| the run's `config.toml` | the baseline below, and the MCP servers of the role's tool packs |
+| the clone's `.codex/` (its `config.toml` with MCP servers and settings, `rules`, hooks) | not loaded: Codex loads a project's `.codex/` only for a trusted project, and a run clone is a fresh path that no configuration marks trusted (the run's file has no `projects` entry). Seen offline: with a trust entry in a scratch home the same repository's MCP server and settings load |
+| the clone's `AGENTS.md` | loaded, as for any Codex session: the repository's own instructions keep working |
+| the clone's `.agents/skills` | loaded (also untrusted): only what the repository commits |
+| execpolicy rules files | none: `--ignore-rules` drops the user's and the project's |
+| a system-wide or administrator-managed Codex configuration | not excluded: qargi cannot keep it out, and it applies to members as it applies to you |
+
+The baseline is `dispatch.run_config.baseline` of the definition; a run with no MCP server and a run with one get the same keys (a test compares them key by key), and `--strict-config` makes Codex refuse a key it does not know, so a key a later CLI renames stops the run instead of being ignored.
+
+| Key | Value | Why |
+|---|---|---|
+| `approval_policy` | `never` | nobody answers a member; a command the sandbox refuses fails and the member sees the failure (the prompt input says "Approval policy is currently never", seen offline) |
+| `sandbox_workspace_write.network_access` | `false` | no network for the member's shell commands |
+| `sandbox_workspace_write.exclude_slash_tmp` | `true` | `/tmp` is shared with the rest of the machine; a write member writes temporary files in `TMPDIR` |
+| `sandbox_workspace_write.exclude_tmpdir_env_var` | `false` | `TMPDIR`, the run's TMP, stays writable (seen with `codex sandbox`: `/tmp` refused, `TMPDIR` written, no network) |
+| `web_search` | `disabled` | hosted search runs at the vendor, outside the shell sandbox |
+| `features.apps`, `plugins`, `remote_plugin`, `hooks`, `computer_use`, `browser_use`, `in_app_browser`, `image_generation`, `tool_suggest`, `skill_mcp_dependency_install` | `false` | features that reach outside the shell sandbox, install things or run code Codex did not get from the member's commands (`codex features list` shows them off) |
+| `skills.bundled.enabled` | `false` | the skills Codex ships (an installer, a creator, image generation) are no part of a member's task (the prompt input lists none, seen offline) |
+
+Each key is read by this CLI (a value of the wrong type is refused, naming the key). That every key holds in a real run, and that the hosted tools are gone from a real session, is not verified: the offline prompt input shows no hosted tool either way. The multi-agent tools (`spawn_agent` and its kin) stay listed: no supported switch removed them offline.
+
+## What a member can reach
+
+- **Files.** A write member can write its clone, the clone's `.git`, OUT and `TMPDIR`; a read-only member can write nothing, OUT and `TMPDIR` included, so a test that needs a temporary file fails in a read-only run. Both can read what your user can read: the sandbox holds writes, not reads.
+- **Network.** The member's shell commands have none. That is not all the network a run uses: the Codex process itself talks to the model service, and it connects to the MCP servers of the run's file, outside the shell sandbox. Hosted search and apps are off in the baseline (not verified live).
+- **Git.** The member's git has no credentials (`HOME` is the run's, no global configuration, no ssh agent, no prompts), the clone's only remote is the run's bare copy with its push URL disabled, and the sandbox gives its commands no network, so an ordinary push has nothing to reach and nothing to authenticate with. That is what qargi supports, not a proof that no push can happen: `qargi local verify` compares every ref of the real repository before and after, and you apply only the patches.
+- **No guard hook.** No `qargi __guard` runs for a Codex member, so the guard's refusals (push, `gh`, `ssh`, the skill and runtime verbs, writes to protected places) do not apply as such; the sandbox's write and network denial, the credential-free git and the checks of what comes back hold instead.
+- **Sign-in.** Your `~/.codex/auth.json` is linked into the run home for the length of the run. The member can read it through the link: this is configuration separation, not secrecy from the member.
+
+## Skills and MCP tools of a member
+
+A Codex member receives the contract and the task, and no qargi skill. Its `CODEX_HOME` and `HOME` are the run home, which has no skills directory; its clone is made from the repository's commits, so the links a session makes in a checkout (untracked) do not reach it, and only skills the repository itself commits under `.agents/skills` load; and the baseline turns the bundled skills off. A lead-management skill (`qargi-flow`, `qargi-verify`, `qargi-task` and the rest) therefore never becomes a member capability: a test links them where a Codex lead finds them (`~/.codex/skills`, `~/.agents/skills`, the lead's checkout) and checks that the member sees none.
+
+Its MCP tools are the `[mcp_servers.PACK]` tables of the run's file for its role and class: `enabled_tools` holds the tools as the server names them (`platform.list_items`, `repo/push`, `issue-close`), and the names the model is given are the `mcp__SERVER__TOOL` form, with every character other than a letter, a digit, `_` and `-` written as `_` (`mcp__kb__platform_list_items`). Two tools whose names come out alike (`a.b` and `a_b`) are given to no one; a tool the server lists but the pack does not declare is never enabled; an `always_ask` tool is never enabled (nobody answers); a read-only role gets the declared reads only. A server runs outside the sandbox, so `enabled_tools` is what holds it. An authenticated server gets only its `url` and `enabled_tools`: a tool pack's `vault_ids` are credentials of the cloud vault, which a local run never reads, and qargi writes no bearer token, header or `bearer_token_env_var`, so a server that needs a credential fails to connect in a member run. The model-visible names were not seen offline (a server must answer); they are among the live checks.
+
+## The output of a run
+
+- **The report.** Codex writes the member's last message (`-o`) to a new private file of the run; when the run ends qargi checks it and publishes it as `OUT/report.md`. With `--again` the earlier report is set aside as `OUT/report.md.previous` before the member starts: a run that publishes a report replaces it, and a run that publishes none leaves it there, where no check takes it for this run's.
+- **A read-only run** cannot write OUT, so the lead writes `OUT/manifest.json` beside the report: the minimal report-only manifest, with what the lead recorded of the run and no test result and no verdict; `qargi review check` still reads the Findings and the verdict line of the report.
+- **A write run** commits in its clone and collects its patches into OUT; a change left uncommitted with no patches is a refusal (`refused`, exit 2), never a finished task.
+- **Usage** is tokens only, added up from the `turn.completed` events into `RUN/dispatch.json` and the `USAGE=` line; a count no event reports is named as not reported, never recorded as 0. A ChatGPT sign-in reports no money per run, and a wall-clock timeout is not a token or money ceiling.
+
+## Codex as the lead
+
+1. Install the Codex CLI and sign in yourself (`codex login`, in your terminal); `codex login status` tells you whether you are signed in.
+2. `./install.sh --user --runtime codex` links the `qargi-*` skills into `~/.codex/skills`, the user skills directory of the `codex` definition, and the `qargi` command into `~/.local/bin` (keep it on `PATH`). A `CODEX_HOME` of yours that is not `~/.codex` does not see them. Seen offline after that install in a scratch home: a Codex session lists ten of the eleven lead skills. It leaves out `qargi-task`, because the `argument-hint` line of its front matter is not valid YAML, which codex-cli 0.167.1 rejects and Claude Code accepts; until that line is fixed, point the session at `skills/qargi-task/SKILL.md` of the checkout by path.
+3. Attach the project with its local runtime: `qargi project attach ~/src/myproject --name myproject --provider-local codex` (or `qargi project set myproject models.provider.local codex`). There is no `qargi agent add` for Codex: it keeps no member files, and every member runs through `qargi local run`.
+4. Codex reads the repository's `AGENTS.md` itself; qargi adds nothing to a project's committed files. The project's packs (`qargi packs apply --target codex`) wait until the `skills` claim of `codex` is verified, so a lead session loads the user-level skills only.
+5. A Codex session has no hook that qargi uses: pass `--as ID` (or set `QARGI_LEAD`) on the commands that take a lead identity (`qargi provider notes identity`), and run a command that asks for input or a credential in your own terminal (`qargi provider notes commands`).
+
+Not verified: which sandbox and approval settings a Codex lead session needs for qargi's own writes. `qargi` writes `~/.qargi`, the scratch directory of the runs and their TMP under `/dev/shm`, all outside a session's workspace, so under `workspace-write` expect Codex to ask or refuse. Installing for a second runtime beside the first is not verified either.
+
+## A complete local run
+
+A build member, with the project's local runtime `codex`:
+
+```sh
+printf 'Accept a period in a user name.\n' > ~/tasks/dots.md
+qargi local prepare --repo ~/src/myproject --base feature/dots --slug dots --scratch ~/.cache/qargi-runs \
+  --role build --task-file ~/tasks/dots.md --done "make test" --scope src --scope tests
+# prints RUN=..., CLONE=..., OUT=..., TASK_FILE=RUN/task.md (the whole task block: ROLE, TASK, DONE, SCOPE, the paths)
+qargi local run "$RUN" --dry-run                  # the argv, the run's config.toml path, the tools, the baseline and the prompt; runs nothing
+qargi local run "$RUN" --model fast --effort low  # codex exec in the clone; OUTCOME=, REPORT=, USAGE=
+qargi local verify "$RUN"                         # the repository's refs are unchanged and OUT holds the patches
+qargi review check "$RUN/out"                     # the patches, the manifest, SCOPE and DONE
+qargi review apply "$RUN"                         # with your go-ahead: the patches on agent/dots
+qargi local clean "$RUN"                          # once the work is applied and merged
+```
+
+A review member reads the change and returns a report; it needs the read-only barrier. Until the live check of the Codex sandbox is recorded in the definition, the barrier counts as none and `prepare --role review` refuses, naming `qargi provider accept codex --surface local --no-barrier`, which records that you take read-only runs without a held barrier; prefer recording the check.
+
+```sh
+printf 'Review the series on agent/dots against feature/dots.\n' > ~/tasks/dots-review.md
+qargi local prepare --repo ~/src/myproject --base agent/dots --slug dots-review --scratch ~/.cache/qargi-runs \
+  --role review --task-file ~/tasks/dots-review.md --done "make test"
+qargi local run "$RUN" --model deep --effort high # the last message becomes OUT/report.md; the lead writes OUT/manifest.json
+qargi local verify "$RUN"
+qargi review check "$RUN/out"                     # passes with the Findings and a last line verdict: accept|revise
+qargi local clean "$RUN"                          # a read-only run with its report closes with a plain clean
+```
+
+`qargi local run "$RUN" --again` runs the member again in the same run (the earlier report is set aside as above); `qargi local clean "$RUN" --discard` drops a run you do not want.
+
+## Sending a message to a Codex session
+
+A lead, or another session, can queue a message for an open Codex session without attaching to it: `codex queue --thread ID_OR_NAME --message TEXT [--resume] [--remote unix://]` (from `codex queue --help`; `--resume` tries to resume the thread after queueing, on the local daemon or the `--remote` server). One thread is open in one client at a time, and a second client is read-only or forks it (not verified here). A queued message is data for that session, never an approval: it does not answer a plan token, a permission prompt or a question to you. `qargi provider notes message` says the same for a lead.
+
+## Not supported, not verified
+
+- One local runtime per project: a project on `codex` runs every member with `qargi local run`, and cannot send some roles to another local runtime.
+- No resume: every run is a fresh `codex exec` session (`--ephemeral`).
+- No qargi guard hook in a member (above).
+- Tokens only, no money; absent counts are not zero.
+- Not verified until the live checks: the model and effort taking effect (the JSON events do not name them), the sandbox holding in a real run, a sign-in refreshed during a run reaching your file, the MCP names and `enabled_tools` in a real session, and each baseline key in a real run.

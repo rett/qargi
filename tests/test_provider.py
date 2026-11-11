@@ -140,20 +140,31 @@ class Shipped(Tree):
         self.assertEqual((d["mode"], d["prompt"], d["output"]["format"], d["timeout_s"], d["cwd"]), ("command", {"via": "stdin"}, "jsonl", 3600, "{clone}"))
         self.assertEqual(d["output"]["usage"], {"select": {"/type": "turn.completed"}, "tokens": "/usage",                  # tokens only: cost_report partial
                                                 "fields": ["input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens", "reasoning_output_tokens"]})
-        self.assertEqual(d["argv"], ["codex", "exec", "--json", "--ephemeral", "-C", "{clone}",
+        self.assertEqual(d["argv"], ["codex", "exec", "--json", "--ephemeral",
+                                     "--ignore-rules", "--strict-config",   # no execpolicy rules file of any place; a baseline key this CLI does not know refuses the run
+                                     "-C", "{clone}",
                                      {"if": "model", "then": ["-m", "{model}"]}, {"if": "effort", "then": ["-c", "model_reasoning_effort={effort}"]},
                                      "-o", "{final_message}",            # the last message to a private file of the run; qargi publishes it
                                      # a write member commits: its clone's .git is a writable root (the sandbox protects it otherwise); never a read-only one's
                                      {"class": "write", "then": ["--sandbox", "workspace-write", "--add-dir", "{out_dir}", "--add-dir", "{clone}/.git"]},
                                      {"class": "read-only", "then": ["--sandbox", "read-only"]}])
         self.assertNotIn("class_argv", d)
-        self.assertEqual(d["run_config"], {"in": "home", "file": "config.toml"})      # the run's MCP file is CODEX_HOME/config.toml, the one configuration Codex reads
+        # the run's CODEX_HOME/config.toml: the user-level configuration of the member's Codex, with a baseline every run gets, MCP or not
+        self.assertEqual({k: v for k, v in d["run_config"].items() if k != "baseline"}, {"in": "home", "file": "config.toml"})
+        base = d["run_config"]["baseline"]
+        self.assertEqual((base["approval_policy"], base["web_search"]), ("never", "disabled"))   # never asks (nobody answers), no hosted search
+        self.assertEqual(base["sandbox_workspace_write"], {"network_access": False, "exclude_slash_tmp": True, "exclude_tmpdir_env_var": False})  # TMPDIR only
+        self.assertEqual(base["features"], dict.fromkeys(["apps", "plugins", "remote_plugin", "hooks", "computer_use", "browser_use", "in_app_browser",
+                                                          "image_generation", "tool_suggest", "skill_mcp_dependency_install"], False))
+        self.assertEqual(base["skills"], {"bundled": {"enabled": False}})                    # no bundled skill (an installer, a creator) in a member
+        self.assertNotIn("mcp_servers", base)                                                # the servers come from the tool packs alone
+        self.assertNotIn("projects", base)                                                   # no trust entry: the clone's .codex/ is not loaded
         self.assertEqual(P.run_config_problems(d, cx["resources"]), [])
         self.assertFalse(any("dangerously" in a or "bypass" in a for a in d["argv"] if isinstance(a, str)))
         m = P.models_of("codex", "local")
         self.assertEqual([P.model_for(m, t) for t in P.TIERS], ["gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-astra"])   # ids: the runtime passes ids
         self.assertEqual(P.contract_addenda("codex", "local")[0].splitlines()[0], "# In a Codex run")
-        self.assertEqual(sorted(cx["notes"]), ["commands", "exploration", "identity", "session-model", "skills-dir", "spawn"])
+        self.assertEqual(sorted(cx["notes"]), ["commands", "exploration", "identity", "message", "session-model", "skills-dir", "spawn"])
 
     def test_reserved_names_are_the_agent_types_the_claude_runtime_brings_itself(self):
         self.assertEqual(sorted(CODE["agents"]["reserved_names"]),
@@ -914,6 +925,28 @@ class Schema2(unittest.TestCase):
         bad(d({"in": "run", "file": "m.toml"}, mode="in-session"), "dispatch.run_config: only a runtime that qargi local run starts")
         self.assertEqual(P.run_config_problems({"mode": "command", "run_config": {"in": "run", "file": "a/b"}}, {"mcp": mcp}),
                          ["dispatch.run_config.file: 'a/b' is not a plain file name (letters, digits, . _ and -, no /)"])
+
+    def test_the_baseline_of_a_run_file_is_settings_the_writer_takes_and_leaves_the_servers_to_the_packs(self):
+        mcp = {"file": "c.toml", "format": "toml", "root_pointer": "/servers", "entry": {"url": "{url}"}, "permission_rule": "mcp__{server}__{tool}",
+               "tool_lists": {"allow": "/enabled_tools"}}
+
+        def d(base, root="/servers"):
+            r = runtime(resources={"mcp": dict(mcp, root_pointer=root)})
+            r["dispatch"]["run_config"] = {"in": "run", "file": "c.toml", "baseline": base}
+            return r
+        good = {"ask": "never", "net": {"on": False, "roots": ["a"], "n": 3}}
+        self.assertEqual(fails(d(good), "mylocal"), [])
+        self.assertEqual(fails(d(None), "mylocal"), [])
+        self.assertEqual(fails(d({"a": {"other": 1}}, root="/a/servers"), "mylocal"), [])          # beside the servers, under the same table
+        self.one(d({}), "dispatch.run_config.baseline: {} is not a non-empty object of settings", name="mylocal")
+        self.one(d(["ask"]), 'dispatch.run_config.baseline: ["ask"] is not a non-empty object of settings', name="mylocal")
+        self.one(d({"x": {}}), "dispatch.run_config.baseline: baseline.x is an empty object, which sets nothing", name="mylocal")
+        self.one(d({"x": 1.5}), "dispatch.run_config.baseline.x: 1.5 cannot be written as TOML by the renderer", name="mylocal")
+        self.one(d({"x": [1, 2]}), "dispatch.run_config.baseline.x: [1, 2] cannot be written as TOML by the renderer", name="mylocal")
+        self.one(d({"servers": {"mine": {"url": "https://example.net"}}}), "dispatch.run_config.baseline: it sets /servers, where the MCP servers of the run go",
+                 name="mylocal")
+        self.one(d({"a": {"servers": {}}}, root="/a/servers"), "dispatch.run_config.baseline: it sets /a/servers", name="mylocal")
+        self.one(d({"a": "text"}, root="/a/servers"), "dispatch.run_config.baseline: it sets /a, where the MCP servers of the run go", name="mylocal")
 
     def test_an_exclusion_form_needs_the_keys_that_form_reads(self):
         def excl(e):

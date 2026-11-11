@@ -332,7 +332,7 @@ setprov fakecmd
 cp "$T/bin/fakellm" "$T/bin/codex"
 setprov codex; prep "$T/r" cx1; task
 out=$($DA local run "$RUN" --dry-run 2>"$T/err"); rc=$?
-want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["codex","exec","--json","--ephemeral","-C",$c,"-m","gpt-6.1-terra","-o","FINAL","--sandbox","workspace-write","--add-dir",$o,"--add-dir",($c + "/.git")]')
+want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["codex","exec","--json","--ephemeral","--ignore-rules","--strict-config","-C",$c,"-m","gpt-6.1-terra","-o","FINAL","--sandbox","workspace-write","--add-dir",$o,"--add-dir",($c + "/.git")]')
 { [ "$rc" = 0 ] && [ "$(arg0 <<<"$out" | finarg)" = "$want" ] && grep -q '^COMMAND=codex$' <<<"$out" && grep -q '^PROMPT_VIA=stdin$' <<<"$out" && grep -q '^CLASS=write$' <<<"$out"; } \
   && ok "codex, write: codex exec in the clone, the balanced model, the last message to the run's own new file, the workspace-write sandbox with OUT and the clone's .git added" || no "codex write argv: rc=$rc [$(arg0 <<<"$out")] want [$want] $(cat "$T/err")"
 # the clone's .git is a writable root of the sandbox: one an earlier run left as a link (to anywhere) refuses the run, so the grant never leaves the run
@@ -342,7 +342,7 @@ out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
   && ok "codex: a clone whose .git is a link is refused before the sandbox is told to let the member write it" || no "codex .git link: rc=$rc $out"
 rm -f "$CLONE/.git"; mv "$CLONE/.git.real" "$CLONE/.git"
 out=$($DA local run "$RUN" --dry-run --model fast --effort max 2>&1); rc=$?
-want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["codex","exec","--json","--ephemeral","-C",$c,"-m","gpt-6-luna","-c","model_reasoning_effort=max","-o","FINAL","--sandbox","workspace-write","--add-dir",$o,"--add-dir",($c + "/.git")]')
+want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["codex","exec","--json","--ephemeral","--ignore-rules","--strict-config","-C",$c,"-m","gpt-6-luna","-c","model_reasoning_effort=max","-o","FINAL","--sandbox","workspace-write","--add-dir",$o,"--add-dir",($c + "/.git")]')
 { [ "$rc" = 0 ] && [ "$(arg0 <<<"$out" | finarg)" = "$want" ] && ! grep -q '^NOTE=effort' <<<"$out"; } && ok "codex: a tier is passed as the catalog's id and an effort as -c model_reasoning_effort" || no "codex model and effort: rc=$rc [$(arg0 <<<"$out")] want [$want]"
 if [ "$(command -v codex)" = "$T/bin/codex" ]; then out=$($DA local run "$RUN" 2>"$T/err"); rc=$?; else rc=x; out="the first codex on PATH is $(command -v codex), not the fake: the real run is not made"; : > "$T/err"; fi
 { [ "$rc" = 0 ] && grep -q '^ARG\[--sandbox\]$' "$OUT/transcript" && grep -q '^ARG\[workspace-write\]$' "$OUT/transcript" \
@@ -360,7 +360,7 @@ out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
   && ok "and local run refuses it too, once the acceptance it was prepared under is gone" || no "codex ro unattested: rc=$rc $out"
 jq '.models.accept_no_barrier = {local: {by: "owner", at: "2026-11-11", reason: "test"}}' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
-want=$(jq -nc --arg c "$CLONE" '["codex","exec","--json","--ephemeral","-C",$c,"-m","gpt-6.1-terra","-o","FINAL","--sandbox","read-only"]')
+want=$(jq -nc --arg c "$CLONE" '["codex","exec","--json","--ephemeral","--ignore-rules","--strict-config","-C",$c,"-m","gpt-6.1-terra","-o","FINAL","--sandbox","read-only"]')
 { [ "$rc" = 0 ] && [ "$(arg0 <<<"$out" | finarg)" = "$want" ] && grep -q '^CLASS=read-only$' <<<"$out" && ! grep -q -e '--add-dir' -e '[.]git' <<<"$(arg0 <<<"$out")"; } \
   && ok "codex, read-only (accepted): the read-only sandbox and no write group (no writable directory, the clone's .git included)" || no "codex ro argv: rc=$rc [$(arg0 <<<"$out")] want [$want]"
 jq 'del(.models.accept_no_barrier)' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
@@ -391,12 +391,16 @@ if [ -L "\$a" ]; then echo AUTHLINK=yes; else echo AUTHLINK=no; fi
 [ ! -f "\$a" ] || echo "AUTHSUM=\$(sha256sum < "\$a" | cut -c1-64)"
 cat > /dev/null
 # the events of codex exec --json: two turns report their usage (the second without one count and with a count that is not a number);
-# a line that is not JSON and another event's usage are not counted
+# a line that is not JSON and another event's usage are not counted; in the mode unreported, one turn reports two of the five counts
 echo '{"type":"thread.started","thread_id":"t-1"}'
-echo '{"type":"turn.completed","usage":{"input_tokens":1200,"cached_input_tokens":200,"output_tokens":300,"reasoning_output_tokens":50}}'
-echo 'not a JSON line'
-echo '{"type":"item.completed","usage":{"input_tokens":99999,"output_tokens":99999}}'
-echo '{"type":"turn.completed","usage":{"input_tokens":800,"cached_input_tokens":100,"cache_write_input_tokens":7,"output_tokens":150,"reasoning_output_tokens":true}}'
+if [ "\$(cat "$T/codex-mode" 2>/dev/null)" = unreported ]; then
+  echo '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":2}}'
+else
+  echo '{"type":"turn.completed","usage":{"input_tokens":1200,"cached_input_tokens":200,"output_tokens":300,"reasoning_output_tokens":50}}'
+  echo 'not a JSON line'
+  echo '{"type":"item.completed","usage":{"input_tokens":99999,"output_tokens":99999}}'
+  echo '{"type":"turn.completed","usage":{"input_tokens":800,"cached_input_tokens":100,"cache_write_input_tokens":7,"output_tokens":150,"reasoning_output_tokens":true}}'
+fi
 case \$(cat "$T/codex-mode" 2>/dev/null) in
   replace) rm -f "\$a"; echo 'sign-in-written-anew-v2' > "\$a";;
   through) echo 'sign-in-refreshed-in-place' > "\$a";;
@@ -425,6 +429,13 @@ out=$($DA local run "$RUN" 2>&1); rc=$?; tr=$OUT/transcript
 { [ "$(jq -cS .usage "$RUN/dispatch.json")" = '{"events":2,"tokens":{"cache_write_input_tokens":7,"cached_input_tokens":300,"input_tokens":2000,"output_tokens":450,"reasoning_output_tokens":50}}' ] \
   && grep -q '^USAGE=input_tokens=2000 cached_input_tokens=300 cache_write_input_tokens=7 output_tokens=450 reasoning_output_tokens=50 (2 events)$' <<<"$out"; } \
   && ok "a codex run records the sum of its two turn.completed usages in dispatch.json and prints it as USAGE=" || no "usage: $(jq -c .usage "$RUN/dispatch.json") $(grep '^USAGE' <<<"$out")"
+# a count no event reports is not recorded as 0: it is left out of tokens and named in unreported
+echo unreported > "$T/codex-mode"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(jq -cS .usage "$RUN/dispatch.json")" = '{"events":1,"tokens":{"input_tokens":10,"output_tokens":2},"unreported":["cached_input_tokens","cache_write_input_tokens","reasoning_output_tokens"]}' ] \
+  && grep -q '^USAGE=input_tokens=10 output_tokens=2 (1 event; not reported, so not counted: cached_input_tokens,cache_write_input_tokens,reasoning_output_tokens)$' <<<"$out"; } \
+  && ok "a usage count no event reports is left out and named, never recorded as 0" || no "usage unreported: rc=$rc $(jq -c .usage "$RUN/dispatch.json") $(grep '^USAGE' <<<"$out")"
+rm -f "$T/codex-mode"
 { [ ! -e "$RUN/home/.codex/auth.json" ] && [ ! -L "$RUN/home/.codex/auth.json" ] && [ "$(sha256sum < "$HOME/.codex/auth.json" | cut -c1-64)" = "$SUM" ]; } \
   && ok "the link is removed when the run ends, and the user's file is as it was" || no "home link left: $(ls -lA "$RUN/home/.codex")"
 { [ "$(jq -c .home "$RUN/dispatch.json")" = '{"dir":".codex","env":"CODEX_HOME","left":[],"links":["auth.json"],"not_linked":[]}' ] \
@@ -517,18 +528,27 @@ setprov codexbad; prep "$T/r" hm2; task
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
 { [ "$rc" = 2 ] && grep -q "never linked into a run: the user's ssh keys" <<<"$out" && ! grep -q '^ARGV=' <<<"$out"; } && ok "a run home that links an ssh key is refused" || no "home bad definition: rc=$rc $out"
 
-# --- the MCP file of a codex run (dispatch.run_config): CODEX_HOME/config.toml in the run home, rendered for the run's role (the lead's registry) and
-# class, with the tools a member may call in each server's enabled_tools; none when no tool pack reaches the role. The dry run names the file and the tools.
+# --- the configuration file of a codex run (dispatch.run_config): CODEX_HOME/config.toml in the run home, with the baseline of the definition in every
+# run and, for the run's role (the lead's registry) and class, the tools a member may call in each server's enabled_tools. The dry run names the file,
+# the tools and the baseline. A run with no MCP server and a run with one get the same settings.
 tomljson() { python3 -I -c 'import json, sys, tomllib; print(json.dumps(tomllib.load(open(sys.argv[1], "rb")), sort_keys=True))' "$1"; }
+BASE=$(jq -cS .dispatch.run_config.baseline lib/providers/codex.json)
+settings() { tomljson "$1" | jq -cS 'del(.mcp_servers)'; }     # what the file sets besides the MCP servers
 setprov codex; prep "$T/r" mc1; task
 CFG=$RUN/home/.codex/config.toml
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
-{ [ "$rc" = 0 ] && grep -q "^RUN_CONFIG=none: no tool pack gives the role build of this run a tool" <<<"$out" && grep -q '^RUN_CONFIG_TOOLS=$' <<<"$out"; } \
-  && ok "codex with no tool pack: the dry run says the run gets no MCP file" || no "no mcp dry: rc=$rc $(grep '^RUN_CONFIG' <<<"$out")"
-mkdir -p "$RUN/home/.codex"; echo '[mcp_servers.left]' > "$CFG"
+{ [ "$rc" = 0 ] && grep -q "^RUN_CONFIG=$CFG\$" <<<"$out" && grep -q '^RUN_CONFIG_TOOLS=$' <<<"$out" && [ "$(sed -n 's/^RUN_CONFIG_BASELINE=//p' <<<"$out" | jq -cS .)" = "$BASE" ]; } \
+  && ok "codex with no tool pack: the dry run names CODEX_HOME/config.toml, no tool, and the baseline" || no "no mcp dry: rc=$rc $(grep '^RUN_CONFIG' <<<"$out")"
+mkdir -p "$RUN/home/.codex"; printf '[mcp_servers.left]\nurl = "https://left.example.net"\n[projects."/x"]\ntrust_level = "trusted"\n' > "$CFG"
 out=$($DA local run "$RUN" 2>&1); rc=$?
-{ [ "$rc" = 0 ] && [ ! -e "$CFG" ] && [ "$(jq -c .run_config "$RUN/dispatch.json")" = '{"file":null,"role":"build","tools":[]}' ]; } \
-  && ok "and the run writes none, and removes one an earlier run or a member left there" || no "no mcp run: rc=$rc $out $(ls -A "$RUN/home/.codex")"
+{ [ "$rc" = 0 ] && [ "$(tomljson "$CFG" | jq -cS .)" = "$BASE" ] && [ "$(stat -c %a "$CFG")" = 600 ] \
+  && [ "$(jq -cS .run_config "$RUN/dispatch.json")" = "$(jq -ncS --arg f "$CFG" --argjson b "$BASE" '{file:$f,role:"build",tools:[],baseline:$b}')" ]; } \
+  && ok "and the run writes the baseline alone over what an earlier run or a member left there (no server, no trust entry)" || no "no mcp run: rc=$rc $out $(cat "$CFG")"
+NOMCP=$(settings "$CFG")
+jq -e '.approval_policy == "never" and .sandbox_workspace_write.network_access == false and .sandbox_workspace_write.exclude_slash_tmp == true
+  and .web_search == "disabled" and .features.hooks == false and .features.apps == false and .features.plugins == false and .skills.bundled.enabled == false
+  and (has("projects") | not)' <<<"$NOMCP" >/dev/null \
+  && ok "the baseline: no approval asked, no shell network, no slash-tmp, no hosted search, hooks, apps, plugins or bundled skills, no trust entry" || no "baseline keys: $NOMCP"
 printf '%s' '{"name":"cx","url":"https://mcp.example.net/cx-endpoint","vault_ids":["vlt_runtest"],"write_ok":true,"tools":{"platform.list_items":"always_allow","getStatus":"always_allow","repo/push":"auto","issue-close":"always_ask"}}' > "$T/cx.json"
 ctok=$($DA tool import "$T/cx.json" --compatible any | tok_of); $DA tool import "$T/cx.json" --compatible any --plan "$ctok" --approved test >/dev/null || no "import cx"
 $DA tool link cx --scope project --project rproj >/dev/null || no "link cx"
@@ -537,15 +557,20 @@ out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
   && ! grep -q -e 'cx-endpoint' -e 'vlt_runtest' <<<"$out" && [ "$(arg0 <<<"$out" | jq -c 'map(select(test("config[.]toml") or . == "-p")) | length')" = 0 ]; } \
   && ok "codex, write: the dry run names CODEX_HOME/config.toml and the tools a member may call (not the always_ask one), never the server's address" || no "mcp dry: rc=$rc $out"
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
-want='{"mcp_servers": {"cx": {"enabled_tools": ["getStatus", "platform.list_items", "repo/push"], "url": "https://mcp.example.net/cx-endpoint"}}}'
-{ [ "$rc" = 0 ] && [ "$(tomljson "$CFG")" = "$want" ] && [ "$(stat -c %a "$CFG")" = 600 ] && grep -q "^CODEX_HOME=$RUN/home/.codex\$" "$OUT/transcript" \
-  && [ "$(jq -c .run_config "$RUN/dispatch.json")" = "$(jq -nc --arg f "$CFG" '{file:$f,role:"build",tools:["mcp__cx__getStatus","mcp__cx__platform_list_items","mcp__cx__repo_push"]}')" ] \
+want='{"cx":{"enabled_tools":["getStatus","platform.list_items","repo/push"],"url":"https://mcp.example.net/cx-endpoint"}}'
+{ [ "$rc" = 0 ] && [ "$(tomljson "$CFG" | jq -cS .mcp_servers)" = "$want" ] && [ "$(stat -c %a "$CFG")" = 600 ] && grep -q "^CODEX_HOME=$RUN/home/.codex\$" "$OUT/transcript" \
+  && [ "$(jq -cS 'del(.baseline)' <<<"$(jq -c .run_config "$RUN/dispatch.json")")" = "$(jq -ncS --arg f "$CFG" '{file:$f,role:"build",tools:["mcp__cx__getStatus","mcp__cx__platform_list_items","mcp__cx__repo_push"]}')" ] \
   && ! grep -q 'cx-endpoint' "$RUN/dispatch.json"; } \
   && ok "codex, write: the run's CODEX_HOME/config.toml lists the role's tools in enabled_tools, mode 600; dispatch.json records the names only" || no "mcp run: rc=$rc $out; $(cat "$CFG" 2>&1); $(jq -c .run_config "$RUN/dispatch.json")"
+[ "$(settings "$CFG")" = "$NOMCP" ] && ok "a run with an MCP server gets the same settings, key for key, as the run with none" || no "settings differ with mcp: $(settings "$CFG") vs $NOMCP"
+# the raw tool names stay raw in enabled_tools (a dot, a slash, a hyphen); the names the model is given are the mcp__ form of resources.mcp.permission_rule
+{ tomljson "$CFG" | jq -e '.mcp_servers.cx.enabled_tools | index("platform.list_items") and index("repo/push")' >/dev/null \
+  && ! tomljson "$CFG" | grep -q 'mcp__' && [ "$(jq -c .run_config.tools "$RUN/dispatch.json")" = '["mcp__cx__getStatus","mcp__cx__platform_list_items","mcp__cx__repo_push"]' ]; } \
+  && ok "enabled_tools holds the server's own names; dispatch.json the mcp__ names, with every other character written as _" || no "raw vs native names: $(cat "$CFG")"
 # a link a member put in place of the file is replaced, not written through
 echo precious > "$T/victim2"; rm -f "$CFG"; ln -s "$T/victim2" "$CFG"
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
-{ [ "$rc" = 0 ] && [ "$(cat "$T/victim2")" = precious ] && [ ! -L "$CFG" ] && [ "$(tomljson "$CFG")" = "$want" ]; } \
+{ [ "$rc" = 0 ] && [ "$(cat "$T/victim2")" = precious ] && [ ! -L "$CFG" ] && [ "$(tomljson "$CFG" | jq -cS .mcp_servers)" = "$want" ]; } \
   && ok "a link in place of the run's MCP file is replaced by the file, and what it pointed to is untouched" || no "mcp planted link: rc=$rc $out; victim=$(cat "$T/victim2")"
 # the read-only class: the declared reads only
 jq '.models.accept_no_barrier = {local: {by: "owner", at: "2026-11-11", reason: "test"}}' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
@@ -555,12 +580,34 @@ out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
   && ok "codex, read-only: the run's MCP file lists only the declared reads (no auto tool, no write-like one)" || no "mcp ro dry: rc=$rc $(grep '^RUN_CONFIG' <<<"$out")"
 out=$($DA local run "$RUN" 2>&1); rc=$?
 [ "$rc" = 0 ] && [ "$(tomljson "$RUN/home/.codex/config.toml" | jq -c '.mcp_servers.cx.enabled_tools')" = '["getStatus","platform.list_items"]' ] \
-  && ok "and the file the read-only run gets holds just those" || no "mcp ro run: rc=$rc $out"
+  && [ "$(settings "$RUN/home/.codex/config.toml")" = "$NOMCP" ] \
+  && ok "and the file the read-only run gets holds just those, with the same settings as a write run" || no "mcp ro run: rc=$rc $out"
 # the role is the lead's registry's, never the run's own ability file
 prep "$T/r" mc3 review; task; echo build > "$RUN/ability"
 out=$($DA local run "$RUN" --dry-run 2>&1)
 grep -q '^RUN_CONFIG_TOOLS=mcp__cx__getStatus,mcp__cx__platform_list_items$' <<<"$out" && ok "an ability file rewritten in the run directory does not change the tools of the run" || no "mcp role source: $(grep '^RUN_CONFIG' <<<"$out")"
 jq 'del(.models.accept_no_barrier)' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
+# --- a Codex member gets no qargi skill: the lead's skills, linked where a Codex lead session finds them (~/.codex/skills, ~/.agents/skills, and
+# untracked in the lead's checkout under .agents/skills), are in none of the places Codex reads skills from in a run (CODEX_HOME/skills, HOME/.agents/skills,
+# the clone's .agents/skills), and the run's configuration turns the bundled skills off. The fake codex lists every skill it could load.
+mkdir -p "$T/skillbin" "$HOME/.codex/skills" "$HOME/.agents/skills" "$T/r/.agents/skills"
+ln -s "$PWD/skills/qargi-flow" "$HOME/.codex/skills/qargi-flow"; ln -s "$PWD/skills/qargi-verify" "$HOME/.agents/skills/qargi-verify"
+ln -s "$PWD/skills/qargi-task" "$T/r/.agents/skills/qargi-task"
+cat > "$T/skillbin/codex" <<'SH'
+#!/usr/bin/env bash
+cat > /dev/null
+for d in "$CODEX_HOME/skills" "$HOME/.agents/skills" "$PWD/.agents/skills"; do
+  for s in "$d"/*/SKILL.md; do [ ! -f "$s" ] || echo "SKILL=$s"; done
+done
+echo "SKILLROOTS-CHECKED"
+SH
+chmod 755 "$T/skillbin/codex"
+setprov codex; prep "$T/r" sk1; task
+out=$(PATH=$T/skillbin:$PATH $DA local run "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q '^SKILLROOTS-CHECKED$' "$OUT/transcript" && ! grep -q '^SKILL=' "$OUT/transcript" && [ ! -e "$CLONE/.agents" ] \
+  && [ "$(tomljson "$RUN/home/.codex/config.toml" | jq -c .skills)" = '{"bundled":{"enabled":false}}' ]; } \
+  && ok "a codex member sees no skill of the lead (qargi-flow, qargi-verify, qargi-task), and its bundled skills are off" || no "member skills: rc=$rc $(grep -E '^SKILL' "$OUT/transcript")"
+rm -rf "$T/skillbin" "$HOME/.codex/skills" "$HOME/.agents" "$T/r/.agents"
 # the same file for a runtime that takes it by a flag: in run, RUN/config/FILE, and {run_config} in its argv (no flag without a tool)
 mk fakecfg "$(jq -n --argjson m "$M" '{schema:2,kind:"provider",provider:"fakecfg",family:null,surface:"local",models:$m,capabilities:{},agents:null,barrier:{kind:"none"},
   resources:{mcp:{file:"mcp.json",format:"json",root_pointer:"/servers",entry:{type:"http",url:"{url}"},permission_rule:"mcp__{server}__{tool}",name_key:"nonword-underscore",tool_lists:{allow:"/allow",deny:"/deny"}}},
@@ -570,9 +617,25 @@ out=$($DA local run "$RUN" 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -q "^ARG\[--mcp-file\]$" "$OUT/transcript" && grep -q "^ARG\[$RUN/config/mcp.json\]$" "$OUT/transcript" \
   && [ "$(jq -c '.servers.cx | [.allow, .deny, .url]' "$RUN/config/mcp.json")" = '[["getStatus","platform.list_items","repo/push"],["issue-close"],"https://mcp.example.net/cx-endpoint"]' ]; } \
   && ok "another runtime: the file goes to RUN/config in its own format with its allow and deny lists, and {run_config} passes its path" || no "fakecfg: rc=$rc $out $(cat "$RUN/config/mcp.json" 2>&1)"
+# with a baseline (dispatch.run_config.baseline) the file always holds the definition's settings, with or without a server: the same settings either way
+mk fakecfgb "$(jq '.provider = "fakecfgb" | .dispatch.run_config.baseline = {ask: "never", net: {on: false, roots: ["a"]}}' "$LIB/fakecfg/definition.json")"
+setprov fakecfgb; prep "$T/r" mc5; task
+out=$($DA local run "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(jq -cS '[.ask, .net, (.servers | keys)]' "$RUN/config/mcp.json")" = '["never",{"on":false,"roots":["a"]},["cx"]]' ] \
+  && [ "$(jq -cS .run_config.baseline "$RUN/dispatch.json")" = '{"ask":"never","net":{"on":false,"roots":["a"]}}' ]; } \
+  && ok "a baseline: the run's file holds the settings beside the servers, and dispatch.json records them" || no "baseline with mcp: rc=$rc $out $(cat "$RUN/config/mcp.json" 2>&1)"
+withmcp=$(jq -cS 'del(.servers)' "$RUN/config/mcp.json")
 $DA tool unlink cx --scope project --project rproj >/dev/null
 out=$($DA local run "$RUN" --dry-run 2>&1)
-{ ! grep -q -- '--mcp-file' <<<"$(arg0 <<<"$out")" && grep -q '^RUN_CONFIG=none' <<<"$out"; } && ok "and without a tool for the role the flag is left out" || no "fakecfg none: $out"
+{ grep -q -- '"--mcp-file"' <<<"$(arg0 <<<"$out")" && grep -q "^RUN_CONFIG=$RUN/config/mcp.json\$" <<<"$out" && grep -q '^RUN_CONFIG_TOOLS=$' <<<"$out" \
+  && grep -q '^RUN_CONFIG_BASELINE={"ask":"never","net":{"on":false,"roots":\["a"\]}}$' <<<"$out"; } \
+  && ok "a baseline and no tool for the role: the dry run still names the file, and prints the baseline" || no "baseline dry: $out"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(jq -cS . "$RUN/config/mcp.json")" = "$withmcp" ] && [ "$(jq -c .run_config.tools "$RUN/dispatch.json")" = '[]' ]; } \
+  && ok "and the run writes the baseline alone, the same settings the run with a server got" || no "baseline no mcp: rc=$rc $out $(cat "$RUN/config/mcp.json" 2>&1)"
+setprov fakecfg; prep "$T/r" mc6; task
+out=$($DA local run "$RUN" --dry-run 2>&1)
+{ ! grep -q -- '--mcp-file' <<<"$(arg0 <<<"$out")" && grep -q '^RUN_CONFIG=none' <<<"$out" && ! grep -q '^RUN_CONFIG_BASELINE=' <<<"$out"; } && ok "and without a baseline or a tool for the role the flag is left out" || no "fakecfg none: $out"
 rm -rf "$HOME/.codex"
 rm -f "$T/bin/codex"
 # without the fake, the first codex on PATH is the stub of tests/hermetic.sh: a real codex installed on the machine never runs in a test
@@ -899,12 +962,12 @@ out=$($DA local run "$RUN" --again 2>&1); rc=$?
   && jq -e '.error | startswith("could not start codex: ")' "$RUN/dispatch.json" >/dev/null && [ "$(jq -r .exit "$RUN/dispatch.json")" = null ] && [ ! -L "$LINK" ] && [ ! -e "$LINK" ] \
   && [ -z "$(find "$RUN" -maxdepth 1 -name 'final.*')" ]; } \
   && ok "a command that cannot be started: dispatch.json is rewritten as transport with the error (the earlier outcome does not stay), the link is removed" || no "launch failure: rc=$rc $out $(jq -c . "$RUN/dispatch.json")"
-# the run's MCP file cannot be written (a directory in its place): refused, recorded, the link removed
-echo quick > "$T/ir-mode"; cp "$T/bin/fakellm" "$T/bin/codex"; mkdir -p "$RUN/home/.codex/config.toml"
+# the run's configuration file cannot be written (a directory in its place): refused, recorded, the link removed
+echo quick > "$T/ir-mode"; cp "$T/bin/fakellm" "$T/bin/codex"; rm -f "$RUN/home/.codex/config.toml"; mkdir -p "$RUN/home/.codex/config.toml"
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
-{ [ "$rc" = 2 ] && grep -q "is in the place of the run's MCP file and is not a file" <<<"$out" && [ "$(jq -r .outcome "$RUN/dispatch.json")" = refused ] \
-  && jq -e '.error | test("MCP file")' "$RUN/dispatch.json" >/dev/null && [ ! -L "$LINK" ] && [ ! -e "$LINK" ]; } \
-  && ok "the run's MCP file cannot be made: the run is refused and recorded so, and the link is removed" || no "run config failure: rc=$rc $out $(jq -c . "$RUN/dispatch.json")"
+{ [ "$rc" = 2 ] && grep -q "is in the place of the run's configuration file and is not a file" <<<"$out" && [ "$(jq -r .outcome "$RUN/dispatch.json")" = refused ] \
+  && jq -e '.error | test("configuration file")' "$RUN/dispatch.json" >/dev/null && [ ! -L "$LINK" ] && [ ! -e "$LINK" ]; } \
+  && ok "the run's configuration file cannot be made: the run is refused and recorded so, and the link is removed" || no "run config failure: rc=$rc $out $(jq -c . "$RUN/dispatch.json")"
 rmdir "$RUN/home/.codex/config.toml"
 # SIGKILL cannot be caught: the start record says running, the link stays, and the member runs on. The next start refuses while the member runs,
 # needs --again once it is stopped; list and verify name the link; --again replaces it and the run ends clean; local clean removes a run with it
