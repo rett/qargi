@@ -479,6 +479,188 @@ class ToolNames(unittest.TestCase):
         self.assertEqual(held, [], "the write words are in lib/packs_check.py (WRITE_WORDS) and nowhere as a second pattern")
 
 
+# The server's own tool listing: an MCP tools/list result. Of the pack's tools it marks two read-only, leaves one unmarked, marks one destructive and
+# does not name one; it names a tool the pack does not allow (extra), which is nobody's business here.
+LISTING = {"tools": [{"name": "platform.list_items", "description": "x", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": True}},
+                     {"name": "getStatus", "annotations": {"readOnlyHint": True, "destructiveHint": False}},
+                     {"name": "fetch_all"},
+                     {"name": "wipe/everything", "annotations": {"destructiveHint": True}},
+                     {"name": "extra", "annotations": {"readOnlyHint": True}}]}
+LISTED = {"name": "t-listed", "url": "https://example.net/mcp",
+          "tools": {"platform.list_items": "always_allow", "getStatus": "auto", "fetch_all": "always_ask", "wipe/everything": "always_ask", "unlisted": "always_ask"}}
+HINTS = {"platform.list_items": "read-only", "getStatus": "read-only", "fetch_all": "write", "wipe/everything": "destructive"}
+NOT_READ_ONLY = ("FAIL: tools.%s: the server's tool listing does not mark it read-only (readOnlyHint), so it may not run unattended (use always_ask) "
+                 "unless write_ok is true on the pack, on purpose")
+
+
+class ToolListing(unittest.TestCase):
+    """`tool import|seal --tool-list FILE`: the server's own tool listing, read from a file, is judged in the review, kept in the record and covered by the hash."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="tl.")
+        self.conf, self.home = os.path.join(self.dir, "conf"), os.path.join(self.dir, "home")
+        os.makedirs(self.home)
+        project(self.conf, "alpha", os.path.join(self.dir, "repo"))
+        self.env = dict(os.environ, QARGI_CONF=self.conf, QARGI_STATE=os.path.join(self.dir, "state"), HOME=self.home)
+        self.pack, self.listing = os.path.join(self.dir, "t-listed.json"), os.path.join(self.dir, "listing.json")
+        put(self.pack, json.dumps(LISTED))
+        put(self.listing, json.dumps(LISTING))
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def sha(self, path):
+        import hashlib
+        with open(path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+
+    def token(self, out):
+        return [ln.split()[2] for ln in out.split("\n") if ln.startswith("plan token: ")][0]
+
+    def test_what_a_listing_says_of_the_packs_tools(self):
+        tl, notes = C.read_listing(self.listing, self.pack)
+        self.assertEqual((tl, notes), ({"sha256": self.sha(self.listing), "tools": HINTS}, []))
+        self.assertIsNone(C.listing_problem(tl))
+        # the JSON-RPC response that holds the result, and one page of several
+        put(self.listing, json.dumps({"jsonrpc": "2.0", "id": 1, "result": dict(LISTING, nextCursor="abc")}))
+        tl, notes = C.read_listing(self.listing, self.pack)
+        self.assertEqual(tl["tools"], HINTS)
+        self.assertEqual(len(notes), 1)
+        self.assertIn("nextCursor", notes[0])
+        # only the JSON true is a hint, and destructive wins over read-only
+        put(self.listing, json.dumps({"tools": [{"name": "getStatus", "annotations": {"readOnlyHint": "true"}}, {"name": "fetch_all", "annotations": {"readOnlyHint": 1}},
+                                                {"name": "platform.list_items", "annotations": {"readOnlyHint": True, "destructiveHint": True}},
+                                                {"name": "unlisted", "annotations": ["readOnlyHint"]}]}))
+        self.assertEqual(C.read_listing(self.listing, self.pack)[0]["tools"],
+                         {"getStatus": "write", "fetch_all": "write", "platform.list_items": "destructive", "unlisted": "write"})
+
+    def test_a_file_that_is_no_listing(self):
+        for text, why in (("{nope", "is not JSON"), ("[]", "is not an MCP tools/list result"), ('{"tools": {}}', "is not an MCP tools/list result"),
+                          ('{"result": {"x": 1}}', "is not an MCP tools/list result"), ('{"tools": [{"title": "x"}]}', "tools[0] has no name"),
+                          ('{"tools": ["read_x"]}', "tools[0] has no name"), ('{"tools": [{"name": 3}]}', "tools[0] has no name"),
+                          ('{"tools": [{"name": "a"}, {"name": "b"}, {"name": "a"}]}', "names the tool a twice"),
+                          (json.dumps({"tools": [{"name": "x" * (C.MAX_LISTING + 1)}]}), "is larger than")):
+            put(self.listing, text)
+            with self.assertRaises(C.ListingError) as cm:
+                C.read_listing(self.listing, self.pack)
+            self.assertIn(why, str(cm.exception), text[:40])
+        with self.assertRaises(C.ListingError) as cm:
+            C.read_listing(os.path.join(self.dir, "nosuch.json"), self.pack)
+        self.assertIn("cannot be read", str(cm.exception))
+
+    def test_a_tool_the_listing_does_not_mark_read_only_may_not_run_unattended(self):
+        tl = {"sha256": "ab" * 32, "tools": HINTS}
+        notes = ["NOTE: tools.wipe/everything: the server's tool listing marks it destructive (destructiveHint)", "NOTE: tools.unlisted: not in the server's tool listing",
+                 "NOTE: tool listing abababababababab: it marks 2 of the pack's 5 tools read-only"]
+        self.assertEqual(C.tool_msgs(LISTED, tl), notes)
+        self.assertEqual(C.tool_msgs(LISTED), [], "without a listing: as before")
+        for name in ("fetch_all", "wipe/everything", "unlisted"):
+            for pol in ("always_allow", "auto"):
+                doc = dict(LISTED, tools=dict(LISTED["tools"], **{name: pol}))
+                self.assertEqual(C.tool_msgs(doc, tl), [NOT_READ_ONLY % name] + notes, (name, pol))
+                self.assertEqual(C.tool_msgs(dict(doc, write_ok=True), tl), notes, "write_ok on the pack, on purpose")
+                self.assertEqual(C.tool_msgs(doc), [], "the name of %s is no write: without a listing it passes" % name)
+        # the name check still applies, and a tool it failed is not failed twice
+        doc = dict(LISTED, tools={"delete_item": "always_allow", "list_items": "always_allow"})
+        tl2 = {"sha256": "cd" * 32, "tools": {"delete_item": "read-only", "list_items": "read-only"}}
+        self.assertEqual(C.tool_msgs(doc, tl2), ["FAIL: tools.delete_item: a write-like tool may not run unattended (use always_ask) unless write_ok is true on the pack, on purpose",
+                                                 "NOTE: tool listing cdcdcdcdcdcdcdcd: it marks 2 of the pack's 2 tools read-only"])
+        tl2["tools"]["delete_item"] = "write"
+        self.assertEqual(len([m for m in C.tool_msgs(doc, tl2) if m.startswith("FAIL")]), 1)
+        self.assertEqual(C.tool_msgs(LISTED, C.BAD)[0][:16], "FAIL: tool_list:")
+
+    def test_a_tool_list_is_what_this_file_writes_or_it_is_refused(self):
+        good = {"sha256": "ab" * 32, "tools": HINTS}
+        self.assertIsNone(C.listing_problem(good))
+        self.assertIsNone(C.listing_problem({"sha256": "0" * 64, "tools": {}}))
+        for bad in (None, [], "x", {}, {"sha256": "ab" * 32}, dict(good, extra=1), dict(good, sha256="AB" * 32), dict(good, sha256="ab" * 31), dict(good, sha256="ab" * 32 + "\n"),
+                    dict(good, tools=[]), dict(good, tools={"a b": "read-only"}), dict(good, tools={"x": "safe"}), dict(good, tools={"x": True}), dict(good, tools={"x": ["read-only"]})):
+            self.assertIsNotNone(C.listing_problem(bad), bad)
+        self.assertIsNone(C.parse_tool_list(""))
+        self.assertEqual(C.parse_tool_list(json.dumps(good)), good)
+        for text in ("{nope", "null", "false", json.dumps(dict(good, tools={"x": "safe"}))):
+            self.assertIs(C.parse_tool_list(text), C.BAD, text)
+
+    def test_import_and_seal_judge_keep_and_hash_the_listing(self):
+        lib = os.path.join(self.conf, "packs")
+        stored, rec = os.path.join(lib, "tools", "t-listed.json"), os.path.join(lib, "tools", "t-listed.pack.json")
+        plain, rc = qargi(self.env, "tool", "import", self.pack, "--compatible", "any")
+        self.assertEqual(rc, 0, plain)
+        # a tool the listing does not mark read-only, unattended: refused with the listing, not without
+        put(self.pack, json.dumps(dict(LISTED, tools=dict(LISTED["tools"], fetch_all="always_allow"))))
+        self.assertEqual(qargi(self.env, "tool", "import", self.pack, "--compatible", "any")[1], 0)
+        out, rc = qargi(self.env, "tool", "import", self.pack, "--compatible", "any", "--tool-list", self.listing)
+        self.assertEqual(rc, 1, out)
+        self.assertIn(NOT_READ_ONLY % "fetch_all" + "\n", out)
+        self.assertIn("refused: fix the source first", out)
+        self.assertNotIn("plan token", out)
+        put(self.pack, json.dumps(LISTED))
+        out, rc = qargi(self.env, "tool", "import", self.pack, "--compatible", "any", "--tool-list", self.listing)
+        self.assertEqual(rc, 0, out)
+        for line in ("NOTE: tools.wipe/everything: the server's tool listing marks it destructive (destructiveHint)", "NOTE: tools.unlisted: not in the server's tool listing",
+                     "NOTE: tool listing %s: it marks 2 of the pack's 5 tools read-only" % self.sha(self.listing)[:16]):
+            self.assertIn(line + "\n", out)
+        tok = self.token(out)
+        self.assertNotEqual(tok, self.token(plain), "the listing is part of what the token approves")
+        self.assertFalse(os.path.exists(stored))
+        out, rc = qargi(self.env, "tool", "import", self.pack, "--compatible", "any", "--tool-list", self.listing, "--plan", tok, "--approved", "test")
+        self.assertEqual(rc, 0, out)
+        r = jload(rec)
+        self.assertEqual(r["tool_list"], {"sha256": self.sha(self.listing), "tools": HINTS})
+        self.assertEqual((r["sha256"], C.content_hash(stored)), (tok, tok), "the shell and this file hash the pack with its tool_list alike")
+        self.assertEqual(C.tool_list_of(stored), r["tool_list"])
+        put(os.path.join(lib, "links.json"), json.dumps({"links": [{"pack": "tool:t-listed", "scope": "project", "project": "alpha"}]}))
+        self.assertEqual(qargi(self.env, "tool", "check", "alpha", "build"), ("ok   tool:t-listed\n", 0))
+        shown, _ = qargi(self.env, "tool", "show", "t-listed")
+        self.assertIn("NOTE: tool listing %s: it marks 2 of the pack's 5 tools read-only\n" % self.sha(self.listing)[:16], shown)
+        self.assertIn('"tool_list"', shown)
+        # what the record keeps of the listing is approved: a hint changed by hand is drift
+        put(rec, json.dumps(dict(r, tool_list={"sha256": r["tool_list"]["sha256"], "tools": dict(HINTS, fetch_all="read-only")})))
+        out, rc = qargi(self.env, "tool", "check", "alpha", "build")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("FAIL tool:t-listed: content changed since it was approved (drift: %s -> " % tok, out)
+        put(rec, json.dumps(dict(r, tool_list={"sha256": "nope", "tools": {}})))
+        out, rc = qargi(self.env, "tool", "check", "alpha", "build")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("tool:t-listed: FAIL: tool_list: what the pack's record keeps of the server's tool listing is not what qargi wrote", out)
+        put(rec, json.dumps(r))
+        # an edit that lets an unmarked tool run unattended: seal keeps the record's listing and refuses
+        put(stored, json.dumps(dict(LISTED, tools=dict(LISTED["tools"], unlisted="auto"))))
+        out, rc = qargi(self.env, "tool", "seal", "t-listed")
+        self.assertEqual(rc, 1, out)
+        self.assertIn(NOT_READ_ONLY % "unlisted" + "\n", out)
+        # the server's new listing marks it read-only: seal --tool-list replaces what the record keeps
+        new = os.path.join(self.dir, "listing2.json")
+        put(new, json.dumps({"tools": LISTING["tools"] + [{"name": "unlisted", "annotations": {"readOnlyHint": True}}]}))
+        out, rc = qargi(self.env, "tool", "seal", "t-listed", "--tool-list", new)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("tool listing changes: %s -> %s\n" % (self.sha(self.listing)[:16], self.sha(new)[:16]), out)
+        out, rc = qargi(self.env, "tool", "seal", "t-listed", "--tool-list", new, "--plan", self.token(out), "--approved", "test")
+        self.assertEqual(rc, 0, out)
+        r2 = jload(rec)
+        self.assertEqual(r2["tool_list"], {"sha256": self.sha(new), "tools": dict(HINTS, unlisted="read-only")})
+        self.assertEqual(r2["sha256"], C.content_hash(stored))
+        # a later seal without the option keeps it
+        out, rc = qargi(self.env, "tool", "seal", "t-listed")
+        self.assertEqual((rc, self.token(out)), (0, r2["sha256"]), out)
+        self.assertEqual(qargi(self.env, "tool", "check", "alpha", "build"), ("ok   tool:t-listed\n", 0))
+
+    def test_the_option_goes_with_tool_import_and_seal_and_names_a_file(self):
+        for args in (("skill", "import", self.dir, "--compatible", "any"), ("skill", "seal", "x"), ("tool", "link", "x", "--scope", "user"), ("tool", "new", "x", "--compatible", "any"),
+                     ("tool", "check", "alpha", "build"), ("packs", "seed")):
+            out, rc = qargi(self.env, *args, "--tool-list", self.listing)
+            self.assertEqual(rc, 2, args)
+            self.assertIn("--tool-list FILE (the server's own tool listing) goes with qargi tool import and qargi tool seal", out)
+        out, rc = qargi(self.env, "tool", "import", self.pack, "--compatible", "any", "--tool-list", os.path.join(self.dir, "nosuch.json"))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("cannot be read", out)
+        self.assertNotIn("plan token", out)
+        out, rc = qargi(self.env, "tool", "import", self.pack, "--compatible", "any", "--tool-list", self.pack)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("is not an MCP tools/list result", out)
+        self.assertEqual(qargi(self.env, "tool", "import", self.pack, "--compatible", "any", "--tool-list")[1], 2)
+
+
 class Processes(unittest.TestCase):
     """The number of processes does not grow with the number of packs."""
 
