@@ -91,6 +91,19 @@ def is_name(form, name):
     return re.fullmatch(rx, name, re.S) is not None
 
 
+def is_claimed(form, name):
+    """True when NAME is a name the runtime keeps for its MCP tools: it has their shape (is_name), or it starts with the text the rule starts with
+    (mcp__ under mcp__{server}__{tool}) without having it (mcp__kb, mcp____). The guard judges such a call, and no pack gives a tool that name, so it
+    is refused: a name of that prefix is never passed for not being one of the runtime's MCP tool names. A rule that starts with a placeholder claims
+    the names of its shape alone."""
+    if is_name(form, name):
+        return True
+    if not form or not isinstance(name, str):
+        return False
+    prefix = PLACEHOLDER.split(form["rule"], 1)[0]
+    return bool(prefix) and name.startswith(prefix)
+
+
 # --- the packs of a role
 
 def _load(path, what):

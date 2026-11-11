@@ -60,6 +60,20 @@ class Names(unittest.TestCase):
         self.assertTrue(M.is_name(dotted, "kb.search"))
         self.assertFalse(M.is_name(dotted, "mcp__kb__search"))
 
+    def test_the_names_the_runtime_keeps_for_its_mcp_tools(self):
+        """A name that starts as the runtime's MCP tool names do is claimed by them, of their shape or not; a rule that starts with a placeholder claims
+        the names of its shape alone."""
+        form = M.form_of(CLAUDE)
+        for name in ("mcp__kb__search", "mcp__kb", "mcp____", "mcp__kb__", "mcp____x", "mcp__"):
+            self.assertTrue(M.is_claimed(form, name), name)
+        for name in ("Bash", "xmcp__kb__search", "mcp_kb_search", "mcp_", "", None, 7):
+            self.assertFalse(M.is_claimed(form, name), name)
+        self.assertFalse(M.is_claimed(None, "mcp__kb"))
+        dotted = M.form_of({"permission_rule": "{server}.{tool}"})
+        self.assertTrue(M.is_claimed(dotted, "kb.search"))
+        for name in ("kb", "mcp__kb__search", ".x"):
+            self.assertFalse(M.is_claimed(dotted, name), name)
+
     def test_the_names_a_tools_map_may_hold_are_the_reviews(self):
         for k in ("platform.list_items", "repo/push", "x" * 128):
             self.assertTrue(M.tool_key_ok(k))

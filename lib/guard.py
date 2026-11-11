@@ -3230,7 +3230,7 @@ def tar_targets(rest):
 #   tool_names     kind -> tool names. shell: runs a command; write: changes the file it names; read: reads the file it names; search:
 #                  reads like read and also reaches the directory it names. A call that names no tool is a shell command; a tool in
 #                  no list is not judged, unless its name has the form of the runtime's MCP tool names (mcp_refusal below)
-#   deny          how a refusal is given back: {"exit": N, "stream": "stderr"|"stdout"} prints the reason there, or {"exit": 0,
+#   deny           how a refusal is given back: {"exit": N, "stream": "stderr"|"stdout"} prints the reason there, or {"exit": 0,
 #                  "stdout": {...}} prints that JSON with "{reason}" replaced in every string; allow: {"exit": N}, the answer to a call that passes
 # The data must be complete: tool_names.shell is listed, and every kind that lists a tool has a pointer for its path (hook_problem).
 # The text of a refusal belongs to the decisions: the protocol only carries it.
@@ -3413,7 +3413,8 @@ def hook_of(name):
 #
 # A tool in none of the lists of the hook protocol whose name has the form of the runtime's MCP tool names (resources.mcp of its definition:
 # permission_rule and name_key; DEFAULT_MCP below: mcp__{server}__{tool} with every character other than a letter, a digit, _ and - written as _) is a
-# call of an MCP tool. It is judged by the policy the tool packs of the role give that tool (lib/packs_mcp.py, which has the rules): refused when the
+# call of an MCP tool, and so is one whose name starts as those names do without having their form (mcp__kb: packs_mcp.is_claimed), which no pack
+# gives. It is judged by the policy the tool packs of the role give that tool (lib/packs_mcp.py, which has the rules): refused when the
 # tool is in no tool pack linked to the role, when its pack is missing, changed since its approval or fails its review, when its policy is always_ask
 # (it waits for a person and a member runs unattended), when two tools of the role get the same name, and, under the read-only class, when it is not a
 # declared read (always_allow, no write-like name and, where the pack was approved with the server's tool listing, readOnlyHint true).
@@ -3504,7 +3505,7 @@ def mcp_refusal(call):
     import packs_mcp as M
     import paths as P
     form = M.form_of(_MCP[0])
-    if not M.is_name(form, call.name):
+    if not M.is_claimed(form, call.name):
         return None
     mark = os.environ.get(MEMBER_MARK)
     run = os.path.realpath(mark) if mark and is_run(os.path.realpath(mark)) else run_dir(call.cwd)
