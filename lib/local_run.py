@@ -30,7 +30,13 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
                        linked into it as `to` when the run starts and the link is removed when it ends: the file is never copied and the
                        link's target is never printed (--dry-run names the links, HOME_LINKS=). A source that does not exist is left out with
                        a note. The directory is made and the links are removed without following a link a member may have put in the run
-                       directory; a file that replaced a link during the run is removed too. provider.home_problems states the rules.
+                       directory. What a runtime does to a link during the run (a sign-in refreshed) loses nothing: written through the link, the
+                       source keeps it (a note says the source changed); the link deleted, the source is untouched (a note); the link replaced by
+                       a file of its own (an atomic replace), that file is written back to the source, by a new file of mode 600 renamed over it,
+                       only when it is a regular file of one name of at most 1 MiB and the source is the file it was at the start (its sha256 then,
+                       kept in memory, never printed or recorded); otherwise it is kept as NAME.from-run (mode 600) in the run home, which
+                       qargi local list and verify name and qargi local clean removes. A variable env set in the lead's environment to another
+                       directory than the links' sources is a note. provider.home_problems states the rules.
   dispatch.run_config  {in: home|run, file}: the MCP file of the run, rendered when the run starts from resources.mcp (lib/packs_render.py
                        run_config) for the run's role, as the lead's registry records it (never a file of the run directory), and the run's
                        class: each server lists the tools a member may call (lib/packs_mcp.py: never an always_ask tool, under the read-only
@@ -314,27 +320,67 @@ def plan_home(disp, run, runtime):
     if bad:
         fail("%s of %s" % (bad[0], runtime))
     home = os.path.realpath(os.path.expanduser("~"))
-    mine = [os.path.realpath(d) for d in (paths.conf(), paths.state())]
-    links, missing = [], []
+    links, missing, notes = [], [], []
     for ln in h.get("link", []):
         src = os.path.join(home, ln["from"][2:])
-        real = os.path.realpath(src)
         if not os.path.lexists(src):
             missing.append(ln["to"])
             continue
-        rel = os.path.relpath(real, home)
-        if rel == ".." or rel.startswith(".." + os.sep):
-            why = "it resolves outside the home"
-        elif P.home_link_problem("~/" + rel) or any(real == m or real.startswith(m + os.sep) for m in mine):
-            why = "it resolves into qargi's own directories or a credential store that is never linked"
-        elif not os.path.isfile(real):
-            why = "it is not a regular file"
-        else:
-            why = None
+        why = source_problem(src)[1]
         if why:                                          # the message names the link, never where its source resolves to
             fail("dispatch.home.link of %s: the source of '%s' is refused: %s" % (runtime, ln["to"], why))
         links.append((ln["to"], src))
-    return {"env": h["env"], "dir": h["dir"], "path": os.path.join(run, "home", h["dir"]), "links": links, "missing": missing}
+    # the runtime's own variable set in the lead's environment to another directory: the run home's links come from the sources the definition names,
+    # so a sign-in kept in that other directory is not linked (said, never the value)
+    mine = os.environ.get(h["env"])
+    froms = {os.path.realpath(os.path.dirname(os.path.join(home, ln["from"][2:]))) for ln in h.get("link", [])}
+    if mine and froms and os.path.realpath(os.path.expanduser(mine)) not in froms:
+        notes.append("%s is set in your environment to another directory than the one the run home's links come from (%s): the run links %s from there, "
+                     "and a sign-in kept in the directory %s names is not used" % (h["env"], ", ".join(sorted({os.path.dirname(ln["from"]) for ln in h.get("link", [])})),
+                                                                                   ", ".join(ln["from"] for ln in h.get("link", [])), h["env"]))
+    return {"env": h["env"], "dir": h["dir"], "path": os.path.join(run, "home", h["dir"]), "links": links, "missing": missing, "notes": notes, "start": {}}
+
+
+def source_problem(src):
+    """(real path, None) for a source of a run home's link that may be linked (and written back to), or (real path, why not): its real path must be
+    under the user's home, outside qargi's directories and the credential stores home_link_problem refuses, and a regular file."""
+    home = os.path.realpath(os.path.expanduser("~"))
+    mine = [os.path.realpath(d) for d in (paths.conf(), paths.state())]
+    real = os.path.realpath(src)
+    rel = os.path.relpath(real, home)
+    if rel == ".." or rel.startswith(".." + os.sep):
+        return real, "it resolves outside the home"
+    if P.home_link_problem("~/" + rel) or any(real == m or real.startswith(m + os.sep) for m in mine):
+        return real, "it resolves into qargi's own directories or a credential store that is never linked"
+    if not os.path.isfile(real):
+        return real, "it is not a regular file"
+    return real, None
+
+
+MAX_SIGNIN = 1 << 20      # the bound of a file a runtime put in place of a run home's link that is written back to its source
+
+
+def digest_of(path):
+    """The sha256 of the file at path (followed, as the runtime reads it through the link), read in memory only and never printed or recorded; None
+    when it is not a regular file of at most MAX_SIGNIN bytes."""
+    import hashlib
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > MAX_SIGNIN:
+            return None
+        h = hashlib.sha256()
+        while True:
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            h.update(chunk)
+        return h.hexdigest()
+    finally:
+        os.close(fd)
 
 
 O_DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
@@ -377,8 +423,10 @@ def make_home(run, home):
                 st = None
             if st is not None:
                 if not stat.S_ISLNK(st.st_mode):
-                    fail("%s is in the run home and is not a link qargi made; remove it, or the run is refused" % os.path.join(home["path"], to))
+                    fail("%s is in the run home and is not a link qargi made (a file a runtime wrote there in a run that did not end, or a member's); "
+                         "remove it, or the run is refused" % os.path.join(home["path"], to))
                 os.unlink(to, dir_fd=fd)
+            home["start"][to] = (os.path.realpath(src), digest_of(src))   # what the source was when the run started: in memory only
             os.symlink(src, to, dir_fd=fd)
             made.append(to)
     except BaseException:
@@ -437,19 +485,118 @@ def clear_home(run, home, names):
         return sweep_home(run, home, names)
     try:
         for to in names:
+            src = dict(home["links"]).get(to)
+            real0, sum0 = home["start"].get(to, (None, None))
             try:
                 st = os.lstat(to, dir_fd=fd)
             except FileNotFoundError:
+                notes.append("%s was removed from the run home during the run (by the runtime or the member); its source is untouched" % to)
                 continue
-            if stat.S_ISLNK(st.st_mode) or stat.S_ISREG(st.st_mode):
-                os.unlink(to, dir_fd=fd)
-                if not stat.S_ISLNK(st.st_mode):
-                    notes.append("%s in the run home was replaced during the run by a file, not the link; it is removed and its source was not updated" % to)
+            if stat.S_ISLNK(st.st_mode):
+                target = os.readlink(to, dir_fd=fd)
+                os.unlink(to, dir_fd=fd)                 # the name only: what it points to is untouched
+                if target != src:
+                    notes.append("%s in the run home pointed elsewhere at the end of the run; the link is removed, what it pointed to is untouched" % to)
+                elif sum0 is not None and digest_of(src) != sum0:
+                    notes.append("the source of %s changed during the run (written through the link, such as a sign-in the runtime refreshed in place, "
+                                 "or by another program); it keeps what was written" % to)
+            elif stat.S_ISREG(st.st_mode):
+                notes.append(take_back(fd, to, src, real0, sum0, home))
             else:
                 notes.append("%s in the run home is not a link or a file any more; it was left in place" % to)
     finally:
         os.close(fd)
     return notes
+
+
+KEPT = ".from-run"   # a file a runtime put in place of a run home's link that is not written back is kept in the run home under this suffix
+
+
+def take_back(fd, to, src, real0, sum0, home):
+    """A regular file in place of the link `to` at the end of the run: the runtime replaced the link with a file of its own (a sign-in written anew by
+    an atomic replace, which does not write through a link). It is written back to the source when that is safe: the file is a regular file of one
+    name of at most MAX_SIGNIN bytes, the source is still the regular file it was when the run started (the same real path, allowed as a source, the
+    same sha256 as then: neither you nor another program changed it meanwhile), and it is replaced by a new file of mode 600 renamed over it.
+    Otherwise nothing of the source changes and the file is kept in the run home as NAME.from-run (mode 600) for you to compare; a second name of
+    another file is removed (a name only). The note says which, never a value."""
+    here = os.path.join(home["path"], to)
+    try:
+        rfd = os.open(to, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+    except OSError:
+        return "%s in the run home could not be read at the end of the run; it was left in place" % to
+    try:
+        st = os.fstat(rfd)
+        if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+            os.unlink(to, dir_fd=fd)
+            return "%s in the run home was replaced during the run by a second name of another file; the name is removed, and the source is untouched" % to
+        data = b""
+        while st.st_size <= MAX_SIGNIN and len(data) <= MAX_SIGNIN:
+            chunk = os.read(rfd, MAX_SIGNIN + 1 - len(data))
+            if not chunk:
+                break
+            data += chunk
+        why = None
+        if st.st_size > MAX_SIGNIN or len(data) > MAX_SIGNIN:
+            why = "it is over %d bytes" % MAX_SIGNIN
+        elif src is None or real0 is None or sum0 is None:
+            why = "the source was not read when the run started"
+        else:
+            real, bad = source_problem(src)
+            if bad or real != real0:
+                why = "the source is not the file it was when the run started"
+            elif digest_of(real) != sum0:
+                why = "the source changed since the run started (another sign-in, or another program)"
+        if why is None:
+            bad = write_back(real0, data)
+            if bad is None:
+                os.unlink(to, dir_fd=fd)
+                return ("%s in the run home was replaced during the run by a file of its own (a sign-in written anew); the source was unchanged since the run "
+                        "started, so it now holds that file (mode 600), and the run home holds no copy" % to)
+            why = "the source could not be written (%s)" % bad
+        try:
+            os.fchmod(rfd, 0o600)
+            os.rename(to, to + KEPT, src_dir_fd=fd, dst_dir_fd=fd)
+        except OSError as e:
+            return ("%s in the run home was replaced during the run by a file of its own and was not written back (%s); it could not be set aside as %s (%s), "
+                    "so it was left in place" % (to, why, here + KEPT, e.strerror or e))
+        return ("%s in the run home was replaced during the run by a file of its own (a sign-in written anew), and it was not written back: %s. It is kept "
+                "as %s (mode 600) for you to compare with your own; qargi local clean removes it with the run" % (to, why, here + KEPT))
+    finally:
+        os.close(rfd)
+
+
+def write_back(real, data):
+    """Replace the file real with data: a new file of mode 600 in its directory, written and synced, then renamed over it. None, or why not."""
+    d, base = os.path.split(real)
+    try:
+        dfd = os.open(d, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError as e:
+        return e.strerror or str(e)
+    tmp = ".%s.qargi-%s" % (base, secrets.token_hex(6))
+    try:
+        try:
+            wfd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dfd)
+        except OSError as e:
+            return e.strerror or str(e)
+        try:
+            os.fchmod(wfd, 0o600)
+            view = memoryview(data)
+            while view:
+                view = view[os.write(wfd, view):]
+            os.fsync(wfd)
+        finally:
+            os.close(wfd)
+        os.rename(tmp, base, src_dir_fd=dfd, dst_dir_fd=dfd)
+        os.fsync(dfd)
+        return None
+    except OSError as e:
+        try:
+            os.unlink(tmp, dir_fd=dfd)
+        except OSError:
+            pass
+        return e.strerror or str(e)
+    finally:
+        os.close(dfd)
 
 
 # ---- the MCP file of the run (dispatch.run_config) -----------------------------------------------------------------------------------
@@ -765,7 +912,8 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
 
 
 def home_notes(home):
-    return ["the source of the run home's link '%s' does not exist, so it is not linked: the runtime starts without it" % n for n in (home or {}).get("missing", [])]
+    return ["the source of the run home's link '%s' does not exist, so it is not linked: the runtime starts without it" % n for n in (home or {}).get("missing", [])] \
+        + (home or {}).get("notes", [])
 
 
 def dry(plan, run):

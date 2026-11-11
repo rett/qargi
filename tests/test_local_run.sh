@@ -398,7 +398,12 @@ echo 'not a JSON line'
 echo '{"type":"item.completed","usage":{"input_tokens":99999,"output_tokens":99999}}'
 echo '{"type":"turn.completed","usage":{"input_tokens":800,"cached_input_tokens":100,"cache_write_input_tokens":7,"output_tokens":150,"reasoning_output_tokens":true}}'
 case \$(cat "$T/codex-mode" 2>/dev/null) in
-  replace) rm -f "\$a"; echo 'a copy the runtime wrote' > "\$a";;
+  replace) rm -f "\$a"; echo 'sign-in-written-anew-v2' > "\$a";;
+  through) echo 'sign-in-refreshed-in-place' > "\$a";;
+  delete) rm -f "\$a";;
+  race) src=\$(readlink "\$a"); echo 'sign-in-of-the-lead-meanwhile' > "\$src"; rm -f "\$a"; echo 'sign-in-written-anew-v3' > "\$a";;
+  second) rm -f "\$a"; ln "$T/victim-h" "\$a";;
+  big) rm -f "\$a"; head -c 1048600 /dev/zero | tr '\0' a > "\$a";;
   swap) src=\$(readlink "\$a"); mv "\$CODEX_HOME" "\$CODEX_HOME.moved"; ln -s "\$(dirname "\$src")" "\$CODEX_HOME";;
 esac
 exit 0
@@ -425,16 +430,66 @@ out=$($DA local run "$RUN" 2>&1); rc=$?; tr=$OUT/transcript
 { [ "$(jq -c .home "$RUN/dispatch.json")" = '{"dir":".codex","env":"CODEX_HOME","left":[],"links":["auth.json"],"not_linked":[]}' ] \
   && ! grep -q -e "$SECRET" -e "$HOME/.codex" "$RUN/dispatch.json" && ! grep -q "$SECRET" <<<"$out" && ! grep -qF "$HOME/.codex" <<<"$out"; } \
   && ok "dispatch.json records the link by name; neither it nor the output holds the content or the source path" || no "home record: $(jq -c .home "$RUN/dispatch.json") $out"
-# the runtime replaces the link by a file of its own (a sign-in written anew): that file is removed too, so no copy stays in the run
+# what the runtime does to the link during the run (a sign-in refreshed) loses nothing, and no value reaches an output or a record
+src_is() { [ "$(cat "$HOME/.codex/auth.json")" = "$1" ] && [ "$(stat -c %a "$HOME/.codex/auth.json")" = 600 ]; }
+noval() { ! grep -q -e "$SECRET" -e 'sign-in-' <<<"$out" && ! grep -q -e "$SECRET" -e 'sign-in-' "$RUN/dispatch.json"; }
+reset_src() { printf '{"token": "%s"}\n' "$SECRET" > "$HOME/.codex/auth.json"; chmod 600 "$HOME/.codex/auth.json"; }
+reset_src; HD=$RUN/home/.codex
+# an atomic replace (a file of its own renamed over the link), the source unchanged since the start: the file is written back, mode 600, no copy stays
 echo replace > "$T/codex-mode"
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
-{ [ "$rc" = 0 ] && [ ! -e "$RUN/home/.codex/auth.json" ] && grep -q 'replaced during the run by a file' <<<"$out" && [ "$(sha256sum < "$HOME/.codex/auth.json" | cut -c1-64)" = "$SUM" ]; } \
-  && ok "a file the runtime put in place of the link is removed at the end, with a note" || no "home replaced: rc=$rc $out $(ls -lA "$RUN/home/.codex")"
-# a member puts a link to the user's ~/.codex in place of the run home: the end of the run removes nothing through it
+{ [ "$rc" = 0 ] && src_is sign-in-written-anew-v2 && [ ! -e "$HD/auth.json" ] && [ ! -L "$HD/auth.json" ] && [ ! -e "$HD/auth.json.from-run" ] \
+  && grep -q 'auth.json in the run home was replaced during the run by a file of its own (a sign-in written anew); the source was unchanged since the run started, so it now holds that file (mode 600)' <<<"$out" \
+  && [ -z "$(find "$HOME/.codex" -name '.auth.json.qargi-*')" ] && noval; } \
+  && ok "atomic replace: the runtime's new file is written back to the unchanged source (mode 600), the run home keeps no copy, no value is printed" || no "home replaced: rc=$rc $out $(ls -lA "$HD" "$HOME/.codex")"
+# written through the link: the source keeps it, the link goes, a note says the source changed
+reset_src; echo through > "$T/codex-mode"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(cat "$HOME/.codex/auth.json")" = sign-in-refreshed-in-place ] && [ ! -L "$HD/auth.json" ] && [ ! -e "$HD/auth.json" ] \
+  && grep -q 'the source of auth.json changed during the run (written through the link' <<<"$out" && noval; } \
+  && ok "write-through: the source keeps what the runtime wrote through the link, the link is removed, with a note" || no "home through: rc=$rc $out"
+# deleted: the source is untouched, a note says so
+reset_src; echo delete > "$T/codex-mode"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 0 ] && src_is "{\"token\": \"$SECRET\"}" && grep -q 'auth.json was removed from the run home during the run (by the runtime or the member); its source is untouched' <<<"$out"; } \
+  && ok "deleted: the source is untouched, with a note" || no "home delete: rc=$rc $out"
+# an atomic replace while the source changed (you signed in again meanwhile): the source keeps yours, the runtime's file is kept as auth.json.from-run (mode 600)
+reset_src; echo race > "$T/codex-mode"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(cat "$HOME/.codex/auth.json")" = sign-in-of-the-lead-meanwhile ] && [ "$(cat "$HD/auth.json.from-run")" = sign-in-written-anew-v3 ] \
+  && [ "$(stat -c %a "$HD/auth.json.from-run")" = 600 ] && [ ! -e "$HD/auth.json" ] \
+  && grep -qF "it was not written back: the source changed since the run started (another sign-in, or another program). It is kept as $HD/auth.json.from-run (mode 600)" <<<"$out" && noval \
+  && [ "$(jq -r '.home.left[0] | test("kept as")' "$RUN/dispatch.json")" = true ]; } \
+  && ok "replace while the source changed: the source keeps the newer one, the runtime's file is kept as auth.json.from-run (mode 600) and said" || no "home race: rc=$rc $out $(ls -lA "$HD")"
+out=$($DA local list 2>&1)
+grep -qF "  residue: $HD/auth.json.from-run (a file the runtime wrote in place of the link, not written back to its source: compare it with your own)" <<<"$out" \
+  && ok "local list names the kept file" || no "list kept: $out"
+rm -f "$HD/auth.json.from-run"
+# a second name of another file in place of the link: the name is removed, the file and the source untouched
+reset_src; echo precious > "$T/victim-h"; echo second > "$T/codex-mode"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(cat "$T/victim-h")" = precious ] && [ "$(stat -c %h "$T/victim-h")" = 1 ] && src_is "{\"token\": \"$SECRET\"}" && [ ! -e "$HD/auth.json" ] \
+  && grep -q 'replaced during the run by a second name of another file; the name is removed' <<<"$out"; } \
+  && ok "a second name of another file in place of the link: the name is removed, nothing is written back" || no "home second: rc=$rc $out"
+# over the bound: kept, not written back
+reset_src; echo big > "$T/codex-mode"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 0 ] && src_is "{\"token\": \"$SECRET\"}" && [ -f "$HD/auth.json.from-run" ] && grep -q 'not written back: it is over 1048576 bytes' <<<"$out"; } \
+  && ok "a file over 1 MiB in place of the link is kept, not written back" || no "home big: rc=$rc $out"
+rm -f "$HD/auth.json.from-run" "$T/victim-h"; reset_src
+# a CODEX_HOME of yours that is another directory: said, the value never printed
+out=$(CODEX_HOME=$T/my-codex-home $DA local run "$RUN" --dry-run 2>&1)
+{ grep -q '^NOTE=CODEX_HOME is set in your environment to another directory than the one the run home.s links come from (~/.codex): the run links ~/.codex/auth.json from there' <<<"$out" \
+  && ! grep -q 'my-codex-home' <<<"$out"; } && ok "a CODEX_HOME of yours elsewhere is a note, without its value" || no "codex home note: $out"
+out=$(CODEX_HOME=$HOME/.codex $DA local run "$RUN" --dry-run 2>&1)
+! grep -q '^NOTE=CODEX_HOME is set' <<<"$out" && ok "a CODEX_HOME that is ~/.codex is no note" || no "codex home same: $out"
+# a member puts a link to the user's ~/.codex in place of the run home and moves the run home: the end of the run removes nothing through the link,
+# and finds the link it made where the run home was moved, under RUN/home
 echo swap > "$T/codex-mode"
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
-{ [ "$rc" = 0 ] && [ "$(sha256sum < "$HOME/.codex/auth.json" | cut -c1-64)" = "$SUM" ] && grep -q 'not the directory the run made' <<<"$out"; } \
-  && ok "a run home replaced by a link to the user's directory: nothing is removed through it, the user's file stays" || no "home swap: rc=$rc $out; source $(ls -l "$HOME/.codex" 2>&1)"
+{ [ "$rc" = 0 ] && [ "$(sha256sum < "$HOME/.codex/auth.json" | cut -c1-64)" = "$SUM" ] && grep -q 'not the directory the run made (a link the member put there, left in place and not followed)' <<<"$out" \
+  && grep -qF "the link qargi made was found under $RUN/home and removed: $RUN/home/.codex.moved/auth.json" <<<"$out" && [ ! -L "$RUN/home/.codex.moved/auth.json" ]; } \
+  && ok "a run home replaced by a link to the user's directory: nothing is removed through it, the user's file stays, the moved link is found and removed" || no "home swap: rc=$rc $out; source $(ls -l "$HOME/.codex" 2>&1)"
 rm -f "$RUN/home/.codex"; rm -rf "$RUN/home/.codex.moved"; rm -f "$T/codex-mode"
 # what a member left in the run directory before the run: a link in place of the run home is not followed, a file in place of the link is not replaced
 mkdir -p "$T/elsewhere"; ln -s "$T/elsewhere" "$RUN/home/.codex"
