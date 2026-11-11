@@ -6,17 +6,18 @@
  "note": "",
  "status": "active",
  "lead": {
-  "id": "arc-qargi",
+  "id": "rett@arc",
   "user": "rett",
   "host": "arc",
-  "since": "2026-11-11T10:04:52Z",
-  "worktree": "94b9af1305afafc4"
+  "since": "2026-11-11T11:32:20Z",
+  "worktree": "94b9af1305afafc4",
+  "succeeds": "arc-qargi"
  },
- "renewed_at": "2026-11-11T10:05:02Z",
+ "renewed_at": "2026-11-11T11:32:20Z",
  "finished_at": null,
- "updated_by": "arc-qargi",
- "rev": 2,
- "updated_at": "2026-11-11T10:05:02Z",
+ "updated_by": "rett@arc",
+ "rev": 3,
+ "updated_at": "2026-11-11T11:32:20Z",
  "feature": "mcpsafety",
  "project": "qargi"
 }
