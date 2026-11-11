@@ -140,14 +140,25 @@ class Shipped(Tree):
         self.assertEqual((d["mode"], d["prompt"], d["output"]["format"], d["timeout_s"], d["cwd"]), ("command", {"via": "stdin"}, "jsonl", 3600, "{clone}"))
         self.assertEqual(d["output"]["usage"], {"select": {"/type": "turn.completed"}, "tokens": "/usage",                  # tokens only: cost_report partial
                                                 "fields": ["input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens", "reasoning_output_tokens"]})
-        self.assertEqual(d["argv"], ["codex", "exec", "--json", "--ephemeral", "-C", "{clone}",
+        self.assertEqual(d["argv"], ["codex", "exec", "--json", "--ephemeral",
+                                     "--ignore-rules", "--strict-config",   # no execpolicy rules file of any place; a baseline key this CLI does not know refuses the run
+                                     "-C", "{clone}",
                                      {"if": "model", "then": ["-m", "{model}"]}, {"if": "effort", "then": ["-c", "model_reasoning_effort={effort}"]},
                                      "-o", "{final_message}",            # the last message to a private file of the run; qargi publishes it
                                      # a write member commits: its clone's .git is a writable root (the sandbox protects it otherwise); never a read-only one's
                                      {"class": "write", "then": ["--sandbox", "workspace-write", "--add-dir", "{out_dir}", "--add-dir", "{clone}/.git"]},
                                      {"class": "read-only", "then": ["--sandbox", "read-only"]}])
         self.assertNotIn("class_argv", d)
-        self.assertEqual(d["run_config"], {"in": "home", "file": "config.toml"})      # the run's MCP file is CODEX_HOME/config.toml, the one configuration Codex reads
+        # the run's CODEX_HOME/config.toml: the user-level configuration of the member's Codex, with a baseline every run gets, MCP or not
+        self.assertEqual({k: v for k, v in d["run_config"].items() if k != "baseline"}, {"in": "home", "file": "config.toml"})
+        base = d["run_config"]["baseline"]
+        self.assertEqual((base["approval_policy"], base["web_search"]), ("never", "disabled"))   # never asks (nobody answers), no hosted search
+        self.assertEqual(base["sandbox_workspace_write"], {"network_access": False, "exclude_slash_tmp": True, "exclude_tmpdir_env_var": False})  # TMPDIR only
+        self.assertEqual(base["features"], dict.fromkeys(["apps", "plugins", "remote_plugin", "hooks", "computer_use", "browser_use", "in_app_browser",
+                                                          "image_generation", "tool_suggest", "skill_mcp_dependency_install"], False))
+        self.assertEqual(base["skills"], {"bundled": {"enabled": False}})                    # no bundled skill (an installer, a creator) in a member
+        self.assertNotIn("mcp_servers", base)                                                # the servers come from the tool packs alone
+        self.assertNotIn("projects", base)                                                   # no trust entry: the clone's .codex/ is not loaded
         self.assertEqual(P.run_config_problems(d, cx["resources"]), [])
         self.assertFalse(any("dangerously" in a or "bypass" in a for a in d["argv"] if isinstance(a, str)))
         m = P.models_of("codex", "local")

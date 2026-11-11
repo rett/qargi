@@ -79,7 +79,7 @@ the author qargi) and TMPDIR of the run, plus QARGI_MEMBER_RUN (the run director
 member changes to), PATH, the env_pass names and the variable of dispatch.home. It runs in its own session without a shell, its standard output goes
 to OUT/transcript and its standard error to OUT/transcript.err, and a process group that outlives the bound is killed. A record of what ran is
 written to RUN/dispatch.json (argv, class, model, outcome; never an environment value): when the run starts (outcome running, with the process ids of
-the runner and, once started, of the member), and again when it ends, whatever ended it: the member's exit, the bound, a run home, MCP file or
+the runner and, once started, of the member), and again when it ends, whatever ended it: the member's exit, the bound, a run home, configuration file or
 transcript that cannot be made (refused, with the error), a command that cannot be started (transport), or SIGINT, SIGTERM or SIGHUP to the runner
 (interrupted, with the signal: the member's process group is stopped, TERM then KILL, and the run home's links are removed). SIGKILL leaves the start
 record: the next start of the run refuses while that runner or its member still runs (the member is found by QARGI_MEMBER_RUN in its environment),
@@ -602,7 +602,7 @@ def write_back(real, data):
         os.close(dfd)
 
 
-# ---- the MCP file of the run (dispatch.run_config) -----------------------------------------------------------------------------------
+# ---- the configuration file of the run (dispatch.run_config) -------------------------------------------------------------------------
 
 def merge_into(doc, add, where=""):
     """Put every key of add into doc, objects key by key; a key both set to something other than two objects is a refusal (the rules of
@@ -668,7 +668,7 @@ def plan_run_config(disp, doc, run, home, project, cls, runtime):
 
 
 def config_dir_fd(run, plan, home):
-    """A descriptor of the directory of the run's MCP file, made when missing, opened part by part without following a link (home_dir_fd for the run
+    """A descriptor of the directory of the run's configuration file, made when missing, opened part by part without following a link (home_dir_fd for the run
     home; RUN/config otherwise)."""
     if plan["in"] == "home":
         return home_dir_fd(run, home, True)
@@ -681,14 +681,14 @@ def config_dir_fd(run, plan, home):
         try:
             return os.open(CONFIG_DIR, O_DIR, dir_fd=fd)
         except OSError as e:
-            fail("%s is not a plain directory of the run; the MCP file of the run goes there and nowhere else (%s)" % (os.path.join(run, CONFIG_DIR), e.strerror or e))
+            fail("%s is not a plain directory of the run; the configuration file of the run goes there and nowhere else (%s)" % (os.path.join(run, CONFIG_DIR), e.strerror or e))
     finally:
         os.close(fd)
 
 
 def put_run_config(run, plan, home):
-    """Write the run's MCP file (mode 600, a new or regular file of its own, never through a link), or, with no tool for the run, remove a file of
-    that name left there (a link or a regular file; anything else is a refusal), so the runtime reads none."""
+    """Write the run's configuration file (mode 600, a new or regular file of its own, never through a link), or, with no baseline and no tool for the
+    run, remove a file of that name left there (a link or a regular file; anything else is a refusal), so the runtime reads none."""
     fd = config_dir_fd(run, plan, home)
     try:
         try:
@@ -696,7 +696,7 @@ def put_run_config(run, plan, home):
         except FileNotFoundError:
             st = None
         if st is not None and not (stat.S_ISREG(st.st_mode) or stat.S_ISLNK(st.st_mode)):
-            fail("%s is in the place of the run's MCP file and is not a file; remove it, or the run is refused" % plan["path"])
+            fail("%s is in the place of the run's configuration file and is not a file; remove it, or the run is refused" % plan["path"])
         if st is not None and (stat.S_ISLNK(st.st_mode) or st.st_nlink != 1 or plan["data"] is None):
             os.unlink(plan["file"], dir_fd=fd)                  # a link or a second name is never written through
         if plan["data"] is None:
@@ -1610,7 +1610,7 @@ def run_it(plan, run):
             if proc is not None:
                 kill_group(proc)
                 code = proc.returncode
-        except Stop as e:                                # the run home, the MCP file, the transcripts or the report could not be made as the run needs
+        except Stop as e:                                # the run home, the configuration file, the transcripts or the report could not be made as the run needs
             outcome, error, stop_code = "refused", str(e), e.code
     finally:
         sig.armed = False
