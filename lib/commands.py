@@ -888,8 +888,19 @@ COMMANDS = {
     },
     "tool": {
         "summary": "Create or import tools (MCP servers with an allowlist) and attach them by scope",
-        "desc": ("A tool is an MCP server with an explicit list of allowed tools and a permission policy for each. A write-like tool "
-                 "cannot run unattended unless the tool is marked write_ok. Everything else works as for skills (qargi help skill)."),
+        "desc": ("A tool is an MCP server with an explicit list of allowed tools and a permission policy for each: always_allow, always_ask or auto. "
+                 "The tools are named as the server names them: letters, digits and _ . - / (platform.list_items, repo/push). A write-like tool "
+                 "cannot run unattended (always_allow or auto) unless the pack is marked write_ok. A tool is write-like when a word of its name "
+                 "starts with create, update, delete, remove, post, push, write, merge, send, set, add, edit, close or comment, however the name is "
+                 "spelled: the words are cut at every character that is not a letter and at a camelCase boundary (delete_item, "
+                 "platform.delete_knowledge, repo/push, issue-close, deleteItem). A write word inside a word does not count (offset), nor do the "
+                 "words settings, setting, address, addresses, postal, postcode, postcodes, additional and closest. With the server's own tool "
+                 "listing (tool import or tool seal with --tool-list FILE) a tool it does not mark readOnlyHint true cannot run unattended either. "
+                 "A member is given the MCP tools of the tool packs that reach its roles (qargi agent refresh after a link, an unlink or a seal), "
+                 "under the names the runtime gives them, and its guard judges every call of one: a tool of no pack linked to the role, a tool "
+                 "of a pack that changed since its approval and an always_ask tool are refused, and a read-only run calls only declared reads "
+                 "(always_allow, a name that is not write-like, and readOnlyHint true where a listing was recorded). "
+                 "Everything else works as for skills (qargi help skill)."),
         "scripts": ["packs.sh"],
         "verbs": "PACK",
     },
@@ -1641,7 +1652,17 @@ SKILL_VERBS["unaccept"] = verb("Remove the acceptance of a skill", [("PROJECT", 
     desc=("Gated like accept. Removes only the record: the skill itself is not touched and shows as unmanaged again. Refused when there is no such "
           "acceptance in that scope."))
 COMMANDS["skill"]["verbs"] = SKILL_VERBS
-COMMANDS["tool"]["verbs"] = PACK_VERBS
+TOOL_LIST = opt("--tool-list", "the server's own tool listing, saved to a file (the JSON result of MCP tools/list): the review also judges the pack's tools by it", "FILE", "file")
+TOOL_VERBS = dict(PACK_VERBS)
+TOOL_VERBS["import"] = dict(PACK_VERBS["import"], opts=PACK_VERBS["import"]["opts"] + [TOOL_LIST],
+    desc=("With --tool-list FILE a tool that the listing does not annotate readOnlyHint true, or does not name, may not be always_allow or auto unless "
+          "the pack sets write_ok; a tool annotated destructiveHint true is reported. The sha256 of the listing and what it says of each tool of the "
+          "pack are kept in the pack's record (tool_list) and are part of the content hash and of the plan token. qargi reads the file and never "
+          "contacts a server."))
+TOOL_VERBS["seal"] = dict(PACK_VERBS["seal"], opts=PACK_VERBS["seal"]["opts"] + [TOOL_LIST],
+    desc=(PACK_VERBS["seal"]["desc"] + " --tool-list FILE judges the tools by the server's tool listing (see tool import) and replaces what the record "
+          "keeps of it; without the option the record's stands, and a tool added since then counts as not listed."))
+COMMANDS["tool"]["verbs"] = TOOL_VERBS
 
 TOPICS = {
     "concepts": ("The model in one page", [

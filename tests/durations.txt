@@ -1,9 +1,9 @@
-203 bash tests/test_agent.sh
+213 bash tests/test_agent.sh
 98 bash tests/test_packs_claude_hostile.sh
 179 bash tests/test_marshal_refs.sh
 221 python3 tests/test_provider.py
 194 bash tests/test_packs_link.sh
-175 bash tests/test_packs_render.sh
+185 bash tests/test_packs_render.sh
 284 bash tests/test_packs_audit.sh
 220 bash tests/test_flow.sh
 65 bash tests/test_fverify.sh
@@ -15,7 +15,7 @@
 170 bash tests/test_project.sh
 118 python3 tests/test_startup.py
 41 python3 tests/test_startup_modules.py
-132 python3 tests/test_guard.py
+136 python3 tests/test_guard.py
 143 bash tests/test_no_default_provider.sh
 162 bash tests/test_conformance_selftest.sh
 78 bash tests/test_local_run.sh
@@ -31,7 +31,8 @@
 61 python3 tests/test_provider_adapter.py
 39 python3 tests/test_tierplan.py
 71 bash tests/test_packs_seed.sh
-2 python3 tests/test_packs_check.py
+8 python3 tests/test_packs_check.py
+2 python3 tests/test_packs_mcp.py
 32 python3 tests/test_supervise.py
 26 python3 tests/test_env.py
 127 python3 tests/test_site.py
@@ -59,7 +60,7 @@
 13 bash tests/test_marshal_forget.sh
 31 bash tests/test_runner.sh
 36 bash tests/test_lead.sh
-9 python3 tests/test_guard.py Guard FailsClosed HookProtocol Substitutions GlobBound TrimmedExpansions InPlaceScripts SubprocessContract
+13 python3 tests/test_guard.py Guard FailsClosed HookProtocol Substitutions GlobBound TrimmedExpansions InPlaceScripts SubprocessContract McpTools
 15 bash tests/test_tier_packet.sh
 15 bash tests/test_prompt.sh
 17 bash tests/test_upstream.sh
