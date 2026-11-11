@@ -109,7 +109,7 @@
               }
             },
             "output": {
-              "description": "what the command writes on its standard output (OUT/transcript): format text or jsonl (one JSON object per line). usage (jsonl only, with tokens and fields): the lines it picks are the runtime's own report of the tokens a turn used; qargi local run adds up each field over those lines when the run ends, records the sums in RUN/dispatch.json (usage: events, tokens, and model when the rule has it) and prints them as USAGE=. A cost_report claim of a command runtime rests on it.",
+              "description": "what the command writes on its standard output (OUT/transcript): format text or jsonl (one JSON object per line). usage (jsonl only, with tokens and fields): the lines it picks are the runtime's own report of the tokens a turn used; qargi local run adds up each field over those lines when the run ends, records the sums in RUN/dispatch.json (usage: events, tokens, and model when the rule has it) and prints them as USAGE=; a field no picked line reports is left out of tokens and named in unreported, never recorded as 0. A cost_report claim of a command runtime rests on it.",
               "type": ["object", "null"],
               "additionalProperties": false,
               "properties": {

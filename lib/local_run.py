@@ -49,7 +49,8 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
   dispatch.output      {format: text|jsonl, usage: {select, skip, tokens, fields, model}}: with usage (jsonl only), when the run ends every line
                        of OUT/transcript that is a JSON object the rule selects (and does not skip) is a report of the tokens the runtime
                        used; each field of the object at `tokens` is added up over those lines, and the sums go to dispatch.json (usage:
-                       events, tokens, model) and to a USAGE= line. Only whole numbers count; a line that is not JSON is passed over.
+                       events, tokens, model) and to a USAGE= line. Only whole numbers count; a line that is not JSON is passed over. A field
+                       that no such line reports is left out of tokens and named in unreported (absent is not zero).
 Placeholders (the closed set): member, model, effort_native, prompt_file, prompt_arg, clone, run_dir, out_dir, project, run_config, final_message
 (and the short names effort, out, prompt). agent_file and session_id belong to runtimes with agent files and to resume; they are refused here.
 A path of the run in the argv ({clone}, {out_dir}, {run_dir}, alone or followed by a path such as {clone}/.git) stays inside its directory and, where it
@@ -956,12 +957,13 @@ USAGE_SCAN_MAX = 256 * 1024 * 1024    # bytes of a transcript read for the usage
 
 
 def read_usage(path, rule):
-    """{events, tokens: {field: sum}, model?, note?} of the transcript at path under the usage rule of dispatch.output, or None when it cannot
-    be read as a file of the run (it is opened without following a link or waiting for a writer, as a regular file only). A line counts when it
-    is a JSON object whose select pointers all have their values, none of whose skip pointers has its value, and whose tokens pointer is an
-    object; each field that is a whole number of at least 0 is added. model: the last text at the model pointer, when the rule has one."""
+    """{events, tokens: {field: sum}, unreported?, model?, note?} of the transcript at path under the usage rule of dispatch.output, or None when it
+    cannot be read as a file of the run (it is opened without following a link or waiting for a writer, as a regular file only). A line counts when
+    it is a JSON object whose select pointers all have their values, none of whose skip pointers has its value, and whose tokens pointer is an
+    object; each field that is a whole number of at least 0 is added. A field that no counted line reports is left out of tokens and named in
+    unreported: absent is not zero. model: the last text at the model pointer, when the rule has one."""
     fields = list(rule["fields"])
-    sums, events, model, read, note = {f: 0 for f in fields}, 0, None, 0, None
+    sums, events, model, read, note = {}, 0, None, 0, None
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError:
@@ -992,14 +994,16 @@ def read_usage(path, rule):
                 for k in fields:
                     n = counts.get(k)
                     if isinstance(n, int) and not isinstance(n, bool) and n >= 0:
-                        sums[k] += n
+                        sums[k] = sums.get(k, 0) + n
                 if rule.get("model"):
                     m = pointer(rec, rule["model"])
                     if isinstance(m, str) and m:
                         model = m[:80]
     finally:
         os.close(fd)
-    got = {"events": events, "tokens": sums}
+    got = {"events": events, "tokens": {f: sums[f] for f in fields if f in sums}}
+    if events and len(sums) < len(fields):
+        got["unreported"] = [f for f in fields if f not in sums]
     if rule.get("model"):
         got["model"] = model
     if note:
@@ -1012,8 +1016,9 @@ def usage_line(u):
         return "USAGE=unknown: the transcript could not be read as a file of the run"
     if not u["events"]:
         return "USAGE=none: no line of the transcript is a usage report of the runtime (dispatch.output.usage)"
-    return "USAGE=%s (%d event%s%s)" % (" ".join("%s=%d" % kv for kv in u["tokens"].items()), u["events"], "" if u["events"] == 1 else "s",
-                                       "; " + u["note"] if u.get("note") else "")
+    return "USAGE=%s (%d event%s%s%s)" % (" ".join("%s=%d" % kv for kv in u["tokens"].items()) or "unreported", u["events"], "" if u["events"] == 1 else "s",
+                                         "; not reported, so not counted: " + ",".join(u["unreported"]) if u.get("unreported") else "",
+                                         "; " + u["note"] if u.get("note") else "")
 
 
 INTERRUPT = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)

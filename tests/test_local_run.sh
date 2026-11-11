@@ -391,12 +391,16 @@ if [ -L "\$a" ]; then echo AUTHLINK=yes; else echo AUTHLINK=no; fi
 [ ! -f "\$a" ] || echo "AUTHSUM=\$(sha256sum < "\$a" | cut -c1-64)"
 cat > /dev/null
 # the events of codex exec --json: two turns report their usage (the second without one count and with a count that is not a number);
-# a line that is not JSON and another event's usage are not counted
+# a line that is not JSON and another event's usage are not counted; in the mode unreported, one turn reports two of the five counts
 echo '{"type":"thread.started","thread_id":"t-1"}'
-echo '{"type":"turn.completed","usage":{"input_tokens":1200,"cached_input_tokens":200,"output_tokens":300,"reasoning_output_tokens":50}}'
-echo 'not a JSON line'
-echo '{"type":"item.completed","usage":{"input_tokens":99999,"output_tokens":99999}}'
-echo '{"type":"turn.completed","usage":{"input_tokens":800,"cached_input_tokens":100,"cache_write_input_tokens":7,"output_tokens":150,"reasoning_output_tokens":true}}'
+if [ "\$(cat "$T/codex-mode" 2>/dev/null)" = unreported ]; then
+  echo '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":2}}'
+else
+  echo '{"type":"turn.completed","usage":{"input_tokens":1200,"cached_input_tokens":200,"output_tokens":300,"reasoning_output_tokens":50}}'
+  echo 'not a JSON line'
+  echo '{"type":"item.completed","usage":{"input_tokens":99999,"output_tokens":99999}}'
+  echo '{"type":"turn.completed","usage":{"input_tokens":800,"cached_input_tokens":100,"cache_write_input_tokens":7,"output_tokens":150,"reasoning_output_tokens":true}}'
+fi
 case \$(cat "$T/codex-mode" 2>/dev/null) in
   replace) rm -f "\$a"; echo 'sign-in-written-anew-v2' > "\$a";;
   through) echo 'sign-in-refreshed-in-place' > "\$a";;
@@ -425,6 +429,13 @@ out=$($DA local run "$RUN" 2>&1); rc=$?; tr=$OUT/transcript
 { [ "$(jq -cS .usage "$RUN/dispatch.json")" = '{"events":2,"tokens":{"cache_write_input_tokens":7,"cached_input_tokens":300,"input_tokens":2000,"output_tokens":450,"reasoning_output_tokens":50}}' ] \
   && grep -q '^USAGE=input_tokens=2000 cached_input_tokens=300 cache_write_input_tokens=7 output_tokens=450 reasoning_output_tokens=50 (2 events)$' <<<"$out"; } \
   && ok "a codex run records the sum of its two turn.completed usages in dispatch.json and prints it as USAGE=" || no "usage: $(jq -c .usage "$RUN/dispatch.json") $(grep '^USAGE' <<<"$out")"
+# a count no event reports is not recorded as 0: it is left out of tokens and named in unreported
+echo unreported > "$T/codex-mode"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(jq -cS .usage "$RUN/dispatch.json")" = '{"events":1,"tokens":{"input_tokens":10,"output_tokens":2},"unreported":["cached_input_tokens","cache_write_input_tokens","reasoning_output_tokens"]}' ] \
+  && grep -q '^USAGE=input_tokens=10 output_tokens=2 (1 event; not reported, so not counted: cached_input_tokens,cache_write_input_tokens,reasoning_output_tokens)$' <<<"$out"; } \
+  && ok "a usage count no event reports is left out and named, never recorded as 0" || no "usage unreported: rc=$rc $(jq -c .usage "$RUN/dispatch.json") $(grep '^USAGE' <<<"$out")"
+rm -f "$T/codex-mode"
 { [ ! -e "$RUN/home/.codex/auth.json" ] && [ ! -L "$RUN/home/.codex/auth.json" ] && [ "$(sha256sum < "$HOME/.codex/auth.json" | cut -c1-64)" = "$SUM" ]; } \
   && ok "the link is removed when the run ends, and the user's file is as it was" || no "home link left: $(ls -lA "$RUN/home/.codex")"
 { [ "$(jq -c .home "$RUN/dispatch.json")" = '{"dir":".codex","env":"CODEX_HOME","left":[],"links":["auth.json"],"not_linked":[]}' ] \
