@@ -124,7 +124,7 @@ class Shipped(Tree):
         self.assertTrue(all(cl["verified_on"] is None for cl in cx["capabilities"].values()))
         self.assertEqual({c: cl["value"] for c, cl in cx["capabilities"].items()},
                          {"headless_dispatch": "yes", "per_dispatch_model_override": "yes", "per_dispatch_effort_override": "yes",
-                          "read_only_barrier": "partial", "skills": "yes", "resume": "no", "mcp": "no"})
+                          "read_only_barrier": "partial", "skills": "yes", "resume": "no", "mcp": "no", "cost_report": "partial"})
         self.assertEqual((cx["family"], cx["surface"], cx["models"], cx["agents"]), ("openai", "local", {"catalog": "openai", "use": "id"}, None))
         self.assertNotIn("adapter", cx)                                                             # data only: no code of its own
         self.assertIsNone(cx["resources"]["mcp"])
@@ -134,7 +134,9 @@ class Shipped(Tree):
         self.assertEqual(P.cap("codex", "local", "read_only_barrier"), "unverified")                # partial, but not attested: it counts as no
         self.assertEqual(P.effective("codex", "local", "read_only_barrier"), "no")
         d = cx["dispatch"]
-        self.assertEqual((d["mode"], d["prompt"], d["output"], d["timeout_s"], d["cwd"]), ("command", {"via": "stdin"}, {"format": "jsonl"}, 3600, "{clone}"))
+        self.assertEqual((d["mode"], d["prompt"], d["output"]["format"], d["timeout_s"], d["cwd"]), ("command", {"via": "stdin"}, "jsonl", 3600, "{clone}"))
+        self.assertEqual(d["output"]["usage"], {"select": {"/type": "turn.completed"}, "tokens": "/usage",                  # tokens only: cost_report partial
+                                                "fields": ["input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens", "reasoning_output_tokens"]})
         self.assertEqual(d["argv"], ["codex", "exec", "--json", "--ephemeral", "--ignore-user-config", "-C", "{clone}",
                                      {"if": "model", "then": ["-m", "{model}"]}, {"if": "effort", "then": ["-c", "model_reasoning_effort={effort}"]},
                                      "-o", "{out_dir}/report.md",
@@ -527,7 +529,7 @@ class Cli(CliBase):
         self.assertEqual(q("check", "nope")[0], 1)
         self.assertEqual(json.loads(q("show", "claude-code", "--json")[1]), CODE)
         rc, out, _ = q("list")
-        self.assertRegex(out, r"(?m)^codex\s+local\s+5 warnings$")                     # the five unverified claims, no failure
+        self.assertRegex(out, r"(?m)^codex\s+local\s+6 warnings$")                     # the six unverified claims, no failure
         rc, out, _ = q("check", "codex")
         self.assertEqual(rc, 0, out)
         self.assertIn("the review role cannot be served on local", out)                 # the sandbox barrier is not attested yet
@@ -3026,6 +3028,55 @@ class RunHome(LibraryBase):
         self.assertEqual(rc, 1, (out, err))
         self.assertIn("FAIL: dispatch.home.link[0].from: '~/.ssh/id_ed25519' is never linked into a run", out)
         self.assertFalse(self.stored("fakecli"))
+
+
+class OutputUsage(unittest.TestCase):
+    """dispatch.output.usage: the rule qargi local run reads the runtime's own token reports with, from its JSON lines on standard output."""
+
+    RULE = {"select": {"/type": "turn.completed"}, "tokens": "/usage", "fields": ["input_tokens", "output_tokens"]}
+
+    def with_output(self, output):
+        return fake_runtime(dispatch={"mode": "command", "argv": ["fakecli", "run"], "prompt": {"via": "stdin"}, "output": output})
+
+    def test_a_rule_on_json_lines_passes(self):
+        self.assertEqual([m for m in fails(self.with_output({"format": "jsonl", "usage": self.RULE}), "fakecli") if "output" in m], [])
+        self.assertEqual(P.output_usage_problems({"format": "jsonl", "usage": self.RULE}, shape=True), [])
+
+    def test_refusals(self):
+        cases = (
+            ({"format": "text", "usage": self.RULE}, "dispatch.output.format must be jsonl"),
+            ({"usage": self.RULE}, "dispatch.output.format must be jsonl"),
+            ({"format": "jsonl", "usage": {"select": {"/type": "x"}, "fields": ["a"]}}, "missing required property 'tokens'"),
+            ({"format": "jsonl", "usage": {"tokens": "/usage"}}, "missing required property 'fields'"),
+            ({"format": "jsonl", "usage": dict(self.RULE, tokens="usage")}, "dispatch.output.usage.tokens: 'usage' is not a JSON pointer"),
+            ({"format": "jsonl", "usage": dict(self.RULE, model="model")}, "dispatch.output.usage.model: 'model' is not a JSON pointer"),
+            ({"format": "jsonl", "usage": dict(self.RULE, select={"type": "x"})}, "dispatch.output.usage.select: 'type' is not a JSON pointer"),
+            ({"format": "jsonl", "usage": dict(self.RULE, skip={"/a": {"b": 1}})}, "dispatch.output.usage.skip: '/a' is not a JSON pointer to a text"),
+        )
+        for output, needle in cases:
+            with self.subTest(needle):
+                f = fails(self.with_output(output), "fakecli")
+                self.assertTrue(any(needle in m for m in f), f)
+                self.assertTrue(any(needle in m for m in P.output_usage_problems(output, shape=True)), P.output_usage_problems(output, shape=True))
+
+    def test_the_schema_and_local_run_refuse_an_unknown_key_or_a_wrong_shape(self):
+        for output, needle in (({"format": "jsonl", "usage": dict(self.RULE, sum="all")}, "dispatch.output.usage.sum: additional property is not allowed"),
+                               ({"format": "jsonl", "usage": dict(self.RULE, fields=[])}, "dispatch.output.usage.fields"),
+                               ({"format": "json"}, "dispatch.output.format"),
+                               ({"format": "jsonl", "lines": 3}, "dispatch.output.lines: additional property is not allowed")):
+            with self.subTest(needle):
+                f = fails(self.with_output(output), "fakecli")
+                self.assertTrue(any(needle in m for m in f), f)
+        self.assertTrue(any("sum: additional property" in m for m in P.output_usage_problems({"format": "jsonl", "usage": dict(self.RULE, sum="all")}, shape=True)))
+        self.assertTrue(any("fields" in m for m in P.output_usage_problems({"format": "jsonl", "usage": dict(self.RULE, fields="input_tokens")}, shape=True)))
+
+    def test_the_transcript_rule_shares_the_node_and_its_pointer_checks(self):
+        sch = P.schema2()
+        self.assertEqual(sch["$defs"]["res_transcripts"]["properties"]["usage"], {"$ref": "#/$defs/usage"})
+        self.assertEqual(sch["$defs"]["provider"]["properties"]["dispatch"]["properties"]["output"]["properties"]["usage"], {"$ref": "#/$defs/usage"})
+        d = copy.deepcopy(CODE)
+        d["resources"]["transcripts"]["usage"]["tokens"] = "message/usage"
+        self.assertTrue(any("resources.transcripts.usage.tokens: 'message/usage' is not a JSON pointer" in m for m in fails(d, "claude-code")), fails(d, "claude-code"))
 
 
 class Attest(LibraryBase):

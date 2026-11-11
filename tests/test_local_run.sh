@@ -339,6 +339,8 @@ want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["codex","exec","--json","--ephem
 if [ "$(command -v codex)" = "$T/bin/codex" ]; then out=$($DA local run "$RUN" 2>"$T/err"); rc=$?; else rc=x; out="the first codex on PATH is $(command -v codex), not the fake: the real run is not made"; : > "$T/err"; fi
 { [ "$rc" = 0 ] && grep -q '^ARG\[--sandbox\]$' "$OUT/transcript" && grep -q '^ARG\[workspace-write\]$' "$OUT/transcript" \
   && sed -n '/^STDIN-BEGIN/,/^STDIN-END/p' "$OUT/transcript" | grep -q 'TASK: change the thing'; } && ok "codex: a real run of the fake gets the argv as separate arguments and the prompt on its standard input" || no "codex run: rc=$rc $out $(cat "$T/err")"
+{ grep -q '^USAGE=none: no line of the transcript is a usage report' <<<"$out" && [ "$(jq -c .usage.events "$RUN/dispatch.json")" = 0 ]; } \
+  && ok "a transcript with no usage event says so (USAGE=none) and records 0 events" || no "usage none: $(grep '^USAGE' <<<"$out") $(jq -c .usage "$RUN/dispatch.json" 2>&1)"
 out=$($DA local prepare --repo "$T/r" --base main --slug cxr0 --scratch "$T" --role review 2>&1); rc=$?
 { [ "$rc" != 0 ] && grep -q 'qargi provider accept codex --surface local --no-barrier --project rproj' <<<"$out"; } \
   && ok "codex, read-only: its sandbox barrier is not attested yet, so it counts as none and prepare refuses the review role with the accept command" || no "codex ro prepare: rc=$rc $out"
@@ -379,6 +381,13 @@ a=\${CODEX_HOME:-/nonexistent}/auth.json
 if [ -L "\$a" ]; then echo AUTHLINK=yes; else echo AUTHLINK=no; fi
 [ ! -f "\$a" ] || echo "AUTHSUM=\$(sha256sum < "\$a" | cut -c1-64)"
 cat > /dev/null
+# the events of codex exec --json: two turns report their usage (the second without one count and with a count that is not a number);
+# a line that is not JSON and another event's usage are not counted
+echo '{"type":"thread.started","thread_id":"t-1"}'
+echo '{"type":"turn.completed","usage":{"input_tokens":1200,"cached_input_tokens":200,"output_tokens":300,"reasoning_output_tokens":50}}'
+echo 'not a JSON line'
+echo '{"type":"item.completed","usage":{"input_tokens":99999,"output_tokens":99999}}'
+echo '{"type":"turn.completed","usage":{"input_tokens":800,"cached_input_tokens":100,"cache_write_input_tokens":7,"output_tokens":150,"reasoning_output_tokens":true}}'
 case \$(cat "$T/codex-mode" 2>/dev/null) in
   replace) rm -f "\$a"; echo 'a copy the runtime wrote' > "\$a";;
   swap) src=\$(readlink "\$a"); mv "\$CODEX_HOME" "\$CODEX_HOME.moved"; ln -s "\$(dirname "\$src")" "\$CODEX_HOME";;
@@ -398,6 +407,10 @@ out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
 out=$($DA local run "$RUN" 2>&1); rc=$?; tr=$OUT/transcript
 { [ "$rc" = 0 ] && grep -q "^CODEX_HOME=$RUN/home/.codex\$" "$tr" && grep -q '^AUTHLINK=yes$' "$tr" && grep -q "^AUTHSUM=$SUM\$" "$tr"; } \
   && ok "a codex run sees CODEX_HOME=RUN/home/.codex with auth.json a link to the user's file" || no "home run: rc=$rc $out $(grep -E '^(CODEX_HOME|AUTH)' "$tr")"
+# the usage of the run (dispatch.output.usage): the two turn.completed events are added up, field by field
+{ [ "$(jq -cS .usage "$RUN/dispatch.json")" = '{"events":2,"tokens":{"cache_write_input_tokens":7,"cached_input_tokens":300,"input_tokens":2000,"output_tokens":450,"reasoning_output_tokens":50}}' ] \
+  && grep -q '^USAGE=input_tokens=2000 cached_input_tokens=300 cache_write_input_tokens=7 output_tokens=450 reasoning_output_tokens=50 (2 events)$' <<<"$out"; } \
+  && ok "a codex run records the sum of its two turn.completed usages in dispatch.json and prints it as USAGE=" || no "usage: $(jq -c .usage "$RUN/dispatch.json") $(grep '^USAGE' <<<"$out")"
 { [ ! -e "$RUN/home/.codex/auth.json" ] && [ ! -L "$RUN/home/.codex/auth.json" ] && [ "$(sha256sum < "$HOME/.codex/auth.json" | cut -c1-64)" = "$SUM" ]; } \
   && ok "the link is removed when the run ends, and the user's file is as it was" || no "home link left: $(ls -lA "$RUN/home/.codex")"
 { [ "$(jq -c .home "$RUN/dispatch.json")" = '{"dir":".codex","env":"CODEX_HOME","left":[],"links":["auth.json"],"not_linked":[]}' ] \

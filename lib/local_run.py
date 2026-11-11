@@ -33,6 +33,10 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
                        directory; a file that replaced a link during the run is removed too. provider.home_problems states the rules.
   dispatch.timeout_s   the bound (default 1800, at most 86400); --timeout replaces it.
   dispatch.exit        {"0": "ok", "*": "failed"}: the exit status -> outcome ok|failed|refused|transport.
+  dispatch.output      {format: text|jsonl, usage: {select, skip, tokens, fields, model}}: with usage (jsonl only), when the run ends every line
+                       of OUT/transcript that is a JSON object the rule selects (and does not skip) is a report of the tokens the runtime
+                       used; each field of the object at `tokens` is added up over those lines, and the sums go to dispatch.json (usage:
+                       events, tokens, model) and to a USAGE= line. Only whole numbers count; a line that is not JSON is passed over.
 Placeholders (the closed set): member, model, effort_native, prompt_file, prompt_arg, clone, run_dir, out_dir, project (and the short names
 effort, out, prompt). agent_file and session_id belong to runtimes with agent files and to resume; they are refused here.
 
@@ -60,6 +64,7 @@ import provider as P  # noqa: E402
 import paths  # noqa: E402
 import procenv as PE  # noqa: E402
 from procenv import clean_path  # noqa: E402
+from lead_usage import pointer  # noqa: E402  (the JSON pointer the transcript usage rule of a definition is read with)
 
 _print = print
 
@@ -478,6 +483,9 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     if not isinstance(ex, dict) or any(v not in OUTCOME_EXIT for v in ex.values()):
         fail("dispatch.exit of %s maps an exit status to one of %s" % (runtime, ", ".join(OUTCOME_EXIT)))
     passed = env_names(disp, runtime)
+    bad = P.output_usage_problems(disp.get("output"), shape=True)
+    if bad:
+        fail("%s of %s" % (bad[0], runtime))
     home = plan_home(disp, run, runtime)
     if cls == "read-only":
         state, text = P.require_barrier(runtime, "local", project)
@@ -541,7 +549,8 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     exe, how = find_command(runtime, argv[0], run, keep)
     return {"runtime": runtime, "class": cls, "argv": argv, "exe": exe, "exe_from": how, "cwd": cwd, "via": via, "prompt": prompt, "prompt_file": pfile,
             "timeout_s": to, "env_pass": passed, "env": child_env(run, tmp, passed, home), "exit": ex, "model": mname, "effort_native": native,
-            "home": home, "notes": notes + ([note] if note else []) + home_notes(home), "output_format": (disp.get("output") or {}).get("format", "text")}
+            "home": home, "notes": notes + ([note] if note else []) + home_notes(home), "output_format": (disp.get("output") or {}).get("format", "text"),
+            "usage": (disp.get("output") or {}).get("usage")}
 
 
 def home_notes(home):
@@ -572,6 +581,70 @@ def dry(plan, run):
     print("PROMPT:")
     sys.stdout.write(plan["prompt"])
     sys.stdout.flush()
+
+
+USAGE_SCAN_MAX = 256 * 1024 * 1024    # bytes of a transcript read for the usage; past it the sums are of what was read, and say so
+
+
+def read_usage(path, rule):
+    """{events, tokens: {field: sum}, model?, note?} of the transcript at path under the usage rule of dispatch.output, or None when it cannot
+    be read as a file of the run (it is opened without following a link or waiting for a writer, as a regular file only). A line counts when it
+    is a JSON object whose select pointers all have their values, none of whose skip pointers has its value, and whose tokens pointer is an
+    object; each field that is a whole number of at least 0 is added. model: the last text at the model pointer, when the rule has one."""
+    fields = list(rule["fields"])
+    sums, events, model, read, note = {f: 0 for f in fields}, 0, None, 0, None
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        with os.fdopen(fd, "rb", closefd=False) as f:
+            for raw in f:
+                read += len(raw)
+                if read > USAGE_SCAN_MAX:
+                    note = "only the first %d bytes of the transcript were read" % USAGE_SCAN_MAX
+                    break
+                try:
+                    rec = json.loads(raw)
+                except ValueError:
+                    continue
+                if not isinstance(rec, dict):
+                    continue
+                if any(pointer(rec, k) != v for k, v in (rule.get("select") or {}).items()):
+                    continue
+                if any(pointer(rec, k) is not None and pointer(rec, k) == v for k, v in (rule.get("skip") or {}).items()):
+                    continue
+                counts = pointer(rec, rule.get("tokens") or "")
+                if not isinstance(counts, dict):
+                    continue
+                events += 1
+                for k in fields:
+                    n = counts.get(k)
+                    if isinstance(n, int) and not isinstance(n, bool) and n >= 0:
+                        sums[k] += n
+                if rule.get("model"):
+                    m = pointer(rec, rule["model"])
+                    if isinstance(m, str) and m:
+                        model = m[:80]
+    finally:
+        os.close(fd)
+    got = {"events": events, "tokens": sums}
+    if rule.get("model"):
+        got["model"] = model
+    if note:
+        got["note"] = note
+    return got
+
+
+def usage_line(u):
+    if u is None:
+        return "USAGE=unknown: the transcript could not be read as a file of the run"
+    if not u["events"]:
+        return "USAGE=none: no line of the transcript is a usage report of the runtime (dispatch.output.usage)"
+    return "USAGE=%s (%d event%s%s)" % (" ".join("%s=%d" % kv for kv in u["tokens"].items()), u["events"], "" if u["events"] == 1 else "s",
+                                       "; " + u["note"] if u.get("note") else "")
 
 
 def kill_group(proc):
@@ -688,11 +761,15 @@ def run_it(plan, run):
            "exit": code, "timed_out": timed_out, "outcome": outcome, "transcript": os.path.join(out, "transcript")}
     if home:
         rec["home"] = {"env": home["env"], "dir": home["dir"], "links": made, "not_linked": home["missing"], "left": home_left}
+    if plan["usage"]:
+        rec["usage"] = read_usage(rec["transcript"], plan["usage"])
     write_private(dispatch, json.dumps(rec, indent=2, sort_keys=True) + "\n")
     print("RUNTIME=" + plan["runtime"])
     print("OUTCOME=" + outcome + (" (timed out after %ds)" % plan["timeout_s"] if timed_out else ""))
     print("EXIT=%s" % code)
     print("TRANSCRIPT=" + rec["transcript"])
+    if plan["usage"]:
+        print(usage_line(rec["usage"]))
     for n in home_left:
         print("qargi: note: " + n, file=sys.stderr)
     print("next: read the transcript and OUT, then qargi local verify " + run)

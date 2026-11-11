@@ -51,6 +51,12 @@
       "verified_on": null,
       "source": "lib/local_run.py",
       "note": "a local run renders no MCP configuration for a command runtime yet, and the run ignores the user's Codex configuration (--ignore-user-config): a Codex member has no MCP tools"
+    },
+    "cost_report": {
+      "value": "partial",
+      "verified_on": null,
+      "source": "codex-cli 0.167.1: the turn.completed events of codex exec --json carry usage",
+      "note": "tokens only: qargi local run adds up the usage of the turn.completed events of the transcript into dispatch.json (dispatch.output.usage); a ChatGPT sign-in reports no money per run; not yet verified in a real run"
     }
   },
   "resources": {
@@ -114,7 +120,12 @@
     },
     "timeout_s": 3600,
     "output": {
-      "format": "jsonl"
+      "format": "jsonl",
+      "usage": {
+        "select": {"/type": "turn.completed"},
+        "tokens": "/usage",
+        "fields": ["input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens", "reasoning_output_tokens"]
+      }
     },
     "exit": {
       "0": "ok",
