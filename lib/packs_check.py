@@ -94,11 +94,15 @@ TOOL_KEY = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./-]{0,127}\Z")
 WRITE_WORDS = ("create", "update", "delete", "remove", "post", "push", "write", "merge", "send", "set", "add", "edit", "close", "comment")
 READ_ALIKE = frozenset(("settings", "setting", "address", "addresses", "postal", "postcode", "postcodes", "additional", "closest"))
 NAME_WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+")           # a run of capitals that no lower-case letter follows, or a word with at most its first letter a capital
+CAPITALS = re.compile(r"[A-Z]{2,}(?=[a-z])")                      # a run of capitals with lower-case letters after it: HTTPPost is HTTP and Post, DELETEitem is DELETE and item
 
 
 def name_words(name):
-    """The words of a tool name, lower-cased: cut at every character that is not an ASCII letter and at a camelCase boundary."""
-    return [w.lower() for w in NAME_WORD.findall(name)] if isinstance(name, str) else []
+    """The words of a tool name, lower-cased: cut at every character that is not an ASCII letter and at a camelCase boundary. A run of capitals that
+    lower-case letters follow is read both ways (its last capital starts the next word, or the run is a word of its own), so both readings are words."""
+    if not isinstance(name, str):
+        return []
+    return [w.lower() for w in NAME_WORD.findall(name) + CAPITALS.findall(name)]
 
 
 def write_like(name):

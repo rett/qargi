@@ -378,7 +378,7 @@ class Verbs(unittest.TestCase):
 # word does not, and the READ_ALIKE words (settings, address, postal ...) do not.
 WRITES = ("create_issue", "platform.delete_knowledge", "repo/push", "issue-close", "deleteItem", "updateRecord", "HTTPPost", "bulk.remove", "files/write",
           "send-message", "branch.merge", "setValue", "add_label", "editPage", "post_comment", "items.v2.delete", "DELETE_ITEM", "api/v1/users/create",
-          "x__update", "comment", "getOrCreate", "iOSUpdate",
+          "x__update", "comment", "getOrCreate", "iOSUpdate", "DELETEitem", "SENDmail",
           "deleteall", "sendmail", "postmessage",                    # no separator: the word starts with a write word
           "created_at_list", "list_comments", "setup_hook", "sender.lookup")   # not on the read-alike list: taken for a write, so asked about
 READS = ("platform.list_items", "getStatus", "search", "get_item", "listIssues", "repo/read", "fetch-page", "items.v2.list", "GET_ITEM", "query",
@@ -396,7 +396,8 @@ class ToolNames(unittest.TestCase):
 
     def test_the_words_of_a_name(self):
         for name, words in (("platform.delete_knowledge", ["platform", "delete", "knowledge"]), ("repo/push", ["repo", "push"]), ("issue-close", ["issue", "close"]),
-                            ("deleteItem", ["delete", "item"]), ("HTTPPost", ["http", "post"]), ("getHTTPStatus", ["get", "http", "status"]),
+                            ("deleteItem", ["delete", "item"]), ("HTTPPost", ["http", "post", "httpp"]), ("getHTTPStatus", ["get", "http", "status", "https"]),
+                            ("DELETEitem", ["delet", "eitem", "delete"]),      # a run of capitals before lower-case letters is read both ways
                             ("items.v2.delete", ["items", "v", "delete"]), ("DELETE_ITEM", ["delete", "item"]), ("settings_view", ["settings", "view"]), ("", [])):
             self.assertEqual(C.name_words(name), words, name)
         for odd in (None, 7, ["delete"]):
