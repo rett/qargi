@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- The model catalog of the family `openai` (`lib/providers/catalogs/openai.json`), the table a runtime of that family names with `models.catalog`: the tiers fast `gpt-6-luna`, balanced `gpt-6.1-terra`, deep `gpt-6.1-sol` and frontier `gpt-6-astra` (ids of the pattern `^gpt-[a-z0-9.-]+$`, passed as ids, with no alias), and the effort levels `low` to `max` under the same names. No tier is verified yet (`verified_on` is null until a real run uses it); the vendor's sixth effort level, `ultra`, has no qargi level and is not mapped.
+
 ## [0.2.11] - 2026-11-11
 
 ### Added

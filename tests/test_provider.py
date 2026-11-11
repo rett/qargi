@@ -98,6 +98,24 @@ class Shipped(Tree):
         self.assertEqual((CODE["family"], CODE["models"]), ("claude", {"catalog": "claude", "use": "alias"}))
         self.assertEqual((PLATFORM["family"], PLATFORM["models"]), ("claude", {"catalog": "claude", "use": "id"}))
 
+    def test_the_openai_catalog_validates_and_every_tier_resolves_to_a_model_of_its_pattern(self):
+        cat = shipped("catalogs/openai.json")
+        self.assertEqual(fails(cat, "openai"), [])
+        self.assertEqual(P.catalog("openai"), cat)
+        self.assertEqual((cat["family"], cat["pattern"]), ("openai", "^gpt-[a-z0-9.-]+$"))
+        self.assertEqual(set(cat["tiers"]), set(P.TIERS))                       # every tier named, none left to '*'
+        self.assertEqual({t: v["model"] for t, v in cat["tiers"].items()},
+                         {"fast": "gpt-6-luna", "balanced": "gpt-6.1-terra", "deep": "gpt-6.1-sol", "frontier": "gpt-6-astra"})
+        for t, row in cat["tiers"].items():
+            with self.subTest(t):
+                self.assertRegex(row["model"], cat["pattern"])
+                self.assertIsNone(row["alias"])                                 # the runtimes of the family pass the id
+                self.assertIsNone(row["verified_on"])                           # not verified until a real run
+        self.assertEqual(cat["effort"], {e: e for e in ("low", "medium", "high", "xhigh", "max")})
+        broken = copy.deepcopy(cat)
+        broken["tiers"]["deep"]["model"] = "o9-deep"
+        self.assertTrue(any("does not match pattern" in m for m in fails(broken, "openai")), fails(broken, "openai"))
+
     def test_reserved_names_are_the_agent_types_the_claude_runtime_brings_itself(self):
         self.assertEqual(sorted(CODE["agents"]["reserved_names"]),
                          sorted("general-purpose explore plan statusline-setup claude-code-guide claude output-style-setup".split()))
