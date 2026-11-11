@@ -4,7 +4,7 @@ Run by tests/test_hermetic.sh. Usage: hermetic_lint.py [TESTS_DIR]; prints one `
 
 The rules (each test file: tests/test_*.sh, tests/test_*.py, tests/conformance.sh, tests/role_seed_sim.py):
   source  the file does not source tests/hermetic.sh (shell) or import hermetic (python): a caller's variables, HOME, config and the
-          real ant and claude reach the test.
+          real ant, claude and codex reach the test.
   tmp     a literal /tmp, /dev/shm or /run path in code: the test works in a place that every other run shares. Make a directory with
           mktemp (it follows TMPDIR) and work under it.
   pgrep   pkill, killall, or pgrep with -f (a pattern over every process's command line): it finds, and kills, the processes of other
