@@ -46,9 +46,9 @@ fast | par | 300 | 6 | python3 tests/test_cloud.py | lib/cloud.py
 fast | par | 300 | 6 | python3 tests/test_upgrade.py | lib/upgrade.sh
 full | par | 300 | 36 | python3 tests/test_supervise.py | lib/supervise.sh lib/supervise.py lib/procenv.py
 full | par | 300 | 17 | bash tests/test_prompt.sh
-full | par | 390 | 146 | python3 tests/test_guard.py | lib/guard.py
-fast | par | 300 | 10 | python3 tests/test_guard.py Guard FailsClosed HookProtocol Substitutions GlobBound TrimmedExpansions InPlaceScripts SubprocessContract | lib/guard.py
-full | par | 678 | 224 | bash tests/test_agent.sh | lib/agent.sh
+full | par | 390 | 150 | python3 tests/test_guard.py | lib/guard.py lib/packs_mcp.py
+fast | par | 300 | 15 | python3 tests/test_guard.py Guard FailsClosed HookProtocol Substitutions GlobBound TrimmedExpansions InPlaceScripts SubprocessContract McpTools | lib/guard.py lib/packs_mcp.py lib/packs_check.py
+full | par | 678 | 235 | bash tests/test_agent.sh | lib/agent.sh lib/packs_mcp.py
 full | par | 300 | 74 | bash tests/test_agent_cloud.sh | lib/agent*.sh
 full | par | 300 | 38 | bash tests/test_valued_opts.sh
 fast | par | 300 | 14 | bash tests/test_role.sh | lib/role.py roles/*/ROLE.md
@@ -85,8 +85,9 @@ full | par | 300 | 37 | bash tests/test_taskblock.sh | lib/local.sh lib/review_c
 fast | par | 300 | 2 | bash tests/test_cred.sh | lib/cred.sh
 full | par | 480 | 107 | bash tests/test_packs.sh | lib/packs.sh
 full | par | 300 | 79 | bash tests/test_packs_seed.sh | lib/packs*.sh lib/packs*.py
-fast | par | 300 | 3 | python3 tests/test_packs_check.py | lib/packs*.sh lib/packs*.py lib/conformance/review.py
-full | par | 882 | 193 | bash tests/test_packs_render.sh | lib/packs*.sh lib/packs*.py
+fast | par | 300 | 9 | python3 tests/test_packs_check.py | lib/packs*.sh lib/packs*.py lib/conformance/review.py
+fast | par | 300 | 3 | python3 tests/test_packs_mcp.py | lib/packs_mcp.py lib/packs_check.py lib/packs.sh lib/providers/claude-code.json
+full | par | 882 | 204 | bash tests/test_packs_render.sh | lib/packs*.sh lib/packs*.py
 full | par | 804 | 214 | bash tests/test_packs_link.sh | lib/packs*.sh lib/packs*.py
 fast | par | 300 | 20 | bash tests/test_linker.sh | lib/linker.py
 full | par | 1038 | 313 | bash tests/test_packs_audit.sh | lib/packs*.sh lib/packs*.py

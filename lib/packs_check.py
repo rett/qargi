@@ -20,12 +20,21 @@ pack (the approval hash of the library is stored with every pack, so it may not 
                                               the render inputs plus every skill the scan found (packs_audit.py scan) with the library's
                                               hash and approval of the same name: the inputs of the audit of the skills a session would load
   packs_check.py hash PATH                    the content hash of one pack (what the shell function content_hash printed)
+  packs_check.py toolmsgs PATH [TOOL_LIST]    the findings of the review about a tool pack file: its name, its URL, its tools map, the name and the
+                                              policy of each tool, a write-like tool that would run unattended (a line starts with FAIL), and what the
+                                              server's tool listing says of its tools (FAIL and NOTE lines). The review of lib/packs.sh prints them: the
+                                              rule that says which tool names write is in this file alone. TOOL_LIST is the tool_list to judge by, as
+                                              JSON (empty: none); without it the one of the pack's record
+  packs_check.py toollist LISTING PATH        the tool_list for the tool pack file PATH from the server's own tool listing in the file LISTING (an MCP
+                                              tools/list result), as compact sorted JSON: what the record keeps and the content hash covers. Exit 1
+                                              and the reason on stderr when LISTING is no such listing. No server is contacted
 
 The things the shell computed with the locale (sort, a glob) are computed with the same C library calls (strcoll), so the answer is the
 same in every locale. Where the shell used jq on a record or a pack file in a way that has more cases than this script handles in plain
 Python (a value of an unexpected type, text that is not strict JSON) the script runs the same jq program, so the answer cannot differ.
 Not reproduced: the lists `URLs mentioned` and `network commands mentioned` of the review (they are text for a person; check keeps only
-the lines that start with FAIL, and the render only whether the review passed)."""
+the lines that start with FAIL, and the render only whether the review passed). The findings about a tool pack's document (tool_msgs) are this
+file's own and the shell asks for them (toolmsgs): a file that is not one JSON object, or whose tools map is not an object, fails."""
 import hashlib
 import json
 import locale
@@ -64,21 +73,121 @@ SECRET_TOOL = (rb"sk-ant-|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,
 SCRIPT_SUFFIX = (b".sh", b".py", b".js", b".rb")
 SIMPLE = r"[A-Za-z0-9._-]*"
 POLICY_WORDS = ("always_allow", "always_ask", "auto")
-WRITE_LIKE = (r"(^|_)(create|update|delete|remove|post|push|write|merge|send|set|add|edit|close|comment)")
-TOOL_NAME = r"[a-z0-9][a-z0-9-]{0,40}$"
+UNATTENDED = ("always_allow", "auto")                             # the policies under which a tool runs with nobody asked
+TOOL_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,40}\Z")              # the name of a tool pack (the MCP server as qargi calls it)
 VAULT_ID = r"vlt_[A-Za-z0-9]+$"
 MISSING = object()
 BAD = object()
 
+# --- the names of the tools in a pack's `tools` map
+# A key of the map is the name the MCP server gives the tool, so it is taken as servers write them: letters, digits and _ . - / (platform.list_items,
+# repo/push, issue-close, deleteItem), 1 to 128 characters, the first a letter, a digit or _. No blank, control character, quote, wildcard or any other
+# character: the name goes into a permission rule and into the lines a person approves.
+TOOL_KEY = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./-]{0,127}\Z")
+# The one definition of "this tool writes, by its name" (the shell review asks it through the `toolmsgs` verb).
+# A name is cut into words at every character that is not a letter (_ . - / and digits) and at a camelCase boundary (deleteItem: delete, Item;
+# HTTPPost: HTTP, Post), and the case is dropped. A word that STARTS with a write word makes the tool write-like, wherever the word stands in the
+# name: delete_item, platform.delete_knowledge, repo/push, issue-close, deleteItem, and also deleteall and sendmail, which have no separator.
+# A write word in the middle or at the end of a word does not count (offset, dataset, preset, asset). The words of READ_ALIKE start with a write
+# word and are ordinary names of things that are read (settings_view, address_list, postal_code_lookup), so they do not count either; any other
+# word that starts with one counts (created, comments, setup, sender), since a tool taken for a write is asked about and one taken for a read is not.
+WRITE_WORDS = ("create", "update", "delete", "remove", "post", "push", "write", "merge", "send", "set", "add", "edit", "close", "comment")
+READ_ALIKE = frozenset(("settings", "setting", "address", "addresses", "postal", "postcode", "postcodes", "additional", "closest"))
+NAME_WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+")           # a run of capitals that no lower-case letter follows, or a word with at most its first letter a capital
+CAPITALS = re.compile(r"[A-Z]{2,}(?=[a-z])")                      # a run of capitals with lower-case letters after it: HTTPPost is HTTP and Post, DELETEitem is DELETE and item
+
+
+def name_words(name):
+    """The words of a tool name, lower-cased: cut at every character that is not an ASCII letter and at a camelCase boundary. A run of capitals that
+    lower-case letters follow is read both ways (its last capital starts the next word, or the run is a word of its own), so both readings are words."""
+    if not isinstance(name, str):
+        return []
+    return [w.lower() for w in NAME_WORD.findall(name) + CAPITALS.findall(name)]
+
+
+def write_like(name):
+    """True when the name of a tool says it writes: one of its words starts with a write word and is not a READ_ALIKE word."""
+    return any(w.startswith(WRITE_WORDS) and w not in READ_ALIKE for w in name_words(name))
+
+
+def shown_key(k):
+    """A key of the tools map as a message prints it: as it is when it is a tool name, else as a JSON string (a newline or a quote in it stays on its line)."""
+    return k if isinstance(k, str) and TOOL_KEY.match(k) else json.dumps(k, ensure_ascii=True)
+
+
+# --- the server's own tool listing (an MCP tools/list result in a file), given to `tool import` and `tool seal` with --tool-list FILE
+# The record of a tool pack keeps what the listing says of the pack's tools: tool_list = {"sha256": the sha256 of the listing file, "tools": {name:
+# hint}}. The hint is read-only (annotations.readOnlyHint is true), destructive (annotations.destructiveHint is true, whatever else is said) or write
+# (the listing names the tool and does not mark it read-only). A tool of the pack that the listing does not name has no entry. tool_list is part of
+# the content hash, as compatible_providers is, so it is approved with the pack and a change of it is drift.
+HINTS = ("read-only", "write", "destructive")
+MAX_LISTING = 4 * 1024 * 1024
+SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+
+
+class ListingError(Exception):
+    """The file given as the server's tool listing is not one."""
+
+
+def listing_problem(tl):
+    """What is wrong with a tool_list (it is not what this file writes), or None."""
+    if not isinstance(tl, dict) or set(tl) != {"sha256", "tools"}:
+        return "it is not an object with sha256 and tools"
+    if not isinstance(tl["sha256"], str) or not SHA256.match(tl["sha256"]):
+        return "its sha256 is not the sha256 of a file"
+    if not isinstance(tl["tools"], dict) or not all(TOOL_KEY.match(k) and isinstance(v, str) and v in HINTS for k, v in tl["tools"].items()):
+        return "its tools is not a map of tool names to read-only, write or destructive"
+    return None
+
+
+def parse_tool_list(text):
+    """The tool_list a JSON text stands for: None for no text, the object when it is what this file writes, else BAD."""
+    if not text.strip():
+        return None
+    try:
+        v = json.loads(text)
+    except (ValueError, RecursionError):
+        return BAD
+    return v if listing_problem(v) is None else BAD
+
+
+def read_listing(path, pack):
+    """(tool_list, notes) for the tool pack file PACK from the server's tool listing in the file PATH: an MCP tools/list result (an object with a tools
+    list) or the JSON-RPC response that holds it as result. ListingError says why PATH is no listing."""
+    try:
+        with open(path, "rb") as f:
+            raw = f.read(MAX_LISTING + 1)
+    except OSError as e:
+        raise ListingError("the tool listing %s cannot be read (%s)" % (path, e.strerror or type(e).__name__))
+    if len(raw) > MAX_LISTING:
+        raise ListingError("the tool listing %s is larger than %d bytes" % (path, MAX_LISTING))
+    try:
+        doc = json.loads(raw.decode("utf-8"))
+    except (ValueError, RecursionError):
+        raise ListingError("the tool listing %s is not JSON" % path)
+    if isinstance(doc, dict) and "tools" not in doc and isinstance(doc.get("result"), dict):
+        doc = doc["result"]
+    tools = doc.get("tools") if isinstance(doc, dict) else None
+    if not isinstance(tools, list):
+        raise ListingError("the tool listing %s is not an MCP tools/list result: an object with a tools list, or the response that holds one as result" % path)
+    hints = {}
+    for i, t in enumerate(tools):
+        name = t.get("name") if isinstance(t, dict) else None
+        if not isinstance(name, str) or not name:
+            raise ListingError("the tool listing %s: tools[%d] has no name" % (path, i))
+        if name in hints:
+            raise ListingError("the tool listing %s names the tool %s twice" % (path, shown_key(name)))
+        ann = t["annotations"] if isinstance(t.get("annotations"), dict) else {}
+        hints[name] = "destructive" if ann.get("destructiveHint") is True else "read-only" if ann.get("readOnlyHint") is True else "write"
+    d = read_tool(pack)
+    keys = [k for k in d["tools"] if TOOL_KEY.match(k)] if isinstance(d, dict) and isinstance(d.get("tools"), dict) else []
+    notes = []
+    if isinstance(doc.get("nextCursor"), str) and doc["nextCursor"]:
+        notes.append("the tool listing has a nextCursor: it is one page of the server's tools, and a tool on another page counts as not listed")
+    return {"sha256": hashlib.sha256(raw).hexdigest(), "tools": {k: hints[k] for k in keys if k in hints}}, notes
+
+
 # the jq programs the review used, kept word for word for the values this file does not read itself
-JQ_MSG = r'''
-      . as $t |
-      [ (if (.name|type)!="string" or ((.name|tostring)|test("^[a-z0-9][a-z0-9-]{0,40}$")|not) then "FAIL: name: lower-case letters, digits, -" else empty end),
-        (if (.url|type)!="string" or ((.url|tostring)|startswith("https://")|not) or ((.url|tostring)|test("example\\.invalid|OWNER|<")) then "FAIL: url: a real https URL" else empty end),
-        (if (.tools|type)!="object" or ((.tools|length)==0) then "FAIL: tools: an explicit allowlist of tool names with a policy each" else empty end),
-        ((.tools // {}) | to_entries[]? | select(.value|IN("always_allow","always_ask","auto")|not) | "FAIL: tools."+.key+": policy must be always_allow, always_ask or auto"),
-        ((.tools // {}) | to_entries[]? | select((.key|test("(^|_)(create|update|delete|remove|post|push|write|merge|send|set|add|edit|close|comment)")) and (.value=="always_allow" or .value=="auto") and ($t.write_ok != true)) | "FAIL: tools."+.key+": a write-like tool may not run unattended (use always_ask) unless write_ok is true on the pack, on purpose")
-      ] | .[]'''
 JQ_TOOLS_LINE = r'"tools: " + ((.tools // {}) | to_entries | map(.key + "=" + (.value|tostring)) | join(", "))'
 JQ_VAULT = r'(.vault_ids // []) | all(test("^vlt_[A-Za-z0-9]+$"))'
 
@@ -174,6 +283,28 @@ def approved_of(p):
     return jq(["-r", '.sha256 // ""'], record_of(p))[1]
 
 
+def tool_list_text(p):
+    """tl_of of the shell: the tool_list of a tool pack's record as compact, sorted JSON (the text the content hash covers); empty when the record has
+    none, and for a directory (a skill has none)."""
+    if os.path.isdir(p):
+        return ""
+    d = _record(p)
+    if d is MISSING:
+        return ""
+    if isinstance(d, dict):
+        v = d.get("tool_list")
+        if v is None:
+            return ""
+        if listing_problem(v) is None:               # names and words in ASCII: this is the text `jq -cS` prints
+            return json.dumps(v, sort_keys=True, separators=(",", ":"))
+    return jq(["-cS", ".tool_list | select(. != null)"], record_of(p))[1]
+
+
+def tool_list_of(p):
+    """The tool_list of the record of the tool pack P: None when it has none, BAD when it is not what this file writes (the review fails then)."""
+    return parse_tool_list(tool_list_text(p))
+
+
 # --- the content hash: the files, the entries that are not plain files, and the declaration
 def walk(root):
     """Every entry under ROOT in the order `find` lists them (the directory's own order, a directory before its content, nothing followed):
@@ -264,9 +395,12 @@ def content_hash(p, quiet=True):
         except OSError:
             h = ""
     c = compat_of(p)
-    if not c:
-        return h
-    return hashlib.sha256(("%s\ncompatible_providers=%s\n" % (h, c)).encode("utf-8", "surrogateescape")).hexdigest()[:16]
+    if c:
+        h = hashlib.sha256(("%s\ncompatible_providers=%s\n" % (h, c)).encode("utf-8", "surrogateescape")).hexdigest()[:16]
+    t = tool_list_text(p)                            # a pack with no tool_list hashes as it always did
+    if t:
+        h = hashlib.sha256(("%s\ntool_list=%s\n" % (h, t)).encode("utf-8", "surrogateescape")).hexdigest()[:16]
+    return h
 
 
 # --- the review
@@ -401,53 +535,81 @@ def skill_review(p, c):
     return "".join(o), rc
 
 
-def tool_msgs(path, d):
-    """The FAIL lines of the big jq program, for the document D read from PATH."""
-    plain = (isinstance(d, dict) and isinstance(d.get("tools"), dict)
-             and all(isinstance(k, str) and "\n" not in k and "\r" not in k for k in d["tools"])
-             and (not isinstance(d.get("name"), str) or "\n" not in d["name"]))
-    if not plain:
-        return jq(["-r", JQ_MSG], path)[1]
+def tool_msgs(d, tl=None):
+    """The findings about the document D of a tool pack (what json.loads made of the file, or BAD), one line each: its name, its URL, the tools map, the name
+    and the policy of every tool, a write-like tool that would run unattended and, with a tool_list TL (what the server's own listing says of the pack's
+    tools; BAD: one that is not what this file writes), a tool the listing does not mark read-only that would run unattended. A finding starts with
+    FAIL; the lines that start with NOTE are for the person who approves (a tool the listing marks destructive or does not name, the listing's hash)."""
+    if not isinstance(d, dict):
+        return ["FAIL: not a JSON object: a tool pack is one object with name, url and tools"]
     msgs = []
     name = d.get("name")
-    if not isinstance(name, str) or not re.match(TOOL_NAME, name):
+    if not isinstance(name, str) or not TOOL_NAME.match(name):
         msgs.append("FAIL: name: lower-case letters, digits, -")
     url = d.get("url")
     if not isinstance(url, str) or not url.startswith("https://") or re.search(r"example\.invalid|OWNER|<", url):
         msgs.append("FAIL: url: a real https URL")
-    tools = d["tools"]
-    if len(tools) == 0:
+    tools = d.get("tools")
+    if not isinstance(tools, dict) or len(tools) == 0:
         msgs.append("FAIL: tools: an explicit allowlist of tool names with a policy each")
-    for k, v in tools.items():
-        if not (isinstance(v, str) and v in POLICY_WORDS):
+        return msgs
+    named = [k for k in tools if TOOL_KEY.match(k)]
+    for k in tools:
+        if not TOOL_KEY.match(k):
+            msgs.append("FAIL: tools.%s: not a tool name (letters, digits, _ . - /, at most 128 characters, no blank)" % shown_key(k))
+    for k in named:
+        if not (isinstance(tools[k], str) and tools[k] in POLICY_WORDS):
             msgs.append("FAIL: tools." + k + ": policy must be always_allow, always_ask or auto")
-    for k, v in tools.items():
-        if re.search(WRITE_LIKE, k) and isinstance(v, str) and v in ("always_allow", "auto") and d.get("write_ok") is not True:
+    for k in named:
+        if write_like(k) and tools[k] in UNATTENDED and d.get("write_ok") is not True:
             msgs.append("FAIL: tools." + k + ": a write-like tool may not run unattended (use always_ask) unless write_ok is true on the pack, on purpose")
-    return "\n".join(msgs)
+    if tl is BAD:
+        msgs.append("FAIL: tool_list: what the pack's record keeps of the server's tool listing is not what qargi wrote; seal the pack again with --tool-list FILE")
+    elif tl is not None:
+        hints = tl["tools"]
+        for k in named:                              # the name check above stands: a tool it failed is not failed twice
+            if tools[k] in UNATTENDED and hints.get(k) != "read-only" and d.get("write_ok") is not True and not write_like(k):
+                msgs.append("FAIL: tools." + k + ": the server's tool listing does not mark it read-only (readOnlyHint), so it may not run unattended "
+                            "(use always_ask) unless write_ok is true on the pack, on purpose")
+        for k in named:
+            if hints.get(k) == "destructive":
+                msgs.append("NOTE: tools." + k + ": the server's tool listing marks it destructive (destructiveHint)")
+        for k in named:
+            if k not in hints:
+                msgs.append("NOTE: tools." + k + ": not in the server's tool listing")
+        msgs.append("NOTE: tool listing %s: it marks %d of the pack's %d tools read-only" % (tl["sha256"][:16], sum(1 for k in named if hints.get(k) == "read-only"), len(named)))
+    return msgs
 
 
-def tool_review(p, c):
+def read_tool(p):
+    """The document of the tool pack file P, or BAD when it cannot be read as one JSON value."""
+    try:
+        with open(p, "rb") as f:
+            return json.loads(f.read().decode("utf-8"))
+    except (OSError, ValueError, RecursionError):
+        return BAD
+
+
+def tool_review(p, c, tl=MISSING):
+    """The review of a tool pack. TL is the tool_list to judge by (None: none; BAD: not a tool_list); left out, it is the one of the pack's record."""
     o = []
     rc = 0
+    if tl is MISSING:
+        tl = tool_list_of(p)
     prc, pol = policy_text(p)
     if prc:
         o.append(cmdsub(pol) + "\n")
         rc = 1
-    try:
-        with open(p, "rb") as f:
-            raw = f.read()
-        d = json.loads(raw.decode("utf-8"))
-    except (OSError, ValueError, RecursionError):
-        d = BAD
+    d = read_tool(p)
     if not isinstance(d, dict):                      # jq -e decides the cases that are not an object
         if jq(["-e", "."], p)[0] != 0:
             o.append("FAIL: not valid JSON\n")
             return "".join(o), 1
-    msg = tool_msgs(p, d) if d is not BAD else jq(["-r", JQ_MSG], p)[1]
-    if msg:
-        o.append(R.vis(msg + "\n"))
-        rc = 1
+    msgs = tool_msgs(d, tl)
+    if msgs:
+        o.append(R.vis("\n".join(msgs) + "\n"))
+        if any(m.startswith("FAIL") for m in msgs):
+            rc = 1
     wo = d.get("write_ok") if isinstance(d, dict) else MISSING
     if wo is True or wo == "true":
         o.append("NOTE: write_ok is set: write-like tools may run unattended\n")
@@ -577,34 +739,38 @@ def listing(kind, packs, attached, label):
 
 
 # --- filter
-def filt(project, surfaces, packs, conf):
+def usable(entries, project, surfaces, packs, conf):
+    """(entry, kind, name, why) for each KIND:NAME entry: why is None for a pack the project's provider can use on one of SURFACES (or whose use is
+    not decided here: a pack that is missing, declares nothing or "any", or changed since it was approved fails loudly where it is used), else the
+    reason the pack is skipped. The rule of `filter`, for the callers in this process too (lib/packs_mcp.py)."""
     answers = MISSING
     surf = [s for s in surfaces.split(",") if s]
     valid_surfaces = bool(surf) and all(s in packs_compat.SURFACES for s in surf)
-    for line in sys.stdin.read().split("\n"):
-        e = line.strip(" \t")
-        if not e:
-            continue
+    for e in entries:
         k, n = e.split(":", 1) if ":" in e else (e, e)
         p = item_path(packs, k, n)
         c = compat_of(p) if os.path.exists(p) else ""
+        why = None
         if c and c != '["any"]' and valid_surfaces:
             want = approved_of(p)
-            if want and want != content_hash(p):
-                out("ok\t%s\n" % e)
-                continue
-            declared = declared_of(c)
-            if packs_compat.problem(declared) is None:
-                if answers is MISSING:
-                    answers = packs_compat._provider().project_answers(project, conf)
-                try:
-                    ok, why = packs_compat.evaluate(declared, answers, project, surf)
-                except Exception as ex:             # the script would have failed with a traceback and status 1
-                    ok, why = False, "%s: %s" % (type(ex).__name__, ex)
-                if not ok:
-                    out("skip\t%s\t%s\t%s\n" % (k, n, why.rstrip("\n")))
-                    continue
-        out("ok\t%s\n" % e)
+            if not (want and want != content_hash(p)):
+                declared = declared_of(c)
+                if packs_compat.problem(declared) is None:
+                    if answers is MISSING:
+                        answers = packs_compat._provider().project_answers(project, conf)
+                    try:
+                        ok, said = packs_compat.evaluate(declared, answers, project, surf)
+                    except Exception as ex:             # the script would have failed with a traceback and status 1
+                        ok, said = False, "%s: %s" % (type(ex).__name__, ex)
+                    if not ok:
+                        why = said.rstrip("\n")
+        yield e, k, n, why
+
+
+def filt(project, surfaces, packs, conf):
+    entries = [e for e in (line.strip(" \t") for line in sys.stdin.read().split("\n")) if e]
+    for e, k, n, why in usable(entries, project, surfaces, packs, conf):
+        out("ok\t%s\n" % e if why is None else "skip\t%s\t%s\t%s\n" % (k, n, why))
     return 0
 
 
@@ -687,10 +853,24 @@ def main(argv):
         if verb == "hash" and len(argv) == 2:
             out(content_hash(argv[1], quiet=False) + "\n")
             return 0
+        if verb == "toolmsgs" and len(argv) in (2, 3):
+            tl = tool_list_of(argv[1]) if len(argv) == 2 else parse_tool_list(argv[2])
+            out("".join(m + "\n" for m in tool_msgs(read_tool(argv[1]), tl)))
+            return 0
+        if verb == "toollist" and len(argv) == 3:
+            try:
+                tl, notes = read_listing(argv[1], argv[2])
+            except ListingError as e:
+                warn("qargi: %s\n" % R.vis(str(e)))
+                return 1
+            for n in notes:
+                warn("note: %s\n" % n)
+            out(json.dumps(tl, sort_keys=True, separators=(",", ":")) + "\n")
+            return 0
     except IndexError:
         pass
     print("usage: packs_check.py check KIND PACKS NAME... | list KIND PACKS [--attached TEXT --label P/R] | filter PROJECT SURFACES PACKS CONF | "
-          "rows PACKS OUTFILE | audit PACKS CCINPUTS SCAN OUTFILE | hash PATH", file=sys.stderr)
+          "rows PACKS OUTFILE | audit PACKS CCINPUTS SCAN OUTFILE | hash PATH | toolmsgs PATH [TOOL_LIST] | toollist LISTING PATH", file=sys.stderr)
     return 2
 
 

@@ -274,6 +274,7 @@
       }
     },
     "res_mcp": {
+      "description": "the file the runtime reads its MCP servers from and what it calls a tool of one. permission_rule is the form of a tool's name, with {server} for the name of the tool pack and {tool} for the tool: the render writes its permission rules in it, a member's tool list holds its tools under it, and the guard takes a call of a tool whose name has this form for an MCP call. name_key says how the runtime writes a server or a tool name inside it: nonword-underscore replaces every character that is not an ASCII letter, a digit, _ or - by _; null or absent leaves a name as written",
       "type": ["object", "null"],
       "additionalProperties": false,
       "properties": {
@@ -281,7 +282,8 @@
         "format": {"enum": ["json", "toml"]},
         "root_pointer": {"type": "string"},
         "entry": {"type": "object"},
-        "permission_rule": {"type": ["string", "null"]}
+        "permission_rule": {"type": ["string", "null"]},
+        "name_key": {"enum": ["nonword-underscore", null]}
       }
     },
     "res_settings": {

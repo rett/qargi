@@ -56,7 +56,7 @@
       "value": "yes",
       "verified_on": null,
       "source": "lib/packs.sh",
-      "note": "rendered by packs, not end-to-end tested"
+      "note": "rendered by packs and listed in a member's tools; not end-to-end tested: neither the tool names (resources.mcp permission_rule and name_key) nor that the member's hook is run for an MCP call"
     }
   },
   "resources": {
@@ -94,7 +94,8 @@
       "format": "json",
       "root_pointer": "/mcpServers",
       "entry": {"type": "http", "url": "{url}"},
-      "permission_rule": "mcp__{server}__{tool}"
+      "permission_rule": "mcp__{server}__{tool}",
+      "name_key": "nonword-underscore"
     },
     "settings": {
       "files": [
@@ -175,7 +176,7 @@
           "value": {
             "PreToolUse": [
               {
-                "matcher": "Bash|Monitor|Edit|Write|NotebookEdit|Read|Grep",
+                "matcher": "Bash|Monitor|Edit|Write|NotebookEdit|Read|Grep|mcp__.*",
                 "hooks": [
                   {"type": "command", "command": "{barrier.guard_command}", "timeout": 20, "onFailure": "block"}
                 ]

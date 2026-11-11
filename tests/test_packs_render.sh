@@ -79,6 +79,24 @@ check >/dev/null && ok "check passes with a tool pack" || no "check with tool: $
 echo '{}' > "$D/mcp.json"; check 2>&1 | grep -q "differs from the manifest: mcp.json" && ok "a tampered mcp.json is reported" || no "mcp.json tamper"
 go >/dev/null
 
+# --- a rule names a tool as the runtime does: the tool names a server publishes (dotted, slashed, hyphenated, camelCase) are written by the name_key of
+# the runtime's definition (Claude Code: every character but a letter, a digit, _ and - is _), and two tools that get one rule are refused
+printf '%s' '{"name":"kb","url":"https://mcp.example.net/kb","tools":{"platform.list_items":"always_allow","getStatus":"always_allow","repo/read":"always_allow","a_a":"always_allow","issue-close":"always_ask","repo/push":"always_ask","other.auto":"auto"}}' > "$T/kb.json"
+ktok=$($DA tool import "$T/kb.json" --compatible any | tok_of); $DA tool import "$T/kb.json" --compatible any --plan "$ktok" --approved test >/dev/null
+$DA tool link kb --scope project-role --project alpha --role build >/dev/null
+go >/dev/null
+jq -e '.permissions.allow==["mcp__issues__list_issues","mcp__kb__a_a","mcp__kb__getStatus","mcp__kb__platform_list_items","mcp__kb__repo_read"] and .permissions.ask==["mcp__issues__create_issue","mcp__kb__issue-close","mcp__kb__repo_push"]' "$D/settings.json" >/dev/null \
+  && ok "a rule names a tool as the runtime writes it (platform.list_items is platform_list_items, repo/read is repo_read), and the rules are in order" || no "names in the rules: $(cat "$D/settings.json" 2>&1)"
+check >/dev/null && ok "check passes with those names (it builds the same rules in the same order)" || no "check with dotted names: $(check)"
+jq '.tools["platform_list_items"]="always_ask"' "$T/c/packs/tools/kb.json" > "$T/kb.tmp" && mv "$T/kb.tmp" "$T/c/packs/tools/kb.json"
+ktok=$($DA tool seal kb | tok_of); $DA tool seal kb --plan "$ktok" --approved test >/dev/null
+out=$(apply 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q "tool kb: the tools platform.list_items and platform_list_items get the same permission rule (mcp__kb__platform_list_items)" <<<"$out" && ! grep -q "plan token" <<<"$out" \
+  && ok "two tools the runtime writes the same way are refused: a rule for one would hold for the other" || no "same rule (rc=$rc): $out"
+check 2>&1 | grep -q "library: a tool pack cannot be rendered" && ok "check reports the pack that cannot be rendered" || no "same rule in check: $(check 2>&1)"
+$DA tool unlink kb --scope project-role --project alpha --role build >/dev/null; $DA tool remove kb >/dev/null; go >/dev/null
+check >/dev/null && ok "without that pack the render is clean again" || no "after removing kb: $(check)"
+
 # --- rendered drift: tampered and extra files
 echo tamper >> "$D/.claude/skills/s-all/SKILL.md"
 check 2>&1 | grep -q "differs from the manifest: .claude/skills/s-all/SKILL.md" && ok "a tampered rendered file is reported" || no "tamper not reported"
@@ -187,6 +205,14 @@ echo '{}' > "$FD/rules.json"; $FX packs check --target fk-render delta 2>&1 | gr
 mkdir -p "$HOME/.fk/skills/s-all"; $FX packs check --target fk-render delta 2>&1 | grep -q "shadowing: skill s-all is also in ~/.fk/skills" && ok "another runtime: shadowing is looked for in its own user skills directory" || no "fakert shadow"
 rmdir "$HOME/.fk/skills/s-all" "$HOME/.fk/skills" "$HOME/.fk"
 $FX packs apply --target claude-code delta >/dev/null 2>&1; [ $? != 0 ] && ok "another runtime: its project is not rendered under the target of another" || no "fakert wrong target"
+# its definition has no name_key: a name goes into a rule as written, so only a plain name does (a slash is refused, not guessed at)
+printf '%s' '{"name":"sl","url":"https://mcp.example.net/sl","tools":{"repo/read":"always_allow"}}' > "$T/sl.json"
+stok=$($DA tool import "$T/sl.json" --compatible any | tok_of); $DA tool import "$T/sl.json" --compatible any --plan "$stok" --approved test >/dev/null
+$DA tool link sl --scope project --project delta >/dev/null
+out=$(fapply 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q "tool sl: tool name 'repo/read' is not a plain name (letters, digits, _ . -, 1-64 characters), and FakeRT writes a name into a rule as it is" <<<"$out" \
+  && ok "another runtime: with no name_key a tool name that is not plain is refused" || no "fakert slashed name (rc=$rc): $out"
+$DA tool unlink sl --scope project --project delta >/dev/null; $DA tool remove sl >/dev/null
 
 # a runtime with no usable mcp resource gets its skills only; its tool packs are said to be skipped, and a check does not call them missing
 jq '.models = {provider: "nomcp"}' "$T/c/projects/delta.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/delta.json"
