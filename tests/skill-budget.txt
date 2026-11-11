@@ -10,7 +10,7 @@ lib/providers/claude-code/local-run.md 51 # lowered: a refused Write of a report
 lib/providers/claude-platform.json:notes 2
 lib/providers/claude-platform/cloud-run.md 61
 lib/providers/codex.json:notes 301 # new: the topics of the codex runtime (spawn through qargi local run, session-model, exploration, skills-dir, identity, commands)
-lib/providers/codex/local-run.md 105 # new: the addendum of a Codex run (the report is the last message, no network, .git may be read-only); raised: one sentence, the member's MCP tools are the ones its run configuration lists and no others
+lib/providers/codex/local-run.md 111 # new: the addendum of a Codex run (the report is the last message, no network, .git may be read-only); raised: one sentence, the member's MCP tools are the ones its run configuration lists and no others; raised: one clause, the lead writes the manifest of a read-only run
 packs/skills/docs-site-member/SKILL.md 163 # raised: two rules: no line starts with <, and run the render check before reporting; for the lead's review
 packs/skills/gitflow-member/SKILL.md 229 # lowered: the commit-message, stash and SCOPE lines live in the contract only
 packs/skills/keep-a-changelog/SKILL.md 344 # raised: one rule on numbered items (unnumbered bullet, the lead renumbers), kept here only; for the lead's review
@@ -35,7 +35,7 @@ skills/qargi-packs/seed.md 250
 skills/qargi-project/SKILL.md 896 # raised: one line naming the answer lead.context_window (null derives the window from the model); for the lead's review
 skills/qargi-project/repository.md 206
 skills/qargi-providers/SKILL.md 767
-skills/qargi-providers/definition.md 684 # raised: one clause each for dispatch.home, dispatch.run_config, dispatch.output.usage and resources.mcp.tool_lists, the command-runtime fields the codex runtime brought; for the lead's review
+skills/qargi-providers/definition.md 704 # raised: one clause each for dispatch.home, dispatch.run_config, dispatch.output.usage, resources.mcp.tool_lists and the {final_message} placeholder, the command-runtime fields the codex runtime brought; for the lead's review
 skills/qargi-providers/verify.md 691 # raised: the live checks of a sandbox runtime (the free barrier check with no model call, the smoke run, what to check before members rely on it) and where a shipped runtime records them; the sandbox-args case in the list of hermetic cases; for the lead's review
 skills/qargi-provision/SKILL.md 396
 skills/qargi-session/SKILL.md 926 # raised: two lines on local runs (no clean needed before the next feature finish; before a reboot apply verified runs or use the saved copy)

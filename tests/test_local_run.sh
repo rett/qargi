@@ -66,6 +66,8 @@ prep() { # repo slug [ability] -> exports RUN CLONE OUT
   eval "$($DA local prepare --repo "$1" --base main --slug "$2" --scratch "$T" ${3:+--role "$3"} | sed '/^$/,$d' | sed 's/^/export /')"; }
 task() { printf 'TASK: change the thing\nDONE: it is changed\n' > "$RUN/task.md"; }
 arg0() { sed -n 's/^ARGV=//p'; }
+finarg() { # the argv on stdin with the value of -o, when it is the run's own new {final_message} file (RUN/final.XXXXXXXXXXXX/message.md), as FINAL
+  jq -c --arg r "$RUN/final." '(index(["-o"])) as $i | if $i != null and (.[$i+1] | startswith($r) and endswith("/message.md") and (ltrimstr($r) | test("^[0-9a-f]{12}/message[.]md$"))) then .[$i+1] = "FINAL" else . end'; }
 
 # --- dry run: the exact argv and the prompt, nothing written -----------------------------------------------------------------------
 prep "$T/r" w1; task
@@ -330,12 +332,12 @@ setprov fakecmd
 cp "$T/bin/fakellm" "$T/bin/codex"
 setprov codex; prep "$T/r" cx1; task
 out=$($DA local run "$RUN" --dry-run 2>"$T/err"); rc=$?
-want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["codex","exec","--json","--ephemeral","-C",$c,"-m","gpt-6.1-terra","-o",($o + "/report.md"),"--sandbox","workspace-write","--add-dir",$o]')
-{ [ "$rc" = 0 ] && [ "$(arg0 <<<"$out")" = "$want" ] && grep -q '^COMMAND=codex$' <<<"$out" && grep -q '^PROMPT_VIA=stdin$' <<<"$out" && grep -q '^CLASS=write$' <<<"$out"; } \
-  && ok "codex, write: codex exec in the clone, the balanced model, the last message to OUT/report.md, the workspace-write sandbox with OUT added" || no "codex write argv: rc=$rc [$(arg0 <<<"$out")] want [$want] $(cat "$T/err")"
+want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["codex","exec","--json","--ephemeral","-C",$c,"-m","gpt-6.1-terra","-o","FINAL","--sandbox","workspace-write","--add-dir",$o]')
+{ [ "$rc" = 0 ] && [ "$(arg0 <<<"$out" | finarg)" = "$want" ] && grep -q '^COMMAND=codex$' <<<"$out" && grep -q '^PROMPT_VIA=stdin$' <<<"$out" && grep -q '^CLASS=write$' <<<"$out"; } \
+  && ok "codex, write: codex exec in the clone, the balanced model, the last message to the run's own new file, the workspace-write sandbox with OUT added" || no "codex write argv: rc=$rc [$(arg0 <<<"$out")] want [$want] $(cat "$T/err")"
 out=$($DA local run "$RUN" --dry-run --model fast --effort max 2>&1); rc=$?
-want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["codex","exec","--json","--ephemeral","-C",$c,"-m","gpt-6-luna","-c","model_reasoning_effort=max","-o",($o + "/report.md"),"--sandbox","workspace-write","--add-dir",$o]')
-{ [ "$rc" = 0 ] && [ "$(arg0 <<<"$out")" = "$want" ] && ! grep -q '^NOTE=effort' <<<"$out"; } && ok "codex: a tier is passed as the catalog's id and an effort as -c model_reasoning_effort" || no "codex model and effort: rc=$rc [$(arg0 <<<"$out")] want [$want]"
+want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["codex","exec","--json","--ephemeral","-C",$c,"-m","gpt-6-luna","-c","model_reasoning_effort=max","-o","FINAL","--sandbox","workspace-write","--add-dir",$o]')
+{ [ "$rc" = 0 ] && [ "$(arg0 <<<"$out" | finarg)" = "$want" ] && ! grep -q '^NOTE=effort' <<<"$out"; } && ok "codex: a tier is passed as the catalog's id and an effort as -c model_reasoning_effort" || no "codex model and effort: rc=$rc [$(arg0 <<<"$out")] want [$want]"
 if [ "$(command -v codex)" = "$T/bin/codex" ]; then out=$($DA local run "$RUN" 2>"$T/err"); rc=$?; else rc=x; out="the first codex on PATH is $(command -v codex), not the fake: the real run is not made"; : > "$T/err"; fi
 { [ "$rc" = 0 ] && grep -q '^ARG\[--sandbox\]$' "$OUT/transcript" && grep -q '^ARG\[workspace-write\]$' "$OUT/transcript" \
   && sed -n '/^STDIN-BEGIN/,/^STDIN-END/p' "$OUT/transcript" | grep -q 'TASK: change the thing'; } && ok "codex: a real run of the fake gets the argv as separate arguments and the prompt on its standard input" || no "codex run: rc=$rc $out $(cat "$T/err")"
@@ -352,8 +354,8 @@ out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
   && ok "and local run refuses it too, once the acceptance it was prepared under is gone" || no "codex ro unattested: rc=$rc $out"
 jq '.models.accept_no_barrier = {local: {by: "owner", at: "2026-11-11", reason: "test"}}' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
-want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["codex","exec","--json","--ephemeral","-C",$c,"-m","gpt-6.1-terra","-o",($o + "/report.md"),"--sandbox","read-only"]')
-{ [ "$rc" = 0 ] && [ "$(arg0 <<<"$out")" = "$want" ] && grep -q '^CLASS=read-only$' <<<"$out"; } && ok "codex, read-only (accepted): the read-only sandbox and no write group" || no "codex ro argv: rc=$rc [$(arg0 <<<"$out")] want [$want]"
+want=$(jq -nc --arg c "$CLONE" '["codex","exec","--json","--ephemeral","-C",$c,"-m","gpt-6.1-terra","-o","FINAL","--sandbox","read-only"]')
+{ [ "$rc" = 0 ] && [ "$(arg0 <<<"$out" | finarg)" = "$want" ] && grep -q '^CLASS=read-only$' <<<"$out"; } && ok "codex, read-only (accepted): the read-only sandbox and no write group" || no "codex ro argv: rc=$rc [$(arg0 <<<"$out")] want [$want]"
 jq 'del(.models.accept_no_barrier)' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
 # copies in the library, attested: with the read-only group the barrier holds (partial, with its note); without it a read-only run is refused
 mk codexro "$(jq '.provider = "codexro" | del(.resources.contract_addenda)' lib/providers/codex.json)"
@@ -516,6 +518,172 @@ out=$(codex exec 2>&1); rc=$?
 { [ "$(command -v codex)" = "$HERMETIC/bin/codex" ] && [ "$rc" = 127 ] && grep -q 'the real codex is not available' <<<"$out"; } \
   && ok "with no fake, codex is the hermetic stub, which fails" || no "codex stub: $(command -v codex) rc=$rc $out"
 setprov fakecmd
+
+# --- the member's last message ({final_message}): codex writes it to a new private file of the run, which the lead checks and publishes as OUT/report.md ---
+# The fake codex does what $T/fin-mode says with the file -o names (and, with outlink, first plants a link to the victim as OUT/report.md, as a write member can).
+cat > "$T/bin/codex" <<SH
+#!/usr/bin/env bash
+cat > /dev/null
+o='' od=''
+while [ \$# -gt 0 ]; do case \$1 in -o) o=\$2;; --add-dir) od=\$2;; esac; shift; done
+echo "FINAL=\$o"
+for m in \$(cat "$T/fin-mode" 2>/dev/null); do
+  case \$m in
+    report) printf '# Findings\n\nnone\n\n# Checked\n\nls (exit 0)\n\nverdict: accept\n' > "\$o";;
+    second) printf '# Findings\n\nthe second run\n\nverdict: revise\n' > "\$o";;
+    empty) : > "\$o";;
+    link) ln -s "$T/victim3" "\$o";;
+    hard) ln "$T/victim3" "\$o";;
+    fifo) mkfifo "\$o";;
+    dir) mkdir "\$o"; echo inner > "\$o/inner";;
+    big) head -c 1048600 /dev/zero | tr '\0' a > "\$o";;
+    binary) printf 'a\0b\n' > "\$o";;
+    outlink) rm -f "\$od/report.md"; ln -s "$T/victim3" "\$od/report.md";;
+    fail) exit 7;;
+  esac
+done
+exit 0
+SH
+chmod 755 "$T/bin/codex"
+echo precious > "$T/victim3"
+fin() { printf '%s\n' "$1" > "$T/fin-mode"; }
+finrun() { out=$($DA local run "$RUN" "$@" 2>&1); rc=$?; }
+victim_ok() { [ "$(cat "$T/victim3")" = precious ] && [ "$(stat -c %h "$T/victim3")" = 1 ]; }
+nostage() { [ -z "$(find "$RUN" -maxdepth 1 -name 'final.*' 2>/dev/null)" ]; }
+setprov codex; prep "$T/r" fm1; task
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+fp=$(arg0 <<<"$out" | jq -r '.[(index(["-o"]) + 1)]')
+{ [ "$rc" = 0 ] && [[ $fp =~ ^$RUN/final\.[0-9a-f]{12}/message\.md$ ]] && grep -qF "FINAL_MESSAGE=$fp (its directory is made new when the run starts; the file is published as $OUT/report.md)" <<<"$out" && nostage; } \
+  && ok "codex -o names a new file of the run, never one of OUT; the dry run names it and makes nothing" || no "final dry: rc=$rc [$fp] $out"
+fin report; finrun
+fp=$(jq -r '.argv[(.argv | index(["-o"])) + 1]' "$RUN/dispatch.json" 2>/dev/null)
+{ [ "$rc" = 0 ] && grep -qxF "FINAL=$fp" "$OUT/transcript" && [[ $fp == "$RUN"/final.* ]] && [ -f "$OUT/report.md" ] && [ ! -L "$OUT/report.md" ] && grep -q '^verdict: accept$' "$OUT/report.md" \
+  && grep -q "^REPORT=$OUT/report.md ([0-9]* bytes: the member's last message)\$" <<<"$out" && ! grep -q '^PREVIOUS_REPORT=' <<<"$out" && nostage \
+  && [ "$(jq -c '.report | [.state, .previous, .report, .final_message]' "$RUN/dispatch.json")" = "$(jq -nc --arg r "$OUT/report.md" --arg f "$fp" '["published","none",$r,$f]')" ]; } \
+  && ok "the last message is published as OUT/report.md, its directory removed; dispatch.json records it" || no "final published: rc=$rc $out $(jq -c .report "$RUN/dispatch.json" 2>&1)"
+[ "$(stat -c %a "$OUT/report.md")" = 644 ] && ok "the published report is mode 644" || no "report mode $(stat -c %a "$OUT/report.md")"
+fin second; finrun --again
+{ [ "$rc" = 0 ] && grep -q 'the second run' "$OUT/report.md" && [ ! -e "$OUT/report.md.previous" ] && grep -q '^PREVIOUS_REPORT=replaced' <<<"$out" && [ "$(jq -r .report.previous "$RUN/dispatch.json")" = replaced ]; } \
+  && ok "--again with a new report: the earlier one is replaced, and the output says so" || no "final replaced: rc=$rc $out"
+fin fail; finrun --again
+{ [ "$rc" = 1 ] && [ ! -e "$OUT/report.md" ] && grep -q 'the second run' "$OUT/report.md.previous" && grep -q '^REPORT=none: the runtime wrote no last message' <<<"$out" \
+  && grep -qF "PREVIOUS_REPORT=kept as $OUT/report.md.previous: this run published no report" <<<"$out" && [ "$(jq -c '.report | [.state, .previous]' "$RUN/dispatch.json")" = '["none","kept"]' ] && nostage; } \
+  && ok "a failed rerun with no last message leaves no report.md: the earlier one is kept as report.md.previous, and the output and dispatch.json say so" || no "final failed rerun: rc=$rc $out $(ls -A "$OUT")"
+fin report; finrun --again
+{ [ "$rc" = 0 ] && [ -f "$OUT/report.md" ] && [ ! -e "$OUT/report.md.previous" ] && grep -q '^PREVIOUS_REPORT=replaced' <<<"$out"; } && ok "the next run that publishes a report replaces the set-aside one, and says so" || no "final after kept: rc=$rc $out $(ls -A "$OUT")"
+# what the runtime (or a member) leaves at the private file instead of a report: never followed, published or waited on; a name only is removed
+for m in link hard fifo dir empty big binary; do
+  fin "$m"; finrun --again
+  case $m in empty) why='is empty';; link) why='is a link';; hard) why='has another name';; fifo) why='is a pipe';; dir) why='is a directory';; big) why='is over 1048576 bytes';; binary) why='is not text';; esac
+  { [ "$rc" = 0 ] && victim_ok && [ ! -e "$OUT/report.md" ] && [ ! -L "$OUT/report.md" ] && grep -q "^REPORT=none: .*$why" <<<"$out" && [ -f "$OUT/report.md.previous" ] \
+    && grep -q '^PREVIOUS_REPORT=kept' <<<"$out" && ! grep -q Traceback <<<"$out"; } \
+    && ok "a final message that $why is not published, the earlier report is kept aside, a file it points to is untouched" || no "final $m: rc=$rc $out; victim=$(cat "$T/victim3") $(ls -A "$OUT")"
+  case $m in
+    dir) [ -d "$(jq -r .report.final_message "$RUN/dispatch.json")" ] && ok "a directory there is left in place" || no "final dir removed";;
+    big|binary) { kp=$(jq -r .report.kept "$RUN/dispatch.json"); [ -f "$kp" ] && grep -q 'kept for you to read' <<<"$out"; } && ok "a file of its own that $why is kept for the lead to read" || no "final $m not kept: $(jq -c .report "$RUN/dispatch.json")";;
+    *) nostage && ok "the name is removed with its directory" || no "final $m stage left: $(ls -A "$RUN")";;
+  esac
+  rm -rf "$RUN"/final.*; fin report; finrun --again   # a published report again, for the next case to set aside
+done
+# a link a write member planted as OUT/report.md during the run is replaced by the published report, never written through
+fin "outlink report"; finrun --again
+{ [ "$rc" = 0 ] && victim_ok && [ -f "$OUT/report.md" ] && [ ! -L "$OUT/report.md" ] && grep -q '^verdict: accept$' "$OUT/report.md"; } \
+  && ok "a link planted as OUT/report.md during the run is replaced by the report; what it points to is untouched" || no "final outlink: rc=$rc $out; victim=$(cat "$T/victim3")"
+# what is left as OUT/report.md before a run, other than a report of its own, refuses the run before anything starts
+for m in link hard fifo dir; do
+  rm -rf "$OUT/report.md"
+  case $m in
+    link) ln -s "$T/victim3" "$OUT/report.md"; what='link';; hard) ln "$T/victim3" "$OUT/report.md"; what='second name of a file';;
+    fifo) mkfifo "$OUT/report.md"; what='pipe';; dir) mkdir "$OUT/report.md"; what='directory';;
+  esac
+  cp "$RUN/dispatch.json" "$T/dispatch.keep"
+  fin report; out=$(timeout 30 $DA local run "$RUN" --again 2>&1); rc=$?
+  { [ "$rc" = 2 ] && grep -qF "the report of an earlier run ($OUT/report.md) is not a plain file of its own" <<<"$out" && [ "$(cat "$T/victim3")" = precious ] && cmp -s "$RUN/dispatch.json" "$T/dispatch.keep" && nostage; } \
+    && ok "an OUT/report.md that is a $what refuses the run before anything starts; nothing is written through it" || no "report.md $m: rc=$rc $out; victim=$(cat "$T/victim3")"
+done
+rm -rf "$OUT/report.md" "$T/fin-mode" "$T/victim3" "$T/dispatch.keep"
+rm -f "$T/bin/codex"
+
+# --- a read-only run whose report is the runtime's last message is packaged by the lead: report.md and the minimal manifest, from the run's record ---
+# End to end with the conformance stub of codex in place of the command (its last message is a review report with Findings and a verdict), on the
+# attested copy codexro: what the stub writes is chosen by $T/stub-final (a file, or empty for none); $T/stub-patch makes it leave a patch in OUT.
+STUBX=$PWD/tests/providers/codex/stub
+cat > "$T/bin/codex" <<SH
+#!/usr/bin/env bash
+c='' a=("\$@")
+while [ \$# -gt 0 ]; do [ "\$1" = -C ] && c=\$2; shift; done
+if [ -f "$T/stub-patch" ]; then mkdir -p "\$(dirname "\$c")/out/patches"; printf 'From 0 Mon Sep 17 00:00:00 2001\nSubject: [PATCH] x\n\nx\n' > "\$(dirname "\$c")/out/patches/0001-x.patch"; fi
+if [ -f "$T/stub-final" ]; then QARGI_STUB_FINAL=\$(cat "$T/stub-final"); export QARGI_STUB_FINAL; fi
+exec "$STUBX" "\${a[@]}"
+SH
+chmod 755 "$T/bin/codex"
+setprov codexro; prep "$T/r" pk1 review; task
+BSHA=$(git -C "$T/r" rev-parse main)
+out=$($DA local run "$RUN" --effort low 2>&1); rc=$?
+{ [ "$rc" = 0 ] && cmp -s tests/providers/codex/final-message.md "$OUT/report.md" && grep -q "^MANIFEST=$OUT/manifest.json (written by the lead: status DONE" <<<"$out" \
+  && [ "$(jq -r .manifest.state "$RUN/dispatch.json")" = written ]; } && ok "e2e: a read-only codex run (the stub) returns its report as OUT/report.md and the lead writes OUT/manifest.json" || no "e2e run: rc=$rc $out"
+jq -e --arg b "$BSHA" --arg id "${RUN##*/}" '.status == "DONE" and .commits == [] and .gates == [] and .done.exit_code == null and .touched_paths == [] and .scope == []
+  and .base == {branch: "main", sha: $b} and .artifacts == [{path: "report.md", kind: "report"}] and (has("verdict") | not)
+  and .run.id == $id and .run.role == "review" and .run.runtime == "codexro" and .run.class == "read-only" and .run.model == "gpt-6.1-terra"
+  and .run.effort == "low" and .run.effort_native == "low" and .run.outcome == "ok" and .run.exit == 0 and .run.packaged_by == "qargi local run"' "$OUT/manifest.json" >/dev/null \
+  && ok "the manifest is the minimal report-only one, with the run's id, role, runtime, class, model, effort and base from the lead's record; no test, no verdict" || no "e2e manifest: $(cat "$OUT/manifest.json")"
+out=$($DA local verify "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && ! grep -q 'holds no report' <<<"$out"; } && ok "e2e: qargi local verify passes" || no "e2e verify: rc=$rc $out"
+out=$($DA review check "$OUT" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q '^OK report-only run: report.md holds a Findings section and ends with its verdict' <<<"$out"; } && ok "e2e: qargi review check passes the package" || no "e2e review check: rc=$rc $out"
+pkrun=$RUN
+out=$($DA local clean "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ ! -e "$pkrun" ]; } && ok "e2e: qargi local clean closes it" || no "e2e clean: rc=$rc $out"
+# a rerun that returns no report leaves neither the report nor the lead's manifest of the earlier run as this run's
+prep "$T/r" pk2 review; task
+out=$($DA local run "$RUN" 2>&1); rc=$?; [ "$rc" = 0 ] && [ -f "$OUT/manifest.json" ] || no "pk2 first run: rc=$rc $out"
+: > "$T/stub-final"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ ! -e "$OUT/report.md" ] && [ ! -e "$OUT/manifest.json" ] && [ -f "$OUT/report.md.previous" ] && [ -f "$OUT/manifest.json.previous" ] \
+  && grep -q '^MANIFEST=none: no report was published' <<<"$out" && grep -q '^PREVIOUS_MANIFEST=kept as' <<<"$out" && grep -q '^PREVIOUS_REPORT=kept as' <<<"$out"; } \
+  && ok "missing report: no manifest is written, and the earlier report and manifest are set aside, not taken for this run's" || no "pk2 missing: rc=$rc $out $(ls -A "$OUT")"
+out=$($DA review check "$OUT" 2>&1); rc=$?
+{ [ "$rc" = 1 ] && grep -q 'FAIL no patches found in .*, and no report.md (or PREFIXreport.md) with a Findings section' <<<"$out"; } && ok "missing report: review check fails as before" || no "pk2 review check: rc=$rc $out"
+out=$($DA local verify "$RUN" 2>&1); grep -q 'holds no report' <<<"$out" && ok "missing report: local verify says OUT holds no report" || no "pk2 verify: $out"
+out=$($DA local clean "$RUN" 2>&1); rc=$?
+{ [ "$rc" != 0 ] && grep -q 'holds no manifest' <<<"$out" && [ -d "$RUN" ]; } && ok "missing report: local clean refuses it, as before" || no "pk2 clean: rc=$rc $out"
+rm -f "$T/stub-final"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ -f "$OUT/manifest.json" ] && [ ! -e "$OUT/manifest.json.previous" ] && [ ! -e "$OUT/report.md.previous" ] && grep -q '^PREVIOUS_MANIFEST=replaced' <<<"$out"; } \
+  && ok "the next run with a report writes the manifest again and drops the set-aside ones" || no "pk2 again: rc=$rc $out $(ls -A "$OUT")"
+# an invalid verdict, or no Findings heading: the report is published and packaged, and review check refuses it with its own words
+printf '# Findings\n\nnone\n\nverdict: maybe\n' > "$T/badverdict.md"; printf '%s\n' "$T/badverdict.md" > "$T/stub-final"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+out=$($DA review check "$OUT" 2>&1); rc2=$?
+{ [ "$rc" = 0 ] && [ "$rc2" = 1 ] && grep -q 'report.md: the last line must be `verdict: accept` or `verdict: revise` (it is: verdict: maybe)' <<<"$out"; } \
+  && ok "invalid verdict: review check fails with today's refusal" || no "invalid verdict: rc=$rc rc2=$rc2 $out"
+printf 'all fine\n\nverdict: accept\n' > "$T/badverdict.md"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+out=$($DA review check "$OUT" 2>&1); rc2=$?
+{ [ "$rc" = 0 ] && [ "$rc2" = 1 ] && grep -q 'and no report.md (or PREFIXreport.md) with a Findings section' <<<"$out"; } && ok "no Findings heading: review check fails as before" || no "no findings: rc=$rc rc2=$rc2 $out"
+printf 'BLOCKED\nthe clone cannot be read\n\n# Findings\n\nnone\n\nverdict: revise\n' > "$T/badverdict.md"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(jq -r .status "$OUT/manifest.json")" = BLOCKED ] && grep -q 'status BLOCKED' <<<"$out"; } && ok "a report that begins with BLOCKED is packaged as status BLOCKED" || no "blocked: rc=$rc $out"
+rm -f "$T/stub-final" "$T/badverdict.md"
+# a read-only run that leaves patches in OUT: no manifest, and local verify refuses it as before
+touch "$T/stub-patch"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ -f "$OUT/patches/0001-x.patch" ] && [ ! -e "$OUT/manifest.json" ] && grep -q '^MANIFEST=none: OUT holds patches' <<<"$out"; } && ok "read-only patches: no manifest is written" || no "ro patches: rc=$rc $out"
+out=$($DA local verify "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'is a read-only run (review) and its output holds patches' <<<"$out"; } && ok "read-only patches: local verify refuses them, as before" || no "ro patches verify: rc=$rc $out"
+out=$($DA review check "$OUT" 2>&1); rc=$?; [ "$rc" = 1 ] && ok "read-only patches: review check fails" || no "ro patches review check: rc=$rc $out"
+rm -f "$T/stub-patch"; rm -rf "$OUT/patches"
+# a write run is not packaged: its manifest is the member's
+setprov codexro; prep "$T/r" pk3; task
+out=$($DA local run "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ -f "$OUT/report.md" ] && [ ! -e "$OUT/manifest.json" ] && ! grep -q '^MANIFEST=' <<<"$out" && [ "$(jq -r 'has("manifest")' "$RUN/dispatch.json")" = false ]; } \
+  && ok "a write run publishes the report and writes no manifest (the member's own)" || no "pk3 write: rc=$rc $out"
+# a manifest.json left in a read-only OUT that is not a plain file of its own refuses the run before anything starts
+prep "$T/r" pk4 review; task; echo precious > "$T/victim4"; ln -s "$T/victim4" "$OUT/manifest.json"
+out=$($DA local run "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -qF "the manifest of an earlier run ($OUT/manifest.json) is not a plain file of its own" <<<"$out" && [ "$(cat "$T/victim4")" = precious ] && [ ! -e "$RUN/dispatch.json" ]; } \
+  && ok "a link as the manifest of a read-only run refuses the run; what it points to is untouched" || no "pk4 link: rc=$rc $out"
+rm -f "$OUT/manifest.json" "$T/victim4" "$T/bin/codex"
 
 # --- an in-session runtime is not started here ----------------------------------------------------------------------------------------
 prep "$T/r2" c1; task

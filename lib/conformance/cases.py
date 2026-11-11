@@ -358,7 +358,7 @@ def barrier_hook(doc, directory, name, sealed, usable):
 SAMPLE_RUN = "/conformance/run"
 SAMPLE_VALUES = {"member": "conformance-member", "model": "conformance-model", "effort_native": "conformance-effort", "prompt_file": SAMPLE_RUN + "/prompt/prompt.md",
                  "prompt_arg": "conformance prompt", "clone": SAMPLE_RUN + "/clone", "run_dir": SAMPLE_RUN, "out_dir": SAMPLE_RUN + "/out",
-                 "project": "conformance", "run_config": SAMPLE_RUN + "/config/conformance.toml"}
+                 "project": "conformance", "run_config": SAMPLE_RUN + "/config/conformance.toml", "final_message": SAMPLE_RUN + "/final.conformance/message.md"}
 
 
 def class_group(items, values, cls, runtime):

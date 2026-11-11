@@ -118,7 +118,7 @@
       {"if": "model", "then": ["-m", "{model}"]},
       {"if": "effort", "then": ["-c", "model_reasoning_effort={effort}"]},
       "-o",
-      "{out_dir}/report.md",
+      "{final_message}",
       {"class": "write", "then": ["--sandbox", "workspace-write", "--add-dir", "{out_dir}"]},
       {"class": "read-only", "then": ["--sandbox", "read-only"]}
     ],

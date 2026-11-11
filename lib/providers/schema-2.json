@@ -118,7 +118,7 @@
               }
             }
           },
-          "description": "how a member is started: in the lead's own session, as a command line, or through the adapter (built later)"
+          "description": "how a member is started: in the lead's own session, as a command line, or through the adapter (built later). In the argv of mode command, {final_message} is the file the runtime is told to write the member's last message to: a file of a directory of the run made new for each run (RUN/final.XXXXXXXXXXXX/message.md), never one of OUT. When the process has ended qargi local run takes it only as a regular file with one name, of text, at most 1 MiB (never following a link or waiting on a pipe) and publishes it as OUT/report.md by renaming a new file over that name; the report of an earlier run is set aside as OUT/report.md.previous before the member starts and stays there when the run publishes none."
         },
         "barrier": {
           "type": ["object", "null"],
