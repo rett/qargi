@@ -30,7 +30,7 @@ effort: high
 tools: Bash, Read, Edit, Write, Grep, Glob, Monitor, TaskStop, ToolSearch, Skill
 hooks:
   PreToolUse:
-    - matcher: "Bash|Monitor|Edit|Write|NotebookEdit|Read|Grep"
+    - matcher: "Bash|Monitor|Edit|Write|NotebookEdit|Read|Grep|mcp__.*"
       hooks:
         - type: command
           command: qargi __guard
@@ -54,7 +54,8 @@ jq -e --arg h "$h" --arg f "$A/forge.md" '.projects.pbase.forge | .provider == "
   && ok "the record keeps the runtime, the surface, the path, the hash of the file and the hash of what it was made from" || no "record: $(jq -c .projects.pbase.forge "$T/c/agents.json")"
 $DA agent list | grep -q "forge .*forge.md$" && ok "list shows no state for a current member" || no "list current: $($DA agent list | head -2)"
 grep -q '^name: forge$' "$A/forge.md" && grep -q 'build, test' "$A/forge.md" && grep -q '^model: claude-sonnet-5-5$' "$A/forge.md" && grep -q '^effort: high$' "$A/forge.md" && ok "it carries the name, abilities and model" || no "rendered: $(head -5 "$A/forge.md")"
-grep -q 'matcher: "Bash|Monitor|Edit|Write|NotebookEdit|Read|Grep"' "$A/forge.md" && grep -q 'command: qargi __guard$' "$A/forge.md" && ok "the guard covers Bash, Monitor and the edit tools" || no "hook"
+grep -q 'matcher: "Bash|Monitor|Edit|Write|NotebookEdit|Read|Grep|mcp__.\*"' "$A/forge.md" && grep -q 'command: qargi __guard$' "$A/forge.md" && ok "the guard covers Bash, Monitor, the edit tools and every MCP tool" || no "hook"
+! grep -q 'mcp__[a-z]' "$A/forge.md" && ok "a member whose roles have no tool pack has no MCP tool" || no "an MCP tool with no tool pack: $(grep -n mcp__ "$A/forge.md")"
 grep -q 'onFailure: block$' "$A/forge.md" && grep -q '^ *timeout: [0-9]' "$A/forge.md" && ok "the guard hook blocks when it fails or times out" || no "hook failure setting"
 ! grep -q '{{' "$A/forge.md" && ok "no placeholder is left" || no "placeholder left"
 $DA agent add scribe --project pbase --roles write --model opus --effort medium >/dev/null 2>&1 && grep -q '^model: opus$' "$A/scribe.md" && ok "model is the one given" || no "model"
@@ -443,5 +444,43 @@ out=$($DA agent rename hand1 hand2 2>&1); rc=$?
   && ok "rename keeps a hand-edited file and says so" || no "rename of a DRIFT member: rc=$rc $out"
 $DA agent add clean1 --project pbase >/dev/null 2>&1; $DA agent rename clean1 clean2 >/dev/null 2>&1
 { [ -f "$A/clean2.md" ] && [ ! -e "$A/clean1.md" ]; } && ok "and an unedited file is removed as before" || no "rename of a current member"
+
+# --- the MCP tools of a member are the ones the tool packs of its roles give it, under the runtime's names; the hook command then names the member's
+# project and roles, so the guard can hold a call to them where it finds no run (an MCP call names no path)
+tools_of() { sed -n 's/^tools: //p' "$A/$1.md"; }
+hook_of() { sed -n 's/^ *command: //p' "$A/$1.md"; }
+BASE_TOOLS='Bash, Read, Edit, Write, Grep, Glob, Monitor, TaskStop, ToolSearch, Skill'
+printf '%s' '{"name":"kb","url":"https://mcp.example.net/kb","write_ok":true,"tools":{"platform.list_items":"always_allow","getStatus":"always_allow","platform.delete_knowledge":"always_allow","repo/push":"auto","issue-close":"always_ask"}}' > "$T/kb.json"
+ktok=$($DA tool import "$T/kb.json" --compatible any | tok_of); $DA tool import "$T/kb.json" --compatible any --plan "$ktok" --approved test >/dev/null
+$DA agent add mcp0 --project pbase --roles build >/dev/null 2>&1
+[ "$(tools_of mcp0)" = "$BASE_TOOLS" ] && [ "$(hook_of mcp0)" = "qargi __guard" ] && ok "a tool pack nobody linked gives a member nothing" || no "unlinked pack: $(tools_of mcp0) / $(hook_of mcp0)"
+$DA tool link kb --scope project --project pbase >/dev/null
+$DA agent list | grep -q "mcp0 .*(STALE: qargi agent refresh mcp0 --project pbase)$" && ok "a member is STALE once a tool pack reaches its roles" || no "not stale after the link: $($DA agent list | grep mcp0)"
+# the guard asked as the hook asks it (the hook command of the member's file, here with this checkout's qargi), from a directory that is in no run
+gcall() { # member tool: the exit status of the member's hook for a call of the tool; the refusal goes to $T/g.err
+  local args; args=$(hook_of "$1"); args=${args#qargi __guard}
+  # shellcheck disable=SC2086  # the arguments of the hook command are words
+  jq -nc --arg t "$2" --arg d "$T" '{tool_name:$t,tool_input:{},cwd:$d}' | $DA __guard $args >/dev/null 2>"$T/g.err"
+}
+gcall mcp0 mcp__kb__getStatus; [ $? = 2 ] && grep -q "does not say whose member this is" "$T/g.err" && ok "a member rendered before the pack was linked is refused the tool until it is refreshed" || no "stale member: $(cat "$T/g.err")"
+$DA agent refresh mcp0 >/dev/null 2>&1
+[ "$(tools_of mcp0)" = "$BASE_TOOLS, mcp__kb__getStatus, mcp__kb__platform_delete_knowledge, mcp__kb__platform_list_items, mcp__kb__repo_push" ] \
+  && ok "refresh gives it the tools of the pack under the runtime's names, without the always_ask one" || no "tools of a build member: $(tools_of mcp0)"
+[ "$(hook_of mcp0)" = "qargi __guard --project pbase --roles build" ] && ok "and its hook command names its project and roles" || no "hook of a build member: $(hook_of mcp0)"
+! $DA agent list | grep mcp0 | grep -qw 'STALE\|DRIFT' && ok "and it is current again" || no "still flagged: $($DA agent list | grep mcp0)"
+$DA agent add mcp1 --project pbase --roles review >/dev/null 2>&1
+[ "$(tools_of mcp1)" = "$BASE_TOOLS, mcp__kb__getStatus, mcp__kb__platform_list_items" ] && [ "$(hook_of mcp1)" = "qargi __guard --project pbase --roles review --class read-only" ] \
+  && ok "a member of read-only roles gets the declared reads alone, and its class stays in the hook command" || no "review member: $(tools_of mcp1) / $(hook_of mcp1)"
+$DA agent add mcp2 --project pbase --roles build,review >/dev/null 2>&1
+[ "$(tools_of mcp2)" = "$(tools_of mcp0)" ] && [ "$(hook_of mcp2)" = "qargi __guard --project pbase --roles build,review" ] && ok "a member of several roles gets what any of them may call; the guard narrows it to the role of the task" || no "two roles: $(tools_of mcp2) / $(hook_of mcp2)"
+gcall mcp0 mcp__kb__platform_delete_knowledge && ok "the hook command of a build member lets it call a write tool the pack allows" || no "build member write tool: $(cat "$T/g.err")"
+gcall mcp0 mcp__kb__issue-close; [ $? = 2 ] && grep -q "always_ask" "$T/g.err" && ok "and refuses the always_ask tool" || no "always_ask: $(cat "$T/g.err")"
+gcall mcp1 mcp__kb__getStatus && ok "the hook command of a review member lets it call a declared read" || no "review member read: $(cat "$T/g.err")"
+gcall mcp1 mcp__kb__platform_delete_knowledge; [ $? = 2 ] && grep -q "under the read-only class" "$T/g.err" && ok "and refuses a write tool" || no "review member write: $(cat "$T/g.err")"
+gcall mcp2 mcp__kb__platform_delete_knowledge; [ $? = 2 ] && grep -q "must be allowed for each of build, review" "$T/g.err" && ok "a member of a write and a read-only role calls only what both allow where no run is found" || no "two roles write: $(cat "$T/g.err")"
+$DA tool unlink kb --scope project --project pbase >/dev/null
+$DA agent list | grep -q "mcp0 .*(STALE: qargi agent refresh mcp0 --project pbase)$" && ok "a member is STALE once the pack is unlinked" || no "not stale after the unlink"
+$DA agent refresh mcp0 >/dev/null 2>&1
+[ "$(tools_of mcp0)" = "$BASE_TOOLS" ] && [ "$(hook_of mcp0)" = "qargi __guard" ] && ok "refresh takes the MCP tools away again" || no "after the unlink: $(tools_of mcp0) / $(hook_of mcp0)"
 rm -rf "$T"
 exit $fail

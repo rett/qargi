@@ -230,10 +230,11 @@ class Guard(HookCase):
         with open(os.path.join(d, "member.md")) as f:
             text = f.read()
         self.assertIn('command: "qargi __guard{{GUARD_ARGS}}"', text)
-        self.assertIn('matcher: "Bash|Monitor|Edit|Write|NotebookEdit|Read|Grep"', text)
+        self.assertIn('matcher: "Bash|Monitor|Edit|Write|NotebookEdit|Read|Grep|mcp__.*"', text)
         tools = [l for l in text.splitlines() if l.startswith("tools:")][0]
         for t in ("Edit", "Write", "Monitor", "ToolSearch", "Skill"):
             self.assertIn(t, tools)
+        self.assertNotIn("mcp__", tools, "the template lists no MCP tool: a member has the ones the tool packs of its roles give it, and none otherwise")
 
     def test_a_monitor_call_is_judged_like_a_bash_command(self):
         """Monitor runs a shell command in the background and a member has the tool, so its `command` goes through the same code as a Bash command's."""
@@ -249,7 +250,8 @@ class Guard(HookCase):
 
     def test_the_tools_the_hook_matches_are_the_tools_the_guard_judges_and_the_docs_list_exactly_them(self):
         """One list of guarded tools in four places: the hook matcher of the member template and of the Claude Code definition, the tool names of the guard's hook
-        data (the definition's barrier.hook and the guard's own copy of it), and the members page."""
+        data (the definition's barrier.hook and the guard's own copy of it), and the members page. The matcher ends with the pattern of the MCP tools, which
+        are no list: it is the form of the names the definition gives (resources.mcp.permission_rule) with any server and any tool."""
         root = os.path.join(os.path.dirname(BIN), "..")
         with open(os.path.join(root, "lib", "providers", "claude-code.json")) as f:
             doc = json.load(f)
@@ -259,14 +261,18 @@ class Guard(HookCase):
             matchers += [l.split('"')[1] for l in f.read().splitlines() if l.strip().startswith("- matcher:")]
         self.assertEqual(len(matchers), 2, matchers)
         names = [t for ts in doc["barrier"]["hook"]["tool_names"].values() for t in ts]
+        mcp = doc["resources"]["mcp"]["permission_rule"].replace("{server}__{tool}", ".*")
+        self.assertEqual(mcp, "mcp__.*")
         for m in matchers:
-            self.assertEqual(sorted(m.split("|")), sorted(names), m)
+            self.assertEqual(m.split("|")[-1], mcp, m)
+            self.assertEqual(sorted(m.split("|")[:-1]), sorted(names), m)
         self.assertIn("Monitor", names)
         self.assertEqual(doc["barrier"]["hook"], self.m_hook(), "the guard's own copy of the Claude Code hook data is the definition's")
         with open(os.path.join(root, "docs", "members-and-providers", "README.md")) as f:
             page = " ".join(f.read().split())
-        listed = ", ".join("`%s`" % t for t in matchers[0].split("|")[:-1]) + " and `%s`" % matchers[0].split("|")[-1]
-        self.assertIn("every call of " + listed + " passes `qargi __guard`", page)
+        tools = matchers[0].split("|")[:-1]
+        listed = ", ".join("`%s`" % t for t in tools[:-1]) + " and `%s`" % tools[-1]
+        self.assertIn("every call of " + listed + ", and of every MCP tool (`%s`), passes `qargi __guard`" % mcp, page)
 
     def m_hook(self):
         """CLAUDE_HOOK of guard.py, read as the data it is."""
@@ -5038,6 +5044,232 @@ class Differential(HookCase):
             self.assertEqual((mine.returncode, mine.stdout.encode("utf-8", "surrogateescape"), mine.stderr.encode("utf-8", "surrogateescape")), theirs, (args, payload))
             verdicts.add(mine.returncode)
         self.assertEqual(verdicts, {0, 2}, "the sample holds both verdicts")
+
+
+class McpTools(HookCase):
+    """A member's call of an MCP tool is judged by the policy the tool packs of its role give that tool. The library here has a pack linked to every role
+    of the project (kb: read tools, a write tool that is always_allow on purpose, an auto tool and an always_ask tool, their names dotted, slashed,
+    hyphenated and camelCase as servers write them), a pack approved with the server's tool listing (hints), a pack of one role (only-build), a pack whose
+    two tools the runtime writes the same way (twin), a pack that changed after its approval (drifted), a pack that fails its review (unsound), a pack
+    nobody linked and a pack of another project. The runs are a build run and a review run the lead's registry names."""
+    KB = {"platform.list_items": "always_allow", "getStatus": "always_allow", "search": "always_allow", "settings_view": "always_allow",
+          "platform.delete_knowledge": "always_allow", "repo/push": "auto", "issue-close": "always_ask"}
+
+    def setUp(self):
+        self.t = os.path.realpath(tempfile.mkdtemp())
+        self.home, self.conf, self.state, self.outside = (os.path.join(self.t, d) for d in ("home", "conf", "state", "outside"))
+        for d in ("home", "conf/packs/tools", "conf/projects", "state", "outside"):
+            os.makedirs(os.path.join(self.t, d))
+        self.runs, registry = {}, []
+        for role, cls in (("build", "write"), ("review", "read-only")):
+            run = os.path.join(self.t, "runs", "qargi." + role)
+            for d in ("clone/src", "out"):
+                os.makedirs(os.path.join(run, d))
+            for name, text in (("ability", role + "\n"), ("class", cls + "\n"), ("refs.before", "")):
+                self.put(os.path.join(run, name), text)
+            self.runs[role] = run
+            registry.append({"run": run, "slug": "x", "ability": role, "class": cls, "project": "alpha", "tmpdir": os.path.join(run, "tmp"), "repo": self.outside})
+        self.put(os.path.join(self.state, "local-runs.jsonl"), "".join(json.dumps(r) + "\n" for r in registry))
+        self.put(os.path.join(self.conf, "projects", "alpha.json"), json.dumps(
+            {"schema": 1, "project": "alpha", "repo": {"url": "https://github.com/example/x", "path": self.outside, "long_lived": ["main"]},
+             "roles": {"build": {}, "review": {}, "write": {"packs_off": ["tool:kb"]}}, "models": {"provider": {"local": "claude-code"}}}))
+        self.links = []
+        self.pack("kb", self.KB, write_ok=True)
+        self.pack("hints", {"lookup": "always_allow", "fetch_all": "always_allow", "unlisted": "always_allow"}, write_ok=True, listing={"lookup": "read-only", "fetch_all": "write"})
+        self.pack("only-build", {"list_x": "always_allow"}, link={"scope": "project-role", "project": "alpha", "role": "build"})
+        self.pack("twin", {"a.b": "always_allow", "a_b": "always_allow", "list_t": "always_allow"})
+        self.pack("drifted", {"list_z": "always_allow"}, approved="0123456789abcdef")
+        self.pack("unsound", {"list_u": "always_allow", "delete_u": "always_allow"})
+        self.pack("unlinked", {"list_y": "always_allow"}, link=None)
+        self.pack("elsewhere", {"list_w": "always_allow"}, link={"scope": "project", "project": "beta"})
+        self.pack("for-reviewers", {"list_r": "always_allow"}, link={"scope": "user-role", "role": "review"})
+        self.put(os.path.join(self.conf, "packs", "links.json"), json.dumps({"links": self.links}))
+
+    def tearDown(self):
+        shutil.rmtree(self.t, ignore_errors=True)
+
+    @staticmethod
+    def put(path, text):
+        with open(path, "w") as f:
+            f.write(text)
+
+    def pack(self, name, tools, write_ok=False, listing=None, approved=None, link=False):
+        """A tool pack in the library with its record, approved as it is (or with the hash given), linked to every role of alpha (or as link says; None: not linked)."""
+        p = os.path.join(self.conf, "packs", "tools", name + ".json")
+        doc = {"name": name, "url": "https://mcp.example.net/" + name, "tools": tools}
+        if write_ok:
+            doc["write_ok"] = True
+        self.put(p, json.dumps(doc))
+        rec = {"kind": "tool", "source": "created", "stored": "2026-01-01T00:00:00Z", "compatible_providers": ["any"]}
+        if listing is not None:
+            rec["tool_list"] = {"sha256": "ab" * 32, "tools": listing}
+        self.put(p[:-5] + ".pack.json", json.dumps(rec))
+        if approved is None:
+            approved = subprocess.run([sys.executable, "-I", os.path.join(LIBDIR, "packs_check.py"), "hash", p], capture_output=True, text=True, check=True).stdout.strip()
+        self.put(p[:-5] + ".pack.json", json.dumps(dict(rec, sha256=approved)))
+        if link is not None:
+            self.links.append(dict(link or {"scope": "project", "project": "alpha"}, pack="tool:" + name))
+
+    def env(self, **more):
+        e = {k: v for k, v in os.environ.items() if k not in ("QARGI_CONF", "QARGI_STATE", "QARGI_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "HOME", "QARGI_MEMBER_RUN")}
+        e.update({"HOME": self.home, "QARGI_CONF": self.conf, "QARGI_STATE": self.state})
+        e.update(more)
+        return e
+
+    def call(self, tool, where, *args, **env):
+        """The verdict on a call of the tool made in the directory `where` (a role: the clone of that role's run), under the hook command arguments args."""
+        cwd = os.path.join(self.runs[where], "clone") if where in self.runs else where
+        return self.hook(list(args), {"tool_name": tool, "tool_input": {"query": "x"}, "cwd": cwd}, self.env(**env))
+
+    def allowed(self, where, tools, *args, **env):
+        for t in tools:
+            self.assertEqual(self.call(t, where, *args, **env), Verdict(0, "", ""), (t, where, args))
+
+    def refused(self, where, cases, *args, **env):
+        for t, words in cases:
+            r = self.call(t, where, *args, **env)
+            self.assertEqual((r.returncode, r.stdout), (2, ""), (t, where, args, r.stderr))
+            self.assertEqual(r.stderr.count("\n"), 1, r.stderr)
+            self.assertTrue(r.stderr.startswith("qargi guard: "), r.stderr)
+            self.assertIn(words, r.stderr, (t, where, args))
+            self.assertIn("the lead decides which tools a role is given", r.stderr)
+
+    def test_a_write_run_calls_the_tools_its_role_was_given(self):
+        self.allowed("build", ("mcp__kb__platform_list_items", "mcp__kb__getStatus", "mcp__kb__search", "mcp__kb__settings_view",
+                               "mcp__kb__platform_delete_knowledge",      # a write tool the pack lets run unattended, on purpose (write_ok)
+                               "mcp__kb__repo_push",                      # auto: the runtime's own permission rules decide
+                               "mcp__hints__lookup", "mcp__hints__fetch_all", "mcp__hints__unlisted", "mcp__only-build__list_x", "mcp__twin__list_t"))
+        self.refused("build", (("mcp__kb__issue-close", "the tool issue-close of pack kb is always_ask: it waits for a person's answer, and a member runs unattended"),
+                               ("mcp__kb__nosuch", "mcp__kb__nosuch is not a tool of a tool pack linked to the role build of alpha"),
+                               ("mcp__unlinked__list_y", "is not a tool of a tool pack linked to the role build of alpha"),
+                               ("mcp__elsewhere__list_w", "is not a tool of a tool pack linked to the role build of alpha"),
+                               ("mcp__for-reviewers__list_r", "is not a tool of a tool pack linked to the role build of alpha"),
+                               ("mcp__nosuch__x", "is not a tool of a tool pack linked to the role build of alpha"),
+                               ("mcp__kb__platform.list_items", "is not a tool of a tool pack linked"),     # the runtime never writes the dot: this is no name of its
+                               ("mcp__drifted__list_z", "the tool pack drifted changed since it was approved"),
+                               ("mcp__unsound__list_u", "the tool pack unsound fails its review"),
+                               ("mcp__unsound__delete_u", "the tool pack unsound fails its review"),
+                               ("mcp__twin__a_b", "stands for more than one tool of the role build of alpha (a.b of pack twin, a_b of pack twin)")))
+
+    def test_a_read_only_run_calls_only_the_declared_reads(self):
+        self.allowed("review", ("mcp__kb__platform_list_items", "mcp__kb__getStatus", "mcp__kb__search", "mcp__kb__settings_view", "mcp__hints__lookup",
+                                "mcp__twin__list_t", "mcp__for-reviewers__list_r"))
+        not_a_read = "under the read-only class only a declared read of a tool pack is called, and the tool %s of pack %s is not one: %s"
+        self.refused("review", (("mcp__kb__platform_delete_knowledge", not_a_read % ("platform.delete_knowledge", "kb", "its name is write-like")),
+                                ("mcp__kb__repo_push", not_a_read % ("repo/push", "kb", "its policy is auto, and only an always_allow tool is a declared read")),
+                                ("mcp__kb__issue-close", "is always_ask"),
+                                ("mcp__hints__fetch_all", not_a_read % ("fetch_all", "hints", "the server's tool listing the pack was approved with does not mark it read-only (readOnlyHint)")),
+                                ("mcp__hints__unlisted", "does not mark it read-only (readOnlyHint)"),
+                                ("mcp__only-build__list_x", "is not a tool of a tool pack linked to the role review of alpha"),
+                                ("mcp__drifted__list_z", "changed since it was approved")))
+
+    def test_the_class_of_the_hook_command_holds_in_any_run(self):
+        """A member rendered for read-only roles alone passes --class read-only: its calls are held to the declared reads in a build run too."""
+        self.allowed("build", ("mcp__kb__search", "mcp__only-build__list_x"), "--class", "read-only")
+        self.refused("build", (("mcp__kb__platform_delete_knowledge", "its name is write-like"), ("mcp__kb__repo_push", "its policy is auto")), "--class", "read-only")
+
+    def test_the_run_is_the_registrys_not_the_run_directorys(self):
+        """The project and the role come from the lead's registry: a run the registry does not name is refused, and the ability file of the run (which the
+        guard keeps a member from writing) is not what names the role's packs."""
+        self.put(os.path.join(self.state, "local-runs.jsonl"), "")
+        self.refused("build", (("mcp__kb__search", "the lead's registry names no project and role for the run %s" % self.runs["build"]),))
+        self.put(os.path.join(self.state, "local-runs.jsonl"), json.dumps({"run": self.runs["build"], "ability": "build", "class": "write", "project": "../alpha"}) + "\n")
+        self.refused("build", (("mcp__kb__search", "the lead's registry names no project and role"),))
+        self.put(os.path.join(self.state, "local-runs.jsonl"), json.dumps({"run": self.runs["build"], "ability": "review", "class": "read-only", "project": "alpha"}) + "\n")
+        self.refused("build", (("mcp__kb__platform_delete_knowledge", "under the read-only class"), ("mcp__only-build__list_x", "linked to the role review of alpha")))
+        self.allowed("build", ("mcp__for-reviewers__list_r",))
+
+    def test_the_member_mark_names_the_run_of_a_call_made_elsewhere(self):
+        self.allowed(self.outside, ("mcp__kb__platform_delete_knowledge", "mcp__only-build__list_x"), QARGI_MEMBER_RUN=self.runs["build"])
+        self.refused(self.outside, (("mcp__kb__platform_delete_knowledge", "under the read-only class"),), QARGI_MEMBER_RUN=self.runs["review"])
+        self.refused(self.outside, (("mcp__kb__search", "no run directory is found from the directory of this call and the hook command does not say whose member this is"),),
+                     QARGI_MEMBER_RUN=os.path.join(self.t, "no-such-run"))
+
+    def test_without_a_run_the_hook_command_says_whose_member_it_is(self):
+        """An MCP call names no path, and a member a session starts works in a directory outside its run: the hook command of a member with MCP tools
+        names its project and roles, and the call must be allowed for each of them."""
+        self.refused(self.outside, (("mcp__kb__search", "no run directory is found from the directory of this call and the hook command does not say whose member this is"),))
+        one = ("--project", "alpha", "--roles", "build")
+        self.allowed(self.outside, ("mcp__kb__search", "mcp__kb__platform_delete_knowledge", "mcp__only-build__list_x"), *one)
+        self.refused(self.outside, (("mcp__kb__issue-close", "is always_ask"), ("mcp__unlinked__list_y", "linked to the role build of alpha")), *one)
+        both = ("--project", "alpha", "--roles", "build,review")
+        self.allowed(self.outside, ("mcp__kb__search", "mcp__hints__lookup"), *both)
+        each = "the guard cannot tell which of the member's roles the task is, and the call must be allowed for each of build, review"
+        for tool, words in (("mcp__kb__platform_delete_knowledge", "under the read-only class"), ("mcp__only-build__list_x", "linked to the role review of alpha"),
+                            ("mcp__for-reviewers__list_r", "linked to the role build of alpha")):
+            self.refused(self.outside, ((tool, words), (tool, each)), *both)
+        # the class of the hook command holds every role to the declared reads; a role the guard cannot read is held to them too
+        self.refused(self.outside, (("mcp__kb__platform_delete_knowledge", "under the read-only class"),), *one, "--class", "read-only")
+        self.refused(self.outside, (("mcp__kb__platform_delete_knowledge", "under the read-only class"), ("mcp__only-build__list_x", "linked to the role nosuchrole of alpha")),
+                     "--project", "alpha", "--roles", "nosuchrole")
+        self.allowed(self.outside, ("mcp__kb__search",), "--project", "alpha", "--roles", "nosuchrole")
+        # packs_off of the role takes the pack away
+        self.refused(self.outside, (("mcp__kb__search", "linked to the role write of alpha"),), "--project", "alpha", "--roles", "write")
+        self.allowed(self.outside, ("mcp__hints__lookup",), "--project", "alpha", "--roles", "write")
+        # in a run, the run decides: the roles of the hook command do not widen it
+        self.refused("review", (("mcp__only-build__list_x", "linked to the role review of alpha"),), *one)
+
+    def test_a_hook_command_that_names_the_member_badly_refuses_every_call(self):
+        for args in (("--project", "alpha"), ("--roles", "build"), ("--project", "alpha", "--roles"), ("--project", "../alpha", "--roles", "build"),
+                     ("--project", "alpha", "--roles", "build,"), ("--project", "alpha", "--roles", "Build"), ("--project", "", "--roles", "build")):
+            for payload in ({"tool_name": "mcp__kb__search", "tool_input": {}, "cwd": self.outside}, {"tool_name": "Bash", "tool_input": {"command": "ls"}, "cwd": self.outside}):
+                r = self.hook(list(args), payload, self.env())
+                self.assertEqual(r.returncode, 2, args)
+                self.assertIn("does not name the member's project and roles", r.stderr, args)
+                self.assertIn("refusing every call until the member is refreshed", r.stderr, args)
+        self.assertEqual(self.hook(["--project", "alpha", "--roles", "build"], {"tool_name": "Bash", "tool_input": {"command": "ls"}, "cwd": self.outside}, self.env()), Verdict(0, "", ""))
+
+    def test_a_tool_that_is_no_mcp_tool_is_not_judged(self):
+        self.allowed(self.outside, ("Glob", "ToolSearch", "TaskStop", "Skill", "WebFetch", "mcp__kb", "mcp_kb_search", "mcp____", "xmcp__kb__search"))
+        self.allowed("review", ("Glob", "mcp__kb"))
+        self.refused(self.outside, (("mcp__a__b", "no run directory"), ("mcp__kb__x__y", "no run directory"), ("mcp__\n__x", "no run directory")))
+        # the name comes with the call: one with a newline or an escape is printed as a JSON string, on the one line of the refusal
+        self.refused(self.outside, (("mcp__kb__x\nqargi guard: ok\x1b[2K", 'the call of "mcp__kb__x\\nqargi guard: ok\\u001b[2K"'),))
+        self.refused("build", (("mcp__kb__x\ny", '"mcp__kb__x\\ny" is not a tool of a tool pack linked'),))
+
+    def test_links_or_answers_that_cannot_be_read_refuse(self):
+        self.put(os.path.join(self.conf, "packs", "links.json"), "{nope")
+        self.refused("build", (("mcp__kb__search", "the links of the pack library cannot be read"),))
+        self.put(os.path.join(self.conf, "packs", "links.json"), json.dumps({"links": self.links}))
+        self.put(os.path.join(self.conf, "projects", "alpha.json"), "{nope")
+        self.refused("build", (("mcp__kb__search", "the answers of project alpha cannot be read"),))
+
+    def test_a_runtime_says_its_own_names_or_has_none(self):
+        """--provider NAME reads the form of the MCP tool names from that runtime's definition: one that gives none has no MCP calls to judge, one whose
+        name_key this version does not know cannot be judged, and one with its own rule is judged by it."""
+        hook = {"input": "json-stdin", "tool_pointer": "/tool_name", "command_pointer": "/tool_input/command", "cwd_pointer": "/cwd", "path_pointers": ["/tool_input/file_path"],
+                "tool_names": {"shell": ["Bash"], "write": ["Edit"], "read": ["Read"]}, "deny": {"exit": 2, "stream": "stderr"}, "allow": {"exit": 0}}
+        sys.path.insert(0, LIBDIR)
+        import provider as P
+        for name, mcp in (("nomcp", None), ("dotted", {"file": "m.json", "format": "json", "root_pointer": "/servers", "entry": {"url": "{url}"}, "permission_rule": "{server}.{tool}"}),
+                          ("oddkey", {"file": "m.json", "format": "json", "root_pointer": "/servers", "entry": {"url": "{url}"}, "permission_rule": "t:{server}:{tool}", "name_key": "rot13"})):
+            d = os.path.join(self.conf, "packs", "providers", name)
+            os.makedirs(d)
+            self.put(os.path.join(d, "definition.json"), json.dumps(runtime(name, barrier={"kind": "hook", "hook": hook}, resources={"mcp": mcp} if mcp else {})))
+            self.put(os.path.join(d, ".pack.json"), json.dumps({"kind": "provider", "sealed": True, "sha256": P.tree_hash(d)}))
+        self.allowed("build", ("mcp__kb__issue-close", "mcp__nosuch__x"), "--provider", "nomcp")
+        self.allowed("build", ("mcp__kb__search", "kb.search", "kb.repo/push", "only-build.list_x"), "--provider", "dotted")      # mcp__kb__search is no name of this runtime
+        self.refused("build", (("kb.issue-close", "is always_ask"), ("kb.nosuch", "is not a tool of a tool pack linked"), ("kb.platform_list_items", "is not a tool of a tool pack linked")), "--provider", "dotted")
+        self.allowed("build", ("twin.a.b", "twin.a_b", "kb.platform.list_items"), "--provider", "dotted")          # as written, the two tools of twin have two names
+        self.refused("review", (("kb.repo/push", "its policy is auto"),), "--provider", "dotted")
+        self.refused("build", (("t:kb:search", "writes MCP tool names by a rule this version does not know (resources.mcp.name_key \"rot13\")"),), "--provider", "oddkey")
+        self.refused("build", (("mcp__kb__issue-close", "is always_ask"),))                 # the next call without --provider is Claude Code's again
+
+    def test_the_names_the_guard_assumes_are_the_definitions(self):
+        root = os.path.join(os.path.dirname(BIN), "..")
+        with open(os.path.join(root, "lib", "providers", "claude-code.json")) as f:
+            mcp = json.load(f)["resources"]["mcp"]
+        self.assertEqual({k: mcp.get(k) for k in ("permission_rule", "name_key")}, self.J.m.DEFAULT_MCP)
+        self.assertEqual(self.J.m.DEFAULT_MCP, {"permission_rule": "mcp__{server}__{tool}", "name_key": "nonword-underscore"})
+
+    def test_the_process_judges_the_same(self):
+        """`qargi __guard` as the hook runs it (isolated, the modules of lib found from the script) ends as this process does."""
+        for where, tool, args in (("build", "mcp__kb__platform_list_items", []), ("review", "mcp__kb__platform_delete_knowledge", []), ("build", "mcp__kb__issue-close", []),
+                                  (self.outside, "mcp__kb__search", ["--project", "alpha", "--roles", "build,review"]), (self.outside, "mcp__kb__search", [])):
+            cwd = os.path.join(self.runs[where], "clone") if where in self.runs else where
+            payload = {"tool_name": tool, "tool_input": {}, "cwd": cwd}
+            mine = self.hook(args, payload, self.env())
+            self.assertEqual((mine.returncode, mine.stdout.encode(), mine.stderr.encode()), process(args, payload, self.env()), (where, tool, args))
 
 
 if __name__ == "__main__":

@@ -82,8 +82,10 @@ def render_runtime(prov, project=None):
     return found[0]
 
 
-def guard_command(rt, cls):
-    """The hook command of a member: it names the runtime only when that runtime's hook protocol is not the one the guard assumes."""
+def guard_command(rt, cls, project=None, abilities=()):
+    """The hook command of a member: it names the runtime only when that runtime's hook protocol is not the one the guard assumes, and the project
+    and the roles of the member only when the member has MCP tools (an MCP call names no path the guard could find the run by, so the hook command
+    says whose member it is and the guard holds the call to the tool packs of those roles)."""
     cmd = "qargi __guard"
     try:
         import guard
@@ -92,7 +94,31 @@ def guard_command(rt, cls):
         plain = False
     if not plain:
         cmd += " --provider " + rt
+    if project and abilities:
+        cmd += " --project %s --roles %s" % (project, ",".join(abilities))
     return cmd + (" --class read-only" if cls == "read-only" else "")
+
+
+def mcp_tools(doc, project, abilities):
+    """The MCP tools the member's roles may call, under the runtime's own names (lib/packs_mcp.py member_tools): the tools of the tool packs that
+    reach those roles of the project, without the ones a member is never let call. None without a project, for a runtime whose definition gives no
+    MCP tool names, and when no tool pack reaches the roles."""
+    if not project:
+        return []
+    import packs_mcp
+    import paths
+    import role
+
+    def read_only(a):
+        try:
+            return role.role_class(a) != "write"
+        except Exception:                                # a role that cannot be read is held to the read-only class
+            return True
+    try:
+        return packs_mcp.member_tools(paths.conf(), project, abilities, {a: read_only(a) for a in abilities},
+                                      packs_mcp.form_of((doc.get("resources") or {}).get("mcp")))
+    except (packs_mcp.McpError, OSError, ValueError) as e:   # the links, the answers or a pack cannot be read: no member is rendered from a guess
+        raise Fail("the MCP tools of the member cannot be worked out: %s" % e)
 
 
 def render_member(prov, name, abilities, cls, model, effort, project=None):
@@ -119,9 +145,18 @@ def render_member(prov, name, abilities, cls, model, effort, project=None):
         if kind == "model":
             return P.model_for(models, value) if value in models["tiers"] else None
         raise R.RenderError("no resolver for %r" % kind)
+    tools, mcp = meta["tools"], mcp_tools(doc, project, abilities)
+    if mcp:
+        # the MCP tools join the tool list under the names the runtime gives them: each is an optional tool whose native name the tool map of the
+        # renderer is given here (the spec is part of the inputs hash, so a change of the role's tool packs makes the member STALE)
+        tools = dict(tools, optional=list(tools.get("optional") or []) + ["mcp:" + n for n in mcp])
+        spec = json.loads(json.dumps(spec))
+        for f in spec["fields"]:
+            if isinstance(f.get("tool_map"), dict):
+                f["tool_map"].update({"mcp:" + n: n for n in mcp})
     inst = {"name": name, "description": meta["description"].replace("{abilities}", ", ".join(abilities)), "abilities": list(abilities),
-            "class": cls, "tier": tier, "model": model, "effort": effort or None, "tools": meta["tools"],
-            "barrier": {"class": cls, "guard_command": guard_command(rt, cls)},
+            "class": cls, "tier": tier, "model": model, "effort": effort or None, "tools": tools,
+            "barrier": {"class": cls, "guard_command": guard_command(rt, cls, project if mcp else None, abilities)},
             "body": body.replace("{skills_dir}", (res.get("skills") or {}).get("project_dir") or "skills")}
     try:
         extra = {"runtime": rt, "definition": P.definition_hash(rt)}
