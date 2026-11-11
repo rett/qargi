@@ -44,8 +44,17 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
                        of OUT/transcript that is a JSON object the rule selects (and does not skip) is a report of the tokens the runtime
                        used; each field of the object at `tokens` is added up over those lines, and the sums go to dispatch.json (usage:
                        events, tokens, model) and to a USAGE= line. Only whole numbers count; a line that is not JSON is passed over.
-Placeholders (the closed set): member, model, effort_native, prompt_file, prompt_arg, clone, run_dir, out_dir, project, run_config (and the short names
-effort, out, prompt). agent_file and session_id belong to runtimes with agent files and to resume; they are refused here.
+Placeholders (the closed set): member, model, effort_native, prompt_file, prompt_arg, clone, run_dir, out_dir, project, run_config, final_message
+(and the short names effort, out, prompt). agent_file and session_id belong to runtimes with agent files and to resume; they are refused here.
+  {final_message}      the file a runtime writes the member's last message to (a flag of its own, such as an output-last-message option): never a
+                       file of OUT, but RUN/final.XXXXXXXXXXXX/message.md, in a directory of the run made new for each run (mode 700, a name no
+                       earlier run used). When the process has ended the lead opens it without following a link or waiting for a writer and takes
+                       it only as a regular file with one name, of text, at most 1 MiB; then it is published as OUT/report.md through a new file
+                       renamed over that name (a link, a pipe or a second name there is replaced, never written through). The report of an earlier
+                       run (--again) is set aside as OUT/report.md.previous before the member starts: a run that publishes a report replaces it, a run
+                       that publishes none leaves it there, where no check takes it for this run's report. A report.md that is not a plain file of
+                       its own refuses the run before anything starts. RUN/dispatch.json (report) and the REPORT= and PREVIOUS_REPORT= lines say
+                       what became of both.
 
 The process gets the environment of the run's git wrapper (RUN/git: HOME is RUN/home, no global git configuration, no ssh, no prompts,
 the author qargi) and TMPDIR of the run, plus QARGI_MEMBER_RUN (the run directory: the mark that tells the marshal a member is running, wherever the
@@ -58,6 +67,7 @@ import errno
 import json
 import os
 import re
+import secrets
 import shutil
 import signal
 import stat
@@ -85,7 +95,8 @@ def print(*args, **kw):  # noqa: A001  (this module's print: what a definition n
 TOOL = os.path.dirname(HERE)
 PLACEHOLDER = re.compile(r"\{([a-z_]+)\}")
 ALIASES = {"effort": "effort_native", "out": "out_dir", "prompt": "prompt_arg"}
-CLOSED = ("member", "model", "effort_native", "prompt_file", "prompt_arg", "clone", "run_dir", "out_dir", "agent_file", "session_id", "project", "run_config")
+CLOSED = ("member", "model", "effort_native", "prompt_file", "prompt_arg", "clone", "run_dir", "out_dir", "agent_file", "session_id", "project", "run_config",
+          "final_message")
 NOT_HERE = ("agent_file", "session_id")
 CLASSES = ("write", "read-only")
 OUTCOME_EXIT = {"ok": 0, "failed": 1, "refused": 2, "transport": 4}
@@ -97,6 +108,12 @@ ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 PROMPT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 PROMPT_DIR = "prompt"     # where the prompt file goes: a directory of the run for it alone, so no name can reach a control file of the run
 CONFIG_DIR = "config"     # where a run_config of "in": "run" goes, for the same reason
+FINAL_PREFIX = "final."   # RUN/final.XXXXXXXXXXXX/: where the runtime writes the last message ({final_message}), a directory made new for each run
+FINAL_NAME = "message.md"
+REPORT = "report.md"      # what the last message is published as, in OUT
+MANIFEST = "manifest.json"
+PREVIOUS = ".previous"    # the report (and the lead's manifest) of an earlier run, set aside under this suffix: no check reads it as a report
+MAX_REPORT = 1 << 20      # the bound of a published report, as qargi local report and review save have it
 
 
 class Stop(Exception):
@@ -621,8 +638,13 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     member = member or read_run_file(os.path.join(run, "ability"), 256, "the run's ability").strip()
     if not member:
         fail("%s is missing or empty: a run made by qargi local prepare records its ability there" % os.path.join(run, "ability"))
+    final = None
+    if "final_message" in used:                          # a name no earlier run used: the directory is made new when the run starts (make_final)
+        stage = FINAL_PREFIX + secrets.token_hex(6)
+        final = {"dir": stage, "path": os.path.join(run, stage, FINAL_NAME)}
     values = {"member": member, "model": mname, "effort_native": native or "", "prompt_file": pfile, "prompt_arg": prompt if via == "arg" else "",
-              "clone": clone, "run_dir": run, "out_dir": out, "project": project, "run_config": rcfg["path"] if rcfg and rcfg["data"] is not None else ""}
+              "clone": clone, "run_dir": run, "out_dir": out, "project": project, "run_config": rcfg["path"] if rcfg and rcfg["data"] is not None else "",
+              "final_message": final["path"] if final else ""}
     argv = expand(argv_t, values, cls, "dispatch.argv", runtime)
     extra = expand(class_extra(disp, cls, runtime), values, cls, "dispatch.class_argv", runtime)
     if extra:
@@ -636,7 +658,8 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     return {"runtime": runtime, "class": cls, "argv": argv, "exe": exe, "exe_from": how, "cwd": cwd, "via": via, "prompt": prompt, "prompt_file": pfile,
             "timeout_s": to, "env_pass": passed, "env": child_env(run, tmp, passed, home), "exit": ex, "model": mname, "effort_native": native,
             "home": home, "notes": notes + ([note] if note else []) + home_notes(home) + ([rcfg["note"]] if rcfg and rcfg["note"] else []),
-            "output_format": (disp.get("output") or {}).get("format", "text"), "usage": (disp.get("output") or {}).get("usage"), "run_config": rcfg}
+            "output_format": (disp.get("output") or {}).get("format", "text"), "usage": (disp.get("output") or {}).get("usage"), "run_config": rcfg,
+            "final": final}
 
 
 def home_notes(home):
@@ -670,6 +693,8 @@ def dry(plan, run):
     print("PROMPT_VIA=" + plan["via"])
     print("PROMPT_FILE=" + plan["prompt_file"])
     print("TRANSCRIPT=" + os.path.join(run, "out", "transcript"))
+    if plan["final"]:
+        print("FINAL_MESSAGE=%s (its directory is made new when the run starts; the file is published as %s)" % (plan["final"]["path"], os.path.join(run, "out", REPORT)))
     for n in plan["notes"]:
         print("NOTE=" + n)
     print("PROMPT:")
@@ -805,6 +830,182 @@ def write_prompt(run, path, text):
         f.write(text)
 
 
+# ---- the member's last message ({final_message}) -------------------------------------------------------------------------------------
+
+def kind_of(mode):
+    for test, name in ((stat.S_ISLNK, "a link"), (stat.S_ISDIR, "a directory"), (stat.S_ISFIFO, "a pipe"), (stat.S_ISSOCK, "a socket"),
+                       (stat.S_ISCHR, "a device"), (stat.S_ISBLK, "a device")):
+        if test(mode):
+            return name
+    return "not a regular file"
+
+
+def sub_fd(run, name):
+    """A descriptor of the directory RUN/name, opened without following a link."""
+    fd = os.open(run, O_DIR)
+    try:
+        return os.open(name, O_DIR, dir_fd=fd)
+    finally:
+        os.close(fd)
+
+
+def set_aside(ofd, name):
+    """OUT/name of an earlier run is renamed name.previous (over an older one), so nothing of an earlier run reads as this run's. True when there
+    was one. check_own has refused, before anything was made, a name there that is not a plain file of its own; a rename moves the name only."""
+    try:
+        os.lstat(name, dir_fd=ofd)
+    except FileNotFoundError:
+        return False
+    try:
+        os.rename(name, name + PREVIOUS, src_dir_fd=ofd, dst_dir_fd=ofd)
+    except OSError as e:
+        fail("%s of an earlier run cannot be set aside as %s: %s; remove it, or the run is refused" % (name, name + PREVIOUS, e.strerror or e))
+    return True
+
+
+def make_final(run, final):
+    """Make the directory of {final_message}, RUN/final.XXXXXXXXXXXX, new (mode 700): one of that name that exists refuses the run."""
+    fd = os.open(run, O_DIR)
+    try:
+        os.mkdir(final["dir"], 0o700, dir_fd=fd)
+    except OSError as e:
+        fail("the directory of the member's last message %s cannot be made: %s" % (os.path.join(run, final["dir"]), e.strerror or e))
+    finally:
+        os.close(fd)
+
+
+def take_final(run, final):
+    """After the process: (state, data, why, kept). state is "ok" (data: the bytes to publish), "none" (no file), "empty" or "refused". The file is
+    opened in the directory the run made (a link in its place is not followed), without following a link and without waiting for a writer, and taken
+    only as a regular file with one name, of UTF-8 text without NUL, at most MAX_REPORT bytes. A name that is not taken is removed when it is a name
+    only (a link, a pipe, a socket, a second name of a file elsewhere); a file of its own that is too large or not text is kept for the lead to read
+    (kept: its path); a directory is left. The directory goes when it is empty."""
+    try:
+        sfd = sub_fd(run, final["dir"])
+    except OSError as e:
+        return "refused", None, "its directory %s is not the one the run made (%s)" % (os.path.join(run, final["dir"]), e.strerror or e), None
+    state, data, why, keep = "refused", None, None, False
+    try:
+        try:
+            fd = os.open(FINAL_NAME, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=sfd)
+        except FileNotFoundError:
+            fd, state, why = None, "none", "the runtime wrote no last message to %s" % final["path"]
+        except OSError as e:
+            fd = None
+            why = "%s is %s" % (final["path"], "a link" if e.errno == errno.ELOOP else "a socket" if e.errno == errno.ENXIO else "not readable (%s)" % (e.strerror or e))
+        if fd is not None:
+            try:
+                st = os.fstat(fd)
+                if not stat.S_ISREG(st.st_mode):
+                    why = "%s is %s, not a file" % (final["path"], kind_of(st.st_mode))
+                elif st.st_nlink != 1:
+                    why = "%s has another name (a hard link to a file elsewhere)" % final["path"]
+                else:
+                    raw, keep = b"", True
+                    while len(raw) <= MAX_REPORT:
+                        chunk = os.read(fd, MAX_REPORT + 1 - len(raw))
+                        if not chunk:
+                            break
+                        raw += chunk
+                    try:
+                        text = raw.decode("utf-8")
+                    except UnicodeDecodeError:
+                        text = None
+                    if len(raw) > MAX_REPORT:
+                        why = "%s is over %d bytes" % (final["path"], MAX_REPORT)
+                    elif text is None or "\0" in text:
+                        why = "%s is not text" % final["path"]
+                    elif not text.strip():
+                        state, why, keep = "empty", "the runtime's last message in %s is empty" % final["path"], False
+                    else:
+                        state, data, keep = "ok", (raw if raw.endswith(b"\n") else raw + b"\n"), False
+            finally:
+                os.close(fd)
+        try:
+            st = os.lstat(FINAL_NAME, dir_fd=sfd)
+            if not keep and not stat.S_ISDIR(st.st_mode):
+                os.unlink(FINAL_NAME, dir_fd=sfd)            # a name only: what a link or a second name points to is untouched
+        except OSError:
+            pass
+    finally:
+        os.close(sfd)
+    try:
+        rfd = os.open(run, O_DIR)
+        try:
+            os.rmdir(final["dir"], dir_fd=rfd)
+        finally:
+            os.close(rfd)
+    except OSError:
+        pass
+    return state, data, why, (final["path"] if keep else None)
+
+
+def publish(ofd, name, data):
+    """Write data as OUT/name: a new file (mode 644) renamed over the name, so a link, a pipe or a second name there is replaced, never written
+    through or waited on. None, or why it was not published (the new file is removed then)."""
+    tmp = ".%s.%s" % (name, secrets.token_hex(6))
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=ofd)
+    except OSError as e:
+        return e.strerror or str(e)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            os.fchmod(f.fileno(), 0o644)
+            f.write(data)
+        os.rename(tmp, name, src_dir_fd=ofd, dst_dir_fd=ofd)
+    except OSError as e:
+        try:
+            os.unlink(tmp, dir_fd=ofd)
+        except OSError:
+            pass
+        return e.strerror or str(e)
+    return None
+
+
+def drop_previous(ofd, name):
+    """Remove name.previous now that this run published name (a link or a file: the name only; a directory is left)."""
+    try:
+        if not stat.S_ISDIR(os.lstat(name + PREVIOUS, dir_fd=ofd).st_mode):
+            os.unlink(name + PREVIOUS, dir_fd=ofd)
+    except OSError:
+        pass
+
+
+def finish_report(run, out, final, previous):
+    """Take the member's last message from its private file and publish it as OUT/report.md; the record of what became of it and of the report of
+    an earlier run (previous: one was set aside), for dispatch.json and the output."""
+    state, data, why, kept = take_final(run, final)
+    rec = {"final_message": final["path"], "report": None, "bytes": None, "state": state, "why": why, "kept": kept}
+    if state == "ok":
+        ofd = sub_fd(run, "out")
+        try:
+            bad = publish(ofd, REPORT, data)
+            if bad is None:
+                drop_previous(ofd, REPORT)
+        finally:
+            os.close(ofd)
+        if bad is None:
+            rec.update(state="published", report=os.path.join(out, REPORT), bytes=len(data))
+        else:
+            rec.update(state="refused", why="it could not be published as %s: %s" % (os.path.join(out, REPORT), bad))
+    published = rec["state"] == "published"
+    rec["previous"] = "none" if not previous else "replaced" if published else "kept"
+    return rec
+
+
+def report_lines(rec, out):
+    lines = []
+    if rec["state"] == "published":
+        lines.append("REPORT=%s (%d bytes: the member's last message)" % (rec["report"], rec["bytes"]))
+    else:
+        lines.append("REPORT=none: %s%s" % (rec["why"], "; the file is kept for you to read" if rec["kept"] else ""))
+    if rec["previous"] == "replaced":
+        lines.append("PREVIOUS_REPORT=replaced: the report of the earlier run is replaced by this run's")
+    elif rec["previous"] == "kept":
+        lines.append("PREVIOUS_REPORT=kept as %s: this run published no report, so the earlier one is not taken for this run's" % os.path.join(out, REPORT + PREVIOUS))
+    return lines
+
+
 def run_it(plan, run):
     out = os.path.join(run, "out")
     if os.path.islink(out) or (os.path.exists(out) and not os.path.isdir(out)):
@@ -814,6 +1015,9 @@ def run_it(plan, run):
         fail("%s is not inside the run" % out)
     dispatch = os.path.join(run, "dispatch.json")
     check_own(dispatch, "the dispatch record")
+    fin = plan["final"]
+    if fin:                                              # a report.md the lead would not set aside refuses the run before anything is made
+        check_own(os.path.join(out, REPORT), "the report of an earlier run")
     write_prompt(run, plan["prompt_file"], plan["prompt"])
     argv = [plan["exe"]] + plan["argv"][1:]
     home = plan["home"]
@@ -821,18 +1025,27 @@ def run_it(plan, run):
     home_left = []
     started = time.time()
     timed_out = False
+    previous = False
     try:
         if plan["run_config"]:
             put_run_config(run, plan["run_config"], home)
         sin = open(plan["prompt_file"], "rb") if plan["via"] == "stdin" else subprocess.DEVNULL
         with os.fdopen(open_own(os.path.join(out, "transcript"), "the transcript"), "wb") as so, \
                 os.fdopen(open_own(os.path.join(out, "transcript.err"), "the error transcript"), "wb") as se:
+            if fin:                                      # the last moment before the member starts: nothing of an earlier run is left as this run's
+                ofd = sub_fd(run, "out")
+                try:
+                    previous = set_aside(ofd, REPORT)
+                finally:
+                    os.close(ofd)
+                make_final(run, fin)
             try:
                 proc = subprocess.Popen(argv, cwd=plan["cwd"], env=plan["env"], stdin=sin, stdout=so, stderr=se, shell=False, start_new_session=True)
             except OSError as e:
                 if sin is not subprocess.DEVNULL:
                     sin.close()
-                fail("could not start %s: %s" % (plan["argv"][0], e.strerror or e), 4)
+                fail("could not start %s: %s%s" % (plan["argv"][0], e.strerror or e, "; the report of the earlier run is set aside as %s"
+                                                   % os.path.join(out, REPORT + PREVIOUS) if previous else ""), 4)
             try:
                 code = proc.wait(timeout=plan["timeout_s"])
             except subprocess.TimeoutExpired:
@@ -851,6 +1064,7 @@ def run_it(plan, run):
         outcome = "failed"
     else:
         outcome = plan["exit"].get(str(code), plan["exit"].get("*", "failed"))
+    report = finish_report(run, out, fin, previous) if fin else None
     rec = {"runtime": plan["runtime"], "class": plan["class"], "argv": plan["argv"], "command_from": plan["exe_from"], "cwd": plan["cwd"],
            "model": plan["model"], "effort_native": plan["effort_native"], "prompt_via": plan["via"], "timeout_s": plan["timeout_s"],
            "started": PE.now(started), "seconds": round(time.time() - started, 1),
@@ -862,11 +1076,16 @@ def run_it(plan, run):
     rc = plan["run_config"]
     if rc:                                                 # names only, never the file
         rec["run_config"] = {"file": rc["path"] if rc["data"] is not None else None, "role": rc["role"], "tools": rc["tools"]}
+    if report:
+        rec["report"] = report
     write_private(dispatch, json.dumps(rec, indent=2, sort_keys=True) + "\n")
     print("RUNTIME=" + plan["runtime"])
     print("OUTCOME=" + outcome + (" (timed out after %ds)" % plan["timeout_s"] if timed_out else ""))
     print("EXIT=%s" % code)
     print("TRANSCRIPT=" + rec["transcript"])
+    if report:
+        for line in report_lines(report, out):
+            print(line)
     if plan["usage"]:
         print(usage_line(rec["usage"]))
     for n in home_left:

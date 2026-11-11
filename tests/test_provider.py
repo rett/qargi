@@ -142,7 +142,7 @@ class Shipped(Tree):
                                                 "fields": ["input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens", "reasoning_output_tokens"]})
         self.assertEqual(d["argv"], ["codex", "exec", "--json", "--ephemeral", "-C", "{clone}",
                                      {"if": "model", "then": ["-m", "{model}"]}, {"if": "effort", "then": ["-c", "model_reasoning_effort={effort}"]},
-                                     "-o", "{out_dir}/report.md",
+                                     "-o", "{final_message}",            # the last message to a private file of the run; qargi publishes it
                                      {"class": "write", "then": ["--sandbox", "workspace-write", "--add-dir", "{out_dir}"]},
                                      {"class": "read-only", "then": ["--sandbox", "read-only"]}])
         self.assertNotIn("class_argv", d)
