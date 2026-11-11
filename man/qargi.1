@@ -1,4 +1,4 @@
-.TH QARGI 1 "2026-11-10" "qargi 0.2.10"
+.TH QARGI 1 "2026-11-11" "qargi 0.2.11"
 .SH NAME
 qargi \- A gathering place for agent work: dispatch, review, remember
 .SH SYNOPSIS
@@ -1472,7 +1472,7 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .B qargi tool
 Create or import tools (MCP servers with an allowlist) and attach them by scope.
 .PP
-A tool is an MCP server with an explicit list of allowed tools and a permission policy for each. A write\-like tool cannot run unattended unless the tool is marked write_ok. Everything else works as for skills (qargi help skill).
+A tool is an MCP server with an explicit list of allowed tools and a permission policy for each: always_allow, always_ask or auto. The tools are named as the server names them: letters, digits and _ . \- / (platform.list_items, repo/push). A write\-like tool cannot run unattended (always_allow or auto) unless the pack is marked write_ok. A tool is write\-like when a word of its name starts with create, update, delete, remove, post, push, write, merge, send, set, add, edit, close or comment, however the name is spelled: the words are cut at every character that is not a letter and at a camelCase boundary (delete_item, platform.delete_knowledge, repo/push, issue\-close, deleteItem). A write word inside a word does not count (offset), nor do the words settings, setting, address, addresses, postal, postcode, postcodes, additional and closest. With the server's own tool listing (tool import or tool seal with \-\-tool\-list FILE) a tool it does not mark readOnlyHint true cannot run unattended either. A member is given the MCP tools of the tool packs that reach its roles (qargi agent refresh after a link, an unlink or a seal), under the names the runtime gives them, and its guard judges every call of one: a tool of no pack linked to the role, a tool of a pack that changed since its approval and an always_ask tool are refused, and a read\-only run calls only declared reads (always_allow, a name that is not write\-like, and readOnlyHint true where a listing was recorded). Everything else works as for skills (qargi help skill).
 .RS
 .TP
 .BI "new " "NAME"
@@ -1487,6 +1487,8 @@ the providers the pack works with: runtime or family names, comma separated, or 
 .TP
 .BI "import " "SOURCE"
 Import a pack from a directory, file or pinned git URL, after a review (a top\-level .pack.json in the source is qargi's own record: ignored, not copied).
+.br
+With \-\-tool\-list FILE a tool that the listing does not annotate readOnlyHint true, or does not name, may not be always_allow or auto unless the pack sets write_ok; a tool annotated destructiveHint true is reported. The sha256 of the listing and what it says of each tool of the pack are kept in the pack's record (tool_list) and are part of the content hash and of the plan token. qargi reads the file and never contacts a server.
 .RS
 .TP
 .BI "\-\-compatible " "LIST"
@@ -1517,6 +1519,11 @@ the plan token printed by the same command without \-\-approved.
 .BI "\-\-approved " "WORDS"
 your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .RE
+.RS
+.TP
+.BI "\-\-tool\-list " "FILE"
+the server's own tool listing, saved to a file (the JSON result of MCP tools/list): the review also judges the pack's tools by it.
+.RE
 .RE
 .RS
 .TP
@@ -1533,7 +1540,7 @@ Show a pack.
 .BI "seal " "NAME"
 Approve the current content of a pack (after you edited it).
 .br
-A pack with no compatible_providers needs \-\-compatible once; giving it again changes the declaration and the plan says so.
+A pack with no compatible_providers needs \-\-compatible once; giving it again changes the declaration and the plan says so. \-\-tool\-list FILE judges the tools by the server's tool listing (see tool import) and replaces what the record keeps of it; without the option the record's stands, and a tool added since then counts as not listed.
 .RS
 .TP
 .BI "\-\-compatible " "LIST"
@@ -1548,6 +1555,11 @@ the plan token printed by the same command without \-\-approved.
 .TP
 .BI "\-\-approved " "WORDS"
 your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RS
+.TP
+.BI "\-\-tool\-list " "FILE"
+the server's own tool listing, saved to a file (the JSON result of MCP tools/list): the review also judges the pack's tools by it.
 .RE
 .RE
 .RS

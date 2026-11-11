@@ -15,11 +15,37 @@ become. A new member is available in Claude Code sessions started after it is ad
 ## The tools a member has
 
 For Claude Code a member may call `Bash`, `Read`, `Edit`, `Write`,
-`Grep`, `Glob`, `Monitor`, `TaskStop`, `ToolSearch` and `Skill`, and every call of `Bash`, `Monitor`, `Edit`, `Write`, `NotebookEdit`, `Read` and `Grep` passes `qargi __guard`
+`Grep`, `Glob`, `Monitor`, `TaskStop`, `ToolSearch` and `Skill`, and the MCP tools of the tool packs its roles are given (below); every call of `Bash`, `Monitor`, `Edit`, `Write`, `NotebookEdit`, `Read` and `Grep`, and of every MCP tool (`mcp__.*`), passes `qargi __guard`
 (a runtime states its own hook protocol, or has
 none: then a read-only run needs its declared barrier or your acceptance, and `qargi local verify`
 is the proof). A `Monitor` command is judged exactly as a `Bash` command is; `Glob`, `TaskStop`,
 `ToolSearch` and `Skill` are not hooked, since they run no command and change no file.
+
+### MCP tools
+
+A member has no MCP tool unless a tool pack reaches one of its roles (`qargi tool link`, see
+[Skills and tools in a local Claude Code session](../skills-tools-and-memory/local-session.md)). `qargi agent add` and
+`agent refresh` write into the member's tool list the tools of those packs, under the names the runtime gives them
+(for Claude Code `mcp__SERVER__TOOL`, with every character of a name other than a letter, a digit, `_` and `-` written
+as `_`: the tool `platform.list_items` of the pack `kb` is `mcp__kb__platform_list_items`). A tool that is `always_ask`
+is left out, since a member runs unattended, and a member of read-only roles alone gets only the declared reads. The
+member is `STALE` after a link, an unlink or a seal changes those packs, and `agent refresh` renders it again.
+
+The guard judges every call of an MCP tool by the policy the packs of the role give that tool. It refuses
+
+- a tool that is in no tool pack linked to the role, in every run;
+- a tool whose pack is missing from the library, changed since you approved it or fails its review;
+- an `always_ask` tool: it waits for a person, and a member runs unattended;
+- a name that stands for two tools of the role (`a.b` and `a_b` of one server are written the same way);
+- in a read-only run (review), every tool that is not a declared read: `always_allow`, a name that is not write-like and,
+  when the pack was approved with the server's tool listing (`qargi tool import|seal --tool-list FILE`), `readOnlyHint: true` there.
+
+The role is the one of the run, as the lead's registry of local runs records it. An MCP call names no path, so the
+guard finds the run from the directory the call is made in; a member that a session starts works in the session's
+directory, outside its run, and for that case the hook command of a member with MCP tools names its project and roles
+(`qargi __guard --project P --roles build,review`): the call must then be allowed for every one of those roles, each held
+to its class. A member that serves a read-only role beside write roles therefore calls only declared reads unless the
+guard finds its run; give a member that needs a write tool the write roles alone.
 
 ## What the guard refuses
 

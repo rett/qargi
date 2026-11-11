@@ -15,6 +15,7 @@
 #   packs.sh skill|tool list    [PROJECT [ROLE]]
 #   packs.sh skill|tool show    NAME
 #   packs.sh skill|tool seal    NAME [--compatible LIST] [--plan TOKEN --approved "..."]    approve the current content (after you edited it)
+#   packs.sh tool import|seal   ... --tool-list FILE    judge the pack's tools by the server's own tool listing too (below)
 #   packs.sh skill|tool link    NAME --scope S [--project P] [--role R]      unlink: the same
 #   packs.sh skill|tool enable|disable PROJECT ROLE NAME                     (role-level opt-out)
 #   packs.sh skill accept PROJECT NAME [--user] [--plan TOKEN --approved "..."]   accept a skill a session loads that qargi does not manage
@@ -40,11 +41,18 @@
 # Imported content is untrusted instructions: it is shown (files, scripts, URLs, secret findings),
 # hashed and approved before it is stored, and any later change fails `check` and provisioning
 # until it is reviewed again.
+#
+# A tool pack names the tools of an MCP server it allows and a policy for each. The review refuses a tool whose name says it writes
+# as always_allow or auto unless the pack says write_ok (lib/packs_check.py has the rule). `tool import|seal --tool-list FILE` also
+# takes the server's own tool listing (the JSON result of MCP tools/list, as a file; no server is ever contacted): a tool the listing
+# does not mark readOnlyHint true is then refused as always_allow or auto without write_ok, one it marks destructiveHint true is
+# reported, and the record keeps the listing's sha256 and what it says of the pack's tools (tool_list). tool_list is covered by the
+# content hash like compatible_providers, so it is approved with the pack; a seal without --tool-list keeps the record's.
 . "$(dirname "$0")/lib.sh"
 
 PACKS=$DA_CONF/packs; LINKS=$PACKS/links.json
 KIND=${1:-}; VERB=${2:-}; shift 2 || true
-COMPAT_ARG='' INSTALL='' USER_SCOPE='' RENDER_ONLY='' TARGET='' SCOPE='' PROJECT='' ROLE='' NAME='' REF='' SUBPATH='' APPROVED='' PLAN_ARG='' ARGS=()
+COMPAT_ARG='' INSTALL='' USER_SCOPE='' RENDER_ONLY='' TARGET='' SCOPE='' PROJECT='' ROLE='' NAME='' REF='' SUBPATH='' APPROVED='' PLAN_ARG='' TOOL_LIST='' ARGS=()
 while [ $# -gt 0 ]; do
   case $1 in
     --scope) need_val "$1" $#; SCOPE=$2; shift 2;;
@@ -58,6 +66,7 @@ while [ $# -gt 0 ]; do
     --asked) need_val "$1" $#; ASKED=$2; shift 2;;
     --compatible) need_val "$1" $#; COMPAT_ARG=$2; shift 2;;
     --target) need_val "$1" $#; TARGET=$2; shift 2;;
+    --tool-list) need_val "$1" $#; TOOL_LIST=$2; shift 2;;
     --install) INSTALL=1; shift;;
     --user) USER_SCOPE=1; shift;;
     '--render-only') RENDER_ONLY=1; shift;;   # internal (lib/local.sh): check the render alone, without the section of the skills a session would load
@@ -81,6 +90,7 @@ prov_need() { # project would field...: prov_of, then the refusals above
   for f; do pymod provider layout "$PROV" "$f" --would "$would" >/dev/null || exit $?; done
 }
 case $KIND in skill|tool|packs) ;; *) usage_die "usage: packs.sh skill|tool|packs <verb> ...";; esac
+[ -z "$TOOL_LIST" ] || case $KIND:$VERB in tool:import|tool:seal) ;; *) usage_die "--tool-list FILE (the server's own tool listing) goes with qargi tool import and qargi tool seal";; esac
 # Changing a skill needs a present person (library/SPEC.md, "Who may modify a skill"): need_plan always checks the token, so
 # no environment variable stands in for it here.
 need_token() { # expected-token; never empty, and never skipped
@@ -112,26 +122,41 @@ compat_need() { # the --compatible of a verb that makes a pack: parsed, or the v
 # A directory pack's hash also covers what is not a regular file of one name: a link, a pipe, a socket, an empty directory, a file with a second name
 # (with its type, link count and link target). They fail the review, and a pack that gains one after approval is drift. A pack with none of them
 # hashes as its files alone, so every hash made without them is unchanged.
-content_hash() { # path [compat-json]
-  local h c x
+tl_of() { # path -> the tool_list of a tool pack's record (what the server's tool listing said of its tools, kept at approval) as compact sorted JSON; empty when the record has none, and for a skill
+  [ -d "$1" ] || jq -cS '.tool_list | select(. != null)' "$(record_of "$1")" 2>/dev/null
+  return 0
+}
+# A tool pack's hash also covers the tool_list of its record (given as the third argument, else the record's own), so what the listing said is
+# approved with the pack and a change of it is drift. A pack with none hashes as before.
+content_hash() { # path [compat-json [tool-list-json]]
+  local h c x t
   if [ -d "$1" ]; then
     h=$(cd "$1" && find . -type f ! -path ./.pack.json -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)
     x=$(cd "$1" && find . ! -path . ! -path ./.pack.json \( \( ! -type f ! -type d \) -o \( -type d -empty \) -o \( -type f -links +1 \) \) -printf '%y %n %P -> %l\0' | LC_ALL=C sort -z | tr '\0' '\n')
     [ -z "$x" ] || h=$({ printf '%s\nnon-regular entries\n' "$h"; printf '%s\n' "$x"; } | sha256sum | cut -c1-16)
   else h=$(sha256sum < "$1" | cut -c1-16); fi
   if [ $# -ge 2 ]; then c=$2; else c=$(compat_of "$1"); fi
-  if [ -z "$c" ]; then echo "$h"; else printf '%s\ncompatible_providers=%s\n' "$h" "$c" | sha256sum | cut -c1-16; fi
+  if [ $# -ge 3 ]; then t=$3; else t=$(tl_of "$1"); fi
+  [ -z "$c" ] || h=$(printf '%s\ncompatible_providers=%s\n' "$h" "$c" | sha256sum | cut -c1-16)
+  [ -z "$t" ] || h=$(printf '%s\ntool_list=%s\n' "$h" "$t" | sha256sum | cut -c1-16)
+  echo "$h"
 }
-write_record() { # path kind source compat-json
-  jq -n --arg k "$2" --arg src "$3" --arg h "$(content_hash "$1" "$4")" --arg t "$(now)" --argjson c "$4" \
-    '{kind:$k, source:$src, sha256:$h, stored:$t, compatible_providers:$c}' > "$(record_of "$1")"
+write_record() { # path kind source compat-json [tool-list-json]: a record made here has the tool_list it is given, or none
+  jq -n --arg k "$2" --arg src "$3" --arg h "$(content_hash "$1" "$4" "${5-}")" --arg t "$(now)" --argjson c "$4" --argjson tl "${5:-null}" \
+    '{kind:$k, source:$src, sha256:$h, stored:$t, compatible_providers:$c} + (if $tl == null then {} else {tool_list:$tl} end)' > "$(record_of "$1")"
+}
+# The tool_list of --tool-list FILE for the tool pack at a path: lib/packs_check.py reads the listing (a file; no server is contacted) and prints what
+# it says of the pack's tools. The verb ends when FILE is no listing.
+tl_need() { # path -> the tool_list JSON on stdout; status 1 and the reason on stderr when FILE is no listing
+  python3 -I "$CHECKPY" toollist "$TOOL_LIST" "$1"
 }
 
 showable() { python3 -I "$REVIEWPY" vis; }   # stdin with control, escape and bidi characters written out: what a pack holds never reaches the terminal raw
 
 # What a reviewer needs to see before trusting a pack; prints findings, returns 1 on a FAIL.
-review() { # kind path [compat-json]: the declaration is the third argument while the pack has no record yet (import, seed), else the record's
-  local p=$2 rc=0 n size c cw
+review() { # kind path [compat-json [tool-list-json]]: the declaration is the third argument while the pack has no record yet (import, seed), else the record's; so is the tool_list of a tool pack, the fourth
+  local p=$2 rc=0 n size c cw tl=()
+  [ $# -lt 4 ] || tl=("$4")
   if [ $# -ge 3 ]; then c=$3; else c=$(compat_of "$p"); fi
   if cw=$(python3 -I "$COMPATPY" valid "$c"); then echo "compatible_providers: $(jq -r 'join(", ")' <<<"$c")"
   else echo "FAIL: compatible_providers: $cw"; rc=1; fi
@@ -163,15 +188,11 @@ review() { # kind path [compat-json]: the declaration is the third argument whil
     # escapes are decoded, in any key or string (\u001b is plain ASCII on disk); everything below is printed through showable
     pol=$(python3 -I "$REVIEWPY" policy "$p" 2>&1) || { echo "$pol"; rc=1; }
     jq -e . "$p" >/dev/null 2>&1 || { echo "FAIL: not valid JSON"; return 1; }
-    local msg; msg=$(jq -r '
-      . as $t |
-      [ (if (.name|type)!="string" or ((.name|tostring)|test("^[a-z0-9][a-z0-9-]{0,40}$")|not) then "FAIL: name: lower-case letters, digits, -" else empty end),
-        (if (.url|type)!="string" or ((.url|tostring)|startswith("https://")|not) or ((.url|tostring)|test("example\\.invalid|OWNER|<")) then "FAIL: url: a real https URL" else empty end),
-        (if (.tools|type)!="object" or ((.tools|length)==0) then "FAIL: tools: an explicit allowlist of tool names with a policy each" else empty end),
-        ((.tools // {}) | to_entries[]? | select(.value|IN("always_allow","always_ask","auto")|not) | "FAIL: tools."+.key+": policy must be always_allow, always_ask or auto"),
-        ((.tools // {}) | to_entries[]? | select((.key|test("(^|_)(create|update|delete|remove|post|push|write|merge|send|set|add|edit|close|comment)")) and (.value=="always_allow" or .value=="auto") and ($t.write_ok != true)) | "FAIL: tools."+.key+": a write-like tool may not run unattended (use always_ask) unless write_ok is true on the pack, on purpose")
-      ] | .[]' "$p" 2>/dev/null)
-    if [ -n "$msg" ]; then echo "$msg" | showable; rc=1; fi
+    # the findings about the document: its name, its URL, the tools map, the name and the policy of each tool, a write-like tool that would run
+    # unattended, and what the server's tool listing says of the tools (the tool_list given, else the record's). One definition of them, in
+    # lib/packs_check.py (tool_msgs); a review that cannot ask it fails. The NOTE lines among them are for the person and fail nothing
+    local msg; msg=$(python3 -I "$CHECKPY" toolmsgs "$p" ${tl[@]+"${tl[@]}"}) || { echo "FAIL: the findings about the tool pack could not be worked out (lib/packs_check.py toolmsgs failed)"; rc=1; }
+    if [ -n "$msg" ]; then echo "$msg" | showable; ! grep -q '^FAIL' <<<"$msg" || rc=1; fi
     [ "$(jq -r '.write_ok // false' "$p")" != true ] || echo "NOTE: write_ok is set: write-like tools may run unattended"
     jq -r '"tools: " + ((.tools // {}) | to_entries | map(.key + "=" + (.value|tostring)) | join(", "))' "$p" | showable
     jq -e '(.vault_ids // []) | all(test("^vlt_[A-Za-z0-9]+$"))' "$p" >/dev/null 2>&1 || { echo "FAIL: vault_ids must be vault ids (vlt_...), never secrets"; rc=1; }
@@ -677,11 +698,13 @@ case "$VERB" in
     [ -z "$(ls "$PACKS/skills/$NAME" "$PACKS/tools/$NAME.json" 2>/dev/null)" ] || die "$NAME already exists in the library (names are unique; pass --name or remove the old one)"
     echo "== review of $KIND $NAME from $SRCREC"
     [ -z "${IGNORED_REC:-}" ] || echo "note: the source's top-level .pack.json is qargi's own record of a library pack: it is ignored and not copied (the pack gets a new record from this import)"
-    review "$KIND" "$T/stage" "$COMPAT" || { echo "refused: fix the source first" >&2; exit 1; }
-    TOK=$(content_hash "$T/stage" "$COMPAT")
+    # the server's own tool listing, when it is given: what it says of the pack's tools is judged in the review, covered by the token and kept in the record
+    TL=''; [ -z "$TOOL_LIST" ] || { TL=$(tl_need "$T/stage") || exit 1; }
+    review "$KIND" "$T/stage" "$COMPAT" "$TL" || { echo "refused: fix the source first" >&2; exit 1; }
+    TOK=$(content_hash "$T/stage" "$COMPAT" "$TL")
     if [ -z "$APPROVED" ]; then echo "plan token: $TOK   (store it with: --plan $TOK --approved \"<the user's go-ahead after reading the review>\")"; exit 0; fi
     need_token "$TOK"; audit_log "$KIND-import" "$NAME from $SRCREC"
-    P=$(item_path "$KIND" "$NAME"); mv "$T/stage" "$P"; write_record "$P" "$KIND" "$SRCREC" "$COMPAT"
+    P=$(item_path "$KIND" "$NAME"); mv "$T/stage" "$P"; write_record "$P" "$KIND" "$SRCREC" "$COMPAT" "$TL"
     echo "stored $KIND $NAME (content $TOK); link it to a scope to attach it";;
   list)
     PRJ=${ARGS[0]:-}; ROL=${ARGS[1]:-}; lopts=()
@@ -696,12 +719,18 @@ case "$VERB" in
     # the declaration is approved with the content: --compatible changes it, else the record's stands, and a pack with none must be given one
     if [ -n "$COMPAT_ARG" ]; then COMPAT=$(compat_parse "$COMPAT_ARG") || exit 1
     else COMPAT=$(compat_of "$P"); [ -n "$COMPAT" ] || die "$NAME declares no compatible_providers; seal it with --compatible LIST (the providers that can use it: runtime or family names separated by commas, or any)"; fi
-    echo "== review of $KIND $NAME"; review "$KIND" "$P" "$COMPAT" || { echo "refused: fix it first" >&2; exit 1; }
+    # the server's tool listing is approved with the content too: --tool-list FILE replaces what the record keeps of it, else the record's stands
+    curtl=$(tl_of "$P"); if [ -n "$TOOL_LIST" ]; then TL=$(tl_need "$P") || exit 1; else TL=$curtl; fi
+    echo "== review of $KIND $NAME"; review "$KIND" "$P" "$COMPAT" "$TL" || { echo "refused: fix it first" >&2; exit 1; }
     cur=$(compat_of "$P"); [ -z "$COMPAT_ARG" ] || [ "$COMPAT" = "$cur" ] || echo "compatible_providers changes: ${cur:-(none)} -> $COMPAT"
-    TOK=$(content_hash "$P" "$COMPAT")
+    if [ -n "$TOOL_LIST" ] && [ "$TL" != "$curtl" ]; then
+      was='(none)'; [ -z "$curtl" ] || was=$(jq -r '.sha256[0:16]' <<<"$curtl" 2>/dev/null) || was='(unreadable)'
+      echo "tool listing changes: $was -> $(jq -r '.sha256[0:16]' <<<"$TL")"
+    fi
+    TOK=$(content_hash "$P" "$COMPAT" "$TL")
     if [ -z "$APPROVED" ]; then echo "plan token: $TOK   (approve this content with: --plan $TOK --approved \"<the user's go-ahead after reading the review>\")"; exit 0; fi
     need_token "$TOK"; audit_log "$KIND-seal" "$NAME $TOK"
-    src=$(jq -r '.source // "created"' "$(record_of "$P")" 2>/dev/null); write_record "$P" "$KIND" "$src" "$COMPAT"; echo "sealed $KIND $NAME (content $TOK)";;
+    src=$(jq -r '.source // "created"' "$(record_of "$P")" 2>/dev/null); write_record "$P" "$KIND" "$src" "$COMPAT" "$TL"; echo "sealed $KIND $NAME (content $TOK)";;
   link|unlink)
     NAME=${ARGS[0]:-}; P=$(item_path "$KIND" "$NAME"); [ -e "$P" ] || die "no such $KIND in the library"
     L=$(link_args "$KIND:$NAME") || exit $?   # a usage error in the scope ends the verb with its status, not only the substitution
