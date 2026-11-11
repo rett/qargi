@@ -40,7 +40,8 @@
 #      read-only role is exit 2 where the barrier is effectively no, unless the request accepts that
 # The command cases, for a runtime whose dispatch.mode is command (qargi local run, lib/local_run.py, starts the stub in place of
 # the command argv[0] names, through a wrapper first on PATH that records the environment the command gets):
-#  11  barrier sandbox-args: the argv of a read-only run carries the read-only arguments and sets their flags nowhere else (the case
+#  11  barrier sandbox-args: the argv of a read-only run carries the read-only arguments, sets their flags nowhere else and carries no
+#      flag with its value of the write class's arguments, such as a writable directory (the case
 #      barrier-sandbox-args of lib/conformance/cases.py, which `qargi provider check` runs on a library pack)
 #  12  a write run, and a read-only one unless read_only_barrier is no (on a copy where its claim is dated when it is not yet verified),
 #      start the stub once with the argv RUN/dispatch.json records and the prompt (task block and class) by the way prompt.via says;

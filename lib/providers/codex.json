@@ -32,7 +32,7 @@
       "value": "partial",
       "verified_on": null,
       "source": "codex exec --help (--sandbox read-only|workspace-write)",
-      "note": "the Codex sandbox holds the shell commands of a member (read-only: no writes, workspace-write: the clone and OUT only), not its reads, and no qargi guard hook runs: the publish and skill verbs are held only by the sandbox's write and network denial; not yet attested"
+      "note": "the Codex sandbox holds the shell commands of a member (read-only: no writes, workspace-write: the clone, its .git and OUT only), not its reads, and no qargi guard hook runs: the publish and skill verbs are held only by the sandbox's write and network denial; not yet attested"
     },
     "skills": {
       "value": "yes",
@@ -119,7 +119,7 @@
       {"if": "effort", "then": ["-c", "model_reasoning_effort={effort}"]},
       "-o",
       "{final_message}",
-      {"class": "write", "then": ["--sandbox", "workspace-write", "--add-dir", "{out_dir}"]},
+      {"class": "write", "then": ["--sandbox", "workspace-write", "--add-dir", "{out_dir}", "--add-dir", "{clone}/.git"]},
       {"class": "read-only", "then": ["--sandbox", "read-only"]}
     ],
     "prompt": {

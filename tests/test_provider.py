@@ -143,7 +143,8 @@ class Shipped(Tree):
         self.assertEqual(d["argv"], ["codex", "exec", "--json", "--ephemeral", "-C", "{clone}",
                                      {"if": "model", "then": ["-m", "{model}"]}, {"if": "effort", "then": ["-c", "model_reasoning_effort={effort}"]},
                                      "-o", "{final_message}",            # the last message to a private file of the run; qargi publishes it
-                                     {"class": "write", "then": ["--sandbox", "workspace-write", "--add-dir", "{out_dir}"]},
+                                     # a write member commits: its clone's .git is a writable root (the sandbox protects it otherwise); never a read-only one's
+                                     {"class": "write", "then": ["--sandbox", "workspace-write", "--add-dir", "{out_dir}", "--add-dir", "{clone}/.git"]},
                                      {"class": "read-only", "then": ["--sandbox", "read-only"]}])
         self.assertNotIn("class_argv", d)
         self.assertEqual(d["run_config"], {"in": "home", "file": "config.toml"})      # the run's MCP file is CODEX_HOME/config.toml, the one configuration Codex reads
@@ -3988,8 +3989,8 @@ class SandboxArgs(unittest.TestCase):
     def test_the_shipped_codex_passes_and_names_the_arguments_of_each_class(self):
         r = self.case(shipped("codex.json"))
         self.assertEqual(r["status"], "pass", r)
-        self.assertEqual(r["notes"], ["a read-only run carries --sandbox read-only (a write run: --sandbox workspace-write --add-dir /conformance/run/out); "
-                                      "that the runtime's sandbox holds is attested"])
+        self.assertEqual(r["notes"], ["a read-only run carries --sandbox read-only (a write run: --sandbox workspace-write --add-dir /conformance/run/out "
+                                      "--add-dir /conformance/run/clone/.git); that the runtime's sandbox holds is attested"])
 
     def test_only_the_barrier_kind_sandbox_args_has_the_case(self):
         for bar in (None, {"kind": "hook"}, {"kind": "adapter"}, "sandbox-args"):
@@ -4045,6 +4046,18 @@ class SandboxArgs(unittest.TestCase):
                 r = self.case(self.codex(argv=["codex", "exec"], class_argv=ca))
                 self.assertEqual(r["status"], "pass", r)
                 self.assertIn("a read-only run carries --sandbox read-only", r["notes"][0])
+
+    def test_a_write_grant_the_read_only_run_carries_too_fails(self):
+        w = ("--sandbox", "workspace-write", "--add-dir", "{out_dir}", "--add-dir", "{clone}/.git")
+        for label, argv in (("in the read-only group", self.argv(ro=("--sandbox", "read-only", "--add-dir", "{clone}/.git"), write=w)),
+                            ("in the common arguments", self.argv(write=w, common=["--add-dir", "{clone}/.git"])),
+                            ("written FLAG=VALUE", self.argv(write=w, common=["--add-dir={clone}/.git"]))):
+            with self.subTest(label):
+                r = self.case(self.codex(argv=argv))
+                self.assertEqual(r["status"], "fail", r)
+                self.assertIn("a read-only run carries --add-dir /conformance/run/clone/.git of the write class", r["notes"][0])
+        r = self.case(self.codex(argv=self.argv(ro=("--sandbox", "read-only", "--add-dir", "{run_dir}/scratch"), write=w)))
+        self.assertEqual(r["status"], "pass", "a directory of its own is not the write class's grant: %s" % r)
 
     def test_the_write_arguments_do_not_count_against_the_read_only_run(self):
         r = self.case(self.codex(argv=self.argv(write=("--sandbox", "workspace-write", "--sandbox", "x"))))

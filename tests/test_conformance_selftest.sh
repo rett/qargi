@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The conformance suite (tests/conformance.sh) catches what it claims to catch: it passes the claude-code and claude-platform adapters,
 # the command runtime codex and the broken fixture without a fault, and fails the fixture, naming the case, for each fault the fixture can
-# be told to have; the command cases 11 to 13 fail on faulty copies of the codex definition and of its stub.
+# be told to have; the command cases 11 to 13 fail on faulty copies of the codex definition and of its stub (one gives a read-only run the
+# write class's writable .git).
 # Run: tests/test_conformance_selftest.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -88,10 +89,12 @@ declare -A CXF=(
   [twosandbox]='.dispatch.argv |= (.[:2] + ["--sandbox=danger-full-access"] + .[2:])'
   [nousage]='.dispatch.output.usage.select = {"/type": "no.such.event"}'
   [roinwrite]='.dispatch.argv |= (.[:2] + ["--sandbox", "read-only"] + .[2:])'
+  [gitinro]='.dispatch.argv |= map(if type == "object" and .class == "read-only" then .then += ["--add-dir", "{clone}/.git"] else . end)'
 )
-declare -A CXWANT=([norogroup]='11 12' [twosandbox]='11' [nousage]='12' [roinwrite]='11 12' [homewrite]='13')
+declare -A CXWANT=([norogroup]='11 12' [twosandbox]='11' [nousage]='12' [roinwrite]='11 12' [gitinro]='11' [homewrite]='13')
 declare -A CXWHY=([norogroup]='carries no arguments of its own' [twosandbox]='also sets --sandbox outside its read-only arguments'
   [nousage]='records no usage: dispatch.output.usage matches no line' [roinwrite]='the write run carries the arguments of the read-only class: --sandbox read-only'
+  [gitinro]='a read-only run carries --add-dir /conformance/run/clone/.git of the write class'
   [homewrite]='the run changed a file of the caller.s home')
 for f in "${!CXF[@]}"; do
   mkdir -p "$T/cx.$f"; cp -R lib agents "$T/cx.$f/"

@@ -50,6 +50,26 @@
 # text), and the file then never reaches OUT: the member is not late, it is blocked. verify and clean name it where they find OUT without a report.
 NOREPORT_CAUSE="A runtime can refuse a member's write tool for a report file, so the file never reaches OUT. The member writes its OUT files (report, manifest, series) with its file tool; a read-only member whose file tool is refused returns the report as its final message, and the lead stores it with: qargi review save RUN < MESSAGE"
 
+# home_residue RUN -> what a start of `local run` left in the run home (dispatch.home), one line each, nothing while a runner of the run is alive. RUN/dispatch.json
+# (the start record, or the end record of a run that ended) names the run home's directory and its links; each that is still a link, and a run home that is a link
+# itself, is residue: a runner killed with SIGKILL (or a machine that stopped) never removed it. The record is a member's to write, so this only reports; local run
+# --again replaces the links and local clean removes the run with them.
+home_residue() {
+  local d=$1 rec dir r n
+  rec=$d/dispatch.json
+  [ -f "$rec" ] && [ ! -L "$rec" ] && [ -d "$d/home" ] && [ ! -L "$d/home" ] || return 0
+  dir=$(jq -r '.home.dir // empty | select(type == "string" and test("^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$") and (test("(^|/)[.][.]?(/|$)") | not))' "$rec" 2>/dev/null) || return 0
+  [ -n "$dir" ] || return 0
+  r=$(jq -r 'select(.outcome == "running") | .runner // empty | numbers' "$rec" 2>/dev/null) || r=''
+  if [[ $r =~ ^[0-9]{1,9}$ ]] && [ -r "/proc/$r/cmdline" ] && tr '\0' '\n' < "/proc/$r/cmdline" 2>/dev/null | grep -q 'local_run[.]py$'; then return 0; fi
+  if [ -L "$d/home/$dir" ]; then echo "$d/home/$dir (the run home is a link)"; return 0; fi
+  while IFS= read -r n; do
+    [[ $n =~ ^[A-Za-z0-9._-]+$ ]] && [ "$n" != . ] && [ "$n" != .. ] || continue
+    [ ! -L "$d/home/$dir/$n" ] || echo "$d/home/$dir/$n (a link a start of qargi local run left: its runner did not end)"
+    [ ! -f "$d/home/$dir/$n.from-run" ] || [ -L "$d/home/$dir/$n.from-run" ] || echo "$d/home/$dir/$n.from-run (a file the runtime wrote in place of the link, not written back to its source: compare it with your own)"
+  done < <(jq -r '.home.links[]? | strings' "$rec" 2>/dev/null)
+}
+
 # drop_qargi_refs -> stdin without the refs under refs/qargi/ (lines "local REF SHA" and "remote SHA REF"). The marshal refs backend
 # keeps its records there and the lead's renewer fetches and pushes them during a run; that is not an agent push. Only that
 # namespace: refs/qargi-x/ and every other ref stay compared.
@@ -844,6 +864,11 @@ WRAP
     if [ -z "$SAVED" ] && [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ] && [ "$(run_class "$RUN")" = read-only ] && ! out_has_report "$RUN/out"; then
       echo "qargi: note: OUT of the read-only run $RUN holds no report (report.md or NAME-report.md). $NOREPORT_CAUSE" >&2
     fi
+    # what a start of local run left in the run home (its runner was killed with SIGKILL, or the machine stopped): named, never removed here
+    if [ -z "$SAVED" ] && [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ]; then
+      res=$(home_residue "$RUN")
+      [ -z "$res" ] || echo "qargi: note: the run home of $RUN holds what a run left there: $(paste -sd ';' - <<<"$res" | LC_ALL=C tr -d '\000-\037\177'). qargi local run $RUN --again replaces a link left there; qargi local clean $RUN removes the run with it" >&2
+    fi
     reg_load; crc=0; NOREC=$NOREC check_run "$RUN" "$SRC" || crc=$?
     if [ "$crc" = 3 ]; then
       exit 3   # run_record said why: the registry does not vouch for this run directory, so no repository was asked
@@ -1090,7 +1115,9 @@ WRAP
     if [ -z "$rt" ] && [ -n "$t" ]; then echo "qargi: note: left $t alone: it is not a directory prepare makes under /dev/shm, QARGI_RUN_TMP or the run" >&2; fi
     [ -z "$rt" ] || rm -rf --one-file-system -- "$rt"
     rrun=$(readlink -f -- "$RUN" 2>/dev/null) || rrun=$RUN   # the registry's name of the run, taken while the directory is there
+    res=$(home_residue "$RUN")   # links a start of local run left in the run home: rm removes a link, never what it points to
     rm -rf --one-file-system -- "$RUN"
+    [ -z "$res" ] || echo "qargi: note: removed with the run what its run home held: $(paste -sd ';' - <<<"$res" | LC_ALL=C tr -d '\000-\037\177')" >&2
     sv=$(saved_of "$RUN"); [ -z "$sv" ] || rm -rf --one-file-system -- "$sv"   # the copy verify saved: the work is merged, or dropped on purpose
     scrub_ok_drop "$RUN"   # the record of a passed scrub that review check kept for a run never applied
     apply_state_drop "$RUN"   # the apply record of the run, and the temporary directories of a killed apply of it
@@ -1227,6 +1254,10 @@ $vout}"
       elif [ -n "$(reg_get "$d" closed)" ]; then ap=closed; mg=-   # local close --applied-by-am: applied by hand, no tip to follow
       fi
       printf '%-10s %-18s %-10s %-6s %-8s %s\n' "$( (cat "$d/ability" 2>/dev/null || echo '?') | plain)" "$(printf '%s' "${sl:--}" | plain)" "$ag" "$ap" "$mg" "$(printf '%s' "$d" | plain)"
+      # what a start of local run left in the run home (a runner killed with SIGKILL): named under its run
+      while IFS= read -r rl; do
+        [ -z "$rl" ] || printf '  residue: %s; qargi local run RUN --again replaces a link left there, qargi local clean RUN removes the run with it\n' "$(printf '%s' "$rl" | plain)"
+      done < <(home_residue "$d")
     done
     for d in ${gone[@]+"${gone[@]}"}; do
       [ -n "$d" ] || continue
