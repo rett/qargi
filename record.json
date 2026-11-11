@@ -1,0 +1,22 @@
+{
+ "purpose": "Codex provider bundle for 0.2.12: openai catalog, codex runtime as data, per-run sign-in, usage, MCP (TOML), conformance, docs",
+ "started": "2026-11-11T12:02:24Z",
+ "goal": "Codex provider bundle for 0.2.12: openai catalog, codex runtime as data, per-run sign-in, usage, MCP (TOML), conformance, docs",
+ "plan": "",
+ "note": "",
+ "status": "active",
+ "lead": {
+  "id": "rett@arc",
+  "user": "rett",
+  "host": "arc",
+  "since": "2026-11-11T12:02:24Z",
+  "worktree": "94b9af1305afafc4"
+ },
+ "renewed_at": "2026-11-11T12:02:24Z",
+ "finished_at": null,
+ "updated_by": "rett@arc",
+ "rev": 1,
+ "updated_at": "2026-11-11T12:02:24Z",
+ "feature": "codex",
+ "project": "qargi"
+}
