@@ -3966,6 +3966,133 @@ class JsonEscapedControls(LibraryBase):
             self.assertEqual(err.getvalue(), "qargi: a\\x1b[2Kb\n", mod.__name__)
 
 
+class SandboxArgs(unittest.TestCase):
+    """lib/conformance/cases.py on its own: the case barrier-sandbox-args (the argv qargi local run builds for a read-only run carries the
+    read-only arguments and sets their flags nowhere else) and how its gate weighs in the verdict on read_only_barrier (CAP_GATES)."""
+
+    def setUp(self):
+        from conformance import cases
+        self.C = cases
+
+    def case(self, d, name="codex"):
+        return self.C.barrier_sandbox_args(d, None, name, False, False)["barrier-sandbox-args"]
+
+    def codex(self, **disp):
+        d = copy.deepcopy(shipped("codex.json"))
+        d["dispatch"].update(disp)
+        return d
+
+    def argv(self, ro=("--sandbox", "read-only"), write=("--sandbox", "workspace-write"), common=()):
+        return ["codex", "exec"] + list(common) + [{"class": "write", "then": list(write)}, {"class": "read-only", "then": list(ro)}]
+
+    def test_the_shipped_codex_passes_and_names_the_arguments_of_each_class(self):
+        r = self.case(shipped("codex.json"))
+        self.assertEqual(r["status"], "pass", r)
+        self.assertEqual(r["notes"], ["a read-only run carries --sandbox read-only (a write run: --sandbox workspace-write --add-dir /conformance/run/out); "
+                                      "that the runtime's sandbox holds is attested"])
+
+    def test_only_the_barrier_kind_sandbox_args_has_the_case(self):
+        for bar in (None, {"kind": "hook"}, {"kind": "adapter"}, "sandbox-args"):
+            with self.subTest(bar):
+                d = shipped("codex.json")
+                d["barrier"] = bar
+                self.assertEqual(self.case(d), {"status": "na", "notes": []})
+
+    def test_a_runtime_that_is_not_a_command_runtime_fails(self):
+        r = self.case(self.codex(mode="in-session"))
+        self.assertEqual(r["status"], "fail")
+        self.assertIn("only a command dispatch passes (dispatch.mode is \"in-session\")", r["notes"][0])
+
+    def test_a_dispatch_qargi_local_run_would_refuse_fails_with_its_reason(self):
+        for argv, needle in ((["codex", "{agent_file}", {"class": "read-only", "then": ["--sandbox", "read-only"]}], "uses {agent_file}"),
+                             (["codex", {"class": "admin", "then": ["--x"]}], "{\"class\": \"admin\"}")):
+            with self.subTest(needle):
+                r = self.case(self.codex(argv=argv))
+                self.assertEqual(r["status"], "fail")
+                self.assertTrue(r["notes"][0].startswith("qargi local run would refuse the dispatch: "), r)
+                self.assertIn(needle, r["notes"][0])
+
+    def test_a_read_only_run_with_no_arguments_of_its_own_fails(self):
+        for label, disp in (("no read-only group", {"argv": ["codex", "exec", {"class": "write", "then": ["--sandbox", "workspace-write"]}]}),
+                            ("an empty group", {"argv": self.argv(ro=())}),
+                            ("a group inside an if-group a local run never fills", {"argv": ["codex", {"if": "session_id", "then": [{"class": "read-only", "then": ["-x"]}]}]})):
+            with self.subTest(label):
+                r = self.case(self.codex(**disp))
+                self.assertEqual(r["status"], "fail", r)
+                self.assertTrue(r["notes"][0].startswith("a read-only run carries no arguments of its own"), r)
+
+    def test_a_flag_of_the_read_only_arguments_set_again_elsewhere_fails(self):
+        for label, common in (("--sandbox", ["--sandbox", "danger-full-access"]), ("--sandbox=VALUE", ["--sandbox=danger-full-access"]),
+                              ("the same read-only flags", ["--sandbox", "read-only"])):
+            with self.subTest(label):
+                r = self.case(self.codex(argv=self.argv(common=common)))
+                self.assertEqual(r["status"], "fail", r)
+                self.assertIn("a read-only run also sets --sandbox outside its read-only arguments", r["notes"][0])
+        r = self.case(self.codex(argv=["codex", {"if": "model", "then": ["--sandbox", "danger-full-access"]}, {"class": "read-only", "then": ["--sandbox", "read-only"]}]))
+        self.assertEqual(r["status"], "fail", "a flag inside an if-group that has a value counts too")
+
+    def test_a_key_value_setting_is_a_setting_of_its_own_per_key(self):
+        ro = ("-c", "sandbox_mode=read-only")
+        r = self.case(self.codex(argv=self.argv(ro=ro, write=("-c", "sandbox_mode=workspace-write"), common=["-c", "model_reasoning_effort={effort}"])))
+        self.assertEqual(r["status"], "pass", "-c of another key is another setting: %s" % r)
+        r = self.case(self.codex(argv=self.argv(ro=ro, common=["-c", "sandbox_mode=danger-full-access"])))
+        self.assertEqual(r["status"], "fail", r)
+        self.assertIn("also sets -c sandbox_mode outside", r["notes"][0])
+
+    def test_class_argv_counts_as_the_read_only_arguments_in_either_form(self):
+        for ca in (["--sandbox", "read-only"], {"read-only": ["--sandbox", "read-only"], "write": ["--sandbox", "workspace-write"]}):
+            with self.subTest(ca):
+                r = self.case(self.codex(argv=["codex", "exec"], class_argv=ca))
+                self.assertEqual(r["status"], "pass", r)
+                self.assertIn("a read-only run carries --sandbox read-only", r["notes"][0])
+
+    def test_the_write_arguments_do_not_count_against_the_read_only_run(self):
+        r = self.case(self.codex(argv=self.argv(write=("--sandbox", "workspace-write", "--sandbox", "x"))))
+        self.assertEqual(r["status"], "pass", r)
+
+    # ---- CAP_GATES: a gate can only hold read_only_barrier back
+    def verdict(self, results, claim="partial"):
+        doc = {"capabilities": {"read_only_barrier": {"value": claim, "note": "n"}}}
+        return self.C.verdicts(doc, {k: {"status": v, "notes": []} for k, v in results.items()})["read_only_barrier"]
+
+    def test_barrier_sandbox_args_is_a_gate_of_read_only_barrier_and_backs_nothing(self):
+        self.assertEqual(self.C.CAP_GATES["read_only_barrier"], ("barrier-sandbox-args",))
+        self.assertNotIn("barrier-sandbox-args", [i for ids in self.C.CAP_CASES.values() for i in ids])
+
+    def test_a_failed_gate_leaves_the_barrier_unverified_whatever_else_passed(self):
+        for others in ({}, {"barrier-hook": "pass"}, {"barrier-hook": "pass", "barrier-adapter": "pass"}):
+            with self.subTest(others):
+                ok, why = self.verdict(dict(others, **{"barrier-sandbox-args": "fail"}))
+                self.assertFalse(ok)
+                self.assertEqual(why, "failed: barrier-sandbox-args")
+
+    def test_a_passed_gate_alone_verifies_nothing_and_says_the_runtime_side_is_attested(self):
+        for others in ({}, {"barrier-hook": "na", "barrier-adapter": "na"}):
+            with self.subTest(others):
+                ok, why = self.verdict(dict(others, **{"barrier-sandbox-args": "pass"}))
+                self.assertFalse(ok)
+                self.assertTrue(why.startswith("barrier-sandbox-args passed, which shows qargi's side only"), why)
+                self.assertIn("qargi provider attest records a check you ran", why)
+        self.assertFalse(self.verdict({"barrier-sandbox-args": "pass"}, claim="yes")[0])
+
+    def test_a_passed_gate_beside_a_case_leaves_the_verdict_to_the_case(self):
+        self.assertEqual(self.verdict({"barrier-sandbox-args": "pass", "barrier-hook": "pass"}), (True, "cases barrier-hook"))
+        self.assertEqual(self.verdict({"barrier-sandbox-args": "pass", "barrier-hook": "fail"}), (False, "failed: barrier-hook"))
+        ok, why = self.verdict({"barrier-sandbox-args": "pass", "barrier-hook": "skip"})
+        self.assertFalse(ok)
+        self.assertTrue(why.startswith("could not run: barrier-hook"), why)
+
+    def test_a_gate_that_does_not_apply_is_no_gate(self):
+        self.assertEqual(self.verdict({"barrier-sandbox-args": "na", "barrier-hook": "pass"}), (True, "cases barrier-hook"))
+        ok, why = self.verdict({"barrier-sandbox-args": "na"})
+        self.assertFalse(ok)
+        self.assertTrue(why.startswith("no case applies to this definition"), why)
+
+    def test_an_unclaimed_barrier_gets_no_verdict(self):
+        doc = {"capabilities": {"read_only_barrier": {"value": "no", "note": "n"}}}
+        self.assertEqual(self.C.verdicts(doc, {"barrier-sandbox-args": {"status": "fail", "notes": []}}), {})
+
+
 class Review(unittest.TestCase):
     """lib/conformance/review.py on its own."""
 
@@ -4054,6 +4181,74 @@ class Review(unittest.TestCase):
         d = self.tree({"definition.json": "{}"})
         rv = self.R.scan(d, {"adapter": "../evil"})
         self.assertTrue(any("is not a path inside the pack" in m for m in rv["fail"]))
+
+    def home_lines(self, definition):
+        rv = self.R.scan(self.tree({"definition.json": "{}"}), definition)
+        return rv, [ln for ln in self.R.lines(rv, "t") if ln.startswith("run home")]
+
+    def test_the_review_names_the_run_home_and_each_file_it_links_in(self):
+        rv, got = self.home_lines(shipped("codex.json"))
+        self.assertEqual(rv["home"], {"env": "CODEX_HOME", "dir": ".codex", "links": ["~/.codex/auth.json as auth.json"]})
+        self.assertEqual(got, ["run home (dispatch.home): CODEX_HOME is RUN/home/.codex; files of your home linked into it for each run: ~/.codex/auth.json as auth.json"])
+        two = {"dispatch": {"home": {"env": "FAKE_HOME", "dir": ".f", "link": [{"from": "~/.f/a.json", "to": "a.json"}, {"from": "~/.f/b", "to": "b"}]}}}
+        self.assertEqual(self.home_lines(two)[1], ["run home (dispatch.home): FAKE_HOME is RUN/home/.f; files of your home linked into it for each run: "
+                                                   "~/.f/a.json as a.json, ~/.f/b as b"])
+
+    def test_a_run_home_without_links_says_none_and_a_definition_without_one_has_no_line(self):
+        self.assertEqual(self.home_lines({"dispatch": {"home": {"env": "FAKE_HOME", "dir": ".f"}}})[1],
+                         ["run home (dispatch.home): FAKE_HOME is RUN/home/.f; files of your home linked into it for each run: none"])
+        for d in (None, {}, {"dispatch": {"mode": "command"}}, {"dispatch": {"home": "~/.f"}}, {"dispatch": "x"}):
+            with self.subTest(d):
+                rv, got = self.home_lines(d)
+                self.assertIsNone(rv["home"])
+                self.assertEqual(got, [])
+
+    def test_the_run_home_line_names_the_files_and_never_reads_them(self):
+        """The line is made from the definition's names only: a linked file's content, or where it resolves, is never in the review."""
+        home = tempfile.mkdtemp(prefix="home.", dir=self.tmp)
+        os.makedirs(os.path.join(home, ".codex"))
+        with open(os.path.join(home, ".codex", "auth.json"), "w") as f:
+            f.write("SENTINEL-sign-in-content")
+        with mock.patch.dict(os.environ, {"HOME": home}):
+            rv, got = self.home_lines(shipped("codex.json"))
+        text = "\n".join(self.R.lines(rv, "t"))
+        self.assertNotIn("SENTINEL-sign-in-content", text)
+        self.assertNotIn(home, text)
+        self.assertIn("~/.codex/auth.json as auth.json", got[0])
+
+    def eval_flags(self, files, definition=None):
+        return [f for f in self.R.scan(self.tree(files), definition)["flags"] if ": eval or exec: " in f]
+
+    def test_the_words_exec_and_eval_in_a_definitions_data_are_not_flagged(self):
+        """`codex exec` is a command line in argv and a word of the notes, not code: the shipped codex definition has no eval or exec flag."""
+        with open(os.path.join(LIB, "providers", "codex.json")) as f:
+            text = f.read()
+        self.assertGreaterEqual(text.count("exec"), 8)
+        self.assertEqual(self.eval_flags({"definition.json": text}, json.loads(text)), [])
+        prose = {"dispatch": {"argv": ["tool", "exec", "--json", "eval", "{clone}"]}, "notes": {"x": "run `tool exec` or tool eval 'a b'; the exec verb (exec mode)"}}
+        self.assertEqual(self.eval_flags({"definition.json": json.dumps(prose, indent=1)}, prose), [])
+
+    def test_code_in_a_definitions_data_is_still_flagged(self):
+        for label, argv in (("eval of a command substitution", ["sh", "-c", "eval \"$(cat run.sh)\""]), ("exec of a variable", ["sh", "-c", "exec $CMD"]),
+                            ("exec of a backquote", ["sh", "-c", "exec `cat x`"]), ("a python exec call", ["python3", "-c", "exec(open('x').read())"]),
+                            ("eval with a blank before the call", ["python3", "-c", "eval (x)"]), ("os.system", ["python3", "-c", "import os; os.system('x')"]),
+                            ("shell=True", ["python3", "-c", "import subprocess; subprocess.run('x', shell=True)"])):
+            with self.subTest(label):
+                d = {"dispatch": {"argv": argv}}
+                got = self.eval_flags({"definition.json": json.dumps(d, indent=1)}, d)
+                self.assertEqual(len(got), 1, got)
+                self.assertTrue(got[0].startswith("definition.json:"), got)
+
+    def test_code_in_a_pack_is_flagged_as_before_even_when_it_reads_like_a_command_line(self):
+        """Only the definition's data is read as data: a script, another JSON file, or a definition.json below the pack root is code to read."""
+        script = "#!/bin/sh\nexec python3 -I \"$0.py\" \"$@\"\ncodex exec --json\n"
+        got = self.eval_flags({"definition.json": "{}", "adapter": script, "conformance/fixtures/x.json": "[\"codex\", \"exec\"]\n",
+                               "sub/definition.json": "{\"argv\": [\"codex\", \"exec\"]}\n", "run.py": "exec(src)\n"})
+        self.assertEqual(sorted(f.split(": ")[0] for f in got), ["adapter:2", "adapter:3", "conformance/fixtures/x.json:1", "run.py:1", "sub/definition.json:1"])
+
+    def test_a_control_character_in_a_run_home_name_is_shown_escaped(self):
+        rv, got = self.home_lines({"dispatch": {"home": {"env": "F\x1b[2K", "dir": ".f‮", "link": [{"from": "~/.f/a\x07", "to": "a"}]}}})
+        self.assertEqual(got, ["run home (dispatch.home): F\\x1b[2K is RUN/home/.f\\u202e; files of your home linked into it for each run: ~/.f/a\\x07 as a"])
 
 
 if __name__ == "__main__":
