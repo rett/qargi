@@ -369,6 +369,10 @@ prep "$T/r" cxw3; task
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -q '"workspace-write"' <<<"$out"; } && ok "and its write run is not affected" || no "codex without group, write: rc=$rc $out"
 rm -f "$T/bin/codex"
+# without the fake, the first codex on PATH is the stub of tests/hermetic.sh: a real codex installed on the machine never runs in a test
+out=$(codex exec 2>&1); rc=$?
+{ [ "$(command -v codex)" = "$HERMETIC/bin/codex" ] && [ "$rc" = 127 ] && grep -q 'the real codex is not available' <<<"$out"; } \
+  && ok "with no fake, codex is the hermetic stub, which fails" || no "codex stub: $(command -v codex) rc=$rc $out"
 setprov fakecmd
 
 # --- an in-session runtime is not started here ----------------------------------------------------------------------------------------
