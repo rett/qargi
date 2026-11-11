@@ -124,7 +124,7 @@ class Shipped(Tree):
         self.assertTrue(all(cl["verified_on"] is None for cl in cx["capabilities"].values()))
         self.assertEqual({c: cl["value"] for c, cl in cx["capabilities"].items()},
                          {"headless_dispatch": "yes", "per_dispatch_model_override": "yes", "per_dispatch_effort_override": "yes",
-                          "read_only_barrier": "partial", "skills": "yes", "resume": "no", "mcp": "no"})
+                          "read_only_barrier": "partial", "skills": "yes", "resume": "no", "mcp": "no", "cost_report": "partial"})
         self.assertEqual((cx["family"], cx["surface"], cx["models"], cx["agents"]), ("openai", "local", {"catalog": "openai", "use": "id"}, None))
         self.assertNotIn("adapter", cx)                                                             # data only: no code of its own
         self.assertIsNone(cx["resources"]["mcp"])
@@ -134,7 +134,9 @@ class Shipped(Tree):
         self.assertEqual(P.cap("codex", "local", "read_only_barrier"), "unverified")                # partial, but not attested: it counts as no
         self.assertEqual(P.effective("codex", "local", "read_only_barrier"), "no")
         d = cx["dispatch"]
-        self.assertEqual((d["mode"], d["prompt"], d["output"], d["timeout_s"], d["cwd"]), ("command", {"via": "stdin"}, {"format": "jsonl"}, 3600, "{clone}"))
+        self.assertEqual((d["mode"], d["prompt"], d["output"]["format"], d["timeout_s"], d["cwd"]), ("command", {"via": "stdin"}, "jsonl", 3600, "{clone}"))
+        self.assertEqual(d["output"]["usage"], {"select": {"/type": "turn.completed"}, "tokens": "/usage",                  # tokens only: cost_report partial
+                                                "fields": ["input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens", "reasoning_output_tokens"]})
         self.assertEqual(d["argv"], ["codex", "exec", "--json", "--ephemeral", "--ignore-user-config", "-C", "{clone}",
                                      {"if": "model", "then": ["-m", "{model}"]}, {"if": "effort", "then": ["-c", "model_reasoning_effort={effort}"]},
                                      "-o", "{out_dir}/report.md",
@@ -145,7 +147,7 @@ class Shipped(Tree):
         m = P.models_of("codex", "local")
         self.assertEqual([P.model_for(m, t) for t in P.TIERS], ["gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-astra"])   # ids: the runtime passes ids
         self.assertEqual(P.contract_addenda("codex", "local")[0].splitlines()[0], "# In a Codex run")
-        self.assertEqual(sorted(cx["notes"]), ["commands", "identity", "session-model", "skills-dir", "spawn"])
+        self.assertEqual(sorted(cx["notes"]), ["commands", "exploration", "identity", "session-model", "skills-dir", "spawn"])
 
     def test_reserved_names_are_the_agent_types_the_claude_runtime_brings_itself(self):
         self.assertEqual(sorted(CODE["agents"]["reserved_names"]),
@@ -527,7 +529,7 @@ class Cli(CliBase):
         self.assertEqual(q("check", "nope")[0], 1)
         self.assertEqual(json.loads(q("show", "claude-code", "--json")[1]), CODE)
         rc, out, _ = q("list")
-        self.assertRegex(out, r"(?m)^codex\s+local\s+5 warnings$")                     # the five unverified claims, no failure
+        self.assertRegex(out, r"(?m)^codex\s+local\s+6 warnings$")                     # the six unverified claims, no failure
         rc, out, _ = q("check", "codex")
         self.assertEqual(rc, 0, out)
         self.assertIn("the review role cannot be served on local", out)                 # the sandbox barrier is not attested yet
@@ -2958,6 +2960,123 @@ class EnvPass(LibraryBase):
         self.assertEqual(rv["env_pass"], ["HOME", "GH_TOKEN", "OK_NAME"])
         self.assertIn("environment handed to the command (env_pass): HOME, GH_TOKEN, OK_NAME", "\n".join(R.lines(rv, "x")))
         self.assertEqual(R.scan(d, {})["env_pass"], [])
+
+
+class RunHome(LibraryBase):
+    """dispatch.home: the member's own home directory under the run home, named by a variable, with files of the user's home linked into it
+    for the run. What may be named and linked is checked by the definition check and again by qargi local run (provider.home_problems)."""
+
+    CMD = {"mode": "command", "argv": ["fakecli", "run"], "prompt": {"via": "stdin"}, "output": {"format": "text"}}
+
+    def with_home(self, home, **disp):
+        return fake_runtime(dispatch=dict(self.CMD, home=home, **disp))
+
+    def test_the_codex_runtime_links_only_its_sign_in(self):
+        self.assertEqual(shipped("codex.json")["dispatch"]["home"], {"env": "CODEX_HOME", "dir": ".codex", "link": [{"from": "~/.codex/auth.json", "to": "auth.json"}]})
+        self.assertEqual(P.home_problems(shipped("codex.json")["dispatch"]["home"]), [])
+        self.assertEqual(fails(self.with_home({"env": "FAKECLI_HOME", "dir": ".fakecli"}), "fakecli"), [])                 # link is optional
+
+    def test_refusals(self):
+        ok_link = [{"from": "~/.fakecli/auth.json", "to": "auth.json"}]
+        cases = (
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": ok_link, "copy": True}, "dispatch.home.copy: additional property is not allowed"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.fakecli/auth.json", "to": "auth.json", "mode": "copy"}]}, "dispatch.home.link[0].mode: additional property"),
+            ({"dir": ".f"}, "missing required property 'env'"),
+            ({"env": "FAKECLI_HOME"}, "missing required property 'dir'"),
+            ({"env": "HOME", "dir": ".f"}, "dispatch.home.env: HOME is never set for a runtime"),
+            ({"env": "PATH", "dir": ".f"}, "dispatch.home.env: PATH is never set"),
+            ({"env": "GIT_DIR", "dir": ".f"}, "dispatch.home.env: GIT_DIR is never set"),
+            ({"env": "QARGI_CONF", "dir": ".f"}, "dispatch.home.env: QARGI_CONF is never set"),
+            ({"env": "XDG_CONFIG_HOME", "dir": ".f"}, "dispatch.home.env: XDG_CONFIG_HOME is never set"),
+            ({"env": "LD_PRELOAD", "dir": ".f"}, "dispatch.home.env: LD_PRELOAD is never set"),
+            ({"env": "TZ", "dir": ".f"}, "qargi local run sets it for every member"),
+            ({"env": "FAKECLI_HOME", "dir": "../out"}, "dispatch.home.dir: '../out' is not a directory inside the run home"),
+            ({"env": "FAKECLI_HOME", "dir": "/abs"}, "dispatch.home.dir: '/abs' is not a directory inside the run home"),
+            ({"env": "FAKECLI_HOME", "dir": "a/./b"}, "is not a directory inside the run home"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "/etc/fakecli/auth.json", "to": "auth.json"}]}, "is not a plain path under the home"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/../other/auth.json", "to": "auth.json"}]}, "is not a plain path under the home"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~", "to": "auth.json"}]}, "is not a plain path under the home"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.qargi/config/credentials/marshal_ed25519", "to": "k"}]}, "qargi's own configuration, state and credentials"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.qargi", "to": "q"}]}, "qargi's own configuration"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.ssh/id_ed25519", "to": "k"}]}, "the user's ssh keys"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.gnupg/private-keys-v1.d/x.key", "to": "k"}]}, "the user's keys"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.git-credentials", "to": "c"}]}, "stored git logins"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.config/gh/hosts.yml", "to": "h"}]}, "a forge credential"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.aws/credentials", "to": "c"}]}, "a cloud credential"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.fakecli/auth.json", "to": "sub/auth.json"}]}, "is not a plain file name"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.fakecli/auth.json", "to": ".."}]}, "is not a plain file name"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": ok_link + [{"from": "~/.fakecli/other.json", "to": "auth.json"}]}, "'auth.json' is linked twice"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.f/%d" % i, "to": "f%d" % i} for i in range(9)]}, "more than the 8"),
+        )
+        for home, needle in cases:
+            with self.subTest(needle):
+                d = self.with_home(home)
+                f = fails(d, "fakecli")
+                self.assertTrue(any(needle in m for m in f), f)
+                self.assertTrue(any(needle in m for m in P.home_problems(home)), P.home_problems(home))     # what qargi local run asks too
+        self.assertEqual([m for m in fails(self.with_home({"env": "FAKECLI_HOME", "dir": ".f", "link": ok_link})) if "dispatch.home" in m], [])
+
+    def test_the_variable_is_not_also_handed_on_and_only_a_command_runtime_has_a_run_home(self):
+        d = self.with_home({"env": "FAKECLI_HOME", "dir": ".f"}, env_pass=["FAKECLI_HOME"])
+        self.assertTrue(any("is also in dispatch.env_pass" in m for m in fails(d, "fakecli")), fails(d, "fakecli"))
+        d = fake_runtime(dispatch={"mode": "in-session", "home": {"env": "FAKECLI_HOME", "dir": ".f"}})
+        self.assertTrue(any("only a runtime that qargi local run starts" in m for m in fails(d, "fakecli")), fails(d, "fakecli"))
+
+    def test_a_definition_with_a_refused_run_home_cannot_be_imported(self):
+        d = self.with_home({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.ssh/id_ed25519", "to": "k"}]})
+        rc, out, err = self.q("import", self.source(doc=d))
+        self.assertEqual(rc, 1, (out, err))
+        self.assertIn("FAIL: dispatch.home.link[0].from: '~/.ssh/id_ed25519' is never linked into a run", out)
+        self.assertFalse(self.stored("fakecli"))
+
+
+class OutputUsage(unittest.TestCase):
+    """dispatch.output.usage: the rule qargi local run reads the runtime's own token reports with, from its JSON lines on standard output."""
+
+    RULE = {"select": {"/type": "turn.completed"}, "tokens": "/usage", "fields": ["input_tokens", "output_tokens"]}
+
+    def with_output(self, output):
+        return fake_runtime(dispatch={"mode": "command", "argv": ["fakecli", "run"], "prompt": {"via": "stdin"}, "output": output})
+
+    def test_a_rule_on_json_lines_passes(self):
+        self.assertEqual([m for m in fails(self.with_output({"format": "jsonl", "usage": self.RULE}), "fakecli") if "output" in m], [])
+        self.assertEqual(P.output_usage_problems({"format": "jsonl", "usage": self.RULE}, shape=True), [])
+
+    def test_refusals(self):
+        cases = (
+            ({"format": "text", "usage": self.RULE}, "dispatch.output.format must be jsonl"),
+            ({"usage": self.RULE}, "dispatch.output.format must be jsonl"),
+            ({"format": "jsonl", "usage": {"select": {"/type": "x"}, "fields": ["a"]}}, "missing required property 'tokens'"),
+            ({"format": "jsonl", "usage": {"tokens": "/usage"}}, "missing required property 'fields'"),
+            ({"format": "jsonl", "usage": dict(self.RULE, tokens="usage")}, "dispatch.output.usage.tokens: 'usage' is not a JSON pointer"),
+            ({"format": "jsonl", "usage": dict(self.RULE, model="model")}, "dispatch.output.usage.model: 'model' is not a JSON pointer"),
+            ({"format": "jsonl", "usage": dict(self.RULE, select={"type": "x"})}, "dispatch.output.usage.select: 'type' is not a JSON pointer"),
+            ({"format": "jsonl", "usage": dict(self.RULE, skip={"/a": {"b": 1}})}, "dispatch.output.usage.skip: '/a' is not a JSON pointer to a text"),
+        )
+        for output, needle in cases:
+            with self.subTest(needle):
+                f = fails(self.with_output(output), "fakecli")
+                self.assertTrue(any(needle in m for m in f), f)
+                self.assertTrue(any(needle in m for m in P.output_usage_problems(output, shape=True)), P.output_usage_problems(output, shape=True))
+
+    def test_the_schema_and_local_run_refuse_an_unknown_key_or_a_wrong_shape(self):
+        for output, needle in (({"format": "jsonl", "usage": dict(self.RULE, sum="all")}, "dispatch.output.usage.sum: additional property is not allowed"),
+                               ({"format": "jsonl", "usage": dict(self.RULE, fields=[])}, "dispatch.output.usage.fields"),
+                               ({"format": "json"}, "dispatch.output.format"),
+                               ({"format": "jsonl", "lines": 3}, "dispatch.output.lines: additional property is not allowed")):
+            with self.subTest(needle):
+                f = fails(self.with_output(output), "fakecli")
+                self.assertTrue(any(needle in m for m in f), f)
+        self.assertTrue(any("sum: additional property" in m for m in P.output_usage_problems({"format": "jsonl", "usage": dict(self.RULE, sum="all")}, shape=True)))
+        self.assertTrue(any("fields" in m for m in P.output_usage_problems({"format": "jsonl", "usage": dict(self.RULE, fields="input_tokens")}, shape=True)))
+
+    def test_the_transcript_rule_shares_the_node_and_its_pointer_checks(self):
+        sch = P.schema2()
+        self.assertEqual(sch["$defs"]["res_transcripts"]["properties"]["usage"], {"$ref": "#/$defs/usage"})
+        self.assertEqual(sch["$defs"]["provider"]["properties"]["dispatch"]["properties"]["output"]["properties"]["usage"], {"$ref": "#/$defs/usage"})
+        d = copy.deepcopy(CODE)
+        d["resources"]["transcripts"]["usage"]["tokens"] = "message/usage"
+        self.assertTrue(any("resources.transcripts.usage.tokens: 'message/usage' is not a JSON pointer" in m for m in fails(d, "claude-code")), fails(d, "claude-code"))
 
 
 class Attest(LibraryBase):

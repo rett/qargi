@@ -25,14 +25,24 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
   dispatch.env_pass    names of environment variables handed on (secrets travel by name, never in argv); GIT_* and QARGI_* are refused,
                        and so is what would hand on the user's own home, search path, code loaders, ssh agent or forge credentials
                        (provider.env_pass_problem).
+  dispatch.home        {env, dir, link: [{from, to}]}: the member's own home directory RUN/home/DIR, named by the variable env (a runtime that
+                       reads its configuration and sign-in from a directory of its own). Each file `from` (~/PATH, under the user's home) is
+                       linked into it as `to` when the run starts and the link is removed when it ends: the file is never copied and the
+                       link's target is never printed (--dry-run names the links, HOME_LINKS=). A source that does not exist is left out with
+                       a note. The directory is made and the links are removed without following a link a member may have put in the run
+                       directory; a file that replaced a link during the run is removed too. provider.home_problems states the rules.
   dispatch.timeout_s   the bound (default 1800, at most 86400); --timeout replaces it.
   dispatch.exit        {"0": "ok", "*": "failed"}: the exit status -> outcome ok|failed|refused|transport.
+  dispatch.output      {format: text|jsonl, usage: {select, skip, tokens, fields, model}}: with usage (jsonl only), when the run ends every line
+                       of OUT/transcript that is a JSON object the rule selects (and does not skip) is a report of the tokens the runtime
+                       used; each field of the object at `tokens` is added up over those lines, and the sums go to dispatch.json (usage:
+                       events, tokens, model) and to a USAGE= line. Only whole numbers count; a line that is not JSON is passed over.
 Placeholders (the closed set): member, model, effort_native, prompt_file, prompt_arg, clone, run_dir, out_dir, project (and the short names
 effort, out, prompt). agent_file and session_id belong to runtimes with agent files and to resume; they are refused here.
 
 The process gets the environment of the run's git wrapper (RUN/git: HOME is RUN/home, no global git configuration, no ssh, no prompts,
 the author qargi) and TMPDIR of the run, plus QARGI_MEMBER_RUN (the run directory: the mark that tells the marshal a member is running, wherever the
-member changes to), PATH and the env_pass names. It runs in its own session without a shell, its standard output goes
+member changes to), PATH, the env_pass names and the variable of dispatch.home. It runs in its own session without a shell, its standard output goes
 to OUT/transcript and its standard error to OUT/transcript.err, and a process group that outlives the bound is killed. A record of what ran is
 written to RUN/dispatch.json (argv, class, model, outcome; never an environment value). --dry-run prints the argv and the prompt and writes
 nothing. The exit status: 0 ok, 1 failed (or a usage error), 2 refused, 3 the runtime cannot be run this way, 4 transport.
@@ -54,6 +64,7 @@ import provider as P  # noqa: E402
 import paths  # noqa: E402
 import procenv as PE  # noqa: E402
 from procenv import clean_path  # noqa: E402
+from lead_usage import pointer  # noqa: E402  (the JSON pointer the transcript usage rule of a definition is read with)
 
 _print = print
 
@@ -215,7 +226,7 @@ def compose_prompt(doc, task_text, cls, run, tmp):
 
 # ---- the process --------------------------------------------------------------------------------------------------------------------
 
-def child_env(run, tmp, passed):
+def child_env(run, tmp, passed, home=None):
     env = {"HOME": os.path.join(run, "home"), "PATH": clean_path(), "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "TZ": "UTC", "TERM": "dumb", "TMPDIR": tmp,
            "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1", "GIT_SSH_COMMAND": "false", "GIT_TERMINAL_PROMPT": "0",
            "GIT_ASKPASS": "false", "GIT_AUTHOR_NAME": "qargi", "GIT_COMMITTER_NAME": "qargi",
@@ -224,7 +235,123 @@ def child_env(run, tmp, passed):
     for n in passed:
         if n in os.environ:
             env[n] = os.environ[n]
+    if home:
+        env[home["env"]] = home["path"]
     return env
+
+
+# ---- the run home (dispatch.home) -----------------------------------------------------------------------------------------------------
+
+def plan_home(disp, run, runtime):
+    """None, or what the run home of dispatch.home is: {env, dir, path, links: [(to, source)], missing: [to]}. The rules are provider.home_problems;
+    a source is taken when it is a regular file whose real path is still under the user's home, outside qargi's directories and the credential
+    stores home_link_problem refuses (a ~/.codex that is a link to elsewhere is followed, then checked). Nothing is made here."""
+    h = disp.get("home")
+    if h is None:
+        return None
+    bad = P.home_problems(h, disp.get("env_pass") if isinstance(disp.get("env_pass"), list) else ())
+    if bad:
+        fail("%s of %s" % (bad[0], runtime))
+    home = os.path.realpath(os.path.expanduser("~"))
+    mine = [os.path.realpath(d) for d in (paths.conf(), paths.state())]
+    links, missing = [], []
+    for ln in h.get("link", []):
+        src = os.path.join(home, ln["from"][2:])
+        real = os.path.realpath(src)
+        if not os.path.lexists(src):
+            missing.append(ln["to"])
+            continue
+        rel = os.path.relpath(real, home)
+        if rel == ".." or rel.startswith(".." + os.sep):
+            why = "it resolves outside the home"
+        elif P.home_link_problem("~/" + rel) or any(real == m or real.startswith(m + os.sep) for m in mine):
+            why = "it resolves into qargi's own directories or a credential store that is never linked"
+        elif not os.path.isfile(real):
+            why = "it is not a regular file"
+        else:
+            why = None
+        if why:                                          # the message names the link, never where its source resolves to
+            fail("dispatch.home.link of %s: the source of '%s' is refused: %s" % (runtime, ln["to"], why))
+        links.append((ln["to"], src))
+    return {"env": h["env"], "dir": h["dir"], "path": os.path.join(run, "home", h["dir"]), "links": links, "missing": missing}
+
+
+O_DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+
+def home_dir_fd(run, home, create):
+    """A descriptor of RUN/home/DIR, opened part by part without following a link (a member can write the run directory: a link planted as
+    RUN/home or as a part of DIR is refused, never followed). create: make the parts that are missing. None when a part is missing and
+    create is off, or a part is not a plain directory (a refusal when create is on)."""
+    fd = os.open(run, O_DIR)
+    try:
+        for part in ["home"] + home["dir"].split("/"):
+            if create:
+                try:
+                    os.mkdir(part, 0o700, dir_fd=fd)
+                except FileExistsError:
+                    pass
+            try:
+                nfd = os.open(part, O_DIR, dir_fd=fd)
+            except OSError as e:
+                if create:
+                    fail("the run home %s cannot be made: %s is not a plain directory of the run (%s)" % (home["path"], part, e.strerror or e))
+                return None
+            os.close(fd)
+            fd = nfd
+        return os.dup(fd)
+    finally:
+        os.close(fd)
+
+
+def make_home(run, home):
+    """Make RUN/home/DIR and its links; the names linked. A link that an earlier run left there is replaced; anything else in its place is a refusal."""
+    fd = home_dir_fd(run, home, True)
+    made = []
+    try:
+        for to, src in home["links"]:
+            try:
+                st = os.lstat(to, dir_fd=fd)
+            except FileNotFoundError:
+                st = None
+            if st is not None:
+                if not stat.S_ISLNK(st.st_mode):
+                    fail("%s is in the run home and is not a link qargi made; remove it, or the run is refused" % os.path.join(home["path"], to))
+                os.unlink(to, dir_fd=fd)
+            os.symlink(src, to, dir_fd=fd)
+            made.append(to)
+    except BaseException:
+        clear_home(run, home, made)
+        raise
+    finally:
+        os.close(fd)
+    return made
+
+
+def clear_home(run, home, names):
+    """Remove the links of the run home (names), without following a link; notes for what was not as it was left: a file in place of a link
+    (the runtime replaced it: it is removed too, so no copy of the source stays in the run), or a run home a member replaced."""
+    notes = []
+    if not names:
+        return notes
+    fd = home_dir_fd(run, home, False)
+    if fd is None:
+        return ["the run home %s is not the directory the run made (gone or replaced by a link); its links were not looked for there" % home["path"]]
+    try:
+        for to in names:
+            try:
+                st = os.lstat(to, dir_fd=fd)
+            except FileNotFoundError:
+                continue
+            if stat.S_ISLNK(st.st_mode) or stat.S_ISREG(st.st_mode):
+                os.unlink(to, dir_fd=fd)
+                if not stat.S_ISLNK(st.st_mode):
+                    notes.append("%s in the run home was replaced during the run by a file, not the link; it is removed and its source was not updated" % to)
+            else:
+                notes.append("%s in the run home is not a link or a file any more; it was left in place" % to)
+    finally:
+        os.close(fd)
+    return notes
 
 
 def env_names(disp, runtime):
@@ -356,6 +483,10 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     if not isinstance(ex, dict) or any(v not in OUTCOME_EXIT for v in ex.values()):
         fail("dispatch.exit of %s maps an exit status to one of %s" % (runtime, ", ".join(OUTCOME_EXIT)))
     passed = env_names(disp, runtime)
+    bad = P.output_usage_problems(disp.get("output"), shape=True)
+    if bad:
+        fail("%s of %s" % (bad[0], runtime))
+    home = plan_home(disp, run, runtime)
     if cls == "read-only":
         state, text = P.require_barrier(runtime, "local", project)
         if state == "refused":
@@ -417,8 +548,13 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
         fail("dispatch.cwd of %s is %s, outside the clone" % (runtime, cwd))
     exe, how = find_command(runtime, argv[0], run, keep)
     return {"runtime": runtime, "class": cls, "argv": argv, "exe": exe, "exe_from": how, "cwd": cwd, "via": via, "prompt": prompt, "prompt_file": pfile,
-            "timeout_s": to, "env_pass": passed, "env": child_env(run, tmp, passed), "exit": ex, "model": mname, "effort_native": native,
-            "notes": notes + ([note] if note else []), "output_format": (disp.get("output") or {}).get("format", "text")}
+            "timeout_s": to, "env_pass": passed, "env": child_env(run, tmp, passed, home), "exit": ex, "model": mname, "effort_native": native,
+            "home": home, "notes": notes + ([note] if note else []) + home_notes(home), "output_format": (disp.get("output") or {}).get("format", "text"),
+            "usage": (disp.get("output") or {}).get("usage")}
+
+
+def home_notes(home):
+    return ["the source of the run home's link '%s' does not exist, so it is not linked: the runtime starts without it" % n for n in (home or {}).get("missing", [])]
 
 
 def dry(plan, run):
@@ -433,6 +569,10 @@ def dry(plan, run):
     print("CWD=" + plan["cwd"])
     print("TIMEOUT_S=%d" % plan["timeout_s"])
     print("ENV_PASS=" + ",".join(plan["env_pass"]))
+    if plan["home"]:
+        print("HOME_ENV=" + plan["home"]["env"])
+        print("HOME_DIR=" + plan["home"]["path"])
+        print("HOME_LINKS=" + ",".join(to for to, _ in plan["home"]["links"]))
     print("PROMPT_VIA=" + plan["via"])
     print("PROMPT_FILE=" + plan["prompt_file"])
     print("TRANSCRIPT=" + os.path.join(run, "out", "transcript"))
@@ -441,6 +581,70 @@ def dry(plan, run):
     print("PROMPT:")
     sys.stdout.write(plan["prompt"])
     sys.stdout.flush()
+
+
+USAGE_SCAN_MAX = 256 * 1024 * 1024    # bytes of a transcript read for the usage; past it the sums are of what was read, and say so
+
+
+def read_usage(path, rule):
+    """{events, tokens: {field: sum}, model?, note?} of the transcript at path under the usage rule of dispatch.output, or None when it cannot
+    be read as a file of the run (it is opened without following a link or waiting for a writer, as a regular file only). A line counts when it
+    is a JSON object whose select pointers all have their values, none of whose skip pointers has its value, and whose tokens pointer is an
+    object; each field that is a whole number of at least 0 is added. model: the last text at the model pointer, when the rule has one."""
+    fields = list(rule["fields"])
+    sums, events, model, read, note = {f: 0 for f in fields}, 0, None, 0, None
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        with os.fdopen(fd, "rb", closefd=False) as f:
+            for raw in f:
+                read += len(raw)
+                if read > USAGE_SCAN_MAX:
+                    note = "only the first %d bytes of the transcript were read" % USAGE_SCAN_MAX
+                    break
+                try:
+                    rec = json.loads(raw)
+                except ValueError:
+                    continue
+                if not isinstance(rec, dict):
+                    continue
+                if any(pointer(rec, k) != v for k, v in (rule.get("select") or {}).items()):
+                    continue
+                if any(pointer(rec, k) is not None and pointer(rec, k) == v for k, v in (rule.get("skip") or {}).items()):
+                    continue
+                counts = pointer(rec, rule.get("tokens") or "")
+                if not isinstance(counts, dict):
+                    continue
+                events += 1
+                for k in fields:
+                    n = counts.get(k)
+                    if isinstance(n, int) and not isinstance(n, bool) and n >= 0:
+                        sums[k] += n
+                if rule.get("model"):
+                    m = pointer(rec, rule["model"])
+                    if isinstance(m, str) and m:
+                        model = m[:80]
+    finally:
+        os.close(fd)
+    got = {"events": events, "tokens": sums}
+    if rule.get("model"):
+        got["model"] = model
+    if note:
+        got["note"] = note
+    return got
+
+
+def usage_line(u):
+    if u is None:
+        return "USAGE=unknown: the transcript could not be read as a file of the run"
+    if not u["events"]:
+        return "USAGE=none: no line of the transcript is a usage report of the runtime (dispatch.output.usage)"
+    return "USAGE=%s (%d event%s%s)" % (" ".join("%s=%d" % kv for kv in u["tokens"].items()), u["events"], "" if u["events"] == 1 else "s",
+                                       "; " + u["note"] if u.get("note") else "")
 
 
 def kill_group(proc):
@@ -518,29 +722,35 @@ def run_it(plan, run):
     check_own(dispatch, "the dispatch record")
     write_prompt(run, plan["prompt_file"], plan["prompt"])
     argv = [plan["exe"]] + plan["argv"][1:]
+    home = plan["home"]
+    made = make_home(run, home) if home else []          # the links exist for the length of the run only
+    home_left = []
     started = time.time()
     timed_out = False
-    sin = open(plan["prompt_file"], "rb") if plan["via"] == "stdin" else subprocess.DEVNULL
-    with os.fdopen(open_own(os.path.join(out, "transcript"), "the transcript"), "wb") as so, \
-            os.fdopen(open_own(os.path.join(out, "transcript.err"), "the error transcript"), "wb") as se:
-        try:
-            proc = subprocess.Popen(argv, cwd=plan["cwd"], env=plan["env"], stdin=sin, stdout=so, stderr=se, shell=False, start_new_session=True)
-        except OSError as e:
-            if sin is not subprocess.DEVNULL:
-                sin.close()
-            fail("could not start %s: %s" % (plan["argv"][0], e.strerror or e), 4)
-        try:
-            code = proc.wait(timeout=plan["timeout_s"])
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            kill_group(proc)
-            code = proc.returncode
-        except BaseException:
-            kill_group(proc)
-            raise
-        finally:
-            if sin is not subprocess.DEVNULL:
-                sin.close()
+    try:
+        sin = open(plan["prompt_file"], "rb") if plan["via"] == "stdin" else subprocess.DEVNULL
+        with os.fdopen(open_own(os.path.join(out, "transcript"), "the transcript"), "wb") as so, \
+                os.fdopen(open_own(os.path.join(out, "transcript.err"), "the error transcript"), "wb") as se:
+            try:
+                proc = subprocess.Popen(argv, cwd=plan["cwd"], env=plan["env"], stdin=sin, stdout=so, stderr=se, shell=False, start_new_session=True)
+            except OSError as e:
+                if sin is not subprocess.DEVNULL:
+                    sin.close()
+                fail("could not start %s: %s" % (plan["argv"][0], e.strerror or e), 4)
+            try:
+                code = proc.wait(timeout=plan["timeout_s"])
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                kill_group(proc)
+                code = proc.returncode
+            except BaseException:
+                kill_group(proc)
+                raise
+            finally:
+                if sin is not subprocess.DEVNULL:
+                    sin.close()
+    finally:
+        home_left = clear_home(run, home, made) if home else []
     if timed_out:
         outcome = "failed"
     else:
@@ -549,11 +759,19 @@ def run_it(plan, run):
            "model": plan["model"], "effort_native": plan["effort_native"], "prompt_via": plan["via"], "timeout_s": plan["timeout_s"],
            "started": PE.now(started), "seconds": round(time.time() - started, 1),
            "exit": code, "timed_out": timed_out, "outcome": outcome, "transcript": os.path.join(out, "transcript")}
+    if home:
+        rec["home"] = {"env": home["env"], "dir": home["dir"], "links": made, "not_linked": home["missing"], "left": home_left}
+    if plan["usage"]:
+        rec["usage"] = read_usage(rec["transcript"], plan["usage"])
     write_private(dispatch, json.dumps(rec, indent=2, sort_keys=True) + "\n")
     print("RUNTIME=" + plan["runtime"])
     print("OUTCOME=" + outcome + (" (timed out after %ds)" % plan["timeout_s"] if timed_out else ""))
     print("EXIT=%s" % code)
     print("TRANSCRIPT=" + rec["transcript"])
+    if plan["usage"]:
+        print(usage_line(rec["usage"]))
+    for n in home_left:
+        print("qargi: note: " + n, file=sys.stderr)
     print("next: read the transcript and OUT, then qargi local verify " + run)
     return OUTCOME_EXIT[outcome]
 

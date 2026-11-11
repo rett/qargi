@@ -3,7 +3,7 @@
 # allowlist applied as explicit exports and unsets (a full `env -i` would drop what the tests need to find their tools, the PATH
 # search for git, jq and python3 and the shell's own variables, and every test would then have to rebuild it): no ANTHROPIC_* or QARGI_*
 # variable gets through; HOME, TMPDIR, qargi's config and state are fresh directories under one temporary directory (HERMETIC); the
-# first `ant` and `claude` on PATH are stubs that fail, so a test that did not bring its own fake cannot reach the real tools; the
+# first `ant`, `claude` and `codex` on PATH are stubs that fail, so a test that did not bring its own fake cannot reach the real tools; the
 # locale, time zone and umask are fixed (LANG=C.UTF-8, TZ=UTC, umask 022); git reads no configuration of the host or the user
 # (GIT_CONFIG_GLOBAL=/dev/null, GIT_CONFIG_NOSYSTEM=1) and has a default branch name from the environment (no identity: a test that commits sets
 # its own, in the repository or in GIT_AUTHOR_*, as it did when HOME was a fresh directory); no
@@ -29,7 +29,7 @@ if [ -n "${TMPDIR:-}" ] && { [ ! -d "$TMPDIR" ] || [ ! -w "$TMPDIR" ]; }; then
 fi
 HERMETIC=$(command mktemp -d) || { echo "hermetic test: cannot make a temporary directory" >&2; exit 1; }
 mkdir -p "$HERMETIC/home" "$HERMETIC/bin" "$HERMETIC/tmp"
-for _t in ant claude; do
+for _t in ant claude codex; do
   printf '#!/bin/sh\necho "hermetic test: the real %s is not available; put a fake first on PATH" >&2\nexit 127\n' "$_t" > "$HERMETIC/bin/$_t"
   chmod 755 "$HERMETIC/bin/$_t"
 done

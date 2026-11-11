@@ -113,6 +113,7 @@ for t in $topics; do run "$t" --project onclaude; [ $rc = 0 ] || missing="$missi
 mkproj oncodex '{"local":"codex"}'
 run --project oncodex
 { [ $rc = 0 ] && [ "$out" = "commands
+exploration
 identity
 session-model
 skills-dir
@@ -122,6 +123,8 @@ run spawn --project oncodex
   && ok "codex says a member is started with qargi local run" || no "codex spawn: rc=$rc out=$out err=$err"
 run skills-dir --project oncodex
 { [ $rc = 0 ] && grep -q '\.agents/skills' <<<"$out"; } && ok "codex names its skills directory" || no "codex skills-dir: rc=$rc out=$out err=$err"
+run exploration --project oncodex
+{ [ $rc = 0 ] && grep -q 'qargi provider model codex local fast' <<<"$out" && grep -q 'git grep' <<<"$out"; } && ok "codex says how a lead explores a repository (the skills point at that topic)" || no "codex exploration: rc=$rc out=$out err=$err"
 run spawn --project cloudonly
 [ $rc = 2 ] && ok "claude-platform is a cloud runtime: a project with only it has no local notes" || no "cloud only spawn: rc=$rc"
 

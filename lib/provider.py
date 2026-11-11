@@ -388,6 +388,92 @@ def env_pass_problem(name):
     return None
 
 
+# ---- the run home of a command runtime (dispatch.home) ----------------------------------------------------------------------------
+
+HOME_KEYS = ("env", "dir", "link")
+HOME_ENV_SET = ("LANG", "LC_ALL", "TZ", "TERM")          # set by qargi local run for every member, beside what env_pass_problem refuses
+HOME_LINK_NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$")
+HOME_LINKS_MAX = 8
+HOME_LINK_DENIED = (                                    # under the user's home: never linked into a run, whatever the runtime says
+    (".qargi", "qargi's own configuration, state and credentials"), (".ssh", "the user's ssh keys"), (".gnupg", "the user's keys"),
+    (".netrc", "the user's stored logins"), (".git-credentials", "the user's stored git logins"), (".gitconfig", "the user's git configuration"),
+    (".config/git", "the user's git configuration"), (".config/gh", "a forge credential"), (".config/hub", "a forge credential"),
+    (".config/glab-cli", "a forge credential"), (".aws", "a cloud credential"), (".azure", "a cloud credential"), (".config/gcloud", "a cloud credential"),
+    (".kube", "a cluster credential"), (".docker", "a registry credential"), (".password-store", "the user's passwords"),
+    (".local/share/keyrings", "the user's keyring"), (".pki", "the user's certificates and keys"),
+)
+
+
+def home_link_problem(src):
+    """Why the file src (written ~/PATH) may not be linked into a run home, or None. It must be a plain path under the user's home (no .., no
+    empty or . part) that is not qargi's own directory or a credential store of the user's other tools (HOME_LINK_DENIED)."""
+    if not isinstance(src, str) or not src.startswith("~/") or not _plain_relative(src[2:]):
+        return "%s is not a plain path under the home (~/PATH, no .., no empty or . part)" % _show(src)
+    rel = src[2:]
+    for p, why in HOME_LINK_DENIED:
+        if rel == p or rel.startswith(p + "/"):
+            return "%s is never linked into a run: %s" % (_show(src), why)
+    return None
+
+
+def home_problems(home, env_pass=(), shape=True):
+    """The findings of a runtime's dispatch.home, as messages: {env, dir, link: [{from, to}]} gives the member a home directory of its own,
+    RUN/home/DIR, named by the variable env, with the files of link linked into it for the length of the run. env must be a variable a
+    runtime may set (env_pass_problem, not one qargi local run sets, not one of env_pass); dir a relative path inside the run home; from a file
+    under the user's home (home_link_problem); to a plain file name, each once. shape: also the types and keys (the schema states them too;
+    qargi local run, which reads a definition without the schema, asks for them)."""
+    if home is None:
+        return []
+    if not isinstance(home, dict):
+        return ["dispatch.home: %s is not an object {env, dir, link}" % _show(home)] if shape else []
+    bad = []
+    if shape:
+        bad += ["dispatch.home.%s: additional property is not allowed" % k for k in home if k not in HOME_KEYS]
+        bad += ["dispatch.home: missing required property '%s'" % k for k in ("env", "dir") if k not in home]
+    env = home.get("env")
+    if isinstance(env, str):
+        why = env_pass_problem(env) or ("qargi local run sets it for every member" if env in HOME_ENV_SET else None)
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", env):
+            bad.append("dispatch.home.env: %s is not a variable name" % _show(env))
+        elif why:
+            bad.append("dispatch.home.env: %s is never set for a runtime: %s" % (env, why))
+        elif env in (env_pass or ()):
+            bad.append("dispatch.home.env: %s is also in dispatch.env_pass; the run home replaces the caller's value, so name it once" % env)
+    elif shape and "env" in home:
+        bad.append("dispatch.home.env: %s is not of type string" % _show(env))
+    d = home.get("dir")
+    if isinstance(d, str):
+        if not _plain_relative(d):
+            bad.append("dispatch.home.dir: %s is not a directory inside the run home (a relative path, no .., no ~, no empty or . part)" % _show(d))
+    elif shape and "dir" in home:
+        bad.append("dispatch.home.dir: %s is not of type string" % _show(d))
+    links = home.get("link", [])
+    if not isinstance(links, list):
+        return bad + (["dispatch.home.link: %s is not a list of {from, to}" % _show(links)] if shape else [])
+    if len(links) > HOME_LINKS_MAX:
+        bad.append("dispatch.home.link: %d links are more than the %d a run home may hold" % (len(links), HOME_LINKS_MAX))
+    seen = set()
+    for i, ln in enumerate(links):
+        if not isinstance(ln, dict):
+            bad += ["dispatch.home.link[%d]: %s is not an object {from, to}" % (i, _show(ln))] if shape else []
+            continue
+        if shape:
+            bad += ["dispatch.home.link[%d].%s: additional property is not allowed" % (i, k) for k in ln if k not in ("from", "to")]
+            bad += ["dispatch.home.link[%d]: missing required property '%s'" % (i, k) for k in ("from", "to") if k not in ln]
+        if "from" in ln:
+            why = home_link_problem(ln["from"])
+            if why:
+                bad.append("dispatch.home.link[%d].from: %s" % (i, why))
+        to = ln.get("to")
+        if "to" in ln and (not isinstance(to, str) or not HOME_LINK_NAME.match(to) or to in (".", "..")):
+            bad.append("dispatch.home.link[%d].to: %s is not a plain file name (letters, digits, . _ and -, no /)" % (i, _show(to)))
+        elif isinstance(to, str):
+            if to in seen:
+                bad.append("dispatch.home.link[%d].to: %s is linked twice" % (i, _show(to)))
+            seen.add(to)
+    return bad
+
+
 def pack_env(home, tmp):
     """The environment pack code runs in when qargi runs it itself (the conformance harness of `provider check`): nothing of the caller's, only
     a search path of absolute entries, a home and temporary directory of the run, a locale and a clock zone. Same shape as the environment a
@@ -884,19 +970,53 @@ def _resource_problems(res, extension=False):
                     bad.append("resources.transcripts.windows[%d].model: %s is not a pattern (plain text of at most 80 characters)" % (i, _show(m)))
                 if n is not None and (not isinstance(n, int) or isinstance(n, bool) or n < 1000):
                     bad.append("resources.transcripts.windows[%d].tokens: %s is not a number of tokens (at least 1000)" % (i, _show(n)))
-        us = tr.get("usage") if isinstance(tr.get("usage"), dict) else {}
-        for k in ("select", "skip"):
-            for ptr, want in (us.get(k) or {}).items() if isinstance(us.get(k), dict) else ():
-                if not isinstance(ptr, str) or not ptr.startswith("/") or isinstance(want, (dict, list)):
-                    bad.append("resources.transcripts.usage.%s: '%s' is not a JSON pointer to a text, number or boolean" % (k, ptr))
-        for k in ("tokens", "model"):
-            if k in us and not (isinstance(us[k], str) and us[k].startswith("/")):
-                bad.append("resources.transcripts.usage.%s: %s is not a JSON pointer" % (k, _show(us[k])))
+        bad += _usage_problems("resources.transcripts.usage", tr.get("usage"))
     mem = res.get("memory")
     if isinstance(mem, dict) and isinstance(mem.get("user_dir"), str):
         add(_path_problem("resources.memory.user_dir", mem["user_dir"], True, inside_ok=False))
         if "{checkout_key}" in mem["user_dir"] and mem.get("checkout_key") is None:
             bad.append("resources.memory.user_dir: uses {checkout_key} but checkout_key is null")
+    return bad
+
+
+def _usage_problems(label, us):
+    """The rules of a usage reading rule ($defs/usage) a schema cannot state: select and skip map JSON pointers to a text, number or boolean,
+    tokens and model are JSON pointers."""
+    us = us if isinstance(us, dict) else {}
+    bad = []
+    for k in ("select", "skip"):
+        for ptr, want in (us.get(k) or {}).items() if isinstance(us.get(k), dict) else ():
+            if not isinstance(ptr, str) or not ptr.startswith("/") or isinstance(want, (dict, list)):
+                bad.append("%s.%s: '%s' is not a JSON pointer to a text, number or boolean" % (label, k, ptr))
+    for k in ("tokens", "model"):
+        if k in us and not (isinstance(us[k], str) and us[k].startswith("/")):
+            bad.append("%s.%s: %s is not a JSON pointer" % (label, k, _show(us[k])))
+    return bad
+
+
+USAGE_KEYS = ("select", "skip", "tokens", "fields", "model")
+
+
+def output_usage_problems(out, shape=False):
+    """The findings of a dispatch's output (format text or jsonl, and a usage rule that qargi local run adds up when the run ends): the rule
+    reads JSON lines, so it needs format jsonl, and it needs tokens and fields to have counts to add. shape: also the keys and types the
+    schema states (qargi local run, which reads a definition without the schema, asks for them)."""
+    if not isinstance(out, dict) or not isinstance(out.get("usage"), dict):
+        return ["dispatch.output.usage: %s is not an object" % _show(out["usage"])] if shape and isinstance(out, dict) and out.get("usage") is not None else []
+    us = out["usage"]
+    bad = []
+    if shape:
+        bad += ["dispatch.output.usage.%s: additional property is not allowed" % k for k in us if k not in USAGE_KEYS]
+        f = us.get("fields")
+        if "fields" in us and not (isinstance(f, list) and f and all(isinstance(x, str) for x in f)):
+            bad.append("dispatch.output.usage.fields: %s is not a non-empty list of names" % _show(f))
+        for k in ("select", "skip"):
+            if k in us and not isinstance(us[k], dict):
+                bad.append("dispatch.output.usage.%s: %s is not an object" % (k, _show(us[k])))
+    bad += _usage_problems("dispatch.output.usage", us)
+    if out.get("format") != "jsonl":
+        bad.append("dispatch.output.usage: the usage is read from JSON lines, so dispatch.output.format must be jsonl, not %s" % _show(out.get("format")))
+    bad += ["dispatch.output.usage: missing required property '%s' (the counts to add up)" % k for k in ("tokens", "fields") if k not in us]
     return bad
 
 
@@ -1023,6 +1143,12 @@ def validate2(d, name=None):
     disp = d.get("dispatch")
     if isinstance(disp, dict) and isinstance(disp.get("env_pass"), list):
         out += [("fail", "dispatch.env_pass: %s is never handed on: %s" % (n, env_pass_problem(n))) for n in disp["env_pass"] if isinstance(n, str) and env_pass_problem(n)]
+    if isinstance(disp, dict) and disp.get("home") is not None:
+        out += [("fail", m) for m in home_problems(disp["home"], disp.get("env_pass") if isinstance(disp.get("env_pass"), list) else (), shape=False)]
+        if disp.get("mode") != "command":
+            out.append(("fail", "dispatch.home: only a runtime that qargi local run starts (dispatch.mode command) has a run home"))
+    if isinstance(disp, dict):
+        out += [("fail", m) for m in output_usage_problems(disp.get("output"))]
     notes = d.get("notes")
     if d.get("surface") == "local" and isinstance(disp, dict) and disp.get("mode") == "in-session" and not (isinstance(notes, dict) and "spawn" in notes):
         out.append(("warn", "notes.spawn: a local runtime that works in the session has no way to tell a lead how to start a member without a 'spawn' note (qargi provider notes spawn)"))

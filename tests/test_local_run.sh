@@ -339,6 +339,8 @@ want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["codex","exec","--json","--ephem
 if [ "$(command -v codex)" = "$T/bin/codex" ]; then out=$($DA local run "$RUN" 2>"$T/err"); rc=$?; else rc=x; out="the first codex on PATH is $(command -v codex), not the fake: the real run is not made"; : > "$T/err"; fi
 { [ "$rc" = 0 ] && grep -q '^ARG\[--sandbox\]$' "$OUT/transcript" && grep -q '^ARG\[workspace-write\]$' "$OUT/transcript" \
   && sed -n '/^STDIN-BEGIN/,/^STDIN-END/p' "$OUT/transcript" | grep -q 'TASK: change the thing'; } && ok "codex: a real run of the fake gets the argv as separate arguments and the prompt on its standard input" || no "codex run: rc=$rc $out $(cat "$T/err")"
+{ grep -q '^USAGE=none: no line of the transcript is a usage report' <<<"$out" && [ "$(jq -c .usage.events "$RUN/dispatch.json")" = 0 ]; } \
+  && ok "a transcript with no usage event says so (USAGE=none) and records 0 events" || no "usage none: $(grep '^USAGE' <<<"$out") $(jq -c .usage "$RUN/dispatch.json" 2>&1)"
 out=$($DA local prepare --repo "$T/r" --base main --slug cxr0 --scratch "$T" --role review 2>&1); rc=$?
 { [ "$rc" != 0 ] && grep -q 'qargi provider accept codex --surface local --no-barrier --project rproj' <<<"$out"; } \
   && ok "codex, read-only: its sandbox barrier is not attested yet, so it counts as none and prepare refuses the review role with the accept command" || no "codex ro prepare: rc=$rc $out"
@@ -368,7 +370,94 @@ out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
 prep "$T/r" cxw3; task
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -q '"workspace-write"' <<<"$out"; } && ok "and its write run is not affected" || no "codex without group, write: rc=$rc $out"
+
+# --- the run home of codex (dispatch.home): CODEX_HOME is RUN/home/.codex, the user's ~/.codex/auth.json is linked into it for the run only ---
+# The fake codex says where CODEX_HOME is, whether auth.json is a link and the sha256 of what it reads through it (never the content), and
+# does what $T/codex-mode says: replace the link by a file, or put a link to the user's ~/.codex in place of the run home.
+cat > "$T/bin/codex" <<SH
+#!/usr/bin/env bash
+echo "CODEX_HOME=\${CODEX_HOME-unset}"
+a=\${CODEX_HOME:-/nonexistent}/auth.json
+if [ -L "\$a" ]; then echo AUTHLINK=yes; else echo AUTHLINK=no; fi
+[ ! -f "\$a" ] || echo "AUTHSUM=\$(sha256sum < "\$a" | cut -c1-64)"
+cat > /dev/null
+# the events of codex exec --json: two turns report their usage (the second without one count and with a count that is not a number);
+# a line that is not JSON and another event's usage are not counted
+echo '{"type":"thread.started","thread_id":"t-1"}'
+echo '{"type":"turn.completed","usage":{"input_tokens":1200,"cached_input_tokens":200,"output_tokens":300,"reasoning_output_tokens":50}}'
+echo 'not a JSON line'
+echo '{"type":"item.completed","usage":{"input_tokens":99999,"output_tokens":99999}}'
+echo '{"type":"turn.completed","usage":{"input_tokens":800,"cached_input_tokens":100,"cache_write_input_tokens":7,"output_tokens":150,"reasoning_output_tokens":true}}'
+case \$(cat "$T/codex-mode" 2>/dev/null) in
+  replace) rm -f "\$a"; echo 'a copy the runtime wrote' > "\$a";;
+  swap) src=\$(readlink "\$a"); mv "\$CODEX_HOME" "\$CODEX_HOME.moved"; ln -s "\$(dirname "\$src")" "\$CODEX_HOME";;
+esac
+exit 0
+SH
+chmod 755 "$T/bin/codex"
+SECRET=sk-test-$RANDOM$RANDOM-marker
+mkdir -p "$HOME/.codex"; printf '{"token": "%s"}\n' "$SECRET" > "$HOME/.codex/auth.json"
+SUM=$(sha256sum < "$HOME/.codex/auth.json" | cut -c1-64)
+setprov codex; prep "$T/r" hm1; task
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q '^HOME_ENV=CODEX_HOME$' <<<"$out" && grep -q "^HOME_DIR=$RUN/home/.codex\$" <<<"$out" && grep -q '^HOME_LINKS=auth.json$' <<<"$out"; } \
+  && ok "codex dry run: the run home is named by CODEX_HOME, and HOME_LINKS names the link" || no "home dry run: rc=$rc $(grep '^HOME' <<<"$out")"
+{ ! grep -q "$SECRET" <<<"$out" && ! grep -qF "$HOME/.codex" <<<"$out" && [ ! -e "$RUN/home/.codex" ]; } \
+  && ok "the dry run prints no content and no source path of the link, and makes nothing" || no "home dry run printed or made: $(grep -nF -e "$SECRET" -e "$HOME/.codex" <<<"$out") $(ls -A "$RUN/home")"
+out=$($DA local run "$RUN" 2>&1); rc=$?; tr=$OUT/transcript
+{ [ "$rc" = 0 ] && grep -q "^CODEX_HOME=$RUN/home/.codex\$" "$tr" && grep -q '^AUTHLINK=yes$' "$tr" && grep -q "^AUTHSUM=$SUM\$" "$tr"; } \
+  && ok "a codex run sees CODEX_HOME=RUN/home/.codex with auth.json a link to the user's file" || no "home run: rc=$rc $out $(grep -E '^(CODEX_HOME|AUTH)' "$tr")"
+# the usage of the run (dispatch.output.usage): the two turn.completed events are added up, field by field
+{ [ "$(jq -cS .usage "$RUN/dispatch.json")" = '{"events":2,"tokens":{"cache_write_input_tokens":7,"cached_input_tokens":300,"input_tokens":2000,"output_tokens":450,"reasoning_output_tokens":50}}' ] \
+  && grep -q '^USAGE=input_tokens=2000 cached_input_tokens=300 cache_write_input_tokens=7 output_tokens=450 reasoning_output_tokens=50 (2 events)$' <<<"$out"; } \
+  && ok "a codex run records the sum of its two turn.completed usages in dispatch.json and prints it as USAGE=" || no "usage: $(jq -c .usage "$RUN/dispatch.json") $(grep '^USAGE' <<<"$out")"
+{ [ ! -e "$RUN/home/.codex/auth.json" ] && [ ! -L "$RUN/home/.codex/auth.json" ] && [ "$(sha256sum < "$HOME/.codex/auth.json" | cut -c1-64)" = "$SUM" ]; } \
+  && ok "the link is removed when the run ends, and the user's file is as it was" || no "home link left: $(ls -lA "$RUN/home/.codex")"
+{ [ "$(jq -c .home "$RUN/dispatch.json")" = '{"dir":".codex","env":"CODEX_HOME","left":[],"links":["auth.json"],"not_linked":[]}' ] \
+  && ! grep -q -e "$SECRET" -e "$HOME/.codex" "$RUN/dispatch.json" && ! grep -q "$SECRET" <<<"$out" && ! grep -qF "$HOME/.codex" <<<"$out"; } \
+  && ok "dispatch.json records the link by name; neither it nor the output holds the content or the source path" || no "home record: $(jq -c .home "$RUN/dispatch.json") $out"
+# the runtime replaces the link by a file of its own (a sign-in written anew): that file is removed too, so no copy stays in the run
+echo replace > "$T/codex-mode"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ ! -e "$RUN/home/.codex/auth.json" ] && grep -q 'replaced during the run by a file' <<<"$out" && [ "$(sha256sum < "$HOME/.codex/auth.json" | cut -c1-64)" = "$SUM" ]; } \
+  && ok "a file the runtime put in place of the link is removed at the end, with a note" || no "home replaced: rc=$rc $out $(ls -lA "$RUN/home/.codex")"
+# a member puts a link to the user's ~/.codex in place of the run home: the end of the run removes nothing through it
+echo swap > "$T/codex-mode"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(sha256sum < "$HOME/.codex/auth.json" | cut -c1-64)" = "$SUM" ] && grep -q 'not the directory the run made' <<<"$out"; } \
+  && ok "a run home replaced by a link to the user's directory: nothing is removed through it, the user's file stays" || no "home swap: rc=$rc $out; source $(ls -l "$HOME/.codex" 2>&1)"
+rm -f "$RUN/home/.codex"; rm -rf "$RUN/home/.codex.moved"; rm -f "$T/codex-mode"
+# what a member left in the run directory before the run: a link in place of the run home is not followed, a file in place of the link is not replaced
+mkdir -p "$T/elsewhere"; ln -s "$T/elsewhere" "$RUN/home/.codex"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'not a plain directory of the run' <<<"$out" && [ -z "$(ls -A "$T/elsewhere")" ] && ! grep -q Traceback <<<"$out"; } \
+  && ok "a run home that is a link is refused, nothing is made where it points" || no "home planted link: rc=$rc $out $(ls -A "$T/elsewhere")"
+rm -f "$RUN/home/.codex"; mkdir -p "$RUN/home/.codex"; echo planted > "$RUN/home/.codex/auth.json"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'is not a link qargi made' <<<"$out" && [ "$(cat "$RUN/home/.codex/auth.json")" = planted ]; } \
+  && ok "a file in place of the link is refused and left alone" || no "home planted file: rc=$rc $out"
+rm -f "$RUN/home/.codex/auth.json"
+# the source: absent (signed out: no link, a note), or a link into a credential store (refused, the message names no path)
+mv "$HOME/.codex/auth.json" "$HOME/.codex/auth.keep"
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q '^HOME_LINKS=$' <<<"$out" && grep -q "^NOTE=the source of the run home's link 'auth.json' does not exist" <<<"$out"; } \
+  && ok "a source that does not exist is not linked, with a note (the runtime starts signed out)" || no "home missing source: rc=$rc $(grep -E '^(HOME|NOTE)' <<<"$out")"
+mkdir -p "$HOME/.ssh"; echo key > "$HOME/.ssh/id_test"; ln -s "$HOME/.ssh/id_test" "$HOME/.codex/auth.json"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q "the source of 'auth.json' is refused: it resolves into qargi's own directories or a credential store" <<<"$out" && ! grep -qF "$HOME" <<<"$out" && [ ! -e "$RUN/home/.codex/auth.json" ]; } \
+  && ok "a source that is a link into the user's ssh keys is refused, without naming where it resolves" || no "home source into .ssh: rc=$rc $out"
+rm -f "$HOME/.codex/auth.json"; rm -rf "$HOME/.ssh"; mv "$HOME/.codex/auth.keep" "$HOME/.codex/auth.json"
+# a definition whose run home breaks a rule is refused before anything runs (the rules are provider.home_problems, tested in test_provider.py)
+mk codexbad "$(jq '.provider = "codexbad" | del(.resources.contract_addenda) | .dispatch.home.link[0].from = "~/.ssh/id_ed25519"' lib/providers/codex.json)"
+setprov codexbad; prep "$T/r" hm2; task
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q "never linked into a run: the user's ssh keys" <<<"$out" && ! grep -q '^ARGV=' <<<"$out"; } && ok "a run home that links an ssh key is refused" || no "home bad definition: rc=$rc $out"
+rm -rf "$HOME/.codex"
 rm -f "$T/bin/codex"
+# without the fake, the first codex on PATH is the stub of tests/hermetic.sh: a real codex installed on the machine never runs in a test
+out=$(codex exec 2>&1); rc=$?
+{ [ "$(command -v codex)" = "$HERMETIC/bin/codex" ] && [ "$rc" = 127 ] && grep -q 'the real codex is not available' <<<"$out"; } \
+  && ok "with no fake, codex is the hermetic stub, which fails" || no "codex stub: $(command -v codex) rc=$rc $out"
 setprov fakecmd
 
 # --- an in-session runtime is not started here ----------------------------------------------------------------------------------------
