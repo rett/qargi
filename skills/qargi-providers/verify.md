@@ -19,7 +19,7 @@ A runtime held by `sandbox-args` (the shipped `codex`) passes `bash tests/confor
 
 - **Barrier, free**: the sandbox alone with no model call (`codex sandbox`; its `--help` says how a mode is chosen): a write in the scratch directory is refused under read-only and allowed under workspace-write.
 - **Smoke run**: one `qargi local run` on the fast tier at `low` effort: the JSON lines name the model and effort asked, the run signs in through the run home's link, and the last message lands in `OUT/report.md`.
-- **Before members rely on it**: a sign-in the runtime rewrites during a run reaches your file through the link; the MCP tool names have the form of `permission_rule`; `enabled_tools` hides a server's other tools; a write member can commit (the write class makes the clone's `.git` writable).
+- **Before members rely on it**: a sign-in the runtime rewrites during a run reaches your file, through the link or written back; the MCP tool names have the form of `permission_rule`; `enabled_tools` hides a server's other tools; a write member can commit (the write class makes the clone's `.git` writable).
 
 A shipped runtime records each result as `verified_on` and `source` in its definition, a change to the repository; a library pack records it with `attest`.
 
