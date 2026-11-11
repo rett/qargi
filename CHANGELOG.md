@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.11] - 2026-11-11
+
 ### Added
 - `qargi tool import SOURCE --tool-list FILE` and `qargi tool seal NAME --tool-list FILE` judge the tools of a tool pack by the server's own tool listing: FILE is the JSON result of the server's MCP `tools/list` (or the response that holds it as `result`), saved to a file; qargi reads the file and never contacts a server. A tool that the listing does not annotate `readOnlyHint: true`, or does not name, may not be `always_allow` or `auto` unless the pack sets `"write_ok": true`; a tool annotated `destructiveHint: true` and a tool the listing does not name are reported in the review as `NOTE` lines; the check of the tool's name still applies. The pack's record keeps the sha256 of the listing and what it says of each tool of the pack (`tool_list`: `read-only`, `write` or `destructive` per tool; `qargi tool show NAME` prints it). `tool_list` is part of the content hash and of the plan token, so it is approved with the pack and a change of it is drift; a pack without one hashes as before. A later `seal` without the option keeps the record's listing, and a tool added to the pack since then counts as not listed. A file that is no listing ends the verb with exit 1, and the option with any other verb is a usage error (exit 2). Without a listing the review is the name check alone, as before.
 
