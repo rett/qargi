@@ -34,7 +34,9 @@ adapter verbs). The review lists each with its sha256, interpreter and first lin
 
 The review dict: files [{path, size, sha256, exec, text}], executables [{path, sha256, why, interpreter, head}], fail [msg], warn [msg],
 urls [url], network ["path:line: text"], flags ["path:line: what"], secrets ["path:line"], needs_on_path [command], argv [text],
-env_pass [name] (the variables of the caller's environment the runtime's command receives; a credential-looking one is also a warning), bytes, count."""
+env_pass [name] (the variables of the caller's environment the runtime's command receives; a credential-looking one is also a warning),
+home {env, dir, links: ["FROM as TO"]} or None (dispatch.home: the files of the user's home linked into each run's home, as the
+definition names them; never their content or where they resolve), bytes, count."""
 import hashlib
 import json
 import os
@@ -319,9 +321,19 @@ def _env_pass(definition):
     return [x for x in v if isinstance(x, str)] if isinstance(v, list) else []
 
 
+def _home(definition):
+    """dispatch.home as the definition writes it, names only: {env, dir, links: ["FROM as TO"]}, or None."""
+    disp = definition.get("dispatch") if isinstance(definition, dict) and isinstance(definition.get("dispatch"), dict) else {}
+    h = disp.get("home")
+    if not isinstance(h, dict):
+        return None
+    links = [l for l in h.get("link") if isinstance(l, dict)] if isinstance(h.get("link"), list) else []
+    return {"env": str(h.get("env")), "dir": str(h.get("dir")), "links": ["%s as %s" % (l.get("from"), l.get("to")) for l in links]}
+
+
 def scan(root, definition=None):
     r = {"files": [], "executables": [], "fail": [], "warn": [], "urls": [], "network": [], "flags": [], "secrets": [], "needs_on_path": [],
-         "argv": [], "env_pass": [], "bytes": 0, "count": 0}
+         "argv": [], "env_pass": [], "home": None, "bytes": 0, "count": 0}
     files = _files(root)
     named = _named(definition)
     norm = {}
@@ -397,6 +409,7 @@ def scan(root, definition=None):
     r["needs_on_path"] = needs_on_path(definition)
     r["argv"] = _argv_text(definition)
     r["env_pass"] = _env_pass(definition)
+    r["home"] = _home(definition)
     for n in r["env_pass"]:
         if SECRET_NAME.search(n.upper()):
             r["warn"].append("dispatch.env_pass hands %s to the command: the name looks like a credential, and it reaches everything that command does; approve it only if the "
@@ -434,7 +447,7 @@ def executables(review):
 
 def lines(review, title):
     """The review as text: files, every executable with what it is, URLs, network commands, flagged constructs, what is needed on the PATH,
-    the argv templates, and the failures last. A failure line starts with FAIL."""
+    the argv templates, the files linked into the run home (names only), and the failures last. A failure line starts with FAIL."""
     out = ["== review of %s" % title]
     out.append("files: %d, %d bytes" % (review["count"], review["bytes"]))
     for f in review["files"][:60]:
@@ -455,6 +468,10 @@ def lines(review, title):
         out.append("runs: %s" % a)
     if review.get("env_pass"):
         out.append("environment handed to the command (env_pass): %s" % ", ".join(review["env_pass"]))
+    if review.get("home"):
+        h = review["home"]
+        out.append("run home (dispatch.home): %s is RUN/home/%s; files of your home linked into it for each run: %s"
+                   % (h["env"], h["dir"], ", ".join(h["links"]) or "none"))
     if review["urls"]:
         out.append("URLs mentioned:")
         out.extend("  " + u for u in review["urls"])
