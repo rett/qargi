@@ -332,11 +332,17 @@ setprov fakecmd
 cp "$T/bin/fakellm" "$T/bin/codex"
 setprov codex; prep "$T/r" cx1; task
 out=$($DA local run "$RUN" --dry-run 2>"$T/err"); rc=$?
-want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["codex","exec","--json","--ephemeral","-C",$c,"-m","gpt-6.1-terra","-o","FINAL","--sandbox","workspace-write","--add-dir",$o]')
+want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["codex","exec","--json","--ephemeral","-C",$c,"-m","gpt-6.1-terra","-o","FINAL","--sandbox","workspace-write","--add-dir",$o,"--add-dir",($c + "/.git")]')
 { [ "$rc" = 0 ] && [ "$(arg0 <<<"$out" | finarg)" = "$want" ] && grep -q '^COMMAND=codex$' <<<"$out" && grep -q '^PROMPT_VIA=stdin$' <<<"$out" && grep -q '^CLASS=write$' <<<"$out"; } \
-  && ok "codex, write: codex exec in the clone, the balanced model, the last message to the run's own new file, the workspace-write sandbox with OUT added" || no "codex write argv: rc=$rc [$(arg0 <<<"$out")] want [$want] $(cat "$T/err")"
+  && ok "codex, write: codex exec in the clone, the balanced model, the last message to the run's own new file, the workspace-write sandbox with OUT and the clone's .git added" || no "codex write argv: rc=$rc [$(arg0 <<<"$out")] want [$want] $(cat "$T/err")"
+# the clone's .git is a writable root of the sandbox: one an earlier run left as a link (to anywhere) refuses the run, so the grant never leaves the run
+mv "$CLONE/.git" "$CLONE/.git.real"; ln -s "$CLONE/.git.real" "$CLONE/.git"
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -qF "$CLONE/.git ({clone}/.git in dispatch.argv of codex) passes through a link" <<<"$out" && ! grep -q '^ARGV=' <<<"$out"; } \
+  && ok "codex: a clone whose .git is a link is refused before the sandbox is told to let the member write it" || no "codex .git link: rc=$rc $out"
+rm -f "$CLONE/.git"; mv "$CLONE/.git.real" "$CLONE/.git"
 out=$($DA local run "$RUN" --dry-run --model fast --effort max 2>&1); rc=$?
-want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["codex","exec","--json","--ephemeral","-C",$c,"-m","gpt-6-luna","-c","model_reasoning_effort=max","-o","FINAL","--sandbox","workspace-write","--add-dir",$o]')
+want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["codex","exec","--json","--ephemeral","-C",$c,"-m","gpt-6-luna","-c","model_reasoning_effort=max","-o","FINAL","--sandbox","workspace-write","--add-dir",$o,"--add-dir",($c + "/.git")]')
 { [ "$rc" = 0 ] && [ "$(arg0 <<<"$out" | finarg)" = "$want" ] && ! grep -q '^NOTE=effort' <<<"$out"; } && ok "codex: a tier is passed as the catalog's id and an effort as -c model_reasoning_effort" || no "codex model and effort: rc=$rc [$(arg0 <<<"$out")] want [$want]"
 if [ "$(command -v codex)" = "$T/bin/codex" ]; then out=$($DA local run "$RUN" 2>"$T/err"); rc=$?; else rc=x; out="the first codex on PATH is $(command -v codex), not the fake: the real run is not made"; : > "$T/err"; fi
 { [ "$rc" = 0 ] && grep -q '^ARG\[--sandbox\]$' "$OUT/transcript" && grep -q '^ARG\[workspace-write\]$' "$OUT/transcript" \
@@ -355,7 +361,8 @@ out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
 jq '.models.accept_no_barrier = {local: {by: "owner", at: "2026-11-11", reason: "test"}}' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
 want=$(jq -nc --arg c "$CLONE" '["codex","exec","--json","--ephemeral","-C",$c,"-m","gpt-6.1-terra","-o","FINAL","--sandbox","read-only"]')
-{ [ "$rc" = 0 ] && [ "$(arg0 <<<"$out" | finarg)" = "$want" ] && grep -q '^CLASS=read-only$' <<<"$out"; } && ok "codex, read-only (accepted): the read-only sandbox and no write group" || no "codex ro argv: rc=$rc [$(arg0 <<<"$out")] want [$want]"
+{ [ "$rc" = 0 ] && [ "$(arg0 <<<"$out" | finarg)" = "$want" ] && grep -q '^CLASS=read-only$' <<<"$out" && ! grep -q -e '--add-dir' -e '[.]git' <<<"$(arg0 <<<"$out")"; } \
+  && ok "codex, read-only (accepted): the read-only sandbox and no write group (no writable directory, the clone's .git included)" || no "codex ro argv: rc=$rc [$(arg0 <<<"$out")] want [$want]"
 jq 'del(.models.accept_no_barrier)' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
 # copies in the library, attested: with the read-only group the barrier holds (partial, with its note); without it a read-only run is refused
 mk codexro "$(jq '.provider = "codexro" | del(.resources.contract_addenda)' lib/providers/codex.json)"
@@ -684,6 +691,43 @@ out=$($DA local run "$RUN" 2>&1); rc=$?
 { [ "$rc" = 2 ] && grep -qF "the manifest of an earlier run ($OUT/manifest.json) is not a plain file of its own" <<<"$out" && [ "$(cat "$T/victim4")" = precious ] && [ ! -e "$RUN/dispatch.json" ]; } \
   && ok "a link as the manifest of a read-only run refuses the run; what it points to is untouched" || no "pk4 link: rc=$rc $out"
 rm -f "$OUT/manifest.json" "$T/victim4" "$T/bin/codex"
+
+# --- a write run of codex returns the normal series: the member commits in its clone (its .git is a writable root of the sandbox) and collects ---
+# End to end with the conformance stub in place of the command: before the stub writes the last message, the fake does what a build member does with
+# the run's git wrapper ($GIT): a change, a commit with a body, git format-patch into OUT/patches, the manifest and series.md. The lead then verifies,
+# checks the series, applies it in a disposable clone of the repository and runs DONE there.
+cat > "$T/bin/codex" <<SH
+#!/usr/bin/env bash
+c='' a=("\$@")
+while [ \$# -gt 0 ]; do [ "\$1" = -C ] && c=\$2; shift; done
+r=\$(dirname "\$c"); o=\$r/out
+b=\$(awk '\$1 == "local" && \$2 == "refs/heads/main" {print \$3}' "\$r/refs.before")
+( cd "\$c" || exit 1
+  printf 'ok\n' > CHANGED.txt; "\$GIT" add CHANGED.txt
+  printf 'Changed: the file the task asks for\n\nCHANGED.txt holds ok, which DONE checks.\n' > "\$r/tmp-msg"
+  "\$GIT" commit -q -F "\$r/tmp-msg"; rm -f "\$r/tmp-msg"
+  mkdir -p "\$o/patches"; "\$GIT" format-patch -q --binary -o "\$o/patches" "\$b..HEAD"
+  s=\$("\$GIT" rev-parse HEAD)
+  jq -n --arg b "\$b" --arg s "\$s" '{status: "DONE", base: {branch: "main", sha: \$b}, branch: "agent/wx1", scope: ["CHANGED.txt"],
+    done: {command: "grep -qx ok CHANGED.txt", exit_code: 0, output_tail: ""}, gates: [], commits: [{sha: \$s, subject: "Changed: the file the task asks for"}],
+    commit_advice: [{sha: \$s, subject: "Changed: the file the task asks for", why_separate: "one change", depends_on: [], builds_alone: true}],
+    patch_groups: [{name: "the change", why: "the task", commits: [\$s]}], touched_paths: [{path: "CHANGED.txt", reason: "the task"}]}' > "\$o/manifest.json"
+  printf '0001 Changed: the file the task asks for\n' > "\$o/series.md" ) || exit 9
+exec "$STUBX" "\${a[@]}"
+SH
+chmod 755 "$T/bin/codex"
+setprov codex; prep "$T/r" wx1; printf 'TASK: add CHANGED.txt holding ok\nDONE: grep -qx ok CHANGED.txt\n\nBASE: main\nSCOPE: CHANGED.txt\n' > "$RUN/task.md"
+out=$($DA local run "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q '^OUTCOME=ok' <<<"$out" && [ -f "$OUT/patches/0001-Changed-the-file-the-task-asks-for.patch" ] && [ -f "$OUT/manifest.json" ] && [ -f "$OUT/report.md" ] \
+  && [ "$(jq -c --arg g "$CLONE/.git" '.argv | index(["--add-dir", $g]) != null' "$RUN/dispatch.json")" = true ]; } \
+  && ok "e2e write: a codex build run (the stub) given its clone's .git commits and returns the series, the manifest and the report" || no "e2e write run: rc=$rc $out $(ls -A "$OUT")"
+out=$($DA local verify "$RUN" 2>&1); rc=$?; [ "$rc" = 0 ] && ok "e2e write: qargi local verify passes" || no "e2e write verify: rc=$rc $out"
+out=$($DA review check "$OUT" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q '^0 fail' <<<"$out"; } && ok "e2e write: qargi review check passes the series" || no "e2e write review check: rc=$rc $out"
+git clone -q "$T/r" "$T/apply-wx1"
+{ $LC -C "$T/apply-wx1" am -q "$OUT"/patches/*.patch && ( cd "$T/apply-wx1" && grep -qx ok CHANGED.txt ); } \
+  && ok "e2e write: the lead applies the series in a disposable clone and DONE passes there" || no "e2e write apply: $(ls "$T/apply-wx1")"
+rm -rf "$T/apply-wx1"; rm -f "$T/bin/codex"
 
 # --- an in-session runtime is not started here ----------------------------------------------------------------------------------------
 prep "$T/r2" c1; task

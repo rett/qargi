@@ -46,6 +46,8 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
                        events, tokens, model) and to a USAGE= line. Only whole numbers count; a line that is not JSON is passed over.
 Placeholders (the closed set): member, model, effort_native, prompt_file, prompt_arg, clone, run_dir, out_dir, project, run_config, final_message
 (and the short names effort, out, prompt). agent_file and session_id belong to runtimes with agent files and to resume; they are refused here.
+A path of the run in the argv ({clone}, {out_dir}, {run_dir}, alone or followed by a path such as {clone}/.git) stays inside its directory and, where it
+exists, passes through no link, or the run is refused: a sandbox may be told to let the member write it.
   {final_message}      the file a runtime writes the member's last message to (a flag of its own, such as an output-last-message option): never a
                        file of OUT, but RUN/final.XXXXXXXXXXXX/message.md, in a directory of the run made new for each run (mode 700, a name no
                        earlier run used). When the process has ended the lead opens it without following a link or waiting for a writer and takes
@@ -194,6 +196,26 @@ def expand(items, values, cls, where, runtime):
         elif it["class"] == cls:
             out += expand(it["then"], values, cls, where, runtime)
     return out
+
+
+RUN_PATH = re.compile(r"\{(clone|out_dir|out|run_dir)\}(/[^\s=:,]*)?")
+
+
+def check_run_paths(items, values, runtime):
+    """A path the argv gives the runtime inside the run ({clone}, {out_dir}, {run_dir}, alone or with a path after it, such as {clone}/.git, which a
+    sandbox may be told to let the member write): it must stay inside its directory (no '..' out of it) and, where it exists, pass through no link.
+    The run directory is a member's to write: a link planted as RUN/clone/.git by an earlier run would point a writable root of the sandbox anywhere."""
+    for s in walk_strings(items):
+        for m in RUN_PATH.finditer(s):
+            base = values.get(ALIASES.get(m.group(1), m.group(1)))
+            if not base:
+                continue
+            path = os.path.normpath(base + (m.group(2) or ""))
+            if path != base and not path.startswith(base + os.sep):
+                fail("dispatch.argv of %s: %s leaves the directory {%s} names" % (runtime, m.group(0), m.group(1)))
+            if os.path.lexists(path) and os.path.realpath(path) != path:
+                fail("%s (%s in dispatch.argv of %s) passes through a link; a path the runtime is given in the run must be the run's own, so the run is refused"
+                     % (path, m.group(0), runtime))
 
 
 def class_extra(disp, cls, runtime):
@@ -682,6 +704,7 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
               "final_message": final["path"] if final else ""}
     argv = expand(argv_t, values, cls, "dispatch.argv", runtime)
     extra = expand(class_extra(disp, cls, runtime), values, cls, "dispatch.class_argv", runtime)
+    check_run_paths(argv_t + class_extra(disp, cls, runtime), values, runtime)
     if extra:
         at = next((i for i, a in enumerate(argv) if via == "arg" and prompt in a), len(argv))
         argv[at:at] = extra

@@ -22,7 +22,8 @@ The cases:
   barrier-sandbox-args  read_only_barrier (a gate)   for the barrier kind sandbox-args: the argv qargi local run builds for a read-only run
                                        (lib/local_run.py, with a value for every placeholder) carries the read-only arguments (the class_argv
                                        of the class, the {"class": "read-only"} groups), sets each of their flags only there, and carries
-                                       none of the arguments of the write class; whether the runtime's sandbox holds is attested
+                                       no flag with its value of the write class's arguments (a write grant such as --add-dir DIR); whether
+                                       the runtime's sandbox holds is attested
   adapter-cost     session_budget_ceiling   the harness, case 7 (cost is in cents or null), for a pack with an adapter and a conformance/ stub
 Pack code (an adapter, a command renderer, the stub) runs only from a private copy of a SEALED pack, after the hashes were checked
 (provider.exec_copy, whose copy provider.discard_exec_copy removes, with the temporary directory around it); an unsealed pack, or a
@@ -388,6 +389,20 @@ def settings(args):
     return out
 
 
+def pairs(args):
+    """The flags of an argument list with their values, as tuples: (FLAG, VALUE) for a flag followed by a value or written FLAG=VALUE, (FLAG,) for one
+    alone. A pair the write class's arguments give that a read-only argv carries too is a write grant in a read-only run (--add-dir DIR)."""
+    out = []
+    for i, a in enumerate(args):
+        if not a.startswith("-") or a in ("-", "--"):
+            continue
+        flag, eq, val = a.partition("=")
+        if not eq and i + 1 < len(args) and not args[i + 1].startswith("-"):
+            val = args[i + 1]
+        out.append((flag, val) if val else (flag,))
+    return out
+
+
 def group_args(disp, cls):
     """The argument lists a run of class cls gets from its own groups (each {"class": cls} group of argv, also inside an if-group, and
     class_argv), as written (with their placeholders). For the harness (lib/conformance/run.sh), which looks for each in the argv a command
@@ -452,6 +467,9 @@ def barrier_sandbox_args(doc, directory, name, sealed, usable):
     outside = sorted(k for k, n in settings(ro).items() if settings(argv["read-only"]).get(k, 0) > n)
     if outside:
         return {"barrier-sandbox-args": result("fail", "a read-only run also sets %s outside its read-only arguments, which can override them" % ", ".join(outside))}
+    granted = [" ".join(p) for p in pairs(group["write"]) if p in pairs(argv["read-only"])]
+    if granted:
+        return {"barrier-sandbox-args": result("fail", "a read-only run carries %s of the write class (a write grant, such as a writable directory)" % "; ".join(granted))}
     return {"barrier-sandbox-args": result("pass", "a read-only run carries %s%s; that the runtime's sandbox holds is attested" % (
         " ".join(ro), " (a write run: %s)" % " ".join(group["write"]) if group["write"] else ""))}
 
