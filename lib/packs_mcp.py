@@ -7,9 +7,9 @@ One answer for the three places that need it:
   lib/guard.py          a member's call of an MCP tool is judged by the policy the role's packs give that tool (refusal)
 
 What a runtime calls a tool is data of its definition (lib/providers/NAME.json, resources.mcp): permission_rule is the form of the name, with
-{server} for the name of the tool pack and {tool} for the tool (Claude Code: mcp__{server}__{tool}); name_key is how the runtime writes each of the
-two inside it (nonword-underscore: every character that is not an ASCII letter, a digit, _ or - becomes _, so the tool platform.list_items of the
-pack kb is mcp__kb__platform_list_items; absent or null: as written). Two tools of a role that get the same name this way cannot be told apart,
+{server} for the name of the tool pack and {tool} for the tool (mcp__{server}__{tool}, say); name_key is how the runtime writes each of the
+two inside it (nonword-underscore: every character that is not an ASCII letter, a digit, _ or - becomes _, so under that rule the tool
+platform.list_items of the pack kb is mcp__kb__platform_list_items; absent or null: as written). Two tools of a role that get the same name this way cannot be told apart,
 so neither is given to a member and a call of the name is refused.
 
 The packs of a role are the ones `qargi tool effective PROJECT ROLE` lists for the local surface: every tool pack linked at a scope that reaches the

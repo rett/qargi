@@ -5,8 +5,8 @@
 Nothing here names a runtime. What the render looks like comes from the runtime's definition (lib/providers/NAME.json, read through
 lib/provider.py): the skills go under resources.skills.project_dir; the tool packs become MCP server entries in the file
 resources.mcp.file, built from resources.mcp.entry under resources.mcp.root_pointer, with a permission rule per tool from
-resources.mcp.permission_rule, the names in it written as the runtime writes them (resources.mcp.name_key, lib/packs_mcp.py: for Claude Code
-the tool platform.list_items of the pack kb is mcp__kb__platform_list_items); those rules go into a settings file (renderers.packs.settings.file) at resources.settings.allow_pointer
+resources.mcp.permission_rule, the names in it written as the runtime writes them (resources.mcp.name_key, lib/packs_mcp.py: under the rule
+mcp__{server}__{tool} and the key nonword-underscore the tool platform.list_items of the pack kb is mcp__kb__platform_list_items); those rules go into a settings file (renderers.packs.settings.file) at resources.settings.allow_pointer
 and the ask_pointer and deny_pointer of renderers.packs.settings; renderers.packs.label is how the runtime is called in the plan, and
 session.render_target is the --target name. A runtime whose definition has no usable mcp resource gets its skills only: its tool packs
 are left out of the render and said so, like a pack the runtime cannot use. A tool pack is always an https URL with an explicit allowlist
