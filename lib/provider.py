@@ -1040,6 +1040,40 @@ def _mcp_problems(mcp):
     return bad
 
 
+RUN_CONFIG_PLACES = ("home", "run")
+
+
+def run_config_problems(disp, resources, shape=True):
+    """The findings of a dispatch's run_config (the MCP file of one member run, which qargi local run renders): a runtime that qargi local run starts,
+    in home only with a run home (and a file name that is not one of its links), and resources.mcp with the tool lists that hold a run's tools. shape:
+    also the types the schema states (for a caller that has not validated the definition)."""
+    rc = disp.get("run_config") if isinstance(disp, dict) else None
+    if rc is None:
+        return []
+    if not isinstance(rc, dict):
+        return ["dispatch.run_config: %s is not an object {in, file}" % _show(rc)] if shape else []
+    bad = []
+    if shape:
+        bad += ["dispatch.run_config.%s: additional property is not allowed" % k for k in rc if k not in ("in", "file")]
+        if rc.get("in") not in RUN_CONFIG_PLACES:
+            bad.append("dispatch.run_config.in: %s is not one of home, run" % _show(rc.get("in")))
+        if not isinstance(rc.get("file"), str) or not HOME_LINK_NAME.match(rc["file"]):
+            bad.append("dispatch.run_config.file: %s is not a plain file name (letters, digits, . _ and -, no /)" % _show(rc.get("file")))
+    if disp.get("mode") != "command":
+        bad.append("dispatch.run_config: only a runtime that qargi local run starts (dispatch.mode command) gets a file per run")
+    home = disp.get("home")
+    if rc.get("in") == "home":
+        if not isinstance(home, dict):
+            bad.append("dispatch.run_config.in: home needs dispatch.home, the run home the file goes in")
+        elif any(isinstance(ln, dict) and ln.get("to") == rc.get("file") for ln in home.get("link") or [] if isinstance(home.get("link"), list)):
+            bad.append("dispatch.run_config.file: %s is also a link of the run home" % _show(rc.get("file")))
+    mcp = resources.get("mcp") if isinstance(resources, dict) else None
+    tl = mcp.get("tool_lists") if isinstance(mcp, dict) else None
+    if not isinstance(tl, dict) or not (tl.get("allow") or tl.get("deny")):
+        bad.append("dispatch.run_config: needs resources.mcp with tool_lists: the list in each server entry is what holds the MCP tools of a run")
+    return bad
+
+
 def _usage_problems(label, us):
     """The rules of a usage reading rule ($defs/usage) a schema cannot state: select and skip map JSON pointers to a text, number or boolean,
     tokens and model are JSON pointers."""
@@ -1210,6 +1244,7 @@ def validate2(d, name=None):
             out.append(("fail", "dispatch.home: only a runtime that qargi local run starts (dispatch.mode command) has a run home"))
     if isinstance(disp, dict):
         out += [("fail", m) for m in output_usage_problems(disp.get("output"))]
+        out += [("fail", m) for m in run_config_problems(disp, d.get("resources"), shape=False)]
     notes = d.get("notes")
     if d.get("surface") == "local" and isinstance(disp, dict) and disp.get("mode") == "in-session" and not (isinstance(notes, dict) and "spawn" in notes):
         out.append(("warn", "notes.spawn: a local runtime that works in the session has no way to tell a lead how to start a member without a 'spawn' note (qargi provider notes spawn)"))

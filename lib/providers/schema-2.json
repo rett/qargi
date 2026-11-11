@@ -98,6 +98,16 @@
                 }
               }
             },
+            "run_config": {
+              "description": "mode command only: the MCP file of one member run, rendered by qargi local run when the run starts from resources.mcp (its format, root pointer, entry and tool_lists, which it needs) for the run's role, as the lead's registry of local runs records it, and the run's class: each server lists the tools a member may call (never an always_ask tool, under the read-only class only a declared read). in home: RUN/home/DIR/FILE, the run home of dispatch.home (which it needs), for a runtime that reads its configuration from its home by itself; in run: RUN/config/FILE. {run_config} in argv is the path of the file, and has no value when no tool pack gives the role a tool: nothing is written then, and a file of that name left in the place is removed. --dry-run prints the path and the tool names (RUN_CONFIG=, RUN_CONFIG_TOOLS=), never the file. file is a plain file name and not one of the run home's links. Absent or null: a run gets no MCP file.",
+              "type": ["object", "null"],
+              "additionalProperties": false,
+              "required": ["in", "file"],
+              "properties": {
+                "in": {"enum": ["home", "run"]},
+                "file": {"type": "string", "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$"}
+              }
+            },
             "output": {
               "description": "what the command writes on its standard output (OUT/transcript): format text or jsonl (one JSON object per line). usage (jsonl only, with tokens and fields): the lines it picks are the runtime's own report of the tokens a turn used; qargi local run adds up each field over those lines when the run ends, records the sums in RUN/dispatch.json (usage: events, tokens, and model when the rule has it) and prints them as USAGE=. A cost_report claim of a command runtime rests on it.",
               "type": ["object", "null"],

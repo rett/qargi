@@ -189,6 +189,24 @@ class Roles(unittest.TestCase):
         put(os.path.join(self.conf, "packs", "links.json"), json.dumps({"links": []}))
         self.assertEqual(lists("build", "review"), {}, "no tool pack reaches the roles: no server")
 
+    def test_the_mcp_file_of_a_run_holds_the_tools_of_its_role(self):
+        """lib/packs_render.py run_config, the file lib/local_run.py writes for one member run: the shipped codex form, read back as TOML."""
+        import tomllib
+        import packs_render as R
+        with open(os.path.join(ROOT, "lib", "providers", "codex.json")) as f:
+            mcp = json.load(f)["resources"]["mcp"]
+        got = R.run_config(self.conf, "alpha", ["review"], {"review": True}, mcp)
+        self.assertEqual(tomllib.loads(got["data"].decode()), {"mcp_servers": {
+            "all": {"url": "https://mcp.example.net/all", "enabled_tools": ["ping"]},
+            "kb": {"url": "https://mcp.example.net/kb", "enabled_tools": ["getStatus", "platform.list_items"]},
+            "look": {"url": "https://mcp.example.net/look", "enabled_tools": ["lookup"]}}})
+        self.assertEqual(got["tools"], M.member_tools(self.conf, "alpha", ["review"], {"review": True}, M.form_of(mcp)))
+        self.assertEqual(sorted(tomllib.loads(R.run_config(self.conf, "alpha", ["write"], {}, mcp)["data"].decode())["mcp_servers"]), ["all"])
+        with self.assertRaises(ValueError):
+            R.run_config(self.conf, "alpha", ["build"], {}, dict(mcp, tool_lists=None))        # no list in the entry: a run gets no server unheld
+        put(os.path.join(self.conf, "packs", "links.json"), json.dumps({"links": []}))
+        self.assertIsNone(R.run_config(self.conf, "alpha", ["build"], {}, mcp))
+
     def test_a_pack_counts_only_as_it_was_approved(self):
         p = os.path.join(self.conf, "packs", "tools", "ops.json")
         self.assertIsNone(M.refusal(self.conf, "alpha", "build", False, "mcp__ops__list_jobs", self.form))

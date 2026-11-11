@@ -140,12 +140,14 @@ class Shipped(Tree):
         self.assertEqual((d["mode"], d["prompt"], d["output"]["format"], d["timeout_s"], d["cwd"]), ("command", {"via": "stdin"}, "jsonl", 3600, "{clone}"))
         self.assertEqual(d["output"]["usage"], {"select": {"/type": "turn.completed"}, "tokens": "/usage",                  # tokens only: cost_report partial
                                                 "fields": ["input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens", "reasoning_output_tokens"]})
-        self.assertEqual(d["argv"], ["codex", "exec", "--json", "--ephemeral", "--ignore-user-config", "-C", "{clone}",
+        self.assertEqual(d["argv"], ["codex", "exec", "--json", "--ephemeral", "-C", "{clone}",
                                      {"if": "model", "then": ["-m", "{model}"]}, {"if": "effort", "then": ["-c", "model_reasoning_effort={effort}"]},
                                      "-o", "{out_dir}/report.md",
                                      {"class": "write", "then": ["--sandbox", "workspace-write", "--add-dir", "{out_dir}"]},
                                      {"class": "read-only", "then": ["--sandbox", "read-only"]}])
         self.assertNotIn("class_argv", d)
+        self.assertEqual(d["run_config"], {"in": "home", "file": "config.toml"})      # the run's MCP file is CODEX_HOME/config.toml, the one configuration Codex reads
+        self.assertEqual(P.run_config_problems(d, cx["resources"]), [])
         self.assertFalse(any("dangerously" in a or "bypass" in a for a in d["argv"] if isinstance(a, str)))
         m = P.models_of("codex", "local")
         self.assertEqual([P.model_for(m, t) for t in P.TIERS], ["gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-astra"])   # ids: the runtime passes ids
@@ -885,6 +887,32 @@ class Schema2(unittest.TestCase):
         bad({"root_pointer": "servers"}, "resources.mcp.root_pointer: 'servers' is not a JSON pointer")
         self.assertEqual(fails(runtime(resources={"mcp": dict(good, format="json", entry={"url": "{url}", "timeout": 1.5})}), "mylocal"), [])   # JSON holds a number
         self.assertEqual(fails(runtime(resources={"mcp": dict(good, tool_lists=None)}), "mylocal"), [])
+
+    def test_the_mcp_file_of_a_run_needs_a_command_runtime_a_place_and_tool_lists(self):
+        mcp = {"file": "c.toml", "format": "toml", "root_pointer": "/servers", "entry": {"url": "{url}"}, "permission_rule": "mcp__{server}__{tool}",
+               "tool_lists": {"allow": "/enabled_tools"}}
+        home = {"env": "MY_HOME", "dir": ".my", "link": [{"from": "~/.my/auth.json", "to": "auth.json"}]}
+
+        def d(rc, **over):
+            r = runtime(resources={"mcp": over.pop("mcp", mcp)})
+            r["dispatch"].update(dict({"run_config": rc}, **over))
+            return r
+        self.assertEqual(fails(d({"in": "run", "file": "mcp.toml"}), "mylocal"), [])
+        self.assertEqual(fails(d({"in": "home", "file": "config.toml"}, home=home), "mylocal"), [])
+        self.assertEqual(fails(d(None), "mylocal"), [])
+
+        def bad(r, needle):
+            self.one(r, needle, name="mylocal")
+        bad(d({"in": "home", "file": "config.toml"}), "dispatch.run_config.in: home needs dispatch.home")
+        bad(d({"in": "home", "file": "auth.json"}, home=home), "dispatch.run_config.file: 'auth.json' is also a link of the run home")
+        bad(d({"in": "run", "file": "m.toml"}, mcp=dict(mcp, tool_lists=None)), "dispatch.run_config: needs resources.mcp with tool_lists")
+        bad(d({"in": "run", "file": "m.toml"}, mcp=None), "dispatch.run_config: needs resources.mcp with tool_lists")
+        bad(d({"in": "run", "file": "../m.toml"}), "dispatch.run_config.file: '../m.toml' does not match ^")
+        bad(d({"in": "elsewhere", "file": "m.toml"}), "dispatch.run_config.in: 'elsewhere' is not one of home, run")
+        bad(d({"in": "run", "file": "m.toml", "x": 1}), "dispatch.run_config.x: additional property is not allowed")
+        bad(d({"in": "run", "file": "m.toml"}, mode="in-session"), "dispatch.run_config: only a runtime that qargi local run starts")
+        self.assertEqual(P.run_config_problems({"mode": "command", "run_config": {"in": "run", "file": "a/b"}}, {"mcp": mcp}),
+                         ["dispatch.run_config.file: 'a/b' is not a plain file name (letters, digits, . _ and -, no /)"])
 
     def test_an_exclusion_form_needs_the_keys_that_form_reads(self):
         def excl(e):

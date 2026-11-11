@@ -50,7 +50,7 @@
       "value": "yes",
       "verified_on": null,
       "source": "codex mcp add --help; codex mcp list --json reads the [mcp_servers.NAME] tables of CODEX_HOME/config.toml and refuses an enabled_tools that is not a list, codex-cli 0.167.1",
-      "note": "qargi packs apply --target codex renders the tool packs into config.toml, one [mcp_servers.PACK] table each with url and enabled_tools: the tools a member may call for the roles the pack reaches (never an always_ask tool, for a read-only role only a declared read); a server runs outside the Codex sandbox, so the tool list is what holds it; the tool names and enabled_tools are not yet verified in a real run"
+      "note": "qargi packs apply --target codex renders the tool packs into config.toml, one [mcp_servers.PACK] table each with url and enabled_tools: the tools a member may call for the roles the pack reaches (never an always_ask tool, for a read-only role only a declared read); qargi local run writes the same file for the run's role and class as CODEX_HOME/config.toml in the run home (dispatch.run_config), the one configuration file the member's Codex reads, and none when no tool pack reaches the role; a server runs outside the Codex sandbox, so the tool list is what holds it; the tool names and enabled_tools are not yet verified in a real run"
     },
     "cost_report": {
       "value": "partial",
@@ -113,7 +113,6 @@
       "exec",
       "--json",
       "--ephemeral",
-      "--ignore-user-config",
       "-C",
       "{clone}",
       {"if": "model", "then": ["-m", "{model}"]},
@@ -132,6 +131,7 @@
       "dir": ".codex",
       "link": [{"from": "~/.codex/auth.json", "to": "auth.json"}]
     },
+    "run_config": {"in": "home", "file": "config.toml"},
     "timeout_s": 3600,
     "output": {
       "format": "jsonl",

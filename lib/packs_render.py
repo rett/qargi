@@ -555,6 +555,38 @@ def with_lists(servers, every, allowed, lists):
     return kept
 
 
+def run_config(conf, project, roles, read_only, mcp):
+    """The MCP file of one member run (lib/local_run.py, dispatch.run_config): {"data": bytes, "tools": [the runtime's names], "servers": {pack: [tools]}}
+    for the tools a member serving ROLES of PROJECT may call (read_only: {role: True under the read-only class}), or None when no tool pack gives
+    it one. Only a runtime whose resources.mcp has tool lists gets one (the list in each server entry is what holds the tools: a run never gets a
+    server without it). Raises ValueError (TomlError) or packs_mcp.McpError when the file cannot be made; never reads a vault value, and the
+    bytes are the caller's to keep out of what it prints."""
+    mcp = mcp if isinstance(mcp, dict) else {}
+    lists = tool_lists_of(mcp)
+    if not lists or mcp.get("format", "json") not in ("json", "toml") or not pointer_parts(mcp.get("root_pointer")) or not isinstance(mcp.get("entry"), dict):
+        raise ValueError("the runtime's resources.mcp gives no file a run can be given (a format, a root pointer, an entry and tool lists)")
+    M = packs_mcp()
+    form = M.form_of(mcp)
+    got = member_lists(conf, project, roles, read_only, form)
+    if not got:
+        return None
+    C = lib_module("packs_check")
+    servers, every = {}, {}
+    for pack in sorted(got):
+        doc = C.read_tool(C.item_path(os.path.join(conf, "packs"), "tool", pack))
+        if not isinstance(doc, dict) or not isinstance(doc.get("url"), str) or not isinstance(doc.get("tools"), dict):
+            raise M.McpError("the tool pack %s cannot be read as a tool pack" % pack)
+        servers[pack] = fill(mcp["entry"], {"url": doc["url"], "name": pack})
+        every[pack] = [t for t in doc["tools"] if isinstance(t, str)]
+    tg = {"mcp": mcp_form(mcp, lists), "settings": None}
+    servers = with_lists(servers, every, got, lists)
+    data = shared_files(servers, [], [], tg).get(mcp["file"])
+    if data is None:
+        return None
+    return {"data": data, "tools": sorted(M.native(form, p, t) for p in servers for t in got[p]),
+            "servers": {p: sorted(got[p]) for p in sorted(servers)}}
+
+
 def tool_files(inp, tools):
     """(the shared files {name: bytes}, the packs that need credentials, {pack: [the tools listed]} or None for a runtime without tool lists) of the
     tool packs of a project render. The lists are the union over the roles each pack reaches of what a member may call for that role (member_lists).
