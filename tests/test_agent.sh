@@ -467,7 +467,7 @@ $DA agent refresh mcp0 >/dev/null 2>&1
 [ "$(tools_of mcp0)" = "$BASE_TOOLS, mcp__kb__getStatus, mcp__kb__platform_delete_knowledge, mcp__kb__platform_list_items, mcp__kb__repo_push" ] \
   && ok "refresh gives it the tools of the pack under the runtime's names, without the always_ask one" || no "tools of a build member: $(tools_of mcp0)"
 [ "$(hook_of mcp0)" = "qargi __guard --project pbase --roles build" ] && ok "and its hook command names its project and roles" || no "hook of a build member: $(hook_of mcp0)"
-! $DA agent list | grep mcp0 | grep -qw 'STALE\|DRIFT' && ok "and it is current again" || no "still flagged: $($DA agent list | grep mcp0)"
+$DA agent list | grep -q "mcp0 .*mcp0\.md$" && ok "and it is current again" || no "still flagged: $($DA agent list | grep mcp0)"
 $DA agent add mcp1 --project pbase --roles review >/dev/null 2>&1
 [ "$(tools_of mcp1)" = "$BASE_TOOLS, mcp__kb__getStatus, mcp__kb__platform_list_items" ] && [ "$(hook_of mcp1)" = "qargi __guard --project pbase --roles review --class read-only" ] \
   && ok "a member of read-only roles gets the declared reads alone, and its class stays in the hook command" || no "review member: $(tools_of mcp1) / $(hook_of mcp1)"
