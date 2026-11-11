@@ -13,11 +13,11 @@
   "worktree": "94b9af1305afafc4",
   "succeeds": "arc-qargi"
  },
- "renewed_at": "2026-11-11T11:32:20Z",
+ "renewed_at": "2026-11-11T11:37:41Z",
  "finished_at": null,
  "updated_by": "rett@arc",
- "rev": 3,
- "updated_at": "2026-11-11T11:32:20Z",
+ "rev": 4,
+ "updated_at": "2026-11-11T11:37:41Z",
  "feature": "mcpsafety",
  "project": "qargi"
 }
