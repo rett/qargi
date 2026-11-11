@@ -2960,6 +2960,74 @@ class EnvPass(LibraryBase):
         self.assertEqual(R.scan(d, {})["env_pass"], [])
 
 
+class RunHome(LibraryBase):
+    """dispatch.home: the member's own home directory under the run home, named by a variable, with files of the user's home linked into it
+    for the run. What may be named and linked is checked by the definition check and again by qargi local run (provider.home_problems)."""
+
+    CMD = {"mode": "command", "argv": ["fakecli", "run"], "prompt": {"via": "stdin"}, "output": {"format": "text"}}
+
+    def with_home(self, home, **disp):
+        return fake_runtime(dispatch=dict(self.CMD, home=home, **disp))
+
+    def test_the_codex_runtime_links_only_its_sign_in(self):
+        self.assertEqual(shipped("codex.json")["dispatch"]["home"], {"env": "CODEX_HOME", "dir": ".codex", "link": [{"from": "~/.codex/auth.json", "to": "auth.json"}]})
+        self.assertEqual(P.home_problems(shipped("codex.json")["dispatch"]["home"]), [])
+        self.assertEqual(fails(self.with_home({"env": "FAKECLI_HOME", "dir": ".fakecli"}), "fakecli"), [])                 # link is optional
+
+    def test_refusals(self):
+        ok_link = [{"from": "~/.fakecli/auth.json", "to": "auth.json"}]
+        cases = (
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": ok_link, "copy": True}, "dispatch.home.copy: additional property is not allowed"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.fakecli/auth.json", "to": "auth.json", "mode": "copy"}]}, "dispatch.home.link[0].mode: additional property"),
+            ({"dir": ".f"}, "missing required property 'env'"),
+            ({"env": "FAKECLI_HOME"}, "missing required property 'dir'"),
+            ({"env": "HOME", "dir": ".f"}, "dispatch.home.env: HOME is never set for a runtime"),
+            ({"env": "PATH", "dir": ".f"}, "dispatch.home.env: PATH is never set"),
+            ({"env": "GIT_DIR", "dir": ".f"}, "dispatch.home.env: GIT_DIR is never set"),
+            ({"env": "QARGI_CONF", "dir": ".f"}, "dispatch.home.env: QARGI_CONF is never set"),
+            ({"env": "XDG_CONFIG_HOME", "dir": ".f"}, "dispatch.home.env: XDG_CONFIG_HOME is never set"),
+            ({"env": "LD_PRELOAD", "dir": ".f"}, "dispatch.home.env: LD_PRELOAD is never set"),
+            ({"env": "TZ", "dir": ".f"}, "qargi local run sets it for every member"),
+            ({"env": "FAKECLI_HOME", "dir": "../out"}, "dispatch.home.dir: '../out' is not a directory inside the run home"),
+            ({"env": "FAKECLI_HOME", "dir": "/abs"}, "dispatch.home.dir: '/abs' is not a directory inside the run home"),
+            ({"env": "FAKECLI_HOME", "dir": "a/./b"}, "is not a directory inside the run home"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "/etc/fakecli/auth.json", "to": "auth.json"}]}, "is not a plain path under the home"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/../other/auth.json", "to": "auth.json"}]}, "is not a plain path under the home"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~", "to": "auth.json"}]}, "is not a plain path under the home"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.qargi/config/credentials/marshal_ed25519", "to": "k"}]}, "qargi's own configuration, state and credentials"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.qargi", "to": "q"}]}, "qargi's own configuration"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.ssh/id_ed25519", "to": "k"}]}, "the user's ssh keys"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.gnupg/private-keys-v1.d/x.key", "to": "k"}]}, "the user's keys"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.git-credentials", "to": "c"}]}, "stored git logins"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.config/gh/hosts.yml", "to": "h"}]}, "a forge credential"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.aws/credentials", "to": "c"}]}, "a cloud credential"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.fakecli/auth.json", "to": "sub/auth.json"}]}, "is not a plain file name"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.fakecli/auth.json", "to": ".."}]}, "is not a plain file name"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": ok_link + [{"from": "~/.fakecli/other.json", "to": "auth.json"}]}, "'auth.json' is linked twice"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.f/%d" % i, "to": "f%d" % i} for i in range(9)]}, "more than the 8"),
+        )
+        for home, needle in cases:
+            with self.subTest(needle):
+                d = self.with_home(home)
+                f = fails(d, "fakecli")
+                self.assertTrue(any(needle in m for m in f), f)
+                self.assertTrue(any(needle in m for m in P.home_problems(home)), P.home_problems(home))     # what qargi local run asks too
+        self.assertEqual([m for m in fails(self.with_home({"env": "FAKECLI_HOME", "dir": ".f", "link": ok_link})) if "dispatch.home" in m], [])
+
+    def test_the_variable_is_not_also_handed_on_and_only_a_command_runtime_has_a_run_home(self):
+        d = self.with_home({"env": "FAKECLI_HOME", "dir": ".f"}, env_pass=["FAKECLI_HOME"])
+        self.assertTrue(any("is also in dispatch.env_pass" in m for m in fails(d, "fakecli")), fails(d, "fakecli"))
+        d = fake_runtime(dispatch={"mode": "in-session", "home": {"env": "FAKECLI_HOME", "dir": ".f"}})
+        self.assertTrue(any("only a runtime that qargi local run starts" in m for m in fails(d, "fakecli")), fails(d, "fakecli"))
+
+    def test_a_definition_with_a_refused_run_home_cannot_be_imported(self):
+        d = self.with_home({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.ssh/id_ed25519", "to": "k"}]})
+        rc, out, err = self.q("import", self.source(doc=d))
+        self.assertEqual(rc, 1, (out, err))
+        self.assertIn("FAIL: dispatch.home.link[0].from: '~/.ssh/id_ed25519' is never linked into a run", out)
+        self.assertFalse(self.stored("fakecli"))
+
+
 class Attest(LibraryBase):
     def setUp(self):
         super().setUp()

@@ -74,7 +74,31 @@
         "renderers": {"type": ["object", "null"], "description": "how a neutral definition becomes native files (built later)"},
         "dispatch": {
           "type": ["object", "null"],
-          "properties": {"mode": {"enum": ["in-session", "command", "adapter"]}},
+          "properties": {
+            "mode": {"enum": ["in-session", "command", "adapter"]},
+            "home": {
+              "description": "mode command only: a home directory of the member's own, RUN/home/DIR, that qargi local run names in the variable env, with each file `from` (a file under the user's home, ~/PATH) linked into it as `to` for the length of the run. The link is made when the run starts and removed when it ends, its target is never printed and the file is never copied; a source that does not exist is left out with a note. env may not be a variable qargi sets or never hands on (env_pass_problem) nor one of env_pass; dir is a relative path; from may not be qargi's own directory or a credential store of the user's other tools (ssh, gpg, git, forges, clouds, keyrings); to is a plain file name. At most 8 links. Absent or null: the member's home is the run's home and nothing is linked.",
+              "type": ["object", "null"],
+              "additionalProperties": false,
+              "required": ["env", "dir"],
+              "properties": {
+                "env": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
+                "dir": {"type": "string", "minLength": 1},
+                "link": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["from", "to"],
+                    "properties": {
+                      "from": {"type": "string"},
+                      "to": {"type": "string"}
+                    }
+                  }
+                }
+              }
+            }
+          },
           "description": "how a member is started: in the lead's own session, as a command line, or through the adapter (built later)"
         },
         "barrier": {

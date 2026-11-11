@@ -107,6 +107,11 @@
       "via": "stdin"
     },
     "cwd": "{clone}",
+    "home": {
+      "env": "CODEX_HOME",
+      "dir": ".codex",
+      "link": [{"from": "~/.codex/auth.json", "to": "auth.json"}]
+    },
     "timeout_s": 3600,
     "output": {
       "format": "jsonl"
