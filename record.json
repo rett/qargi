@@ -4,20 +4,13 @@
  "goal": "0.2.11: MCP pack safety",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "rett@arc",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-11T11:32:20Z",
-  "worktree": "94b9af1305afafc4",
-  "succeeds": "arc-qargi"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-11T11:56:45Z",
- "finished_at": null,
+ "finished_at": "2026-11-11T11:57:09Z",
  "updated_by": "rett@arc",
- "rev": 7,
- "updated_at": "2026-11-11T11:56:45Z",
+ "rev": 8,
+ "updated_at": "2026-11-11T11:57:09Z",
  "feature": "mcpsafety",
  "project": "qargi"
 }
