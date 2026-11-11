@@ -570,7 +570,7 @@ fin fail; finrun --again
   && grep -qF "PREVIOUS_REPORT=kept as $OUT/report.md.previous: this run published no report" <<<"$out" && [ "$(jq -c '.report | [.state, .previous]' "$RUN/dispatch.json")" = '["none","kept"]' ] && nostage; } \
   && ok "a failed rerun with no last message leaves no report.md: the earlier one is kept as report.md.previous, and the output and dispatch.json say so" || no "final failed rerun: rc=$rc $out $(ls -A "$OUT")"
 fin report; finrun --again
-{ [ "$rc" = 0 ] && [ -f "$OUT/report.md" ] && [ ! -e "$OUT/report.md.previous" ] && ! grep -q '^PREVIOUS_REPORT=' <<<"$out"; } && ok "the next run that publishes a report removes the set-aside one" || no "final after kept: rc=$rc $out $(ls -A "$OUT")"
+{ [ "$rc" = 0 ] && [ -f "$OUT/report.md" ] && [ ! -e "$OUT/report.md.previous" ] && grep -q '^PREVIOUS_REPORT=replaced' <<<"$out"; } && ok "the next run that publishes a report replaces the set-aside one, and says so" || no "final after kept: rc=$rc $out $(ls -A "$OUT")"
 # what the runtime (or a member) leaves at the private file instead of a report: never followed, published or waited on; a name only is removed
 for m in link hard fifo dir empty big binary; do
   fin "$m"; finrun --again
@@ -603,6 +603,87 @@ for m in link hard fifo dir; do
 done
 rm -rf "$OUT/report.md" "$T/fin-mode" "$T/victim3" "$T/dispatch.keep"
 rm -f "$T/bin/codex"
+
+# --- a read-only run whose report is the runtime's last message is packaged by the lead: report.md and the minimal manifest, from the run's record ---
+# End to end with the conformance stub of codex in place of the command (its last message is a review report with Findings and a verdict), on the
+# attested copy codexro: what the stub writes is chosen by $T/stub-final (a file, or empty for none); $T/stub-patch makes it leave a patch in OUT.
+STUBX=$PWD/tests/providers/codex/stub
+cat > "$T/bin/codex" <<SH
+#!/usr/bin/env bash
+c='' a=("\$@")
+while [ \$# -gt 0 ]; do [ "\$1" = -C ] && c=\$2; shift; done
+if [ -f "$T/stub-patch" ]; then mkdir -p "\$(dirname "\$c")/out/patches"; printf 'From 0 Mon Sep 17 00:00:00 2001\nSubject: [PATCH] x\n\nx\n' > "\$(dirname "\$c")/out/patches/0001-x.patch"; fi
+if [ -f "$T/stub-final" ]; then QARGI_STUB_FINAL=\$(cat "$T/stub-final"); export QARGI_STUB_FINAL; fi
+exec "$STUBX" "\${a[@]}"
+SH
+chmod 755 "$T/bin/codex"
+setprov codexro; prep "$T/r" pk1 review; task
+BSHA=$(git -C "$T/r" rev-parse main)
+out=$($DA local run "$RUN" --effort low 2>&1); rc=$?
+{ [ "$rc" = 0 ] && cmp -s tests/providers/codex/final-message.md "$OUT/report.md" && grep -q "^MANIFEST=$OUT/manifest.json (written by the lead: status DONE" <<<"$out" \
+  && [ "$(jq -r .manifest.state "$RUN/dispatch.json")" = written ]; } && ok "e2e: a read-only codex run (the stub) returns its report as OUT/report.md and the lead writes OUT/manifest.json" || no "e2e run: rc=$rc $out"
+jq -e --arg b "$BSHA" --arg id "${RUN##*/}" '.status == "DONE" and .commits == [] and .gates == [] and .done.exit_code == null and .touched_paths == [] and .scope == []
+  and .base == {branch: "main", sha: $b} and .artifacts == [{path: "report.md", kind: "report"}] and (has("verdict") | not)
+  and .run.id == $id and .run.role == "review" and .run.runtime == "codexro" and .run.class == "read-only" and .run.model == "gpt-6.1-terra"
+  and .run.effort == "low" and .run.effort_native == "low" and .run.outcome == "ok" and .run.exit == 0 and .run.packaged_by == "qargi local run"' "$OUT/manifest.json" >/dev/null \
+  && ok "the manifest is the minimal report-only one, with the run's id, role, runtime, class, model, effort and base from the lead's record; no test, no verdict" || no "e2e manifest: $(cat "$OUT/manifest.json")"
+out=$($DA local verify "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && ! grep -q 'holds no report' <<<"$out"; } && ok "e2e: qargi local verify passes" || no "e2e verify: rc=$rc $out"
+out=$($DA review check "$OUT" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q '^OK report-only run: report.md holds a Findings section and ends with its verdict' <<<"$out"; } && ok "e2e: qargi review check passes the package" || no "e2e review check: rc=$rc $out"
+pkrun=$RUN
+out=$($DA local clean "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ ! -e "$pkrun" ]; } && ok "e2e: qargi local clean closes it" || no "e2e clean: rc=$rc $out"
+# a rerun that returns no report leaves neither the report nor the lead's manifest of the earlier run as this run's
+prep "$T/r" pk2 review; task
+out=$($DA local run "$RUN" 2>&1); rc=$?; [ "$rc" = 0 ] && [ -f "$OUT/manifest.json" ] || no "pk2 first run: rc=$rc $out"
+: > "$T/stub-final"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ ! -e "$OUT/report.md" ] && [ ! -e "$OUT/manifest.json" ] && [ -f "$OUT/report.md.previous" ] && [ -f "$OUT/manifest.json.previous" ] \
+  && grep -q '^MANIFEST=none: no report was published' <<<"$out" && grep -q '^PREVIOUS_MANIFEST=kept as' <<<"$out" && grep -q '^PREVIOUS_REPORT=kept as' <<<"$out"; } \
+  && ok "missing report: no manifest is written, and the earlier report and manifest are set aside, not taken for this run's" || no "pk2 missing: rc=$rc $out $(ls -A "$OUT")"
+out=$($DA review check "$OUT" 2>&1); rc=$?
+{ [ "$rc" = 1 ] && grep -q 'FAIL no patches found in .*, and no report.md (or PREFIXreport.md) with a Findings section' <<<"$out"; } && ok "missing report: review check fails as before" || no "pk2 review check: rc=$rc $out"
+out=$($DA local verify "$RUN" 2>&1); grep -q 'holds no report' <<<"$out" && ok "missing report: local verify says OUT holds no report" || no "pk2 verify: $out"
+out=$($DA local clean "$RUN" 2>&1); rc=$?
+{ [ "$rc" != 0 ] && grep -q 'holds no manifest' <<<"$out" && [ -d "$RUN" ]; } && ok "missing report: local clean refuses it, as before" || no "pk2 clean: rc=$rc $out"
+rm -f "$T/stub-final"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ -f "$OUT/manifest.json" ] && [ ! -e "$OUT/manifest.json.previous" ] && [ ! -e "$OUT/report.md.previous" ] && grep -q '^PREVIOUS_MANIFEST=replaced' <<<"$out"; } \
+  && ok "the next run with a report writes the manifest again and drops the set-aside ones" || no "pk2 again: rc=$rc $out $(ls -A "$OUT")"
+# an invalid verdict, or no Findings heading: the report is published and packaged, and review check refuses it with its own words
+printf '# Findings\n\nnone\n\nverdict: maybe\n' > "$T/badverdict.md"; printf '%s\n' "$T/badverdict.md" > "$T/stub-final"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+out=$($DA review check "$OUT" 2>&1); rc2=$?
+{ [ "$rc" = 0 ] && [ "$rc2" = 1 ] && grep -q 'report.md: the last line must be `verdict: accept` or `verdict: revise` (it is: verdict: maybe)' <<<"$out"; } \
+  && ok "invalid verdict: review check fails with today's refusal" || no "invalid verdict: rc=$rc rc2=$rc2 $out"
+printf 'all fine\n\nverdict: accept\n' > "$T/badverdict.md"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+out=$($DA review check "$OUT" 2>&1); rc2=$?
+{ [ "$rc" = 0 ] && [ "$rc2" = 1 ] && grep -q 'and no report.md (or PREFIXreport.md) with a Findings section' <<<"$out"; } && ok "no Findings heading: review check fails as before" || no "no findings: rc=$rc rc2=$rc2 $out"
+printf 'BLOCKED\nthe clone cannot be read\n\n# Findings\n\nnone\n\nverdict: revise\n' > "$T/badverdict.md"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(jq -r .status "$OUT/manifest.json")" = BLOCKED ] && grep -q 'status BLOCKED' <<<"$out"; } && ok "a report that begins with BLOCKED is packaged as status BLOCKED" || no "blocked: rc=$rc $out"
+rm -f "$T/stub-final" "$T/badverdict.md"
+# a read-only run that leaves patches in OUT: no manifest, and local verify refuses it as before
+touch "$T/stub-patch"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ -f "$OUT/patches/0001-x.patch" ] && [ ! -e "$OUT/manifest.json" ] && grep -q '^MANIFEST=none: OUT holds patches' <<<"$out"; } && ok "read-only patches: no manifest is written" || no "ro patches: rc=$rc $out"
+out=$($DA local verify "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'is a read-only run (review) and its output holds patches' <<<"$out"; } && ok "read-only patches: local verify refuses them, as before" || no "ro patches verify: rc=$rc $out"
+out=$($DA review check "$OUT" 2>&1); rc=$?; [ "$rc" = 1 ] && ok "read-only patches: review check fails" || no "ro patches review check: rc=$rc $out"
+rm -f "$T/stub-patch"; rm -rf "$OUT/patches"
+# a write run is not packaged: its manifest is the member's
+setprov codexro; prep "$T/r" pk3; task
+out=$($DA local run "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ -f "$OUT/report.md" ] && [ ! -e "$OUT/manifest.json" ] && ! grep -q '^MANIFEST=' <<<"$out" && [ "$(jq -r 'has("manifest")' "$RUN/dispatch.json")" = false ]; } \
+  && ok "a write run publishes the report and writes no manifest (the member's own)" || no "pk3 write: rc=$rc $out"
+# a manifest.json left in a read-only OUT that is not a plain file of its own refuses the run before anything starts
+prep "$T/r" pk4 review; task; echo precious > "$T/victim4"; ln -s "$T/victim4" "$OUT/manifest.json"
+out=$($DA local run "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -qF "the manifest of an earlier run ($OUT/manifest.json) is not a plain file of its own" <<<"$out" && [ "$(cat "$T/victim4")" = precious ] && [ ! -e "$RUN/dispatch.json" ]; } \
+  && ok "a link as the manifest of a read-only run refuses the run; what it points to is untouched" || no "pk4 link: rc=$rc $out"
+rm -f "$OUT/manifest.json" "$T/victim4" "$T/bin/codex"
 
 # --- an in-session runtime is not started here ----------------------------------------------------------------------------------------
 prep "$T/r2" c1; task

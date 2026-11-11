@@ -55,6 +55,13 @@ Placeholders (the closed set): member, model, effort_native, prompt_file, prompt
                        that publishes none leaves it there, where no check takes it for this run's report. A report.md that is not a plain file of
                        its own refuses the run before anything starts. RUN/dispatch.json (report) and the REPORT= and PREVIOUS_REPORT= lines say
                        what became of both.
+                       A read-only run with a final message is packaged by the lead, since its member may write nothing, OUT included: when the
+                       outcome is ok, the report was published and OUT holds no patch, OUT/manifest.json is written in the minimal report-only format
+                       of `qargi review save` (status, base, commits [], the report in artifacts), with what the lead recorded of the run (run: id,
+                       role, runtime, class, model and effort as passed, start, seconds, exit, outcome), taken from the lead's registry and from
+                       RUN/refs.before as read before the member started, never from the member. No test result and no verdict is written: review
+                       check still reads the verdict in the report. The manifest of an earlier run is set aside as OUT/manifest.json.previous like
+                       the report, and the MANIFEST= and PREVIOUS_MANIFEST= lines and dispatch.json (manifest) say what became of both.
 
 The process gets the environment of the run's git wrapper (RUN/git: HOME is RUN/home, no global git configuration, no ssh, no prompts,
 the author qargi) and TMPDIR of the run, plus QARGI_MEMBER_RUN (the run directory: the mark that tells the marshal a member is running, wherever the
@@ -513,6 +520,28 @@ def registry_tmp(run):
     return (t.rstrip("/") or "") if isinstance(t, str) and os.path.isabs(t) else ""
 
 
+def base_sha(run, base):
+    """The commit of BASE that `local prepare` recorded in RUN/refs.before (the line `local refs/heads/BASE SHA`), else "". Read as a file of the run:
+    no link followed, no writer waited for, a regular file only (as review save and local report read it)."""
+    want = "local refs/heads/%s " % base
+    try:
+        fd = os.open(os.path.join(run, "refs.before"), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return ""
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return ""
+        with os.fdopen(fd, "rb", closefd=False) as f:
+            for raw in f:
+                line = raw.decode("utf-8", "replace").rstrip("\n")
+                if line.startswith(want):
+                    sha = line[len(want):].strip()
+                    return sha if re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", sha) else ""
+    finally:
+        os.close(fd)
+    return ""
+
+
 def read_run_file(path, limit, what):
     """The text of a file of the run directory, "" when it is absent. The run directory is a member's to write: the file is opened without following a
     link and without waiting for a writer (a pipe in its place would stop the lead), and must be a regular file, or the run is refused."""
@@ -638,10 +667,16 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     member = member or read_run_file(os.path.join(run, "ability"), 256, "the run's ability").strip()
     if not member:
         fail("%s is missing or empty: a run made by qargi local prepare records its ability there" % os.path.join(run, "ability"))
-    final = None
+    final = package = None
     if "final_message" in used:                          # a name no earlier run used: the directory is made new when the run starts (make_final)
         stage = FINAL_PREFIX + secrets.token_hex(6)
         final = {"dir": stage, "path": os.path.join(run, stage, FINAL_NAME)}
+        if cls == "read-only":                           # what the lead's manifest says of the run, read before the member starts
+            reg = registry_line(run)
+            base = reg.get("base") if isinstance(reg.get("base"), str) else ""
+            package = {"registered": bool(reg), "role": reg.get("ability") if isinstance(reg.get("ability"), str) else "",
+                       "slug": reg.get("slug") if isinstance(reg.get("slug"), str) else "", "base": base,
+                       "base_sha": base_sha(run, base) if base else "", "effort": effort or None}
     values = {"member": member, "model": mname, "effort_native": native or "", "prompt_file": pfile, "prompt_arg": prompt if via == "arg" else "",
               "clone": clone, "run_dir": run, "out_dir": out, "project": project, "run_config": rcfg["path"] if rcfg and rcfg["data"] is not None else "",
               "final_message": final["path"] if final else ""}
@@ -659,7 +694,7 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
             "timeout_s": to, "env_pass": passed, "env": child_env(run, tmp, passed, home), "exit": ex, "model": mname, "effort_native": native,
             "home": home, "notes": notes + ([note] if note else []) + home_notes(home) + ([rcfg["note"]] if rcfg and rcfg["note"] else []),
             "output_format": (disp.get("output") or {}).get("format", "text"), "usage": (disp.get("output") or {}).get("usage"), "run_config": rcfg,
-            "final": final}
+            "final": final, "package": package}
 
 
 def home_notes(home):
@@ -851,11 +886,16 @@ def sub_fd(run, name):
 
 def set_aside(ofd, name):
     """OUT/name of an earlier run is renamed name.previous (over an older one), so nothing of an earlier run reads as this run's. True when there
-    was one. check_own has refused, before anything was made, a name there that is not a plain file of its own; a rename moves the name only."""
+    is one now: just set aside, or set aside by an earlier run that published none. check_own has refused, before anything was made, a name there
+    that is not a plain file of its own; a rename moves the name only."""
     try:
         os.lstat(name, dir_fd=ofd)
     except FileNotFoundError:
-        return False
+        try:
+            os.lstat(name + PREVIOUS, dir_fd=ofd)
+            return True
+        except FileNotFoundError:
+            return False
     try:
         os.rename(name, name + PREVIOUS, src_dir_fd=ofd, dst_dir_fd=ofd)
     except OSError as e:
@@ -972,8 +1012,8 @@ def drop_previous(ofd, name):
 
 
 def finish_report(run, out, final, previous):
-    """Take the member's last message from its private file and publish it as OUT/report.md; the record of what became of it and of the report of
-    an earlier run (previous: one was set aside), for dispatch.json and the output."""
+    """Take the member's last message from its private file and publish it as OUT/report.md; (the record of what became of it and of the report of
+    an earlier run (previous: one was set aside), for dispatch.json and the output; the bytes published, or None)."""
     state, data, why, kept = take_final(run, final)
     rec = {"final_message": final["path"], "report": None, "bytes": None, "state": state, "why": why, "kept": kept}
     if state == "ok":
@@ -990,7 +1030,7 @@ def finish_report(run, out, final, previous):
             rec.update(state="refused", why="it could not be published as %s: %s" % (os.path.join(out, REPORT), bad))
     published = rec["state"] == "published"
     rec["previous"] = "none" if not previous else "replaced" if published else "kept"
-    return rec
+    return rec, (data if published else None)
 
 
 def report_lines(rec, out):
@@ -1006,6 +1046,75 @@ def report_lines(rec, out):
     return lines
 
 
+def out_has_patches(out):
+    """Does OUT hold a patch or a bundle (*.patch or run.bundle in OUT or a directory directly in it, as local verify looks)? No link is followed."""
+    def names(d):
+        try:
+            with os.scandir(d) as it:
+                return [(e.name, e.path, e.is_dir(follow_symlinks=False)) for e in it]
+        except OSError:
+            return []
+    for name, path, isdir in names(out):
+        if name.endswith(".patch") or name == "run.bundle":
+            return True
+        if isdir and any(n.endswith(".patch") or n == "run.bundle" for n, _, _ in names(path)):
+            return True
+    return False
+
+
+def package(run, out, plan, report, text, outcome, code, started, seconds, previous):
+    """The lead's OUT/manifest.json for a read-only run whose report is the runtime's last message: the minimal report-only format of `review save`,
+    with what the lead recorded of the run. It is written only for a run the lead's registry names, whose outcome is ok, whose report was published
+    and whose OUT holds no patch; it claims no test and no verdict (review check reads the verdict in the report). The record for dispatch.json."""
+    pk = plan["package"]
+    rec = {"manifest": None, "state": "none", "why": None}
+    if not pk["registered"]:
+        rec["why"] = "the lead's registry names no run %s, so nothing vouches for what a manifest would say" % run
+    elif out_has_patches(out):
+        rec["why"] = "OUT holds patches: a read-only run's product is a report, never patches (qargi local verify refuses the run)"
+    elif outcome != "ok":
+        rec["why"] = "the run's outcome is %s" % outcome
+    elif report["state"] != "published":
+        rec["why"] = "no report was published"
+    else:
+        first = next((ln.strip() for ln in text.decode("utf-8").splitlines() if ln.strip()), "")   # the report as it was published
+        blocked = re.match(r"BLOCKED\b", first) is not None
+        man = {"status": "BLOCKED" if blocked else "DONE", "blocked_reason": "the member's report begins with BLOCKED" if blocked else "",
+               "task": "read-only run %s %s: the report is the member's last message, packaged by the lead (qargi local run)" % (pk["role"], pk["slug"]),
+               "base": {"branch": pk["base"], "sha": pk["base_sha"]}, "branch": "", "scope": [],
+               "done": {"command": "", "exit_code": None, "output_tail": ""}, "gates": [], "commits": [], "touched_paths": [],
+               "artifacts": [{"path": REPORT, "kind": "report"}],
+               "run": {"id": os.path.basename(run), "role": pk["role"], "runtime": plan["runtime"], "class": plan["class"], "model": plan["model"],
+                       "effort": pk["effort"], "effort_native": plan["effort_native"], "started": PE.now(started), "seconds": seconds, "exit": code,
+                       "outcome": outcome, "packaged_by": "qargi local run"}}
+        ofd = sub_fd(run, "out")
+        try:
+            bad = publish(ofd, MANIFEST, (json.dumps(man, indent=2) + "\n").encode("utf-8"))
+            if bad is None:
+                drop_previous(ofd, MANIFEST)
+        finally:
+            os.close(ofd)
+        if bad is None:
+            rec.update(state="written", manifest=os.path.join(out, MANIFEST), status=man["status"])
+        else:
+            rec["why"] = "it could not be written as %s: %s" % (os.path.join(out, MANIFEST), bad)
+    rec["previous"] = "none" if not previous else "replaced" if rec["state"] == "written" else "kept"
+    return rec
+
+
+def manifest_lines(rec, out):
+    lines = []
+    if rec["state"] == "written":
+        lines.append("MANIFEST=%s (written by the lead: status %s, commits [], the report in artifacts; no test and no verdict)" % (rec["manifest"], rec["status"]))
+    else:
+        lines.append("MANIFEST=none: %s" % rec["why"])
+    if rec["previous"] == "replaced":
+        lines.append("PREVIOUS_MANIFEST=replaced: the manifest of the earlier run is replaced by this run's")
+    elif rec["previous"] == "kept":
+        lines.append("PREVIOUS_MANIFEST=kept as %s: this run wrote none, so the earlier one is not taken for this run's" % os.path.join(out, MANIFEST + PREVIOUS))
+    return lines
+
+
 def run_it(plan, run):
     out = os.path.join(run, "out")
     if os.path.islink(out) or (os.path.exists(out) and not os.path.isdir(out)):
@@ -1015,9 +1124,11 @@ def run_it(plan, run):
         fail("%s is not inside the run" % out)
     dispatch = os.path.join(run, "dispatch.json")
     check_own(dispatch, "the dispatch record")
-    fin = plan["final"]
+    fin, pk = plan["final"], plan["package"]
     if fin:                                              # a report.md the lead would not set aside refuses the run before anything is made
         check_own(os.path.join(out, REPORT), "the report of an earlier run")
+    if pk:                                               # and so does a manifest.json of a read-only run, whose manifest is the lead's
+        check_own(os.path.join(out, MANIFEST), "the manifest of an earlier run")
     write_prompt(run, plan["prompt_file"], plan["prompt"])
     argv = [plan["exe"]] + plan["argv"][1:]
     home = plan["home"]
@@ -1025,7 +1136,7 @@ def run_it(plan, run):
     home_left = []
     started = time.time()
     timed_out = False
-    previous = False
+    previous = prev_manifest = False
     try:
         if plan["run_config"]:
             put_run_config(run, plan["run_config"], home)
@@ -1036,6 +1147,7 @@ def run_it(plan, run):
                 ofd = sub_fd(run, "out")
                 try:
                     previous = set_aside(ofd, REPORT)
+                    prev_manifest = set_aside(ofd, MANIFEST) if pk else False
                 finally:
                     os.close(ofd)
                 make_final(run, fin)
@@ -1064,10 +1176,12 @@ def run_it(plan, run):
         outcome = "failed"
     else:
         outcome = plan["exit"].get(str(code), plan["exit"].get("*", "failed"))
-    report = finish_report(run, out, fin, previous) if fin else None
+    seconds = round(time.time() - started, 1)
+    report, text = finish_report(run, out, fin, previous) if fin else (None, None)
+    manifest = package(run, out, plan, report, text, outcome, code, started, seconds, prev_manifest) if pk else None
     rec = {"runtime": plan["runtime"], "class": plan["class"], "argv": plan["argv"], "command_from": plan["exe_from"], "cwd": plan["cwd"],
            "model": plan["model"], "effort_native": plan["effort_native"], "prompt_via": plan["via"], "timeout_s": plan["timeout_s"],
-           "started": PE.now(started), "seconds": round(time.time() - started, 1),
+           "started": PE.now(started), "seconds": seconds,
            "exit": code, "timed_out": timed_out, "outcome": outcome, "transcript": os.path.join(out, "transcript")}
     if home:
         rec["home"] = {"env": home["env"], "dir": home["dir"], "links": made, "not_linked": home["missing"], "left": home_left}
@@ -1078,6 +1192,8 @@ def run_it(plan, run):
         rec["run_config"] = {"file": rc["path"] if rc["data"] is not None else None, "role": rc["role"], "tools": rc["tools"]}
     if report:
         rec["report"] = report
+    if manifest:
+        rec["manifest"] = manifest
     write_private(dispatch, json.dumps(rec, indent=2, sort_keys=True) + "\n")
     print("RUNTIME=" + plan["runtime"])
     print("OUTCOME=" + outcome + (" (timed out after %ds)" % plan["timeout_s"] if timed_out else ""))
@@ -1085,6 +1201,9 @@ def run_it(plan, run):
     print("TRANSCRIPT=" + rec["transcript"])
     if report:
         for line in report_lines(report, out):
+            print(line)
+    if manifest:
+        for line in manifest_lines(manifest, out):
             print(line)
     if plan["usage"]:
         print(usage_line(rec["usage"]))
