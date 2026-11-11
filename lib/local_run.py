@@ -1085,6 +1085,49 @@ def out_has_patches(out):
     return False
 
 
+WORKTREE_TIMEOUT = 60
+
+
+def worktree_changes(clone):
+    """None (it cannot be told), or (tracked, untracked): the paths of the clone with uncommitted changes to tracked files (staged or not, deleted
+    included) and the untracked files git does not ignore. The clone is a member's to write, its .git included: git runs on it with no system or
+    global configuration, the work tree named outright (not the clone's core.worktree), no fsmonitor and every filter driver the clone's
+    configuration names emptied, so nothing the member put in its configuration runs; it reads and writes nothing else (no optional locks)."""
+    if not os.path.isdir(clone) or os.path.islink(clone) or os.path.islink(os.path.join(clone, ".git")) or not os.path.isdir(os.path.join(clone, ".git")):
+        return None
+    env = {"PATH": clean_path(), "HOME": "/nonexistent", "LC_ALL": "C", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_ATTR_NOSYSTEM": "1",
+           "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0", "GIT_DIR": os.path.join(clone, ".git"), "GIT_WORK_TREE": clone}
+    def git(args):
+        return subprocess.run(["git"] + args, cwd=clone, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              timeout=WORKTREE_TIMEOUT, check=False)
+    try:
+        cf = git(["config", "-z", "--name-only", "--get-regexp", r"^filter\."])
+        off = ["-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-c", "core.hooksPath=/dev/null"]
+        for name in sorted({k.decode("utf-8", "replace")[len("filter."):].rpartition(".")[0] for k in cf.stdout.split(b"\0") if k.startswith(b"filter.")}):
+            if not name or "=" in name:
+                return None                                  # a driver that cannot be emptied on the command line: git is not run over it
+            off += [a for k in ("clean", "smudge", "process") for a in ("-c", "filter.%s.%s=" % (name, k))] + ["-c", "filter.%s.required=false" % name]
+        st = git(off + ["status", "--porcelain=v1", "-z", "--no-renames", "--ignore-submodules=all", "--untracked-files=all"])
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if st.returncode != 0:
+        return None
+    tracked, untracked = [], []
+    for ent in st.stdout.split(b"\0"):
+        if len(ent) > 3:
+            (untracked if ent[:2] == b"??" else tracked).append(ent[3:].decode("utf-8", "replace"))
+    return tracked, untracked
+
+
+def worktree_line(work, run):
+    clone = os.path.join(run, "clone")
+    if work["refused"]:
+        return ("WORKTREE=uncommitted: %s holds %d changed tracked file(s)%s and OUT holds no patches: the member did not commit and collect, so the run is a "
+                "refusal, not a finished task (read its report; send it back, or take the change from the clone yourself)"
+                % (clone, work["tracked"], " and %d untracked file(s)" % work["untracked"] if work["untracked"] else ""))
+    return "WORKTREE=untracked: %s holds %d untracked file(s) no commit has and OUT holds no patches" % (clone, work["untracked"])
+
+
 def package(run, out, plan, report, text, outcome, code, started, seconds, previous):
     """The lead's OUT/manifest.json for a read-only run whose report is the runtime's last message: the minimal report-only format of `review save`,
     with what the lead recorded of the run. It is written only for a run the lead's registry names, whose outcome is ok, whose report was published
@@ -1200,6 +1243,13 @@ def run_it(plan, run):
     else:
         outcome = plan["exit"].get(str(code), plan["exit"].get("*", "failed"))
     seconds = round(time.time() - started, 1)
+    work = None
+    if plan["class"] == "write" and outcome == "ok" and not out_has_patches(out):
+        ch = worktree_changes(os.path.join(run, "clone"))
+        if ch is not None and (ch[0] or ch[1]):
+            work = {"tracked": len(ch[0]), "untracked": len(ch[1]), "patches": False, "refused": bool(ch[0])}
+            if ch[0]:                                    # a change left uncommitted with nothing collected is a refusal, never a finished task
+                outcome = "refused"
     report, text = finish_report(run, out, fin, previous) if fin else (None, None)
     manifest = package(run, out, plan, report, text, outcome, code, started, seconds, prev_manifest) if pk else None
     rec = {"runtime": plan["runtime"], "class": plan["class"], "argv": plan["argv"], "command_from": plan["exe_from"], "cwd": plan["cwd"],
@@ -1217,11 +1267,16 @@ def run_it(plan, run):
         rec["report"] = report
     if manifest:
         rec["manifest"] = manifest
+    if work:
+        rec["worktree"] = work
     write_private(dispatch, json.dumps(rec, indent=2, sort_keys=True) + "\n")
     print("RUNTIME=" + plan["runtime"])
-    print("OUTCOME=" + outcome + (" (timed out after %ds)" % plan["timeout_s"] if timed_out else ""))
+    print("OUTCOME=" + outcome + (" (timed out after %ds)" % plan["timeout_s"] if timed_out else "")
+          + (" (the runtime ended ok, but the clone holds uncommitted changes and OUT holds no patches)" if work and work["refused"] else ""))
     print("EXIT=%s" % code)
     print("TRANSCRIPT=" + rec["transcript"])
+    if work:
+        print(worktree_line(work, run))
     if report:
         for line in report_lines(report, out):
             print(line)

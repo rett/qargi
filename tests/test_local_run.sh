@@ -729,6 +729,71 @@ git clone -q "$T/r" "$T/apply-wx1"
   && ok "e2e write: the lead applies the series in a disposable clone and DONE passes there" || no "e2e write apply: $(ls "$T/apply-wx1")"
 rm -rf "$T/apply-wx1"; rm -f "$T/bin/codex"
 
+# --- a write run that leaves its change uncommitted and returns no patches is a refusal, in local run and in review check, never DONE ---
+# The fake member edits a tracked file and/or adds an untracked one, collects nothing and writes a manifest with no commits ($T/wu-mode: tracked,
+# untracked, and the status DONE or BLOCKED).
+printf 'a\n' > "$T/r/tracked.txt"; git -C "$T/r" add tracked.txt; $LC -C "$T/r" commit -q -m tracked
+cat > "$T/bin/codex" <<SH
+#!/usr/bin/env bash
+c='' a=("\$@")
+while [ \$# -gt 0 ]; do [ "\$1" = -C ] && c=\$2; shift; done
+o=\$(dirname "\$c")/out; st=DONE
+for m in \$(cat "$T/wu-mode"); do
+  case \$m in tracked) printf 'b\n' > "\$c/tracked.txt";; untracked) printf 'new\n' > "\$c/new.txt";; blocked) st=BLOCKED;; esac
+done
+jq -n --arg s "\$st" '{status: \$s, blocked_reason: (if \$s == "BLOCKED" then "the commit was refused" else "" end), base: {branch: "main", sha: ""}, commits: [], gates: [], touched_paths: [], scope: []}' > "\$o/manifest.json"
+QARGI_STUB_FINAL=$T/wu-final.md exec "$STUBX" "\${a[@]}"
+SH
+chmod 755 "$T/bin/codex"; printf 'the change is made in the clone\n' > "$T/wu-final.md"
+setprov codex; prep "$T/r" wu1; task
+echo tracked untracked > "$T/wu-mode"
+out=$($DA local run "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q '^OUTCOME=refused (the runtime ended ok, but the clone holds uncommitted changes and OUT holds no patches)$' <<<"$out" \
+  && grep -qF "WORKTREE=uncommitted: $CLONE holds 1 changed tracked file(s) and 1 untracked file(s) and OUT holds no patches" <<<"$out" \
+  && [ "$(jq -c '[.outcome, .exit, .worktree]' "$RUN/dispatch.json")" = '["refused",0,{"patches":false,"refused":true,"tracked":1,"untracked":1}]' ]; } \
+  && ok "a write run that leaves a tracked change uncommitted and no patches is refused (exit 2), however the runtime ended" || no "uncommitted: rc=$rc $out $(jq -c . "$RUN/dispatch.json")"
+out=$($DA review check "$OUT" --allow-empty 2>&1); rc=$?
+{ [ "$rc" = 1 ] && grep -qF "FAIL $CLONE holds 1 uncommitted change(s) to tracked files (tracked.txt) and OUT holds no patches: that is a refusal, not a finished task" <<<"$out"; } \
+  && ok "review check fails a DONE manifest with no commits whose clone holds the change uncommitted, --allow-empty or not" || no "review check uncommitted: rc=$rc $out"
+cp "$OUT/report.md" "$T/wu-report.keep"; cp tests/providers/codex/final-message.md "$OUT/report.md"
+out=$($DA review check "$OUT" 2>&1); rc=$?
+{ [ "$rc" = 1 ] && grep -qF "FAIL $CLONE holds 1 uncommitted change(s) to tracked files (tracked.txt)" <<<"$out"; } \
+  && ok "and a report with Findings and a verdict does not make it a report-only run that passes" || no "report-only uncommitted: rc=$rc $out"
+mv "$T/wu-report.keep" "$OUT/report.md"
+echo tracked untracked blocked > "$T/wu-mode"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+out=$($DA review check "$OUT" 2>&1); rc2=$?
+{ [ "$rc" = 2 ] && [ "$rc2" = 0 ] && grep -q '^OK no commits (status BLOCKED): the commit was refused$' <<<"$out" && grep -q '^NOTE .*holds 1 uncommitted change(s) to tracked files (tracked.txt); the run is BLOCKED' <<<"$out" \
+  && grep -q '^WARN .*holds 1 untracked file(s) no commit has (new.txt)' <<<"$out"; } \
+  && ok "a BLOCKED manifest with the change left uncommitted passes review check as a refusal, with a note and a warning" || no "blocked uncommitted: rc=$rc rc2=$rc2 $out"
+git -C "$CLONE" checkout -q tracked.txt; echo untracked > "$T/wu-mode"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q '^OUTCOME=ok$' <<<"$out" && grep -qF "WORKTREE=untracked: $CLONE holds 1 untracked file(s) no commit has and OUT holds no patches" <<<"$out" \
+  && [ "$(jq -c '.worktree.refused' "$RUN/dispatch.json")" = false ]; } && ok "untracked files alone are said (WORKTREE=untracked), not a refusal" || no "untracked only: rc=$rc $out"
+rm -f "$CLONE/new.txt"; : > "$T/wu-mode"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 0 ] && ! grep -q '^WORKTREE=' <<<"$out" && [ "$(jq -r 'has("worktree")' "$RUN/dispatch.json")" = false ]; } && ok "a clean clone says nothing of it" || no "clean clone: rc=$rc $out"
+# the lead reads the clone's state with git, but nothing the member put in the clone's git configuration runs: no fsmonitor, every filter driver it names
+# emptied, the work tree named outright, no system or global configuration, no optional locks (a git on PATH records how it is called)
+REALGIT=$(command -v git); mkdir -p "$T/fgit"
+cat > "$T/fgit/git" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "ARGS \$*" "WT=\${GIT_WORK_TREE-} GD=\${GIT_DIR-} NOSYS=\${GIT_CONFIG_NOSYSTEM-} GLOBAL=\${GIT_CONFIG_GLOBAL-} LOCKS=\${GIT_OPTIONAL_LOCKS-}" >> "$T/fgit.log"
+case " \$* " in *" config "*) cat "$T/fgit.names"; exit 0;; esac
+exec "$REALGIT" "\$@"
+SH
+chmod 755 "$T/fgit/git"; : > "$T/fgit.log"; printf 'c\n' > "$CLONE/tracked.txt"; printf 'filter.evil.clean\0filter.a.b.process\0' > "$T/fgit.names"
+got=$(PATH="$T/fgit:$PATH" python3 -I -c 'import sys; sys.path.insert(0, "lib"); import local_run as L; print(L.worktree_changes(sys.argv[1]))' "$CLONE" 2>&1)
+st=$(grep '^ARGS .*status' "$T/fgit.log")
+{ [ "$got" = "(['tracked.txt'], [])" ] && grep -q -- '-c core.fsmonitor=false' <<<"$st" && grep -q -- '-c filter.evil.clean= -c filter.evil.smudge= -c filter.evil.process= -c filter.evil.required=false' <<<"$st" \
+  && grep -q -- '-c filter.a.b.process=' <<<"$st" && grep -qx "WT=$CLONE GD=$CLONE/.git NOSYS=1 GLOBAL=/dev/null LOCKS=0" "$T/fgit.log"; } \
+  && ok "the lead's git status of the clone turns off fsmonitor and every filter driver the clone names, and names the work tree itself" || no "worktree git: $got $(cat "$T/fgit.log")"
+printf 'filter.x=y.clean\0' > "$T/fgit.names"
+got=$(PATH="$T/fgit:$PATH" python3 -I -c 'import sys; sys.path.insert(0, "lib"); import local_run as L; print(L.worktree_changes(sys.argv[1]))' "$CLONE" 2>&1)
+[ "$got" = None ] && ok "a filter driver whose name cannot be emptied on the command line: git status is not run, the state is unknown" || no "bad filter name: $got $(cat "$T/fgit.log")"
+git -C "$CLONE" checkout -q tracked.txt; rm -rf "$T/fgit" "$T/fgit.log" "$T/fgit.names" "$T/wu-mode" "$T/wu-final.md" "$T/bin/codex"
+
+
 # --- an in-session runtime is not started here ----------------------------------------------------------------------------------------
 prep "$T/r2" c1; task
 out=$($DA local run "$RUN" 2>&1); rc=$?

@@ -4,7 +4,9 @@ not one monolithic patch. Usage: review_check.py OUT [--allow-empty]   (exit 1 o
 OUT is the member's output directory (RUN/out; given RUN, whose out directory exists, it checks RUN/out): it holds manifest.json and the patches in OUT/patches/*.patch, the one place `review apply` reads them from.
 SCOPE is a hard limit: the SCOPE line of RUN/task.md (beside OUT) when it records one, else the manifest's scope[]; a patch outside it fails.
 The DONE line of RUN/task.md is the check the lead set: a manifest whose done.command is another command fails (a missing done.command is a warning).
-A review run has no patches: report.md (or PREFIXreport.md) with a Findings heading and a last line `verdict: accept` or `verdict: revise`, with manifest.json beside it, is its deliverable."""
+A review run has no patches: report.md (or PREFIXreport.md) with a Findings heading and a last line `verdict: accept` or `verdict: revise`, with manifest.json beside it, is its deliverable.
+A run with no patches whose clone (RUN/clone, beside OUT) holds uncommitted changes to tracked files fails unless its manifest says BLOCKED: a change left
+uncommitted is a refusal, never a finished task (untracked files are a warning). The clone is read with lib/local_run.py worktree_changes."""
 import fnmatch, glob, json, os, re, sys
 from email.utils import parsedate_to_datetime
 
@@ -51,6 +53,31 @@ if os.path.isdir(os.path.join(run, "out")) and not os.path.isdir(os.path.join(ru
     run = os.path.join(run, "out")
     N("checked %s (a run directory was given; the output directory is RUN_DIR/out)" % run)
 
+def clone_changes(out):
+    """None, or (tracked, untracked) of the clone beside OUT (RUN/clone): its uncommitted changes, read by local_run.worktree_changes, which runs nothing
+    the member put in the clone's git configuration. A run that returns no patches and leaves a tracked change uncommitted has not finished its task."""
+    clone = os.path.join(os.path.dirname(os.path.abspath(out)), "clone")
+    if not os.path.isdir(os.path.join(clone, ".git")):
+        return None
+    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+    from local_run import worktree_changes
+    return worktree_changes(clone)
+
+def uncommitted(out, status):
+    """The FAIL (or, for a BLOCKED manifest, the NOTE) for a run with no patches whose clone holds uncommitted changes; WARN for untracked files only."""
+    ch = clone_changes(out)
+    if not ch or not (ch[0] or ch[1]):
+        return
+    clone = os.path.join(os.path.dirname(os.path.abspath(out)), "clone")
+    names = lambda ps: ", ".join(ps[:5]) + (" ..." if len(ps) > 5 else "")
+    if ch[0] and status != "BLOCKED":
+        F("%s holds %d uncommitted change(s) to tracked files (%s) and OUT holds no patches: that is a refusal, not a finished task. Commit and collect the work "
+          "(git format-patch into OUT/patches), or report BLOCKED with the reason" % (clone, len(ch[0]), names(ch[0])))
+    elif ch[0]:
+        N("%s holds %d uncommitted change(s) to tracked files (%s); the run is BLOCKED and returns no patches" % (clone, len(ch[0]), names(ch[0])))
+    if ch[1]:
+        W("%s holds %d untracked file(s) no commit has (%s) and OUT holds no patches" % (clone, len(ch[1]), names(ch[1])))
+
 patches = sorted(glob.glob(os.path.join(run, "patches", "*.patch")))
 if not patches:
     # a review run returns a report, not patches
@@ -61,18 +88,20 @@ if not patches:
             # the report is `# Findings`, `# Checked`, and a last line `verdict: accept` or `verdict: revise`; manifest.json travels with it
             base = os.path.basename(rep)
             last = [l.strip() for l in text.splitlines() if l.strip()][-1]
+            rman = None
             try:
-                json.load(open(os.path.join(run, base[:-len("report.md")] + "manifest.json")))
+                rman = json.load(open(os.path.join(run, base[:-len("report.md")] + "manifest.json")))
             except Exception as e:
                 F("%s: %smanifest.json missing or unreadable (%s); a report-only run returns report.md and manifest.json" % (base, base[:-len("report.md")], e))
             if not re.fullmatch(r"verdict: (accept|revise)", last):
                 F("%s: the last line must be `verdict: accept` or `verdict: revise` (it is: %s)" % (base, last[:60]))
             if not re.search(r"(?mi)^#+\s*checked\b", text):
                 W("%s: no `# Checked` section (what you ran with its exit status; what you only read)" % base)
+            uncommitted(run, rman.get("status") if isinstance(rman, dict) else None)
             if fails:
-                print("\n".join(fails + warns)); print("%d fail, %d warn" % (len(fails), len(warns))); sys.exit(1)
+                print("\n".join(fails + warns + notes)); print("%d fail, %d warn" % (len(fails), len(warns))); sys.exit(1)
             print("OK report-only run: %s holds a Findings section and ends with its verdict (%d chars)" % (base, len(text)))
-            if warns: print("\n".join(warns))
+            if warns or notes: print("\n".join(warns + notes))
             sys.exit(0)
     try:
         m0 = json.load(open(os.path.join(run, "manifest.json")))
@@ -81,8 +110,13 @@ if not patches:
     if m0 is not None and m0.get("commits") == [] and (allow_empty or m0.get("status") == "BLOCKED"):
         dp = done_problem(m0, run)
         if dp and dp[0] == "FAIL":
-            print("FAIL " + dp[1]); print("1 fail, 0 warn"); sys.exit(1)
-        print("OK no commits (status %s)%s" % (m0.get("status"), ": " + m0["blocked_reason"] if m0.get("blocked_reason") else "")); sys.exit(0)
+            F(dp[1])
+        uncommitted(run, m0.get("status"))
+        if fails:
+            print("\n".join(fails + warns + notes)); print("%d fail, %d warn" % (len(fails), len(warns))); sys.exit(1)
+        print("OK no commits (status %s)%s" % (m0.get("status"), ": " + m0["blocked_reason"] if m0.get("blocked_reason") else ""))
+        if warns or notes: print("\n".join(warns + notes))
+        sys.exit(0)
     print("FAIL no patches found in %s, and no report.md (or PREFIXreport.md) with a Findings section" % run); sys.exit(1)
 try:
     man = json.load(open(os.path.join(run, "manifest.json")))
