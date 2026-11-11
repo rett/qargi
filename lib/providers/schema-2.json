@@ -98,6 +98,16 @@
                 }
               }
             },
+            "run_config": {
+              "description": "mode command only: the MCP file of one member run, rendered by qargi local run when the run starts from resources.mcp (its format, root pointer, entry and tool_lists, which it needs) for the run's role, as the lead's registry of local runs records it, and the run's class: each server lists the tools a member may call (never an always_ask tool, under the read-only class only a declared read). in home: RUN/home/DIR/FILE, the run home of dispatch.home (which it needs), for a runtime that reads its configuration from its home by itself; in run: RUN/config/FILE. {run_config} in argv is the path of the file, and has no value when no tool pack gives the role a tool: nothing is written then, and a file of that name left in the place is removed. --dry-run prints the path and the tool names (RUN_CONFIG=, RUN_CONFIG_TOOLS=), never the file. file is a plain file name and not one of the run home's links. Absent or null: a run gets no MCP file.",
+              "type": ["object", "null"],
+              "additionalProperties": false,
+              "required": ["in", "file"],
+              "properties": {
+                "in": {"enum": ["home", "run"]},
+                "file": {"type": "string", "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$"}
+              }
+            },
             "output": {
               "description": "what the command writes on its standard output (OUT/transcript): format text or jsonl (one JSON object per line). usage (jsonl only, with tokens and fields): the lines it picks are the runtime's own report of the tokens a turn used; qargi local run adds up each field over those lines when the run ends, records the sums in RUN/dispatch.json (usage: events, tokens, and model when the rule has it) and prints them as USAGE=. A cost_report claim of a command runtime rests on it.",
               "type": ["object", "null"],
@@ -307,7 +317,7 @@
       }
     },
     "res_mcp": {
-      "description": "the file the runtime reads its MCP servers from and what it calls a tool of one. permission_rule is the form of a tool's name, with {server} for the name of the tool pack and {tool} for the tool: the render writes its permission rules in it, a member's tool list holds its tools under it, and the guard takes a call of a tool whose name has this form for an MCP call. name_key says how the runtime writes a server or a tool name inside it: nonword-underscore replaces every character that is not an ASCII letter, a digit, _ or - by _; null or absent leaves a name as written",
+      "description": "the file the runtime reads its MCP servers from and what it calls a tool of one. permission_rule is the form of a tool's name, with {server} for the name of the tool pack and {tool} for the tool: the render writes its permission rules in it, a member's tool list holds its tools under it, and the guard takes a call of a tool whose name has this form for an MCP call. name_key says how the runtime writes a server or a tool name inside it: nonword-underscore replaces every character that is not an ASCII letter, a digit, _ or - by _; null or absent leaves a name as written. format is how the file is written: json, or toml (tables, texts, whole numbers, booleans and lists of texts; the entry template may hold nothing else). tool_lists is for a runtime that takes the tools of a server in the server's entry: allow and deny are JSON pointers into the entry; allow gets the tools a member may call for the roles the pack reaches (never an always_ask tool, under the read-only class only a declared read), deny the pack's other tools, and a server with an allow list and no tool on it is left out. It needs a permission_rule with {server} and {tool}, since the member policy judges a tool by that name",
       "type": ["object", "null"],
       "additionalProperties": false,
       "properties": {
@@ -316,7 +326,15 @@
         "root_pointer": {"type": "string"},
         "entry": {"type": "object"},
         "permission_rule": {"type": ["string", "null"]},
-        "name_key": {"enum": ["nonword-underscore", null]}
+        "name_key": {"enum": ["nonword-underscore", null]},
+        "tool_lists": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "allow": {"type": ["string", "null"]},
+            "deny": {"type": ["string", "null"]}
+          }
+        }
       }
     },
     "res_settings": {

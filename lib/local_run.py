@@ -31,13 +31,20 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
                        link's target is never printed (--dry-run names the links, HOME_LINKS=). A source that does not exist is left out with
                        a note. The directory is made and the links are removed without following a link a member may have put in the run
                        directory; a file that replaced a link during the run is removed too. provider.home_problems states the rules.
+  dispatch.run_config  {in: home|run, file}: the MCP file of the run, rendered when the run starts from resources.mcp (lib/packs_render.py
+                       run_config) for the run's role, as the lead's registry records it (never a file of the run directory), and the run's
+                       class: each server lists the tools a member may call (lib/packs_mcp.py: never an always_ask tool, under the read-only
+                       class only a declared read). in home: RUN/home/DIR/FILE, the run home of dispatch.home, which a runtime reads by itself;
+                       in run: RUN/config/FILE. {run_config} is its path, empty when no tool pack gives the role a tool: then nothing is written
+                       and a file of that name left there is removed. It is written without following a link a member may have put in the run
+                       directory. --dry-run prints its path and the tool names (RUN_CONFIG=, RUN_CONFIG_TOOLS=), never its content.
   dispatch.timeout_s   the bound (default 1800, at most 86400); --timeout replaces it.
   dispatch.exit        {"0": "ok", "*": "failed"}: the exit status -> outcome ok|failed|refused|transport.
   dispatch.output      {format: text|jsonl, usage: {select, skip, tokens, fields, model}}: with usage (jsonl only), when the run ends every line
                        of OUT/transcript that is a JSON object the rule selects (and does not skip) is a report of the tokens the runtime
                        used; each field of the object at `tokens` is added up over those lines, and the sums go to dispatch.json (usage:
                        events, tokens, model) and to a USAGE= line. Only whole numbers count; a line that is not JSON is passed over.
-Placeholders (the closed set): member, model, effort_native, prompt_file, prompt_arg, clone, run_dir, out_dir, project (and the short names
+Placeholders (the closed set): member, model, effort_native, prompt_file, prompt_arg, clone, run_dir, out_dir, project, run_config (and the short names
 effort, out, prompt). agent_file and session_id belong to runtimes with agent files and to resume; they are refused here.
 
 The process gets the environment of the run's git wrapper (RUN/git: HOME is RUN/home, no global git configuration, no ssh, no prompts,
@@ -78,7 +85,7 @@ def print(*args, **kw):  # noqa: A001  (this module's print: what a definition n
 TOOL = os.path.dirname(HERE)
 PLACEHOLDER = re.compile(r"\{([a-z_]+)\}")
 ALIASES = {"effort": "effort_native", "out": "out_dir", "prompt": "prompt_arg"}
-CLOSED = ("member", "model", "effort_native", "prompt_file", "prompt_arg", "clone", "run_dir", "out_dir", "agent_file", "session_id", "project")
+CLOSED = ("member", "model", "effort_native", "prompt_file", "prompt_arg", "clone", "run_dir", "out_dir", "agent_file", "session_id", "project", "run_config")
 NOT_HERE = ("agent_file", "session_id")
 CLASSES = ("write", "read-only")
 OUTCOME_EXIT = {"ok": 0, "failed": 1, "refused": 2, "transport": 4}
@@ -89,6 +96,7 @@ MAX_TASK = 1 << 20
 ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 PROMPT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 PROMPT_DIR = "prompt"     # where the prompt file goes: a directory of the run for it alone, so no name can reach a control file of the run
+CONFIG_DIR = "config"     # where a run_config of "in": "run" goes, for the same reason
 
 
 class Stop(Exception):
@@ -354,6 +362,78 @@ def clear_home(run, home, names):
     return notes
 
 
+# ---- the MCP file of the run (dispatch.run_config) -----------------------------------------------------------------------------------
+
+def plan_run_config(disp, doc, run, home, project, cls, runtime):
+    """None, or the MCP file of the run: {in, file, path, data (bytes or None: no tool for the run, the file is removed), tools, servers, role, note}.
+    The role is the one the lead's registry records for the run; the class is the run's. The rules are provider.run_config_problems. Nothing is
+    written here."""
+    rc = disp.get("run_config")
+    if rc is None:
+        return None
+    bad = P.run_config_problems(disp, doc.get("resources"))
+    if bad:
+        fail("%s of %s" % (bad[0], runtime))
+    where = home["path"] if rc["in"] == "home" else os.path.join(run, CONFIG_DIR)
+    plan = {"in": rc["in"], "file": rc["file"], "path": os.path.join(where, rc["file"]), "data": None, "tools": [], "servers": {}, "role": None, "note": None}
+    role = registry_line(run).get("ability")
+    if not isinstance(role, str) or not role:
+        plan["note"] = "the lead's registry names no role for this run, so it is given no MCP tool"
+        return plan
+    plan["role"] = role
+    import packs_mcp
+    import packs_render
+    try:
+        got = packs_render.run_config(paths.conf(), project, [role], {role: cls == "read-only"}, (doc.get("resources") or {}).get("mcp"))
+    except (packs_mcp.McpError, ValueError, OSError) as e:          # the links, the answers or a pack cannot be read: no run is started from a guess
+        fail("the MCP file of the run (dispatch.run_config of %s) cannot be made: %s" % (runtime, e))
+    if got:
+        plan.update(data=got["data"], tools=got["tools"], servers=got["servers"])
+    return plan
+
+
+def config_dir_fd(run, plan, home):
+    """A descriptor of the directory of the run's MCP file, made when missing, opened part by part without following a link (home_dir_fd for the run
+    home; RUN/config otherwise)."""
+    if plan["in"] == "home":
+        return home_dir_fd(run, home, True)
+    fd = os.open(run, O_DIR)
+    try:
+        try:
+            os.mkdir(CONFIG_DIR, 0o700, dir_fd=fd)
+        except FileExistsError:
+            pass
+        try:
+            return os.open(CONFIG_DIR, O_DIR, dir_fd=fd)
+        except OSError as e:
+            fail("%s is not a plain directory of the run; the MCP file of the run goes there and nowhere else (%s)" % (os.path.join(run, CONFIG_DIR), e.strerror or e))
+    finally:
+        os.close(fd)
+
+
+def put_run_config(run, plan, home):
+    """Write the run's MCP file (mode 600, a new or regular file of its own, never through a link), or, with no tool for the run, remove a file of
+    that name left there (a link or a regular file; anything else is a refusal), so the runtime reads none."""
+    fd = config_dir_fd(run, plan, home)
+    try:
+        try:
+            st = os.lstat(plan["file"], dir_fd=fd)
+        except FileNotFoundError:
+            st = None
+        if st is not None and not (stat.S_ISREG(st.st_mode) or stat.S_ISLNK(st.st_mode)):
+            fail("%s is in the place of the run's MCP file and is not a file; remove it, or the run is refused" % plan["path"])
+        if st is not None and (stat.S_ISLNK(st.st_mode) or st.st_nlink != 1 or plan["data"] is None):
+            os.unlink(plan["file"], dir_fd=fd)                  # a link or a second name is never written through
+        if plan["data"] is None:
+            return
+        wfd = os.open(plan["file"], os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600, dir_fd=fd)
+        os.fchmod(wfd, 0o600)
+        with os.fdopen(wfd, "wb") as f:
+            f.write(plan["data"])
+    finally:
+        os.close(fd)
+
+
 def env_names(disp, runtime):
     ep = disp.get("env_pass", [])
     if not isinstance(ep, list) or not all(isinstance(n, str) and ENV_NAME.match(n) for n in ep):
@@ -391,11 +471,10 @@ def find_command(runtime, exe, run, keep):
     return path, "shipped with %s" % runtime
 
 
-def registry_tmp(run):
-    """The run's temporary directory as the lead's registry ($QARGI_STATE/local-runs.jsonl, written by prepare) names it for this run
-    directory, else "". The run's own tmpdir file is never read: a member can write the run directory, and that file could name another
-    run's directory (the same rule as `local clean`). The last line for the run wins; only an absolute path is taken."""
-    real, found = os.path.realpath(run), ""
+def registry_line(run):
+    """The lead's registry line ($QARGI_STATE/local-runs.jsonl, written by prepare) for this run directory, the last one wins, or {}. What it says
+    of a run is believed over the run's own files: a member can write the run directory (the same rule as `local clean`)."""
+    real, found = os.path.realpath(run), {}
     try:
         with open(os.path.join(paths.state(), "local-runs.jsonl"), encoding="utf-8", errors="replace") as f:
             for line in f:
@@ -403,12 +482,18 @@ def registry_tmp(run):
                     e = json.loads(line)
                 except ValueError:
                     continue
-                if isinstance(e, dict) and isinstance(e.get("run"), str) and isinstance(e.get("tmpdir"), str) \
-                        and os.path.realpath(e["run"]) == real and os.path.isabs(e["tmpdir"]):
-                    found = e["tmpdir"].rstrip("/") or ""
+                if isinstance(e, dict) and isinstance(e.get("run"), str) and os.path.realpath(e["run"]) == real:
+                    found = e
     except OSError:
         pass
     return found
+
+
+def registry_tmp(run):
+    """The run's temporary directory as the lead's registry names it for this run directory, else "". The run's own tmpdir file is never read: it
+    could name another run's directory. Only an absolute path is taken."""
+    t = registry_line(run).get("tmpdir")
+    return (t.rstrip("/") or "") if isinstance(t, str) and os.path.isabs(t) else ""
 
 
 def read_run_file(path, limit, what):
@@ -487,6 +572,7 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     if bad:
         fail("%s of %s" % (bad[0], runtime))
     home = plan_home(disp, run, runtime)
+    rcfg = plan_run_config(disp, doc, run, home, project, cls, runtime)
     if cls == "read-only":
         state, text = P.require_barrier(runtime, "local", project)
         if state == "refused":
@@ -536,7 +622,7 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     if not member:
         fail("%s is missing or empty: a run made by qargi local prepare records its ability there" % os.path.join(run, "ability"))
     values = {"member": member, "model": mname, "effort_native": native or "", "prompt_file": pfile, "prompt_arg": prompt if via == "arg" else "",
-              "clone": clone, "run_dir": run, "out_dir": out, "project": project}
+              "clone": clone, "run_dir": run, "out_dir": out, "project": project, "run_config": rcfg["path"] if rcfg and rcfg["data"] is not None else ""}
     argv = expand(argv_t, values, cls, "dispatch.argv", runtime)
     extra = expand(class_extra(disp, cls, runtime), values, cls, "dispatch.class_argv", runtime)
     if extra:
@@ -549,8 +635,8 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     exe, how = find_command(runtime, argv[0], run, keep)
     return {"runtime": runtime, "class": cls, "argv": argv, "exe": exe, "exe_from": how, "cwd": cwd, "via": via, "prompt": prompt, "prompt_file": pfile,
             "timeout_s": to, "env_pass": passed, "env": child_env(run, tmp, passed, home), "exit": ex, "model": mname, "effort_native": native,
-            "home": home, "notes": notes + ([note] if note else []) + home_notes(home), "output_format": (disp.get("output") or {}).get("format", "text"),
-            "usage": (disp.get("output") or {}).get("usage")}
+            "home": home, "notes": notes + ([note] if note else []) + home_notes(home) + ([rcfg["note"]] if rcfg and rcfg["note"] else []),
+            "output_format": (disp.get("output") or {}).get("format", "text"), "usage": (disp.get("output") or {}).get("usage"), "run_config": rcfg}
 
 
 def home_notes(home):
@@ -573,6 +659,14 @@ def dry(plan, run):
         print("HOME_ENV=" + plan["home"]["env"])
         print("HOME_DIR=" + plan["home"]["path"])
         print("HOME_LINKS=" + ",".join(to for to, _ in plan["home"]["links"]))
+    rc = plan["run_config"]
+    if rc:                                                 # the path and the tool names only: the file holds the servers' addresses
+        if rc["data"] is None:
+            print("RUN_CONFIG=none: no tool pack gives %s a tool; nothing is written and a file %s left there is removed"
+                  % ("the role %s of this run" % rc["role"] if rc["role"] else "this run", rc["path"]))
+        else:
+            print("RUN_CONFIG=" + rc["path"])
+        print("RUN_CONFIG_TOOLS=" + ",".join(rc["tools"]))
     print("PROMPT_VIA=" + plan["via"])
     print("PROMPT_FILE=" + plan["prompt_file"])
     print("TRANSCRIPT=" + os.path.join(run, "out", "transcript"))
@@ -728,6 +822,8 @@ def run_it(plan, run):
     started = time.time()
     timed_out = False
     try:
+        if plan["run_config"]:
+            put_run_config(run, plan["run_config"], home)
         sin = open(plan["prompt_file"], "rb") if plan["via"] == "stdin" else subprocess.DEVNULL
         with os.fdopen(open_own(os.path.join(out, "transcript"), "the transcript"), "wb") as so, \
                 os.fdopen(open_own(os.path.join(out, "transcript.err"), "the error transcript"), "wb") as se:
@@ -763,6 +859,9 @@ def run_it(plan, run):
         rec["home"] = {"env": home["env"], "dir": home["dir"], "links": made, "not_linked": home["missing"], "left": home_left}
     if plan["usage"]:
         rec["usage"] = read_usage(rec["transcript"], plan["usage"])
+    rc = plan["run_config"]
+    if rc:                                                 # names only, never the file
+        rec["run_config"] = {"file": rc["path"] if rc["data"] is not None else None, "role": rc["role"], "tools": rc["tools"]}
     write_private(dispatch, json.dumps(rec, indent=2, sort_keys=True) + "\n")
     print("RUNTIME=" + plan["runtime"])
     print("OUTCOME=" + outcome + (" (timed out after %ds)" % plan["timeout_s"] if timed_out else ""))
