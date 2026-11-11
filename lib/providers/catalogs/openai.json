@@ -1,0 +1,41 @@
+{
+  "schema": 2,
+  "kind": "catalog",
+  "family": "openai",
+  "description": "The OpenAI GPT models: one table of tiers and effort levels, shared by every OpenAI runtime (codex). The vendor's sixth effort level (ultra) has no qargi level and is not mapped",
+  "version": "2026-11-11",
+  "pattern": "^gpt-[a-z0-9.-]+$",
+  "tiers": {
+    "fast": {
+      "model": "gpt-6-luna",
+      "alias": null,
+      "verified_on": null,
+      "source": "codex debug models / models_cache.json, codex-cli 0.167.1, 2026-11-11; not yet used in a run"
+    },
+    "balanced": {
+      "model": "gpt-6.1-terra",
+      "alias": null,
+      "verified_on": null,
+      "source": "codex debug models / models_cache.json, codex-cli 0.167.1, 2026-11-11; not yet used in a run"
+    },
+    "deep": {
+      "model": "gpt-6.1-sol",
+      "alias": null,
+      "verified_on": null,
+      "source": "codex debug models / models_cache.json, codex-cli 0.167.1, 2026-11-11; not yet used in a run"
+    },
+    "frontier": {
+      "model": "gpt-6-astra",
+      "alias": null,
+      "verified_on": null,
+      "source": "codex debug models / models_cache.json, codex-cli 0.167.1, 2026-11-11; not yet used in a run"
+    }
+  },
+  "effort": {
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+    "xhigh": "xhigh",
+    "max": "max"
+  }
+}
