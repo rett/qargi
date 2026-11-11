@@ -11,7 +11,12 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
                        the placeholder VAR has a value) or {"class": "read-only"|"write", "then": [...]} (kept for that class of the run).
                        Element 0 is the command: a plain word looked up on PATH (a vendor CLI), or a path inside the definition's
                        directory. A library pack's executable runs only as a private copy of the sealed pack (provider.exec_copy) and
-                       only when its record approves it; a shipped definition's is read from lib/providers/NAME/.
+                       only when its record approves it; a shipped definition's is read from lib/providers/NAME/. A word is resolved on
+                       the lead's PATH, entry by entry, to the first regular executable file whose real path has that name (or the name
+                       with an extension, a launcher NAME.js), and that real path runs (COMMAND=, `command` in dispatch.json): a wrapper or
+                       a shim linked to a program of another name (a version manager's) is passed over with a note, since under the run's
+                       HOME it would look for the tool there; with none left the run is refused (exit 3), naming each entry and why. The
+                       member's own PATH is the lead's, unchanged.
   dispatch.class_argv  arguments added for the run's class: a list (read-only runs only) or {"read-only": [...], "write": [...]}. They go
                        before the first element that carries the prompt argument, or at the end. For sandbox flags a definition keeps out
                        of argv. The barrier kind `sandbox-args` needs them (or a class element in argv) for a read-only run.
@@ -722,28 +727,70 @@ def env_names(disp, runtime):
     return ep
 
 
+EXTENSION = re.compile(r"[A-Za-z0-9]+\Z")
+
+
+def program_named(real, exe):
+    """Is the file at the real path real the program exe names: its name is exe, or exe with an extension (a launcher NAME.js or NAME.py
+    that a package manager links as NAME)? A wrapper or a shim that is a link to a program of another name (a version manager's multi-call
+    program) is not."""
+    b = os.path.basename(real)
+    return b == exe or (b.startswith(exe + ".") and bool(EXTENSION.match(b[len(exe) + 1:])))
+
+
+def resolve_on_path(exe):
+    """(real path or None, passed over): the first entry of the lead's PATH, in order, that holds a regular executable file named exe whose real
+    path is the program exe names (program_named), as that real path; passed over is [(path, why)] for each entry before it that holds
+    something named exe and is not that. The member's own PATH is not changed by this: only what runs as argv[0] is."""
+    passed, seen = [], set()
+    for d in clean_path().split(os.pathsep):
+        if d in seen:
+            continue
+        seen.add(d)
+        cand = os.path.join(d, exe)
+        if not os.path.lexists(cand):
+            continue
+        real = os.path.realpath(cand)
+        if not os.path.exists(real):
+            passed.append((cand, "a link to nothing"))
+        elif not os.path.isfile(real):
+            passed.append((cand, "not a regular file"))
+        elif not os.access(real, os.X_OK):
+            passed.append((cand, "not executable"))
+        elif not program_named(real, exe):
+            passed.append((cand, "it resolves to %s, a program named %s, not %s: a wrapper or a shim, which under the run's home would look for "
+                                 "the tool there" % (real, os.path.basename(real), exe)))
+        else:
+            return real, passed
+    return None, passed
+
+
 def find_command(runtime, exe, run, keep):
-    """(path, note): where the command of argv[0] is run from. keep collects a directory to remove afterwards (an exec copy)."""
+    """(path, how, notes): where the command of argv[0] is run from. keep collects a directory to remove afterwards (an exec copy)."""
     if not isinstance(exe, str) or not exe or PLACEHOLDER.search(exe):
         fail("dispatch.argv[0] of %s must be a plain command: a word looked up on PATH, or a path inside the definition's directory" % runtime)
     if "/" not in exe:
-        found = shutil.which(exe, path=clean_path())
-        if not found:
+        found, passed = resolve_on_path(exe)
+        if not found and not passed:
             fail("the command '%s' of runtime %s is not on PATH; install it first (it is run by name, as you would run it)" % (exe, runtime), 3)
-        if os.path.realpath(found).startswith(os.path.realpath(run) + os.sep):
+        if not found:
+            fail("the command '%s' of runtime %s has no program of that name on PATH that a run can start; passed over: %s. Put the directory of "
+                 "the real program first on PATH (for a version manager, the directory it installed the tool in): a run never starts a wrapper"
+                 % (exe, runtime, "; ".join("%s (%s)" % p for p in passed)), 3)
+        if found.startswith(os.path.realpath(run) + os.sep):
             fail("the command '%s' resolves into the run directory; refused" % exe)
-        return found, "on PATH"
+        return found, "on PATH", ["%s on PATH is passed over (%s); the run starts %s" % (p, why, found) for p, why in passed]
     n = os.path.normpath(exe)
     if os.path.isabs(exe) or n != exe or n.startswith(".."):
         fail("dispatch.argv[0] '%s' of %s is not a path inside the definition's directory" % (exe, runtime))
     if P.origin(runtime) == "library":
         d, path = P.exec_copy(runtime, exe)              # Drift or Refused unless the pack is sealed and approves exactly this executable
         keep.append(os.path.dirname(d))                  # exec_copy makes TMP/qargi-exec.XXXX/NAME; the whole of it goes
-        return path, "sealed copy of pack %s" % runtime
+        return path, "sealed copy of pack %s" % runtime, []
     path = os.path.join(P.PROVIDERS, runtime, exe)
     if not os.path.isfile(path) or not os.access(path, os.X_OK) or not os.path.realpath(path).startswith(os.path.realpath(os.path.join(P.PROVIDERS, runtime)) + os.sep):
         fail("dispatch.argv[0] '%s' of %s is not an executable inside lib/providers/%s/" % (exe, runtime, runtime), 3)
-    return path, "shipped with %s" % runtime
+    return path, "shipped with %s" % runtime, []
 
 
 def registry_line(run):
@@ -941,10 +988,10 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     real = os.path.realpath(cwd)
     if real != os.path.realpath(clone) and not real.startswith(os.path.realpath(clone) + os.sep):
         fail("dispatch.cwd of %s is %s, outside the clone" % (runtime, cwd))
-    exe, how = find_command(runtime, argv[0], run, keep)
+    exe, how, exe_notes = find_command(runtime, argv[0], run, keep)
     return {"runtime": runtime, "class": cls, "argv": argv, "exe": exe, "exe_from": how, "cwd": cwd, "via": via, "prompt": prompt, "prompt_file": pfile,
             "timeout_s": to, "env_pass": passed, "env": child_env(run, tmp, passed, home), "exit": ex, "model": mname, "effort_native": native,
-            "home": home, "notes": notes + ([note] if note else []) + home_notes(home) + ([rcfg["note"]] if rcfg and rcfg["note"] else []),
+            "home": home, "notes": exe_notes + notes + ([note] if note else []) + home_notes(home) + ([rcfg["note"]] if rcfg and rcfg["note"] else []),
             "output_format": (disp.get("output") or {}).get("format", "text"), "usage": (disp.get("output") or {}).get("usage"), "run_config": rcfg,
             "final": final, "package": package}
 
@@ -955,7 +1002,7 @@ def home_notes(home):
 
 
 def dry(plan, run):
-    exe = plan["argv"][0] if plan["exe_from"] == "on PATH" else "<%s>/%s" % (plan["exe_from"], plan["argv"][0])
+    exe = plan["exe"] if plan["exe_from"] == "on PATH" else "<%s>/%s" % (plan["exe_from"], plan["argv"][0])
     print("dry run: nothing is run and nothing is written")
     print("RUNTIME=" + plan["runtime"])
     print("CLASS=" + plan["class"])
@@ -1549,6 +1596,7 @@ def run_it(plan, run):
     argv = [plan["exe"]] + plan["argv"][1:]
     home = plan["home"]
     head = {"runtime": plan["runtime"], "class": plan["class"], "argv": plan["argv"], "command_from": plan["exe_from"], "cwd": plan["cwd"],
+            "command": plan["exe"] if plan["exe_from"] == "on PATH" else None,
             "model": plan["model"], "effort_native": plan["effort_native"], "prompt_via": plan["via"], "timeout_s": plan["timeout_s"]}
     started = time.time()
     # the start record: an earlier run's outcome never stays, and a runner killed with SIGKILL leaves "running" with its process and the member's, and
