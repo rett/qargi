@@ -307,7 +307,7 @@
       }
     },
     "res_mcp": {
-      "description": "the file the runtime reads its MCP servers from and what it calls a tool of one. permission_rule is the form of a tool's name, with {server} for the name of the tool pack and {tool} for the tool: the render writes its permission rules in it, a member's tool list holds its tools under it, and the guard takes a call of a tool whose name has this form for an MCP call. name_key says how the runtime writes a server or a tool name inside it: nonword-underscore replaces every character that is not an ASCII letter, a digit, _ or - by _; null or absent leaves a name as written",
+      "description": "the file the runtime reads its MCP servers from and what it calls a tool of one. permission_rule is the form of a tool's name, with {server} for the name of the tool pack and {tool} for the tool: the render writes its permission rules in it, a member's tool list holds its tools under it, and the guard takes a call of a tool whose name has this form for an MCP call. name_key says how the runtime writes a server or a tool name inside it: nonword-underscore replaces every character that is not an ASCII letter, a digit, _ or - by _; null or absent leaves a name as written. format is how the file is written: json, or toml (tables, texts, whole numbers, booleans and lists of texts; the entry template may hold nothing else). tool_lists is for a runtime that takes the tools of a server in the server's entry: allow and deny are JSON pointers into the entry; allow gets the tools a member may call for the roles the pack reaches (never an always_ask tool, under the read-only class only a declared read), deny the pack's other tools, and a server with an allow list and no tool on it is left out. It needs a permission_rule with {server} and {tool}, since the member policy judges a tool by that name",
       "type": ["object", "null"],
       "additionalProperties": false,
       "properties": {
@@ -316,7 +316,15 @@
         "root_pointer": {"type": "string"},
         "entry": {"type": "object"},
         "permission_rule": {"type": ["string", "null"]},
-        "name_key": {"enum": ["nonword-underscore", null]}
+        "name_key": {"enum": ["nonword-underscore", null]},
+        "tool_lists": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "allow": {"type": ["string", "null"]},
+            "deny": {"type": ["string", "null"]}
+          }
+        }
       }
     },
     "res_settings": {

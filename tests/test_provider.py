@@ -124,10 +124,13 @@ class Shipped(Tree):
         self.assertTrue(all(cl["verified_on"] is None for cl in cx["capabilities"].values()))
         self.assertEqual({c: cl["value"] for c, cl in cx["capabilities"].items()},
                          {"headless_dispatch": "yes", "per_dispatch_model_override": "yes", "per_dispatch_effort_override": "yes",
-                          "read_only_barrier": "partial", "skills": "yes", "resume": "no", "mcp": "no", "cost_report": "partial"})
+                          "read_only_barrier": "partial", "skills": "yes", "resume": "no", "mcp": "yes", "cost_report": "partial"})
         self.assertEqual((cx["family"], cx["surface"], cx["models"], cx["agents"]), ("openai", "local", {"catalog": "openai", "use": "id"}, None))
         self.assertNotIn("adapter", cx)                                                             # data only: no code of its own
-        self.assertIsNone(cx["resources"]["mcp"])
+        self.assertEqual(cx["resources"]["mcp"], {"file": "config.toml", "format": "toml", "root_pointer": "/mcp_servers", "entry": {"url": "{url}"},   # the tools held per server
+                                                  "permission_rule": "mcp__{server}__{tool}", "name_key": "nonword-underscore", "tool_lists": {"allow": "/enabled_tools"}})
+        self.assertEqual((cx["session"], cx["renderers"]), ({"render_target": "codex"}, {"packs": {"label": "Codex"}}))   # no launch line: a session is not started on the render
+        self.assertEqual(P.cap("codex", "local", "mcp"), "unverified")
         self.assertEqual(cx["barrier"], {"kind": "sandbox-args"})
         self.assertTrue(P.has_class_args(cx["dispatch"]))
         self.assertIsNone(P.barrier_claim_problem(cx))
@@ -529,7 +532,7 @@ class Cli(CliBase):
         self.assertEqual(q("check", "nope")[0], 1)
         self.assertEqual(json.loads(q("show", "claude-code", "--json")[1]), CODE)
         rc, out, _ = q("list")
-        self.assertRegex(out, r"(?m)^codex\s+local\s+6 warnings$")                     # the six unverified claims, no failure
+        self.assertRegex(out, r"(?m)^codex\s+local\s+7 warnings$")                     # the seven unverified claims, no failure
         rc, out, _ = q("check", "codex")
         self.assertEqual(rc, 0, out)
         self.assertIn("the review role cannot be served on local", out)                 # the sandbox barrier is not attested yet
@@ -859,6 +862,29 @@ class Schema2(unittest.TestCase):
         bad({"transcripts": {"user_dir": "~/t", "usage": {"select": {"type": "assistant"}}}}, "resources.transcripts.usage.select: 'type' is not a JSON pointer")
         bad({"transcripts": {"user_dir": "~/t", "usage": {"tokens": "usage"}}}, "resources.transcripts.usage.tokens: 'usage' is not a JSON pointer")
         bad({"mcp": {"file": "../x.json"}}, "resources.mcp.file: '../x.json' is not a path inside the checkout")
+
+    def test_the_tool_lists_of_an_mcp_entry_are_pointers_the_renderer_can_write(self):
+        """resources.mcp.tool_lists (the tools of a server held in its own entry) and a TOML file's entry template: what the renderer can write, said
+        by provider check before a render is tried."""
+        good = {"file": "c.toml", "format": "toml", "root_pointer": "/servers", "entry": {"url": "{url}", "opts": {"timeout": 30, "on": True}},
+                "permission_rule": "mcp__{server}__{tool}", "name_key": "nonword-underscore", "tool_lists": {"allow": "/enabled_tools", "deny": "/opts/off"}}
+        self.assertEqual(fails(runtime(resources={"mcp": good}), "mylocal"), [])
+
+        def bad(change, needle):
+            self.one(runtime(resources={"mcp": dict(good, **change)}), needle, name="mylocal")
+        bad({"tool_lists": {}}, "resources.mcp.tool_lists: names neither an allow nor a deny list")
+        bad({"tool_lists": {"allow": "enabled_tools"}}, "resources.mcp.tool_lists.allow: 'enabled_tools' is not a JSON pointer into the entry")
+        bad({"tool_lists": {"allow": "/url"}}, "resources.mcp.tool_lists.allow: /url runs onto or through a value the entry template sets")
+        bad({"tool_lists": {"deny": "/url/x"}}, "resources.mcp.tool_lists.deny: /url/x runs onto or through a value the entry template sets")
+        bad({"tool_lists": {"allow": "/t", "deny": "/t"}}, "resources.mcp.tool_lists: allow and deny are the same place (/t)")
+        bad({"tool_lists": {"allow": "/t", "list": "/u"}}, "resources.mcp.tool_lists.list: additional property is not allowed")
+        bad({"permission_rule": None}, "resources.mcp.tool_lists: needs a permission_rule with {server} and {tool}")
+        bad({"permission_rule": "{server}"}, "resources.mcp.tool_lists: needs a permission_rule with {server} and {tool}")
+        bad({"entry": {"url": "{url}", "timeout": 1.5}}, "resources.mcp.entry.timeout: 1.5 cannot be written as TOML by the renderer")
+        bad({"entry": {"url": "{url}", "args": [1, 2]}}, "resources.mcp.entry.args: [1, 2] cannot be written as TOML by the renderer")
+        bad({"root_pointer": "servers"}, "resources.mcp.root_pointer: 'servers' is not a JSON pointer")
+        self.assertEqual(fails(runtime(resources={"mcp": dict(good, format="json", entry={"url": "{url}", "timeout": 1.5})}), "mylocal"), [])   # JSON holds a number
+        self.assertEqual(fails(runtime(resources={"mcp": dict(good, tool_lists=None)}), "mylocal"), [])
 
     def test_an_exclusion_form_needs_the_keys_that_form_reads(self):
         def excl(e):

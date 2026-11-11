@@ -935,6 +935,7 @@ def _resource_problems(res, extension=False):
     mcp = res.get("mcp")
     if isinstance(mcp, dict):
         add(_path_problem("resources.mcp.file", mcp.get("file"), True))
+        bad += _mcp_problems(mcp)
     for i, f in enumerate(st.get("files") or []):
         if isinstance(f, dict) and isinstance(f.get("path"), str):
             lab = "resources.settings.files[%d].path" % i
@@ -976,6 +977,66 @@ def _resource_problems(res, extension=False):
         add(_path_problem("resources.memory.user_dir", mem["user_dir"], True, inside_ok=False))
         if "{checkout_key}" in mem["user_dir"] and mem.get("checkout_key") is None:
             bad.append("resources.memory.user_dir: uses {checkout_key} but checkout_key is null")
+    return bad
+
+
+def _json_pointer(v):
+    """The keys of a JSON pointer into nested objects (/a/b), or None when v is not one (the form the renderer reads)."""
+    if not isinstance(v, str) or not v.startswith("/") or v == "/":
+        return None
+    parts = [x.replace("~1", "/").replace("~0", "~") for x in v[1:].split("/")]
+    return None if "" in parts else parts
+
+
+def _toml_problem(v, where):
+    """Why the value v of an entry template cannot be written as TOML by the renderer, or None (objects, texts, whole numbers, booleans, lists of texts)."""
+    if isinstance(v, dict):
+        for k, x in v.items():
+            p = _toml_problem(x, "%s.%s" % (where, k))
+            if p:
+                return p
+        return None
+    if isinstance(v, (str, bool, int)) or (isinstance(v, list) and all(isinstance(x, str) for x in v)):
+        return None
+    return "%s: %s cannot be written as TOML by the renderer (an object, a text, a whole number, a boolean or a list of texts)" % (where, _show(v))
+
+
+def _mcp_problems(mcp):
+    """The rules of resources.mcp a schema cannot state: the root pointer is a JSON pointer, a TOML file's entry template holds only what TOML is written
+    with, and the tool lists of an entry (tool_lists) are pointers into the entry that the template does not already use, of a runtime whose tool names
+    qargi can write (the member policy judges a tool by that name)."""
+    bad = []
+    rp = mcp.get("root_pointer")
+    if rp is not None and _json_pointer(rp) is None:
+        bad.append("resources.mcp.root_pointer: %s is not a JSON pointer into nested objects (/a/b)" % _show(rp))
+    if mcp.get("format") == "toml" and isinstance(mcp.get("entry"), dict):
+        p = _toml_problem(mcp["entry"], "resources.mcp.entry")
+        if p:
+            bad.append(p)
+    tl = mcp.get("tool_lists")
+    if not isinstance(tl, dict):
+        return bad
+    ptrs = [(k, tl.get(k)) for k in ("allow", "deny") if tl.get(k) is not None]
+    if not ptrs:
+        bad.append("resources.mcp.tool_lists: names neither an allow nor a deny list")
+    for k, v in ptrs:
+        parts = _json_pointer(v)
+        if parts is None:
+            bad.append("resources.mcp.tool_lists.%s: %s is not a JSON pointer into the entry (/a/b)" % (k, _show(v)))
+            continue
+        node = mcp.get("entry") if isinstance(mcp.get("entry"), dict) else {}
+        for i, part in enumerate(parts):
+            if not isinstance(node, dict) or part not in node:
+                break
+            if i == len(parts) - 1 or not isinstance(node[part], dict):
+                bad.append("resources.mcp.tool_lists.%s: %s runs onto or through a value the entry template sets" % (k, v))
+                break
+            node = node[part]
+    if len(ptrs) == 2 and ptrs[0][1] == ptrs[1][1]:
+        bad.append("resources.mcp.tool_lists: allow and deny are the same place (%s)" % ptrs[0][1])
+    rule = mcp.get("permission_rule")
+    if not isinstance(rule, str) or sorted(set(re.findall(r"\{(server|tool)\}", rule))) != ["server", "tool"]:
+        bad.append("resources.mcp.tool_lists: needs a permission_rule with {server} and {tool}, the name by which the member policy judges a tool")
     return bad
 
 

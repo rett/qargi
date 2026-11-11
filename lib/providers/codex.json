@@ -4,7 +4,7 @@
   "provider": "codex",
   "family": "openai",
   "surface": "local",
-  "description": "Codex CLI, the local command-line runtime: a member is a `codex exec` process that qargi local run starts in the run's clone, held by the Codex sandbox (read-only or workspace-write by class); skills load from .agents/skills; no MCP yet",
+  "description": "Codex CLI, the local command-line runtime: a member is a `codex exec` process that qargi local run starts in the run's clone, held by the Codex sandbox (read-only or workspace-write by class); skills load from .agents/skills; the tool packs become [mcp_servers] tables of config.toml, each with the tools a member may call (enabled_tools)",
   "models": {
     "catalog": "openai",
     "use": "id"
@@ -47,10 +47,10 @@
       "note": "codex can resume a session, but qargi local run starts no resumed session"
     },
     "mcp": {
-      "value": "no",
+      "value": "yes",
       "verified_on": null,
-      "source": "lib/local_run.py",
-      "note": "a local run renders no MCP configuration for a command runtime yet, and the run ignores the user's Codex configuration (--ignore-user-config): a Codex member has no MCP tools"
+      "source": "codex mcp add --help; codex mcp list --json reads the [mcp_servers.NAME] tables of CODEX_HOME/config.toml and refuses an enabled_tools that is not a list, codex-cli 0.167.1",
+      "note": "qargi packs apply --target codex renders the tool packs into config.toml, one [mcp_servers.PACK] table each with url and enabled_tools: the tools a member may call for the roles the pack reaches (never an always_ask tool, for a read-only role only a declared read); a server runs outside the Codex sandbox, so the tool list is what holds it; the tool names and enabled_tools are not yet verified in a real run"
     },
     "cost_report": {
       "value": "partial",
@@ -89,9 +89,23 @@
       "user_file": "~/.codex/AGENTS.md",
       "items": "single-file"
     },
-    "mcp": null
+    "mcp": {
+      "file": "config.toml",
+      "format": "toml",
+      "root_pointer": "/mcp_servers",
+      "entry": {"url": "{url}"},
+      "permission_rule": "mcp__{server}__{tool}",
+      "name_key": "nonword-underscore",
+      "tool_lists": {"allow": "/enabled_tools"}
+    }
   },
   "agents": null,
+  "renderers": {
+    "packs": {"label": "Codex"}
+  },
+  "session": {
+    "render_target": "codex"
+  },
   "dispatch": {
     "mode": "command",
     "argv": [
