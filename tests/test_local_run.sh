@@ -326,6 +326,51 @@ out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
 jq 'del(.models.extensions)' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
 setprov fakecmd
 
+# --- the shipped codex runtime: the argv of each class comes from its data alone (a fake codex on PATH; nothing reaches the vendor) ----------
+cp "$T/bin/fakellm" "$T/bin/codex"
+setprov codex; prep "$T/r" cx1; task
+out=$($DA local run "$RUN" --dry-run 2>"$T/err"); rc=$?
+want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["codex","exec","--json","--ephemeral","--ignore-user-config","-C",$c,"-m","gpt-6.1-terra","-o",($o + "/report.md"),"--sandbox","workspace-write","--add-dir",$o]')
+{ [ "$rc" = 0 ] && [ "$(arg0 <<<"$out")" = "$want" ] && grep -q '^COMMAND=codex$' <<<"$out" && grep -q '^PROMPT_VIA=stdin$' <<<"$out" && grep -q '^CLASS=write$' <<<"$out"; } \
+  && ok "codex, write: codex exec in the clone, the balanced model, the last message to OUT/report.md, the workspace-write sandbox with OUT added" || no "codex write argv: rc=$rc [$(arg0 <<<"$out")] want [$want] $(cat "$T/err")"
+out=$($DA local run "$RUN" --dry-run --model fast --effort max 2>&1); rc=$?
+want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["codex","exec","--json","--ephemeral","--ignore-user-config","-C",$c,"-m","gpt-6-luna","-c","model_reasoning_effort=max","-o",($o + "/report.md"),"--sandbox","workspace-write","--add-dir",$o]')
+{ [ "$rc" = 0 ] && [ "$(arg0 <<<"$out")" = "$want" ] && ! grep -q '^NOTE=effort' <<<"$out"; } && ok "codex: a tier is passed as the catalog's id and an effort as -c model_reasoning_effort" || no "codex model and effort: rc=$rc [$(arg0 <<<"$out")] want [$want]"
+if [ "$(command -v codex)" = "$T/bin/codex" ]; then out=$($DA local run "$RUN" 2>"$T/err"); rc=$?; else rc=x; out="the first codex on PATH is $(command -v codex), not the fake: the real run is not made"; : > "$T/err"; fi
+{ [ "$rc" = 0 ] && grep -q '^ARG\[--sandbox\]$' "$OUT/transcript" && grep -q '^ARG\[workspace-write\]$' "$OUT/transcript" \
+  && sed -n '/^STDIN-BEGIN/,/^STDIN-END/p' "$OUT/transcript" | grep -q 'TASK: change the thing'; } && ok "codex: a real run of the fake gets the argv as separate arguments and the prompt on its standard input" || no "codex run: rc=$rc $out $(cat "$T/err")"
+out=$($DA local prepare --repo "$T/r" --base main --slug cxr0 --scratch "$T" --role review 2>&1); rc=$?
+{ [ "$rc" != 0 ] && grep -q 'qargi provider accept codex --surface local --no-barrier --project rproj' <<<"$out"; } \
+  && ok "codex, read-only: its sandbox barrier is not attested yet, so it counts as none and prepare refuses the review role with the accept command" || no "codex ro prepare: rc=$rc $out"
+jq '.models.accept_no_barrier = {local: {by: "owner", at: "2026-11-11", reason: "test"}}' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
+prep "$T/r" cxr review; task
+jq 'del(.models.accept_no_barrier)' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'qargi provider accept codex --surface local --no-barrier --project rproj' <<<"$out" && ! grep -q '^ARGV=' <<<"$out"; } \
+  && ok "and local run refuses it too, once the acceptance it was prepared under is gone" || no "codex ro unattested: rc=$rc $out"
+jq '.models.accept_no_barrier = {local: {by: "owner", at: "2026-11-11", reason: "test"}}' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["codex","exec","--json","--ephemeral","--ignore-user-config","-C",$c,"-m","gpt-6.1-terra","-o",($o + "/report.md"),"--sandbox","read-only"]')
+{ [ "$rc" = 0 ] && [ "$(arg0 <<<"$out")" = "$want" ] && grep -q '^CLASS=read-only$' <<<"$out"; } && ok "codex, read-only (accepted): the read-only sandbox and no write group" || no "codex ro argv: rc=$rc [$(arg0 <<<"$out")] want [$want]"
+jq 'del(.models.accept_no_barrier)' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
+# copies in the library, attested: with the read-only group the barrier holds (partial, with its note); without it a read-only run is refused
+mk codexro "$(jq '.provider = "codexro" | del(.resources.contract_addenda)' lib/providers/codex.json)"
+mk codexnoro "$(jq '.provider = "codexnoro" | del(.resources.contract_addenda) | .dispatch.argv |= map(select((type == "object" and .class == "read-only") | not))' lib/providers/codex.json)"
+verify_ro codexro; verify_ro codexnoro
+setprov codexro; prep "$T/r" cxr2 review; task
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(arg0 <<<"$out" | jq -c '.[-2:]')" = '["--sandbox","read-only"]' ] && grep -q '^NOTE=codexro has only a partial read-only barrier on local' <<<"$out"; } \
+  && ok "codex attested, read-only: the run goes on with the read-only sandbox and the partial barrier's note" || no "codex ro attested: rc=$rc $out"
+setprov codexnoro; prep "$T/r" cxr3 review; task
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'sandbox-args but its dispatch supplies no read-only arguments' <<<"$out" && ! grep -q '^ARGV=' <<<"$out"; } \
+  && ok "codex without its read-only sandbox group: a read-only run is refused, even attested" || no "codex ro without group: rc=$rc $out"
+prep "$T/r" cxw3; task
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q '"workspace-write"' <<<"$out"; } && ok "and its write run is not affected" || no "codex without group, write: rc=$rc $out"
+rm -f "$T/bin/codex"
+setprov fakecmd
+
 # --- an in-session runtime is not started here ----------------------------------------------------------------------------------------
 prep "$T/r2" c1; task
 out=$($DA local run "$RUN" 2>&1); rc=$?

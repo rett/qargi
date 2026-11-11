@@ -116,6 +116,37 @@ class Shipped(Tree):
         broken["tiers"]["deep"]["model"] = "o9-deep"
         self.assertTrue(any("does not match pattern" in m for m in fails(broken, "openai")), fails(broken, "openai"))
 
+    def test_the_codex_runtime_is_data_only_held_by_its_sandbox_and_claims_nothing_verified(self):
+        cx = shipped("codex.json")
+        self.assertEqual(fails(cx, "codex"), [])
+        claims = sorted("capabilities.%s.verified_on" % c for c, cl in cx["capabilities"].items() if cl["value"] in ("yes", "partial"))
+        self.assertEqual(sorted(m.split(":")[0] for m in warns(cx, "codex")), claims)              # every claim warns: none is verified yet
+        self.assertTrue(all(cl["verified_on"] is None for cl in cx["capabilities"].values()))
+        self.assertEqual({c: cl["value"] for c, cl in cx["capabilities"].items()},
+                         {"headless_dispatch": "yes", "per_dispatch_model_override": "yes", "per_dispatch_effort_override": "yes",
+                          "read_only_barrier": "partial", "skills": "yes", "resume": "no", "mcp": "no"})
+        self.assertEqual((cx["family"], cx["surface"], cx["models"], cx["agents"]), ("openai", "local", {"catalog": "openai", "use": "id"}, None))
+        self.assertNotIn("adapter", cx)                                                             # data only: no code of its own
+        self.assertIsNone(cx["resources"]["mcp"])
+        self.assertEqual(cx["barrier"], {"kind": "sandbox-args"})
+        self.assertTrue(P.has_class_args(cx["dispatch"]))
+        self.assertIsNone(P.barrier_claim_problem(cx))
+        self.assertEqual(P.cap("codex", "local", "read_only_barrier"), "unverified")                # partial, but not attested: it counts as no
+        self.assertEqual(P.effective("codex", "local", "read_only_barrier"), "no")
+        d = cx["dispatch"]
+        self.assertEqual((d["mode"], d["prompt"], d["output"], d["timeout_s"], d["cwd"]), ("command", {"via": "stdin"}, {"format": "jsonl"}, 3600, "{clone}"))
+        self.assertEqual(d["argv"], ["codex", "exec", "--json", "--ephemeral", "--ignore-user-config", "-C", "{clone}",
+                                     {"if": "model", "then": ["-m", "{model}"]}, {"if": "effort", "then": ["-c", "model_reasoning_effort={effort}"]},
+                                     "-o", "{out_dir}/report.md",
+                                     {"class": "write", "then": ["--sandbox", "workspace-write", "--add-dir", "{out_dir}"]},
+                                     {"class": "read-only", "then": ["--sandbox", "read-only"]}])
+        self.assertNotIn("class_argv", d)
+        self.assertFalse(any("dangerously" in a or "bypass" in a for a in d["argv"] if isinstance(a, str)))
+        m = P.models_of("codex", "local")
+        self.assertEqual([P.model_for(m, t) for t in P.TIERS], ["gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-astra"])   # ids: the runtime passes ids
+        self.assertEqual(P.contract_addenda("codex", "local")[0].splitlines()[0], "# In a Codex run")
+        self.assertEqual(sorted(cx["notes"]), ["commands", "identity", "session-model", "skills-dir", "spawn"])
+
     def test_reserved_names_are_the_agent_types_the_claude_runtime_brings_itself(self):
         self.assertEqual(sorted(CODE["agents"]["reserved_names"]),
                          sorted("general-purpose explore plan statusline-setup claude-code-guide claude output-style-setup".split()))
@@ -495,6 +526,13 @@ class Cli(CliBase):
         self.assertIn("the review role cannot be served on cloud", out)
         self.assertEqual(q("check", "nope")[0], 1)
         self.assertEqual(json.loads(q("show", "claude-code", "--json")[1]), CODE)
+        rc, out, _ = q("list")
+        self.assertRegex(out, r"(?m)^codex\s+local\s+5 warnings$")                     # the five unverified claims, no failure
+        rc, out, _ = q("check", "codex")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("the review role cannot be served on local", out)                 # the sandbox barrier is not attested yet
+        for t, m in (("fast", "gpt-6-luna"), ("balanced", "gpt-6.1-terra"), ("deep", "gpt-6.1-sol"), ("frontier", "gpt-6-astra")):
+            self.assertEqual(q("model", "codex", "local", t)[:2], (0, m + "\n"), t)
 
 
 class Layout(Tree):

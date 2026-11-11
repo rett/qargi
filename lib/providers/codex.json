@@ -1,0 +1,129 @@
+{
+  "schema": 2,
+  "kind": "provider",
+  "provider": "codex",
+  "family": "openai",
+  "surface": "local",
+  "description": "Codex CLI, the local command-line runtime: a member is a `codex exec` process that qargi local run starts in the run's clone, held by the Codex sandbox (read-only or workspace-write by class); skills load from .agents/skills; no MCP yet",
+  "models": {
+    "catalog": "openai",
+    "use": "id"
+  },
+  "capabilities": {
+    "headless_dispatch": {
+      "value": "yes",
+      "verified_on": null,
+      "source": "codex exec --help, codex-cli 0.167.1",
+      "note": "codex exec reads the prompt from standard input, --json writes the events as JSON lines, -o writes the last message to a file"
+    },
+    "per_dispatch_model_override": {
+      "value": "yes",
+      "verified_on": null,
+      "source": "codex exec --help (-m MODEL)",
+      "note": "not yet verified to take effect in a run"
+    },
+    "per_dispatch_effort_override": {
+      "value": "yes",
+      "verified_on": null,
+      "source": "codex exec --help (-c KEY=VALUE); the key model_reasoning_effort",
+      "note": "not yet verified to take effect in a run"
+    },
+    "read_only_barrier": {
+      "value": "partial",
+      "verified_on": null,
+      "source": "codex exec --help (--sandbox read-only|workspace-write)",
+      "note": "the Codex sandbox holds the shell commands of a member (read-only: no writes, workspace-write: the clone and OUT only), not its reads, and no qargi guard hook runs: the publish and skill verbs are held only by the sandbox's write and network denial; not yet attested"
+    },
+    "skills": {
+      "value": "yes",
+      "verified_on": null,
+      "source": "codex-cli 0.167.1: SKILL.md directories in the user's skills directory, linked directories included",
+      "note": "the project directory .agents/skills is not yet verified"
+    },
+    "resume": {
+      "value": "no",
+      "verified_on": null,
+      "source": "codex exec --help (codex exec resume)",
+      "note": "codex can resume a session, but qargi local run starts no resumed session"
+    },
+    "mcp": {
+      "value": "no",
+      "verified_on": null,
+      "source": "lib/local_run.py",
+      "note": "a local run renders no MCP configuration for a command runtime yet, and the run ignores the user's Codex configuration (--ignore-user-config): a Codex member has no MCP tools"
+    }
+  },
+  "resources": {
+    "contract_addenda": ["local-run.md"],
+    "skills": {
+      "project_dir": ".agents/skills",
+      "user_dir": "~/.codex/skills",
+      "items": "dir-per-item",
+      "entry": "SKILL.md",
+      "format": "skill-md",
+      "link": {
+        "project": "dir-symlink",
+        "user": "none"
+      },
+      "exclusion": {
+        "form": "config-list",
+        "file": "~/.codex/config.toml",
+        "format": "toml",
+        "pointer": "/skills/config",
+        "match": {
+          "name": "{name}"
+        },
+        "off": {
+          "enabled": false
+        }
+      }
+    },
+    "instructions": {
+      "project_file": ["AGENTS.md"],
+      "user_file": "~/.codex/AGENTS.md",
+      "items": "single-file"
+    },
+    "mcp": null
+  },
+  "agents": null,
+  "dispatch": {
+    "mode": "command",
+    "argv": [
+      "codex",
+      "exec",
+      "--json",
+      "--ephemeral",
+      "--ignore-user-config",
+      "-C",
+      "{clone}",
+      {"if": "model", "then": ["-m", "{model}"]},
+      {"if": "effort", "then": ["-c", "model_reasoning_effort={effort}"]},
+      "-o",
+      "{out_dir}/report.md",
+      {"class": "write", "then": ["--sandbox", "workspace-write", "--add-dir", "{out_dir}"]},
+      {"class": "read-only", "then": ["--sandbox", "read-only"]}
+    ],
+    "prompt": {
+      "via": "stdin"
+    },
+    "cwd": "{clone}",
+    "timeout_s": 3600,
+    "output": {
+      "format": "jsonl"
+    },
+    "exit": {
+      "0": "ok",
+      "*": "failed"
+    }
+  },
+  "barrier": {
+    "kind": "sandbox-args"
+  },
+  "notes": {
+    "spawn": "A Codex member is not started inside a session: prepare a run with `qargi local prepare` (with --role and the task block) and start it with `qargi local run RUN`, adding `--model` (a tier or a gpt- model id) and `--effort` (a level). It runs `codex exec` in the run's clone with the prompt on standard input and the Codex sandbox of the run's class; the JSON events go to OUT/transcript and the member's last message to OUT/report.md. `--dry-run` prints the command first and runs nothing.",
+    "session-model": "A Codex session's own model is chosen in Codex (`codex -m MODEL` or its configuration), not by qargi; qargi chooses only the model of a member it starts with `qargi local run`.",
+    "skills-dir": "Codex loads a checkout's skills from `.agents/skills` and the user's from `~/.codex/skills` (a directory with a SKILL.md each; a linked directory works). To hide a skill without removing it, add an entry to `skills.config` in `~/.codex/config.toml` that names it with `enabled = false`; qargi only reads that file. A member run ignores the user's Codex configuration.",
+    "identity": "Codex has no hook that qargi uses to record the lead identity for the later commands of a session, so pass `--as ID` to the commands that take it; without it the anonymous identity user@host works but only warns.",
+    "commands": "A command the person must run themselves, such as one that asks for input or a credential, is printed for them to run in their own terminal; a Codex member runs commands only inside its sandbox."
+  }
+}
