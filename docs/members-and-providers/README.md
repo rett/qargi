@@ -1,6 +1,6 @@
 # Members
 
-See also [Choosing models](models.md) and [Providers and runtimes](providers.md).
+See also [Choosing models](models.md), [Providers and runtimes](providers.md) and [Codex as lead and as member](codex.md).
 
 qargi ships one neutral member definition (`agents/member.json` and its prompt
 `agents/member.body.md`) and installs none: you create the members with `qargi agent add`, which
@@ -82,3 +82,5 @@ hooks of a project-level agent run only once you trust the workspace.
 
 The guard is a second barrier beside the credential-free git
 wrapper. It is a best-effort text check of the command or the path of a call, which refuses the ordinary ways to push, reach out, change a skill or write where a role may not. It is not a sandbox. A local member runs as your operating-system user, so an agent that goes out of its way can get around it; a real sandbox is not yet built. `qargi local verify` and `qargi review check` are the backstop: they check what came back, not what was attempted.
+
+A member of a command runtime started by `qargi local run` (the `codex` runtime) has no guard hook at all: what holds it is the runtime's own sandbox (for Codex, the read-only or workspace-write sandbox of the run's class, with no network for its commands), the credential-free git wrapper and a clone whose only remote is the run's copy with its push URL disabled, and the same backstop. Neither the guard nor the sandbox makes a push impossible; they leave an ordinary push nothing to reach or authenticate with, and `qargi local verify` shows whether any ref of the real repository moved. See [Codex as lead and as member](codex.md).

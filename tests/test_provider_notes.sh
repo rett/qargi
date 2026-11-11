@@ -115,9 +115,13 @@ run --project oncodex
 { [ $rc = 0 ] && [ "$out" = "commands
 exploration
 identity
+message
 session-model
 skills-dir
 spawn" ]; } && ok "the shipped codex lists its topics" || no "codex topics: rc=$rc out=$out err=$err"
+run message --project oncodex
+{ [ $rc = 0 ] && grep -q 'codex queue --thread ID_OR_NAME --message TEXT' <<<"$out" && grep -q 'never an approval' <<<"$out"; } \
+  && ok "codex says how to send a session a message without attaching, and that a message is no approval" || no "codex message: rc=$rc out=$out err=$err"
 run spawn --project oncodex
 { [ $rc = 0 ] && grep -q 'qargi local run RUN' <<<"$out" && grep -q 'qargi local prepare' <<<"$out" && ! grep -q 'subagent_type' <<<"$out"; } \
   && ok "codex says a member is started with qargi local run" || no "codex spawn: rc=$rc out=$out err=$err"
