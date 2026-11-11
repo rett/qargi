@@ -1043,18 +1043,53 @@ def _mcp_problems(mcp):
 RUN_CONFIG_PLACES = ("home", "run")
 
 
+def _baseline_problems(base, root):
+    """The rules of a run_config baseline a schema cannot state: an object of non-empty keys whose values the file's writer takes (objects, texts,
+    whole numbers, booleans, lists of texts), with nothing at or below the root pointer of the MCP servers, which only the tool packs fill."""
+    if base is None:
+        return []
+    if not isinstance(base, dict) or not base:
+        return ["dispatch.run_config.baseline: %s is not a non-empty object of settings" % _show(base)]
+    bad = []
+
+    def keys(d, where):
+        for k, v in d.items():
+            if not isinstance(k, str) or not k.strip():
+                bad.append("dispatch.run_config.baseline: %s holds an empty key" % where)
+            elif isinstance(v, dict):
+                if not v:
+                    bad.append("dispatch.run_config.baseline: %s.%s is an empty object, which sets nothing" % (where, k))
+                keys(v, "%s.%s" % (where, k))
+    keys(base, "baseline")
+    p = _toml_problem(base, "dispatch.run_config.baseline")
+    if p:
+        bad.append(p)
+    parts = _json_pointer(root) or []
+    node = base
+    for i, k in enumerate(parts):
+        if not isinstance(node, dict) or k not in node:
+            break
+        node = node[k]
+        if i == len(parts) - 1 or not isinstance(node, dict):
+            bad.append("dispatch.run_config.baseline: it sets /%s, where the MCP servers of the run go (resources.mcp.root_pointer %s): only the tool packs "
+                       "of the run's role put servers there" % ("/".join(parts[:i + 1]), root))
+            break
+    return bad
+
+
 def run_config_problems(disp, resources, shape=True):
-    """The findings of a dispatch's run_config (the MCP file of one member run, which qargi local run renders): a runtime that qargi local run starts,
-    in home only with a run home (and a file name that is not one of its links), and resources.mcp with the tool lists that hold a run's tools. shape:
-    also the types the schema states (for a caller that has not validated the definition)."""
+    """The findings of a dispatch's run_config (the configuration file of one member run, which qargi local run renders): a runtime that qargi local run
+    starts, in home only with a run home (and a file name that is not one of its links), resources.mcp with the tool lists that hold a run's tools, and
+    a baseline that the file's writer takes and that leaves the place of the MCP servers to the tool packs. shape: also the types the schema states (for
+    a caller that has not validated the definition)."""
     rc = disp.get("run_config") if isinstance(disp, dict) else None
     if rc is None:
         return []
     if not isinstance(rc, dict):
-        return ["dispatch.run_config: %s is not an object {in, file}" % _show(rc)] if shape else []
+        return ["dispatch.run_config: %s is not an object {in, file, baseline}" % _show(rc)] if shape else []
     bad = []
     if shape:
-        bad += ["dispatch.run_config.%s: additional property is not allowed" % k for k in rc if k not in ("in", "file")]
+        bad += ["dispatch.run_config.%s: additional property is not allowed" % k for k in rc if k not in ("in", "file", "baseline")]
         if rc.get("in") not in RUN_CONFIG_PLACES:
             bad.append("dispatch.run_config.in: %s is not one of home, run" % _show(rc.get("in")))
         if not isinstance(rc.get("file"), str) or not HOME_LINK_NAME.match(rc["file"]):
@@ -1071,6 +1106,7 @@ def run_config_problems(disp, resources, shape=True):
     tl = mcp.get("tool_lists") if isinstance(mcp, dict) else None
     if not isinstance(tl, dict) or not (tl.get("allow") or tl.get("deny")):
         bad.append("dispatch.run_config: needs resources.mcp with tool_lists: the list in each server entry is what holds the MCP tools of a run")
+    bad += _baseline_problems(rc.get("baseline"), mcp.get("root_pointer") if isinstance(mcp, dict) else None)
     return bad
 
 

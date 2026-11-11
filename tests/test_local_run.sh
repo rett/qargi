@@ -581,9 +581,25 @@ out=$($DA local run "$RUN" 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -q "^ARG\[--mcp-file\]$" "$OUT/transcript" && grep -q "^ARG\[$RUN/config/mcp.json\]$" "$OUT/transcript" \
   && [ "$(jq -c '.servers.cx | [.allow, .deny, .url]' "$RUN/config/mcp.json")" = '[["getStatus","platform.list_items","repo/push"],["issue-close"],"https://mcp.example.net/cx-endpoint"]' ]; } \
   && ok "another runtime: the file goes to RUN/config in its own format with its allow and deny lists, and {run_config} passes its path" || no "fakecfg: rc=$rc $out $(cat "$RUN/config/mcp.json" 2>&1)"
+# with a baseline (dispatch.run_config.baseline) the file always holds the definition's settings, with or without a server: the same settings either way
+mk fakecfgb "$(jq '.provider = "fakecfgb" | .dispatch.run_config.baseline = {ask: "never", net: {on: false, roots: ["a"]}}' "$LIB/fakecfg/definition.json")"
+setprov fakecfgb; prep "$T/r" mc5; task
+out=$($DA local run "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(jq -cS '[.ask, .net, (.servers | keys)]' "$RUN/config/mcp.json")" = '["never",{"on":false,"roots":["a"]},["cx"]]' ] \
+  && [ "$(jq -cS .run_config.baseline "$RUN/dispatch.json")" = '{"ask":"never","net":{"on":false,"roots":["a"]}}' ]; } \
+  && ok "a baseline: the run's file holds the settings beside the servers, and dispatch.json records them" || no "baseline with mcp: rc=$rc $out $(cat "$RUN/config/mcp.json" 2>&1)"
+withmcp=$(jq -cS 'del(.servers)' "$RUN/config/mcp.json")
 $DA tool unlink cx --scope project --project rproj >/dev/null
 out=$($DA local run "$RUN" --dry-run 2>&1)
-{ ! grep -q -- '--mcp-file' <<<"$(arg0 <<<"$out")" && grep -q '^RUN_CONFIG=none' <<<"$out"; } && ok "and without a tool for the role the flag is left out" || no "fakecfg none: $out"
+{ grep -q -- '"--mcp-file"' <<<"$(arg0 <<<"$out")" && grep -q "^RUN_CONFIG=$RUN/config/mcp.json\$" <<<"$out" && grep -q '^RUN_CONFIG_TOOLS=$' <<<"$out" \
+  && grep -q '^RUN_CONFIG_BASELINE={"ask":"never","net":{"on":false,"roots":\["a"\]}}$' <<<"$out"; } \
+  && ok "a baseline and no tool for the role: the dry run still names the file, and prints the baseline" || no "baseline dry: $out"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(jq -cS . "$RUN/config/mcp.json")" = "$withmcp" ] && [ "$(jq -c .run_config.tools "$RUN/dispatch.json")" = '[]' ]; } \
+  && ok "and the run writes the baseline alone, the same settings the run with a server got" || no "baseline no mcp: rc=$rc $out $(cat "$RUN/config/mcp.json" 2>&1)"
+setprov fakecfg; prep "$T/r" mc6; task
+out=$($DA local run "$RUN" --dry-run 2>&1)
+{ ! grep -q -- '--mcp-file' <<<"$(arg0 <<<"$out")" && grep -q '^RUN_CONFIG=none' <<<"$out" && ! grep -q '^RUN_CONFIG_BASELINE=' <<<"$out"; } && ok "and without a baseline or a tool for the role the flag is left out" || no "fakecfg none: $out"
 rm -rf "$HOME/.codex"
 rm -f "$T/bin/codex"
 # without the fake, the first codex on PATH is the stub of tests/hermetic.sh: a real codex installed on the machine never runs in a test

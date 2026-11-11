@@ -915,6 +915,28 @@ class Schema2(unittest.TestCase):
         self.assertEqual(P.run_config_problems({"mode": "command", "run_config": {"in": "run", "file": "a/b"}}, {"mcp": mcp}),
                          ["dispatch.run_config.file: 'a/b' is not a plain file name (letters, digits, . _ and -, no /)"])
 
+    def test_the_baseline_of_a_run_file_is_settings_the_writer_takes_and_leaves_the_servers_to_the_packs(self):
+        mcp = {"file": "c.toml", "format": "toml", "root_pointer": "/servers", "entry": {"url": "{url}"}, "permission_rule": "mcp__{server}__{tool}",
+               "tool_lists": {"allow": "/enabled_tools"}}
+
+        def d(base, root="/servers"):
+            r = runtime(resources={"mcp": dict(mcp, root_pointer=root)})
+            r["dispatch"]["run_config"] = {"in": "run", "file": "c.toml", "baseline": base}
+            return r
+        good = {"ask": "never", "net": {"on": False, "roots": ["a"], "n": 3}}
+        self.assertEqual(fails(d(good), "mylocal"), [])
+        self.assertEqual(fails(d(None), "mylocal"), [])
+        self.assertEqual(fails(d({"a": {"other": 1}}, root="/a/servers"), "mylocal"), [])          # beside the servers, under the same table
+        self.one(d({}), "dispatch.run_config.baseline: {} is not a non-empty object of settings", name="mylocal")
+        self.one(d(["ask"]), 'dispatch.run_config.baseline: ["ask"] is not a non-empty object of settings', name="mylocal")
+        self.one(d({"x": {}}), "dispatch.run_config.baseline: baseline.x is an empty object, which sets nothing", name="mylocal")
+        self.one(d({"x": 1.5}), "dispatch.run_config.baseline.x: 1.5 cannot be written as TOML by the renderer", name="mylocal")
+        self.one(d({"x": [1, 2]}), "dispatch.run_config.baseline.x: [1, 2] cannot be written as TOML by the renderer", name="mylocal")
+        self.one(d({"servers": {"mine": {"url": "https://example.net"}}}), "dispatch.run_config.baseline: it sets /servers, where the MCP servers of the run go",
+                 name="mylocal")
+        self.one(d({"a": {"servers": {}}}, root="/a/servers"), "dispatch.run_config.baseline: it sets /a/servers", name="mylocal")
+        self.one(d({"a": "text"}, root="/a/servers"), "dispatch.run_config.baseline: it sets /a, where the MCP servers of the run go", name="mylocal")
+
     def test_an_exclusion_form_needs_the_keys_that_form_reads(self):
         def excl(e):
             return {"skills": {"project_dir": ".s", "exclusion": e}}
