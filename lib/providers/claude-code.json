@@ -94,7 +94,8 @@
       "format": "json",
       "root_pointer": "/mcpServers",
       "entry": {"type": "http", "url": "{url}"},
-      "permission_rule": "mcp__{server}__{tool}"
+      "permission_rule": "mcp__{server}__{tool}",
+      "name_key": "nonword-underscore"
     },
     "settings": {
       "files": [

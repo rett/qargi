@@ -5,7 +5,8 @@
 Nothing here names a runtime. What the render looks like comes from the runtime's definition (lib/providers/NAME.json, read through
 lib/provider.py): the skills go under resources.skills.project_dir; the tool packs become MCP server entries in the file
 resources.mcp.file, built from resources.mcp.entry under resources.mcp.root_pointer, with a permission rule per tool from
-resources.mcp.permission_rule; those rules go into a settings file (renderers.packs.settings.file) at resources.settings.allow_pointer
+resources.mcp.permission_rule, the names in it written as the runtime writes them (resources.mcp.name_key, lib/packs_mcp.py: for Claude Code
+the tool platform.list_items of the pack kb is mcp__kb__platform_list_items); those rules go into a settings file (renderers.packs.settings.file) at resources.settings.allow_pointer
 and the ask_pointer and deny_pointer of renderers.packs.settings; renderers.packs.label is how the runtime is called in the plan, and
 session.render_target is the --target name. A runtime whose definition has no usable mcp resource gets its skills only: its tool packs
 are left out of the render and said so, like a pack the runtime cannot use. A tool pack is always an https URL with an explicit allowlist
@@ -45,7 +46,7 @@ from datetime import datetime, timezone
 HERE = os.path.dirname(os.path.abspath(__file__))
 NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]*$')
 PROV_RE = re.compile(r'^[a-z][a-z0-9-]*$')
-TOOL_RE = re.compile(r'^[A-Za-z0-9_.-]{1,64}$')
+TOOL_RE = re.compile(r'^[A-Za-z0-9_.-]{1,64}$')            # a tool name that goes into a rule as written (a runtime whose definition has no name_key)
 SKIP = ".pack.json"
 
 
@@ -136,7 +137,8 @@ def target_of(inp):
     if (mcp.get("format", "json") == "json" and plain_file(mcp.get("file"), skills_dir) and pointer_parts(mcp.get("root_pointer"))
             and isinstance(mcp.get("entry"), dict)):
         rule = mcp.get("permission_rule")
-        tg["mcp"] = {"file": mcp["file"], "root": mcp["root_pointer"], "entry": mcp["entry"], "rule": rule if isinstance(rule, str) else None}
+        tg["mcp"] = {"file": mcp["file"], "root": mcp["root_pointer"], "entry": mcp["entry"], "rule": rule if isinstance(rule, str) else None,
+                     "name_key": mcp.get("name_key")}
         st = packs.get("settings") if isinstance(packs.get("settings"), dict) else {}
         allow = (res.get("settings") or {}).get("allow_pointer") if isinstance(res.get("settings"), dict) else None
         ptrs = {"allow_pointer": allow, "ask_pointer": st.get("ask_pointer"), "deny_pointer": st.get("deny_pointer")}
@@ -335,23 +337,52 @@ def fill(tpl, values):
     return tpl
 
 
+def packs_mcp():
+    """lib/packs_mcp.py: how a runtime writes a server or a tool name inside the name of a tool (python -I does not put this directory on sys.path)."""
+    if HERE not in sys.path:
+        sys.path.insert(0, HERE)
+    import packs_mcp as M
+    return M
+
+
 def tool_parts(p, tg):
-    """(server entry, allow rules, ask rules, needs credentials) of one tool pack; refuses tool names that are not plain names."""
+    """(server entry, allow rules, ask rules, needs credentials, the rule of every tool) of one tool pack; refuses tool names that are not tool names.
+    A rule names the server and the tool as the runtime writes them (the name_key of its definition): with one, every tool name a review accepts is
+    written by it; without one a name goes into the rule as written, and only a plain name does."""
     mcp = tg["mcp"]
+    M = packs_mcp()
+    key = mcp.get("name_key")
     t = load(p["path"])
     if not isinstance(t["url"], str):
         raise TypeError("url is not a string")
-    allow, ask = [], []
+    allow, ask, rules = [], [], []
     for tool, pol in sorted((t.get("tools") or {}).items()):
-        if not isinstance(tool, str) or not TOOL_RE.match(tool):
-            die("tool %s: tool name %r is not a plain name (letters, digits, _ . -, 1-64 characters); a rule with a "
-                "wildcard or quote would defeat the allowlist; refusing" % (p["name"], tool))
-        rule = fill(mcp["rule"], {"server": p["name"], "tool": tool}) if mcp["rule"] else None
+        if not isinstance(tool, str) or not (M.tool_key_ok(tool) if key is not None else TOOL_RE.match(tool)):
+            die("tool %s: tool name %r is not a %s; a rule with a wildcard or quote would defeat the allowlist; refusing"
+                % (p["name"], tool, "tool name (letters, digits, _ . - /, 1-128 characters)" if key is not None else
+                   "plain name (letters, digits, _ . -, 1-64 characters), and %s writes a name into a rule as it is" % tg["label"]))
+        try:
+            rule = fill(mcp["rule"], {"server": M.part(key, p["name"]), "tool": M.part(key, tool)}) if mcp["rule"] else None
+        except M.McpError as e:
+            die("tool %s: %s; refusing" % (p["name"], e))
+        if rule:
+            rules.append((rule, tool))
         if rule and pol == "always_allow":
             allow.append(rule)
         elif rule and pol == "always_ask":
             ask.append(rule)
-    return fill(mcp["entry"], {"url": t["url"], "name": p["name"]}), allow, ask, bool(t.get("vault_ids"))
+    return fill(mcp["entry"], {"url": t["url"], "name": p["name"]}), allow, ask, bool(t.get("vault_ids")), [(r, p["name"], tool) for r, tool in rules]
+
+
+def one_rule_each(rules):
+    """Refuse when two tools get the same permission rule (the runtime writes a.b and a_b of one server the same way): a rule made for one would hold
+    for the other, whatever the other's policy is."""
+    seen = {}
+    for rule, pack, tool in rules:
+        if rule in seen:
+            die("tool %s: the tools %s and %s get the same permission rule (%s), so a rule for one would hold for the other; keep one of them in the pack; refusing"
+                % (pack, "%s of pack %s" % seen[rule] if seen[rule][1] != pack else seen[rule][0], tool, rule))
+        seen[rule] = (tool, pack)
 
 
 def shared_files(servers, allow, ask, tg):
@@ -377,7 +408,7 @@ def render(inp, out):
     """Write the tree into out; returns the manifest's pack list and the tool details."""
     tg = inp["target"]
     mkdirs(os.path.join(out, tg["skills_dir"]), os.path.dirname(out))
-    packs, servers, allow, ask, creds = [], {}, [], [], []
+    packs, servers, allow, ask, creds, rules = [], {}, [], [], [], []
     for p in sorted(inp["packs"], key=lambda x: (x["kind"], x["name"])):
         entry = {"kind": p["kind"], "name": p["name"], "sha256": p["sha256"], "roles": sorted(p["roles"]), "files": {}, "modes": {}}
         if p["kind"] == "skill":
@@ -412,17 +443,19 @@ def render(inp, out):
                     entry["modes"][key] = "%o" % mode
         else:
             try:
-                server, a, k, cred = tool_parts(p, tg)
+                server, a, k, cred, named = tool_parts(p, tg)
             except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
                 die("tool %s: cannot be read as a tool pack (%s); refusing" % (p["name"], e))
             servers[p["name"]] = server
             allow += a
             ask += k
+            rules += named
             if cred:
                 creds.append(p["name"])
         packs.append(entry)
+    one_rule_each(rules)
     shared = {}
-    for name, data in shared_files(servers, allow, ask, tg).items():
+    for name, data in shared_files(servers, sorted(allow), sorted(ask), tg).items():     # sorted, as the check builds them: the order of the names as the runtime writes them is not the order of the packs
         mkdirs(os.path.dirname(os.path.join(out, name)), out)
         with open(os.path.join(out, name), "wb") as fh:
             fh.write(data)
@@ -703,11 +736,13 @@ def cmd_check(inp):
     tools = [p for p in inp["packs"] if p["kind"] == "tool"]
     if tools and all(p["exists"] and p["review_ok"] for p in tools):
         try:
-            servers, allow, ask = {}, [], []
+            servers, allow, ask, rules = {}, [], [], []
             for p in tools:
-                servers[p["name"]], a, kk, _ = tool_parts(p, inp["target"])
+                servers[p["name"]], a, kk, _, named = tool_parts(p, inp["target"])
                 allow += a
                 ask += kk
+                rules += named
+            one_rule_each(rules)
             for name, data in shared_files(servers, sorted(allow), sorted(ask), inp["target"]).items():
                 if name in have and have[name] != sha(data):
                     findings.append("rendered: file differs from the library copy: " + name)

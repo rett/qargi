@@ -735,34 +735,38 @@ def listing(kind, packs, attached, label):
 
 
 # --- filter
-def filt(project, surfaces, packs, conf):
+def usable(entries, project, surfaces, packs, conf):
+    """(entry, kind, name, why) for each KIND:NAME entry: why is None for a pack the project's provider can use on one of SURFACES (or whose use is
+    not decided here: a pack that is missing, declares nothing or "any", or changed since it was approved fails loudly where it is used), else the
+    reason the pack is skipped. The rule of `filter`, for the callers in this process too (lib/packs_mcp.py)."""
     answers = MISSING
     surf = [s for s in surfaces.split(",") if s]
     valid_surfaces = bool(surf) and all(s in packs_compat.SURFACES for s in surf)
-    for line in sys.stdin.read().split("\n"):
-        e = line.strip(" \t")
-        if not e:
-            continue
+    for e in entries:
         k, n = e.split(":", 1) if ":" in e else (e, e)
         p = item_path(packs, k, n)
         c = compat_of(p) if os.path.exists(p) else ""
+        why = None
         if c and c != '["any"]' and valid_surfaces:
             want = approved_of(p)
-            if want and want != content_hash(p):
-                out("ok\t%s\n" % e)
-                continue
-            declared = declared_of(c)
-            if packs_compat.problem(declared) is None:
-                if answers is MISSING:
-                    answers = packs_compat._provider().project_answers(project, conf)
-                try:
-                    ok, why = packs_compat.evaluate(declared, answers, project, surf)
-                except Exception as ex:             # the script would have failed with a traceback and status 1
-                    ok, why = False, "%s: %s" % (type(ex).__name__, ex)
-                if not ok:
-                    out("skip\t%s\t%s\t%s\n" % (k, n, why.rstrip("\n")))
-                    continue
-        out("ok\t%s\n" % e)
+            if not (want and want != content_hash(p)):
+                declared = declared_of(c)
+                if packs_compat.problem(declared) is None:
+                    if answers is MISSING:
+                        answers = packs_compat._provider().project_answers(project, conf)
+                    try:
+                        ok, said = packs_compat.evaluate(declared, answers, project, surf)
+                    except Exception as ex:             # the script would have failed with a traceback and status 1
+                        ok, said = False, "%s: %s" % (type(ex).__name__, ex)
+                    if not ok:
+                        why = said.rstrip("\n")
+        yield e, k, n, why
+
+
+def filt(project, surfaces, packs, conf):
+    entries = [e for e in (line.strip(" \t") for line in sys.stdin.read().split("\n")) if e]
+    for e, k, n, why in usable(entries, project, surfaces, packs, conf):
+        out("ok\t%s\n" % e if why is None else "skip\t%s\t%s\t%s\n" % (k, n, why))
     return 0
 
 

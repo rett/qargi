@@ -31,7 +31,8 @@
 61 python3 tests/test_provider_adapter.py
 39 python3 tests/test_tierplan.py
 71 bash tests/test_packs_seed.sh
-2 python3 tests/test_packs_check.py
+8 python3 tests/test_packs_check.py
+2 python3 tests/test_packs_mcp.py
 32 python3 tests/test_supervise.py
 26 python3 tests/test_env.py
 127 python3 tests/test_site.py
