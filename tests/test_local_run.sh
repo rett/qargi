@@ -23,7 +23,7 @@ cat > "$T/bin/fakellm" <<'SH'
 out=''
 for a in "$@"; do printf 'ARG[%s]\n' "$a"; done
 while [ $# -gt 0 ]; do [ "$1" = --out ] && out=$2; shift; done
-echo "PWD=$PWD"; echo "HOME=$HOME"; echo "KEY=${FAKE_KEY-unset}"; echo "OTHER=${OTHER_SECRET-unset}"; echo "GITCFG=${GIT_CONFIG_GLOBAL-unset}"; echo "GITWRAP=${GIT-unset}"; echo "MEMBERMARK=${QARGI_MEMBER_RUN-unset}"
+echo "SELF0=$0"; echo "MEMBERPATH=$PATH"; echo "PWD=$PWD"; echo "HOME=$HOME"; echo "KEY=${FAKE_KEY-unset}"; echo "OTHER=${OTHER_SECRET-unset}"; echo "GITCFG=${GIT_CONFIG_GLOBAL-unset}"; echo "GITWRAP=${GIT-unset}"; echo "MEMBERMARK=${QARGI_MEMBER_RUN-unset}"
 echo "STDIN-BEGIN"; if [ -t 0 ]; then echo "(tty)"; else cat; fi; echo "STDIN-END"
 [ -z "$out" ] || echo "report of the fake" > "$out/report.md"
 case ${FAKE_MODE-} in
@@ -78,7 +78,7 @@ grep -q '^You are a qargi member: a task-scoped worker' <<<"$out" && grep -q '^T
   && ok "dry run: the prompt is the member body and the task block, with the class qargi recorded" || no "dry prompt: $out"
 grep -q '{skills_dir}' <<<"$out" && no "the member body still has {skills_dir}" || ok "the member body's {skills_dir} is filled"
 [ ! -e "$RUN/dispatch.json" ] && [ ! -e "$OUT/transcript" ] && [ ! -e "$RUN/prompt" ] && ok "dry run writes nothing" || no "dry run wrote: $(ls "$RUN" "$OUT")"
-grep -q '^COMMAND=fakellm' <<<"$out" && grep -q '^PROMPT_VIA=stdin' <<<"$out" && grep -q '^ENV_PASS=FAKE_KEY,FAKE_MODE' <<<"$out" && ok "dry run names the command, the prompt route and the environment passed (names only)" || no "dry fields: $out"
+grep -qxF "COMMAND=$(realpath "$T/bin/fakellm")" <<<"$out" && grep -q '^PROMPT_VIA=stdin' <<<"$out" && grep -q '^ENV_PASS=FAKE_KEY,FAKE_MODE' <<<"$out" && ok "dry run names the command (the absolute path it runs), the prompt route and the environment passed (names only)" || no "dry fields: $out"
 
 out=$($DA local run "$RUN" --dry-run --effort high --model deep 2>&1); rc=$?
 want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["fakellm","run","--model","fake-m-1","--effort","h","--clone",$c,"--out",$o]')
@@ -333,7 +333,7 @@ cp "$T/bin/fakellm" "$T/bin/codex"
 setprov codex; prep "$T/r" cx1; task
 out=$($DA local run "$RUN" --dry-run 2>"$T/err"); rc=$?
 want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["codex","exec","--json","--ephemeral","--ignore-rules","--strict-config","-C",$c,"-m","gpt-6.1-terra","-o","FINAL","--sandbox","workspace-write","--add-dir",$o,"--add-dir",($c + "/.git")]')
-{ [ "$rc" = 0 ] && [ "$(arg0 <<<"$out" | finarg)" = "$want" ] && grep -q '^COMMAND=codex$' <<<"$out" && grep -q '^PROMPT_VIA=stdin$' <<<"$out" && grep -q '^CLASS=write$' <<<"$out"; } \
+{ [ "$rc" = 0 ] && [ "$(arg0 <<<"$out" | finarg)" = "$want" ] && grep -qxF "COMMAND=$(realpath "$T/bin/codex")" <<<"$out" && grep -q '^PROMPT_VIA=stdin$' <<<"$out" && grep -q '^CLASS=write$' <<<"$out"; } \
   && ok "codex, write: codex exec in the clone, the balanced model, the last message to the run's own new file, the workspace-write sandbox with OUT and the clone's .git added" || no "codex write argv: rc=$rc [$(arg0 <<<"$out")] want [$want] $(cat "$T/err")"
 # the clone's .git is a writable root of the sandbox: one an earlier run left as a link (to anywhere) refuses the run, so the grant never leaves the run
 mv "$CLONE/.git" "$CLONE/.git.real"; ln -s "$CLONE/.git.real" "$CLONE/.git"
@@ -1080,6 +1080,42 @@ bad fakeb8 '{"mode":"adapter"}'; tryrun
 [ "$rc" = 3 ] && ok "mode adapter is exit 3 (not run here)" || no "adapter mode: rc=$rc $out"
 bad fakeb9 '{"mode":"command","argv":["fakellm"],"prompt":{"via":"stdin"},"timeout_s":0}'; tryrun
 [ "$rc" = 2 ] && grep -q 'timeout' <<<"$out" && ok "a timeout of 0 is refused" || no "timeout: rc=$rc $out"
+
+# --- the command runs as the real program of its name on the lead's PATH: a wrapper or a shim linked to a program of another name (a version
+# manager's multi-call program, which under the run's HOME would look for the tool there) is passed over, and the member's PATH is unchanged ---
+setprov fakecmd
+w6=("$RUN" "$CLONE" "$OUT"); prep "$T/r" rs1; task                      # a run of its own; the checks below go on with w6
+mkdir -p "$T/vm" "$T/wrap" "$T/same" "$T/ext" "$T/real" "$T/noexec"
+printf '#!/bin/sh\necho "the wrapper ran as $0" > "%s"\nexit 9\n' "$T/wrapper-ran" > "$T/vm/vmgr"; chmod 755 "$T/vm/vmgr"
+ln -s "$T/vm/vmgr" "$T/wrap/fakellm"
+cp "$T/bin/fakellm" "$T/real/fakellm"; cp "$T/bin/fakellm" "$T/real/fakellm.js"
+ln -s "$T/real/fakellm" "$T/same/fakellm"; ln -s "$T/real/fakellm.js" "$T/ext/fakellm"
+printf '#!/bin/sh\nexit 0\n' > "$T/noexec/fakellm"; chmod 644 "$T/noexec/fakellm"
+nofake=$(tr ':' '\n' <<<"$PATH" | grep -vxF "$T/bin" | paste -sd: -)     # the PATH of the test without the fake's directory
+realfake=$(realpath "$T/bin/fakellm")
+out=$(PATH="$T/wrap:$PATH" $DA local run "$RUN" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -qxF "COMMAND=$realfake" <<<"$out" && grep -qF "NOTE=$T/wrap/fakellm on PATH is passed over (it resolves to $(realpath "$T/vm/vmgr"), a program named vmgr, not fakellm" <<<"$out"; } \
+  && ok "a wrapper linked to a program of another name first on PATH is passed over with a note; the real program second is the command" || no "wrapper first: rc=$rc $out"
+out=$(PATH="$T/wrap:$PATH" $DA local run "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ ! -e "$T/wrapper-ran" ] && grep -qxF "SELF0=$realfake" "$OUT/transcript" && [ "$(jq -r .command "$RUN/dispatch.json")" = "$realfake" ] \
+  && [ "$(jq -r '.argv[0]' "$RUN/dispatch.json")" = fakellm ] && grep -q "^MEMBERPATH=$T/wrap:" "$OUT/transcript" && grep -q 'note: .*wrap/fakellm on PATH is passed over' <<<"$out"; } \
+  && ok "a run starts the real program by its absolute path (recorded as command in dispatch.json), never the wrapper; the member's PATH is the lead's, wrapper first" \
+  || no "wrapper run: rc=$rc $out $(cat "$T/wrapper-ran" 2>/dev/null) $(head -3 "$OUT/transcript" 2>/dev/null)"
+out=$(PATH="$T/wrap:$nofake" $DA local run "$RUN" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 3 ] && grep -qF "passed over: $T/wrap/fakellm (it resolves to $(realpath "$T/vm/vmgr"), a program named vmgr, not fakellm" <<<"$out" \
+  && grep -q 'a run never starts a wrapper' <<<"$out" && ! grep -q '^COMMAND=' <<<"$out" && [ ! -e "$T/wrapper-ran" ]; } \
+  && ok "a wrapper alone on PATH is refused (exit 3), naming the entry and why" || no "wrapper only: rc=$rc $out"
+out=$(PATH="$T/same:$nofake" $DA local run "$RUN" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -qxF "COMMAND=$(realpath "$T/real/fakellm")" <<<"$out" && ! grep -q 'passed over' <<<"$out"; } \
+  && ok "a link to a program of the same name is accepted and its real path is the command" || no "same-name link: rc=$rc $out"
+out=$(PATH="$T/ext:$nofake" $DA local run "$RUN" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -qxF "COMMAND=$(realpath "$T/real/fakellm.js")" <<<"$out"; } \
+  && ok "a link to the name with an extension (a launcher fakellm.js) is accepted" || no "extension link: rc=$rc $out"
+out=$(PATH="$T/noexec:$PATH" $DA local run "$RUN" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -qxF "COMMAND=$realfake" <<<"$out" && grep -qF "NOTE=$T/noexec/fakellm on PATH is passed over (not executable)" <<<"$out"; } \
+  && ok "a file of that name that is not executable is passed over with a note" || no "noexec: rc=$rc $out"
+rm -rf "$T/vm" "$T/wrap" "$T/same" "$T/ext" "$T/real" "$T/noexec" "$T/wrapper-ran"
+RUN=${w6[0]} CLONE=${w6[1]} OUT=${w6[2]}
 # a pack somebody put in the library by hand (no record: nobody read it, nobody sealed it) is not loaded, so its argv never runs
 mkdir -p "$LIB/handrun"
 jq -n --argjson m "$M" --arg f "$T/PWNED" '{schema:2,kind:"provider",provider:"handrun",family:null,surface:"local",models:$m,capabilities:{},agents:null,resources:{},barrier:{kind:"none"},

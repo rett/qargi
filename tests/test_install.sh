@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# install.sh: the skills it installs agree with skills/, an install links them, a second run changes nothing, an existing
-# real directory is kept unless --force, an uninstall removes the links, and a project install hides them through the local
+# install.sh: the skills it installs agree with skills/, their front matter is YAML a strict parser reads, an install links them,
+# a second run changes nothing, an existing real directory is kept unless --force, an uninstall removes the links, and a project install hides them through the local
 # exclude file without touching the owner's lines. Hermetic home; nothing touches the real ~/.claude. Run: tests/test_install.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -26,6 +26,93 @@ for s in $listed; do
      && [ -n "$(sed -n '2,/^---$/{s/^description: *//p}' "$f" | head -1)" ]; then ok "skill $s: SKILL.md with name $s and a description"
   else no "skill $s: SKILL.md missing or its front matter has no name: $s / description"; fi
 done
+
+# --- the front matter of every shipped skill is YAML a strict parser reads: a runtime that parses it strictly drops a skill it cannot read, without a
+# word. Each line is `key: value`; an unquoted value starts with no YAML indicator (- ? : followed by a space, or , [ ] { } # & * ! | > ' " % @ `)
+# and holds no ': ' and no ' #' (a strict parser fails on the first and reads a comment from the second); a quoted value is one quoted
+# scalar with nothing after it. The rule is tried on samples first, so a check that accepts everything fails. EXPECTED names the skills whose front
+# matter fails it today and is fixed outside this test; an entry that passes fails, so the list only shrinks.
+EXPECTED="qargi-packs qargi-session qargi-team qargi-verify"
+fm_check() { # FILE... -> one line per file: FILE<TAB>ok or FILE<TAB>line N: why
+  python3 -I - "$@" <<'PY'
+import sys
+
+INDICATORS = ",[]{}#&*!|>'\"%@`"
+
+
+def quoted_end(v, q):
+    """The index after the closing quote of the scalar quoted with q at the start of v, or None when it is not closed."""
+    i = 1
+    while i < len(v):
+        if q == '"' and v[i] == "\\":
+            i += 2
+            continue
+        if v[i] == q:
+            if q == "'" and v[i + 1:i + 2] == "'":
+                i += 2
+                continue
+            return i + 1
+        i += 1
+    return None
+
+
+def problem(v):
+    if v == "":
+        return "no value (a strict parser reads null or a nested block)"
+    if v[0] in "\"'":
+        end = quoted_end(v, v[0])
+        if end is None:
+            return "a quoted value that is not closed"
+        return None if v[end:].strip() == "" else "text after the closing quote of a quoted value"
+    if v[0] in "-?:" and (len(v) == 1 or v[1] == " "):
+        return "an unquoted value that starts with '%s '" % v[0]
+    if v[0] in INDICATORS:
+        return "an unquoted value that starts with '%s'" % v[0]
+    if ": " in v or v.endswith(":"):
+        return "an unquoted value with ': ' in it"
+    if " #" in v or "\t" in v:
+        return "an unquoted value with ' #' or a tab in it"
+    return None
+
+
+def check(text):
+    lines = text.split("\n")
+    if lines[0] != "---" or "---" not in lines[1:]:
+        return "no front matter between two --- lines"
+    for n, line in enumerate(lines[1:lines.index("---", 1)], 2):
+        key, sep, value = line.partition(": ")
+        if not sep and line.endswith(":"):
+            key, sep, value = line[:-1], ":", ""
+        if not sep or not key or not key.replace("-", "").replace("_", "").isalnum():
+            return "line %d: not a `key: value` line" % n
+        why = problem(value)
+        if why:
+            return "line %d: %s" % (n, why)
+    return None
+
+
+samples = {"plain words, a/b|c (d) and NAME.md": None, "'single ''quoted'' text'": None, '"double \\"quoted\\" text"': None, "-x is plain": None,
+           "a: b": "': '", "ends with:": "': '", "[NAME]": "'['", "{a}": "'{'", "- item": "'- '", "* star": "'*'", "@at": "'@'", "`tick`": "'`'",
+           '"<task>" --done "<check>"': "after the closing quote", "'open": "not closed", "a #comment": "' #'", "": "no value"}
+for v, want in samples.items():
+    got = problem(v)
+    if (got is None) != (want is None) or (want and want not in got):
+        print("SELFTEST\tthe rule gives %r for %r, not %r" % (got, v, want))
+for f in sys.argv[1:]:
+    with open(f, encoding="utf-8") as fh:
+        why = check(fh.read())
+    print("%s\t%s" % (f, why or "ok"))
+PY
+}
+while IFS=$'\t' read -r f res; do
+  s=${f#skills/}; s=${s%/SKILL.md}
+  if [ "$f" = SELFTEST ]; then no "the front matter rule fails its own samples: $res"
+  elif [[ " $EXPECTED " == *" $s "* ]]; then
+    if [ "$res" = ok ]; then no "skill $s: its front matter now parses; remove it from EXPECTED in this test"
+    else echo "expected  skill $s: front matter a strict YAML parser fails ($res), fixed outside this test"; fi
+  elif [ "$res" = ok ]; then ok "skill $s: its front matter is YAML a strict parser reads"
+  else no "skill $s: its front matter is not YAML a strict parser reads ($res)"; fi
+done < <(cd "$ROOT" && fm_check skills/*/SKILL.md)
 
 mkdir -p "$T/elsewhere"
 

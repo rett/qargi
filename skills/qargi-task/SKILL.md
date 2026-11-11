@@ -1,7 +1,7 @@
 ---
 name: qargi-task
 description: Hand a one-off development task (build, write, review or test) to a member that works in its own clone and returns patches, with /qargi-task "<task>" --done "<check>". Use when the user asks to dispatch, delegate or run a task through an agent, or to drive the session of a named cloud instance (send, watch, collect, stop, close). Local by default; cloud only when the request names an instance. Taking the patches in is /qargi-verify; a team run is /qargi-team.
-argument-hint: "<task>" --done "<check>" [--instance NAME] [--base B] [--scope PATHS] | send|start|status|watch|collect|stop|close ...
+argument-hint: '"<task>" --done "<check>" [--instance NAME] [--base B] [--scope PATHS] | send|start|status|watch|collect|stop|close ...'
 ---
 
 # /qargi-task (dispatch and session lifecycle)

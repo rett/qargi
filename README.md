@@ -3,7 +3,7 @@
 **A gathering place for agent work: dispatch, review, remember.**
 
 Qargi is a set of Claude Code skills and a CLI that dispatch one-off, task-scoped development tasks to agents and take the work back as
-reviewable patches. An agent works on one task in its own clone and is given no way to push (a git wrapper without credentials, and a guard that refuses the ordinary ways); the dispatching session verifies the result and applies it. Local
+reviewable patches. An agent works on one task in its own clone, whose git has no credentials and whose only remote is a copy with its push URL disabled, so an ordinary push has nothing to reach or authenticate with; that is what qargi supports, not a proof that no push can happen, so the dispatching session checks that the real repository's refs did not move, verifies the result and applies it. Local
 members are the default and cloud agents are used only when you ask for them in that request; each runs on a runtime the project names for that surface.
 
 Requirements: Linux with bash, GNU coreutils (including `timeout`) and findutils, git, jq, python3 3.11 or newer, `flock` (the locks) and `ssh-keygen` (the marshal's signed records). qargi uses GNU options throughout and nothing checks the platform before a verb runs, so another system is not supported. `make doctor` checks the tools of a checkout.
@@ -18,6 +18,8 @@ Requirements: Linux with bash, GNU coreutils (including `timeout`) and findutils
 qargi project attach ~/src/myproject --name myproject --provider-local claude-code
 qargi agent add worker --project myproject      # the members that do the work,
 qargi agent add reviewer --project myproject    # and the read-only one
+# a project on codex (--provider-local codex) keeps no member files, so agent add refuses it: each task is a run instead,
+# qargi local prepare --task-file F --done C ... then qargi local run RUN (docs/members-and-providers/codex.md)
 
 # the feature loop; the lead drives it from a Claude Code session in the repository
 qargi feature start dots --purpose "..."        # cuts feature/dots from develop
