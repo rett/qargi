@@ -21,6 +21,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 - `qargi packs apply --target TARGET PROJECT` records the apply in the audit log as `packs-apply-TARGET`, the render target it applied (`packs-apply-codex` for a Codex project). Every render was logged as `packs-apply-claude-code`, whatever its target.
+- The review of a provider pack (`qargi provider import`, `seal` and `enable`) no longer lists the words of a definition's command line and notes as `eval or exec` constructs: the definition of `codex` had eight such flags, one for every `codex exec` in its argv and its notes. In `definition.json` an `eval` or `exec` is flagged only as code, a call (`exec(...)`), an `eval` or `exec` of an expansion (`$VAR`, `$(...)`, a backquote) or the `shell=True` and `os.system(` forms; in the pack's scripts and other files it is flagged as before.
 
 ## [0.2.11] - 2026-11-11
 

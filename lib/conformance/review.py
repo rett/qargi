@@ -28,7 +28,8 @@ The rules (the owner's policy for what a pack may hold):
   * Secrets (a token, a key) are refused; the review names the file and line, never the value.
   * Flagged, not refused, so that the person reads them: network commands and URLs, writes outside the run directory, reads of
     environment variables that look like secrets, eval/exec, scripts that fetch code and run it, base64 or hex blobs and very long lines
-    (opaque content).
+    (opaque content). In the definition's data (definition.json) eval/exec is flagged only as code (a call, or an eval or exec of an
+    expansion), so the words of a command line or a note (`codex exec`) are not flags.
 An executable is a file with an executable mode, a shebang line, a script suffix, or one the definition names (adapter, renderer command,
 adapter verbs). The review lists each with its sha256, interpreter and first lines; the person approves them by name.
 
@@ -60,6 +61,10 @@ NETWORK = re.compile(r"\b(curl|wget|nc|ncat|ssh|scp|sftp|telnet|ftp|rsync)\b|url
 FETCH_EXEC = re.compile(r"(curl|wget)[^|;&\n]*\|\s*(sudo\s+)?(sh|bash|zsh|python3?|perl|ruby|node)\b|(sh|bash|source|\.)\s+<\(\s*(curl|wget)|"
                         r"(exec|eval)\s*\(\s*[^)]*(urlopen|requests\.|httpx|\.read\(\))|base64\s+(-d|--decode)[^|\n]*\|\s*(sh|bash|python3?)")
 EVAL_EXEC = re.compile(r"(^|[^A-Za-z0-9_.])(eval|exec)\b\s*[(\s\"']|shell\s*=\s*True|os\.system\(")
+# in the definition's data (definition.json) `exec` and `eval` are words of a command line or of a note (`codex exec --json`): only a call,
+# eval or exec of an expansion ($VAR, $(...), `...`, also behind a JSON-escaped quote) and the shell= and os.system forms are code there
+EVAL_EXEC_DATA = re.compile(r"(^|[^A-Za-z0-9_.])(eval|exec)\s*\(|(^|[^A-Za-z0-9_.])(eval|exec)\s+(\\?[\"'])?[$`]|shell\s*=\s*True|os\.system\(")
+DEFINITION = "definition.json"
 WRITES = re.compile(r">>?\s*(?!/dev/(null|stderr|stdout|fd/))(/|~|\$HOME|\$\{HOME\})|"
                     r"\b(rm|mv|cp|chmod|chown|ln|tee|install)\b[^\n|;&]*?\s(/etc|/usr|/var|/opt|/home|/root|~|\$HOME|\$\{HOME\})|"
                     r"\bopen\([^)]*[\"'][wax]b?\+?[\"']|\.write_text\(|\.write_bytes\(|shutil\.(rmtree|move|copy)|os\.(remove|unlink|rmdir|rename|makedirs)\(")
@@ -395,7 +400,7 @@ def scan(root, definition=None):
             head = [ln[:120] for ln in content.splitlines()[:3]]
             interp = content.splitlines()[0][2:].strip() if shebang else None
             r["executables"].append({"path": rel, "sha256": row["sha256"], "why": reason, "interpreter": interp, "head": head, "mode_x": isx})
-        _lines(rel, content, r)
+        _lines(rel, content, r, data=rel == DEFINITION)
     if r["bytes"] > MAX_TOTAL:
         r["fail"].append("more than %d bytes in all" % MAX_TOTAL)
     for n, why in sorted(norm.items()):
@@ -417,7 +422,9 @@ def scan(root, definition=None):
     return r
 
 
-def _lines(rel, content, r):
+def _lines(rel, content, r, data=False):
+    """The flags of one file; data: the file is the definition's data, where an eval or exec is flagged only as code (EVAL_EXEC_DATA)."""
+    eval_exec = EVAL_EXEC_DATA if data else EVAL_EXEC
     for i, ln in enumerate(content.splitlines(), 1):
         at = "%s:%d" % (rel, i)
         if SECRET.search(ln):
@@ -429,7 +436,7 @@ def _lines(rel, content, r):
             r["network"].append("%s: %s" % (at, shown))
         if FETCH_EXEC.search(ln):
             r["flags"].append("%s: fetches code and runs it: %s" % (at, shown))
-        if EVAL_EXEC.search(ln):
+        if eval_exec.search(ln):
             r["flags"].append("%s: eval or exec: %s" % (at, shown))
         if WRITES.search(ln):
             r["flags"].append("%s: writes files (maybe outside the run directory): %s" % (at, shown))

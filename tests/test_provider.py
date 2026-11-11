@@ -4216,6 +4216,36 @@ class Review(unittest.TestCase):
         self.assertNotIn(home, text)
         self.assertIn("~/.codex/auth.json as auth.json", got[0])
 
+    def eval_flags(self, files, definition=None):
+        return [f for f in self.R.scan(self.tree(files), definition)["flags"] if ": eval or exec: " in f]
+
+    def test_the_words_exec_and_eval_in_a_definitions_data_are_not_flagged(self):
+        """`codex exec` is a command line in argv and a word of the notes, not code: the shipped codex definition has no eval or exec flag."""
+        with open(os.path.join(LIB, "providers", "codex.json")) as f:
+            text = f.read()
+        self.assertGreaterEqual(text.count("exec"), 8)
+        self.assertEqual(self.eval_flags({"definition.json": text}, json.loads(text)), [])
+        prose = {"dispatch": {"argv": ["tool", "exec", "--json", "eval", "{clone}"]}, "notes": {"x": "run `tool exec` or tool eval 'a b'; the exec verb (exec mode)"}}
+        self.assertEqual(self.eval_flags({"definition.json": json.dumps(prose, indent=1)}, prose), [])
+
+    def test_code_in_a_definitions_data_is_still_flagged(self):
+        for label, argv in (("eval of a command substitution", ["sh", "-c", "eval \"$(cat run.sh)\""]), ("exec of a variable", ["sh", "-c", "exec $CMD"]),
+                            ("exec of a backquote", ["sh", "-c", "exec `cat x`"]), ("a python exec call", ["python3", "-c", "exec(open('x').read())"]),
+                            ("eval with a blank before the call", ["python3", "-c", "eval (x)"]), ("os.system", ["python3", "-c", "import os; os.system('x')"]),
+                            ("shell=True", ["python3", "-c", "import subprocess; subprocess.run('x', shell=True)"])):
+            with self.subTest(label):
+                d = {"dispatch": {"argv": argv}}
+                got = self.eval_flags({"definition.json": json.dumps(d, indent=1)}, d)
+                self.assertEqual(len(got), 1, got)
+                self.assertTrue(got[0].startswith("definition.json:"), got)
+
+    def test_code_in_a_pack_is_flagged_as_before_even_when_it_reads_like_a_command_line(self):
+        """Only the definition's data is read as data: a script, another JSON file, or a definition.json below the pack root is code to read."""
+        script = "#!/bin/sh\nexec python3 -I \"$0.py\" \"$@\"\ncodex exec --json\n"
+        got = self.eval_flags({"definition.json": "{}", "adapter": script, "conformance/fixtures/x.json": "[\"codex\", \"exec\"]\n",
+                               "sub/definition.json": "{\"argv\": [\"codex\", \"exec\"]}\n", "run.py": "exec(src)\n"})
+        self.assertEqual(sorted(f.split(": ")[0] for f in got), ["adapter:2", "adapter:3", "conformance/fixtures/x.json:1", "run.py:1", "sub/definition.json:1"])
+
     def test_a_control_character_in_a_run_home_name_is_shown_escaped(self):
         rv, got = self.home_lines({"dispatch": {"home": {"env": "F\x1b[2K", "dir": ".f‮", "link": [{"from": "~/.f/a\x07", "to": "a"}]}}})
         self.assertEqual(got, ["run home (dispatch.home): F\\x1b[2K is RUN/home/.f\\u202e; files of your home linked into it for each run: ~/.f/a\\x07 as a"])
