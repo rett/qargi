@@ -9,7 +9,7 @@ lib/providers/claude-code.json:notes 301 # lowered: the member-out topic no long
 lib/providers/claude-code/local-run.md 51 # lowered: a refused Write of a report file is answered by the final message, not a heredoc
 lib/providers/claude-platform.json:notes 2
 lib/providers/claude-platform/cloud-run.md 61
-lib/providers/codex.json:notes 249 # new: the topics of the codex runtime (spawn through qargi local run, session-model, skills-dir, identity, commands)
+lib/providers/codex.json:notes 301 # new: the topics of the codex runtime (spawn through qargi local run, session-model, exploration, skills-dir, identity, commands)
 lib/providers/codex/local-run.md 92 # new: the addendum of a Codex run (the report is the last message, no network, .git may be read-only)
 packs/skills/docs-site-member/SKILL.md 163 # raised: two rules: no line starts with <, and run the render check before reporting; for the lead's review
 packs/skills/gitflow-member/SKILL.md 229 # lowered: the commit-message, stash and SCOPE lines live in the contract only

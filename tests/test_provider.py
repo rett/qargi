@@ -145,7 +145,7 @@ class Shipped(Tree):
         m = P.models_of("codex", "local")
         self.assertEqual([P.model_for(m, t) for t in P.TIERS], ["gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-astra"])   # ids: the runtime passes ids
         self.assertEqual(P.contract_addenda("codex", "local")[0].splitlines()[0], "# In a Codex run")
-        self.assertEqual(sorted(cx["notes"]), ["commands", "identity", "session-model", "skills-dir", "spawn"])
+        self.assertEqual(sorted(cx["notes"]), ["commands", "exploration", "identity", "session-model", "skills-dir", "spawn"])
 
     def test_reserved_names_are_the_agent_types_the_claude_runtime_brings_itself(self):
         self.assertEqual(sorted(CODE["agents"]["reserved_names"]),
