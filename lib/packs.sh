@@ -363,7 +363,7 @@ rn_main() { # verb: apply|check
     echo "plan token: $tok   (apply with: --plan $tok --approved \"<the user's go-ahead>\")"; exit 0
   fi
   need_token "$tok"
-  audit_log packs-apply-claude-code "$prj $tok"
+  audit_log "packs-apply-$TARGET" "$prj $tok"
   python3 -I "$PY" swap "$RN_W/in.json" "$RN_W/token.stage" "$tok" || exit 1
   echo "applied: $live"; rn_launch "$live"
   exit 0

@@ -19,6 +19,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The `qargi-providers` skill says how a runtime held by `sandbox-args` is checked live (`verify.md`): its barrier with the runtime's own sandbox command and no model call (for `codex`, `codex sandbox`, at no cost), one smoke run on the fast tier at `low` effort for the model, the effort, the sign-in through the run home's link and the report file, and, before members rely on it, a sign-in rewritten through the link, the MCP tool names, `enabled_tools` hiding a server's other tools and commits under `workspace-write`; a shipped runtime records each result as `verified_on` and `source` in its definition. Its definition page names `dispatch.home`, `dispatch.run_config`, `dispatch.output.usage` and `resources.mcp.tool_lists`.
 - The addenda of a Codex run (`lib/providers/codex/local-run.md`) tell the member that its MCP tools are the ones its run's configuration lists, and no others. The providers page has a table of what the `codex` runtime is and is not (its barrier the operating-system sandbox, claimed partial; MCP held by `enabled_tools`; no guard hook; sign-in by a link; tokens only; one local runtime per project, so no mixed runtimes), and the models page its catalog `openai`.
 
+### Fixed
+- `qargi packs apply --target TARGET PROJECT` records the apply in the audit log as `packs-apply-TARGET`, the render target it applied (`packs-apply-codex` for a Codex project). Every render was logged as `packs-apply-claude-code`, whatever its target.
+
 ## [0.2.11] - 2026-11-11
 
 ### Added

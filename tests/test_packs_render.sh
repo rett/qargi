@@ -294,6 +294,7 @@ out=$($FX packs apply --target cxv eps --plan "$ctok" --approved test 2>&1); rc=
 want='{"mcp_servers": {"cx": {"enabled_tools": ["getStatus", "platform.list_items", "repo/push"], "url": "https://mcp.example.net/cx"}, "rox": {"enabled_tools": ["lookup"], "url": "https://mcp.example.net/rox"}}}'
 { [ "$rc" = 0 ] && [ "$(tomljson "$CD/config.toml")" = "$want" ] && [ -f "$CD/.agents/skills/s-all/SKILL.md" ] && [ ! -e "$CD/settings.json" ]; } \
   && ok "codex: config.toml lists for each pack the union over its roles of what a member may call (build: all but always_ask; review: the declared reads)" || no "codex apply (rc=$rc): $out; $(cat "$CD/config.toml" 2>&1)"
+tail -1 "$T/s/audit.log" | jq -e '.verb=="packs-apply-cxv" and .detail=="eps \($t)"' --arg t "$ctok" >/dev/null && ok "the apply of another target is audit-logged under that target's name" || no "audit of the cxv apply: $(tail -1 "$T/s/audit.log")"
 grep -q "^launch: none: the definition of cxv gives no command that starts a session on the render" <<<"$out" && ok "codex: apply says there is no launch line rather than failing" || no "codex launch: $out"
 out=$($FX packs check --target cxv eps 2>&1); rc=$?
 [ "$rc" = 0 ] && grep -q "^ok   eps: 4 packs" <<<"$out" && ok "codex: check passes on its render" || no "codex check (rc=$rc): $out"
