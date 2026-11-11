@@ -21,6 +21,7 @@ The local runtime `codex` (family `openai`, data only) is held and wired as foll
 | Guard hook | not wired: no `qargi __guard` runs, so the publish and skill verbs are held only by the sandbox's write and network denial |
 | MCP | each run's own `config.toml` in its `CODEX_HOME` lists, per server, the tools the run's role and class may call (`enabled_tools`); a server runs outside the sandbox, so that list is what holds it |
 | Sign-in | your `~/.codex/auth.json`, linked into the run home for the run only; the member sees nothing else of your Codex home, and can read that file through the link |
+| Ending a run | the link goes when the run ends, also when it fails, times out, cannot start, or the runner gets SIGINT, SIGTERM or SIGHUP (the member's process group is stopped first; `RUN/dispatch.json` says `interrupted`). SIGKILL leaves it: `RUN/dispatch.json` still says `running`, `qargi local list` and `qargi local verify` name the link, the next start refuses while the member still runs and otherwise needs `--again`, which replaces it, and `qargi local clean` removes the run with it |
 | Cost | tokens only, added up from the `turn.completed` events; a ChatGPT sign-in reports no money per run |
 | Mixed runtimes | not supported: a project has one local runtime, so a project on `codex` runs every member with `qargi local run` |
 
