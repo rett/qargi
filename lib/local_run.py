@@ -69,8 +69,15 @@ The process gets the environment of the run's git wrapper (RUN/git: HOME is RUN/
 the author qargi) and TMPDIR of the run, plus QARGI_MEMBER_RUN (the run directory: the mark that tells the marshal a member is running, wherever the
 member changes to), PATH, the env_pass names and the variable of dispatch.home. It runs in its own session without a shell, its standard output goes
 to OUT/transcript and its standard error to OUT/transcript.err, and a process group that outlives the bound is killed. A record of what ran is
-written to RUN/dispatch.json (argv, class, model, outcome; never an environment value). --dry-run prints the argv and the prompt and writes
-nothing. The exit status: 0 ok, 1 failed (or a usage error), 2 refused, 3 the runtime cannot be run this way, 4 transport.
+written to RUN/dispatch.json (argv, class, model, outcome; never an environment value): when the run starts (outcome running, with the process ids of
+the runner and, once started, of the member), and again when it ends, whatever ended it: the member's exit, the bound, a run home, MCP file or
+transcript that cannot be made (refused, with the error), a command that cannot be started (transport), or SIGINT, SIGTERM or SIGHUP to the runner
+(interrupted, with the signal: the member's process group is stopped, TERM then KILL, and the run home's links are removed). SIGKILL leaves the start
+record: the next start of the run refuses while that runner or its member still runs (the member is found by QARGI_MEMBER_RUN in its environment),
+and otherwise needs --again, which replaces the links left in the run home and removes the stale last-message directories; qargi local clean
+removes the run with them, and qargi local list and verify name the links left. A run home a member moved or replaced is searched for the links
+qargi made, which are removed where found and named where not. --dry-run prints the argv and the prompt and writes nothing. The exit status: 0 ok,
+1 failed (or a usage error), 2 refused, 3 the runtime cannot be run this way, 4 transport, 128+N interrupted by signal N.
 """
 import errno
 import json
@@ -382,6 +389,43 @@ def make_home(run, home):
     return made
 
 
+def sweep_home(run, home, names):
+    """The run home is not the directory the run made (moved away, or replaced by a link): the links qargi made (a link whose target is the source of
+    one of names) are looked for anywhere under RUN/home, without following a link or entering one, and removed. Notes that say what was found where,
+    and what could not be: a link moved out of RUN/home is not seen, so it is never said to be gone."""
+    srcs = {src for to, src in home["links"] if to in names}
+    found, kept = [], []
+    try:
+        top = sub_fd(run, "home")
+    except OSError:
+        return ["the run home %s is gone and so is %s: the link%s qargi made (%s) cannot be looked for; if the member moved %s out of the run "
+                "directory, it is still there" % (home["path"], os.path.join(run, "home"), "s" if len(names) > 1 else "", ", ".join(names), "them" if len(names) > 1 else "it")]
+    try:
+        for dirpath, dirnames, filenames, dfd in os.fwalk(".", dir_fd=top, follow_symlinks=False):
+            for n in dirnames + filenames:
+                try:
+                    if stat.S_ISLNK(os.lstat(n, dir_fd=dfd).st_mode) and os.readlink(n, dir_fd=dfd) in srcs:
+                        os.unlink(n, dir_fd=dfd)
+                        found.append(os.path.normpath(os.path.join(run, "home", dirpath, n)))
+                except OSError:
+                    kept.append(os.path.normpath(os.path.join(run, "home", dirpath, n)))
+    finally:
+        os.close(top)
+    what = "gone" if not os.path.lexists(home["path"]) else "a link the member put there, left in place and not followed" if os.path.islink(home["path"]) \
+        else "not a plain directory"
+    notes = ["the run home %s is not the directory the run made (%s)" % (home["path"], what)]
+    if found:
+        notes.append("the link%s qargi made %s found under %s and removed: %s" % ("s" if len(found) > 1 else "", "were" if len(found) > 1 else "was",
+                                                                                  os.path.join(run, "home"), ", ".join(found)))
+    if len(found) < len(names):
+        notes.append("%d link%s qargi made (%s) %s not found under %s: if the member moved it out of there it is still there; qargi local clean %s "
+                     "removes the run directory" % (len(names) - len(found), "s" if len(names) - len(found) > 1 else "", ", ".join(names),
+                                                     "was" if len(names) - len(found) == 1 else "were", os.path.join(run, "home"), run))
+    for p in kept:
+        notes.append("%s could not be checked or removed" % p)
+    return notes
+
+
 def clear_home(run, home, names):
     """Remove the links of the run home (names), without following a link; notes for what was not as it was left: a file in place of a link
     (the runtime replaced it: it is removed too, so no copy of the source stays in the run), or a run home a member replaced."""
@@ -390,7 +434,7 @@ def clear_home(run, home, names):
         return notes
     fd = home_dir_fd(run, home, False)
     if fd is None:
-        return ["the run home %s is not the directory the run made (gone or replaced by a link); its links were not looked for there" % home["path"]]
+        return sweep_home(run, home, names)
     try:
         for to in names:
             try:
@@ -824,6 +868,119 @@ def usage_line(u):
                                        "; " + u["note"] if u.get("note") else "")
 
 
+INTERRUPT = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+
+
+class Interrupted(BaseException):
+    """A SIGINT, SIGTERM or SIGHUP to the runner (Signals): the member's process group is stopped and the run ends as interrupted."""
+    def __init__(self, signum):
+        BaseException.__init__(self, signum)
+        self.signum = signum
+
+
+class Signals:
+    """SIGINT, SIGTERM and SIGHUP while a run is under way. The first one is recorded: while the lead waits for the member (armed) it is raised there
+    (Interrupted), so the member's process group is stopped (kill_group: TERM, then KILL, each waited for 5 seconds) and the run home is cleared;
+    before the member starts it is acted on at the next check, and after the member has ended it is only noted, so the run's end is never cut short.
+    A later one is recorded by nothing. A signal the runner was started with set to be ignored (nohup) stays ignored. SIGKILL cannot be caught:
+    then RUN/dispatch.json still says running, with the runner's and the member's process ids, and the next start or qargi local clean clears it."""
+    def __init__(self):
+        self.sig, self.armed, self.old = None, False, {}
+
+    def install(self):
+        for s in INTERRUPT:
+            cur = signal.getsignal(s)
+            if cur == signal.SIG_IGN:
+                continue
+            self.old[s] = cur
+            signal.signal(s, self.handle)
+
+    def handle(self, signum, frame):
+        if self.sig is not None:
+            return
+        self.sig = signum
+        if self.armed:
+            self.armed = False
+            raise Interrupted(signum)
+
+    def check(self):
+        if self.sig is not None:
+            raise Interrupted(self.sig)
+
+    def restore(self):
+        for s, h in self.old.items():
+            signal.signal(s, h if h is not None else signal.SIG_DFL)
+
+
+def clear_stale_finals(run):
+    """Remove what a killed run left of its {final_message} directories (RUN/final.*): the message file, a name only, and the directory. A link in place
+    of one is not followed and a directory in place of the file is left."""
+    try:
+        with os.scandir(run) as it:
+            stale = [e.name for e in it if e.name.startswith(FINAL_PREFIX) and e.is_dir(follow_symlinks=False)]
+    except OSError:
+        return
+    for name in stale:
+        try:
+            sfd = sub_fd(run, name)
+        except OSError:
+            continue
+        try:
+            if not stat.S_ISDIR(os.lstat(FINAL_NAME, dir_fd=sfd).st_mode):
+                os.unlink(FINAL_NAME, dir_fd=sfd)
+        except OSError:
+            pass
+        finally:
+            os.close(sfd)
+        try:
+            rfd = os.open(run, O_DIR)
+            try:
+                os.rmdir(name, dir_fd=rfd)
+            finally:
+                os.close(rfd)
+        except OSError:
+            pass
+
+
+def proc_of_run(pid, run, what):
+    """Is pid a live process of this run: the runner (its command line names local_run.py and the run) or the member (its environment carries
+    QARGI_MEMBER_RUN=run, which the member's runtime and its children inherit)? Read from /proc; False when it cannot be told."""
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1:
+        return False
+    try:
+        with open("/proc/%d/%s" % (pid, "cmdline" if what == "runner" else "environ"), "rb") as f:
+            items = f.read(1 << 20).split(b"\0")
+    except OSError:
+        return False
+    if what == "runner":
+        return any(i.endswith(b"local_run.py") for i in items) and any(i and os.path.realpath(os.fsdecode(i)) == run for i in items)
+    return ("QARGI_MEMBER_RUN=" + run).encode() in items
+
+
+def earlier_start(run, again):
+    """Refuse a start while an earlier one of this run is under way or its member still runs; a start record left by a runner that is gone (killed
+    with SIGKILL, or by a reboot) needs --again, which clears what it left. A record of a run that ended needs --again as before."""
+    path = os.path.join(run, "dispatch.json")
+    if not os.path.lexists(path):
+        return
+    try:
+        rec = json.loads(read_run_file(path, 1 << 20, "the dispatch record") or "{}")
+    except (ValueError, Stop):
+        rec = {}
+    if isinstance(rec, dict) and rec.get("outcome") == "running":
+        if proc_of_run(rec.get("runner"), run, "runner"):
+            fail("%s is being run now (qargi local run, process %d); it is started once at a time" % (run, rec["runner"]))
+        if proc_of_run(rec.get("member"), run, "member"):
+            fail("the member of an earlier start of %s is still running (process group %d), its runner is gone: stop it first (kill -TERM -- -%d), then "
+                 "qargi local run %s --again" % (run, rec["member"], rec["member"], run))
+        if not again:
+            fail("%s was started and did not end: its runner is gone (killed with SIGKILL, or the machine restarted), so %s still says running and the run "
+                 "home may still hold its links. qargi local run %s --again starts it again and replaces them; qargi local clean %s --discard drops the run"
+                 % (run, path, run, run))
+    elif not again:
+        fail("%s has been run already (%s); --again runs it again and replaces the transcript" % (run, path))
+
+
 def kill_group(proc):
     for sig, wait in ((signal.SIGTERM, 5), (signal.SIGKILL, 5)):
         try:
@@ -1196,52 +1353,78 @@ def run_it(plan, run):
     if pk:                                               # and so does a manifest.json of a read-only run, whose manifest is the lead's
         check_own(os.path.join(out, MANIFEST), "the manifest of an earlier run")
     write_prompt(run, plan["prompt_file"], plan["prompt"])
+    clear_stale_finals(run)
     argv = [plan["exe"]] + plan["argv"][1:]
     home = plan["home"]
-    made = make_home(run, home) if home else []          # the links exist for the length of the run only
-    home_left = []
+    head = {"runtime": plan["runtime"], "class": plan["class"], "argv": plan["argv"], "command_from": plan["exe_from"], "cwd": plan["cwd"],
+            "model": plan["model"], "effort_native": plan["effort_native"], "prompt_via": plan["via"], "timeout_s": plan["timeout_s"]}
     started = time.time()
-    timed_out = False
+    # the start record: an earlier run's outcome never stays, and a runner killed with SIGKILL leaves "running" with its process and the member's, and
+    # the links the run home will hold (qargi local list and verify name the ones left)
+    begun = dict(head, started=PE.now(started), outcome="running", runner=os.getpid(), member=None)
+    if home:
+        begun["home"] = {"env": home["env"], "dir": home["dir"], "links": [to for to, _ in home["links"]]}
+    write_private(dispatch, json.dumps(begun, indent=2, sort_keys=True) + "\n")
+    sig = Signals()
+    sig.install()
+    made, home_left, staged = [], [], False
+    proc = code = error = outcome = None
+    timed_out, stop_code = False, 2
     previous = prev_manifest = False
     try:
-        if plan["run_config"]:
-            put_run_config(run, plan["run_config"], home)
-        sin = open(plan["prompt_file"], "rb") if plan["via"] == "stdin" else subprocess.DEVNULL
-        with os.fdopen(open_own(os.path.join(out, "transcript"), "the transcript"), "wb") as so, \
-                os.fdopen(open_own(os.path.join(out, "transcript.err"), "the error transcript"), "wb") as se:
-            if fin:                                      # the last moment before the member starts: nothing of an earlier run is left as this run's
-                ofd = sub_fd(run, "out")
-                try:
-                    previous = set_aside(ofd, REPORT)
-                    prev_manifest = set_aside(ofd, MANIFEST) if pk else False
-                finally:
-                    os.close(ofd)
-                make_final(run, fin)
+        try:
+            if home:
+                made = make_home(run, home)              # the links exist for the length of the run only
+            sig.check()
+            if plan["run_config"]:
+                put_run_config(run, plan["run_config"], home)
+            sin = open(plan["prompt_file"], "rb") if plan["via"] == "stdin" else subprocess.DEVNULL
             try:
-                proc = subprocess.Popen(argv, cwd=plan["cwd"], env=plan["env"], stdin=sin, stdout=so, stderr=se, shell=False, start_new_session=True)
-            except OSError as e:
-                if sin is not subprocess.DEVNULL:
-                    sin.close()
-                fail("could not start %s: %s%s" % (plan["argv"][0], e.strerror or e, "; the report of the earlier run is set aside as %s"
-                                                   % os.path.join(out, REPORT + PREVIOUS) if previous else ""), 4)
-            try:
-                code = proc.wait(timeout=plan["timeout_s"])
-            except subprocess.TimeoutExpired:
-                timed_out = True
-                kill_group(proc)
-                code = proc.returncode
-            except BaseException:
-                kill_group(proc)
-                raise
+                with os.fdopen(open_own(os.path.join(out, "transcript"), "the transcript"), "wb") as so, \
+                        os.fdopen(open_own(os.path.join(out, "transcript.err"), "the error transcript"), "wb") as se:
+                    if fin:                              # the last moment before the member starts: nothing of an earlier run is left as this run's
+                        ofd = sub_fd(run, "out")
+                        try:
+                            previous = set_aside(ofd, REPORT)
+                            prev_manifest = set_aside(ofd, MANIFEST) if pk else False
+                        finally:
+                            os.close(ofd)
+                        make_final(run, fin)
+                        staged = True
+                    sig.check()
+                    try:
+                        proc = subprocess.Popen(argv, cwd=plan["cwd"], env=plan["env"], stdin=sin, stdout=so, stderr=se, shell=False, start_new_session=True)
+                    except OSError as e:
+                        outcome, error = "transport", "could not start %s: %s" % (plan["argv"][0], e.strerror or e)
+                    if proc is not None:
+                        write_private(dispatch, json.dumps(dict(begun, member=proc.pid), indent=2, sort_keys=True) + "\n")
+                        try:
+                            sig.armed = True             # from here a signal stops the member where the lead waits for it
+                            sig.check()
+                            code = proc.wait(timeout=plan["timeout_s"])
+                        except subprocess.TimeoutExpired:
+                            sig.armed = False
+                            timed_out = True
+                            kill_group(proc)
+                            code = proc.returncode
+                        finally:
+                            sig.armed = False
             finally:
                 if sin is not subprocess.DEVNULL:
                     sin.close()
+        except Interrupted:
+            sig.armed = False
+            outcome = "interrupted"
+            if proc is not None:
+                kill_group(proc)
+                code = proc.returncode
+        except Stop as e:                                # the run home, the MCP file, the transcripts or the report could not be made as the run needs
+            outcome, error, stop_code = "refused", str(e), e.code
     finally:
+        sig.armed = False
         home_left = clear_home(run, home, made) if home else []
-    if timed_out:
-        outcome = "failed"
-    else:
-        outcome = plan["exit"].get(str(code), plan["exit"].get("*", "failed"))
+    if outcome is None:
+        outcome = "failed" if timed_out else plan["exit"].get(str(code), plan["exit"].get("*", "failed"))
     seconds = round(time.time() - started, 1)
     work = None
     if plan["class"] == "write" and outcome == "ok" and not out_has_patches(out):
@@ -1250,15 +1433,22 @@ def run_it(plan, run):
             work = {"tracked": len(ch[0]), "untracked": len(ch[1]), "patches": False, "refused": bool(ch[0])}
             if ch[0]:                                    # a change left uncommitted with nothing collected is a refusal, never a finished task
                 outcome = "refused"
-    report, text = finish_report(run, out, fin, previous) if fin else (None, None)
+    if staged:
+        report, text = finish_report(run, out, fin, previous)
+    elif fin:                                            # the member was never started: nothing of it to publish, an earlier report stays set aside
+        report, text = {"final_message": fin["path"], "report": None, "bytes": None, "state": "none", "kept": None, "previous": "kept" if previous else "none",
+                        "why": "the member was not started"}, None
+    else:
+        report, text = None, None
     manifest = package(run, out, plan, report, text, outcome, code, started, seconds, prev_manifest) if pk else None
-    rec = {"runtime": plan["runtime"], "class": plan["class"], "argv": plan["argv"], "command_from": plan["exe_from"], "cwd": plan["cwd"],
-           "model": plan["model"], "effort_native": plan["effort_native"], "prompt_via": plan["via"], "timeout_s": plan["timeout_s"],
-           "started": PE.now(started), "seconds": seconds,
-           "exit": code, "timed_out": timed_out, "outcome": outcome, "transcript": os.path.join(out, "transcript")}
+    rec = dict(head, started=PE.now(started), seconds=seconds, exit=code, timed_out=timed_out, outcome=outcome, transcript=os.path.join(out, "transcript"))
+    if outcome == "interrupted":
+        rec["signal"] = signal.Signals(sig.sig).name
+    if error:
+        rec["error"] = error
     if home:
         rec["home"] = {"env": home["env"], "dir": home["dir"], "links": made, "not_linked": home["missing"], "left": home_left}
-    if plan["usage"]:
+    if plan["usage"] and proc is not None:
         rec["usage"] = read_usage(rec["transcript"], plan["usage"])
     rc = plan["run_config"]
     if rc:                                                 # names only, never the file
@@ -1270,10 +1460,14 @@ def run_it(plan, run):
     if work:
         rec["worktree"] = work
     write_private(dispatch, json.dumps(rec, indent=2, sort_keys=True) + "\n")
+    if error:
+        print("qargi: %s" % error, file=sys.stderr)
     print("RUNTIME=" + plan["runtime"])
     print("OUTCOME=" + outcome + (" (timed out after %ds)" % plan["timeout_s"] if timed_out else "")
+          + (" (%s: %s)" % (rec["signal"], "the member's process group was stopped" if proc is not None else "the member was not started")
+             if outcome == "interrupted" else "")
           + (" (the runtime ended ok, but the clone holds uncommitted changes and OUT holds no patches)" if work and work["refused"] else ""))
-    print("EXIT=%s" % code)
+    print("EXIT=%s" % ("" if code is None else code))
     print("TRANSCRIPT=" + rec["transcript"])
     if work:
         print(worktree_line(work, run))
@@ -1283,11 +1477,18 @@ def run_it(plan, run):
     if manifest:
         for line in manifest_lines(manifest, out):
             print(line)
-    if plan["usage"]:
+    if "usage" in rec:
         print(usage_line(rec["usage"]))
     for n in home_left:
         print("qargi: note: " + n, file=sys.stderr)
+    if sig.sig is not None and outcome != "interrupted":
+        print("qargi: note: %s arrived after the member had ended; the run was finished first" % signal.Signals(sig.sig).name, file=sys.stderr)
+    sig.restore()
     print("next: read the transcript and OUT, then qargi local verify " + run)
+    if outcome == "interrupted":
+        return 128 + sig.sig
+    if error and outcome == "refused":
+        return stop_code
     return OUTCOME_EXIT[outcome]
 
 
@@ -1321,8 +1522,8 @@ def main(argv):
     try:
         o = parse(argv)
         run = os.path.realpath(o["run"])
-        if not o["dry"] and not o["again"] and os.path.lexists(os.path.join(run, "dispatch.json")):
-            fail("%s has been run already (%s); --again runs it again and replaces the transcript" % (run, os.path.join(run, "dispatch.json")))
+        if not o["dry"]:
+            earlier_start(run, o["again"])
         plan = build(run, o["project"], o["runtime"], o["class"], o["task"], o["model"], o["effort"], o["timeout"], keep)
         for n in plan["notes"]:
             if not o["dry"]:

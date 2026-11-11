@@ -793,6 +793,106 @@ got=$(PATH="$T/fgit:$PATH" python3 -I -c 'import sys; sys.path.insert(0, "lib");
 [ "$got" = None ] && ok "a filter driver whose name cannot be emptied on the command line: git status is not run, the state is unknown" || no "bad filter name: $got $(cat "$T/fgit.log")"
 git -C "$CLONE" checkout -q tracked.txt; rm -rf "$T/fgit" "$T/fgit.log" "$T/fgit.names" "$T/wu-mode" "$T/wu-final.md" "$T/bin/codex"
 
+# --- however a run ends, the member's processes are stopped, the run home's link is removed and dispatch.json says how it ended (synthetic sign-in) ---
+# The fake codex records its pid and starts a child in its process group, then waits ($T/ir-mode: wait, or quick to end at once). The signal goes to the
+# runner, whose pid the start record in dispatch.json names.
+mkdir -p "$HOME/.codex"; printf '{"token": "sk-test-%s-interrupt"}\n' "$RANDOM" > "$HOME/.codex/auth.json"; ISUM=$(sha256sum < "$HOME/.codex/auth.json")
+cat > "$T/bin/codex" <<SH
+#!/usr/bin/env bash
+cat > /dev/null
+[ "\$(cat "$T/ir-mode" 2>/dev/null)" = quick ] && exit 0
+sleep 3571 & echo \$! > "$T/ir-child"
+echo \$\$ > "$T/ir-member"
+wait
+SH
+chmod 755 "$T/bin/codex"
+setprov codex; prep "$T/r" ir1; task
+LINK=$RUN/home/.codex/auth.json
+gone() { ! kill -0 "$1" 2>/dev/null; }
+ir_start() { # [launcher...]: local run --again in the background; waits for the member to have started
+  rm -f "$T/ir-child" "$T/ir-member" "$T/ir.rc" "$T/ir.out"; echo wait > "$T/ir-mode"
+  ( "$@" $DA local run "$RUN" --again > "$T/ir.out" 2>&1; echo $? > "$T/ir.rc" ) &
+  wait_until '[ -s "$T/ir-child" ] && [ -s "$T/ir-member" ] && [ "$(jq -r .member "$RUN/dispatch.json" 2>/dev/null)" = "$(cat "$T/ir-member")" ]' 30
+}
+ir_after() { # SIGNAL CODE: the run ended interrupted by SIGNAL with exit CODE, its processes are gone, the link removed, the source unchanged
+  wait_until '[ -s "$T/ir.rc" ]' 30
+  { [ "$(cat "$T/ir.rc")" = "$2" ] && grep -q "^OUTCOME=interrupted (SIG$1: the member's process group was stopped)\$" "$T/ir.out" \
+    && [ "$(jq -c '[.outcome, .signal]' "$RUN/dispatch.json")" = "[\"interrupted\",\"SIG$1\"]" ] && gone "$(cat "$T/ir-member")" && gone "$(cat "$T/ir-child")" \
+    && [ ! -e "$LINK" ] && [ ! -L "$LINK" ] && [ "$(sha256sum < "$HOME/.codex/auth.json")" = "$ISUM" ] && ! grep -q 'interrupt"' "$T/ir.out" "$RUN/dispatch.json"; } \
+    && ok "SIG$1 to the runner: the member and its child are stopped, the run home's link is removed, dispatch.json says interrupted (exit $2)" \
+    || no "SIG$1: rc=$(cat "$T/ir.rc" 2>/dev/null) $(cat "$T/ir.out") $(jq -c . "$RUN/dispatch.json") link=$(ls -lA "$RUN/home/.codex" 2>&1)"
+  for p in "$T/ir-member" "$T/ir-child"; do [ ! -s "$p" ] || kill -KILL "$(cat "$p")" 2>/dev/null; done
+}
+echo quick > "$T/ir-mode"; out=$($DA local run "$RUN" 2>&1) || no "ir1 first run: $out"
+for s in TERM HUP; do
+  if ir_start; then kill -"$s" "$(jq -r .runner "$RUN/dispatch.json")"; ir_after "$s" "$([ "$s" = TERM ] && echo 143 || echo 129)"; else no "SIG$s: the member did not start: $(cat "$T/ir.out")"; fi
+done
+# a background job of a script starts with SIGINT ignored, which the runner keeps (as under nohup): this launcher restores it first, as a terminal has it
+if ir_start python3 -I -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])'; then
+  kill -INT "$(jq -r .runner "$RUN/dispatch.json")"; ir_after INT 130
+else no "SIGINT: the member did not start: $(cat "$T/ir.out")"; fi
+# the bound: the same, as failed and timed out
+echo wait > "$T/ir-mode"; rm -f "$T/ir-child" "$T/ir-member"
+out=$(timeout 120 $DA local run "$RUN" --again --timeout 1 2>&1); rc=$?
+{ [ "$rc" = 1 ] && grep -q 'timed out after 1s' <<<"$out" && gone "$(cat "$T/ir-member")" && gone "$(cat "$T/ir-child")" && [ ! -L "$LINK" ] && [ ! -e "$LINK" ] \
+  && [ "$(jq -c '[.outcome, .timed_out]' "$RUN/dispatch.json")" = '["failed",true]' ]; } \
+  && ok "the bound: the member and its child are killed and the run home's link is removed" || no "timeout: rc=$rc $out"
+# the command cannot be started: the earlier outcome does not stay, dispatch.json says transport with the error, and the link is removed
+printf '#!/nonexistent/interpreter\n' > "$T/bin/codex"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 4 ] && grep -q '^qargi: could not start codex: ' <<<"$out" && grep -q '^OUTCOME=transport$' <<<"$out" && [ "$(jq -r .outcome "$RUN/dispatch.json")" = transport ] \
+  && jq -e '.error | startswith("could not start codex: ")' "$RUN/dispatch.json" >/dev/null && [ "$(jq -r .exit "$RUN/dispatch.json")" = null ] && [ ! -L "$LINK" ] && [ ! -e "$LINK" ] \
+  && [ -z "$(find "$RUN" -maxdepth 1 -name 'final.*')" ]; } \
+  && ok "a command that cannot be started: dispatch.json is rewritten as transport with the error (the earlier outcome does not stay), the link is removed" || no "launch failure: rc=$rc $out $(jq -c . "$RUN/dispatch.json")"
+# the run's MCP file cannot be written (a directory in its place): refused, recorded, the link removed
+echo quick > "$T/ir-mode"; cp "$T/bin/fakellm" "$T/bin/codex"; mkdir -p "$RUN/home/.codex/config.toml"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q "is in the place of the run's MCP file and is not a file" <<<"$out" && [ "$(jq -r .outcome "$RUN/dispatch.json")" = refused ] \
+  && jq -e '.error | test("MCP file")' "$RUN/dispatch.json" >/dev/null && [ ! -L "$LINK" ] && [ ! -e "$LINK" ]; } \
+  && ok "the run's MCP file cannot be made: the run is refused and recorded so, and the link is removed" || no "run config failure: rc=$rc $out $(jq -c . "$RUN/dispatch.json")"
+rmdir "$RUN/home/.codex/config.toml"
+# SIGKILL cannot be caught: the start record says running, the link stays, and the member runs on. The next start refuses while the member runs,
+# needs --again once it is stopped; list and verify name the link; --again replaces it and the run ends clean; local clean removes a run with it
+cat > "$T/bin/codex" <<SH
+#!/usr/bin/env bash
+cat > /dev/null
+[ "\$(cat "$T/ir-mode" 2>/dev/null)" = quick ] && exit 0
+sleep 3571 & echo \$! > "$T/ir-child"
+echo \$\$ > "$T/ir-member"
+wait
+SH
+chmod 755 "$T/bin/codex"
+if ir_start; then
+  kill -KILL "$(jq -r .runner "$RUN/dispatch.json")"; wait_until '[ -s "$T/ir.rc" ]' 30
+  { [ "$(jq -r .outcome "$RUN/dispatch.json")" = running ] && [ -L "$LINK" ] && ! gone "$(cat "$T/ir-member")"; } && ok "SIGKILL: the start record stays (running), the link stays, the member runs on" || no "sigkill state: $(jq -c . "$RUN/dispatch.json")"
+  out=$($DA local run "$RUN" --again 2>&1); rc=$?
+  { [ "$rc" = 2 ] && grep -qF "the member of an earlier start of $RUN is still running (process group $(cat "$T/ir-member")), its runner is gone: stop it first (kill -TERM -- -$(cat "$T/ir-member"))" <<<"$out"; } \
+    && ok "the next start refuses while the member of the killed runner still runs, naming its process group" || no "sigkill member alive: rc=$rc $out"
+  kill -TERM -- -"$(cat "$T/ir-member")"; wait_until 'gone "$(cat "$T/ir-member")" && gone "$(cat "$T/ir-child")"' 10 || no "the member's process group did not stop"
+  out=$($DA local run "$RUN" 2>&1); rc=$?
+  { [ "$rc" = 2 ] && grep -q 'was started and did not end: its runner is gone' <<<"$out" && grep -qF "qargi local run $RUN --again" <<<"$out"; } && ok "without --again the start is refused with the way on" || no "sigkill no again: rc=$rc $out"
+  out=$($DA local list 2>&1)
+  grep -qF "  residue: $LINK (a link a start of qargi local run left: its runner did not end); qargi local run RUN --again replaces a link left there" <<<"$out" \
+    && ok "local list names the link left in the run home" || no "list residue: $out"
+  out=$($DA local verify "$RUN" 2>&1)
+  grep -qF "qargi: note: the run home of $RUN holds what a run left there: $LINK (a link a start of qargi local run left: its runner did not end)." <<<"$out" \
+    && ok "local verify names it too" || no "verify residue: $out"
+  [ -z "$(find "$RUN" -maxdepth 1 -name 'final.*')" ] && no "a SIGKILLed codex run left no last-message directory (the test expects one)"
+  echo quick > "$T/ir-mode"
+  out=$($DA local run "$RUN" --again 2>&1); rc=$?
+  { [ "$rc" = 0 ] && [ ! -L "$LINK" ] && [ ! -e "$LINK" ] && [ -z "$(find "$RUN" -maxdepth 1 -name 'final.*')" ] && [ "$(jq -r .outcome "$RUN/dispatch.json")" = ok ] \
+    && [ -z "$($DA local list 2>&1 | grep -F "residue: $LINK")" ]; } \
+    && ok "--again replaces the link, clears the stale last-message directory and ends clean; list names no residue" || no "sigkill again: rc=$rc $out"
+else no "SIGKILL: the member did not start: $(cat "$T/ir.out")"; fi
+prep "$T/r" ir2; task; LINK=$RUN/home/.codex/auth.json
+if ir_start; then
+  kill -KILL "$(jq -r .runner "$RUN/dispatch.json")"; wait_until '[ -s "$T/ir.rc" ]' 30
+  kill -TERM -- -"$(cat "$T/ir-member")"; wait_until 'gone "$(cat "$T/ir-member")"' 10
+  ir2=$RUN; out=$($DA local clean "$RUN" --discard 2>&1); rc=$?
+  { [ "$rc" = 0 ] && [ ! -e "$ir2" ] && grep -qF "removed with the run what its run home held: $LINK (a link a start" <<<"$out" && [ "$(sha256sum < "$HOME/.codex/auth.json")" = "$ISUM" ]; } \
+    && ok "local clean --discard removes a SIGKILLed run with its link (the link only: the sign-in file is untouched)" || no "sigkill clean: rc=$rc $out"
+else no "SIGKILL 2: the member did not start: $(cat "$T/ir.out")"; fi
+rm -f "$T/ir-child" "$T/ir-member" "$T/ir.rc" "$T/ir.out" "$T/ir-mode" "$T/bin/codex"; rm -rf "$HOME/.codex"
 
 # --- an in-session runtime is not started here ----------------------------------------------------------------------------------------
 prep "$T/r2" c1; task
