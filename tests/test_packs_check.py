@@ -7,6 +7,10 @@ change by a bit, and the lines of the verbs are what people and scripts read. Th
 backslash or a tab, a link, a hard link, a pipe, an empty directory, a nested record, a case and punctuation mix whose order depends on the
 locale, a tool pack whose JSON is not what the review expects. The last test counts processes: a check of 3 packs and of 12 start the
 same number of jq, find, sort, xargs, sha256sum and python3 (the shell started about 70 per pack).
+The findings about a tool pack's document are no longer the shell's: lib/packs_check.py holds the one definition of them (tool_msgs: which tool names
+write, which names a tools map may hold) and the shell review asks it. ToolNames below is its table; the lines of t-array, t-keynl and t-toolsarr in
+GOLD_TOOL_CHECK are what that definition says (a file that is not an object, or a tools map that is not one, fails; the shell's jq program ended in an
+error on them and said nothing).
 Run: python3 tests/test_packs_check.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import json, locale, os, shutil, stat, subprocess, sys, tempfile, unittest
@@ -194,15 +198,17 @@ GOLD_SKILL_CHECK = ((
     'skill:special: FAIL: link.md is a symbolic link, which a pack may not hold\n'
     'skill:special: FAIL: pipe is not a regular file\n'), 1)
 GOLD_TOOL_CHECK = ((
+    'tool:t-array: FAIL: not a JSON object: a tool pack is one object with name, url and tools\n'
     'tool:t-array: FAIL: vault_ids must be vault ids (vlt_...), never secrets\n'
     'tool:t-badjson: FAIL: not valid JSON\n'
     'tool:t-badurl: FAIL: url: a real https URL\n'
     'tool:t-keynl: FAIL: tools.a\n'
     'tool:t-keynl: FAIL: forged: the key has a control or bidi character (U+000A), which can change what a reader sees; a definition holds plain one-line text\n'
+    'tool:t-keynl: FAIL: tools."a\\nFAIL: forged": not a tool name (letters, digits, _ . - /, at most 128 characters, no blank)\n'
     'tool:t-keynl: FAIL: forged=always_allow\n'
     'ok   tool:t-ok\n'
     'tool:t-secret: FAIL: looks like a secret (credentials belong in a vault)\n'
-    'ok   tool:t-toolsarr\n'
+    'tool:t-toolsarr: FAIL: tools: an explicit allowlist of tool names with a policy each\n'
     'tool:t-vault: FAIL: vault_ids must be vault ids (vlt_...), never secrets\n'
     'tool:t-write: FAIL: tools.create_y: a write-like tool may not run unattended (use always_ask) unless write_ok is true on the pack, on purpose\n'
     'tool:t-write: FAIL: tools.post_z: a write-like tool may not run unattended (use always_ask) unless write_ok is true on the pack, on purpose\n'), 1)
@@ -365,6 +371,112 @@ class Verbs(unittest.TestCase):
             self.assertEqual(qargi(fx.env, "skill", "check", "alpha", "build"), ("no pack is linked to any role of alpha\n", 0))
         finally:
             fx.close()
+
+
+# The names of tools as MCP servers write them, and whether the name says the tool writes (C.write_like). The rule: a name is cut into words at every
+# character that is not a letter and at a camelCase boundary; a word that starts with a write word counts, a write word inside or at the end of a
+# word does not, and the READ_ALIKE words (settings, address, postal ...) do not.
+WRITES = ("create_issue", "platform.delete_knowledge", "repo/push", "issue-close", "deleteItem", "updateRecord", "HTTPPost", "bulk.remove", "files/write",
+          "send-message", "branch.merge", "setValue", "add_label", "editPage", "post_comment", "items.v2.delete", "DELETE_ITEM", "api/v1/users/create",
+          "x__update", "comment", "getOrCreate", "iOSUpdate",
+          "deleteall", "sendmail", "postmessage",                    # no separator: the word starts with a write word
+          "created_at_list", "list_comments", "setup_hook", "sender.lookup")   # not on the read-alike list: taken for a write, so asked about
+READS = ("platform.list_items", "getStatus", "search", "get_item", "listIssues", "repo/read", "fetch-page", "items.v2.list", "GET_ITEM", "query",
+         "settings_view", "address_list", "postal_code_lookup", "getSettings", "user.address", "closest_store", "additional_info", "postcode/find",   # look-alikes: READ_ALIKE
+         "offset_page", "dataset.query", "preset_list", "asset/get", "list_assets", "subset_view", "getDataset")   # a write word inside or at the end of a word
+
+
+class ToolNames(unittest.TestCase):
+    """The one definition of a write-like tool name and of a name a tools map may hold, and that the shell review says what it says."""
+
+    def test_a_write_word_counts_however_the_name_is_spelled(self):
+        self.assertGreaterEqual(len(WRITES) + len(READS), 40)
+        self.assertEqual([n for n in WRITES if not C.write_like(n)], [], "names that write and were taken for a read")
+        self.assertEqual([n for n in READS if C.write_like(n)], [], "names that read and were taken for a write")
+
+    def test_the_words_of_a_name(self):
+        for name, words in (("platform.delete_knowledge", ["platform", "delete", "knowledge"]), ("repo/push", ["repo", "push"]), ("issue-close", ["issue", "close"]),
+                            ("deleteItem", ["delete", "item"]), ("HTTPPost", ["http", "post"]), ("getHTTPStatus", ["get", "http", "status"]),
+                            ("items.v2.delete", ["items", "v", "delete"]), ("DELETE_ITEM", ["delete", "item"]), ("settings_view", ["settings", "view"]), ("", [])):
+            self.assertEqual(C.name_words(name), words, name)
+        for odd in (None, 7, ["delete"]):
+            self.assertEqual(C.name_words(odd), [])
+            self.assertFalse(C.write_like(odd))
+
+    def test_the_names_a_tools_map_may_hold(self):
+        good = ("read_x", "platform.list_items", "repo/push", "issue-close", "deleteItem", "_private", "a", "A.b/c-d_e", "x" * 128, "9lives")
+        bad = ("", "x" * 129, "a b", "a\tb", "a\nb", "a\x00b", "a*", "mcp__x(*)", 'a"b', "a'b", ".hidden", "-opt", "/abs", "a:b", "a,b", "café", "a‮b", "a\n")
+        for k in good:
+            self.assertEqual(C.tool_msgs(dict(TOOL, tools={k: "always_ask"})), [], k)
+        for k in bad:
+            got = C.tool_msgs(dict(TOOL, tools={k: "always_ask"}))
+            self.assertEqual(len(got), 1, k)
+            self.assertTrue(got[0].startswith("FAIL: tools.") and got[0].endswith(": not a tool name (letters, digits, _ . - /, at most 128 characters, no blank)"), got)
+            self.assertNotIn("\n", got[0])
+            self.assertTrue(got[0].isascii() and got[0].isprintable(), got)
+        # the name of the pack keeps its own rule: lower-case letters, digits and -
+        for n in ("t-ok", "a", "0x", "a" * 41):
+            self.assertEqual(C.tool_msgs(dict(TOOL, name=n)), [], n)
+        for n in ("T", "a.b", "a/b", "a_b", "-a", "", "a" * 42, "t-ok\n", 7, None):
+            self.assertEqual(C.tool_msgs(dict(TOOL, name=n)), ["FAIL: name: lower-case letters, digits, -"], n)
+
+    def test_a_write_like_tool_may_not_run_unattended(self):
+        line = "FAIL: tools.%s: a write-like tool may not run unattended (use always_ask) unless write_ok is true on the pack, on purpose"
+        for n in WRITES:
+            for pol in ("always_allow", "auto"):
+                self.assertEqual(C.tool_msgs(dict(TOOL, tools={n: pol})), [line % n], n)
+                self.assertEqual(C.tool_msgs(dict(TOOL, tools={n: pol}, write_ok=True)), [], n)
+                self.assertEqual(C.tool_msgs(dict(TOOL, tools={n: pol}, write_ok="true")), [line % n], "only the JSON true is a yes")
+            self.assertEqual(C.tool_msgs(dict(TOOL, tools={n: "always_ask"})), [], n)
+        for n in READS:
+            for pol in C.POLICY_WORDS:
+                self.assertEqual(C.tool_msgs(dict(TOOL, tools={n: pol})), [], n)
+
+    def test_a_document_that_is_no_tool_pack(self):
+        for d in (C.BAD, [1, 2], "x", 3, None):
+            self.assertEqual(C.tool_msgs(d), ["FAIL: not a JSON object: a tool pack is one object with name, url and tools"])
+        for tools in (["always_allow"], {}, "read_x", None, 1):
+            self.assertEqual(C.tool_msgs(dict(TOOL, tools=tools)), ["FAIL: tools: an explicit allowlist of tool names with a policy each"], tools)
+        self.assertEqual(C.tool_msgs(dict(TOOL, tools={"read_x": "sometimes", "list_y": 1})),
+                         ["FAIL: tools.read_x: policy must be always_allow, always_ask or auto", "FAIL: tools.list_y: policy must be always_allow, always_ask or auto"])
+
+    def test_the_shell_review_says_what_the_definition_says(self):
+        """`tool check` (this file's review) and `tool show` (the review of lib/packs.sh) print the same findings for names in every spelling, and the
+        write words are written down in one place."""
+        def packs(lib):
+            tool(lib, "t-spell", dict(TOOL, name="t-spell", tools={n: "always_allow" for n in WRITES[:8] + READS[:14]}))
+            tool(lib, "t-reads", dict(TOOL, name="t-reads", tools={n: "always_allow" for n in READS}))
+            tool(lib, "t-meant", dict(TOOL, name="t-meant", write_ok=True, tools={n: "auto" for n in WRITES}))
+            tool(lib, "t-key", dict(TOOL, name="t-key", tools={"a b": "always_ask", "ok.name/x": "always_ask"}))
+        fx = Fixture(extra=packs)
+        try:
+            for n in ("t-spell", "t-reads", "t-meant", "t-key"):
+                p = os.path.join(fx.lib, "tools", n + ".json")
+                rec = jload(p[:-5] + ".pack.json")
+                rec["sha256"] = C.content_hash(p)
+                put(p[:-5] + ".pack.json", json.dumps(rec))
+            out, rc = qargi(fx.env, "tool", "check", "alpha", "build")
+            want = "".join("tool:t-spell: FAIL: tools.%s: a write-like tool may not run unattended (use always_ask) unless write_ok is true on the pack, on purpose\n" % n
+                           for n in WRITES[:8])
+            self.assertEqual((out, rc), ('tool:t-key: FAIL: tools."a b": not a tool name (letters, digits, _ . - /, at most 128 characters, no blank)\n'
+                                         "ok   tool:t-meant\nok   tool:t-reads\n" + want, 1))
+            for n, fails in (("t-spell", 8), ("t-reads", 0), ("t-meant", 0), ("t-key", 1)):
+                shown, _ = qargi(fx.env, "tool", "show", n)
+                got = [ln for ln in shown.split("\n") if ln.startswith("FAIL")]
+                self.assertEqual(got, [ln.split(": ", 1)[1] for ln in out.split("\n") if ln.startswith("tool:%s: FAIL" % n)], n)
+                self.assertEqual(len(got), fails, n)
+            self.assertIn("NOTE: write_ok is set: write-like tools may run unattended", qargi(fx.env, "tool", "show", "t-meant")[0])
+        finally:
+            fx.close()
+        held = []
+        for d in ("lib", "bin"):
+            for dp, _, fns in os.walk(os.path.join(ROOT, d)):
+                for f in fns:
+                    if f.endswith((".py", ".sh", "qargi")) and "__pycache__" not in dp:
+                        with open(os.path.join(dp, f), encoding="utf-8", errors="replace") as fh:
+                            if "create|update|delete" in fh.read():
+                                held.append(os.path.relpath(os.path.join(dp, f), ROOT))
+        self.assertEqual(held, [], "the write words are in lib/packs_check.py (WRITE_WORDS) and nowhere as a second pattern")
 
 
 class Processes(unittest.TestCase):

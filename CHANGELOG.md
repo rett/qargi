@@ -6,6 +6,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- The review of a tool pack finds a write-like tool however the MCP server spells its name. The check only saw a write word at the start of a name or after `_`, so `platform.delete_knowledge`, `repo/push`, `issue-close` and `deleteItem` passed as `always_allow` or `auto` without `write_ok`. A name is now cut into words at every character that is not a letter (`_`, `.`, `-`, `/`, digits) and at a camelCase boundary (`deleteItem`, `HTTPPost`), and a word that starts with a write word (create, update, delete, remove, post, push, write, merge, send, set, add, edit, close, comment) makes the tool write-like, also in a name with no separator (`deleteall`, `sendmail`). A write word in the middle or at the end of a word does not count (`offset`, `dataset`), and the words `settings`, `setting`, `address`, `addresses`, `postal`, `postcode`, `postcodes`, `additional` and `closest` are taken for the names of things that are read, so `settings_view`, `address_list` and `postal_code_lookup`, which the old check refused, pass. The rule is written once, in `lib/packs_check.py`, and every review asks it (`tool import`, `seal`, `show`, `link`, `check`, the renders). A pack in your library that has such a tool unattended now fails `qargi tool check` and is not rendered until the tool is `always_ask` or the pack sets `"write_ok": true`, and you seal it again.
+- The review of a tool pack checks the names in its `tools` map: letters, digits and `_ . - /`, 1 to 128 characters, the first a letter, a digit or `_`, so the dotted and slashed names that servers publish are accepted and a name with a blank, a control character, a quote or a wildcard fails with the name written as a JSON string. A tool pack that is not one JSON object, or whose `tools` is not an object (a list), fails its review; both passed before, because the check ended in an error and said nothing. The name of the pack keeps its rule (lower-case letters, digits, `-`).
+
 ## [0.2.10] - 2026-11-10
 
 ### Added

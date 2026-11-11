@@ -20,12 +20,16 @@ pack (the approval hash of the library is stored with every pack, so it may not 
                                               the render inputs plus every skill the scan found (packs_audit.py scan) with the library's
                                               hash and approval of the same name: the inputs of the audit of the skills a session would load
   packs_check.py hash PATH                    the content hash of one pack (what the shell function content_hash printed)
+  packs_check.py toolmsgs PATH                the findings of the review about a tool pack file: its name, its URL, its tools map, the name and the
+                                              policy of each tool, a write-like tool that would run unattended (a line starts with FAIL). The review of
+                                              lib/packs.sh prints them: the rule that says which tool names write is in this file alone
 
 The things the shell computed with the locale (sort, a glob) are computed with the same C library calls (strcoll), so the answer is the
 same in every locale. Where the shell used jq on a record or a pack file in a way that has more cases than this script handles in plain
 Python (a value of an unexpected type, text that is not strict JSON) the script runs the same jq program, so the answer cannot differ.
 Not reproduced: the lists `URLs mentioned` and `network commands mentioned` of the review (they are text for a person; check keeps only
-the lines that start with FAIL, and the render only whether the review passed)."""
+the lines that start with FAIL, and the render only whether the review passed). The findings about a tool pack's document (tool_msgs) are this
+file's own and the shell asks for them (toolmsgs): a file that is not one JSON object, or whose tools map is not an object, fails."""
 import hashlib
 import json
 import locale
@@ -64,21 +68,45 @@ SECRET_TOOL = (rb"sk-ant-|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,
 SCRIPT_SUFFIX = (b".sh", b".py", b".js", b".rb")
 SIMPLE = r"[A-Za-z0-9._-]*"
 POLICY_WORDS = ("always_allow", "always_ask", "auto")
-WRITE_LIKE = (r"(^|_)(create|update|delete|remove|post|push|write|merge|send|set|add|edit|close|comment)")
-TOOL_NAME = r"[a-z0-9][a-z0-9-]{0,40}$"
+UNATTENDED = ("always_allow", "auto")                             # the policies under which a tool runs with nobody asked
+TOOL_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,40}\Z")              # the name of a tool pack (the MCP server as qargi calls it)
 VAULT_ID = r"vlt_[A-Za-z0-9]+$"
 MISSING = object()
 BAD = object()
 
+# --- the names of the tools in a pack's `tools` map
+# A key of the map is the name the MCP server gives the tool, so it is taken as servers write them: letters, digits and _ . - / (platform.list_items,
+# repo/push, issue-close, deleteItem), 1 to 128 characters, the first a letter, a digit or _. No blank, control character, quote, wildcard or any other
+# character: the name goes into a permission rule and into the lines a person approves.
+TOOL_KEY = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./-]{0,127}\Z")
+# The one definition of "this tool writes, by its name" (the shell review asks it through the `toolmsgs` verb).
+# A name is cut into words at every character that is not a letter (_ . - / and digits) and at a camelCase boundary (deleteItem: delete, Item;
+# HTTPPost: HTTP, Post), and the case is dropped. A word that STARTS with a write word makes the tool write-like, wherever the word stands in the
+# name: delete_item, platform.delete_knowledge, repo/push, issue-close, deleteItem, and also deleteall and sendmail, which have no separator.
+# A write word in the middle or at the end of a word does not count (offset, dataset, preset, asset). The words of READ_ALIKE start with a write
+# word and are ordinary names of things that are read (settings_view, address_list, postal_code_lookup), so they do not count either; any other
+# word that starts with one counts (created, comments, setup, sender), since a tool taken for a write is asked about and one taken for a read is not.
+WRITE_WORDS = ("create", "update", "delete", "remove", "post", "push", "write", "merge", "send", "set", "add", "edit", "close", "comment")
+READ_ALIKE = frozenset(("settings", "setting", "address", "addresses", "postal", "postcode", "postcodes", "additional", "closest"))
+NAME_WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+")           # a run of capitals that no lower-case letter follows, or a word with at most its first letter a capital
+
+
+def name_words(name):
+    """The words of a tool name, lower-cased: cut at every character that is not an ASCII letter and at a camelCase boundary."""
+    return [w.lower() for w in NAME_WORD.findall(name)] if isinstance(name, str) else []
+
+
+def write_like(name):
+    """True when the name of a tool says it writes: one of its words starts with a write word and is not a READ_ALIKE word."""
+    return any(w.startswith(WRITE_WORDS) and w not in READ_ALIKE for w in name_words(name))
+
+
+def shown_key(k):
+    """A key of the tools map as a message prints it: as it is when it is a tool name, else as a JSON string (a newline or a quote in it stays on its line)."""
+    return k if isinstance(k, str) and TOOL_KEY.match(k) else json.dumps(k, ensure_ascii=True)
+
+
 # the jq programs the review used, kept word for word for the values this file does not read itself
-JQ_MSG = r'''
-      . as $t |
-      [ (if (.name|type)!="string" or ((.name|tostring)|test("^[a-z0-9][a-z0-9-]{0,40}$")|not) then "FAIL: name: lower-case letters, digits, -" else empty end),
-        (if (.url|type)!="string" or ((.url|tostring)|startswith("https://")|not) or ((.url|tostring)|test("example\\.invalid|OWNER|<")) then "FAIL: url: a real https URL" else empty end),
-        (if (.tools|type)!="object" or ((.tools|length)==0) then "FAIL: tools: an explicit allowlist of tool names with a policy each" else empty end),
-        ((.tools // {}) | to_entries[]? | select(.value|IN("always_allow","always_ask","auto")|not) | "FAIL: tools."+.key+": policy must be always_allow, always_ask or auto"),
-        ((.tools // {}) | to_entries[]? | select((.key|test("(^|_)(create|update|delete|remove|post|push|write|merge|send|set|add|edit|close|comment)")) and (.value=="always_allow" or .value=="auto") and ($t.write_ok != true)) | "FAIL: tools."+.key+": a write-like tool may not run unattended (use always_ask) unless write_ok is true on the pack, on purpose")
-      ] | .[]'''
 JQ_TOOLS_LINE = r'"tools: " + ((.tools // {}) | to_entries | map(.key + "=" + (.value|tostring)) | join(", "))'
 JQ_VAULT = r'(.vault_ids // []) | all(test("^vlt_[A-Za-z0-9]+$"))'
 
@@ -401,30 +429,42 @@ def skill_review(p, c):
     return "".join(o), rc
 
 
-def tool_msgs(path, d):
-    """The FAIL lines of the big jq program, for the document D read from PATH."""
-    plain = (isinstance(d, dict) and isinstance(d.get("tools"), dict)
-             and all(isinstance(k, str) and "\n" not in k and "\r" not in k for k in d["tools"])
-             and (not isinstance(d.get("name"), str) or "\n" not in d["name"]))
-    if not plain:
-        return jq(["-r", JQ_MSG], path)[1]
+def tool_msgs(d):
+    """The findings about the document D of a tool pack (what json.loads made of the file, or BAD), one line each: its name, its URL, the tools map, the name
+    and the policy of every tool, and a write-like tool that would run unattended. A line starts with FAIL."""
+    if not isinstance(d, dict):
+        return ["FAIL: not a JSON object: a tool pack is one object with name, url and tools"]
     msgs = []
     name = d.get("name")
-    if not isinstance(name, str) or not re.match(TOOL_NAME, name):
+    if not isinstance(name, str) or not TOOL_NAME.match(name):
         msgs.append("FAIL: name: lower-case letters, digits, -")
     url = d.get("url")
     if not isinstance(url, str) or not url.startswith("https://") or re.search(r"example\.invalid|OWNER|<", url):
         msgs.append("FAIL: url: a real https URL")
-    tools = d["tools"]
-    if len(tools) == 0:
+    tools = d.get("tools")
+    if not isinstance(tools, dict) or len(tools) == 0:
         msgs.append("FAIL: tools: an explicit allowlist of tool names with a policy each")
-    for k, v in tools.items():
-        if not (isinstance(v, str) and v in POLICY_WORDS):
+        return msgs
+    named = [k for k in tools if TOOL_KEY.match(k)]
+    for k in tools:
+        if not TOOL_KEY.match(k):
+            msgs.append("FAIL: tools.%s: not a tool name (letters, digits, _ . - /, at most 128 characters, no blank)" % shown_key(k))
+    for k in named:
+        if not (isinstance(tools[k], str) and tools[k] in POLICY_WORDS):
             msgs.append("FAIL: tools." + k + ": policy must be always_allow, always_ask or auto")
-    for k, v in tools.items():
-        if re.search(WRITE_LIKE, k) and isinstance(v, str) and v in ("always_allow", "auto") and d.get("write_ok") is not True:
+    for k in named:
+        if write_like(k) and tools[k] in UNATTENDED and d.get("write_ok") is not True:
             msgs.append("FAIL: tools." + k + ": a write-like tool may not run unattended (use always_ask) unless write_ok is true on the pack, on purpose")
-    return "\n".join(msgs)
+    return msgs
+
+
+def read_tool(p):
+    """The document of the tool pack file P, or BAD when it cannot be read as one JSON value."""
+    try:
+        with open(p, "rb") as f:
+            return json.loads(f.read().decode("utf-8"))
+    except (OSError, ValueError, RecursionError):
+        return BAD
 
 
 def tool_review(p, c):
@@ -434,17 +474,12 @@ def tool_review(p, c):
     if prc:
         o.append(cmdsub(pol) + "\n")
         rc = 1
-    try:
-        with open(p, "rb") as f:
-            raw = f.read()
-        d = json.loads(raw.decode("utf-8"))
-    except (OSError, ValueError, RecursionError):
-        d = BAD
+    d = read_tool(p)
     if not isinstance(d, dict):                      # jq -e decides the cases that are not an object
         if jq(["-e", "."], p)[0] != 0:
             o.append("FAIL: not valid JSON\n")
             return "".join(o), 1
-    msg = tool_msgs(p, d) if d is not BAD else jq(["-r", JQ_MSG], p)[1]
+    msg = "\n".join(tool_msgs(d))
     if msg:
         o.append(R.vis(msg + "\n"))
         rc = 1
@@ -687,10 +722,13 @@ def main(argv):
         if verb == "hash" and len(argv) == 2:
             out(content_hash(argv[1], quiet=False) + "\n")
             return 0
+        if verb == "toolmsgs" and len(argv) == 2:
+            out("".join(m + "\n" for m in tool_msgs(read_tool(argv[1]))))
+            return 0
     except IndexError:
         pass
     print("usage: packs_check.py check KIND PACKS NAME... | list KIND PACKS [--attached TEXT --label P/R] | filter PROJECT SURFACES PACKS CONF | "
-          "rows PACKS OUTFILE | audit PACKS CCINPUTS SCAN OUTFILE | hash PATH", file=sys.stderr)
+          "rows PACKS OUTFILE | audit PACKS CCINPUTS SCAN OUTFILE | hash PATH | toolmsgs PATH", file=sys.stderr)
     return 2
 
 

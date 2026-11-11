@@ -163,15 +163,10 @@ review() { # kind path [compat-json]: the declaration is the third argument whil
     # escapes are decoded, in any key or string (\u001b is plain ASCII on disk); everything below is printed through showable
     pol=$(python3 -I "$REVIEWPY" policy "$p" 2>&1) || { echo "$pol"; rc=1; }
     jq -e . "$p" >/dev/null 2>&1 || { echo "FAIL: not valid JSON"; return 1; }
-    local msg; msg=$(jq -r '
-      . as $t |
-      [ (if (.name|type)!="string" or ((.name|tostring)|test("^[a-z0-9][a-z0-9-]{0,40}$")|not) then "FAIL: name: lower-case letters, digits, -" else empty end),
-        (if (.url|type)!="string" or ((.url|tostring)|startswith("https://")|not) or ((.url|tostring)|test("example\\.invalid|OWNER|<")) then "FAIL: url: a real https URL" else empty end),
-        (if (.tools|type)!="object" or ((.tools|length)==0) then "FAIL: tools: an explicit allowlist of tool names with a policy each" else empty end),
-        ((.tools // {}) | to_entries[]? | select(.value|IN("always_allow","always_ask","auto")|not) | "FAIL: tools."+.key+": policy must be always_allow, always_ask or auto"),
-        ((.tools // {}) | to_entries[]? | select((.key|test("(^|_)(create|update|delete|remove|post|push|write|merge|send|set|add|edit|close|comment)")) and (.value=="always_allow" or .value=="auto") and ($t.write_ok != true)) | "FAIL: tools."+.key+": a write-like tool may not run unattended (use always_ask) unless write_ok is true on the pack, on purpose")
-      ] | .[]' "$p" 2>/dev/null)
-    if [ -n "$msg" ]; then echo "$msg" | showable; rc=1; fi
+    # the findings about the document: its name, its URL, the tools map, the name and the policy of each tool, a write-like tool that would run
+    # unattended. One definition of them, in lib/packs_check.py (tool_msgs); a review that cannot ask it fails
+    local msg; msg=$(python3 -I "$CHECKPY" toolmsgs "$p") || { echo "FAIL: the findings about the tool pack could not be worked out (lib/packs_check.py toolmsgs failed)"; rc=1; }
+    if [ -n "$msg" ]; then echo "$msg" | showable; ! grep -q '^FAIL' <<<"$msg" || rc=1; fi
     [ "$(jq -r '.write_ok // false' "$p")" != true ] || echo "NOTE: write_ok is set: write-like tools may run unattended"
     jq -r '"tools: " + ((.tools // {}) | to_entries | map(.key + "=" + (.value|tostring)) | join(", "))' "$p" | showable
     jq -e '(.vault_ids // []) | all(test("^vlt_[A-Za-z0-9]+$"))' "$p" >/dev/null 2>&1 || { echo "FAIL: vault_ids must be vault ids (vlt_...), never secrets"; rc=1; }
