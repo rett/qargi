@@ -1124,8 +1124,16 @@ WRAP
     [ -z "$rt" ] || rm -rf --one-file-system -- "$rt"
     rrun=$(readlink -f -- "$RUN" 2>/dev/null) || rrun=$RUN   # the registry's name of the run, taken while the directory is there
     res=$(home_residue "$RUN")   # links a start of local run left in the run home: rm removes a link, never what it points to
+    # what the clone holds that no commit has (new files never added, changes to tracked files), read the way local run reads it (nothing the member put
+    # in the clone's git configuration runs): removed with the run, so it is said
+    wt=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from local_run import worktree_changes; c = worktree_changes(sys.argv[2]); print("%d %d" % (len(c[0]), len(c[1])) if c else "0 0")' \
+      "$(dirname "$0")" "$RUN/clone" 2>/dev/null </dev/null) || wt='0 0'
+    read -r wtt wtu _ <<<"$wt"
     rm -rf --one-file-system -- "$RUN"
     [ -z "$res" ] || echo "qargi: note: removed with the run what its run home held: $(paste -sd ';' - <<<"$res" | LC_ALL=C tr -d '\000-\037\177')" >&2
+    if [[ ${wtu:-0} =~ ^[1-9][0-9]*$ ]] || [[ ${wtt:-0} =~ ^[1-9][0-9]*$ ]]; then
+      echo "qargi: warning: removed with the run what no commit had: $RUN/clone held ${wtu:-0} untracked file(s) (new files never added) and ${wtt:-0} uncommitted change(s) to tracked files; to keep such work, copy the files out of the clone before clean (never run git in a write member's clone)" >&2
+    fi
     sv=$(saved_of "$RUN"); [ -z "$sv" ] || rm -rf --one-file-system -- "$sv"   # the copy verify saved: the work is merged, or dropped on purpose
     scrub_ok_drop "$RUN"   # the record of a passed scrub that review check kept for a run never applied
     apply_state_drop "$RUN"   # the apply record of the run, and the temporary directories of a killed apply of it

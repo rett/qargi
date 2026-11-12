@@ -87,7 +87,7 @@ Its MCP tools are the `[mcp_servers.PACK]` tables of the run's file for its role
 
 - **The report.** Codex writes the member's last message (`-o`) to a new private file of the run; when the run ends qargi checks it and publishes it as `OUT/report.md`. With `--again` the earlier report is set aside as `OUT/report.md.previous` before the member starts: a run that publishes a report replaces it, and a run that publishes none leaves it there, where no check takes it for this run's.
 - **A read-only run** cannot write OUT, so the lead writes `OUT/manifest.json` beside the report: the minimal report-only manifest, with what the lead recorded of the run and no test result and no verdict; `qargi review check` still reads the Findings and the verdict line of the report.
-- **A write run** commits in its clone and collects its patches into OUT; a change left uncommitted with no patches is a refusal (`refused`, exit 2), never a finished task.
+- **A write run** commits in its clone and collects its patches into OUT; a change to a tracked file left uncommitted with no patches is a refusal (`refused`, exit 2), never a finished task. A new file the member never added is not a refusal: it is reported (`WORKTREE=untracked`, and a warning in `qargi review check`), the run can still end `ok`, and `qargi local clean` removes it with the clone, with a warning. When such files are the task's work, send the run back to commit and collect them.
 - **Usage** is tokens only, added up from the `turn.completed` events into `RUN/dispatch.json` and the `USAGE=` line; a count no event reports is named as not reported, never recorded as 0. A ChatGPT sign-in reports no money per run, and a wall-clock timeout is not a token or money ceiling.
 
 ## Codex as the lead

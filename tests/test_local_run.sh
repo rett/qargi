@@ -1007,7 +1007,7 @@ out=$($DA review check "$OUT" 2>&1); rc2=$?
   && ok "a BLOCKED manifest with the change left uncommitted passes review check as a refusal, with a note and a warning" || no "blocked uncommitted: rc=$rc rc2=$rc2 $out"
 git -C "$CLONE" checkout -q tracked.txt; echo untracked > "$T/wu-mode"
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
-{ [ "$rc" = 0 ] && grep -q '^OUTCOME=ok$' <<<"$out" && grep -qF "WORKTREE=untracked: $CLONE holds 1 untracked file(s) no commit has and OUT holds no patches" <<<"$out" \
+{ [ "$rc" = 0 ] && grep -q '^OUTCOME=ok$' <<<"$out" && grep -qF "WORKTREE=untracked: $CLONE holds 1 untracked file(s) no commit has and OUT holds no patches: new files never added are reported, not a refusal (the refusal covers changes to tracked files)" <<<"$out" \
   && [ "$(jq -c '.worktree.refused' "$RUN/dispatch.json")" = false ]; } && ok "untracked files alone are said (WORKTREE=untracked), not a refusal" || no "untracked only: rc=$rc $out"
 rm -f "$CLONE/new.txt"; : > "$T/wu-mode"
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
@@ -1031,6 +1031,11 @@ printf 'filter.x=y.clean\0' > "$T/fgit.names"
 got=$(PATH="$T/fgit:$PATH" python3 -I -c 'import sys; sys.path.insert(0, "lib"); import local_run as L; print(L.worktree_changes(sys.argv[1]))' "$CLONE" 2>&1)
 [ "$got" = None ] && ok "a filter driver whose name cannot be emptied on the command line: git status is not run, the state is unknown" || no "bad filter name: $got $(cat "$T/fgit.log")"
 git -C "$CLONE" checkout -q tracked.txt; rm -rf "$T/fgit" "$T/fgit.log" "$T/fgit.names" "$T/wu-mode" "$T/wu-final.md" "$T/bin/codex"
+# a new file never added is not a refusal, so a clean of such a run removes it: never silently
+printf 'new\n' > "$CLONE/new.txt"
+out=$($DA local clean "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ ! -e "$RUN" ] && grep -qF "qargi: warning: removed with the run what no commit had: $RUN/clone held 1 untracked file(s) (new files never added) and 0 uncommitted change(s) to tracked files" <<<"$out"; } \
+  && ok "local clean warns that it removes a new file of the clone no commit has" || no "clean untracked: rc=$rc $out"
 
 # --- what git in the clone would run: the clone's .git (config, hooks/, info/) is compared before and after a run whose member can write it ---
 # fakecmd gives its write class no sandbox arguments, so nothing of the runtime holds the .git (unsandboxed); its read-only class has its sandbox flags

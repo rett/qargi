@@ -1557,7 +1557,9 @@ def worktree_line(work, run):
                 "refusal, not a finished task (read its report and send it back; to keep the change, copy the changed files out of the clone: never run git "
                 "in a write member's clone, whose .git it could set to run a program as you)"
                 % (clone, work["tracked"], " and %d untracked file(s)" % work["untracked"] if work["untracked"] else ""))
-    return "WORKTREE=untracked: %s holds %d untracked file(s) no commit has and OUT holds no patches" % (clone, work["untracked"])
+    return ("WORKTREE=untracked: %s holds %d untracked file(s) no commit has and OUT holds no patches: new files never added are reported, not a "
+            "refusal (the refusal covers changes to tracked files), and they are lost with the clone when the run is cleaned (qargi local clean warns): "
+            "if they are the task's work, send the run back to commit and collect them" % (clone, work["untracked"]))
 
 
 # ---- what git in the clone would run (the clone's .git) --------------------------------------------------------------------------------
@@ -1860,8 +1862,8 @@ def run_it(plan, run):
         ch = worktree_changes(os.path.join(run, "clone"))
         if ch is not None and (ch[0] or ch[1]):
             work = {"tracked": len(ch[0]), "untracked": len(ch[1]), "patches": False, "refused": bool(ch[0])}
-            if ch[0]:                                    # a change left uncommitted with nothing collected is a refusal, never a finished task
-                outcome = "refused"
+            if ch[0]:                                    # a change to a tracked file left uncommitted with nothing collected is a refusal, never a
+                outcome = "refused"                      # finished task; new files never added (untracked) are only reported
     if staged:
         report, text = finish_report(run, out, fin, previous)
     elif fin:                                            # the member was never started: nothing of it to publish, an earlier report stays set aside
