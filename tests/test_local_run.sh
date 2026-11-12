@@ -1051,14 +1051,14 @@ out=$(FAKE_MODE=gitcfg FAKE_KEY="$T/gitdir-ran" $DA local run "$RUN" 2>&1); rc=$
 rm -f "$T/gitdir-ran"
 
 # --- however a run ends, the member's processes are stopped, the run home's link is removed and dispatch.json says how it ended (synthetic sign-in) ---
-# The fake codex records its pid and starts a child in its process group, then waits ($T/ir-mode: wait, or quick to end at once). The signal goes to the
-# runner, whose pid the start record in dispatch.json names.
+# The fake codex records its pid and starts a child in its process group, then waits ($T/ir-mode: wait, quick to end at once, or stubborn: its child
+# ignores TERM, while the fake codex itself ends on it). The signal goes to the runner, whose pid the start record in dispatch.json names.
 mkdir -p "$HOME/.codex"; printf '{"token": "sk-test-%s-interrupt"}\n' "$RANDOM" > "$HOME/.codex/auth.json"; ISUM=$(sha256sum < "$HOME/.codex/auth.json")
 cat > "$T/bin/codex" <<SH
 #!/usr/bin/env bash
 cat > /dev/null
 [ "\$(cat "$T/ir-mode" 2>/dev/null)" = quick ] && exit 0
-sleep 3571 & echo \$! > "$T/ir-child"
+if [ "\$(cat "$T/ir-mode" 2>/dev/null)" = stubborn ]; then (trap '' TERM; exec sleep 3571) & echo \$! > "$T/ir-child"; else sleep 3571 & echo \$! > "$T/ir-child"; fi
 echo \$\$ > "$T/ir-member"
 wait
 SH
@@ -1067,7 +1067,7 @@ setprov codex; prep "$T/r" ir1; task
 LINK=$RUN/home/.codex/auth.json
 gone() { ! kill -0 "$1" 2>/dev/null; }
 ir_start() { # [launcher...]: local run --again in the background; waits for the member to have started
-  rm -f "$T/ir-child" "$T/ir-member" "$T/ir.rc" "$T/ir.out"; echo wait > "$T/ir-mode"
+  rm -f "$T/ir-child" "$T/ir-member" "$T/ir.rc" "$T/ir.out"; echo "${IR_MODE:-wait}" > "$T/ir-mode"
   ( "$@" $DA local run "$RUN" --again > "$T/ir.out" 2>&1; echo $? > "$T/ir.rc" ) &
   wait_until '[ -s "$T/ir-child" ] && [ -s "$T/ir-member" ] && [ "$(jq -r .member "$RUN/dispatch.json" 2>/dev/null)" = "$(cat "$T/ir-member")" ]' 30
 }
@@ -1084,6 +1084,18 @@ echo quick > "$T/ir-mode"; out=$($DA local run "$RUN" 2>&1) || no "ir1 first run
 for s in TERM HUP; do
   if ir_start; then kill -"$s" "$(jq -r .runner "$RUN/dispatch.json")"; ir_after "$s" "$([ "$s" = TERM ] && echo 143 || echo 129)"; else no "SIG$s: the member did not start: $(cat "$T/ir.out")"; fi
 done
+# the member ends on TERM, its child ignores it: the group is watched, not only the member, and KILL stops the child before the run says so
+if IR_MODE=stubborn ir_start; then
+  kill -TERM "$(jq -r .runner "$RUN/dispatch.json")"; ir_after TERM 143
+  [ "$(jq -r .group_left "$RUN/dispatch.json")" = 0 ] && ok "a child that ignores TERM after the member ended on it is killed, and dispatch.json says none of the group is left" \
+    || no "stubborn child: $(jq -c . "$RUN/dispatch.json")"
+else no "stubborn: the member did not start: $(cat "$T/ir.out")"; fi
+# a group that cannot be emptied is never said to be stopped: the count of what is left is said (group_left stands in for processes that survive KILL)
+got=$(python3 -I -c 'import subprocess, sys; sys.path.insert(0, "lib"); import local_run as L
+p = subprocess.Popen(["sleep", "30"], start_new_session=True); L.group_left = lambda pg: [pg, 1]
+n = L.kill_group(p, grace=0.1); print(n, p.wait(5), L.stopped_text(n), "|", L.stopped_text(1), "|", L.stopped_text(0))' 2>&1)
+[ "$got" = "2 -15 a descendant survived: 2 processes of the member's process group still alive after TERM and KILL | a descendant survived: 1 process of the member's process group still alive after TERM and KILL | the member's process group was stopped" ] \
+  && ok "survivors of TERM and KILL are counted and said, never called a stopped group" || no "survivors: $got"
 # a background job of a script starts with SIGINT ignored, which the runner keeps (as under nohup): this launcher restores it first, as a terminal has it
 if ir_start python3 -I -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])'; then
   kill -INT "$(jq -r .runner "$RUN/dispatch.json")"; ir_after INT 130

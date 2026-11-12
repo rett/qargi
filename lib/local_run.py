@@ -89,11 +89,12 @@ exists, passes through no link, or the run is refused: a sandbox may be told to 
 The process gets the environment of the run's git wrapper (RUN/git: HOME is RUN/home, no global git configuration, no ssh, no prompts,
 the author qargi) and TMPDIR of the run, plus QARGI_MEMBER_RUN (the run directory: the mark that tells the marshal a member is running, wherever the
 member changes to), PATH, the env_pass names and the variable of dispatch.home. It runs in its own session without a shell, its standard output goes
-to OUT/transcript and its standard error to OUT/transcript.err, and a process group that outlives the bound is killed. A record of what ran is
+to OUT/transcript and its standard error to OUT/transcript.err, and a process group that outlives the bound is stopped (kill_group). A record of what ran is
 written to RUN/dispatch.json (argv, class, model, outcome; never an environment value): when the run starts (outcome running, with the process ids of
 the runner and, once started, of the member), and again when it ends, whatever ended it: the member's exit, the bound, a run home, configuration file or
 transcript that cannot be made (refused, with the error), a command that cannot be started (transport), or SIGINT, SIGTERM or SIGHUP to the runner
-(interrupted, with the signal: the member's process group is stopped, TERM then KILL, and the run home's links are removed). SIGKILL leaves the start
+(interrupted, with the signal: the member's process group gets TERM, is watched for 5 seconds, then KILL for what is left of it, and the run
+home's links are removed; the output says the group was stopped only when none of it is alive, and otherwise how many of its processes survived). SIGKILL leaves the start
 record: the next start of the run refuses while that runner or its member still runs (the member is found by QARGI_MEMBER_RUN in its environment),
 and otherwise needs --again, which replaces the links left in the run home and removes the stale last-message directories; qargi local clean
 removes the run with them, and qargi local list and verify name the links left. A run home a member moved or replaced is searched for the links
@@ -1095,7 +1096,8 @@ class Interrupted(BaseException):
 
 class Signals:
     """SIGINT, SIGTERM and SIGHUP while a run is under way. The first one is recorded: while the lead waits for the member (armed) it is raised there
-    (Interrupted), so the member's process group is stopped (kill_group: TERM, then KILL, each waited for 5 seconds) and the run home is cleared;
+    (Interrupted), so the member's process group is stopped (kill_group: TERM, the group watched for 5 seconds, then KILL for what is left) and the
+    run home is cleared;
     before the member starts it is acted on at the next check, and after the member has ended it is only noted, so the run's end is never cut short.
     A later one is recorded by nothing. A signal the runner was started with set to be ignored (nohup) stays ignored. SIGKILL cannot be caught:
     then RUN/dispatch.json still says running, with the runner's and the member's process ids, and the next start or qargi local clean clears it."""
@@ -1204,17 +1206,66 @@ def earlier_start(run, again):
         fail("%s has been run already (%s); --again runs it again and replaces the transcript" % (run, path))
 
 
-def kill_group(proc):
-    for sig, wait in ((signal.SIGTERM, 5), (signal.SIGKILL, 5)):
+KILL_GRACE = 5   # seconds kill_group watches the member's process group after TERM, and again after KILL
+
+
+def group_left(pgid):
+    """The pids of the live processes (not zombies) in the process group pgid, read from /proc; when /proc cannot be read, [pgid] while
+    the group can still be signalled, else []."""
+    try:
+        names = os.listdir("/proc")
+    except OSError:
         try:
-            os.killpg(proc.pid, sig)
-        except (ProcessLookupError, PermissionError):
-            return
-        try:
-            proc.wait(timeout=wait)
-            return
-        except subprocess.TimeoutExpired:
+            os.killpg(pgid, 0)
+            return [pgid]
+        except OSError:
+            return []
+    want, left = str(pgid).encode(), []
+    for n in names:
+        if not n.isdigit():
             continue
+        try:
+            with open("/proc/%s/stat" % n, "rb") as f:
+                st = f.read()
+        except OSError:
+            continue
+        rest = st[st.rfind(b")") + 2:].split()      # after the command name: state, ppid, pgrp, ...
+        if len(rest) > 2 and rest[0] not in (b"Z", b"X") and rest[2] == want:
+            left.append(int(n))
+    return left
+
+
+def kill_group(proc, grace=KILL_GRACE):
+    """Stop the member's process group: TERM to the group, which is then watched (the group, not only the member: a descendant may ignore TERM
+    after the member has ended) until none of it is alive or grace seconds have passed; then KILL to what is left, watched the same way. The member
+    is reaped. The number of the group's processes still alive at the end: 0 when the group is gone. A process that moved to a process group of
+    its own is not in the group and is not reached."""
+    pg = proc.pid
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(pg, sig)
+        except ProcessLookupError:
+            break
+        except PermissionError:
+            pass
+        end = time.monotonic() + grace
+        while True:
+            proc.poll()
+            if not group_left(pg):
+                proc.poll()
+                return 0
+            if time.monotonic() >= end:
+                break
+            time.sleep(0.05)
+    proc.poll()
+    return len(group_left(pg))
+
+
+def stopped_text(left):
+    """What became of the member's process group, for the output: stopped only when none of it is alive."""
+    if not left:
+        return "the member's process group was stopped"
+    return ("a descendant survived: %d process%s of the member's process group still alive after TERM and KILL" % (left, "" if left == 1 else "es"))
 
 
 def open_own(path, what):
@@ -1740,7 +1791,7 @@ def run_it(plan, run):
     sig.install()
     made, home_left, staged = [], [], False
     git0 = git_state(os.path.join(run, "clone")) if plan["git_watch"] else None   # before the member starts: what git in the clone would run
-    proc = code = error = outcome = None
+    proc = code = error = outcome = left = None
     timed_out, stop_code = False, 2
     previous = prev_manifest = False
     try:
@@ -1777,7 +1828,7 @@ def run_it(plan, run):
                         except subprocess.TimeoutExpired:
                             sig.armed = False
                             timed_out = True
-                            kill_group(proc)
+                            left = kill_group(proc)
                             code = proc.returncode
                         finally:
                             sig.armed = False
@@ -1788,12 +1839,12 @@ def run_it(plan, run):
             sig.armed = False
             outcome = "interrupted"
             if proc is not None:
-                kill_group(proc)
+                left = kill_group(proc)
                 code = proc.returncode
         except Stop as e:                                # the run home, the configuration file, the transcripts or the report could not be made as the run needs
             outcome, error, stop_code = "refused", str(e), e.code
             if proc is not None:                         # the start record could not be rewritten once the member had started: it is stopped, never
-                kill_group(proc)                         # left running after the runner has gone
+                left = kill_group(proc)                  # left running after the runner has gone
                 code = proc.returncode
     finally:
         sig.armed = False
@@ -1822,6 +1873,8 @@ def run_it(plan, run):
     rec = dict(head, started=PE.now(started), seconds=seconds, exit=code, timed_out=timed_out, outcome=outcome, transcript=os.path.join(out, "transcript"))
     if outcome == "interrupted":
         rec["signal"] = signal.Signals(sig.sig).name
+    if left is not None:                                 # the member's process group was stopped: how many of its processes are still alive
+        rec["group_left"] = left
     if error:
         rec["error"] = error
     if home:
@@ -1846,8 +1899,8 @@ def run_it(plan, run):
     if error:
         print("qargi: %s" % error, file=sys.stderr)
     print("RUNTIME=" + plan["runtime"])
-    print("OUTCOME=" + outcome + (" (timed out after %ds)" % plan["timeout_s"] if timed_out else "")
-          + (" (%s: %s)" % (rec["signal"], "the member's process group was stopped" if proc is not None else "the member was not started")
+    print("OUTCOME=" + outcome + (" (timed out after %ds%s)" % (plan["timeout_s"], "; " + stopped_text(left) if left else "") if timed_out else "")
+          + (" (%s: %s)" % (rec["signal"], stopped_text(left) if proc is not None else "the member was not started")
              if outcome == "interrupted" else "")
           + (" (the runtime ended ok, but the clone holds uncommitted changes and OUT holds no patches)" if work and work["refused"] else ""))
     print("EXIT=%s" % ("" if code is None else code))
@@ -1869,6 +1922,9 @@ def run_it(plan, run):
               "reconcile it yourself)" % os.path.join(home["path"], n))
     for n in home_left:
         print("qargi: note: " + n, file=sys.stderr)
+    if left:
+        print("qargi: note: %d process%s of the member's process group %d survived TERM and KILL and may still be running: look at it with ps -g %d"
+              % (left, "" if left == 1 else "es", proc.pid, proc.pid), file=sys.stderr)
     if sig.sig is not None and outcome != "interrupted":
         print("qargi: note: %s arrived after the member had ended; the run was finished first" % signal.Signals(sig.sig).name, file=sys.stderr)
     sig.restore()
