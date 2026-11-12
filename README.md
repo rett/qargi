@@ -12,27 +12,46 @@ Requirements: Linux with bash, GNU coreutils (including `timeout`) and findutils
 
 ## Quick start
 
+Choose the installation for your lead's runtime. For a Claude Code lead, install skills in `~/.claude/skills` and the command in `~/.local/bin`:
+
 ```sh
-./install.sh --user                    # skills for your lead (Claude Code: ~/.claude/skills), the command in ~/.local/bin
-./install.sh --user --runtime codex    # or for a Codex lead: ~/.codex/skills (docs/members-and-providers/codex.md)
-
-# a project: attach an existing repository (or `qargi project new myproject`); each prints a plan and a token,
-# applied with --plan TOKEN --approved "<your words>"; --provider-local names the runtime of its members
-qargi project attach ~/src/myproject --name myproject --provider-local claude-code
-qargi agent add worker --project myproject      # the members that do the work,
-qargi agent add reviewer --project myproject    # and the read-only one
-qargi project attach ~/src/other --name other --provider-local codex   # or on codex: it keeps no member files, so agent
-# add refuses it and each task is a run: qargi local prepare --task-file F --done C ... then qargi local run RUN
-
-# the feature loop; the lead drives it from an agent session in the repository
-qargi feature start dots --purpose "..."        # cuts feature/dots from develop
-/qargi-task "<task>" --done "<check>" --base feature/dots   # a member works in its own clone and returns patches
-qargi review apply RUN                          # puts the checked patches on agent/<slug>
-qargi feature merge dots agent/<slug>
-qargi feature verify dots                       # the one whole-suite run (test_command, or the declared gates of tier feature)
-qargi feature finish dots                       # the only merge into develop; names the open backlog items its commits mention
-qargi backlog list                              # the open items of the backlog file (the answer backlog.file)
+./install.sh --user
 ```
+
+For a Codex lead, install skills in `~/.codex/skills` ([setup](docs/members-and-providers/codex.md)):
+
+```sh
+./install.sh --user --runtime codex
+```
+
+Attach an existing repository (or use `qargi project new myproject`). Each prints a plan and a token to apply with `--plan TOKEN --approved "<your words>"`; `--provider-local` names the members' runtime. Add a worker and a read-only reviewer:
+
+```sh
+qargi project attach ~/src/myproject --name myproject \
+  --provider-local claude-code
+qargi agent add worker --project myproject
+qargi agent add reviewer --project myproject
+```
+
+For Codex, attach with `--provider-local codex`. It keeps no member files, so `agent add` refuses it; each task is a run: `qargi local prepare --task-file F --done C ...`, then `qargi local run RUN`.
+
+```sh
+qargi project attach ~/src/other --name other --provider-local codex
+```
+
+The lead drives the feature loop from an agent session in the repository:
+
+```sh
+qargi feature start dots --purpose "..."
+/qargi-task "<task>" --done "<check>" --base feature/dots
+qargi review apply RUN
+qargi feature merge dots agent/<slug>
+qargi feature verify dots
+qargi feature finish dots
+qargi backlog list
+```
+
+Start cuts `feature/dots` from develop; the member works in its own clone and returns patches, and review apply puts the checked patches on `agent/<slug>`. Verify runs the whole suite once (`test_command`, or the declared gates of tier feature). Finish is the only merge into develop and names the open backlog items its commits mention. Backlog list shows the open items of the backlog file (the answer `backlog.file`).
 
 `/qargi-task` is the Claude Code slash command of the `qargi-task` skill; another lead loads that skill by name or runs the verbs
 it describes (`qargi local prepare`, `qargi local run`, `qargi local verify`); a Codex lead's setup is in
