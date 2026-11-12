@@ -117,13 +117,59 @@ class Inspection(unittest.TestCase):
         self.assertIsNone(L.clone_commits(str(self.clone)))
 
     def test_bounds_and_unsupported_refstorage(self):
+        reasons = []
         with patch.object(L, 'INSPECTION_BYTES_MAX', 1):
-            self.assertIsNone(L.clone_commits(str(self.clone)))
+            self.assertIsNone(L.clone_commits(str(self.clone), reasons=reasons))
+        self.assertEqual(reasons, ['metadata byte limit exceeded (512 MiB in 0.2.13)'])
+        reasons = []
         with patch.object(L, 'INSPECTION_ENTRIES_MAX', 1):
-            self.assertIsNone(L.worktree_changes(str(self.clone)))
+            self.assertIsNone(L.worktree_changes(str(self.clone), reasons))
+        self.assertEqual(reasons, ['metadata traversal/read-step limit exceeded'])
+        reasons = []
+        with patch.object(L, 'GIT_CONFIG_MAX', 8):
+            self.assertIsNone(L.worktree_changes(str(self.clone), reasons))
+        self.assertEqual(reasons, ['Git config byte limit exceeded (1 MiB)'])
+        reasons = []
+        with patch.object(L.time, 'monotonic', side_effect=[0] + [L.WORKTREE_TIMEOUT + 1] * 20):
+            self.assertIsNone(L.clone_commits(str(self.clone), reasons=reasons))
+        self.assertEqual(reasons, ['metadata copy time limit exceeded'])
+        deep = self.gd / 'refs' / Path(*(['d'] * 66))
+        deep.mkdir(parents=True)
+        reasons = []
+        self.assertIsNone(L.clone_commits(str(self.clone), reasons=reasons))
+        self.assertEqual(reasons, ['metadata directory depth limit exceeded'])
+        shutil.rmtree(self.gd / 'refs/d')
         with (self.gd / 'config').open('a') as f:
             f.write('\n[extensions]\n refStorage = reftable\n')
         self.assertIsNone(L.clone_commits(str(self.clone)))
+
+    def test_failure_diagnostics_never_copy_exception_or_config_contents(self):
+        secret = 'fixture-config-and-exception-secret'
+        for error in (OSError(secret), ValueError(secret), subprocess.SubprocessError(secret), subprocess.TimeoutExpired(secret, 1)):
+            reasons = []
+            with patch.object(L, 'inspection_copy', side_effect=error):
+                self.assertIsNone(L.worktree_changes(str(self.clone), reasons))
+            self.assertTrue(reasons)
+            self.assertNotIn(secret, str(reasons))
+        with (self.gd / 'config').open('a') as f:
+            f.write('\n[core]\n eol = ' + secret + '\n')
+        reasons = []
+        self.assertIsNone(L.clone_commits(str(self.clone), reasons=reasons))
+        self.assertEqual(reasons, ['unsupported core configuration value'])
+
+    def test_replacement_refs_cannot_change_commit_or_status_semantics(self):
+        (self.clone / 'data').write_text('new\n')
+        self.git('-C', str(self.clone), 'add', 'data')
+        self.git('-C', str(self.clone), '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-qm', 'work')
+        self.git('-C', str(self.clone), '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '--allow-empty', '-m', 'second')
+        self.git('-C', str(self.clone), 'replace', 'HEAD', 'HEAD^^')
+        # Negative control: replacements hide the new commit and change its tree.
+        self.assertEqual(self.git('-C', str(self.clone), 'rev-list', '--count', 'HEAD', '--not', '--remotes=origin').stdout.strip(), b'1')
+        self.assertEqual(self.git('-C', str(self.clone), 'status', '--porcelain').stdout, b'M  data\n')
+        self.assertEqual(L.clone_commits(str(self.clone)), 2)
+        self.assertEqual(L.worktree_changes(str(self.clone)), ([], []))
+        (self.clone / 'data').write_text('old\n')
+        self.assertEqual(L.worktree_changes(str(self.clone)), (['data'], []))
 
     def test_sha256(self):
         repo = self.root / 'sha256/clone'
@@ -131,6 +177,33 @@ class Inspection(unittest.TestCase):
         self.git('-C', str(repo), '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '--allow-empty', '-m', 'base')
         self.assertEqual(L.clone_commits(str(repo)), 1)
         self.assertEqual(L.worktree_changes(str(repo)), ([], []))
+        self.assert_inspection_format(repo, '1', 'sha256')
+
+    def assert_inspection_format(self, clone, version, fmt):
+        original = subprocess.run
+        def inspect(argv, **kwargs):
+            if 'rev-list' in argv:
+                config = (Path(kwargs['env']['GIT_DIR']) / 'config').read_bytes()
+                entries = L.config_entries(config)
+                self.assertEqual(entries['core.repositoryformatversion'], [version])
+                self.assertEqual(entries.get('extensions.objectformat'), [fmt] if fmt == 'sha256' else None)
+            return original(argv, **kwargs)
+        with patch.object(L.subprocess, 'run', inspect):
+            self.assertIsNotNone(L.clone_commits(str(clone)))
+
+    def test_sha1_uses_minimal_version_zero_configuration(self):
+        self.assert_inspection_format(self.clone, '0', 'sha1')
+
+    def test_explicit_empty_and_valueless_booleans_keep_git_semantics(self):
+        config = self.gd / 'config'
+        original = config.read_text()
+        (self.clone / 'data').chmod(0o755)
+        for spelling, expected in (('filemode', (['data'], [])), ('filemode =', ([], [])), ('filemode = ""', ([], []))):
+            config.write_text(original + '\n[core]\n ' + spelling + '\n')
+            self.assertEqual(self.git('-C', str(self.clone), 'config', '--bool', 'core.filemode').stdout.strip(),
+                             b'true' if expected[0] else b'false')
+            self.assertEqual(L.worktree_changes(str(self.clone)), expected)
+        self.assertEqual(L.config_entries(b'[core]\n filemode\n filemode =\n'), {'core.filemode': [None, '']})
 
     def test_safe_filemode_configuration(self):
         self.git('-C', str(self.clone), 'config', 'core.filemode', 'false')
@@ -141,17 +214,30 @@ class Inspection(unittest.TestCase):
 
     def test_index_copy_preserves_racy_timestamp_detection(self):
         index = self.gd / 'index'
-        timestamp = index.stat().st_mtime_ns
-        (self.clone / 'data').write_text('new\n')
+        data = self.clone / 'data'
+        before = data.stat()
+        timestamp = before.st_mtime_ns
+        os.utime(index, ns=(timestamp, timestamp))
+        data.write_text('new\n')
+        os.utime(data, ns=(before.st_atime_ns, timestamp))
         original = subprocess.run
+        lose_timestamp = False
         def inspect(argv, **kwargs):
             if 'status' in argv:
                 copied = Path(kwargs['env']['GIT_DIR']) / 'index'
                 self.assertEqual(copied.stat().st_mtime_ns, timestamp)
+                # Test-only controls remove inode/ctime detection as an explanation.
+                argv = argv[:1] + ['-c', 'core.checkstat=minimal', '-c', 'core.trustctime=false'] + argv[1:]
+                if lose_timestamp:
+                    newer = timestamp + 10_000_000_000
+                    os.utime(copied, ns=(newer, newer))
             return original(argv, **kwargs)
         with patch.object(L.subprocess, 'run', inspect):
-            for _ in range(2):
-                self.assertEqual(L.worktree_changes(str(self.clone)), (['data'], []))
+            self.assertEqual(L.worktree_changes(str(self.clone)), (['data'], []))
+            lose_timestamp = True
+            self.assertEqual(L.worktree_changes(str(self.clone)), ([], []))  # negative control
+            lose_timestamp = False
+            self.assertEqual(L.worktree_changes(str(self.clone)), (['data'], []))
 
     def test_lead_git_resolved_once_from_nonstandard_path(self):
         trusted = self.root / 'trusted'

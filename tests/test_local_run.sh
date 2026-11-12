@@ -1014,8 +1014,15 @@ out=$($DA local run "$RUN" --again 2>&1); rc=$?
 { [ "$rc" = 0 ] && ! grep -q '^WORKTREE=' <<<"$out" && [ "$(jq -r 'has("worktree")' "$RUN/dispatch.json")" = false ]; } && ok "a clean clone says nothing of it" || no "clean clone: rc=$rc $out"
 printf '%s\n' elsewhere > "$CLONE/.git/commondir"
 out=$($DA review check "$OUT" --allow-empty 2>&1); rc=$?
-[ "$rc" != 0 ] && grep -q 'worktree state is unknown: clone inspection failed' <<<"$out" \
+[ "$rc" != 0 ] && grep -q 'worktree state is unknown: clone inspection failed: unsupported metadata layout or indirection' <<<"$out" \
   && ok "review check refuses an unknown worktree state" || no "review check unknown worktree: rc=$rc $out"
+out=$($DA local verify "$RUN" 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q 'inspection: unsupported metadata layout or indirection' <<<"$out" \
+  && ok "verify explains the inspection failure without printing member metadata" || no "verify inspection reason: rc=$rc $out"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'worktree state is unknown; inspection failed: unsupported metadata layout or indirection' <<<"$out" \
+  && jq -e '.outcome == "refused" and (.error | contains("unsupported metadata layout or indirection"))' "$RUN/dispatch.json" >/dev/null; } \
+  && ok "run records and prints a sanitized inspection failure" || no "run inspection reason: rc=$rc $out"
 rm -f "$CLONE/.git/commondir"
 # A Git selected from the lead's controlled PATH records the private config and
 # scrubbed environment. Member filter configuration never reaches status.

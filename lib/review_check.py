@@ -53,26 +53,28 @@ if os.path.isdir(os.path.join(run, "out")) and not os.path.isdir(os.path.join(ru
     run = os.path.join(run, "out")
     N("checked %s (a run directory was given; the output directory is RUN_DIR/out)" % run)
 
-def clone_changes(out):
+def clone_changes(out, reasons):
     """None, or (tracked, untracked) of the clone beside OUT (RUN/clone): its uncommitted changes, read by local_run.worktree_changes, which runs nothing
     the member put in the clone's git configuration. A run that returns no patches and leaves a tracked change uncommitted has not finished its task."""
     clone = os.path.join(os.path.dirname(os.path.abspath(out)), "clone")
     if not os.path.isdir(os.path.join(clone, ".git")):
+        reasons.append("clone Git metadata is missing or not a directory")
         return None
     sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
     from local_run import worktree_changes
-    return worktree_changes(clone)
+    return worktree_changes(clone, reasons)
 
 def uncommitted(out, status):
     """Lead inspection for uncommitted work; member checks only the structure."""
     if os.environ.get("QARGI_MEMBER_RUN"):
         N("clone inspection: not run (a member's structural check; the lead checks it)")
         return
-    ch = clone_changes(out)
+    reasons = []
+    ch = clone_changes(out, reasons)
     if ch is None:
         clone = os.path.join(os.path.dirname(os.path.abspath(out)), "clone")
         if os.path.lexists(clone):
-            (N if status == "BLOCKED" else F)("%s worktree state is unknown: clone inspection failed" % clone)
+            (N if status == "BLOCKED" else F)("%s worktree state is unknown: clone inspection failed: %s" % (clone, "; ".join(reasons)))
         return
     if not (ch[0] or ch[1]):
         return

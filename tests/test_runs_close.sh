@@ -390,24 +390,68 @@ out=$(env -u QARGI_CONF -u QARGI_STATE -u QARGI_HOME HOME="$R/home" QARGI_MEMBER
 { [ "$rc" = 0 ] && grep -q 'OK report-only run' <<<"$out" && [ ! -e "$R/home/.qargi" ] && [ ! -e "$R/verified" ]; } \
   && ok "member structural check without lead state: PASS" || no "member structural check: rc=$rc $out"
 # Explicit discard can close only a KNOWN legacy record and intentionally drops its evidence.
-for form in existing gone; do
+for form in existing changed gone; do
   R=$(mkrun legacy feature/ro)
   cp "$T/s/local-runs.jsonl" "$T/class-reg.keep"
   jq -c --arg r "$R" 'if .run == $r then del(.class) else . end' "$T/class-reg.keep" > "$T/s/local-runs.jsonl"
+  if [ "$form" != gone ]; then
+    [ "$form" != changed ] || git -C "$A" branch unexplained-legacy develop
+    before_registry=$(cat "$T/s/local-runs.jsonl")
+    out=$(QARGI_VERIFY_REFS_ONLY=1 "$DA" local verify "$R" 2>&1); rc=$?
+    want=0; [ "$form" != changed ] || want=2
+    { [ "$rc" = "$want" ] && [ ! -e "$R/verified" ] && [ ! -e "$T/s/runs/${R##*/}" ] && [ "$(cat "$T/s/local-runs.jsonl")" = "$before_registry" ]; } \
+      && ok "legacy $form refs-only observation grants no verify or saved output" || no "legacy observation $form: rc=$rc $out"
+    if [ "$form" = changed ]; then
+      grep -q 'REFS CHANGED' <<<"$out" && grep -q 'unexplained-legacy' <<<"$out" && ok "legacy observation finds the unexplained real ref" || no "legacy changed verdict: $out"
+    else
+      grep -q 'refs unchanged' <<<"$out" && ok "legacy observation reports unchanged refs" || no "legacy unchanged verdict: $out"
+    fi
+    ordinary=$($DA local verify "$R" 2>&1); rc=$?
+    [ "$rc" = 3 ] && grep -q 'registry has no valid class' <<<"$ordinary" && ok "ordinary legacy verify still refuses unknown class" || no "ordinary legacy verify: $ordinary"
+  fi
   [ "$form" != gone ] || rm -rf "$R"
   out=$($DA local clean "$R" --discard 2>&1); rc=$?
   { [ "$rc" = 0 ] && [ ! -e "$R" ]; } \
     && ok "explicit discard recovers $form legacy run: PASS" || no "discard legacy $form: rc=$rc $out"
+  case $form in
+    existing) grep -q 'refs unchanged' <<<"$out" && ok "discard reports the actual unchanged verdict" || no "discard unchanged verdict: $out";;
+    changed) grep -q 'REFS CHANGED' <<<"$out" && grep -q 'unexplained-legacy' <<<"$out" && ok "discard reports the changed real ref while continuing deliberately" || no "discard changed verdict: $out"
+      git -C "$A" branch -D unexplained-legacy >/dev/null;;
+  esac
   out=$($DA lead compact-check --project app 2>&1)
   ! grep -qF "$R" <<<"$out" && ok "compact-check no longer counts discarded $form legacy run" || no "discarded legacy still counted: $out"
   cp "$T/s/local-runs.jsonl" "$T/class-reg.keep"
   jq -c --arg r "$R" 'select(.run != $r)' "$T/class-reg.keep" > "$T/s/local-runs.jsonl"
-  if [ "$form" = existing ]; then mkdir -p "$R/out"; touch "$R/refs.before" "$R/ability"; fi
+  if [ "$form" != gone ]; then mkdir -p "$R/out"; touch "$R/refs.before" "$R/ability"; fi
   out=$($DA local clean "$R" --discard 2>&1); rc=$?
   { [ "$rc" = 3 ] && { [ "$form" = gone ] || [ -d "$R" ]; }; } \
     && ok "unregistered $form run cannot be discarded" || no "unregistered discard: rc=$rc $out"
   rm -rf "$R"
 done
+
+# Commit traversal can succeed with a corrupt index while status is unknown.
+# Ordinary clean must refuse before deleting TMP, output, saved evidence or state.
+R=$(mkrun unknown-index feature/ro)
+printf '{"status":"DONE","commits":[]}\n' > "$R/out/manifest.json"
+printf '# Findings\n\nNone.\n\n# Checked\n\nEvidence.\n\nverdict: accept\n' > "$R/out/report.md"
+verify "$R" >/dev/null
+rtmp=$(cat "$R/tmpdir"); echo temporary-evidence > "$rtmp/keep"
+mkdir -p "$T/s/scrub_ok" "$T/s/apply"
+echo scrub-evidence > "$T/s/scrub_ok/${R##*/}"
+printf '{"evidence":true}\n' > "$T/s/apply/${R##*/}.json"
+printf 'corrupt-index-fixture\n' > "$R/clone/.git/index"
+nc=$(python3 -I -c 'import sys; sys.path.insert(0, "lib"); import local_run as L; print(L.clone_commits(sys.argv[1]))' "$R/clone")
+[ "$nc" = 0 ] && ok "unknown worktree regression has known zero commits" || no "unknown worktree setup: $nc"
+artifacts_before=$(find "$R" "$T/s" "$rtmp" -type f -exec sha256sum {} + | sort)
+out=$($DA local clean "$R" 2>&1); rc=$?
+{ [ "$rc" = 1 ] && grep -q 'cannot inspect worktree' <<<"$out" && grep -q 'Git inspection failed' <<<"$out" \
+  && [ "$(find "$R" "$T/s" "$rtmp" -type f -exec sha256sum {} + | sort)" = "$artifacts_before" ]; } \
+  && ok "unknown worktree: ordinary clean preserves every artifact and state file" || no "unknown worktree clean: rc=$rc $out"
+out=$($DA review check "$R/out" 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q 'worktree state is unknown.*Git inspection failed' <<<"$out" && ok "review check explains unknown worktree inspection" || no "unknown worktree review: rc=$rc $out"
+out=$($DA local clean "$R" --discard 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ ! -e "$R" ] && [ ! -e "$rtmp" ] && [ ! -e "$T/s/runs/${R##*/}" ] && grep -q 'worktree state is unknown.*dropped on purpose' <<<"$out"; } \
+  && ok "unknown worktree: explicit discard remains deliberate recovery" || no "unknown worktree discard: rc=$rc $out"
 # what counts as a report: a regular file named report.md or NAME-report.md directly in OUT, for clean and for compact-check alike
 R=$(mkrun rep-kinds feature/ro review)
 ln -s /etc/hostname "$R/out/report.md"
