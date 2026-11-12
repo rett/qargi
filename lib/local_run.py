@@ -1265,7 +1265,11 @@ def kill_group(proc, grace=KILL_GRACE):
         end = time.monotonic() + grace
         while True:
             proc.poll()
-            if not group_left(pg):
+            try:
+                remaining = group_left(pg)
+            except OSError:
+                remaining = None  # unknown must not stop TERM-to-KILL escalation
+            if remaining == []:
                 proc.poll()
                 return 0
             if time.monotonic() >= end:
@@ -2120,7 +2124,8 @@ def run_it(plan, run):
     if error:
         rec["error"] = error
     if home:
-        rec["home"] = {"env": home["env"], "dir": home["dir"], "links": made, "not_linked": home["missing"], "left": home_left,
+        names = [to for to, _ in home["links"]] if home.get("cleanup_failed") else made
+        rec["home"] = {"env": home["env"], "dir": home["dir"], "links": names, "not_linked": home["missing"], "left": home_left,
                        "residue": home["residue"]}     # names in the run home, never a value
     if plan["usage"] and proc is not None:
         rec["usage"] = read_usage(rec["transcript"], plan["usage"])

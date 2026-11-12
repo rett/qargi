@@ -72,6 +72,15 @@ for mode in empty traceback noisy-success; do
     && ok "finish distinguishes $mode reader output from rows of open runs" || no "reader $mode rc=$rc: $out"
 done
 rm "$T/bin/python3"
+# Missing repository identity cannot attribute live work; a confirmed absent
+# run cannot be open work, regardless of when its record was written.
+jq -nc --arg d "$T/absent-legacy-run" '{run:$d,slug:"legacy",ability:"build",base:"feature/search",started:"2026-01-01T00:00:00Z"}' > "$T/s/local-runs.jsonl"
+out=$($F finish search 2>&1); rc=$?
+[ "$rc" = 0 ] && ! grep -q 'could not list the open runs' <<<"$out" && ok "finish plans with an absent pre-identity legacy record" || no "legacy plan: rc=$rc $out"
+mkdir "$T/absent-legacy-run"
+out=$($F finish search --plan "$t" --approved go 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q 'cannot read the open-run registry' <<<"$out" && ok "finish refuses legacy identity when the run exists" || no "existing legacy: rc=$rc $out"
+rmdir "$T/absent-legacy-run"; rm "$T/s/local-runs.jsonl"
 mkdir -p "$T/open-run"
 jq -nc --arg d "$T/open-run" --arg r "$R" '{run:$d,repo:$r,base:"feature/search",slug:"unknown",ability:"build",class:"invalid"}' > "$T/s/local-runs.jsonl"
 out=$($F finish search --plan "$t" --approved go 2>&1); rc=$?

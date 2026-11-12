@@ -53,7 +53,7 @@ out=$(./bin/qargi local prepare --repo "$T/rs2" --base main --slug sub2 --scratc
   && ok "a submodule whose objects are not on this host is a note, nothing is fetched and the run is still made" || no "unavailable submodule: $out $(cat "$T/sub2.err")"
 [ ! -e "$S2/clone/vendor/acme-test/.git" ] && ok "and the clone's submodule is left alone" || no "submodule fetched"
 rm -rf "$S1" "$S2" "$T/c/projects/rs2proj.json"; mv "$T/rproj.bak" "$T/c/projects/rproj.json"; sed -i '/"slug":"sub[12]"/d' "$T/s/local-runs.jsonl"
-# clean: a collected, verified run goes away with its temporary directory; anything else is refused
+# clean: collected output can be removed after its safety checks, without granting verification
 git init -q -b main "$T/r2" && git -C "$T/r2" -c user.name=t -c user.email=t@example.net commit -q --allow-empty -m one
 out=$(./bin/qargi local prepare --repo "$T/r2" --base main --slug c1 --scratch "$T"); C1=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out"); TM=$(sed -n '1,/^$/s/^TMP=//p' <<<"$out")
 [ -d "$TM" ] && [ "$(cat "$C1/tmpdir")" = "$TM" ] && ok "prepare makes a private temporary directory and prints it as TMP" || no "TMP: $out"
@@ -71,8 +71,8 @@ echo '{}' > "$C2/out/p--manifest.json"; touch "$TM2/leftover"
 [ -d "$TM" ] && ok "another run's temporary directory is untouched" || no "touched another run's tmp"
 # the registry (one line per run) records the clean: the line stays, marked cleaned, so a cleaned run is never listed as an open task
 regline() { jq -c --arg r "$1" 'select(.run == $r)' "$T/s/local-runs.jsonl"; }
-[ "$(regline "$C2" | wc -l)" = 1 ] && [ -n "$(regline "$C2" | jq -r '.cleaned // ""')" ] && [ "$(regline "$C2" | jq -r '.verified // ""')" != "" ] \
-  && ok "clean marks the run's registry line cleaned (and the verify it ran, verified), still one line per run" || no "registry after clean: $(regline "$C2")"
+[ "$(regline "$C2" | wc -l)" = 1 ] && [ -n "$(regline "$C2" | jq -r '.cleaned // ""')" ] && [ "$(regline "$C2" | jq -r '.verified // ""')" = "" ] \
+  && ok "clean marks the run cleaned without granting verification, still one line per run" || no "registry after clean: $(regline "$C2")"
 [ "$(stat -c %a "$T/s/local-runs.jsonl")" = 600 ] && ok "the registry keeps mode 600 after the mark" || no "registry mode $(stat -c %a "$T/s/local-runs.jsonl")"
 [ -z "$(regline "$C1" | jq -r '.cleaned // ""')" ] && ok "a run clean refused is not marked cleaned" || no "refused clean marked: $(regline "$C1")"
 out=$(./bin/qargi local prepare --repo "$T/r2" --base main --slug c3 --scratch "$T"); C3=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out")
