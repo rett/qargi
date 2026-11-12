@@ -10,7 +10,7 @@ The skills and the one command behind them, the packs a session loads, how memor
 
 ## Skills and command
 
-Eleven skills, all prefixed `qargi-`, drive one `qargi` command. `/qargi-task` dispatches work; the roles are defined by their texts (see [Roles and members](../flow/README.md#roles-and-members)), not by skills; the others configure and manage:
+Eleven skills, all prefixed `qargi-`, drive one `qargi` command. A lead loads a skill by its name; Claude Code also offers each as a slash command, which is how the table writes them (`/qargi-task`). `qargi-task` dispatches work; the roles are defined by their texts (see [Roles and members](../flow/README.md#roles-and-members)), not by skills; the others configure and manage:
 
 | Skill | Covers |
 |---|---|

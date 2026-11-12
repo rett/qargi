@@ -7,8 +7,8 @@ gathered to make and mend its tools, decide together and hand knowledge on. Here
 work of agents gathers in the same way: tasks go out, patches come back for review,
 and what was learned is kept in memory.
 
-Qargi is a set of Claude Code skills and a CLI that dispatch one-off, task-scoped
-development tasks to agents and take the work back as reviewable patches. An agent
+Qargi is a CLI and a set of skills that dispatch one-off, task-scoped development
+tasks to agents and take the work back as reviewable patches. An agent
 works on one task in its own clone, whose git has no credentials and whose only remote is
 a copy with its push URL disabled; the dispatching session checks that the real repository's
 refs did not move, verifies the result and applies it.
@@ -22,8 +22,12 @@ Two kinds of agent do the work, each on a **runtime** the project names for that
 - **cloud**: a hosted agent of one role, registered as an instance; today a Claude Managed Agents
   deployment (`claude-platform`) driven through the `ant` CLI.
 
-A **lead** coordinates members on one task (a team): this session, a cloud lead or a lead
-started in the console.
+The **lead** is the agent session you work in: it loads qargi's skills, runs the `qargi`
+command, and dispatches, verifies and merges. `install.sh` installs the skills for a Claude Code
+lead, or with `--runtime codex` for a Codex lead (see
+[Codex as the lead](members-and-providers/codex.md#codex-as-the-lead)); the skills directory
+comes from the runtime's definition, never from a path built into qargi. On one task a lead can also
+coordinate several members (a team): your session, a cloud lead or a lead started in the console.
 
 Local is the default. Cloud is used only when the user asks for it in that
 request.
