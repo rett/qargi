@@ -47,7 +47,8 @@ refusal changes nothing.
    - `feature finish` is refused while a run of the feature is open. The message names each open run and the exact command that
      closes it; a read-only run, an advisor or a review that returned a `report.md` and no patches, closes with a plain
      `qargi local clean RUN`. A run whose patches you applied by hand (`git am`) is closed with
-     `qargi local close RUN --applied-by-am`.
+     `qargi local close RUN --applied-by-am`. Finish also refuses when the open-run registry is unreadable or malformed,
+     or the runs cannot be enumerated; inspect the registry and resolve the error before retrying.
    - A read-only member whose runtime refuses its file tool for `report.md` writes the text under another name in OUT and runs
      `qargi local report RUN --from NAME` itself: that writes `OUT/report.md` and a minimal `manifest.json` and nothing outside OUT,
      refuses a build run, a run your registry does not name and, with the member mark set, any run but its own. A member whose
