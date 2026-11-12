@@ -374,26 +374,40 @@ out=$(verify "$R"); rc=$?
 $DA local clean "$R" --discard >/dev/null 2>&1
 # The class must be supported registry metadata; a member's class file cannot supply it.
 R=$(mkrun oldrec feature/ro); echo "# report" > "$R/out/report.md"; rm -f "$R/class"
+echo read-only > "$R/class"
+python3 tests/class_cases.py "$R" "$T/s/local-runs.jsonl" "$DA" && ok "exact registry classes: PASS" || no "exact registry classes"
+# Structural checks in the real member HOME have no lead registry and write no trusted state.
+printf '# Findings\n\nNone.\n\n# Checked\n\nStructural check.\n\nverdict: accept\n' > "$R/out/report.md"
+printf '{"status":"DONE","commits":[],"artifacts":[{"path":"report.md","kind":"report"}]}\n' > "$R/out/manifest.json"
 cp "$T/s/local-runs.jsonl" "$T/class-reg.keep"
-for value in missing null number invalid; do
-  jq -c --arg r "$R" --arg v "$value" 'if .run != $r then . elif $v == "missing" then del(.class) elif $v == "null" then .class = null elif $v == "number" then .class = 1 else .class = "unknown" end' "$T/class-reg.keep" > "$T/s/local-runs.jsonl"
-  echo read-only > "$R/class"
-  for verb in verify run clean report; do
-    out=$($DA local "$verb" "$R" 2>&1); rc=$?
-    { [ "$rc" = 3 ] && grep -q 'registry has no valid class' <<<"$out" && [ -d "$R" ]; } \
-      && ok "$verb refuses $value registry class without removing the run" || no "$verb $value class: rc=$rc $out"
-  done
-  out=$($DA local close "$R" --applied-by-am 2>&1); rc=$?
-  { [ "$rc" = 3 ] && grep -q 'registry has no valid class' <<<"$out" && [ -d "$R" ]; } \
-    && ok "close refuses $value registry class" || no "close $value class: rc=$rc $out"
-  out=$($DA review apply "$R" 2>&1); rc=$?
-  { [ "$rc" = 3 ] && grep -q 'registry has no valid class' <<<"$out" && [ -d "$R" ]; } \
-    && ok "review apply refuses $value registry class" || no "review apply $value class: rc=$rc $out"
-  out=$($DA review check "$R/out" 2>&1); rc=$?
-  { [ "$rc" = 3 ] && grep -q 'registry has no valid class' <<<"$out"; } \
-    && ok "review check refuses $value registry class" || no "review check $value class: rc=$rc $out"
-done
+jq -c --arg r "$R" 'select(.run != $r)' "$T/class-reg.keep" > "$T/s/local-runs.jsonl"
+out=$($DA review check "$R/out" 2>&1); rc=$?
+{ [ "$rc" = 3 ] && grep -q 'registry names no run' <<<"$out" && [ -f "$R/out/report.md" ] && [ ! -e "$R/verified" ]; } \
+  && ok "lead check without a registry record refuses and preserves evidence" || no "unregistered lead check: rc=$rc $out"
 cp "$T/class-reg.keep" "$T/s/local-runs.jsonl"
+mkdir -p "$R/home"
+out=$(env -u QARGI_CONF -u QARGI_STATE -u QARGI_HOME HOME="$R/home" QARGI_MEMBER_RUN="$R" "$DA" review check "$R/out" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q 'OK report-only run' <<<"$out" && [ ! -e "$R/home/.qargi" ] && [ ! -e "$R/verified" ]; } \
+  && ok "member structural check without lead state: PASS" || no "member structural check: rc=$rc $out"
+# Explicit discard can close only a KNOWN legacy record and intentionally drops its evidence.
+for form in existing gone; do
+  R=$(mkrun legacy feature/ro)
+  cp "$T/s/local-runs.jsonl" "$T/class-reg.keep"
+  jq -c --arg r "$R" 'if .run == $r then del(.class) else . end' "$T/class-reg.keep" > "$T/s/local-runs.jsonl"
+  [ "$form" != gone ] || rm -rf "$R"
+  out=$($DA local clean "$R" --discard 2>&1); rc=$?
+  { [ "$rc" = 0 ] && [ ! -e "$R" ]; } \
+    && ok "explicit discard recovers $form legacy run: PASS" || no "discard legacy $form: rc=$rc $out"
+  out=$($DA lead compact-check --project app 2>&1)
+  ! grep -qF "$R" <<<"$out" && ok "compact-check no longer counts discarded $form legacy run" || no "discarded legacy still counted: $out"
+  cp "$T/s/local-runs.jsonl" "$T/class-reg.keep"
+  jq -c --arg r "$R" 'select(.run != $r)' "$T/class-reg.keep" > "$T/s/local-runs.jsonl"
+  if [ "$form" = existing ]; then mkdir -p "$R/out"; touch "$R/refs.before" "$R/ability"; fi
+  out=$($DA local clean "$R" --discard 2>&1); rc=$?
+  { [ "$rc" = 3 ] && { [ "$form" = gone ] || [ -d "$R" ]; }; } \
+    && ok "unregistered $form run cannot be discarded" || no "unregistered discard: rc=$rc $out"
+  rm -rf "$R"
+done
 # what counts as a report: a regular file named report.md or NAME-report.md directly in OUT, for clean and for compact-check alike
 R=$(mkrun rep-kinds feature/ro review)
 ln -s /etc/hostname "$R/out/report.md"

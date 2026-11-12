@@ -102,8 +102,9 @@ run_class() {
   local c
   reg_has "$1" || reg_load
   reg_has "$1" || { echo "qargi: $1 is not in the lead's registry; nothing was done" >&2; return 1; }
-  c=$(reg_get "$1" class)
-  case $c in write|read-only) echo "$c"; return 0;; esac
+  # Validate the JSON value before decoding: shell substitution strips LF and NUL.
+  c=$(reg_json "$1" '.class | select(. == "write" or . == "read-only")')
+  case $c in '"write"') echo write; return 0;; '"read-only"') echo read-only; return 0;; esac
   echo "qargi: the lead's registry has no valid class for $1 (expected write or read-only); nothing was done" >&2
   return 1
 }

@@ -64,7 +64,10 @@ def clone_changes(out):
     return worktree_changes(clone)
 
 def uncommitted(out, status):
-    """The FAIL (or, for a BLOCKED manifest, the NOTE) for a run with no patches whose clone holds uncommitted changes; WARN for untracked files only."""
+    """Lead inspection for uncommitted work; member checks only the structure."""
+    if os.environ.get("QARGI_MEMBER_RUN"):
+        N("clone inspection: not run (a member's structural check; the lead checks it)")
+        return
     ch = clone_changes(out)
     if ch is None:
         clone = os.path.join(os.path.dirname(os.path.abspath(out)), "clone")

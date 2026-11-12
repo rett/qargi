@@ -1039,7 +1039,10 @@ WRAP
     reg_load
     RUN=$CLEAN_RUN
     while [ "${RUN%/}" != "$RUN" ] && [ "$RUN" != / ]; do RUN=${RUN%/}; done   # a trailing slash makes rm -rf follow a link
-    RCLASS=$(run_class "$RUN") || exit 3
+    # Explicit discard recovers a known legacy record without granting it a class.
+    reg_has "$RUN" || { echo "qargi: $RUN is not in the lead's registry; nothing was done" >&2; exit 3; }
+    RCLASS=''
+    if [ -z "$DISCARD" ]; then RCLASS=$(run_class "$RUN") || exit 3; fi
     marshal_touch_run "$RUN"   # the lead's clean keeps its lease on the feature the run is based on
     # a run whose review apply is under way is not removed, --discard or not: the apply reads the run's files and its saved copy, and writes the branch and the record
     if aph=$(apply_lock_holder "$RUN"); then die "a review apply of $RUN is running (process $aph, $DA_STATE/apply/${RUN##*/}.json.run); nothing was removed: let it finish, then clean again"; fi
