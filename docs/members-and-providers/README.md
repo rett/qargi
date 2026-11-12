@@ -10,7 +10,7 @@ written from there to the runtime's agents location, so a checkout that is clean
 gets its members back with `qargi agent refresh NAME --project P`; `agent list` names that command
 beside a member that is `MISSING`, `STALE` or `DRIFT`. The runtime's definition says how (`renderers.agent`)
 and which of its own tools the neutral names (shell, read, edit, write, search, monitor, skill, ...)
-become. A new member is available in Claude Code sessions started after it is added. A runtime that keeps no
+become. On `claude-code` a new member is available in the sessions started after it is added. A runtime that keeps no
 member files has no `agent add`: a project on `codex` runs each task with `qargi local prepare` and `qargi local run`
 ([Codex as lead and as member](codex.md#a-complete-local-run)).
 
