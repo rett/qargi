@@ -32,7 +32,7 @@ done
 # and holds no ': ' and no ' #' (a strict parser fails on the first and reads a comment from the second); a quoted value is one quoted
 # scalar with nothing after it. The rule is tried on samples first, so a check that accepts everything fails. EXPECTED names the skills whose front
 # matter fails it today and is fixed outside this test; an entry that passes fails, so the list only shrinks.
-EXPECTED="qargi-packs qargi-session qargi-team qargi-verify"
+EXPECTED=""
 fm_check() { # FILE... -> one line per file: FILE<TAB>ok or FILE<TAB>line N: why
   python3 -I - "$@" <<'PY'
 import sys

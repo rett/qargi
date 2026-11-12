@@ -1,6 +1,6 @@
 ---
 name: qargi-verify
-description: Take in the patches a member or cloud agent returned: verify every open run, scrub, apply on a scratch branch, re-run the gates and the DONE check yourself, report, and merge only with the user's approval. Use when a dispatched run has finished or the user asks to review, apply or merge returned work.
+description: "Take in the patches a member or cloud agent returned: verify every open run, scrub, apply on a scratch branch, re-run the gates and the DONE check yourself, report, and merge only with the user's approval. Use when a dispatched run has finished or the user asks to review, apply or merge returned work."
 argument-hint: <run directory with patches/ and manifest.json>
 ---
 
