@@ -350,19 +350,31 @@ if [ "$(command -v codex)" = "$T/bin/codex" ]; then out=$($DA local run "$RUN" 2
 { grep -q '^USAGE=none: no line of the transcript is a usage report' <<<"$out" && [ "$(jq -c .usage.events "$RUN/dispatch.json")" = 0 ]; } \
   && ok "a transcript with no usage event says so (USAGE=none) and records 0 events" || no "usage none: $(grep '^USAGE' <<<"$out") $(jq -c .usage "$RUN/dispatch.json" 2>&1)"
 out=$($DA local prepare --repo "$T/r" --base main --slug cxr0 --scratch "$T" --role review 2>&1); rc=$?
-{ [ "$rc" != 0 ] && grep -q 'qargi provider accept codex --surface local --no-barrier --project rproj' <<<"$out"; } \
-  && ok "codex, read-only: its sandbox barrier is not attested yet, so it counts as none and prepare refuses the review role with the accept command" || no "codex ro prepare: rc=$rc $out"
-jq '.models.accept_no_barrier = {local: {by: "owner", at: "2026-11-11", reason: "test"}}' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
+{ [ "$rc" = 0 ] && grep -q '^RUN=' <<<"$out" && ! grep -q 'no-barrier' <<<"$out"; } \
+  && ok "codex, read-only: its sandbox barrier is dated (partial), so prepare takes the review role with no acceptance" || no "codex ro prepare: rc=$rc $out"
 prep "$T/r" cxr review; task
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+want=$(jq -nc --arg c "$CLONE" '["codex","exec","--json","--ephemeral","--ignore-rules","--strict-config","-C",$c,"-m","gpt-6.1-terra","-o","FINAL","--sandbox","read-only"]')
+{ [ "$rc" = 0 ] && [ "$(arg0 <<<"$out" | finarg)" = "$want" ] && grep -q '^CLASS=read-only$' <<<"$out" && ! grep -q -e '--add-dir' -e '[.]git' <<<"$(arg0 <<<"$out")" \
+  && grep -q '^NOTE=codex has only a partial read-only barrier on local' <<<"$out"; } \
+  && ok "codex, read-only: the read-only sandbox, no write group (no writable directory, the clone's .git included) and the partial barrier's note" || no "codex ro argv: rc=$rc [$(arg0 <<<"$out")] want [$want] $out"
+# a copy with the barrier's date removed (in the library, with no record either): the claim counts as none, so the review role needs the acceptance
+mk codexundated "$(jq '.provider = "codexundated" | del(.resources.contract_addenda) | .capabilities.read_only_barrier.verified_on = null' lib/providers/codex.json)"
+setprov codexundated
+out=$($DA local prepare --repo "$T/r" --base main --slug cxu0 --scratch "$T" --role review 2>&1); rc=$?
+{ [ "$rc" != 0 ] && grep -q 'qargi provider accept codexundated --surface local --no-barrier --project rproj' <<<"$out"; } \
+  && ok "codex undated, read-only: the barrier counts as none and prepare refuses the review role with the accept command" || no "codex undated ro prepare: rc=$rc $out"
+jq '.models.accept_no_barrier = {local: {by: "owner", at: "2026-11-11", reason: "test"}}' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
+prep "$T/r" cxu review; task
 jq 'del(.models.accept_no_barrier)' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
-{ [ "$rc" = 2 ] && grep -q 'qargi provider accept codex --surface local --no-barrier --project rproj' <<<"$out" && ! grep -q '^ARGV=' <<<"$out"; } \
-  && ok "and local run refuses it too, once the acceptance it was prepared under is gone" || no "codex ro unattested: rc=$rc $out"
+{ [ "$rc" = 2 ] && grep -q 'qargi provider accept codexundated --surface local --no-barrier --project rproj' <<<"$out" && ! grep -q '^ARGV=' <<<"$out"; } \
+  && ok "and local run refuses it too, once the acceptance it was prepared under is gone" || no "codex undated ro: rc=$rc $out"
 jq '.models.accept_no_barrier = {local: {by: "owner", at: "2026-11-11", reason: "test"}}' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
 want=$(jq -nc --arg c "$CLONE" '["codex","exec","--json","--ephemeral","--ignore-rules","--strict-config","-C",$c,"-m","gpt-6.1-terra","-o","FINAL","--sandbox","read-only"]')
-{ [ "$rc" = 0 ] && [ "$(arg0 <<<"$out" | finarg)" = "$want" ] && grep -q '^CLASS=read-only$' <<<"$out" && ! grep -q -e '--add-dir' -e '[.]git' <<<"$(arg0 <<<"$out")"; } \
-  && ok "codex, read-only (accepted): the read-only sandbox and no write group (no writable directory, the clone's .git included)" || no "codex ro argv: rc=$rc [$(arg0 <<<"$out")] want [$want]"
+{ [ "$rc" = 0 ] && [ "$(arg0 <<<"$out" | finarg)" = "$want" ] && grep -q '^CLASS=read-only$' <<<"$out"; } \
+  && ok "codex undated, read-only (accepted): the same read-only sandbox" || no "codex undated ro argv: rc=$rc [$(arg0 <<<"$out")] want [$want]"
 jq 'del(.models.accept_no_barrier)' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
 # copies in the library, attested: with the read-only group the barrier holds (partial, with its note); without it a read-only run is refused
 mk codexro "$(jq '.provider = "codexro" | del(.resources.contract_addenda)' lib/providers/codex.json)"

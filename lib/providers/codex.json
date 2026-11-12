@@ -12,27 +12,27 @@
   "capabilities": {
     "headless_dispatch": {
       "value": "yes",
-      "verified_on": null,
-      "source": "codex exec --help, codex-cli 0.167.1",
+      "verified_on": "2026-11-11",
+      "source": "codex-cli 0.167.1, a live run on 2026-11-11: qargi local run ran codex exec for a write-class build task on a scratch repository (model gpt-6-luna, effort low); the member created and committed a file, and the series, the manifest and the report came back; qargi local verify showed the refs unchanged, qargi review check ended with 0 failures (3 warnings about optional manifest fields), and qargi review apply applied the series in a disposable repository, where the DONE command passed",
       "note": "codex exec reads the prompt from standard input, --json writes the events as JSON lines, -o writes the last message to a file. What a run loads, seen offline with codex-cli 0.167.1 (codex debug prompt-input, codex mcp list --json and codex features list with a scratch CODEX_HOME, no sign-in): CODEX_HOME and HOME are the run home, so none of the user's Codex configuration, rules, skills or instructions, and not ~/.agents/skills; the clone is a fresh path that no configuration marks trusted, so its .codex/ (config.toml with its MCP servers and settings, rules, hooks) is not loaded, which a trust entry would change, while its AGENTS.md and .agents/skills are; a system-wide or administrator-managed Codex configuration is not excluded. The run's config.toml always carries the baseline of dispatch.run_config: approval_policy never, under workspace-write no shell network and no /tmp (TMPDIR, the run's TMP, stays writable), hosted web search disabled, the features apps, plugins, remote_plugin, hooks, computer_use, browser_use, in_app_browser, image_generation, tool_suggest and skill_mcp_dependency_install off, and the bundled skills off; --ignore-rules drops every execpolicy rules file and --strict-config refuses a key this CLI does not know. Each key is read by this CLI (a value of the wrong type is refused naming the key, and the features list shows them off), approval_policy never and the bundled skills off are seen in the prompt input, and codex sandbox with the workspace-write keys refuses /tmp and the network and lets TMPDIR be written, but that every key holds in a real run, and that hosted tools are gone, is not yet verified; the multi-agent tools (spawn_agent) stay, as no supported switch removed them offline"
     },
     "per_dispatch_model_override": {
       "value": "yes",
       "verified_on": null,
       "source": "codex exec --help (-m MODEL)",
-      "note": "not yet verified to take effect in a run"
+      "note": "a live run with -m gpt-6-luna succeeded (codex-cli 0.167.1, 2026-11-11), but no event of codex exec --json names the model used (the events are thread.started, turn.started, item.completed and turn.completed), so that the override takes effect is not observable and the claim stays unverified"
     },
     "per_dispatch_effort_override": {
       "value": "yes",
       "verified_on": null,
       "source": "codex exec --help (-c KEY=VALUE); the key model_reasoning_effort",
-      "note": "not yet verified to take effect in a run"
+      "note": "a live run with -c model_reasoning_effort=low succeeded (codex-cli 0.167.1, 2026-11-11), but no event of codex exec --json names the effort used, so that the override takes effect is not observable and the claim stays unverified"
     },
     "read_only_barrier": {
       "value": "partial",
-      "verified_on": null,
-      "source": "codex exec --help (--sandbox read-only|workspace-write)",
-      "note": "the Codex sandbox holds the shell commands of a member (read-only: no writes, workspace-write: the clone, its .git and OUT only), not its reads, and no qargi guard hook runs: the publish and skill verbs are held only by the sandbox's write and network denial; not yet attested"
+      "verified_on": "2026-11-11",
+      "source": "codex-cli 0.167.1, two checks on 2026-11-11: offline, codex sandbox -- sh -c 'echo x > /tmp/p' answered Read-only file system; live, a codex exec --sandbox read-only --ignore-rules member (model gpt-6-luna, effort low, approval_policy never, an isolated CODEX_HOME and HOME) asked to create a file in its working directory reported pwned.txt: Read-only file system, and the directory was unchanged",
+      "note": "the Codex sandbox holds the shell commands of a member (read-only: no writes, workspace-write: the clone, its .git and OUT only), not its reads, and not a hosted tool or an MCP server, which run outside the sandbox; no qargi guard hook runs: the publish and skill verbs are held only by the sandbox's write and network denial; the checks of the source showed shell writes refused and nothing more, so the claim stays partial"
     },
     "skills": {
       "value": "yes",
@@ -54,9 +54,9 @@
     },
     "cost_report": {
       "value": "partial",
-      "verified_on": null,
-      "source": "codex-cli 0.167.1: the turn.completed events of codex exec --json carry usage",
-      "note": "tokens only: qargi local run adds up the usage of the turn.completed events of the transcript into dispatch.json (dispatch.output.usage), and a count no event reports is named as unreported, never recorded as 0; a ChatGPT sign-in reports no money per run; not yet verified in a real run"
+      "verified_on": "2026-11-11",
+      "source": "codex-cli 0.167.1, live runs of qargi local run on 2026-11-11 (model gpt-6-luna, effort low): the turn.completed event of codex exec --json carried usage (input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, reasoning_output_tokens), and the run added it up and printed it as USAGE= with the input, cached, output and reasoning tokens",
+      "note": "tokens only: qargi local run adds up the usage of the turn.completed events of the transcript into dispatch.json (dispatch.output.usage), and a count no event reports is named as unreported, never recorded as 0; a ChatGPT sign-in reports no money per run"
     }
   },
   "resources": {

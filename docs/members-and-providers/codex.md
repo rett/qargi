@@ -2,8 +2,9 @@
 
 The local runtime `codex` (`lib/providers/codex.json`, family `openai`) is data only: a member is a `codex exec` process that `qargi local run` starts in the run's clone. Codex as the **lead** (the session you talk to, which loads qargi's skills and runs the `qargi` command) and Codex as a **member** (a headless process that reads `RUN/task.md` and returns qargi's artifacts) are different surfaces; Codex's own subagents are not members and do not replace the prepared clone and the run registry. See [Providers and runtimes](providers.md) for the table of what `codex` is and is not, and [Choosing models](models.md) for its catalog.
 
-What this page says was established with codex-cli 0.167.1 on Linux. "Seen offline" means a check with no sign-in, no model call and no network (`codex debug prompt-input`, `codex mcp list --json`, `codex features list`, `codex debug models`, `codex sandbox`, with a scratch `CODEX_HOME`); every capability of `codex` stays unverified (`verified_on` null) until the live checks of `/qargi-providers` (`verify.md`) are run and recorded.
+What this page says was established with codex-cli 0.167.1 on Linux. "Seen offline" means a check with no sign-in, no model call and no network (`codex debug prompt-input`, `codex mcp list --json`, `codex features list`, `codex debug models`, `codex sandbox`, with a scratch `CODEX_HOME`). "Live" means a check with a sign-in and a model call, on a scratch repository. Three capabilities of `codex` are verified live and dated in its definition; the others stay unverified (`verified_on` null) until a live check of `/qargi-providers` (`verify.md`) shows them ([What is verified](#what-is-verified)).
 
+- [What is verified](#what-is-verified)
 - [Platform and sandbox](#platform-and-sandbox)
 - [What a member run loads](#what-a-member-run-loads)
 - [What a member can reach](#what-a-member-can-reach)
@@ -13,6 +14,22 @@ What this page says was established with codex-cli 0.167.1 on Linux. "Seen offli
 - [A complete local run](#a-complete-local-run)
 - [Sending a message to a Codex session](#sending-a-message-to-a-codex-session)
 - [Not supported, not verified](#not-supported-not-verified)
+
+## What is verified
+
+Each verified capability carries `verified_on` (the date of its checks) and `source` (the evidence and the CLI version) in `lib/providers/codex.json`; `qargi provider show codex` prints the date and the note of each, and `--json` the whole definition. All were checked with codex-cli 0.167.1 on 2026-11-11, on the fast tier (`gpt-6-luna`) at `low` effort.
+
+| Capability | Verified | By |
+|---|---|---|
+| Headless dispatch | yes | `qargi local run` ran `codex exec` for a write-class build task on a scratch repository: the member created and committed a file, the series, manifest and report came back, `qargi local verify` found the refs unchanged, `qargi review check` ended with 0 failures (3 warnings about optional manifest fields), and `qargi review apply` applied the series in a disposable repository, where the DONE command passed |
+| Read-only barrier | partial | offline, `codex sandbox -- sh -c 'echo x > /tmp/p'` answered "Read-only file system"; live, a `codex exec --sandbox read-only --ignore-rules` member (approval policy `never`, its own `CODEX_HOME` and `HOME`) asked to create a file in its working directory reported "Read-only file system" and the directory was unchanged. It holds the member's shell writes, not its reads, and not a hosted tool or an MCP server, which run outside the sandbox: so the claim is `partial`, and a review role runs on it with that note and no `provider accept` |
+| Token report | partial (tokens only) | the `turn.completed` events carried the usage counts the definition reads, and the runs printed them as `USAGE=` (input, cached, output and reasoning tokens) |
+
+Not verified, and so counted as not supported:
+
+- **The model and effort overrides.** A run with `-m gpt-6-luna` and `-c model_reasoning_effort=low` succeeded, but no event of `codex exec --json` names the model or the effort used (the events are `thread.started`, `turn.started`, `item.completed` and `turn.completed`), so that they take effect is not observable.
+- **Skills and MCP.** No real run has shown which skills a member loads or the MCP tool names and `enabled_tools` in a session.
+- **The rest of a run.** A sign-in refreshed during a run reaching your file, each baseline key holding in a real run, the hosted tools being gone, and how a trusted project's `.codex/` loads.
 
 ## Platform and sandbox
 
@@ -97,7 +114,7 @@ qargi review apply "$RUN"                         # with your go-ahead: the patc
 qargi local clean "$RUN"                          # once the work is applied and merged
 ```
 
-A review member reads the change and returns a report; it needs the read-only barrier. Until the live check of the Codex sandbox is recorded in the definition, the barrier counts as none and `prepare --role review` refuses, naming `qargi provider accept codex --surface local --no-barrier`, which records that you take read-only runs without a held barrier; prefer recording the check.
+A review member reads the change and returns a report; it needs the read-only barrier. The Codex sandbox is verified as a partial barrier ([What is verified](#what-is-verified)), so `prepare --role review` takes the role and `local run` prints the barrier's note: the member's shell writes are refused, its reads are not.
 
 ```sh
 printf 'Review the series on agent/dots against feature/dots.\n' > ~/tasks/dots-review.md
@@ -121,4 +138,4 @@ A lead, or another session, can queue a message for an open Codex session withou
 - No resume: every run is a fresh `codex exec` session (`--ephemeral`).
 - No qargi guard hook in a member (above).
 - Tokens only, no money; absent counts are not zero.
-- Not verified until the live checks: the model and effort taking effect (the JSON events do not name them), the sandbox holding in a real run, a sign-in refreshed during a run reaching your file, the MCP names and `enabled_tools` in a real session, and each baseline key in a real run.
+- Not verified: the model and effort taking effect (the JSON events do not name them), a sign-in refreshed during a run reaching your file, the skills a member loads and the MCP names and `enabled_tools` in a real session, and each baseline key in a real run ([What is verified](#what-is-verified)).
