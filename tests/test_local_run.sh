@@ -1222,7 +1222,7 @@ out=$($DA local run "$RUN" 2>&1); rc=$?
 setprov fakecmd
 # the start record cannot be rewritten once the member has started (here: the runner's second write of dispatch.json fails): the run is refused and
 # the member's process group is stopped, never left running after the runner has gone
-got=$(FAKE_MODE=sleep python3 -I - "$T/tool/lib" "$RUN" <<'PY' 2>&1
+got=$(env FAKE_MODE=sleep python3 -I - "$T/tool/lib" "$RUN" <<'PY' 2>&1
 import os, sys; sys.path.insert(0, sys.argv[1])
 import local_run as L
 run, orig, n = os.path.realpath(sys.argv[2]), L.write_private, [0]
