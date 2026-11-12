@@ -38,7 +38,9 @@
 # about a run (lib.sh run_record): the repository, the URL and the credential path come from it, and a run whose own repo.path, repo.url or cred.path
 # (files a member can write) differ is refused, as is a directory the registry does not name. `clean` removes the temporary directory that this line names
 # for the run, not the one the run's own tmpdir file says (a member can write the run directory, and a file there could name another run's temporary directory).
-# A --scratch on a tmpfs (stat -f) is warned about on stderr: a reboot empties it and the run is lost. A passing verify copies OUT, a run bundle and
+# A --scratch on a tmpfs (stat -f) is warned about on stderr: a reboot empties it and the run is lost. When the project's local runtime declares
+# dispatch.hidden_paths (places its sandbox hides from the member) and a path the member of the run's class works with would lie there (the run
+# under --scratch, or its TMP), prepare refuses before it makes anything (exit 2), naming the path, the prefix and the fix. A passing verify copies OUT, a run bundle and
 # the snapshots to $QARGI_STATE/runs/<run id>/ (save_run), so `review apply --from-saved ID` can still apply the work after a reboot; clean removes the copy.
 # After the TASK-BLOCK PATHS lines it prints TASK-BLOCK MEMORY (tiercontext.py packet: the tier summary, the always rows of the
 # indexes and the no-write rule; the repo tier is the clone's committed copy) when the repository belongs to a stored project.
@@ -699,7 +701,7 @@ case $verb in
     fi
     # the contract addenda of the project's runtime on the local surface (resources.contract_addenda of its definition), read before anything
     # is made; a repository in no project, or a project with no local runtime, gets the core's contract alone (no runtime is assumed)
-    ADDENDA='' CPJ=$(project_of "$REPO" "$URL")
+    ADDENDA='' CPROV='' CPJ=$(project_of "$REPO" "$URL")
     # what verification and review apply will believe of the lead's answers is taken now, into the lead's registry line (the stored project's file is not read again for this run):
     # the project's name and the answers runs.owned_refs, repo.long_lived, repo.parking_branch, git.author and review.keep_author, scrub, trailer_policy and reject_trailers, as they are today
     ANS='{}'
@@ -714,6 +716,14 @@ case $verb in
       CPROV=$(project_provider_if_set "$CPJ" local) || die "the local provider of project $CPJ does not resolve, so the contract addenda of its runtime cannot be added; nothing was made (qargi project show $CPJ)"
       [ -z "$CPROV" ] || ADDENDA=$(pymod provider addenda "$CPROV" local </dev/null) || die "could not read the contract addenda of the local runtime $CPROV (qargi provider check $CPROV)"
     fi
+    # the run's TMP: a private directory on tmpfs when there is one (QARGI_RUN_TMP moves it, as the tests do, so a test never leaves anything in
+    # /dev/shm), else RUN/tmp; made below, once RUN is
+    SHM=${QARGI_RUN_TMP:-/dev/shm}
+    while [ "${SHM%/}" != "$SHM" ] && [ "$SHM" != / ]; do SHM=${SHM%/}; done   # clean compares the parent as written
+    if [ -d "$SHM" ] && [ -w "$SHM" ]; then TMPW=$SHM/qargi-run.XXXXXX; else TMPW=$SCR/qargi.XXXXXX/tmp; fi
+    # a runtime whose sandbox hides part of the filesystem from its member (dispatch.hidden_paths: a sandbox with a /dev of its own hides /dev/shm)
+    # refuses a run whose member would not see a path it works with, before anything is made; local run asks again (lib/provider.py hidden_run_paths)
+    if [ -n "$CPROV" ]; then pymod provider hidden-paths "$CPROV" local "$CLASS" "$SCR/qargi.XXXXXX" "$TMPW" --project "$CPJ" </dev/null || exit $?; fi
     LEAD=''
     case $BASE in
       feature/?*)
@@ -737,10 +747,8 @@ case $verb in
     # as one more file (CONTRACT below)
     cp "$(prompt_root)/contract/"*.md "$(prompt_root)/contract/manifest.example.json" "$RUN/contract/" || die "could not copy the contract"
     [ -z "$ADDENDA" ] || printf '%s\n' "$ADDENDA" > "$RUN/contract/runtime-addenda.md"
-    # a private temporary directory for the run's test sandboxes, on tmpfs when there is one; `clean` removes it, so a run
-    # leaves nothing behind in /dev/shm and parallel runs never touch each other's files
-    SHM=${QARGI_RUN_TMP:-/dev/shm}   # QARGI_RUN_TMP moves it (the tests do), so a test never leaves anything in /dev/shm
-    while [ "${SHM%/}" != "$SHM" ] && [ "$SHM" != / ]; do SHM=${SHM%/}; done   # clean compares the parent as written
+    # a private temporary directory for the run's test sandboxes (SHM above); `clean` removes it, so a run leaves nothing behind in /dev/shm and
+    # parallel runs never touch each other's files
     if [ -d "$SHM" ] && [ -w "$SHM" ]; then TMPD=$(mktemp -d "$SHM/qargi-run.XXXXXX"); else TMPD=$RUN/tmp; mkdir -p "$TMPD"; fi
     printf '%s\n' "$TMPD" > "$RUN/tmpdir"
     printf '%s\n' "$ROLE" > "$RUN/ability"

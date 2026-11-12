@@ -51,6 +51,12 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
                        is empty when no tool pack gives the role a tool: then nothing is written and a file of that name left there is removed.
                        It is written without following a link a member may have put in the run directory. --dry-run prints its path, the tool
                        names and the baseline (RUN_CONFIG=, RUN_CONFIG_TOOLS=, RUN_CONFIG_BASELINE=), never the servers' addresses.
+  dispatch.hidden_paths {prefixes, shown, note}: the places the runtime's sandbox hides from the member's commands (a sandbox that mounts a /dev
+                       of its own hides everything under /dev/shm), and, per class, the run paths it shows anyway (the places it binds in,
+                       such as the writable directories of a write class). A run path the member of the class works with (provider.MEMBER_NEEDS:
+                       CLONE, CONTRACT and GIT, and for a write run OUT and TMP too) whose path or real path lies under a prefix and that its
+                       class does not show refuses the run before anything starts (exit 2), naming the path, the prefix and the fix (another
+                       --scratch, or QARGI_RUN_TMP); local prepare refuses the same run before it makes anything.
   dispatch.timeout_s   the bound (default 1800, at most 86400); --timeout replaces it.
   dispatch.exit        {"0": "ok", "*": "failed"}: the exit status -> outcome ok|failed|refused|transport.
   dispatch.output      {format: text|jsonl, usage: {select, skip, tokens, fields, model}}: with usage (jsonl only), when the run ends every line
@@ -944,6 +950,12 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
         note = text if state == "partial" else ""
     else:
         note = ""
+    bad = P.hidden_paths_problems(disp, shape=True)
+    if bad:
+        fail("%s of %s" % (bad[0], runtime))
+    hidden = P.hidden_run_paths(disp, cls, {"clone": clone, "contract": os.path.join(run, "contract"), "git": os.path.join(run, "git"), "out": out, "tmp": tmp})
+    if hidden:
+        fail(P.hidden_message(runtime, cls, hidden, disp))
     if task_file is None:
         task_text = read_run_file(os.path.join(run, "task.md"), MAX_TASK, "the task block")
         if not task_text:

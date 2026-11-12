@@ -1151,6 +1151,81 @@ def output_usage_problems(out, shape=False):
     return bad
 
 
+# ---- the places a runtime's sandbox hides from its member (dispatch.hidden_paths) --------------------------------------------------------
+# The run paths of a task block that a member works with, by class: a read-only member reads its clone and its contract and runs git through
+# its wrapper; a write member also writes OUT and makes its temporary directories in TMP. The task file is not among them: the task block
+# reaches a command runtime's member in its prompt.
+RUN_PATHS = {"clone": "CLONE", "contract": "CONTRACT", "git": "GIT", "out": "OUT", "tmp": "TMP"}
+MEMBER_NEEDS = {"read-only": ("clone", "contract", "git"), "write": ("clone", "contract", "git", "out", "tmp")}
+HIDDEN_KEYS = ("prefixes", "shown", "note")
+
+
+def hidden_paths_problems(disp, shape=True):
+    """The findings of a dispatch's hidden_paths: absolute, normalised prefixes other than /, the run paths each class's sandbox shows anyway
+    (names of RUN_PATHS), a note saying why, and a runtime that qargi local run starts. shape: also the keys and types the schema states."""
+    hp = disp.get("hidden_paths") if isinstance(disp, dict) else None
+    if hp is None:
+        return []
+    if not isinstance(hp, dict):
+        return ["dispatch.hidden_paths: %s is not an object {prefixes, shown, note}" % _show(hp)] if shape else []
+    bad = []
+    pre, shown = hp.get("prefixes"), hp.get("shown")
+    if shape:
+        bad += ["dispatch.hidden_paths.%s: additional property is not allowed" % k for k in hp if k not in HIDDEN_KEYS]
+        if not isinstance(hp.get("note"), str) or not hp["note"].strip():
+            bad.append("dispatch.hidden_paths.note: %s is not a text saying why the sandbox hides them" % _show(hp.get("note")))
+        if not isinstance(pre, list) or not pre:
+            bad.append("dispatch.hidden_paths.prefixes: %s is not a non-empty list of paths" % _show(pre))
+        if shown is not None and not isinstance(shown, dict):
+            bad.append("dispatch.hidden_paths.shown: %s is not an object of class to run paths" % _show(shown))
+    for p in pre if isinstance(pre, list) else ():
+        if not isinstance(p, str) or not p.startswith("/") or os.path.normpath(p) != p or p == "/":
+            bad.append("dispatch.hidden_paths.prefixes: %s is not an absolute, normalised path other than /" % _show(p))
+    for cls, names in shown.items() if isinstance(shown, dict) else ():
+        if cls not in MEMBER_NEEDS:
+            bad.append("dispatch.hidden_paths.shown: the key %s is not a class (read-only, write)" % _show(cls))
+        elif not isinstance(names, list) or any(n not in RUN_PATHS for n in names):
+            bad.append("dispatch.hidden_paths.shown.%s: %s is not a list of run paths (%s)" % (cls, _show(names), ", ".join(RUN_PATHS)))
+    if disp.get("mode") != "command":
+        bad.append("dispatch.hidden_paths: only a runtime that qargi local run starts (dispatch.mode command) has a sandbox qargi places a run for")
+    return bad
+
+
+def hidden_run_paths(disp, cls, paths):
+    """[(name, path, real path, prefix)]: each run path a member of class cls works with (MEMBER_NEEDS) that the sandbox of the dispatch hides
+    from it: the path as given or its real path (every link resolved; a path need not exist yet) is a prefix of dispatch.hidden_paths or lies
+    under one, and the class's `shown` does not name it. paths: a name of RUN_PATHS -> the path; a name left out is not checked."""
+    hp = disp.get("hidden_paths") if isinstance(disp, dict) else None
+    if not isinstance(hp, dict) or not isinstance(hp.get("prefixes"), list):
+        return []
+    pre = [p for p in hp["prefixes"] if isinstance(p, str) and p.startswith("/") and p != "/"]
+    shown = hp.get("shown") if isinstance(hp.get("shown"), dict) else {}
+    shown = shown.get(cls) if isinstance(shown.get(cls), list) else []
+    out = []
+    for name in MEMBER_NEEDS.get(cls, ()):
+        if name in shown or not paths.get(name):
+            continue
+        given, real = os.path.abspath(paths[name]), os.path.realpath(paths[name])
+        hit = next((x for f in (given, real) for x in pre if f == x or f.startswith(x + "/")), None)
+        if hit:
+            out.append((name, paths[name], real, hit))
+    return out
+
+
+def hidden_message(runtime, cls, hits, disp):
+    """The refusal of a run whose member would not see a run path it works with (hidden_run_paths), naming each path, the prefix and the fix."""
+    lines = ["the member of this %s run of %s would not see what it works with: its runtime's sandbox hides %s from the member's commands (dispatch.hidden_paths: %s)"
+             % (cls, runtime, ", ".join(sorted({h[3] for h in hits})), (disp.get("hidden_paths") or {}).get("note") or "no note")]
+    for name, path, real, prefix in hits:
+        lines.append("  %s %s%s lies under %s" % (RUN_PATHS[name], path, "" if real == os.path.abspath(path) else " (its real path %s)" % real, prefix))
+    fix = []
+    if any(h[0] != "tmp" for h in hits):
+        fix.append("prepare the run again with --scratch on another filesystem, for example a directory under your home (~/.cache/qargi-runs) or under /tmp")
+    if any(h[0] == "tmp" for h in hits):
+        fix.append("set QARGI_RUN_TMP to a directory on another filesystem before you prepare the run")
+    return "\n".join(lines) + "\nNothing was started: " + "; and ".join(fix) + "."
+
+
 NOTE_TOPIC_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 NOTE_MAX, NOTES_MAX = 2000, 16
 
@@ -1281,6 +1356,7 @@ def validate2(d, name=None):
     if isinstance(disp, dict):
         out += [("fail", m) for m in output_usage_problems(disp.get("output"))]
         out += [("fail", m) for m in run_config_problems(disp, d.get("resources"), shape=False)]
+        out += [("fail", m) for m in hidden_paths_problems(disp, shape=False)]
     notes = d.get("notes")
     if d.get("surface") == "local" and isinstance(disp, dict) and disp.get("mode") == "in-session" and not (isinstance(notes, dict) and "spawn" in notes):
         out.append(("warn", "notes.spawn: a local runtime that works in the session has no way to tell a lead how to start a member without a 'spawn' note (qargi provider notes spawn)"))
@@ -2327,6 +2403,26 @@ def cmd_addenda(args):
     return 0
 
 
+def cmd_hidden_paths(args):
+    """hidden-paths NAME SURFACE CLASS RUN TMP [--project P]: exit 2 with the refusal on standard error when the sandbox of the runtime (as the
+    project composes it) would hide from a member of CLASS a path it works with in the run RUN (its clone, contract, git wrapper and OUT, which
+    need not exist yet) with the temporary directory TMP; else exit 0, silent. local prepare asks it before it makes anything."""
+    project = None
+    if len(args) == 7 and args[5] == "--project":
+        project, args = args[6], args[:5]
+    if len(args) != 5 or args[1] not in SURFACES or args[2] not in MEMBER_NEEDS:
+        print("usage: qargi provider hidden-paths NAME local|cloud read-only|write RUN TMP [--project P]", file=sys.stderr)
+        return 2
+    name, surface, cls, run, tmp = args
+    disp = compose(name, surface, project)["definition"].get("dispatch")
+    hits = hidden_run_paths(disp, cls, {"clone": os.path.join(run, "clone"), "contract": os.path.join(run, "contract"), "git": os.path.join(run, "git"),
+                                        "out": os.path.join(run, "out"), "tmp": tmp})
+    if hits:
+        print("qargi: " + hidden_message(name, cls, hits, disp), file=sys.stderr)
+        return 2
+    return 0
+
+
 def adapter_exec(name, surface, verb, root=None, library=None):
     """(path, cleanup) of the adapter of a runtime on a surface, ready to run for VERB. A shipped adapter is the file in the tool; a library
     pack's is run only as a private copy of the sealed pack (exec_copy: the content and the executable's hash are checked against the
@@ -2612,6 +2708,8 @@ def main(argv):
             return cmd_adapter(rest)
         if verb == "addenda":
             return cmd_addenda(rest)
+        if verb == "hidden-paths":
+            return cmd_hidden_paths(rest)
         if verb == "notes":
             return cmd_notes(rest)
         if verb == "model":

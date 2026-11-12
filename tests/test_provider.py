@@ -172,6 +172,10 @@ class Shipped(Tree):
         self.assertNotIn("projects", base)                                                   # no trust entry: the clone's .codex/ is not loaded
         self.assertEqual(P.run_config_problems(d, cx["resources"]), [])
         self.assertFalse(any("dangerously" in a or "bypass" in a for a in d["argv"] if isinstance(a, str)))
+        # its sandbox mounts a /dev of its own: a run under /dev/shm leaves a read-only member blind, and a write member without its contract
+        self.assertEqual({k: v for k, v in d["hidden_paths"].items() if k != "note"}, {"prefixes": ["/dev"], "shown": {"write": ["clone", "out", "tmp"]}})
+        self.assertIn("/dev/shm", d["hidden_paths"]["note"])
+        self.assertEqual(P.hidden_paths_problems(d), [])
         m = P.models_of("codex", "local")
         self.assertEqual([P.model_for(m, t) for t in P.TIERS], ["gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-astra"])   # ids: the runtime passes ids
         self.assertEqual(P.contract_addenda("codex", "local")[0].splitlines()[0], "# In a Codex run")
@@ -3195,6 +3199,108 @@ class OutputUsage(unittest.TestCase):
         d = copy.deepcopy(CODE)
         d["resources"]["transcripts"]["usage"]["tokens"] = "message/usage"
         self.assertTrue(any("resources.transcripts.usage.tokens: 'message/usage' is not a JSON pointer" in m for m in fails(d, "claude-code")), fails(d, "claude-code"))
+
+
+class HiddenPaths(unittest.TestCase):
+    """dispatch.hidden_paths: the places a runtime's sandbox hides from its member, and the run paths each class shows anyway. A run path the
+    member of the class works with that lies there refuses the run (qargi local prepare and local run ask provider.hidden_run_paths)."""
+
+    HP = {"prefixes": ["/hid"], "shown": {"write": ["clone", "out", "tmp"]}, "note": "the sandbox mounts its own /hid"}
+
+    def with_hidden(self, hp, mode="command"):
+        return fake_runtime(dispatch={"mode": mode, "argv": ["fakecli", "run"], "prompt": {"via": "stdin"}, "output": {"format": "text"}, "hidden_paths": hp})
+
+    def paths(self, run, tmp):
+        return {"clone": run + "/clone", "contract": run + "/contract", "git": run + "/git", "out": run + "/out", "tmp": tmp}
+
+    def test_a_declaration_passes_and_each_wrong_shape_is_refused(self):
+        self.assertEqual([m for m in fails(self.with_hidden(self.HP), "fakecli") if "hidden_paths" in m], [])
+        self.assertEqual(P.hidden_paths_problems({"mode": "command", "hidden_paths": self.HP}), [])
+        cases = (
+            (dict(self.HP, prefixes=["hid"]), "dispatch.hidden_paths.prefixes"),
+            (dict(self.HP, prefixes=["/"]), "dispatch.hidden_paths.prefixes"),
+            (dict(self.HP, prefixes=["/hid/"]), "dispatch.hidden_paths.prefixes"),
+            (dict(self.HP, prefixes=["/a/../hid"]), "is not an absolute, normalised path other than /"),
+            (dict(self.HP, prefixes=[]), "dispatch.hidden_paths.prefixes"),
+            (dict(self.HP, shown={"review": ["clone"]}), "dispatch.hidden_paths.shown"),
+            (dict(self.HP, shown={"write": ["task"]}), "dispatch.hidden_paths.shown.write"),
+            ({"prefixes": ["/hid"]}, "note"),
+            (dict(self.HP, note=""), "dispatch.hidden_paths.note"),
+            (dict(self.HP, bind=["/x"]), "dispatch.hidden_paths.bind: additional property is not allowed"),
+        )
+        for hp, needle in cases:
+            with self.subTest(needle=needle, hp=hp):
+                f = fails(self.with_hidden(hp), "fakecli")
+                self.assertTrue(any(needle in m for m in f), f)
+                self.assertTrue(any(needle.split(":")[0] in m for m in P.hidden_paths_problems({"mode": "command", "hidden_paths": hp})))   # what local run asks too
+        f = fails(self.with_hidden(self.HP, mode="in-session"), "fakecli")
+        self.assertTrue(any("dispatch.hidden_paths: only a runtime that qargi local run starts" in m for m in f), f)
+
+    def test_a_read_only_member_needs_its_clone_contract_and_git_wrapper_and_not_tmp(self):
+        d = {"hidden_paths": self.HP}
+        hits = P.hidden_run_paths(d, "read-only", self.paths("/hid/s/qargi.1", "/hid/qargi-run.1"))
+        self.assertEqual([h[0] for h in hits], ["clone", "contract", "git"])                  # OUT and TMP: a read-only member writes neither
+        self.assertEqual({h[3] for h in hits}, {"/hid"})
+        self.assertEqual(P.hidden_run_paths(d, "read-only", self.paths("/srv/s/qargi.1", "/hid/qargi-run.1")), [])
+
+    def test_a_write_member_is_refused_only_for_what_its_class_does_not_show(self):
+        d = {"hidden_paths": self.HP}
+        self.assertEqual([h[0] for h in P.hidden_run_paths(d, "write", self.paths("/hid/s/qargi.1", "/hid/qargi-run.1"))], ["contract", "git"])
+        self.assertEqual(P.hidden_run_paths(d, "write", self.paths("/srv/s/qargi.1", "/hid/qargi-run.1")), [])   # its TMP is bound in: shown
+        bare = {"hidden_paths": dict(self.HP, shown={})}
+        self.assertEqual([h[0] for h in P.hidden_run_paths(bare, "write", self.paths("/srv/s/qargi.1", "/hid/qargi-run.1"))], ["tmp"])
+
+    def test_the_prefix_is_a_whole_path_and_the_prefix_itself_counts(self):
+        d = {"hidden_paths": dict(self.HP, shown={})}
+        self.assertEqual(P.hidden_run_paths(d, "write", self.paths("/hidden/s/qargi.1", "/hidx")), [])
+        self.assertEqual([h[0] for h in P.hidden_run_paths(d, "write", dict(self.paths("/srv/r", "/srv/t"), tmp="/hid"))], ["tmp"])
+        self.assertEqual(P.hidden_run_paths({}, "read-only", self.paths("/hid/r", "/hid/t")), [])                  # nothing declared: nothing hidden
+        self.assertEqual(P.hidden_run_paths({"hidden_paths": None}, "read-only", self.paths("/hid/r", "/hid/t")), [])
+
+    def test_a_link_into_a_hidden_place_is_found_by_its_real_path(self):
+        tmp = os.path.realpath(tempfile.mkdtemp(prefix="hid."))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        os.makedirs(os.path.join(tmp, "hid", "s"))
+        os.symlink(os.path.join(tmp, "hid", "s"), os.path.join(tmp, "lnk"))
+        d = {"hidden_paths": dict(self.HP, prefixes=[os.path.join(tmp, "hid")])}
+        hits = P.hidden_run_paths(d, "read-only", self.paths(os.path.join(tmp, "lnk", "qargi.1"), os.path.join(tmp, "t")))
+        self.assertEqual([(h[0], h[2]) for h in hits], [(n, os.path.join(tmp, "hid", "s", "qargi.1", n)) for n in ("clone", "contract", "git")])
+        msg = P.hidden_message("fakecli", "read-only", hits, d)
+        self.assertIn("CONTRACT %s (its real path %s) lies under %s" % (os.path.join(tmp, "lnk", "qargi.1", "contract"), os.path.join(tmp, "hid", "s", "qargi.1", "contract"),
+                                                                      os.path.join(tmp, "hid")), msg)
+
+    def test_the_message_names_the_path_the_prefix_the_note_and_the_fix(self):
+        d = {"hidden_paths": dict(self.HP, shown={})}
+        msg = P.hidden_message("fakecli", "write", P.hidden_run_paths(d, "write", self.paths("/hid/s/qargi.1", "/hid/t")), d)
+        self.assertIn("this write run of fakecli", msg)
+        self.assertIn("hides /hid from the member's commands (dispatch.hidden_paths: the sandbox mounts its own /hid)", msg)
+        self.assertIn("CONTRACT /hid/s/qargi.1/contract lies under /hid", msg)
+        self.assertIn("TMP /hid/t lies under /hid", msg)
+        self.assertIn("Nothing was started", msg)
+        self.assertIn("--scratch on another filesystem", msg)
+        self.assertIn("QARGI_RUN_TMP", msg)
+        only_run = P.hidden_message("fakecli", "read-only", P.hidden_run_paths(d, "read-only", self.paths("/hid/s/qargi.1", "/srv/t")), d)
+        self.assertNotIn("QARGI_RUN_TMP", only_run)
+
+    def test_codex_refuses_a_run_under_dev_shm_except_a_write_run_whose_tmp_alone_is_there(self):
+        def cli(*a):
+            r = subprocess.run([sys.executable, "-I", os.path.join(LIB, "provider.py"), "hidden-paths", "codex", "local"] + list(a), capture_output=True, text=True)
+            return r.returncode, r.stderr
+        rc, err = cli("read-only", "/dev/shm/s/qargi.XXXXXX", "/dev/shm/qargi-run.XXXXXX")
+        self.assertEqual(rc, 2, err)
+        self.assertIn("this read-only run of codex", err)
+        self.assertIn("CONTRACT /dev/shm/s/qargi.XXXXXX/contract lies under /dev", err)
+        self.assertIn("--scratch on another filesystem", err)
+        rc, err = cli("write", "/dev/shm/s/qargi.XXXXXX", "/dev/shm/qargi-run.XXXXXX")
+        self.assertEqual((rc, "CONTRACT /dev/shm/s/qargi.XXXXXX/contract" in err, "  CLONE" in err, "  TMP" in err), (2, True, False, False), err)
+        # the scratch on disk: the default TMP on /dev/shm is no matter, a read-only member writes none and a write member's is bound in
+        self.assertEqual(cli("read-only", "/srv/scratch/qargi.XXXXXX", "/dev/shm/qargi-run.XXXXXX"), (0, ""))
+        self.assertEqual(cli("write", "/srv/scratch/qargi.XXXXXX", "/dev/shm/qargi-run.XXXXXX"), (0, ""))
+        self.assertEqual(cli("review", "/srv/scratch/qargi.XXXXXX", "/srv/t")[0], 2)                 # a class, not a role
+        self.assertIn("usage:", cli("review", "/srv/scratch/qargi.XXXXXX", "/srv/t")[1])
+        r = subprocess.run([sys.executable, "-I", os.path.join(LIB, "provider.py"), "hidden-paths", "claude-code", "local", "read-only",
+                            "/dev/shm/s/qargi.XXXXXX", "/dev/shm/t"], capture_output=True, text=True)
+        self.assertEqual((r.returncode, r.stderr), (0, ""))                                       # a runtime that declares nothing hides nothing
 
 
 class Attest(LibraryBase):
