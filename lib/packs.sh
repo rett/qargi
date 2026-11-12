@@ -295,9 +295,14 @@ au_report() { # ccinputs workdir: print the section; the status is 1 when a skil
   if au_inputs "$1" "$2/au.json"; then python3 -I "$(dirname "$(readlink -f "$0")")/packs_audit.py" report "$2/au.json"
   else echo "skills a session would load: cannot be listed"; return 0; fi
 }
-rn_launch() { # dir: the exact command that loads the render (the provider's session_launch)
-  local c; c=$(pymod provider launch "$PROV" "$1") || exit $?
-  echo "launch: $c"
+rn_launch() { # dir: the exact command that loads the render (the provider's session_launch); a runtime whose definition has none (exit 3) is said so
+  local c rc=0
+  c=$(pymod provider launch "$PROV" "$1" 2>"$RN_W/launch.err") || rc=$?
+  case $rc in
+    0) echo "launch: $c";;
+    3) echo "launch: none: the definition of $PROV gives no command that starts a session on the render (session.launch)";;
+    *) cat "$RN_W/launch.err" >&2; exit "$rc";;
+  esac
 }
 rn_cleanup() { # the temporary files, this run's staging directory and the lock file, whatever the exit
   local st
@@ -358,7 +363,7 @@ rn_main() { # verb: apply|check
     echo "plan token: $tok   (apply with: --plan $tok --approved \"<the user's go-ahead>\")"; exit 0
   fi
   need_token "$tok"
-  audit_log packs-apply-claude-code "$prj $tok"
+  audit_log "packs-apply-$TARGET" "$prj $tok"
   python3 -I "$PY" swap "$RN_W/in.json" "$RN_W/token.stage" "$tok" || exit 1
   echo "applied: $live"; rn_launch "$live"
   exit 0

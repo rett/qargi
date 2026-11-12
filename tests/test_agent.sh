@@ -203,7 +203,7 @@ jq '.provider = "badcat" | .models = {catalog: "nocat", use: "id"}' "$LIB/defini
 python3 -I tests/handseal.py "$LIB3"
 jq '.models.provider = "badcat"' "$T/c/projects/tomlp.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/tomlp.json"
 out=$($DA agent add nope3 --roles build --project tomlp 2>&1); rc=$?
-{ [ $rc != 0 ] && grep -q "no catalog 'nocat'" <<<"$out" && grep -q 'available: badcat, claimtoml, claude-code, claude-platform, faketoml, norender$' <<<"$out"; } && ok "a definition that cannot be loaded is refused with the reason and the providers there are (the library's too, no schema file)" || no "available: rc=$rc $out"
+{ [ $rc != 0 ] && grep -q "no catalog 'nocat'" <<<"$out" && grep -q 'available: badcat, claimtoml, claude-code, claude-platform, codex, faketoml, norender$' <<<"$out"; } && ok "a definition that cannot be loaded is refused with the reason and the providers there are (the library's too, no schema file)" || no "available: rc=$rc $out"
 
 # where a member's file goes: a member belongs to a project, and its file goes where the runtime links the project's agents; there are no user-level members
 while read -r p m; do $DA agent remove "$m" --project "$p" >/dev/null 2>&1; done < <($DA agent list | awk '{print $1, $2}')

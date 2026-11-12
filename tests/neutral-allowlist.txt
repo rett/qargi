@@ -185,7 +185,6 @@ lib/agent.sh:guard\.CLAUDE_HOOK
 
 # lib/packs.sh and lib/packs_render.py: the target name claude-code
 lib/packs.sh:claude-code for Claude Code
-lib/packs.sh:packs-apply-claude-code
 lib/packs_render.py:`claude --add-dir DIR`
 lib/packs_render.py:Claude Code: \.claude/skills
 lib/packs_render.py:make Claude Code load it

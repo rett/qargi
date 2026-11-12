@@ -243,6 +243,82 @@ jq -e '.servers.remote.issues == {transport:"http",address:"https://mcp.example.
 out=$($FX packs check --target fk-render delta 2>&1); rc=$?
 [ "$rc" = 0 ] && ok "and check reads the same composed definition and passes" || no "extension check (rc=$rc): $out"
 jq '.models = {provider: "nomcp"}' "$T/c/projects/delta.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/delta.json"
+
+# --- the TOML writer of the render: tables, texts, whole numbers, booleans and lists of texts, every text escaped, and nothing else written
+out=$(python3 -I -c '
+import sys, tomllib
+sys.path.insert(0, "lib")
+import packs_render as R
+doc = {"mcp_servers": {"kb": {"url": "https://x.example/a\"b\\c\nd\u0001\u007f", "enabled_tools": ["a.b", "q\"x"], "n": 7, "on": True},
+       "odd key": {"x": {"deep": False}}}, "top": "v"}
+text = R.toml_dumps(doc).decode()
+assert tomllib.loads(text) == doc, text
+assert text.startswith("top = \"v\"\n"), text                                   # the plain keys of a table come before its tables
+assert "[mcp_servers.\"odd key\".x]" in text and "\n\"odd key\"" not in text, text
+for bad in ({"a": 1.5}, {"a": None}, {"a": [1]}, {"a": [{"b": "c"}]}, {"": "x"}, {"a": 1 << 64}, {"a": "\ud800"}, ["x"]):
+    try:
+        R.toml_dumps(bad)
+    except R.TomlError:
+        continue
+    raise SystemExit("written: %r" % (bad,))
+print("toml ok")' 2>&1)
+[ "$out" = "toml ok" ] && ok "the TOML writer escapes every text, quotes a key that is not bare, reads back as it was written and refuses what TOML is not written with here" || no "toml writer: $out"
+
+# --- codex: the tool packs become [mcp_servers.PACK] tables of config.toml, and each lists in enabled_tools the tools a member may call for the roles
+# the pack reaches (lib/packs_mcp.py: never an always_ask tool, for a role of the read-only class only a declared read); a server whose list would be
+# empty is left out. Two tools the runtime names alike are refused as for Claude Code. The shipped codex claims skills unverified, so the render (which
+# needs a verified skills capability) is refused for it; cxv is its definition with that one claim dated, in the copy of the tool.
+tomljson() { python3 -I -c 'import json, sys, tomllib; print(json.dumps(tomllib.load(open(sys.argv[1], "rb")), sort_keys=True))' "$1"; }
+mk_cx() { jq --arg n "$1" '.provider = $n | .session.render_target = $n | del(.resources.contract_addenda) | .capabilities.skills.verified_on = "2026-11-11" | '"${2:-.}" "$ROOT/lib/providers/codex.json" > "$TOOL/lib/providers/$1.json"; }
+eps() { jq -n --arg p "$1" '{schema:1,project:"eps",repo:{url:"https://github.com/example/x",path:"",long_lived:["main"]},
+  roles:{build:{base:"@dispatcher",push:{mode:"none"},model:"gpt-6.1-terra",effort:"high",apt:[],skills:[]},
+         review:{base:"@dispatcher",push:{mode:"none"},model:"gpt-6.1-terra",effort:"high",apt:[],skills:[]}},
+  models:{provider:$p},memory:{memory_store:"",reference_store:""},budget_cents:500}' > "$T/c/projects/eps.json"; }
+mktool() { printf '%s' "$2" > "$T/$1.json"; local t; t=$($DA tool import "$T/$1.json" --compatible any | tok_of); $DA tool import "$T/$1.json" --compatible any --plan "$t" --approved test >/dev/null || no "import $1"; }
+mktool cx '{"name":"cx","url":"https://mcp.example.net/cx","write_ok":true,"tools":{"platform.list_items":"always_allow","getStatus":"always_allow","repo/push":"auto","issue-close":"always_ask"}}'
+mktool rox '{"name":"rox","url":"https://mcp.example.net/rox","write_ok":true,"tools":{"lookup":"always_allow","fetch":"auto","deleteAll":"always_allow"}}'
+mktool askx '{"name":"askx","url":"https://mcp.example.net/askx","tools":{"approve":"always_ask"}}'
+eps codex
+$DA tool link cx --scope project --project eps >/dev/null; $DA tool link rox --scope project-role --project eps --role review >/dev/null
+$DA tool link askx --scope project-role --project eps --role build >/dev/null; $DA skill link s-all --scope project --project eps >/dev/null
+out=$($DA packs apply --target codex eps 2>&1); rc=$?
+[ "$rc" = 3 ] && grep -q "provider codex has no skills support on the local surface" <<<"$out" && ok "the shipped codex: its render waits for its skills claim to be verified (exit 3)" || no "shipped codex render (rc=$rc): $out"
+mk_cx cxv; eps cxv
+CD=$T/s/render/eps/cxv
+out=$($FX packs apply --target cxv eps 2>&1); ctok=$(tok_of <<<"$out")
+{ [ -n "$ctok" ] && grep -q "^cxv target for eps -> $CD\$" <<<"$out" && grep -q "role scoping is advisory: Codex cannot enforce" <<<"$out" \
+  && grep -q "^  tool entry: mcp__cx__\*  (see config.toml)$" <<<"$out" && grep -q "^    tools a member may call: getStatus, platform.list_items, repo/push$" <<<"$out" \
+  && grep -q "^    tools a member may call: lookup$" <<<"$out" && grep -q "^    no tool a member may call for its roles, so the server is left out$" <<<"$out"; } \
+  && ok "codex: the plan names the config.toml entries and the tools each lists, and the server with none" || no "codex plan: $out"
+out=$($FX packs apply --target cxv eps --plan "$ctok" --approved test 2>&1); rc=$?
+want='{"mcp_servers": {"cx": {"enabled_tools": ["getStatus", "platform.list_items", "repo/push"], "url": "https://mcp.example.net/cx"}, "rox": {"enabled_tools": ["lookup"], "url": "https://mcp.example.net/rox"}}}'
+{ [ "$rc" = 0 ] && [ "$(tomljson "$CD/config.toml")" = "$want" ] && [ -f "$CD/.agents/skills/s-all/SKILL.md" ] && [ ! -e "$CD/settings.json" ]; } \
+  && ok "codex: config.toml lists for each pack the union over its roles of what a member may call (build: all but always_ask; review: the declared reads)" || no "codex apply (rc=$rc): $out; $(cat "$CD/config.toml" 2>&1)"
+tail -1 "$T/s/audit.log" | jq -e '.verb=="packs-apply-cxv" and .detail=="eps \($t)"' --arg t "$ctok" >/dev/null && ok "the apply of another target is audit-logged under that target's name" || no "audit of the cxv apply: $(tail -1 "$T/s/audit.log")"
+grep -q "^launch: none: the definition of cxv gives no command that starts a session on the render" <<<"$out" && ok "codex: apply says there is no launch line rather than failing" || no "codex launch: $out"
+out=$($FX packs check --target cxv eps 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q "^ok   eps: 4 packs" <<<"$out" && ok "codex: check passes on its render" || no "codex check (rc=$rc): $out"
+$DA tool unlink cx --scope project --project eps >/dev/null; $DA tool link cx --scope project-role --project eps --role review >/dev/null
+out=$($FX packs check --target cxv eps 2>&1)
+grep -q "differs from the library copy: config.toml" <<<"$out" && ok "codex: a pack that now reaches only the read-only role makes the render stale" || no "codex stale: $out"
+$FX packs apply --target cxv eps --plan "$($FX packs apply --target cxv eps | tok_of)" --approved test >/dev/null 2>&1
+[ "$(tomljson "$CD/config.toml" | jq -c '.mcp_servers.cx.enabled_tools')" = '["getStatus","platform.list_items"]' ] && ok "codex: a pack of the read-only role alone lists only its declared reads" || no "codex ro list: $(cat "$CD/config.toml")"
+mktool dup '{"name":"dup","url":"https://mcp.example.net/dup","tools":{"a.b":"always_allow","a_b":"always_allow"}}'
+$DA tool link dup --scope project --project eps >/dev/null
+out=$($FX packs apply --target cxv eps 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q "tool dup: the tools a.b and a_b get the same permission rule (mcp__dup__a_b)" <<<"$out" && ok "codex: two tools the runtime names alike are refused" || no "codex same name (rc=$rc): $out"
+$DA tool unlink dup --scope project --project eps >/dev/null
+# tool lists that cannot be written: the definition is refused, never rendered without its lists
+mk_cx cxbad '.resources.mcp.tool_lists = {allow: "/url"}'; eps cxbad
+out=$($FX packs apply --target cxbad eps 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q "resources.mcp.tool_lists.allow: /url runs onto or through a value the entry template sets" <<<"$out" && [ ! -e "$T/s/render/eps/cxbad" ] \
+  && ok "tool lists onto a key of the entry template: the render is refused and says why" || no "cxbad (rc=$rc): $out"
+# a definition with a deny list too: the pack's other tools go there
+mk_cx cxdeny '.resources.mcp.tool_lists = {allow: "/enabled_tools", deny: "/disabled_tools"}'; eps cxdeny
+$FX packs apply --target cxdeny eps --plan "$($FX packs apply --target cxdeny eps | tok_of)" --approved test >/dev/null 2>&1
+[ "$(tomljson "$T/s/render/eps/cxdeny/config.toml" | jq -c '.mcp_servers.cx | [.enabled_tools, .disabled_tools]')" = '[["getStatus","platform.list_items"],["issue-close","repo/push"]]' ] \
+  && ok "a deny list holds the pack's tools a member may not call" || no "cxdeny: $(cat "$T/s/render/eps/cxdeny/config.toml" 2>&1)"
+
 # --- the render directory of an earlier version (<state>/claude) is not handled any more: no migrate-render verb, and a leftover directory
 # there is neither read nor changed by apply and check. The render of the runtime (<state>/render/PROJECT/RUNTIME) applies and checks as before.
 case $QARGI_STATE in "$T"/*) ok "the tests run in the test's own state directory, never the real one";; *) no "state is not temporary: $QARGI_STATE"; exit 1;; esac

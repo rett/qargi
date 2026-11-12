@@ -7,7 +7,8 @@ refusal changes nothing.
 
 1. `qargi feature start NAME --purpose "..."` cuts `feature/NAME` from develop. A feature is a broad
    theme; `qargi feature list` shows the open ones and the files two of them both change.
-2. Tasks run on `agent/<slug>` (`/qargi-task ... --base feature/NAME`) with targeted checks only.
+2. Tasks run on `agent/<slug>` (`/qargi-task ... --base feature/NAME` in Claude Code, `qargi local prepare ... --base feature/NAME`
+   from any lead) with targeted checks only.
    - Per task: `qargi review check RUN/out` and `qargi review apply RUN`. The apply puts the series on `agent/<slug>`; the author
      of each commit is reset to yours: the answer `git.author`, a string `Name <email>`, else the repository's `user.name` and
      `user.email`. `review.keep_author` `true` keeps the member's. The member's author is recorded in the ref journal and the audit log.

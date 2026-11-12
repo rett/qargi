@@ -74,8 +74,73 @@
         "renderers": {"type": ["object", "null"], "description": "how a neutral definition becomes native files (built later)"},
         "dispatch": {
           "type": ["object", "null"],
-          "properties": {"mode": {"enum": ["in-session", "command", "adapter"]}},
-          "description": "how a member is started: in the lead's own session, as a command line, or through the adapter (built later)"
+          "properties": {
+            "mode": {"enum": ["in-session", "command", "adapter"]},
+            "home": {
+              "description": "mode command only: a home directory of the member's own, RUN/home/DIR, that qargi local run names in the variable env, with each file `from` (a file under the user's home, ~/PATH) linked into it as `to` for the length of the run. The link is made when the run starts and removed when it ends, its target is never printed and the file is never copied; a source that does not exist is left out with a note. A write through the link lands in the source, which qargi cannot prevent; a file the runtime puts in place of the link is never written to the source: it is kept in the run home as TO.from-run (mode 600), named by the run's output and dispatch.json (home.residue), for the user to reconcile. env may not be a variable qargi sets or never hands on (env_pass_problem) nor one of env_pass; dir is a relative path; from may not be qargi's own directory, a credential store of the user's other tools (ssh, gpg, git, forges, clouds, keyrings), a startup file of the user's shell, desktop or services, or ~/.local/bin; to is a plain file name. At most 8 links. Absent or null: the member's home is the run's home and nothing is linked.",
+              "type": ["object", "null"],
+              "additionalProperties": false,
+              "required": ["env", "dir"],
+              "properties": {
+                "env": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
+                "dir": {"type": "string", "minLength": 1},
+                "link": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["from", "to"],
+                    "properties": {
+                      "from": {"type": "string"},
+                      "to": {"type": "string"}
+                    }
+                  }
+                }
+              }
+            },
+            "run_config": {
+              "description": "mode command only: the configuration file of one member run, rendered by qargi local run when the run starts in the format of resources.mcp: the baseline, and the MCP servers from resources.mcp (its format, root pointer, entry and tool_lists, which it needs) for the run's role, as the lead's registry of local runs records it, and the run's class: each server lists the tools a member may call (never an always_ask tool, under the read-only class only a declared read). in home: RUN/home/DIR/FILE, the run home of dispatch.home (which it needs), for a runtime that reads its configuration from its home by itself; in run: RUN/config/FILE. {run_config} in argv is the path of the file. Without a baseline it has no value when no tool pack gives the role a tool: nothing is written then, and a file of that name left in the place is removed. --dry-run prints the path, the tool names and the baseline (RUN_CONFIG=, RUN_CONFIG_TOOLS=, RUN_CONFIG_BASELINE=), never the servers' addresses. file is a plain file name and not one of the run home's links. Absent or null: a run gets no file.",
+              "type": ["object", "null"],
+              "additionalProperties": false,
+              "required": ["in", "file"],
+              "properties": {
+                "in": {"enum": ["home", "run"]},
+                "file": {"type": "string", "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$"},
+                "baseline": {
+                  "description": "the settings every run's file holds, whatever tools reach the role, so that a run with no MCP server and a run with one get the same settings: keys of the runtime's own configuration (what it asks before a command runs, its network, its writable places, its features), written at the root of the file as they are, with no placeholder. Values are objects, texts, whole numbers, booleans and lists of texts; nothing may be set at or below resources.mcp.root_pointer, which only the tool packs of the run's role fill. With a baseline the file is written for every run. qargi records it in RUN/dispatch.json (run_config.baseline); whether the runtime honours a key is a fact of the runtime, shown live, not by qargi.",
+                  "type": ["object", "null"]
+                }
+              }
+            },
+            "hidden_paths": {
+              "description": "mode command only: the places the runtime's sandbox hides from the member's commands, so a run there would leave the member without its clone or its contract (a sandbox that mounts a /dev of its own hides everything under /dev/shm). prefixes: absolute, normalised paths other than /. shown: per class (read-only, write), the run paths the sandbox shows anyway, such as the directories it binds in as writable (clone, contract, git, out, tmp). note: why. A run path the member of the class works with (CLONE, CONTRACT and GIT, and for a write run OUT and TMP too; the task block reaches it in the prompt) whose path or real path lies under a prefix, and that its class does not show, refuses the run: qargi local prepare before it makes anything, qargi local run before it starts anything (exit 2), naming the path, the prefix and the fix. Absent or null: the sandbox hides no place a run uses.",
+              "type": ["object", "null"],
+              "additionalProperties": false,
+              "required": ["prefixes", "note"],
+              "properties": {
+                "prefixes": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^/."}},
+                "shown": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "read-only": {"type": "array", "items": {"enum": ["clone", "contract", "git", "out", "tmp"]}},
+                    "write": {"type": "array", "items": {"enum": ["clone", "contract", "git", "out", "tmp"]}}
+                  }
+                },
+                "note": {"type": "string", "minLength": 1}
+              }
+            },
+            "output": {
+              "description": "what the command writes on its standard output (OUT/transcript): format text or jsonl (one JSON object per line). usage (jsonl only, with tokens and fields): the lines it picks are the runtime's own report of the tokens a turn used; qargi local run adds up each field over those lines when the run ends, records the sums in RUN/dispatch.json (usage: events, tokens, and model when the rule has it) and prints them as USAGE=; a field no picked line reports is left out of tokens and named in unreported, never recorded as 0. A cost_report claim of a command runtime rests on it.",
+              "type": ["object", "null"],
+              "additionalProperties": false,
+              "properties": {
+                "format": {"enum": ["text", "jsonl"]},
+                "usage": {"$ref": "#/$defs/usage"}
+              }
+            }
+          },
+          "description": "how a member is started: in the lead's own session, as a command line, or through the adapter (built later). In the argv of mode command, {final_message} is the file the runtime is told to write the member's last message to: a file of a directory of the run made new for each run (RUN/final.XXXXXXXXXXXX/message.md), never one of OUT. When the process has ended qargi local run takes it only as a regular file with one name, of text, at most 1 MiB (never following a link or waiting on a pipe) and publishes it as OUT/report.md by renaming a new file over that name; the report of an earlier run is set aside as OUT/report.md.previous before the member starts and stays there when the run publishes none."
         },
         "barrier": {
           "type": ["object", "null"],
@@ -274,7 +339,7 @@
       }
     },
     "res_mcp": {
-      "description": "the file the runtime reads its MCP servers from and what it calls a tool of one. permission_rule is the form of a tool's name, with {server} for the name of the tool pack and {tool} for the tool: the render writes its permission rules in it, a member's tool list holds its tools under it, and the guard takes a call of a tool whose name has this form for an MCP call. name_key says how the runtime writes a server or a tool name inside it: nonword-underscore replaces every character that is not an ASCII letter, a digit, _ or - by _; null or absent leaves a name as written",
+      "description": "the file the runtime reads its MCP servers from and what it calls a tool of one. permission_rule is the form of a tool's name, with {server} for the name of the tool pack and {tool} for the tool: the render writes its permission rules in it, a member's tool list holds its tools under it, and the guard takes a call of a tool whose name has this form for an MCP call. name_key says how the runtime writes a server or a tool name inside it: nonword-underscore replaces every character that is not an ASCII letter, a digit, _ or - by _; null or absent leaves a name as written. format is how the file is written: json, or toml (tables, texts, whole numbers, booleans and lists of texts; the entry template may hold nothing else). tool_lists is for a runtime that takes the tools of a server in the server's entry: allow and deny are JSON pointers into the entry; allow gets the tools a member may call for the roles the pack reaches (never an always_ask tool, under the read-only class only a declared read), deny the pack's other tools, and a server with an allow list and no tool on it is left out. It needs a permission_rule with {server} and {tool}, since the member policy judges a tool by that name",
       "type": ["object", "null"],
       "additionalProperties": false,
       "properties": {
@@ -283,7 +348,15 @@
         "root_pointer": {"type": "string"},
         "entry": {"type": "object"},
         "permission_rule": {"type": ["string", "null"]},
-        "name_key": {"enum": ["nonword-underscore", null]}
+        "name_key": {"enum": ["nonword-underscore", null]},
+        "tool_lists": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "allow": {"type": ["string", "null"]},
+            "deny": {"type": ["string", "null"]}
+          }
+        }
       }
     },
     "res_settings": {
@@ -328,17 +401,19 @@
             }
           }
         },
-        "usage": {
-          "type": ["object", "null"],
-          "additionalProperties": false,
-          "properties": {
-            "select": {"type": "object"},
-            "skip": {"type": "object"},
-            "tokens": {"type": "string"},
-            "fields": {"type": "array", "minItems": 1, "items": {"type": "string"}},
-            "model": {"type": "string"}
-          }
-        }
+        "usage": {"$ref": "#/$defs/usage"}
+      }
+    },
+    "usage": {
+      "description": "how to read token counts from a file of JSON lines: select and skip are maps from a JSON pointer to the value that picks a line (select, every one must match) or drops it (skip); tokens points at the object holding the counts, fields lists the counts read from it, model points at the model id",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "select": {"type": "object"},
+        "skip": {"type": "object"},
+        "tokens": {"type": "string"},
+        "fields": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "model": {"type": "string"}
       }
     },
     "res_memory": {

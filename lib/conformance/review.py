@@ -28,13 +28,16 @@ The rules (the owner's policy for what a pack may hold):
   * Secrets (a token, a key) are refused; the review names the file and line, never the value.
   * Flagged, not refused, so that the person reads them: network commands and URLs, writes outside the run directory, reads of
     environment variables that look like secrets, eval/exec, scripts that fetch code and run it, base64 or hex blobs and very long lines
-    (opaque content).
+    (opaque content). In the definition's data (definition.json) eval/exec is flagged only as code (a call, or an eval or exec of an
+    expansion), so the words of a command line or a note (`codex exec`) are not flags.
 An executable is a file with an executable mode, a shebang line, a script suffix, or one the definition names (adapter, renderer command,
 adapter verbs). The review lists each with its sha256, interpreter and first lines; the person approves them by name.
 
 The review dict: files [{path, size, sha256, exec, text}], executables [{path, sha256, why, interpreter, head}], fail [msg], warn [msg],
 urls [url], network ["path:line: text"], flags ["path:line: what"], secrets ["path:line"], needs_on_path [command], argv [text],
-env_pass [name] (the variables of the caller's environment the runtime's command receives; a credential-looking one is also a warning), bytes, count."""
+env_pass [name] (the variables of the caller's environment the runtime's command receives; a credential-looking one is also a warning),
+home {env, dir, links: ["FROM as TO"]} or None (dispatch.home: the files of the user's home linked into each run's home, as the
+definition names them; never their content or where they resolve), bytes, count."""
 import hashlib
 import json
 import os
@@ -58,6 +61,10 @@ NETWORK = re.compile(r"\b(curl|wget|nc|ncat|ssh|scp|sftp|telnet|ftp|rsync)\b|url
 FETCH_EXEC = re.compile(r"(curl|wget)[^|;&\n]*\|\s*(sudo\s+)?(sh|bash|zsh|python3?|perl|ruby|node)\b|(sh|bash|source|\.)\s+<\(\s*(curl|wget)|"
                         r"(exec|eval)\s*\(\s*[^)]*(urlopen|requests\.|httpx|\.read\(\))|base64\s+(-d|--decode)[^|\n]*\|\s*(sh|bash|python3?)")
 EVAL_EXEC = re.compile(r"(^|[^A-Za-z0-9_.])(eval|exec)\b\s*[(\s\"']|shell\s*=\s*True|os\.system\(")
+# in the definition's data (definition.json) `exec` and `eval` are words of a command line or of a note (`codex exec --json`): only a call,
+# eval or exec of an expansion ($VAR, $(...), `...`, also behind a JSON-escaped quote) and the shell= and os.system forms are code there
+EVAL_EXEC_DATA = re.compile(r"(^|[^A-Za-z0-9_.])(eval|exec)\s*\(|(^|[^A-Za-z0-9_.])(eval|exec)\s+(\\?[\"'])?[$`]|shell\s*=\s*True|os\.system\(")
+DEFINITION = "definition.json"
 WRITES = re.compile(r">>?\s*(?!/dev/(null|stderr|stdout|fd/))(/|~|\$HOME|\$\{HOME\})|"
                     r"\b(rm|mv|cp|chmod|chown|ln|tee|install)\b[^\n|;&]*?\s(/etc|/usr|/var|/opt|/home|/root|~|\$HOME|\$\{HOME\})|"
                     r"\bopen\([^)]*[\"'][wax]b?\+?[\"']|\.write_text\(|\.write_bytes\(|shutil\.(rmtree|move|copy)|os\.(remove|unlink|rmdir|rename|makedirs)\(")
@@ -319,9 +326,19 @@ def _env_pass(definition):
     return [x for x in v if isinstance(x, str)] if isinstance(v, list) else []
 
 
+def _home(definition):
+    """dispatch.home as the definition writes it, names only: {env, dir, links: ["FROM as TO"]}, or None."""
+    disp = definition.get("dispatch") if isinstance(definition, dict) and isinstance(definition.get("dispatch"), dict) else {}
+    h = disp.get("home")
+    if not isinstance(h, dict):
+        return None
+    links = [l for l in h.get("link") if isinstance(l, dict)] if isinstance(h.get("link"), list) else []
+    return {"env": str(h.get("env")), "dir": str(h.get("dir")), "links": ["%s as %s" % (l.get("from"), l.get("to")) for l in links]}
+
+
 def scan(root, definition=None):
     r = {"files": [], "executables": [], "fail": [], "warn": [], "urls": [], "network": [], "flags": [], "secrets": [], "needs_on_path": [],
-         "argv": [], "env_pass": [], "bytes": 0, "count": 0}
+         "argv": [], "env_pass": [], "home": None, "bytes": 0, "count": 0}
     files = _files(root)
     named = _named(definition)
     norm = {}
@@ -383,7 +400,7 @@ def scan(root, definition=None):
             head = [ln[:120] for ln in content.splitlines()[:3]]
             interp = content.splitlines()[0][2:].strip() if shebang else None
             r["executables"].append({"path": rel, "sha256": row["sha256"], "why": reason, "interpreter": interp, "head": head, "mode_x": isx})
-        _lines(rel, content, r)
+        _lines(rel, content, r, data=rel == DEFINITION)
     if r["bytes"] > MAX_TOTAL:
         r["fail"].append("more than %d bytes in all" % MAX_TOTAL)
     for n, why in sorted(norm.items()):
@@ -397,6 +414,7 @@ def scan(root, definition=None):
     r["needs_on_path"] = needs_on_path(definition)
     r["argv"] = _argv_text(definition)
     r["env_pass"] = _env_pass(definition)
+    r["home"] = _home(definition)
     for n in r["env_pass"]:
         if SECRET_NAME.search(n.upper()):
             r["warn"].append("dispatch.env_pass hands %s to the command: the name looks like a credential, and it reaches everything that command does; approve it only if the "
@@ -404,7 +422,9 @@ def scan(root, definition=None):
     return r
 
 
-def _lines(rel, content, r):
+def _lines(rel, content, r, data=False):
+    """The flags of one file; data: the file is the definition's data, where an eval or exec is flagged only as code (EVAL_EXEC_DATA)."""
+    eval_exec = EVAL_EXEC_DATA if data else EVAL_EXEC
     for i, ln in enumerate(content.splitlines(), 1):
         at = "%s:%d" % (rel, i)
         if SECRET.search(ln):
@@ -416,7 +436,7 @@ def _lines(rel, content, r):
             r["network"].append("%s: %s" % (at, shown))
         if FETCH_EXEC.search(ln):
             r["flags"].append("%s: fetches code and runs it: %s" % (at, shown))
-        if EVAL_EXEC.search(ln):
+        if eval_exec.search(ln):
             r["flags"].append("%s: eval or exec: %s" % (at, shown))
         if WRITES.search(ln):
             r["flags"].append("%s: writes files (maybe outside the run directory): %s" % (at, shown))
@@ -434,7 +454,7 @@ def executables(review):
 
 def lines(review, title):
     """The review as text: files, every executable with what it is, URLs, network commands, flagged constructs, what is needed on the PATH,
-    the argv templates, and the failures last. A failure line starts with FAIL."""
+    the argv templates, the files linked into the run home (names only), and the failures last. A failure line starts with FAIL."""
     out = ["== review of %s" % title]
     out.append("files: %d, %d bytes" % (review["count"], review["bytes"]))
     for f in review["files"][:60]:
@@ -455,6 +475,10 @@ def lines(review, title):
         out.append("runs: %s" % a)
     if review.get("env_pass"):
         out.append("environment handed to the command (env_pass): %s" % ", ".join(review["env_pass"]))
+    if review.get("home"):
+        h = review["home"]
+        out.append("run home (dispatch.home): %s is RUN/home/%s; files of your home linked into it for each run: %s"
+                   % (h["env"], h["dir"], ", ".join(h["links"]) or "none"))
     if review["urls"]:
         out.append("URLs mentioned:")
         out.extend("  " + u for u in review["urls"])

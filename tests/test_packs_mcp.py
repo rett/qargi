@@ -172,6 +172,72 @@ class Roles(unittest.TestCase):
         with self.assertRaises(M.McpError):
             member("build")
 
+    def test_the_tool_lists_of_a_server_entry_are_the_tool_list_of_a_member_by_pack(self):
+        """lib/packs_render.py member_lists, the enabled tools a runtime that holds the tools of a server in its entry gets (Codex: enabled_tools): the
+        same answer as member_tools, grouped by the pack that gives each tool and in the names the pack writes."""
+        import packs_render as R
+        ro = {"build": False, "write": False, "review": True, "test": False}
+
+        def lists(*roles):
+            return R.member_lists(self.conf, "alpha", roles, ro, self.form)
+        self.assertEqual(lists("build"), {"all": {"ping"}, "kb": {"getStatus", "platform.delete_knowledge", "platform.list_items", "repo/push"}, "ops": {"list_jobs"}})
+        self.assertEqual(lists("review"), {"all": {"ping"}, "kb": {"getStatus", "platform.list_items"}, "look": {"lookup"}}, "a read-only role: the declared reads")
+        for roles in (("build",), ("review",), ("build", "review"), ("write",), ()):
+            got = sorted(M.native(self.form, p, t) for p, ts in lists(*roles).items() for t in ts)
+            self.assertEqual(got, M.member_tools(self.conf, "alpha", roles, ro, self.form), roles)
+        self.assertNotIn("issue-close", lists("build", "review")["kb"], "an always_ask tool is never listed")
+        put(os.path.join(self.conf, "packs", "links.json"), json.dumps({"links": []}))
+        self.assertEqual(lists("build", "review"), {}, "no tool pack reaches the roles: no server")
+
+    def test_the_mcp_file_of_a_run_holds_the_tools_of_its_role(self):
+        """lib/packs_render.py run_config, the file lib/local_run.py writes for one member run: the shipped codex form, read back as TOML."""
+        import tomllib
+        import packs_render as R
+        with open(os.path.join(ROOT, "lib", "providers", "codex.json")) as f:
+            mcp = json.load(f)["resources"]["mcp"]
+        got = R.run_config(self.conf, "alpha", ["review"], {"review": True}, mcp)
+        self.assertEqual(tomllib.loads(got["data"].decode()), {"mcp_servers": {
+            "all": {"url": "https://mcp.example.net/all", "enabled_tools": ["ping"]},
+            "kb": {"url": "https://mcp.example.net/kb", "enabled_tools": ["getStatus", "platform.list_items"]},
+            "look": {"url": "https://mcp.example.net/look", "enabled_tools": ["lookup"]}}})
+        self.assertEqual(got["tools"], M.member_tools(self.conf, "alpha", ["review"], {"review": True}, M.form_of(mcp)))
+        self.assertEqual(sorted(tomllib.loads(R.run_config(self.conf, "alpha", ["write"], {}, mcp)["data"].decode())["mcp_servers"]), ["all"])
+        with self.assertRaises(ValueError):
+            R.run_config(self.conf, "alpha", ["build"], {}, dict(mcp, tool_lists=None))        # no list in the entry: a run gets no server unheld
+        put(os.path.join(self.conf, "packs", "links.json"), json.dumps({"links": []}))
+        self.assertIsNone(R.run_config(self.conf, "alpha", ["build"], {}, mcp))
+
+    def test_a_codex_run_file_lists_raw_names_and_the_model_gets_the_mcp_names(self):
+        """The codex run file (packs_render.run_config): enabled_tools holds each tool as the server names it (a dot, a slash, a hyphen), the names the
+        model is given are the mcp__ form of permission_rule, two tools that name alike are given to no one, a tool the server lists but the pack does
+        not declare is never enabled, an always_ask tool never, and a read-only role never gets a write tool."""
+        import tomllib
+        import packs_render as R
+        with open(os.path.join(ROOT, "lib", "providers", "codex.json")) as f:
+            mcp = json.load(f)["resources"]["mcp"]
+        form = M.form_of(mcp)
+        # the server also lists drop_all, a write tool the pack does not declare (the approved listing names it)
+        self.tool("srv", {"read.doc": "always_allow", "repo/list": "always_allow", "x-y": "always_allow", "a.b": "always_allow", "a_b": "always_allow",
+                          "wipe-all": "auto", "ask_me": "always_ask"}, {"scope": "project", "project": "alpha"}, write_ok=True,
+                  listing={"read.doc": "read-only", "repo/list": "read-only", "x-y": "read-only", "a.b": "read-only", "a_b": "read-only", "wipe-all": "write",
+                           "ask_me": "read-only", "drop_all": "write"})
+        put(os.path.join(self.conf, "packs", "links.json"), json.dumps({"links": self.links}))
+
+        def run(role, ro):
+            got = R.run_config(self.conf, "alpha", [role], {role: ro}, mcp)
+            return tomllib.loads(got["data"].decode())["mcp_servers"]["srv"]["enabled_tools"], [t for t in got["tools"] if t.startswith("mcp__srv__")]
+        raw, names = run("build", False)
+        self.assertEqual(raw, ["read.doc", "repo/list", "wipe-all", "x-y"], "raw names; a.b and a_b (both mcp__srv__a_b) and ask_me are left out")
+        self.assertEqual(names, ["mcp__srv__read_doc", "mcp__srv__repo_list", "mcp__srv__wipe-all", "mcp__srv__x-y"])
+        self.assertEqual(names, sorted(M.native(form, "srv", t) for t in raw), "each model-visible name is the mcp__ form of a raw one")
+        self.assertIn("stands for more than one tool", M.refusal(self.conf, "alpha", "build", False, "mcp__srv__a_b", form) or "", "the collision is refused to the member")
+        self.assertIsNotNone(M.refusal(self.conf, "alpha", "build", False, "mcp__srv__ask_me", form), "an always_ask tool is refused")
+        self.assertIsNotNone(M.refusal(self.conf, "alpha", "build", False, "mcp__srv__drop_all", form), "a tool the pack does not declare is refused")
+        raw, names = run("review", True)
+        self.assertEqual(raw, ["read.doc", "repo/list", "x-y"], "a read-only role: the declared reads only, never wipe-all or drop_all")
+        for role, ro in (("build", False), ("review", True)):
+            self.assertFalse({"drop_all", "ask_me", "a.b", "a_b"} & set(run(role, ro)[0]), role)
+
     def test_a_pack_counts_only_as_it_was_approved(self):
         p = os.path.join(self.conf, "packs", "tools", "ops.json")
         self.assertIsNone(M.refusal(self.conf, "alpha", "build", False, "mcp__ops__list_jobs", self.form))

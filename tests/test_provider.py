@@ -98,6 +98,89 @@ class Shipped(Tree):
         self.assertEqual((CODE["family"], CODE["models"]), ("claude", {"catalog": "claude", "use": "alias"}))
         self.assertEqual((PLATFORM["family"], PLATFORM["models"]), ("claude", {"catalog": "claude", "use": "id"}))
 
+    def test_the_openai_catalog_validates_and_every_tier_resolves_to_a_model_of_its_pattern(self):
+        cat = shipped("catalogs/openai.json")
+        self.assertEqual(fails(cat, "openai"), [])
+        self.assertEqual(P.catalog("openai"), cat)
+        self.assertEqual((cat["family"], cat["pattern"]), ("openai", "^gpt-[a-z0-9.-]+$"))
+        self.assertEqual(set(cat["tiers"]), set(P.TIERS))                       # every tier named, none left to '*'
+        self.assertEqual({t: v["model"] for t, v in cat["tiers"].items()},
+                         {"fast": "gpt-6-luna", "balanced": "gpt-6.1-terra", "deep": "gpt-6.1-sol", "frontier": "gpt-6-astra"})
+        for t, row in cat["tiers"].items():
+            with self.subTest(t):
+                self.assertRegex(row["model"], cat["pattern"])
+                self.assertIsNone(row["alias"])                                 # the runtimes of the family pass the id
+                self.assertIsNone(row["verified_on"])                           # not verified until a real run
+        self.assertEqual(cat["effort"], {e: e for e in ("low", "medium", "high", "xhigh", "max")})
+        broken = copy.deepcopy(cat)
+        broken["tiers"]["deep"]["model"] = "o9-deep"
+        self.assertTrue(any("does not match pattern" in m for m in fails(broken, "openai")), fails(broken, "openai"))
+
+    def test_the_codex_runtime_is_data_only_held_by_its_sandbox_and_dates_only_what_the_live_checks_showed(self):
+        cx = shipped("codex.json")
+        self.assertEqual(fails(cx, "codex"), [])
+        # the live checks of codex-cli 0.167.1 on 2026-11-11: a write run end to end, the read-only sandbox, the token usage
+        live = ("headless_dispatch", "read_only_barrier", "cost_report")
+        self.assertEqual({c: cl["verified_on"] for c, cl in cx["capabilities"].items() if cl["verified_on"]}, dict.fromkeys(live, "2026-11-11"))
+        for c in live:
+            self.assertTrue(cx["capabilities"][c]["source"].startswith("codex-cli 0.167.1, "), c)       # the CLI version the evidence was seen with
+            self.assertIn("2026-11-11", cx["capabilities"][c]["source"], c)
+        unverified = ("per_dispatch_model_override", "per_dispatch_effort_override", "skills", "mcp")
+        self.assertEqual(sorted(m.split(":")[0] for m in warns(cx, "codex")), sorted("capabilities.%s.verified_on" % c for c in unverified))
+        for c in ("per_dispatch_model_override", "per_dispatch_effort_override"):                    # accepted in a run, but no event names it
+            self.assertIn("not observable", cx["capabilities"][c]["note"], c)
+        self.assertIn("not its reads", cx["capabilities"]["read_only_barrier"]["note"])               # the barrier holds shell writes only
+        self.assertIn("outside the sandbox", cx["capabilities"]["read_only_barrier"]["note"])
+        self.assertEqual({c: cl["value"] for c, cl in cx["capabilities"].items()},
+                         {"headless_dispatch": "yes", "per_dispatch_model_override": "yes", "per_dispatch_effort_override": "yes",
+                          "read_only_barrier": "partial", "skills": "yes", "resume": "no", "mcp": "yes", "cost_report": "partial"})
+        self.assertEqual((cx["family"], cx["surface"], cx["models"], cx["agents"]), ("openai", "local", {"catalog": "openai", "use": "id"}, None))
+        self.assertNotIn("adapter", cx)                                                             # data only: no code of its own
+        self.assertEqual(cx["resources"]["mcp"], {"file": "config.toml", "format": "toml", "root_pointer": "/mcp_servers", "entry": {"url": "{url}"},   # the tools held per server
+                                                  "permission_rule": "mcp__{server}__{tool}", "name_key": "nonword-underscore", "tool_lists": {"allow": "/enabled_tools"}})
+        self.assertEqual((cx["session"], cx["renderers"]), ({"render_target": "codex"}, {"packs": {"label": "Codex"}}))   # no launch line: a session is not started on the render
+        self.assertEqual(P.cap("codex", "local", "mcp"), "unverified")
+        self.assertEqual(cx["barrier"], {"kind": "sandbox-args"})
+        self.assertTrue(P.has_class_args(cx["dispatch"]))
+        self.assertIsNone(P.barrier_claim_problem(cx))
+        self.assertEqual(P.cap("codex", "local", "read_only_barrier"), "partial")                   # partial and dated: a read-only role is held
+        self.assertEqual(P.effective("codex", "local", "read_only_barrier"), "partial")
+        self.assertEqual((P.cap("codex", "local", "headless_dispatch"), P.cap("codex", "local", "cost_report")), ("yes", "partial"))
+        self.assertEqual(P.cap("codex", "local", "per_dispatch_model_override"), "unverified")
+        d = cx["dispatch"]
+        self.assertEqual((d["mode"], d["prompt"], d["output"]["format"], d["timeout_s"], d["cwd"]), ("command", {"via": "stdin"}, "jsonl", 3600, "{clone}"))
+        self.assertEqual(d["output"]["usage"], {"select": {"/type": "turn.completed"}, "tokens": "/usage",                  # tokens only: cost_report partial
+                                                "fields": ["input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens", "reasoning_output_tokens"]})
+        self.assertEqual(d["argv"], ["codex", "exec", "--json", "--ephemeral",
+                                     "--ignore-rules", "--strict-config",   # no execpolicy rules file of any place; a baseline key this CLI does not know refuses the run
+                                     "-C", "{clone}",
+                                     {"if": "model", "then": ["-m", "{model}"]}, {"if": "effort", "then": ["-c", "model_reasoning_effort={effort}"]},
+                                     "-o", "{final_message}",            # the last message to a private file of the run; qargi publishes it
+                                     # a write member commits: its clone's .git is a writable root (the sandbox protects it otherwise); never a read-only one's
+                                     {"class": "write", "then": ["--sandbox", "workspace-write", "--add-dir", "{out_dir}", "--add-dir", "{clone}/.git"]},
+                                     {"class": "read-only", "then": ["--sandbox", "read-only"]}])
+        self.assertNotIn("class_argv", d)
+        # the run's CODEX_HOME/config.toml: the user-level configuration of the member's Codex, with a baseline every run gets, MCP or not
+        self.assertEqual({k: v for k, v in d["run_config"].items() if k != "baseline"}, {"in": "home", "file": "config.toml"})
+        base = d["run_config"]["baseline"]
+        self.assertEqual((base["approval_policy"], base["web_search"]), ("never", "disabled"))   # never asks (nobody answers), no hosted search
+        self.assertEqual(base["sandbox_workspace_write"], {"network_access": False, "exclude_slash_tmp": True, "exclude_tmpdir_env_var": False})  # TMPDIR only
+        self.assertEqual(base["features"], dict.fromkeys(["apps", "plugins", "remote_plugin", "hooks", "computer_use", "browser_use", "in_app_browser",
+                                                          "image_generation", "tool_suggest", "skill_mcp_dependency_install"], False))
+        self.assertEqual(base["skills"], {"bundled": {"enabled": False}})                    # no bundled skill (an installer, a creator) in a member
+        self.assertNotIn("mcp_servers", base)                                                # the servers come from the tool packs alone
+        self.assertNotIn("projects", base)                                                   # no trust entry: the clone's .codex/ is not loaded
+        self.assertEqual(P.run_config_problems(d, cx["resources"]), [])
+        self.assertFalse(any("dangerously" in a or "bypass" in a for a in d["argv"] if isinstance(a, str)))
+        # its sandbox mounts a /dev of its own: a run under /dev/shm leaves a read-only member blind, and a write member without its contract
+        self.assertEqual({k: v for k, v in d["hidden_paths"].items() if k != "note"}, {"prefixes": ["/dev"], "shown": {"write": ["clone", "out", "tmp"]}})
+        self.assertIn("/dev/shm", d["hidden_paths"]["note"])
+        self.assertEqual(P.hidden_paths_problems(d), [])
+        m = P.models_of("codex", "local")
+        self.assertEqual([P.model_for(m, t) for t in P.TIERS], ["gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-astra"])   # ids: the runtime passes ids
+        self.assertEqual(P.contract_addenda("codex", "local")[0].splitlines()[0], "# In a Codex run")
+        self.assertEqual(sorted(cx["notes"]), ["commands", "exploration", "identity", "message", "session-model", "skills-dir", "spawn"])
+
     def test_reserved_names_are_the_agent_types_the_claude_runtime_brings_itself(self):
         self.assertEqual(sorted(CODE["agents"]["reserved_names"]),
                          sorted("general-purpose explore plan statusline-setup claude-code-guide claude output-style-setup".split()))
@@ -248,6 +331,23 @@ class Barrier(Tree):
         state, text = self.rb("unver", "local")
         self.assertEqual(state, "refused")
         self.assertIn("not verified", text)
+
+    def test_the_shipped_codex_barrier_holds_by_its_date_and_an_undated_copy_is_refused(self):
+        os.makedirs(os.path.join(self.root, "catalogs"), exist_ok=True)
+        with open(os.path.join(self.root, "catalogs", "openai.json"), "w") as f:
+            json.dump(shipped("catalogs/openai.json"), f)
+        cx = shipped("codex.json")
+        cx["resources"].pop("contract_addenda", None)                                       # the files stay in the shipped directory
+        self.put("codex", cx)
+        state, text = self.rb("codex", "local", "alpha")
+        self.assertEqual(state, "partial")                                                  # dated: a read-only role is held, with the note
+        self.assertIn("not its reads", text)
+        cx["capabilities"]["read_only_barrier"]["verified_on"] = None                       # the same claim with the date removed
+        self.put("codex", cx)
+        state, text = self.rb("codex", "local", "alpha")
+        self.assertEqual(state, "refused")
+        self.assertIn("not verified", text)
+        self.assertIn("qargi provider accept codex --surface local --no-barrier --project alpha", text)
 
     def test_a_recorded_acceptance_allows_it_for_that_surface_only(self):
         self.answers("alpha", {"accept_no_barrier": {"cloud": self.ACC}})
@@ -477,6 +577,15 @@ class Cli(CliBase):
         self.assertIn("the review role cannot be served on cloud", out)
         self.assertEqual(q("check", "nope")[0], 1)
         self.assertEqual(json.loads(q("show", "claude-code", "--json")[1]), CODE)
+        rc, out, _ = q("list")
+        self.assertRegex(out, r"(?m)^codex\s+local\s+4 warnings$")                     # the four unverified claims, no failure
+        rc, out, _ = q("check", "codex")
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("the review role cannot be served", out)                       # the sandbox barrier is dated: partial, a review role is held
+        self.assertRegex(out, r"(?m)^  local: per_dispatch_model_override\s+unverified \(counts as no\)$")
+        self.assertNotRegex(out, r"(?m)^  local: (read_only_barrier|headless_dispatch|cost_report)\s")
+        for t, m in (("fast", "gpt-6-luna"), ("balanced", "gpt-6.1-terra"), ("deep", "gpt-6.1-sol"), ("frontier", "gpt-6-astra")):
+            self.assertEqual(q("model", "codex", "local", t)[:2], (0, m + "\n"), t)
 
 
 class Layout(Tree):
@@ -801,6 +910,77 @@ class Schema2(unittest.TestCase):
         bad({"transcripts": {"user_dir": "~/t", "usage": {"select": {"type": "assistant"}}}}, "resources.transcripts.usage.select: 'type' is not a JSON pointer")
         bad({"transcripts": {"user_dir": "~/t", "usage": {"tokens": "usage"}}}, "resources.transcripts.usage.tokens: 'usage' is not a JSON pointer")
         bad({"mcp": {"file": "../x.json"}}, "resources.mcp.file: '../x.json' is not a path inside the checkout")
+
+    def test_the_tool_lists_of_an_mcp_entry_are_pointers_the_renderer_can_write(self):
+        """resources.mcp.tool_lists (the tools of a server held in its own entry) and a TOML file's entry template: what the renderer can write, said
+        by provider check before a render is tried."""
+        good = {"file": "c.toml", "format": "toml", "root_pointer": "/servers", "entry": {"url": "{url}", "opts": {"timeout": 30, "on": True}},
+                "permission_rule": "mcp__{server}__{tool}", "name_key": "nonword-underscore", "tool_lists": {"allow": "/enabled_tools", "deny": "/opts/off"}}
+        self.assertEqual(fails(runtime(resources={"mcp": good}), "mylocal"), [])
+
+        def bad(change, needle):
+            self.one(runtime(resources={"mcp": dict(good, **change)}), needle, name="mylocal")
+        bad({"tool_lists": {}}, "resources.mcp.tool_lists: names neither an allow nor a deny list")
+        bad({"tool_lists": {"allow": "enabled_tools"}}, "resources.mcp.tool_lists.allow: 'enabled_tools' is not a JSON pointer into the entry")
+        bad({"tool_lists": {"allow": "/url"}}, "resources.mcp.tool_lists.allow: /url runs onto or through a value the entry template sets")
+        bad({"tool_lists": {"deny": "/url/x"}}, "resources.mcp.tool_lists.deny: /url/x runs onto or through a value the entry template sets")
+        bad({"tool_lists": {"allow": "/t", "deny": "/t"}}, "resources.mcp.tool_lists: allow and deny are the same place (/t)")
+        bad({"tool_lists": {"allow": "/t", "list": "/u"}}, "resources.mcp.tool_lists.list: additional property is not allowed")
+        bad({"permission_rule": None}, "resources.mcp.tool_lists: needs a permission_rule with {server} and {tool}")
+        bad({"permission_rule": "{server}"}, "resources.mcp.tool_lists: needs a permission_rule with {server} and {tool}")
+        bad({"entry": {"url": "{url}", "timeout": 1.5}}, "resources.mcp.entry.timeout: 1.5 cannot be written as TOML by the renderer")
+        bad({"entry": {"url": "{url}", "args": [1, 2]}}, "resources.mcp.entry.args: [1, 2] cannot be written as TOML by the renderer")
+        bad({"root_pointer": "servers"}, "resources.mcp.root_pointer: 'servers' is not a JSON pointer")
+        self.assertEqual(fails(runtime(resources={"mcp": dict(good, format="json", entry={"url": "{url}", "timeout": 1.5})}), "mylocal"), [])   # JSON holds a number
+        self.assertEqual(fails(runtime(resources={"mcp": dict(good, tool_lists=None)}), "mylocal"), [])
+
+    def test_the_mcp_file_of_a_run_needs_a_command_runtime_a_place_and_tool_lists(self):
+        mcp = {"file": "c.toml", "format": "toml", "root_pointer": "/servers", "entry": {"url": "{url}"}, "permission_rule": "mcp__{server}__{tool}",
+               "tool_lists": {"allow": "/enabled_tools"}}
+        home = {"env": "MY_HOME", "dir": ".my", "link": [{"from": "~/.my/auth.json", "to": "auth.json"}]}
+
+        def d(rc, **over):
+            r = runtime(resources={"mcp": over.pop("mcp", mcp)})
+            r["dispatch"].update(dict({"run_config": rc}, **over))
+            return r
+        self.assertEqual(fails(d({"in": "run", "file": "mcp.toml"}), "mylocal"), [])
+        self.assertEqual(fails(d({"in": "home", "file": "config.toml"}, home=home), "mylocal"), [])
+        self.assertEqual(fails(d(None), "mylocal"), [])
+
+        def bad(r, needle):
+            self.one(r, needle, name="mylocal")
+        bad(d({"in": "home", "file": "config.toml"}), "dispatch.run_config.in: home needs dispatch.home")
+        bad(d({"in": "home", "file": "auth.json"}, home=home), "dispatch.run_config.file: 'auth.json' is also a link of the run home")
+        bad(d({"in": "run", "file": "m.toml"}, mcp=dict(mcp, tool_lists=None)), "dispatch.run_config: needs resources.mcp with tool_lists")
+        bad(d({"in": "run", "file": "m.toml"}, mcp=None), "dispatch.run_config: needs resources.mcp with tool_lists")
+        bad(d({"in": "run", "file": "../m.toml"}), "dispatch.run_config.file: '../m.toml' does not match ^")
+        bad(d({"in": "elsewhere", "file": "m.toml"}), "dispatch.run_config.in: 'elsewhere' is not one of home, run")
+        bad(d({"in": "run", "file": "m.toml", "x": 1}), "dispatch.run_config.x: additional property is not allowed")
+        bad(d({"in": "run", "file": "m.toml"}, mode="in-session"), "dispatch.run_config: only a runtime that qargi local run starts")
+        self.assertEqual(P.run_config_problems({"mode": "command", "run_config": {"in": "run", "file": "a/b"}}, {"mcp": mcp}),
+                         ["dispatch.run_config.file: 'a/b' is not a plain file name (letters, digits, . _ and -, no /)"])
+
+    def test_the_baseline_of_a_run_file_is_settings_the_writer_takes_and_leaves_the_servers_to_the_packs(self):
+        mcp = {"file": "c.toml", "format": "toml", "root_pointer": "/servers", "entry": {"url": "{url}"}, "permission_rule": "mcp__{server}__{tool}",
+               "tool_lists": {"allow": "/enabled_tools"}}
+
+        def d(base, root="/servers"):
+            r = runtime(resources={"mcp": dict(mcp, root_pointer=root)})
+            r["dispatch"]["run_config"] = {"in": "run", "file": "c.toml", "baseline": base}
+            return r
+        good = {"ask": "never", "net": {"on": False, "roots": ["a"], "n": 3}}
+        self.assertEqual(fails(d(good), "mylocal"), [])
+        self.assertEqual(fails(d(None), "mylocal"), [])
+        self.assertEqual(fails(d({"a": {"other": 1}}, root="/a/servers"), "mylocal"), [])          # beside the servers, under the same table
+        self.one(d({}), "dispatch.run_config.baseline: {} is not a non-empty object of settings", name="mylocal")
+        self.one(d(["ask"]), 'dispatch.run_config.baseline: ["ask"] is not a non-empty object of settings', name="mylocal")
+        self.one(d({"x": {}}), "dispatch.run_config.baseline: baseline.x is an empty object, which sets nothing", name="mylocal")
+        self.one(d({"x": 1.5}), "dispatch.run_config.baseline.x: 1.5 cannot be written as TOML by the renderer", name="mylocal")
+        self.one(d({"x": [1, 2]}), "dispatch.run_config.baseline.x: [1, 2] cannot be written as TOML by the renderer", name="mylocal")
+        self.one(d({"servers": {"mine": {"url": "https://example.net"}}}), "dispatch.run_config.baseline: it sets /servers, where the MCP servers of the run go",
+                 name="mylocal")
+        self.one(d({"a": {"servers": {}}}, root="/a/servers"), "dispatch.run_config.baseline: it sets /a/servers", name="mylocal")
+        self.one(d({"a": "text"}, root="/a/servers"), "dispatch.run_config.baseline: it sets /a, where the MCP servers of the run go", name="mylocal")
 
     def test_an_exclusion_form_needs_the_keys_that_form_reads(self):
         def excl(e):
@@ -2904,6 +3084,234 @@ class EnvPass(LibraryBase):
         self.assertEqual(R.scan(d, {})["env_pass"], [])
 
 
+class RunHome(LibraryBase):
+    """dispatch.home: the member's own home directory under the run home, named by a variable, with files of the user's home linked into it
+    for the run. What may be named and linked is checked by the definition check and again by qargi local run (provider.home_problems)."""
+
+    CMD = {"mode": "command", "argv": ["fakecli", "run"], "prompt": {"via": "stdin"}, "output": {"format": "text"}}
+
+    def with_home(self, home, **disp):
+        return fake_runtime(dispatch=dict(self.CMD, home=home, **disp))
+
+    def test_the_codex_runtime_links_only_its_sign_in(self):
+        self.assertEqual(shipped("codex.json")["dispatch"]["home"], {"env": "CODEX_HOME", "dir": ".codex", "link": [{"from": "~/.codex/auth.json", "to": "auth.json"}]})
+        self.assertEqual(P.home_problems(shipped("codex.json")["dispatch"]["home"]), [])
+        self.assertEqual(fails(self.with_home({"env": "FAKECLI_HOME", "dir": ".fakecli"}), "fakecli"), [])                 # link is optional
+
+    def test_refusals(self):
+        ok_link = [{"from": "~/.fakecli/auth.json", "to": "auth.json"}]
+        cases = (
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": ok_link, "copy": True}, "dispatch.home.copy: additional property is not allowed"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.fakecli/auth.json", "to": "auth.json", "mode": "copy"}]}, "dispatch.home.link[0].mode: additional property"),
+            ({"dir": ".f"}, "missing required property 'env'"),
+            ({"env": "FAKECLI_HOME"}, "missing required property 'dir'"),
+            ({"env": "HOME", "dir": ".f"}, "dispatch.home.env: HOME is never set for a runtime"),
+            ({"env": "PATH", "dir": ".f"}, "dispatch.home.env: PATH is never set"),
+            ({"env": "GIT_DIR", "dir": ".f"}, "dispatch.home.env: GIT_DIR is never set"),
+            ({"env": "QARGI_CONF", "dir": ".f"}, "dispatch.home.env: QARGI_CONF is never set"),
+            ({"env": "XDG_CONFIG_HOME", "dir": ".f"}, "dispatch.home.env: XDG_CONFIG_HOME is never set"),
+            ({"env": "LD_PRELOAD", "dir": ".f"}, "dispatch.home.env: LD_PRELOAD is never set"),
+            ({"env": "TZ", "dir": ".f"}, "qargi local run sets it for every member"),
+            ({"env": "FAKECLI_HOME", "dir": "../out"}, "dispatch.home.dir: '../out' is not a directory inside the run home"),
+            ({"env": "FAKECLI_HOME", "dir": "/abs"}, "dispatch.home.dir: '/abs' is not a directory inside the run home"),
+            ({"env": "FAKECLI_HOME", "dir": "a/./b"}, "is not a directory inside the run home"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "/etc/fakecli/auth.json", "to": "auth.json"}]}, "is not a plain path under the home"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/../other/auth.json", "to": "auth.json"}]}, "is not a plain path under the home"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~", "to": "auth.json"}]}, "is not a plain path under the home"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.qargi/config/credentials/marshal_ed25519", "to": "k"}]}, "qargi's own configuration, state and credentials"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.qargi", "to": "q"}]}, "qargi's own configuration"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.ssh/id_ed25519", "to": "k"}]}, "the user's ssh keys"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.gnupg/private-keys-v1.d/x.key", "to": "k"}]}, "the user's keys"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.git-credentials", "to": "c"}]}, "stored git logins"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.config/gh/hosts.yml", "to": "h"}]}, "a forge credential"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.aws/credentials", "to": "c"}]}, "a cloud credential"),
+            # what runs as the user later: a member's write through the link lands in the source
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.bashrc", "to": "c"}]}, "a startup file of the user's shell"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.profile", "to": "c"}]}, "a startup file of the user's shell"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.zshrc", "to": "c"}]}, "a startup file of the user's shell"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.config/autostart/x.desktop", "to": "c"}]}, "what the user's desktop starts"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.config/systemd/user/x.service", "to": "c"}]}, "what the user's service manager starts"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.local/bin/fakecli", "to": "c"}]}, "the user's own programs"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.fakecli/auth.json", "to": "sub/auth.json"}]}, "is not a plain file name"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.fakecli/auth.json", "to": ".."}]}, "is not a plain file name"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": ok_link + [{"from": "~/.fakecli/other.json", "to": "auth.json"}]}, "'auth.json' is linked twice"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.f/%d" % i, "to": "f%d" % i} for i in range(9)]}, "more than the 8"),
+        )
+        for home, needle in cases:
+            with self.subTest(needle):
+                d = self.with_home(home)
+                f = fails(d, "fakecli")
+                self.assertTrue(any(needle in m for m in f), f)
+                self.assertTrue(any(needle in m for m in P.home_problems(home)), P.home_problems(home))     # what qargi local run asks too
+        self.assertEqual([m for m in fails(self.with_home({"env": "FAKECLI_HOME", "dir": ".f", "link": ok_link})) if "dispatch.home" in m], [])
+
+    def test_the_variable_is_not_also_handed_on_and_only_a_command_runtime_has_a_run_home(self):
+        d = self.with_home({"env": "FAKECLI_HOME", "dir": ".f"}, env_pass=["FAKECLI_HOME"])
+        self.assertTrue(any("is also in dispatch.env_pass" in m for m in fails(d, "fakecli")), fails(d, "fakecli"))
+        d = fake_runtime(dispatch={"mode": "in-session", "home": {"env": "FAKECLI_HOME", "dir": ".f"}})
+        self.assertTrue(any("only a runtime that qargi local run starts" in m for m in fails(d, "fakecli")), fails(d, "fakecli"))
+
+    def test_a_definition_with_a_refused_run_home_cannot_be_imported(self):
+        d = self.with_home({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.ssh/id_ed25519", "to": "k"}]})
+        rc, out, err = self.q("import", self.source(doc=d))
+        self.assertEqual(rc, 1, (out, err))
+        self.assertIn("FAIL: dispatch.home.link[0].from: '~/.ssh/id_ed25519' is never linked into a run", out)
+        self.assertFalse(self.stored("fakecli"))
+
+
+class OutputUsage(unittest.TestCase):
+    """dispatch.output.usage: the rule qargi local run reads the runtime's own token reports with, from its JSON lines on standard output."""
+
+    RULE = {"select": {"/type": "turn.completed"}, "tokens": "/usage", "fields": ["input_tokens", "output_tokens"]}
+
+    def with_output(self, output):
+        return fake_runtime(dispatch={"mode": "command", "argv": ["fakecli", "run"], "prompt": {"via": "stdin"}, "output": output})
+
+    def test_a_rule_on_json_lines_passes(self):
+        self.assertEqual([m for m in fails(self.with_output({"format": "jsonl", "usage": self.RULE}), "fakecli") if "output" in m], [])
+        self.assertEqual(P.output_usage_problems({"format": "jsonl", "usage": self.RULE}, shape=True), [])
+
+    def test_refusals(self):
+        cases = (
+            ({"format": "text", "usage": self.RULE}, "dispatch.output.format must be jsonl"),
+            ({"usage": self.RULE}, "dispatch.output.format must be jsonl"),
+            ({"format": "jsonl", "usage": {"select": {"/type": "x"}, "fields": ["a"]}}, "missing required property 'tokens'"),
+            ({"format": "jsonl", "usage": {"tokens": "/usage"}}, "missing required property 'fields'"),
+            ({"format": "jsonl", "usage": dict(self.RULE, tokens="usage")}, "dispatch.output.usage.tokens: 'usage' is not a JSON pointer"),
+            ({"format": "jsonl", "usage": dict(self.RULE, model="model")}, "dispatch.output.usage.model: 'model' is not a JSON pointer"),
+            ({"format": "jsonl", "usage": dict(self.RULE, select={"type": "x"})}, "dispatch.output.usage.select: 'type' is not a JSON pointer"),
+            ({"format": "jsonl", "usage": dict(self.RULE, skip={"/a": {"b": 1}})}, "dispatch.output.usage.skip: '/a' is not a JSON pointer to a text"),
+        )
+        for output, needle in cases:
+            with self.subTest(needle):
+                f = fails(self.with_output(output), "fakecli")
+                self.assertTrue(any(needle in m for m in f), f)
+                self.assertTrue(any(needle in m for m in P.output_usage_problems(output, shape=True)), P.output_usage_problems(output, shape=True))
+
+    def test_the_schema_and_local_run_refuse_an_unknown_key_or_a_wrong_shape(self):
+        for output, needle in (({"format": "jsonl", "usage": dict(self.RULE, sum="all")}, "dispatch.output.usage.sum: additional property is not allowed"),
+                               ({"format": "jsonl", "usage": dict(self.RULE, fields=[])}, "dispatch.output.usage.fields"),
+                               ({"format": "json"}, "dispatch.output.format"),
+                               ({"format": "jsonl", "lines": 3}, "dispatch.output.lines: additional property is not allowed")):
+            with self.subTest(needle):
+                f = fails(self.with_output(output), "fakecli")
+                self.assertTrue(any(needle in m for m in f), f)
+        self.assertTrue(any("sum: additional property" in m for m in P.output_usage_problems({"format": "jsonl", "usage": dict(self.RULE, sum="all")}, shape=True)))
+        self.assertTrue(any("fields" in m for m in P.output_usage_problems({"format": "jsonl", "usage": dict(self.RULE, fields="input_tokens")}, shape=True)))
+
+    def test_the_transcript_rule_shares_the_node_and_its_pointer_checks(self):
+        sch = P.schema2()
+        self.assertEqual(sch["$defs"]["res_transcripts"]["properties"]["usage"], {"$ref": "#/$defs/usage"})
+        self.assertEqual(sch["$defs"]["provider"]["properties"]["dispatch"]["properties"]["output"]["properties"]["usage"], {"$ref": "#/$defs/usage"})
+        d = copy.deepcopy(CODE)
+        d["resources"]["transcripts"]["usage"]["tokens"] = "message/usage"
+        self.assertTrue(any("resources.transcripts.usage.tokens: 'message/usage' is not a JSON pointer" in m for m in fails(d, "claude-code")), fails(d, "claude-code"))
+
+
+class HiddenPaths(unittest.TestCase):
+    """dispatch.hidden_paths: the places a runtime's sandbox hides from its member, and the run paths each class shows anyway. A run path the
+    member of the class works with that lies there refuses the run (qargi local prepare and local run ask provider.hidden_run_paths)."""
+
+    HP = {"prefixes": ["/hid"], "shown": {"write": ["clone", "out", "tmp"]}, "note": "the sandbox mounts its own /hid"}
+
+    def with_hidden(self, hp, mode="command"):
+        return fake_runtime(dispatch={"mode": mode, "argv": ["fakecli", "run"], "prompt": {"via": "stdin"}, "output": {"format": "text"}, "hidden_paths": hp})
+
+    def paths(self, run, tmp):
+        return {"clone": run + "/clone", "contract": run + "/contract", "git": run + "/git", "out": run + "/out", "tmp": tmp}
+
+    def test_a_declaration_passes_and_each_wrong_shape_is_refused(self):
+        self.assertEqual([m for m in fails(self.with_hidden(self.HP), "fakecli") if "hidden_paths" in m], [])
+        self.assertEqual(P.hidden_paths_problems({"mode": "command", "hidden_paths": self.HP}), [])
+        cases = (
+            (dict(self.HP, prefixes=["hid"]), "dispatch.hidden_paths.prefixes"),
+            (dict(self.HP, prefixes=["/"]), "dispatch.hidden_paths.prefixes"),
+            (dict(self.HP, prefixes=["/hid/"]), "dispatch.hidden_paths.prefixes"),
+            (dict(self.HP, prefixes=["/a/../hid"]), "is not an absolute, normalised path other than /"),
+            (dict(self.HP, prefixes=[]), "dispatch.hidden_paths.prefixes"),
+            (dict(self.HP, shown={"review": ["clone"]}), "dispatch.hidden_paths.shown"),
+            (dict(self.HP, shown={"write": ["task"]}), "dispatch.hidden_paths.shown.write"),
+            ({"prefixes": ["/hid"]}, "note"),
+            (dict(self.HP, note=""), "dispatch.hidden_paths.note"),
+            (dict(self.HP, bind=["/x"]), "dispatch.hidden_paths.bind: additional property is not allowed"),
+        )
+        for hp, needle in cases:
+            with self.subTest(needle=needle, hp=hp):
+                f = fails(self.with_hidden(hp), "fakecli")
+                self.assertTrue(any(needle in m for m in f), f)
+                self.assertTrue(any(needle.split(":")[0] in m for m in P.hidden_paths_problems({"mode": "command", "hidden_paths": hp})))   # what local run asks too
+        f = fails(self.with_hidden(self.HP, mode="in-session"), "fakecli")
+        self.assertTrue(any("dispatch.hidden_paths: only a runtime that qargi local run starts" in m for m in f), f)
+
+    def test_a_read_only_member_needs_its_clone_contract_and_git_wrapper_and_not_tmp(self):
+        d = {"hidden_paths": self.HP}
+        hits = P.hidden_run_paths(d, "read-only", self.paths("/hid/s/qargi.1", "/hid/qargi-run.1"))
+        self.assertEqual([h[0] for h in hits], ["clone", "contract", "git"])                  # OUT and TMP: a read-only member writes neither
+        self.assertEqual({h[3] for h in hits}, {"/hid"})
+        self.assertEqual(P.hidden_run_paths(d, "read-only", self.paths("/srv/s/qargi.1", "/hid/qargi-run.1")), [])
+
+    def test_a_write_member_is_refused_only_for_what_its_class_does_not_show(self):
+        d = {"hidden_paths": self.HP}
+        self.assertEqual([h[0] for h in P.hidden_run_paths(d, "write", self.paths("/hid/s/qargi.1", "/hid/qargi-run.1"))], ["contract", "git"])
+        self.assertEqual(P.hidden_run_paths(d, "write", self.paths("/srv/s/qargi.1", "/hid/qargi-run.1")), [])   # its TMP is bound in: shown
+        bare = {"hidden_paths": dict(self.HP, shown={})}
+        self.assertEqual([h[0] for h in P.hidden_run_paths(bare, "write", self.paths("/srv/s/qargi.1", "/hid/qargi-run.1"))], ["tmp"])
+
+    def test_the_prefix_is_a_whole_path_and_the_prefix_itself_counts(self):
+        d = {"hidden_paths": dict(self.HP, shown={})}
+        self.assertEqual(P.hidden_run_paths(d, "write", self.paths("/hidden/s/qargi.1", "/hidx")), [])
+        self.assertEqual([h[0] for h in P.hidden_run_paths(d, "write", dict(self.paths("/srv/r", "/srv/t"), tmp="/hid"))], ["tmp"])
+        self.assertEqual(P.hidden_run_paths({}, "read-only", self.paths("/hid/r", "/hid/t")), [])                  # nothing declared: nothing hidden
+        self.assertEqual(P.hidden_run_paths({"hidden_paths": None}, "read-only", self.paths("/hid/r", "/hid/t")), [])
+
+    def test_a_link_into_a_hidden_place_is_found_by_its_real_path(self):
+        tmp = os.path.realpath(tempfile.mkdtemp(prefix="hid."))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        os.makedirs(os.path.join(tmp, "hid", "s"))
+        os.symlink(os.path.join(tmp, "hid", "s"), os.path.join(tmp, "lnk"))
+        d = {"hidden_paths": dict(self.HP, prefixes=[os.path.join(tmp, "hid")])}
+        hits = P.hidden_run_paths(d, "read-only", self.paths(os.path.join(tmp, "lnk", "qargi.1"), os.path.join(tmp, "t")))
+        self.assertEqual([(h[0], h[2]) for h in hits], [(n, os.path.join(tmp, "hid", "s", "qargi.1", n)) for n in ("clone", "contract", "git")])
+        msg = P.hidden_message("fakecli", "read-only", hits, d)
+        self.assertIn("CONTRACT %s (its real path %s) lies under %s" % (os.path.join(tmp, "lnk", "qargi.1", "contract"), os.path.join(tmp, "hid", "s", "qargi.1", "contract"),
+                                                                      os.path.join(tmp, "hid")), msg)
+
+    def test_the_message_names_the_path_the_prefix_the_note_and_the_fix(self):
+        d = {"hidden_paths": dict(self.HP, shown={})}
+        msg = P.hidden_message("fakecli", "write", P.hidden_run_paths(d, "write", self.paths("/hid/s/qargi.1", "/hid/t")), d)
+        self.assertIn("this write run of fakecli", msg)
+        self.assertIn("hides /hid from the member's commands (dispatch.hidden_paths: the sandbox mounts its own /hid)", msg)
+        self.assertIn("CONTRACT /hid/s/qargi.1/contract lies under /hid", msg)
+        self.assertIn("TMP /hid/t lies under /hid", msg)
+        self.assertIn("Nothing was started", msg)
+        self.assertIn("--scratch on another filesystem", msg)
+        self.assertIn("~/.cache/qargi-runs", msg)
+        self.assertNotIn("/tmp", msg)                     # a scratch there is not shown to work for any runtime, so it is not advised
+        self.assertIn("QARGI_RUN_TMP", msg)
+        only_run = P.hidden_message("fakecli", "read-only", P.hidden_run_paths(d, "read-only", self.paths("/hid/s/qargi.1", "/srv/t")), d)
+        self.assertNotIn("QARGI_RUN_TMP", only_run)
+
+    def test_codex_refuses_a_run_under_dev_shm_except_a_write_run_whose_tmp_alone_is_there(self):
+        def cli(*a):
+            r = subprocess.run([sys.executable, "-I", os.path.join(LIB, "provider.py"), "hidden-paths", "codex", "local"] + list(a), capture_output=True, text=True)
+            return r.returncode, r.stderr
+        rc, err = cli("read-only", "/dev/shm/s/qargi.XXXXXX", "/dev/shm/qargi-run.XXXXXX")
+        self.assertEqual(rc, 2, err)
+        self.assertIn("this read-only run of codex", err)
+        self.assertIn("CONTRACT /dev/shm/s/qargi.XXXXXX/contract lies under /dev", err)
+        self.assertIn("--scratch on another filesystem", err)
+        rc, err = cli("write", "/dev/shm/s/qargi.XXXXXX", "/dev/shm/qargi-run.XXXXXX")
+        self.assertEqual((rc, "CONTRACT /dev/shm/s/qargi.XXXXXX/contract" in err, "  CLONE" in err, "  TMP" in err), (2, True, False, False), err)
+        # the scratch on disk: the default TMP on /dev/shm is no matter, a read-only member writes none and a write member's is bound in
+        self.assertEqual(cli("read-only", "/srv/scratch/qargi.XXXXXX", "/dev/shm/qargi-run.XXXXXX"), (0, ""))
+        self.assertEqual(cli("write", "/srv/scratch/qargi.XXXXXX", "/dev/shm/qargi-run.XXXXXX"), (0, ""))
+        self.assertEqual(cli("review", "/srv/scratch/qargi.XXXXXX", "/srv/t")[0], 2)                 # a class, not a role
+        self.assertIn("usage:", cli("review", "/srv/scratch/qargi.XXXXXX", "/srv/t")[1])
+        r = subprocess.run([sys.executable, "-I", os.path.join(LIB, "provider.py"), "hidden-paths", "claude-code", "local", "read-only",
+                            "/dev/shm/s/qargi.XXXXXX", "/dev/shm/t"], capture_output=True, text=True)
+        self.assertEqual((r.returncode, r.stderr), (0, ""))                                       # a runtime that declares nothing hides nothing
+
+
 class Attest(LibraryBase):
     def setUp(self):
         super().setUp()
@@ -3737,6 +4145,145 @@ class JsonEscapedControls(LibraryBase):
             self.assertEqual(err.getvalue(), "qargi: a\\x1b[2Kb\n", mod.__name__)
 
 
+class SandboxArgs(unittest.TestCase):
+    """lib/conformance/cases.py on its own: the case barrier-sandbox-args (the argv qargi local run builds for a read-only run carries the
+    read-only arguments and sets their flags nowhere else) and how its gate weighs in the verdict on read_only_barrier (CAP_GATES)."""
+
+    def setUp(self):
+        from conformance import cases
+        self.C = cases
+
+    def case(self, d, name="codex"):
+        return self.C.barrier_sandbox_args(d, None, name, False, False)["barrier-sandbox-args"]
+
+    def codex(self, **disp):
+        d = copy.deepcopy(shipped("codex.json"))
+        d["dispatch"].update(disp)
+        return d
+
+    def argv(self, ro=("--sandbox", "read-only"), write=("--sandbox", "workspace-write"), common=()):
+        return ["codex", "exec"] + list(common) + [{"class": "write", "then": list(write)}, {"class": "read-only", "then": list(ro)}]
+
+    def test_the_shipped_codex_passes_and_names_the_arguments_of_each_class(self):
+        r = self.case(shipped("codex.json"))
+        self.assertEqual(r["status"], "pass", r)
+        self.assertEqual(r["notes"], ["a read-only run carries --sandbox read-only (a write run: --sandbox workspace-write --add-dir /conformance/run/out "
+                                      "--add-dir /conformance/run/clone/.git); that the runtime's sandbox holds is attested"])
+
+    def test_only_the_barrier_kind_sandbox_args_has_the_case(self):
+        for bar in (None, {"kind": "hook"}, {"kind": "adapter"}, "sandbox-args"):
+            with self.subTest(bar):
+                d = shipped("codex.json")
+                d["barrier"] = bar
+                self.assertEqual(self.case(d), {"status": "na", "notes": []})
+
+    def test_a_runtime_that_is_not_a_command_runtime_fails(self):
+        r = self.case(self.codex(mode="in-session"))
+        self.assertEqual(r["status"], "fail")
+        self.assertIn("only a command dispatch passes (dispatch.mode is \"in-session\")", r["notes"][0])
+
+    def test_a_dispatch_qargi_local_run_would_refuse_fails_with_its_reason(self):
+        for argv, needle in ((["codex", "{agent_file}", {"class": "read-only", "then": ["--sandbox", "read-only"]}], "uses {agent_file}"),
+                             (["codex", {"class": "admin", "then": ["--x"]}], "{\"class\": \"admin\"}")):
+            with self.subTest(needle):
+                r = self.case(self.codex(argv=argv))
+                self.assertEqual(r["status"], "fail")
+                self.assertTrue(r["notes"][0].startswith("qargi local run would refuse the dispatch: "), r)
+                self.assertIn(needle, r["notes"][0])
+
+    def test_a_read_only_run_with_no_arguments_of_its_own_fails(self):
+        for label, disp in (("no read-only group", {"argv": ["codex", "exec", {"class": "write", "then": ["--sandbox", "workspace-write"]}]}),
+                            ("an empty group", {"argv": self.argv(ro=())}),
+                            ("a group inside an if-group a local run never fills", {"argv": ["codex", {"if": "session_id", "then": [{"class": "read-only", "then": ["-x"]}]}]})):
+            with self.subTest(label):
+                r = self.case(self.codex(**disp))
+                self.assertEqual(r["status"], "fail", r)
+                self.assertTrue(r["notes"][0].startswith("a read-only run carries no arguments of its own"), r)
+
+    def test_a_flag_of_the_read_only_arguments_set_again_elsewhere_fails(self):
+        for label, common in (("--sandbox", ["--sandbox", "danger-full-access"]), ("--sandbox=VALUE", ["--sandbox=danger-full-access"]),
+                              ("the same read-only flags", ["--sandbox", "read-only"])):
+            with self.subTest(label):
+                r = self.case(self.codex(argv=self.argv(common=common)))
+                self.assertEqual(r["status"], "fail", r)
+                self.assertIn("a read-only run also sets --sandbox outside its read-only arguments", r["notes"][0])
+        r = self.case(self.codex(argv=["codex", {"if": "model", "then": ["--sandbox", "danger-full-access"]}, {"class": "read-only", "then": ["--sandbox", "read-only"]}]))
+        self.assertEqual(r["status"], "fail", "a flag inside an if-group that has a value counts too")
+
+    def test_a_key_value_setting_is_a_setting_of_its_own_per_key(self):
+        ro = ("-c", "sandbox_mode=read-only")
+        r = self.case(self.codex(argv=self.argv(ro=ro, write=("-c", "sandbox_mode=workspace-write"), common=["-c", "model_reasoning_effort={effort}"])))
+        self.assertEqual(r["status"], "pass", "-c of another key is another setting: %s" % r)
+        r = self.case(self.codex(argv=self.argv(ro=ro, common=["-c", "sandbox_mode=danger-full-access"])))
+        self.assertEqual(r["status"], "fail", r)
+        self.assertIn("also sets -c sandbox_mode outside", r["notes"][0])
+
+    def test_class_argv_counts_as_the_read_only_arguments_in_either_form(self):
+        for ca in (["--sandbox", "read-only"], {"read-only": ["--sandbox", "read-only"], "write": ["--sandbox", "workspace-write"]}):
+            with self.subTest(ca):
+                r = self.case(self.codex(argv=["codex", "exec"], class_argv=ca))
+                self.assertEqual(r["status"], "pass", r)
+                self.assertIn("a read-only run carries --sandbox read-only", r["notes"][0])
+
+    def test_a_write_grant_the_read_only_run_carries_too_fails(self):
+        w = ("--sandbox", "workspace-write", "--add-dir", "{out_dir}", "--add-dir", "{clone}/.git")
+        for label, argv in (("in the read-only group", self.argv(ro=("--sandbox", "read-only", "--add-dir", "{clone}/.git"), write=w)),
+                            ("in the common arguments", self.argv(write=w, common=["--add-dir", "{clone}/.git"])),
+                            ("written FLAG=VALUE", self.argv(write=w, common=["--add-dir={clone}/.git"]))):
+            with self.subTest(label):
+                r = self.case(self.codex(argv=argv))
+                self.assertEqual(r["status"], "fail", r)
+                self.assertIn("a read-only run carries --add-dir /conformance/run/clone/.git of the write class", r["notes"][0])
+        r = self.case(self.codex(argv=self.argv(ro=("--sandbox", "read-only", "--add-dir", "{run_dir}/scratch"), write=w)))
+        self.assertEqual(r["status"], "pass", "a directory of its own is not the write class's grant: %s" % r)
+
+    def test_the_write_arguments_do_not_count_against_the_read_only_run(self):
+        r = self.case(self.codex(argv=self.argv(write=("--sandbox", "workspace-write", "--sandbox", "x"))))
+        self.assertEqual(r["status"], "pass", r)
+
+    # ---- CAP_GATES: a gate can only hold read_only_barrier back
+    def verdict(self, results, claim="partial"):
+        doc = {"capabilities": {"read_only_barrier": {"value": claim, "note": "n"}}}
+        return self.C.verdicts(doc, {k: {"status": v, "notes": []} for k, v in results.items()})["read_only_barrier"]
+
+    def test_barrier_sandbox_args_is_a_gate_of_read_only_barrier_and_backs_nothing(self):
+        self.assertEqual(self.C.CAP_GATES["read_only_barrier"], ("barrier-sandbox-args",))
+        self.assertNotIn("barrier-sandbox-args", [i for ids in self.C.CAP_CASES.values() for i in ids])
+
+    def test_a_failed_gate_leaves_the_barrier_unverified_whatever_else_passed(self):
+        for others in ({}, {"barrier-hook": "pass"}, {"barrier-hook": "pass", "barrier-adapter": "pass"}):
+            with self.subTest(others):
+                ok, why = self.verdict(dict(others, **{"barrier-sandbox-args": "fail"}))
+                self.assertFalse(ok)
+                self.assertEqual(why, "failed: barrier-sandbox-args")
+
+    def test_a_passed_gate_alone_verifies_nothing_and_says_the_runtime_side_is_attested(self):
+        for others in ({}, {"barrier-hook": "na", "barrier-adapter": "na"}):
+            with self.subTest(others):
+                ok, why = self.verdict(dict(others, **{"barrier-sandbox-args": "pass"}))
+                self.assertFalse(ok)
+                self.assertTrue(why.startswith("barrier-sandbox-args passed, which shows qargi's side only"), why)
+                self.assertIn("qargi provider attest records a check you ran", why)
+        self.assertFalse(self.verdict({"barrier-sandbox-args": "pass"}, claim="yes")[0])
+
+    def test_a_passed_gate_beside_a_case_leaves_the_verdict_to_the_case(self):
+        self.assertEqual(self.verdict({"barrier-sandbox-args": "pass", "barrier-hook": "pass"}), (True, "cases barrier-hook"))
+        self.assertEqual(self.verdict({"barrier-sandbox-args": "pass", "barrier-hook": "fail"}), (False, "failed: barrier-hook"))
+        ok, why = self.verdict({"barrier-sandbox-args": "pass", "barrier-hook": "skip"})
+        self.assertFalse(ok)
+        self.assertTrue(why.startswith("could not run: barrier-hook"), why)
+
+    def test_a_gate_that_does_not_apply_is_no_gate(self):
+        self.assertEqual(self.verdict({"barrier-sandbox-args": "na", "barrier-hook": "pass"}), (True, "cases barrier-hook"))
+        ok, why = self.verdict({"barrier-sandbox-args": "na"})
+        self.assertFalse(ok)
+        self.assertTrue(why.startswith("no case applies to this definition"), why)
+
+    def test_an_unclaimed_barrier_gets_no_verdict(self):
+        doc = {"capabilities": {"read_only_barrier": {"value": "no", "note": "n"}}}
+        self.assertEqual(self.C.verdicts(doc, {"barrier-sandbox-args": {"status": "fail", "notes": []}}), {})
+
+
 class Review(unittest.TestCase):
     """lib/conformance/review.py on its own."""
 
@@ -3825,6 +4372,74 @@ class Review(unittest.TestCase):
         d = self.tree({"definition.json": "{}"})
         rv = self.R.scan(d, {"adapter": "../evil"})
         self.assertTrue(any("is not a path inside the pack" in m for m in rv["fail"]))
+
+    def home_lines(self, definition):
+        rv = self.R.scan(self.tree({"definition.json": "{}"}), definition)
+        return rv, [ln for ln in self.R.lines(rv, "t") if ln.startswith("run home")]
+
+    def test_the_review_names_the_run_home_and_each_file_it_links_in(self):
+        rv, got = self.home_lines(shipped("codex.json"))
+        self.assertEqual(rv["home"], {"env": "CODEX_HOME", "dir": ".codex", "links": ["~/.codex/auth.json as auth.json"]})
+        self.assertEqual(got, ["run home (dispatch.home): CODEX_HOME is RUN/home/.codex; files of your home linked into it for each run: ~/.codex/auth.json as auth.json"])
+        two = {"dispatch": {"home": {"env": "FAKE_HOME", "dir": ".f", "link": [{"from": "~/.f/a.json", "to": "a.json"}, {"from": "~/.f/b", "to": "b"}]}}}
+        self.assertEqual(self.home_lines(two)[1], ["run home (dispatch.home): FAKE_HOME is RUN/home/.f; files of your home linked into it for each run: "
+                                                   "~/.f/a.json as a.json, ~/.f/b as b"])
+
+    def test_a_run_home_without_links_says_none_and_a_definition_without_one_has_no_line(self):
+        self.assertEqual(self.home_lines({"dispatch": {"home": {"env": "FAKE_HOME", "dir": ".f"}}})[1],
+                         ["run home (dispatch.home): FAKE_HOME is RUN/home/.f; files of your home linked into it for each run: none"])
+        for d in (None, {}, {"dispatch": {"mode": "command"}}, {"dispatch": {"home": "~/.f"}}, {"dispatch": "x"}):
+            with self.subTest(d):
+                rv, got = self.home_lines(d)
+                self.assertIsNone(rv["home"])
+                self.assertEqual(got, [])
+
+    def test_the_run_home_line_names_the_files_and_never_reads_them(self):
+        """The line is made from the definition's names only: a linked file's content, or where it resolves, is never in the review."""
+        home = tempfile.mkdtemp(prefix="home.", dir=self.tmp)
+        os.makedirs(os.path.join(home, ".codex"))
+        with open(os.path.join(home, ".codex", "auth.json"), "w") as f:
+            f.write("SENTINEL-sign-in-content")
+        with mock.patch.dict(os.environ, {"HOME": home}):
+            rv, got = self.home_lines(shipped("codex.json"))
+        text = "\n".join(self.R.lines(rv, "t"))
+        self.assertNotIn("SENTINEL-sign-in-content", text)
+        self.assertNotIn(home, text)
+        self.assertIn("~/.codex/auth.json as auth.json", got[0])
+
+    def eval_flags(self, files, definition=None):
+        return [f for f in self.R.scan(self.tree(files), definition)["flags"] if ": eval or exec: " in f]
+
+    def test_the_words_exec_and_eval_in_a_definitions_data_are_not_flagged(self):
+        """`codex exec` is a command line in argv and a word of the notes, not code: the shipped codex definition has no eval or exec flag."""
+        with open(os.path.join(LIB, "providers", "codex.json")) as f:
+            text = f.read()
+        self.assertGreaterEqual(text.count("exec"), 8)
+        self.assertEqual(self.eval_flags({"definition.json": text}, json.loads(text)), [])
+        prose = {"dispatch": {"argv": ["tool", "exec", "--json", "eval", "{clone}"]}, "notes": {"x": "run `tool exec` or tool eval 'a b'; the exec verb (exec mode)"}}
+        self.assertEqual(self.eval_flags({"definition.json": json.dumps(prose, indent=1)}, prose), [])
+
+    def test_code_in_a_definitions_data_is_still_flagged(self):
+        for label, argv in (("eval of a command substitution", ["sh", "-c", "eval \"$(cat run.sh)\""]), ("exec of a variable", ["sh", "-c", "exec $CMD"]),
+                            ("exec of a backquote", ["sh", "-c", "exec `cat x`"]), ("a python exec call", ["python3", "-c", "exec(open('x').read())"]),
+                            ("eval with a blank before the call", ["python3", "-c", "eval (x)"]), ("os.system", ["python3", "-c", "import os; os.system('x')"]),
+                            ("shell=True", ["python3", "-c", "import subprocess; subprocess.run('x', shell=True)"])):
+            with self.subTest(label):
+                d = {"dispatch": {"argv": argv}}
+                got = self.eval_flags({"definition.json": json.dumps(d, indent=1)}, d)
+                self.assertEqual(len(got), 1, got)
+                self.assertTrue(got[0].startswith("definition.json:"), got)
+
+    def test_code_in_a_pack_is_flagged_as_before_even_when_it_reads_like_a_command_line(self):
+        """Only the definition's data is read as data: a script, another JSON file, or a definition.json below the pack root is code to read."""
+        script = "#!/bin/sh\nexec python3 -I \"$0.py\" \"$@\"\ncodex exec --json\n"
+        got = self.eval_flags({"definition.json": "{}", "adapter": script, "conformance/fixtures/x.json": "[\"codex\", \"exec\"]\n",
+                               "sub/definition.json": "{\"argv\": [\"codex\", \"exec\"]}\n", "run.py": "exec(src)\n"})
+        self.assertEqual(sorted(f.split(": ")[0] for f in got), ["adapter:2", "adapter:3", "conformance/fixtures/x.json:1", "run.py:1", "sub/definition.json:1"])
+
+    def test_a_control_character_in_a_run_home_name_is_shown_escaped(self):
+        rv, got = self.home_lines({"dispatch": {"home": {"env": "F\x1b[2K", "dir": ".f‮", "link": [{"from": "~/.f/a\x07", "to": "a"}]}}})
+        self.assertEqual(got, ["run home (dispatch.home): F\\x1b[2K is RUN/home/.f\\u202e; files of your home linked into it for each run: ~/.f/a\\x07 as a"])
 
 
 if __name__ == "__main__":
