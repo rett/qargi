@@ -2,8 +2,8 @@
  "purpose": "Harden lead-side handling of member-controlled run metadata and Git state; close normal-exit process cleanup and missing-class gaps",
  "started": "2026-11-12T05:10:27Z",
  "goal": "Harden lead-side handling of member-controlled run metadata and Git state; close normal-exit process cleanup and missing-class gaps",
- "plan": "Codex rs-core: fail-closed run classes, bounded normal-exit process cleanup, safe lead-side Git inspection; targeted checks and patch intake; independent Opus advisor; feature checkpoint only after task verification",
- "note": "Codex configured; feature at 1ed7524. rs-core qargi.twg39L returned BLOCKED partial patches c07519ac/7a7e8ab4. Lead local verify and review check pass; NOT APPLIED. Intake /tmp/qargi-run-safety-intake-1.md requires Git inspection, docs table/changelog repair, cleanup-order regression and class consumer coverage. Opus design review /tmp/qargi-run-safety-opus-design-review.md. Next brief /tmp/qargi-run-safety-git-task.md.",
+ "plan": "Complete rs-complete, verify every open run, inspect patches, qargi apply and independently rerun DONE; merge verified task into feature; sync and whole-suite checkpoint; Opus sign-off; finish into develop under owner instruction to integrate fully tested/reviewed features",
+ "note": "Campaign active. Owner MCP decision: explicit server read-only evidence required. Owner superseded queue-only integration: lead merges fully tested and reviewed features into develop through qargi. No release/tag/site publication authorized. Active run qargi.Q0C72y; prior qargi.twg39L remains preserved, not applied. Campaign state /tmp/qargi-campaign-2026-11-11.json.",
  "status": "active",
  "lead": {
   "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
@@ -12,11 +12,11 @@
   "since": "2026-11-12T05:10:27Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-12T05:41:37Z",
+ "renewed_at": "2026-11-12T05:42:50Z",
  "finished_at": null,
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 6,
- "updated_at": "2026-11-12T05:41:37Z",
+ "rev": 7,
+ "updated_at": "2026-11-12T05:42:50Z",
  "feature": "run-safety",
  "project": "qargi"
 }
