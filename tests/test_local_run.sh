@@ -1063,6 +1063,12 @@ cat > "$T/bin/codex" <<SH
 #!/usr/bin/env bash
 cat > /dev/null
 [ "\$(cat "$T/ir-mode" 2>/dev/null)" = quick ] && exit 0
+if [ "\$(cat "$T/ir-mode" 2>/dev/null)" = child ]; then
+  (trap '[ -L "\$CODEX_HOME/auth.json" ] && echo present > "$T/ir-link-seen"; exit 0' TERM; echo ready > "$T/ir-ready"; while :; do sleep 0.1; done) &
+  echo \$! > "$T/ir-child"
+  while [ ! -f "$T/ir-ready" ]; do sleep 0.01; done
+  exit 0
+fi
 if [ "\$(cat "$T/ir-mode" 2>/dev/null)" = stubborn ]; then (trap '' TERM; exec sleep 3571) & echo \$! > "$T/ir-child"; else sleep 3571 & echo \$! > "$T/ir-child"; fi
 echo \$\$ > "$T/ir-member"
 wait
@@ -1086,6 +1092,11 @@ ir_after() { # SIGNAL CODE: the run ended interrupted by SIGNAL with exit CODE, 
   for p in "$T/ir-member" "$T/ir-child"; do [ ! -s "$p" ] || kill -KILL "$(cat "$p")" 2>/dev/null; done
 }
 echo quick > "$T/ir-mode"; out=$($DA local run "$RUN" 2>&1) || no "ir1 first run: $out"
+echo child > "$T/ir-mode"; out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q '^OUTCOME=ok$' <<<"$out" && [ "$(jq -r .group_left "$RUN/dispatch.json")" = 0 ] \
+  && gone "$(cat "$T/ir-child")" && [ "$(cat "$T/ir-link-seen")" = present ] && [ ! -L "$LINK" ]; } \
+  && ok "a normally exiting member's child is stopped before the link is removed" || no "normal child: rc=$rc $out"
+[ ! -s "$T/ir-child" ] || kill -KILL "$(cat "$T/ir-child")" 2>/dev/null || true
 for s in TERM HUP; do
   if ir_start; then kill -"$s" "$(jq -r .runner "$RUN/dispatch.json")"; ir_after "$s" "$([ "$s" = TERM ] && echo 143 || echo 129)"; else no "SIG$s: the member did not start: $(cat "$T/ir.out")"; fi
 done

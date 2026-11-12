@@ -1827,6 +1827,9 @@ def run_it(plan, run):
                             sig.armed = True             # from here a signal stops the member where the lead waits for it
                             sig.check()
                             code = proc.wait(timeout=plan["timeout_s"])
+                            sig.armed = False
+                            if group_left(proc.pid):
+                                left = kill_group(proc)
                         except subprocess.TimeoutExpired:
                             sig.armed = False
                             timed_out = True
@@ -1853,6 +1856,8 @@ def run_it(plan, run):
         home_left = clear_home(run, home, made) if home else []
     if outcome is None:
         outcome = "failed" if timed_out else plan["exit"].get(str(code), plan["exit"].get("*", "failed"))
+        if left and outcome == "ok":
+            outcome = "failed"
     seconds = round(time.time() - started, 1)
     gitdir = None
     if plan["git_watch"] and proc is not None:
