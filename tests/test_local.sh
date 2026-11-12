@@ -230,6 +230,17 @@ rm -rf "$TM6" "$T/elsewhere"
 # link leads to), a link inside its path, and a run directory that is itself a link all leave that other directory as it was
 VIC=$T/victim; mkdir -p "$VIC/sub"; echo keep > "$VIC/sub/precious"
 mkc() { ./bin/qargi local prepare --repo "$T/r2" --base main --slug "$1" --scratch "$T" | sed -n '1,/^$/s/^\(RUN\|TMP\)=//p' | paste -sd' '; }
+read -r CU _ <<<"$(mkc unknown-git)"; echo '{}' > "$CU/out/manifest.json"
+printf 'corrupt head\n' > "$CU/clone/.git/HEAD"
+out=$(./bin/qargi local verify "$CU" 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q 'state is unknown' <<<"$out" && [ ! -f "$CU/verified" ] \
+  && ok "verify does not record a corrupt clone as zero commits" || no "verify corrupt clone: rc=$rc $out"
+out=$(./bin/qargi local clean "$CU" 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q 'state is unknown' <<<"$out" && [ -d "$CU" ] \
+  && ok "clean keeps a clone whose commit state is unknown" || no "clean corrupt clone: rc=$rc $out"
+out=$(./bin/qargi local clean "$CU" --discard 2>&1); rc=$?
+[ "$rc" = 0 ] && [ ! -e "$CU" ] && grep -q 'commit state is unknown' <<<"$out" \
+  && ok "discard explicitly drops a clone with unknown commit state" || no "discard corrupt clone: rc=$rc $out"
 ln -s "$VIC" "$T/qargi-run.abcde"; ln -s "$VIC" "$T/qargi-run.abcdef"
 mkdir -p "$T/realroot/qargi-run.ghijkl"; touch "$T/realroot/qargi-run.ghijkl/precious"; ln -s "$T/realroot" "$T/linkroot"
 n=0

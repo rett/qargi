@@ -1519,29 +1519,90 @@ def out_has_patches(out):
 WORKTREE_TIMEOUT = 60
 
 
+def clone_git(clone, args):
+    """Run bounded inspection of a plain prepared clone, or return None when unknown.
+
+    These checks are not a snapshot: another process can replace metadata between
+    the checks and Git's reads. No process outside the original group is contained.
+    """
+    clone = os.path.abspath(clone)
+    gd = os.path.join(clone, ".git")
+    try:
+        path = os.path.sep
+        for part in clone.strip(os.path.sep).split(os.path.sep) + [".git"]:
+            path = os.path.join(path, part)
+            if not stat.S_ISDIR(os.lstat(path).st_mode):
+                return None
+        for name in ("commondir", "config.worktree", "objects/info/alternates", "objects/info/http-alternates"):
+            if os.path.lexists(os.path.join(gd, name)):
+                return None
+        for name in ("objects", "objects/info", "refs"):
+            p = os.path.join(gd, name)
+            if os.path.lexists(p) and not stat.S_ISDIR(os.lstat(p).st_mode):
+                return None
+        deadline, count = time.monotonic() + WORKTREE_TIMEOUT, 0
+        def walk_error(error):
+            raise error
+        for top in ("objects", "refs"):
+            for root, dirs, files in os.walk(os.path.join(gd, top), followlinks=False, onerror=walk_error):
+                for name in dirs + files:
+                    count += 1
+                    if count > 100000 or time.monotonic() > deadline:
+                        return None
+                    mode = os.lstat(os.path.join(root, name)).st_mode
+                    if not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
+                        return None
+        for name in ("HEAD", "config", "index", "packed-refs"):
+            p = os.path.join(gd, name)
+            if not os.path.lexists(p):
+                if name in ("HEAD", "config"):
+                    return None
+            elif not stat.S_ISREG(os.lstat(p).st_mode):
+                return None
+        fd = os.open(os.path.join(gd, "config"), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as f:
+            data = f.read(GIT_CONFIG_MAX + 1)
+        if len(data) > GIT_CONFIG_MAX:
+            return None
+        entries = config_entries(data)
+        if entries is None or any(k.startswith(("include.", "includeif.")) for k in entries):
+            return None
+        env = {"PATH": PE.DEFAULT_PATH, "HOME": "/nonexistent", "LC_ALL": "C", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null",
+               "GIT_ATTR_NOSYSTEM": "1", "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0", "GIT_ALLOW_PROTOCOL": "",
+               "GIT_NO_LAZY_FETCH": "1", "GIT_SSH_COMMAND": "false", "GIT_ASKPASS": "false", "GIT_DIR": gd, "GIT_WORK_TREE": clone}
+        return subprocess.run(["git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"] + args,
+                              cwd=clone, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              timeout=WORKTREE_TIMEOUT, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def clone_commits(clone, branches=False):
+    args = ["rev-list", "--count"] + (["--branches"] if branches else []) + ["HEAD", "--not", "--remotes=origin"]
+    r = clone_git(clone, args)
+    if r is None or r.returncode or not r.stdout.strip().isdigit():
+        return None
+    return int(r.stdout.strip())
+
+
 def worktree_changes(clone):
     """None (it cannot be told), or (tracked, untracked): the paths of the clone with uncommitted changes to tracked files (staged or not, deleted
     included) and the untracked files git does not ignore. The clone is a member's to write, its .git included: git runs on it with no system or
     global configuration, the work tree named outright (not the clone's core.worktree), no fsmonitor and every filter driver the clone's
     configuration names emptied, so nothing the member put in its configuration runs; it reads and writes nothing else (no optional locks)."""
-    if not os.path.isdir(clone) or os.path.islink(clone) or os.path.islink(os.path.join(clone, ".git")) or not os.path.isdir(os.path.join(clone, ".git")):
-        return None
-    env = {"PATH": clean_path(), "HOME": "/nonexistent", "LC_ALL": "C", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_ATTR_NOSYSTEM": "1",
-           "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0", "GIT_DIR": os.path.join(clone, ".git"), "GIT_WORK_TREE": clone}
-    def git(args):
-        return subprocess.run(["git"] + args, cwd=clone, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                              timeout=WORKTREE_TIMEOUT, check=False)
     try:
-        cf = git(["config", "-z", "--name-only", "--get-regexp", r"^filter\."])
+        cf = clone_git(clone, ["config", "-z", "--name-only", "--get-regexp", r"^filter\."])
+        if cf is None or cf.returncode not in (0, 1):
+            return None
         off = ["-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-c", "core.hooksPath=/dev/null"]
         for name in sorted({k.decode("utf-8", "replace")[len("filter."):].rpartition(".")[0] for k in cf.stdout.split(b"\0") if k.startswith(b"filter.")}):
             if not name or "=" in name:
                 return None                                  # a driver that cannot be emptied on the command line: git is not run over it
             off += [a for k in ("clean", "smudge", "process") for a in ("-c", "filter.%s.%s=" % (name, k))] + ["-c", "filter.%s.required=false" % name]
-        st = git(off + ["status", "--porcelain=v1", "-z", "--no-renames", "--ignore-submodules=all", "--untracked-files=all"])
+        st = clone_git(clone, off + ["status", "--porcelain=v1", "-z", "--no-renames", "--ignore-submodules=all", "--untracked-files=all"])
     except (OSError, subprocess.SubprocessError):
         return None
-    if st.returncode != 0:
+    if st is None or st.returncode != 0:
         return None
     tracked, untracked = [], []
     for ent in st.stdout.split(b"\0"):
@@ -1619,6 +1680,10 @@ def git_state(clone):
             os.close(fd)
     tree = {}
     try:
+        for name in ("commondir", "config.worktree", "objects/info/alternates", "objects/info/http-alternates"):
+            p = os.path.join(gd, name)
+            if os.path.lexists(p):
+                tree[name] = _git_sig(p)
         for top in GIT_WATCHED:
             p = os.path.join(gd, top)
             if not os.path.lexists(p):
@@ -1650,7 +1715,7 @@ def config_entries(data):
         p = os.path.join(d, "config")
         with open(p, "wb") as f:
             f.write(data)
-        env = {"PATH": clean_path(), "HOME": "/nonexistent", "LC_ALL": "C", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_TERMINAL_PROMPT": "0"}
+        env = {"PATH": PE.DEFAULT_PATH, "HOME": "/nonexistent", "LC_ALL": "C", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_TERMINAL_PROMPT": "0"}
         r = subprocess.run(["git", "config", "--file", p, "--no-includes", "--list", "-z"], cwd=d, env=env, stdin=subprocess.DEVNULL,
                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=WORKTREE_TIMEOUT, check=False)
     except (OSError, subprocess.SubprocessError):
@@ -1865,7 +1930,9 @@ def run_it(plan, run):
     work = None
     if plan["class"] == "write" and outcome == "ok" and not out_has_patches(out):
         ch = worktree_changes(os.path.join(run, "clone"))
-        if ch is not None and (ch[0] or ch[1]):
+        if ch is None:
+            outcome, error = "refused", "the clone's worktree state is unknown; inspection failed"
+        elif ch[0] or ch[1]:
             work = {"tracked": len(ch[0]), "untracked": len(ch[1]), "patches": False, "refused": bool(ch[0])}
             if ch[0]:                                    # a change to a tracked file left uncommitted with nothing collected is a refusal, never a
                 outcome = "refused"                      # finished task; new files never added (untracked) are only reported

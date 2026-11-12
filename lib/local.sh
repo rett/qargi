@@ -863,8 +863,11 @@ WRAP
     # copy, which exists only for a passed run.
     NOREC='' EMPTY=''
     if [ -z "$SAVED" ] && [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ]; then
-      ncm=$(git -C "$RUN/clone" rev-list --count --branches HEAD --not --remotes=origin 2>/dev/null || echo 0)
-      if [ "${ncm:-0}" -gt 0 ] && [ -z "$(find "$RUN/out" -maxdepth 2 -name '*.patch' 2>/dev/null | head -1)" ] && ! out_has_report "$RUN/out"; then
+      ncm=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from local_run import clone_commits; n = clone_commits(sys.argv[2], True); sys.exit(1) if n is None else print(n)' "$(dirname "$0")" "$RUN/clone" </dev/null) || ncm=''
+      if [ -z "$ncm" ]; then
+        EMPTY="qargi: cannot inspect the clone's commits; the state is unknown, so this run is not verified"
+        NOREC=1
+      elif [ "$ncm" -gt 0 ] && [ -z "$(find "$RUN/out" -maxdepth 2 -name '*.patch' 2>/dev/null | head -1)" ] && ! out_has_report "$RUN/out"; then
         EMPTY="qargi: OUT is empty: the member did not collect. $RUN/clone holds $ncm commit(s) past BASE_SHA, but $RUN/out holds no patches and no report. The member's DONE needs \`ls OUT/patches\` to list the patches (git format-patch --binary BASE_SHA..HEAD into OUT/patches, then the manifest and report). This run is not verified, and apply and close need a passing verify: send it back to collect and verify again, or take the commits yourself without running git in the clone (a member that could write its .git could set it to run a program as you): make a clean copy with git clone --no-local $RUN/clone, as git(1) advises under SECURITY, take them from there and drop the run with qargi local clean RUN --discard. $NOREPORT_CAUSE"
         NOREC=1
       fi
@@ -1083,10 +1086,14 @@ WRAP
     acc=''; [ "$vrc" != 0 ] || acc=$(sed -n -e '/per runs\.owned_refs)$/s/^  //p' -e '/per runs\.owned_refs)$/!s/^  /accepted, the lead'"'"'s own move: /p' <<<"$vout")   # what verify accepted, named again when the run is cleaned
     # finished work is never dropped before it is merged: commits in the clone must be applied (review apply) and the applied tip must
     # be on a branch other than agent/*, in the real repository. --discard is the deliberate way to drop them.
-    nc=$(git -C "$RUN/clone" rev-list --count HEAD --not --remotes=origin 2>/dev/null || echo 0)
-    if [ "${nc:-0}" -gt 0 ] && [ -n "$(reg_get "$RUN" closed)" ]; then
+    nc=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from local_run import clone_commits; n = clone_commits(sys.argv[2]); sys.exit(1) if n is None else print(n)' "$(dirname "$0")" "$RUN/clone" </dev/null) || nc=''
+    if [ -z "$nc" ]; then
+      [ -n "$DISCARD" ] || die "cannot inspect commits in $RUN/clone: state is unknown, so the run is kept (--discard drops it on purpose)"
+      echo "qargi: warning: commit state is unknown; $RUN is dropped on purpose" >&2
+    fi
+    if [ -n "$nc" ] && [ "$nc" -gt 0 ] && [ -n "$(reg_get "$RUN" closed)" ]; then
       echo "qargi: note: $RUN was closed as $(reg_get "$RUN" closed_by): its $nc commit(s) are taken as applied by hand" >&2
-    elif [ "${nc:-0}" -gt 0 ]; then
+    elif [ -n "$nc" ] && [ "$nc" -gt 0 ]; then
       if [ -n "$DISCARD" ]; then echo "qargi: dropped $nc unmerged commit(s) of $RUN on purpose" >&2
       else
         [ -f "$RUN/applied" ] || die "$RUN holds $nc commit(s) that were never applied: qargi review apply $RUN, then qargi feature merge, then clean (--discard drops them on purpose)"
@@ -1128,10 +1135,11 @@ WRAP
     res=$(home_residue "$RUN")   # links a start of local run left in the run home: rm removes a link, never what it points to
     # what the clone holds that no commit has (new files never added, changes to tracked files), read the way local run reads it (nothing the member put
     # in the clone's git configuration runs): removed with the run, so it is said
-    wt=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from local_run import worktree_changes; c = worktree_changes(sys.argv[2]); print("%d %d" % (len(c[0]), len(c[1])) if c else "0 0")' \
-      "$(dirname "$0")" "$RUN/clone" 2>/dev/null </dev/null) || wt='0 0'
+    wt=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from local_run import worktree_changes; c = worktree_changes(sys.argv[2]); print("%d %d" % (len(c[0]), len(c[1])) if c is not None else "unknown unknown")' \
+      "$(dirname "$0")" "$RUN/clone" 2>/dev/null </dev/null) || wt='unknown unknown'
     read -r wtt wtu _ <<<"$wt"
     rm -rf --one-file-system -- "$RUN"
+    [ "$wtt" != unknown ] || echo "qargi: warning: the removed clone's worktree state was unknown" >&2
     [ -z "$res" ] || echo "qargi: note: removed with the run what its run home held: $(paste -sd ';' - <<<"$res" | LC_ALL=C tr -d '\000-\037\177')" >&2
     if [[ ${wtu:-0} =~ ^[1-9][0-9]*$ ]] || [[ ${wtt:-0} =~ ^[1-9][0-9]*$ ]]; then
       echo "qargi: warning: removed with the run what no commit had: $RUN/clone held ${wtu:-0} untracked file(s) (new files never added) and ${wtt:-0} uncommitted change(s) to tracked files; to keep such work, copy the files out of the clone before clean (never run git in a write member's clone)" >&2

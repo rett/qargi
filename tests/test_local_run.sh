@@ -1018,17 +1018,17 @@ REALGIT=$(command -v git); mkdir -p "$T/fgit"
 cat > "$T/fgit/git" <<SH
 #!/usr/bin/env bash
 printf '%s\n' "ARGS \$*" "WT=\${GIT_WORK_TREE-} GD=\${GIT_DIR-} NOSYS=\${GIT_CONFIG_NOSYSTEM-} GLOBAL=\${GIT_CONFIG_GLOBAL-} LOCKS=\${GIT_OPTIONAL_LOCKS-}" >> "$T/fgit.log"
-case " \$* " in *" config "*) cat "$T/fgit.names"; exit 0;; esac
+case " \$* " in *" config --file "*) exec "$REALGIT" "\$@";; *" config "*) cat "$T/fgit.names"; exit 0;; esac
 exec "$REALGIT" "\$@"
 SH
 chmod 755 "$T/fgit/git"; : > "$T/fgit.log"; printf 'c\n' > "$CLONE/tracked.txt"; printf 'filter.evil.clean\0filter.a.b.process\0' > "$T/fgit.names"
-got=$(PATH="$T/fgit:$PATH" python3 -I -c 'import sys; sys.path.insert(0, "lib"); import local_run as L; print(L.worktree_changes(sys.argv[1]))' "$CLONE" 2>&1)
+got=$(python3 -I -c 'import sys; sys.path.insert(0, "lib"); import local_run as L; L.PE.DEFAULT_PATH = sys.argv[2] + ":" + L.PE.DEFAULT_PATH; print(L.worktree_changes(sys.argv[1]))' "$CLONE" "$T/fgit" 2>&1)
 st=$(grep '^ARGS .*status' "$T/fgit.log")
 { [ "$got" = "(['tracked.txt'], [])" ] && grep -q -- '-c core.fsmonitor=false' <<<"$st" && grep -q -- '-c filter.evil.clean= -c filter.evil.smudge= -c filter.evil.process= -c filter.evil.required=false' <<<"$st" \
   && grep -q -- '-c filter.a.b.process=' <<<"$st" && grep -qx "WT=$CLONE GD=$CLONE/.git NOSYS=1 GLOBAL=/dev/null LOCKS=0" "$T/fgit.log"; } \
   && ok "the lead's git status of the clone turns off fsmonitor and every filter driver the clone names, and names the work tree itself" || no "worktree git: $got $(cat "$T/fgit.log")"
 printf 'filter.x=y.clean\0' > "$T/fgit.names"
-got=$(PATH="$T/fgit:$PATH" python3 -I -c 'import sys; sys.path.insert(0, "lib"); import local_run as L; print(L.worktree_changes(sys.argv[1]))' "$CLONE" 2>&1)
+got=$(python3 -I -c 'import sys; sys.path.insert(0, "lib"); import local_run as L; L.PE.DEFAULT_PATH = sys.argv[2] + ":" + L.PE.DEFAULT_PATH; print(L.worktree_changes(sys.argv[1]))' "$CLONE" "$T/fgit" 2>&1)
 [ "$got" = None ] && ok "a filter driver whose name cannot be emptied on the command line: git status is not run, the state is unknown" || no "bad filter name: $got $(cat "$T/fgit.log")"
 git -C "$CLONE" checkout -q tracked.txt; rm -rf "$T/fgit" "$T/fgit.log" "$T/fgit.names" "$T/wu-mode" "$T/wu-final.md" "$T/bin/codex"
 # a new file never added is not a refusal, so a clean of such a run removes it: never silently
@@ -1344,6 +1344,48 @@ out=$($DA local run "$T" --dry-run 2>&1); rc=$?; [ "$rc" != 0 ] && grep -q 'RUN 
 out=$($DA local run "$RUN" --dry-run --project other 2>&1); rc=$?; [ "$rc" != 0 ] && ok "the project is not an option" || no "--project accepted: $out"
 rm -f "$T/c/projects/rproj.json"
 out=$($DA local run "$RUN" --dry-run --task "$T/other-task.md" 2>&1); rc=$?; [ "$rc" = 2 ] && grep -q 'no stored project has the repository' <<<"$out" && ok "a run whose repository belongs to no stored project is refused" || no "no project: rc=$rc $out"
+
+got=$(python3 -I - "$T/r" "$T" <<'PY'
+import os, shutil, subprocess, sys
+sys.path.insert(0, os.path.abspath("lib"))
+import local_run as L
+source, root = sys.argv[1:]
+clone = os.path.join(root, "inspect")
+subprocess.run(["git", "clone", "--no-hardlinks", "-q", source, clone], check=True)
+gd = os.path.join(clone, ".git")
+assert L.clone_commits(clone) == 0
+assert L.worktree_changes(clone) == ([], [])
+before = L.git_state(clone)
+for name in ("commondir", "config.worktree", "objects/info/alternates", "objects/info/http-alternates"):
+    path = os.path.join(gd, name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f: f.write(source + "\n")
+    assert L.clone_commits(clone) is None and L.worktree_changes(clone) is None
+    assert any(name in x for x in L.git_changes(before, L.git_state(clone)))
+    os.unlink(path)
+head = os.path.join(gd, "HEAD")
+saved = open(head, "rb").read()
+os.unlink(head); os.mkfifo(head)
+assert L.clone_commits(clone) is None
+os.unlink(head)
+with open(head, "wb") as f: f.write(b"invalid head\n")
+assert L.clone_commits(clone) is None
+with open(head, "wb") as f: f.write(saved)
+marker = os.path.join(root, "helper-ran")
+cfg = os.path.join(gd, "config")
+with open(cfg, "a") as f:
+    f.write('\n[core]\n fsmonitor = touch %s\n sshCommand = touch %s\n[include]\n path = %s\n' % (marker, marker, os.path.join(root, "outside-config")))
+assert L.clone_commits(clone) is None and L.worktree_changes(clone) is None
+assert not os.path.exists(marker)
+shutil.rmtree(gd)
+with open(gd, "w") as f: f.write("gitdir: " + os.path.join(source, ".git") + "\n")
+assert L.clone_commits(clone) is None
+os.unlink(gd); os.symlink(os.path.join(source, ".git"), gd)
+assert L.clone_commits(clone) is None
+print("inspection: PASS")
+PY
+); rc=$?
+[ "$rc" = 0 ] && [ "$got" = 'inspection: PASS' ] && ok "clone inspection refuses redirection, special files and corrupt HEAD without running helpers" || no "clone inspection: rc=$rc $got"
 
 rm -rf "$T"
 exit $fail
