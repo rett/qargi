@@ -850,20 +850,22 @@ WRAP
       RUN=${1:-}; [ -f "$RUN/refs.before" ] || usage_die "verify needs a RUN dir made by prepare"
       SRC=$RUN
     fi
-    RCLASS=$(run_class "$RUN") || exit 3
+    RCLASS=''
+    if [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ]; then RCLASS=$(run_class "$RUN") || exit 3; fi
     # a read-only run's product is a report, never patches: patches in its output are not to be applied or accepted
     if [ "$RCLASS" = read-only ] && [ -n "$(find "$SRC/out" -maxdepth 2 \( -name '*.patch' -o -name run.bundle \) 2>/dev/null | head -1)" ]; then
       echo "qargi: $RUN is a read-only run ($(cat "$SRC/ability" 2>/dev/null || echo review)) and its output holds patches. A read-only run's product is a report, never patches: read $SRC/out/report.md, and do not apply or accept the patches." >&2
       exit 2
     fi
-    marshal_touch_run "$RUN"   # the lead's verify keeps its lease on the feature the run is based on
+    [ -n "${QARGI_VERIFY_REFS_ONLY:-}" ] || marshal_touch_run "$RUN"   # observation grants no authority and renews no lease
     # the member did not collect: the clone holds commits past BASE_SHA and OUT holds neither patches nor a report. The refs are compared all the same (a run
     # that broke out and did not collect still gets its ref verdict) and said next to the message, but nothing is recorded: the run is not verified, and apply
     # and close need a passing verify. (clean asks verify for the refs alone, QARGI_VERIFY_REFS_ONLY: it has its own check for the manifest.) Not for a saved
     # copy, which exists only for a passed run.
     NOREC='' EMPTY=''
+    [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ] || NOREC=1
     if [ -z "$SAVED" ] && [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ]; then
-      ncm=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from local_run import clone_commits; n = clone_commits(sys.argv[2], True); sys.exit(1) if n is None else print(n)' "$(dirname "$0")" "$RUN/clone" </dev/null) || ncm=''
+      ncm=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from local_run import clone_commits; why = []; n = clone_commits(sys.argv[2], True, why); print("inspection: " + "; ".join(why), file=sys.stderr) if n is None else None; sys.exit(1) if n is None else print(n)' "$(dirname "$0")" "$RUN/clone" </dev/null) || ncm=''
       if [ -z "$ncm" ]; then
         EMPTY="qargi: cannot inspect the clone's commits; the state is unknown, so this run is not verified"
         NOREC=1
@@ -894,13 +896,13 @@ WRAP
       echo "$EMPTY" >&2
       exit $((crc == 0 ? 1 : 2))
     elif [ "$crc" = 0 ]; then
-      reg_mark "$RUN" verified "$(now)"   # the registry says so after the run directory is gone (marshal status, handoff: "verified", never "not verified")
+      [ -n "${QARGI_VERIFY_REFS_ONLY:-}" ] || reg_mark "$RUN" verified "$(now)"   # refs-only observation never verifies or saves output
       if [ -s "$SRC/refs.accepted" ]; then
         if grep -q 'per runs\.owned_refs)$' "$SRC/refs.accepted"; then echo "refs differ from the snapshot only by the lead's own moves and the refs the project declares the runtime's own (runs.owned_refs); nothing was pushed by the run:"
         else echo "refs differ from the snapshot only by the lead's own moves; nothing was pushed by the run:"; fi
         sed 's/^/  /' "$SRC/refs.accepted"
       else echo "refs unchanged: nothing was pushed to the repository or its remote"; fi
-      [ -n "$SAVED" ] || save_run "$RUN"   # what the run returned outlives its directory (a reboot that empties a tmpfs)
+      [ -n "$SAVED${QARGI_VERIFY_REFS_ONLY:-}" ] || save_run "$RUN"   # what a verified run returned outlives its directory
     else
       echo "REFS CHANGED during the run (the agent must not have pushed):" >&2
       cat "$SRC/refs.diff" >&2
@@ -1043,6 +1045,22 @@ WRAP
     reg_has "$RUN" || { echo "qargi: $RUN is not in the lead's registry; nothing was done" >&2; exit 3; }
     RCLASS=''
     if [ -z "$DISCARD" ]; then RCLASS=$(run_class "$RUN") || exit 3; fi
+    # Refs-only observation grants no product permission: ordinary clean keeps
+    # an invalid read-only product even when the clone holds no extra commits.
+    if [ -z "$DISCARD" ] && [ "$RCLASS" = read-only ] \
+      && [ -n "$(find "$RUN/out" -maxdepth 2 \( -name '*.patch' -o -name run.bundle \) 2>/dev/null | head -1)" ]; then
+      die "$RUN is a read-only run and its output holds patches. A read-only run's product is a report, never patches; nothing was removed (--discard drops the run on purpose)"
+    fi
+    # Observe the worktree before clean changes state; commit inspection below also gates removal.
+    wt='unknown unknown'
+    if [ -d "$RUN" ] && [ ! -L "$RUN" ]; then
+      wt=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from local_run import worktree_changes; why = []; c = worktree_changes(sys.argv[2], why); print("inspection: " + "; ".join(why), file=sys.stderr) if c is None else None; print("%d %d" % (len(c[0]), len(c[1])) if c is not None else "unknown unknown")' \
+        "$(dirname "$0")" "$RUN/clone" </dev/null) || wt='unknown unknown'
+      if [ "$wt" = 'unknown unknown' ]; then
+        [ -n "$DISCARD" ] || die "cannot inspect worktree in $RUN/clone: state is unknown, so the run and all its artifacts are kept (--discard drops them on purpose)"
+        echo "qargi: warning: worktree state is unknown; $RUN is dropped on purpose" >&2
+      fi
+    fi
     marshal_touch_run "$RUN"   # the lead's clean keeps its lease on the feature the run is based on
     # a run whose review apply is under way is not removed, --discard or not: the apply reads the run's files and its saved copy, and writes the branch and the record
     if aph=$(apply_lock_holder "$RUN"); then die "a review apply of $RUN is running (process $aph, $DA_STATE/apply/${RUN##*/}.json.run); nothing was removed: let it finish, then clean again"; fi
@@ -1085,11 +1103,13 @@ WRAP
       [ -n "$DISCARD" ] || die "the refs of the repository changed during this run: keep $RUN as evidence and tell the user (qargi local verify $RUN)"
       echo "qargi: warning: the refs of the repository changed during this run; dropped on purpose:" >&2
       sed 's/^/  /' <<<"$vout" >&2
+    elif [ -n "$DISCARD" ]; then
+      printf '%s\n' "$vout"   # even deliberate recovery reports the actual refs verdict
     fi
     acc=''; [ "$vrc" != 0 ] || acc=$(sed -n -e '/per runs\.owned_refs)$/s/^  //p' -e '/per runs\.owned_refs)$/!s/^  /accepted, the lead'"'"'s own move: /p' <<<"$vout")   # what verify accepted, named again when the run is cleaned
     # finished work is never dropped before it is merged: commits in the clone must be applied (review apply) and the applied tip must
     # be on a branch other than agent/*, in the real repository. --discard is the deliberate way to drop them.
-    nc=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from local_run import clone_commits; n = clone_commits(sys.argv[2]); sys.exit(1) if n is None else print(n)' "$(dirname "$0")" "$RUN/clone" </dev/null) || nc=''
+    nc=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from local_run import clone_commits; why = []; n = clone_commits(sys.argv[2], reasons=why); print("inspection: " + "; ".join(why), file=sys.stderr) if n is None else None; sys.exit(1) if n is None else print(n)' "$(dirname "$0")" "$RUN/clone" </dev/null) || nc=''
     if [ -z "$nc" ]; then
       [ -n "$DISCARD" ] || die "cannot inspect commits in $RUN/clone: state is unknown, so the run is kept (--discard drops it on purpose)"
       echo "qargi: warning: commit state is unknown; $RUN is dropped on purpose" >&2
@@ -1138,8 +1158,6 @@ WRAP
     res=$(home_residue "$RUN")   # links a start of local run left in the run home: rm removes a link, never what it points to
     # what the clone holds that no commit has (new files never added, changes to tracked files), read the way local run reads it (nothing the member put
     # in the clone's git configuration runs): removed with the run, so it is said
-    wt=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from local_run import worktree_changes; c = worktree_changes(sys.argv[2]); print("%d %d" % (len(c[0]), len(c[1])) if c is not None else "unknown unknown")' \
-      "$(dirname "$0")" "$RUN/clone" 2>/dev/null </dev/null) || wt='unknown unknown'
     read -r wtt wtu _ <<<"$wt"
     rm -rf --one-file-system -- "$RUN"
     [ "$wtt" != unknown ] || echo "qargi: warning: the removed clone's worktree state was unknown" >&2

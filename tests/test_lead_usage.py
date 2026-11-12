@@ -3,7 +3,8 @@
 Nothing reads the real session files: HOME is a fresh directory and the transcripts are written under it, where the runtime's definition
 (resources.transcripts of lib/providers/claude-code.json) says they live. Offline. Run: python3 tests/test_lead_usage.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
-import json, os, re, subprocess, sys, tempfile, time, unittest
+import argparse, io, json, os, re, subprocess, sys, tempfile, time, unittest
+from unittest.mock import patch
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "lib"))
@@ -265,6 +266,112 @@ class Check(Base):
 
     def check(self, *args, **env):
         return self.run_cli("lead", "compact-check", *args, **env)
+
+    def open_cli(self, project="app"):
+        return subprocess.run([sys.executable, '-I', LEADPY, 'open-runs', '--state', self.state, '--conf', self.conf,
+                               '--project', project, '--feature', 'lc'], env=self.env(), capture_output=True, text=True, timeout=10)
+
+    def test_strict_open_cli_distinguishes_empty_open_and_errors(self):
+        result = self.open_cli()
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        d = self.run_dir('strict-open')
+        result = self.open_cli()
+        self.assertEqual((result.returncode, result.stderr), (1, ''))
+        self.assertTrue(result.stdout.startswith(d + '\tstrict-open\tbuild\t'))
+        for project in ('', 'missing'):
+            result = self.open_cli(project)
+            self.assertEqual((result.returncode, result.stdout), (2, ''))
+            self.assertNotIn('Traceback', result.stderr)
+
+    def test_strict_open_cli_refuses_unknown_answers_and_repository_identity(self):
+        self.run_dir('answers-open')
+        path = os.path.join(self.conf, 'projects/app.json')
+        for data in (None, b'{broken', b'[]', b'{}', b'{"project":"other","repo":{"path":"/example"}}',
+                     b'{"project":"app","repo":{}}', b'{"project":"app","repo":{"path":[]}}',
+                     b'{"project":"app","repo":{"url":17}}'):
+            with self.subTest(data=data):
+                if data is None:
+                    os.unlink(path)
+                else:
+                    with open(path, 'wb') as f:
+                        f.write(data)
+                result = self.open_cli()
+                self.assertEqual((result.returncode, result.stdout), (2, ''))
+                self.assertIn('qargi:', result.stderr)
+                self.assertNotIn('Traceback', result.stderr)
+                self.write_answers()
+
+    def test_strict_open_cli_keeps_url_identity(self):
+        d = os.path.join(self.t, 'url-run')
+        os.makedirs(d)
+        url = self.answers['repo']['url']
+        self.answers['repo'] = {'url': url}
+        self.write_answers()
+        self.registry({'run': d, 'url': url, 'base': 'feature/lc', 'slug': 'url-run', 'role': 'build', 'class': 'write'})
+        self.assertEqual(self.open_cli().returncode, 1)
+
+    def test_strict_open_cli_refuses_every_damaged_registry_without_partial_rows(self):
+        self.run_dir('registry-open')
+        path = os.path.join(self.state, 'local-runs.jsonl')
+        with open(path, 'rb') as f:
+            valid = f.read()
+        row = json.loads(valid)
+        invalid = [b'{broken\n', b'[]\n', b'null\n', b'{}\n', b'\xff\n']
+        for key, value in (('run', ''), ('repo', 17), ('base', []), ('slug', None), ('ability', {}), ('answers', []), ('closed', True)):
+            invalid.append((json.dumps(dict(row, **{key: value})) + '\n').encode())
+        for data in invalid:
+            with self.subTest(data=data):
+                with open(path, 'wb') as f:
+                    f.write(valid + data)
+                result = self.open_cli()
+                self.assertEqual((result.returncode, result.stdout), (2, ''))
+                self.assertIn('cannot read the open-run registry', result.stderr)
+                self.assertNotIn('Traceback', result.stderr)
+        os.unlink(path)
+        for kind in ('dangling', 'directory', 'fifo'):
+            with self.subTest(kind=kind):
+                if kind == 'dangling':
+                    os.symlink(os.path.join(self.t, 'missing-registry'), path)
+                elif kind == 'directory':
+                    os.mkdir(path)
+                else:
+                    os.mkfifo(path)
+                result = self.open_cli()
+                self.assertEqual((result.returncode, result.stdout), (2, ''))
+                self.assertIn('cannot read the open-run registry', result.stderr)
+                os.rmdir(path) if kind == 'directory' else os.unlink(path)
+
+    def test_strict_open_command_enumerates_the_same_validated_snapshot(self):
+        d = self.run_dir('snapshot-open')
+        original, calls = lead_usage.registry, []
+        def replaced_after_read(state, strict=False):
+            calls.append(strict)
+            records = original(state, strict=strict)
+            with open(os.path.join(state, 'local-runs.jsonl'), 'w') as f:
+                f.write('{replacement-is-malformed\n')
+            return records
+        out, err = io.StringIO(), io.StringIO()
+        with patch.object(lead_usage, 'registry', replaced_after_read), patch('sys.stdout', out), patch('sys.stderr', err):
+            rc = lead_usage.cmd_open_runs(argparse.Namespace(project='app', feature='lc'), self.conf, self.state)
+        self.assertEqual((rc, calls, err.getvalue()), (1, [True], ''))
+        self.assertTrue(out.getvalue().startswith(d + '\t'))
+
+    def test_strict_open_registry_permission_error_is_sanitized(self):
+        out, err = io.StringIO(), io.StringIO()
+        with patch.object(lead_usage.os, 'open', side_effect=PermissionError('fixture-permission-secret')), patch('sys.stdout', out), patch('sys.stderr', err):
+            rc = lead_usage.cmd_open_runs(argparse.Namespace(project='app', feature='lc'), self.conf, self.state)
+        self.assertEqual((rc, out.getvalue()), (2, ''))
+        self.assertEqual(err.getvalue(), 'qargi: cannot read the open-run registry\n')
+
+    def test_merged_git_errors_keep_the_applied_run_open(self):
+        tip = self.git('rev-parse', 'HEAD')
+        d = self.run_dir('git-error', ('applied', 'agent/error ' + tip))
+        module = lead_usage.load('merged')
+        for result in (OSError('fixture-exception-secret'), subprocess.CompletedProcess([], 1, '', 'fixture-stderr-secret')):
+            kwargs = {'side_effect': result} if isinstance(result, Exception) else {'return_value': result}
+            with patch.object(module.subprocess, 'run', **kwargs):
+                rows = lead_usage.open_runs(self.state, self.repo, '')
+            self.assertEqual([r[0] for r in rows], [d])
 
     def test_nothing_open_is_safe_and_prints_the_restart_block(self):
         rc, out, _ = self.check()
