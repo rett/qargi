@@ -389,6 +389,9 @@ for value in missing null number invalid; do
   out=$($DA review apply "$R" 2>&1); rc=$?
   { [ "$rc" = 3 ] && grep -q 'registry has no valid class' <<<"$out" && [ -d "$R" ]; } \
     && ok "review apply refuses $value registry class" || no "review apply $value class: rc=$rc $out"
+  out=$($DA review check "$R/out" 2>&1); rc=$?
+  { [ "$rc" = 3 ] && grep -q 'registry has no valid class' <<<"$out"; } \
+    && ok "review check refuses $value registry class" || no "review check $value class: rc=$rc $out"
 done
 cp "$T/class-reg.keep" "$T/s/local-runs.jsonl"
 # what counts as a report: a regular file named report.md or NAME-report.md directly in OUT, for clean and for compact-check alike

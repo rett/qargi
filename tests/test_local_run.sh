@@ -1012,6 +1012,11 @@ out=$($DA local run "$RUN" --again 2>&1); rc=$?
 rm -f "$CLONE/new.txt"; : > "$T/wu-mode"
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
 { [ "$rc" = 0 ] && ! grep -q '^WORKTREE=' <<<"$out" && [ "$(jq -r 'has("worktree")' "$RUN/dispatch.json")" = false ]; } && ok "a clean clone says nothing of it" || no "clean clone: rc=$rc $out"
+printf '%s\n' elsewhere > "$CLONE/.git/commondir"
+out=$($DA review check "$OUT" --allow-empty 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q 'worktree state is unknown: clone inspection failed' <<<"$out" \
+  && ok "review check refuses an unknown worktree state" || no "review check unknown worktree: rc=$rc $out"
+rm -f "$CLONE/.git/commondir"
 # the lead reads the clone's state with git, but nothing the member put in the clone's git configuration runs: no fsmonitor, every filter driver it names
 # emptied, the work tree named outright, no system or global configuration, no optional locks (a git on PATH records how it is called)
 REALGIT=$(command -v git); mkdir -p "$T/fgit"
@@ -1063,6 +1068,12 @@ cat > "$T/bin/codex" <<SH
 #!/usr/bin/env bash
 cat > /dev/null
 [ "\$(cat "$T/ir-mode" 2>/dev/null)" = quick ] && exit 0
+if [ "\$(cat "$T/ir-mode" 2>/dev/null)" = normal-stubborn ]; then
+  (trap '' TERM; echo ready > "$T/ir-stubborn-ready"; exec sleep 3571) &
+  echo \$! > "$T/ir-child"
+  while [ ! -f "$T/ir-stubborn-ready" ]; do sleep 0.01; done
+  exit 0
+fi
 if [ "\$(cat "$T/ir-mode" 2>/dev/null)" = child ]; then
   (trap '[ -L "\$CODEX_HOME/auth.json" ] && echo present > "$T/ir-link-seen"; exit 0' TERM; echo ready > "$T/ir-ready"; while :; do sleep 0.1; done) &
   echo \$! > "$T/ir-child"
@@ -1097,6 +1108,24 @@ echo child > "$T/ir-mode"; out=$($DA local run "$RUN" --again 2>&1); rc=$?
   && gone "$(cat "$T/ir-child")" && [ "$(cat "$T/ir-link-seen")" = present ] && [ ! -L "$LINK" ]; } \
   && ok "a normally exiting member's child is stopped before the link is removed" || no "normal child: rc=$rc $out"
 [ ! -s "$T/ir-child" ] || kill -KILL "$(cat "$T/ir-child")" 2>/dev/null || true
+echo normal-stubborn > "$T/ir-mode"; out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(jq -r .group_left "$RUN/dispatch.json")" = 0 ] && gone "$(cat "$T/ir-child")"; } \
+  && ok "a normally exiting member's TERM-ignoring child is killed" || no "normal stubborn: rc=$rc $out"
+[ ! -s "$T/ir-child" ] || kill -KILL "$(cat "$T/ir-child")" 2>/dev/null || true
+echo quick > "$T/ir-mode"
+got=$(python3 -I - "$RUN" "$T" <<'PY' 2>&1
+import os, sys
+sys.path.insert(0, os.path.join(sys.argv[2], "tool", "lib"))
+import local_run as L
+L.group_left = lambda pg: [pg]
+L.kill_group = lambda proc: 1
+rc = L.main([sys.argv[1], "--project", "rproj", "--runtime", "codex", "--class", "write", "--again"])
+print("CLASSIFICATION_RC=%d" % rc)
+PY
+)
+{ grep -q '^CLASSIFICATION_RC=1$' <<<"$got" && grep -q '^OUTCOME=failed' <<<"$got" && grep -q '1 process of the member.s process group .* survived TERM and KILL' <<<"$got" \
+  && ! grep -q 'process group was stopped' <<<"$got" && [ "$(jq -r .group_left "$RUN/dispatch.json")" = 1 ]; } \
+  && ok "normal exit with a reported survivor fails and never says the group stopped" || no "normal survivor: $got"
 for s in TERM HUP; do
   if ir_start; then kill -"$s" "$(jq -r .runner "$RUN/dispatch.json")"; ir_after "$s" "$([ "$s" = TERM ] && echo 143 || echo 129)"; else no "SIG$s: the member did not start: $(cat "$T/ir.out")"; fi
 done
@@ -1363,6 +1392,10 @@ for name in ("commondir", "config.worktree", "objects/info/alternates", "objects
     assert L.clone_commits(clone) is None and L.worktree_changes(clone) is None
     assert any(name in x for x in L.git_changes(before, L.git_state(clone)))
     os.unlink(path)
+alternate = os.path.join(gd, "objects/info/alternates")
+os.mkfifo(alternate)
+assert L.clone_commits(clone) is None
+os.unlink(alternate)
 head = os.path.join(gd, "HEAD")
 saved = open(head, "rb").read()
 os.unlink(head); os.mkfifo(head)
@@ -1377,6 +1410,17 @@ with open(cfg, "a") as f:
     f.write('\n[core]\n fsmonitor = touch %s\n sshCommand = touch %s\n[include]\n path = %s\n' % (marker, marker, os.path.join(root, "outside-config")))
 assert L.clone_commits(clone) is None and L.worktree_changes(clone) is None
 assert not os.path.exists(marker)
+subprocess.run(["git", "clone", "--no-hardlinks", "-q", source, os.path.join(root, "partial")], check=True)
+partial = os.path.join(root, "partial")
+subprocess.run(["git", "-C", partial, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", "new"], check=True)
+helper = os.path.join(root, "hostile-helper")
+with open(helper, "w") as f: f.write("#!/bin/sh\ntouch '%s'\n" % marker)
+os.chmod(helper, 0o755)
+for key, value in (("core.repositoryformatversion", "1"), ("extensions.partialClone", "origin"), ("remote.origin.promisor", "true"), ("remote.origin.url", "ext::" + helper)):
+    subprocess.run(["git", "-C", partial, "config", key, value], check=True)
+parent = subprocess.check_output(["git", "-C", partial, "rev-parse", "HEAD^"], text=True).strip()
+os.unlink(os.path.join(partial, ".git", "objects", parent[:2], parent[2:]))
+assert L.clone_commits(partial) is None and not os.path.exists(marker)
 shutil.rmtree(gd)
 with open(gd, "w") as f: f.write("gitdir: " + os.path.join(source, ".git") + "\n")
 assert L.clone_commits(clone) is None

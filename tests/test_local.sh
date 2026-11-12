@@ -241,6 +241,35 @@ out=$(./bin/qargi local clean "$CU" 2>&1); rc=$?
 out=$(./bin/qargi local clean "$CU" --discard 2>&1); rc=$?
 [ "$rc" = 0 ] && [ ! -e "$CU" ] && grep -q 'commit state is unknown' <<<"$out" \
   && ok "discard explicitly drops a clone with unknown commit state" || no "discard corrupt clone: rc=$rc $out"
+read -r CI _ <<<"$(mkc indirect-git)"; echo '{}' > "$CI/out/manifest.json"
+external_before=$(git -C "$T/r2" show-ref)
+for meta in commondir config.worktree objects/info/alternates objects/info/http-alternates; do
+  mkdir -p "$(dirname "$CI/clone/.git/$meta")"
+  printf '%s\n' "$T/r2/.git" > "$CI/clone/.git/$meta"
+  out=$(./bin/qargi local verify "$CI" 2>&1); vr=$?
+  out2=$(./bin/qargi local clean "$CI" 2>&1); cr=$?
+  { [ "$vr" != 0 ] && [ "$cr" != 0 ] && grep -q 'state is unknown' <<<"$out" && grep -q 'state is unknown' <<<"$out2" && [ -d "$CI" ]; } \
+    && ok "verify and clean refuse clone indirection $meta" || no "indirection $meta: verify=$vr clean=$cr $out $out2"
+  rm -f "$CI/clone/.git/$meta"
+done
+mkfifo "$CI/clone/.git/objects/info/alternates"
+out=$(./bin/qargi local clean "$CI" 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q 'state is unknown' <<<"$out" && [ -d "$CI" ] \
+  && ok "clean refuses a FIFO in clone alternates" || no "FIFO alternates: rc=$rc $out"
+rm -f "$CI/clone/.git/objects/info/alternates"
+mv "$CI/clone/.git" "$CI/clone/git.saved"
+printf 'gitdir: %s\n' "$T/r2/.git" > "$CI/clone/.git"
+out=$(./bin/qargi local verify "$CI" 2>&1); vr=$?
+out2=$(./bin/qargi local clean "$CI" 2>&1); cr=$?
+[ "$vr" != 0 ] && [ "$cr" != 0 ] && grep -q 'state is unknown' <<<"$out" && grep -q 'state is unknown' <<<"$out2" && [ -d "$CI" ] \
+  && ok "verify and clean refuse a gitfile pointing to another repository" || no "gitfile: verify=$vr clean=$cr $out $out2"
+rm -f "$CI/clone/.git"; ln -s "$T/r2/.git" "$CI/clone/.git"
+out=$(./bin/qargi local clean "$CI" 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q 'state is unknown' <<<"$out" && [ -d "$CI" ] \
+  && ok "clean refuses a linked Git directory" || no "linked git directory: rc=$rc $out"
+rm -f "$CI/clone/.git"; mv "$CI/clone/git.saved" "$CI/clone/.git"
+[ "$(git -C "$T/r2" show-ref)" = "$external_before" ] && ok "inspection did not change the external repository refs" || no "external refs changed"
+./bin/qargi local clean "$CI" --discard >/dev/null 2>&1 || no "discard indirect test run"
 ln -s "$VIC" "$T/qargi-run.abcde"; ln -s "$VIC" "$T/qargi-run.abcdef"
 mkdir -p "$T/realroot/qargi-run.ghijkl"; touch "$T/realroot/qargi-run.ghijkl/precious"; ln -s "$T/realroot" "$T/linkroot"
 n=0

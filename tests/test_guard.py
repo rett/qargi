@@ -5076,8 +5076,10 @@ class McpTools(HookCase):
 
     def test_unknown_registry_class_refuses_mcp(self):
         path = os.path.join(self.state, "local-runs.jsonl")
-        for value in (None, 7, "unknown"):
+        for value in (None, 7, "unknown", "missing"):
             rec = {"run": self.runs["build"], "ability": "build", "project": "alpha", "class": value}
+            if value == "missing":
+                del rec["class"]
             self.put(path, json.dumps(rec) + "\n")
             result = self.call("mcp__kb__platform.delete_knowledge", "build")
             self.assertEqual(result.returncode, 2, result.stderr)
