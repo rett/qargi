@@ -29,7 +29,7 @@ Not verified, and so counted as not supported:
 
 - **The model and effort overrides.** A run with `-m gpt-6-luna` and `-c model_reasoning_effort=low` succeeded, but no event of `codex exec --json` names the model or the effort used (the events are `thread.started`, `turn.started`, `item.completed` and `turn.completed`), so that they take effect is not observable.
 - **Skills and MCP.** No real run has shown which skills a member loads or the MCP tool names and `enabled_tools` in a session.
-- **The rest of a run.** A sign-in refreshed during a run reaching your file, each baseline key holding in a real run, the hosted tools being gone, and how a trusted project's `.codex/` loads.
+- **The rest of a run.** How codex-cli writes a sign-in it refreshes during a run (through the link, or by replacing it), each baseline key holding in a real run, the hosted tools being gone, and how a trusted project's `.codex/` loads.
 
 ## Platform and sandbox
 
@@ -75,6 +75,7 @@ Each key is read by this CLI (a value of the wrong type is refused, naming the k
 - **Git.** The member's git has no credentials (`HOME` is the run's, no global configuration, no ssh agent, no prompts), the clone's only remote is the run's bare copy with its push URL disabled, and the sandbox gives its commands no network, so an ordinary push has nothing to reach and nothing to authenticate with. That is what qargi supports, not a proof that no push can happen: `qargi local verify` compares every ref of the real repository before and after, and you apply only the patches.
 - **No guard hook.** No `qargi __guard` runs for a Codex member, so the guard's refusals (push, `gh`, `ssh`, the skill and runtime verbs, writes to protected places) do not apply as such; the sandbox's write and network denial, the credential-free git and the checks of what comes back hold instead.
 - **Sign-in.** Your `~/.codex/auth.json` is linked into the run home for the length of the run, and the member's Codex loads nothing else of your Codex home. This is configuration separation, not secrecy from the member: the sandbox holds writes, not reads, so the member can read that file through the link and the rest of your `~/.codex` (sessions, history) by path.
+- **A sign-in refreshed during a run.** Written through the link, it lands in your `~/.codex/auth.json` directly: qargi cannot prevent a write through the link, and the run notes that your file changed. Written by replacing the link with a new file (an atomic replace), it never reaches your file: qargi does not write your file, since another run, a Codex session or a sign-in of yours may have written it meanwhile and nothing qargi can check before a rename keeps such a writer out. The new file is kept in the run home as `auth.json.from-run` (mode 600, over one an earlier run kept there), named in a `HOME_RESIDUE=` line, in `home.residue` of `RUN/dispatch.json` (the name, never a value) and by `qargi local list` and `verify`, with a note that says whether your file is unchanged since the run started. To reconcile it: if `codex login status` in your terminal still finds you signed in, keep yours and let `qargi local clean` remove the copy; if not, and the note says your file is unchanged, move the copy over yours yourself (`mv RUN/home/.codex/auth.json.from-run ~/.codex/auth.json`), or sign in again with `codex login`. When the note says your file changed, keep yours.
 
 ## Skills and MCP tools of a member
 
@@ -141,4 +142,4 @@ A lead, or another session, can queue a message for an open Codex session withou
 - No resume: every run is a fresh `codex exec` session (`--ephemeral`).
 - No qargi guard hook in a member (above).
 - Tokens only, no money; absent counts are not zero.
-- Not verified: the model and effort taking effect (the JSON events do not name them), a sign-in refreshed during a run reaching your file, the skills a member loads and the MCP names and `enabled_tools` in a real session, and each baseline key in a real run ([What is verified](#what-is-verified)).
+- Not verified: the model and effort taking effect (the JSON events do not name them), how codex-cli writes a sign-in it refreshes during a run, the skills a member loads and the MCP names and `enabled_tools` in a real session, and each baseline key in a real run ([What is verified](#what-is-verified)).

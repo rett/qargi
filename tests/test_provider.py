@@ -3125,7 +3125,7 @@ class RunHome(LibraryBase):
             ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.git-credentials", "to": "c"}]}, "stored git logins"),
             ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.config/gh/hosts.yml", "to": "h"}]}, "a forge credential"),
             ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.aws/credentials", "to": "c"}]}, "a cloud credential"),
-            # what runs as the user later: a file a runtime puts in place of its link is written back to the source
+            # what runs as the user later: a member's write through the link lands in the source
             ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.bashrc", "to": "c"}]}, "a startup file of the user's shell"),
             ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.profile", "to": "c"}]}, "a startup file of the user's shell"),
             ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.zshrc", "to": "c"}]}, "a startup file of the user's shell"),

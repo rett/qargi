@@ -68,7 +68,7 @@ home_residue() {
   while IFS= read -r n; do
     [[ $n =~ ^[A-Za-z0-9._-]+$ ]] && [ "$n" != . ] && [ "$n" != .. ] || continue
     [ ! -L "$d/home/$dir/$n" ] || echo "$d/home/$dir/$n (a link a start of qargi local run left: its runner did not end)"
-    [ ! -f "$d/home/$dir/$n.from-run" ] || [ -L "$d/home/$dir/$n.from-run" ] || echo "$d/home/$dir/$n.from-run (a file the runtime wrote in place of the link, not written back to its source: compare it with your own)"
+    [ ! -f "$d/home/$dir/$n.from-run" ] || [ -L "$d/home/$dir/$n.from-run" ] || echo "$d/home/$dir/$n.from-run (a file the runtime wrote in place of the link, which qargi never writes to your file: compare it with yours and reconcile it yourself)"
   done < <(jq -r '.home.links[]? | strings' "$rec" 2>/dev/null)
 }
 

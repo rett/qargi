@@ -35,13 +35,14 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
                        linked into it as `to` when the run starts and the link is removed when it ends: the file is never copied and the
                        link's target is never printed (--dry-run names the links, HOME_LINKS=). A source that does not exist is left out with
                        a note. The directory is made and the links are removed without following a link a member may have put in the run
-                       directory. What a runtime does to a link during the run (a sign-in refreshed) loses nothing: written through the link, the
-                       source keeps it (a note says the source changed); the link deleted, the source is untouched (a note); the link replaced by
-                       a file of its own (an atomic replace), that file is written back to the source, by a new file of mode 600 renamed over it,
-                       only when it is a regular file of one name of at most 1 MiB and the source is the file it was at the start (its sha256 then,
-                       kept in memory, never printed or recorded); otherwise it is kept as NAME.from-run (mode 600) in the run home, which
-                       qargi local list and verify name and qargi local clean removes. A variable env set in the lead's environment to another
-                       directory than the links' sources is a note. provider.home_problems states the rules.
+                       directory. What a runtime does to a link during the run (a sign-in refreshed): written through the link, it lands in the
+                       source, which qargi cannot prevent (a note says the source changed); the link deleted, the source is untouched (a note); the
+                       link replaced by a file of its own (an atomic replace), qargi never writes that file to the source (another run, a session of
+                       the runtime or a sign-in of yours may have written the source meanwhile): it is kept as NAME.from-run (mode 600) in the run
+                       home, named in the HOME_RESIDUE= line and in home.residue of dispatch.json (the name, never a value), with a note that says
+                       whether the source is still what it was when the run started (its sha256 then, kept in memory, never printed or recorded);
+                       you reconcile it yourself. qargi local list and verify name it and qargi local clean removes it. A variable env set in the
+                       lead's environment to another directory than the links' sources is a note. provider.home_problems states the rules.
   dispatch.run_config  {in: home|run, file, baseline}: the configuration file of the run, rendered when the run starts in the format of
                        resources.mcp: the baseline (the definition's own settings, the same for every run) at its root, and the MCP servers
                        from resources.mcp (lib/packs_render.py run_config) for the run's role, as the lead's registry records it (never a file
@@ -356,11 +357,12 @@ def plan_home(disp, run, runtime):
         notes.append("%s is set in your environment to another directory than the one the run home's links come from (%s): the run links %s from there, "
                      "and a sign-in kept in the directory %s names is not used" % (h["env"], ", ".join(sorted({os.path.dirname(ln["from"]) for ln in h.get("link", [])})),
                                                                                    ", ".join(ln["from"] for ln in h.get("link", [])), h["env"]))
-    return {"env": h["env"], "dir": h["dir"], "path": os.path.join(run, "home", h["dir"]), "links": links, "missing": missing, "notes": notes, "start": {}}
+    return {"env": h["env"], "dir": h["dir"], "path": os.path.join(run, "home", h["dir"]), "links": links, "missing": missing, "notes": notes, "start": {},
+            "residue": []}
 
 
 def source_problem(src):
-    """(real path, None) for a source of a run home's link that may be linked (and written back to), or (real path, why not): its real path must be
+    """(real path, None) for a source of a run home's link that may be linked, or (real path, why not): its real path must be
     under the user's home, outside qargi's directories and the credential stores home_link_problem refuses, and a regular file."""
     home = os.path.realpath(os.path.expanduser("~"))
     mine = [os.path.realpath(d) for d in (paths.conf(), paths.state())]
@@ -375,7 +377,7 @@ def source_problem(src):
     return real, None
 
 
-MAX_SIGNIN = 1 << 20      # the bound of a file a runtime put in place of a run home's link that is written back to its source
+MAX_SIGNIN = 1 << 20      # the bound of a source digest_of reads (a larger one is not compared)
 
 
 def digest_of(path):
@@ -493,8 +495,8 @@ def sweep_home(run, home, names):
 
 
 def clear_home(run, home, names):
-    """Remove the links of the run home (names), without following a link; notes for what was not as it was left: a file in place of a link
-    (the runtime replaced it: it is removed too, so no copy of the source stays in the run), or a run home a member replaced."""
+    """Remove the links of the run home (names), without following a link; notes for what was not as it was left: a source written through its link,
+    a file in place of a link (the runtime replaced it: kept as NAME.from-run, keep_replacement), or a run home a member replaced."""
     notes = []
     if not names:
         return notes
@@ -517,9 +519,10 @@ def clear_home(run, home, names):
                     notes.append("%s in the run home pointed elsewhere at the end of the run; the link is removed, what it pointed to is untouched" % to)
                 elif sum0 is not None and digest_of(src) != sum0:
                     notes.append("the source of %s changed during the run (written through the link, such as a sign-in the runtime refreshed in place, "
-                                 "or by another program); it keeps what was written" % to)
+                                 "or by another program); it keeps what was written: a write through the link reaches the source, which qargi cannot "
+                                 "prevent" % to)
             elif stat.S_ISREG(st.st_mode):
-                notes.append(take_back(fd, to, src, real0, sum0, home))
+                notes.append(keep_replacement(fd, to, src, real0, sum0, home))
             else:
                 notes.append("%s in the run home is not a link or a file any more; it was left in place" % to)
     finally:
@@ -527,16 +530,16 @@ def clear_home(run, home, names):
     return notes
 
 
-KEPT = ".from-run"   # a file a runtime put in place of a run home's link that is not written back is kept in the run home under this suffix
+KEPT = ".from-run"   # a file a runtime put in place of a run home's link is kept in the run home under this suffix; qargi never writes it to the source
 
 
-def take_back(fd, to, src, real0, sum0, home):
-    """A regular file in place of the link `to` at the end of the run: the runtime replaced the link with a file of its own (a sign-in written anew by
-    an atomic replace, which does not write through a link). It is written back to the source when that is safe: the file is a regular file of one
-    name of at most MAX_SIGNIN bytes, the source is still the regular file it was when the run started (the same real path, allowed as a source, the
-    same sha256 as then: neither you nor another program changed it meanwhile), and it is replaced by a new file of mode 600 renamed over it.
-    Otherwise nothing of the source changes and the file is kept in the run home as NAME.from-run (mode 600) for you to compare; a second name of
-    another file is removed (a name only). The note says which, never a value."""
+def keep_replacement(fd, to, src, real0, sum0, home):
+    """A regular file in place of the link `to` at the end of the run: the runtime (or the member) replaced the link with a file of its own (a sign-in
+    written anew by an atomic replace, which does not write through a link). qargi never writes it to the source: another run, a session of the
+    runtime or a sign-in of yours may write the source at any moment, and no check qargi makes before a rename keeps such a writer out, so a newer
+    sign-in would be lost. The file is kept in the run home as NAME.from-run (mode 600), over one an earlier run left there, and its name goes to
+    home["residue"]: you compare it with yours and put it in place yourself. A second name of another file is removed (a name only). The note says
+    which, and whether the source is still the file it was when the run started (the same real path and sha256), never a value."""
     here = os.path.join(home["path"], to)
     try:
         rfd = os.open(to, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
@@ -547,74 +550,28 @@ def take_back(fd, to, src, real0, sum0, home):
         if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
             os.unlink(to, dir_fd=fd)
             return "%s in the run home was replaced during the run by a second name of another file; the name is removed, and the source is untouched" % to
-        data = b""
-        while st.st_size <= MAX_SIGNIN and len(data) <= MAX_SIGNIN:
-            chunk = os.read(rfd, MAX_SIGNIN + 1 - len(data))
-            if not chunk:
-                break
-            data += chunk
-        why = None
-        if st.st_size > MAX_SIGNIN or len(data) > MAX_SIGNIN:
-            why = "it is over %d bytes" % MAX_SIGNIN
-        elif src is None or real0 is None or sum0 is None:
-            why = "the source was not read when the run started"
+        if src is None or real0 is None or sum0 is None:
+            now = "the source was not read when the run started, so whether it changed since is not known"
         else:
             real, bad = source_problem(src)
-            if bad or real != real0:
-                why = "the source is not the file it was when the run started"
-            elif digest_of(real) != sum0:
-                why = "the source changed since the run started (another sign-in, or another program)"
-        if why is None:
-            bad = write_back(real0, data)
-            if bad is None:
-                os.unlink(to, dir_fd=fd)
-                return ("%s in the run home was replaced during the run by a file of its own (a sign-in written anew); the source was unchanged since the run "
-                        "started, so it now holds that file (mode 600), and the run home holds no copy" % to)
-            why = "the source could not be written (%s)" % bad
+            now = ("your file is unchanged since the run started" if not bad and real == real0 and digest_of(real) == sum0
+                   else "your file changed since the run started (another sign-in, another run, or another program): keep yours")
         try:
+            try:
+                earlier = bool(os.lstat(to + KEPT, dir_fd=fd))
+            except FileNotFoundError:
+                earlier = False
             os.fchmod(rfd, 0o600)
             os.rename(to, to + KEPT, src_dir_fd=fd, dst_dir_fd=fd)
         except OSError as e:
-            return ("%s in the run home was replaced during the run by a file of its own and was not written back (%s); it could not be set aside as %s (%s), "
-                    "so it was left in place" % (to, why, here + KEPT, e.strerror or e))
-        return ("%s in the run home was replaced during the run by a file of its own (a sign-in written anew), and it was not written back: %s. It is kept "
-                "as %s (mode 600) for you to compare with your own; qargi local clean removes it with the run" % (to, why, here + KEPT))
+            return ("%s in the run home was replaced during the run by a file of its own; qargi does not write it to your file, and it could not be set aside "
+                    "as %s (%s), so it was left in place" % (to, here + KEPT, e.strerror or e))
+        home["residue"].append(to + KEPT)
+        return ("%s in the run home was replaced during the run by a file of its own (a sign-in written anew, or the member's); qargi never writes it to your "
+                "file. It is kept as %s (mode 600)%s; %s. Compare it with yours and, to use it, move it over yours yourself; qargi local clean removes it "
+                "with the run" % (to, here + KEPT, ", in place of the one an earlier run kept there" if earlier else "", now))
     finally:
         os.close(rfd)
-
-
-def write_back(real, data):
-    """Replace the file real with data: a new file of mode 600 in its directory, written and synced, then renamed over it. None, or why not."""
-    d, base = os.path.split(real)
-    try:
-        dfd = os.open(d, os.O_RDONLY | os.O_DIRECTORY)
-    except OSError as e:
-        return e.strerror or str(e)
-    tmp = ".%s.qargi-%s" % (base, secrets.token_hex(6))
-    try:
-        try:
-            wfd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dfd)
-        except OSError as e:
-            return e.strerror or str(e)
-        try:
-            os.fchmod(wfd, 0o600)
-            view = memoryview(data)
-            while view:
-                view = view[os.write(wfd, view):]
-            os.fsync(wfd)
-        finally:
-            os.close(wfd)
-        os.rename(tmp, base, src_dir_fd=dfd, dst_dir_fd=dfd)
-        os.fsync(dfd)
-        return None
-    except OSError as e:
-        try:
-            os.unlink(tmp, dir_fd=dfd)
-        except OSError:
-            pass
-        return e.strerror or str(e)
-    finally:
-        os.close(dfd)
 
 
 # ---- the configuration file of the run (dispatch.run_config) -------------------------------------------------------------------------
@@ -1868,7 +1825,8 @@ def run_it(plan, run):
     if error:
         rec["error"] = error
     if home:
-        rec["home"] = {"env": home["env"], "dir": home["dir"], "links": made, "not_linked": home["missing"], "left": home_left}
+        rec["home"] = {"env": home["env"], "dir": home["dir"], "links": made, "not_linked": home["missing"], "left": home_left,
+                       "residue": home["residue"]}     # names in the run home, never a value
     if plan["usage"] and proc is not None:
         rec["usage"] = read_usage(rec["transcript"], plan["usage"])
     rc = plan["run_config"]
@@ -1906,6 +1864,9 @@ def run_it(plan, run):
             print(line)
     if "usage" in rec:
         print(usage_line(rec["usage"]))
+    for n in (home["residue"] if home else []):
+        print("HOME_RESIDUE=%s (the runtime replaced the link with a file of its own; qargi did not write it to your file: compare it with yours and "
+              "reconcile it yourself)" % os.path.join(home["path"], n))
     for n in home_left:
         print("qargi: note: " + n, file=sys.stderr)
     if sig.sig is not None and outcome != "interrupted":
