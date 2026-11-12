@@ -3105,12 +3105,15 @@ class TrimmedExpansions(HookCase):
     CHAIN = 1000
 
     def judged_in_time(self, command, limit=3.0):
-        """The verdict of a command the real clock times (the budget of the hook is 5 s): it is judged, not refused for time, and well inside the budget."""
-        t0 = time.monotonic()
+        """The verdict of a command that costs the guard time: it is judged, not refused for time (the hook's budget is 5 s of the real clock), and its cost stays
+        well inside that budget. The cost is the CPU time of this thread over the call (the hook runs in this process, on this thread), not the real clock: under
+        the load of the whole suite the real clock of a correct verdict reached 4.75 s, while the CPU time counts the work the guard does whatever else the
+        machine runs. The limit guards against a regression in that work and does not fail for the load; the refusal for time is still checked."""
+        t0 = time.thread_time()
         r = self.bash(command)
-        took = time.monotonic() - t0
+        took = time.thread_time() - t0
         self.assertNotIn(BUDGET_REFUSAL, r.stderr, command[:80])
-        self.assertLess(took, limit, command[:80])
+        self.assertLess(took, limit, (command[:80], "%.2f s of CPU time" % took))
         return r
 
     def test_a_thousand_dependent_assignments_are_judged_not_refused_as_too_slow(self):
