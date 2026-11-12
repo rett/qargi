@@ -1045,6 +1045,12 @@ WRAP
     reg_has "$RUN" || { echo "qargi: $RUN is not in the lead's registry; nothing was done" >&2; exit 3; }
     RCLASS=''
     if [ -z "$DISCARD" ]; then RCLASS=$(run_class "$RUN") || exit 3; fi
+    # Refs-only observation grants no product permission: ordinary clean keeps
+    # an invalid read-only product even when the clone holds no extra commits.
+    if [ -z "$DISCARD" ] && [ "$RCLASS" = read-only ] \
+      && [ -n "$(find "$RUN/out" -maxdepth 2 \( -name '*.patch' -o -name run.bundle \) 2>/dev/null | head -1)" ]; then
+      die "$RUN is a read-only run and its output holds patches. A read-only run's product is a report, never patches; nothing was removed (--discard drops the run on purpose)"
+    fi
     # Observe the worktree before clean changes state; commit inspection below also gates removal.
     wt='unknown unknown'
     if [ -d "$RUN" ] && [ ! -L "$RUN" ]; then

@@ -373,6 +373,19 @@ out=$(verify "$R"); rc=$?
 [ $rc = 2 ] && grep -q "is a read-only run" <<<"$out" && ok "a read-only run's patches are refused though a member set the class file to write" || no "ro with patches: rc=$rc $out"
 $DA local clean "$R" --discard >/dev/null 2>&1
 # The class must be supported registry metadata; a member's class file cannot supply it.
+R=$(mkrun ro-patch-evidence feature/ro review); echo '# report' > "$R/out/report.md"
+mkdir -p "$R/out/patches"; echo 'unexpected product' > "$R/out/patches/0001-evidence.patch"
+nc=$(python3 -I -c 'import sys; sys.path.insert(0, "lib"); from local_run import clone_commits; print(clone_commits(sys.argv[1]))' "$R/clone")
+[ "$nc" = 0 ] && ok "read-only product regression has zero extra commits" || no "read-only product setup: $nc"
+out=$($DA local clean "$R" 2>&1); rc=$?
+{ [ "$rc" = 1 ] && grep -q "read-only run's product is a report, never patches" <<<"$out" && [ -f "$R/out/patches/0001-evidence.patch" ]; } \
+  && ok "ordinary clean preserves unexpected read-only patches with zero commits" || no "read-only product clean: rc=$rc $out"
+out=$(QARGI_VERIFY_REFS_ONLY=1 $DA local verify "$R" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q 'refs unchanged' <<<"$out" && [ ! -e "$R/verified" ] && [ ! -e "$T/s/runs/${R##*/}" ]; } \
+  && ok "refs-only observation of an invalid product grants no verify or accepted output" || no "read-only product refs: rc=$rc $out"
+out=$($DA local clean "$R" --discard 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q 'refs unchanged' <<<"$out" && [ ! -e "$R" ]; } \
+  && ok "invalid read-only product: explicit discard still reports actual refs" || no "read-only product discard: rc=$rc $out"
 R=$(mkrun oldrec feature/ro); echo "# report" > "$R/out/report.md"; rm -f "$R/class"
 echo read-only > "$R/class"
 python3 tests/class_cases.py "$R" "$T/s/local-runs.jsonl" "$DA" && ok "exact registry classes: PASS" || no "exact registry classes"
