@@ -3125,6 +3125,13 @@ class RunHome(LibraryBase):
             ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.git-credentials", "to": "c"}]}, "stored git logins"),
             ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.config/gh/hosts.yml", "to": "h"}]}, "a forge credential"),
             ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.aws/credentials", "to": "c"}]}, "a cloud credential"),
+            # what runs as the user later: a file a runtime puts in place of its link is written back to the source
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.bashrc", "to": "c"}]}, "a startup file of the user's shell"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.profile", "to": "c"}]}, "a startup file of the user's shell"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.zshrc", "to": "c"}]}, "a startup file of the user's shell"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.config/autostart/x.desktop", "to": "c"}]}, "what the user's desktop starts"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.config/systemd/user/x.service", "to": "c"}]}, "what the user's service manager starts"),
+            ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.local/bin/fakecli", "to": "c"}]}, "the user's own programs"),
             ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.fakecli/auth.json", "to": "sub/auth.json"}]}, "is not a plain file name"),
             ({"env": "FAKECLI_HOME", "dir": ".f", "link": [{"from": "~/.fakecli/auth.json", "to": ".."}]}, "is not a plain file name"),
             ({"env": "FAKECLI_HOME", "dir": ".f", "link": ok_link + [{"from": "~/.fakecli/other.json", "to": "auth.json"}]}, "'auth.json' is linked twice"),
@@ -3278,6 +3285,8 @@ class HiddenPaths(unittest.TestCase):
         self.assertIn("TMP /hid/t lies under /hid", msg)
         self.assertIn("Nothing was started", msg)
         self.assertIn("--scratch on another filesystem", msg)
+        self.assertIn("~/.cache/qargi-runs", msg)
+        self.assertNotIn("/tmp", msg)                     # a scratch there is not shown to work for any runtime, so it is not advised
         self.assertIn("QARGI_RUN_TMP", msg)
         only_run = P.hidden_message("fakecli", "read-only", P.hidden_run_paths(d, "read-only", self.paths("/hid/s/qargi.1", "/srv/t")), d)
         self.assertNotIn("QARGI_RUN_TMP", only_run)

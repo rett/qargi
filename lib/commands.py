@@ -1182,6 +1182,8 @@ COMMANDS = {
                         desc=("Only for a runtime whose dispatch mode is command; a runtime that works inside the session (dispatch mode in-session) is refused: dispatch it as its notes say (qargi provider notes spawn). "
                               "The command is built from the definition without a shell, runs in a scrubbed environment (only the names the pack's env_pass lists, which the review shows), and its output goes to OUT/transcript. "
                               "A read-only run needs the barrier the definition declares (or your acceptance). A library pack's executable runs only from its sealed copy. "
+                              "The runtime may refuse a run whose paths its sandbox hides from the member (dispatch.hidden_paths, /dev for codex): a clone, contract, git wrapper, OUT or TMP there that the run's class does not show refuses it before it starts (exit 2), naming the path and the fix. "
+                              "When the member can write the clone's .git (the argv grants it, or the class has no sandbox arguments), a change to what git there would run (.git/config, hooks/, info/) is named in a GITDIR=changed: line and git_dir of RUN/dispatch.json; never run git in that clone. "
                               "Exit status: 0 the command succeeded, 1 it failed (or a usage error, such as no task block), 2 refused (a barrier the run cannot have, a refused definition), 3 the runtime cannot be run this way (not a command runtime, its command is not on PATH), 4 transport (the definition maps the command's exit to it).")),
             "prepare": verb("Make the clone and the wrapper for a local agent", [],
                             [opt("--repo", "the local repository", "DIR", "dir"), opt("--repo-url", "clone a private repository from this https URL (no user name or password in it: that is --credential-file)", "URL"),
@@ -1208,7 +1210,9 @@ COMMANDS = {
                                   "findings and the fix, packs apply --target RUNTIME PROJECT. The run goes on, and stdout and the "
                                   "TASK-BLOCK PATHS block are unchanged.\n"
                                   "A --scratch on a tmpfs (/dev/shm, often /tmp) is warned about on stderr: a reboot empties it and loses the run (its clone, commits "
-                                  "and output); prefer a directory on disk, such as ~/.cache/qargi-runs.")),
+                                  "and output); prefer a directory on disk, such as ~/.cache/qargi-runs.\n"
+                                  "The runtime may refuse a run whose paths its sandbox hides from the member (dispatch.hidden_paths, /dev for codex): prepare refuses it "
+                                  "before it makes anything (exit 2), naming the path and the fix (--scratch on another filesystem, or QARGI_RUN_TMP).")),
             "verify": verb("Compare the repository's refs with the snapshot taken by prepare", [("RUN_DIR", "dir", True)],
                            [opt("--saved", "verify the lead's saved copy of a passed run whose directory is gone (ID: the name of the run directory, qargi.XXXXXX)", "ID")],
                            desc=("OUT without a report, for an uncollected run or a read-only run, is said with its likely cause: a runtime can refuse the member's write tool for a report file, so the file never reached OUT; "

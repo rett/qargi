@@ -35,6 +35,9 @@ echo "STDIN-BEGIN"; if [ -t 0 ]; then echo "(tty)"; else cat; fi; echo "STDIN-EN
 case ${FAKE_MODE-} in
   exit3) exit 3;; exit5) exit 5;;
   sleep) sleep 3571 & echo $! > "${out:-.}/child.pid"; wait;;
+  branchcfg) printf '[branch "agent/other"]\n\tremote = origin\n\tmerge = refs/heads/main\n' >> .git/config;;
+  gitcfg) printf '[core]\n\tfsmonitor = touch %s\n' "$FAKE_KEY" >> .git/config; printf '#!/bin/sh\ntouch %s\n' "$FAKE_KEY" > .git/hooks/pre-commit
+          chmod 755 .git/hooks/pre-commit;;
 esac
 exit 0
 SH
@@ -869,6 +872,16 @@ printf 'BLOCKED\nthe clone cannot be read\n\n# Findings\n\nnone\n\nverdict: revi
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
 { [ "$rc" = 0 ] && [ "$(jq -r .status "$OUT/manifest.json")" = BLOCKED ] && grep -q 'status BLOCKED' <<<"$out"; } && ok "a report that begins with BLOCKED is packaged as status BLOCKED" || no "blocked: rc=$rc $out"
 rm -f "$T/stub-final" "$T/badverdict.md"
+got=$(python3 -I - <<'PY'
+import sys; sys.path.insert(0, "lib")
+import local_run as L
+yes = ["BLOCKED", "BLOCKED: the clone cannot be read", "**BLOCKED**", "# BLOCKED", "## BLOCKED - no contract", "> BLOCKED", "`BLOCKED`", "_BLOCKED_",
+       "Status: BLOCKED", "status:BLOCKED", "**Status:** BLOCKED", "# Status: BLOCKED", "\n\n  **BLOCKED**\nwhy"]
+no = ["DONE", "# Findings", "Not BLOCKED", "BLOCKEDNESS", "blocked", "Status: DONE", "Nothing is BLOCKED", ""]
+print(" ".join(repr(t) for t in yes if not L.report_blocked(t)) + "|" + " ".join(repr(t) for t in no if L.report_blocked(t)))
+PY
+)
+[ "$got" = "|" ] && ok "a first line that says BLOCKED under Markdown marks or as Status: BLOCKED is a BLOCKED report; DONE and prose are not" || no "report_blocked: missed|wrong: $got"
 # a read-only run that leaves patches in OUT: no manifest, and local verify refuses it as before
 touch "$T/stub-patch"
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
@@ -916,8 +929,9 @@ chmod 755 "$T/bin/codex"
 setprov codex; prep "$T/r" wx1; printf 'TASK: add CHANGED.txt holding ok\nDONE: grep -qx ok CHANGED.txt\n\nBASE: main\nSCOPE: CHANGED.txt\n' > "$RUN/task.md"
 out=$($DA local run "$RUN" 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -q '^OUTCOME=ok' <<<"$out" && [ -f "$OUT/patches/0001-Changed-the-file-the-task-asks-for.patch" ] && [ -f "$OUT/manifest.json" ] && [ -f "$OUT/report.md" ] \
-  && [ "$(jq -c --arg g "$CLONE/.git" '.argv | index(["--add-dir", $g]) != null' "$RUN/dispatch.json")" = true ]; } \
-  && ok "e2e write: a codex build run (the stub) given its clone's .git commits and returns the series, the manifest and the report" || no "e2e write run: rc=$rc $out $(ls -A "$OUT")"
+  && [ "$(jq -c --arg g "$CLONE/.git" '.argv | index(["--add-dir", $g]) != null' "$RUN/dispatch.json")" = true ] \
+  && [ "$(jq -c .git_dir "$RUN/dispatch.json")" = '{"changed":[],"watched":"granted"}' ] && ! grep -q '^GITDIR=' <<<"$out"; } \
+  && ok "e2e write: a codex build run (the stub) given its clone's .git commits and returns the series, the manifest and the report; its .git is compared and a commit is no change" || no "e2e write run: rc=$rc $out $(ls -A "$OUT")"
 out=$($DA local verify "$RUN" 2>&1); rc=$?; [ "$rc" = 0 ] && ok "e2e write: qargi local verify passes" || no "e2e write verify: rc=$rc $out"
 out=$($DA review check "$OUT" 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -q '^0 fail' <<<"$out"; } && ok "e2e write: qargi review check passes the series" || no "e2e write review check: rc=$rc $out"
@@ -990,6 +1004,24 @@ got=$(PATH="$T/fgit:$PATH" python3 -I -c 'import sys; sys.path.insert(0, "lib");
 [ "$got" = None ] && ok "a filter driver whose name cannot be emptied on the command line: git status is not run, the state is unknown" || no "bad filter name: $got $(cat "$T/fgit.log")"
 git -C "$CLONE" checkout -q tracked.txt; rm -rf "$T/fgit" "$T/fgit.log" "$T/fgit.names" "$T/wu-mode" "$T/wu-final.md" "$T/bin/codex"
 
+# --- what git in the clone would run: the clone's .git (config, hooks/, info/) is compared before and after a run whose member can write it ---
+# fakecmd gives its write class no sandbox arguments, so nothing of the runtime holds the .git (unsandboxed); its read-only class has its sandbox flags
+setprov fakecmd; prep "$T/r" gd1; task
+out=$(FAKE_MODE=branchcfg $DA local run "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(jq -c .git_dir "$RUN/dispatch.json")" = '{"changed":[],"watched":"unsandboxed"}' ] && ! grep -q '^GITDIR=' <<<"$out"; } \
+  && ok "a run that only sets what git branch sets (branch.NAME.remote, .merge) changes nothing git would run" || no "branch config: rc=$rc $out $(jq -c .git_dir "$RUN/dispatch.json")"
+out=$(FAKE_MODE=gitcfg FAKE_KEY="$T/gitdir-ran" $DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q "^GITDIR=changed: the member changed what git reads in $CLONE/.git: config core.fsmonitor; hooks/pre-commit (added)\. Never run git in this clone" <<<"$out" \
+  && grep -q 'git clone --no-local' <<<"$out" && [ "$(jq -c .git_dir.changed "$RUN/dispatch.json")" = '["config core.fsmonitor","hooks/pre-commit (added)"]' ] \
+  && [ ! -e "$T/gitdir-ran" ] && ! grep -q 'gitdir-ran' "$RUN/dispatch.json"; } \
+  && ok "a member that sets core.fsmonitor and adds a hook: GITDIR= names the key and the hook (never a value), dispatch.json records them, and nothing of them ran" \
+  || no "git config change: rc=$rc $out $(jq -c .git_dir "$RUN/dispatch.json")"
+prep "$T/r" gd2 review; task
+out=$(FAKE_MODE=gitcfg FAKE_KEY="$T/gitdir-ran" $DA local run "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(jq -r 'has("git_dir")' "$RUN/dispatch.json")" = false ] && ! grep -q '^GITDIR=' <<<"$out"; } \
+  && ok "a class whose own sandbox arguments do not grant the .git is not compared (its sandbox holds it)" || no "read-only not watched: rc=$rc $out"
+rm -f "$T/gitdir-ran"
+
 # --- however a run ends, the member's processes are stopped, the run home's link is removed and dispatch.json says how it ended (synthetic sign-in) ---
 # The fake codex records its pid and starts a child in its process group, then waits ($T/ir-mode: wait, or quick to end at once). The signal goes to the
 # runner, whose pid the start record in dispatch.json names.
@@ -1028,6 +1060,22 @@ done
 if ir_start python3 -I -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])'; then
   kill -INT "$(jq -r .runner "$RUN/dispatch.json")"; ir_after INT 130
 else no "SIGINT: the member did not start: $(cat "$T/ir.out")"; fi
+# a run started by a relative path from its scratch directory is told by its real path: a start from another directory sees that it is being run
+# (its runner's command line holds the real path), and a runner whose command line holds a relative one is told from its own working directory
+rm -f "$T/ir-child" "$T/ir-member" "$T/ir.rc" "$T/ir.out"; echo wait > "$T/ir-mode"
+( cd "$(dirname "$RUN")" && "$DA" local run "./$(basename "$RUN")" --again > "$T/ir.out" 2>&1; echo $? > "$T/ir.rc" ) &
+if wait_until '[ -s "$T/ir-child" ] && [ -s "$T/ir-member" ] && [ "$(jq -r .member "$RUN/dispatch.json" 2>/dev/null)" = "$(cat "$T/ir-member")" ]' 30; then
+  runner=$(jq -r .runner "$RUN/dispatch.json")
+  out=$($DA local run "$RUN" --again 2>&1); rc=$?
+  { [ "$rc" = 2 ] && grep -qF "$RUN is being run now (qargi local run, process $runner)" <<<"$out" && tr '\0' '\n' < "/proc/$runner/cmdline" | grep -qxF "$RUN"; } \
+    && ok "a run started by a relative path: its runner holds the real path, and a start from another directory refuses while it runs" || no "relative run: rc=$rc $out"
+  kill -TERM "$runner"; ir_after TERM 143
+else no "relative run: the member did not start: $(cat "$T/ir.out")"; fi
+(cd "$(dirname "$RUN")" && exec python3 -I -c 'import time; time.sleep(30)' local_run.py "./$(basename "$RUN")" > /dev/null 2>&1) & rel=$!
+wait_until 'tr "\0" "\n" < /proc/$rel/cmdline 2>/dev/null | grep -qx local_run.py' 10
+got=$(python3 -I -c 'import sys; sys.path.insert(0, "lib"); import local_run as L; p = int(sys.argv[1]); print(L.proc_of_run(p, sys.argv[2], "runner"), L.proc_of_run(p, sys.argv[2] + "x", "runner"))' "$rel" "$RUN" 2>&1)
+kill "$rel" 2>/dev/null; wait "$rel" 2>/dev/null
+[ "$got" = "True False" ] && ok "a runner whose command line holds a relative run path is found from its working directory, not the checker's" || no "relative cmdline: $got"
 # the bound: the same, as failed and timed out
 echo wait > "$T/ir-mode"; rm -f "$T/ir-child" "$T/ir-member"
 out=$(timeout 120 $DA local run "$RUN" --again --timeout 1 2>&1); rc=$?
@@ -1190,10 +1238,14 @@ out=$(PATH="$T/same:$nofake" $DA local run "$RUN" --dry-run 2>&1); rc=$?
 out=$(PATH="$T/ext:$nofake" $DA local run "$RUN" --dry-run 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -qxF "COMMAND=$(realpath "$T/real/fakellm.js")" <<<"$out"; } \
   && ok "a link to the name with an extension (a launcher fakellm.js) is accepted" || no "extension link: rc=$rc $out"
+mkdir -p "$T/rel"; cp "$T/bin/fakellm" "$T/real/fakellm-x86_64-unknown-linux-musl"; ln -s "$T/real/fakellm-x86_64-unknown-linux-musl" "$T/rel/fakellm"
+out=$(PATH="$T/rel:$nofake" $DA local run "$RUN" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -qxF "COMMAND=$(realpath "$T/real/fakellm-x86_64-unknown-linux-musl")" <<<"$out" && ! grep -q 'passed over' <<<"$out"; } \
+  && ok "a link to the name with a suffix after a dash (a release binary fakellm-x86_64-unknown-linux-musl) is accepted" || no "suffix link: rc=$rc $out"
 out=$(PATH="$T/noexec:$PATH" $DA local run "$RUN" --dry-run 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -qxF "COMMAND=$realfake" <<<"$out" && grep -qF "NOTE=$T/noexec/fakellm on PATH is passed over (not executable)" <<<"$out"; } \
   && ok "a file of that name that is not executable is passed over with a note" || no "noexec: rc=$rc $out"
-rm -rf "$T/vm" "$T/wrap" "$T/same" "$T/ext" "$T/real" "$T/noexec" "$T/wrapper-ran"
+rm -rf "$T/vm" "$T/wrap" "$T/same" "$T/ext" "$T/rel" "$T/real" "$T/noexec" "$T/wrapper-ran"
 RUN=${w6[0]} CLONE=${w6[1]} OUT=${w6[2]}
 # a pack somebody put in the library by hand (no record: nobody read it, nobody sealed it) is not loaded, so its argv never runs
 mkdir -p "$LIB/handrun"
@@ -1206,6 +1258,28 @@ out=$($DA local run "$RUN" 2>&1); rc=$?
 
 # --- the run itself ---------------------------------------------------------------------------------------------------------------------
 setprov fakecmd
+# the start record cannot be rewritten once the member has started (here: the runner's second write of dispatch.json fails): the run is refused and
+# the member's process group is stopped, never left running after the runner has gone
+got=$(env FAKE_MODE=sleep python3 -I - "$T/tool/lib" "$RUN" <<'PY' 2>&1
+import os, sys; sys.path.insert(0, sys.argv[1])
+import local_run as L
+run, orig, n = os.path.realpath(sys.argv[2]), L.write_private, [0]
+def wp(path, text):
+    n[0] += 1
+    if n[0] == 2:
+        raise L.Stop("cannot write the run record (injected)", 2)
+    return orig(path, text)
+L.write_private = wp
+rc = L.main([run, "--project", "rproj", "--runtime", "fakecmd", "--class", "write", "--again"])
+left = [p for p in os.listdir("/proc") if p.isdigit() and L.proc_of_run(int(p), run, "member")]
+for p in left:                                   # a member left running is reported and then stopped, so a failure leaves nothing behind
+    os.kill(int(p), 9)
+print("RC=%d LEFT=%s" % (rc, ",".join(left)))
+PY
+)
+{ grep -q '^RC=2 LEFT=$' <<<"$got" && grep -q '^OUTCOME=refused$' <<<"$got" && grep -q 'injected' <<<"$got" && [ "$(jq -r .outcome "$RUN/dispatch.json")" = refused ] \
+  && [ "$(jq -r .exit "$RUN/dispatch.json")" != null ]; } \
+  && ok "a start record that cannot be rewritten after the member started: refused, and the member's process group is stopped" || no "record after start: $got"
 rm -f "$RUN/task.md"
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?; [ "$rc" = 1 ] && grep -q 'no task block' <<<"$out" && ok "no task block: stated, exit 1" || no "no task: rc=$rc $out"
 echo 'TASK: x' > "$T/other-task.md"
