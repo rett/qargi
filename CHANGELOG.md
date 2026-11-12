@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- Documentation examples and explanatory tables fit narrower GitHub views more readily.
+
 ## [0.2.12] - 2026-11-11
 
 ### Added

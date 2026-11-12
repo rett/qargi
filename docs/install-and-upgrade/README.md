@@ -9,11 +9,13 @@ Installing qargi, keeping it current, binding a project to a cloud profile, and 
 
 ## Install
 
+Install skills for a Claude Code lead in `~/.claude/skills` and the command in `~/.local/bin`, or install for a Codex lead in `~/.codex/skills`. The project option installs skills for one repository only. Add a worker and then a read-only base:
+
 ```sh
-./install.sh --user                    # skills for your lead (Claude Code: ~/.claude/skills), command in ~/.local/bin
-./install.sh --user --runtime codex    # or for a Codex lead: ~/.codex/skills
-./install.sh --project /path/to/repo   # skills for one repository only
-qargi agent add worker --project P                     # then the read-only base:
+./install.sh --user
+./install.sh --user --runtime codex
+./install.sh --project /path/to/repo
+qargi agent add worker --project P
 qargi agent add reviewer --project P
 ```
 

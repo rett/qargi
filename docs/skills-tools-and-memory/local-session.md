@@ -26,8 +26,16 @@ The plan refuses, writing nothing, a skill whose `SKILL.md` name differs from it
 A tool pack is a JSON file: the `name` of the pack (lower-case letters, digits, `-`), the `url` of an MCP server, and `tools`, the allowlist: a map from the name the server gives a tool to its policy, `always_allow`, `always_ask` or `auto`.
 
 ```json
-{"name": "kb", "url": "https://mcp.example.net/kb", "vault_ids": [],
- "tools": {"platform.list_items": "always_allow", "getStatus": "always_allow", "platform.delete_knowledge": "always_ask"}}
+{
+  "name": "kb",
+  "url": "https://mcp.example.net/kb",
+  "vault_ids": [],
+  "tools": {
+    "platform.list_items": "always_allow",
+    "getStatus": "always_allow",
+    "platform.delete_knowledge": "always_ask"
+  }
+}
 ```
 
 - **Tool names** are taken as servers write them: letters, digits and `_ . - /`, 1 to 128 characters, the first a letter, a digit or `_` (`platform.list_items`, `repo/push`, `issue-close`, `deleteItem`). Any other name fails the review.
