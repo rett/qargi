@@ -96,8 +96,12 @@ transcript that cannot be made (refused, with the error), a command that cannot 
 record: the next start of the run refuses while that runner or its member still runs (the member is found by QARGI_MEMBER_RUN in its environment),
 and otherwise needs --again, which replaces the links left in the run home and removes the stale last-message directories; qargi local clean
 removes the run with them, and qargi local list and verify name the links left. A run home a member moved or replaced is searched for the links
-qargi made, which are removed where found and named where not. --dry-run prints the argv and the prompt and writes nothing. The exit status: 0 ok,
-1 failed (or a usage error), 2 refused, 3 the runtime cannot be run this way, 4 transport, 128+N interrupted by signal N.
+qargi made, which are removed where found and named where not. When the member could write the clone's .git (git_watch: the argv names it, or the
+run's class has no sandbox arguments of its own), what git in the clone would run (.git/config, hooks/, info/) is read before the member starts and
+compared when it ends; a change other than what git branch sets is named (GITDIR=, git_dir in dispatch.json: key and entry names, never a value), not
+restored, so the lead knows not to run git in that clone (worktree_changes runs it there only with what the member could set switched off).
+--dry-run prints the argv and the prompt and writes nothing. The exit status: 0 ok, 1 failed (or a usage error), 2 refused, 3 the runtime cannot be
+run this way, 4 transport, 128+N interrupted by signal N.
 """
 import errno
 import json
@@ -1003,11 +1007,12 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     if real != os.path.realpath(clone) and not real.startswith(os.path.realpath(clone) + os.sep):
         fail("dispatch.cwd of %s is %s, outside the clone" % (runtime, cwd))
     exe, how, exe_notes = find_command(runtime, argv[0], run, keep)
+    watched = git_watch(argv_t, class_extra(disp, cls, runtime), cls, argv, clone)
     return {"runtime": runtime, "class": cls, "argv": argv, "exe": exe, "exe_from": how, "cwd": cwd, "via": via, "prompt": prompt, "prompt_file": pfile,
             "timeout_s": to, "env_pass": passed, "env": child_env(run, tmp, passed, home), "exit": ex, "model": mname, "effort_native": native,
             "home": home, "notes": exe_notes + notes + ([note] if note else []) + home_notes(home) + ([rcfg["note"]] if rcfg and rcfg["note"] else []),
             "output_format": (disp.get("output") or {}).get("format", "text"), "usage": (disp.get("output") or {}).get("usage"), "run_config": rcfg,
-            "final": final, "package": package}
+            "final": final, "package": package, "git_watch": watched}
 
 
 def home_notes(home):
@@ -1541,9 +1546,147 @@ def worktree_line(work, run):
     clone = os.path.join(run, "clone")
     if work["refused"]:
         return ("WORKTREE=uncommitted: %s holds %d changed tracked file(s)%s and OUT holds no patches: the member did not commit and collect, so the run is a "
-                "refusal, not a finished task (read its report; send it back, or take the change from the clone yourself)"
+                "refusal, not a finished task (read its report and send it back; to keep the change, copy the changed files out of the clone: never run git "
+                "in a write member's clone, whose .git it could set to run a program as you)"
                 % (clone, work["tracked"], " and %d untracked file(s)" % work["untracked"] if work["untracked"] else ""))
     return "WORKTREE=untracked: %s holds %d untracked file(s) no commit has and OUT holds no patches" % (clone, work["untracked"])
+
+
+# ---- what git in the clone would run (the clone's .git) --------------------------------------------------------------------------------
+
+GIT_WATCHED = ("hooks", "info")   # beside config: the directories of a clone's .git whose files git runs (hooks) or reads as rules (info/attributes)
+GIT_CONFIG_SAFE = re.compile(r"branch\..+\.(remote|merge|rebase|description)\Z", re.S)   # what git branch and git checkout -b set: no program
+GIT_ENTRIES_MAX = 4096
+GIT_CONFIG_MAX = 1 << 20
+GIT_NAMED_MAX = 20
+
+
+def git_watch(argv_t, extra_t, cls, argv, clone):
+    """Why the clone's .git of this run is compared before and after (git_state), or None: "granted" when the run's argv names the clone's .git or a
+    path in it (a sandbox told to let the member write it, as the write class of codex does), "unsandboxed" when the definition gives the run's class
+    no arguments of its own (no class_argv and no {"class": CLASS} group), so nothing of the runtime holds the member's writes. A class with sandbox
+    arguments that do not name the .git is not compared: its sandbox is what keeps the .git as it was."""
+    gd = os.path.join(clone, ".git")
+    if any(a == gd or a.startswith(gd + os.sep) or a.endswith("=" + gd) or ("=" + gd + os.sep) in a for a in argv):
+        return "granted"
+    def has_group(items):
+        return any(isinstance(it, dict) and ((it.get("class") == cls and it.get("then")) or ("if" in it and has_group(it.get("then") or [])))
+                   for it in items)
+    return None if extra_t or has_group(argv_t) else "unsandboxed"
+
+
+def _git_sig(path):
+    st = os.lstat(path)
+    fmt = stat.S_IFMT(st.st_mode)
+    if stat.S_ISLNK(st.st_mode):
+        return (fmt, os.readlink(path))
+    if stat.S_ISDIR(st.st_mode):
+        return (fmt, stat.S_IMODE(st.st_mode), st.st_ino)
+    return (fmt, stat.S_IMODE(st.st_mode), st.st_size, st.st_ino, st.st_mtime_ns, st.st_ctime_ns)
+
+
+def git_state(clone):
+    """What git in the clone reads that can make it run a program, read by the lead without following a link and without running git there: the bytes
+    of .git/config (None when there is none, a text when it is not a regular file or too big), and each entry under .git/hooks and .git/info by its type,
+    mode, size, inode and times (a change of a file's content changes its ctime, which no one sets by hand). None when it cannot be read at all."""
+    gd = os.path.join(clone, ".git")
+    try:
+        fd = os.open(os.path.join(gd, "config"), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        config = None
+    except OSError as e:
+        config = "not a file it can read (%s)" % (e.strerror or e)
+    else:
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                config = "not a regular file"
+            else:
+                with os.fdopen(fd, "rb", closefd=False) as f:
+                    config = f.read(GIT_CONFIG_MAX + 1)
+                if len(config) > GIT_CONFIG_MAX:
+                    config = "larger than %d bytes" % GIT_CONFIG_MAX
+        finally:
+            os.close(fd)
+    tree = {}
+    try:
+        for top in GIT_WATCHED:
+            p = os.path.join(gd, top)
+            if not os.path.lexists(p):
+                continue
+            tree[top] = _git_sig(p)
+            if not stat.S_ISDIR(tree[top][0]):
+                continue
+            for root, dirs, files in os.walk(p):         # a link is an entry, never followed
+                for n in sorted(dirs + files):
+                    if len(tree) >= GIT_ENTRIES_MAX:
+                        tree["..."] = "more than %d entries" % GIT_ENTRIES_MAX
+                        return {"config": config, "tree": tree}
+                    q = os.path.join(root, n)
+                    try:
+                        tree[os.path.relpath(q, gd)] = _git_sig(q)
+                    except OSError:
+                        tree[os.path.relpath(q, gd)] = "unreadable"
+    except OSError:
+        return None
+    return {"config": config, "tree": tree}
+
+
+def config_entries(data):
+    """{key: [values]} of a git configuration file's bytes, read by git from a private copy (no include followed, no system, global or repository
+    configuration, nothing run), or None when git cannot read it."""
+    import tempfile
+    d = tempfile.mkdtemp(prefix="qargi-gitcfg.")
+    try:
+        p = os.path.join(d, "config")
+        with open(p, "wb") as f:
+            f.write(data)
+        env = {"PATH": clean_path(), "HOME": "/nonexistent", "LC_ALL": "C", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_TERMINAL_PROMPT": "0"}
+        r = subprocess.run(["git", "config", "--file", p, "--no-includes", "--list", "-z"], cwd=d, env=env, stdin=subprocess.DEVNULL,
+                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=WORKTREE_TIMEOUT, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    if r.returncode != 0:
+        return None
+    out = {}
+    for ent in r.stdout.split(b"\0"):
+        if ent:
+            k, _, v = ent.decode("utf-8", "replace").partition("\n")
+            out.setdefault(k, []).append(v)
+    return out
+
+
+def git_changes(before, after):
+    """What changed between two git_states, as short texts naming a configuration key or an entry (never a value); [] when nothing did that could
+    make git run something. A key git branch or git checkout -b sets (GIT_CONFIG_SAFE) is no change."""
+    if before is None or after is None:
+        return ["the clone's .git could not be read"]
+    out = []
+    a, b = before["config"], after["config"]
+    if a != b:
+        if isinstance(a, bytes) and isinstance(b, bytes):
+            ea, eb = config_entries(a), config_entries(b)
+            if ea is None or eb is None:
+                out.append("config (git cannot read it)")
+            else:
+                keys = sorted(k for k in set(ea) | set(eb) if ea.get(k) != eb.get(k) and not GIT_CONFIG_SAFE.match(k))
+                out += ["config %s" % k for k in keys]
+        else:
+            out.append("config (%s)" % (b if isinstance(b, str) else "removed" if b is None else "added" if a is None else "replaced"))
+    ta, tb = before["tree"], after["tree"]
+    for name in sorted(set(ta) | set(tb)):
+        if ta.get(name) != tb.get(name):
+            out.append("%s (%s)" % (name, "added" if name not in ta else "removed" if name not in tb else "changed"))
+    if len(out) > GIT_NAMED_MAX:
+        out = out[:GIT_NAMED_MAX] + ["and %d more" % (len(out) - GIT_NAMED_MAX)]
+    return out
+
+
+def gitdir_line(changed, run):
+    return ("GITDIR=changed: the member changed what git reads in %s: %s. Never run git in this clone: a hook, core.fsmonitor, an alias or a filter "
+            "driver set there runs as you. Take the work from the patches in OUT, copy files out, or make a clean copy first with git clone --no-local "
+            "(as git(1) advises under SECURITY); qargi restores nothing" % (os.path.join(run, "clone", ".git"), "; ".join(changed)))
 
 
 BLOCKED_FIRST = re.compile(r"[#*_>`\s]*(?:(?i:status)[*_`]*\s*:[#*_>`\s]*)?BLOCKED(?![A-Za-z0-9])")
@@ -1639,6 +1782,7 @@ def run_it(plan, run):
     sig = Signals()
     sig.install()
     made, home_left, staged = [], [], False
+    git0 = git_state(os.path.join(run, "clone")) if plan["git_watch"] else None   # before the member starts: what git in the clone would run
     proc = code = error = outcome = None
     timed_out, stop_code = False, 2
     previous = prev_manifest = False
@@ -1700,6 +1844,9 @@ def run_it(plan, run):
     if outcome is None:
         outcome = "failed" if timed_out else plan["exit"].get(str(code), plan["exit"].get("*", "failed"))
     seconds = round(time.time() - started, 1)
+    gitdir = None
+    if plan["git_watch"] and proc is not None:
+        gitdir = {"watched": plan["git_watch"], "changed": git_changes(git0, git_state(os.path.join(run, "clone")))}
     work = None
     if plan["class"] == "write" and outcome == "ok" and not out_has_patches(out):
         ch = worktree_changes(os.path.join(run, "clone"))
@@ -1735,6 +1882,8 @@ def run_it(plan, run):
         rec["manifest"] = manifest
     if work:
         rec["worktree"] = work
+    if gitdir:
+        rec["git_dir"] = gitdir
     write_private(dispatch, json.dumps(rec, indent=2, sort_keys=True) + "\n")
     if error:
         print("qargi: %s" % error, file=sys.stderr)
@@ -1747,6 +1896,8 @@ def run_it(plan, run):
     print("TRANSCRIPT=" + rec["transcript"])
     if work:
         print(worktree_line(work, run))
+    if gitdir and gitdir["changed"]:
+        print(gitdir_line(gitdir["changed"], run))
     if report:
         for line in report_lines(report, out):
             print(line)

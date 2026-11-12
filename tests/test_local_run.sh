@@ -35,6 +35,9 @@ echo "STDIN-BEGIN"; if [ -t 0 ]; then echo "(tty)"; else cat; fi; echo "STDIN-EN
 case ${FAKE_MODE-} in
   exit3) exit 3;; exit5) exit 5;;
   sleep) sleep 3571 & echo $! > "${out:-.}/child.pid"; wait;;
+  branchcfg) printf '[branch "agent/other"]\n\tremote = origin\n\tmerge = refs/heads/main\n' >> .git/config;;
+  gitcfg) printf '[core]\n\tfsmonitor = touch %s\n' "$FAKE_KEY" >> .git/config; printf '#!/bin/sh\ntouch %s\n' "$FAKE_KEY" > .git/hooks/pre-commit
+          chmod 755 .git/hooks/pre-commit;;
 esac
 exit 0
 SH
@@ -926,8 +929,9 @@ chmod 755 "$T/bin/codex"
 setprov codex; prep "$T/r" wx1; printf 'TASK: add CHANGED.txt holding ok\nDONE: grep -qx ok CHANGED.txt\n\nBASE: main\nSCOPE: CHANGED.txt\n' > "$RUN/task.md"
 out=$($DA local run "$RUN" 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -q '^OUTCOME=ok' <<<"$out" && [ -f "$OUT/patches/0001-Changed-the-file-the-task-asks-for.patch" ] && [ -f "$OUT/manifest.json" ] && [ -f "$OUT/report.md" ] \
-  && [ "$(jq -c --arg g "$CLONE/.git" '.argv | index(["--add-dir", $g]) != null' "$RUN/dispatch.json")" = true ]; } \
-  && ok "e2e write: a codex build run (the stub) given its clone's .git commits and returns the series, the manifest and the report" || no "e2e write run: rc=$rc $out $(ls -A "$OUT")"
+  && [ "$(jq -c --arg g "$CLONE/.git" '.argv | index(["--add-dir", $g]) != null' "$RUN/dispatch.json")" = true ] \
+  && [ "$(jq -c .git_dir "$RUN/dispatch.json")" = '{"changed":[],"watched":"granted"}' ] && ! grep -q '^GITDIR=' <<<"$out"; } \
+  && ok "e2e write: a codex build run (the stub) given its clone's .git commits and returns the series, the manifest and the report; its .git is compared and a commit is no change" || no "e2e write run: rc=$rc $out $(ls -A "$OUT")"
 out=$($DA local verify "$RUN" 2>&1); rc=$?; [ "$rc" = 0 ] && ok "e2e write: qargi local verify passes" || no "e2e write verify: rc=$rc $out"
 out=$($DA review check "$OUT" 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -q '^0 fail' <<<"$out"; } && ok "e2e write: qargi review check passes the series" || no "e2e write review check: rc=$rc $out"
@@ -999,6 +1003,24 @@ printf 'filter.x=y.clean\0' > "$T/fgit.names"
 got=$(PATH="$T/fgit:$PATH" python3 -I -c 'import sys; sys.path.insert(0, "lib"); import local_run as L; print(L.worktree_changes(sys.argv[1]))' "$CLONE" 2>&1)
 [ "$got" = None ] && ok "a filter driver whose name cannot be emptied on the command line: git status is not run, the state is unknown" || no "bad filter name: $got $(cat "$T/fgit.log")"
 git -C "$CLONE" checkout -q tracked.txt; rm -rf "$T/fgit" "$T/fgit.log" "$T/fgit.names" "$T/wu-mode" "$T/wu-final.md" "$T/bin/codex"
+
+# --- what git in the clone would run: the clone's .git (config, hooks/, info/) is compared before and after a run whose member can write it ---
+# fakecmd gives its write class no sandbox arguments, so nothing of the runtime holds the .git (unsandboxed); its read-only class has its sandbox flags
+setprov fakecmd; prep "$T/r" gd1; task
+out=$(FAKE_MODE=branchcfg $DA local run "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(jq -c .git_dir "$RUN/dispatch.json")" = '{"changed":[],"watched":"unsandboxed"}' ] && ! grep -q '^GITDIR=' <<<"$out"; } \
+  && ok "a run that only sets what git branch sets (branch.NAME.remote, .merge) changes nothing git would run" || no "branch config: rc=$rc $out $(jq -c .git_dir "$RUN/dispatch.json")"
+out=$(FAKE_MODE=gitcfg FAKE_KEY="$T/gitdir-ran" $DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q "^GITDIR=changed: the member changed what git reads in $CLONE/.git: config core.fsmonitor; hooks/pre-commit (added)\. Never run git in this clone" <<<"$out" \
+  && grep -q 'git clone --no-local' <<<"$out" && [ "$(jq -c .git_dir.changed "$RUN/dispatch.json")" = '["config core.fsmonitor","hooks/pre-commit (added)"]' ] \
+  && [ ! -e "$T/gitdir-ran" ] && ! grep -q 'gitdir-ran' "$RUN/dispatch.json"; } \
+  && ok "a member that sets core.fsmonitor and adds a hook: GITDIR= names the key and the hook (never a value), dispatch.json records them, and nothing of them ran" \
+  || no "git config change: rc=$rc $out $(jq -c .git_dir "$RUN/dispatch.json")"
+prep "$T/r" gd2 review; task
+out=$(FAKE_MODE=gitcfg FAKE_KEY="$T/gitdir-ran" $DA local run "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(jq -r 'has("git_dir")' "$RUN/dispatch.json")" = false ] && ! grep -q '^GITDIR=' <<<"$out"; } \
+  && ok "a class whose own sandbox arguments do not grant the .git is not compared (its sandbox holds it)" || no "read-only not watched: rc=$rc $out"
+rm -f "$T/gitdir-ran"
 
 # --- however a run ends, the member's processes are stopped, the run home's link is removed and dispatch.json says how it ended (synthetic sign-in) ---
 # The fake codex records its pid and starts a child in its process group, then waits ($T/ir-mode: wait, or quick to end at once). The signal goes to the
