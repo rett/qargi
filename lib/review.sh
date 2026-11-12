@@ -140,7 +140,7 @@ if [ "$verb" = check ]; then
     if ! reg_has "$CLASS_RUN"; then
       CLASS_RUN=$(reg_id "${SRUN##*/}") || { echo "qargi: the lead's registry names no run for $SRUN; its class is unknown" >&2; exit 3; }
     fi
-    run_class "$CLASS_RUN" >/dev/null || exit 3
+    RCLASS=$(run_class "$CLASS_RUN") || exit 3
   fi
   rc=0; python3 -I "$(dirname "$0")/review_check.py" "$@" || rc=$?
   # The project's declared take-in scrub (answers review.scrub and review.trailer_policy; neither set: nothing more is checked or printed) runs on a series
