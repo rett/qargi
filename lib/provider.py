@@ -401,12 +401,22 @@ HOME_LINK_DENIED = (                                    # under the user's home:
     (".config/glab-cli", "a forge credential"), (".aws", "a cloud credential"), (".azure", "a cloud credential"), (".config/gcloud", "a cloud credential"),
     (".kube", "a cluster credential"), (".docker", "a registry credential"), (".password-store", "the user's passwords"),
     (".local/share/keyrings", "the user's keyring"), (".pki", "the user's certificates and keys"),
+    # what runs as the user later: a file the runtime put in place of its link is written back to the source, so a startup file or a program
+    # directory as a source would let a member's write run at the next login or command
+    (".bashrc", "a startup file of the user's shell"), (".bash_profile", "a startup file of the user's shell"),
+    (".bash_login", "a startup file of the user's shell"), (".bash_logout", "a startup file of the user's shell"),
+    (".profile", "a startup file of the user's shell"), (".zshenv", "a startup file of the user's shell"),
+    (".zprofile", "a startup file of the user's shell"), (".zshrc", "a startup file of the user's shell"),
+    (".zlogin", "a startup file of the user's shell"), (".config/fish", "a startup file of the user's shell"),
+    (".config/autostart", "what the user's desktop starts"), (".config/systemd", "what the user's service manager starts"),
+    (".config/environment.d", "the environment of the user's services"), (".local/bin", "the user's own programs, on the search path"),
 )
 
 
 def home_link_problem(src):
     """Why the file src (written ~/PATH) may not be linked into a run home, or None. It must be a plain path under the user's home (no .., no
-    empty or . part) that is not qargi's own directory or a credential store of the user's other tools (HOME_LINK_DENIED)."""
+    empty or . part) that is not qargi's own directory, a credential store of the user's other tools, a startup file of the user's shell, desktop or
+    services, or ~/.local/bin (HOME_LINK_DENIED)."""
     if not isinstance(src, str) or not src.startswith("~/") or not _plain_relative(src[2:]):
         return "%s is not a plain path under the home (~/PATH, no .., no empty or . part)" % _show(src)
     rel = src[2:]
