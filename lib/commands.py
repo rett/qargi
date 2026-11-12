@@ -310,9 +310,9 @@ COMMANDS = {
             "park": verb("Put the project's main checkout on its parking branch, reset to develop", [], [PROJECT_OPT],
                          desc=("qargi moves develop without touching a working tree, so develop cannot be checked out in the project's main checkout. The checkout rests on a "
                                "parking branch instead (answers repo.parking_branch, default scratch). This makes it: git checkout -B BRANCH develop in the main checkout, creating the "
-                               "branch when missing. Refused when the working tree is not clean, or when the parking branch has commits develop lacks (they are listed; re-implement "
+                               "branch when missing. Refused for tracked working tree changes, colliding untracked or ignored files, or when the parking branch has commits develop lacks (they are listed; re-implement "
                                "them with an agent task based on develop, or keep them on a branch of their own). After feature finish, release finish and hotfix finish moved "
-                               "develop, a clean main checkout on the parking branch with no commits of its own is fast-forwarded to develop, and one status line says why it was not. "
+                               "develop, a main checkout on the parking branch with no tracked changes or commits of its own is fast-forwarded to develop if no untracked or ignored files collide, and one status line says why it was not. "
                                "The parking branch is never pushed or merged.")),
             "sync": verb("Merge develop into the feature (after another feature landed, before this one's checkpoint)", [("NAME", "none")], [PROJECT_OPT, RESOLVED_OPT, FLOW_UNREACHABLE_OPT],
                          desc=("With the answer release.changelog.numbered true it then checks the changelog for duplicate item numbers and warns (exit status unchanged); "
