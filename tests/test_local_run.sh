@@ -487,9 +487,8 @@ case \$(cat "$T/codex-mode" 2>/dev/null) in
   replace) rm -f "\$a"; echo 'sign-in-written-anew-v2' > "\$a";;
   through) echo 'sign-in-refreshed-in-place' > "\$a";;
   delete) rm -f "\$a";;
-  race) src=\$(readlink "\$a"); echo 'sign-in-of-the-lead-meanwhile' > "\$src"; rm -f "\$a"; echo 'sign-in-written-anew-v3' > "\$a";;
+  race) src=\$(readlink "\$a"); rm -f "\$a"; echo 'sign-in-written-anew-v3' > "\$a"; echo 'sign-in-of-the-lead-meanwhile' > "\$src";;
   second) rm -f "\$a"; ln "$T/victim-h" "\$a";;
-  big) rm -f "\$a"; head -c 1048600 /dev/zero | tr '\0' a > "\$a";;
   swap) src=\$(readlink "\$a"); mv "\$CODEX_HOME" "\$CODEX_HOME.moved"; ln -s "\$(dirname "\$src")" "\$CODEX_HOME";;
 esac
 exit 0
@@ -520,21 +519,30 @@ out=$($DA local run "$RUN" --again 2>&1); rc=$?
 rm -f "$T/codex-mode"
 { [ ! -e "$RUN/home/.codex/auth.json" ] && [ ! -L "$RUN/home/.codex/auth.json" ] && [ "$(sha256sum < "$HOME/.codex/auth.json" | cut -c1-64)" = "$SUM" ]; } \
   && ok "the link is removed when the run ends, and the user's file is as it was" || no "home link left: $(ls -lA "$RUN/home/.codex")"
-{ [ "$(jq -c .home "$RUN/dispatch.json")" = '{"dir":".codex","env":"CODEX_HOME","left":[],"links":["auth.json"],"not_linked":[]}' ] \
+{ [ "$(jq -c .home "$RUN/dispatch.json")" = '{"dir":".codex","env":"CODEX_HOME","left":[],"links":["auth.json"],"not_linked":[],"residue":[]}' ] \
   && ! grep -q -e "$SECRET" -e "$HOME/.codex" "$RUN/dispatch.json" && ! grep -q "$SECRET" <<<"$out" && ! grep -qF "$HOME/.codex" <<<"$out"; } \
   && ok "dispatch.json records the link by name; neither it nor the output holds the content or the source path" || no "home record: $(jq -c .home "$RUN/dispatch.json") $out"
-# what the runtime does to the link during the run (a sign-in refreshed) loses nothing, and no value reaches an output or a record
+# what the runtime does to the link during the run (a sign-in refreshed) loses nothing: qargi never writes the user's file, and no value reaches an
+# output or a record
 src_is() { [ "$(cat "$HOME/.codex/auth.json")" = "$1" ] && [ "$(stat -c %a "$HOME/.codex/auth.json")" = 600 ]; }
 noval() { ! grep -q -e "$SECRET" -e 'sign-in-' <<<"$out" && ! grep -q -e "$SECRET" -e 'sign-in-' "$RUN/dispatch.json"; }
 reset_src() { printf '{"token": "%s"}\n' "$SECRET" > "$HOME/.codex/auth.json"; chmod 600 "$HOME/.codex/auth.json"; }
 reset_src; HD=$RUN/home/.codex
-# an atomic replace (a file of its own renamed over the link), the source unchanged since the start: the file is written back, mode 600, no copy stays
+# an atomic replace (a file of its own renamed over the link), the source unchanged since the start: the source is not written; the runtime's file is
+# kept as auth.json.from-run (mode 600), named in HOME_RESIDUE= and home.residue, for the user to reconcile
 echo replace > "$T/codex-mode"
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
-{ [ "$rc" = 0 ] && src_is sign-in-written-anew-v2 && [ ! -e "$HD/auth.json" ] && [ ! -L "$HD/auth.json" ] && [ ! -e "$HD/auth.json.from-run" ] \
-  && grep -q 'auth.json in the run home was replaced during the run by a file of its own (a sign-in written anew); the source was unchanged since the run started, so it now holds that file (mode 600)' <<<"$out" \
-  && [ -z "$(find "$HOME/.codex" -name '.auth.json.qargi-*')" ] && noval; } \
-  && ok "atomic replace: the runtime's new file is written back to the unchanged source (mode 600), the run home keeps no copy, no value is printed" || no "home replaced: rc=$rc $out $(ls -lA "$HD" "$HOME/.codex")"
+{ [ "$rc" = 0 ] && src_is "{\"token\": \"$SECRET\"}" && [ ! -e "$HD/auth.json" ] && [ ! -L "$HD/auth.json" ] && [ "$(cat "$HD/auth.json.from-run")" = sign-in-written-anew-v2 ] \
+  && [ "$(stat -c %a "$HD/auth.json.from-run")" = 600 ] \
+  && grep -qF "auth.json in the run home was replaced during the run by a file of its own (a sign-in written anew, or the member's); qargi never writes it to your file. It is kept as $HD/auth.json.from-run (mode 600); your file is unchanged since the run started" <<<"$out" \
+  && grep -qxF "HOME_RESIDUE=$HD/auth.json.from-run (the runtime replaced the link with a file of its own; qargi did not write it to your file: compare it with yours and reconcile it yourself)" <<<"$out" \
+  && [ "$(jq -c .home.residue "$RUN/dispatch.json")" = '["auth.json.from-run"]' ] && [ -z "$(find "$HOME/.codex" -name '.auth.json.qargi-*')" ] && noval; } \
+  && ok "atomic replace: the user's file is not written, the runtime's file is kept as auth.json.from-run (mode 600), named in the output and dispatch.json, no value" || no "home replaced: rc=$rc $out $(ls -lA "$HD" "$HOME/.codex")"
+# the same again: the kept file of the earlier run is replaced by this run's, and the note says so
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(cat "$HD/auth.json.from-run")" = sign-in-written-anew-v2 ] && grep -qF "(mode 600), in place of the one an earlier run kept there; your file is unchanged" <<<"$out" \
+  && src_is "{\"token\": \"$SECRET\"}"; } && ok "a second replace keeps the newer file in place of the earlier run's, and says so" || no "home replaced twice: rc=$rc $out"
+rm -f "$HD/auth.json.from-run"
 # written through the link: the source keeps it, the link goes, a note says the source changed
 reset_src; echo through > "$T/codex-mode"
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
@@ -546,30 +554,50 @@ reset_src; echo delete > "$T/codex-mode"
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
 { [ "$rc" = 0 ] && src_is "{\"token\": \"$SECRET\"}" && grep -q 'auth.json was removed from the run home during the run (by the runtime or the member); its source is untouched' <<<"$out"; } \
   && ok "deleted: the source is untouched, with a note" || no "home delete: rc=$rc $out"
-# an atomic replace while the source changed (you signed in again meanwhile): the source keeps yours, the runtime's file is kept as auth.json.from-run (mode 600)
+# the source changes after the member started and after the link was replaced (you, another run or a session signed in again meanwhile): the newer
+# sign-in stays in your file and the runtime's is kept as auth.json.from-run (mode 600)
 reset_src; echo race > "$T/codex-mode"
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
 { [ "$rc" = 0 ] && [ "$(cat "$HOME/.codex/auth.json")" = sign-in-of-the-lead-meanwhile ] && [ "$(cat "$HD/auth.json.from-run")" = sign-in-written-anew-v3 ] \
   && [ "$(stat -c %a "$HD/auth.json.from-run")" = 600 ] && [ ! -e "$HD/auth.json" ] \
-  && grep -qF "it was not written back: the source changed since the run started (another sign-in, or another program). It is kept as $HD/auth.json.from-run (mode 600)" <<<"$out" && noval \
-  && [ "$(jq -r '.home.left[0] | test("kept as")' "$RUN/dispatch.json")" = true ]; } \
-  && ok "replace while the source changed: the source keeps the newer one, the runtime's file is kept as auth.json.from-run (mode 600) and said" || no "home race: rc=$rc $out $(ls -lA "$HD")"
+  && grep -qF "It is kept as $HD/auth.json.from-run (mode 600); your file changed since the run started (another sign-in, another run, or another program): keep yours" <<<"$out" && noval \
+  && [ "$(jq -r '.home.left[0] | test("kept as")' "$RUN/dispatch.json")" = true ] && [ "$(jq -c .home.residue "$RUN/dispatch.json")" = '["auth.json.from-run"]' ]; } \
+  && ok "replace, then the source changes: the newer sign-in stays in your file, the runtime's file is kept as auth.json.from-run (mode 600) and said" || no "home race: rc=$rc $out $(ls -lA "$HD")"
 out=$($DA local list 2>&1)
-grep -qF "  residue: $HD/auth.json.from-run (a file the runtime wrote in place of the link, not written back to its source: compare it with your own)" <<<"$out" \
+grep -qF "  residue: $HD/auth.json.from-run (a file the runtime wrote in place of the link, which qargi never writes to your file: compare it with yours and reconcile it yourself)" <<<"$out" \
   && ok "local list names the kept file" || no "list kept: $out"
+# the window a write-back would have had: the source is written by another program while the run's end looks at the replaced file (the digest is
+# taken in the middle of it); the source keeps the newer sign-in, the replacement is kept, nothing of the source is written by qargi
+rm -f "$HD/auth.json.from-run"; reset_src; printf 'sign-in-written-anew-v4\n' > "$HD/auth.json"
+got=$(python3 -I - "$RUN" "$HOME/.codex/auth.json" <<'PY' 2>&1
+import os, sys
+sys.path.insert(0, "lib")
+import local_run as L
+run, src = sys.argv[1], sys.argv[2]
+home = {"path": os.path.join(run, "home", ".codex"), "dir": ".codex", "links": [("auth.json", src)], "residue": []}
+home["start"] = {"auth.json": (os.path.realpath(src), L.digest_of(src))}
+real_digest = L.digest_of
+def digest_then_write(path):
+    d = real_digest(path)
+    with open(src, "w") as f:
+        f.write("sign-in-newer-elsewhere\n")
+    return d
+L.digest_of = digest_then_write
+notes = L.clear_home(run, home, ["auth.json"])
+print(home["residue"], "kept as" in notes[0], "unchanged" in notes[0])
+PY
+)
+{ [ "$got" = "['auth.json.from-run'] True True" ] && [ "$(cat "$HOME/.codex/auth.json")" = sign-in-newer-elsewhere ] && [ "$(cat "$HD/auth.json.from-run")" = sign-in-written-anew-v4 ] \
+  && [ -z "$(find "$HOME/.codex" -name '.auth.json.qargi-*')" ]; } \
+  && ok "a source written after the end of the run compared it: the newer sign-in is not lost, the replacement is kept as residue" || no "home late race: $got $(ls -lA "$HD")"
 rm -f "$HD/auth.json.from-run"
 # a second name of another file in place of the link: the name is removed, the file and the source untouched
 reset_src; echo precious > "$T/victim-h"; echo second > "$T/codex-mode"
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
 { [ "$rc" = 0 ] && [ "$(cat "$T/victim-h")" = precious ] && [ "$(stat -c %h "$T/victim-h")" = 1 ] && src_is "{\"token\": \"$SECRET\"}" && [ ! -e "$HD/auth.json" ] \
   && grep -q 'replaced during the run by a second name of another file; the name is removed' <<<"$out"; } \
-  && ok "a second name of another file in place of the link: the name is removed, nothing is written back" || no "home second: rc=$rc $out"
-# over the bound: kept, not written back
-reset_src; echo big > "$T/codex-mode"
-out=$($DA local run "$RUN" --again 2>&1); rc=$?
-{ [ "$rc" = 0 ] && src_is "{\"token\": \"$SECRET\"}" && [ -f "$HD/auth.json.from-run" ] && grep -q 'not written back: it is over 1048576 bytes' <<<"$out"; } \
-  && ok "a file over 1 MiB in place of the link is kept, not written back" || no "home big: rc=$rc $out"
-rm -f "$HD/auth.json.from-run" "$T/victim-h"; reset_src
+  && ok "a second name of another file in place of the link: the name is removed, nothing is kept or written" || no "home second: rc=$rc $out"
+rm -f "$T/victim-h"; reset_src
 # a CODEX_HOME of yours that is another directory: said, the value never printed
 out=$(CODEX_HOME=$T/my-codex-home $DA local run "$RUN" --dry-run 2>&1)
 { grep -q '^NOTE=CODEX_HOME is set in your environment to another directory than the one the run home.s links come from (~/.codex): the run links ~/.codex/auth.json from there' <<<"$out" \
@@ -979,7 +1007,7 @@ out=$($DA review check "$OUT" 2>&1); rc2=$?
   && ok "a BLOCKED manifest with the change left uncommitted passes review check as a refusal, with a note and a warning" || no "blocked uncommitted: rc=$rc rc2=$rc2 $out"
 git -C "$CLONE" checkout -q tracked.txt; echo untracked > "$T/wu-mode"
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
-{ [ "$rc" = 0 ] && grep -q '^OUTCOME=ok$' <<<"$out" && grep -qF "WORKTREE=untracked: $CLONE holds 1 untracked file(s) no commit has and OUT holds no patches" <<<"$out" \
+{ [ "$rc" = 0 ] && grep -q '^OUTCOME=ok$' <<<"$out" && grep -qF "WORKTREE=untracked: $CLONE holds 1 untracked file(s) no commit has and OUT holds no patches: new files never added are reported, not a refusal (the refusal covers changes to tracked files)" <<<"$out" \
   && [ "$(jq -c '.worktree.refused' "$RUN/dispatch.json")" = false ]; } && ok "untracked files alone are said (WORKTREE=untracked), not a refusal" || no "untracked only: rc=$rc $out"
 rm -f "$CLONE/new.txt"; : > "$T/wu-mode"
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
@@ -1003,6 +1031,11 @@ printf 'filter.x=y.clean\0' > "$T/fgit.names"
 got=$(PATH="$T/fgit:$PATH" python3 -I -c 'import sys; sys.path.insert(0, "lib"); import local_run as L; print(L.worktree_changes(sys.argv[1]))' "$CLONE" 2>&1)
 [ "$got" = None ] && ok "a filter driver whose name cannot be emptied on the command line: git status is not run, the state is unknown" || no "bad filter name: $got $(cat "$T/fgit.log")"
 git -C "$CLONE" checkout -q tracked.txt; rm -rf "$T/fgit" "$T/fgit.log" "$T/fgit.names" "$T/wu-mode" "$T/wu-final.md" "$T/bin/codex"
+# a new file never added is not a refusal, so a clean of such a run removes it: never silently
+printf 'new\n' > "$CLONE/new.txt"
+out=$($DA local clean "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ ! -e "$RUN" ] && grep -qF "qargi: warning: removed with the run what no commit had: $RUN/clone held 1 untracked file(s) (new files never added) and 0 uncommitted change(s) to tracked files" <<<"$out"; } \
+  && ok "local clean warns that it removes a new file of the clone no commit has" || no "clean untracked: rc=$rc $out"
 
 # --- what git in the clone would run: the clone's .git (config, hooks/, info/) is compared before and after a run whose member can write it ---
 # fakecmd gives its write class no sandbox arguments, so nothing of the runtime holds the .git (unsandboxed); its read-only class has its sandbox flags
@@ -1023,14 +1056,14 @@ out=$(FAKE_MODE=gitcfg FAKE_KEY="$T/gitdir-ran" $DA local run "$RUN" 2>&1); rc=$
 rm -f "$T/gitdir-ran"
 
 # --- however a run ends, the member's processes are stopped, the run home's link is removed and dispatch.json says how it ended (synthetic sign-in) ---
-# The fake codex records its pid and starts a child in its process group, then waits ($T/ir-mode: wait, or quick to end at once). The signal goes to the
-# runner, whose pid the start record in dispatch.json names.
+# The fake codex records its pid and starts a child in its process group, then waits ($T/ir-mode: wait, quick to end at once, or stubborn: its child
+# ignores TERM, while the fake codex itself ends on it). The signal goes to the runner, whose pid the start record in dispatch.json names.
 mkdir -p "$HOME/.codex"; printf '{"token": "sk-test-%s-interrupt"}\n' "$RANDOM" > "$HOME/.codex/auth.json"; ISUM=$(sha256sum < "$HOME/.codex/auth.json")
 cat > "$T/bin/codex" <<SH
 #!/usr/bin/env bash
 cat > /dev/null
 [ "\$(cat "$T/ir-mode" 2>/dev/null)" = quick ] && exit 0
-sleep 3571 & echo \$! > "$T/ir-child"
+if [ "\$(cat "$T/ir-mode" 2>/dev/null)" = stubborn ]; then (trap '' TERM; exec sleep 3571) & echo \$! > "$T/ir-child"; else sleep 3571 & echo \$! > "$T/ir-child"; fi
 echo \$\$ > "$T/ir-member"
 wait
 SH
@@ -1039,7 +1072,7 @@ setprov codex; prep "$T/r" ir1; task
 LINK=$RUN/home/.codex/auth.json
 gone() { ! kill -0 "$1" 2>/dev/null; }
 ir_start() { # [launcher...]: local run --again in the background; waits for the member to have started
-  rm -f "$T/ir-child" "$T/ir-member" "$T/ir.rc" "$T/ir.out"; echo wait > "$T/ir-mode"
+  rm -f "$T/ir-child" "$T/ir-member" "$T/ir.rc" "$T/ir.out"; echo "${IR_MODE:-wait}" > "$T/ir-mode"
   ( "$@" $DA local run "$RUN" --again > "$T/ir.out" 2>&1; echo $? > "$T/ir.rc" ) &
   wait_until '[ -s "$T/ir-child" ] && [ -s "$T/ir-member" ] && [ "$(jq -r .member "$RUN/dispatch.json" 2>/dev/null)" = "$(cat "$T/ir-member")" ]' 30
 }
@@ -1056,6 +1089,18 @@ echo quick > "$T/ir-mode"; out=$($DA local run "$RUN" 2>&1) || no "ir1 first run
 for s in TERM HUP; do
   if ir_start; then kill -"$s" "$(jq -r .runner "$RUN/dispatch.json")"; ir_after "$s" "$([ "$s" = TERM ] && echo 143 || echo 129)"; else no "SIG$s: the member did not start: $(cat "$T/ir.out")"; fi
 done
+# the member ends on TERM, its child ignores it: the group is watched, not only the member, and KILL stops the child before the run says so
+if IR_MODE=stubborn ir_start; then
+  kill -TERM "$(jq -r .runner "$RUN/dispatch.json")"; ir_after TERM 143
+  [ "$(jq -r .group_left "$RUN/dispatch.json")" = 0 ] && ok "a child that ignores TERM after the member ended on it is killed, and dispatch.json says none of the group is left" \
+    || no "stubborn child: $(jq -c . "$RUN/dispatch.json")"
+else no "stubborn: the member did not start: $(cat "$T/ir.out")"; fi
+# a group that cannot be emptied is never said to be stopped: the count of what is left is said (group_left stands in for processes that survive KILL)
+got=$(python3 -I -c 'import subprocess, sys; sys.path.insert(0, "lib"); import local_run as L
+p = subprocess.Popen(["sleep", "30"], start_new_session=True); L.group_left = lambda pg: [pg, 1]
+n = L.kill_group(p, grace=0.1); print(n, p.wait(5), L.stopped_text(n), "|", L.stopped_text(1), "|", L.stopped_text(0))' 2>&1)
+[ "$got" = "2 -15 a descendant survived: 2 processes of the member's process group still alive after TERM and KILL | a descendant survived: 1 process of the member's process group still alive after TERM and KILL | the member's process group was stopped" ] \
+  && ok "survivors of TERM and KILL are counted and said, never called a stopped group" || no "survivors: $got"
 # a background job of a script starts with SIGINT ignored, which the runner keeps (as under nohup): this launcher restores it first, as a terminal has it
 if ir_start python3 -I -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])'; then
   kill -INT "$(jq -r .runner "$RUN/dispatch.json")"; ir_after INT 130

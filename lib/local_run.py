@@ -35,13 +35,14 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
                        linked into it as `to` when the run starts and the link is removed when it ends: the file is never copied and the
                        link's target is never printed (--dry-run names the links, HOME_LINKS=). A source that does not exist is left out with
                        a note. The directory is made and the links are removed without following a link a member may have put in the run
-                       directory. What a runtime does to a link during the run (a sign-in refreshed) loses nothing: written through the link, the
-                       source keeps it (a note says the source changed); the link deleted, the source is untouched (a note); the link replaced by
-                       a file of its own (an atomic replace), that file is written back to the source, by a new file of mode 600 renamed over it,
-                       only when it is a regular file of one name of at most 1 MiB and the source is the file it was at the start (its sha256 then,
-                       kept in memory, never printed or recorded); otherwise it is kept as NAME.from-run (mode 600) in the run home, which
-                       qargi local list and verify name and qargi local clean removes. A variable env set in the lead's environment to another
-                       directory than the links' sources is a note. provider.home_problems states the rules.
+                       directory. What a runtime does to a link during the run (a sign-in refreshed): written through the link, it lands in the
+                       source, which qargi cannot prevent (a note says the source changed); the link deleted, the source is untouched (a note); the
+                       link replaced by a file of its own (an atomic replace), qargi never writes that file to the source (another run, a session of
+                       the runtime or a sign-in of yours may have written the source meanwhile): it is kept as NAME.from-run (mode 600) in the run
+                       home, named in the HOME_RESIDUE= line and in home.residue of dispatch.json (the name, never a value), with a note that says
+                       whether the source is still what it was when the run started (its sha256 then, kept in memory, never printed or recorded);
+                       you reconcile it yourself. qargi local list and verify name it and qargi local clean removes it. A variable env set in the
+                       lead's environment to another directory than the links' sources is a note. provider.home_problems states the rules.
   dispatch.run_config  {in: home|run, file, baseline}: the configuration file of the run, rendered when the run starts in the format of
                        resources.mcp: the baseline (the definition's own settings, the same for every run) at its root, and the MCP servers
                        from resources.mcp (lib/packs_render.py run_config) for the run's role, as the lead's registry records it (never a file
@@ -88,11 +89,12 @@ exists, passes through no link, or the run is refused: a sandbox may be told to 
 The process gets the environment of the run's git wrapper (RUN/git: HOME is RUN/home, no global git configuration, no ssh, no prompts,
 the author qargi) and TMPDIR of the run, plus QARGI_MEMBER_RUN (the run directory: the mark that tells the marshal a member is running, wherever the
 member changes to), PATH, the env_pass names and the variable of dispatch.home. It runs in its own session without a shell, its standard output goes
-to OUT/transcript and its standard error to OUT/transcript.err, and a process group that outlives the bound is killed. A record of what ran is
+to OUT/transcript and its standard error to OUT/transcript.err, and a process group that outlives the bound is stopped (kill_group). A record of what ran is
 written to RUN/dispatch.json (argv, class, model, outcome; never an environment value): when the run starts (outcome running, with the process ids of
 the runner and, once started, of the member), and again when it ends, whatever ended it: the member's exit, the bound, a run home, configuration file or
 transcript that cannot be made (refused, with the error), a command that cannot be started (transport), or SIGINT, SIGTERM or SIGHUP to the runner
-(interrupted, with the signal: the member's process group is stopped, TERM then KILL, and the run home's links are removed). SIGKILL leaves the start
+(interrupted, with the signal: the member's process group gets TERM, is watched for 5 seconds, then KILL for what is left of it, and the run
+home's links are removed; the output says the group was stopped only when none of it is alive, and otherwise how many of its processes survived). SIGKILL leaves the start
 record: the next start of the run refuses while that runner or its member still runs (the member is found by QARGI_MEMBER_RUN in its environment),
 and otherwise needs --again, which replaces the links left in the run home and removes the stale last-message directories; qargi local clean
 removes the run with them, and qargi local list and verify name the links left. A run home a member moved or replaced is searched for the links
@@ -356,11 +358,12 @@ def plan_home(disp, run, runtime):
         notes.append("%s is set in your environment to another directory than the one the run home's links come from (%s): the run links %s from there, "
                      "and a sign-in kept in the directory %s names is not used" % (h["env"], ", ".join(sorted({os.path.dirname(ln["from"]) for ln in h.get("link", [])})),
                                                                                    ", ".join(ln["from"] for ln in h.get("link", [])), h["env"]))
-    return {"env": h["env"], "dir": h["dir"], "path": os.path.join(run, "home", h["dir"]), "links": links, "missing": missing, "notes": notes, "start": {}}
+    return {"env": h["env"], "dir": h["dir"], "path": os.path.join(run, "home", h["dir"]), "links": links, "missing": missing, "notes": notes, "start": {},
+            "residue": []}
 
 
 def source_problem(src):
-    """(real path, None) for a source of a run home's link that may be linked (and written back to), or (real path, why not): its real path must be
+    """(real path, None) for a source of a run home's link that may be linked, or (real path, why not): its real path must be
     under the user's home, outside qargi's directories and the credential stores home_link_problem refuses, and a regular file."""
     home = os.path.realpath(os.path.expanduser("~"))
     mine = [os.path.realpath(d) for d in (paths.conf(), paths.state())]
@@ -375,7 +378,7 @@ def source_problem(src):
     return real, None
 
 
-MAX_SIGNIN = 1 << 20      # the bound of a file a runtime put in place of a run home's link that is written back to its source
+MAX_SIGNIN = 1 << 20      # the bound of a source digest_of reads (a larger one is not compared)
 
 
 def digest_of(path):
@@ -493,8 +496,8 @@ def sweep_home(run, home, names):
 
 
 def clear_home(run, home, names):
-    """Remove the links of the run home (names), without following a link; notes for what was not as it was left: a file in place of a link
-    (the runtime replaced it: it is removed too, so no copy of the source stays in the run), or a run home a member replaced."""
+    """Remove the links of the run home (names), without following a link; notes for what was not as it was left: a source written through its link,
+    a file in place of a link (the runtime replaced it: kept as NAME.from-run, keep_replacement), or a run home a member replaced."""
     notes = []
     if not names:
         return notes
@@ -517,9 +520,10 @@ def clear_home(run, home, names):
                     notes.append("%s in the run home pointed elsewhere at the end of the run; the link is removed, what it pointed to is untouched" % to)
                 elif sum0 is not None and digest_of(src) != sum0:
                     notes.append("the source of %s changed during the run (written through the link, such as a sign-in the runtime refreshed in place, "
-                                 "or by another program); it keeps what was written" % to)
+                                 "or by another program); it keeps what was written: a write through the link reaches the source, which qargi cannot "
+                                 "prevent" % to)
             elif stat.S_ISREG(st.st_mode):
-                notes.append(take_back(fd, to, src, real0, sum0, home))
+                notes.append(keep_replacement(fd, to, src, real0, sum0, home))
             else:
                 notes.append("%s in the run home is not a link or a file any more; it was left in place" % to)
     finally:
@@ -527,16 +531,16 @@ def clear_home(run, home, names):
     return notes
 
 
-KEPT = ".from-run"   # a file a runtime put in place of a run home's link that is not written back is kept in the run home under this suffix
+KEPT = ".from-run"   # a file a runtime put in place of a run home's link is kept in the run home under this suffix; qargi never writes it to the source
 
 
-def take_back(fd, to, src, real0, sum0, home):
-    """A regular file in place of the link `to` at the end of the run: the runtime replaced the link with a file of its own (a sign-in written anew by
-    an atomic replace, which does not write through a link). It is written back to the source when that is safe: the file is a regular file of one
-    name of at most MAX_SIGNIN bytes, the source is still the regular file it was when the run started (the same real path, allowed as a source, the
-    same sha256 as then: neither you nor another program changed it meanwhile), and it is replaced by a new file of mode 600 renamed over it.
-    Otherwise nothing of the source changes and the file is kept in the run home as NAME.from-run (mode 600) for you to compare; a second name of
-    another file is removed (a name only). The note says which, never a value."""
+def keep_replacement(fd, to, src, real0, sum0, home):
+    """A regular file in place of the link `to` at the end of the run: the runtime (or the member) replaced the link with a file of its own (a sign-in
+    written anew by an atomic replace, which does not write through a link). qargi never writes it to the source: another run, a session of the
+    runtime or a sign-in of yours may write the source at any moment, and no check qargi makes before a rename keeps such a writer out, so a newer
+    sign-in would be lost. The file is kept in the run home as NAME.from-run (mode 600), over one an earlier run left there, and its name goes to
+    home["residue"]: you compare it with yours and put it in place yourself. A second name of another file is removed (a name only). The note says
+    which, and whether the source is still the file it was when the run started (the same real path and sha256), never a value."""
     here = os.path.join(home["path"], to)
     try:
         rfd = os.open(to, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
@@ -547,74 +551,28 @@ def take_back(fd, to, src, real0, sum0, home):
         if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
             os.unlink(to, dir_fd=fd)
             return "%s in the run home was replaced during the run by a second name of another file; the name is removed, and the source is untouched" % to
-        data = b""
-        while st.st_size <= MAX_SIGNIN and len(data) <= MAX_SIGNIN:
-            chunk = os.read(rfd, MAX_SIGNIN + 1 - len(data))
-            if not chunk:
-                break
-            data += chunk
-        why = None
-        if st.st_size > MAX_SIGNIN or len(data) > MAX_SIGNIN:
-            why = "it is over %d bytes" % MAX_SIGNIN
-        elif src is None or real0 is None or sum0 is None:
-            why = "the source was not read when the run started"
+        if src is None or real0 is None or sum0 is None:
+            now = "the source was not read when the run started, so whether it changed since is not known"
         else:
             real, bad = source_problem(src)
-            if bad or real != real0:
-                why = "the source is not the file it was when the run started"
-            elif digest_of(real) != sum0:
-                why = "the source changed since the run started (another sign-in, or another program)"
-        if why is None:
-            bad = write_back(real0, data)
-            if bad is None:
-                os.unlink(to, dir_fd=fd)
-                return ("%s in the run home was replaced during the run by a file of its own (a sign-in written anew); the source was unchanged since the run "
-                        "started, so it now holds that file (mode 600), and the run home holds no copy" % to)
-            why = "the source could not be written (%s)" % bad
+            now = ("your file is unchanged since the run started" if not bad and real == real0 and digest_of(real) == sum0
+                   else "your file changed since the run started (another sign-in, another run, or another program): keep yours")
         try:
+            try:
+                earlier = bool(os.lstat(to + KEPT, dir_fd=fd))
+            except FileNotFoundError:
+                earlier = False
             os.fchmod(rfd, 0o600)
             os.rename(to, to + KEPT, src_dir_fd=fd, dst_dir_fd=fd)
         except OSError as e:
-            return ("%s in the run home was replaced during the run by a file of its own and was not written back (%s); it could not be set aside as %s (%s), "
-                    "so it was left in place" % (to, why, here + KEPT, e.strerror or e))
-        return ("%s in the run home was replaced during the run by a file of its own (a sign-in written anew), and it was not written back: %s. It is kept "
-                "as %s (mode 600) for you to compare with your own; qargi local clean removes it with the run" % (to, why, here + KEPT))
+            return ("%s in the run home was replaced during the run by a file of its own; qargi does not write it to your file, and it could not be set aside "
+                    "as %s (%s), so it was left in place" % (to, here + KEPT, e.strerror or e))
+        home["residue"].append(to + KEPT)
+        return ("%s in the run home was replaced during the run by a file of its own (a sign-in written anew, or the member's); qargi never writes it to your "
+                "file. It is kept as %s (mode 600)%s; %s. Compare it with yours and, to use it, move it over yours yourself; qargi local clean removes it "
+                "with the run" % (to, here + KEPT, ", in place of the one an earlier run kept there" if earlier else "", now))
     finally:
         os.close(rfd)
-
-
-def write_back(real, data):
-    """Replace the file real with data: a new file of mode 600 in its directory, written and synced, then renamed over it. None, or why not."""
-    d, base = os.path.split(real)
-    try:
-        dfd = os.open(d, os.O_RDONLY | os.O_DIRECTORY)
-    except OSError as e:
-        return e.strerror or str(e)
-    tmp = ".%s.qargi-%s" % (base, secrets.token_hex(6))
-    try:
-        try:
-            wfd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dfd)
-        except OSError as e:
-            return e.strerror or str(e)
-        try:
-            os.fchmod(wfd, 0o600)
-            view = memoryview(data)
-            while view:
-                view = view[os.write(wfd, view):]
-            os.fsync(wfd)
-        finally:
-            os.close(wfd)
-        os.rename(tmp, base, src_dir_fd=dfd, dst_dir_fd=dfd)
-        os.fsync(dfd)
-        return None
-    except OSError as e:
-        try:
-            os.unlink(tmp, dir_fd=dfd)
-        except OSError:
-            pass
-        return e.strerror or str(e)
-    finally:
-        os.close(dfd)
 
 
 # ---- the configuration file of the run (dispatch.run_config) -------------------------------------------------------------------------
@@ -1138,7 +1096,8 @@ class Interrupted(BaseException):
 
 class Signals:
     """SIGINT, SIGTERM and SIGHUP while a run is under way. The first one is recorded: while the lead waits for the member (armed) it is raised there
-    (Interrupted), so the member's process group is stopped (kill_group: TERM, then KILL, each waited for 5 seconds) and the run home is cleared;
+    (Interrupted), so the member's process group is stopped (kill_group: TERM, the group watched for 5 seconds, then KILL for what is left) and the
+    run home is cleared;
     before the member starts it is acted on at the next check, and after the member has ended it is only noted, so the run's end is never cut short.
     A later one is recorded by nothing. A signal the runner was started with set to be ignored (nohup) stays ignored. SIGKILL cannot be caught:
     then RUN/dispatch.json still says running, with the runner's and the member's process ids, and the next start or qargi local clean clears it."""
@@ -1247,17 +1206,66 @@ def earlier_start(run, again):
         fail("%s has been run already (%s); --again runs it again and replaces the transcript" % (run, path))
 
 
-def kill_group(proc):
-    for sig, wait in ((signal.SIGTERM, 5), (signal.SIGKILL, 5)):
+KILL_GRACE = 5   # seconds kill_group watches the member's process group after TERM, and again after KILL
+
+
+def group_left(pgid):
+    """The pids of the live processes (not zombies) in the process group pgid, read from /proc; when /proc cannot be read, [pgid] while
+    the group can still be signalled, else []."""
+    try:
+        names = os.listdir("/proc")
+    except OSError:
         try:
-            os.killpg(proc.pid, sig)
-        except (ProcessLookupError, PermissionError):
-            return
-        try:
-            proc.wait(timeout=wait)
-            return
-        except subprocess.TimeoutExpired:
+            os.killpg(pgid, 0)
+            return [pgid]
+        except OSError:
+            return []
+    want, left = str(pgid).encode(), []
+    for n in names:
+        if not n.isdigit():
             continue
+        try:
+            with open("/proc/%s/stat" % n, "rb") as f:
+                st = f.read()
+        except OSError:
+            continue
+        rest = st[st.rfind(b")") + 2:].split()      # after the command name: state, ppid, pgrp, ...
+        if len(rest) > 2 and rest[0] not in (b"Z", b"X") and rest[2] == want:
+            left.append(int(n))
+    return left
+
+
+def kill_group(proc, grace=KILL_GRACE):
+    """Stop the member's process group: TERM to the group, which is then watched (the group, not only the member: a descendant may ignore TERM
+    after the member has ended) until none of it is alive or grace seconds have passed; then KILL to what is left, watched the same way. The member
+    is reaped. The number of the group's processes still alive at the end: 0 when the group is gone. A process that moved to a process group of
+    its own is not in the group and is not reached."""
+    pg = proc.pid
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(pg, sig)
+        except ProcessLookupError:
+            break
+        except PermissionError:
+            pass
+        end = time.monotonic() + grace
+        while True:
+            proc.poll()
+            if not group_left(pg):
+                proc.poll()
+                return 0
+            if time.monotonic() >= end:
+                break
+            time.sleep(0.05)
+    proc.poll()
+    return len(group_left(pg))
+
+
+def stopped_text(left):
+    """What became of the member's process group, for the output: stopped only when none of it is alive."""
+    if not left:
+        return "the member's process group was stopped"
+    return ("a descendant survived: %d process%s of the member's process group still alive after TERM and KILL" % (left, "" if left == 1 else "es"))
 
 
 def open_own(path, what):
@@ -1549,7 +1557,9 @@ def worktree_line(work, run):
                 "refusal, not a finished task (read its report and send it back; to keep the change, copy the changed files out of the clone: never run git "
                 "in a write member's clone, whose .git it could set to run a program as you)"
                 % (clone, work["tracked"], " and %d untracked file(s)" % work["untracked"] if work["untracked"] else ""))
-    return "WORKTREE=untracked: %s holds %d untracked file(s) no commit has and OUT holds no patches" % (clone, work["untracked"])
+    return ("WORKTREE=untracked: %s holds %d untracked file(s) no commit has and OUT holds no patches: new files never added are reported, not a "
+            "refusal (the refusal covers changes to tracked files), and they are lost with the clone when the run is cleaned (qargi local clean warns): "
+            "if they are the task's work, send the run back to commit and collect them" % (clone, work["untracked"]))
 
 
 # ---- what git in the clone would run (the clone's .git) --------------------------------------------------------------------------------
@@ -1783,7 +1793,7 @@ def run_it(plan, run):
     sig.install()
     made, home_left, staged = [], [], False
     git0 = git_state(os.path.join(run, "clone")) if plan["git_watch"] else None   # before the member starts: what git in the clone would run
-    proc = code = error = outcome = None
+    proc = code = error = outcome = left = None
     timed_out, stop_code = False, 2
     previous = prev_manifest = False
     try:
@@ -1820,7 +1830,7 @@ def run_it(plan, run):
                         except subprocess.TimeoutExpired:
                             sig.armed = False
                             timed_out = True
-                            kill_group(proc)
+                            left = kill_group(proc)
                             code = proc.returncode
                         finally:
                             sig.armed = False
@@ -1831,12 +1841,12 @@ def run_it(plan, run):
             sig.armed = False
             outcome = "interrupted"
             if proc is not None:
-                kill_group(proc)
+                left = kill_group(proc)
                 code = proc.returncode
         except Stop as e:                                # the run home, the configuration file, the transcripts or the report could not be made as the run needs
             outcome, error, stop_code = "refused", str(e), e.code
             if proc is not None:                         # the start record could not be rewritten once the member had started: it is stopped, never
-                kill_group(proc)                         # left running after the runner has gone
+                left = kill_group(proc)                  # left running after the runner has gone
                 code = proc.returncode
     finally:
         sig.armed = False
@@ -1852,8 +1862,8 @@ def run_it(plan, run):
         ch = worktree_changes(os.path.join(run, "clone"))
         if ch is not None and (ch[0] or ch[1]):
             work = {"tracked": len(ch[0]), "untracked": len(ch[1]), "patches": False, "refused": bool(ch[0])}
-            if ch[0]:                                    # a change left uncommitted with nothing collected is a refusal, never a finished task
-                outcome = "refused"
+            if ch[0]:                                    # a change to a tracked file left uncommitted with nothing collected is a refusal, never a
+                outcome = "refused"                      # finished task; new files never added (untracked) are only reported
     if staged:
         report, text = finish_report(run, out, fin, previous)
     elif fin:                                            # the member was never started: nothing of it to publish, an earlier report stays set aside
@@ -1865,10 +1875,13 @@ def run_it(plan, run):
     rec = dict(head, started=PE.now(started), seconds=seconds, exit=code, timed_out=timed_out, outcome=outcome, transcript=os.path.join(out, "transcript"))
     if outcome == "interrupted":
         rec["signal"] = signal.Signals(sig.sig).name
+    if left is not None:                                 # the member's process group was stopped: how many of its processes are still alive
+        rec["group_left"] = left
     if error:
         rec["error"] = error
     if home:
-        rec["home"] = {"env": home["env"], "dir": home["dir"], "links": made, "not_linked": home["missing"], "left": home_left}
+        rec["home"] = {"env": home["env"], "dir": home["dir"], "links": made, "not_linked": home["missing"], "left": home_left,
+                       "residue": home["residue"]}     # names in the run home, never a value
     if plan["usage"] and proc is not None:
         rec["usage"] = read_usage(rec["transcript"], plan["usage"])
     rc = plan["run_config"]
@@ -1888,8 +1901,8 @@ def run_it(plan, run):
     if error:
         print("qargi: %s" % error, file=sys.stderr)
     print("RUNTIME=" + plan["runtime"])
-    print("OUTCOME=" + outcome + (" (timed out after %ds)" % plan["timeout_s"] if timed_out else "")
-          + (" (%s: %s)" % (rec["signal"], "the member's process group was stopped" if proc is not None else "the member was not started")
+    print("OUTCOME=" + outcome + (" (timed out after %ds%s)" % (plan["timeout_s"], "; " + stopped_text(left) if left else "") if timed_out else "")
+          + (" (%s: %s)" % (rec["signal"], stopped_text(left) if proc is not None else "the member was not started")
              if outcome == "interrupted" else "")
           + (" (the runtime ended ok, but the clone holds uncommitted changes and OUT holds no patches)" if work and work["refused"] else ""))
     print("EXIT=%s" % ("" if code is None else code))
@@ -1906,8 +1919,14 @@ def run_it(plan, run):
             print(line)
     if "usage" in rec:
         print(usage_line(rec["usage"]))
+    for n in (home["residue"] if home else []):
+        print("HOME_RESIDUE=%s (the runtime replaced the link with a file of its own; qargi did not write it to your file: compare it with yours and "
+              "reconcile it yourself)" % os.path.join(home["path"], n))
     for n in home_left:
         print("qargi: note: " + n, file=sys.stderr)
+    if left:
+        print("qargi: note: %d process%s of the member's process group %d survived TERM and KILL and may still be running: look at it with ps -g %d"
+              % (left, "" if left == 1 else "es", proc.pid, proc.pid), file=sys.stderr)
     if sig.sig is not None and outcome != "interrupted":
         print("qargi: note: %s arrived after the member had ended; the run was finished first" % signal.Signals(sig.sig).name, file=sys.stderr)
     sig.restore()

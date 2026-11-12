@@ -32,7 +32,7 @@
       "value": "partial",
       "verified_on": "2026-11-11",
       "source": "codex-cli 0.167.1, two checks on 2026-11-11: offline, codex sandbox -- sh -c 'echo x > /tmp/p' answered Read-only file system; live, a codex exec --sandbox read-only --ignore-rules member (model gpt-6-luna, effort low, approval_policy never, an isolated CODEX_HOME and HOME) asked to create a file in its working directory reported pwned.txt: Read-only file system, and the directory was unchanged",
-      "note": "the Codex sandbox holds the shell commands of a member (read-only: no writes, workspace-write: the clone, its .git and OUT only), not its reads, and not a hosted tool or an MCP server, which run outside the sandbox; no qargi guard hook runs: the publish and skill verbs are held only by the sandbox's write and network denial; the checks of the source showed shell writes refused and nothing more, so the claim stays partial"
+      "note": "the Codex sandbox holds the shell commands of a member (read-only: no writes, workspace-write: the clone, its .git, OUT and TMPDIR only), not its reads, and not a hosted tool or an MCP server, which run outside the sandbox; no qargi guard hook runs: the publish and skill verbs are held only by the sandbox's write and network denial; the checks of the source showed shell writes refused and nothing more, so the claim stays partial"
     },
     "skills": {
       "value": "yes",

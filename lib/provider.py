@@ -401,7 +401,7 @@ HOME_LINK_DENIED = (                                    # under the user's home:
     (".config/glab-cli", "a forge credential"), (".aws", "a cloud credential"), (".azure", "a cloud credential"), (".config/gcloud", "a cloud credential"),
     (".kube", "a cluster credential"), (".docker", "a registry credential"), (".password-store", "the user's passwords"),
     (".local/share/keyrings", "the user's keyring"), (".pki", "the user's certificates and keys"),
-    # what runs as the user later: a file the runtime put in place of its link is written back to the source, so a startup file or a program
+    # what runs as the user later: a member's write through the link lands in the source, so a startup file or a program
     # directory as a source would let a member's write run at the next login or command
     (".bashrc", "a startup file of the user's shell"), (".bash_profile", "a startup file of the user's shell"),
     (".bash_login", "a startup file of the user's shell"), (".bash_logout", "a startup file of the user's shell"),
