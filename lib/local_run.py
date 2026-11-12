@@ -1538,6 +1538,16 @@ def worktree_line(work, run):
     return "WORKTREE=untracked: %s holds %d untracked file(s) no commit has and OUT holds no patches" % (clone, work["untracked"])
 
 
+BLOCKED_FIRST = re.compile(r"[#*_>`\s]*(?:(?i:status)[*_`]*\s*:[#*_>`\s]*)?BLOCKED(?![A-Za-z0-9])")
+
+
+def report_blocked(text):
+    """Does a report say BLOCKED on its first line that is not blank: BLOCKED, or Status: BLOCKED, after any Markdown marks (a heading #, a quote >,
+    emphasis * or _, code `), as **BLOCKED**, # BLOCKED, > BLOCKED or **Status:** BLOCKED? The word is the contract's, in capitals."""
+    first = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
+    return BLOCKED_FIRST.match(first) is not None
+
+
 def package(run, out, plan, report, text, outcome, code, started, seconds, previous):
     """The lead's OUT/manifest.json for a read-only run whose report is the runtime's last message: the minimal report-only format of `review save`,
     with what the lead recorded of the run. It is written only for a run the lead's registry names, whose outcome is ok, whose report was published
@@ -1553,8 +1563,7 @@ def package(run, out, plan, report, text, outcome, code, started, seconds, previ
     elif report["state"] != "published":
         rec["why"] = "no report was published"
     else:
-        first = next((ln.strip() for ln in text.decode("utf-8").splitlines() if ln.strip()), "")   # the report as it was published
-        blocked = re.match(r"BLOCKED\b", first) is not None
+        blocked = report_blocked(text.decode("utf-8"))                                            # the report as it was published
         man = {"status": "BLOCKED" if blocked else "DONE", "blocked_reason": "the member's report begins with BLOCKED" if blocked else "",
                "task": "read-only run %s %s: the report is the member's last message, packaged by the lead (qargi local run)" % (pk["role"], pk["slug"]),
                "base": {"branch": pk["base"], "sha": pk["base_sha"]}, "branch": "", "scope": [],

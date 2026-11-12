@@ -869,6 +869,16 @@ printf 'BLOCKED\nthe clone cannot be read\n\n# Findings\n\nnone\n\nverdict: revi
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
 { [ "$rc" = 0 ] && [ "$(jq -r .status "$OUT/manifest.json")" = BLOCKED ] && grep -q 'status BLOCKED' <<<"$out"; } && ok "a report that begins with BLOCKED is packaged as status BLOCKED" || no "blocked: rc=$rc $out"
 rm -f "$T/stub-final" "$T/badverdict.md"
+got=$(python3 -I - <<'PY'
+import sys; sys.path.insert(0, "lib")
+import local_run as L
+yes = ["BLOCKED", "BLOCKED: the clone cannot be read", "**BLOCKED**", "# BLOCKED", "## BLOCKED - no contract", "> BLOCKED", "`BLOCKED`", "_BLOCKED_",
+       "Status: BLOCKED", "status:BLOCKED", "**Status:** BLOCKED", "# Status: BLOCKED", "\n\n  **BLOCKED**\nwhy"]
+no = ["DONE", "# Findings", "Not BLOCKED", "BLOCKEDNESS", "blocked", "Status: DONE", "Nothing is BLOCKED", ""]
+print(" ".join(repr(t) for t in yes if not L.report_blocked(t)) + "|" + " ".join(repr(t) for t in no if L.report_blocked(t)))
+PY
+)
+[ "$got" = "|" ] && ok "a first line that says BLOCKED under Markdown marks or as Status: BLOCKED is a BLOCKED report; DONE and prose are not" || no "report_blocked: missed|wrong: $got"
 # a read-only run that leaves patches in OUT: no manifest, and local verify refuses it as before
 touch "$T/stub-patch"
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
