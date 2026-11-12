@@ -1,6 +1,6 @@
 ---
 name: qargi-packs
-description: Create or import skills and tools (MCP servers) into one library and attach them by scope: user, user-role, project, project-role. Review and approve at import, link to a scope, opt a role out, check for drift, and apply to provisioned or existing cloud agents. Names are globally unique, so there is no precedence to resolve.
+description: "Create or import skills and tools (MCP servers) into one library and attach them by scope: user, user-role, project, project-role. Review and approve at import, link to a scope, opt a role out, check for drift, and apply to provisioned or existing cloud agents. Names are globally unique, so there is no precedence to resolve."
 argument-hint: skill|tool new|import|seal [--compatible LIST]|link|unlink|enable|disable|list|show|effective|check|remove ... | packs seed [--install] | packs apply INSTANCE | packs apply|check|link|unlink --target RUNTIME PROJECT | project link PROJECT
 ---
 

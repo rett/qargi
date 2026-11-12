@@ -1,0 +1,8 @@
+{"type":"thread.started","thread_id":"thread_conformance"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"reasoning","text":"Read the task block, then list the clone."}}
+{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"ls","aggregated_output":"src\n","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"DONE\nThe stub changed nothing."}}
+{"type":"turn.completed","usage":{"input_tokens":1200,"cached_input_tokens":800,"cache_write_input_tokens":0,"output_tokens":90,"reasoning_output_tokens":40}}
+{"type":"turn.started"}
+{"type":"turn.completed","usage":{"input_tokens":300,"cached_input_tokens":200,"cache_write_input_tokens":16,"output_tokens":10,"reasoning_output_tokens":0}}

@@ -38,7 +38,9 @@
 # about a run (lib.sh run_record): the repository, the URL and the credential path come from it, and a run whose own repo.path, repo.url or cred.path
 # (files a member can write) differ is refused, as is a directory the registry does not name. `clean` removes the temporary directory that this line names
 # for the run, not the one the run's own tmpdir file says (a member can write the run directory, and a file there could name another run's temporary directory).
-# A --scratch on a tmpfs (stat -f) is warned about on stderr: a reboot empties it and the run is lost. A passing verify copies OUT, a run bundle and
+# A --scratch on a tmpfs (stat -f) is warned about on stderr: a reboot empties it and the run is lost. When the project's local runtime declares
+# dispatch.hidden_paths (places its sandbox hides from the member) and a path the member of the run's class works with would lie there (the run
+# under --scratch, or its TMP), prepare refuses before it makes anything (exit 2), naming the path, the prefix and the fix. A passing verify copies OUT, a run bundle and
 # the snapshots to $QARGI_STATE/runs/<run id>/ (save_run), so `review apply --from-saved ID` can still apply the work after a reboot; clean removes the copy.
 # After the TASK-BLOCK PATHS lines it prints TASK-BLOCK MEMORY (tiercontext.py packet: the tier summary, the always rows of the
 # indexes and the no-write rule; the repo tier is the clone's committed copy) when the repository belongs to a stored project.
@@ -49,6 +51,26 @@
 # NOREPORT_CAUSE: the likely reason OUT holds no report. A runtime can refuse a member's write tool for a report file (the member is told to return findings as
 # text), and the file then never reaches OUT: the member is not late, it is blocked. verify and clean name it where they find OUT without a report.
 NOREPORT_CAUSE="A runtime can refuse a member's write tool for a report file, so the file never reaches OUT. The member writes its OUT files (report, manifest, series) with its file tool; a read-only member whose file tool is refused returns the report as its final message, and the lead stores it with: qargi review save RUN < MESSAGE"
+
+# home_residue RUN -> what a start of `local run` left in the run home (dispatch.home), one line each, nothing while a runner of the run is alive. RUN/dispatch.json
+# (the start record, or the end record of a run that ended) names the run home's directory and its links; each that is still a link, and a run home that is a link
+# itself, is residue: a runner killed with SIGKILL (or a machine that stopped) never removed it. The record is a member's to write, so this only reports; local run
+# --again replaces the links and local clean removes the run with them.
+home_residue() {
+  local d=$1 rec dir r n
+  rec=$d/dispatch.json
+  [ -f "$rec" ] && [ ! -L "$rec" ] && [ -d "$d/home" ] && [ ! -L "$d/home" ] || return 0
+  dir=$(jq -r '.home.dir // empty | select(type == "string" and test("^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$") and (test("(^|/)[.][.]?(/|$)") | not))' "$rec" 2>/dev/null) || return 0
+  [ -n "$dir" ] || return 0
+  r=$(jq -r 'select(.outcome == "running") | .runner // empty | numbers' "$rec" 2>/dev/null) || r=''
+  if [[ $r =~ ^[0-9]{1,9}$ ]] && [ -r "/proc/$r/cmdline" ] && tr '\0' '\n' < "/proc/$r/cmdline" 2>/dev/null | grep -q 'local_run[.]py$'; then return 0; fi
+  if [ -L "$d/home/$dir" ]; then echo "$d/home/$dir (the run home is a link)"; return 0; fi
+  while IFS= read -r n; do
+    [[ $n =~ ^[A-Za-z0-9._-]+$ ]] && [ "$n" != . ] && [ "$n" != .. ] || continue
+    [ ! -L "$d/home/$dir/$n" ] || echo "$d/home/$dir/$n (a link a start of qargi local run left: its runner did not end)"
+    [ ! -f "$d/home/$dir/$n.from-run" ] || [ -L "$d/home/$dir/$n.from-run" ] || echo "$d/home/$dir/$n.from-run (a file the runtime wrote in place of the link, which qargi never writes to your file: compare it with yours and reconcile it yourself)"
+  done < <(jq -r '.home.links[]? | strings' "$rec" 2>/dev/null)
+}
 
 # drop_qargi_refs -> stdin without the refs under refs/qargi/ (lines "local REF SHA" and "remote SHA REF"). The marshal refs backend
 # keeps its records there and the lead's renewer fetches and pushes them during a run; that is not an agent push. Only that
@@ -679,7 +701,7 @@ case $verb in
     fi
     # the contract addenda of the project's runtime on the local surface (resources.contract_addenda of its definition), read before anything
     # is made; a repository in no project, or a project with no local runtime, gets the core's contract alone (no runtime is assumed)
-    ADDENDA='' CPJ=$(project_of "$REPO" "$URL")
+    ADDENDA='' CPROV='' CPJ=$(project_of "$REPO" "$URL")
     # what verification and review apply will believe of the lead's answers is taken now, into the lead's registry line (the stored project's file is not read again for this run):
     # the project's name and the answers runs.owned_refs, repo.long_lived, repo.parking_branch, git.author and review.keep_author, scrub, trailer_policy and reject_trailers, as they are today
     ANS='{}'
@@ -694,6 +716,14 @@ case $verb in
       CPROV=$(project_provider_if_set "$CPJ" local) || die "the local provider of project $CPJ does not resolve, so the contract addenda of its runtime cannot be added; nothing was made (qargi project show $CPJ)"
       [ -z "$CPROV" ] || ADDENDA=$(pymod provider addenda "$CPROV" local </dev/null) || die "could not read the contract addenda of the local runtime $CPROV (qargi provider check $CPROV)"
     fi
+    # the run's TMP: a private directory on tmpfs when there is one (QARGI_RUN_TMP moves it, as the tests do, so a test never leaves anything in
+    # /dev/shm), else RUN/tmp; made below, once RUN is
+    SHM=${QARGI_RUN_TMP:-/dev/shm}
+    while [ "${SHM%/}" != "$SHM" ] && [ "$SHM" != / ]; do SHM=${SHM%/}; done   # clean compares the parent as written
+    if [ -d "$SHM" ] && [ -w "$SHM" ]; then TMPW=$SHM/qargi-run.XXXXXX; else TMPW=$SCR/qargi.XXXXXX/tmp; fi
+    # a runtime whose sandbox hides part of the filesystem from its member (dispatch.hidden_paths: a sandbox with a /dev of its own hides /dev/shm)
+    # refuses a run whose member would not see a path it works with, before anything is made; local run asks again (lib/provider.py hidden_run_paths)
+    if [ -n "$CPROV" ]; then pymod provider hidden-paths "$CPROV" local "$CLASS" "$SCR/qargi.XXXXXX" "$TMPW" --project "$CPJ" </dev/null || exit $?; fi
     LEAD=''
     case $BASE in
       feature/?*)
@@ -717,10 +747,8 @@ case $verb in
     # as one more file (CONTRACT below)
     cp "$(prompt_root)/contract/"*.md "$(prompt_root)/contract/manifest.example.json" "$RUN/contract/" || die "could not copy the contract"
     [ -z "$ADDENDA" ] || printf '%s\n' "$ADDENDA" > "$RUN/contract/runtime-addenda.md"
-    # a private temporary directory for the run's test sandboxes, on tmpfs when there is one; `clean` removes it, so a run
-    # leaves nothing behind in /dev/shm and parallel runs never touch each other's files
-    SHM=${QARGI_RUN_TMP:-/dev/shm}   # QARGI_RUN_TMP moves it (the tests do), so a test never leaves anything in /dev/shm
-    while [ "${SHM%/}" != "$SHM" ] && [ "$SHM" != / ]; do SHM=${SHM%/}; done   # clean compares the parent as written
+    # a private temporary directory for the run's test sandboxes (SHM above); `clean` removes it, so a run leaves nothing behind in /dev/shm and
+    # parallel runs never touch each other's files
     if [ -d "$SHM" ] && [ -w "$SHM" ]; then TMPD=$(mktemp -d "$SHM/qargi-run.XXXXXX"); else TMPD=$RUN/tmp; mkdir -p "$TMPD"; fi
     printf '%s\n' "$TMPD" > "$RUN/tmpdir"
     printf '%s\n' "$ROLE" > "$RUN/ability"
@@ -836,13 +864,18 @@ WRAP
     if [ -z "$SAVED" ] && [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ]; then
       ncm=$(git -C "$RUN/clone" rev-list --count --branches HEAD --not --remotes=origin 2>/dev/null || echo 0)
       if [ "${ncm:-0}" -gt 0 ] && [ -z "$(find "$RUN/out" -maxdepth 2 -name '*.patch' 2>/dev/null | head -1)" ] && ! out_has_report "$RUN/out"; then
-        EMPTY="qargi: OUT is empty: the member did not collect. $RUN/clone holds $ncm commit(s) past BASE_SHA, but $RUN/out holds no patches and no report. The member's DONE needs \`ls OUT/patches\` to list the patches (git format-patch --binary BASE_SHA..HEAD into OUT/patches, then the manifest and report). This run is not verified, and apply and close need a passing verify: send it back to collect and verify again, or take the commits from the clone yourself and drop the run with qargi local clean RUN --discard. $NOREPORT_CAUSE"
+        EMPTY="qargi: OUT is empty: the member did not collect. $RUN/clone holds $ncm commit(s) past BASE_SHA, but $RUN/out holds no patches and no report. The member's DONE needs \`ls OUT/patches\` to list the patches (git format-patch --binary BASE_SHA..HEAD into OUT/patches, then the manifest and report). This run is not verified, and apply and close need a passing verify: send it back to collect and verify again, or take the commits yourself without running git in the clone (a member that could write its .git could set it to run a program as you): make a clean copy with git clone --no-local $RUN/clone, as git(1) advises under SECURITY, take them from there and drop the run with qargi local clean RUN --discard. $NOREPORT_CAUSE"
         NOREC=1
       fi
     fi
     # a read-only run's product is its report: none in OUT is said (a note; the refs verdict below is the exit status), with the likely cause
     if [ -z "$SAVED" ] && [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ] && [ "$(run_class "$RUN")" = read-only ] && ! out_has_report "$RUN/out"; then
       echo "qargi: note: OUT of the read-only run $RUN holds no report (report.md or NAME-report.md). $NOREPORT_CAUSE" >&2
+    fi
+    # what a start of local run left in the run home (its runner was killed with SIGKILL, or the machine stopped): named, never removed here
+    if [ -z "$SAVED" ] && [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ]; then
+      res=$(home_residue "$RUN")
+      [ -z "$res" ] || echo "qargi: note: the run home of $RUN holds what a run left there: $(paste -sd ';' - <<<"$res" | LC_ALL=C tr -d '\000-\037\177'). qargi local run $RUN --again replaces a link left there; qargi local clean $RUN removes the run with it" >&2
     fi
     reg_load; crc=0; NOREC=$NOREC check_run "$RUN" "$SRC" || crc=$?
     if [ "$crc" = 3 ]; then
@@ -1090,7 +1123,17 @@ WRAP
     if [ -z "$rt" ] && [ -n "$t" ]; then echo "qargi: note: left $t alone: it is not a directory prepare makes under /dev/shm, QARGI_RUN_TMP or the run" >&2; fi
     [ -z "$rt" ] || rm -rf --one-file-system -- "$rt"
     rrun=$(readlink -f -- "$RUN" 2>/dev/null) || rrun=$RUN   # the registry's name of the run, taken while the directory is there
+    res=$(home_residue "$RUN")   # links a start of local run left in the run home: rm removes a link, never what it points to
+    # what the clone holds that no commit has (new files never added, changes to tracked files), read the way local run reads it (nothing the member put
+    # in the clone's git configuration runs): removed with the run, so it is said
+    wt=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from local_run import worktree_changes; c = worktree_changes(sys.argv[2]); print("%d %d" % (len(c[0]), len(c[1])) if c else "0 0")' \
+      "$(dirname "$0")" "$RUN/clone" 2>/dev/null </dev/null) || wt='0 0'
+    read -r wtt wtu _ <<<"$wt"
     rm -rf --one-file-system -- "$RUN"
+    [ -z "$res" ] || echo "qargi: note: removed with the run what its run home held: $(paste -sd ';' - <<<"$res" | LC_ALL=C tr -d '\000-\037\177')" >&2
+    if [[ ${wtu:-0} =~ ^[1-9][0-9]*$ ]] || [[ ${wtt:-0} =~ ^[1-9][0-9]*$ ]]; then
+      echo "qargi: warning: removed with the run what no commit had: $RUN/clone held ${wtu:-0} untracked file(s) (new files never added) and ${wtt:-0} uncommitted change(s) to tracked files; to keep such work, copy the files out of the clone before clean (never run git in a write member's clone)" >&2
+    fi
     sv=$(saved_of "$RUN"); [ -z "$sv" ] || rm -rf --one-file-system -- "$sv"   # the copy verify saved: the work is merged, or dropped on purpose
     scrub_ok_drop "$RUN"   # the record of a passed scrub that review check kept for a run never applied
     apply_state_drop "$RUN"   # the apply record of the run, and the temporary directories of a killed apply of it
@@ -1227,6 +1270,10 @@ $vout}"
       elif [ -n "$(reg_get "$d" closed)" ]; then ap=closed; mg=-   # local close --applied-by-am: applied by hand, no tip to follow
       fi
       printf '%-10s %-18s %-10s %-6s %-8s %s\n' "$( (cat "$d/ability" 2>/dev/null || echo '?') | plain)" "$(printf '%s' "${sl:--}" | plain)" "$ag" "$ap" "$mg" "$(printf '%s' "$d" | plain)"
+      # what a start of local run left in the run home (a runner killed with SIGKILL): named under its run
+      while IFS= read -r rl; do
+        [ -z "$rl" ] || printf '  residue: %s; qargi local run RUN --again replaces a link left there, qargi local clean RUN removes the run with it\n' "$(printf '%s' "$rl" | plain)"
+      done < <(home_residue "$d")
     done
     for d in ${gone[@]+"${gone[@]}"}; do
       [ -n "$d" ] || continue
@@ -1255,6 +1302,7 @@ $vout}"
     [ -f "$DA_CONF/projects/$RPJ.json" ] && valid_project "$RPJ" || RPJ=''   # a project stored since removed is no project
     [ -n "$RPJ" ] || { echo "qargi: no stored project has the repository of this run, so no runtime is known: store it (qargi project attach) and give it a local provider (qargi project set PROJECT models.provider.local NAME)" >&2; exit 2; }
     RPROV=$(project_provider "$RPJ" local) || exit $?
-    exec python3 -I "$(dirname "$0")/local_run.py" "$RUN" --project "$RPJ" --runtime "$RPROV" --class "$(run_class "$RUN")" "$@";;
+    # the run by its real path: a later start or clean tells this runner by its command line, from whatever directory it runs in
+    exec python3 -I "$(dirname "$0")/local_run.py" "$(realpath -- "$RUN")" --project "$RPJ" --runtime "$RPROV" --class "$(run_class "$RUN")" "$@";;
   *) usage_die "usage: local.sh prepare|verify|close|clean|report|list|run ...";;
 esac

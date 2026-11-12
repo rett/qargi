@@ -5,6 +5,8 @@ capabilities that backs. A library for lib/conformance/library.py; it does nothi
                  cases applies to the definition and passed, and none failed or could not run. A capability that no case backs (the
                  vendor's own behaviour: a model id, an OS sandbox, a spend ceiling the vendor enforces) stays unverified until the owner
                  attests it (qargi provider attest).
+  CAP_GATES      capability -> cases that can only hold it back: one that failed leaves the capability unverified, one that passed
+                 verifies nothing (what it shows is qargi's side; the runtime's side is attested)
   run(...)       {case: {status: pass|fail|skip|na, notes: [..]}}   na: the definition has nothing of that kind; skip: it could not run
   verdicts(...)  {capability: (verified, why)} for every capability the definition claims
 
@@ -17,6 +19,11 @@ The cases:
                                        pointers and tool names of the definition, goes through `qargi __guard --provider NAME`: every deny
                                        is a deny in the hook's way, every allow an allow
   barrier-adapter  read_only_barrier   the conformance harness (lib/conformance/run.sh) on the adapter of the pack, case 8
+  barrier-sandbox-args  read_only_barrier (a gate)   for the barrier kind sandbox-args: the argv qargi local run builds for a read-only run
+                                       (lib/local_run.py, with a value for every placeholder) carries the read-only arguments (the class_argv
+                                       of the class, the {"class": "read-only"} groups), sets each of their flags only there, and carries
+                                       no flag with its value of the write class's arguments (a write grant such as --add-dir DIR); whether
+                                       the runtime's sandbox holds is attested
   adapter-cost     session_budget_ceiling   the harness, case 7 (cost is in cents or null), for a pack with an adapter and a conformance/ stub
 Pack code (an adapter, a command renderer, the stub) runs only from a private copy of a SEALED pack, after the hashes were checked
 (provider.exec_copy, whose copy provider.discard_exec_copy removes, with the temporary directory around it); an unsealed pack, or a
@@ -42,6 +49,9 @@ CAP_CASES = {
     "read_only_barrier": ("barrier-hook", "barrier-adapter"),
     "session_budget_ceiling": ("adapter-cost",),
 }
+CAP_GATES = {
+    "read_only_barrier": ("barrier-sandbox-args",),
+}
 CORPUS = os.path.join(HERE, "barrier-corpus.jsonl")
 RUN_SH = os.path.join(HERE, "run.sh")
 HARNESS_TIMEOUT = 600
@@ -58,7 +68,15 @@ def verdicts(doc, results):
     for cap, cell in sorted(caps.items()):
         if not isinstance(cell, dict) or cell.get("value") not in ("yes", "partial"):
             continue
+        gates = [(i, results[i]) for i in CAP_GATES.get(cap, ()) if i in results and results[i]["status"] != "na"]
+        if any(r["status"] == "fail" for _, r in gates):
+            out[cap] = (False, "failed: " + ", ".join(i for i, r in gates if r["status"] == "fail"))
+            continue
         ids = CAP_CASES.get(cap)
+        if gates and not [i for i in ids or () if i in results and results[i]["status"] != "na"]:
+            out[cap] = (False, "%s passed, which shows qargi's side only; that the runtime holds it is a fact of the runtime: qargi provider attest records a check you ran"
+                        % ", ".join(i for i, _ in gates))
+            continue
         if not ids:
             out[cap] = (False, "no hermetic case backs it (a fact about the vendor's runtime); qargi provider attest records a check you ran")
             continue
@@ -78,7 +96,7 @@ def run(doc, directory, name, entry, sealed=False, opts=None, rv=None):
     """All the cases for a provider definition. directory: the pack directory; name: its library name or None; sealed: pack code may run."""
     usable = name is not None and entry is not None and P.seal_state(entry)[0] == "sealed"
     res = {}
-    for case in (render_agent, link_skills, barrier_hook, adapter_harness):
+    for case in (render_agent, link_skills, barrier_hook, barrier_sandbox_args, adapter_harness):
         try:
             res.update(case(doc, directory, name, sealed, usable))
         except Exception as e:                                       # a case that breaks is a failure of the pack, not a crash of the verb
@@ -334,6 +352,126 @@ def barrier_hook(doc, directory, name, sealed, usable):
         return {"barrier-hook": result("pass", "%d corpus calls through the guard in the hook's own protocol (%d not expressible and left out)" % (n, skipped))}
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ---- barrier-sandbox-args ---------------------------------------------------------------------------------------------------------
+
+SAMPLE_RUN = "/conformance/run"
+SAMPLE_VALUES = {"member": "conformance-member", "model": "conformance-model", "effort_native": "conformance-effort", "prompt_file": SAMPLE_RUN + "/prompt/prompt.md",
+                 "prompt_arg": "conformance prompt", "clone": SAMPLE_RUN + "/clone", "run_dir": SAMPLE_RUN, "out_dir": SAMPLE_RUN + "/out",
+                 "project": "conformance", "run_config": SAMPLE_RUN + "/config/conformance.toml", "final_message": SAMPLE_RUN + "/final.conformance/message.md"}
+
+
+def class_group(items, values, cls, runtime):
+    """The arguments the {"class": cls} groups of an argv-like list give for a run of that class (inside the if-groups that are kept too)."""
+    import local_run as LR
+    out = []
+    for it in items:
+        if isinstance(it, dict) and it.get("class") == cls:
+            out += LR.expand(it["then"], values, cls, "dispatch.argv", runtime)
+        elif isinstance(it, dict) and "if" in it and values.get(LR.ALIASES.get(it["if"], it["if"])) not in (None, ""):
+            out += class_group(it["then"], values, cls, runtime)
+    return out
+
+
+def settings(args):
+    """{setting: count} of the flags in an argument list: a flag is an argument that starts with '-'; one whose value is KEY=VALUE (in the
+    next argument, or after '=') is the setting 'FLAG KEY', so that a repeated -c KEY=VALUE names a different setting for each KEY."""
+    out = {}
+    for i, a in enumerate(args):
+        if not a.startswith("-") or a in ("-", "--"):
+            continue
+        flag, _, val = a.partition("=")
+        if not val and i + 1 < len(args) and not args[i + 1].startswith("-"):
+            val = args[i + 1]
+        key = flag + (" " + val.split("=", 1)[0] if "=" in val else "")
+        out[key] = out.get(key, 0) + 1
+    return out
+
+
+def pairs(args):
+    """The flags of an argument list with their values, as tuples: (FLAG, VALUE) for a flag followed by a value or written FLAG=VALUE, (FLAG,) for one
+    alone. A pair the write class's arguments give that a read-only argv carries too is a write grant in a read-only run (--add-dir DIR)."""
+    out = []
+    for i, a in enumerate(args):
+        if not a.startswith("-") or a in ("-", "--"):
+            continue
+        flag, eq, val = a.partition("=")
+        if not eq and i + 1 < len(args) and not args[i + 1].startswith("-"):
+            val = args[i + 1]
+        out.append((flag, val) if val else (flag,))
+    return out
+
+
+def group_args(disp, cls):
+    """The argument lists a run of class cls gets from its own groups (each {"class": cls} group of argv, also inside an if-group, and
+    class_argv), as written (with their placeholders). For the harness (lib/conformance/run.sh), which looks for each in the argv a command
+    really got (carries)."""
+    out = []
+
+    def walk(items):
+        for it in items if isinstance(items, list) else ():
+            if isinstance(it, dict) and it.get("class") == cls:
+                strs = [x for x in it.get("then") or [] if isinstance(x, str)]
+                if strs:
+                    out.append(strs)
+            elif isinstance(it, dict) and "if" in it:
+                walk(it.get("then"))
+    walk(disp.get("argv"))
+    ca = disp.get("class_argv")
+    extra = (ca if cls == "read-only" else []) if isinstance(ca, list) else (ca.get(cls) if isinstance(ca, dict) else None)
+    strs = [x for x in extra or [] if isinstance(x, str)]
+    if strs:
+        out.append(strs)
+    return out
+
+
+def literal(args):
+    """Does an argument list hold any text that is not a placeholder? A list of placeholders alone matches any arguments."""
+    import local_run as LR
+    return any(LR.PLACEHOLDER.sub("", a) for a in args)
+
+
+def carries(argv, args):
+    """Does argv hold the argument list (placeholders match any non-empty text) as a run of consecutive arguments?"""
+    import local_run as LR
+    pats = ["^" + "".join(".+" if i % 2 else re.escape(p) for i, p in enumerate(LR.PLACEHOLDER.split(a))) + "$" for a in args]
+    n = len(pats)
+    return any(all(re.match(p, a, re.S) for p, a in zip(pats, argv[i:i + n])) for i in range(len(argv) - n + 1))
+
+
+def barrier_sandbox_args(doc, directory, name, sealed, usable):
+    bar = doc.get("barrier") if isinstance(doc.get("barrier"), dict) else {}
+    if bar.get("kind") != "sandbox-args":
+        return {"barrier-sandbox-args": result("na")}
+    import local_run as LR
+    disp = doc.get("dispatch") if isinstance(doc.get("dispatch"), dict) else {}
+    runtime = name or doc.get("provider") or "the definition"
+    if disp.get("mode") != "command":
+        return {"barrier-sandbox-args": result("fail", "the barrier kind sandbox-args is the runtime's own arguments, which only a command dispatch passes (dispatch.mode is %s)"
+                                               % json.dumps(disp.get("mode")))}
+    argv, group = {}, {}
+    try:
+        LR.check_items(disp.get("argv"), "dispatch.argv", runtime)
+        for cls in LR.CLASSES:
+            extra = LR.class_extra(disp, cls, runtime)
+            LR.check_items(extra, "dispatch.class_argv", runtime)
+            extra = LR.expand(extra, SAMPLE_VALUES, cls, "dispatch.class_argv", runtime)
+            argv[cls] = LR.expand(disp["argv"], SAMPLE_VALUES, cls, "dispatch.argv", runtime) + extra
+            group[cls] = class_group(disp["argv"], SAMPLE_VALUES, cls, runtime) + extra
+    except LR.Stop as e:
+        return {"barrier-sandbox-args": result("fail", "qargi local run would refuse the dispatch: %s" % e)}
+    ro = group["read-only"]
+    if not ro:
+        return {"barrier-sandbox-args": result("fail", "a read-only run carries no arguments of its own (class_argv, or a {\"class\": \"read-only\"} group in argv), so nothing holds it")}
+    outside = sorted(k for k, n in settings(ro).items() if settings(argv["read-only"]).get(k, 0) > n)
+    if outside:
+        return {"barrier-sandbox-args": result("fail", "a read-only run also sets %s outside its read-only arguments, which can override them" % ", ".join(outside))}
+    granted = [" ".join(p) for p in pairs(group["write"]) if p in pairs(argv["read-only"])]
+    if granted:
+        return {"barrier-sandbox-args": result("fail", "a read-only run carries %s of the write class (a write grant, such as a writable directory)" % "; ".join(granted))}
+    return {"barrier-sandbox-args": result("pass", "a read-only run carries %s%s; that the runtime's sandbox holds is attested" % (
+        " ".join(ro), " (a write run: %s)" % " ".join(group["write"]) if group["write"] else ""))}
 
 
 # ---- the adapter harness ----------------------------------------------------------------------------------------------------------

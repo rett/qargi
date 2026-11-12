@@ -47,7 +47,7 @@ out=$(verify "$R"); rc=$?
 [ $rc = 0 ] && ok "(setup) a run with no commits and an empty OUT verifies: nothing to collect" || no "empty run: rc=$rc $out"
 commits "$R" a1.go; rm -f "$R/verified"
 out=$(verify "$R"); rc=$?
-[ $rc = 1 ] && grep -q "OUT is empty: the member did not collect" <<<"$out" && grep -q "ls OUT/patches" <<<"$out" && ok "verify fails fast, naming the missing collect, when the clone has commits and OUT is empty" || no "uncollected: rc=$rc $out"
+[ $rc = 1 ] && grep -q "OUT is empty: the member did not collect" <<<"$out" && grep -q "ls OUT/patches" <<<"$out" && grep -q "without running git in the clone.*git clone --no-local" <<<"$out" && ok "verify fails fast, naming the missing collect, when the clone has commits and OUT is empty; it says to take the commits through a clean copy, never git in the clone" || no "uncollected: rc=$rc $out"
 [ ! -f "$R/verified" ] && ok "and records nothing" || no "verified written for an uncollected run"
 grep -q "refuse a member's write tool for a report file" <<<"$out" && grep -q "writes its OUT files (report, manifest, series) with its file tool" <<<"$out" && ! grep -qi "heredoc" <<<"$out" \
   && ok "verify of an OUT with no report names the likely cause: a refused write tool" || no "verify cause: $out"

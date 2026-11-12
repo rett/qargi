@@ -10,13 +10,16 @@ Installing qargi, keeping it current, binding a project to a cloud profile, and 
 ## Install
 
 ```sh
-./install.sh --user                    # skills in ~/.claude, command in ~/.local/bin
+./install.sh --user                    # skills for your lead (Claude Code: ~/.claude/skills), command in ~/.local/bin
+./install.sh --user --runtime codex    # or for a Codex lead: ~/.codex/skills
 ./install.sh --project /path/to/repo   # skills for one repository only
 qargi agent add worker --project P                     # then the read-only base:
 qargi agent add reviewer --project P
 ```
 
-qargi needs Python 3.11 or later (the standard library reads the TOML files some runtimes keep their settings in). The `agent add` lines need a project whose `models.provider.local` is set (see [Providers and runtimes](../members-and-providers/providers.md)).
+qargi needs Python 3.11 or later (the standard library reads the TOML files some runtimes keep their settings in). The `agent add` lines need a project whose `models.provider.local` is set (see [Providers and runtimes](../members-and-providers/providers.md)) and a runtime that keeps member files: a project on `codex` has none, and its members run with `qargi local run`.
+
+For a Codex lead, install with `./install.sh --user --runtime codex`: the skills go to `~/.codex/skills`, where Codex finds a user's skills (with its default `CODEX_HOME`), and the command to `~/.local/bin` as before. The setup, what a Codex session sees of the skills and what is not verified are in [Codex as lead and as member](../members-and-providers/codex.md#codex-as-the-lead).
 
 Both link to this checkout, so `git pull` updates them; add `--copy` for real
 files (the whole tool is copied to `~/.local/share/qargi` for `--user`),

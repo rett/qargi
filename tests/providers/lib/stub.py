@@ -9,6 +9,10 @@ Each provider's tests/providers/NAME/stub starts this file with its own director
     default.json. A fixture is printed as it is, exit 0. With none the stub says so on stderr and exits 4 (a transport
     error).
   - $QARGI_STUB_DELAY (seconds) keeps the stub alive that long, so a `ps`-style capture of the process list sees it.
+  - $QARGI_STUB_FINAL_FLAG (a flag such as -o, set by the stub of a command runtime whose CLI writes the last message of a run to the
+    file its argument names): when the call has that flag, the stub writes the last message there, as the CLI does: the file
+    $QARGI_STUB_FINAL names, else NAME/final-message.md; with $QARGI_STUB_FINAL set and empty it writes nothing (a run that ends
+    without a last message).
 A call is read-class when its method is one of READ below (compared without regard to case), otherwise it changes
 something; the conformance suite holds a provision in plan mode to read-class calls.
 Stdlib only; run isolated (python3 -I)."""
@@ -31,6 +35,12 @@ def main(argv):
     if log:
         with open(log, "a") as f:
             f.write(json.dumps({"argv": call, "stdin": body}) + "\n")
+    flag = os.environ.get("QARGI_STUB_FINAL_FLAG")
+    if flag and flag in call[:-1]:
+        src = os.environ.get("QARGI_STUB_FINAL", os.path.join(base, "final-message.md"))
+        if src:
+            with open(src, "rb") as f, open(call[call.index(flag) + 1], "wb") as g:
+                g.write(f.read())
     delay = os.environ.get("QARGI_STUB_DELAY")
     if delay:
         time.sleep(float(delay))

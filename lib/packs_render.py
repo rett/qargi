@@ -12,6 +12,13 @@ session.render_target is the --target name. A runtime whose definition has no us
 are left out of the render and said so, like a pack the runtime cannot use. A tool pack is always an https URL with an explicit allowlist
 (the shell's review), so the only MCP server form the renderer makes is the URL one.
 
+The mcp file is JSON or TOML (resources.mcp.format; the TOML writer here writes tables, strings, whole numbers, booleans and lists of strings,
+nothing else). A runtime that holds the tools of a server in the server's own entry names the lists in resources.mcp.tool_lists ({allow, deny}:
+JSON pointers into the entry, /enabled_tools say): allow gets the tools a member may call for at least one role the pack reaches (lib/packs_mcp.py
+decides: never an always_ask tool, and for a role of the read-only class only a declared read), deny the pack's other tools; a server with an
+allow list and no tool on it is left out. run_config renders the same file for one member run (lib/local_run.py): the tools of the run's roles
+under its class.
+
 Called by packs.sh, which gathers the facts only the shell knows (links, review, hashes) into an inputs file:
   {project, provider, state, home, checkout, packs:[{kind,name,path,sha256,approved,review_ok,exists,compatible_providers,roles[]}],
    skipped:[{kind,name,why,roles[]}]}
@@ -32,6 +39,7 @@ side under <state>/render/<project>/, which is also where a staged tree lives un
   packs_render.py label PROVIDER [PROJECT]  how the plan calls the runtime (renderers.packs.label of its definition, with a project of the
                                             composed one, else its name)
 """
+import copy
 import ctypes
 import hashlib
 import json
@@ -106,11 +114,108 @@ def put(doc, ptr, value):
     doc[parts[-1]] = value
 
 
+# ---- the TOML writer: the one form of TOML a render writes (the standard library reads TOML, it does not write it)
+
+class TomlError(ValueError):
+    """A value or a key the TOML writer does not write."""
+
+
+BARE_KEY = re.compile(r"[A-Za-z0-9_-]+\Z")
+TOML_ESCAPES = {'"': '\\"', "\\": "\\\\", "\b": "\\b", "\t": "\\t", "\n": "\\n", "\f": "\\f", "\r": "\\r"}
+TOML_INT = (-(1 << 63), (1 << 63) - 1)
+
+
+def toml_string(s):
+    """s as a TOML basic string: a quote, a backslash and every control character escaped, so no text ends the string or starts a line of its own."""
+    out = []
+    for ch in s:
+        o = ord(ch)
+        if 0xD800 <= o <= 0xDFFF:
+            raise TomlError("%s holds a lone surrogate, which is not text" % json.dumps(s))
+        out.append(TOML_ESCAPES.get(ch) or ("\\u%04x" % o if o < 0x20 or o == 0x7F else ch))
+    return '"' + "".join(out) + '"'
+
+
+def toml_key(k):
+    """A key as TOML writes it: bare when it is letters, digits, _ and -, else quoted. An empty key or one that is not text is refused."""
+    if not isinstance(k, str) or not k:
+        raise TomlError("%s is not a key (a non-empty text)" % json.dumps(k))
+    return k if BARE_KEY.match(k) else toml_string(k)
+
+
+def toml_value(v, where):
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, int):
+        if not TOML_INT[0] <= v <= TOML_INT[1]:
+            raise TomlError("%s: %d is out of the range of a TOML integer" % (where, v))
+        return str(v)
+    if isinstance(v, str):
+        return toml_string(v)
+    if isinstance(v, list) and all(isinstance(x, str) for x in v):
+        return "[" + ", ".join(toml_string(x) for x in v) + "]"
+    raise TomlError("%s: %s is not a text, a whole number, a boolean or a list of texts" % (where, json.dumps(v)[:80]))
+
+
+def toml_dumps(doc):
+    """The UTF-8 bytes of doc (an object of objects) as TOML: in each table its plain keys in order, then its tables as [a.b] headers in order. Anything
+    but a text, a whole number, a boolean, a list of texts or an object is refused (TomlError), never written in another form."""
+    if not isinstance(doc, dict):
+        raise TomlError("the document is not an object")
+    lines = []
+
+    def table(d, path):
+        plain = sorted((k, v) for k, v in d.items() if not isinstance(v, dict))
+        subs = sorted(((k, v) for k, v in d.items() if isinstance(v, dict)), key=lambda kv: kv[0])
+        if path and (plain or not subs):
+            if lines:
+                lines.append("")
+            lines.append("[" + ".".join(toml_key(k) for k in path) + "]")
+        for k, v in plain:
+            lines.append("%s = %s" % (toml_key(k), toml_value(v, ".".join(path + [k]))))
+        for k, v in subs:
+            toml_key(k)
+            table(v, path + [k])
+    table(doc, [])
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
 def plain_file(name, skills_dir):
     """True when name is a relative file name inside the render that cannot collide with the manifest or the skills."""
     if not isinstance(name, str) or not name or os.path.isabs(name) or any(x in ("", ".", "..") for x in name.split("/")):
         return False
     return name != "MANIFEST.json" and name != skills_dir and not name.startswith(skills_dir.rstrip("/") + "/")
+
+
+def mcp_form(mcp, lists):
+    """What the render reads of a usable resources.mcp: the file, its format, the root pointer, the entry template, the rule, the name key and the tool lists."""
+    rule = mcp.get("permission_rule")
+    return {"file": mcp["file"], "format": mcp.get("format", "json"), "root": mcp["root_pointer"], "entry": mcp["entry"],
+            "rule": rule if isinstance(rule, str) else None, "name_key": mcp.get("name_key"), "lists": lists}
+
+
+def tool_lists_of(mcp):
+    """The tool lists of a server entry (resources.mcp.tool_lists): {"allow": pointer or None, "deny": pointer or None}; None when the definition gives
+    none; False when they cannot be written: a pointer that is not one, neither list, both at one place, a pointer onto or through a key of the entry
+    template, or a runtime whose tools have no names qargi can write (the member policy, lib/packs_mcp.py, judges a tool by that name)."""
+    tl = mcp.get("tool_lists")
+    if tl is None:
+        return None
+    if not isinstance(tl, dict) or set(tl) - {"allow", "deny"}:
+        return False
+    ptrs = {k: tl.get(k) for k in ("allow", "deny")}
+    if not any(ptrs.values()) or any(v is not None and not pointer_parts(v) for v in ptrs.values()) or packs_mcp().form_of(mcp) is None:
+        return False
+    try:
+        probe = copy.deepcopy(mcp.get("entry"))
+        if not isinstance(probe, dict):
+            return False
+        for v in ptrs.values():
+            if v:
+                put(probe, v, [])
+    except TypeError:
+        return False
+    return ptrs
 
 
 def target_of(inp):
@@ -134,11 +239,10 @@ def target_of(inp):
     tg = {"runtime": rt, "label": label, "target": lay["render_target"], "skills_dir": skills_dir,
           "user_dir": user_dir if isinstance(user_dir, str) else None, "mcp": None, "settings": None}
     mcp = res.get("mcp") if isinstance(res.get("mcp"), dict) else {}
-    if (mcp.get("format", "json") == "json" and plain_file(mcp.get("file"), skills_dir) and pointer_parts(mcp.get("root_pointer"))
-            and isinstance(mcp.get("entry"), dict)):
-        rule = mcp.get("permission_rule")
-        tg["mcp"] = {"file": mcp["file"], "root": mcp["root_pointer"], "entry": mcp["entry"], "rule": rule if isinstance(rule, str) else None,
-                     "name_key": mcp.get("name_key")}
+    lists = tool_lists_of(mcp)
+    if (mcp.get("format", "json") in ("json", "toml") and plain_file(mcp.get("file"), skills_dir) and pointer_parts(mcp.get("root_pointer"))
+            and isinstance(mcp.get("entry"), dict) and lists is not False):
+        tg["mcp"] = mcp_form(mcp, lists)
         st = packs.get("settings") if isinstance(packs.get("settings"), dict) else {}
         allow = (res.get("settings") or {}).get("allow_pointer") if isinstance(res.get("settings"), dict) else None
         ptrs = {"allow_pointer": allow, "ask_pointer": st.get("ask_pointer"), "deny_pointer": st.get("deny_pointer")}
@@ -387,7 +491,8 @@ def one_rule_each(rules):
 
 def shared_files(servers, allow, ask, tg):
     """{name: bytes} of the MCP file and the settings file for the tool packs, or {} when there are none. A runtime that gave no
-    settings form gets the servers without a permission list (its own default policy then applies to every tool)."""
+    settings form gets the servers without a permission list (its own default policy then applies to every tool). The MCP file is
+    written in the format of the definition (TomlError for an entry TOML cannot hold); the settings file is JSON."""
     if not servers:
         return {}
     docs = {}
@@ -401,14 +506,131 @@ def shared_files(servers, allow, ask, tg):
         if pointer_parts(st["deny_pointer"]):
             put(doc, st["deny_pointer"], [])
         docs[st["file"]] = doc
-    return {name: (json.dumps(obj, indent=2, sort_keys=True) + "\n").encode() for name, obj in docs.items()}
+    return {name: toml_dumps(obj) if name == tg["mcp"]["file"] and tg["mcp"].get("format") == "toml" else (json.dumps(obj, indent=2, sort_keys=True) + "\n").encode()
+            for name, obj in docs.items()}
+
+
+def lib_module(name):
+    """A module of this directory (python -I does not put it on sys.path)."""
+    if HERE not in sys.path:
+        sys.path.insert(0, HERE)
+    return __import__(name)
+
+
+def role_read_only(name):
+    """True when the role is not of the write class; a role that cannot be read is held to the read-only class (as lib/agent.sh holds it)."""
+    try:
+        return lib_module("role").role_class(name) != "write"
+    except Exception:
+        return True
+
+
+def member_lists(conf, project, roles, read_only, form):
+    """{pack: set of tool names as the pack writes them} of the tools a member may call for at least one of ROLES of PROJECT (read_only: {role: True
+    when it is of the read-only class}): the answer of lib/packs_mcp.py (refusal), grouped by the pack that gives the tool. A name of the runtime that
+    stands for two tools gives neither."""
+    M = packs_mcp()
+    out = {}
+    for role in roles:
+        table = M.tools_of(conf, project, role, form)
+        for name, found in table.items():
+            if M.refusal(conf, project, role, bool(read_only.get(role)), name, form, table) is None:
+                out.setdefault(found[0].pack, set()).add(found[0].tool)
+    return out
+
+
+def with_lists(servers, every, allowed, lists):
+    """The server entries with their tool lists: allow the tools a member may call, deny the pack's other tools. A server with an allow list and no tool
+    on it is left out (an empty list would read as no list to a runtime that takes one as a filter). Returns the entries kept."""
+    kept = {}
+    for name, entry in servers.items():
+        on = sorted(allowed.get(name, ()))
+        if lists.get("allow") and not on:
+            continue
+        if lists.get("allow"):
+            put(entry, lists["allow"], on)
+        if lists.get("deny"):
+            put(entry, lists["deny"], [t for t in sorted(every.get(name, ())) if t not in on])
+        kept[name] = entry
+    return kept
+
+
+def run_config(conf, project, roles, read_only, mcp):
+    """The MCP file of one member run (lib/local_run.py, dispatch.run_config): {"data": bytes, "tools": [the runtime's names], "servers": {pack: [tools]}}
+    for the tools a member serving ROLES of PROJECT may call (read_only: {role: True under the read-only class}), or None when no tool pack gives
+    it one. Only a runtime whose resources.mcp has tool lists gets one (the list in each server entry is what holds the tools: a run never gets a
+    server without it). Raises ValueError (TomlError) or packs_mcp.McpError when the file cannot be made; never reads a vault value, and the
+    bytes are the caller's to keep out of what it prints."""
+    mcp = mcp if isinstance(mcp, dict) else {}
+    lists = tool_lists_of(mcp)
+    if not lists or mcp.get("format", "json") not in ("json", "toml") or not pointer_parts(mcp.get("root_pointer")) or not isinstance(mcp.get("entry"), dict):
+        raise ValueError("the runtime's resources.mcp gives no file a run can be given (a format, a root pointer, an entry and tool lists)")
+    M = packs_mcp()
+    form = M.form_of(mcp)
+    got = member_lists(conf, project, roles, read_only, form)
+    if not got:
+        return None
+    C = lib_module("packs_check")
+    servers, every = {}, {}
+    for pack in sorted(got):
+        doc = C.read_tool(C.item_path(os.path.join(conf, "packs"), "tool", pack))
+        if not isinstance(doc, dict) or not isinstance(doc.get("url"), str) or not isinstance(doc.get("tools"), dict):
+            raise M.McpError("the tool pack %s cannot be read as a tool pack" % pack)
+        servers[pack] = fill(mcp["entry"], {"url": doc["url"], "name": pack})
+        every[pack] = [t for t in doc["tools"] if isinstance(t, str)]
+    tg = {"mcp": mcp_form(mcp, lists), "settings": None}
+    servers = with_lists(servers, every, got, lists)
+    data = shared_files(servers, [], [], tg).get(mcp["file"])
+    if data is None:
+        return None
+    return {"data": data, "tools": sorted(M.native(form, p, t) for p in servers for t in got[p]),
+            "servers": {p: sorted(got[p]) for p in sorted(servers)}}
+
+
+def tool_files(inp, tools):
+    """(the shared files {name: bytes}, the packs that need credentials, {pack: [the tools listed]} or None for a runtime without tool lists) of the
+    tool packs of a project render. The lists are the union over the roles each pack reaches of what a member may call for that role (member_lists).
+    Refuses (die) a pack that cannot be read, two tools with one rule, and a file the format cannot hold."""
+    tg = inp["target"]
+    servers, allow, ask, creds, rules, every = {}, [], [], [], [], {}
+    for p in tools:
+        try:
+            server, a, k, cred, named = tool_parts(p, tg)
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+            die("tool %s: cannot be read as a tool pack (%s); refusing" % (p["name"], e))
+        servers[p["name"]] = server
+        allow += a
+        ask += k
+        rules += named
+        every[p["name"]] = [t for _, _, t in named]
+        if cred:
+            creds.append(p["name"])
+    one_rule_each(rules)
+    listed = None
+    lists = tg["mcp"]["lists"] if tools else None
+    if lists:
+        form = {"rule": tg["mcp"]["rule"], "name_key": tg["mcp"]["name_key"]}
+        roles = sorted({r for p in tools for r in p["roles"]})
+        M = packs_mcp()
+        try:     # the tools of a role are those of the packs that reach it, so the union over the roles gives each pack what its own roles may call
+            got = member_lists(lib_module("paths").conf(), inp["project"], roles, {r: role_read_only(r) for r in roles}, form)
+        except M.McpError as e:
+            die("the tools a member may call cannot be worked out: %s; refusing" % e)
+        allowed = {p["name"]: got.get(p["name"], set()) for p in tools}
+        servers = with_lists(servers, every, allowed, lists)
+        listed = {n: sorted(allowed[n]) for n in sorted(allowed)}
+    try:
+        files = shared_files(servers, sorted(allow), sorted(ask), tg)    # sorted, as the check builds them: the order of the names as the runtime writes them is not the order of the packs
+    except TomlError as e:
+        die("the MCP file %s cannot be written as TOML: %s; refusing" % (tg["mcp"]["file"], e))
+    return files, creds, listed
 
 
 def render(inp, out):
-    """Write the tree into out; returns the manifest's pack list and the tool details."""
+    """Write the tree into out; returns the manifest's pack list and the tool details (the shared files, the packs that need credentials, the tool lists)."""
     tg = inp["target"]
     mkdirs(os.path.join(out, tg["skills_dir"]), os.path.dirname(out))
-    packs, servers, allow, ask, creds, rules = [], {}, [], [], [], []
+    packs, tools = [], []
     for p in sorted(inp["packs"], key=lambda x: (x["kind"], x["name"])):
         entry = {"kind": p["kind"], "name": p["name"], "sha256": p["sha256"], "roles": sorted(p["roles"]), "files": {}, "modes": {}}
         if p["kind"] == "skill":
@@ -442,26 +664,17 @@ def render(inp, out):
                     entry["files"][key] = sha(data)
                     entry["modes"][key] = "%o" % mode
         else:
-            try:
-                server, a, k, cred, named = tool_parts(p, tg)
-            except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
-                die("tool %s: cannot be read as a tool pack (%s); refusing" % (p["name"], e))
-            servers[p["name"]] = server
-            allow += a
-            ask += k
-            rules += named
-            if cred:
-                creds.append(p["name"])
+            tools.append(p)
         packs.append(entry)
-    one_rule_each(rules)
+    files, creds, listed = tool_files(inp, tools)
     shared = {}
-    for name, data in shared_files(servers, sorted(allow), sorted(ask), tg).items():     # sorted, as the check builds them: the order of the names as the runtime writes them is not the order of the packs
+    for name, data in files.items():
         mkdirs(os.path.dirname(os.path.join(out, name)), out)
         with open(os.path.join(out, name), "wb") as fh:
             fh.write(data)
         os.chmod(os.path.join(out, name), 0o644)
         shared[name] = sha(data)
-    return packs, shared, creds
+    return packs, shared, creds, listed
 
 
 def shadows(inp, packs):
@@ -550,7 +763,7 @@ def cmd_plan(inp, tokenfile):
     done = False
     try:
         os.chmod(stage, 0o755)
-        packs, shared, creds = render(inp, stage)
+        packs, shared, creds, listed = render(inp, stage)
         old = read_manifest(live)
         manifest = {"schema": 1, "project": inp["project"], "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                     "role_scoping": "advisory", "packs": packs, "files": shared}
@@ -562,7 +775,7 @@ def cmd_plan(inp, tokenfile):
         tok = token_of(manifest, old)
         with open(tokenfile + ".stage", "w") as fh:
             json.dump({"stage": stage, "token": tok}, fh)
-        report(inp, live, manifest, old, creds)
+        report(inp, live, manifest, old, creds, listed)
         with open(tokenfile, "w") as fh:
             fh.write(tok)
         done = True
@@ -571,7 +784,7 @@ def cmd_plan(inp, tokenfile):
             rmpath(stage)
 
 
-def report(inp, live, manifest, old, creds):
+def report(inp, live, manifest, old, creds, listed=None):
     packs, shared = manifest["packs"], manifest["files"]
     oldp = {(p["kind"], p["name"]): p for p in (old or {}).get("packs", [])}
     newp = {(p["kind"], p["name"]): p for p in packs}
@@ -607,6 +820,9 @@ def report(inp, live, manifest, old, creds):
         if k[0] == "tool":
             rule = fill(tg["mcp"]["rule"], {"server": k[1], "tool": "*"}) if tg["mcp"]["rule"] else k[1]
             print("  tool entry: %s  (see %s)" % (rule, " and ".join(files)))
+            if listed is not None:
+                print("    " + ("tools a member may call: " + ", ".join(listed[k[1]]) if listed.get(k[1]) else
+                              "no tool a member may call for its roles, so the server is left out"))
     if creds:
         print("  needs credentials you configure yourself (vault_ids cannot authenticate locally): " + ", ".join(creds))
     for w in shadows(inp, packs):
@@ -736,14 +952,7 @@ def cmd_check(inp):
     tools = [p for p in inp["packs"] if p["kind"] == "tool"]
     if tools and all(p["exists"] and p["review_ok"] for p in tools):
         try:
-            servers, allow, ask, rules = {}, [], [], []
-            for p in tools:
-                servers[p["name"]], a, kk, _, named = tool_parts(p, inp["target"])
-                allow += a
-                ask += kk
-                rules += named
-            one_rule_each(rules)
-            for name, data in shared_files(servers, sorted(allow), sorted(ask), inp["target"]).items():
+            for name, data in tool_files(inp, sorted(tools, key=lambda x: x["name"]))[0].items():
                 if name in have and have[name] != sha(data):
                     findings.append("rendered: file differs from the library copy: " + name)
         except (SystemExit, OSError, ValueError, KeyError, TypeError):

@@ -109,6 +109,26 @@ topics=$(grep -rhoE 'qargi provider notes [a-z][a-z0-9-]*' skills packs contract
 missing=
 for t in $topics; do run "$t" --project onclaude; [ $rc = 0 ] || missing="$missing $t"; done
 [ -z "$missing" ] && ok "every topic a skill points at exists in claude-code${topics:+ ($(tr '\n' ' ' <<<"$topics" | sed 's/ $//'))}" || no "skills point at topics claude-code lacks:$missing"
+# the shipped runtime of Codex: a command runtime, so its spawn note sends the lead to `qargi local run`, not to an in-session tool
+mkproj oncodex '{"local":"codex"}'
+run --project oncodex
+{ [ $rc = 0 ] && [ "$out" = "commands
+exploration
+identity
+message
+session-model
+skills-dir
+spawn" ]; } && ok "the shipped codex lists its topics" || no "codex topics: rc=$rc out=$out err=$err"
+run message --project oncodex
+{ [ $rc = 0 ] && grep -q 'codex queue --thread ID_OR_NAME --message TEXT' <<<"$out" && grep -q 'never an approval' <<<"$out"; } \
+  && ok "codex says how to send a session a message without attaching, and that a message is no approval" || no "codex message: rc=$rc out=$out err=$err"
+run spawn --project oncodex
+{ [ $rc = 0 ] && grep -q 'qargi local run RUN' <<<"$out" && grep -q 'qargi local prepare' <<<"$out" && ! grep -q 'subagent_type' <<<"$out"; } \
+  && ok "codex says a member is started with qargi local run" || no "codex spawn: rc=$rc out=$out err=$err"
+run skills-dir --project oncodex
+{ [ $rc = 0 ] && grep -q '\.agents/skills' <<<"$out"; } && ok "codex names its skills directory" || no "codex skills-dir: rc=$rc out=$out err=$err"
+run exploration --project oncodex
+{ [ $rc = 0 ] && grep -q 'qargi provider model codex local fast' <<<"$out" && grep -q 'git grep' <<<"$out"; } && ok "codex says how a lead explores a repository (the skills point at that topic)" || no "codex exploration: rc=$rc out=$out err=$err"
 run spawn --project cloudonly
 [ $rc = 2 ] && ok "claude-platform is a cloud runtime: a project with only it has no local notes" || no "cloud only spawn: rc=$rc"
 

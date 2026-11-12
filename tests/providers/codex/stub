@@ -1,0 +1,9 @@
+#!/bin/sh
+# The stand-in for the `codex` command of the codex runtime (see tests/providers/lib/stub.py). The runtime has no adapter: the
+# conformance suite starts this file through qargi local run in place of `codex`, so its log holds the argv as the member gets it and
+# the prompt it read on standard input, and it prints fixtures/default.json, the JSON lines of a `codex exec --json` run, as the
+# transcript (a turn.completed event carries the usage the definition adds up). As `codex exec -o FILE` does, it writes the last
+# message of the run to FILE: final-message.md (a review report with its Findings and verdict), or the file $QARGI_STUB_FINAL names,
+# or nothing when $QARGI_STUB_FINAL is set and empty. It reaches no vendor.
+here=$(dirname "$0")
+QARGI_STUB_FINAL_FLAG=-o exec python3 -I "$here/../lib/stub.py" "$here" "$@"

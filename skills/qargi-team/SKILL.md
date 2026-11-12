@@ -1,6 +1,6 @@
 ---
 name: qargi-team
-description: Run a team on one task, opt-in: a lead coordinating members for build, write and review so a change to the code and the documentation that describes it are made, reviewed and delivered together. Led by this lead session, by a cloud lead agent, or by a lead session started in the console.
+description: "Run a team on one task, opt-in: a lead coordinating members for build, write and review so a change to the code and the documentation that describes it are made, reviewed and delivered together. Led by this lead session, by a cloud lead agent, or by a lead session started in the console."
 argument-hint: brief PROJECT TEAM --task T --done C [--base B] | check DIR | contract
 ---
 

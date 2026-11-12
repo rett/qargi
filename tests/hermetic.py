@@ -1,8 +1,8 @@
 """Imported first by every Python test (the tests directory is on sys.path when a test runs as a script).
 It makes the test independent of the caller, with the environment of tests/hermetic.sh (read its header for the reasons): no ANTHROPIC_*
 or QARGI_* variable gets through, HOME, TMPDIR and qargi's config and state are fresh directories under one temporary directory (ROOT,
-removed at exit; what tempfile makes goes into ROOT/tmp), and the first `ant` and `claude` on PATH are stubs that fail, so a test that
-did not bring its own fake cannot reach the real tools. The locale, time zone and umask are fixed, git reads no configuration of the
+removed at exit; what tempfile makes goes into ROOT/tmp), and the first `ant`, `claude` and `codex` on PATH are stubs that fail, so a
+test that did not bring its own fake cannot reach the real tools. The locale, time zone and umask are fixed, git reads no configuration of the
 host or the user and has a default branch name (no identity: a test that commits sets its own), and python writes no bytecode (the first
 `python3` on PATH is a wrapper that adds -B, because PYTHONDONTWRITEBYTECODE is ignored under `python3 -I`, which qargi's scripts use). A test can still build its own
 environment from os.environ and override any of it."""
@@ -24,7 +24,7 @@ ROOT =tempfile.mkdtemp(prefix="hermetic.")
 atexit.register(shutil.rmtree, ROOT, True)
 for _d in ("home", "bin", "tmp"):
     os.makedirs(os.path.join(ROOT, _d))
-for _t in ("ant", "claude"):
+for _t in ("ant", "claude", "codex"):
     _p = os.path.join(ROOT, "bin", _t)
     with open(_p, "w") as _f:
         _f.write('#!/bin/sh\necho "hermetic test: the real %s is not available; put a fake first on PATH" >&2\nexit 127\n' % _t)

@@ -388,6 +388,102 @@ def env_pass_problem(name):
     return None
 
 
+# ---- the run home of a command runtime (dispatch.home) ----------------------------------------------------------------------------
+
+HOME_KEYS = ("env", "dir", "link")
+HOME_ENV_SET = ("LANG", "LC_ALL", "TZ", "TERM")          # set by qargi local run for every member, beside what env_pass_problem refuses
+HOME_LINK_NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$")
+HOME_LINKS_MAX = 8
+HOME_LINK_DENIED = (                                    # under the user's home: never linked into a run, whatever the runtime says
+    (".qargi", "qargi's own configuration, state and credentials"), (".ssh", "the user's ssh keys"), (".gnupg", "the user's keys"),
+    (".netrc", "the user's stored logins"), (".git-credentials", "the user's stored git logins"), (".gitconfig", "the user's git configuration"),
+    (".config/git", "the user's git configuration"), (".config/gh", "a forge credential"), (".config/hub", "a forge credential"),
+    (".config/glab-cli", "a forge credential"), (".aws", "a cloud credential"), (".azure", "a cloud credential"), (".config/gcloud", "a cloud credential"),
+    (".kube", "a cluster credential"), (".docker", "a registry credential"), (".password-store", "the user's passwords"),
+    (".local/share/keyrings", "the user's keyring"), (".pki", "the user's certificates and keys"),
+    # what runs as the user later: a member's write through the link lands in the source, so a startup file or a program
+    # directory as a source would let a member's write run at the next login or command
+    (".bashrc", "a startup file of the user's shell"), (".bash_profile", "a startup file of the user's shell"),
+    (".bash_login", "a startup file of the user's shell"), (".bash_logout", "a startup file of the user's shell"),
+    (".profile", "a startup file of the user's shell"), (".zshenv", "a startup file of the user's shell"),
+    (".zprofile", "a startup file of the user's shell"), (".zshrc", "a startup file of the user's shell"),
+    (".zlogin", "a startup file of the user's shell"), (".config/fish", "a startup file of the user's shell"),
+    (".config/autostart", "what the user's desktop starts"), (".config/systemd", "what the user's service manager starts"),
+    (".config/environment.d", "the environment of the user's services"), (".local/bin", "the user's own programs, on the search path"),
+)
+
+
+def home_link_problem(src):
+    """Why the file src (written ~/PATH) may not be linked into a run home, or None. It must be a plain path under the user's home (no .., no
+    empty or . part) that is not qargi's own directory, a credential store of the user's other tools, a startup file of the user's shell, desktop or
+    services, or ~/.local/bin (HOME_LINK_DENIED)."""
+    if not isinstance(src, str) or not src.startswith("~/") or not _plain_relative(src[2:]):
+        return "%s is not a plain path under the home (~/PATH, no .., no empty or . part)" % _show(src)
+    rel = src[2:]
+    for p, why in HOME_LINK_DENIED:
+        if rel == p or rel.startswith(p + "/"):
+            return "%s is never linked into a run: %s" % (_show(src), why)
+    return None
+
+
+def home_problems(home, env_pass=(), shape=True):
+    """The findings of a runtime's dispatch.home, as messages: {env, dir, link: [{from, to}]} gives the member a home directory of its own,
+    RUN/home/DIR, named by the variable env, with the files of link linked into it for the length of the run. env must be a variable a
+    runtime may set (env_pass_problem, not one qargi local run sets, not one of env_pass); dir a relative path inside the run home; from a file
+    under the user's home (home_link_problem); to a plain file name, each once. shape: also the types and keys (the schema states them too;
+    qargi local run, which reads a definition without the schema, asks for them)."""
+    if home is None:
+        return []
+    if not isinstance(home, dict):
+        return ["dispatch.home: %s is not an object {env, dir, link}" % _show(home)] if shape else []
+    bad = []
+    if shape:
+        bad += ["dispatch.home.%s: additional property is not allowed" % k for k in home if k not in HOME_KEYS]
+        bad += ["dispatch.home: missing required property '%s'" % k for k in ("env", "dir") if k not in home]
+    env = home.get("env")
+    if isinstance(env, str):
+        why = env_pass_problem(env) or ("qargi local run sets it for every member" if env in HOME_ENV_SET else None)
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", env):
+            bad.append("dispatch.home.env: %s is not a variable name" % _show(env))
+        elif why:
+            bad.append("dispatch.home.env: %s is never set for a runtime: %s" % (env, why))
+        elif env in (env_pass or ()):
+            bad.append("dispatch.home.env: %s is also in dispatch.env_pass; the run home replaces the caller's value, so name it once" % env)
+    elif shape and "env" in home:
+        bad.append("dispatch.home.env: %s is not of type string" % _show(env))
+    d = home.get("dir")
+    if isinstance(d, str):
+        if not _plain_relative(d):
+            bad.append("dispatch.home.dir: %s is not a directory inside the run home (a relative path, no .., no ~, no empty or . part)" % _show(d))
+    elif shape and "dir" in home:
+        bad.append("dispatch.home.dir: %s is not of type string" % _show(d))
+    links = home.get("link", [])
+    if not isinstance(links, list):
+        return bad + (["dispatch.home.link: %s is not a list of {from, to}" % _show(links)] if shape else [])
+    if len(links) > HOME_LINKS_MAX:
+        bad.append("dispatch.home.link: %d links are more than the %d a run home may hold" % (len(links), HOME_LINKS_MAX))
+    seen = set()
+    for i, ln in enumerate(links):
+        if not isinstance(ln, dict):
+            bad += ["dispatch.home.link[%d]: %s is not an object {from, to}" % (i, _show(ln))] if shape else []
+            continue
+        if shape:
+            bad += ["dispatch.home.link[%d].%s: additional property is not allowed" % (i, k) for k in ln if k not in ("from", "to")]
+            bad += ["dispatch.home.link[%d]: missing required property '%s'" % (i, k) for k in ("from", "to") if k not in ln]
+        if "from" in ln:
+            why = home_link_problem(ln["from"])
+            if why:
+                bad.append("dispatch.home.link[%d].from: %s" % (i, why))
+        to = ln.get("to")
+        if "to" in ln and (not isinstance(to, str) or not HOME_LINK_NAME.match(to) or to in (".", "..")):
+            bad.append("dispatch.home.link[%d].to: %s is not a plain file name (letters, digits, . _ and -, no /)" % (i, _show(to)))
+        elif isinstance(to, str):
+            if to in seen:
+                bad.append("dispatch.home.link[%d].to: %s is linked twice" % (i, _show(to)))
+            seen.add(to)
+    return bad
+
+
 def pack_env(home, tmp):
     """The environment pack code runs in when qargi runs it itself (the conformance harness of `provider check`): nothing of the caller's, only
     a search path of absolute entries, a home and temporary directory of the run, a locale and a clock zone. Same shape as the environment a
@@ -849,6 +945,7 @@ def _resource_problems(res, extension=False):
     mcp = res.get("mcp")
     if isinstance(mcp, dict):
         add(_path_problem("resources.mcp.file", mcp.get("file"), True))
+        bad += _mcp_problems(mcp)
     for i, f in enumerate(st.get("files") or []):
         if isinstance(f, dict) and isinstance(f.get("path"), str):
             lab = "resources.settings.files[%d].path" % i
@@ -884,20 +981,259 @@ def _resource_problems(res, extension=False):
                     bad.append("resources.transcripts.windows[%d].model: %s is not a pattern (plain text of at most 80 characters)" % (i, _show(m)))
                 if n is not None and (not isinstance(n, int) or isinstance(n, bool) or n < 1000):
                     bad.append("resources.transcripts.windows[%d].tokens: %s is not a number of tokens (at least 1000)" % (i, _show(n)))
-        us = tr.get("usage") if isinstance(tr.get("usage"), dict) else {}
-        for k in ("select", "skip"):
-            for ptr, want in (us.get(k) or {}).items() if isinstance(us.get(k), dict) else ():
-                if not isinstance(ptr, str) or not ptr.startswith("/") or isinstance(want, (dict, list)):
-                    bad.append("resources.transcripts.usage.%s: '%s' is not a JSON pointer to a text, number or boolean" % (k, ptr))
-        for k in ("tokens", "model"):
-            if k in us and not (isinstance(us[k], str) and us[k].startswith("/")):
-                bad.append("resources.transcripts.usage.%s: %s is not a JSON pointer" % (k, _show(us[k])))
+        bad += _usage_problems("resources.transcripts.usage", tr.get("usage"))
     mem = res.get("memory")
     if isinstance(mem, dict) and isinstance(mem.get("user_dir"), str):
         add(_path_problem("resources.memory.user_dir", mem["user_dir"], True, inside_ok=False))
         if "{checkout_key}" in mem["user_dir"] and mem.get("checkout_key") is None:
             bad.append("resources.memory.user_dir: uses {checkout_key} but checkout_key is null")
     return bad
+
+
+def _json_pointer(v):
+    """The keys of a JSON pointer into nested objects (/a/b), or None when v is not one (the form the renderer reads)."""
+    if not isinstance(v, str) or not v.startswith("/") or v == "/":
+        return None
+    parts = [x.replace("~1", "/").replace("~0", "~") for x in v[1:].split("/")]
+    return None if "" in parts else parts
+
+
+def _toml_problem(v, where):
+    """Why the value v of an entry template cannot be written as TOML by the renderer, or None (objects, texts, whole numbers, booleans, lists of texts)."""
+    if isinstance(v, dict):
+        for k, x in v.items():
+            p = _toml_problem(x, "%s.%s" % (where, k))
+            if p:
+                return p
+        return None
+    if isinstance(v, (str, bool, int)) or (isinstance(v, list) and all(isinstance(x, str) for x in v)):
+        return None
+    return "%s: %s cannot be written as TOML by the renderer (an object, a text, a whole number, a boolean or a list of texts)" % (where, _show(v))
+
+
+def _mcp_problems(mcp):
+    """The rules of resources.mcp a schema cannot state: the root pointer is a JSON pointer, a TOML file's entry template holds only what TOML is written
+    with, and the tool lists of an entry (tool_lists) are pointers into the entry that the template does not already use, of a runtime whose tool names
+    qargi can write (the member policy judges a tool by that name)."""
+    bad = []
+    rp = mcp.get("root_pointer")
+    if rp is not None and _json_pointer(rp) is None:
+        bad.append("resources.mcp.root_pointer: %s is not a JSON pointer into nested objects (/a/b)" % _show(rp))
+    if mcp.get("format") == "toml" and isinstance(mcp.get("entry"), dict):
+        p = _toml_problem(mcp["entry"], "resources.mcp.entry")
+        if p:
+            bad.append(p)
+    tl = mcp.get("tool_lists")
+    if not isinstance(tl, dict):
+        return bad
+    ptrs = [(k, tl.get(k)) for k in ("allow", "deny") if tl.get(k) is not None]
+    if not ptrs:
+        bad.append("resources.mcp.tool_lists: names neither an allow nor a deny list")
+    for k, v in ptrs:
+        parts = _json_pointer(v)
+        if parts is None:
+            bad.append("resources.mcp.tool_lists.%s: %s is not a JSON pointer into the entry (/a/b)" % (k, _show(v)))
+            continue
+        node = mcp.get("entry") if isinstance(mcp.get("entry"), dict) else {}
+        for i, part in enumerate(parts):
+            if not isinstance(node, dict) or part not in node:
+                break
+            if i == len(parts) - 1 or not isinstance(node[part], dict):
+                bad.append("resources.mcp.tool_lists.%s: %s runs onto or through a value the entry template sets" % (k, v))
+                break
+            node = node[part]
+    if len(ptrs) == 2 and ptrs[0][1] == ptrs[1][1]:
+        bad.append("resources.mcp.tool_lists: allow and deny are the same place (%s)" % ptrs[0][1])
+    rule = mcp.get("permission_rule")
+    if not isinstance(rule, str) or sorted(set(re.findall(r"\{(server|tool)\}", rule))) != ["server", "tool"]:
+        bad.append("resources.mcp.tool_lists: needs a permission_rule with {server} and {tool}, the name by which the member policy judges a tool")
+    return bad
+
+
+RUN_CONFIG_PLACES = ("home", "run")
+
+
+def _baseline_problems(base, root):
+    """The rules of a run_config baseline a schema cannot state: an object of non-empty keys whose values the file's writer takes (objects, texts,
+    whole numbers, booleans, lists of texts), with nothing at or below the root pointer of the MCP servers, which only the tool packs fill."""
+    if base is None:
+        return []
+    if not isinstance(base, dict) or not base:
+        return ["dispatch.run_config.baseline: %s is not a non-empty object of settings" % _show(base)]
+    bad = []
+
+    def keys(d, where):
+        for k, v in d.items():
+            if not isinstance(k, str) or not k.strip():
+                bad.append("dispatch.run_config.baseline: %s holds an empty key" % where)
+            elif isinstance(v, dict):
+                if not v:
+                    bad.append("dispatch.run_config.baseline: %s.%s is an empty object, which sets nothing" % (where, k))
+                keys(v, "%s.%s" % (where, k))
+    keys(base, "baseline")
+    p = _toml_problem(base, "dispatch.run_config.baseline")
+    if p:
+        bad.append(p)
+    parts = _json_pointer(root) or []
+    node = base
+    for i, k in enumerate(parts):
+        if not isinstance(node, dict) or k not in node:
+            break
+        node = node[k]
+        if i == len(parts) - 1 or not isinstance(node, dict):
+            bad.append("dispatch.run_config.baseline: it sets /%s, where the MCP servers of the run go (resources.mcp.root_pointer %s): only the tool packs "
+                       "of the run's role put servers there" % ("/".join(parts[:i + 1]), root))
+            break
+    return bad
+
+
+def run_config_problems(disp, resources, shape=True):
+    """The findings of a dispatch's run_config (the configuration file of one member run, which qargi local run renders): a runtime that qargi local run
+    starts, in home only with a run home (and a file name that is not one of its links), resources.mcp with the tool lists that hold a run's tools, and
+    a baseline that the file's writer takes and that leaves the place of the MCP servers to the tool packs. shape: also the types the schema states (for
+    a caller that has not validated the definition)."""
+    rc = disp.get("run_config") if isinstance(disp, dict) else None
+    if rc is None:
+        return []
+    if not isinstance(rc, dict):
+        return ["dispatch.run_config: %s is not an object {in, file, baseline}" % _show(rc)] if shape else []
+    bad = []
+    if shape:
+        bad += ["dispatch.run_config.%s: additional property is not allowed" % k for k in rc if k not in ("in", "file", "baseline")]
+        if rc.get("in") not in RUN_CONFIG_PLACES:
+            bad.append("dispatch.run_config.in: %s is not one of home, run" % _show(rc.get("in")))
+        if not isinstance(rc.get("file"), str) or not HOME_LINK_NAME.match(rc["file"]):
+            bad.append("dispatch.run_config.file: %s is not a plain file name (letters, digits, . _ and -, no /)" % _show(rc.get("file")))
+    if disp.get("mode") != "command":
+        bad.append("dispatch.run_config: only a runtime that qargi local run starts (dispatch.mode command) gets a file per run")
+    home = disp.get("home")
+    if rc.get("in") == "home":
+        if not isinstance(home, dict):
+            bad.append("dispatch.run_config.in: home needs dispatch.home, the run home the file goes in")
+        elif any(isinstance(ln, dict) and ln.get("to") == rc.get("file") for ln in home.get("link") or [] if isinstance(home.get("link"), list)):
+            bad.append("dispatch.run_config.file: %s is also a link of the run home" % _show(rc.get("file")))
+    mcp = resources.get("mcp") if isinstance(resources, dict) else None
+    tl = mcp.get("tool_lists") if isinstance(mcp, dict) else None
+    if not isinstance(tl, dict) or not (tl.get("allow") or tl.get("deny")):
+        bad.append("dispatch.run_config: needs resources.mcp with tool_lists: the list in each server entry is what holds the MCP tools of a run")
+    bad += _baseline_problems(rc.get("baseline"), mcp.get("root_pointer") if isinstance(mcp, dict) else None)
+    return bad
+
+
+def _usage_problems(label, us):
+    """The rules of a usage reading rule ($defs/usage) a schema cannot state: select and skip map JSON pointers to a text, number or boolean,
+    tokens and model are JSON pointers."""
+    us = us if isinstance(us, dict) else {}
+    bad = []
+    for k in ("select", "skip"):
+        for ptr, want in (us.get(k) or {}).items() if isinstance(us.get(k), dict) else ():
+            if not isinstance(ptr, str) or not ptr.startswith("/") or isinstance(want, (dict, list)):
+                bad.append("%s.%s: '%s' is not a JSON pointer to a text, number or boolean" % (label, k, ptr))
+    for k in ("tokens", "model"):
+        if k in us and not (isinstance(us[k], str) and us[k].startswith("/")):
+            bad.append("%s.%s: %s is not a JSON pointer" % (label, k, _show(us[k])))
+    return bad
+
+
+USAGE_KEYS = ("select", "skip", "tokens", "fields", "model")
+
+
+def output_usage_problems(out, shape=False):
+    """The findings of a dispatch's output (format text or jsonl, and a usage rule that qargi local run adds up when the run ends): the rule
+    reads JSON lines, so it needs format jsonl, and it needs tokens and fields to have counts to add. shape: also the keys and types the
+    schema states (qargi local run, which reads a definition without the schema, asks for them)."""
+    if not isinstance(out, dict) or not isinstance(out.get("usage"), dict):
+        return ["dispatch.output.usage: %s is not an object" % _show(out["usage"])] if shape and isinstance(out, dict) and out.get("usage") is not None else []
+    us = out["usage"]
+    bad = []
+    if shape:
+        bad += ["dispatch.output.usage.%s: additional property is not allowed" % k for k in us if k not in USAGE_KEYS]
+        f = us.get("fields")
+        if "fields" in us and not (isinstance(f, list) and f and all(isinstance(x, str) for x in f)):
+            bad.append("dispatch.output.usage.fields: %s is not a non-empty list of names" % _show(f))
+        for k in ("select", "skip"):
+            if k in us and not isinstance(us[k], dict):
+                bad.append("dispatch.output.usage.%s: %s is not an object" % (k, _show(us[k])))
+    bad += _usage_problems("dispatch.output.usage", us)
+    if out.get("format") != "jsonl":
+        bad.append("dispatch.output.usage: the usage is read from JSON lines, so dispatch.output.format must be jsonl, not %s" % _show(out.get("format")))
+    bad += ["dispatch.output.usage: missing required property '%s' (the counts to add up)" % k for k in ("tokens", "fields") if k not in us]
+    return bad
+
+
+# ---- the places a runtime's sandbox hides from its member (dispatch.hidden_paths) --------------------------------------------------------
+# The run paths of a task block that a member works with, by class: a read-only member reads its clone and its contract and runs git through
+# its wrapper; a write member also writes OUT and makes its temporary directories in TMP. The task file is not among them: the task block
+# reaches a command runtime's member in its prompt.
+RUN_PATHS = {"clone": "CLONE", "contract": "CONTRACT", "git": "GIT", "out": "OUT", "tmp": "TMP"}
+MEMBER_NEEDS = {"read-only": ("clone", "contract", "git"), "write": ("clone", "contract", "git", "out", "tmp")}
+HIDDEN_KEYS = ("prefixes", "shown", "note")
+
+
+def hidden_paths_problems(disp, shape=True):
+    """The findings of a dispatch's hidden_paths: absolute, normalised prefixes other than /, the run paths each class's sandbox shows anyway
+    (names of RUN_PATHS), a note saying why, and a runtime that qargi local run starts. shape: also the keys and types the schema states."""
+    hp = disp.get("hidden_paths") if isinstance(disp, dict) else None
+    if hp is None:
+        return []
+    if not isinstance(hp, dict):
+        return ["dispatch.hidden_paths: %s is not an object {prefixes, shown, note}" % _show(hp)] if shape else []
+    bad = []
+    pre, shown = hp.get("prefixes"), hp.get("shown")
+    if shape:
+        bad += ["dispatch.hidden_paths.%s: additional property is not allowed" % k for k in hp if k not in HIDDEN_KEYS]
+        if not isinstance(hp.get("note"), str) or not hp["note"].strip():
+            bad.append("dispatch.hidden_paths.note: %s is not a text saying why the sandbox hides them" % _show(hp.get("note")))
+        if not isinstance(pre, list) or not pre:
+            bad.append("dispatch.hidden_paths.prefixes: %s is not a non-empty list of paths" % _show(pre))
+        if shown is not None and not isinstance(shown, dict):
+            bad.append("dispatch.hidden_paths.shown: %s is not an object of class to run paths" % _show(shown))
+    for p in pre if isinstance(pre, list) else ():
+        if not isinstance(p, str) or not p.startswith("/") or os.path.normpath(p) != p or p == "/":
+            bad.append("dispatch.hidden_paths.prefixes: %s is not an absolute, normalised path other than /" % _show(p))
+    for cls, names in shown.items() if isinstance(shown, dict) else ():
+        if cls not in MEMBER_NEEDS:
+            bad.append("dispatch.hidden_paths.shown: the key %s is not a class (read-only, write)" % _show(cls))
+        elif not isinstance(names, list) or any(n not in RUN_PATHS for n in names):
+            bad.append("dispatch.hidden_paths.shown.%s: %s is not a list of run paths (%s)" % (cls, _show(names), ", ".join(RUN_PATHS)))
+    if disp.get("mode") != "command":
+        bad.append("dispatch.hidden_paths: only a runtime that qargi local run starts (dispatch.mode command) has a sandbox qargi places a run for")
+    return bad
+
+
+def hidden_run_paths(disp, cls, paths):
+    """[(name, path, real path, prefix)]: each run path a member of class cls works with (MEMBER_NEEDS) that the sandbox of the dispatch hides
+    from it: the path as given or its real path (every link resolved; a path need not exist yet) is a prefix of dispatch.hidden_paths or lies
+    under one, and the class's `shown` does not name it. paths: a name of RUN_PATHS -> the path; a name left out is not checked."""
+    hp = disp.get("hidden_paths") if isinstance(disp, dict) else None
+    if not isinstance(hp, dict) or not isinstance(hp.get("prefixes"), list):
+        return []
+    pre = [p for p in hp["prefixes"] if isinstance(p, str) and p.startswith("/") and p != "/"]
+    shown = hp.get("shown") if isinstance(hp.get("shown"), dict) else {}
+    shown = shown.get(cls) if isinstance(shown.get(cls), list) else []
+    out = []
+    for name in MEMBER_NEEDS.get(cls, ()):
+        if name in shown or not paths.get(name):
+            continue
+        given, real = os.path.abspath(paths[name]), os.path.realpath(paths[name])
+        hit = next((x for f in (given, real) for x in pre if f == x or f.startswith(x + "/")), None)
+        if hit:
+            out.append((name, paths[name], real, hit))
+    return out
+
+
+def hidden_message(runtime, cls, hits, disp):
+    """The refusal of a run whose member would not see a run path it works with (hidden_run_paths), naming each path, the prefix and the fix."""
+    lines = ["the member of this %s run of %s would not see what it works with: its runtime's sandbox hides %s from the member's commands (dispatch.hidden_paths: %s)"
+             % (cls, runtime, ", ".join(sorted({h[3] for h in hits})), (disp.get("hidden_paths") or {}).get("note") or "no note")]
+    for name, path, real, prefix in hits:
+        lines.append("  %s %s%s lies under %s" % (RUN_PATHS[name], path, "" if real == os.path.abspath(path) else " (its real path %s)" % real, prefix))
+    fix = []
+    if any(h[0] != "tmp" for h in hits):
+        fix.append("prepare the run again with --scratch on another filesystem, for example a directory under your home such as ~/.cache/qargi-runs")
+    if any(h[0] == "tmp" for h in hits):
+        fix.append("set QARGI_RUN_TMP to a directory on another filesystem before you prepare the run")
+    return "\n".join(lines) + "\nNothing was started: " + "; and ".join(fix) + "."
 
 
 NOTE_TOPIC_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
@@ -1023,6 +1359,14 @@ def validate2(d, name=None):
     disp = d.get("dispatch")
     if isinstance(disp, dict) and isinstance(disp.get("env_pass"), list):
         out += [("fail", "dispatch.env_pass: %s is never handed on: %s" % (n, env_pass_problem(n))) for n in disp["env_pass"] if isinstance(n, str) and env_pass_problem(n)]
+    if isinstance(disp, dict) and disp.get("home") is not None:
+        out += [("fail", m) for m in home_problems(disp["home"], disp.get("env_pass") if isinstance(disp.get("env_pass"), list) else (), shape=False)]
+        if disp.get("mode") != "command":
+            out.append(("fail", "dispatch.home: only a runtime that qargi local run starts (dispatch.mode command) has a run home"))
+    if isinstance(disp, dict):
+        out += [("fail", m) for m in output_usage_problems(disp.get("output"))]
+        out += [("fail", m) for m in run_config_problems(disp, d.get("resources"), shape=False)]
+        out += [("fail", m) for m in hidden_paths_problems(disp, shape=False)]
     notes = d.get("notes")
     if d.get("surface") == "local" and isinstance(disp, dict) and disp.get("mode") == "in-session" and not (isinstance(notes, dict) and "spawn" in notes):
         out.append(("warn", "notes.spawn: a local runtime that works in the session has no way to tell a lead how to start a member without a 'spawn' note (qargi provider notes spawn)"))
@@ -2069,6 +2413,26 @@ def cmd_addenda(args):
     return 0
 
 
+def cmd_hidden_paths(args):
+    """hidden-paths NAME SURFACE CLASS RUN TMP [--project P]: exit 2 with the refusal on standard error when the sandbox of the runtime (as the
+    project composes it) would hide from a member of CLASS a path it works with in the run RUN (its clone, contract, git wrapper and OUT, which
+    need not exist yet) with the temporary directory TMP; else exit 0, silent. local prepare asks it before it makes anything."""
+    project = None
+    if len(args) == 7 and args[5] == "--project":
+        project, args = args[6], args[:5]
+    if len(args) != 5 or args[1] not in SURFACES or args[2] not in MEMBER_NEEDS:
+        print("usage: qargi provider hidden-paths NAME local|cloud read-only|write RUN TMP [--project P]", file=sys.stderr)
+        return 2
+    name, surface, cls, run, tmp = args
+    disp = compose(name, surface, project)["definition"].get("dispatch")
+    hits = hidden_run_paths(disp, cls, {"clone": os.path.join(run, "clone"), "contract": os.path.join(run, "contract"), "git": os.path.join(run, "git"),
+                                        "out": os.path.join(run, "out"), "tmp": tmp})
+    if hits:
+        print("qargi: " + hidden_message(name, cls, hits, disp), file=sys.stderr)
+        return 2
+    return 0
+
+
 def adapter_exec(name, surface, verb, root=None, library=None):
     """(path, cleanup) of the adapter of a runtime on a surface, ready to run for VERB. A shipped adapter is the file in the tool; a library
     pack's is run only as a private copy of the sealed pack (exec_copy: the content and the executable's hash are checked against the
@@ -2354,6 +2718,8 @@ def main(argv):
             return cmd_adapter(rest)
         if verb == "addenda":
             return cmd_addenda(rest)
+        if verb == "hidden-paths":
+            return cmd_hidden_paths(rest)
         if verb == "notes":
             return cmd_notes(rest)
         if verb == "model":

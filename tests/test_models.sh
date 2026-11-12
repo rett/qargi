@@ -32,7 +32,7 @@ jq -e --argjson tiers "$TIERS" --slurpfile d "$TABLE" '.family == "claude" and (
   and ([$d[0].profiles[].tier] | unique | all(. as $t | $tiers | index($t)))' "$PROV/catalogs/claude.json" >/dev/null \
   && ok "the claude catalog maps every tier the table uses to an id and to an alias" || no "catalog file"
 jq -e --slurpfile d "$TABLE" '. as $c | [$d[0].profiles[].tier] | unique | all(. as $t | $c.tiers[$t].model != null and $c.tiers[$t].alias != null)' "$PROV/catalogs/claude.json" >/dev/null && ok "every profile's tier has both a model and an alias" || no "tier coverage"
-[ "$(find "$PROV" -maxdepth 1 -name '*.json' -printf '%f\n' | LC_ALL=C sort)" = "$(printf 'adapter-schema.json\nclaude-code.json\nclaude-platform.json\nschema-2.json')" ] && ok "claude-code and claude-platform are the provider files (beside the schemas, which describe them)" || no "providers: $(ls "$PROV")"
+[ "$(find "$PROV" -maxdepth 1 -name '*.json' -printf '%f\n' | LC_ALL=C sort)" = "$(printf 'adapter-schema.json\nclaude-code.json\nclaude-platform.json\ncodex.json\nschema-2.json')" ] && ok "claude-code, claude-platform and codex are the provider files (beside the schemas, which describe them)" || no "providers: $(ls "$PROV")"
 
 mline() { grep -c "^$2: $3\$" "$A/$1.md"; }
 $DA agent add b1 --project pbase --roles build >/dev/null 2>&1 && [ "$(mline b1 model claude-sonnet-5-5)" = 1 ] && [ "$(mline b1 effort high)" = 1 ] && ok "add: build gets the table's model and effort" || no "build default: $(head -5 "$A/b1.md")"

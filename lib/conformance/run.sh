@@ -8,9 +8,11 @@
 #              and `adapter` in it names the adapter. A schema 2 definition serves one surface and its models may live in a
 #              catalog; the suite reads it through lib/provider.py summary() (surfaces, tier_detail, effort, adapter), so a
 #              definition whose models are inline and one that references a catalog are checked the same way. A descriptor
-#              with adapter null is skipped with a message (exit 0).
+#              with adapter null gets the command cases when it is a command runtime (dispatch.mode command) and is otherwise
+#              skipped with a message (exit 0).
 #   --stub DIR the provider's test directory, default tests/providers/NAME. It holds `stub` (an executable that stands in
-#              for the vendor, exported to the adapter as $QARGI_TRANSPORT; see tests/providers/lib/stub.py), fixtures/
+#              for the vendor, exported to the adapter as $QARGI_TRANSPORT, and run by qargi local run in place of the command
+#              of a command runtime; see tests/providers/lib/stub.py), fixtures/
 #              (what the stub replays), for case 9 definition.json and, for a provider whose start-session builds the body of a
 #              session request, start-session/worker.request.json (the request the sample of cases 1, 5 and 10 uses).
 #   --tool DIR a tool root (a directory with lib/providers/) other than this checkout; the suite of a fixture uses it.
@@ -36,6 +38,27 @@
 #      an object {id, effort}, and no tools, skills or mcp_servers at any depth; a request that carries one of those keys, or
 #      lacks a model, an effort or a system prompt, or has a system over 100000 characters, is exit 2 with an error body; a
 #      read-only role is exit 2 where the barrier is effectively no, unless the request accepts that
+# The command cases, for a runtime whose dispatch.mode is command (qargi local run, lib/local_run.py, starts the stub in place of
+# the command argv[0] names, through a wrapper first on PATH that records the environment the command gets):
+#  11  barrier sandbox-args: the argv of a read-only run carries the read-only arguments, sets their flags nowhere else and carries no
+#      flag with its value of the write class's arguments, such as a writable directory (the case
+#      barrier-sandbox-args of lib/conformance/cases.py, which `qargi provider check` runs on a library pack)
+#  12  a write run, and a read-only one unless read_only_barrier is no (on a copy where its claim is dated when it is not yet verified),
+#      start the stub once with the argv RUN/dispatch.json records and the prompt (task block and class) by the way prompt.via says;
+#      each run carries the arguments of its class and none of the other's; OUT/transcript is what the stub printed; with
+#      dispatch.output.usage, RUN/dispatch.json adds up a usage from it
+#  13  the command gets HOME=RUN/home, no variable of the caller that env_pass does not name, and with dispatch.home its variable at
+#      RUN/home/DIR with each link there while it runs (a file of the hermetic home holding a sentinel) and gone after; the sentinel
+#      and the source paths are in no output, record or transcript, and the caller's home is unchanged
+#  14  with dispatch.run_config.baseline, a write run and a read-only one (as in 12) each get the run's configuration file holding the
+#      baseline and nothing else (no tool pack reaches a role in the hermetic home), read back in the format of resources.mcp, found by
+#      the command in its run home while it runs (in: home), and recorded in RUN/dispatch.json; whether the runtime honours a key is live
+#  15  with dispatch.hidden_paths, a write run and a read-only one (as in 12) whose run directory lies in a hidden place are refused (exit 2)
+#      before the stub starts, naming each run path the member of the class works with and the class does not show (CLONE, CONTRACT, GIT;
+#      for a write run OUT and TMP too), and a run on another place whose TMP alone is hidden is refused or goes on by the same rule
+# The command cases run a definition with dispatch.hidden_paths from a copy that hides a directory of the suite in place of its prefixes:
+# the suite's own directory may lie under one of them (a TMPDIR under /dev/shm for a runtime that hides /dev); whether the runtime's sandbox
+# hides what it declares is live
 # A case whose verb the adapter does not implement (exit 3) is skipped. A mutated copy of the tool tree (the descriptor
 # changed, the adapter run from the copy) tests what the definition of the runtime cannot show on its own: an effort
 # with no control (changed where the models live: the catalog the definition references, or the definition itself), a surface that
@@ -83,8 +106,9 @@ try:
 except P.ProviderError as e:
     sys.exit("conformance: %s" % e)' "$ROOT/lib" "$NAME" "$PROV" > "$VIEW" || exit 2
 AD_REL=$(jq -r '.adapter // empty' "$VIEW")
-if [ -z "$AD_REL" ]; then
-  echo "skip [-] $NAME has no adapter (adapter is null in its descriptor); nothing to check"
+MODE=$(jq -r '.dispatch.mode // empty | strings' "$DESC")
+if [ -z "$AD_REL" ] && [ "$MODE" != command ]; then
+  echo "skip [-] $NAME has no adapter (adapter is null in its descriptor) and is not a command runtime; nothing to check"
   exit 0
 fi
 ADAPTER=$TOOL/$AD_REL
@@ -474,9 +498,242 @@ case10() {
   finish 10 "$title"
 }
 
-echo "conformance: $NAME ($AD_REL)"
-if [ ! -x "$ADAPTER" ]; then echo "FAIL [0] the adapter $AD_REL does not exist or is not executable"; exit 1; fi
-if [ ! -x "$STUB" ]; then echo "FAIL [0] no stub transport at $STUB (an executable; see tests/providers/lib/stub.py)"; exit 1; fi
-case1; case2; case3; case4; case5; case6; case7; case8; case9; case10
+# ---- 11-13: a command runtime: qargi local run (lib/local_run.py) starts the stub in place of the command ------------------------
+CMD0=$(jq -r '.dispatch.argv[0] // empty | strings' "$DESC")
+HOMEENV=$(jq -r '.dispatch.home.env // empty | strings' "$DESC")
+HOMEREL=$(jq -r '.dispatch.home.dir // empty | strings' "$DESC")
+CFGIN=$(jq -r '.dispatch.run_config.in // empty | strings' "$DESC")
+CFGFILE=$(jq -r '.dispatch.run_config.file // empty | strings' "$DESC")
+CBIN=$W/cbin
+CRUN=""; CRC=0; COUT=""
+pycases() {   # PYTHON-CODE ARG...: the code with sys.argv[1] the lib of this suite (lib/conformance/cases.py is `cases`) and the descriptor as doc
+  python3 -I -c 'import json, sys; sys.path.insert(0, sys.argv[1])
+from conformance import cases
+with open(sys.argv[2]) as f:
+    doc = json.load(f)
+'"$1" "$ROOT/lib" "$DESC" "${@:2}"
+}
+stub_ready() {   # the wrapper named argv[0] first on PATH: it records its environment and the links of the run home, then runs the stub
+  [[ $CMD0 =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || return 1
+  mkdir -p "$CBIN"
+  { printf '#!/bin/sh\n'
+    printf "env > '%s'\n" "$W/cmd.env"
+    if [[ $HOMEENV =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+      printf 'd=$(printenv %s)\n' "$HOMEENV"
+      printf "for f in \"\$d\"/* \"\$d\"/.[!.]*; do [ ! -L \"\$f\" ] || echo \"\${f##*/}\"; done > '%s'\n" "$W/cmd.home"
+      if [ "$CFGIN" = home ] && [[ $CFGFILE =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]]; then   # the run's configuration file as the command finds it
+        printf "[ ! -f \"\$d/%s\" ] || cp \"\$d/%s\" '%s'\n" "$CFGFILE" "$CFGFILE" "$W/cmd.cfg"
+      fi
+    fi
+    printf "QARGI_STUB_LOG='%s' exec '%s' \"\$@\"\n" "$W/cmd.log" "$STUB"
+  } > "$CBIN/$CMD0" && chmod 755 "$CBIN/$CMD0"
+  local from to rel
+  while IFS=$'\t' read -r from to; do   # each source of the run home's links (~/PATH), a file of this run's home holding the sentinel
+    rel=${from#\~/}
+    { [ "$rel" != "$from" ] && [ -n "$rel" ] && [[ $rel != *..* ]]; } || continue
+    mkdir -p "$(dirname "$HOME/$rel")" && printf '%s\n' "$SENT" > "$HOME/$rel"
+  done < <(jq -r '.dispatch.home.link[]? | [(.from | strings), (.to | strings)] | @tsv' "$DESC")
+}
+cmdrun() {   # CLASS LIB [RUN [TMP]]: one run of LIB/local_run.py of the class with the stub in place of the command (in RUN, default W/crun.CLASS;
+             # TMP: the run's temporary directory, recorded for it in the lead's registry); CRUN (the run), CRC, COUT
+  local cls=$1
+  CRUN=${3:-$W/crun.$cls}
+  [ -z "${4:-}" ] || { mkdir -p "$QARGI_STATE" "$4"; jq -nc --arg r "$CRUN" --arg t "$4" '{run: $r, tmpdir: $t}' >> "$QARGI_STATE/local-runs.jsonl"; }
+  rm -rf "$CRUN"; mkdir -p "$CRUN/clone/src" "$CRUN/out"
+  : > "$CRUN/refs.before"; : > "$CRUN/clone/src/a.go"
+  if [ "$cls" = write ]; then printf 'build\n' > "$CRUN/ability"; else printf 'review\n' > "$CRUN/ability"; fi
+  printf 'TASK: conformance task\nDONE: true\n' > "$CRUN/task.md"
+  : > "$W/cmd.log"; rm -f "$W/cmd.env" "$W/cmd.home" "$W/cmd.cfg"
+  COUT=$(CONFORMANCE_CALLER_SECRET=caller-$$ PATH="$CBIN:$PATH" python3 -I "$2/local_run.py" "$CRUN" --project conformance --runtime "$NAME" --class "$cls" 2>"$W/cmd.err"); CRC=$?
+}
+HIDDEN=$W/hidden   # the place a copy of a definition with dispatch.hidden_paths hides in place of its prefixes
+HIDF=""
+if jq -e '.dispatch.hidden_paths | type == "object"' "$DESC" >/dev/null 2>&1; then HIDF=".dispatch.hidden_paths.prefixes = $(jq -nc --arg h "$HIDDEN" '[$h]')"; fi
+CLIB=""
+cmdlib() {   # CLASS: CLIB, the lib a command case runs CLASS from: the tool's, or a copy that hides HIDDEN (HIDF) and, for a read-only run of a
+             # read_only_barrier claim not yet dated, dates it (as it is once verified: what a run carries is the case, not the claim)
+  local f=$HIDF
+  if [ "$1" = read-only ] && [ "$(eff local read_only_barrier)" = no ]; then f="${f:+$f | }.capabilities.read_only_barrier.verified_on = \"$(date +%F)\""; fi
+  if [ -z "$f" ]; then CLIB=$TOOL/lib; return 0; fi
+  mutate "$f" && CLIB=$W/mut/lib
+}
+cmd_skip() {   # why case 12 or 13 cannot run, or nothing
+  if ! listed local; then echo "the provider has no local surface"
+  elif [[ ! $CMD0 =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then echo "dispatch.argv[0] is not a command looked up on PATH, so the stub cannot stand in for it"
+  fi
+}
+
+case11() {
+  begin
+  local title="a read-only run carries the sandbox arguments" res
+  if [ "$(jq -r '.barrier.kind // empty' "$DESC")" != sandbox-args ]; then nothing "the barrier kind is not sandbox-args"; finish 11 "$title"; return; fi
+  ran
+  res=$(pycases 'print(json.dumps(cases.barrier_sandbox_args(doc, None, sys.argv[3], False, False)["barrier-sandbox-args"]))' "$NAME") \
+    || { problem "internal: the case barrier-sandbox-args of lib/conformance/cases.py did not run"; finish 11 "$title"; return; }
+  case $(jq -r .status <<<"$res") in
+    pass) note "$(jq -r '.notes | join("; ")' <<<"$res")";;
+    *) problem "$(jq -r '.notes | join("; ")' <<<"$res")";;
+  esac
+  finish 11 "$title"
+}
+
+case12() {
+  begin
+  local title="a run of the stub gets the argv, the prompt and the output" why cls pf fx m bad runs="" usage=""
+  why=$(cmd_skip)
+  if [ -n "$why" ]; then nothing "$why"; finish 12 "$title"; return; fi
+  stub_ready || { ran; problem "internal: could not put the stub in place of $CMD0"; finish 12 "$title"; return; }
+  for cls in write read-only; do
+    if [ "$cls" = read-only ] && [ "$(jq -r '.capabilities.read_only_barrier.value // "no"' "$DESC")" = no ]; then note "no read-only run: read_only_barrier is no"; continue; fi
+    cmdlib "$cls" || { ran; problem "internal: could not make a changed copy of the tool tree"; continue; }
+    cmdrun "$cls" "$CLIB"; ran
+    if [ "$CRC" != 0 ]; then problem "$cls: qargi local run exited $CRC: $(tail -2 "$W/cmd.err" | paste -sd' ' - | cut -c1-200)"; continue; fi
+    grep -qx 'OUTCOME=ok' <<<"$COUT" || problem "$cls: the outcome is not ok: $(grep '^OUTCOME=' <<<"$COUT")"
+    if [ "$(grep -c . "$W/cmd.log")" != 1 ]; then problem "$cls: the stub was called $(grep -c . "$W/cmd.log") times, not once"; continue; fi
+    [ "$(jq -c .argv "$W/cmd.log")" = "$(jq -c '.argv[1:]' "$CRUN/dispatch.json")" ] || problem "$cls: the stub got other arguments than RUN/dispatch.json records"
+    pf=$(find "$CRUN/prompt" -maxdepth 1 -type f | head -1)
+    { [ -n "$pf" ] && grep -q '^TASK: conformance task$' "$pf" && grep -qx "CLASS=$cls" "$pf"; } || problem "$cls: the prompt lacks the task block or the class qargi recorded"
+    case $(jq -r .prompt_via "$CRUN/dispatch.json") in
+      stdin) [ "$(jq -r .stdin "$W/cmd.log")" = "$(cat "$pf")" ] || problem "$cls: the stub's standard input is not the prompt";;
+      file) jq -e --arg p "$pf" '.argv | index([$p])' "$W/cmd.log" >/dev/null || problem "$cls: the prompt file is not among the stub's arguments";;
+      arg) jq -e --rawfile p "$pf" '.argv | any(. == $p)' "$W/cmd.log" >/dev/null || problem "$cls: the prompt is not among the stub's arguments";;
+    esac
+    bad=$(pycases '
+argv = json.loads(open(sys.argv[3]).readline())["argv"]
+cls = sys.argv[4]
+other = "write" if cls == "read-only" else "read-only"
+for g in cases.group_args(doc.get("dispatch") or {}, cls):
+    if not cases.carries(argv, g):
+        print("the %s run lacks its arguments %s" % (cls, " ".join(g)))
+for g in cases.group_args(doc.get("dispatch") or {}, other):
+    if cases.literal(g) and cases.carries(argv, g):
+        print("the %s run carries the arguments of the %s class: %s" % (cls, other, " ".join(g)))' "$W/cmd.log" "$cls") || bad="internal: the class arguments could not be compared"
+    [ -z "$bad" ] || while IFS= read -r m; do problem "$m"; done <<<"$bad"
+    m=0; for fx in "$STUBDIR"/fixtures/*; do cmp -s "$fx" "$CRUN/out/transcript" && m=1; done
+    [ "$m" = 1 ] || problem "$cls: OUT/transcript is not what the stub printed"
+    if jq -e '.dispatch.output.usage | type == "object"' "$DESC" >/dev/null 2>&1; then
+      if jq -e '.usage.events >= 1 and ([.usage.tokens[]] | add // 0) > 0' "$CRUN/dispatch.json" >/dev/null 2>&1; then usage="usage of $(jq -r .usage.events "$CRUN/dispatch.json") events"
+      else problem "$cls: RUN/dispatch.json records no usage: dispatch.output.usage matches no line the stub printed ($(jq -c .usage "$CRUN/dispatch.json"))"; fi
+    fi
+    runs="$runs $cls"
+  done
+  [ -z "$runs" ] || note "runs:$runs"
+  [ -z "$usage" ] || note "$usage"
+  finish 12 "$title"
+}
+
+case13() {
+  begin
+  local title="the member's environment and run home" why f from to hd src s0 s1 links=""
+  why=$(cmd_skip)
+  if [ -n "$why" ]; then nothing "$why"; finish 13 "$title"; return; fi
+  stub_ready || { ran; problem "internal: could not put the stub in place of $CMD0"; finish 13 "$title"; return; }
+  s0=$(find "$HOME" -type f -exec sha256sum {} + | sort)
+  cmdlib write || { ran; problem "internal: could not make a changed copy of the tool tree"; finish 13 "$title"; return; }
+  cmdrun write "$CLIB"; ran
+  if [ "$CRC" != 0 ] || [ ! -s "$W/cmd.env" ]; then problem "qargi local run exited $CRC or the stub recorded no environment: $(tail -2 "$W/cmd.err" | paste -sd' ' - | cut -c1-200)"; finish 13 "$title"; return; fi
+  if ! jq -e '.dispatch.env_pass // [] | index(["CONFORMANCE_CALLER_SECRET"])' "$DESC" >/dev/null 2>&1; then
+    grep -q '^CONFORMANCE_CALLER_SECRET=' "$W/cmd.env" && problem "a variable of the caller that dispatch.env_pass does not name reached the command"
+  fi
+  grep -qx "HOME=$CRUN/home" "$W/cmd.env" || problem "HOME of the command is not the run's own home"
+  for f in "$W/cmd.env" "$W/cmd.log" "$W/cmd.err" "$CRUN/dispatch.json" "$CRUN/out/transcript"; do
+    grep -qF -- "$SENT" "$f" && problem "the content of a linked file is in ${f##*/}"
+  done
+  grep -qF -- "$SENT" <<<"$COUT" && problem "the content of a linked file is in the output of qargi local run"
+  if [ -n "$HOMEENV" ]; then
+    hd=$CRUN/home/$HOMEREL
+    grep -qx "$HOMEENV=$hd" "$W/cmd.env" || problem "$HOMEENV is not RUN/home/$HOMEREL"
+    while IFS=$'\t' read -r from to; do
+      src=$HOME/${from#\~/}
+      [ -f "$src" ] || continue
+      links="$links $to"
+      grep -qx -- "$to" "$W/cmd.home" 2>/dev/null || problem "$to was not a link in the run home while the command ran"
+      { [ ! -e "$hd/$to" ] && [ ! -L "$hd/$to" ]; } || problem "$to is still in the run home after the run"
+    done < <(jq -r '.dispatch.home.link[]? | [(.from | strings), (.to | strings)] | @tsv' "$DESC")
+    grep -qF -- "$HOME/" <<<"$COUT" && problem "the output of qargi local run names a source path of the run home's links"
+    grep -qF -- "$HOME/" "$CRUN/dispatch.json" && problem "RUN/dispatch.json names a source path of the run home's links"
+    note "$HOMEENV=RUN/home/$HOMEREL; links:${links:- none}"
+  else
+    note "no run home"
+  fi
+  s1=$(find "$HOME" -type f -exec sha256sum {} + | sort)
+  [ "$s0" = "$s1" ] || problem "the run changed a file of the caller's home"
+  finish 13 "$title"
+}
+
+case14() {
+  begin
+  local title="every run's configuration file holds the baseline" why cls f got want fmt runs=""
+  if [ "$(jq -r '.dispatch.run_config.baseline | type' "$DESC" 2>/dev/null)" != object ]; then nothing "dispatch.run_config has no baseline"; finish 14 "$title"; return; fi
+  why=$(cmd_skip)
+  if [ -n "$why" ]; then nothing "$why"; finish 14 "$title"; return; fi
+  stub_ready || { ran; problem "internal: could not put the stub in place of $CMD0"; finish 14 "$title"; return; }
+  want=$(jq -cS .dispatch.run_config.baseline "$DESC"); fmt=$(jq -r '.resources.mcp.format // "json"' "$DESC")
+  for cls in write read-only; do
+    if [ "$cls" = read-only ] && [ "$(jq -r '.capabilities.read_only_barrier.value // "no"' "$DESC")" = no ]; then note "no read-only run: read_only_barrier is no"; continue; fi
+    cmdlib "$cls" || { ran; problem "internal: could not make a changed copy of the tool tree"; continue; }
+    cmdrun "$cls" "$CLIB"; ran
+    if [ "$CRC" != 0 ]; then problem "$cls: qargi local run exited $CRC: $(tail -2 "$W/cmd.err" | paste -sd' ' - | cut -c1-200)"; continue; fi
+    if [ "$CFGIN" = home ]; then f=$CRUN/home/$HOMEREL/$CFGFILE; else f=$CRUN/config/$CFGFILE; fi
+    # no tool pack reaches a role in the hermetic home, so the file is the baseline and nothing else, in the format of resources.mcp
+    if ! got=$(python3 -I -c 'import json, sys, tomllib
+data = open(sys.argv[1], "rb").read()
+print(json.dumps(tomllib.loads(data.decode()) if sys.argv[2] == "toml" else json.loads(data), sort_keys=True, separators=(",", ":")))' "$f" "$fmt" 2>/dev/null); then
+      problem "$cls: the run's configuration file ${f#"$CRUN"/} is missing or cannot be read as $fmt"; continue
+    fi
+    [ "$got" = "$want" ] || problem "$cls: the run's configuration file is not the baseline alone: $(cut -c1-200 <<<"$got")"
+    jq -e --argjson b "$want" '.run_config.baseline == $b' "$CRUN/dispatch.json" >/dev/null 2>&1 || problem "$cls: RUN/dispatch.json does not record the baseline (run_config.baseline)"
+    if [ "$CFGIN" = home ] && ! cmp -s "$f" "$W/cmd.cfg"; then problem "$cls: the command did not find the file in its run home while it ran"; fi
+    runs="$runs $cls"
+  done
+  [ -z "$runs" ] || note "runs:$runs; each got the baseline, $(jq -r 'keys | length' <<<"$want") top-level keys"
+  finish 14 "$title"
+}
+
+case15() {
+  begin
+  local title="a run the sandbox would hide from its member is refused before it starts" why cls where want got lbl runs=""
+  if [ -z "$HIDF" ]; then nothing "dispatch.hidden_paths declares no place"; finish 15 "$title"; return; fi
+  why=$(cmd_skip)
+  if [ -n "$why" ]; then nothing "$why"; finish 15 "$title"; return; fi
+  stub_ready || { ran; problem "internal: could not put the stub in place of $CMD0"; finish 15 "$title"; return; }
+  mkdir -p "$HIDDEN"
+  for cls in write read-only; do
+    if [ "$cls" = read-only ] && [ "$(jq -r '.capabilities.read_only_barrier.value // "no"' "$DESC")" = no ]; then note "no read-only run: read_only_barrier is no"; continue; fi
+    cmdlib "$cls" || { ran; problem "internal: could not make a changed copy of the tool tree"; continue; }
+    for where in run tmp; do
+      # the run paths the member of the class works with (qargi's own rule, lib/provider.py MEMBER_NEEDS) that its class does not show and that
+      # lie in the hidden place: all of them with the run there (its TMP is RUN/tmp), TMP alone with the run elsewhere and its TMP there
+      want=$(python3 -I -c 'import json, sys; sys.path.insert(0, sys.argv[1]); import provider as P
+hp = json.load(open(sys.argv[2]))["dispatch"]["hidden_paths"]
+shown = (hp.get("shown") or {}).get(sys.argv[3]) or []
+print(" ".join(P.RUN_PATHS[n] for n in P.MEMBER_NEEDS[sys.argv[3]] if n not in shown and (sys.argv[4] == "run" or n == "tmp")))' "$ROOT/lib" "$DESC" "$cls" "$where") \
+        || { ran; problem "internal: the run paths of the class could not be read"; continue; }
+      if [ "$where" = run ]; then cmdrun "$cls" "$CLIB" "$HIDDEN/crun.$cls"; else cmdrun "$cls" "$CLIB" "$W/crun15.$cls" "$HIDDEN/tmp.$cls"; fi
+      ran
+      if [ -z "$want" ]; then
+        { [ "$CRC" = 0 ] && grep -qx 'OUTCOME=ok' <<<"$COUT"; } || problem "$cls, $where hidden: nothing the member works with is hidden, but qargi local run exited $CRC: $(tail -2 "$W/cmd.err" | paste -sd' ' - | cut -c1-200)"
+        runs="$runs $cls/$where:ran"; continue
+      fi
+      [ "$CRC" = 2 ] || { problem "$cls, $where hidden: qargi local run exited $CRC, not 2 (refused)"; continue; }
+      [ ! -s "$W/cmd.log" ] || problem "$cls, $where hidden: the stub was started"
+      [ ! -e "$CRUN/dispatch.json" ] || problem "$cls, $where hidden: RUN/dispatch.json was written"
+      for lbl in $want; do grep -q "^  $lbl .* lies under $HIDDEN\$" "$W/cmd.err" || problem "$cls, $where hidden: the refusal does not name $lbl under the hidden place"; done
+      got=$(sed -n 's/^  \([A-Z_]*\) .* lies under .*/\1/p' "$W/cmd.err" | paste -sd' ' -)
+      [ "$got" = "$want" ] || problem "$cls, $where hidden: the refusal names $got, not $want"
+      runs="$runs $cls/$where:refused($want)"
+    done
+  done
+  [ -z "$runs" ] || note "runs:$runs"
+  finish 15 "$title"
+}
+
+echo "conformance: $NAME (${AD_REL:-no adapter}${MODE:+, dispatch $MODE})"
+if [ -n "$AD_REL" ] && [ ! -x "$ADAPTER" ]; then echo "FAIL [0] the adapter $AD_REL does not exist or is not executable"; exit 1; fi
+if [ ! -x "$STUB" ]; then echo "FAIL [0] no stub at $STUB (an executable; see tests/providers/lib/stub.py)"; exit 1; fi
+if [ -n "$AD_REL" ]; then case1; case2; case3; case4; case5; case6; case7; case8; case9; case10
+else echo "skip [-] the adapter cases 1 to 10: $NAME has no adapter (adapter is null in its descriptor)"; fi
+if [ "$MODE" = command ]; then case11; case12; case13; case14; case15
+else echo "skip [-] the command cases 11 to 15: $NAME is not a command runtime (dispatch.mode is ${MODE:-not set})"; fi
 echo "conformance: $NAME: $nok ok, $nfail FAIL, $nskip skip"
 [ "$nfail" = 0 ]
