@@ -1,0 +1,22 @@
+{
+ "purpose": "Update current Claude model catalog and honest model-selection guidance for Fable 5.2",
+ "started": "2026-11-12T20:15:28Z",
+ "goal": "Update current Claude model catalog and honest model-selection guidance for Fable 5.2",
+ "plan": "",
+ "note": "",
+ "status": "active",
+ "lead": {
+  "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
+  "user": "rett",
+  "host": "arc",
+  "since": "2026-11-12T20:15:28Z",
+  "worktree": "94b9af1305afafc4"
+ },
+ "renewed_at": "2026-11-12T20:15:28Z",
+ "finished_at": null,
+ "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
+ "rev": 1,
+ "updated_at": "2026-11-12T20:15:28Z",
+ "feature": "claude-catalog",
+ "project": "qargi"
+}
