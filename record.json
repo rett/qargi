@@ -1,0 +1,22 @@
+{
+ "purpose": "Reduce redundant member baseline, DONE and lint work while preserving per-change checks, honest evidence and feature full-suite checkpoints",
+ "started": "2026-11-12T06:05:16Z",
+ "goal": "Reduce redundant member baseline, DONE and lint work while preserving per-change checks, honest evidence and feature full-suite checkpoints",
+ "plan": "",
+ "note": "",
+ "status": "active",
+ "lead": {
+  "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
+  "user": "rett",
+  "host": "arc",
+  "since": "2026-11-12T06:05:16Z",
+  "worktree": "94b9af1305afafc4"
+ },
+ "renewed_at": "2026-11-12T06:05:16Z",
+ "finished_at": null,
+ "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
+ "rev": 1,
+ "updated_at": "2026-11-12T06:05:16Z",
+ "feature": "workflow-efficiency",
+ "project": "qargi"
+}
