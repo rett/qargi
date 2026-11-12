@@ -5074,6 +5074,17 @@ class McpTools(HookCase):
     KB = {"platform.list_items": "always_allow", "getStatus": "always_allow", "search": "always_allow", "settings_view": "always_allow",
           "platform.delete_knowledge": "always_allow", "repo/push": "auto", "issue-close": "always_ask"}
 
+    def test_unknown_registry_class_refuses_mcp(self):
+        path = os.path.join(self.state, "local-runs.jsonl")
+        for value in (None, 7, "unknown", "missing"):
+            rec = {"run": self.runs["build"], "ability": "build", "project": "alpha", "class": value}
+            if value == "missing":
+                del rec["class"]
+            self.put(path, json.dumps(rec) + "\n")
+            result = self.call("mcp__kb__platform.delete_knowledge", "build")
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn("no valid class", result.stderr)
+
     def setUp(self):
         self.t = os.path.realpath(tempfile.mkdtemp())
         self.home, self.conf, self.state, self.outside = (os.path.join(self.t, d) for d in ("home", "conf", "state", "outside"))

@@ -66,7 +66,12 @@ def clone_changes(out):
 def uncommitted(out, status):
     """The FAIL (or, for a BLOCKED manifest, the NOTE) for a run with no patches whose clone holds uncommitted changes; WARN for untracked files only."""
     ch = clone_changes(out)
-    if not ch or not (ch[0] or ch[1]):
+    if ch is None:
+        clone = os.path.join(os.path.dirname(os.path.abspath(out)), "clone")
+        if os.path.lexists(clone):
+            (N if status == "BLOCKED" else F)("%s worktree state is unknown: clone inspection failed" % clone)
+        return
+    if not (ch[0] or ch[1]):
         return
     clone = os.path.join(os.path.dirname(os.path.abspath(out)), "clone")
     names = lambda ps: ", ".join(ps[:5]) + (" ..." if len(ps) > 5 else "")

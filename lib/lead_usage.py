@@ -443,14 +443,8 @@ def features_of(repo):
 
 
 def read_only(d, cls=None):
-    """True when the run is a read-only one: its product is a report, never patches. The class is the lead's registry record's (cls: prepare writes it); only a
-    record with none falls back to RUN/class, a member's file, and a run with neither is a run of work (write)."""
-    if cls in ("write", "read-only"):
-        return cls == "read-only"
-    try:
-        return open(os.path.join(d, "class"), errors="replace").read().strip() == "read-only"
-    except OSError:
-        return False
+    """True when the lead's registry identifies a read-only run."""
+    return cls == "read-only"
 
 
 def has_report(d):
@@ -474,6 +468,8 @@ def closing(run):
     """The exact command that closes an open run (run: a tuple of open_runs): a read-only run with its report closes with a plain clean; a run
     of work closes by its next step, applied by hand (local close), applied and merged (clean), or dropped."""
     d, slug, role, base, what = run
+    if getattr(run, "cls", None) not in ("write", "read-only"):
+        return "the lead's registry has no valid class for %s; inspect the registry" % d
     if read_only(d, getattr(run, "cls", None)):
         if has_report(d):
             return "qargi local clean %s" % d
@@ -495,7 +491,9 @@ def check(a, conf, state):
     reasons, runs = [], open_runs(state, repo, url)
     for run in runs:
         d, slug, role, base, what = run
-        if read_only(d, run.cls):
+        if run.cls not in ("write", "read-only"):
+            reasons.append("a local run has an unknown class: %s; the lead's registry has no valid class" % d)
+        elif read_only(d, run.cls):
             reasons.append("a read-only local run is open: %s (%s %s on %s, %s); read its report, then close it: %s" % (d, role, slug, base, what, closing(run)))
         elif what == "prepared, not verified":
             reasons.append("a local run is prepared and not verified: %s (%s %s on %s); verify it (qargi local verify %s) or discard it" % (d, role, slug, base, d))

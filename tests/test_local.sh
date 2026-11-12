@@ -230,6 +230,46 @@ rm -rf "$TM6" "$T/elsewhere"
 # link leads to), a link inside its path, and a run directory that is itself a link all leave that other directory as it was
 VIC=$T/victim; mkdir -p "$VIC/sub"; echo keep > "$VIC/sub/precious"
 mkc() { ./bin/qargi local prepare --repo "$T/r2" --base main --slug "$1" --scratch "$T" | sed -n '1,/^$/s/^\(RUN\|TMP\)=//p' | paste -sd' '; }
+read -r CU _ <<<"$(mkc unknown-git)"; echo '{}' > "$CU/out/manifest.json"
+printf 'corrupt head\n' > "$CU/clone/.git/HEAD"
+out=$(./bin/qargi local verify "$CU" 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q 'state is unknown' <<<"$out" && [ ! -f "$CU/verified" ] \
+  && ok "verify does not record a corrupt clone as zero commits" || no "verify corrupt clone: rc=$rc $out"
+out=$(./bin/qargi local clean "$CU" 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q 'state is unknown' <<<"$out" && [ -d "$CU" ] \
+  && ok "clean keeps a clone whose commit state is unknown" || no "clean corrupt clone: rc=$rc $out"
+out=$(./bin/qargi local clean "$CU" --discard 2>&1); rc=$?
+[ "$rc" = 0 ] && [ ! -e "$CU" ] && grep -q 'commit state is unknown' <<<"$out" \
+  && ok "discard explicitly drops a clone with unknown commit state" || no "discard corrupt clone: rc=$rc $out"
+read -r CI _ <<<"$(mkc indirect-git)"; echo '{}' > "$CI/out/manifest.json"
+external_before=$(git -C "$T/r2" show-ref)
+for meta in commondir config.worktree objects/info/alternates objects/info/http-alternates; do
+  mkdir -p "$(dirname "$CI/clone/.git/$meta")"
+  printf '%s\n' "$T/r2/.git" > "$CI/clone/.git/$meta"
+  out=$(./bin/qargi local verify "$CI" 2>&1); vr=$?
+  out2=$(./bin/qargi local clean "$CI" 2>&1); cr=$?
+  { [ "$vr" != 0 ] && [ "$cr" != 0 ] && grep -q 'state is unknown' <<<"$out" && grep -q 'state is unknown' <<<"$out2" && [ -d "$CI" ]; } \
+    && ok "verify and clean refuse clone indirection $meta" || no "indirection $meta: verify=$vr clean=$cr $out $out2"
+  rm -f "$CI/clone/.git/$meta"
+done
+mkfifo "$CI/clone/.git/objects/info/alternates"
+out=$(./bin/qargi local clean "$CI" 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q 'state is unknown' <<<"$out" && [ -d "$CI" ] \
+  && ok "clean refuses a FIFO in clone alternates" || no "FIFO alternates: rc=$rc $out"
+rm -f "$CI/clone/.git/objects/info/alternates"
+mv "$CI/clone/.git" "$CI/clone/git.saved"
+printf 'gitdir: %s\n' "$T/r2/.git" > "$CI/clone/.git"
+out=$(./bin/qargi local verify "$CI" 2>&1); vr=$?
+out2=$(./bin/qargi local clean "$CI" 2>&1); cr=$?
+[ "$vr" != 0 ] && [ "$cr" != 0 ] && grep -q 'state is unknown' <<<"$out" && grep -q 'state is unknown' <<<"$out2" && [ -d "$CI" ] \
+  && ok "verify and clean refuse a gitfile pointing to another repository" || no "gitfile: verify=$vr clean=$cr $out $out2"
+rm -f "$CI/clone/.git"; ln -s "$T/r2/.git" "$CI/clone/.git"
+out=$(./bin/qargi local clean "$CI" 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q 'state is unknown' <<<"$out" && [ -d "$CI" ] \
+  && ok "clean refuses a linked Git directory" || no "linked git directory: rc=$rc $out"
+rm -f "$CI/clone/.git"; mv "$CI/clone/git.saved" "$CI/clone/.git"
+[ "$(git -C "$T/r2" show-ref)" = "$external_before" ] && ok "inspection did not change the external repository refs" || no "external refs changed"
+./bin/qargi local clean "$CI" --discard >/dev/null 2>&1 || no "discard indirect test run"
 ln -s "$VIC" "$T/qargi-run.abcde"; ln -s "$VIC" "$T/qargi-run.abcdef"
 mkdir -p "$T/realroot/qargi-run.ghijkl"; touch "$T/realroot/qargi-run.ghijkl/precious"; ln -s "$T/realroot" "$T/linkroot"
 n=0
@@ -261,12 +301,13 @@ for form in "$TY" "$TY/" "${TY%/*}//${TY##*/}" "${TY%/*}/./${TY##*/}"; do
     || no "forged tmpdir file '$form': other=$(ls "$TY" 2>&1) run=$(ls -d "$CX" 2>&1) own=$(ls -d "$TX" 2>&1)"
   read -r CX TX <<<"$(mkc fg-x)"
 done
-# a run with no line in the registry loses only RUN/tmp, whatever its tmpdir file says
+# A run with no registry line is refused, even with --discard.
 jq -c --arg r "$CX" 'select(.run != $r)' "$T/s/local-runs.jsonl" > "$T/s/lr.new" && mv "$T/s/lr.new" "$T/s/local-runs.jsonl"
 mkdir -p "$CX/tmp"; touch "$CX/tmp/x"; printf '%s\n' "$TY" > "$CX/tmpdir"
-./bin/qargi local clean "$CX" --discard >/dev/null 2>&1
-[ -f "$TY/precious" ] && [ ! -e "$CX" ] && [ -d "$TX" ] && ok "with no registry line only RUN/tmp goes: the tmpdir file's directory and the unrecorded temporary directory are left" || no "no record: other=$(ls "$TY" 2>&1) run=$(ls -d "$CX" 2>&1)"
-rm -rf "$TX" "$TY" "$CY"
+out=$(./bin/qargi local clean "$CX" --discard 2>&1); rc=$?
+[ "$rc" = 3 ] && grep -q "not in the lead's registry" <<<"$out" && [ -f "$TY/precious" ] && [ -d "$CX/tmp" ] && [ -d "$TX" ] \
+  && ok "with no registry line clean refuses and leaves the run and temporary directories" || no "no record: rc=$rc $out"
+rm -rf "$CX" "$TX" "$TY" "$CY"
 # the repository, its URL and the credential path come from the lead's registry, never from the run directory (repo.path, repo.url and cred.path are a member's
 # to write): a run whose files disagree with the registry is refused by verify, clean and run before any git is run for it
 read -r CF TF <<<"$(mkc rf-a)"; echo '{}' > "$CF/out/manifest.json"

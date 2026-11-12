@@ -6,6 +6,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- Local runs stop remaining members of the original process group before removing authentication links and inspecting output, including on normal exit; surviving members fail an otherwise successful run.
+- Permission decisions refuse missing, malformed or unsupported registry classes and preserve the run for investigation.
+- Clone inspection refuses unsupported Git metadata indirection, isolates and bounds Git, and treats inspection failures as unknown. Ordinary clean preserves unknown commit state; `--discard` remains explicit. Metadata warnings include commondir, worktree configuration and object alternates.
+
 ## [0.2.12] - 2026-11-11
 
 ### Added

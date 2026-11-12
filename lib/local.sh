@@ -850,8 +850,9 @@ WRAP
       RUN=${1:-}; [ -f "$RUN/refs.before" ] || usage_die "verify needs a RUN dir made by prepare"
       SRC=$RUN
     fi
+    RCLASS=$(run_class "$RUN") || exit 3
     # a read-only run's product is a report, never patches: patches in its output are not to be applied or accepted
-    if [ "$(run_class "$RUN")" = read-only ] && [ -n "$(find "$SRC/out" -maxdepth 2 \( -name '*.patch' -o -name run.bundle \) 2>/dev/null | head -1)" ]; then
+    if [ "$RCLASS" = read-only ] && [ -n "$(find "$SRC/out" -maxdepth 2 \( -name '*.patch' -o -name run.bundle \) 2>/dev/null | head -1)" ]; then
       echo "qargi: $RUN is a read-only run ($(cat "$SRC/ability" 2>/dev/null || echo review)) and its output holds patches. A read-only run's product is a report, never patches: read $SRC/out/report.md, and do not apply or accept the patches." >&2
       exit 2
     fi
@@ -862,14 +863,17 @@ WRAP
     # copy, which exists only for a passed run.
     NOREC='' EMPTY=''
     if [ -z "$SAVED" ] && [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ]; then
-      ncm=$(git -C "$RUN/clone" rev-list --count --branches HEAD --not --remotes=origin 2>/dev/null || echo 0)
-      if [ "${ncm:-0}" -gt 0 ] && [ -z "$(find "$RUN/out" -maxdepth 2 -name '*.patch' 2>/dev/null | head -1)" ] && ! out_has_report "$RUN/out"; then
+      ncm=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from local_run import clone_commits; n = clone_commits(sys.argv[2], True); sys.exit(1) if n is None else print(n)' "$(dirname "$0")" "$RUN/clone" </dev/null) || ncm=''
+      if [ -z "$ncm" ]; then
+        EMPTY="qargi: cannot inspect the clone's commits; the state is unknown, so this run is not verified"
+        NOREC=1
+      elif [ "$ncm" -gt 0 ] && [ -z "$(find "$RUN/out" -maxdepth 2 -name '*.patch' 2>/dev/null | head -1)" ] && ! out_has_report "$RUN/out"; then
         EMPTY="qargi: OUT is empty: the member did not collect. $RUN/clone holds $ncm commit(s) past BASE_SHA, but $RUN/out holds no patches and no report. The member's DONE needs \`ls OUT/patches\` to list the patches (git format-patch --binary BASE_SHA..HEAD into OUT/patches, then the manifest and report). This run is not verified, and apply and close need a passing verify: send it back to collect and verify again, or take the commits yourself without running git in the clone (a member that could write its .git could set it to run a program as you): make a clean copy with git clone --no-local $RUN/clone, as git(1) advises under SECURITY, take them from there and drop the run with qargi local clean RUN --discard. $NOREPORT_CAUSE"
         NOREC=1
       fi
     fi
     # a read-only run's product is its report: none in OUT is said (a note; the refs verdict below is the exit status), with the likely cause
-    if [ -z "$SAVED" ] && [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ] && [ "$(run_class "$RUN")" = read-only ] && ! out_has_report "$RUN/out"; then
+    if [ -z "$SAVED" ] && [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ] && [ "$RCLASS" = read-only ] && ! out_has_report "$RUN/out"; then
       echo "qargi: note: OUT of the read-only run $RUN holds no report (report.md or NAME-report.md). $NOREPORT_CAUSE" >&2
     fi
     # what a start of local run left in the run home (its runner was killed with SIGKILL, or the machine stopped): named, never removed here
@@ -1035,6 +1039,7 @@ WRAP
     reg_load
     RUN=$CLEAN_RUN
     while [ "${RUN%/}" != "$RUN" ] && [ "$RUN" != / ]; do RUN=${RUN%/}; done   # a trailing slash makes rm -rf follow a link
+    RCLASS=$(run_class "$RUN") || exit 3
     marshal_touch_run "$RUN"   # the lead's clean keeps its lease on the feature the run is based on
     # a run whose review apply is under way is not removed, --discard or not: the apply reads the run's files and its saved copy, and writes the branch and the record
     if aph=$(apply_lock_holder "$RUN"); then die "a review apply of $RUN is running (process $aph, $DA_STATE/apply/${RUN##*/}.json.run); nothing was removed: let it finish, then clean again"; fi
@@ -1065,8 +1070,8 @@ WRAP
     # a read-only run (its class in the lead's registry: an advisor, a review) returns a report and no manifest: its OUT holds a report.md (or NAME-report.md, a
     # regular file) and it closes with a plain clean, when its refs are unchanged (the check below) and its clone holds no commit (the check after that)
     [ -n "$DISCARD" ] || [ -f "$RUN/out/manifest.json" ] || [ -n "$(find "$RUN/out" -name '*manifest.json' 2>/dev/null | head -1)" ] \
-      || { [ "$(run_class "$RUN")" = read-only ] && out_has_report "$RUN/out"; } \
-      || die "$RUN/out holds no manifest: collect the work first, or --discard to drop a run that produced none$([ "$(run_class "$RUN")" != read-only ] || echo " (a read-only run closes with a plain clean once its OUT holds report.md)")$(out_has_report "$RUN/out" || printf '\n%s' "$NOREPORT_CAUSE")"
+      || { [ "$RCLASS" = read-only ] && out_has_report "$RUN/out"; } \
+      || die "$RUN/out holds no manifest: collect the work first, or --discard to drop a run that produced none$([ "$RCLASS" != read-only ] || echo " (a read-only run closes with a plain clean once its OUT holds report.md)")$(out_has_report "$RUN/out" || printf '\n%s' "$NOREPORT_CAUSE")"
     # changed refs are evidence: kept, unless the run is dropped on purpose (--discard), which says so and goes on
     vrc=0; vout=$(QARGI_VERIFY_REFS_ONLY=1 "$0" verify "$RUN" 2>&1 </dev/null) || vrc=$?
     if [ "$vrc" = 3 ]; then   # the registry does not vouch for the run directory: nothing was asked of any repository
@@ -1081,10 +1086,14 @@ WRAP
     acc=''; [ "$vrc" != 0 ] || acc=$(sed -n -e '/per runs\.owned_refs)$/s/^  //p' -e '/per runs\.owned_refs)$/!s/^  /accepted, the lead'"'"'s own move: /p' <<<"$vout")   # what verify accepted, named again when the run is cleaned
     # finished work is never dropped before it is merged: commits in the clone must be applied (review apply) and the applied tip must
     # be on a branch other than agent/*, in the real repository. --discard is the deliberate way to drop them.
-    nc=$(git -C "$RUN/clone" rev-list --count HEAD --not --remotes=origin 2>/dev/null || echo 0)
-    if [ "${nc:-0}" -gt 0 ] && [ -n "$(reg_get "$RUN" closed)" ]; then
+    nc=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from local_run import clone_commits; n = clone_commits(sys.argv[2]); sys.exit(1) if n is None else print(n)' "$(dirname "$0")" "$RUN/clone" </dev/null) || nc=''
+    if [ -z "$nc" ]; then
+      [ -n "$DISCARD" ] || die "cannot inspect commits in $RUN/clone: state is unknown, so the run is kept (--discard drops it on purpose)"
+      echo "qargi: warning: commit state is unknown; $RUN is dropped on purpose" >&2
+    fi
+    if [ -n "$nc" ] && [ "$nc" -gt 0 ] && [ -n "$(reg_get "$RUN" closed)" ]; then
       echo "qargi: note: $RUN was closed as $(reg_get "$RUN" closed_by): its $nc commit(s) are taken as applied by hand" >&2
-    elif [ "${nc:-0}" -gt 0 ]; then
+    elif [ -n "$nc" ] && [ "$nc" -gt 0 ]; then
       if [ -n "$DISCARD" ]; then echo "qargi: dropped $nc unmerged commit(s) of $RUN on purpose" >&2
       else
         [ -f "$RUN/applied" ] || die "$RUN holds $nc commit(s) that were never applied: qargi review apply $RUN, then qargi feature merge, then clean (--discard drops them on purpose)"
@@ -1126,10 +1135,11 @@ WRAP
     res=$(home_residue "$RUN")   # links a start of local run left in the run home: rm removes a link, never what it points to
     # what the clone holds that no commit has (new files never added, changes to tracked files), read the way local run reads it (nothing the member put
     # in the clone's git configuration runs): removed with the run, so it is said
-    wt=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from local_run import worktree_changes; c = worktree_changes(sys.argv[2]); print("%d %d" % (len(c[0]), len(c[1])) if c else "0 0")' \
-      "$(dirname "$0")" "$RUN/clone" 2>/dev/null </dev/null) || wt='0 0'
+    wt=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from local_run import worktree_changes; c = worktree_changes(sys.argv[2]); print("%d %d" % (len(c[0]), len(c[1])) if c is not None else "unknown unknown")' \
+      "$(dirname "$0")" "$RUN/clone" 2>/dev/null </dev/null) || wt='unknown unknown'
     read -r wtt wtu _ <<<"$wt"
     rm -rf --one-file-system -- "$RUN"
+    [ "$wtt" != unknown ] || echo "qargi: warning: the removed clone's worktree state was unknown" >&2
     [ -z "$res" ] || echo "qargi: note: removed with the run what its run home held: $(paste -sd ';' - <<<"$res" | LC_ALL=C tr -d '\000-\037\177')" >&2
     if [[ ${wtu:-0} =~ ^[1-9][0-9]*$ ]] || [[ ${wtt:-0} =~ ^[1-9][0-9]*$ ]]; then
       echo "qargi: warning: removed with the run what no commit had: $RUN/clone held ${wtu:-0} untracked file(s) (new files never added) and ${wtt:-0} uncommitted change(s) to tracked files; to keep such work, copy the files out of the clone before clean (never run git in a write member's clone)" >&2
@@ -1159,7 +1169,8 @@ WRAP
     reg_load; reg_has "$RUN" || die "$RUN is not in the lead's registry ($DA_STATE/local-runs.jsonl): only a run made by qargi local prepare on this machine is closed"
     [ -z "$(reg_get "$RUN" cleaned)" ] || die "$RUN was cleaned already"
     [ -z "$(reg_get "$RUN" closed)" ] || die "$RUN is closed already ($(reg_get "$RUN" closed_by)): qargi local clean $RUN removes its files"
-    [ "$(run_class "$RUN")" != read-only ] || die "$RUN is a read-only run: it has no patches to apply. qargi local clean $RUN removes it"
+    RCLASS=$(run_class "$RUN") || exit 3
+    [ "$RCLASS" != read-only ] || die "$RUN is a read-only run: it has no patches to apply. qargi local clean $RUN removes it"
     if [ -f "$RUN/applied" ]; then
       read -r _ab _ < "$RUN/applied"
       die "$RUN was applied with qargi review apply ($(cut -d' ' -f1 "$RUN/applied")): merge that branch (qargi feature merge), then qargi local clean $RUN$(rwh=$(rewrite_hint "$(reg_get "$RUN" repo)" "${_ab:-}"); [ -z "$rwh" ] || printf '\n%s' "$rwh")"
@@ -1196,7 +1207,8 @@ $vout}"
     [ -z "${QARGI_MEMBER_RUN:-}" ] || [ "$(readlink -f -- "$QARGI_MEMBER_RUN" 2>/dev/null)" = "$RUN" ] \
       || die "a member reports on its own run only ($RUN is not the run this member was started in): nothing was written"
     reg_load; reg_has "$RUN" || die "the lead's registry names no run $RUN (a directory a member made is not one): nothing was written"
-    [ "$(run_class "$RUN")" = read-only ] \
+    RCLASS=$(run_class "$RUN") || exit 3
+    [ "$RCLASS" = read-only ] \
       || die "$RUN is not a read-only run ($(cat "$RUN/ability" 2>/dev/null || echo build)): its product is patches, and the lead takes them in with qargi local verify; nothing was written"
     [ -d "$SOUT" ] && [ ! -L "$SOUT" ] || die "$SOUT is a link or not a directory: nothing was written"
     RNAME=report.md; [ -z "$RFIND" ] || RNAME=findings.md
@@ -1298,11 +1310,12 @@ $vout}"
     [ -f "$RUN/refs.before" ] && [ -f "$RUN/ability" ] || usage_die "run needs a RUN dir made by prepare"
     for a in "$@"; do case $a in --project|--runtime|--class) die "run: $a is not an option (the project and its runtime come from the run)";; esac; done
     reg_load; run_record "$RUN" || exit 2   # the project is found by the repository the lead's registry records, not by files in the run directory
+    RCLASS=$(run_class "$RUN") || exit 3
     RPJ=$(run_project "$RUN")   # the project prepare recorded in the lead's registry, not the first stored project whose repository it is
     [ -f "$DA_CONF/projects/$RPJ.json" ] && valid_project "$RPJ" || RPJ=''   # a project stored since removed is no project
     [ -n "$RPJ" ] || { echo "qargi: no stored project has the repository of this run, so no runtime is known: store it (qargi project attach) and give it a local provider (qargi project set PROJECT models.provider.local NAME)" >&2; exit 2; }
     RPROV=$(project_provider "$RPJ" local) || exit $?
     # the run by its real path: a later start or clean tells this runner by its command line, from whatever directory it runs in
-    exec python3 -I "$(dirname "$0")/local_run.py" "$(realpath -- "$RUN")" --project "$RPJ" --runtime "$RPROV" --class "$(run_class "$RUN")" "$@";;
+    exec python3 -I "$(dirname "$0")/local_run.py" "$(realpath -- "$RUN")" --project "$RPJ" --runtime "$RPROV" --class "$RCLASS" "$@";;
   *) usage_die "usage: local.sh prepare|verify|close|clean|report|list|run ...";;
 esac
