@@ -40,7 +40,7 @@ if python3 -I -c 'import json,sys; m=json.load(open("contract/manifest.example.j
 
 # P4: claims and cadence
 has $C 'Record each check in `log.txt`' && has $C 'Report only what you ran' && has $C '`not run` with the reason, never `pass`' && ok "the contract says to log each check, report only what was run, and that an unrun check is not run, never pass" || no "the contract's rule on recording and claiming checks"
-has $C 'Commit as you go' && has $C 'sent back' && ok "the contract says to commit as you go and that a batch at the end is sent back" || no "the contract's commit-as-you-go rule"
+has $C 'commit it before starting the next' && has $C 'independently reviewable and buildable' && ok "the contract says to commit each checked change before the next" || no "the contract's commit-as-you-go rule"
 
 # P5: one review vocabulary, in every text that describes a report
 F=contract/output-format.md
@@ -63,7 +63,7 @@ for r in build write; do
 done
 has $C 'Without a MEMORY section or a mounted store the task block, the contract and the repository are all your instructions' && ok "the contract says what a member without a store follows" || no "the contract's sentence for a member without a store"
 steps=$(awk '/^# Order of work/{f=1;next} /^# /{f=0} f && /^[1-6]\. /{printf "%s ", tolower($2)}' $C)
-[ "$steps" = "orient: baseline: implement check: commit report " ] && ok "the contract holds the six-step order of work as a numbered list (orient, baseline, implement, check, commit as you go, report)" || no "the contract's order of work: '$steps'"
+[ "$steps" = "orient: baseline: for after report " ] && ok "the contract orders orientation, baseline, each change, final DONE and report" || no "the contract's order of work: '$steps'"
 ! grep -q 'Orient\.' provision/role-seeds/build/reference/workflow/workflow.md && ok "the build seed's workflow does not repeat the lifecycle" || no "the build seed repeats the lifecycle"
 
 exit $fail
