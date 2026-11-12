@@ -45,7 +45,7 @@ The run's `config.toml` in `CODEX_HOME` (`RUN/home/.codex/config.toml`) is the u
 
 | Source | In a member run |
 |---|---|
-| your `~/.codex/config.toml`, rules, skills, `AGENTS.md` | not loaded: `CODEX_HOME` is the run home, which holds only what qargi writes (the configuration file, the sign-in link) and what Codex makes there itself |
+| your `~/.codex/config.toml`, rules, skills, `AGENTS.md` | not loaded: `CODEX_HOME` is the run home, which holds only what qargi writes (the configuration file, the sign-in link) and what Codex makes there itself. Not loaded is not unreadable: the member's commands can read them by path ([What a member can reach](#what-a-member-can-reach)) |
 | `~/.agents/skills` | not loaded: `HOME` is the run home too |
 | the run's `config.toml` | the baseline below, and the MCP servers of the role's tool packs |
 | the clone's `.codex/` (its `config.toml` with MCP servers and settings, `rules`, hooks) | not loaded: Codex loads a project's `.codex/` only for a trusted project, and a run clone is a fresh path that no configuration marks trusted (the run's file has no `projects` entry). Seen offline: with a trust entry in a scratch home the same repository's MCP server and settings load |
@@ -74,7 +74,7 @@ Each key is read by this CLI (a value of the wrong type is refused, naming the k
 - **Network.** The member's shell commands have none. That is not all the network a run uses: the Codex process itself talks to the model service, and it connects to the MCP servers of the run's file, outside the shell sandbox. Hosted search and apps are off in the baseline (not verified live).
 - **Git.** The member's git has no credentials (`HOME` is the run's, no global configuration, no ssh agent, no prompts), the clone's only remote is the run's bare copy with its push URL disabled, and the sandbox gives its commands no network, so an ordinary push has nothing to reach and nothing to authenticate with. That is what qargi supports, not a proof that no push can happen: `qargi local verify` compares every ref of the real repository before and after, and you apply only the patches.
 - **No guard hook.** No `qargi __guard` runs for a Codex member, so the guard's refusals (push, `gh`, `ssh`, the skill and runtime verbs, writes to protected places) do not apply as such; the sandbox's write and network denial, the credential-free git and the checks of what comes back hold instead.
-- **Sign-in.** Your `~/.codex/auth.json` is linked into the run home for the length of the run. The member can read it through the link: this is configuration separation, not secrecy from the member.
+- **Sign-in.** Your `~/.codex/auth.json` is linked into the run home for the length of the run, and the member's Codex loads nothing else of your Codex home. This is configuration separation, not secrecy from the member: the sandbox holds writes, not reads, so the member can read that file through the link and the rest of your `~/.codex` (sessions, history) by path.
 
 ## Skills and MCP tools of a member
 
