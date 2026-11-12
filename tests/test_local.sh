@@ -71,8 +71,8 @@ echo '{}' > "$C2/out/p--manifest.json"; touch "$TM2/leftover"
 [ -d "$TM" ] && ok "another run's temporary directory is untouched" || no "touched another run's tmp"
 # the registry (one line per run) records the clean: the line stays, marked cleaned, so a cleaned run is never listed as an open task
 regline() { jq -c --arg r "$1" 'select(.run == $r)' "$T/s/local-runs.jsonl"; }
-[ "$(regline "$C2" | wc -l)" = 1 ] && [ -n "$(regline "$C2" | jq -r '.cleaned // ""')" ] && [ "$(regline "$C2" | jq -r '.verified // ""')" != "" ] \
-  && ok "clean marks the run's registry line cleaned (and the verify it ran, verified), still one line per run" || no "registry after clean: $(regline "$C2")"
+[ "$(regline "$C2" | wc -l)" = 1 ] && [ -n "$(regline "$C2" | jq -r '.cleaned // ""')" ] && [ "$(regline "$C2" | jq -r '.verified // ""')" = "" ] \
+  && ok "clean marks the run cleaned without granting verification, still one line per run" || no "registry after clean: $(regline "$C2")"
 [ "$(stat -c %a "$T/s/local-runs.jsonl")" = 600 ] && ok "the registry keeps mode 600 after the mark" || no "registry mode $(stat -c %a "$T/s/local-runs.jsonl")"
 [ -z "$(regline "$C1" | jq -r '.cleaned // ""')" ] && ok "a run clean refused is not marked cleaned" || no "refused clean marked: $(regline "$C1")"
 out=$(./bin/qargi local prepare --repo "$T/r2" --base main --slug c3 --scratch "$T"); C3=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out")

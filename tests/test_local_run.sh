@@ -1482,16 +1482,35 @@ def partial_clear(run, home, names):
     if names:
         raise OSError(secret)
     return []
-with patch.object(L.os, "symlink", partial_link), patch.object(L, "clear_home", partial_clear):
+for original in (RuntimeError(secret), L.Stop("setup refused (fixture)", 3)):
+    calls.clear()
+    with patch.object(L.os, "symlink", partial_link), patch.object(L, "clear_home", partial_clear):
+        try:
+            rc = L.run_it(plan(run, "rproj", "fakecmd", "write", None, None, None, None, []), run)
+            assert isinstance(original, L.Stop) and rc == 3
+        except RuntimeError as e:
+            assert e is original
+    rec = json.load(open(os.path.join(run, "dispatch.json")))
+    assert os.path.islink(link) and rec["home"]["left"] and rec["member"] is None, rec
+    assert rec["home"]["links"] == ["signin", "refresh"], rec
+    assert "group_left" not in rec and secret not in json.dumps(rec)
+    for command in ([sys.argv[3], "local", "list"], [sys.argv[3], "local", "verify", run]):
+        result = subprocess.run(command, capture_output=True, text=True)
+        assert link in result.stdout + result.stderr, result
+        assert secret not in result.stdout + result.stderr
+    os.unlink(link)
+# An unreadable group probe must not abort escalation after TERM. The final
+# observation still raises: callers record unknown, never a false zero.
+from unittest.mock import Mock
+signals = []
+with patch.object(L.os, "killpg", side_effect=lambda pg, sig: signals.append(sig)), \
+     patch.object(L, "group_left", side_effect=PermissionError("fixture unreadable group")):
     try:
-        L.run_it(plan(run, "rproj", "fakecmd", "write", None, None, None, None, []), run)
-        raise AssertionError("setup exception swallowed")
-    except RuntimeError as e:
-        assert e is original
-rec = json.load(open(os.path.join(run, "dispatch.json")))
-assert os.path.islink(link) and rec["home"]["left"] and rec["member"] is None, rec
-assert "group_left" not in rec and secret not in json.dumps(rec)
-os.unlink(link)
+        stop(Mock(pid=12345), grace=0)
+        raise AssertionError("unknown group reported stopped")
+    except PermissionError:
+        pass
+assert signals == [L.signal.SIGTERM, L.signal.SIGKILL], signals
 print("unexpected-error cleanup ordering: PASS")
 PY
 ); rc=$?
