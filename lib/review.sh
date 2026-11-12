@@ -15,6 +15,7 @@
 #
 # The branch is made in a temporary worktree of the project's repository (repo.path), so the user's checkout is never touched;
 # no ref other than the new branch changes. A patch that does not apply removes the worktree and the branch again.
+if [ "${1:-}" = check ] && [ -n "${QARGI_MEMBER_RUN:-}" ]; then export DA_NOSETUP=1; fi
 . "$(dirname "$0")/lib.sh"
 
 # scrub_declared RUN -> 0 when the lead's registry holds, for the run, a take-in scrub (review.scrub) or a trailer policy (review.trailer_policy reject).
@@ -129,12 +130,12 @@ if [ "$verb" = check ]; then
     case $a in -*) ;; *)
       if o=$(readlink -f -- "$a" 2>/dev/null); then
         if [ -d "$o/out" ] && [ ! -d "$o/patches" ] && [ ! -e "$o/manifest.json" ]; then SRUN=$o SOUT=$o/out; else SRUN=$(dirname "$o") SOUT=$o; fi
-        marshal_touch_run "$SRUN"
+        [ -n "${QARGI_MEMBER_RUN:-}" ] || marshal_touch_run "$SRUN"
       fi
       break;;
     esac
   done
-  if [ -n "$SRUN" ] && [ -f "$SRUN/refs.before" ] && [ -f "$SRUN/ability" ]; then
+  if [ -z "${QARGI_MEMBER_RUN:-}" ] && [ -n "$SRUN" ] && [ -f "$SRUN/refs.before" ] && [ -f "$SRUN/ability" ]; then
     reg_load
     CLASS_RUN=$SRUN
     if ! reg_has "$CLASS_RUN"; then
@@ -145,7 +146,9 @@ if [ "$verb" = check ]; then
   rc=0; python3 -I "$(dirname "$0")/review_check.py" "$@" || rc=$?
   # The project's declared take-in scrub (answers review.scrub and review.trailer_policy; neither set: nothing more is checked or printed) runs on a series
   # that has patches, after the check above; a failing scrub fails the check
-  if [ "$rc" != 2 ] && [ -n "$SRUN" ] && compgen -G "$SOUT/patches/*.patch" >/dev/null && scrub_declared "$SRUN"; then
+  if [ -n "${QARGI_MEMBER_RUN:-}" ]; then
+    echo "scrub: not run (a member's structural check; the lead's check runs it)"
+  elif [ "$rc" != 2 ] && [ -n "$SRUN" ] && compgen -G "$SOUT/patches/*.patch" >/dev/null && scrub_declared "$SRUN"; then
     # a member's check (the mark `qargi local run` sets in a member's environment) never runs the lead's command or makes the checkout: the lead's check runs it
     if [ -n "${QARGI_MEMBER_RUN:-}" ]; then echo "scrub: not run (a member's check; the lead's check runs it)"
     elif [ "$rc" != 0 ]; then echo "scrub: not run (the series check failed)"

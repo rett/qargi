@@ -258,7 +258,7 @@ class Check(Base):
             with open(os.path.join(d, fn), "w") as f:
                 f.write(text)
         rec = {"run": d, "slug": slug or name, "ability": "build", "base": base, "started": "1", "repo": repo or self.repo}
-        if cls:
+        if cls is not None:
             rec["class"] = cls                                                                            # the class prepare records in the lead's registry
         self.registry(rec)
         return d
@@ -418,6 +418,15 @@ class Check(Base):
         self.assertIn("a local run has an unknown class: " + old, out)
         self.assertIn("close it: qargi local clean %s (once the member has written OUT/report.md" % sym, out)   # a link is no report
         self.assertIn("close it: qargi local clean %s\n" % pre, out)           # NAME-report.md is
+
+    def test_exact_registry_classes_agree_with_permission_consumers(self):
+        with open(os.path.join(ROOT, "tests", "fixtures", "run-classes.json")) as f:
+            cases = json.load(f)
+        for i, case in enumerate(cases):
+            d = self.run_dir("class%02d" % i, ("class", "read-only\n"), cls=case.get("value"))
+            rows = [r for r in lead_usage.open_runs(self.state, self.repo, "") if r[0] == d]
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0].cls, case["value"] if case.get("valid") else None, case["name"])
 
     def test_runs_of_another_repository_and_cleaned_runs_are_not_counted(self):
         self.run_dir("other", repo=os.path.join(self.t, "elsewhere"))

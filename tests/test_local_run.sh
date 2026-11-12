@@ -1017,25 +1017,28 @@ out=$($DA review check "$OUT" --allow-empty 2>&1); rc=$?
 [ "$rc" != 0 ] && grep -q 'worktree state is unknown: clone inspection failed' <<<"$out" \
   && ok "review check refuses an unknown worktree state" || no "review check unknown worktree: rc=$rc $out"
 rm -f "$CLONE/.git/commondir"
-# the lead reads the clone's state with git, but nothing the member put in the clone's git configuration runs: no fsmonitor, every filter driver it names
-# emptied, the work tree named outright, no system or global configuration, no optional locks (a git on PATH records how it is called)
+# A Git selected from the lead's controlled PATH records the private config and
+# scrubbed environment. Member filter configuration never reaches status.
 REALGIT=$(command -v git); mkdir -p "$T/fgit"
 cat > "$T/fgit/git" <<SH
 #!/usr/bin/env bash
 printf '%s\n' "ARGS \$*" "WT=\${GIT_WORK_TREE-} GD=\${GIT_DIR-} NOSYS=\${GIT_CONFIG_NOSYSTEM-} GLOBAL=\${GIT_CONFIG_GLOBAL-} LOCKS=\${GIT_OPTIONAL_LOCKS-}" >> "$T/fgit.log"
-case " \$* " in *" config --file "*) exec "$REALGIT" "\$@";; *" config "*) cat "$T/fgit.names"; exit 0;; esac
+case " \$* " in *" status "*) "$REALGIT" config --file "\$GIT_DIR/config" --no-includes --list >> "$T/fgit.config";; esac
 exec "$REALGIT" "\$@"
 SH
-chmod 755 "$T/fgit/git"; : > "$T/fgit.log"; printf 'c\n' > "$CLONE/tracked.txt"; printf 'filter.evil.clean\0filter.a.b.process\0' > "$T/fgit.names"
-got=$(python3 -I -c 'import sys; sys.path.insert(0, "lib"); import local_run as L; L.PE.DEFAULT_PATH = sys.argv[2] + ":" + L.PE.DEFAULT_PATH; print(L.worktree_changes(sys.argv[1]))' "$CLONE" "$T/fgit" 2>&1)
+chmod 755 "$T/fgit/git"; : > "$T/fgit.log"; printf 'c\n' > "$CLONE/tracked.txt"
+printf '\n[filter "evil"]\n clean = touch %s; cat\n[filter "a.b"]\n process = touch %s\n' "$T/filter-ran" "$T/filter-ran" >> "$CLONE/.git/config"
+got=$(PATH="$T/fgit:$PATH" python3 -I -c 'import sys; sys.path.insert(0, "lib"); import local_run as L; print(L.worktree_changes(sys.argv[1]))' "$CLONE" 2>&1)
 st=$(grep '^ARGS .*status' "$T/fgit.log")
-{ [ "$got" = "(['tracked.txt'], [])" ] && grep -q -- '-c core.fsmonitor=false' <<<"$st" && grep -q -- '-c filter.evil.clean= -c filter.evil.smudge= -c filter.evil.process= -c filter.evil.required=false' <<<"$st" \
-  && grep -q -- '-c filter.a.b.process=' <<<"$st" && grep -qx "WT=$CLONE GD=$CLONE/.git NOSYS=1 GLOBAL=/dev/null LOCKS=0" "$T/fgit.log"; } \
-  && ok "the lead's git status of the clone turns off fsmonitor and every filter driver the clone names, and names the work tree itself" || no "worktree git: $got $(cat "$T/fgit.log")"
-printf 'filter.x=y.clean\0' > "$T/fgit.names"
-got=$(python3 -I -c 'import sys; sys.path.insert(0, "lib"); import local_run as L; L.PE.DEFAULT_PATH = sys.argv[2] + ":" + L.PE.DEFAULT_PATH; print(L.worktree_changes(sys.argv[1]))' "$CLONE" "$T/fgit" 2>&1)
-[ "$got" = None ] && ok "a filter driver whose name cannot be emptied on the command line: git status is not run, the state is unknown" || no "bad filter name: $got $(cat "$T/fgit.log")"
-git -C "$CLONE" checkout -q tracked.txt; rm -rf "$T/fgit" "$T/fgit.log" "$T/fgit.names" "$T/wu-mode" "$T/wu-final.md" "$T/bin/codex"
+{ [ "$got" = "(['tracked.txt'], [])" ] && [ -n "$st" ] && grep -qx 'core.fsmonitor=false' "$T/fgit.config" && grep -qx 'core.hookspath=/dev/null' "$T/fgit.config" \
+  && ! grep -q '^filter\.' "$T/fgit.config" && grep -q "^WT=$CLONE GD=$QARGI_STATE/inspect\..* NOSYS=1 GLOBAL=/dev/null LOCKS=0$" "$T/fgit.log" && [ ! -e "$T/filter-ran" ]; } \
+  && ok "the lead's Git inspects private metadata with no member filters, fsmonitor, hooks or inherited configuration" || no "worktree git: $got $(cat "$T/fgit.log")"
+printf '\n[filter "x=y"]\n clean = touch %s; cat\n' "$T/filter-ran" >> "$CLONE/.git/config"
+got=$(PATH="$T/fgit:$PATH" python3 -I -c 'import sys; sys.path.insert(0, "lib"); import local_run as L; print(L.worktree_changes(sys.argv[1]))' "$CLONE" 2>&1)
+[ "$got" = "(['tracked.txt'], [])" ] && [ ! -e "$T/filter-ran" ] \
+  && ok "a driver name with equals is safely omitted from the private inspection config" || no "filter name with equals: $got $(cat "$T/fgit.log")"
+git -C "$CLONE" config --remove-section filter.evil; git -C "$CLONE" config --remove-section filter.a.b; git -C "$CLONE" config --remove-section 'filter.x=y'
+git -C "$CLONE" checkout -q tracked.txt; rm -rf "$T/fgit" "$T/fgit.log" "$T/fgit.config" "$T/wu-mode" "$T/wu-final.md" "$T/bin/codex"
 # a new file never added is not a refusal, so a clean of such a run removes it: never silently
 printf 'new\n' > "$CLONE/new.txt"
 out=$($DA local clean "$RUN" 2>&1); rc=$?
@@ -1365,6 +1368,61 @@ PY
 { grep -q '^RC=2 LEFT=$' <<<"$got" && grep -q '^OUTCOME=refused$' <<<"$got" && grep -q 'injected' <<<"$got" && [ "$(jq -r .outcome "$RUN/dispatch.json")" = refused ] \
   && [ "$(jq -r .exit "$RUN/dispatch.json")" != null ]; } \
   && ok "a start record that cannot be rewritten after the member started: refused, and the member's process group is stopped" || no "record after start: $got"
+got=$(env FAKE_MODE=sleep python3 -I - "$T/tool/lib" "$RUN" <<'PY' 2>&1
+import os, sys
+sys.path.insert(0, sys.argv[1])
+import local_run as L
+run = os.path.realpath(sys.argv[2])
+build, write, stop = L.build, L.write_private, L.kill_group
+for cleanup_fails in (False, True):
+    events, writes, procs = [], [0], []
+    link = os.path.join(run, "test-link")
+    original = RuntimeError("unexpected error (injected)")
+    def plan(*args, **kwargs):
+        p = build(*args, **kwargs)
+        p["home"] = {"env":"FAKE_HOME", "dir":"test-home", "links":[], "missing":[], "residue":[]}
+        return p
+    def make(*args):
+        os.symlink("harmless-missing-fixture", link)
+        events.append("linked")
+        return ["test-link"]
+    def wp(path, text):
+        writes[0] += 1
+        if writes[0] == 2:
+            raise original
+        return write(path, text)
+    def kill(proc):
+        assert os.path.islink(link)
+        events.append("stopping")
+        procs.append(proc)
+        left = stop(proc)
+        assert left == 0 and not L.group_left(proc.pid)
+        events.append("stopped")
+        if cleanup_fails:
+            raise OSError("secondary stop error (injected)")
+        return left
+    def clear(*args):
+        assert events[-1] == "stopped" and not L.group_left(procs[0].pid)
+        events.append("unlink")
+        os.unlink(link)
+        if cleanup_fails:
+            raise OSError("secondary unlink error (injected)")
+        return []
+    L.build, L.make_home, L.write_private, L.kill_group, L.clear_home = plan, make, wp, kill, clear
+    try:
+        L.main([run, "--project", "rproj", "--runtime", "fakecmd", "--class", "write", "--again"])
+        raise AssertionError("unexpected exception swallowed")
+    except RuntimeError as e:
+        assert e is original
+    assert events == ["linked", "stopping", "stopped", "unlink"], events
+    import json
+    rec = json.load(open(os.path.join(run, "dispatch.json")))
+    assert rec["outcome"] == "refused" and rec["group_left"] == 0, rec
+print("unexpected-error cleanup ordering: PASS")
+PY
+); rc=$?
+[ "$rc" = 0 ] && grep -qx 'unexpected-error cleanup ordering: PASS' <<<"$got" \
+  && ok "unexpected-error cleanup ordering: PASS" || no "unexpected error: rc=$rc $got"
 rm -f "$RUN/task.md"
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?; [ "$rc" = 1 ] && grep -q 'no task block' <<<"$out" && ok "no task block: stated, exit 1" || no "no task: rc=$rc $out"
 echo 'TASK: x' > "$T/other-task.md"
@@ -1431,5 +1489,6 @@ PY
 ); rc=$?
 [ "$rc" = 0 ] && [ "$got" = 'inspection: PASS' ] && ok "clone inspection refuses redirection, special files and corrupt HEAD without running helpers" || no "clone inspection: rc=$rc $got"
 
+python3 tests/inspection_cases.py && ok "private Git inspection: PASS" || no "private Git inspection"
 rm -rf "$T"
 exit $fail
