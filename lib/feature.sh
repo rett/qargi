@@ -107,9 +107,23 @@ run_warning() {
 # --applied-by-am) and an applied run whose branch is merged are not open. Nothing is changed.
 open_run_gate() {
   local out rc=0 d sl ro st n=0 lines=''
+  # The general-purpose reader skips damaged records; a finish must know the list is complete.
+  python3 -I -c 'import json, os, sys
+p = os.path.join(sys.argv[1], "local-runs.jsonl")
+try:
+    with open(p, encoding="utf-8") as f:
+        for line in f:
+            r = json.loads(line)
+            if not isinstance(r, dict) or not isinstance(r.get("run"), str):
+                raise ValueError("invalid registry record")
+except FileNotFoundError:
+    if os.path.lexists(p):
+        sys.exit(1)
+except (OSError, ValueError, UnicodeError):
+    sys.exit(1)' "$DA_STATE" || die "cannot read the open-run registry for feature/$1; finish refused. Nothing was changed."
   out=$(pymod lead_usage open-runs --state "$DA_STATE" --conf "$DA_CONF" --project "$PROJ" --feature "$1" </dev/null 2>/dev/null) || rc=$?
   [ "$rc" != 0 ] || return 0
-  [ "$rc" = 1 ] || { echo "qargi: warning: could not list the open runs of feature/$1 (lead_usage.py exited $rc): finishing goes on without that check" >&2; return 0; }
+  [ "$rc" = 1 ] || die "could not list the open runs of feature/$1 (lead_usage.py exited $rc); finish refused. Nothing was changed."
   while IFS=$'\t' read -r d sl ro st cmd; do
     [ -n "$d" ] || continue
     n=$((n + 1)); lines+="  $d ($ro $sl): $st"$'\n'"    close it: ${cmd:-qargi local clean $d}"$'\n'
