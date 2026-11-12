@@ -452,7 +452,10 @@ def make_home(run, home):
             os.symlink(src, to, dir_fd=fd)
             made.append(to)
     except BaseException:
-        clear_home(run, home, made)
+        try:
+            clear_home(run, home, made)
+        except BaseException:
+            pass  # the start failure stays primary; dispatch retains the planned link names
         raise
     finally:
         os.close(fd)
@@ -1193,12 +1196,22 @@ def earlier_start(run, again):
         rec = json.loads(read_run_file(path, 1 << 20, "the dispatch record") or "{}")
     except (ValueError, Stop):
         rec = {}
-    if isinstance(rec, dict) and rec.get("outcome") == "running":
+    if isinstance(rec, dict):
         if proc_of_run(rec.get("runner"), run, "runner"):
             fail("%s is being run now (qargi local run, process %d); it is started once at a time" % (run, rec["runner"]))
         if proc_of_run(rec.get("member"), run, "member"):
             fail("the member of an earlier start of %s is still running (process group %d), its runner is gone: stop it first (kill -TERM -- -%d), then "
                  "qargi local run %s --again" % (run, rec["member"], rec["member"], run))
+        member = rec.get("member")
+        if type(member) is int and member > 1:
+            try:
+                survivors = group_left(member)
+            except OSError:
+                survivors = None
+            if survivors is None or survivors:
+                fail("the original process group of an earlier start of %s is not known to be quiescent; inspect process group %d before retrying "
+                     "(its identity may have changed); nothing was started" % (run, member))
+    if isinstance(rec, dict) and rec.get("outcome") == "running":
         if not again:
             fail("%s was started and did not end: its runner is gone (killed with SIGKILL, or the machine restarted), so %s still says running and the run "
                  "home may still hold its links. qargi local run %s --again starts it again and replaces them; qargi local clean %s --discard drops the run"
@@ -1219,7 +1232,7 @@ def group_left(pgid):
         try:
             os.killpg(pgid, 0)
             return [pgid]
-        except OSError:
+        except ProcessLookupError:
             return []
     want, left = str(pgid).encode(), []
     for n in names:
@@ -1228,7 +1241,7 @@ def group_left(pgid):
         try:
             with open("/proc/%s/stat" % n, "rb") as f:
                 st = f.read()
-        except OSError:
+        except (FileNotFoundError, ProcessLookupError):
             continue
         rest = st[st.rfind(b")") + 2:].split()      # after the command name: state, ppid, pgrp, ...
         if len(rest) > 2 and rest[0] not in (b"Z", b"X") and rest[2] == want:
@@ -1980,7 +1993,8 @@ def run_it(plan, run):
                     except OSError as e:
                         outcome, error = "transport", "could not start %s: %s" % (plan["argv"][0], e.strerror or e)
                     if proc is not None:
-                        write_private(dispatch, json.dumps(dict(begun, member=proc.pid), indent=2, sort_keys=True) + "\n")
+                        begun["member"] = proc.pid
+                        write_private(dispatch, json.dumps(begun, indent=2, sort_keys=True) + "\n")
                         try:
                             sig.armed = True             # from here a signal stops the member where the lead waits for it
                             sig.check()
@@ -2027,13 +2041,19 @@ def run_it(plan, run):
         sig.armed = False
         try:
             home_left = clear_home(run, home, made) if home else []
-        except BaseException:
+        except BaseException as e:
+            home_left = ["run home cleanup failed; links and refreshed files may remain (inspect the run home)"]
             if unexpected is None:
-                raise
+                unexpected = e
     if unexpected is not None:
         try:
-            write_private(dispatch, json.dumps(dict(head, outcome="refused", exit=code, group_left=left,
-                                                   error="unexpected runner error (%s)" % type(unexpected).__name__)) + "\n")
+            rec = dict(begun, outcome="refused", exit=code, seconds=round(time.time() - started, 1), timed_out=timed_out,
+                       error="unexpected runner error", transcript=os.path.join(out, "transcript"))
+            if proc is not None:
+                rec["group_left"] = left
+            if home:
+                rec["home"].update(left=home_left, not_linked=home["missing"], residue=home["residue"])
+            write_private(dispatch, json.dumps(rec, indent=2, sort_keys=True) + "\n")
         except BaseException:
             pass
         sig.restore()
@@ -2063,7 +2083,7 @@ def run_it(plan, run):
     else:
         report, text = None, None
     manifest = package(run, out, plan, report, text, outcome, code, started, seconds, prev_manifest) if pk else None
-    rec = dict(head, started=PE.now(started), seconds=seconds, exit=code, timed_out=timed_out, outcome=outcome, transcript=os.path.join(out, "transcript"))
+    rec = dict(begun, seconds=seconds, exit=code, timed_out=timed_out, outcome=outcome, transcript=os.path.join(out, "transcript"))
     if outcome == "interrupted":
         rec["signal"] = signal.Signals(sig.sig).name
     if left is not None:                                 # the member's process group was stopped: how many of its processes are still alive

@@ -7,6 +7,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
+- Unexpected runner failures retain nonsecret start/process and home metadata, cleanup status and refreshed-file residue for list and verify. Retry checks the original group for every dispatch outcome and refuses known or unknown survivors until quiescence can be established, without signalling a potentially recycled PID.
 - `feature finish` refuses when its open-run registry is unreadable or malformed, or enumeration fails, instead of proceeding without the check.
 - Local runs stop remaining members of the original process group before removing authentication links and inspecting output, including on normal exit and unexpected runner errors; surviving members fail an otherwise successful run. Unexpected errors retain the original exception even if cleanup also fails, and an unreadable survivor count stays unknown.
 - Permission decisions validate the decoded JSON class against the exact supported registry strings before shell decoding and preserve malformed runs for investigation. Explicit `clean --discard` remains a recovery route for known registered legacy runs without a class; it intentionally drops evidence and cannot discard unregistered runs. A member's `review check` checks structure without lead registry authority, verification, scrub marks or cache.

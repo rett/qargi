@@ -1117,10 +1117,12 @@ echo normal-stubborn > "$T/ir-mode"; out=$($DA local run "$RUN" --again 2>&1); r
 [ ! -s "$T/ir-child" ] || kill -KILL "$(cat "$T/ir-child")" 2>/dev/null || true
 echo quick > "$T/ir-mode"
 got=$(python3 -I - "$RUN" "$T" <<'PY' 2>&1
-import os, sys
+import json, os, sys
 sys.path.insert(0, os.path.join(sys.argv[2], "tool", "lib"))
 import local_run as L
-L.group_left = lambda pg: [pg]
+earlier = json.load(open(os.path.join(sys.argv[1], "dispatch.json")))["member"]
+groups = L.group_left
+L.group_left = lambda pg: groups(pg) if pg == earlier else [pg]
 L.kill_group = lambda proc: 1
 rc = L.main([sys.argv[1], "--project", "rproj", "--runtime", "codex", "--class", "write", "--again"])
 print("CLASSIFICATION_RC=%d" % rc)
@@ -1368,24 +1370,26 @@ PY
 { grep -q '^RC=2 LEFT=$' <<<"$got" && grep -q '^OUTCOME=refused$' <<<"$got" && grep -q 'injected' <<<"$got" && [ "$(jq -r .outcome "$RUN/dispatch.json")" = refused ] \
   && [ "$(jq -r .exit "$RUN/dispatch.json")" != null ]; } \
   && ok "a start record that cannot be rewritten after the member started: refused, and the member's process group is stopped" || no "record after start: $got"
-got=$(env FAKE_MODE=sleep python3 -I - "$T/tool/lib" "$RUN" <<'PY' 2>&1
-import os, sys
+got=$(env FAKE_MODE=sleep python3 -I - "$T/tool/lib" "$RUN" "$DA" <<'PY' 2>&1
+import json, os, subprocess, sys
+from unittest.mock import patch
 sys.path.insert(0, sys.argv[1])
 import local_run as L
 run = os.path.realpath(sys.argv[2])
-build, write, stop = L.build, L.write_private, L.kill_group
-for cleanup_fails in (False, True):
+build, write, stop, clear_home, groups = L.build, L.write_private, L.kill_group, L.clear_home, L.group_left
+source = os.path.join(run, "signin-fixture")
+secret = "fixture-credential-never-record"
+with open(source, "w") as f:
+    f.write(secret)
+for cleanup_fails in (False, True, "unknown"):
     events, writes, procs = [], [0], []
-    link = os.path.join(run, "test-link")
-    original = RuntimeError("unexpected error (injected)")
+    link = os.path.join(run, "home/test-home/signin")
+    original = RuntimeError(secret)
     def plan(*args, **kwargs):
         p = build(*args, **kwargs)
-        p["home"] = {"env":"FAKE_HOME", "dir":"test-home", "links":[], "missing":[], "residue":[]}
+        p["home"] = {"env":"FAKE_HOME", "dir":"test-home", "path":os.path.dirname(link),
+                     "links":[("signin", source), ("refresh", source)], "missing":[], "residue":[], "start":{}}
         return p
-    def make(*args):
-        os.symlink("harmless-missing-fixture", link)
-        events.append("linked")
-        return ["test-link"]
     def wp(path, text):
         writes[0] += 1
         if writes[0] == 2:
@@ -1398,26 +1402,67 @@ for cleanup_fails in (False, True):
         left = stop(proc)
         assert left == 0 and not L.group_left(proc.pid)
         events.append("stopped")
+        if cleanup_fails == "unknown":
+            def unreadable(*args):
+                raise OSError(secret)
+            L.group_left = unreadable
         if cleanup_fails:
             raise OSError("secondary stop error (injected)")
         return left
     def clear(*args):
-        assert events[-1] == "stopped" and not L.group_left(procs[0].pid)
+        assert events[-1] == "stopped" and not groups(procs[0].pid)
         events.append("unlink")
-        os.unlink(link)
+        # Refresh one sign-in file while retaining the other real link on failure.
+        refresh = os.path.join(os.path.dirname(link), "refresh")
+        os.unlink(refresh)
+        with open(refresh, "w") as f:
+            f.write("refreshed-" + secret)
+        notes = clear_home(args[0], args[1], ["refresh"])
         if cleanup_fails:
-            raise OSError("secondary unlink error (injected)")
-        return []
-    L.build, L.make_home, L.write_private, L.kill_group, L.clear_home = plan, make, wp, kill, clear
+            raise OSError(secret)
+        return notes + clear_home(args[0], args[1], ["signin"])
+    L.build, L.write_private, L.kill_group, L.clear_home = plan, wp, kill, clear
     try:
         L.main([run, "--project", "rproj", "--runtime", "fakecmd", "--class", "write", "--again"])
         raise AssertionError("unexpected exception swallowed")
     except RuntimeError as e:
         assert e is original
-    assert events == ["linked", "stopping", "stopped", "unlink"], events
-    import json
+    L.group_left = groups
+    assert events == ["stopping", "stopped", "unlink"], events
     rec = json.load(open(os.path.join(run, "dispatch.json")))
-    assert rec["outcome"] == "refused" and rec["group_left"] == 0, rec
+    assert rec["outcome"] == "refused" and rec["group_left"] == (None if cleanup_fails == "unknown" else 0), rec
+    assert rec["member"] == procs[0].pid and rec["runner"] == os.getpid() and rec["started"]
+    assert rec["home"]["links"] == ["signin", "refresh"] and rec["home"]["residue"] == ["refresh.from-run"], rec
+    assert secret not in json.dumps(rec)
+    assert open(os.path.join(os.path.dirname(link), "refresh.from-run")).read() == "refreshed-" + secret
+    if cleanup_fails:
+        assert os.path.islink(link) and rec["home"]["left"]
+        for command in ([sys.argv[3], "local", "list"], [sys.argv[3], "local", "verify", run]):
+            result = subprocess.run(command, capture_output=True, text=True)
+            assert link in result.stdout + result.stderr, result
+            assert "refresh.from-run" in result.stdout + result.stderr, result
+            assert secret not in result.stdout + result.stderr
+    # Even a refused dispatch cannot retry beside original-group survivors.
+    for survivors in ([procs[0].pid], None):
+        rec["group_left"] = len(survivors) if survivors else None
+        write(os.path.join(run, "dispatch.json"), json.dumps(rec))
+        with patch.object(L, "group_left", return_value=survivors):
+            try:
+                L.earlier_start(run, True)
+                raise AssertionError("retry beside survivors")
+            except L.Stop as e:
+                assert "not known to be quiescent" in str(e)
+    L.earlier_start(run, True)  # actual group has stopped: safe to retry
+    if os.path.islink(link):
+        os.unlink(link)
+    os.unlink(os.path.join(os.path.dirname(link), "refresh.from-run"))
+# A failure before Popen must not invent a process-group observation.
+with patch.object(L, "make_home", side_effect=original):
+    try:
+        L.run_it(plan(run, "rproj", "fakecmd", "write", None, None, None, None, []), run)
+    except RuntimeError as e:
+        assert e is original
+assert "group_left" not in json.load(open(os.path.join(run, "dispatch.json")))
 print("unexpected-error cleanup ordering: PASS")
 PY
 ); rc=$?
