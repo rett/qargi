@@ -167,7 +167,8 @@ if [ "$verb" = save ]; then
   { [ -f "$RUN/refs.before" ] && [ -f "$RUN/ability" ] && case ${RUN##*/} in qargi.??????) true;; *) false;; esac; } \
     || die "$RUN is not a run prepared by qargi local prepare: nothing was written"
   reg_load; reg_has "$RUN" || die "the lead's registry names no run $RUN (a directory a member made is not one): nothing was written"
-  [ "$(run_class "$RUN")" = read-only ] \
+  RCLASS=$(run_class "$RUN") || exit 3
+  [ "$RCLASS" = read-only ] \
     || die "$RUN is not a read-only run ($(cat "$RUN/ability" 2>/dev/null || echo build)): its product is patches, and the lead takes them in with qargi local verify; nothing was written"
   [ -d "$SOUT" ] && [ ! -L "$SOUT" ] || die "$SOUT is a link or not a directory: a member put it there (look at the run); nothing was written"
   [ ! -t 0 ] || usage_die "give the member's final message on standard input: qargi review save $SRUN < message.md"
@@ -358,8 +359,9 @@ case $verb in
       SRC=$RUN
     fi
     [ -f "$SRC/refs.before" ] && [ -d "$SRC/out" ] || usage_die "apply needs a RUN dir made by qargi local prepare"
+    RCLASS=$(run_class "$RUN") || exit 3
     marshal_touch_run "$RUN"   # the lead's apply keeps its lease on the feature the run is based on
-    [ "$(run_class "$RUN")" != read-only ] \
+    [ "$RCLASS" != read-only ] \
       || die "$RUN is a read-only run ($(cat "$SRC/ability" 2>/dev/null || echo review)): its product is a report, never patches. Read $SRC/out/report.md; nothing was applied"
     appid=${RUN##*/}; amark=$(apply_rec_file "$RUN")
     # one apply of a run at a time: a second one finds the lock of the first (a pid lock, like the finishing verbs') and stops before it touches the record,

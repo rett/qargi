@@ -261,12 +261,13 @@ for form in "$TY" "$TY/" "${TY%/*}//${TY##*/}" "${TY%/*}/./${TY##*/}"; do
     || no "forged tmpdir file '$form': other=$(ls "$TY" 2>&1) run=$(ls -d "$CX" 2>&1) own=$(ls -d "$TX" 2>&1)"
   read -r CX TX <<<"$(mkc fg-x)"
 done
-# a run with no line in the registry loses only RUN/tmp, whatever its tmpdir file says
+# A run with no registry line is refused, even with --discard.
 jq -c --arg r "$CX" 'select(.run != $r)' "$T/s/local-runs.jsonl" > "$T/s/lr.new" && mv "$T/s/lr.new" "$T/s/local-runs.jsonl"
 mkdir -p "$CX/tmp"; touch "$CX/tmp/x"; printf '%s\n' "$TY" > "$CX/tmpdir"
-./bin/qargi local clean "$CX" --discard >/dev/null 2>&1
-[ -f "$TY/precious" ] && [ ! -e "$CX" ] && [ -d "$TX" ] && ok "with no registry line only RUN/tmp goes: the tmpdir file's directory and the unrecorded temporary directory are left" || no "no record: other=$(ls "$TY" 2>&1) run=$(ls -d "$CX" 2>&1)"
-rm -rf "$TX" "$TY" "$CY"
+out=$(./bin/qargi local clean "$CX" --discard 2>&1); rc=$?
+[ "$rc" = 3 ] && grep -q "not in the lead's registry" <<<"$out" && [ -f "$TY/precious" ] && [ -d "$CX/tmp" ] && [ -d "$TX" ] \
+  && ok "with no registry line clean refuses and leaves the run and temporary directories" || no "no record: rc=$rc $out"
+rm -rf "$CX" "$TX" "$TY" "$CY"
 # the repository, its URL and the credential path come from the lead's registry, never from the run directory (repo.path, repo.url and cred.path are a member's
 # to write): a run whose files disagree with the registry is refused by verify, clean and run before any git is run for it
 read -r CF TF <<<"$(mkc rf-a)"; echo '{}' > "$CF/out/manifest.json"

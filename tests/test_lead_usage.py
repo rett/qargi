@@ -251,7 +251,7 @@ class Check(Base):
             for r in runs:
                 f.write(json.dumps(r) + "\n")
 
-    def run_dir(self, name, *files, base="feature/lc", repo=None, slug=None, cls=None):
+    def run_dir(self, name, *files, base="feature/lc", repo=None, slug=None, cls="write"):
         d = os.path.join(self.t, name)
         os.makedirs(d)
         for fn, text in files:
@@ -336,7 +336,7 @@ class Check(Base):
         for fn, text in (("applied", "agent/x %s\n" % old), ("refs.before", ""), ("ability", "build\n")):                # what local list needs of a run directory
             with open(os.path.join(d, fn), "w") as f:
                 f.write(text)
-        self.registry({"run": d, "slug": "old", "ability": "build", "base": "feature/lc", "started": "1", "repo": self.repo})
+        self.registry({"run": d, "slug": "old", "ability": "build", "class": "write", "base": "feature/lc", "started": "1", "repo": self.repo})
         rc, out, _ = self.check()
         self.assertEqual(rc, 1)                                                                          # not journaled: the old commit is nowhere, so the run is not merged
         self.assertIn("a local run is applied and not merged: " + d, out)
@@ -376,11 +376,11 @@ class Check(Base):
     def test_every_open_run_names_the_command_that_closes_it(self):
         """open-runs (what feature finish lists) carries the exact closing command: a read-only run with its report closes with a plain clean, a run of
         work by the next step it waits for."""
-        ro = self.run_dir("ro", ("class", "read-only\n"), slug="advice")
+        ro = self.run_dir("ro", ("class", "read-only\n"), slug="advice", cls="read-only")
         os.makedirs(os.path.join(ro, "out"))
         with open(os.path.join(ro, "out", "report.md"), "w") as f:
             f.write("# report\n")
-        ro2 = self.run_dir("ro2", ("class", "read-only\n"), slug="waiting")
+        ro2 = self.run_dir("ro2", ("class", "read-only\n"), slug="waiting", cls="read-only")
         wr = self.run_dir("wr", ("class", "write\n"), ("verified", "refs"), slug="work")
         pr = self.run_dir("pr", slug="fresh")
         rc, out, _ = self.run_cli("lead", "compact-check")
@@ -401,11 +401,10 @@ class Check(Base):
         self.assertTrue(rows["fresh"][4].startswith("qargi local verify %s" % pr))
 
     def test_the_class_is_the_registrys_and_a_report_is_a_regular_file_named_report_md(self):
-        """The class file of a run directory is a member's: the registry's class wins; a record with none falls back to the file, and a run with neither is a
-        run of work. A report is a regular file named report.md or NAME-report.md directly in OUT, as lib.sh out_has_report says."""
+        """Only the registry class is trusted. A report must be a regular file directly in OUT."""
         fg = self.run_dir("fg", ("class", "read-only\n"), cls="write", slug="forged")
-        old = self.run_dir("old", ("class", "read-only\n"), slug="oldrec")
-        none = self.run_dir("none", slug="nothing")
+        old = self.run_dir("old", ("class", "read-only\n"), slug="oldrec", cls=None)
+        none = self.run_dir("none", slug="nothing", cls=None)
         sym = self.run_dir("sym", cls="read-only", slug="symrep")
         pre = self.run_dir("pre", cls="read-only", slug="prerep")
         for d, make in ((sym, lambda o: os.symlink("/etc/hostname", os.path.join(o, "report.md"))),
@@ -415,8 +414,8 @@ class Check(Base):
         rc, out, _ = self.run_cli("lead", "compact-check")
         self.assertEqual(rc, 1)
         self.assertNotIn("a read-only local run is open: " + fg, out)          # the registry says write; the member's file does not matter
-        self.assertNotIn("a read-only local run is open: " + none, out)        # neither: a run of work
-        self.assertIn("a read-only local run is open: " + old, out)            # an older record: the file
+        self.assertIn("a local run has an unknown class: " + none, out)
+        self.assertIn("a local run has an unknown class: " + old, out)
         self.assertIn("close it: qargi local clean %s (once the member has written OUT/report.md" % sym, out)   # a link is no report
         self.assertIn("close it: qargi local clean %s\n" % pre, out)           # NAME-report.md is
 
@@ -640,7 +639,7 @@ class Advice(Base):
         d = os.path.join(self.t, "r1")
         os.makedirs(d)
         with open(os.path.join(self.state, "local-runs.jsonl"), "w") as f:
-            f.write(json.dumps({"run": d, "slug": "r1", "ability": "build", "base": "feature/lc", "repo": self.repo}) + "\n")
+            f.write(json.dumps({"run": d, "slug": "r1", "ability": "build", "class": "write", "base": "feature/lc", "repo": self.repo}) + "\n")
         out = self.advice()
         self.assertEqual(out, "lead: 50%%, 100k tokens of context%s; compact is not safe yet: a local run is prepared and not verified (qargi lead compact-check)\n" % NOTE)
 
@@ -649,7 +648,7 @@ class Advice(Base):
         d = os.path.join(self.t, "r1")
         os.makedirs(d)
         with open(os.path.join(self.state, "local-runs.jsonl"), "w") as f:
-            f.write(json.dumps({"run": d, "slug": "r1", "ability": "build", "base": "feature/lc", "repo": self.repo}) + "\n")
+            f.write(json.dumps({"run": d, "slug": "r1", "ability": "build", "class": "write", "base": "feature/lc", "repo": self.repo}) + "\n")
         self.assertEqual(self.advice("--feature", "lc"), "")                                              # a run of feature/lc is still open
         self.assertIn("compact is not safe yet", self.advice("--feature", "other"))                       # not a run of that feature
         subprocess.run(["rm", "-rf", d])
