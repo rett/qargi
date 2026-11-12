@@ -18,11 +18,9 @@ The build member owns everything that ships with the code: manual page, help tex
 
 ## Three ways to lead (one contract: `qargi team contract`)
 
-| Lead | How |
-|---|---|
-| **This session** (default) | The session-start hook has loaded the lead's resources. You dispatch each member yourself with `/qargi-task` (locally the member that `qargi agent for <role>` prints as `MEMBER MODEL EFFORT PROFILE`, spawned as `qargi provider notes spawn` says; when the user's request names the cloud, the instance `qargi agent for ROLE --surface cloud --project P` picks: a base (`<project>-worker`, `<project>-reviewer`) or a role agent), in order: build; write with `USAGE_IMPACT` and the build series; review; revise rounds up to `max_rounds`. You verify every run and apply with the user's approval. |
-| **A cloud lead** | `qargi team brief PROJECT TEAM --task ... --done ... --base ...` prints the brief. `qargi start PROJECT-lead --asked "..."`, then `qargi send PROJECT-lead --label SLUG "<brief>" --asked "..."`. The lead starts the members as threads, runs the rounds and reports; `qargi watch`, `qargi collect SID DIR`, then `qargi team check DIR`. |
-| **A lead started in the console** | Start a session from the lead deployment (`PROJECT-deployment-lead`) and give it a plain task: the team definitions are in its prompt. Afterwards `qargi track SID`, then collect and check as above. |
+- **This session** (default): The session-start hook has loaded the lead's resources. You dispatch each member yourself with `/qargi-task` (locally the member that `qargi agent for <role>` prints as `MEMBER MODEL EFFORT PROFILE`, spawned as `qargi provider notes spawn` says; when the user's request names the cloud, the instance `qargi agent for ROLE --surface cloud --project P` picks: a base (`<project>-worker`, `<project>-reviewer`) or a role agent), in order: build; write with `USAGE_IMPACT` and the build series; review; revise rounds up to `max_rounds`. You verify every run and apply with the user's approval.
+- **A cloud lead**: `qargi team brief PROJECT TEAM --task ... --done ... --base ...` prints the brief. `qargi start PROJECT-lead --asked "..."`, then `qargi send PROJECT-lead --label SLUG "<brief>" --asked "..."`. The lead starts the members as threads, runs the rounds and reports; `qargi watch`, `qargi collect SID DIR`, then `qargi team check DIR`.
+- **A lead started in the console**: Start a session from the lead deployment (`PROJECT-deployment-lead`) and give it a plain task: the team definitions are in its prompt. Afterwards `qargi track SID`, then collect and check as above.
 
 Cloud verbs need `--asked` (`qargi help approvals`); use the cloud only when the request names it.
 
