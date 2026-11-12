@@ -3,7 +3,7 @@
  "started": "2026-11-12T05:10:27Z",
  "goal": "Harden lead-side handling of member-controlled run metadata and Git state; close normal-exit process cleanup and missing-class gaps",
  "plan": "Codex rs-core: fail-closed run classes, bounded normal-exit process cleanup, safe lead-side Git inspection; targeted checks and patch intake; independent Opus advisor; feature checkpoint only after task verification",
- "note": "Implementation run qargi.twg39L; task /tmp/qargi-run-safety-task-1.md; independent Opus design advisor report /tmp/qargi-run-safety-opus-design-review.md. Main checkout remains parked and untouched.",
+ "note": "Codex rs-core run qargi.twg39L active. Opus design review /tmp/qargi-run-safety-opus-design-review.md: revise pending implementation; intake must reject Git-inspection failure as zero commits, propagate unknown-class failures, cover metadata indirection. No guarantee for escaped process groups; no shell-heuristic expansion.",
  "status": "active",
  "lead": {
   "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
@@ -12,11 +12,11 @@
   "since": "2026-11-12T05:10:27Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-12T05:13:01Z",
+ "renewed_at": "2026-11-12T05:18:48Z",
  "finished_at": null,
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 2,
- "updated_at": "2026-11-12T05:13:01Z",
+ "rev": 3,
+ "updated_at": "2026-11-12T05:18:48Z",
  "feature": "run-safety",
  "project": "qargi"
 }
