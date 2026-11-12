@@ -53,7 +53,7 @@ out=$(./bin/qargi local prepare --repo "$T/rs2" --base main --slug sub2 --scratc
   && ok "a submodule whose objects are not on this host is a note, nothing is fetched and the run is still made" || no "unavailable submodule: $out $(cat "$T/sub2.err")"
 [ ! -e "$S2/clone/vendor/acme-test/.git" ] && ok "and the clone's submodule is left alone" || no "submodule fetched"
 rm -rf "$S1" "$S2" "$T/c/projects/rs2proj.json"; mv "$T/rproj.bak" "$T/c/projects/rproj.json"; sed -i '/"slug":"sub[12]"/d' "$T/s/local-runs.jsonl"
-# clean: a collected, verified run goes away with its temporary directory; anything else is refused
+# clean: collected output can be removed after its safety checks, without granting verification
 git init -q -b main "$T/r2" && git -C "$T/r2" -c user.name=t -c user.email=t@example.net commit -q --allow-empty -m one
 out=$(./bin/qargi local prepare --repo "$T/r2" --base main --slug c1 --scratch "$T"); C1=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out"); TM=$(sed -n '1,/^$/s/^TMP=//p' <<<"$out")
 [ -d "$TM" ] && [ "$(cat "$C1/tmpdir")" = "$TM" ] && ok "prepare makes a private temporary directory and prints it as TMP" || no "TMP: $out"

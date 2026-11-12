@@ -310,6 +310,42 @@ class Check(Base):
         self.registry({'run': d, 'url': url, 'base': 'feature/lc', 'slug': 'url-run', 'role': 'build', 'class': 'write'})
         self.assertEqual(self.open_cli().returncode, 1)
 
+    def test_strict_open_missing_identity_requires_confirmed_absence(self):
+        d = os.path.join(self.t, 'legacy-gone')
+        row = {'run': d, 'slug': 'legacy', 'ability': 'build', 'base': 'feature/lc', 'started': '2026-01-01T00:00:00Z',
+               'lead': 'old-lead', 'profile': '', 'tmpdir': os.path.join(self.t, 'old-tmp')}
+        path = os.path.join(self.state, 'local-runs.jsonl')
+        def write(value):
+            with open(path, 'w') as f:
+                f.write(json.dumps(value) + '\n')
+        write(row)
+        with open(path, 'rb') as f:
+            before = f.read()
+        result = self.open_cli()
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        with open(path, 'rb') as f:
+            self.assertEqual(f.read(), before)
+        os.mkdir(d)
+        self.assertEqual(self.open_cli().returncode, 2)
+        os.rmdir(d)
+        os.symlink(os.path.join(self.t, 'missing-target'), d)
+        self.assertEqual(self.open_cli().returncode, 2)
+        os.unlink(d)
+        with patch.object(lead_usage.os, 'lstat', side_effect=PermissionError('private-error')):
+            with self.assertRaises(lead_usage.OpenRunsError):
+                lead_usage.registry_snapshot(self.state)
+        for inactive in (dict(row, **{'class': 'write'}), dict(row, cleaned='2026-01-02T00:00:00Z'), dict(row, lead=None)):
+            write(inactive)
+            self.assertEqual(self.open_cli().returncode, 0)
+        for invalid in (dict(row, repo=17), dict(row, url=[]), dict(row, closed=True), dict(row, answers=[]), dict(row, run=d + '/')):
+            write(invalid)
+            self.assertEqual(self.open_cli().returncode, 2)
+        write(row)
+        current = self.run_dir('current-open')
+        result = self.open_cli()
+        self.assertEqual(result.returncode, 1)
+        self.assertTrue(result.stdout.startswith(current + '\t'))
+
     def test_strict_open_cli_refuses_every_damaged_registry_without_partial_rows(self):
         self.run_dir('registry-open')
         path = os.path.join(self.state, 'local-runs.jsonl')

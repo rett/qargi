@@ -316,7 +316,17 @@ def registry_snapshot(state):
                 if r.get(key) is not None and (not isinstance(r[key], str) or clean(r[key]) != r[key]):
                     raise ValueError()
             if not (text(r.get("repo")) or text(r.get("url"))):
-                raise ValueError()
+                # Identity is needed to attribute work that can still exist.
+                # Confirm absence without following a final link; an unreadable
+                # path is not absent. No record is rewritten or granted authority.
+                if os.path.normpath(r["run"]) != r["run"]:
+                    raise ValueError()
+                try:
+                    os.lstat(r["run"])
+                except FileNotFoundError:
+                    pass
+                else:
+                    raise ValueError()
             if r.get("answers") is not None and not isinstance(r["answers"], dict):
                 raise ValueError()
             rows[os.path.realpath(r["run"])] = r  # same last-record rule as the shell registry
