@@ -1197,7 +1197,8 @@ def clear_stale_finals(run):
 
 def proc_of_run(pid, run, what):
     """Is pid a live process of this run: the runner (its command line names local_run.py and the run) or the member (its environment carries
-    QARGI_MEMBER_RUN=run, which the member's runtime and its children inherit)? Read from /proc; False when it cannot be told."""
+    QARGI_MEMBER_RUN=run, which the member's runtime and its children inherit)? Read from /proc; False when it cannot be told. A relative path in the
+    runner's command line is taken from the runner's working directory (/proc/PID/cwd), never from the checker's."""
     if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1:
         return False
     try:
@@ -1206,7 +1207,14 @@ def proc_of_run(pid, run, what):
     except OSError:
         return False
     if what == "runner":
-        return any(i.endswith(b"local_run.py") for i in items) and any(i and os.path.realpath(os.fsdecode(i)) == run for i in items)
+        if not any(i.endswith(b"local_run.py") for i in items):
+            return False
+        try:
+            cwd = os.readlink("/proc/%d/cwd" % pid)
+        except OSError:
+            cwd = None
+        names = [os.fsdecode(i) for i in items if i]
+        return any(os.path.realpath(n) == run if os.path.isabs(n) else cwd is not None and os.path.realpath(os.path.join(cwd, n)) == run for n in names)
     return ("QARGI_MEMBER_RUN=" + run).encode() in items
 
 

@@ -1038,6 +1038,22 @@ done
 if ir_start python3 -I -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])'; then
   kill -INT "$(jq -r .runner "$RUN/dispatch.json")"; ir_after INT 130
 else no "SIGINT: the member did not start: $(cat "$T/ir.out")"; fi
+# a run started by a relative path from its scratch directory is told by its real path: a start from another directory sees that it is being run
+# (its runner's command line holds the real path), and a runner whose command line holds a relative one is told from its own working directory
+rm -f "$T/ir-child" "$T/ir-member" "$T/ir.rc" "$T/ir.out"; echo wait > "$T/ir-mode"
+( cd "$(dirname "$RUN")" && "$DA" local run "./$(basename "$RUN")" --again > "$T/ir.out" 2>&1; echo $? > "$T/ir.rc" ) &
+if wait_until '[ -s "$T/ir-child" ] && [ -s "$T/ir-member" ] && [ "$(jq -r .member "$RUN/dispatch.json" 2>/dev/null)" = "$(cat "$T/ir-member")" ]' 30; then
+  runner=$(jq -r .runner "$RUN/dispatch.json")
+  out=$($DA local run "$RUN" --again 2>&1); rc=$?
+  { [ "$rc" = 2 ] && grep -qF "$RUN is being run now (qargi local run, process $runner)" <<<"$out" && tr '\0' '\n' < "/proc/$runner/cmdline" | grep -qxF "$RUN"; } \
+    && ok "a run started by a relative path: its runner holds the real path, and a start from another directory refuses while it runs" || no "relative run: rc=$rc $out"
+  kill -TERM "$runner"; ir_after TERM 143
+else no "relative run: the member did not start: $(cat "$T/ir.out")"; fi
+(cd "$(dirname "$RUN")" && exec python3 -I -c 'import time; time.sleep(30)' local_run.py "./$(basename "$RUN")" > /dev/null 2>&1) & rel=$!
+wait_until 'tr "\0" "\n" < /proc/$rel/cmdline 2>/dev/null | grep -qx local_run.py' 10
+got=$(python3 -I -c 'import sys; sys.path.insert(0, "lib"); import local_run as L; p = int(sys.argv[1]); print(L.proc_of_run(p, sys.argv[2], "runner"), L.proc_of_run(p, sys.argv[2] + "x", "runner"))' "$rel" "$RUN" 2>&1)
+kill "$rel" 2>/dev/null; wait "$rel" 2>/dev/null
+[ "$got" = "True False" ] && ok "a runner whose command line holds a relative run path is found from its working directory, not the checker's" || no "relative cmdline: $got"
 # the bound: the same, as failed and timed out
 echo wait > "$T/ir-mode"; rm -f "$T/ir-child" "$T/ir-member"
 out=$(timeout 120 $DA local run "$RUN" --again --timeout 1 2>&1); rc=$?
