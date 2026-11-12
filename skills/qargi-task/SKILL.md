@@ -22,7 +22,7 @@ If the first argument is not a session verb (`send`, `start`, `status`, `watch`,
 
 ## Task block
 
-`qargi local prepare` writes a local run's task block, `RUN/task.md` (it prints `ROLE`, `CLASS`, `PROFILE`, `CONTRACT` and the paths; the file holds the role text, TASK, DONE, BASE, SCOPE); never write one by hand. BASE defaults to the dispatching session's branch; name it if that is master or develop. DONE is a command; if the user gave prose, get an executable form first. A cloud task block (cloud.md) has the same sections.
+`qargi local prepare` writes `RUN/task.md` with ROLE, TASK, DONE, BASE and SCOPE; never write one by hand. It prints `ROLE`, `CLASS`, `PROFILE`, `CONTRACT` and the paths. BASE defaults to the dispatching session's branch; name it on master or develop. DONE is executable and runs after all outcomes; obtain a command for prose. Supply matching, passing exact-BASE evidence with reference and provenance as baseline context. Cloud blocks (cloud.md) have the same sections.
 
 ## Profiles
 
