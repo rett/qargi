@@ -18,7 +18,7 @@
 136 python3 tests/test_guard.py
 143 bash tests/test_no_default_provider.sh
 162 bash tests/test_conformance_selftest.sh
-109 bash tests/test_local_run.sh
+201 bash tests/test_local_run.sh
 55 bash tests/test_marshal.sh
 276 bash tests/test_marshal_sign.sh main
 24 bash tests/test_marshal_sign.sh review-a
