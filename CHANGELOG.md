@@ -6,6 +6,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- Member tasks can reuse lead-supplied passing baseline evidence for the exact base when relevant inputs and check definitions match, citing its provenance rather than claiming a run. They run focused checks and applicable gates for each change, then DONE after all outcomes; profile gates and the lead's whole-suite checkpoint remain in force.
+- `qargi feature park` and automatic parking follow allow nonconflicting untracked runtime files while refusing tracked changes, parking-branch commits absent from develop, and collisions with untracked or ignored files. A failed automatic follow leaves the parking branch behind without undoing a successful integration.
+
 ## [0.2.12] - 2026-11-11
 
 ### Added
