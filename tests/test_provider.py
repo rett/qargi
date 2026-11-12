@@ -3278,6 +3278,8 @@ class HiddenPaths(unittest.TestCase):
         self.assertIn("TMP /hid/t lies under /hid", msg)
         self.assertIn("Nothing was started", msg)
         self.assertIn("--scratch on another filesystem", msg)
+        self.assertIn("~/.cache/qargi-runs", msg)
+        self.assertNotIn("/tmp", msg)                     # a scratch there is not shown to work for any runtime, so it is not advised
         self.assertIn("QARGI_RUN_TMP", msg)
         only_run = P.hidden_message("fakecli", "read-only", P.hidden_run_paths(d, "read-only", self.paths("/hid/s/qargi.1", "/srv/t")), d)
         self.assertNotIn("QARGI_RUN_TMP", only_run)

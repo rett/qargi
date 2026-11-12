@@ -1220,7 +1220,7 @@ def hidden_message(runtime, cls, hits, disp):
         lines.append("  %s %s%s lies under %s" % (RUN_PATHS[name], path, "" if real == os.path.abspath(path) else " (its real path %s)" % real, prefix))
     fix = []
     if any(h[0] != "tmp" for h in hits):
-        fix.append("prepare the run again with --scratch on another filesystem, for example a directory under your home (~/.cache/qargi-runs) or under /tmp")
+        fix.append("prepare the run again with --scratch on another filesystem, for example a directory under your home such as ~/.cache/qargi-runs")
     if any(h[0] == "tmp" for h in hits):
         fix.append("set QARGI_RUN_TMP to a directory on another filesystem before you prepare the run")
     return "\n".join(lines) + "\nNothing was started: " + "; and ".join(fix) + "."
