@@ -1470,6 +1470,28 @@ with patch.object(L, "make_home", side_effect=original):
     except RuntimeError as e:
         assert e is original
 assert "group_left" not in json.load(open(os.path.join(run, "dispatch.json")))
+# A setup failure can happen after only one link was made, before make_home
+# returns its list. A secondary cleanup error must still leave an honest note.
+symlink, calls = os.symlink, []
+def partial_link(src, to, **kwargs):
+    calls.append(to)
+    if len(calls) == 2:
+        raise original
+    return symlink(src, to, **kwargs)
+def partial_clear(run, home, names):
+    if names:
+        raise OSError(secret)
+    return []
+with patch.object(L.os, "symlink", partial_link), patch.object(L, "clear_home", partial_clear):
+    try:
+        L.run_it(plan(run, "rproj", "fakecmd", "write", None, None, None, None, []), run)
+        raise AssertionError("setup exception swallowed")
+    except RuntimeError as e:
+        assert e is original
+rec = json.load(open(os.path.join(run, "dispatch.json")))
+assert os.path.islink(link) and rec["home"]["left"] and rec["member"] is None, rec
+assert "group_left" not in rec and secret not in json.dumps(rec)
+os.unlink(link)
 print("unexpected-error cleanup ordering: PASS")
 PY
 ); rc=$?

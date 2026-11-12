@@ -455,7 +455,7 @@ def make_home(run, home):
         try:
             clear_home(run, home, made)
         except BaseException:
-            pass  # the start failure stays primary; dispatch retains the planned link names
+            home["cleanup_failed"] = True  # the start failure stays primary; planned links remain observable
         raise
     finally:
         os.close(fd)
@@ -2071,6 +2071,8 @@ def run_it(plan, run):
             home_left = ["run home cleanup failed; links and refreshed files may remain (inspect the run home)"]
             if unexpected is None:
                 unexpected = e
+        if home and home.get("cleanup_failed"):
+            home_left.append("cleanup during run home setup failed; inspect the planned link names for residue")
     if unexpected is not None:
         try:
             rec = dict(begun, outcome="refused", exit=code, seconds=round(time.time() - started, 1), timed_out=timed_out,
