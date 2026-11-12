@@ -328,6 +328,53 @@ out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
 jq 'del(.models.extensions)' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
 setprov fakecmd
 
+# --- a runtime whose sandbox hides part of the filesystem (dispatch.hidden_paths): a run whose member would not see a path it works with is ----
+# refused, by prepare before it makes anything and by local run before it starts anything. The hidden place is HID, a directory of this test.
+HID=$(realpath "$T")/hid; mkdir -p "$HID" "$T/ok"; ln -s "$HID" "$T/lnk"
+mk fakehid "$(jq --arg h "$HID" '.provider = "fakehid" | .dispatch.hidden_paths = {prefixes: [$h], shown: {write: ["clone", "out", "tmp"]}, note: "the sandbox mounts its own hid"}' "$LIB/fakecmd/definition.json")"
+mk fakehidtmp "$(jq --arg h "$HID" '.provider = "fakehidtmp" | .dispatch.hidden_paths = {prefixes: [$h], note: "the sandbox binds nothing in"}' "$LIB/fakecmd/definition.json")"
+verify_ro fakehid
+setprov fakehid
+out=$($DA local prepare --repo "$T/r" --base main --slug hd1 --scratch "$HID" --role review 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -qF "this read-only run of fakehid" <<<"$out" && grep -qF "CLONE $HID/qargi.XXXXXX/clone lies under $HID" <<<"$out" \
+  && grep -qF "CONTRACT $HID/qargi.XXXXXX/contract lies under $HID" <<<"$out" && grep -qF "GIT $HID/qargi.XXXXXX/git lies under $HID" <<<"$out" \
+  && grep -qF '(dispatch.hidden_paths: the sandbox mounts its own hid)' <<<"$out" && grep -q 'Nothing was started: prepare the run again with --scratch on another filesystem' <<<"$out" \
+  && [ -z "$(ls -A "$HID")" ]; } \
+  && ok "hidden paths: prepare refuses a read-only run in a place the sandbox hides, naming each path, the prefix, the note and the fix, and makes nothing" \
+  || no "hidden ro prepare: rc=$rc $out $(ls -A "$HID")"
+out=$($DA local prepare --repo "$T/r" --base main --slug hd2 --scratch "$HID" 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -qF "CONTRACT $HID/qargi.XXXXXX/contract" <<<"$out" && grep -qF "GIT $HID/qargi.XXXXXX/git" <<<"$out" && ! grep -q '^  CLONE\|^  OUT\|^  TMP' <<<"$out" \
+  && [ -z "$(ls -A "$HID")" ]; } \
+  && ok "and a write run there: its class shows the clone, OUT and TMP, not the contract or the git wrapper" || no "hidden write prepare: rc=$rc $out"
+out=$($DA local prepare --repo "$T/r" --base main --slug hd3 --scratch "$T/lnk" --role review 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -qF "CONTRACT $HID/qargi.XXXXXX/contract lies under $HID" <<<"$out" && [ -z "$(ls -A "$HID")" ]; } \
+  && ok "a --scratch that is a link into the hidden place is refused by its real path" || no "hidden link scratch: rc=$rc $out"
+out=$(QARGI_RUN_TMP=$T/lnk $DA local prepare --repo "$T/r" --base main --slug hd4 --scratch "$T/ok" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q "^TMP=$T/lnk/qargi-run\." <<<"$out"; } && ok "a write run outside with its TMP in the hidden place is prepared: the class shows TMP" || no "hidden tmp, write: rc=$rc $out"
+out=$(QARGI_RUN_TMP=$T/lnk $DA local prepare --repo "$T/r" --base main --slug hd5 --scratch "$T/ok" --role review 2>&1); rc=$?
+[ "$rc" = 0 ] && ok "and so is a read-only one: a read-only member writes no TMP" || no "hidden tmp, read-only: rc=$rc $out"
+setprov fakehidtmp; n0=$(ls "$T/ok" | wc -l)
+out=$(QARGI_RUN_TMP=$T/lnk $DA local prepare --repo "$T/r" --base main --slug hd6 --scratch "$T/ok" 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -qF "TMP $T/lnk/qargi-run.XXXXXX (its real path $HID/qargi-run.XXXXXX) lies under $HID" <<<"$out" \
+  && grep -q 'set QARGI_RUN_TMP to a directory on another filesystem' <<<"$out" && ! grep -q -- '--scratch on another' <<<"$out" && [ "$(ls "$T/ok" | wc -l)" = "$n0" ]; } \
+  && ok "a write run whose sandbox does not show TMP is refused when TMP is hidden, by its real path, with the QARGI_RUN_TMP fix" || no "hidden tmp, not shown: rc=$rc $out"
+# local run asks again: the runtime of the project may have changed since prepare (here: prepared on fakecmd, which hides nothing)
+setprov fakecmd
+eval "$($DA local prepare --repo "$T/r" --base main --slug hd8 --scratch "$HID" --role review | sed '/^$/,$d' | sed 's/^/export /')"; task
+setprov fakehid
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -qF "CONTRACT $RUN/contract lies under $HID" <<<"$out" && ! grep -q '^ARGV=' <<<"$out"; } && ok "local run refuses a read-only run in the hidden place (dry run)" || no "hidden ro run, dry: rc=$rc $out"
+out=$($DA local run "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'Nothing was started' <<<"$out" && [ ! -e "$RUN/dispatch.json" ] && [ ! -e "$OUT/transcript" ]; } && ok "and a real one starts nothing" || no "hidden ro run: rc=$rc $out"
+setprov fakecmd; eval "$($DA local prepare --repo "$T/r" --base main --slug hd9 --scratch "$HID" | sed '/^$/,$d' | sed 's/^/export /')"; task
+setprov fakehid
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -qF "GIT $RUN/git lies under $HID" <<<"$out" && ! grep -qF "CLONE $RUN" <<<"$out"; } && ok "and a write run there, for what its class does not show" || no "hidden write run: rc=$rc $out"
+prep "$T/r" hd10 review; task
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q '^ARGV=' <<<"$out"; } && ok "a read-only run of the same runtime outside the hidden place goes on" || no "hidden ro outside: rc=$rc $out"
+setprov fakecmd
+
 # --- the shipped codex runtime: the argv of each class comes from its data alone (a fake codex on PATH; nothing reaches the vendor) ----------
 cp "$T/bin/fakellm" "$T/bin/codex"
 setprov codex; prep "$T/r" cx1; task

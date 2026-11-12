@@ -112,6 +112,24 @@
                 }
               }
             },
+            "hidden_paths": {
+              "description": "mode command only: the places the runtime's sandbox hides from the member's commands, so a run there would leave the member without its clone or its contract (a sandbox that mounts a /dev of its own hides everything under /dev/shm). prefixes: absolute, normalised paths other than /. shown: per class (read-only, write), the run paths the sandbox shows anyway, such as the directories it binds in as writable (clone, contract, git, out, tmp). note: why. A run path the member of the class works with (CLONE, CONTRACT and GIT, and for a write run OUT and TMP too; the task block reaches it in the prompt) whose path or real path lies under a prefix, and that its class does not show, refuses the run: qargi local prepare before it makes anything, qargi local run before it starts anything (exit 2), naming the path, the prefix and the fix. Absent or null: the sandbox hides no place a run uses.",
+              "type": ["object", "null"],
+              "additionalProperties": false,
+              "required": ["prefixes", "note"],
+              "properties": {
+                "prefixes": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^/."}},
+                "shown": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "read-only": {"type": "array", "items": {"enum": ["clone", "contract", "git", "out", "tmp"]}},
+                    "write": {"type": "array", "items": {"enum": ["clone", "contract", "git", "out", "tmp"]}}
+                  }
+                },
+                "note": {"type": "string", "minLength": 1}
+              }
+            },
             "output": {
               "description": "what the command writes on its standard output (OUT/transcript): format text or jsonl (one JSON object per line). usage (jsonl only, with tokens and fields): the lines it picks are the runtime's own report of the tokens a turn used; qargi local run adds up each field over those lines when the run ends, records the sums in RUN/dispatch.json (usage: events, tokens, and model when the rule has it) and prints them as USAGE=; a field no picked line reports is left out of tokens and named in unreported, never recorded as 0. A cost_report claim of a command runtime rests on it.",
               "type": ["object", "null"],
