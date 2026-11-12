@@ -27,7 +27,7 @@ and `_conflicts/`) repeat per tier and are exempt.
 $ qargi memory tiers --project acme
 repo     dir    /home/u/src/acme/qargi/memory          present   12 notes
 cloud    cloud  memstore_01ABC (acme-memory)           present   40 notes
-project  dir    ~/.qargi/memory/projects/acme          missing   (not initialised)
+project  dir    ~/.qargi/memory/projects/acme      missing   (not initialised)
 shared   dir    ~/.qargi/memory/shared                 empty
 system   dir    ~/.qargi/memory/system                 missing
 reference: memstore_01DEF (optional, read-only, not composed)

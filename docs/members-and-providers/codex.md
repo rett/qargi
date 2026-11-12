@@ -19,11 +19,9 @@ What this page says was established with codex-cli 0.167.1 on Linux. "Seen offli
 
 Each verified capability carries `verified_on` (the date of its checks) and `source` (the evidence and the CLI version) in `lib/providers/codex.json`; `qargi provider show codex` prints the date and the note of each, and `--json` the whole definition. All were checked with codex-cli 0.167.1 on 2026-11-11, on the fast tier (`gpt-6-luna`) at `low` effort.
 
-| Capability | Verified | By |
-|---|---|---|
-| Headless dispatch | yes | `qargi local run` ran `codex exec` for a write-class build task on a scratch repository: the member created and committed a file, the series, manifest and report came back, `qargi local verify` found the refs unchanged, `qargi review check` ended with 0 failures (3 warnings about optional manifest fields), and `qargi review apply` applied the series in a disposable repository, where the DONE command passed |
-| Read-only barrier | partial | offline, `codex sandbox -- sh -c 'echo x > /tmp/p'` answered "Read-only file system"; live, a `codex exec --sandbox read-only --ignore-rules` member (approval policy `never`, its own `CODEX_HOME` and `HOME`) asked to create a file in its working directory reported "Read-only file system" and the directory was unchanged. It holds the member's shell writes, not its reads, and not a hosted tool or an MCP server, which run outside the sandbox: so the claim is `partial`, and a review role runs on it with that note and no `provider accept` |
-| Token report | partial (tokens only) | the `turn.completed` events carried the usage counts the definition reads, and the runs printed them as `USAGE=` (input, cached, output and reasoning tokens) |
+- **Headless dispatch**: Verified: yes; By: `qargi local run` ran `codex exec` for a write-class build task on a scratch repository: the member created and committed a file, the series, manifest and report came back, `qargi local verify` found the refs unchanged, `qargi review check` ended with 0 failures (3 warnings about optional manifest fields), and `qargi review apply` applied the series in a disposable repository, where the DONE command passed
+- **Read-only barrier**: Verified: partial; By: offline, `codex sandbox -- sh -c 'echo x > /tmp/p'` answered "Read-only file system"; live, a `codex exec --sandbox read-only --ignore-rules` member (approval policy `never`, its own `CODEX_HOME` and `HOME`) asked to create a file in its working directory reported "Read-only file system" and the directory was unchanged. It holds the member's shell writes, not its reads, and not a hosted tool or an MCP server, which run outside the sandbox: so the claim is `partial`, and a review role runs on it with that note and no `provider accept`
+- **Token report**: Verified: partial (tokens only); By: the `turn.completed` events carried the usage counts the definition reads, and the runs printed them as `USAGE=` (input, cached, output and reasoning tokens)
 
 Not verified, and so counted as not supported:
 
@@ -43,28 +41,24 @@ qargi runs on Linux only (see the requirements in the repository's README). On L
 
 The run's `config.toml` in `CODEX_HOME` (`RUN/home/.codex/config.toml`) is the user-level configuration of the member's Codex, written by qargi for every run. It is not the only thing Codex reads:
 
-| Source | In a member run |
-|---|---|
-| your `~/.codex/config.toml`, rules, skills, `AGENTS.md` | not loaded: `CODEX_HOME` is the run home, which holds only what qargi writes (the configuration file, the sign-in link) and what Codex makes there itself. Not loaded is not unreadable: the member's commands can read them by path ([What a member can reach](#what-a-member-can-reach)) |
-| `~/.agents/skills` | not loaded: `HOME` is the run home too |
-| the run's `config.toml` | the baseline below, and the MCP servers of the role's tool packs |
-| the clone's `.codex/` (its `config.toml` with MCP servers and settings, `rules`, hooks) | not loaded: Codex loads a project's `.codex/` only for a trusted project, and a run clone is a fresh path that no configuration marks trusted (the run's file has no `projects` entry). Seen offline: with a trust entry in a scratch home the same repository's MCP server and settings load |
-| the clone's `AGENTS.md` | loaded, as for any Codex session: the repository's own instructions keep working |
-| the clone's `.agents/skills` | loaded (also untrusted): only what the repository commits |
-| execpolicy rules files | none: `--ignore-rules` drops the user's and the project's |
-| a system-wide or administrator-managed Codex configuration | not excluded: qargi cannot keep it out, and it applies to members as it applies to you |
+- **your `~/.codex/config.toml`, rules, skills, `AGENTS.md`**: not loaded: `CODEX_HOME` is the run home, which holds only what qargi writes (the configuration file, the sign-in link) and what Codex makes there itself. Not loaded is not unreadable: the member's commands can read them by path ([What a member can reach](#what-a-member-can-reach))
+- **`~/.agents/skills`**: not loaded: `HOME` is the run home too
+- **the run's `config.toml`**: the baseline below, and the MCP servers of the role's tool packs
+- **the clone's `.codex/` (its `config.toml` with MCP servers and settings, `rules`, hooks)**: not loaded: Codex loads a project's `.codex/` only for a trusted project, and a run clone is a fresh path that no configuration marks trusted (the run's file has no `projects` entry). Seen offline: with a trust entry in a scratch home the same repository's MCP server and settings load
+- **the clone's `AGENTS.md`**: loaded, as for any Codex session: the repository's own instructions keep working
+- **the clone's `.agents/skills`**: loaded (also untrusted): only what the repository commits
+- **execpolicy rules files**: none: `--ignore-rules` drops the user's and the project's
+- **a system-wide or administrator-managed Codex configuration**: not excluded: qargi cannot keep it out, and it applies to members as it applies to you
 
 The baseline is `dispatch.run_config.baseline` of the definition; a run with no MCP server and a run with one get the same keys (a test compares them key by key), and `--strict-config` makes Codex refuse a key it does not know, so a key a later CLI renames stops the run instead of being ignored.
 
-| Key | Value | Why |
-|---|---|---|
-| `approval_policy` | `never` | nobody answers a member; a command the sandbox refuses fails and the member sees the failure (the prompt input says "Approval policy is currently never", seen offline) |
-| `sandbox_workspace_write.network_access` | `false` | no network for the member's shell commands |
-| `sandbox_workspace_write.exclude_slash_tmp` | `true` | `/tmp` is shared with the rest of the machine; a write member writes temporary files in `TMPDIR` |
-| `sandbox_workspace_write.exclude_tmpdir_env_var` | `false` | `TMPDIR`, the run's TMP, stays writable (seen with `codex sandbox`: `/tmp` refused, `TMPDIR` written, no network) |
-| `web_search` | `disabled` | hosted search runs at the vendor, outside the shell sandbox |
-| `features.apps`, `plugins`, `remote_plugin`, `hooks`, `computer_use`, `browser_use`, `in_app_browser`, `image_generation`, `tool_suggest`, `skill_mcp_dependency_install` | `false` | features that reach outside the shell sandbox, install things or run code Codex did not get from the member's commands (`codex features list` shows them off) |
-| `skills.bundled.enabled` | `false` | the skills Codex ships (an installer, a creator, image generation) are no part of a member's task (the prompt input lists none, seen offline) |
+- **`approval_policy`**: Value: `never`; Why: nobody answers a member; a command the sandbox refuses fails and the member sees the failure (the prompt input says "Approval policy is currently never", seen offline)
+- **`sandbox_workspace_write.network_access`**: Value: `false`; Why: no network for the member's shell commands
+- **`sandbox_workspace_write.exclude_slash_tmp`**: Value: `true`; Why: `/tmp` is shared with the rest of the machine; a write member writes temporary files in `TMPDIR`
+- **`sandbox_workspace_write.exclude_tmpdir_env_var`**: Value: `false`; Why: `TMPDIR`, the run's TMP, stays writable (seen with `codex sandbox`: `/tmp` refused, `TMPDIR` written, no network)
+- **`web_search`**: Value: `disabled`; Why: hosted search runs at the vendor, outside the shell sandbox
+- **`features.apps`, `plugins`, `remote_plugin`, `hooks`, `computer_use`, `browser_use`, `in_app_browser`, `image_generation`, `tool_suggest`, `skill_mcp_dependency_install`**: Value: `false`; Why: features that reach outside the shell sandbox, install things or run code Codex did not get from the member's commands (`codex features list` shows them off)
+- **`skills.bundled.enabled`**: Value: `false`; Why: the skills Codex ships (an installer, a creator, image generation) are no part of a member's task (the prompt input lists none, seen offline)
 
 Each key is read by this CLI (a value of the wrong type is refused, naming the key). That every key holds in a real run, and that the hosted tools are gone from a real session, is not verified: the offline prompt input shows no hosted tool either way. The multi-agent tools (`spawn_agent` and its kin) stay listed: no supported switch removed them offline.
 
@@ -104,29 +98,35 @@ Not verified: which sandbox and approval settings a Codex lead session needs for
 
 A build member, with the project's local runtime `codex`:
 
+Prepare prints `RUN=...`, `CLONE=...`, `OUT=...` and `TASK_FILE=RUN/task.md` (the whole task block: ROLE, TASK, DONE, SCOPE and paths). The dry run shows the argv, run configuration path, tools, baseline and prompt without running anything. The run starts codex exec in the clone and prints `OUTCOME=`, `REPORT=` and `USAGE=`. Verify checks that the repository's refs are unchanged and OUT holds patches; review check checks the patches, manifest, SCOPE and DONE. Apply puts the patches on `agent/dots` with your go-ahead; clean after the work is applied and merged.
+
 ```sh
 printf 'Accept a period in a user name.\n' > ~/tasks/dots.md
-qargi local prepare --repo ~/src/myproject --base feature/dots --slug dots --scratch ~/.cache/qargi-runs \
-  --role build --task-file ~/tasks/dots.md --done "make test" --scope src --scope tests
-# prints RUN=..., CLONE=..., OUT=..., TASK_FILE=RUN/task.md (the whole task block: ROLE, TASK, DONE, SCOPE, the paths)
-qargi local run "$RUN" --dry-run                  # the argv, the run's config.toml path, the tools, the baseline and the prompt; runs nothing
-qargi local run "$RUN" --model fast --effort low  # codex exec in the clone; OUTCOME=, REPORT=, USAGE=
-qargi local verify "$RUN"                         # the repository's refs are unchanged and OUT holds the patches
-qargi review check "$RUN/out"                     # the patches, the manifest, SCOPE and DONE
-qargi review apply "$RUN"                         # with your go-ahead: the patches on agent/dots
-qargi local clean "$RUN"                          # once the work is applied and merged
+qargi local prepare --repo ~/src/myproject --base feature/dots --slug dots \
+  --scratch ~/.cache/qargi-runs --role build --task-file ~/tasks/dots.md \
+  --done "make test" --scope src --scope tests
+qargi local run "$RUN" --dry-run
+qargi local run "$RUN" --model fast --effort low
+qargi local verify "$RUN"
+qargi review check "$RUN/out"
+qargi review apply "$RUN"
+qargi local clean "$RUN"
 ```
 
 A review member reads the change and returns a report; it needs the read-only barrier. The Codex sandbox is verified as a partial barrier ([What is verified](#what-is-verified)), so `prepare --role review` takes the role and `local run` prints the barrier's note: the member's shell writes are refused, its reads are not.
 
+The last message becomes `OUT/report.md`; the lead writes `OUT/manifest.json`. Review check passes with the Findings and a last line `verdict: accept|revise`. A read-only run with its report closes with a plain clean.
+
 ```sh
-printf 'Review the series on agent/dots against feature/dots.\n' > ~/tasks/dots-review.md
-qargi local prepare --repo ~/src/myproject --base agent/dots --slug dots-review --scratch ~/.cache/qargi-runs \
-  --role review --task-file ~/tasks/dots-review.md --done "make test"
-qargi local run "$RUN" --model deep --effort high # the last message becomes OUT/report.md; the lead writes OUT/manifest.json
+printf 'Review the series on agent/dots against feature/dots.\n' \
+  > ~/tasks/dots-review.md
+qargi local prepare --repo ~/src/myproject --base agent/dots \
+  --slug dots-review --scratch ~/.cache/qargi-runs --role review \
+  --task-file ~/tasks/dots-review.md --done "make test"
+qargi local run "$RUN" --model deep --effort high
 qargi local verify "$RUN"
-qargi review check "$RUN/out"                     # passes with the Findings and a last line verdict: accept|revise
-qargi local clean "$RUN"                          # a read-only run with its report closes with a plain clean
+qargi review check "$RUN/out"
+qargi local clean "$RUN"
 ```
 
 `qargi local run "$RUN" --again` runs the member again in the same run (the earlier report is set aside as above); `qargi local clean "$RUN" --discard` drops a run you do not want.
