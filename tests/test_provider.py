@@ -172,6 +172,10 @@ class Shipped(Tree):
         self.assertNotIn("projects", base)                                                   # no trust entry: the clone's .codex/ is not loaded
         self.assertEqual(P.run_config_problems(d, cx["resources"]), [])
         self.assertFalse(any("dangerously" in a or "bypass" in a for a in d["argv"] if isinstance(a, str)))
+        # its sandbox mounts a /dev of its own: a run under /dev/shm leaves a read-only member blind, and a write member without its contract
+        self.assertEqual({k: v for k, v in d["hidden_paths"].items() if k != "note"}, {"prefixes": ["/dev"], "shown": {"write": ["clone", "out", "tmp"]}})
+        self.assertIn("/dev/shm", d["hidden_paths"]["note"])
+        self.assertEqual(P.hidden_paths_problems(d), [])
         m = P.models_of("codex", "local")
         self.assertEqual([P.model_for(m, t) for t in P.TIERS], ["gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-astra"])   # ids: the runtime passes ids
         self.assertEqual(P.contract_addenda("codex", "local")[0].splitlines()[0], "# In a Codex run")
@@ -3277,6 +3281,26 @@ class HiddenPaths(unittest.TestCase):
         self.assertIn("QARGI_RUN_TMP", msg)
         only_run = P.hidden_message("fakecli", "read-only", P.hidden_run_paths(d, "read-only", self.paths("/hid/s/qargi.1", "/srv/t")), d)
         self.assertNotIn("QARGI_RUN_TMP", only_run)
+
+    def test_codex_refuses_a_run_under_dev_shm_except_a_write_run_whose_tmp_alone_is_there(self):
+        def cli(*a):
+            r = subprocess.run([sys.executable, "-I", os.path.join(LIB, "provider.py"), "hidden-paths", "codex", "local"] + list(a), capture_output=True, text=True)
+            return r.returncode, r.stderr
+        rc, err = cli("read-only", "/dev/shm/s/qargi.XXXXXX", "/dev/shm/qargi-run.XXXXXX")
+        self.assertEqual(rc, 2, err)
+        self.assertIn("this read-only run of codex", err)
+        self.assertIn("CONTRACT /dev/shm/s/qargi.XXXXXX/contract lies under /dev", err)
+        self.assertIn("--scratch on another filesystem", err)
+        rc, err = cli("write", "/dev/shm/s/qargi.XXXXXX", "/dev/shm/qargi-run.XXXXXX")
+        self.assertEqual((rc, "CONTRACT /dev/shm/s/qargi.XXXXXX/contract" in err, "  CLONE" in err, "  TMP" in err), (2, True, False, False), err)
+        # the scratch on disk: the default TMP on /dev/shm is no matter, a read-only member writes none and a write member's is bound in
+        self.assertEqual(cli("read-only", "/srv/scratch/qargi.XXXXXX", "/dev/shm/qargi-run.XXXXXX"), (0, ""))
+        self.assertEqual(cli("write", "/srv/scratch/qargi.XXXXXX", "/dev/shm/qargi-run.XXXXXX"), (0, ""))
+        self.assertEqual(cli("review", "/srv/scratch/qargi.XXXXXX", "/srv/t")[0], 2)                 # a class, not a role
+        self.assertIn("usage:", cli("review", "/srv/scratch/qargi.XXXXXX", "/srv/t")[1])
+        r = subprocess.run([sys.executable, "-I", os.path.join(LIB, "provider.py"), "hidden-paths", "claude-code", "local", "read-only",
+                            "/dev/shm/s/qargi.XXXXXX", "/dev/shm/t"], capture_output=True, text=True)
+        self.assertEqual((r.returncode, r.stderr), (0, ""))                                       # a runtime that declares nothing hides nothing
 
 
 class Attest(LibraryBase):

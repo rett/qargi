@@ -38,9 +38,9 @@ for rt in claude-code claude-platform codex; do
 done
 # the command runtime codex has no adapter and gets the command cases, the others the adapter cases only
 grep -q '^skip \[-\] the adapter cases 1 to 10: codex has no adapter' "$T/codex.out" && ok "codex: the adapter cases are one skip (no adapter)" || no "codex: the adapter cases were not skipped"
-for c in 11 12 13 14; do grep -Eq "^ok +\[$c\] " "$T/codex.out" || no "codex: case $c is not ok"; done
+for c in 11 12 13 14 15; do grep -Eq "^ok +\[$c\] " "$T/codex.out" || no "codex: case $c is not ok"; done
 grep -Eq '^ok +\[12\] .*runs: write read-only; usage of [0-9]+ events' "$T/codex.out" && ok "codex: the stub ran once for each class and its usage was added up" || no "codex: case 12 did not run both classes with usage"
-for rt in claude-code claude-platform; do grep -q '^skip \[-\] the command cases 11 to 14' "$T/$rt.out" || no "$rt: the command cases were not skipped"; done
+for rt in claude-code claude-platform; do grep -q '^skip \[-\] the command cases 11 to 15' "$T/$rt.out" || no "$rt: the command cases were not skipped"; done
 # the local runtime holds the barrier, the cloud runtime builds the session body; each other case is a skip with its reason
 grep -Eq '^ok +\[8\] ' "$T/claude-code.out" && ok "claude-code: the barrier corpus ran" || no "claude-code: the barrier corpus did not run"
 grep -Eq '^ok +\[9\] ' "$T/claude-code.out" && ok "claude-code: the definition carries the barrier" || no "claude-code: case 9"
@@ -91,11 +91,12 @@ declare -A CXF=(
   [roinwrite]='.dispatch.argv |= (.[:2] + ["--sandbox", "read-only"] + .[2:])'
   [gitinro]='.dispatch.argv |= map(if type == "object" and .class == "read-only" then .then += ["--add-dir", "{clone}/.git"] else . end)'
 )
-declare -A CXWANT=([norogroup]='11 12 14' [twosandbox]='11' [nousage]='12' [roinwrite]='11 12' [gitinro]='11' [homewrite]='13' [nobaseline]='14')
+declare -A CXWANT=([norogroup]='11 12 14 15' [twosandbox]='11' [nousage]='12' [roinwrite]='11 12' [gitinro]='11' [homewrite]='13' [nobaseline]='14' [nohide]='15')
 declare -A CXWHY=([norogroup]='carries no arguments of its own' [twosandbox]='also sets --sandbox outside its read-only arguments'
   [nousage]='records no usage: dispatch.output.usage matches no line' [roinwrite]='the write run carries the arguments of the read-only class: --sandbox read-only'
   [gitinro]='a read-only run carries --add-dir /conformance/run/clone/.git of the write class'
-  [homewrite]='the run changed a file of the caller.s home' [nobaseline]='the run.s configuration file home/.codex/config.toml is missing')
+  [homewrite]='the run changed a file of the caller.s home' [nobaseline]='the run.s configuration file home/.codex/config.toml is missing'
+  [nohide]='write, run hidden: qargi local run exited 0, not 2 .refused.')
 for f in "${!CXF[@]}"; do
   mkdir -p "$T/cx.$f"; cp -R lib agents "$T/cx.$f/"
   jq "${CXF[$f]}" lib/providers/codex.json > "$T/cx.$f/lib/providers/codex.json" || no "the codex mutation $f did not apply"
@@ -105,6 +106,10 @@ done
 mkdir -p "$T/cx.nobaseline"; cp -R lib agents "$T/cx.nobaseline/"
 sed -i 's|^    base = rc.get("baseline") or None$|    base = None|' "$T/cx.nobaseline/lib/local_run.py"
 cmp -s "$T/cx.nobaseline/lib/local_run.py" lib/local_run.py && no "the local run mutation nobaseline changed nothing"
+# a qargi local run that does not ask whether the sandbox hides a run path: a run in the hidden place starts
+mkdir -p "$T/cx.nohide"; cp -R lib agents "$T/cx.nohide/"
+sed -i 's|^    if hidden:$|    if False:|' "$T/cx.nohide/lib/local_run.py"
+cmp -s "$T/cx.nohide/lib/local_run.py" lib/local_run.py && no "the local run mutation nohide changed nothing"
 # a stub that writes through the sign-in file the run home links in: the caller's own file changes
 mkdir -p "$T/cxstub"; cp -R tests/providers/codex tests/providers/lib "$T/cxstub/"
 mv "$T/cxstub/codex/stub" "$T/cxstub/codex/stub.real"

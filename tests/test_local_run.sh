@@ -10,7 +10,13 @@ export QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T TMPDIR=$T/tmp
 mkdir -p "$T/tmp" "$T/bin" "$T/c/projects"
 # shellcheck source=fixtures.sh
 . tests/fixtures.sh
-DA=./bin/qargi
+# the shipped codex declares that its sandbox hides /dev (dispatch.hidden_paths), and this test's directory may lie there (a TMPDIR under /dev/shm):
+# the test runs a copy of the tool whose codex hides CXHID, a directory of the test, in its place, so what it shows of codex holds wherever it runs
+CXHID=$(realpath "$T")/cxhid
+copy_tool . "$T/tool"
+jq --arg h "$CXHID" '.dispatch.hidden_paths.prefixes = [$h]' lib/providers/codex.json > "$T/tool/lib/providers/codex.json"
+CX=$T/tool/lib/providers/codex.json
+DA=$T/tool/bin/qargi
 LC="git -c user.name=t -c user.email=t@example.net"
 git init -q -b main "$T/r" && $LC -C "$T/r" commit -q --allow-empty -m one
 git init -q -b main "$T/r2" && $LC -C "$T/r2" commit -q --allow-empty -m one
@@ -405,8 +411,22 @@ want=$(jq -nc --arg c "$CLONE" '["codex","exec","--json","--ephemeral","--ignore
 { [ "$rc" = 0 ] && [ "$(arg0 <<<"$out" | finarg)" = "$want" ] && grep -q '^CLASS=read-only$' <<<"$out" && ! grep -q -e '--add-dir' -e '[.]git' <<<"$(arg0 <<<"$out")" \
   && grep -q '^NOTE=codex has only a partial read-only barrier on local' <<<"$out"; } \
   && ok "codex, read-only: the read-only sandbox, no write group (no writable directory, the clone's .git included) and the partial barrier's note" || no "codex ro argv: rc=$rc [$(arg0 <<<"$out")] want [$want] $out"
+# its sandbox hides /dev (here CXHID, the copy's place for it): a review run there would see neither its clone nor its contract, and a build run
+# no contract; a run outside with only its TMP there (as prepare puts TMP on /dev/shm) is a run that works
+mkdir -p "$CXHID"
+out=$($DA local prepare --repo "$T/r" --base main --slug cxh1 --scratch "$CXHID" --role review 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -qF "this read-only run of codex" <<<"$out" && grep -qF "CLONE $CXHID/qargi.XXXXXX/clone lies under $CXHID" <<<"$out" \
+  && grep -q 'mounts a /dev of its own' <<<"$out" && [ -z "$(ls -A "$CXHID")" ]; } \
+  && ok "codex: prepare refuses a review run where its sandbox hides the run, and makes nothing" || no "codex hidden ro: rc=$rc $out"
+out=$($DA local prepare --repo "$T/r" --base main --slug cxh2 --scratch "$CXHID" 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -qF "CONTRACT $CXHID/qargi.XXXXXX/contract" <<<"$out" && ! grep -q '^  CLONE' <<<"$out"; } \
+  && ok "codex: and a build run there, whose clone, OUT and TMP the sandbox binds in but whose contract it hides" || no "codex hidden write: rc=$rc $out"
+for r in build review; do
+  out=$(QARGI_RUN_TMP=$CXHID $DA local prepare --repo "$T/r" --base main --slug "cxh3$r" --scratch "$T" --role "$r" 2>&1); rc=$?
+  [ "$rc" = 0 ] && ok "codex: a $r run on disk with its TMP in the hidden place is prepared" || no "codex hidden tmp $r: rc=$rc $out"
+done
 # a copy with the barrier's date removed (in the library, with no record either): the claim counts as none, so the review role needs the acceptance
-mk codexundated "$(jq '.provider = "codexundated" | del(.resources.contract_addenda) | .capabilities.read_only_barrier.verified_on = null' lib/providers/codex.json)"
+mk codexundated "$(jq '.provider = "codexundated" | del(.resources.contract_addenda) | .capabilities.read_only_barrier.verified_on = null' "$CX")"
 setprov codexundated
 out=$($DA local prepare --repo "$T/r" --base main --slug cxu0 --scratch "$T" --role review 2>&1); rc=$?
 { [ "$rc" != 0 ] && grep -q 'qargi provider accept codexundated --surface local --no-barrier --project rproj' <<<"$out"; } \
@@ -424,8 +444,8 @@ want=$(jq -nc --arg c "$CLONE" '["codex","exec","--json","--ephemeral","--ignore
   && ok "codex undated, read-only (accepted): the same read-only sandbox" || no "codex undated ro argv: rc=$rc [$(arg0 <<<"$out")] want [$want]"
 jq 'del(.models.accept_no_barrier)' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
 # copies in the library, attested: with the read-only group the barrier holds (partial, with its note); without it a read-only run is refused
-mk codexro "$(jq '.provider = "codexro" | del(.resources.contract_addenda)' lib/providers/codex.json)"
-mk codexnoro "$(jq '.provider = "codexnoro" | del(.resources.contract_addenda) | .dispatch.argv |= map(select((type == "object" and .class == "read-only") | not))' lib/providers/codex.json)"
+mk codexro "$(jq '.provider = "codexro" | del(.resources.contract_addenda)' "$CX")"
+mk codexnoro "$(jq '.provider = "codexnoro" | del(.resources.contract_addenda) | .dispatch.argv |= map(select((type == "object" and .class == "read-only") | not))' "$CX")"
 verify_ro codexro; verify_ro codexnoro
 setprov codexro; prep "$T/r" cxr2 review; task
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
@@ -582,7 +602,7 @@ out=$($DA local run "$RUN" --again 2>&1); rc=$?
   && ok "a source that is a link into the user's ssh keys is refused, without naming where it resolves" || no "home source into .ssh: rc=$rc $out"
 rm -f "$HOME/.codex/auth.json"; rm -rf "$HOME/.ssh"; mv "$HOME/.codex/auth.keep" "$HOME/.codex/auth.json"
 # a definition whose run home breaks a rule is refused before anything runs (the rules are provider.home_problems, tested in test_provider.py)
-mk codexbad "$(jq '.provider = "codexbad" | del(.resources.contract_addenda) | .dispatch.home.link[0].from = "~/.ssh/id_ed25519"' lib/providers/codex.json)"
+mk codexbad "$(jq '.provider = "codexbad" | del(.resources.contract_addenda) | .dispatch.home.link[0].from = "~/.ssh/id_ed25519"' "$CX")"
 setprov codexbad; prep "$T/r" hm2; task
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
 { [ "$rc" = 2 ] && grep -q "never linked into a run: the user's ssh keys" <<<"$out" && ! grep -q '^ARGV=' <<<"$out"; } && ok "a run home that links an ssh key is refused" || no "home bad definition: rc=$rc $out"

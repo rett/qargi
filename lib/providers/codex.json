@@ -155,6 +155,11 @@
         "skills": {"bundled": {"enabled": false}}
       }
     },
+    "hidden_paths": {
+      "prefixes": ["/dev"],
+      "shown": {"write": ["clone", "out", "tmp"]},
+      "note": "the Codex Linux sandbox (bubblewrap) mounts a /dev of its own, so nothing under /dev (such as /dev/shm) is there for the member's commands, the working directory included; under workspace-write it binds its writable places in (the working directory, each --add-dir and TMPDIR), so a write run sees its clone, OUT and TMP but not its contract or git wrapper. Seen with codex-cli 0.167.1 on 2026-11-11: offline, codex sandbox read-only saw no directory under /dev/shm (its /dev/shm was empty), and with a run's OUT, its clone's .git and TMPDIR bound in as writable it saw those and the clone, and not the contract beside them; live, a read-only member run under /dev/shm saw no clone, contract or OUT, and a write member there found no contract"
+    },
     "timeout_s": 3600,
     "output": {
       "format": "jsonl",
