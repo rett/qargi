@@ -7,9 +7,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
-- Local runs stop remaining members of the original process group before removing authentication links and inspecting output, including on normal exit; surviving members fail an otherwise successful run.
-- Permission decisions refuse missing, malformed or unsupported registry classes and preserve the run for investigation.
-- Clone inspection refuses unsupported Git metadata indirection, isolates and bounds Git, and treats inspection failures as unknown. Ordinary clean preserves unknown commit state; `--discard` remains explicit. Metadata warnings include commondir, worktree configuration and object alternates.
+- Local runs stop remaining members of the original process group before removing authentication links and inspecting output, including on normal exit and unexpected runner errors; surviving members fail an otherwise successful run. Unexpected errors retain the original exception even if cleanup also fails, and an unreadable survivor count stays unknown.
+- Permission decisions validate the decoded JSON class against the exact supported registry strings before shell decoding and preserve malformed runs for investigation. Explicit `clean --discard` remains a recovery route for known registered legacy runs without a class; it intentionally drops evidence and cannot discard unregistered runs. A member's `review check` checks structure without lead registry authority, verification, scrub marks or cache.
+- Clone inspection reads a bounded private metadata copy in trusted lead state with a minimal configuration and an absolute Git resolved once from the lead's controlled PATH, so even a newly inserted filter cannot execute during inspection. The copy preserves index timestamps for same-length write detection and supports SHA-1 and SHA-256. Unsupported metadata layouts and inspection failures stay unknown; ordinary clean preserves unknown commit state. Copies may combine concurrent states and do not contain escaped sessions.
 
 ## [0.2.12] - 2026-11-11
 
