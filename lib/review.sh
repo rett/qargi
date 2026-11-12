@@ -3,7 +3,7 @@
 # verified series on a task branch of the real repository.
 #
 #   review.sh check OUT [--allow-empty]                       checks a member's output (RUN_DIR/out, or the run directory) with review_check.py; the
-#       lead's lease on the feature the run is based on is renewed first
+#       registered run's class is validated before the lead's lease is renewed
 #   review.sh apply RUN_DIR [--branch BRANCH] [--project P]   agent/<slug> at the run's base with the patches applied
 #   review.sh apply --from-saved ID [--branch BRANCH] [--project P]
 #       the same from the copy `local verify` saved of the run when it passed ($QARGI_STATE/runs/ID: its OUT, its snapshots, its record),
@@ -122,7 +122,7 @@ scrub_ok_has() { # RUN OUT -> 0 when the record names this series
 verb=${1:-}; shift || true
 if [ "$verb" = check ]; then
   # qargi review check OUT [--allow-empty]: review_check.py reads one output directory; the lead's registry knows the run it belongs to, so the
-  # lead's lease on the feature that run is based on is renewed first (no project is needed, none is loaded)
+  # A registered run's class is validated before its feature lease is renewed (no project is needed, none is loaded).
   . "$(dirname "$0")/marshal.sh"
   # the argument is a run's OUT (the run is its parent directory) or the run directory itself, which review_check.py also takes (RUN/out)
   SRUN='' SOUT=''
@@ -130,7 +130,6 @@ if [ "$verb" = check ]; then
     case $a in -*) ;; *)
       if o=$(readlink -f -- "$a" 2>/dev/null); then
         if [ -d "$o/out" ] && [ ! -d "$o/patches" ] && [ ! -e "$o/manifest.json" ]; then SRUN=$o SOUT=$o/out; else SRUN=$(dirname "$o") SOUT=$o; fi
-        [ -n "${QARGI_MEMBER_RUN:-}" ] || marshal_touch_run "$SRUN"
       fi
       break;;
     esac
@@ -142,6 +141,7 @@ if [ "$verb" = check ]; then
       CLASS_RUN=$(reg_id "${SRUN##*/}") || { echo "qargi: the lead's registry names no run for $SRUN; its class is unknown" >&2; exit 3; }
     fi
     RCLASS=$(run_class "$CLASS_RUN") || exit 3
+    marshal_touch_run "$CLASS_RUN"   # renew only after the lead's authoritative class validation
   fi
   rc=0; python3 -I "$(dirname "$0")/review_check.py" "$@" || rc=$?
   # The project's declared take-in scrub (answers review.scrub and review.trailer_policy; neither set: nothing more is checked or printed) runs on a series
@@ -149,9 +149,7 @@ if [ "$verb" = check ]; then
   if [ -n "${QARGI_MEMBER_RUN:-}" ]; then
     echo "scrub: not run (a member's structural check; the lead's check runs it)"
   elif [ "$rc" != 2 ] && [ -n "$SRUN" ] && compgen -G "$SOUT/patches/*.patch" >/dev/null && scrub_declared "$SRUN"; then
-    # a member's check (the mark `qargi local run` sets in a member's environment) never runs the lead's command or makes the checkout: the lead's check runs it
-    if [ -n "${QARGI_MEMBER_RUN:-}" ]; then echo "scrub: not run (a member's check; the lead's check runs it)"
-    elif [ "$rc" != 0 ]; then echo "scrub: not run (the series check failed)"
+    if [ "$rc" != 0 ]; then echo "scrub: not run (the series check failed)"
     elif scrub_run "$SRUN" "$SOUT"; then scrub_ok_set "$SRUN" "$SOUT"   # review apply skips the scrub it has just seen pass for this series
     else rc=1; fi
     [ "$rc" = 0 ] || scrub_ok_clear "$SRUN"

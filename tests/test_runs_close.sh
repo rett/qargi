@@ -389,6 +389,12 @@ mkdir -p "$R/home"
 out=$(env -u QARGI_CONF -u QARGI_STATE -u QARGI_HOME HOME="$R/home" QARGI_MEMBER_RUN="$R" "$DA" review check "$R/out" 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -q 'OK report-only run' <<<"$out" && [ ! -e "$R/home/.qargi" ] && [ ! -e "$R/verified" ]; } \
   && ok "member structural check without lead state: PASS" || no "member structural check: rc=$rc $out"
+out=$(env -u QARGI_CONF -u QARGI_STATE -u QARGI_HOME HOME="$R/home" QARGI_MEMBER_RUN="$R-other" "$DA" review check "$R/out" 2>&1); rc=$?
+{ [ "$rc" = 3 ] && grep -q 'member marker does not match the inspected run' <<<"$out" && ! grep -q 'OK report-only run' <<<"$out" \
+  && [ ! -e "$R/home/.qargi" ] && [ ! -e "$R/verified" ]; } \
+  && ok "mismatched member marker refuses without borrowing lead state" || no "mismatched marker: rc=$rc $out"
+out=$(QARGI_MEMBER_RUN="$R-other" python3 -I lib/review_check.py "$R/out" 2>&1); rc=$?
+[ "$rc" = 3 ] && grep -q 'member marker does not match' <<<"$out" && ok "direct structural reader also rejects mismatched marker" || no "direct mismatched marker: rc=$rc $out"
 # Explicit discard can close only a KNOWN legacy record and intentionally drops its evidence.
 for form in existing changed gone; do
   R=$(mkrun legacy feature/ro)

@@ -548,6 +548,14 @@ R41=$(newrun membercheck)
 out=$(QARGI_MEMBER_RUN=$R41 $DA review check "$R41/out" 2>&1); rc=$?
 { [ $rc = 0 ] && [ "$(scrubs "$out")" = 1 ] && grep -qx "scrub: not run (a member's structural check; the lead's check runs it)" <<<"$out" && [ ! -e "$MK" ]; } \
   && ok "a member's check does not run the scrub, says so and does not fail" || no "member check: rc=$rc $out"
+out=$(QARGI_MEMBER_RUN=$R41-other QARGI_STATE=$T/member-state QARGI_CONF=$T/member-conf $DA review check "$R41/out" 2>&1); rc=$?
+{ [ "$rc" = 3 ] && grep -q 'member marker does not match the inspected run' <<<"$out" && [ ! -e "$MK" ] \
+  && [ ! -e "$T/member-state" ] && [ ! -e "$T/member-conf" ]; } \
+  && ok "a mismatched member marker refuses without state, scrub or cache writes" || no "mismatched member: rc=$rc $out"
+ln -s "$T/good" "$R41/linked-out"
+out=$(QARGI_MEMBER_RUN=$R41 QARGI_STATE=$T/member-state QARGI_CONF=$T/member-conf $DA review check "$R41/linked-out" 2>&1); rc=$?
+{ [ "$rc" = 3 ] && grep -q 'member marker does not match the inspected run' <<<"$out" && [ ! -e "$T/member-state" ] && [ ! -e "$T/member-conf" ]; } \
+  && ok "an OUT link to another run cannot borrow the member marker" || no "linked member OUT: rc=$rc $out"
 setans '.review.scrub = "touch '"$MK"'; exit 1" | .review.trailer_policy = "reject"'
 R42=$(newrun membertrail); r0=$(refs_all)
 out=$(QARGI_MEMBER_RUN=$R42 $DA review check "$R42/out" 2>&1); rc=$?

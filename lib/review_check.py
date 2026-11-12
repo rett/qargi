@@ -53,6 +53,11 @@ if os.path.isdir(os.path.join(run, "out")) and not os.path.isdir(os.path.join(ru
     run = os.path.join(run, "out")
     N("checked %s (a run directory was given; the output directory is RUN_DIR/out)" % run)
 
+member = os.environ.get("QARGI_MEMBER_RUN")
+if member and os.path.realpath(member) != os.path.dirname(os.path.realpath(run)):
+    print("qargi: member marker does not match the inspected run; structural check refused", file=sys.stderr)
+    sys.exit(3)
+
 def clone_changes(out, reasons):
     """None, or (tracked, untracked) of the clone beside OUT (RUN/clone): its uncommitted changes, read by local_run.worktree_changes, which runs nothing
     the member put in the clone's git configuration. A run that returns no patches and leaves a tracked change uncommitted has not finished its task."""
