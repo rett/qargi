@@ -13,10 +13,10 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
                        directory. A library pack's executable runs only as a private copy of the sealed pack (provider.exec_copy) and
                        only when its record approves it; a shipped definition's is read from lib/providers/NAME/. A word is resolved on
                        the lead's PATH, entry by entry, to the first regular executable file whose real path has that name (or the name
-                       with an extension, a launcher NAME.js), and that real path runs (COMMAND=, `command` in dispatch.json): a wrapper or
-                       a shim linked to a program of another name (a version manager's) is passed over with a note, since under the run's
-                       HOME it would look for the tool there; with none left the run is refused (exit 3), naming each entry and why. The
-                       member's own PATH is the lead's, unchanged.
+                       with an extension, a launcher NAME.js, or with a suffix after a dash, a release binary NAME-x86_64-unknown-linux-musl),
+                       and that real path runs (COMMAND=, `command` in dispatch.json): a wrapper or a shim linked to a program of another
+                       name (a version manager's) is passed over with a note, since under the run's HOME it would look for the tool there;
+                       with none left the run is refused (exit 3), naming each entry and why. The member's own PATH is the lead's, unchanged.
   dispatch.class_argv  arguments added for the run's class: a list (read-only runs only) or {"read-only": [...], "write": [...]}. They go
                        before the first element that carries the prompt argument, or at the end. For sandbox flags a definition keeps out
                        of argv. The barrier kind `sandbox-args` needs them (or a class element in argv) for a read-only run.
@@ -734,14 +734,16 @@ def env_names(disp, runtime):
 
 
 EXTENSION = re.compile(r"[A-Za-z0-9]+\Z")
+SUFFIX = re.compile(r"[A-Za-z0-9_.-]+\Z")
 
 
 def program_named(real, exe):
-    """Is the file at the real path real the program exe names: its name is exe, or exe with an extension (a launcher NAME.js or NAME.py
-    that a package manager links as NAME)? A wrapper or a shim that is a link to a program of another name (a version manager's multi-call
-    program) is not."""
+    """Is the file at the real path real the program exe names: its name is exe, exe with an extension (a launcher NAME.js or NAME.py
+    that a package manager links as NAME) or exe with a suffix after a dash (a release binary NAME-x86_64-unknown-linux-musl linked as NAME)?
+    A wrapper or a shim that is a link to a program of another name (a version manager's multi-call program) is not."""
     b = os.path.basename(real)
-    return b == exe or (b.startswith(exe + ".") and bool(EXTENSION.match(b[len(exe) + 1:])))
+    return b == exe or (b.startswith(exe + ".") and bool(EXTENSION.match(b[len(exe) + 1:]))) \
+        or (b.startswith(exe + "-") and bool(SUFFIX.match(b[len(exe) + 1:])))
 
 
 def resolve_on_path(exe):

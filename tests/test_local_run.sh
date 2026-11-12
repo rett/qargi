@@ -1190,10 +1190,14 @@ out=$(PATH="$T/same:$nofake" $DA local run "$RUN" --dry-run 2>&1); rc=$?
 out=$(PATH="$T/ext:$nofake" $DA local run "$RUN" --dry-run 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -qxF "COMMAND=$(realpath "$T/real/fakellm.js")" <<<"$out"; } \
   && ok "a link to the name with an extension (a launcher fakellm.js) is accepted" || no "extension link: rc=$rc $out"
+mkdir -p "$T/rel"; cp "$T/bin/fakellm" "$T/real/fakellm-x86_64-unknown-linux-musl"; ln -s "$T/real/fakellm-x86_64-unknown-linux-musl" "$T/rel/fakellm"
+out=$(PATH="$T/rel:$nofake" $DA local run "$RUN" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -qxF "COMMAND=$(realpath "$T/real/fakellm-x86_64-unknown-linux-musl")" <<<"$out" && ! grep -q 'passed over' <<<"$out"; } \
+  && ok "a link to the name with a suffix after a dash (a release binary fakellm-x86_64-unknown-linux-musl) is accepted" || no "suffix link: rc=$rc $out"
 out=$(PATH="$T/noexec:$PATH" $DA local run "$RUN" --dry-run 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -qxF "COMMAND=$realfake" <<<"$out" && grep -qF "NOTE=$T/noexec/fakellm on PATH is passed over (not executable)" <<<"$out"; } \
   && ok "a file of that name that is not executable is passed over with a note" || no "noexec: rc=$rc $out"
-rm -rf "$T/vm" "$T/wrap" "$T/same" "$T/ext" "$T/real" "$T/noexec" "$T/wrapper-ran"
+rm -rf "$T/vm" "$T/wrap" "$T/same" "$T/ext" "$T/rel" "$T/real" "$T/noexec" "$T/wrapper-ran"
 RUN=${w6[0]} CLONE=${w6[1]} OUT=${w6[2]}
 # a pack somebody put in the library by hand (no record: nobody read it, nobody sealed it) is not loaded, so its argv never runs
 mkdir -p "$LIB/handrun"
