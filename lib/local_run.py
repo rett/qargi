@@ -1683,6 +1683,9 @@ def run_it(plan, run):
                 code = proc.returncode
         except Stop as e:                                # the run home, the configuration file, the transcripts or the report could not be made as the run needs
             outcome, error, stop_code = "refused", str(e), e.code
+            if proc is not None:                         # the start record could not be rewritten once the member had started: it is stopped, never
+                kill_group(proc)                         # left running after the runner has gone
+                code = proc.returncode
     finally:
         sig.armed = False
         home_left = clear_home(run, home, made) if home else []

@@ -1220,6 +1220,28 @@ out=$($DA local run "$RUN" 2>&1); rc=$?
 
 # --- the run itself ---------------------------------------------------------------------------------------------------------------------
 setprov fakecmd
+# the start record cannot be rewritten once the member has started (here: the runner's second write of dispatch.json fails): the run is refused and
+# the member's process group is stopped, never left running after the runner has gone
+got=$(FAKE_MODE=sleep python3 -I - "$T/tool/lib" "$RUN" <<'PY' 2>&1
+import os, sys; sys.path.insert(0, sys.argv[1])
+import local_run as L
+run, orig, n = os.path.realpath(sys.argv[2]), L.write_private, [0]
+def wp(path, text):
+    n[0] += 1
+    if n[0] == 2:
+        raise L.Stop("cannot write the run record (injected)", 2)
+    return orig(path, text)
+L.write_private = wp
+rc = L.main([run, "--project", "rproj", "--runtime", "fakecmd", "--class", "write", "--again"])
+left = [p for p in os.listdir("/proc") if p.isdigit() and L.proc_of_run(int(p), run, "member")]
+for p in left:                                   # a member left running is reported and then stopped, so a failure leaves nothing behind
+    os.kill(int(p), 9)
+print("RC=%d LEFT=%s" % (rc, ",".join(left)))
+PY
+)
+{ grep -q '^RC=2 LEFT=$' <<<"$got" && grep -q '^OUTCOME=refused$' <<<"$got" && grep -q 'injected' <<<"$got" && [ "$(jq -r .outcome "$RUN/dispatch.json")" = refused ] \
+  && [ "$(jq -r .exit "$RUN/dispatch.json")" != null ]; } \
+  && ok "a start record that cannot be rewritten after the member started: refused, and the member's process group is stopped" || no "record after start: $got"
 rm -f "$RUN/task.md"
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?; [ "$rc" = 1 ] && grep -q 'no task block' <<<"$out" && ok "no task block: stated, exit 1" || no "no task: rc=$rc $out"
 echo 'TASK: x' > "$T/other-task.md"
