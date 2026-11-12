@@ -1,7 +1,7 @@
 ---
 name: qargi-session
 description: Hand a lead's work over to a fresh session (a new session, a new worktree, possibly an older base) from stored state and not from the lead's memory - write the handoff note with qargi marshal handoff, start the new session with it, make it report what it believes before it does anything, check that report, and only then let it proceed. Load it when you lead and are about to end or restart a session (after /compact, after a skill, agent or settings change a running session cannot reload, when context is tight, or when the owner asks). For the lead session, never for a member.
-argument-hint: [NAME]
+argument-hint: "[NAME]"
 ---
 
 # /qargi-session (the lead hands its work to a fresh session)

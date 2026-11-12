@@ -116,12 +116,21 @@ class Shipped(Tree):
         broken["tiers"]["deep"]["model"] = "o9-deep"
         self.assertTrue(any("does not match pattern" in m for m in fails(broken, "openai")), fails(broken, "openai"))
 
-    def test_the_codex_runtime_is_data_only_held_by_its_sandbox_and_claims_nothing_verified(self):
+    def test_the_codex_runtime_is_data_only_held_by_its_sandbox_and_dates_only_what_the_live_checks_showed(self):
         cx = shipped("codex.json")
         self.assertEqual(fails(cx, "codex"), [])
-        claims = sorted("capabilities.%s.verified_on" % c for c, cl in cx["capabilities"].items() if cl["value"] in ("yes", "partial"))
-        self.assertEqual(sorted(m.split(":")[0] for m in warns(cx, "codex")), claims)              # every claim warns: none is verified yet
-        self.assertTrue(all(cl["verified_on"] is None for cl in cx["capabilities"].values()))
+        # the live checks of codex-cli 0.167.1 on 2026-11-11: a write run end to end, the read-only sandbox, the token usage
+        live = ("headless_dispatch", "read_only_barrier", "cost_report")
+        self.assertEqual({c: cl["verified_on"] for c, cl in cx["capabilities"].items() if cl["verified_on"]}, dict.fromkeys(live, "2026-11-11"))
+        for c in live:
+            self.assertTrue(cx["capabilities"][c]["source"].startswith("codex-cli 0.167.1, "), c)       # the CLI version the evidence was seen with
+            self.assertIn("2026-11-11", cx["capabilities"][c]["source"], c)
+        unverified = ("per_dispatch_model_override", "per_dispatch_effort_override", "skills", "mcp")
+        self.assertEqual(sorted(m.split(":")[0] for m in warns(cx, "codex")), sorted("capabilities.%s.verified_on" % c for c in unverified))
+        for c in ("per_dispatch_model_override", "per_dispatch_effort_override"):                    # accepted in a run, but no event names it
+            self.assertIn("not observable", cx["capabilities"][c]["note"], c)
+        self.assertIn("not its reads", cx["capabilities"]["read_only_barrier"]["note"])               # the barrier holds shell writes only
+        self.assertIn("outside the sandbox", cx["capabilities"]["read_only_barrier"]["note"])
         self.assertEqual({c: cl["value"] for c, cl in cx["capabilities"].items()},
                          {"headless_dispatch": "yes", "per_dispatch_model_override": "yes", "per_dispatch_effort_override": "yes",
                           "read_only_barrier": "partial", "skills": "yes", "resume": "no", "mcp": "yes", "cost_report": "partial"})
@@ -134,8 +143,10 @@ class Shipped(Tree):
         self.assertEqual(cx["barrier"], {"kind": "sandbox-args"})
         self.assertTrue(P.has_class_args(cx["dispatch"]))
         self.assertIsNone(P.barrier_claim_problem(cx))
-        self.assertEqual(P.cap("codex", "local", "read_only_barrier"), "unverified")                # partial, but not attested: it counts as no
-        self.assertEqual(P.effective("codex", "local", "read_only_barrier"), "no")
+        self.assertEqual(P.cap("codex", "local", "read_only_barrier"), "partial")                   # partial and dated: a read-only role is held
+        self.assertEqual(P.effective("codex", "local", "read_only_barrier"), "partial")
+        self.assertEqual((P.cap("codex", "local", "headless_dispatch"), P.cap("codex", "local", "cost_report")), ("yes", "partial"))
+        self.assertEqual(P.cap("codex", "local", "per_dispatch_model_override"), "unverified")
         d = cx["dispatch"]
         self.assertEqual((d["mode"], d["prompt"], d["output"]["format"], d["timeout_s"], d["cwd"]), ("command", {"via": "stdin"}, "jsonl", 3600, "{clone}"))
         self.assertEqual(d["output"]["usage"], {"select": {"/type": "turn.completed"}, "tokens": "/usage",                  # tokens only: cost_report partial
@@ -316,6 +327,23 @@ class Barrier(Tree):
         state, text = self.rb("unver", "local")
         self.assertEqual(state, "refused")
         self.assertIn("not verified", text)
+
+    def test_the_shipped_codex_barrier_holds_by_its_date_and_an_undated_copy_is_refused(self):
+        os.makedirs(os.path.join(self.root, "catalogs"), exist_ok=True)
+        with open(os.path.join(self.root, "catalogs", "openai.json"), "w") as f:
+            json.dump(shipped("catalogs/openai.json"), f)
+        cx = shipped("codex.json")
+        cx["resources"].pop("contract_addenda", None)                                       # the files stay in the shipped directory
+        self.put("codex", cx)
+        state, text = self.rb("codex", "local", "alpha")
+        self.assertEqual(state, "partial")                                                  # dated: a read-only role is held, with the note
+        self.assertIn("not its reads", text)
+        cx["capabilities"]["read_only_barrier"]["verified_on"] = None                       # the same claim with the date removed
+        self.put("codex", cx)
+        state, text = self.rb("codex", "local", "alpha")
+        self.assertEqual(state, "refused")
+        self.assertIn("not verified", text)
+        self.assertIn("qargi provider accept codex --surface local --no-barrier --project alpha", text)
 
     def test_a_recorded_acceptance_allows_it_for_that_surface_only(self):
         self.answers("alpha", {"accept_no_barrier": {"cloud": self.ACC}})
@@ -546,10 +574,12 @@ class Cli(CliBase):
         self.assertEqual(q("check", "nope")[0], 1)
         self.assertEqual(json.loads(q("show", "claude-code", "--json")[1]), CODE)
         rc, out, _ = q("list")
-        self.assertRegex(out, r"(?m)^codex\s+local\s+7 warnings$")                     # the seven unverified claims, no failure
+        self.assertRegex(out, r"(?m)^codex\s+local\s+4 warnings$")                     # the four unverified claims, no failure
         rc, out, _ = q("check", "codex")
         self.assertEqual(rc, 0, out)
-        self.assertIn("the review role cannot be served on local", out)                 # the sandbox barrier is not attested yet
+        self.assertNotIn("the review role cannot be served", out)                       # the sandbox barrier is dated: partial, a review role is held
+        self.assertRegex(out, r"(?m)^  local: per_dispatch_model_override\s+unverified \(counts as no\)$")
+        self.assertNotRegex(out, r"(?m)^  local: (read_only_barrier|headless_dispatch|cost_report)\s")
         for t, m in (("fast", "gpt-6-luna"), ("balanced", "gpt-6.1-terra"), ("deep", "gpt-6.1-sol"), ("frontier", "gpt-6-astra")):
             self.assertEqual(q("model", "codex", "local", t)[:2], (0, m + "\n"), t)
 

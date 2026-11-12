@@ -18,10 +18,10 @@ A fact no hermetic case can show (an OS sandbox that really holds, a real model 
 A runtime held by `sandbox-args` (the shipped `codex`) passes `bash tests/conformance.sh NAME`, which shows only what qargi passes. What the runtime does is checked live, in a scratch repository, each check asked first as above:
 
 - **Barrier, free**: the sandbox alone with no model call (`codex sandbox`; its `--help` says how a mode is chosen): a write in the scratch directory is refused under read-only and allowed under workspace-write.
-- **Smoke run**: one `qargi local run` on the fast tier at `low` effort: the JSON lines name the model and effort asked, the run signs in through the run home's link, and the last message lands in `OUT/report.md`.
+- **Smoke run**: one `qargi local run` on the fast tier at `low` effort: the run signs in through the run home's link, the last message lands in `OUT/report.md`, and `USAGE=` shows the tokens. A model or effort override is verified only when an event names what was used.
 - **Before members rely on it**: a sign-in the runtime rewrites during a run reaches your file, through the link or written back; the MCP tool names have the form of `permission_rule`; `enabled_tools` hides a server's other tools; a write member can commit (the write class makes the clone's `.git` writable); the run's `baseline` holds (no approval asked, no network for commands, no hosted search, the features it turns off are gone) and a clone's own `.codex/` does not load. The offline checks of what loads, with a scratch `CODEX_HOME` and no sign-in, cost nothing: `codex debug prompt-input`, `codex mcp list --json`, `codex features list`.
 
-A shipped runtime records each result as `verified_on` and `source` in its definition, a change to the repository; a library pack records it with `attest`.
+A shipped runtime records each result as `verified_on` and `source` in its definition, a change to the repository; a library pack records it with `attest`. The shipped `codex` has headless dispatch, its barrier (partial) and its token report verified (codex-cli 0.167.1, 2026-11-11), so a review role runs on it without `provider accept`; its model and effort overrides (no event names them), skills and MCP are not verified.
 
 A read-only role on a surface whose barrier is not supported is refused unless the person accepts that for the project: `qargi provider accept NAME --surface S --no-barrier --asked "..."` (plan token, then `--plan TOKEN --approved "..."`).
 

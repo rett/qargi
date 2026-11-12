@@ -120,6 +120,15 @@ for f in "${!CXWANT[@]}"; do
     || { no "codex fault '$f' does not fail exactly case(s) $want: rc=$rc, failed: ${failed:-none}"; sed 's/^/     /' "$T/cx.$f.out"; }
 done
 
+# a copy of codex whose barrier claim has no date counts as having no barrier; the read-only runs of cases 12 and 14 still run, on a copy
+# where the claim is dated, since what they check is what a run carries, not the claim
+mkdir -p "$T/cx.undated"; cp -R lib agents "$T/cx.undated/"
+jq '.capabilities.read_only_barrier.verified_on = null' lib/providers/codex.json > "$T/cx.undated/lib/providers/codex.json"
+conf codex --tool "$T/cx.undated" > "$T/cx.undated.out" 2>&1; rc=$?
+{ [ "$rc" = 0 ] && ! grep -q '^FAIL' "$T/cx.undated.out" && grep -Eq '^ok +\[12\] .*runs: write read-only;' "$T/cx.undated.out" \
+  && grep -Eq '^ok +\[14\] .*runs: write read-only;' "$T/cx.undated.out"; } \
+  && ok "codex with an undated barrier claim: both classes still run in cases 12 and 14" || { no "codex undated: rc=$rc"; sed 's/^/     /' "$T/cx.undated.out"; }
+
 # a schema 2 definition whose models are inline (no catalog) is read the same way, and the effort rule is tried on its own models
 mkdir -p "$T/inline"; cp -R lib agents "$T/inline/"
 jq --slurpfile c lib/providers/catalogs/claude.json '.models = {pattern: $c[0].pattern, tiers: $c[0].tiers, effort: $c[0].effort}' \
