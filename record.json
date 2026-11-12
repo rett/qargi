@@ -1,0 +1,22 @@
+{
+ "purpose": "Canonical campaign intent, dependencies and retained evidence with restart-safe local state; existing execution and release authorities remain authoritative",
+ "started": "2026-11-12T10:14:38Z",
+ "goal": "Canonical campaign intent, dependencies and retained evidence with restart-safe local state; existing execution and release authorities remain authoritative",
+ "plan": "",
+ "note": "",
+ "status": "active",
+ "lead": {
+  "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
+  "user": "rett",
+  "host": "arc",
+  "since": "2026-11-12T10:14:38Z",
+  "worktree": "94b9af1305afafc4"
+ },
+ "renewed_at": "2026-11-12T10:14:38Z",
+ "finished_at": null,
+ "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
+ "rev": 1,
+ "updated_at": "2026-11-12T10:14:38Z",
+ "feature": "campaign-kernel",
+ "project": "qargi"
+}
