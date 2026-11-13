@@ -248,7 +248,8 @@ def process(pid):
              and fields[1].isdigit() and fields[2].isdigit()
              and 0 <= int(fields[1]) < 2**31 and 0 <= int(fields[2]) < 2**31,
              "unknown process liveness: invalid stat")
-        return {"token": str(int(fields[19])), "ppid": int(fields[1]), "pgid": int(fields[2])}
+        return {"token": str(int(fields[19])), "ppid": int(fields[1]), "pgid": int(fields[2]),
+                "state": fields[0].decode("ascii")}
     except (ValueError, IndexError) as e:
         raise Refuse("unknown process liveness: invalid stat") from e
 
@@ -258,11 +259,19 @@ def group_alive(pgid):
          and os.path.isfile("/proc/self/stat"), "unknown process group liveness")
     try:
         os.killpg(pgid, 0)
-        return True  # includes zombies: conservative until reaped
     except ProcessLookupError:
         return False
     except OSError as e:
         raise Refuse("unknown process group liveness") from e
+    try:
+        for name in os.listdir("/proc"):
+            if name.isdigit():
+                p = process(int(name))
+                if p is not None and p["pgid"] == pgid and p["state"] not in ("Z", "X"):
+                    return True
+    except OSError as e:
+        raise Refuse("unknown process group liveness") from e
+    return False
 
 
 def owner(pid=None):

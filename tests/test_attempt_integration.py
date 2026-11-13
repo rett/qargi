@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import shutil
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
@@ -442,6 +443,25 @@ print('fixture transcript')
         self.cmd("local", "clean", "--stale", "0", "--scratch", self.root, "--yes", ok=False)
         self.assertEqual(retained.read_text(), "C1")
         self.assertTrue(self.record.exists())
+
+    def test_real_prelaunch_signal_records_not_started(self):
+        self.prepare()
+        for signum in (signal.SIGTERM, signal.SIGHUP):
+            with self.subTest(signal=signum), self.locked():
+                refs = (Path(self.store.path) / "prepared.refs").read_bytes()
+                pending = self.store.gate_pending(refs, epoch=int(time.time()))
+                original = A.Store.begin
+                def begin(store, *args):
+                    result = original(store, *args)
+                    os.kill(os.getpid(), signum)
+                    return result
+                with mock.patch.object(A.Store, "begin", begin), mock.patch.object(R, "run_started") as started:
+                    rc = R.run_it({"final": None, "package": None}, str(self.run),
+                                  {"pending": pending, "refs": refs.decode()})
+                self.assertEqual(rc, 128 + signum)
+                started.assert_not_called()
+                self.assertEqual(self.state_json()["attempts"][-1]["dispatch"]["outcome"], "not-started")
+        self.cmd("local", "clean", self.run, "--discard")
 
     def test_dead_owner_unknown_window_refuses_even_discard(self):
         self.prepare()

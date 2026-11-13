@@ -1830,6 +1830,8 @@ the providers the pack works with (default: the catalog entry's, else asked).
 .RE
 .RE
 .SS Run a task
+.PP
+Lifecycle dispatch handles TERM, HUP and INT before committing begin; caught prelaunch signals leave a not\-started attempt. Uncatchable death with no recorded child remains unknown and refuses recovery. Zombie\-only process groups are terminated; inaccessible process evidence remains unknown.
 .TP
 .B qargi feature
 Develop on a feature branch; merge it into develop once, when complete.

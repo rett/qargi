@@ -1109,7 +1109,7 @@ class Signals:
     run home is cleared;
     before the member starts it is acted on at the next check, and after the member has ended it is only noted, so the run's end is never cut short.
     A later one is recorded by nothing. A signal the runner was started with set to be ignored (nohup) stays ignored. SIGKILL cannot be caught:
-    then RUN/dispatch.json still says running, with the runner's and the member's process ids, and the next start or qargi local clean clears it."""
+    then private lifecycle evidence must prove member termination; an unknown spawn refuses recovery."""
     def __init__(self):
         self.sig, self.armed, self.old = None, False, {}
 
@@ -1944,6 +1944,17 @@ def manifest_lines(rec, out):
 
 
 def run_it(plan, run, pending):
+    sig = Signals()
+    sig.install()
+    try:
+        return run_owned(plan, run, pending, sig)
+    except Interrupted as e:
+        return 128 + e.signum
+    finally:
+        sig.restore()
+
+
+def run_owned(plan, run, pending, sig):
     out = os.path.join(run, "out")
     if os.path.islink(out) or (os.path.exists(out) and not os.path.isdir(out)):
         fail("%s is not a plain directory of the run; the transcript goes there and nowhere else" % out)
@@ -1964,6 +1975,7 @@ def run_it(plan, run, pending):
     dispatch_state = {"spawned": False, "recorded": False}
     result = None
     try:
+        sig.check()
         # Authority commits first; these files are only display mirrors.
         subprocess.run(["bash", "-c", '. "$1/lib.sh"; reg_del "$2" verified',
                         "qargi", HERE, run], check=True, pass_fds=(7,), close_fds=True)
@@ -1971,18 +1983,19 @@ def run_it(plan, run, pending):
             os.unlink(os.path.join(run, "verified"))
         except FileNotFoundError:
             pass
-        result = run_started(plan, run, store, dispatch_state)
+        sig.check()
+        result = run_started(plan, run, store, dispatch_state, sig)
         return result
     finally:
         if not dispatch_state["spawned"]:
             store.end("not-started")
         elif dispatch_state["recorded"]:
-            store.end("ok" if result == 0 else "failed")
+            store.end("cancelled" if sig.sig is not None else "ok" if result == 0 else "failed")
         # If Popen succeeded but member() did not commit, do not invent identity.
         # The foundation deliberately refuses recovery of that unknown window.
 
 
-def run_started(plan, run, store, dispatch_state):
+def run_started(plan, run, store, dispatch_state, sig):
     out = os.path.join(run, "out")
     dispatch = os.path.join(run, "dispatch.json")
     fin, pk = plan["final"], plan["package"]
@@ -2000,8 +2013,6 @@ def run_started(plan, run, store, dispatch_state):
     if home:
         begun["home"] = {"env": home["env"], "dir": home["dir"], "links": [to for to, _ in home["links"]]}
     write_private(dispatch, json.dumps(begun, indent=2, sort_keys=True) + "\n")
-    sig = Signals()
-    sig.install()
     made, home_left, staged = [], [], False
     git0 = git_state(os.path.join(run, "clone")) if plan["git_watch"] else None   # before the member starts: what git in the clone would run
     proc = code = error = outcome = left = None
@@ -2102,7 +2113,6 @@ def run_started(plan, run, store, dispatch_state):
             write_private(dispatch, json.dumps(rec, indent=2, sort_keys=True) + "\n")
         except BaseException:
             pass
-        sig.restore()
         raise unexpected.with_traceback(unexpected.__traceback__)
     if outcome is None:
         outcome = "failed" if timed_out else plan["exit"].get(str(code), plan["exit"].get("*", "failed"))
@@ -2188,7 +2198,6 @@ def run_started(plan, run, store, dispatch_state):
               % (left, "" if left == 1 else "es", proc.pid, proc.pid), file=sys.stderr)
     if sig.sig is not None and outcome != "interrupted":
         print("qargi: note: %s arrived after the member had ended; the run was finished first" % signal.Signals(sig.sig).name, file=sys.stderr)
-    sig.restore()
     print("next: read the transcript and OUT, then qargi local verify " + run)
     if outcome == "interrupted":
         return 128 + sig.sig

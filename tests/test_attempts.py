@@ -113,6 +113,16 @@ class Attempts(unittest.TestCase):
         target.write_text("plain file")
         with self.assertRaises(OSError):
             A.directory(str(target), tighten=True)
+
+    def test_zombie_only_group_is_terminated(self):
+        child = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
+        try:
+            # waitid observes exit but deliberately leaves the child unreaped.
+            os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOWAIT)
+            self.assertFalse(A.group_alive(child.pid))
+        finally:
+            child.wait(timeout=5)
+
     def test_init_and_retry_preserve_prepared_authority(self):
         with self.locked():
             initial = self.prepare()

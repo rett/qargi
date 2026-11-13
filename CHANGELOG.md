@@ -7,6 +7,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
+- Dispatch installs signal handling before committing begin, records caught prelaunch cancellation as not-started, and treats zombie-only groups consistently as terminated while refusing unknown process evidence.
 - Lifecycle verification refuses changed accepted output and unsuccessful dispatch output; apply scrubs its private copy even after review check. Stale cleanup preserves retained evidence after a failed retry and directory loss. Historical lead-owned runs directories upgrade safely to private permissions.
 - New local preparations publish `lifecycle: 1` only after recording immutable refs, epoch and base commit in private lead state. Dispatch, verify, apply, close and clean share the lifecycle lock; active or unknown members refuse all acceptance and cleanup, including discard. Members, Git helpers, scrubs and background renewers do not inherit that lock.
 - Runtime retries commit a fresh strict attempt before dispatch metadata, transcript or report changes. Dry-run and preflight refusal preserve earlier evidence; setup/spawn failures after the boundary leave an unverified not-started attempt. Applied, closed and cleaned work cannot be retried. Legacy runs retain explicitly warned inspection/recovery but require re-preparation for actual runtime dispatch; missing or corrupt new state fails closed.

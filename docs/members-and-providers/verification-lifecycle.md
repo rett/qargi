@@ -28,6 +28,8 @@ The runtime owner records begin, member identity and end itself. Execution compl
 
 There is an intentional unknown-spawn window: if the owner dies after begin and no member identity was committed, qargi cannot prove whether a child was launched. Retry, verification and discard refuse with an unknown-liveness diagnostic. Do not edit the record to fabricate an ended member or rely on `dispatch.json` to recover it. Preserve the evidence and investigate outside these lifecycle verbs. This implementation provides no automatic recovery protocol for that window.
 
+Handlers for TERM, HUP and INT are installed before begin. A caught prelaunch signal records an honest `not-started` outcome; SIGKILL and power loss still leave the uncertain window above. A group containing only exited zombies is terminated, consistent with the runner's process probe. Inaccessible process evidence remains unknown.
+
 Process evidence is Linux-specific and covers the recorded process group. Descendants can escape it by starting another session; this is not containment of escaped processes. An unavailable or unsupported host process probe is unknown, never proof of termination. Filesystem operations that committed but could not fsync their directory warn; persistence across power loss is not guaranteed.
 
 ## Legacy preparation
