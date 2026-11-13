@@ -120,7 +120,7 @@ def values(request, model, effort):
             name = P.model_for(ms, model)
         else:
             row = next((r for r in ms["tiers"].values() if model in (r.get("model"), r.get("alias"))), None)
-            need(row is not None or re.fullmatch(ms["pattern"] or r"^.+$", model),
+            need(row is not None or re.search(ms["pattern"] or r"^.+$", model),
                  "--model %s: neither a tier nor a model of the current catalog/pattern of %s" % (model, runtime))
             if row:
                 name = (row.get("alias") if ms.get("use") == "alias" else None) or row["model"]

@@ -167,6 +167,27 @@ class PreparedRequests(unittest.TestCase):
         self.assertEqual(self.argv("--again", "--effort", "low"), ["--base", "worker", "--model", "fake-balanced"])
         self.assertEqual(self.request()["effort"], "high")
 
+    def test_prefix_pattern_out_of_tier_model_omitted_and_repeated_controls(self):
+        doc = copy.deepcopy(self.definitions["cmdone"])
+        doc["models"]["pattern"] = "^fake-"
+        self.install("cmdone", doc, verify=False)
+        self.answers["profiles"] = {"build": {"model": "fake-custom", "effort": "low"}}
+        self.save_answers()
+        for controls in ((), ("--model", "fake-custom", "--effort", "low")):
+            with self.subTest(controls=controls):
+                self.prepare()
+                original = self.request()
+                self.assertEqual(original["model_id"], "fake-custom")
+                self.assertEqual(self.argv(*controls),
+                                 ["--base", "worker", "--model", "fake-custom", "--effort", "little"])
+                self.assertEqual(self.request(), original)
+        self.prepare()
+        original = self.record.read_bytes()
+        self.assertIn("current catalog/pattern", self.cmd("local", "run", self.run, "--model", "other-custom", code=2))
+        self.assertFalse((self.run / "out/transcript").exists())
+        self.assertFalse((self.run / "dispatch.json").exists())
+        self.assertEqual(self.record.read_bytes(), original)
+
     def test_unverified_overrides_refuse_but_prepared_requests_are_not_claims(self):
         self.install("cmdone", self.definitions["cmdone"], verify=False)
         (self.state / "providers/cmdone/verified.json").unlink()
