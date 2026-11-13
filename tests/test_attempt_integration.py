@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -393,6 +394,55 @@ print('fixture transcript')
         self.git("merge", "--no-edit", "agent/example")
         self.cmd("local", "clean", self.run)
 
+    def test_replacement_during_scrub_is_scrubbed_at_apply(self):
+        scrub = self.root / "scrub.py"
+        self.answers["review"]["scrub"] = "python3 " + shlex.quote(str(scrub))
+        (self.conf / "projects/demo.json").write_text(json.dumps(self.answers))
+        self.prepare()
+        self.collect()
+        patch = next((self.run / "out/patches").glob("*.patch"))
+        scrub.write_text("from pathlib import Path\n"
+                         "assert Path('result.txt').read_text() == 'result\\n', 'reject replacement'\n"
+                         f"p = Path({str(patch)!r})\n"
+                         "p.write_text(p.read_text().replace('+result\\n', '+BAD\\n'))\n")
+        self.cmd("review", "check", self.run / "out")
+        self.assertIn("scrub", self.cmd("review", "apply", self.run, "--project", "demo", ok=False))
+        self.assertEqual(self.git("branch", "--list", "agent/example"), "")
+
+    def test_changed_accepted_output_refused_by_verify_check_apply(self):
+        self.prepare()
+        self.collect()  # External/session output: no local dispatch.
+        self.verify()
+        original = self.bytes_tree(self.saved / "out")
+        patch = next((self.run / "out/patches").glob("*.patch"))
+        patch.write_text(patch.read_text().replace('+result\n', '+changed\n'))
+        for args in [("local", "verify", self.run), ("review", "check", self.run / "out"),
+                     ("review", "apply", self.run, "--project", "demo")]:
+            self.assertIn("OUT changed since acceptance", self.cmd(*args, ok=False))
+        self.assertEqual(original, self.bytes_tree(self.saved / "out"))
+        self.assertEqual(self.git("branch", "--list", "agent/example"), "")
+
+    def test_historical_runs_directory_permissions_upgrade(self):
+        self.prepare()
+        runs = self.state / "runs"
+        runs.mkdir(mode=0o755)
+        runs.chmod(0o755)
+        self.verify()
+        self.assertEqual(runs.stat().st_mode & 0o777, 0o700)
+
+    def test_failed_retry_stale_cleanup_keeps_retained_product(self):
+        self.prepare()
+        (self.run / "out/report.md").write_text("C1")
+        self.verify()
+        self.fake.write_text("not executable format\n")
+        self.dispatch(ok=False)
+        self.assertIn("cannot be attributed", self.cmd("local", "verify", self.run, ok=False))
+        retained = Path(self.store.path) / "a1.saved.1/out/report.md"
+        shutil.rmtree(self.run)
+        self.cmd("local", "clean", "--stale", "0", "--scratch", self.root, "--yes", ok=False)
+        self.assertEqual(retained.read_text(), "C1")
+        self.assertTrue(self.record.exists())
+
     def test_dead_owner_unknown_window_refuses_even_discard(self):
         self.prepare()
         # A real short-lived owning process commits begin without member().
@@ -428,7 +478,7 @@ p.communicate(timeout=5)
 '''
         p = subprocess.run([sys.executable, "-c", code, str(ROOT / "lib"), str(self.run)], env=self.env, capture_output=True, text=True)
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.verify()
+        self.assertIn("cannot be attributed", self.cmd("local", "verify", self.run, ok=False))
         self.assertEqual(self.state_json()["attempts"][-1]["dispatch"]["outcome"], "lost")
 
 

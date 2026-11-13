@@ -146,6 +146,8 @@ if [ "$verb" = check ]; then
       CLASS_RUN=$(reg_id "${SRUN##*/}") || { echo "qargi: the lead's registry names no run for $SRUN; its class is unknown" >&2; exit 3; }
     fi
     RCLASS=$(run_class "$CLASS_RUN") || exit 3
+    lc_ready "$CLASS_RUN" || exit 3
+    [ "$LC_SCHEMA" != true ] || lc product-matches "$CLASS_RUN" >/dev/null || exit 3
     marshal_touch_run "$CLASS_RUN"   # renew only after the lead's authoritative class validation
   fi
   rc=0; python3 -I "$(dirname "$0")/review_check.py" "$@" || rc=$?
@@ -435,7 +437,7 @@ case $verb in
     # the same series (the record is over the patches and the declared scrub; a change to either runs it again). A member's apply never runs it, as its check does not.
     if scrub_declared "$RUN"; then
       if [ -n "${QARGI_MEMBER_RUN:-}" ]; then echo "scrub: not run (a member's apply; the lead's apply runs it)"
-      elif scrub_ok_has "$RUN" "$AP"; then echo "scrub: skipped (review check passed it for this series)"
+      elif [ "$LC_SCHEMA" != true ] && scrub_ok_has "$RUN" "$AP"; then echo "scrub: skipped (review check passed it for this series)"
       else
         text=$(scrub_run "$RUN" "$AP" "$SRC") || { echo "$text"; die "the declared scrub refuses the series: nothing was applied"; }
         echo "$text"

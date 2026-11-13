@@ -97,6 +97,22 @@ class Attempts(unittest.TestCase):
             self.assertEqual(A.Store(self.run).root, str(self.root / "home/state"))
         self.assertFalse(self.state.exists())
 
+    def test_historical_directory_rejects_links_foreign_owner_and_files(self):
+        target = self.root / "historical"
+        target.mkdir(mode=0o755)
+        target.chmod(0o755)
+        with mock.patch.object(A.os, "geteuid", return_value=os.geteuid() + 1):
+            with self.assertRaisesRegex(A.Refuse, "lead-owned"):
+                A.directory(str(target), tighten=True)
+        self.assertEqual(target.stat().st_mode & 0o777, 0o755)
+        link = self.root / "link"
+        link.symlink_to(target)
+        with self.assertRaises(A.Refuse):
+            A.directory(str(link), tighten=True)
+        target.rmdir()
+        target.write_text("plain file")
+        with self.assertRaises(OSError):
+            A.directory(str(target), tighten=True)
     def test_init_and_retry_preserve_prepared_authority(self):
         with self.locked():
             initial = self.prepare()

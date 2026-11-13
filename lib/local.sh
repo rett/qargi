@@ -1049,7 +1049,11 @@ WRAP
           echo "kept $d: directory gone, and its saved copy $sv holds work that was never applied: qargi review apply --from-saved ${d##*/}, or qargi local clean $d --discard"
           kept_n=$((kept_n + 1)); bad_n=$((bad_n + 1)); continue
         fi
-        cargs=("$d"); [ -n "$sv" ] || cargs+=(--discard)   # nothing of it is left but the record
+        if [ -z "$sv" ] && [ "$(reg_json "$d" 'has("lifecycle")')" = true ]; then
+          echo "kept $d: no current copy; retained lifecycle evidence requires explicit discard"
+          kept_n=$((kept_n + 1)); bad_n=$((bad_n + 1)); continue
+        fi
+        cargs=("$d"); [ -n "$sv" ] || cargs+=(--discard)   # legacy record only
         if ! why=$("$0" clean "${cargs[@]}" 2>&1 </dev/null); then echo "kept $d: ${why#qargi: }"; kept_n=$((kept_n + 1)); bad_n=$((bad_n + 1)); continue; fi
         echo "$why"; done_n=$((done_n + 1))
       done < <(gone_runs "$scr")

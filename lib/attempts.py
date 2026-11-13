@@ -172,7 +172,7 @@ def sync_dir(fd, effect):
             pass  # The filesystem effect already committed, even if stderr is broken.
 
 
-def directory(path, create=False):
+def directory(path, create=False, tighten=False):
     """Anchor every component with O_NOFOLLOW; never mkdir through a symlink."""
     path = canonical(path)
     fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY | NOFOLLOW)
@@ -188,6 +188,9 @@ def directory(path, create=False):
             child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | NOFOLLOW, dir_fd=fd)
             os.close(fd)
             fd = child
+        if tighten:
+            need(os.fstat(fd).st_uid == os.geteuid(), "directory is not lead-owned")
+            os.fchmod(fd, 0o700)
         private(os.fstat(fd), 0o700)
         return fd
     except BaseException:
@@ -818,6 +821,56 @@ def current_verified(store):
     return v is not None and store._saved_marker(record) == (a["n"], v["nonce"])
 
 
+def product_tree(path):
+    """Compare product bytes and names, never follow links or open special files."""
+    result = {}
+    def visit(fd, prefix):
+        for name in sorted(os.listdir(fd)):
+            st = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            key = prefix + name
+            if stat.S_ISLNK(st.st_mode):
+                result[key] = ("link", os.readlink(name, dir_fd=fd))
+            elif stat.S_ISDIR(st.st_mode):
+                child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | NOFOLLOW, dir_fd=fd)
+                try:
+                    result[key] = ("dir",)
+                    visit(child, key + "/")
+                finally:
+                    os.close(child)
+            else:
+                need(stat.S_ISREG(st.st_mode), "OUT contains a special file")
+                child = os.open(name, os.O_RDONLY | os.O_NONBLOCK | NOFOLLOW, dir_fd=fd)
+                try:
+                    need(stat.S_ISREG(os.fstat(child).st_mode), "OUT file changed kind")
+                    h = hashlib.sha256()
+                    while block := os.read(child, 1024 * 1024):
+                        h.update(block)
+                    result[key] = ("file", h.hexdigest())
+                finally:
+                    os.close(child)
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | NOFOLLOW)
+    try:
+        visit(fd, "")
+    finally:
+        os.close(fd)
+    return result
+
+
+def product_matches(store):
+    store.require_lock()
+    record = store.show()
+    d = record["attempts"][-1]["dispatch"]
+    need(d is None or d["outcome"] == "ok",
+         "dispatch did not succeed; output cannot be attributed to this attempt; re-prepare")
+    try:
+        accepted = current_verified(store)
+    except FileNotFoundError:
+        accepted = False
+    if accepted and os.path.lexists(store.run):
+        need(product_tree(store.run + "/out") == product_tree(store.saved_copy() + "/out"),
+             "OUT changed since acceptance; retained product was not replaced; re-prepare")
+
+
 def save_product(store, refs):
     """Publish a generation, then commit acceptance without intervening reconcile.
 
@@ -825,6 +878,7 @@ def save_product(store, refs):
     new dispatch (or explicit recovery after an interrupted save).
     """
     store.require_lock()
+    product_matches(store)
     try:
         if current_verified(store):
             store.verified(refs)
@@ -833,7 +887,7 @@ def save_product(store, refs):
         pass
     marker = store.prepare_save()  # Keep its newline; no shell decoding.
     runs = store.root + "/runs"
-    os.close(directory(runs, True))
+    os.close(directory(runs, True, tighten=True))
     tmp = tempfile.mkdtemp(prefix=".save.", dir=runs)
     try:
         # cp -P copies even a replaced top-level OUT as a link; reject it below.
@@ -903,6 +957,9 @@ def main(argv=None):
         elif cmd == "current":
             store.require_lock()
             need(current_verified(store), "re-verification required: no current verified saved generation")
+            result = True
+        elif cmd == "product-matches":
+            product_matches(store)
             result = True
         elif cmd == "saved-copy":
             try:
