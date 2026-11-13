@@ -576,15 +576,15 @@ cmdrun() {   # CLASS [SCRATCH [TMP-PARENT]]: cmdprep, then cmdgo unless the run 
 HIDDEN=$W/hidden   # the place a copy of a definition with dispatch.hidden_paths hides in place of its prefixes
 HIDF=""
 if jq -e '.dispatch.hidden_paths | type == "object"' "$DESC" >/dev/null 2>&1; then HIDF=".dispatch.hidden_paths.prefixes = $(jq -nc --arg h "$HIDDEN" '[$h]')"; fi
-mktool() {   # DEST JQ-FILTER: copy the installed root, substituting entries supplied by the fixture tool
-  local entry d src
+# Keep this list aligned with TOOL_DIRS in tests/hermetic.sh (checked by test_tool_copy.sh).
+MKTOOL_ENTRIES="agents bin lib roles skills provision contract canon methodologies packs catalog VERSION"
+mktool() {   # DEST JQ-FILTER: copy tool entries, substituting entries supplied by the fixture tool
+  local d src
   [ ! -d "$1" ] || return 0
   rm -rf "$1.new"; mkdir -p "$1.new" || return 1
-  for entry in "$ROOT"/*; do
-    [ -e "$entry" ] || continue
-    d=${entry##*/}
-    case $d in tests|docs) continue;; esac
-    src=$TOOL/$d; [ -e "$src" ] || src=$entry
+  for d in $MKTOOL_ENTRIES; do
+    src=$TOOL/$d; [ -e "$src" ] || src=$ROOT/$d
+    [ -e "$src" ] || continue
     cp -R "$src" "$1.new/" || return 1
   done
   jq "$2" "$TOOL/lib/providers/$NAME.json" > "$1.new/lib/providers/$NAME.json.new" \
