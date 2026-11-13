@@ -2,8 +2,8 @@
  "purpose": "Resolve command-runtime profiles consistently and bind prepared model and effort requests through dispatch",
  "started": "2026-11-13T20:44:32Z",
  "goal": "Resolve command-runtime profiles consistently and bind prepared model and effort requests through dispatch",
- "plan": "",
- "note": "",
+ "plan": "Sonnet authors bounded command resolver patch; Sol reconstructs/tests/packages through qargi; Astra or Opus/Fable independently reviews. Then prepared-request propagation, targeted regressions, whole checkpoint and finish.",
+ "note": "Lifecycle merged and pushed bf002a2, suite carried over. Sonnet scoped proposal currently running. Record all model contribution, usage, wall time and rework.",
  "status": "active",
  "lead": {
   "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
@@ -12,11 +12,11 @@
   "since": "2026-11-13T20:44:32Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-13T20:44:32Z",
+ "renewed_at": "2026-11-13T20:44:59Z",
  "finished_at": null,
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 1,
- "updated_at": "2026-11-13T20:44:32Z",
+ "rev": 2,
+ "updated_at": "2026-11-13T20:44:59Z",
  "feature": "command-profiles",
  "project": "qargi"
 }
