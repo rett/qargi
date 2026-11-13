@@ -1030,10 +1030,7 @@ def product_tree(path):
 
 def product_matches(store):
     store.require_lock()
-    record = store.show()
-    d = record["attempts"][-1]["dispatch"]
-    need(d is None or d["outcome"] == "ok",
-         "dispatch did not succeed; output cannot be attributed to this attempt; re-prepare")
+    store.show()
     try:
         accepted = current_verified(store)
     except FileNotFoundError:
@@ -1092,6 +1089,9 @@ def save_product(store, refs):
     new dispatch (or explicit recovery after an interrupted save).
     """
     store.require_lock()
+    d = store.show()["attempts"][-1]["dispatch"]
+    need(d is None or d["outcome"] == "ok",
+         "dispatch did not succeed; output cannot be attributed to this attempt; re-prepare")
     product_matches(store)
     try:
         if current_verified(store):
@@ -1171,6 +1171,9 @@ def main(argv=None):
             result = True
         elif cmd == "product-matches":
             product_matches(store)
+            d = store.show()["attempts"][-1]["dispatch"]
+            if d is not None and d["outcome"] != "ok":
+                print("NOTE structural validation of unsuccessful-attempt output is not acceptance", file=sys.stderr)
             result = True
         elif cmd in ("clean-begin", "clean-discard"):
             result = store.clean_begin(discard=cmd == "clean-discard")

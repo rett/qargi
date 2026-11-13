@@ -1006,8 +1006,13 @@ echo tracked untracked blocked > "$T/wu-mode"
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
 out=$($DA review check "$OUT" 2>&1); rc2=$?
 { [ "$rc" = 2 ] && [ "$rc2" = 0 ] && grep -q '^OK no commits (status BLOCKED): the commit was refused$' <<<"$out" && grep -q '^NOTE .*holds 1 uncommitted change(s) to tracked files (tracked.txt); the run is BLOCKED' <<<"$out" \
-  && grep -q '^WARN .*holds 1 untracked file(s) no commit has (new.txt)' <<<"$out"; } \
+  && grep -q '^WARN .*holds 1 untracked file(s) no commit has (new.txt)' <<<"$out" \
+  && grep -q 'structural validation of unsuccessful-attempt output is not acceptance' <<<"$out"; } \
   && ok "a BLOCKED manifest with the change left uncommitted passes review check as a refusal, with a note and a warning" || no "blocked uncommitted: rc=$rc rc2=$rc2 $out"
+out=$($DA local verify "$RUN" 2>&1); rc=$?
+[ "$rc" != 0 ] && ok "BLOCKED inspection does not verify the attempt" || no "BLOCKED verify: rc=$rc $out"
+out=$($DA review apply "$RUN" 2>&1); rc=$?
+[ "$rc" != 0 ] && ok "BLOCKED inspection does not permit apply" || no "BLOCKED apply: rc=$rc $out"
 git -C "$CLONE" checkout -q tracked.txt; echo untracked > "$T/wu-mode"
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -q '^OUTCOME=ok$' <<<"$out" && grep -qF "WORKTREE=untracked: $CLONE holds 1 untracked file(s) no commit has and OUT holds no patches: new files never added are reported, not a refusal (the refusal covers changes to tracked files)" <<<"$out" \

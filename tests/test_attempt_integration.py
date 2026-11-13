@@ -514,8 +514,11 @@ print('fixture transcript')
         self.fake.write_text("#!/usr/bin/env python3\nraise SystemExit(1)\n")
         self.dispatch(ok=False)
         self.assertEqual(self.state_json()["attempts"][-1]["dispatch"]["outcome"], "failed")
-        for args in [("local", "verify", self.run), ("review", "check", self.run / "out")]:
+        check = self.cmd("review", "check", self.run / "out")
+        self.assertIn("structural validation of unsuccessful-attempt output is not acceptance", check)
+        for args in [("local", "verify", self.run), ("review", "apply", self.run, "--project", "demo")]:
             self.assertIn("cannot be attributed", self.cmd(*args, ok=False))
+        self.assertIsNone(self.state_json()["attempts"][-1]["verified"])
         self.assertEqual(original, self.bytes_tree(Path(self.store.path) / "a1.saved.1/out"))
 
     def test_dead_apply_parent_keeps_live_hook_worktree(self):

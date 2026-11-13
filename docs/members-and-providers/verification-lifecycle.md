@@ -43,3 +43,11 @@ Process evidence is Linux-specific and covers the recorded process group. Descen
 ## Legacy preparation
 
 The current production format is the foundation's schema 1, selected by the exact registry marker `lifecycle: 1`; this wiring does not change that schema. A registry entry without the marker is explicitly legacy. Inspection and recovery remain available with a warning about their writable snapshots, but actual runtime dispatch requires a newly prepared run. No snapshots are automatically adopted into authority. A marked run whose state is missing, corrupt or unsupported fails closed and is never treated as legacy. Legacy recovery has no private attempt-identity or process-liveness guarantee.
+# Diagnostic inspection and acceptance
+
+Review check can inspect output after an unsuccessful dispatch, including a
+truthful BLOCKED report. Its structural verdict is diagnostic and does not
+attribute that output to the unsuccessful attempt or accept it. Local verify
+and review apply still refuse such output. Changes to already accepted OUT are
+refused by check, verify and apply; prepare a new run for revised output.
+
