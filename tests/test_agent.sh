@@ -534,6 +534,20 @@ for name in ("cmdcat", "cmdinline", "cmdalias", "cmdid"):
     assert not bad, (name, bad)
 PY
 [ $? = 0 ] && ok "the inline and referenced alias fixtures satisfy the provider schema" || no "invalid alias fixture"
+# Present malformed values must refuse before normalization can inherit a shipped entry or class fallback.
+mkprofiles() { # project profiles-json -> command project with precisely these profile entries
+  mkproj "$1" cmdb
+  jq --argjson pr "$2" '.profiles = $pr' "$T/c/projects/$1.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/$1.json"
+}
+mkprofiles cmdshapep '{"build":"cmdb-x","review":{"base":7},"auditor":{"abilities":"review"},"researcher":{"abilities":["review",7]},
+  "scout":null,"arrayentry":[],"numberentry":7,"boolentry":false,"nullbase":{"base":null},"arraybase":{"base":[]},
+  "nullabilities":{"base":"worker","abilities":null},"unknownability":{"base":"worker","abilities":["nosuch"]},
+  "leadability":{"base":"worker","abilities":["lead"]},"tw":"cmdb-x","ro":false,
+  "nullmodel":{"base":"worker","model":null},"nulltier":{"base":"worker","tier":null},"nulleffort":{"base":"worker","effort":null},
+  "badpurpose":{"base":"worker","purpose":7},"nullpurpose":{"base":"worker","purpose":null},"unknownkey":{"base":"worker","modle":"cmdb-x"},
+  "validroles":{"base":"worker","abilities":["build","tw"],"purpose":"works"},"emptyroles":{"base":"worker","abilities":[]}}'
+jq '.profiles.longpurpose = {base:"worker",purpose:("x" * 301)}' "$T/c/projects/cmdshapep.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/cmdshapep.json"
+mkprofiles cmdarrayp '[]'; mkprofiles cmdnumberp '5'; mkprofiles cmdstringp '"build"'; mkprofiles cmdnullp 'null'; mkprofiles cmdboolp 'false'
 # cmdap also holds legacy members (models no command runtime has, files that do not exist); cmdbp and cmdcp have no member at all
 jq --arg root "$T" '.projects.cmdap = {worker: {roles: ["build","write","test"], file: ($root + "/legacy/worker.md"), model: "claude-haiku-5-5", effort: "low", provider: "claude-code", surface: "local", seq: 900}, reviewer: {roles: ["review"], file: ($root + "/legacy/reviewer.md"), model: "claude-opus-5-5", effort: "max", provider: "claude-code", surface: "local", seq: 901}}' "$T/c/agents.json" > "$T/a.json" && mv "$T/a.json" "$T/c/agents.json"
 # Include file contents, modes, links and directory entries, including Git excludes and member copies.
@@ -603,6 +617,14 @@ for use in inline alias id; do
   done
 done
 jq -e '.projects.cmdbp == null and .projects.cmdcp == null' "$T/c/agents.json" >/dev/null && [ ! -e "$T/c/agents/cmdbp" ] && [ ! -e "$T/c/agents/cmdcp" ] && ok "command resolution needs no member record or rendered copy" || no "unexpected command member"
+fcj test --project cmdshapep | jq -e '.profile == "test" and .profile_source == "shipped" and .model_id == "cmdb-x"' >/dev/null \
+  && ok "a malformed unrelated entry does not block a valid shipped profile" || no "unrelated malformed profile"
+fcj build --profile validroles --project cmdshapep | jq -e '.profile_source == "project" and .base == "worker" and .purpose == "works"' >/dev/null \
+  && fcj build --profile emptyroles --project cmdshapep | jq -e '.base == "worker"' >/dev/null \
+  && ok "known custom-role abilities and empty ability lists retain the project schema behavior" || no "valid ability lists refused"
+out=$($DA agent for build --project cmdshapep --json 2>"$T/cmd.err"); rc=$?
+{ [ "$rc" = 2 ] && [ -z "$out" ] && grep -q 'entry is not an object' "$T/cmd.err"; } \
+  && ok "a malformed profile with --json returns only a refusal on stderr" || no "malformed JSON answer: rc=$rc $out / $(cat "$T/cmd.err")"
 # refusals: the generic ones (profile, base, class) and the catalog's; each is "args|text of the reason|exit status"
 while IFS='|' read -r args want rc; do
   e=$($DA agent for $args 2>&1); r=$?
@@ -629,6 +651,33 @@ review --profile advisor --project cmdap|catalog of cmda|2
 build --profile lead --project cmdap|never dispatched|2
 unknownrole --project cmdap|usage:|2
 build --project cmdxp|missingext|1
+build --project cmdshapep|entry is not an object|2
+review --project cmdshapep|base 7 is not a string|2
+review --profile auditor --project cmdshapep|abilities|2
+review --profile researcher --project cmdshapep|abilities|2
+review --profile scout --project cmdshapep|entry is not an object|2
+build --profile arrayentry --project cmdshapep|entry is not an object|2
+build --profile numberentry --project cmdshapep|entry is not an object|2
+build --profile boolentry --project cmdshapep|entry is not an object|2
+build --profile nullbase --project cmdshapep|base null is not a string|2
+build --profile arraybase --project cmdshapep|base \[\] is not a string|2
+build --profile nullabilities --project cmdshapep|abilities|2
+build --profile unknownability --project cmdshapep|unknown role|2
+build --profile leadability --project cmdshapep|unknown role|2
+tw --project cmdshapep|entry is not an object|2
+ro --project cmdshapep|entry is not an object|2
+build --profile nullmodel --project cmdshapep|not a model id|2
+build --profile nulltier --project cmdshapep|catalog of cmdb|2
+build --profile nulleffort --project cmdshapep|not a level|2
+build --profile badpurpose --project cmdshapep|purpose|2
+build --profile nullpurpose --project cmdshapep|purpose|2
+build --profile longpurpose --project cmdshapep|at most 300|2
+build --profile unknownkey --project cmdshapep|unknown profile keys|2
+build --project cmdarrayp|profiles is not an object|2
+build --project cmdnumberp|profiles is not an object|2
+build --project cmdstringp|profiles is not an object|2
+build --project cmdnullp|profiles is not an object|2
+build --project cmdboolp|profiles is not an object|2
 EOS
 [ "$(snap)" = "$s0" ] && ok "command-mode resolution wrote nothing: agents.json, the answers, the config copies and the checkouts are as they were" || no "command-mode resolution changed state"
 out=$($DA agent for build --project pbase 2>&1); rc=$?

@@ -607,25 +607,43 @@ RESOLVEJQ="$RESOLVE_HEAD"'
     )'
 
 # A command runtime starts a process, so the base is logical and no registered member is needed.
-# Keep the shared role/base/class refusals, then check raw catalog requests before pclean can drop
-# invalid values and inherit defaults. Per-role member answers do not select command profiles.
-CMDJQ="$RESOLVE_HEAD"'
-  def raw: if ($pf.profiles | type) == "object" then $pf.profiles[$pn] else null end;
-  def rawerr: raw as $r
-    | if ($r | type) != "object" then null
-      elif $r.effort != null and ($r.effort | okeff | not) then "effort \($r.effort | tojson) is not a level (low, medium, high, xhigh, max)"
-      elif $r.model != null and ($r.model | okmod | not) then "model \($r.model | tojson) is not a model id (letters, digits, . -)"
-      elif $r.model != null and tier_of($r.model) == null and ($r.model | test($pat) | not) then "model \($r.model) is not in the catalog of \($prov) and does not match its pattern \($pat)"
-      elif $r.tier != null and (($r.tier | type) != "string" or $tiers[$r.tier] == null) then "tier \($r.tier | tojson) is not in the catalog of \($prov)"
-      else null end;
+# Validate the selected raw entry before RESOLVE_HEAD calls profiles/pclean. In particular, a malformed
+# custom-role entry must not disappear and select the class fallback. Other entries remain independent.
+# Per-role member answers do not select command profiles; shared role/base/class refusals still apply.
+CMDJQ='
+  def requested:
+    if $prof != "" then $prof
+    elif ($d[0].profiles | has($role)) or (($pf.profiles | type) == "object" and ($pf.profiles | has($role))) then $role
+    elif $rclass == "read-only" then "review" else "build" end;
+  def rawerr($pn):
+    if ($pf | has("profiles") | not) then null
+    elif ($pf.profiles | type) != "object" then "profiles is not an object (found \($pf.profiles | tojson))"
+    elif ($pf.profiles | has($pn) | not) then null
+    else $pf.profiles[$pn] as $r
+      | if ($r | type) != "object" then "the entry is not an object (found \($r | tojson))"
+        elif ($r | has("base")) and ($r.base | type) != "string" then "base \($r.base | tojson) is not a string"
+        elif ($r | has("abilities")) and (($r.abilities | type) != "array" or any($r.abilities[]; type != "string")) then "abilities \($r.abilities | tojson) are not a list of role names"
+        elif ($r | has("abilities")) and any($r.abilities[]; $rc[.] == null) then "abilities contain an unknown role (\([$r.abilities[] | select($rc[.] == null)] | join(", ")))"
+        elif ($r | has("purpose")) and (($r.purpose | type) != "string" or ($r.purpose | length) > 300) then "purpose is not a string of at most 300 characters"
+        elif (($r | keys) - ["base", "abilities", "purpose", "model", "tier", "effort"] | length) > 0 then "unknown profile keys (\(($r | keys) - ["base", "abilities", "purpose", "model", "tier", "effort"] | join(", ")))"
+        elif ($r | has("effort")) and ($r.effort | okeff | not) then "effort \($r.effort | tojson) is not a level (low, medium, high, xhigh, max)"
+        elif ($r | has("model")) and ($r.model | okmod | not) then "model \($r.model | tojson) is not a model id (letters, digits, . -)"
+        elif ($r | has("model")) and tier_of($r.model) == null and ($r.model | test($pat) | not) then "model \($r.model) is not in the catalog of \($prov) and does not match its pattern \($pat)"
+        elif ($r | has("tier")) and (($r.tier | type) != "string" or $tiers[$r.tier] == null) then "tier \($r.tier | tojson) is not in the catalog of \($prov)"
+        else null end
+    end;
+  requested as $rawpn
+  | rawerr($rawpn) as $err
+  | if $err != null then {code: 2, err: "the \($rawpn) profile is refused on \($prov): \($err)"}
+    else '"$RESOLVE_HEAD"'
   def lerr: if $p.model_id == null then "the tier of the \($pn) profile (\($p.tier // "none")) is not in the catalog of \($prov)"
       elif $p.effort != null and ($efforts | has($p.effort) | not) then "effort \($p.effort) is not a level of \($prov) (\($efforts | keys | join(", ")))"
       else null end;
   refusal
-    // (rawerr | if . == null then null else {code: 2, err: "the \($pn) profile is refused on \($prov): \(.)"} end)
     // (lerr | if . == null then null else {code: 2, err: "the \($pn) profile cannot run on \($prov): \(.)"} end)
     // {code: 0, out: {role: $role, class: $rclass, profile: $pn, mode: "command", profile_source: (if $want == null then "class-fallback" elif $p.source == "project" then "project" else "shipped" end),
-      base: $p.base, member: $p.base, tier: $p.tier, model: (if $use == "alias" then $p.model else null end), model_id: $p.model_id, effort: $p.effort, opt_in: $p.opt_in, purpose: $p.purpose}}'
+      base: $p.base, member: $p.base, tier: $p.tier, model: (if $use == "alias" then $p.model else null end), model_id: $p.model_id, effort: $p.effort, opt_in: $p.opt_in, purpose: $p.purpose}}
+    end'
 
 resolve_command() { # role profile-or-empty project runtime -> as resolve_for, for a runtime that dispatches by command line: the logical base, its model and effort
   local role=$1 prof=$2 proj=$3 prov=$4 pf pd res code pat
