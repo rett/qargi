@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.13] - 2026-11-12
+
 ### Changed
 - Member tasks can reuse lead-supplied passing baseline evidence for the exact BASE_SHA when relevant input and check definitions match, recording its reference, SHA and provenance in `deviations[]` rather than claiming a run or gates pass. They run focused checks and applicable gates for each change, then DONE on final HEAD after all outcomes and again after later changes; profile gates and the lead's whole-suite checkpoint remain in force.
 - `qargi feature park` and automatic parking follow allow nonconflicting untracked runtime files while refusing tracked changes, parking-branch commits absent from develop, and collisions with untracked or ignored files. A failed automatic follow leaves the parking branch behind without undoing a successful integration.
