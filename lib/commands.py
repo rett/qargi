@@ -256,7 +256,7 @@ COMMANDS = {
             "refresh": verb("Re-render a member from the member definition qargi ships now", [("NAME", "member")], [MEMBER_PROJECT_OPT],
                             desc="The project is found as for rename. Keeps its name, roles and model, and writes the copy in the configuration directory and the runtime's file again: a file that is gone (a cleaned checkout, a fresh clone) comes back, a file edited by hand is replaced (the output says so). "
                                  "Use it after an upgrade changes the definition (for example its hook); an unchanged member is left alone. Sessions started afterwards use the new definition."),
-            "models": verb("Show the base members, the profiles with their resolved models and efforts, and each member",
+            "models": verb("Show the bases, profiles with their requested models and efforts, and in-session members",
                            [], [PROJECT_OPT,
                                 opt("--json", "machine-readable")],
                            desc="Two base members, one per guard class: worker (build, write, test; may write) and reviewer (review; read-only). "
@@ -265,7 +265,10 @@ COMMANDS = {
                                 "and a provider file (lib/providers/NAME.json; the project's models.provider) maps the tiers fast, balanced, deep and frontier to models. "
                                 "The frontier tier (researcher) is opt-in. Problems are flagged on their row, never fatal: a member that is not a base (nothing "
                                 "dispatches it), a missing base, a refused project profile, a mixed-class member, a tier with no alias, a frontier member outside researcher. "
-                                "A project is needed, because its models.provider decides the models: --project, else the one in effect (with none, exit 2). The members shown are that project's (`agent list` shows all projects'). Read-only."),
+                                "For command runtimes, bases are logical: no member registration is needed. Rows use the same resolver as agent for, ignoring legacy roles/lead answers, and show the selected model ID or alias, requested effort level and source. "
+                                "JSON keeps the existing keys and profile metadata, adding mode: command, profile selected and requested_effort, and base logical: true; members and base registration flags are empty. Refused profiles carry the resolver's reason. "
+                                "effort_control describes native support; a requested level remains visible with null native control. A null profiles container is absent; malformed non-null containers and selected entries refuse. The lead row is never dispatched. "
+                                "A project is needed, because its models.provider decides the models: --project, else the one in effect (with none, exit 2). In-session members shown are that project's (`agent list` shows all projects'). Read-only."),
             "remove": verb("Delete a member's definition and its record", [("NAME", "member")], [MEMBER_PROJECT_OPT],
                            desc="The project is found as for rename: --project, else the one in effect, else the only project that has the member; a name in two or more projects with none named is refused (exit 2)."),
             "for": verb("Print how to dispatch a role: the base member, the model alias and the effort", [("ROLE", "workrole")],
@@ -274,7 +277,8 @@ COMMANDS = {
                          opt("--surface", "local (default) or cloud: with cloud, resolve the registered base instance (<project>-worker or -reviewer) instead of a member; needs --project", "SURFACE", ("local", "cloud")),
                          opt("--opt-in", "cloud only: confirm an opt-in profile such as researcher"),
                          opt("--json", "machine-readable: role, class, profile, base, member, tier, model alias, model id, effort (cloud: instance, base, model, effort, profile, class)")],
-                        desc="The base member is the one the profile names (worker for build, write and test, reviewer for review) when the project has registered it; no other member serves, and without it the verb says which base to add. A read-only role never resolves to a member that can write. Plain output is one line: MEMBER MODEL EFFORT PROFILE; pass MODEL and EFFORT to the Agent tool with the member as subagent_type."),
+                        desc="For an in-session runtime, the base member is the one the profile names (worker for build, write and test, reviewer for review) when the project has registered it; no other member serves, and without it the verb says which base to add. A read-only role never resolves to a member that can write. Plain output is one line: MEMBER MODEL EFFORT PROFILE; pass MODEL and EFFORT to the Agent tool with the member as subagent_type. "
+                             "For command runtimes, MEMBER is the logical base, requiring no registration or member file. MODEL is the selected ID or alias (an alias only for use: alias with a nonempty tier alias); EFFORT is the requested level even without native control. JSON marks mode: command. Legacy roles/lead answers do not select command profiles; profiles: null is absent, while malformed non-null containers and selected entries refuse."),
         },
     },
     "role": {
