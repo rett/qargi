@@ -245,15 +245,20 @@ reg_id() {
   [ "$n" = 1 ] && printf '%s\n' "$hit"
 }
 reg_edit() {
-  local f=$DA_STATE/local-runs.jsonl rr tmp
+  local f=$DA_STATE/local-runs.jsonl rr tmp match
   [ -f "$f" ] || return 0
-  rr=$(readlink -m -- "$1" 2>/dev/null) || return 1
+  # Lifecycle cleanup has already bound the exact prepared name under its lock.
+  # Resolving a replacement symlink here could edit a different run's row too.
+  if [ "${3:-}" = exact ]; then rr=$1
+  else rr=$(readlink -m -- "$1" 2>/dev/null) || return 1; fi
   ( umask 077; flock 9 || exit 1
     tmp=$(mktemp "$f.tmp.XXXXXX") || exit 1
     # a line is the run's when its run, resolved as far as it exists, is the same path; any other line, a malformed one too, is kept as it is
     while IFS= read -r line || [ -n "$line" ]; do
       r=$(jq -r 'if type == "object" and (.run | type) == "string" then .run else empty end' <<<"$line" 2>/dev/null) || r=''
-      if [ -n "$r" ] && [ "$(readlink -m -- "$r" 2>/dev/null)" = "$rr" ]; then
+      match=$r
+      if [ "${3:-}" != exact ] && [ -n "$r" ]; then match=$(readlink -m -- "$r" 2>/dev/null) || match=''; fi
+      if [ -n "$r" ] && [ "$match" = "$rr" ]; then
         [ "$2" = drop ] && continue
         line=$(jq -c --arg t "$(now)" '.cleaned = $t' <<<"$line")
       fi

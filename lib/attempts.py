@@ -67,6 +67,7 @@ regular lock, then waits for one input byte so bash can duplicate that inode.
 lock-match checks fd identity; lock-check proves the inherited exclusive lock.
 Errors exit 1 with qargi: diagnostics; successful JSON goes to stdout.
 """
+import contextlib
 import fcntl
 import hashlib
 import json
@@ -148,10 +149,10 @@ def stamp(value):
         raise Refuse("invalid timestamp") from e
 
 
-def canonical(path):
+def canonical(path, *, follow=True):
     need(isinstance(path, str) and len(os.fsencode(path)) <= 4096 and "\0" not in path
          and path.startswith("/") and not path.startswith("//")
-         and os.path.normpath(path) == path and os.path.realpath(path) == path,
+         and os.path.normpath(path) == path and (not follow or os.path.realpath(path) == path),
          "expected a canonical absolute path without symlinks")
     return path
 
@@ -305,8 +306,11 @@ def identity(value):
 
 
 class Store:
-    def __init__(self, run):
-        self.run = canonical(os.fspath(run))
+    def __init__(self, run, *, cleanup=False):
+        # Recovery selects private authority by the recorded name, even if that
+        # name now holds a replacement symlink. Filesystem effects still require
+        # anchored parent and object identities; normal callers reject aliases.
+        self.run = canonical(os.fspath(run), follow=not cleanup)
         self.id = os.path.basename(self.run)
         need(re.fullmatch(r"qargi\.[A-Za-z0-9]{6}", self.id), "invalid lifecycle run id")
         self.root = canonical(os.path.abspath(paths.state()))
@@ -1056,7 +1060,8 @@ class Store:
             if key == 'tmp' and item is None:
                 continue
             shape(item, 'path inode parent phase' if cleaning else 'path inode parent')
-            canonical(item['path'])
+            # A cleanup record names the original object, not today's path target.
+            canonical(item['path'], follow=not cleaning)
             need(item['path'] == self.run if key == 'run' else
                  item['path'] == self.run + '/tmp' or
                  bool(re.fullmatch(r'qargi-run\.[A-Za-z0-9]{6}', os.path.basename(item['path']))),
@@ -1079,13 +1084,37 @@ class Store:
             need(Store._work_identity(item['path']) == {k: item[k] for k in ('path', 'inode', 'parent')},
                  'work cleanup ownership mismatch; nothing was removed')
 
-    def clean_work(self):
-        """Stage and delete only prepare-owned TMP/RUN, with resumable evidence.
+    @staticmethod
+    def _work_entry(parent, name):
+        try:
+            return os.stat(name, dir_fd=parent, follow_symlinks=False)
+        except FileNotFoundError:
+            return None
 
-        Once staged, the source pathname must stay absent. Thus a replacement
-        after deletion is refused even if the filesystem reuses an inode.
-        rm keeps the shell's one-filesystem rule and receives only an anchored
-        parent descriptor, never the lifecycle lock.
+    def _work_probe(self, item, parent, tomb):
+        """Inspect only entries in the anchored original parent, never replacements."""
+        st = os.fstat(parent)
+        need([st.st_dev, st.st_ino] == item['parent'], 'work cleanup parent ownership mismatch')
+        staged = self._work_entry(parent, tomb)
+        if staged is not None:
+            need(item['phase'] != 'removed', 'unexpected work cleanup tombstone')
+            need(stat.S_ISDIR(staged.st_mode) and [staged.st_dev, staged.st_ino] == item['inode'],
+                 'work cleanup tombstone ownership mismatch')
+            private(staged, 0o700)
+        source = self._work_entry(parent, os.path.basename(item['path']))
+        if item['phase'] == 'source' and staged is None and source is not None:
+            need(stat.S_ISDIR(source.st_mode) and [source.st_dev, source.st_ino] == item['inode'],
+                 'work cleanup ownership mismatch; nothing was removed')
+            private(source, 0o700)
+        return source is not None, staged is not None
+
+    def clean_work(self):
+        """Delete original owned tombstones, preserving recreated source entries.
+
+        An owned tombstone also proves staging after a crash before phase commit.
+        Internal TMP is visited only through the still-owned original RUN; once
+        RUN has moved, its recorded TMP completion is authoritative. rm keeps the
+        one-filesystem rule and inherits only the anchored parent descriptor.
         """
         row = self.clean_pending()
         need(row is not None and row['phase'] in ('staged', 'deleting'), 'cleanup was not staged')
@@ -1095,53 +1124,72 @@ class Store:
             if os.path.lexists(tomb):
                 need(expected is not None and self._dir_identity(tomb) == expected,
                      'cleanup tombstone ownership mismatch')
-        # Validate every remaining source before deleting either directory.
-        for item in row['work'].values():
-            if item is not None:
-                tomb = self._work_tomb(item, row['identity'])
-                if os.path.lexists(tomb):
-                    need(item['phase'] != 'removed' and not os.path.lexists(item['path']),
-                         'unexpected work cleanup tombstone or replacement')
-                    observed = self._work_identity(tomb)
-                    need(observed['inode'] == item['inode'] and observed['parent'] == item['parent'],
-                         'work cleanup tombstone ownership mismatch')
-                if item['phase'] == 'source':
-                    self._check_work(item)
+        with contextlib.ExitStack() as stack:
+            parents, tombs, present = {}, {}, {}
+            run = row['work']['run']
+            # Validate RUN first so internal TMP never resolves through a new RUN.
+            for key in ('run', 'tmp'):
+                item = row['work'][key]
+                if item is None:
+                    continue
+                tombs[key] = os.path.basename(self._work_tomb(item, row['identity']))
+                internal = key == 'tmp' and item['path'] == self.run + '/tmp'
+                if internal:
+                    source, staged = present['run']
+                    if run['phase'] != 'source' or staged:
+                        need(item['phase'] == 'removed', 'internal TMP completion missing before RUN staging')
+                        continue
+                    if not source:
+                        # The original RUN is absent, so its internal TMP is too.
+                        continue
+                    parent = os.open(os.path.basename(self.run), os.O_RDONLY | os.O_DIRECTORY | NOFOLLOW,
+                                     dir_fd=parents['run'])
                 else:
-                    need(not os.path.lexists(item['path']), 'unexpected replacement during work cleanup')
-        for key in ('tmp', 'run'):
-            item = row['work'][key]
-            if item is None:
-                continue
-            source = item['path']
-            tomb = self._work_tomb(item, row['identity'])
-            if item['phase'] == 'removed':
-                need(not os.path.lexists(tomb), 'unexpected work cleanup tombstone')
-                continue
-            parent = directory(os.path.dirname(source), private_leaf=False)
-            try:
-                st = os.fstat(parent)
-                need([st.st_dev, st.st_ino] == item['parent'], 'work cleanup parent ownership mismatch')
-                if item['phase'] == 'source' and os.path.lexists(source):
-                    need(not os.path.lexists(tomb), 'unexpected work cleanup tombstone')
-                    self._check_work(item)
-                    os.rename(os.path.basename(source), os.path.basename(tomb), src_dir_fd=parent, dst_dir_fd=parent)
+                    try:
+                        parent = directory(os.path.dirname(item['path']), private_leaf=False)
+                    except FileNotFoundError:
+                        need(item['phase'] == 'removed', 'work cleanup parent missing before completion')
+                        present[key] = (False, False)
+                        continue
+                stack.callback(os.close, parent)
+                if internal:
+                    private(os.fstat(parent), 0o700)
+                parents[key] = parent
+                present[key] = self._work_probe(item, parent, tombs[key])
+
+            # All remaining original sources/tombstones passed before any deletion.
+            for key in ('tmp', 'run'):
+                item = row['work'][key]
+                if item is None:
+                    continue
+                parent = parents.get(key)
+                if parent is None:
+                    if item['phase'] != 'removed':
+                        item['phase'] = 'removed'
+                        self._clean_commit(row)
+                    continue
+                tomb = tombs[key]
+                source, staged = self._work_probe(item, parent, tomb)
+                if item['phase'] == 'source' and source and not staged:
+                    os.rename(os.path.basename(item['path']), tomb, src_dir_fd=parent, dst_dir_fd=parent)
                     sync_dir(parent, 'work cleanup rename')
-                need(not os.path.lexists(source), 'unexpected replacement during work cleanup')
-                if os.path.lexists(tomb):
-                    need(self._dir_identity(tomb) == item['inode'], 'work cleanup tombstone ownership mismatch')
-                item['phase'] = 'staged'
-                self._clean_commit(row)
-                if os.path.lexists(tomb):
-                    subprocess.run(['rm', '-rf', '--one-file-system', '--',
-                                    '/proc/self/fd/%d/%s' % (parent, os.path.basename(tomb))],
-                                   env={'PATH': clean_path()}, close_fds=True, pass_fds=(parent,), check=True)
-                    need(not os.path.lexists(tomb), 'work cleanup incomplete; retained mounted filesystem')
-                    sync_dir(parent, 'work cleanup deletion')
-                item['phase'] = 'removed'
-                self._clean_commit(row)
-            finally:
-                os.close(parent)
+                    self._work_probe(item, parent, tomb)
+                    staged = True
+                if item['phase'] != 'removed':
+                    item['phase'] = 'staged'
+                    self._clean_commit(row)
+                    if staged:
+                        subprocess.run(['rm', '-rf', '--one-file-system', '--',
+                                        '/proc/self/fd/%d/%s' % (parent, tomb)],
+                                       env={'PATH': clean_path()}, close_fds=True, pass_fds=(parent,), check=True)
+                        need(self._work_entry(parent, tomb) is None,
+                             'work cleanup incomplete; retained mounted filesystem')
+                        sync_dir(parent, 'work cleanup deletion')
+                    item['phase'] = 'removed'
+                    self._clean_commit(row)
+                if self._work_entry(parent, os.path.basename(item['path'])) is not None:
+                    print('qargi: lifecycle: replacement preserved at %s; original cleanup completed' %
+                          item['path'], file=sys.stderr)
 
 
 def ready(store, *, closed=False):
@@ -1350,7 +1398,8 @@ def main(argv=None):
     try:
         need(len(argv) == 2, "attempts requires COMMAND RUN")
         cmd, run = argv
-        store = Store(run)
+        store = Store(run, cleanup=cmd in ('lock-open', 'lock-match', 'lock-check', 'ready-clean')
+                      or cmd.startswith('clean-'))
         if cmd == "lock-open":
             fd = store.open_lock()
             try:

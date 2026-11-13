@@ -1109,12 +1109,13 @@ WRAP
       exit 0
     fi
     [ -z "$SCR" ] || usage_die "clean: --scratch is for --applied and --stale"
-    reg_load
     RUN=$CLEAN_RUN
     while [ "${RUN%/}" != "$RUN" ] && [ "$RUN" != / ]; do RUN=${RUN%/}; done   # a trailing slash makes rm -rf follow a link
-    RUN=$(readlink -m -- "$RUN")
+    RUN=$(realpath -ms -- "$RUN")
+    RUN=$(readlink -m -- "${RUN%/*}")/${RUN##*/}   # resolve the parent, never a replacement at RUN itself
     lc_ready "$RUN" ready-clean || exit 3
     if [ "$LC_SCHEMA" != true ]; then
+      [ ! -L "$RUN" ] || die "clean: $RUN is a link, not a directory prepare made"
       lc legacy-check "$RUN" >/dev/null || exit 3
       echo "qargi: warning: $RUN is an unmarked legacy run: registry-confined recovery on one file system, with no proof of process quiescence and no lifecycle adoption; --discard deliberately drops evidence" >&2
     fi
@@ -1125,17 +1126,19 @@ WRAP
         lc clean-work "$RUN" >/dev/null || exit 3
         scrub_ok_drop "$RUN"
         apply_state_drop "$RUN"
-        reg_edit "$RUN" cleaned || die "could not commit cleanup in the registry"
+        reg_edit "$RUN" cleaned exact || die "could not commit cleanup in the registry"
         lc clean-finish "$RUN" >/dev/null || exit 3
         echo "finished interrupted cleanup of $RUN"
         exit 0
       fi
+      reg_load
       if [ -n "$(reg_get "$RUN" cleaned)" ]; then echo "$RUN was cleaned already"; exit 0; fi
       # Ref observation writes display files into RUN; authorize ownership and
       # retained evidence first, then recheck when committing cleanup intent.
       clean_check=clean-check; [ -z "$DISCARD" ] || clean_check=clean-check-discard
       lc "$clean_check" "$RUN" >/dev/null || exit 3
     fi
+    reg_load
     reg_has "$RUN" || { echo "qargi: $RUN is not in the lead's registry; nothing was done" >&2; exit 3; }
     APPLIED_AUTH=''
     if [ "$LC_SCHEMA" = true ]; then APPLIED_AUTH=$(lc applied "$RUN") || exit 3; fi
@@ -1192,7 +1195,7 @@ WRAP
       scrub_ok_drop "$RUN"
       apply_state_drop "$RUN"   # the apply record, and what a killed apply of the run left in the state
       if [ "$LC_SCHEMA" = true ]; then
-        reg_edit "$RUN" cleaned || die "could not commit cleanup in the registry"
+        reg_edit "$RUN" cleaned exact || die "could not commit cleanup in the registry"
         lc clean-finish "$RUN" >/dev/null || exit 3
       else
         reg_edit "$RUN" drop || die "could not drop the record of $RUN from $DA_STATE/local-runs.jsonl"
@@ -1275,7 +1278,8 @@ WRAP
     fi
     scrub_ok_drop "$RUN"   # the record of a passed scrub that review check kept for a run never applied
     apply_state_drop "$RUN"   # the apply record of the run, and the temporary directories of a killed apply of it
-    reg_edit "$rrun" cleaned || die "could not commit cleanup in the registry; rerun local clean"
+    if [ "$LC_SCHEMA" = true ]; then reg_edit "$rrun" cleaned exact
+    else reg_edit "$rrun" cleaned; fi || die "could not commit cleanup in the registry; rerun local clean"
     [ "$LC_SCHEMA" != true ] || lc clean-finish "$rrun" >/dev/null || exit 3
     [ -z "$acc" ] || printf '%s\n' "$acc"
     echo "cleaned $RUN${rt:+ and $rt}";;

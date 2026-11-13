@@ -4,6 +4,7 @@ import hermetic  # noqa: F401
 import contextlib
 import copy
 import fcntl
+import io
 import json
 import os
 from pathlib import Path
@@ -257,6 +258,54 @@ class Attempts(unittest.TestCase):
             with self.assertRaisesRegex(A.Refuse, 'tombstone ownership mismatch'):
                 self.store.clean_work()
             self.assertEqual((tomb / 'evidence').read_text(), 'replacement')
+
+    def test_cleanup_reports_replacement_created_between_work_and_finish(self):
+        with self.locked():
+            self.prepare()
+            self.store.clean_begin(discard=True)
+            self.store.clean_stage()
+            self.store.clean_work()
+            decoy = self.root / 'decoy'
+            decoy.mkdir()
+            (decoy / 'keep').write_text('untouched')
+            self.run.symlink_to(decoy, target_is_directory=True)
+            self.register(cleaned='2026-01-01T00:00:00Z')
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                self.store.clean_finish()
+            self.assertIn('replacement preserved', stderr.getvalue())
+            self.assertTrue(self.run.is_symlink())
+            self.assertEqual((decoy / 'keep').read_text(), 'untouched')
+
+    def test_cleanup_missing_original_run_with_internal_tmp(self):
+        tmp = self.run / 'tmp'
+        tmp.mkdir(mode=0o700)
+        with self.locked():
+            self.store.init(b'lead refs\n', epoch=10, base='feature/example', base_sha='a' * 40,
+                            tmpdir=str(tmp))
+            self.register(tmpdir=str(tmp))
+            shutil.rmtree(self.run)
+            self.store.clean_begin(discard=True)
+            self.store.clean_stage()
+            self.register(tmpdir=str(tmp), cleaned='2026-01-01T00:00:00Z')
+            self.store.clean_finish()
+            self.assertIsNone(self.store.clean_pending())
+
+    def test_cleanup_failed_rm_keeps_owned_tombstone_for_retry(self):
+        with self.locked():
+            self.prepare()
+            self.store.clean_begin(discard=True)
+            self.store.clean_stage()
+            with mock.patch.object(A.subprocess, 'run', side_effect=subprocess.CalledProcessError(1, 'rm')) as remove:
+                with self.assertRaises(subprocess.CalledProcessError):
+                    self.store.clean_work()
+            self.assertIn('--one-file-system', remove.call_args.args[0])
+            row = self.store.clean_pending()
+            self.assertEqual(row['work']['run']['phase'], 'staged')
+            tomb = Path(self.store._work_tomb(row['work']['run'], row['identity']))
+            self.assertTrue(tomb.is_dir())
+            self.store.clean_work()
+            self.assertFalse(tomb.exists())
 
     def test_init_and_retry_preserve_prepared_authority(self):
         with self.locked():

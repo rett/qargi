@@ -929,8 +929,8 @@ A.save_product(s, Path(s.path + '/prepared.refs').read_bytes())
         self.assertFalse(self.run.exists())
         self.assertEqual((decoy / 'keep').read_text(), 'another run')
 
-    def test_cleanup_refuses_replaced_tmp_before_authorization_and_after_deletion(self):
-        for boundary in ('before-intent', 'after-intent', 'after-tmp-deletion'):
+    def test_cleanup_refuses_replaced_tmp_before_staging(self):
+        for boundary in ('before-intent', 'after-intent'):
             with self.subTest(boundary=boundary):
                 self.prepare('review')
                 self.cmd('review', 'save', self.run, input='# Findings\nNo findings.\nverdict: accept\n')
@@ -940,24 +940,149 @@ A.save_product(s, Path(s.path + '/prepared.refs').read_bytes())
                     with self.locked():
                         self.store.clean_begin(discard=True)
                         self.store.clean_stage()
-                        if boundary == 'after-tmp-deletion':
-                            remove = A.subprocess.run
-                            def interrupted_remove(*args, **kwargs):
-                                result = remove(*args, **kwargs)
-                                raise OSError('interrupted after TMP deletion')
-                            with mock.patch.object(A.subprocess, 'run', side_effect=interrupted_remove):
-                                with self.assertRaisesRegex(OSError, 'after TMP deletion'):
-                                    self.store.clean_work()
-                            self.assertFalse(tmp.exists())
                 if tmp.exists():
                     tmp.rename(tmp.with_name(tmp.name + '.kept'))
                 tmp.mkdir(mode=0o700)
                 (tmp / 'replacement').write_text('must not delete')
                 snapshot = lambda: [self.bytes_tree(p) for p in (tmp, self.run, self.state / 'attempts', self.state / 'runs')]
                 kept = snapshot()
-                self.cmd('local', 'clean', self.run, '--discard', ok=False)
+                out = self.cmd('local', 'clean', self.run, '--discard', ok=False)
+                self.assertIn('ownership mismatch', out)
                 self.assertEqual(kept, snapshot())
                 self.assertTrue(self.run.exists())
+
+    def interrupted_work_cleanup(self, key, point):
+        """Crash at rename, staged commit, deletion or removed commit of TMP/RUN."""
+        item = json.loads((Path(self.store.path) / 'work.json').read_text())[key]
+        source = Path(item['path'])
+        tomb = Path(A.Store._work_tomb(item, self.state_json()['prepared']['identity']))
+        nth = 1 if key == 'tmp' else 2
+        seen = []
+        real_sync, real_rm, real_commit = A.sync_dir, A.subprocess.run, self.store._clean_commit
+        def sync(fd, effect):
+            real_sync(fd, effect)
+            if point == 'rename' and effect == 'work cleanup rename':
+                seen.append(effect)
+                if len(seen) == nth:
+                    raise OSError('interrupted after rename')
+        def remove(*args, **kwargs):
+            result = real_rm(*args, **kwargs)
+            if point == 'delete':
+                seen.append('rm')
+                if len(seen) == nth:
+                    raise OSError('interrupted after deletion')
+            return result
+        def commit(row):
+            real_commit(row)
+            if point in ('staged', 'removed') and row['work'][key]['phase'] == point:
+                raise OSError('interrupted after phase commit')
+        with self.locked():
+            self.store.clean_begin(discard=True)
+            self.store.clean_stage()
+            with mock.patch.object(A, 'sync_dir', sync), mock.patch.object(A.subprocess, 'run', remove), \
+                    mock.patch.object(self.store, '_clean_commit', commit):
+                with self.assertRaisesRegex(OSError, 'interrupted'):
+                    self.store.clean_work()
+        self.assertEqual(tomb.exists(), point in ('rename', 'staged'))
+        return source, tomb
+
+    def test_cleanup_preserves_replacements_and_finishes(self):
+        for key in ('tmp', 'run'):
+            for point in ('rename', 'staged', 'delete', 'removed'):
+                with self.subTest(key=key, point=point):
+                    self.prepare('review')
+                    self.cmd('review', 'save', self.run, input='# Findings\nNo findings.\nverdict: accept\n')
+                    self.verify()
+                    tmp = Path((self.run / 'tmpdir').read_text().strip())
+                    source, tomb = self.interrupted_work_cleanup(key, point)
+                    source.mkdir(mode=0o700)
+                    (source / 'replacement').write_text('must not delete')
+                    preserved = self.bytes_tree(source)
+                    out = self.cmd('local', 'clean', self.run)
+                    self.assertIn('replacement preserved', out)
+                    self.assertIn(str(source), out)
+                    self.assertEqual(preserved, self.bytes_tree(source))
+                    self.assertFalse(tomb.exists())
+                    self.assertFalse((self.run if key == 'tmp' else tmp).exists())
+                    self.assertFalse(Path(self.store.path).exists() or Path(self.store.path + '.clean').exists())
+                    self.assertFalse((Path(self.store.area) / self.store.clean_name).exists())
+                    self.assertFalse(self.saved.exists())
+                    self.assertTrue(self.registry_row().get('cleaned'))
+                    shutil.rmtree(source)
+
+    def test_internal_tmp_cleanup_never_traverses_replacement_run(self):
+        self.env['QARGI_RUN_TMP'] = str(self.root / 'unavailable')
+        for point in ('rename', 'staged', 'delete', 'removed'):
+            for kind in ('directory', 'symlink'):
+                with self.subTest(point=point, kind=kind):
+                    self.prepare()
+                    identity = self.state_json()['prepared']['identity']
+                    source, tomb = self.interrupted_work_cleanup('run', point)
+                    decoy = self.root / ('decoy-' + point + '-' + kind)
+                    decoy.mkdir(mode=0o700)
+                    if kind == 'symlink':
+                        source.symlink_to(decoy, target_is_directory=True)
+                    else:
+                        source.mkdir(mode=0o700)
+                    (source / 'tmp').mkdir()
+                    (source / 'tmp/keep').write_text('replacement TMP')
+                    (source / ('.clean.tmp.' + identity)).mkdir()
+                    (source / ('.clean.tmp.' + identity) / 'keep').write_text('foreign tomb in replacement RUN')
+                    preserved = self.bytes_tree(source)
+                    # A row at the symlink target must not be marked cleaned by resolution.
+                    registry = self.state / 'local-runs.jsonl'
+                    with registry.open('a') as stream:
+                        stream.write(json.dumps({'run': str(decoy), 'sentinel': 'unchanged'}) + '\n')
+                    decoy_row = registry.read_text().splitlines()[-1]
+                    out = self.cmd('local', 'clean', self.run, '--discard')
+                    self.assertIn('replacement preserved', out)
+                    self.assertEqual(preserved, self.bytes_tree(source))
+                    self.assertEqual(source.is_symlink(), kind == 'symlink')
+                    self.assertFalse(tomb.exists())
+                    self.assertTrue(self.registry_row().get('cleaned'))
+                    self.assertEqual(registry.read_text().splitlines()[-1], decoy_row)
+                    self.assertFalse((Path(self.store.area) / self.store.clean_name).exists())
+
+    def test_external_cleanup_preserves_replacement_symlinks(self):
+        for key in ('tmp', 'run'):
+            for point in ('staged', 'delete'):
+                with self.subTest(key=key, point=point):
+                    self.prepare()
+                    source, tomb = self.interrupted_work_cleanup(key, point)
+                    decoy = self.root / ('decoy-' + key + '-' + point)
+                    decoy.mkdir()
+                    (decoy / 'keep').write_text('untouched')
+                    source.symlink_to(decoy, target_is_directory=True)
+                    out = self.cmd('local', 'clean', self.run)
+                    self.assertIn('replacement preserved', out)
+                    self.assertTrue(source.is_symlink())
+                    self.assertEqual((decoy / 'keep').read_text(), 'untouched')
+                    self.assertFalse(tomb.exists())
+                    self.assertTrue(self.registry_row().get('cleaned'))
+
+    def test_cleanup_refuses_unowned_or_foreign_work_tombstone(self):
+        for key in ('tmp', 'run'):
+            for when in ('before-staging', 'after-staging'):
+                with self.subTest(key=key, when=when):
+                    self.prepare()
+                    if when == 'before-staging':
+                        item = json.loads((Path(self.store.path) / 'work.json').read_text())[key]
+                        tomb = Path(A.Store._work_tomb(item, self.state_json()['prepared']['identity']))
+                    else:
+                        source, tomb = self.interrupted_work_cleanup(key, 'rename')
+                        original = tomb.with_name(tomb.name + '.original')
+                        tomb.rename(original)
+                        source.mkdir(mode=0o700)
+                        (source / 'replacement').write_text('someone else')
+                    tomb.mkdir(mode=0o700)
+                    (tomb / 'foreign').write_text('not qargi')
+                    out = self.cmd('local', 'clean', self.run, '--discard', ok=False)
+                    self.assertIn('unowned work cleanup tombstone' if when == 'before-staging'
+                                  else 'tombstone ownership mismatch', out)
+                    self.assertEqual((tomb / 'foreign').read_text(), 'not qargi')
+                    if when == 'after-staging':
+                        self.assertEqual((source / 'replacement').read_text(), 'someone else')
+                        self.assertTrue(original.is_dir())
 
     def test_missing_run_cleanup_requires_prepared_tmp_ownership(self):
         for ownership in ('known', 'missing', 'replaced', 'registry-decoy'):

@@ -7,11 +7,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- Interrupted lifecycle cleanup preserves and reports replacements at original RUN/TMP names after staging or deletion, then completes original tombstone deletion and exact registry bookkeeping. Owned tombstones recover crashes before phase commit; pre-stage replacements and foreign/unowned tombstones still refuse. Internal TMP completion is recorded before RUN staging, so recovery never traverses a replacement RUN or its symlink target to inspect old TMP paths.
 - Genuinely unmarked registered legacy runs again support warned `local clean --discard`, and ordinary clean where the released checks permit it, including applied/stale batches. Registry-sourced TMP confinement and one-filesystem deletion remain; this weaker recovery proves no process quiescence and creates no lifecycle authority. Missing/corrupt marked state and stripped markers with private lifecycle remnants still refuse.
 - `local prepare` again accepts symlinked, relative and `..`-containing `QARGI_RUN_TMP` parents. It resolves the parent before creating directories and consistently records and displays the canonical TMP path; repointing the alias later does not redirect cleanup. Hidden-path checks still inspect actual paths.
 
 ### Changed
-- Clean authorizes retained evidence before deleting TMP or RUN. Prepare records private directory identities; interrupted cleanup stages owned tombstones and refuses replaced paths, including a reused TMP pathname after deletion. Missing ownership evidence requires manual recovery.
+- Clean authorizes retained evidence before deleting TMP or RUN. Prepare records private directory identities; interrupted cleanup stages owned tombstones and refuses source replacements before staging. Missing ownership evidence for marked runs requires manual recovery.
 - Process-group completion requires a kernel absence report. A changing process listing or zombie-only sample cannot authorize retry or cleanup; runner diagnostics identify busy or unknown groups without claiming live survivors.
 - A full verification history refuses before publishing a new snapshot; identical observations still consume no history.
 - Lifecycle safety guidance is generated from the canonical help source, keeping the manual and command help consistent.
