@@ -4,19 +4,13 @@
  "goal": "Harden lead-side handling of member-controlled run metadata and Git state; close normal-exit process cleanup and missing-class gaps",
  "plan": "Complete rs-complete, verify every open run, inspect patches, qargi apply and independently rerun DONE; merge verified task into feature; sync and whole-suite checkpoint; Opus sign-off; finish into develop under owner instruction to integrate fully tested/reviewed features",
  "note": "Campaign active. Owner MCP decision: explicit server read-only evidence required. Owner superseded queue-only integration: lead merges fully tested and reviewed features into develop through qargi. No release/tag/site publication authorized. Active run qargi.Q0C72y; prior qargi.twg39L remains preserved, not applied. Campaign state /tmp/qargi-campaign-2026-11-11.json.",
- "status": "active",
- "lead": {
-  "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-12T05:10:27Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-13T00:29:22Z",
- "finished_at": null,
+ "finished_at": "2026-11-13T00:30:57Z",
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 45,
- "updated_at": "2026-11-13T00:29:22Z",
+ "rev": 46,
+ "updated_at": "2026-11-13T00:30:57Z",
  "feature": "run-safety",
  "project": "qargi"
 }
