@@ -463,6 +463,60 @@ print('fixture transcript')
                 self.assertEqual(self.state_json()["attempts"][-1]["dispatch"]["outcome"], "not-started")
         self.cmd("local", "clean", self.run, "--discard")
 
+    def test_dead_apply_parent_keeps_live_hook_worktree(self):
+        self.prepare()
+        self.collect()
+        hook = self.repo / ".git/hooks/applypatch-msg"
+        hook_ready, release = self.root / "hook-ready", self.root / "hook-release"
+        hook.write_text(f"#!{sys.executable}\nimport os, time\nfrom pathlib import Path\n"
+                        "assert not Path('/proc/self/fd/7').exists()\n"
+                        f"Path({str(hook_ready)!r}).write_text(str(os.getpid()))\n"
+                        f"while not Path({str(release)!r}).exists(): time.sleep(.02)\n")
+        hook.chmod(0o755)
+        p = subprocess.Popen([str(ROOT / "bin/qargi"), "review", "apply", str(self.run), "--project", "demo"],
+                             cwd=self.repo, env=self.env, start_new_session=True,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            deadline = time.monotonic() + 20
+            while not hook_ready.exists() and p.poll() is None and time.monotonic() < deadline:
+                time.sleep(.02)
+            self.assertTrue(hook_ready.exists())
+            record = self.state / "apply" / (self.run.name + ".json")
+            apply = json.loads(record.read_text())
+            os.kill(apply["pid"], signal.SIGKILL)
+            p.wait(timeout=5)
+            hook_pid = int(hook_ready.read_text())
+            os.kill(hook_pid, 0)
+            worktrees = list(self.state.glob("apply-wt.*"))
+            self.assertEqual(len(worktrees), 1)
+            for args in [("local", "clean", self.run), ("local", "clean", self.run, "--discard"),
+                         ("review", "apply", self.run, "--project", "demo")]:
+                self.assertIn("Git-child liveness is unknown", self.cmd(*args, ok=False))
+                self.assertTrue(worktrees[0].exists())
+                self.assertTrue(record.exists())
+                self.assertTrue(self.run.exists())
+                os.kill(hook_pid, 0)
+        finally:
+            release.touch()
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            p.communicate(timeout=10)
+
+    def test_built_apply_bookkeeping_can_resume(self):
+        self.prepare()
+        self.collect()
+        self.cmd("review", "apply", self.run, "--project", "demo")
+        tip = self.git("rev-parse", "agent/example")
+        record = self.state / "apply" / (self.run.name + ".json")
+        row = json.loads(record.read_text())
+        row.update(status="built", pid=2**31 - 1, ptoken="0")
+        record.write_text(json.dumps(row))
+        self.assertIn("finishing it", self.cmd("review", "apply", self.run, "--project", "demo"))
+        self.assertEqual(json.loads(record.read_text())["status"], "done")
+        self.assertEqual(self.git("rev-parse", "agent/example"), tip)
+
     def test_dead_owner_unknown_window_refuses_even_discard(self):
         self.prepare()
         # A real short-lived owning process commits begin without member().

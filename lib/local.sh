@@ -1088,6 +1088,9 @@ WRAP
     reg_has "$RUN" || { echo "qargi: $RUN is not in the lead's registry; nothing was done" >&2; exit 3; }
     APPLIED_AUTH=''
     if [ "$LC_SCHEMA" = true ]; then APPLIED_AUTH=$(lc applied "$RUN") || exit 3; fi
+    if [ "$LC_SCHEMA" = true ] && [ "$(jq -r '.status // ""' <<<"$APPLIED_AUTH")" = started ]; then
+      die "unfinished apply: Git-child liveness is unknown; nothing was removed"
+    fi
     RCLASS=''
     if [ -z "$DISCARD" ]; then RCLASS=$(run_class "$RUN") || exit 3; fi
     # Refs-only observation grants no product permission: ordinary clean keeps

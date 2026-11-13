@@ -30,6 +30,8 @@ There is an intentional unknown-spawn window: if the owner dies after begin and 
 
 Handlers for TERM, HUP and INT are installed before begin. A caught prelaunch signal records an honest `not-started` outcome; SIGKILL and power loss still leave the uncertain window above. A group containing only exited zombies is terminated, consistent with the runner's process probe. Inaccessible process evidence remains unknown.
 
+An unfinished apply marked `started` cannot be resumed, cleaned or discarded even after its shell dies: Git or a hook may still be alive, and the shell's PID is not evidence of child termination. Preserve its worktree and record for investigation. A `built` apply can still finish its recorded bookkeeping after its owner exits; its Git work has completed. Git and hooks must never inherit the lifecycle lock.
+
 Process evidence is Linux-specific and covers the recorded process group. Descendants can escape it by starting another session; this is not containment of escaped processes. An unavailable or unsupported host process probe is unknown, never proof of termination. Filesystem operations that committed but could not fsync their directory warn; persistence across power loss is not guaranteed.
 
 ## Legacy preparation

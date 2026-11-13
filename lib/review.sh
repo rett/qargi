@@ -344,6 +344,7 @@ apply_resume() {
       echo "an earlier apply of $RUN was cut off after $BRANCH was built at ${tip:0:12}: finishing it (the patches are not applied again)"
       apply_record; exit 0;;
     started)
+      [ "$LC_SCHEMA" != true ] || die "unfinished apply: Git-child liveness is unknown; preserve its evidence"
       mbase=$(jq -r '.base' "$amark")
       cur=$(sha_of "$mb")
       if [ -n "$cur" ]; then
