@@ -496,6 +496,8 @@ mkcmd cmda '^cmda-[a-z0-9.-]+$' cmda-s cmda-m '{"low":"l","medium":"m","high":"h
 mkcmd cmdb '^cmdb-[a-z0-9.-]+$' cmdb-y cmdb-x '{"low":"1","medium":"2","high":"3","xhigh":"4","max":"5"}'
 mkcmd cmdc '^cmdc-[a-z0-9.-]+$' cmdc-s cmdc-m 'null'
 PROF='{"write":{"effort":"turbo"},"advisor":{"model":"cmdb-x"},"badnumber":{"base":"worker","model":7},"badtiertype":{"base":"worker","tier":7},"badeffort":{"base":"worker","effort":"turbo"},"badmodel":{"base":"worker","model":"claude-opus-5-5"},"badshape":{"base":"worker","model":"Bad Model"},"badtier":{"base":"worker","tier":"nosuchtier"},"okmodel":{"base":"worker","model":"cmda-custom-1"},"deep":{"base":"worker","effort":"xhigh"},"wrong":{"base":"worker","abilities":["review"]},"nobase":{"base":"nosuch"}}'
+PROF=$(jq -c '. + {catalogmodel:{base:"worker",model:"cmda-s",effort:"low"}, catalogtier:{base:"worker",tier:"fast",effort:"max"},
+  numericeffort:{base:"worker",effort:4}, researcher:{effort:"medium"}}' <<<"$PROF")
 LEGACY='{"roles":{"build":{"base":"main","push":{"mode":"none"},"model":"claude-haiku-5-5","effort":"low"},"review":{"model":"claude-opus-5-5","effort":"max"}},"lead":{"model":"claude-opus-5-5","effort":"max"}}'
 mkproj() { # project provider [legacy-json] -> the answers of a project on that runtime, with the profiles above and, when given, the legacy per-role answers
   local lg=${3:-}; [ -n "$lg" ] || lg='{}'; git init -q "$T/repo-$1"
@@ -540,6 +542,17 @@ fcj review --project cmdap | jq -e '.mode == "command" and .member == "reviewer"
 [ "$(fcj build --project cmdap | jq -r .model_id)" != "$(fcj build --project cmdbp | jq -r .model_id)" ] && ok "the two catalogs give different ids for the same profile" || no "same ids for two catalogs"
 fcj build --profile okmodel --project cmdap | jq -e '.profile_source == "project" and .model == null and .model_id == "cmda-custom-1" and .effort == "medium"' >/dev/null && ok "cmda: a project model that matches the runtime's pattern is kept as it is" || no "okmodel: $(fcj build --profile okmodel --project cmdap)"
 fcj build --profile deep --project cmdap | jq -e '.effort == "xhigh" and .model_id == "cmda-m"' >/dev/null && ok "cmda: a level the runtime lists with no native value is kept (local run drops it with a note)" || no "deep: $(fcj build --profile deep --project cmdap)"
+fcj build --profile catalogmodel --project cmdap | jq -e '.profile_source == "project" and .tier == "fast" and .model == null and .model_id == "cmda-s" and .effort == "low"' >/dev/null \
+  && ok "an explicit catalog model resolves its tier without a member alias" || no "catalog model: $(fcj build --profile catalogmodel --project cmdap)"
+fcj build --profile catalogtier --project cmdbp | jq -e '.profile_source == "project" and .tier == "fast" and .model_id == "cmdb-y" and .effort == "max"' >/dev/null \
+  && ok "an explicit tier uses the selected runtime's model and keeps the effort level rather than native value 5" || no "catalog tier: $(fcj build --profile catalogtier --project cmdbp)"
+fcj build --profile catalogtier --project cmdcp | jq -e '.model_id == "cmdc-s" and .effort == "max"' >/dev/null \
+  && ok "the same explicit tier and effort remain requests when native effort control is absent" || no "catalog tier without effort control"
+fcj review --profile researcher --project cmdbp | jq -e '.profile_source == "project" and .base == "reviewer" and .class == "read-only" and .tier == "frontier" and .model_id == "cmdb-x" and .effort == "medium" and .opt_in == true' >/dev/null \
+  && ok "a project effort override keeps the shipped profile's base, frontier tier and opt-in marker" || no "merged researcher: $(fcj review --profile researcher --project cmdbp)"
+out=$($DA agent for build --profile okmodel --project cmdap 2>"$T/cmd.err"); rc=$?
+{ [ "$rc" = 0 ] && [ "$out" = "worker cmda-custom-1 medium okmodel" ] && [ ! -s "$T/cmd.err" ]; } \
+  && ok "an unaliased command model prints its ID without a member-definition warning" || no "unaliased text: rc=$rc $out / $(cat "$T/cmd.err")"
 fcj tw --project cmdbp | jq -e '.profile == "build" and .profile_source == "class-fallback" and .class == "write" and .model_id == "cmdb-x"' >/dev/null && fcj ro --project cmdbp | jq -e '.profile == "review" and .profile_source == "class-fallback" and .class == "read-only" and .member == "reviewer"' >/dev/null && ok "command profiles retain custom-role class fallbacks" || no "command class fallback"
 fcj build --profile deep --project cmdcp | jq -e '.effort == "xhigh" and .model_id == "cmdc-m"' >/dev/null && ok "a runtime without native effort control retains the requested effort level" || no "no native effort: $(fcj build --profile deep --project cmdcp)"
 fcj build --project cmdcp | jq -e '.effort == "high"' >/dev/null && ok "no native effort control preserves the shipped profile's effort request" || no "no native effort default"
@@ -550,6 +563,8 @@ while IFS='|' read -r args want rc; do
   { [ "$r" = "$rc" ] && grep -q -- "$want" <<<"$e"; } && ok "command runtime, for $args: exit $rc, '$want'" || no "for $args: rc=$r $e"
 done <<'EOS'
 build --profile badeffort --project cmdap|not a level|2
+build --profile badeffort --project cmdcp|not a level|2
+build --profile numericeffort --project cmdap|not a level|2
 build --profile badmodel --project cmdap|catalog of cmda|2
 build --profile badshape --project cmdap|not a model id|2
 build --profile badtier --project cmdap|catalog of cmda|2
