@@ -228,12 +228,14 @@ err=$(./bin/qargi local clean "$C1" --discard 2>&1 >/dev/null); rcd=$?
   && ok "--discard removes a run whose refs changed, with its temporary directory, and prints the verify outcome as a warning" || no "discard after changed refs (rc=$rcd): $err"
 # a recorded temporary directory outside /dev/shm and QARGI_RUN_TMP is not removed
 out=$(./bin/qargi local prepare --repo "$T/r2" --base main --slug c6 --scratch "$T"); C6=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out"); TM6=$(sed -n '1,/^$/s/^TMP=//p' <<<"$out")
-settmp() { # RUN PATH: make the registry say that PATH is RUN's temporary directory (what clean trusts)
+settmp() { # RUN PATH: change the registry claim (private prepare ownership must still agree)
   jq -c --arg r "$1" --arg t "$2" 'if .run == $r then .tmpdir = $t else . end' "$T/s/local-runs.jsonl" > "$T/s/lr.new" && mv "$T/s/lr.new" "$T/s/local-runs.jsonl"
 }
 mkdir -p "$T/elsewhere/qargi-run.abcdef"; touch "$T/elsewhere/qargi-run.abcdef/precious"; settmp "$C6" "$T/elsewhere/qargi-run.abcdef"
-err=$(./bin/qargi local clean "$C6" --discard 2>&1 >/dev/null); [ ! -e "$C6" ] && [ -f "$T/elsewhere/qargi-run.abcdef/precious" ] && grep -q 'left .* alone' <<<"$err" \
-  && ok "a recorded TMP that is not under QARGI_RUN_TMP or the shared tmpfs is left alone, with a note" || no "foreign tmpdir: $err"
+err=$(./bin/qargi local clean "$C6" --discard 2>&1 >/dev/null); rc=$?
+[ "$rc" != 0 ] && [ -d "$C6" ] && [ -d "$TM6" ] && [ -f "$T/elsewhere/qargi-run.abcdef/precious" ] && grep -q 'prepared ownership disagree' <<<"$err" \
+  && ok "a foreign registry TMP claim refuses cleanup and preserves RUN and both temporary directories" || no "foreign tmpdir: $err"
+settmp "$C6" "$TM6"; ./bin/qargi local clean "$C6" --discard >/dev/null 2>&1 || no "discard restored c6 ownership"
 rm -rf "$TM6" "$T/elsewhere"
 # a recorded temporary directory is never followed: a link to another directory (also written with a trailing slash, which makes rm -rf empty what the
 # link leads to), a link inside its path, and a run directory that is itself a link all leave that other directory as it was
@@ -289,8 +291,9 @@ for form in 'T/qargi-run.abcde/' 'T/qargi-run.abcde' 'T/qargi-run.abcdef' 'T/qar
     T/*) rec="$T/${form#T/}";;
   esac
   settmp "$CV" "$rec"
-  ./bin/qargi local clean "$CV" --discard >/dev/null 2>&1
-  [ -f "$VIC/sub/precious" ] && [ -f "$T/realroot/qargi-run.ghijkl/precious" ] && [ ! -e "$CV" ] && ok "a recorded tmpdir '$form' is left alone: what it leads to is untouched" || no "tmpdir '$form' damaged something"
+  ./bin/qargi local clean "$CV" --discard >/dev/null 2>&1; rc=$?
+  [ "$rc" != 0 ] && [ -f "$VIC/sub/precious" ] && [ -f "$T/realroot/qargi-run.ghijkl/precious" ] && [ -d "$CV" ] && [ -d "$TV" ] && ok "a recorded tmpdir '$form' refuses cleanup: RUN, TMP and link targets are untouched" || no "tmpdir '$form' damaged something"
+  settmp "$CV" "$TV"; ./bin/qargi local clean "$CV" --discard >/dev/null 2>&1 || no "discard restored link-test ownership"
   rm -rf "$TV"
 done
 read -r CV TV <<<"$(mkc lk-slash)"; touch "$TV/x"; settmp "$CV" "$TV/"

@@ -74,12 +74,13 @@ import os
 import re
 import shutil
 import stat
+import subprocess
 import sys
 import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import paths
-from procenv import now
+from procenv import now, clean_path
 
 MAX_RECORD = 256 * 1024
 DISPATCH_HEADROOM = 1024
@@ -170,7 +171,7 @@ def sync_dir(fd, effect):
             pass  # The filesystem effect already committed, even if stderr is broken.
 
 
-def directory(path, create=False, tighten=False):
+def directory(path, create=False, tighten=False, private_leaf=True):
     """Anchor every component with O_NOFOLLOW; never mkdir through a symlink."""
     path = canonical(path)
     fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY | NOFOLLOW)
@@ -189,7 +190,8 @@ def directory(path, create=False, tighten=False):
         if tighten:
             need(os.fstat(fd).st_uid == os.geteuid(), "directory is not lead-owned")
             os.fchmod(fd, 0o700)
-        private(os.fstat(fd), 0o700)
+        if private_leaf:
+            private(os.fstat(fd), 0o700)
         return fd
     except BaseException:
         os.close(fd)
@@ -522,7 +524,7 @@ class Store:
         return dict(n=n, epoch=epoch, baseline=baseline, baseline_sha256=sha,
                     gate="strict", dispatch=None, verified=None, history=[], saved=[], superseded_at=None, save_nonce=None)
 
-    def init(self, refs, *, epoch, base, base_sha):
+    def init(self, refs, *, epoch, base, base_sha, tmpdir=None):
         self.require_lock()
         need(self.registry() is None, "run already registered; refusing lifecycle adoption")
         need(not os.path.lexists(self.root + "/runs/" + self.id), "leftover saved copy exists")
@@ -537,6 +539,20 @@ class Store:
                               base_sha=base_sha, refs="prepared.refs", refs_sha256=sha, identity=uuid.uuid4().hex), current=1,
                               attempts=[self._attempt(1, epoch, "prepared.refs", sha)])
                 self._commit(record)
+                work = dict(run=self._work_identity(self.run), tmp=None)
+                if tmpdir is not None:
+                    canonical(tmpdir)
+                    parent, name = os.path.split(tmpdir)
+                    allowed = [os.path.realpath(p) for p in ('/dev/shm', os.environ.get('QARGI_RUN_TMP')) if p]
+                    need(tmpdir == self.run + '/tmp' or
+                         (re.fullmatch(r'qargi-run\.[A-Za-z0-9]{6}', name) and parent in allowed),
+                         'TMP is outside prepare locations')
+                    work['tmp'] = self._work_identity(tmpdir)
+                fd = directory(self.path)
+                try:
+                    atomic(fd, 'work.json', encode(work))
+                finally:
+                    os.close(fd)
                 sync_dir(area, "initialization")
                 return record
             except BaseException:
@@ -834,10 +850,10 @@ class Store:
         fd = directory(self.area)
         try:
             try:
-                row = decode(read_at(fd, self.clean_name, 4096, 0o600))
+                row = decode(read_at(fd, self.clean_name, 32768, 0o600))
             except FileNotFoundError:
                 return None
-            shape(row, "run identity state saved phase")
+            shape(row, "run identity state saved phase work")
             need(row["run"] == self.run and isinstance(row["identity"], str)
                  and re.fullmatch(r"[0-9a-f]{32}", row["identity"])
                  and row["phase"] in ("intent", "staged", "deleting"), "invalid cleanup record")
@@ -846,6 +862,7 @@ class Store:
                 need((key == "saved" and value is None) or
                      (type(value) is list and len(value) == 2 and all(type(n) is int and n >= 0 for n in value)),
                      "invalid cleanup ownership")
+            self._validate_work(row['work'], cleaning=True)
             return row
         finally:
             os.close(fd)
@@ -857,7 +874,8 @@ class Store:
         finally:
             os.close(fd)
 
-    def clean_begin(self, discard=False):
+    def clean_check(self, discard=False):
+        """Read-only authorization before shell inspection can write into RUN."""
         self.require_lock()
         need(self.clean_pending() is None, "cleanup already in progress")
         record = self.show()
@@ -868,6 +886,32 @@ class Store:
         need(discard or self.authority().get("closed") or (applied and applied["status"] == "done")
              or not any(a["saved"] for a in record["attempts"]),
              "retained lifecycle evidence requires explicit discard")
+        # Read prepare-time evidence before staging or deleting anything. A path
+        # supplied by RUN/tmpdir, or a directory found during recovery, grants no
+        # ownership. Missing evidence refuses rather than adopting it.
+        fd = directory(self.path)
+        try:
+            try:
+                work = decode(read_at(fd, 'work.json', 32768, 0o600))
+            except FileNotFoundError as e:
+                raise Refuse('prepared RUN/TMP ownership unavailable; preserve them for manual recovery') from e
+        finally:
+            os.close(fd)
+        self._validate_work(work)
+        registered = self.authority().get('tmpdir')
+        need((work['tmp'] is None and not registered) or
+             (work['tmp'] is not None and isinstance(registered, str) and registered.rstrip('/') == work['tmp']['path']),
+             'TMP registry and prepared ownership disagree; nothing was removed')
+        for item in work.values():
+            if item is not None:
+                self._check_work(item)
+                tomb = self._work_tomb(item, record['prepared']['identity'])
+                need(not os.path.lexists(tomb), 'unowned work cleanup tombstone')
+                item['phase'] = 'source' if os.path.lexists(item['path']) else 'removed'
+        return record, work
+
+    def clean_begin(self, discard=False):
+        record, work = self.clean_check(discard)
         self.recover_stage()
         saved = self.root + "/runs/" + self.id
         if os.path.lexists(saved):
@@ -879,7 +923,7 @@ class Store:
              and not os.path.lexists(self.root + "/runs/.clean." + self.id),
              "unowned cleanup tombstone; preserve it for investigation")
         row = dict(run=self.run, identity=record["prepared"]["identity"],
-                   state=self._dir_identity(self.path), saved=saved_id, phase="intent")
+                   state=self._dir_identity(self.path), saved=saved_id, phase="intent", work=work)
         self._clean_commit(row)
         return row
 
@@ -914,6 +958,8 @@ class Store:
         row = self.clean_pending()
         need(bool(self.authority().get("cleaned")), "registry must commit cleaned before lifecycle cleanup")
         need(row is not None and row["phase"] in ("staged", "deleting"), "cleanup was not staged")
+        self.clean_work()
+        row = self.clean_pending()
         row["phase"] = "deleting"
         self._clean_commit(row)
         need(shutil.rmtree.avoids_symlink_attacks, "safe cleanup unavailable")
@@ -946,6 +992,109 @@ class Store:
             self.clean_begin(discard=True)
         self.clean_stage()
         self.clean_finish()
+
+    @staticmethod
+    def _work_identity(path):
+        parent = directory(os.path.dirname(path), private_leaf=False)
+        try:
+            st = os.fstat(parent)
+            return dict(path=path, inode=Store._dir_identity(path), parent=[st.st_dev, st.st_ino])
+        finally:
+            os.close(parent)
+
+    def _validate_work(self, work, cleaning=False):
+        shape(work, 'run tmp')
+        need(work['run'] is not None, 'missing RUN ownership')
+        for key, item in work.items():
+            if key == 'tmp' and item is None:
+                continue
+            shape(item, 'path inode parent phase' if cleaning else 'path inode parent')
+            canonical(item['path'])
+            need(item['path'] == self.run if key == 'run' else
+                 item['path'] == self.run + '/tmp' or
+                 bool(re.fullmatch(r'qargi-run\.[A-Za-z0-9]{6}', os.path.basename(item['path']))),
+                 'invalid prepared work path')
+            for field in ('inode', 'parent'):
+                value = item[field]
+                need(type(value) is list and len(value) == 2 and
+                     all(type(n) is int and n >= 0 for n in value), 'invalid work ownership')
+            if cleaning:
+                need(item['phase'] in ('source', 'staged', 'removed'), 'invalid work cleanup phase')
+
+    @staticmethod
+    def _work_tomb(item, identity):
+        parent, name = os.path.split(item['path'])
+        return parent + '/.clean.' + name + '.' + identity
+
+    @staticmethod
+    def _check_work(item):
+        if os.path.lexists(item['path']):
+            need(Store._work_identity(item['path']) == {k: item[k] for k in ('path', 'inode', 'parent')},
+                 'work cleanup ownership mismatch; nothing was removed')
+
+    def clean_work(self):
+        """Stage and delete only prepare-owned TMP/RUN, with resumable evidence.
+
+        Once staged, the source pathname must stay absent. Thus a replacement
+        after deletion is refused even if the filesystem reuses an inode.
+        rm keeps the shell's one-filesystem rule and receives only an anchored
+        parent descriptor, never the lifecycle lock.
+        """
+        row = self.clean_pending()
+        need(row is not None and row['phase'] in ('staged', 'deleting'), 'cleanup was not staged')
+        for parent, src, dst, expected in self._clean_paths(row):
+            need(not os.path.lexists(parent + '/' + src), 'unexpected replacement during cleanup')
+            tomb = parent + '/' + dst
+            if os.path.lexists(tomb):
+                need(expected is not None and self._dir_identity(tomb) == expected,
+                     'cleanup tombstone ownership mismatch')
+        # Validate every remaining source before deleting either directory.
+        for item in row['work'].values():
+            if item is not None:
+                tomb = self._work_tomb(item, row['identity'])
+                if os.path.lexists(tomb):
+                    need(item['phase'] != 'removed' and not os.path.lexists(item['path']),
+                         'unexpected work cleanup tombstone or replacement')
+                    observed = self._work_identity(tomb)
+                    need(observed['inode'] == item['inode'] and observed['parent'] == item['parent'],
+                         'work cleanup tombstone ownership mismatch')
+                if item['phase'] == 'source':
+                    self._check_work(item)
+                else:
+                    need(not os.path.lexists(item['path']), 'unexpected replacement during work cleanup')
+        for key in ('tmp', 'run'):
+            item = row['work'][key]
+            if item is None:
+                continue
+            source = item['path']
+            tomb = self._work_tomb(item, row['identity'])
+            if item['phase'] == 'removed':
+                need(not os.path.lexists(tomb), 'unexpected work cleanup tombstone')
+                continue
+            parent = directory(os.path.dirname(source), private_leaf=False)
+            try:
+                st = os.fstat(parent)
+                need([st.st_dev, st.st_ino] == item['parent'], 'work cleanup parent ownership mismatch')
+                if item['phase'] == 'source' and os.path.lexists(source):
+                    need(not os.path.lexists(tomb), 'unexpected work cleanup tombstone')
+                    self._check_work(item)
+                    os.rename(os.path.basename(source), os.path.basename(tomb), src_dir_fd=parent, dst_dir_fd=parent)
+                    sync_dir(parent, 'work cleanup rename')
+                need(not os.path.lexists(source), 'unexpected replacement during work cleanup')
+                if os.path.lexists(tomb):
+                    need(self._dir_identity(tomb) == item['inode'], 'work cleanup tombstone ownership mismatch')
+                item['phase'] = 'staged'
+                self._clean_commit(row)
+                if os.path.lexists(tomb):
+                    subprocess.run(['rm', '-rf', '--one-file-system', '--',
+                                    '/proc/self/fd/%d/%s' % (parent, os.path.basename(tomb))],
+                                   env={'PATH': clean_path()}, close_fds=True, pass_fds=(parent,), check=True)
+                    need(not os.path.lexists(tomb), 'work cleanup incomplete; retained mounted filesystem')
+                    sync_dir(parent, 'work cleanup deletion')
+                item['phase'] = 'removed'
+                self._clean_commit(row)
+            finally:
+                os.close(parent)
 
 
 def ready(store, *, closed=False):
@@ -1184,9 +1333,11 @@ def main(argv=None):
             if d is not None and d["outcome"] != "ok":
                 print("NOTE structural validation of unsuccessful-attempt output is not acceptance", file=sys.stderr)
             result = True
+        elif cmd in ("clean-check", "clean-check-discard"):
+            result = store.clean_check(discard=cmd == "clean-check-discard")
         elif cmd in ("clean-begin", "clean-discard"):
             result = store.clean_begin(discard=cmd == "clean-discard")
-        elif cmd in ("clean-pending", "clean-stage", "clean-finish"):
+        elif cmd in ("clean-pending", "clean-stage", "clean-work", "clean-finish"):
             result = getattr(store, cmd.replace("-", "_"))()
         elif cmd == "saved-copy":
             try:
@@ -1213,7 +1364,7 @@ def main(argv=None):
             result = save_product(store, **args) if cmd == "save-product" else getattr(store, cmd.replace("-", "_"))(**args)
         print(json.dumps(result, sort_keys=True))
         return 0
-    except (Refuse, OSError, TypeError, ValueError, RecursionError) as e:
+    except (Refuse, OSError, TypeError, ValueError, RecursionError, subprocess.CalledProcessError) as e:
         print("qargi: lifecycle: %s" % e, file=sys.stderr)
         return 1
 

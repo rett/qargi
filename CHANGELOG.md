@@ -7,6 +7,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
+- Clean authorizes retained evidence before deleting TMP or RUN. Prepare records private directory identities; interrupted cleanup stages owned tombstones and refuses replaced paths, including a reused TMP pathname after deletion. Missing ownership evidence requires manual recovery.
 - Process-group completion requires a kernel absence report. A changing process listing or zombie-only sample cannot authorize retry or cleanup; runner diagnostics identify busy or unknown groups without claiming live survivors.
 - A full verification history refuses before publishing a new snapshot; identical observations still consume no history.
 - Lifecycle safety guidance is generated from the canonical help source, keeping the manual and command help consistent.
@@ -27,7 +28,6 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.2.13] - 2026-11-12
 
 ### Changed
-- Process-group completion requires a kernel absence report. A changing process listing or zombie-only sample cannot authorize retry or cleanup; runner diagnostics identify busy or unknown groups without claiming live survivors.
 - Member tasks can reuse lead-supplied passing baseline evidence for the exact BASE_SHA when relevant input and check definitions match, recording its reference, SHA and provenance in `deviations[]` rather than claiming a run or gates pass. They run focused checks and applicable gates for each change, then DONE on final HEAD after all outcomes and again after later changes; profile gates and the lead's whole-suite checkpoint remain in force.
 - `qargi feature park` and automatic parking follow allow nonconflicting untracked runtime files while refusing tracked changes, parking-branch commits absent from develop, and collisions with untracked or ignored files. A failed automatic follow leaves the parking branch behind without undoing a successful integration.
 - Installation examples distinguish user and project choices, and the memory tiers example aligns its columns.
@@ -66,7 +66,6 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `qargi local run` notes a change a member made to what git in its clone would run. A member that can write the clone's `.git` (the write class of `codex` adds it as a writable directory) can set a hook, `core.fsmonitor`, an alias or a filter driver there, which runs as you when you run git in that clone. For every run whose argv grants the clone's `.git`, and every run whose class gets no sandbox arguments from its runtime, the lead reads `.git/config`, `.git/hooks/` and `.git/info/` before the member starts (without following a link or running git there) and compares them when it ends: a configuration key added, changed or removed, other than what `git branch` sets (`branch.NAME.remote`, `merge`, `rebase`, `description`), and an entry of `hooks/` or `info/` added, removed or changed, are named in a `GITDIR=changed:` line and recorded in `git_dir` of `RUN/dispatch.json` (`watched`: `granted` or `unsandboxed`, and `changed`), by key and entry name, never a value. Nothing is restored. The line, the `WORKTREE=uncommitted` refusal and the `qargi local verify` message for a run that did not collect now say never to run git in a write member's clone: take the work from the patches in OUT, copy files out, or make a clean copy first with `git clone --no-local`, as git(1) advises under SECURITY. They said to take the change or the commits from the clone yourself.
 
 ### Changed
-- Process-group completion requires a kernel absence report. A changing process listing or zombie-only sample cannot authorize retry or cleanup; runner diagnostics identify busy or unknown groups without claiming live survivors.
 - `qargi provider notes skills-dir` for `codex` names `~/.agents/skills` beside `~/.codex/skills` and the install that links qargi's skills there, and says a member run loads only the skills its repository commits, where it said a member ignores the user's configuration. The documentation no longer says that a run's `config.toml` is the one configuration file a Codex member reads, or that an agent is given no way to push: the pages state what holds instead (a git without credentials, a remote with its push URL disabled, no network for a sandboxed member's commands, and `qargi local verify` comparing the real repository's refs).
 - The README says what qargi supports of an agent and a push (a git without credentials and a clone whose only remote is a copy with its push URL disabled, so an ordinary push has nothing to reach or authenticate with, and a check that the real repository's refs did not move), where it said an agent is given no way to push. Its quick start, and the members page, say that a project on `codex` has no `qargi agent add` and runs each task with `qargi local prepare` and `qargi local run`.
 - `qargi help local` and the manual page call a local run one whose git has no credentials (`Prepare, verify, close, list and clean a local run, its git without credentials`), where they said it has no way to push.
@@ -114,7 +113,6 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The answer `release.finish_check`, a command line or a command as a list of words (`{version}` replaced, `QARGI_RELEASE_VERSION` set): `qargi release finish` runs it in a copy of the branch once its plan is approved and before any merge, tag or push, and a non-zero exit refuses with the tail of its output and nothing moved. The finish plan and the `release plan` cut plan list it. Off unless set; a member may not set it (`project set` refuses every `release.*` answer).
 
 ### Changed
-- Process-group completion requires a kernel absence report. A changing process listing or zombie-only sample cannot authorize retry or cleanup; runner diagnostics identify busy or unknown groups without claiming live survivors.
 - With workflows and no gate declared, the CI scan of `qargi release verify` prints one note naming all the jobs (`no gate is declared, so the CI jobs are not compared with gate names (jobs: ...)`) instead of a warning for each job. `--strict` still refuses, its message saying that no gate is declared.
 - `qargi help feature verify` names the exact lines a gate or test command may print for the failure report that ends a failed `feature verify` or `release verify`: `^FAILED: ` for a failing step, `^FAIL( |:)` and now `^--- FAIL: ` (a Go test run's line) for a failing test, and `^logs of the failed steps: ` for where the runner kept its logs. Before, a gate that printed `--- FAIL: TestX` was reported as having no failing test name.
 - The refusal of a restricted environment variable under the read-only class (`PATH`, `TMPDIR`, `HOME`, `GIT_*`, `LD_*`, `PAGER`, `BASH_ENV` ...) says what it is for: a read-only member may not assign the name (inline, with `env`, `export` or `declare`) and runs with the one it was given; a build, vet or test command with that environment is not refused. It read "TMPDIR is not set", which read as if the variable were missing from the environment of a command that only uses it. The rule is the same; only the wording changed.
@@ -192,7 +190,6 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `docs/development/architecture.md`: where each kind of record lives (configuration and state), the layers of the code, the life of a local run, what the guard advises and what the checks verify, and which parts are data and which are per platform. `docs/development/README.md` says in a sentence what each of its links is for.
 
 ### Changed
-- Process-group completion requires a kernel absence report. A changing process listing or zombie-only sample cannot authorize retry or cleanup; runner diagnostics identify busy or unknown groups without claiming live survivors.
 - `qargi __guard`, the hook command a member runs before every tool call, loads `lib/guard.py` as an imported module instead of running it as a script, so python reuses its compiled form (a script is compiled on every run: the 235 KB guard took more than half of each call). A harmless `ls` call takes a median of 48 ms instead of 105 ms, a `Write` call 60 ms instead of 118 ms (20 runs, minimal environment). The exit status, standard output and standard error, the options and the refusal messages are unchanged. `install.sh --user` compiles the tool's `lib/` as you (`compileall`), and `qargi upgrade` compiles the root-owned checkout through `QARGI_SUDO` before it relinks; nothing is written outside the tool's own `__pycache__` directories. A tool you cannot write to and that nobody compiled (a first `sudo git clone` install) works as before, only slower: `install.sh --user` says so and prints the one command that compiles it.
 - `tests/startup-budget.txt` has a ceiling for `qargi __guard` (120 ms, the median of 20 runs on a harmless call in a compiled tool, about twice the 48-60 ms measured), and unlike the `role list` ceiling, which only warns, it fails: a line marked `enforced` fails the test when the median is over its ceiling in three measurements in a row, so a loaded machine does not.
 - `paths.installed_tool_root()` (asked dozens of times in one guarded call) reads `install.json` again only when the file changed (inode, size, modification and change time), not on every call; what it returns is unchanged, and a record that is rewritten, replaced or removed, or a configuration directory that moves, is seen at once. 28 calls take 0.4 ms instead of 1.2 ms.
@@ -242,7 +239,6 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `qargi release step` tells a failed write of the step record in plain words instead of printing raw `jq` text: when another command marked the step first, it says so and to run again with `--again`; otherwise it says the record cannot be written and to check that it and its directory can be written and that the record is valid JSON (commands that write the record wait for each other, so another command is not named as the cause). The exit status is unchanged.
 
 ### Changed
-- Process-group completion requires a kernel absence report. A changing process listing or zombie-only sample cannot authorize retry or cleanup; runner diagnostics identify busy or unknown groups without claiming live survivors.
 - `qargi project attach` and `qargi project show` name the declared `gates` where they showed only the test command: attach lists them (tier, name, command, feature tier first) after the `test command:` line of a stored project and says they replace it; `project show` keeps the answers as JSON on standard output and prints the same list on standard error. Without gates nothing changes.
 - `qargi marshal handoff` lists the declared gates in a `== gates` section after the features (tier, name, command; they replace `test_command`), and `--json` carries them as `gates` (an empty list without gates). Without gates the note is as before. `qargi help` and the manual page describe this output, that of `project show` and `project attach` above, and the `--param gates=JSON` of `project new`.
 - The gitflow scaffold (`qargi methodology files`, and the files `qargi project adopt` writes) renders the declared gates where it rendered only `{{test_command}}`: `README.md`, `AGENTS.md`, `CLAUDE.md` and `CONTRIBUTING.md` list them (name, tier, command) and `.github/workflows/test.yml` has one job for each gate, named after it (the name is a YAML single-quoted scalar, so the scan reads any name back; a feature-tier gate's job runs on every pull request, a release-tier gate's job only on a pull request from a `release/` or `hotfix/` branch or when started by hand; the jobs run in parallel while `verify` runs the gates in order, and `CONTRIBUTING.md` says so), so the CI scan of `release verify` finds every job matched. The markdown files write a name and a command as inline code in a fence of backticks longer than any run in them (`{{gate_name_code}}`, `{{gate_command_code}}`), so a backtick in a gate does not end the span. The new optional methodology parameter `gates` (one line of JSON) carries them; a template marks its parts with `{{#gates}}`, `{{^gates}}` and a `{{#gate}}` loop, each alone on its line. `qargi project new` with `--url` and `--param gates=JSON` stores the same gates in the project's answers, so the files, `feature verify` and the CI scan agree (without `--url` nothing is stored, as for every answer). A gate name or command, and any methodology parameter, may not hold a character that ends a line (U+2028, U+2029, U+0085, a vertical tab and the like, besides a newline), which would break the YAML and the markdown list. Without gates the files are byte for byte what they were.
@@ -279,7 +275,6 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   related (master merges two histories): finish refuses with a line about the branch and develop only, without the advice for an unrelated develop and master.
 
 ### Changed
-- Process-group completion requires a kernel absence report. A changing process listing or zombie-only sample cannot authorize retry or cleanup; runner diagnostics identify busy or unknown groups without claiming live survivors.
 - `docs/flow/git-flow.md` says that `qargi review apply` runs the take-in scrub too, unless a passing `review check` recorded the same series (then it prints
   `scrub: skipped (review check passed it for this series)`), and names `qargi local clean --orphans` beside the other `local clean` forms.
 
@@ -368,7 +363,6 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   just before it goes, and logs the removal. The existing `--stale DAYS --scratch DIR` (finished runs) is unchanged.
 
 ### Changed
-- Process-group completion requires a kernel absence report. A changing process listing or zombie-only sample cannot authorize retry or cleanup; runner diagnostics identify busy or unknown groups without claiming live survivors.
 - `qargi project adopt` names the next step when two long-lived branches share no history (a master made as a snapshot, say), not only the problem: the first release
   joins them (`qargi release start VERSION`, then `release push VERSION`, whose plan joins the history of the first branch into the release branch, then `release finish
   VERSION`), or one merge by hand (`git switch develop && git merge -s ours --allow-unrelated-histories master`, which keeps develop's tree). Adopt still changes no branch.
@@ -487,7 +481,6 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   no valid pattern is checked as before, in the strict phase too. The built-in rule for the harness's `worktree-bridge-*` branches stays.
 
 ### Changed
-- Process-group completion requires a kernel absence report. A changing process listing or zombie-only sample cannot authorize retry or cleanup; runner diagnostics identify busy or unknown groups without claiming live survivors.
 - When the window of `lead usage` is only assumed and the tokens in use exceed it, the real window is larger, so no percentage is printed as fact: the text,
   the `lead compact-check --advise` advice and the stage-verb line say `tokens exceed the assumed window 200,000; set lead.context_window`. `lead usage --json`
   keeps `percent` and adds `window_exceeded` (`true` only in that case; `false` otherwise). The `(window assumed N; ...)` label is unchanged for the rest.
@@ -598,7 +591,6 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   can show them. qargi never runs them.
 
 ### Changed
-- Process-group completion requires a kernel absence report. A changing process listing or zombie-only sample cannot authorize retry or cleanup; runner diagnostics identify busy or unknown groups without claiming live survivors.
 - `qargi feature finish` is refused first (exit 1, nothing changed) while a run prepared against the feature is open, with each open run listed and the way to
   close it (`local clean`, or `local close --applied-by-am`). A run that was cleaned, discarded, closed, or applied and merged does not block.
 - The member text says that DONE of a write role requires `ls OUT/patches`.
@@ -933,7 +925,6 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   at a page or heading) and refuses an inline script.
 
 ### Changed
-- Process-group completion requires a kernel absence report. A changing process listing or zombie-only sample cannot authorize retry or cleanup; runner diagnostics identify busy or unknown groups without claiming live survivors.
 - The CI workflow `.github/workflows/test.yml` (no scheduled run): a pull request into a branch other than master runs the fast
   tier and the steps its changed files cover, or the whole suite when it carries the label `full-suite`; a push to develop, a pull
   request into master (the release pull request) and a manual run run the whole suite in four shards, balanced by
@@ -1547,7 +1538,6 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `lib/paths.py` and the top of `lib/lib.sh` are the one place each language resolves these locations; the nine copies of the XDG logic are gone.
 
 ### Changed
-- Process-group completion requires a kernel absence report. A changing process listing or zombie-only sample cannot authorize retry or cleanup; runner diagnostics identify busy or unknown groups without claiming live survivors.
 - The plan token of `packs apply --target claude-code` also covers file modes, the manifest records them, and the swap installs
   only the tree the token approved.
 - `qargi local verify` and `qargi local clean` accept the lead's own work. After a passing verify the run records `RUN/verified`,

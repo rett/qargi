@@ -273,7 +273,11 @@ print('fixture transcript')
         reg.write_text(json.dumps(row) + "\n")
         self.assertIn("legacy run", self.cmd("local", "verify", self.run))
         self.assertIn("legacy run", self.cmd("local", "run", self.run, ok=False))
-        self.cmd("local", "clean", self.run, "--discard")
+        before = self.bytes_tree(self.run)
+        tmp = Path((self.run / 'tmpdir').read_text().strip())
+        self.assertIn('ownership unavailable', self.cmd('local', 'clean', self.run, '--discard', ok=False))
+        self.assertEqual(before, self.bytes_tree(self.run))
+        self.assertTrue(tmp.is_dir())
 
     def test_external_read_only_report_without_dispatch(self):
         self.prepare("review")
@@ -342,6 +346,31 @@ print('fixture transcript')
         for fd in (7, 8):
             with self.assertRaises(OSError):
                 os.fstat(fd)
+
+    def test_runtime_failure_timeout_and_unknown_probe_cannot_complete_ok(self):
+        for mode in ('failure', 'timeout', 'unknown-probe'):
+            with self.subTest(mode=mode):
+                self.prepare()
+                code = {'failure': 'raise SystemExit(7)',
+                        'timeout': 'import time; time.sleep(30)',
+                        'unknown-probe': 'pass'}[mode]
+                self.fake.write_text('#!/usr/bin/env python3\n' + code + '\n')
+                with mock.patch.object(R, 'main', R.main), mock.patch.object(R, 'run_it', R.run_it):
+                    wire(R)
+                    probe = (mock.patch.object(R, 'group_left', side_effect=PermissionError('unknown group'))
+                             if mode == 'unknown-probe' else contextlib.nullcontext())
+                    with probe:
+                        rc = R.main([str(self.run), '--project', 'demo', '--runtime', 'codex',
+                                     '--class', 'write', '--timeout', '1'])
+                self.assertNotEqual(rc, 0)
+                dispatch = json.loads((self.run / 'dispatch.json').read_text())
+                self.assertEqual(dispatch['timed_out'], mode == 'timeout')
+                self.assertEqual(dispatch['outcome'], 'refused' if mode == 'unknown-probe' else 'failed')
+                if mode == 'unknown-probe':
+                    self.assertIsNone(dispatch['group_left'])
+                self.assertEqual(self.state_json()['attempts'][-1]['dispatch']['outcome'], 'failed')
+                self.assertIsNone(self.state_json()['attempts'][-1]['verified'])
+                self.assertFalse(R.group_left(dispatch['member']))
 
     def collect(self):
         clone = self.run / "clone"
@@ -646,6 +675,8 @@ A.save_product(s, Path(s.path + '/prepared.refs').read_bytes())
         for boundary in ("intent", "saved-rename", "staged", "registry", "marker-removed", "state-removed"):
             with self.subTest(boundary=boundary):
                 self.prepare()
+                tmp = Path((self.run / 'tmpdir').read_text().strip())
+                (tmp / 'evidence').write_text('temporary evidence')
                 (self.run / "out/report.md").write_text("retained product")
                 self.verify()
                 with self.locked():
@@ -686,11 +717,147 @@ A.save_product(s, Path(s.path + '/prepared.refs').read_bytes())
                             self.store.clean_finish()
                 self.assertIn("finished interrupted cleanup", self.cmd("local", "clean", self.run))
                 self.assertFalse(self.run.exists())
+                self.assertFalse(tmp.exists())
                 self.assertFalse(self.saved.exists())
                 self.assertFalse(Path(self.store.path).exists())
                 self.assertFalse(Path(self.store.path + ".clean").exists())
                 self.assertFalse((Path(self.store.area) / self.store.clean_name).exists())
                 self.assertIn("cleaned already", self.cmd("local", "clean", self.run))
+
+    def test_refused_clean_preserves_tmp_run_and_retained_review_generation(self):
+        self.prepare('review')
+        self.cmd('review', 'save', self.run, input='# Findings\nNo findings.\nverdict: accept\n')
+        self.verify()
+        with self.locked():
+            refs = (Path(self.store.path) / 'prepared.refs').read_bytes()
+            pending = self.store.gate_pending(refs, epoch=int(time.time()))
+            original = A.Store.begin
+            def begin(store, *args):
+                result = original(store, *args)
+                os.kill(os.getpid(), signal.SIGTERM)
+                return result
+            with mock.patch.object(A.Store, 'begin', begin), mock.patch.object(R, 'run_started') as started:
+                rc = R.run_it({'final': None, 'package': None}, str(self.run),
+                              {'pending': pending, 'refs': refs.decode()})
+        self.assertEqual(rc, 128 + signal.SIGTERM)
+        started.assert_not_called()
+        self.assertEqual(self.state_json()['attempts'][-1]['dispatch']['outcome'], 'not-started')
+        tmp = Path((self.run / 'tmpdir').read_text().strip())
+        (tmp / 'wanted-evidence').write_text('keep')
+        self.assertTrue((Path(self.store.path) / 'a1.saved.1/out').is_dir())
+        snapshot = lambda: [self.bytes_tree(p) for p in (tmp, self.run, Path(self.store.path))]
+        kept = snapshot()
+        self.assertIn('explicit discard', self.cmd('local', 'clean', self.run, ok=False))
+        self.assertEqual(kept, snapshot())
+        self.assertEqual((tmp / 'wanted-evidence').read_text(), 'keep')
+        self.assertFalse((Path(self.store.area) / self.store.clean_name).exists())
+        self.cmd('local', 'clean', self.run, '--discard')
+        self.assertFalse(tmp.exists())
+        self.assertFalse(self.run.exists())
+
+    def test_interrupted_clean_uses_owned_tmp_never_member_named_directory(self):
+        self.prepare()
+        tmp = Path((self.run / 'tmpdir').read_text().strip())
+        decoy = self.root / 'qargi-run.Decoy1'
+        decoy.mkdir(mode=0o700)
+        (decoy / 'keep').write_text('another run')
+        (self.run / 'tmpdir').write_text(str(decoy) + '\n')
+        with self.locked():
+            self.store.clean_begin(discard=True)
+            self.store.clean_stage()
+        self.assertIn('finished interrupted cleanup', self.cmd('local', 'clean', self.run))
+        self.assertFalse(tmp.exists())
+        self.assertFalse(self.run.exists())
+        self.assertEqual((decoy / 'keep').read_text(), 'another run')
+
+    def test_cleanup_refuses_replaced_tmp_before_authorization_and_after_deletion(self):
+        for boundary in ('before-intent', 'after-intent', 'after-tmp-deletion'):
+            with self.subTest(boundary=boundary):
+                self.prepare('review')
+                self.cmd('review', 'save', self.run, input='# Findings\nNo findings.\nverdict: accept\n')
+                self.verify()
+                tmp = Path((self.run / 'tmpdir').read_text().strip())
+                if boundary != 'before-intent':
+                    with self.locked():
+                        self.store.clean_begin(discard=True)
+                        self.store.clean_stage()
+                        if boundary == 'after-tmp-deletion':
+                            remove = A.subprocess.run
+                            def interrupted_remove(*args, **kwargs):
+                                result = remove(*args, **kwargs)
+                                raise OSError('interrupted after TMP deletion')
+                            with mock.patch.object(A.subprocess, 'run', side_effect=interrupted_remove):
+                                with self.assertRaisesRegex(OSError, 'after TMP deletion'):
+                                    self.store.clean_work()
+                            self.assertFalse(tmp.exists())
+                if tmp.exists():
+                    tmp.rename(tmp.with_name(tmp.name + '.kept'))
+                tmp.mkdir(mode=0o700)
+                (tmp / 'replacement').write_text('must not delete')
+                snapshot = lambda: [self.bytes_tree(p) for p in (tmp, self.run, self.state / 'attempts', self.state / 'runs')]
+                kept = snapshot()
+                self.cmd('local', 'clean', self.run, '--discard', ok=False)
+                self.assertEqual(kept, snapshot())
+                self.assertTrue(self.run.exists())
+
+    def test_missing_run_cleanup_requires_prepared_tmp_ownership(self):
+        for ownership in ('known', 'missing', 'replaced', 'registry-decoy'):
+            with self.subTest(ownership=ownership):
+                self.prepare()
+                tmp = Path((self.run / 'tmpdir').read_text().strip())
+                (tmp / 'keep').write_text('diagnostic')
+                if ownership == 'missing':
+                    (Path(self.store.path) / 'work.json').unlink()
+                elif ownership == 'replaced':
+                    tmp.rename(tmp.with_name(tmp.name + '.kept'))
+                    tmp.mkdir(mode=0o700)
+                    (tmp / 'keep').write_text('replacement')
+                elif ownership == 'registry-decoy':
+                    registry = self.state / 'local-runs.jsonl'
+                    rows = [json.loads(line) for line in registry.read_text().splitlines()]
+                    decoy = self.root / 'qargi-run.Decoy2'
+                    decoy.mkdir(mode=0o700)
+                    (decoy / 'keep').write_text('another run')
+                    rows[-1]['tmpdir'] = str(decoy)
+                    registry.write_text(''.join(json.dumps(row) + '\n' for row in rows))
+                shutil.rmtree(self.run)
+                self.cmd('local', 'clean', self.run, '--discard', ok=ownership == 'known')
+                if ownership == 'known':
+                    self.assertFalse(tmp.exists())
+                else:
+                    self.assertTrue((tmp / 'keep').exists())
+                    self.assertTrue(self.record.exists())
+                if ownership == 'registry-decoy':
+                    self.assertEqual((decoy / 'keep').read_text(), 'another run')
+
+    def test_clean_refuses_replaced_run_before_removing_tmp(self):
+        self.prepare()
+        tmp = Path((self.run / 'tmpdir').read_text().strip())
+        (tmp / 'keep').write_text('diagnostic')
+        saved = self.run.with_name(self.run.name + '.kept')
+        self.run.rename(saved)
+        shutil.copytree(saved, self.run)
+        before = self.bytes_tree(self.run)
+        self.assertIn('ownership mismatch', self.cmd('local', 'clean', self.run, '--discard', ok=False))
+        self.assertEqual(before, self.bytes_tree(self.run))
+        self.assertEqual((tmp / 'keep').read_text(), 'diagnostic')
+
+    def test_clean_internal_tmp_and_legacy_ownership_refusal(self):
+        self.env['QARGI_RUN_TMP'] = str(self.root / 'unavailable')
+        self.prepare()
+        tmp = Path((self.run / 'tmpdir').read_text().strip())
+        self.assertEqual(tmp, self.run / 'tmp')
+        (tmp / 'keep').write_text('diagnostic')
+        registry = self.state / 'local-runs.jsonl'
+        original = registry.read_text()
+        row = json.loads(original)
+        del row['lifecycle']
+        registry.write_text(json.dumps(row) + '\n')
+        self.assertIn('ownership unavailable', self.cmd('local', 'clean', self.run, '--discard', ok=False))
+        self.assertEqual((tmp / 'keep').read_text(), 'diagnostic')
+        registry.write_text(original)
+        self.cmd('local', 'clean', self.run, '--discard')
+        self.assertFalse(self.run.exists())
 
     def test_retry_epoch_precedes_slow_remote_snapshot(self):
         remote = self.root / "remote.git"

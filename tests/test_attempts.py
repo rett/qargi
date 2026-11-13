@@ -30,7 +30,7 @@ class Attempts(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.state = self.root / "state"
         self.run = self.root / "qargi.Abc123"
-        self.run.mkdir()
+        self.run.mkdir(mode=0o700)
         self.env = mock.patch.dict(os.environ, QARGI_STATE=str(self.state),
                                    QARGI_CONF=str(self.root / "conf"), DA_NOSETUP="1")
         self.env.start()
@@ -214,6 +214,49 @@ class Attempts(unittest.TestCase):
             with self.assertRaisesRegex(A.Refuse, "ownership mismatch"):
                 self.store.clean_finish()
             self.assertTrue(tomb.exists())
+
+    def test_cleanup_ownership_refuses_links_permissions_and_missing_evidence(self):
+        with self.locked():
+            self.prepare()
+            (self.run / 'evidence').write_text('keep')
+            self.run.chmod(0o755)
+            with self.assertRaisesRegex(A.Refuse, 'private permissions'):
+                self.store.clean_begin(discard=True)
+            self.run.chmod(0o700)
+            kept = self.run.with_name('kept')
+            self.run.rename(kept)
+            self.run.symlink_to(kept, target_is_directory=True)
+            with self.assertRaisesRegex(A.Refuse, 'without symlinks'):
+                self.store.clean_begin(discard=True)
+            self.run.unlink()
+            kept.rename(self.run)
+            (Path(self.store.path) / 'work.json').unlink()
+            with self.assertRaisesRegex(A.Refuse, 'ownership unavailable'):
+                self.store.clean_begin(discard=True)
+            self.assertEqual((self.run / 'evidence').read_text(), 'keep')
+            self.assertIsNone(self.store.clean_pending())
+
+    def test_cleanup_keeps_incomplete_one_filesystem_tombstone(self):
+        with self.locked():
+            self.prepare()
+            self.store.clean_begin(discard=True)
+            self.store.clean_stage()
+            with mock.patch.object(A.subprocess, 'run') as remove:
+                with self.assertRaisesRegex(A.Refuse, 'retained mounted filesystem'):
+                    self.store.clean_work()
+            argv = remove.call_args.args[0]
+            self.assertIn('--one-file-system', argv)
+            self.assertNotIn(7, remove.call_args.kwargs['pass_fds'])
+            self.assertTrue(remove.call_args.kwargs['close_fds'])
+            row = self.store.clean_pending()
+            self.assertEqual(row['work']['run']['phase'], 'staged')
+            tomb = Path(self.store._work_tomb(row['work']['run'], row['identity']))
+            tomb.rename(tomb.with_name(tomb.name + '.kept'))
+            tomb.mkdir(mode=0o700)
+            (tomb / 'evidence').write_text('replacement')
+            with self.assertRaisesRegex(A.Refuse, 'tombstone ownership mismatch'):
+                self.store.clean_work()
+            self.assertEqual((tomb / 'evidence').read_text(), 'replacement')
 
     def test_init_and_retry_preserve_prepared_authority(self):
         with self.locked():
@@ -910,6 +953,7 @@ if sys.argv[3] == 'member':
             self.assertNotEqual(r.returncode, 0)
             self.assertIn("busy", r.stderr)
             (self.state / "local-runs.jsonl").unlink()
+            self.run.mkdir(mode=0o700)
             self.prepare()
             self.assertEqual(Path(self.store.lock_path).stat().st_ino, inode)
 

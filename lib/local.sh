@@ -757,7 +757,7 @@ case $verb in
     [ -z "$ADDENDA" ] || printf '%s\n' "$ADDENDA" > "$RUN/contract/runtime-addenda.md"
     # a private temporary directory for the run's test sandboxes (SHM above); `clean` removes it, so a run leaves nothing behind in /dev/shm and
     # parallel runs never touch each other's files
-    if [ -d "$SHM" ] && [ -w "$SHM" ]; then TMPD=$(mktemp -d "$SHM/qargi-run.XXXXXX"); else TMPD=$RUN/tmp; mkdir -p "$TMPD"; fi
+    if [ -d "$SHM" ] && [ -w "$SHM" ]; then TMPD=$(mktemp -d "$SHM/qargi-run.XXXXXX"); else TMPD=$RUN/tmp; mkdir -m 700 "$TMPD"; fi
     printf '%s\n' "$TMPD" > "$RUN/tmpdir"
     printf '%s\n' "$ROLE" > "$RUN/ability"
     printf '%s\n' "$CLASS" > "$RUN/class"
@@ -801,8 +801,8 @@ exec env -i HOME="$RUN/home" PATH="\$PATH" LANG=C.UTF-8 TERM=dumb \\
 WRAP
     chmod 755 "$RUN/git"
     lc_lock "$RUN" || die "cannot lock prepared run"
-    jq -nc --rawfile refs "$RUN/refs.before" --argjson epoch "$(cat "$RUN/started")" --arg base "$BASE" --arg base_sha "$BSHA" \
-      '{refs:$refs,epoch:$epoch,base:$base,base_sha:$base_sha}' | lc init "$RUN" >/dev/null || die "cannot initialize prepared authority"
+    jq -nc --rawfile refs "$RUN/refs.before" --argjson epoch "$(cat "$RUN/started")" --arg base "$BASE" --arg base_sha "$BSHA" --arg tmpdir "$TMPD" \
+      '{refs:$refs,epoch:$epoch,base:$base,base_sha:$base_sha,tmpdir:$tmpdir}' | lc init "$RUN" >/dev/null || die "cannot initialize prepared authority"
     jq -nc --arg r "$RUN" --arg s "$SLUG" --arg a "$ROLE" --arg b "$BASE" --arg t "$(now)" --arg l "$LEAD" --arg p "$PROFILE" --arg d "$TMPD" --arg rp "$REPO" --arg ru "$URL" --arg rc "$CRED" --arg pj "$CPJ" --argjson ans "$ANS" --arg cl "$CLASS" \
       '{lifecycle:1, run:$r, slug:$s, ability:$a, profile:$p, base:$b, started:$t, lead:(if $l == "" then null else $l end), tmpdir:$d, class:$cl, project:$pj, answers:$ans}
        + (if $ru == "" then {repo:$rp} else {url:$ru} + (if $rc == "" then {} else {cred:$rc} end) end)' | ( umask 077; flock 9 && cat >> "$DA_STATE/local-runs.jsonl" ) 9> "$DA_STATE/local-runs.jsonl.lock"
@@ -1084,11 +1084,12 @@ WRAP
     while [ "${RUN%/}" != "$RUN" ] && [ "$RUN" != / ]; do RUN=${RUN%/}; done   # a trailing slash makes rm -rf follow a link
     RUN=$(readlink -m -- "$RUN")
     lc_ready "$RUN" ready-clean || exit 3
+    [ "$LC_SCHEMA" = true ] || die "cleanup ownership unavailable; preserve RUN and TMP for manual recovery"
     if [ "$LC_SCHEMA" = true ]; then
       pending_clean=$(lc clean-pending "$RUN") || exit 3
       if [ "$pending_clean" != null ]; then
         lc clean-stage "$RUN" >/dev/null || exit 3
-        rm -rf --one-file-system -- "$RUN"
+        lc clean-work "$RUN" >/dev/null || exit 3
         scrub_ok_drop "$RUN"
         apply_state_drop "$RUN"
         reg_edit "$RUN" cleaned || die "could not commit cleanup in the registry"
@@ -1097,8 +1098,11 @@ WRAP
         exit 0
       fi
       if [ -n "$(reg_get "$RUN" cleaned)" ]; then echo "$RUN was cleaned already"; exit 0; fi
+      # Ref observation writes display files into RUN; authorize ownership and
+      # retained evidence first, then recheck when committing cleanup intent.
+      clean_check=clean-check; [ -z "$DISCARD" ] || clean_check=clean-check-discard
+      lc "$clean_check" "$RUN" >/dev/null || exit 3
     fi
-    # Explicit discard recovers a known legacy record without granting it a class.
     reg_has "$RUN" || { echo "qargi: $RUN is not in the lead's registry; nothing was done" >&2; exit 3; }
     APPLIED_AUTH=''
     if [ "$LC_SCHEMA" = true ]; then APPLIED_AUTH=$(lc applied "$RUN") || exit 3; fi
@@ -1213,31 +1217,7 @@ WRAP
         fi
       fi
     fi
-    # the run's temporary directory is the one the lead's registry names for this run directory ($DA_STATE/local-runs.jsonl, written by prepare), else RUN/tmp:
-    # never the run's own tmpdir file, which a member can write and which could name another run's directory. It is removed only when it is where prepare puts
-    # one: RUN/tmp, or qargi-run.XXXXXX directly under /dev/shm (QARGI_RUN_TMP, when prepare was told to use another parent); a recorded path anywhere else is
-    # left alone. The recorded text is only a claim until checked: the trailing slashes are stripped (rm -rf on a link with one empties what the link leads
-    # to), a link is refused after that, the real path of the directory must be directly under the real path of that parent (no link in between), and what
-    # is removed is that real path, on its own file system.
-    t=$(reg_get "$RUN" tmpdir)
-    [ -n "$t" ] || t=$RUN/tmp
-    while [ "${t%/}" != "$t" ] && [ "$t" != / ]; do t=${t%/}; done
-    rt=''
-    if [ -n "$t" ] && [ ! -L "$t" ] && [ -d "$t" ]; then
-      name=$(basename -- "$t"); par=$(dirname -- "$t"); rp=$(realpath -- "$t" 2>/dev/null || true)
-      if [ -n "$rp" ] && [ "$(basename -- "$rp")" = "$name" ]; then
-        case $name in
-          qargi-run.??????)
-            for b in /dev/shm "${QARGI_RUN_TMP:-}"; do
-              while [ "${b%/}" != "$b" ] && [ "$b" != / ]; do b=${b%/}; done
-              [ -n "$b" ] && [ "$par" = "$b" ] && [ "$(dirname -- "$rp")" = "$(realpath -- "$b" 2>/dev/null)" ] && rt=$rp
-            done;;
-          tmp) [ "$(dirname -- "$rp")" = "$(realpath -- "$RUN")" ] && rt=$rp;;
-        esac
-      fi
-    fi
-    if [ -z "$rt" ] && [ -n "$t" ]; then echo "qargi: note: left $t alone: it is not a directory prepare makes under /dev/shm, QARGI_RUN_TMP or the run" >&2; fi
-    [ -z "$rt" ] || rm -rf --one-file-system -- "$rt"
+    rt=$(reg_get "$RUN" tmpdir)
     rrun=$(readlink -f -- "$RUN" 2>/dev/null) || rrun=$RUN   # the registry's name of the run, taken while the directory is there
     res=$(home_residue "$RUN")   # links a start of local run left in the run home: rm removes a link, never what it points to
     # what the clone holds that no commit has (new files never added, changes to tracked files), read the way local run reads it (nothing the member put
@@ -1247,7 +1227,7 @@ WRAP
       clean_verb=clean-begin; [ -z "$DISCARD" ] || clean_verb=clean-discard
       lc "$clean_verb" "$RUN" >/dev/null && lc clean-stage "$RUN" >/dev/null || exit 3
     fi
-    rm -rf --one-file-system -- "$RUN"
+    lc clean-work "$RUN" >/dev/null || exit 3
     [ "$wtt" != unknown ] || echo "qargi: warning: the removed clone's worktree state was unknown" >&2
     [ -z "$res" ] || echo "qargi: note: removed with the run what its run home held: $(paste -sd ';' - <<<"$res" | LC_ALL=C tr -d '\000-\037\177')" >&2
     if [[ ${wtu:-0} =~ ^[1-9][0-9]*$ ]] || [[ ${wtt:-0} =~ ^[1-9][0-9]*$ ]]; then

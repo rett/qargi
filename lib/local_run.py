@@ -1239,7 +1239,7 @@ def group_left(pgid):
 
 def kill_group(proc, grace=KILL_GRACE):
     """Stop the member's process group: TERM to the group, which is then watched (the group, not only the member: a descendant may ignore TERM
-    after the member has ended) until none of it is alive or grace seconds have passed; then KILL to what is left, watched the same way. The member
+    after the member has ended) until the kernel reports it absent or grace seconds have passed; then KILL to what is left, watched the same way. The member
     is reaped. Returns an observed count or a nonzero unknown-membership sentinel: 0 only when the kernel reports the group gone. A process that moved to a process group of
     its own is not in the group and is not reached."""
     pg = proc.pid
@@ -2150,7 +2150,7 @@ def run_started(plan, run, store, dispatch_state, sig):
     rec = dict(begun, seconds=seconds, exit=code, timed_out=timed_out, outcome=outcome, transcript=os.path.join(out, "transcript"))
     if outcome == "interrupted":
         rec["signal"] = signal.Signals(sig.sig).name
-    if left is not None:                                 # the member's process group was stopped: how many of its processes are still alive
+    if left is not None:                                 # observed count, or a nonzero sentinel for unknown membership
         rec["group_left"] = left
     if error:
         rec["error"] = error
