@@ -63,7 +63,7 @@ grep -q "returns the report as its final message, and the lead stores it with: q
 grep -q "refs: unchanged by the run" <<<"$out" && grep -q "clean RUN --discard" <<<"$out" && ok "it still compares the refs, says so next to the message, and keeps verify required" || no "uncollected refs line: $out"
 git -C "$A" branch stray-by-run develop
 out=$(verify "$R"); rc=$?
-[ $rc = 2 ] && grep -q "branch created, not an allowed branch: refs/heads/stray-by-run" <<<"$out" && grep -q "OUT is empty: the member did not collect" <<<"$out" && ok "a run that changed a ref and did not collect gets the ref verdict (exit 2) and the empty-OUT message" || no "uncollected and refs: rc=$rc $out"
+[ $rc = 2 ] && grep -q "branch created: refs/heads/stray-by-run" <<<"$out" && grep -q "OUT is empty: the member did not collect" <<<"$out" && ok "a run that changed a ref and did not collect gets the ref verdict (exit 2) and the empty-OUT message" || no "uncollected and refs: rc=$rc $out"
 [ ! -f "$R/verified" ] && ok "and still records nothing" || no "verified written for an uncollected run with a ref change"
 git -C "$A" branch -D stray-by-run >/dev/null
 collect "$R"
