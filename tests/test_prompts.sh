@@ -41,6 +41,8 @@ if python3 -I -c 'import json,sys; m=json.load(open("contract/manifest.example.j
 # P4: claims and cadence
 has $C 'Record each check in `log.txt`' && has $C 'Report only what you ran' && has $C '`not run` with the reason, never `pass`' && ok "the contract says to log each check, report only what was run, and that an unrun check is not run, never pass" || no "the contract's rule on recording and claiming checks"
 has $C 'commit it before starting the next' && has $C 'independently reviewable and buildable' && ok "the contract says to commit each checked change before the next" || no "the contract's commit-as-you-go rule"
+has $C 'supplied by the lead in TASK only' && has $C 'exact BASE_SHA and matching check and input definitions' && has $C 'reference, SHA and provenance in report deviations\[\]' && has $C 'never gates\[\] pass' && ok "baseline evidence is bound to the SHA and definitions and reported as context" || no "baseline evidence binding"
+has $C 'DONE verbatim on final HEAD' && has $C 'rerun it after any later change' && has $C 'Members do not run the whole suite' && has $C 'Repository or profile required whole-project lint' && ok "final DONE and lint authority are explicit" || no "final DONE or lint authority"
 
 # P5: one review vocabulary, in every text that describes a report
 F=contract/output-format.md
@@ -57,13 +59,13 @@ FL=skills/qargi-flow/SKILL.md
 has $FL 'qargi local prepare --role review --profile advisor' && has $FL 'full task block' && has $FL "--done 'qargi review check ../out'" && has $FL 'qargi review check OUT' && has $FL 'qargi local clean' && ok "the advisor sign-off prepares a review run, gives it a full task block, checks and closes it" || no "the advisor sign-off step of qargi-flow"
 ! has $FL 'spawn it on that file' && ok "the advisor is not spawned on a bare file" || no "qargi-flow still spawns the advisor on a file with no run"
 
-# P7: a local member has no reference store: the roles name it only under a MEMORY section; the six steps are the contract's, as a numbered list
+# P7: a local member has no reference store: the roles name it only under a MEMORY section; the five steps are the contract's
 for r in build write; do
   has roles/$r/ROLE.md "MEMORY section or a store is mounted, read the store's .roles/$r/INDEX.md" && ok "roles/$r/ROLE.md names the reference store only when there is a MEMORY section or a mounted store" || no "roles/$r/ROLE.md names the reference store unconditionally"
 done
 has $C 'Without a MEMORY section or a mounted store the task block, the contract and the repository are all your instructions' && ok "the contract says what a member without a store follows" || no "the contract's sentence for a member without a store"
 steps=$(awk '/^# Order of work/{f=1;next} /^# /{f=0} f && /^[1-6]\. /{printf "%s ", tolower($2)}' $C)
-[ "$steps" = "orient: baseline: for after report " ] && ok "the contract orders orientation, baseline, each change, final DONE and report" || no "the contract's order of work: '$steps'"
+[ "$steps" = "orient: baseline: for run report " ] && ok "the contract orders orientation, baseline, each change, final DONE and report" || no "the contract's order of work: '$steps'"
 ! grep -q 'Orient\.' provision/role-seeds/build/reference/workflow/workflow.md && ok "the build seed's workflow does not repeat the lifecycle" || no "the build seed repeats the lifecycle"
 
 exit $fail
