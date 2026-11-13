@@ -32,8 +32,7 @@ Both stores share one shape: `shared/` for what every role needs, and
                            something; a curator resolves it, then deletes it
 /_archive/<date>/...       optional: notes `qargi memory split` moved out of
                            the store; the Sources: line records where each came
-                           from, and
-                           `qargi memory merge` moves them back
+                           from, and `qargi memory merge` moves them back
 ```
 
 `/_archive/` is tolerated, not required, and does not change the canon version:
