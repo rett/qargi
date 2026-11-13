@@ -6,6 +6,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- New local preparations publish `lifecycle: 1` only after recording immutable refs, epoch and base commit in private lead state. Dispatch, verify, apply, close and clean share the lifecycle lock; active or unknown members refuse all acceptance and cleanup, including discard. Members, Git helpers, scrubs and background renewers do not inherit that lock.
+- Runtime retries commit a fresh strict attempt before dispatch metadata, transcript or report changes. Dry-run and preflight refusal preserve earlier evidence; setup/spawn failures after the boundary leave an unverified not-started attempt. Applied, closed and cleaned work cannot be retried. Legacy runs retain explicitly warned inspection/recovery but require re-preparation for actual runtime dispatch; missing or corrupt new state fails closed.
+- Verification and saved-copy selection use private attempt authority and per-save generation nonces. Earlier copies are retained before replacements, failed saves require re-verification, and repeated observation reuses the current accepted product. Apply and scrub use the prepared base commit and accepted saved output; open-run and feature gates ignore forged verification/application mirrors. Retention is bounded to 32 copies and 32 historical verifications per attempt, with 256 attempts per preparation.
+- The lifecycle guide documents the conservative unknown-spawn refusal, Linux process-group evidence, escaped-session limitations, and recovery after directory loss. Execution completion, descendant termination and product acceptance remain distinct.
+
 ## [0.2.13] - 2026-11-12
 
 ### Changed

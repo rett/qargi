@@ -1,6 +1,6 @@
 # Members
 
-See also [Choosing models](models.md), [Providers and runtimes](providers.md) and [Codex as lead and as member](codex.md).
+See also [Choosing models](models.md), [Providers and runtimes](providers.md), [Codex as lead and as member](codex.md) and [Verification and retries](verification-lifecycle.md).
 
 qargi ships one neutral member definition (`agents/member.json` and its prompt
 `agents/member.body.md`) and installs none: you create the members with `qargi agent add`, which
