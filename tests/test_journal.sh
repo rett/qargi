@@ -265,6 +265,26 @@ out=$($DA local close "$RH" --applied-by-am 2>&1); rc=$?
 if [ $rc = 1 ] && grep -q "merge that branch" <<<"$out" && grep -qF "qargi ref record --rewrite agent/rwh $ht $ht2 --why" <<<"$out" && [ -d "$RH" ]; then
   ok "close --applied-by-am names the same fix"
 else no "close hint: rc=$rc $out"; fi
+# The public mirror is member-writable; the completed private record supplies the diagnostic.
+RHREC=$T/s/apply/${RH##*/}.json
+cp -p "$RH/applied" "$T/rh.applied" && cp -p "$RHREC" "$T/rh.rec" || no "(setup) save rwh records"
+for how in absent poisoned; do
+  if [ "$how" = absent ]; then rm -f "$RH/applied"; else printf 'agent/poisoned %040d now\n' 0 > "$RH/applied"; fi
+  out=$($DA local close "$RH" --applied-by-am 2>&1); rc=$?
+  if [ "$rc" = 1 ] && grep -qF "qargi ref record --rewrite agent/rwh $ht $ht2 --why" <<<"$out" && ! grep -q "agent/poisoned" <<<"$out" && [ -d "$RH/clone" ] && cmp -s "$RHREC" "$T/rh.rec"; then
+    ok "close uses the private record with public applied $how, keeping clone and record"
+  else no "close hint, applied $how: rc=$rc $out"; fi
+done
+cp -p "$T/rh.applied" "$RH/applied" || no "(setup) restore rwh applied"
+# Test-only status injection models unfinished records; restore the completed record afterwards.
+for st in started built; do
+  jq --arg s "$st" '.status = $s' "$T/rh.rec" > "$T/rh.$st" && cp "$T/rh.$st" "$RHREC" || no "(setup) record $st"
+  out=$($DA local close "$RH" --applied-by-am 2>&1); rc=$?
+  if [ "$rc" = 1 ] && grep -q "run has an authoritative apply record: finish/merge it, then clean" <<<"$out" && ! grep -q "merge that branch" <<<"$out" && [ -d "$RH/clone" ] && cmp -s "$RH/applied" "$T/rh.applied" && cmp -s "$RHREC" "$T/rh.$st"; then
+    ok "close refuses $st early, keeping clone and both records"
+  else no "close with apply $st: rc=$rc $out"; fi
+done
+cp -p "$T/rh.rec" "$RHREC" && cmp -s "$RHREC" "$T/rh.rec" || no "(setup) restore the done record of rwh"
 # the sentence is the fix in full: do what it says, and clean follows the rewrite once the branch is merged
 git -C "$A" branch -f agent/rwh "$ht" && $REF agent/rwh "$ht" "$ht2" --why "reworded by hand" >/dev/null 2>&1 || no "(setup) record the rewrite of rwh"
 out=$($DA local clean "$RH" 2>&1); rc=$?
