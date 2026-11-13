@@ -176,6 +176,30 @@ save_run() {
 }
 # saved_of RUN -> the lead's saved copy of RUN ($DA_STATE/runs/<run id>), when there is one (a directory, not a link)
 saved_of() { local d=$DA_STATE/runs/${1##*/}; case ${1##*/} in qargi.??????) ;; *) return 0;; esac; [ -d "$d" ] && [ ! -L "$d" ] && echo "$d"; return 0; }
+# The released recovery contract uses the registry's TMP, never RUN/tmpdir.
+# It records no identity and cannot prove process quiescence. Keep its confinement
+# and one-filesystem deletion separate from current lifecycle ownership.
+legacy_run_tmp() {
+  local run=$1 t name par rp b rt=''
+  t=$(reg_get "$run" tmpdir)
+  [ -n "$t" ] || t=$run/tmp
+  while [ "${t%/}" != "$t" ] && [ "$t" != / ]; do t=${t%/}; done
+  if [ -n "$t" ] && [ ! -L "$t" ] && [ -d "$t" ]; then
+    name=$(basename -- "$t"); par=$(dirname -- "$t"); rp=$(realpath -- "$t" 2>/dev/null || true)
+    if [ -n "$rp" ] && [ "$(basename -- "$rp")" = "$name" ]; then
+      case $name in
+        qargi-run.??????)
+          for b in /dev/shm "${QARGI_RUN_TMP:-}"; do
+            while [ "${b%/}" != "$b" ] && [ "$b" != / ]; do b=${b%/}; done
+            [ -n "$b" ] && [ "$par" = "$b" ] && [ "$(dirname -- "$rp")" = "$(realpath -- "$b" 2>/dev/null)" ] && rt=$rp
+          done;;
+        tmp) [ "$(dirname -- "$rp")" = "$(realpath -- "$run")" ] && rt=$rp;;
+      esac
+    fi
+  fi
+  if [ -z "$rt" ] && [ -n "$t" ]; then echo "qargi: note: left $t alone: it is not a directory prepare makes under /dev/shm, QARGI_RUN_TMP or the run" >&2; fi
+  [ -z "$rt" ] || printf '%s\n' "$rt"
+}
 # scrub_ok_drop RUN: remove the record `review check` keeps for a run whose take-in scrub passed (scrub_ok/RUN-ID in the lead's state, the path rule of
 # scrub_ok_file in review.sh): a run that was checked and never applied leaves it, and clean removes the run
 scrub_ok_drop() { local id=${1##*/}; case $id in qargi.??????) rm -f -- "$DA_STATE/scrub_ok/$id";; esac; return 0; }
@@ -1043,6 +1067,7 @@ WRAP
       done
       # the runs whose directory is gone: their record (and a saved copy whose work is applied and merged, or none) is dropped; a saved copy whose work
       # was never applied is kept and named, since it is the only place that work is left
+      reg_load   # child clean commands updated rows; do not revisit the runs just cleaned as gone legacy runs
       while IFS= read -r d; do
         [ -n "$d" ] || continue
         st=$(reg_get "$d" started); ste=$(date -d "$st" +%s 2>/dev/null) || ste=''
@@ -1089,7 +1114,10 @@ WRAP
     while [ "${RUN%/}" != "$RUN" ] && [ "$RUN" != / ]; do RUN=${RUN%/}; done   # a trailing slash makes rm -rf follow a link
     RUN=$(readlink -m -- "$RUN")
     lc_ready "$RUN" ready-clean || exit 3
-    [ "$LC_SCHEMA" = true ] || die "cleanup ownership unavailable; preserve RUN and TMP for manual recovery"
+    if [ "$LC_SCHEMA" != true ]; then
+      lc legacy-check "$RUN" >/dev/null || exit 3
+      echo "qargi: warning: $RUN is an unmarked legacy run: registry-confined recovery on one file system, with no proof of process quiescence and no lifecycle adoption; --discard deliberately drops evidence" >&2
+    fi
     if [ "$LC_SCHEMA" = true ]; then
       pending_clean=$(lc clean-pending "$RUN") || exit 3
       if [ "$pending_clean" != null ]; then
@@ -1232,7 +1260,11 @@ WRAP
       clean_verb=clean-begin; [ -z "$DISCARD" ] || clean_verb=clean-discard
       lc "$clean_verb" "$RUN" >/dev/null && lc clean-stage "$RUN" >/dev/null || exit 3
     fi
-    lc clean-work "$RUN" >/dev/null || exit 3
+    if [ "$LC_SCHEMA" = true ]; then lc clean-work "$RUN" >/dev/null || exit 3
+    else
+      rt=$(legacy_run_tmp "$RUN")
+      { [ -z "$rt" ] || rm -rf --one-file-system -- "$rt"; } && rm -rf --one-file-system -- "$RUN" || die "could not remove $RUN or its temporary directory completely; not recorded as cleaned: fix the mount or permission and rerun clean"
+    fi
     [ "$wtt" != unknown ] || echo "qargi: warning: the removed clone's worktree state was unknown" >&2
     [ -z "$res" ] || echo "qargi: note: removed with the run what its run home held: $(paste -sd ';' - <<<"$res" | LC_ALL=C tr -d '\000-\037\177')" >&2
     if [[ ${wtu:-0} =~ ^[1-9][0-9]*$ ]] || [[ ${wtt:-0} =~ ^[1-9][0-9]*$ ]]; then

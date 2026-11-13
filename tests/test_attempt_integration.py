@@ -101,6 +101,125 @@ print('fixture transcript')
     def state_json(self):
         return json.loads(self.record.read_text())
 
+    def unmark(self, **changes):
+        """Reconstruct a released run, without inventing private authority."""
+        shutil.rmtree(self.store.path)
+        registry = self.state / 'local-runs.jsonl'
+        rows = [json.loads(line) for line in registry.read_text().splitlines()]
+        row = next(r for r in rows if r['run'] == str(self.run))
+        del row['lifecycle']
+        row.update(changes)
+        registry.write_text(''.join(json.dumps(r) + '\n' for r in rows))
+
+    def registry_row(self):
+        rows = [json.loads(line) for line in (self.state / 'local-runs.jsonl').read_text().splitlines()]
+        return next(r for r in rows if r['run'] == str(self.run))
+
+    def test_legacy_discard_recovers_without_adoption_and_ignores_member_tmp(self):
+        self.prepare()
+        tmp = Path((self.run / 'tmpdir').read_text().strip())
+        decoy = self.root / 'qargi-run.Decoy1'
+        decoy.mkdir()
+        (decoy / 'keep').write_text('not registered')
+        (self.run / 'tmpdir').write_text(str(decoy))
+        self.unmark()
+        registry = self.state / 'local-runs.jsonl'
+        row = self.registry_row()
+        del row['class']  # classless discard remains the explicit recovery route
+        registry.write_text(json.dumps(row) + '\n')
+        out = self.cmd('local', 'clean', self.run, '--discard')
+        self.assertIn('unmarked legacy run', out)
+        self.assertIn('no proof of process quiescence', out)
+        self.assertFalse(self.run.exists() or tmp.exists())
+        self.assertEqual((decoy / 'keep').read_text(), 'not registered')
+        self.assertNotIn('lifecycle', self.registry_row())
+        self.assertTrue(self.registry_row().get('cleaned'))
+        self.assertFalse(Path(self.store.path).exists())
+
+    def test_legacy_discard_preserves_unconfined_or_linked_tmp(self):
+        for form in ('outside-parent', 'link'):
+            with self.subTest(form=form):
+                self.prepare()
+                elsewhere = self.root / ('elsewhere-' + form)
+                elsewhere.mkdir()
+                decoy = elsewhere / 'qargi-run.Decoy2'
+                decoy.mkdir()
+                (decoy / 'keep').write_text('another run')
+                named = decoy
+                if form == 'link':
+                    named = self.root / 'qargi-run.Link01'
+                    named.symlink_to(decoy)
+                self.unmark(tmpdir=str(named))
+                out = self.cmd('local', 'clean', self.run, '--discard')
+                self.assertIn('left %s alone' % named, out)
+                self.assertFalse(self.run.exists())
+                self.assertEqual((decoy / 'keep').read_text(), 'another run')
+                self.assertTrue(named.is_symlink() if form == 'link' else named.is_dir())
+
+    def test_legacy_stale_and_applied_batches_and_retained_evidence(self):
+        for route in ('stale', 'applied', 'gone-kept', 'gone-empty'):
+            with self.subTest(route=route):
+                self.prepare('build' if route == 'applied' else 'review')
+                tmp = Path((self.run / 'tmpdir').read_text().strip())
+                (self.run / 'out/report.md').write_text('# Findings\nNo findings.\nverdict: accept\n')
+                if route == 'applied':
+                    (self.run / 'out/manifest.json').write_text(json.dumps({'status': 'DONE', 'commits': []}))
+                self.unmark(started='2020-01-01T00:00:00Z')
+                self.verify()  # exercise the actual legacy save helper
+                self.assertFalse((self.saved / 'attempt').exists())
+                self.assertFalse(Path(self.store.path).exists())
+                if route == 'applied':
+                    self.cmd('local', 'close', self.run, '--applied-by-am')
+                    out = self.cmd('local', 'clean', '--applied', '--scratch', self.root)
+                else:
+                    if route.startswith('gone'):
+                        shutil.rmtree(self.run)
+                        if route == 'gone-empty':
+                            shutil.rmtree(self.saved)
+                    plan = self.cmd('local', 'clean', '--stale', '0', '--scratch', self.root)
+                    self.assertIn(str(self.run), plan)
+                    out = self.cmd('local', 'clean', '--stale', '0', '--scratch', self.root,
+                                   '--yes', ok=route != 'gone-kept')
+                if route == 'gone-kept':
+                    self.assertIn('work that was never applied', out)
+                    self.assertTrue((self.saved / 'out/report.md').exists())
+                    self.cmd('local', 'clean', self.run, '--discard')
+                else:
+                    self.assertIn('unmarked legacy run', out)
+                self.assertFalse(self.run.exists() or self.saved.exists())
+                self.assertFalse(Path(self.store.path).exists())
+                if route.startswith('gone'):
+                    # Released recovery drops the absent RUN's row; TMP is left as an orphan.
+                    self.assertTrue(tmp.exists())
+                    with self.assertRaises(StopIteration):
+                        self.registry_row()
+                else:
+                    self.assertFalse(tmp.exists())
+                    self.assertTrue(self.registry_row().get('cleaned'))
+
+    def test_legacy_internal_tmp_and_failed_one_filesystem_removal(self):
+        self.env['QARGI_RUN_TMP'] = str(self.root / 'unavailable')
+        self.prepare()
+        tmp = self.run / 'tmp'
+        self.assertTrue(tmp.is_dir())
+        (tmp / 'keep').write_text('mounted evidence')
+        self.unmark()
+        shim = self.bin / 'rm'
+        real_rm = shutil.which('rm')
+        shim.write_text(f'#!{sys.executable}\nimport os, sys\n'
+                        f'if {str(tmp)!r} in sys.argv:\n'
+                        "    assert '--one-file-system' in sys.argv\n"
+                        '    sys.exit(1)\n'
+                        f'os.execv({real_rm!r}, [{real_rm!r}, *sys.argv[1:]])\n')
+        shim.chmod(0o755)
+        out = self.cmd('local', 'clean', self.run, '--discard', ok=False)
+        self.assertIn('not recorded as cleaned', out)
+        self.assertEqual((tmp / 'keep').read_text(), 'mounted evidence')
+        self.assertFalse(self.registry_row().get('cleaned'))
+        shim.unlink()
+        self.cmd('local', 'clean', self.run, '--discard')
+        self.assertFalse(self.run.exists())
+
     def test_prepare_canonical_tmp_paths_and_repointed_alias_cleanup(self):
         parent = self.root / 'real-tmp'
         parent.mkdir()

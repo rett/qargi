@@ -331,6 +331,28 @@ class Attempts(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 self.store.show()
 
+    def test_legacy_recovery_refuses_every_private_lifecycle_remnant(self):
+        with self.locked():
+            self.write(self.state / 'local-runs.jsonl', A.encode({'run': str(self.run)}))
+            self.assertTrue(self.store.legacy_check())
+            remnants = (Path(self.store.path), Path(self.store.path + '.clean'),
+                        Path(self.store.area) / self.store.clean_name,
+                        self.state / 'runs' / ('.clean.' + self.store.id),
+                        self.state / 'runs' / self.store.id / 'attempt')
+            for path in remnants:
+                with self.subTest(path=path):
+                    self.write(path, b'retained lifecycle evidence')
+                    with self.assertRaisesRegex(A.Refuse, 'ownership unavailable'):
+                        self.store.legacy_check()
+                    self.assertEqual(path.read_bytes(), b'retained lifecycle evidence')
+                    path.unlink()
+            saved_record = self.state / 'runs' / self.store.id / 'record.json'
+            self.write(saved_record, A.encode({'run': str(self.run), 'lifecycle': 1}))
+            with self.assertRaisesRegex(A.Refuse, 'ownership unavailable'):
+                self.store.legacy_check()
+            saved_record.unlink()
+            self.assertTrue(self.store.legacy_check())
+
     def test_schema_paths_hashes_and_bounds_fail_closed(self):
         with self.locked():
             original = self.prepare()

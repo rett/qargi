@@ -7,6 +7,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- Genuinely unmarked registered legacy runs again support warned `local clean --discard`, and ordinary clean where the released checks permit it, including applied/stale batches. Registry-sourced TMP confinement and one-filesystem deletion remain; this weaker recovery proves no process quiescence and creates no lifecycle authority. Missing/corrupt marked state and stripped markers with private lifecycle remnants still refuse.
 - `local prepare` again accepts symlinked, relative and `..`-containing `QARGI_RUN_TMP` parents. It resolves the parent before creating directories and consistently records and displays the canonical TMP path; repointing the alias later does not redirect cleanup. Hidden-path checks still inspect actual paths.
 
 ### Changed

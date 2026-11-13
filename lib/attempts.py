@@ -910,6 +910,53 @@ class Store:
                 item['phase'] = 'source' if os.path.lexists(item['path']) else 'removed'
         return record, work
 
+    def legacy_check(self):
+        """Permit only unmarked recovery with no private lifecycle remnants.
+
+        The stable lock exists for legacy inspections too; it grants no ownership.
+        State, cleanup tombstones and saved lifecycle markers cannot be discarded
+        through this weaker route even if the registry marker was stripped.
+        """
+        self.require_lock()
+        try:
+            self.authority()
+        except Legacy:
+            pass
+        else:
+            raise Refuse('run is marked for lifecycle authority')
+        why = ('cleanup ownership unavailable: private lifecycle evidence exists for an unmarked run; '
+               'preserve RUN and TMP for manual recovery')
+        for parent, names in ((self.area, (self.id, self.id + '.clean', self.clean_name)),
+                              (self.root + '/runs', ('.clean.' + self.id,))):
+            try:
+                fd = directory(parent, private_leaf=False)
+            except FileNotFoundError:
+                continue
+            try:
+                for name in names:
+                    try:
+                        os.stat(name, dir_fd=fd, follow_symlinks=False)
+                    except FileNotFoundError:
+                        continue
+                    raise Refuse(why)
+            finally:
+                os.close(fd)
+        try:
+            fd = directory(self.root + '/runs/' + self.id, private_leaf=False)
+        except FileNotFoundError:
+            return True
+        try:
+            need('attempt' not in os.listdir(fd), why)
+            try:
+                saved = decode(read_at(fd, 'record.json', MAX_RECORD))
+            except FileNotFoundError:
+                pass
+            else:
+                need(type(saved) is dict and 'lifecycle' not in saved, why)
+        finally:
+            os.close(fd)
+        return True
+
     def clean_begin(self, discard=False):
         record, work = self.clean_check(discard)
         self.recover_stage()
@@ -1337,7 +1384,7 @@ def main(argv=None):
             result = store.clean_check(discard=cmd == "clean-check-discard")
         elif cmd in ("clean-begin", "clean-discard"):
             result = store.clean_begin(discard=cmd == "clean-discard")
-        elif cmd in ("clean-pending", "clean-stage", "clean-work", "clean-finish"):
+        elif cmd in ("clean-pending", "clean-stage", "clean-work", "clean-finish", "legacy-check"):
             result = getattr(store, cmd.replace("-", "_"))()
         elif cmd == "saved-copy":
             try:
