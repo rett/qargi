@@ -222,6 +222,15 @@ lc_lock() {
   flock -n 7 || { echo 'qargi: lifecycle lock busy or unsupported; nothing was done' >&2; return 1; }
   python3 -I "$QARGI_TOOL/lib/attempts.py" lock-check "$1"
 }
+# Shared production entry points. Only an inherited, actually held fd grants
+# nesting; environment values never suppress a lifecycle check.
+lc() { python3 -I "$QARGI_TOOL/lib/attempts.py" "$@"; }
+lc_ready() {
+  lc_lock "$1" || return 1
+  # shellcheck disable=SC2034 # consumed by local.sh/review.sh
+  LC_SCHEMA=$(lc "${2:-ready}" "$1") || return 1
+}
+lc_base_sha() { lc base-sha "$1" | jq -er .; }
 reg_record() {
   RUN_REPO='' RUN_URL='' RUN_CRED='' RUN_ANS=''
   reg_has "$1" || { echo "qargi: $1 is not in the lead's registry ($DA_STATE/local-runs.jsonl): only a run made by qargi local prepare on this machine is trusted" >&2; return 1; }
@@ -236,15 +245,20 @@ reg_id() {
   [ "$n" = 1 ] && printf '%s\n' "$hit"
 }
 reg_edit() {
-  local f=$DA_STATE/local-runs.jsonl rr tmp
+  local f=$DA_STATE/local-runs.jsonl rr tmp match
   [ -f "$f" ] || return 0
-  rr=$(readlink -m -- "$1" 2>/dev/null) || return 1
+  # Lifecycle cleanup has already bound the exact prepared name under its lock.
+  # Resolving a replacement symlink here could edit a different run's row too.
+  if [ "${3:-}" = exact ]; then rr=$1
+  else rr=$(readlink -m -- "$1" 2>/dev/null) || return 1; fi
   ( umask 077; flock 9 || exit 1
     tmp=$(mktemp "$f.tmp.XXXXXX") || exit 1
     # a line is the run's when its run, resolved as far as it exists, is the same path; any other line, a malformed one too, is kept as it is
     while IFS= read -r line || [ -n "$line" ]; do
       r=$(jq -r 'if type == "object" and (.run | type) == "string" then .run else empty end' <<<"$line" 2>/dev/null) || r=''
-      if [ -n "$r" ] && [ "$(readlink -m -- "$r" 2>/dev/null)" = "$rr" ]; then
+      match=$r
+      if [ "${3:-}" != exact ] && [ -n "$r" ]; then match=$(readlink -m -- "$r" 2>/dev/null) || match=''; fi
+      if [ -n "$r" ] && [ "$match" = "$rr" ]; then
         [ "$2" = drop ] && continue
         line=$(jq -c --arg t "$(now)" '.cleaned = $t' <<<"$line")
       fi
@@ -413,7 +427,7 @@ need_val() { # OPTION "$#" -> exit 2 when a valued option is the last word: call
 }
 run_clean() { # DIR COMMAND...: runs a command in DIR without the project's cloud binding: a suite, a release check or a scrub must not see it
   local dir=$1; shift
-  (cd "$dir" && env -u ANTHROPIC_PROFILE -u QARGI_CLOUD_WORKSPACE -u QARGI_CLOUD_PROJECT "$@")
+  (cd "$dir" && env -u ANTHROPIC_PROFILE -u QARGI_CLOUD_WORKSPACE -u QARGI_CLOUD_PROJECT "$@") 7>&-
 }
 
 # Cloud verbs that create or drive a session need --asked "<what the user

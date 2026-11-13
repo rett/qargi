@@ -3,7 +3,9 @@
 import hermetic  # noqa: F401
 import contextlib
 import copy
+import errno
 import fcntl
+import io
 import json
 import os
 from pathlib import Path
@@ -12,12 +14,15 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 import attempts as A
+import local_run as R
+from attempt_fixture import ForkAfterEnumeration
 
 
 class Attempts(unittest.TestCase):
@@ -27,7 +32,7 @@ class Attempts(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.state = self.root / "state"
         self.run = self.root / "qargi.Abc123"
-        self.run.mkdir()
+        self.run.mkdir(mode=0o700)
         self.env = mock.patch.dict(os.environ, QARGI_STATE=str(self.state),
                                    QARGI_CONF=str(self.root / "conf"), DA_NOSETUP="1")
         self.env.start()
@@ -96,6 +101,212 @@ class Attempts(unittest.TestCase):
         with mock.patch.dict(os.environ, QARGI_STATE="", QARGI_HOME=str(self.root / "home")):
             self.assertEqual(A.Store(self.run).root, str(self.root / "home/state"))
         self.assertFalse(self.state.exists())
+
+    def test_historical_directory_rejects_links_foreign_owner_and_files(self):
+        target = self.root / "historical"
+        target.mkdir(mode=0o755)
+        target.chmod(0o755)
+        with mock.patch.object(A.os, "geteuid", return_value=os.geteuid() + 1):
+            with self.assertRaisesRegex(A.Refuse, "lead-owned"):
+                A.directory(str(target), tighten=True)
+        self.assertEqual(target.stat().st_mode & 0o777, 0o755)
+        link = self.root / "link"
+        link.symlink_to(target)
+        with self.assertRaises(A.Refuse):
+            A.directory(str(link), tighten=True)
+        target.rmdir()
+        target.write_text("plain file")
+        with self.assertRaises(OSError):
+            A.directory(str(target), tighten=True)
+
+    def test_zombie_only_group_is_unknown_until_reaped(self):
+        child = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
+        try:
+            # waitid observes exit but deliberately leaves the child unreaped.
+            deadline = time.monotonic() + 5
+            while not os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG):
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(.01)
+            with self.assertRaisesRegex(A.Refuse, 'quiescence unknown'):
+                A.group_alive(child.pid)
+            self.assertEqual(R.group_left(child.pid), [child.pid])
+        finally:
+            child.wait(timeout=5)
+        self.assertFalse(A.group_alive(child.pid))
+        self.assertEqual(R.group_left(child.pid), [])
+
+    def test_real_fork_after_enumeration_never_proves_group_gone(self):
+        for probe in (A.group_alive, R.group_left):
+            with self.subTest(probe=probe.__name__), ForkAfterEnumeration() as group:
+                original = os.listdir
+                def enumerate_then_fork(path):
+                    names = original(path)
+                    if path == '/proc':
+                        self.assertIn(str(group.pgid), names)
+                        group.fork_and_exit()
+                        self.assertNotIn(str(group.child), names)
+                    return names
+                with mock.patch.object(os, 'listdir', side_effect=enumerate_then_fork):
+                    if probe is A.group_alive:
+                        with self.assertRaisesRegex(A.Refuse, 'quiescence unknown'):
+                            probe(group.pgid)
+                    else:
+                        self.assertEqual(probe(group.pgid), [group.pgid])
+                self.assertEqual(A.process(group.child)['pgid'], group.pgid)
+                self.assertTrue(A.group_alive(group.pgid))
+            self.assertFalse(A.group_alive(group.pgid))
+
+    def test_unknown_group_probe_escalates_and_never_reports_stopped(self):
+        proc = mock.Mock(pid=12345)
+        with mock.patch.object(R, 'group_left', side_effect=PermissionError('unknown')), \
+                mock.patch.object(R.os, 'killpg') as kill:
+            with self.assertRaises(PermissionError):
+                R.kill_group(proc, grace=0)
+        self.assertEqual([c.args[1] for c in kill.call_args_list], [R.signal.SIGTERM, R.signal.SIGKILL])
+        with mock.patch.object(R.os, 'listdir', return_value=[]), \
+                mock.patch.object(R.os, 'killpg', side_effect=PermissionError('unknown')):
+            with self.assertRaises(PermissionError):
+                R.group_left(proc.pid)
+            with self.assertRaises(A.Refuse):
+                A.group_alive(proc.pid)
+        self.assertNotIn('was stopped', R.stopped_text(1))
+
+    def test_history_limit_creates_no_snapshot(self):
+        with self.locked():
+            self.prepare()
+            self.write(self.saved(1) / "output", b"C1")
+            self.store.verified(b"R1")
+            before = {p.name: p.read_bytes() for p in Path(self.store.path).iterdir() if p.is_file()}
+            with mock.patch.object(A, "MAX_VERIFICATIONS", 0):
+                with self.assertRaisesRegex(A.Refuse, "history limit"):
+                    self.store.verified(b"R2")
+                self.store.verified(b"R1")
+            self.assertEqual(before, {p.name: p.read_bytes() for p in Path(self.store.path).iterdir() if p.is_file()})
+
+    def test_unowned_or_replaced_save_staging_refuses_deletion(self):
+        with self.locked():
+            self.prepare()
+            stage = Path(self.store.path) / "save.stage"
+            stage.mkdir(mode=0o700)
+            with self.assertRaisesRegex(A.Refuse, "unowned save staging"):
+                self.store.reconcile()
+            self.assertTrue(stage.exists())
+            stage.rmdir()
+            self.store.stage_product()
+            stage.rename(stage.with_name("kept-stage"))
+            stage.mkdir(mode=0o700)
+            with self.assertRaisesRegex(A.Refuse, "ownership mismatch"):
+                self.store.recover_stage()
+            self.assertTrue(stage.exists())
+
+    def test_cleanup_refuses_unowned_or_replaced_tombstones(self):
+        with self.locked():
+            self.prepare()
+            tomb = Path(self.store.path + ".clean")
+            tomb.mkdir(mode=0o700)
+            with self.assertRaisesRegex(A.Refuse, "unowned cleanup"):
+                self.store.clean_begin(discard=True)
+            self.assertTrue(tomb.exists())
+            tomb.rmdir()
+            self.store.clean_begin(discard=True)
+            self.store.clean_stage()
+            tomb.rename(tomb.with_name("kept-tombstone"))
+            tomb.mkdir(mode=0o700)
+            self.register(cleaned="2026-01-01T00:00:00Z")
+            with self.assertRaisesRegex(A.Refuse, "ownership mismatch"):
+                self.store.clean_finish()
+            self.assertTrue(tomb.exists())
+
+    def test_cleanup_ownership_refuses_links_permissions_and_missing_evidence(self):
+        with self.locked():
+            self.prepare()
+            (self.run / 'evidence').write_text('keep')
+            self.run.chmod(0o755)
+            with self.assertRaisesRegex(A.Refuse, 'private permissions'):
+                self.store.clean_begin(discard=True)
+            self.run.chmod(0o700)
+            kept = self.run.with_name('kept')
+            self.run.rename(kept)
+            self.run.symlink_to(kept, target_is_directory=True)
+            with self.assertRaisesRegex(A.Refuse, 'without symlinks'):
+                self.store.clean_begin(discard=True)
+            self.run.unlink()
+            kept.rename(self.run)
+            (Path(self.store.path) / 'work.json').unlink()
+            with self.assertRaisesRegex(A.Refuse, 'ownership unavailable'):
+                self.store.clean_begin(discard=True)
+            self.assertEqual((self.run / 'evidence').read_text(), 'keep')
+            self.assertIsNone(self.store.clean_pending())
+
+    def test_cleanup_keeps_incomplete_one_filesystem_tombstone(self):
+        with self.locked():
+            self.prepare()
+            self.store.clean_begin(discard=True)
+            self.store.clean_stage()
+            with mock.patch.object(A.subprocess, 'run') as remove:
+                with self.assertRaisesRegex(A.Refuse, 'retained mounted filesystem'):
+                    self.store.clean_work()
+            argv = remove.call_args.args[0]
+            self.assertIn('--one-file-system', argv)
+            self.assertNotIn(7, remove.call_args.kwargs['pass_fds'])
+            self.assertTrue(remove.call_args.kwargs['close_fds'])
+            row = self.store.clean_pending()
+            self.assertEqual(row['work']['run']['phase'], 'staged')
+            tomb = Path(self.store._work_tomb(row['work']['run'], row['identity']))
+            tomb.rename(tomb.with_name(tomb.name + '.kept'))
+            tomb.mkdir(mode=0o700)
+            (tomb / 'evidence').write_text('replacement')
+            with self.assertRaisesRegex(A.Refuse, 'tombstone ownership mismatch'):
+                self.store.clean_work()
+            self.assertEqual((tomb / 'evidence').read_text(), 'replacement')
+
+    def test_cleanup_reports_replacement_created_between_work_and_finish(self):
+        with self.locked():
+            self.prepare()
+            self.store.clean_begin(discard=True)
+            self.store.clean_stage()
+            self.store.clean_work()
+            decoy = self.root / 'decoy'
+            decoy.mkdir()
+            (decoy / 'keep').write_text('untouched')
+            self.run.symlink_to(decoy, target_is_directory=True)
+            self.register(cleaned='2026-01-01T00:00:00Z')
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                self.store.clean_finish()
+            self.assertIn('replacement preserved', stderr.getvalue())
+            self.assertTrue(self.run.is_symlink())
+            self.assertEqual((decoy / 'keep').read_text(), 'untouched')
+
+    def test_cleanup_missing_original_run_with_internal_tmp(self):
+        tmp = self.run / 'tmp'
+        tmp.mkdir(mode=0o700)
+        with self.locked():
+            self.store.init(b'lead refs\n', epoch=10, base='feature/example', base_sha='a' * 40,
+                            tmpdir=str(tmp))
+            self.register(tmpdir=str(tmp))
+            shutil.rmtree(self.run)
+            self.store.clean_begin(discard=True)
+            self.store.clean_stage()
+            self.register(tmpdir=str(tmp), cleaned='2026-01-01T00:00:00Z')
+            self.store.clean_finish()
+            self.assertIsNone(self.store.clean_pending())
+
+    def test_cleanup_failed_rm_keeps_owned_tombstone_for_retry(self):
+        with self.locked():
+            self.prepare()
+            self.store.clean_begin(discard=True)
+            self.store.clean_stage()
+            with mock.patch.object(A.subprocess, 'run', side_effect=subprocess.CalledProcessError(1, 'rm')) as remove:
+                with self.assertRaises(subprocess.CalledProcessError):
+                    self.store.clean_work()
+            self.assertIn('--one-file-system', remove.call_args.args[0])
+            row = self.store.clean_pending()
+            self.assertEqual(row['work']['run']['phase'], 'staged')
+            tomb = Path(self.store._work_tomb(row['work']['run'], row['identity']))
+            self.assertTrue(tomb.is_dir())
+            self.store.clean_work()
+            self.assertFalse(tomb.exists())
 
     def test_init_and_retry_preserve_prepared_authority(self):
         with self.locked():
@@ -169,6 +380,28 @@ class Attempts(unittest.TestCase):
             self.saved(1)
             with self.assertRaises(FileNotFoundError):
                 self.store.show()
+
+    def test_legacy_recovery_refuses_every_private_lifecycle_remnant(self):
+        with self.locked():
+            self.write(self.state / 'local-runs.jsonl', A.encode({'run': str(self.run)}))
+            self.assertTrue(self.store.legacy_check())
+            remnants = (Path(self.store.path), Path(self.store.path + '.clean'),
+                        Path(self.store.area) / self.store.clean_name,
+                        self.state / 'runs' / ('.clean.' + self.store.id),
+                        self.state / 'runs' / self.store.id / 'attempt')
+            for path in remnants:
+                with self.subTest(path=path):
+                    self.write(path, b'retained lifecycle evidence')
+                    with self.assertRaisesRegex(A.Refuse, 'ownership unavailable'):
+                        self.store.legacy_check()
+                    self.assertEqual(path.read_bytes(), b'retained lifecycle evidence')
+                    path.unlink()
+            saved_record = self.state / 'runs' / self.store.id / 'record.json'
+            self.write(saved_record, A.encode({'run': str(self.run), 'lifecycle': 1}))
+            with self.assertRaisesRegex(A.Refuse, 'ownership unavailable'):
+                self.store.legacy_check()
+            saved_record.unlink()
+            self.assertTrue(self.store.legacy_check())
 
     def test_schema_paths_hashes_and_bounds_fail_closed(self):
         with self.locked():
@@ -274,6 +507,37 @@ class Attempts(unittest.TestCase):
                     self.store.verified(b"new snapshot")
             self.assertEqual(self.record.read_bytes(), before)
             self.assertEqual(list(Path(self.store.path).glob(".write.*")), [])
+
+    def test_initial_atomic_failure_cleans_state_directory(self):
+        with self.locked():
+            with mock.patch.object(A.os, "replace", side_effect=OSError("rename failed")):
+                with self.assertRaises(OSError):
+                    self.store.init(b"refs", epoch=10, base="main", base_sha="a" * 40)
+            self.assertFalse(Path(self.store.path).exists())
+            self.prepare()
+
+    def test_reconcile_is_idempotent_when_unchanged(self):
+        with self.locked():
+            self.prepare()
+            first = self.store.reconcile()
+            before = self.record.read_bytes()
+            self.assertEqual(self.store.reconcile(), first)
+            self.assertEqual(self.record.read_bytes(), before)
+
+    def test_broken_stderr_does_not_undo_committed_replacement(self):
+        with self.locked():
+            self.prepare()
+            pending = self.store.gate_pending(b"gate", epoch=20)
+            fsync = A.os.fsync
+            def fail_directory(fd):
+                if stat.S_ISDIR(os.fstat(fd).st_mode):
+                    raise OSError("directory fsync")
+                fsync(fd)
+            err = mock.Mock()
+            err.write.side_effect = BrokenPipeError("closed")
+            with mock.patch.object(A.os, "fsync", side_effect=fail_directory), mock.patch("sys.stderr", err):
+                self.store.begin(pending, b"gate")
+            self.assertIsNotNone(self.store.show()["attempts"][0]["dispatch"])
 
     def test_saved_marker_links_wrong_numbers_and_new_schema_gaps_refuse(self):
         with self.locked():
@@ -440,6 +704,30 @@ class Attempts(unittest.TestCase):
                     self.store.verified(b"R2")
             with self.assertRaises(A.Refuse):
                 self.store.saved_copy()
+
+    def test_failed_reverification_retains_c2_then_accepts_new_generation(self):
+        with self.locked():
+            self.prepare()
+            current = self.saved(1)
+            self.write(current / "output", b"C1")
+            self.store.verified(b"R1")
+            marker = self.store.prepare_save()
+            self.write(current / "attempt", marker.encode())
+            self.write(current / "output", b"C2")
+            with mock.patch.object(self.store, "_commit", side_effect=OSError("failed")):
+                with self.assertRaises(OSError):
+                    self.store.verified(b"R2")
+            state = self.store.reconcile()
+            self.assertEqual(state["attempts"][0]["verified"]["sha256"], A.digest(b"R1"))
+            self.assertEqual((Path(self.store.path) / "a1.saved.1/output").read_bytes(), b"C1")
+            self.assertEqual((Path(self.store.path) / "a1.saved.2/output").read_bytes(), b"C2")
+            with self.assertRaises((A.Refuse, FileNotFoundError)):
+                self.store.saved_copy()
+            marker = self.store.prepare_save()
+            self.write(current / "attempt", marker.encode())
+            self.write(current / "output", b"C2")
+            self.store.verified(b"R2")
+            self.assertEqual(Path(self.store.saved_copy()).joinpath("output").read_bytes(), b"C2")
 
     def test_malformed_superseded_and_surrogate_refuse(self):
         with self.locked():
@@ -711,6 +999,35 @@ if sys.argv[3] == 'member':
             with self.assertRaisesRegex(A.Refuse, "liveness unknown"):
                 self.store.reconcile()
 
+    def test_process_stat_reaped_after_open_is_absent(self):
+        # Linux returns ESRCH from a stat fd opened before the process was reaped.
+        with subprocess.Popen([sys.executable, '-c', 'import sys; sys.stdin.buffer.read(1)'],
+                              stdin=subprocess.PIPE) as child:
+            with open('/proc/%d/stat' % child.pid, 'rb') as stream:
+                child.communicate(b'x', timeout=5)
+                with mock.patch('builtins.open', return_value=stream):
+                    self.assertIsNone(A.process(child.pid))
+
+    def test_process_stat_esrch_only_counts_as_absence_with_proc_available(self):
+        pid = 2**31 - 2
+        for operation in ('open', 'read'):
+            for error, available in ((ProcessLookupError(errno.ESRCH, 'vanished'), True),
+                                     (ProcessLookupError(errno.ESRCH, 'vanished'), False),
+                                     (PermissionError(errno.EACCES, 'denied'), True),
+                                     (OSError(errno.EIO, 'unreadable'), True)):
+                with self.subTest(operation=operation, error=error.errno, available=available):
+                    opened = mock.mock_open()
+                    if operation == 'open':
+                        opened.side_effect = error
+                    else:
+                        opened.return_value.read.side_effect = error
+                    with mock.patch('builtins.open', opened), mock.patch.object(A.os.path, 'isfile', return_value=available):
+                        if isinstance(error, ProcessLookupError) and available:
+                            self.assertIsNone(A.process(pid))
+                        else:
+                            with self.assertRaisesRegex(A.Refuse, 'unknown process liveness'):
+                                A.process(pid)
+
     def test_unknown_host_liveness_never_proves_death(self):
         with mock.patch.object(A.os, "killpg", side_effect=PermissionError("unknown")):
             with self.assertRaises(A.Refuse):
@@ -737,6 +1054,7 @@ if sys.argv[3] == 'member':
             self.assertNotEqual(r.returncode, 0)
             self.assertIn("busy", r.stderr)
             (self.state / "local-runs.jsonl").unlink()
+            self.run.mkdir(mode=0o700)
             self.prepare()
             self.assertEqual(Path(self.store.lock_path).stat().st_ino, inode)
 

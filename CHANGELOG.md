@@ -6,6 +6,33 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- Help, the manual and verification guidance qualify discard ownership and quiescence guarantees as lifecycle protections; legacy recovery remains explicitly weaker.
+- Lifecycle cleanup completes bookkeeping after an already removed work directory’s parent changes or its tombstone is recreated, preserving foreign entries. Replacements are reported only when observed through the original parent.
+- A process reaped while `/proc/PID/stat` is open can return `ESRCH`; lifecycle probing now treats it as PID absence, like a missing file, only while `/proc` remains available. Other evidence errors stay unknown and process-group completion still requires the kernel absence check.
+- Interrupted lifecycle cleanup preserves and reports replacements at original RUN/TMP names after staging or deletion, then completes original tombstone deletion and exact registry bookkeeping. Owned tombstones recover crashes before phase commit; pre-stage replacements and foreign/unowned tombstones still refuse. Internal TMP completion is recorded before RUN staging, so recovery never traverses a replacement RUN or its symlink target to inspect old TMP paths.
+- Genuinely unmarked registered legacy runs again support warned `local clean --discard`, and ordinary clean where the released checks permit it, including applied/stale batches. Registry-sourced TMP confinement and one-filesystem deletion remain; this weaker recovery proves no process quiescence and creates no lifecycle authority. Missing/corrupt marked state and stripped markers with private lifecycle remnants still refuse.
+- `local prepare` again accepts symlinked, relative and `..`-containing `QARGI_RUN_TMP` parents. It resolves the parent before creating directories and consistently records and displays the canonical TMP path; repointing the alias later does not redirect cleanup. Hidden-path checks still inspect actual paths.
+
+### Changed
+- Clean authorizes retained evidence before deleting TMP or RUN. Prepare records private directory identities; interrupted cleanup stages owned tombstones and refuses source replacements before staging. Missing ownership evidence for marked runs requires manual recovery.
+- Process-group completion requires a kernel absence report. A changing process listing or zombie-only sample cannot authorize retry or cleanup; runner diagnostics identify busy or unknown groups without claiming live survivors.
+- A full verification history refuses before publishing a new snapshot; identical observations still consume no history.
+- Lifecycle safety guidance is generated from the canonical help source, keeping the manual and command help consistent.
+- Structural review can inspect unsuccessful attempts as diagnostic evidence; it explicitly says that inspection is not acceptance, and verification and apply still refuse their output.
+- A signal received after a local member finishes no longer marks its private attempt cancelled, so completed output can be verified.
+- Cleanup diagnostics explicitly name retained cleaned registry evidence; covering shell expectations retain branch, worktree, scrub and registry assertions under the conservative lifecycle policy.
+- Retry epochs precede ref collection, including slow remote queries; lead-written report manifests take their base commit from private prepared authority.
+- Lifecycle clean records owned atomic tombstones before deletion and keeps its cleaned registry row. Repeating clean resumes interruptions before or after registry and lifecycle-state removal without adopting orphan paths or implicitly discarding retained evidence.
+- Save staging is limited to one privately recorded directory per run and recovered after owner death without leaving a copy child. Unknown or replaced staging refuses cleanup; retained-copy limits count directories, not bytes.
+- Unfinished lifecycle applies refuse resume and cleanup after their parent dies because Git-child termination is unknown. Completed Git work marked built retains supported bookkeeping recovery; hooks still receive no lifecycle lock.
+- Dispatch installs signal handling before committing begin, records caught prelaunch cancellation as not-started, and refuses unknown process evidence.
+- Lifecycle verification refuses changed accepted output and unsuccessful dispatch output; apply scrubs its private copy even after review check. Stale cleanup preserves retained evidence after a failed retry and directory loss. Historical lead-owned runs directories upgrade safely to private permissions.
+- New local preparations publish `lifecycle: 1` only after recording immutable refs, epoch and base commit in private lead state. Dispatch, verify, apply, close and clean share the lifecycle lock; active or unknown members refuse all acceptance and cleanup, including discard. Members, Git helpers, scrubs and background renewers do not inherit that lock.
+- Runtime retries commit a fresh strict attempt before dispatch metadata, transcript or report changes. Dry-run and preflight refusal preserve earlier evidence; setup/spawn failures after the boundary leave an unverified not-started attempt. Applied, closed and cleaned work cannot be retried. Legacy runs retain explicitly warned inspection/recovery but require re-preparation for actual runtime dispatch; missing or corrupt new state fails closed.
+- Verification and saved-copy selection use private attempt authority and per-save generation nonces. Earlier copies are retained before replacements, failed saves require re-verification, and repeated live or saved observation reuses the accepted product while advancing the private ref baseline. Byte-identical observations do not consume history. Apply and scrub use the prepared base commit and accepted saved output; open-run and feature gates ignore forged verification/application mirrors. Retention is bounded to 32 copies and 32 historical verifications per attempt, with 256 attempts per preparation.
+- The lifecycle guide documents the conservative unknown-spawn refusal, Linux process-group evidence, escaped-session limitations, and recovery after directory loss. Execution completion, descendant termination and product acceptance remain distinct.
+
 ## [0.2.13] - 2026-11-12
 
 ### Changed
