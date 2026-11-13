@@ -507,6 +507,33 @@ mkproj() { # project provider [legacy-json] -> the answers of a project on that 
 mkproj cmdap cmda "$LEGACY"; mkproj cmdbp cmdb; mkproj cmdcp cmdc
 mkproj cmdxp cmda
 jq '.models.extensions = ["missingext"]' "$T/c/projects/cmdxp.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/cmdxp.json"
+# Aliases exist in all three fixtures; only a referenced catalog with use:alias passes them.
+mkdir -p "$T/c/packs/providers/cmdcat"
+jq -n '{schema:2,kind:"catalog",family:"cmdcat",version:"2026-11-13",pattern:"^cmdk-[a-z0-9.-]+$",
+  tiers:{fast:{model:"cmdk-s-1",alias:"cmdk-s",verified_on:null,source:"test"},
+    frontier:{model:"cmdk-f-1",alias:null,verified_on:null,source:"test"},
+    "*":{model:"cmdk-m-1",alias:"cmdk-m",verified_on:null,source:"test"}},effort:null}' > "$T/c/packs/providers/cmdcat/definition.json"
+python3 -I tests/handseal.py "$T/c/packs/providers/cmdcat"
+for use in inline alias id; do
+  rt=cmd$use; d=$T/c/packs/providers/$rt; mkdir -p "$d"
+  jq --arg n "$rt" --arg u "$use" --slurpfile c "$T/c/packs/providers/cmdcat/definition.json" '.provider = $n
+    | .models = (if $u == "inline" then ($c[0] | {pattern,tiers,effort}) else {catalog:"cmdcat",use:$u} end)' "$T/c/packs/providers/cmda/definition.json" > "$d/definition.json"
+  python3 -I tests/handseal.py "$d"
+  mkproj "${rt}p" "$rt"
+  jq '.profiles += {byalias:{base:"worker",model:"cmdk-s"},byid:{base:"worker",model:"cmdk-s-1"}}' "$T/c/projects/${rt}p.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/${rt}p.json"
+done
+python3 -I - "$T/c/packs/providers" <<'PY'
+import json
+from pathlib import Path
+import sys
+sys.path.insert(0, "lib")
+import provider as P
+for name in ("cmdcat", "cmdinline", "cmdalias", "cmdid"):
+    doc = json.loads((Path(sys.argv[1]) / name / "definition.json").read_text())
+    bad = [message for level, message in P.validate2(doc, name) if level == "fail"]
+    assert not bad, (name, bad)
+PY
+[ $? = 0 ] && ok "the inline and referenced alias fixtures satisfy the provider schema" || no "invalid alias fixture"
 # cmdap also holds legacy members (models no command runtime has, files that do not exist); cmdbp and cmdcp have no member at all
 jq --arg root "$T" '.projects.cmdap = {worker: {roles: ["build","write","test"], file: ($root + "/legacy/worker.md"), model: "claude-haiku-5-5", effort: "low", provider: "claude-code", surface: "local", seq: 900}, reviewer: {roles: ["review"], file: ($root + "/legacy/reviewer.md"), model: "claude-opus-5-5", effort: "max", provider: "claude-code", surface: "local", seq: 901}}' "$T/c/agents.json" > "$T/a.json" && mv "$T/a.json" "$T/c/agents.json"
 # Include file contents, modes, links and directory entries, including Git excludes and member copies.
@@ -520,8 +547,7 @@ from pathlib import Path
 
 root = Path(sys.argv[1])
 digest = hashlib.sha256()
-for name in ("c", "s", "repo-cmdap", "repo-cmdbp", "repo-cmdcp", "repo-cmdxp"):
-    base = root / name
+for base in [root / "c", root / "s", *sorted(root.glob("repo-cmd*"))]:
     for path in sorted([base, *base.rglob("*")]):
         mode = path.lstat().st_mode
         digest.update(str(path.relative_to(root)).encode() + b"\0" + str(mode).encode())
@@ -556,6 +582,26 @@ out=$($DA agent for build --profile okmodel --project cmdap 2>"$T/cmd.err"); rc=
 fcj tw --project cmdbp | jq -e '.profile == "build" and .profile_source == "class-fallback" and .class == "write" and .model_id == "cmdb-x"' >/dev/null && fcj ro --project cmdbp | jq -e '.profile == "review" and .profile_source == "class-fallback" and .class == "read-only" and .member == "reviewer"' >/dev/null && ok "command profiles retain custom-role class fallbacks" || no "command class fallback"
 fcj build --profile deep --project cmdcp | jq -e '.effort == "xhigh" and .model_id == "cmdc-m"' >/dev/null && ok "a runtime without native effort control retains the requested effort level" || no "no native effort: $(fcj build --profile deep --project cmdcp)"
 fcj build --project cmdcp | jq -e '.effort == "high"' >/dev/null && ok "no native effort control preserves the shipped profile's effort request" || no "no native effort default"
+# Cross-check both output forms against the model selector used by command dispatch, including a tier without an alias.
+mf() { python3 -I - "$1" "$2" <<'PY'
+import sys
+sys.path.insert(0, "lib")
+import provider as P
+print(P.model_for(P.models_of(sys.argv[1], "local"), sys.argv[2]))
+PY
+}
+for use in inline alias id; do
+  rt=cmd$use; p=${rt}p
+  for spec in 'build|build|balanced|high|worker' 'review|auditor|fast|low|reviewer' 'review|researcher|frontier|medium|reviewer' 'build|byalias|fast|medium|worker' 'build|byid|fast|medium|worker'; do
+    IFS='|' read -r role profile tier effort member <<<"$spec"
+    want=$(mf "$rt" "$tier")
+    out=$($DA agent for "$role" --profile "$profile" --project "$p" 2>&1); rc=$?
+    answer=$(fcj "$role" --profile "$profile" --project "$p"); json_rc=$?
+    { [ "$rc" = 0 ] && [ "$json_rc" = 0 ] && [ "$out" = "$member $want $effort $profile" ] &&
+      jq -e --arg want "$want" --arg use "$use" '(.model // .model_id) == $want and (if $use == "alias" and .tier != "frontier" then .model == $want else .model == null end)' <<<"$answer" >/dev/null; } \
+      && ok "$rt/$profile: text and JSON select the model command dispatch receives" || no "$rt/$profile: rc=$rc $out / $answer (want $want)"
+  done
+done
 jq -e '.projects.cmdbp == null and .projects.cmdcp == null' "$T/c/agents.json" >/dev/null && [ ! -e "$T/c/agents/cmdbp" ] && [ ! -e "$T/c/agents/cmdcp" ] && ok "command resolution needs no member record or rendered copy" || no "unexpected command member"
 # refusals: the generic ones (profile, base, class) and the catalog's; each is "args|text of the reason|exit status"
 while IFS='|' read -r args want rc; do

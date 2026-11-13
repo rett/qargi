@@ -625,7 +625,7 @@ CMDJQ="$RESOLVE_HEAD"'
     // (rawerr | if . == null then null else {code: 2, err: "the \($pn) profile is refused on \($prov): \(.)"} end)
     // (lerr | if . == null then null else {code: 2, err: "the \($pn) profile cannot run on \($prov): \(.)"} end)
     // {code: 0, out: {role: $role, class: $rclass, profile: $pn, mode: "command", profile_source: (if $want == null then "class-fallback" elif $p.source == "project" then "project" else "shipped" end),
-      base: $p.base, member: $p.base, tier: $p.tier, model: $p.model, model_id: $p.model_id, effort: $p.effort, opt_in: $p.opt_in, purpose: $p.purpose}}'
+      base: $p.base, member: $p.base, tier: $p.tier, model: (if $use == "alias" then $p.model else null end), model_id: $p.model_id, effort: $p.effort, opt_in: $p.opt_in, purpose: $p.purpose}}'
 
 resolve_command() { # role profile-or-empty project runtime -> as resolve_for, for a runtime that dispatches by command line: the logical base, its model and effort
   local role=$1 prof=$2 proj=$3 prov=$4 pf pd res code pat
@@ -637,7 +637,7 @@ resolve_command() { # role profile-or-empty project runtime -> as resolve_for, f
   pat=$(jq -r '.model_pattern // "^.+$"' <<<"$pd")
   res=$(jq -n --slurpfile d "$DEFAULTS" --argjson pf "$pf" --argjson tiers "$(jq -c .tiers <<<"$pd")" --argjson aliases "$(jq -c '.aliases // {}' <<<"$pd")" \
     --argjson efforts "$(jq -c '.effort // {}' <<<"$pd")" --argjson rc "$(role_classes)" --argjson noeffort false --arg prov "$prov" --arg pat "$pat" \
-    --arg role "$role" --arg rclass "$(role_class "$role")" --arg prof "$prof" "$PJQ$CMDJQ") || die "could not resolve the profile"
+    --arg role "$role" --arg rclass "$(role_class "$role")" --arg prof "$prof" --arg use "$(jq -r '.use // ""' <<<"$pd")" "$PJQ$CMDJQ") || die "could not resolve the profile"
   code=$(jq -r .code <<<"$res")
   if [ "$code" != 0 ]; then echo "qargi: $(jq -r .err <<<"$res")" >&2; exit "$code"; fi
   if [ -n "$JSON" ]; then jq '.out' <<<"$res"; return 0; fi
