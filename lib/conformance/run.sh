@@ -39,7 +39,8 @@
 #      lacks a model, an effort or a system prompt, or has a system over 100000 characters, is exit 2 with an error body; a
 #      read-only role is exit 2 where the barrier is effectively no, unless the request accepts that
 # The command cases, for a runtime whose dispatch.mode is command (qargi local run, lib/local_run.py, starts the stub in place of
-# the command argv[0] names, through a wrapper first on PATH that records the environment the command gets):
+# the command argv[0] names, through a wrapper first on PATH that records the environment the command gets; each run is made by qargi
+# local prepare in a hermetic stored project, so the lead's registry and private lifecycle record authorise it as they do every run):
 #  11  barrier sandbox-args: the argv of a read-only run carries the read-only arguments, sets their flags nowhere else and carries no
 #      flag with its value of the write class's arguments, such as a writable directory (the case
 #      barrier-sandbox-args of lib/conformance/cases.py, which `qargi provider check` runs on a library pack)
@@ -534,41 +535,70 @@ stub_ready() {   # the wrapper named argv[0] first on PATH: it records its envir
     mkdir -p "$(dirname "$HOME/$rel")" && printf '%s\n' "$SENT" > "$HOME/$rel"
   done < <(jq -r '.dispatch.home.link[]? | [(.from | strings), (.to | strings)] | @tsv' "$DESC")
 }
-cmdrun() {   # CLASS LIB [RUN [TMP]]: one run of LIB/local_run.py of the class with the stub in place of the command (in RUN, default W/crun.CLASS;
-             # TMP: the run's temporary directory, recorded for it in the lead's registry); CRUN (the run), CRC, COUT
-  local cls=$1
-  CRUN=${3:-$W/crun.$cls}
-  [ -z "${4:-}" ] || { mkdir -p "$QARGI_STATE" "$4"; jq -nc --arg r "$CRUN" --arg t "$4" '{run: $r, tmpdir: $t}' >> "$QARGI_STATE/local-runs.jsonl"; }
-  rm -rf "$CRUN"; mkdir -p "$CRUN/clone/src" "$CRUN/out"
-  : > "$CRUN/refs.before"; : > "$CRUN/clone/src/a.go"
-  # A command run inspects a real clean worktree. Keep its repository independent of the host's Git configuration and templates.
-  mkdir -p "$W/git-template"
-  fixture_git() {
-    env -i PATH="$PATH" HOME="$W" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
-      GIT_AUTHOR_NAME=Conformance GIT_COMMITTER_NAME=Conformance \
-      GIT_AUTHOR_EMAIL=conformance@example.invalid GIT_COMMITTER_EMAIL=conformance@example.invalid \
-      git -c core.hooksPath=/dev/null -c protocol.allow=never "$@"
-  }
-  if ! { fixture_git init -q --template="$W/git-template" "$CRUN/clone" &&
-         fixture_git -C "$CRUN/clone" add src/a.go &&
-         fixture_git -C "$CRUN/clone" commit -q -m 'Conformance fixture'; }; then
-    COUT=''; CRC=1; return
-  fi
-  if [ "$cls" = write ]; then printf 'build\n' > "$CRUN/ability"; else printf 'review\n' > "$CRUN/ability"; fi
+# The runs of cases 12 to 15 are made as every run is: by qargi local prepare, which writes the lead's registry line and the private lifecycle record that alone authorise qargi local run,
+# and started by qargi local run; nothing of a run's authority is written by hand. The stored project (conformance) has the runtime as its local one, its repository is a fixture's, and the
+# lead's state is private (mode 700) as a lifecycle record needs.
+CREPO=$W/crepo; CSCR=$W/cscratch; CSHM=$W/cshm; PTOOL=""; CTOOL=""
+fixture_git() {   # git independent of the host's configuration and templates
+  env -i PATH="$PATH" HOME="$W" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+    GIT_AUTHOR_NAME=Conformance GIT_COMMITTER_NAME=Conformance \
+    GIT_AUTHOR_EMAIL=conformance@example.invalid GIT_COMMITTER_EMAIL=conformance@example.invalid \
+    git -c core.hooksPath=/dev/null -c protocol.allow=never "$@"
+}
+cmd_fixture() {   # once: the repository, the stored project and the private state
+  [ ! -f "$QARGI_CONF/projects/conformance.json" ] || return 0
+  ( umask 077; mkdir -p "$W/git-template" "$CREPO/src" "$CSCR" "$CSHM" "$QARGI_STATE" "$QARGI_CONF/projects" ) && chmod 700 "$QARGI_STATE" "$QARGI_CONF" || return 1
+  : > "$CREPO/src/a.go"
+  fixture_git init -q -b main --template="$W/git-template" "$CREPO" && fixture_git -C "$CREPO" add src/a.go \
+    && fixture_git -C "$CREPO" commit -q -m 'Conformance fixture' || return 1
+  jq -n --arg p "$(cd "$CREPO" && pwd -P)" --arg v "$NAME" '{schema: 1, project: "conformance", repo: {url: "https://github.com/example/conformance", path: $p, long_lived: ["main"]},
+    roles: {build: {base: "main", push: {mode: "none"}}}, models: {provider: $v}, memory: {}, budget_cents: 500}' > "$QARGI_CONF/projects/conformance.json"
+}
+cmdprep() {   # CLASS [SCRATCH [TMP-PARENT]]: a run of the class made by qargi local prepare (write: the build role, read-only: review) in SCRATCH (default W/cscratch), its TMP in a directory of TMP-PARENT
+              # (default W/cshm; a parent that is no directory gives RUN/tmp); CRUN, or CRC and the reason in W/cmd.err
+  local cls=$1 role=review out
+  [ "$cls" != write ] || role=build
+  CRUN=""; COUT=""; CRC=0
+  if ! { cmd_fixture && cmdtools "$cls"; }; then echo "internal: could not make the fixture of the run" > "$W/cmd.err"; CRC=1; return; fi
+  mkdir -p "${2:-$CSCR}"
+  out=$( umask 077; QARGI_RUN_TMP=${3:-$CSHM} "$PTOOL/bin/qargi" local prepare --repo "$CREPO" --base main --slug "conf-$cls" --scratch "${2:-$CSCR}" --role "$role" 2>"$W/cmd.err" ) || { CRC=$?; return; }
+  CRUN=$(sed -n 's/^RUN=//p' <<<"$out" | head -1)
+  if [ -z "$CRUN" ]; then echo "internal: qargi local prepare named no run" > "$W/cmd.err"; CRC=1; return; fi
   printf 'TASK: conformance task\nDONE: true\n' > "$CRUN/task.md"
+}
+cmdgo() {   # qargi local run of CRUN with the stub in place of the command (the project, the runtime and the class are the lead's record's); COUT, CRC
   : > "$W/cmd.log"; rm -f "$W/cmd.env" "$W/cmd.home" "$W/cmd.cfg"
-  COUT=$(CONFORMANCE_CALLER_SECRET=caller-$$ PATH="$CBIN:$PATH" python3 -I "$2/local_run.py" "$CRUN" --project conformance --runtime "$NAME" --class "$cls" 2>"$W/cmd.err"); CRC=$?
+  COUT=$(CONFORMANCE_CALLER_SECRET=caller-$$ PATH="$CBIN:$PATH" "$CTOOL/bin/qargi" local run "$CRUN" 2>"$W/cmd.err"); CRC=$?
+}
+cmdrun() {   # CLASS [SCRATCH [TMP-PARENT]]: cmdprep, then cmdgo unless the run could not be made
+  cmdprep "$@"; [ "$CRC" != 0 ] || cmdgo
 }
 HIDDEN=$W/hidden   # the place a copy of a definition with dispatch.hidden_paths hides in place of its prefixes
 HIDF=""
 if jq -e '.dispatch.hidden_paths | type == "object"' "$DESC" >/dev/null 2>&1; then HIDF=".dispatch.hidden_paths.prefixes = $(jq -nc --arg h "$HIDDEN" '[$h]')"; fi
-CLIB=""
-cmdlib() {   # CLASS: CLIB, the lib a command case runs CLASS from: the tool's, or a copy that hides HIDDEN (HIDF) and, for a read-only run of a
-             # read_only_barrier claim not yet dated, dates it (as it is once verified: what a run carries is the case, not the claim)
-  local f=$HIDF
-  if [ "$1" = read-only ] && [ "$(eff local read_only_barrier)" = no ]; then f="${f:+$f | }.capabilities.read_only_barrier.verified_on = \"$(date +%F)\""; fi
-  if [ -z "$f" ]; then CLIB=$TOOL/lib; return 0; fi
-  mutate "$f" && CLIB=$W/mut/lib
+mktool() {   # DEST JQ-FILTER: copy the installed root, substituting entries supplied by the fixture tool
+  local entry d src
+  [ ! -d "$1" ] || return 0
+  rm -rf "$1.new"; mkdir -p "$1.new" || return 1
+  for entry in "$ROOT"/*; do
+    [ -e "$entry" ] || continue
+    d=${entry##*/}
+    case $d in tests|docs) continue;; esac
+    src=$TOOL/$d; [ -e "$src" ] || src=$entry
+    cp -R "$src" "$1.new/" || return 1
+  done
+  jq "$2" "$TOOL/lib/providers/$NAME.json" > "$1.new/lib/providers/$NAME.json.new" \
+    && mv "$1.new/lib/providers/$NAME.json.new" "$1.new/lib/providers/$NAME.json" && mv "$1.new" "$1"
+}
+cmdtools() {   # CLASS: PTOOL, the tool root that prepares the runs (the definition without its hidden places, so that a run can be made where the sandbox would hide it), and CTOOL, the one
+               # that runs them: the definition that hides HIDDEN (HIDF) and, for a read-only run of a read_only_barrier claim not yet dated, dates it (as it is once verified: what a run
+               # carries is the case, not the claim). Each is made once.
+  local dated='' pf='del(.dispatch.hidden_paths)' cf=${HIDF:-.}
+  [ "$(eff local read_only_barrier)" != no ] || dated=".capabilities.read_only_barrier.verified_on = \"$(date +%F)\""
+  [ -z "$dated" ] || pf="$pf | $dated"
+  [ "$1" != read-only ] || [ -z "$dated" ] || cf="${HIDF:+$HIDF | }$dated"
+  mktool "$W/ptool" "$pf" && mktool "$W/ctool.$1" "$cf" || return 1
+  PTOOL=$W/ptool; CTOOL=$W/ctool.$1
 }
 cmd_skip() {   # why case 12 or 13 cannot run, or nothing
   if ! listed local; then echo "the provider has no local surface"
@@ -598,8 +628,7 @@ case12() {
   stub_ready || { ran; problem "internal: could not put the stub in place of $CMD0"; finish 12 "$title"; return; }
   for cls in write read-only; do
     if [ "$cls" = read-only ] && [ "$(jq -r '.capabilities.read_only_barrier.value // "no"' "$DESC")" = no ]; then note "no read-only run: read_only_barrier is no"; continue; fi
-    cmdlib "$cls" || { ran; problem "internal: could not make a changed copy of the tool tree"; continue; }
-    cmdrun "$cls" "$CLIB"; ran
+    cmdrun "$cls"; ran
     if [ "$CRC" != 0 ]; then problem "$cls: qargi local run exited $CRC: $(tail -2 "$W/cmd.err" | paste -sd' ' - | cut -c1-200)"; continue; fi
     grep -qx 'OUTCOME=ok' <<<"$COUT" || problem "$cls: the outcome is not ok: $(grep '^OUTCOME=' <<<"$COUT")"
     if [ "$(grep -c . "$W/cmd.log")" != 1 ]; then problem "$cls: the stub was called $(grep -c . "$W/cmd.log") times, not once"; continue; fi
@@ -641,9 +670,10 @@ case13() {
   why=$(cmd_skip)
   if [ -n "$why" ]; then nothing "$why"; finish 13 "$title"; return; fi
   stub_ready || { ran; problem "internal: could not put the stub in place of $CMD0"; finish 13 "$title"; return; }
-  s0=$(find "$HOME" -type f -exec sha256sum {} + | sort)
-  cmdlib write || { ran; problem "internal: could not make a changed copy of the tool tree"; finish 13 "$title"; return; }
-  cmdrun write "$CLIB"; ran
+  cmdprep write; ran
+  if [ "$CRC" != 0 ]; then problem "qargi local prepare exited $CRC: $(tail -2 "$W/cmd.err" | paste -sd' ' - | cut -c1-200)"; finish 13 "$title"; return; fi
+  s0=$(find "$HOME" -type f -exec sha256sum {} + | sort)   # the run is compared with the home as the lead's prepare left it
+  cmdgo
   if [ "$CRC" != 0 ] || [ ! -s "$W/cmd.env" ]; then problem "qargi local run exited $CRC or the stub recorded no environment: $(tail -2 "$W/cmd.err" | paste -sd' ' - | cut -c1-200)"; finish 13 "$title"; return; fi
   if ! jq -e '.dispatch.env_pass // [] | index(["CONFORMANCE_CALLER_SECRET"])' "$DESC" >/dev/null 2>&1; then
     grep -q '^CONFORMANCE_CALLER_SECRET=' "$W/cmd.env" && problem "a variable of the caller that dispatch.env_pass does not name reached the command"
@@ -684,8 +714,7 @@ case14() {
   want=$(jq -cS .dispatch.run_config.baseline "$DESC"); fmt=$(jq -r '.resources.mcp.format // "json"' "$DESC")
   for cls in write read-only; do
     if [ "$cls" = read-only ] && [ "$(jq -r '.capabilities.read_only_barrier.value // "no"' "$DESC")" = no ]; then note "no read-only run: read_only_barrier is no"; continue; fi
-    cmdlib "$cls" || { ran; problem "internal: could not make a changed copy of the tool tree"; continue; }
-    cmdrun "$cls" "$CLIB"; ran
+    cmdrun "$cls"; ran
     if [ "$CRC" != 0 ]; then problem "$cls: qargi local run exited $CRC: $(tail -2 "$W/cmd.err" | paste -sd' ' - | cut -c1-200)"; continue; fi
     if [ "$CFGIN" = home ]; then f=$CRUN/home/$HOMEREL/$CFGFILE; else f=$CRUN/config/$CFGFILE; fi
     # no tool pack reaches a role in the hermetic home, so the file is the baseline and nothing else, in the format of resources.mcp
@@ -713,7 +742,6 @@ case15() {
   mkdir -p "$HIDDEN"
   for cls in write read-only; do
     if [ "$cls" = read-only ] && [ "$(jq -r '.capabilities.read_only_barrier.value // "no"' "$DESC")" = no ]; then note "no read-only run: read_only_barrier is no"; continue; fi
-    cmdlib "$cls" || { ran; problem "internal: could not make a changed copy of the tool tree"; continue; }
     for where in run tmp; do
       # the run paths the member of the class works with (qargi's own rule, lib/provider.py MEMBER_NEEDS) that its class does not show and that
       # lie in the hidden place: all of them with the run there (its TMP is RUN/tmp), TMP alone with the run elsewhere and its TMP there
@@ -722,7 +750,7 @@ hp = json.load(open(sys.argv[2]))["dispatch"]["hidden_paths"]
 shown = (hp.get("shown") or {}).get(sys.argv[3]) or []
 print(" ".join(P.RUN_PATHS[n] for n in P.MEMBER_NEEDS[sys.argv[3]] if n not in shown and (sys.argv[4] == "run" or n == "tmp")))' "$ROOT/lib" "$DESC" "$cls" "$where") \
         || { ran; problem "internal: the run paths of the class could not be read"; continue; }
-      if [ "$where" = run ]; then cmdrun "$cls" "$CLIB" "$HIDDEN/crun.$cls"; else cmdrun "$cls" "$CLIB" "$W/crun15.$cls" "$HIDDEN/tmp.$cls"; fi
+      if [ "$where" = run ]; then cmdrun "$cls" "$HIDDEN" "$W/no-shm"; else cmdrun "$cls" "$CSCR" "$HIDDEN"; fi
       ran
       if [ -z "$want" ]; then
         { [ "$CRC" = 0 ] && grep -qx 'OUTCOME=ok' <<<"$COUT"; } || problem "$cls, $where hidden: nothing the member works with is hidden, but qargi local run exited $CRC: $(tail -2 "$W/cmd.err" | paste -sd' ' - | cut -c1-200)"

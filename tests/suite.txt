@@ -24,7 +24,7 @@ full | par | 300 | 59 | bash tests/test_provider_degrade.sh | lib/provider*.sh l
 fast | par | 300 | 19 | bash tests/test_provider_notes.sh | lib/provider*.sh lib/provider*.py
 fast | par | 300 | 20 | bash tests/conformance.sh claude-code
 fast | par | 300 | 8 | bash tests/conformance.sh claude-platform
-fast | par | 300 | 5 | bash tests/conformance.sh codex | lib/conformance/run.sh lib/conformance/cases.py lib/local_run.py lib/providers/codex.json
+fast | par | 300 | 5 | bash tests/conformance.sh codex | lib/conformance/run.sh lib/conformance/cases.py lib/local_run.py lib/providers/codex.json lib/local.sh lib/lib.sh lib/attempts.py
 full | par | 432 | 179 | bash tests/test_conformance_selftest.sh
 full | par | 300 | 43 | python3 tests/test_tierplan.py | lib/tierplan.py
 fast | par | 300 | 22 | bash tests/test_tier_hook.sh
@@ -113,7 +113,7 @@ fast | par | 300 | 14 | bash tests/test_marshal_hook.sh | lib/marshal*.sh lib/ma
 fast | par | 300 | 6 | python3 tests/test_marshal_batch.py | lib/marshal*.py
 full | par | 300 | 40 | bash tests/test_marshal_batch.sh | lib/marshal*.sh lib/marshal*.py
 full | par | 300 | 17 | python3 tests/test_marshal_startup.py | lib/marshal*.sh lib/marshal*.py tests/startup-budget.txt
-full | par | 300 | 108 | bash tests/test_journal.sh | lib/merged.py
+full | par | 300 | 108 | bash tests/test_journal.sh | lib/merged.py lib/local.sh
 full | par | 850 | 185 | bash tests/test_runs_close.sh | lib/local.sh lib/local_run.py lib/procenv.py lib/lib.sh lib/ref.sh lib/feature.sh lib/review.sh lib/review_check.py lib/lead_usage.py lib/merged.py lib/owned_refs.py tests/class_cases.py tests/fixtures/run-classes.json
 fast | par | 300 | 19 | bash tests/test_upstream.sh | lib/upstream.sh
 fast | par | 300 | 21 | bash tests/test_team.sh | lib/team.sh
