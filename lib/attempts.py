@@ -793,10 +793,11 @@ class Store:
         sha = digest(refs)
         if a["verified"] is not None and a["verified"]["sha256"] == sha and a["verified"]["nonce"] == a["save_nonce"]:
             return record
+        if a["verified"] is not None:
+            need(len(a["history"]) < MAX_VERIFICATIONS, "verification history limit reached")
         name = "a%d.verified.%s.refs" % (a["n"], sha)
         self._refs(name, refs)
         if a["verified"] is not None and (a["verified"]["sha256"] != sha or a["verified"]["nonce"] != a["save_nonce"]):
-            need(len(a["history"]) < MAX_VERIFICATIONS, "verification history limit reached")
             a["history"].append(a["verified"])
         a["verified"] = dict(at=now(), snapshot=name, sha256=sha, nonce=a["save_nonce"])
         self._commit(record)

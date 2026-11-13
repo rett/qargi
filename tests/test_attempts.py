@@ -123,6 +123,18 @@ class Attempts(unittest.TestCase):
         finally:
             child.wait(timeout=5)
 
+    def test_history_limit_creates_no_snapshot(self):
+        with self.locked():
+            self.prepare()
+            self.write(self.saved(1) / "output", b"C1")
+            self.store.verified(b"R1")
+            before = {p.name: p.read_bytes() for p in Path(self.store.path).iterdir() if p.is_file()}
+            with mock.patch.object(A, "MAX_VERIFICATIONS", 0):
+                with self.assertRaisesRegex(A.Refuse, "history limit"):
+                    self.store.verified(b"R2")
+                self.store.verified(b"R1")
+            self.assertEqual(before, {p.name: p.read_bytes() for p in Path(self.store.path).iterdir() if p.is_file()})
+
     def test_unowned_or_replaced_save_staging_refuses_deletion(self):
         with self.locked():
             self.prepare()

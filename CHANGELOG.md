@@ -7,6 +7,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
+- A full verification history refuses before publishing a new snapshot; identical observations still consume no history.
 - Lifecycle safety guidance is generated from the canonical help source, keeping the manual and command help consistent.
 - Structural review can inspect unsuccessful attempts as diagnostic evidence; it explicitly says that inspection is not acceptance, and verification and apply still refuse their output.
 - A signal received after a local member finishes no longer marks its private attempt cancelled, so completed output can be verified.
