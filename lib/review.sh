@@ -17,6 +17,7 @@
 # no ref other than the new branch changes. A patch that does not apply removes the worktree and the branch again.
 if [ "${1:-}" = check ] && [ -n "${QARGI_MEMBER_RUN:-}" ]; then export DA_NOSETUP=1; fi
 . "$(dirname "$0")/lib.sh"
+git() { command git "$@" 7>&-; }
 
 # scrub_declared RUN -> 0 when the lead's registry holds, for the run, a take-in scrub (review.scrub) or a trailer policy (review.trailer_policy reject).
 # The answers are the copy `local prepare` took into the registry, never the stored project's file; a run with no copy has none.
@@ -69,8 +70,12 @@ scrub_in() {
   local -a patches=() cmd
   repo=$(reg_get "$run" repo); base=$(reg_get "$run" base)
   [ -n "$repo" ] || { echo "scrub: FAIL the registry names no local repository for the run"; return 1; }
+  if [ "$(reg_json "$run" 'has("lifecycle")')" = true ]; then
+    sha=$(lc_base_sha "$run") || return 1
+  else
   sha=$(awk -v b="refs/heads/$base" '$1=="local" && $2==b {print $3}' "$files/refs.before" 2>/dev/null || true)
   [ -n "$sha" ] || sha=$(git -C "$files/bare.git" rev-parse -q --verify "refs/heads/$base" 2>/dev/null || true)
+  fi
   if [ -z "$sha" ] || ! git -C "$repo" cat-file -e "$sha^{commit}" 2>/dev/null; then echo "scrub: FAIL cannot tell the run's base commit (branch '$base')"; return 1; fi
   while IFS= read -r -d '' p; do patches+=("$p"); done < <(find "$out/patches" -maxdepth 1 -name '*.patch' -type f -print0 2>/dev/null | sort -z)
   if ! { git clone -q --shared --no-checkout -- "$repo" "$tmp/t" && git -C "$tmp/t" -c advice.detachedHead=false checkout -q --detach "$sha"; } >/dev/null 2>&1; then
@@ -141,6 +146,8 @@ if [ "$verb" = check ]; then
       CLASS_RUN=$(reg_id "${SRUN##*/}") || { echo "qargi: the lead's registry names no run for $SRUN; its class is unknown" >&2; exit 3; }
     fi
     RCLASS=$(run_class "$CLASS_RUN") || exit 3
+    lc_ready "$CLASS_RUN" || exit 3
+    [ "$LC_SCHEMA" != true ] || lc product-matches "$CLASS_RUN" >/dev/null || exit 3
     marshal_touch_run "$CLASS_RUN"   # renew only after the lead's authoritative class validation
   fi
   rc=0; python3 -I "$(dirname "$0")/review_check.py" "$@" || rc=$?
@@ -196,7 +203,8 @@ if [ "$verb" = save ]; then
     echo "kept $SOUT/manifest.json (the member wrote one)"
   else
     sbase=$(reg_get "$RUN" base)
-    sha=$(awk -v b="refs/heads/$sbase" '$1=="local" && $2==b {print $3}' "$RUN/refs.before" 2>/dev/null | head -n 1)
+    if [ "$(reg_json "$RUN" 'has("lifecycle")')" = true ]; then sha=$(lc_base_sha "$RUN") || exit 3
+    else sha=$(awk -v b="refs/heads/$sbase" '$1=="local" && $2==b {print $3}' "$RUN/refs.before" 2>/dev/null | head -n 1); fi
     MAN=$(mktemp "$SOUT/.manifest.XXXXXX") || die "could not write the manifest in $SOUT"
     jq -n --arg b "$sbase" --arg s "$sha" --arg slug "$(reg_get "$RUN" slug)" --arg role "$(reg_get "$RUN" ability)" \
       '{status:"DONE", blocked_reason:"", task:("read-only run " + $role + " " + $slug + ": the report is the final message, stored by the lead (qargi review save)"),
@@ -307,6 +315,10 @@ apply_record() {
   fi
   # a run applied from its directory: the saved copy records it too, so it is never applied twice
   if [ -z "$SAVED" ] && [ -d "$DA_STATE/runs/${RUN##*/}" ] && [ ! -L "$DA_STATE/runs/${RUN##*/}" ]; then cp -- "$SRC/applied" "$DA_STATE/runs/${RUN##*/}/applied" 2>/dev/null || true; fi
+  if [ "$SRC" != "$RUN" ] && [ -d "$RUN" ] && [ ! -L "$RUN" ]; then
+    rec=$(mktemp "$DA_STATE/apply-rec.XXXXXX") || die "could not mirror apply"
+    cp -- "$SRC/applied" "$rec" && mv -T -- "$rec" "$RUN/applied" || die "could not mirror apply"
+  fi
   json_update "$amark" '.status = "done"'
   echo "next:"
   echo "  qargi feature merge NAME $BRANCH    (NAME: the feature this task belongs to)"
@@ -333,6 +345,7 @@ apply_resume() {
       echo "an earlier apply of $RUN was cut off after $BRANCH was built at ${tip:0:12}: finishing it (the patches are not applied again)"
       apply_record; exit 0;;
     started)
+      [ "$LC_SCHEMA" != true ] || die "unfinished apply: Git-child liveness is unknown; preserve its evidence"
       mbase=$(jq -r '.base' "$amark")
       cur=$(sha_of "$mb")
       if [ -n "$cur" ]; then
@@ -368,6 +381,8 @@ case $verb in
       SRC=$RUN
     fi
     [ -f "$SRC/refs.before" ] && [ -d "$SRC/out" ] || usage_die "apply needs a RUN dir made by qargi local prepare"
+    lc_ready "$RUN" || exit 3
+    if [ -n "$SAVED" ] && [ "$LC_SCHEMA" = true ]; then lc saved-copy "$RUN" >/dev/null || exit 3; fi
     RCLASS=$(run_class "$RUN") || exit 3
     marshal_touch_run "$RUN"   # the lead's apply keeps its lease on the feature the run is based on
     [ "$RCLASS" != read-only ] \
@@ -383,6 +398,13 @@ case $verb in
     python3 -I "$lib/review_check.py" "$SRC/out" || die "review check refuses $SRC/out: nothing was applied"
     if [ -n "$SAVED" ]; then "$lib/local.sh" verify --saved "$SAVED" || die "local verify refuses the saved copy $SAVED: nothing was applied"
     else "$lib/local.sh" verify "$RUN" || die "local verify refuses $RUN: nothing was applied"; fi
+    if [ "$LC_SCHEMA" = true ]; then
+      SRC=$(lc saved-copy "$RUN" | jq -er .) || die "re-verification required: no accepted product"
+      # This is the lead-owned copy selected by private authority above. The
+      # public/member check already guarded the live input; its marker names
+      # that run, not this private copy.
+      env -u QARGI_MEMBER_RUN python3 -I "$lib/review_check.py" "$SRC/out" || die "review check refuses the accepted saved output"
+    fi
     # the repository, the slug and the base are the lead's registry's (looked up by real path, so ./run and run/ are the same run), never the run directory's own files
     reg_load
     if [ -n "$SAVED" ]; then reg_record "$RUN" || exit 1; else run_record "$RUN" || exit 1; fi
@@ -393,8 +415,10 @@ case $verb in
     git check-ref-format "refs/heads/$BRANCH" || die "'$BRANCH' is not a branch name"
     [ -n "$base" ] || die "the registry records no base branch for $RUN"
     # the base commit: the one the base branch had when prepare took its snapshot
-    sha=$(awk -v b="refs/heads/$base" '$1=="local" && $2==b {print $3}' "$SRC/refs.before")
+    if [ "$LC_SCHEMA" = true ]; then sha=$(lc_base_sha "$RUN") || exit 3
+    else sha=$(awk -v b="refs/heads/$base" '$1=="local" && $2==b {print $3}' "$SRC/refs.before")
     [ -n "$sha" ] || [ "$SRC" != "$RUN" ] || sha=$(git -C "$RUN/bare.git" rev-parse -q --verify "refs/heads/$base" 2>/dev/null || true)
+    fi
     [ -n "$sha" ] || die "cannot tell the run's base commit (branch '$base')"
     g cat-file -e "$sha^{commit}" 2>/dev/null || die "the base commit $sha is not in $REPO"
     branch_exists "$BRANCH" && die "$BRANCH exists already: choose another with --branch, or delete it first"
@@ -415,7 +439,7 @@ case $verb in
     # the same series (the record is over the patches and the declared scrub; a change to either runs it again). A member's apply never runs it, as its check does not.
     if scrub_declared "$RUN"; then
       if [ -n "${QARGI_MEMBER_RUN:-}" ]; then echo "scrub: not run (a member's apply; the lead's apply runs it)"
-      elif scrub_ok_has "$RUN" "$AP"; then echo "scrub: skipped (review check passed it for this series)"
+      elif [ "$LC_SCHEMA" != true ] && scrub_ok_has "$RUN" "$AP"; then echo "scrub: skipped (review check passed it for this series)"
       else
         text=$(scrub_run "$RUN" "$AP" "$SRC") || { echo "$text"; die "the declared scrub refuses the series: nothing was applied"; }
         echo "$text"

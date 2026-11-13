@@ -5,6 +5,9 @@ set -u
 cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
+# Lead-state fixtures use private modes and their own configured Git identities.
+umask 077
+unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_AUTHOR_DATE GIT_COMMITTER_DATE
 T=$(mktemp -d); trap 'rm -rf "$T" "$HERMETIC"' EXIT; fail=0
 export QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T TMPDIR=$T/tmp
 mkdir -p "$T/tmp" "$T/bin" "$T/c/projects"
@@ -359,7 +362,7 @@ out=$($DA local prepare --repo "$T/r" --base main --slug hd3 --scratch "$T/lnk" 
 { [ "$rc" = 2 ] && grep -qF "CONTRACT $HID/qargi.XXXXXX/contract lies under $HID" <<<"$out" && [ -z "$(ls -A "$HID")" ]; } \
   && ok "a --scratch that is a link into the hidden place is refused by its real path" || no "hidden link scratch: rc=$rc $out"
 out=$(QARGI_RUN_TMP=$T/lnk $DA local prepare --repo "$T/r" --base main --slug hd4 --scratch "$T/ok" 2>&1); rc=$?
-{ [ "$rc" = 0 ] && grep -q "^TMP=$T/lnk/qargi-run\." <<<"$out"; } && ok "a write run outside with its TMP in the hidden place is prepared: the class shows TMP" || no "hidden tmp, write: rc=$rc $out"
+{ [ "$rc" = 0 ] && grep -q "^TMP=$HID/qargi-run\." <<<"$out"; } && ok "a write run outside with its TMP in the hidden place is prepared: TMP names the canonical parent" || no "hidden tmp, write: rc=$rc $out"
 out=$(QARGI_RUN_TMP=$T/lnk $DA local prepare --repo "$T/r" --base main --slug hd5 --scratch "$T/ok" --role review 2>&1); rc=$?
 [ "$rc" = 0 ] && ok "and so is a read-only one: a read-only member writes no TMP" || no "hidden tmp, read-only: rc=$rc $out"
 setprov fakehidtmp; n0=$(ls "$T/ok" | wc -l)
@@ -1003,8 +1006,13 @@ echo tracked untracked blocked > "$T/wu-mode"
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
 out=$($DA review check "$OUT" 2>&1); rc2=$?
 { [ "$rc" = 2 ] && [ "$rc2" = 0 ] && grep -q '^OK no commits (status BLOCKED): the commit was refused$' <<<"$out" && grep -q '^NOTE .*holds 1 uncommitted change(s) to tracked files (tracked.txt); the run is BLOCKED' <<<"$out" \
-  && grep -q '^WARN .*holds 1 untracked file(s) no commit has (new.txt)' <<<"$out"; } \
+  && grep -q '^WARN .*holds 1 untracked file(s) no commit has (new.txt)' <<<"$out" \
+  && grep -q 'structural validation of unsuccessful-attempt output is not acceptance' <<<"$out"; } \
   && ok "a BLOCKED manifest with the change left uncommitted passes review check as a refusal, with a note and a warning" || no "blocked uncommitted: rc=$rc rc2=$rc2 $out"
+out=$($DA local verify "$RUN" 2>&1); rc=$?
+[ "$rc" != 0 ] && ok "BLOCKED inspection does not verify the attempt" || no "BLOCKED verify: rc=$rc $out"
+out=$($DA review apply "$RUN" 2>&1); rc=$?
+[ "$rc" != 0 ] && ok "BLOCKED inspection does not permit apply" || no "BLOCKED apply: rc=$rc $out"
 git -C "$CLONE" checkout -q tracked.txt; echo untracked > "$T/wu-mode"
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -q '^OUTCOME=ok$' <<<"$out" && grep -qF "WORKTREE=untracked: $CLONE holds 1 untracked file(s) no commit has and OUT holds no patches: new files never added are reported, not a refusal (the refusal covers changes to tracked files)" <<<"$out" \
@@ -1127,6 +1135,9 @@ got=$(python3 -I - "$RUN" "$T" <<'PY' 2>&1
 import json, os, sys
 sys.path.insert(0, os.path.join(sys.argv[2], "tool", "lib"))
 import local_run as L
+sys.path.insert(0, os.path.join(os.getcwd(), "tests"))
+from attempt_fixture import wire
+wire(L)
 earlier = json.load(open(os.path.join(sys.argv[1], "dispatch.json")))["member"]
 groups = L.group_left
 L.group_left = lambda pg: groups(pg) if pg == earlier else [pg]
@@ -1135,7 +1146,7 @@ rc = L.main([sys.argv[1], "--project", "rproj", "--runtime", "codex", "--class",
 print("CLASSIFICATION_RC=%d" % rc)
 PY
 )
-{ grep -q '^CLASSIFICATION_RC=1$' <<<"$got" && grep -q '^OUTCOME=failed' <<<"$got" && grep -q '1 process of the member.s process group .* survived TERM and KILL' <<<"$got" \
+{ grep -q '^CLASSIFICATION_RC=1$' <<<"$got" && grep -q '^OUTCOME=failed' <<<"$got" && grep -q '1 process observed or unknown in the member.s process group .* after TERM and KILL' <<<"$got" \
   && ! grep -q 'process group was stopped' <<<"$got" && [ "$(jq -r .group_left "$RUN/dispatch.json")" = 1 ]; } \
   && ok "normal exit with a reported survivor fails and never says the group stopped" || no "normal survivor: $got"
 for s in TERM HUP; do
@@ -1151,7 +1162,7 @@ else no "stubborn: the member did not start: $(cat "$T/ir.out")"; fi
 got=$(python3 -I -c 'import subprocess, sys; sys.path.insert(0, "lib"); import local_run as L
 p = subprocess.Popen(["sleep", "30"], start_new_session=True); L.group_left = lambda pg: [pg, 1]
 n = L.kill_group(p, grace=0.1); print(n, p.wait(5), L.stopped_text(n), "|", L.stopped_text(1), "|", L.stopped_text(0))' 2>&1)
-[ "$got" = "2 -15 a descendant survived: 2 processes of the member's process group still alive after TERM and KILL | a descendant survived: 1 process of the member's process group still alive after TERM and KILL | the member's process group was stopped" ] \
+[ "$got" = "2 -15 the member's process group remains busy or unknown after TERM and KILL | the member's process group remains busy or unknown after TERM and KILL | the member's process group was stopped" ] \
   && ok "survivors of TERM and KILL are counted and said, never called a stopped group" || no "survivors: $got"
 # a background job of a script starts with SIGINT ignored, which the runner keeps (as under nohup): this launcher restores it first, as a terminal has it
 if ir_start python3 -I -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])'; then
@@ -1164,7 +1175,7 @@ rm -f "$T/ir-child" "$T/ir-member" "$T/ir.rc" "$T/ir.out"; echo wait > "$T/ir-mo
 if wait_until '[ -s "$T/ir-child" ] && [ -s "$T/ir-member" ] && [ "$(jq -r .member "$RUN/dispatch.json" 2>/dev/null)" = "$(cat "$T/ir-member")" ]' 30; then
   runner=$(jq -r .runner "$RUN/dispatch.json")
   out=$($DA local run "$RUN" --again 2>&1); rc=$?
-  { [ "$rc" = 2 ] && grep -qF "$RUN is being run now (qargi local run, process $runner)" <<<"$out" && tr '\0' '\n' < "/proc/$runner/cmdline" | grep -qxF "$RUN"; } \
+  { [ "$rc" = 2 ] && grep -q "lifecycle lock busy" <<<"$out" && tr '\0' '\n' < "/proc/$runner/cmdline" | grep -qxF "$RUN"; } \
     && ok "a run started by a relative path: its runner holds the real path, and a start from another directory refuses while it runs" || no "relative run: rc=$rc $out"
   kill -TERM "$runner"; ir_after TERM 143
 else no "relative run: the member did not start: $(cat "$T/ir.out")"; fi
@@ -1208,11 +1219,11 @@ if ir_start; then
   kill -KILL "$(jq -r .runner "$RUN/dispatch.json")"; wait_until '[ -s "$T/ir.rc" ]' 30
   { [ "$(jq -r .outcome "$RUN/dispatch.json")" = running ] && [ -L "$LINK" ] && ! gone "$(cat "$T/ir-member")"; } && ok "SIGKILL: the start record stays (running), the link stays, the member runs on" || no "sigkill state: $(jq -c . "$RUN/dispatch.json")"
   out=$($DA local run "$RUN" --again 2>&1); rc=$?
-  { [ "$rc" = 2 ] && grep -qF "the member of an earlier start of $RUN is still running (process group $(cat "$T/ir-member")), its runner is gone: stop it first (kill -TERM -- -$(cat "$T/ir-member"))" <<<"$out"; } \
-    && ok "the next start refuses while the member of the killed runner still runs, naming its process group" || no "sigkill member alive: rc=$rc $out"
+  { [ "$rc" = 2 ] && grep -q "member process group is busy" <<<"$out"; } \
+    && ok "the next start refuses while the recorded member group of the killed runner still runs" || no "sigkill member alive: rc=$rc $out"
   kill -TERM -- -"$(cat "$T/ir-member")"; wait_until 'gone "$(cat "$T/ir-member")" && gone "$(cat "$T/ir-child")"' 10 || no "the member's process group did not stop"
   out=$($DA local run "$RUN" 2>&1); rc=$?
-  { [ "$rc" = 2 ] && grep -q 'was started and did not end: its runner is gone' <<<"$out" && grep -qF "qargi local run $RUN --again" <<<"$out"; } && ok "without --again the start is refused with the way on" || no "sigkill no again: rc=$rc $out"
+  { [ "$rc" = 2 ] && grep -q 'has been run already' <<<"$out" && grep -q -- '--again' <<<"$out"; } && ok "without --again the start is refused with the way on" || no "sigkill no again: rc=$rc $out"
   out=$($DA local list 2>&1)
   grep -qF "  residue: $LINK (a link a start of qargi local run left: its runner did not end); qargi local run RUN --again replaces a link left there" <<<"$out" \
     && ok "local list names the link left in the run home" || no "list residue: $out"
@@ -1360,6 +1371,9 @@ setprov fakecmd
 got=$(env FAKE_MODE=sleep python3 -I - "$T/tool/lib" "$RUN" <<'PY' 2>&1
 import os, sys; sys.path.insert(0, sys.argv[1])
 import local_run as L
+sys.path.insert(0, os.path.join(os.getcwd(), "tests"))
+from attempt_fixture import wire
+wire(L)
 run, orig, n = os.path.realpath(sys.argv[2]), L.write_private, [0]
 def wp(path, text):
     n[0] += 1
@@ -1382,6 +1396,9 @@ import json, os, subprocess, sys
 from unittest.mock import patch
 sys.path.insert(0, sys.argv[1])
 import local_run as L
+sys.path.insert(0, os.path.join(os.getcwd(), "tests"))
+from attempt_fixture import wire, attempt
+wire(L)
 run = os.path.realpath(sys.argv[2])
 build, write, stop, clear_home, groups = L.build, L.write_private, L.kill_group, L.clear_home, L.group_left
 source = os.path.join(run, "signin-fixture")
@@ -1449,17 +1466,34 @@ for cleanup_fails in (False, True, "unknown"):
             assert link in result.stdout + result.stderr, result
             assert "refresh.from-run" in result.stdout + result.stderr, result
             assert secret not in result.stdout + result.stderr
-    # Even a refused dispatch cannot retry beside original-group survivors.
-    for survivors in ([procs[0].pid], None):
-        rec["group_left"] = len(survivors) if survivors else None
-        write(os.path.join(run, "dispatch.json"), json.dumps(rec))
-        with patch.object(L, "group_left", return_value=survivors):
-            try:
-                L.earlier_start(run, True)
-                raise AssertionError("retry beside survivors")
-            except L.Stop as e:
-                assert "not known to be quiescent" in str(e)
-    L.earlier_start(run, True)  # actual group has stopped: safe to retry
+    # Unfinished private dispatch authority, even with a forged ended mirror,
+    # refuses live or unknown groups. Inject the process probe, not RUN metadata.
+    with attempt(run):
+        store = L.A.Store(run)
+        gate = store.gate()
+        refs = open(os.path.join(store.path, gate["baseline"]), "rb").read()
+        store.begin(store.gate_pending(refs, epoch=gate["epoch"]), refs)
+        member = subprocess.Popen(["sleep", "30"], start_new_session=True)
+        try:
+            store.member(member.pid)
+        finally:
+            member.terminate()
+            member.wait()
+        try:
+            for survivors in (True, None):
+                def alive(pg):
+                    if survivors is None:
+                        raise L.A.Refuse("unknown process group liveness")
+                    return survivors
+                with patch.object(L.A, "process", return_value=None), patch.object(L.A, "group_alive", side_effect=alive):
+                    try:
+                        L.earlier_start(run, True)
+                        raise AssertionError("retry beside survivors")
+                    except L.A.Refuse as e:
+                        assert "process group" in str(e)
+        finally:
+            store.end("failed")
+        L.earlier_start(run, True)  # actual group has stopped: safe to retry
     if os.path.islink(link):
         os.unlink(link)
     os.unlink(os.path.join(os.path.dirname(link), "refresh.from-run"))

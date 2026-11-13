@@ -12,6 +12,7 @@ fail=0
 # shellcheck source=fixtures.sh
 . tests/fixtures.sh
 T=$(mktemp -d -p "$HERMETIC")
+trap 'chmod 755 "$T/inst/zz-sentinel" 2>/dev/null || :; kill_bg; rm -rf "$HERMETIC"' EXIT
 ROOT=$PWD
 BROKEN=tests/providers/broken
 tree_before=$(git status --porcelain --untracked-files=no tests lib 2>/dev/null; git diff tests lib 2>/dev/null | cksum)
@@ -140,6 +141,18 @@ jq --slurpfile c lib/providers/catalogs/claude.json '.models = {pattern: $c[0].p
   lib/providers/claude-platform.json > "$T/inline/lib/providers/claude-platform.json"
 conf claude-platform --tool "$T/inline" > "$T/inline.out" 2>&1; rc=$?
 { [ $rc = 0 ] && ! grep -q '^FAIL' "$T/inline.out" && grep -q 'effort null rule on a changed copy' "$T/inline.out"; } && ok "a schema 2 definition with inline models passes, and the effort rule runs on its models" || { no "inline models: rc=$rc"; sed 's/^/     /' "$T/inline.out"; }
+
+# An unreadable unrelated entry in an installed layout must never be copied.
+if [ "$(id -u)" = 0 ]; then
+  echo "skip: the sentinel check needs a non-root user"
+else
+  copy_tool "$ROOT" "$T/inst"
+  mkdir "$T/inst/zz-sentinel" && echo x > "$T/inst/zz-sentinel/f" && chmod 000 "$T/inst/zz-sentinel" || no "(setup) sentinel"
+  bash "$T/inst/lib/conformance/run.sh" codex --stub "$ROOT/tests/providers/codex" > "$T/inst.out" 2>&1; rc=$?
+  chmod 755 "$T/inst/zz-sentinel"
+  { [ "$rc" = 0 ] && ! grep -q '^FAIL' "$T/inst.out" && grep -Eq '^ok +\[12\] .*runs: write read-only' "$T/inst.out"; } \
+    && ok "installed layout ignores an unrelated root entry" || { no "sentinel: rc=$rc"; sed 's/^/     /' "$T/inst.out"; }
+fi
 
 # an adapter that is null is a skip, not a failure; an unknown provider is a usage error
 mkdir -p "$T/null/lib/providers/catalogs"; cp lib/providers/catalogs/claude.json "$T/null/lib/providers/catalogs/"
