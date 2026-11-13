@@ -2,8 +2,8 @@
  "purpose": "Resolve command-runtime profiles consistently and bind prepared model and effort requests through dispatch",
  "started": "2026-11-13T20:44:32Z",
  "goal": "Resolve command-runtime profiles consistently and bind prepared model and effort requests through dispatch",
- "plan": "Resolver repairs accepted by Opus and lead tests. Prepared-request k2T0OD applied at ac3a487, lead validation active, Astra9BaNv5 reviewing. Sol0c1BVX reconstructs Sonnet low display/null fix proposal. Intake final slice, independent review, feature integration, whole suite, advisor and concrete merge plan.",
- "note": "No feature/develop merge yet. Private authority and request drift are under Astra review. Records /home/rett/.cache/qargi-runs/qargi-command-profiles-outcomes.json. Receipts /tmp/qargi-prepared-astra.receipt.json and /tmp/qargi-command-display-sol.receipt.json.",
+ "plan": "Prepared-request lead DONE passed674.71s; Astra revise confirmed prefix-regex semantics and runtime-unavailable reg_json guidance. Sol medium Oy0781 repairing both with public regressions on display descendant367ec77. Display lead checks and Opus review active. Then independent repair review, integrate feature, full checkpoint, final advisor and merge plan.",
+ "note": "No feature/develop merge yet. Astra9BaNv5 archived/verified/cleaned. Efficiency ledger includes native usage and missed coverage. Active receipts /tmp/qargi-command-astra-repair-sol.receipt.json and /tmp/qargi-command-display-opus.receipt.json.",
  "status": "active",
  "lead": {
   "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
@@ -12,11 +12,11 @@
   "since": "2026-11-13T20:44:32Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-13T22:52:06Z",
+ "renewed_at": "2026-11-13T23:21:22Z",
  "finished_at": null,
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 7,
- "updated_at": "2026-11-13T22:52:06Z",
+ "rev": 8,
+ "updated_at": "2026-11-13T23:21:22Z",
  "feature": "command-profiles",
  "project": "qargi"
 }
