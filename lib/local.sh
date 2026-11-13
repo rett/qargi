@@ -721,16 +721,8 @@ case $verb in
     case $(stat -f -c %T -- "$SCR" 2>/dev/null) in
       tmpfs|ramfs) echo "qargi: warning: --scratch $SCR is on a tmpfs: a reboot loses the run (its clone, commits and output). Prefer a directory on disk, for example ~/.cache/qargi-runs; a passing verify saves a copy of the output in $DA_STATE/runs" >&2;;
     esac
-    # a profile is resolved (by the one resolver, `agent for`) before anything is made: a refusal leaves no run directory
-    MEMBER='' MODEL='' EFFORT=''
-    if [ -n "$PROFILE" ]; then
-      PPJ=$(project_of "$REPO" "$URL"); pargs0=(for "$ROLE" --profile "$PROFILE" --json)
-      [ -z "$PPJ" ] || pargs0+=(--project "$PPJ")
-      PRES=$("$(dirname "$0")/agent.sh" "${pargs0[@]}" 2>&1 </dev/null) || die "${PRES#qargi: }"
-      MEMBER=$(jq -r '.member // ""' <<<"$PRES"); MODEL=$(jq -r '.model // "-"' <<<"$PRES"); EFFORT=$(jq -r '.effort // "-"' <<<"$PRES")
-    else
-      PROFILE=$ROLE
-    fi
+    MEMBER='' MODEL='' EFFORT='' SELECTOR=$PROFILE
+    PROFILE=${PROFILE:-$ROLE}
     # the contract addenda of the project's runtime on the local surface (resources.contract_addenda of its definition), read before anything
     # is made; a repository in no project, or a project with no local runtime, gets the core's contract alone (no runtime is assumed)
     ADDENDA='' CPROV='' CPJ=$(project_of "$REPO" "$URL")
@@ -747,6 +739,27 @@ case $verb in
       # a provider that is set but does not resolve is refused here, not left out of the contract
       CPROV=$(project_provider_if_set "$CPJ" local) || die "the local provider of project $CPJ does not resolve, so the contract addenda of its runtime cannot be added; nothing was made (qargi project show $CPJ)"
       [ -z "$CPROV" ] || ADDENDA=$(pymod provider addenda "$CPROV" local </dev/null) || die "could not read the contract addenda of the local runtime $CPROV (qargi provider check $CPROV)"
+    fi
+    # Command profiles apply to implicit role selections too. Resolve before RUN,
+    # TMP or a clone exists, then commit the request in the lifecycle authority.
+    REQUEST=null CMODE=''
+    if [ -n "$CPROV" ]; then
+      # Mode comes from the runtime alone; an in-session selection must retain
+      # its existing extension handling. Command resolution composes below.
+      CMODE=$(python3 -I "$(dirname "$0")/prepared_request.py" mode "$CPROV" </dev/null) || exit 2
+      if [ "$CMODE" = command ]; then
+        reqargs=("$CPJ" "$CPROV" "$ROLE" "$CLASS")
+        [ -z "$SELECTOR" ] || reqargs+=("$SELECTOR")
+        REQUEST=$(python3 -I "$(dirname "$0")/prepared_request.py" "${reqargs[@]}" </dev/null) || exit 2
+        PROFILE=$(jq -r .profile <<<"$REQUEST"); MEMBER=$(jq -r .base <<<"$REQUEST")
+        MODEL=$(jq -r .model <<<"$REQUEST"); EFFORT=$(jq -r .effort <<<"$REQUEST")
+      fi
+    fi
+    if [ "$CMODE" != command ] && [ -n "$SELECTOR" ]; then
+      pargs0=(for "$ROLE" --profile "$SELECTOR" --json)
+      [ -z "$CPJ" ] || pargs0+=(--project "$CPJ")
+      PRES=$("$(dirname "$0")/agent.sh" "${pargs0[@]}" 2>&1 </dev/null) || die "${PRES#qargi: }"
+      MEMBER=$(jq -r '.member // ""' <<<"$PRES"); MODEL=$(jq -r '.model // "-"' <<<"$PRES"); EFFORT=$(jq -r '.effort // "-"' <<<"$PRES")
     fi
     # the run's TMP: a private directory on tmpfs when there is one (QARGI_RUN_TMP moves it, as the tests do, so a test never leaves anything in
     # /dev/shm), else RUN/tmp; made below, once RUN is
@@ -791,6 +804,7 @@ case $verb in
     printf '%s\n' "$ROLE" > "$RUN/ability"
     printf '%s\n' "$CLASS" > "$RUN/class"
     [ -z "$MEMBER" ] || printf '%s\n' "$PROFILE" > "$RUN/profile"
+    [ "$REQUEST" = null ] || printf '%s\n' "$REQUEST" > "$RUN/request.json"   # inspection mirror, never authority
     date +%s > "$RUN/started"   # the epoch the lead's ref journal is read from by `verify`
     if [ -n "$URL" ]; then
       snapshot_url "$URL" "$CRED" > "$RUN/refs.before"
@@ -830,10 +844,11 @@ exec env -i HOME="$RUN/home" PATH="\$PATH" LANG=C.UTF-8 TERM=dumb \\
 WRAP
     chmod 755 "$RUN/git"
     lc_lock "$RUN" || die "cannot lock prepared run"
-    jq -nc --rawfile refs "$RUN/refs.before" --argjson epoch "$(cat "$RUN/started")" --arg base "$BASE" --arg base_sha "$BSHA" --arg tmpdir "$TMPD" \
-      '{refs:$refs,epoch:$epoch,base:$base,base_sha:$base_sha,tmpdir:$tmpdir}' | lc init "$RUN" >/dev/null || die "cannot initialize prepared authority"
-    jq -nc --arg r "$RUN" --arg s "$SLUG" --arg a "$ROLE" --arg b "$BASE" --arg t "$(now)" --arg l "$LEAD" --arg p "$PROFILE" --arg d "$TMPD" --arg rp "$REPO" --arg ru "$URL" --arg rc "$CRED" --arg pj "$CPJ" --argjson ans "$ANS" --arg cl "$CLASS" \
+    jq -nc --rawfile refs "$RUN/refs.before" --argjson epoch "$(cat "$RUN/started")" --arg base "$BASE" --arg base_sha "$BSHA" --arg tmpdir "$TMPD" --argjson request "$REQUEST" \
+      '{refs:$refs,epoch:$epoch,base:$base,base_sha:$base_sha,tmpdir:$tmpdir,request:$request}' | lc init "$RUN" >/dev/null || die "cannot initialize prepared authority"
+    jq -nc --arg r "$RUN" --arg s "$SLUG" --arg a "$ROLE" --arg b "$BASE" --arg t "$(now)" --arg l "$LEAD" --arg p "$PROFILE" --arg d "$TMPD" --arg rp "$REPO" --arg ru "$URL" --arg rc "$CRED" --arg pj "$CPJ" --argjson ans "$ANS" --arg cl "$CLASS" --argjson request "$REQUEST" \
       '{lifecycle:1, run:$r, slug:$s, ability:$a, profile:$p, base:$b, started:$t, lead:(if $l == "" then null else $l end), tmpdir:$d, class:$cl, project:$pj, answers:$ans}
+       + (if $request == null then {} else {command_request:1} end)
        + (if $ru == "" then {repo:$rp} else {url:$ru} + (if $rc == "" then {} else {cred:$rc} end) end)' | ( umask 077; flock 9 && cat >> "$DA_STATE/local-runs.jsonl" ) 9> "$DA_STATE/local-runs.jsonl.lock"
     chmod 600 "$DA_STATE/local-runs.jsonl" 2>/dev/null || true
     render_warning "$REPO" "$URL"
@@ -1459,7 +1474,11 @@ $vout}"
     RPJ=$(run_project "$RUN")   # the project prepare recorded in the lead's registry, not the first stored project whose repository it is
     [ -f "$DA_CONF/projects/$RPJ.json" ] && valid_project "$RPJ" || RPJ=''   # a project stored since removed is no project
     [ -n "$RPJ" ] || { echo "qargi: no stored project has the repository of this run, so no runtime is known: store it (qargi project attach) and give it a local provider (qargi project set PROJECT models.provider.local NAME)" >&2; exit 2; }
-    RPROV=$(project_provider "$RPJ" local) || exit $?
+    RPROV=$(project_provider "$RPJ" local) || {
+      rrc=$?
+      [ "$(reg_json "$RUN" | jq -r '.command_request // ""')" != 1 ] || echo "qargi: prepared command runtime is unavailable; re-prepare with qargi local prepare before running" >&2
+      exit "$rrc"
+    }
     DRY=''
     for a in "$@"; do [ "$a" != --dry-run ] || DRY=1; done
     if [ -z "$DRY" ]; then
