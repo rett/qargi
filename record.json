@@ -3,8 +3,8 @@
  "started": "2026-11-13T05:28:36Z",
  "goal": "Bind verification to the current execution attempt, preserve earlier evidence, and refuse active or accepted-work retries safely",
  "plan": "Opus accepted main compatibility repair; Sonnet supplies bounded terminal-cleanup/docs/concurrency-fixture corrections; validate and review; merge feature stack and full checkpoint; then command-profiles",
- "note": "Whole checkpoint da196d5 remains FAILED. Reproduced conformance and journal fixture failures; Sonnet high proposal696.89s also identified close rewrite-hint regression. Both timeout tests PASS in two-job reruns (361.56s/293.15s). Active qargi.ov81KN Terra/high reconstructs proposal, tests and packages repairs; logs /tmp/qargi-suite-repair-validation.log. Need intake, Opus/Fable exact-delta review and new whole checkpoint before develop integration.",
- "status": "active",
+ "note": "Suite repair ov81KN intake verified/scrubbed/applied as agent/verification-suite-repair4fde407; bundle tree identical. Lead ShellCheck/hermetic/tool-copy/whitespace pass; DONE and scoped Opus medium review running. BASE da196d5 whole checkpoint remains FAILED. No develop merge until targeted pass, independent acceptance and fresh whole checkpoint. Artifacts /tmp/qargi-suite-repair-lead-checks and /tmp/qargi-opus-suite-repair; ledger archived.",
+ "status": "verifying",
  "lead": {
   "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
   "user": "rett",
@@ -12,11 +12,11 @@
   "since": "2026-11-13T05:28:36Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-13T16:04:06Z",
+ "renewed_at": "2026-11-13T16:09:09Z",
  "finished_at": null,
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 37,
- "updated_at": "2026-11-13T16:04:06Z",
+ "rev": 38,
+ "updated_at": "2026-11-13T16:09:09Z",
  "feature": "verification-lifecycle",
  "project": "qargi"
 }
