@@ -8,7 +8,7 @@
 #                                                  makes its worktree at <worktrees.root>/feature/NAME and prints the path
 #   feature.sh list [--project P]                  the open features: purpose, distance from develop, and the files two features both change
 #   feature.sh park [--project P]                  refresh the parking branch (answers repo.parking_branch, default scratch) in the main checkout:
-#                                                  checkout -B it onto develop; refused when the tree is dirty or the branch has commits develop lacks
+#                                                  checkout -B it onto develop; refused for tracked changes or commits develop lacks
 #   feature.sh sync NAME [--project P]             merge develop into the feature (do it before its checkpoint, after another feature landed). With the answer
 #                                                  release.changelog.numbered it warns of duplicate changelog item numbers (finish refuses them)
 #   feature.sh merge NAME BRANCH [--project P]     merge a verified task branch into feature/NAME with --no-ff. NAME may instead be a detached
@@ -106,14 +106,19 @@ run_warning() {
 # merged (lead_usage.py open-runs, the list compact-check reads). A cleaned run, a discarded one (clean --discard), a closed one (local close
 # --applied-by-am) and an applied run whose branch is merged are not open. Nothing is changed.
 open_run_gate() {
-  local out rc=0 d sl ro st n=0 lines=''
-  out=$(pymod lead_usage open-runs --state "$DA_STATE" --conf "$DA_CONF" --project "$PROJ" --feature "$1" </dev/null 2>/dev/null) || rc=$?
-  [ "$rc" != 0 ] || return 0
-  [ "$rc" = 1 ] || { echo "qargi: warning: could not list the open runs of feature/$1 (lead_usage.py exited $rc): finishing goes on without that check" >&2; return 0; }
-  while IFS=$'\t' read -r d sl ro st cmd; do
+  local out rc=0 d sl ro st cmd extra n=0 lines=''
+  # The strict command validates and enumerates one snapshot. This gate does not
+  # coordinate new preparation through the eventual merge.
+  out=$(pymod lead_usage open-runs --state "$DA_STATE" --conf "$DA_CONF" --project "$PROJ" --feature "$1" </dev/null 2>&1) || rc=$?
+  if [ "$rc" = 0 ] && [ -z "$out" ]; then return 0; fi
+  [ "$rc" = 1 ] && [ -n "$out" ] || die "could not list the open runs of feature/$1 (lead_usage.py exited $rc): $out; finish refused. Nothing was changed."
+  while IFS=$'\t' read -r d sl ro st cmd extra; do
     [ -n "$d" ] || continue
+    [ -n "$sl" ] && [ -n "$ro" ] && [ -n "$st" ] && [ -n "$cmd" ] && [ -z "$extra" ] \
+      || die "could not list the open runs of feature/$1 (invalid reader output); finish refused. Nothing was changed."
     n=$((n + 1)); lines+="  $d ($ro $sl): $st"$'\n'"    close it: ${cmd:-qargi local clean $d}"$'\n'
   done <<<"$out"
+  [ "$n" -gt 0 ] || die "could not list the open runs of feature/$1 (empty reader output); finish refused. Nothing was changed."
   die "feature $1 has $n open run(s); finish it when they are taken in or dropped:"$'\n'"${lines%$'\n'}"$'\n'"A read-only run (a report, no patches) closes with qargi local clean RUN; a run of work with qargi local clean RUN after its work is applied and merged (--discard drops it on purpose), or qargi local close RUN --applied-by-am when you applied its patches by hand (git am). Nothing was changed."
 }
 # sync_numbers REF: with the answer release.changelog.numbered, a warning when the changelog at REF has duplicate item numbers (the sync is done either way;
@@ -201,7 +206,7 @@ case $verb in
   park)
     # the main checkout rests on the parking branch (answers repo.parking_branch, default scratch), so qargi can move develop under it
     branch_exists develop || die "no develop branch to park on"
-    [ -z "$(git -C "$REPO" status --porcelain)" ] || die "the main checkout $REPO has uncommitted changes: commit or discard them, then qargi feature park"
+    [ -z "$(git -C "$REPO" status --porcelain --untracked-files=no)" ] || die "the main checkout $REPO has uncommitted changes: commit or discard them, then qargi feature park"
     w=$(held "$PARK"); [ -z "$w" ] || [ "$(readlink -f "$w")" = "$(readlink -f "$REPO")" ] || die "$PARK is checked out in $w, not in the main checkout: leave it there first"
     old=$(sha_of "$PARK")
     if [ -n "$old" ] && [ "$(g rev-list --count "develop..$PARK")" != 0 ]; then
@@ -209,7 +214,7 @@ case $verb in
       g log --format='  %h %s' "develop..$PARK" | head -20 >&2
       die "re-implement them with an agent task based on develop (qargi local prepare --base develop), or keep them on a branch of their own (git branch NAME $PARK), then run qargi feature park again"
     fi
-    git -C "$REPO" checkout -q -B "$PARK" develop || die "could not check out $PARK in $REPO"
+    git -C "$REPO" checkout -q --no-overwrite-ignore -B "$PARK" develop || die "could not check out $PARK in $REPO"
     journal_ref "$REPO" "refs/heads/$PARK" "$old" "$(sha_of "$PARK")" feature:park
     echo "$REPO is on $PARK at develop ($(g rev-parse --short develop))$([ -n "$old" ] || echo "; created $PARK")";;
   start)

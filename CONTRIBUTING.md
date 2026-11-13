@@ -44,13 +44,13 @@ optionally, the globs of the files it covers. A new `tests/test_*` file gets a l
 file is not listed or a listed file does not exist. The budget is the time the step takes on the reference machine; a step
 that takes more than 1.5 times its budget is reported; a budget is re-recorded from the last whole-suite run, rounded up by a tenth.
 
-    bash tests/run.sh                  every step, as many at a time as there are CPUs (-j N; -j 1 is the serial run)
-    bash tests/run.sh --tier fast      the fast tier: every area, about a minute
-    bash tests/run.sh --only PATTERN   the steps whose command matches PATTERN (extended regular expression)
-    bash tests/run.sh --shard 2/4 --durations tests/durations.txt   the second of four parts, balanced by the recorded durations (CI)
-    bash tests/run.sh --tier fast --changed-from origin/develop     the fast tier plus the steps that cover the files changed since develop
-    bash tests/run.sh --shard 2/4 --plan   print the plan of the four parts and the steps of the second, run nothing
-    bash tests/run.sh --shuffle SEED --repeat 3   random order and repeats, to find a test that fails now and then
+- `bash tests/run.sh`: every step, as many at a time as there are CPUs (`-j N`; `-j 1` is the serial run).
+- `bash tests/run.sh --tier fast`: the fast tier, every area, about a minute.
+- `bash tests/run.sh --only PATTERN`: steps whose command matches the extended regular expression.
+- `bash tests/run.sh --shard 2/4 --durations tests/durations.txt`: the second of four parts, balanced by recorded durations (CI).
+- `bash tests/run.sh --tier fast --changed-from origin/develop`: the fast tier plus steps covering files changed since develop.
+- `bash tests/run.sh --shard 2/4 --plan`: print the plan of the four parts and the steps of the second, run nothing.
+- `bash tests/run.sh --shuffle SEED --repeat 3`: random order and repeats, to find a test that fails now and then.
 
 Tiers: `fast` is a quick run that has every area in it (about a minute); `full` steps run only in the whole run. `-j N` sets how many
 steps run at once (default: the CPUs); the verdict is the same at every `-j`, and `-j 1` is the serial run. A step marked `serial` runs
@@ -74,7 +74,10 @@ the same pull request.
 `tests/test_ci.py` fails when the four parts plan more than 1.3 times apart. Regenerate it when steps were added or their time
 changed much, from a whole run on a machine with eight CPUs, and commit it:
 
-    T=$(mktemp -d); mkdir $T/h; HOME=$T/h TMPDIR=$T bash tests/run.sh -j 8 --save-durations tests/durations.txt
+```sh
+T=$(mktemp -d); mkdir $T/h; HOME=$T/h TMPDIR=$T bash tests/run.sh -j 8 \
+  --save-durations tests/durations.txt
+```
 
 A sharded run ends with `shard i/K: planned Ns, the steps took Ns together`, which shows how far the file is from the runs.
 
@@ -159,19 +162,76 @@ from the `/qargi-providers` skill.
      is held (`hook`, `sandbox-args`, `adapter` or `none`).
 
    ```json
-   {"schema": 2, "kind": "provider", "provider": "fakecli", "family": null, "surface": "local",
-    "description": "fakecli, a command-line model runner",
-    "models": {"pattern": "^fake-.+$", "effort": null,
-               "tiers": {"*": {"model": "fake-1", "alias": null, "verified_on": null, "source": "fakecli --list-models"}}},
-    "capabilities": {"skills": {"value": "yes"}},
-    "resources": {"skills": {"project_dir": ".fake/skills", "items": "dir-per-item", "entry": "SKILL.md",
-                             "format": "skill-md", "link": {"project": "dir-symlink", "user": "none"}}},
-    "agents": null,
-    "dispatch": {"mode": "command", "argv": ["fakecli", "run", "--model", "{model}"],
-                 "class_argv": {"read-only": ["--sandbox", "read-only"]}, "prompt": {"via": "stdin"},
-                 "cwd": "{clone}", "env_pass": ["FAKECLI_API_KEY"], "timeout_s": 1800, "output": {"format": "text"}},
-    "barrier": {"kind": "sandbox-args"},
-    "session": {"render_target": "fakecli"}}
+   {
+     "schema": 2,
+     "kind": "provider",
+     "provider": "fakecli",
+     "family": null,
+     "surface": "local",
+     "description": "fakecli, a command-line model runner",
+     "models": {
+       "pattern": "^fake-.+$",
+       "effort": null,
+       "tiers": {
+         "*": {
+           "model": "fake-1",
+           "alias": null,
+           "verified_on": null,
+           "source": "fakecli --list-models"
+         }
+       }
+     },
+     "capabilities": {
+       "skills": {
+         "value": "yes"
+       }
+     },
+     "resources": {
+       "skills": {
+         "project_dir": ".fake/skills",
+         "items": "dir-per-item",
+         "entry": "SKILL.md",
+         "format": "skill-md",
+         "link": {
+           "project": "dir-symlink",
+           "user": "none"
+         }
+       }
+     },
+     "agents": null,
+     "dispatch": {
+       "mode": "command",
+       "argv": [
+         "fakecli",
+         "run",
+         "--model",
+         "{model}"
+       ],
+       "class_argv": {
+         "read-only": [
+           "--sandbox",
+           "read-only"
+         ]
+       },
+       "prompt": {
+         "via": "stdin"
+       },
+       "cwd": "{clone}",
+       "env_pass": [
+         "FAKECLI_API_KEY"
+       ],
+       "timeout_s": 1800,
+       "output": {
+         "format": "text"
+       }
+     },
+     "barrier": {
+       "kind": "sandbox-args"
+     },
+     "session": {
+       "render_target": "fakecli"
+     }
+   }
    ```
 
    `session.render_target` is the name `qargi packs apply --target` takes for the runtime; without

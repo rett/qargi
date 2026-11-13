@@ -541,6 +541,19 @@ cmdrun() {   # CLASS LIB [RUN [TMP]]: one run of LIB/local_run.py of the class w
   [ -z "${4:-}" ] || { mkdir -p "$QARGI_STATE" "$4"; jq -nc --arg r "$CRUN" --arg t "$4" '{run: $r, tmpdir: $t}' >> "$QARGI_STATE/local-runs.jsonl"; }
   rm -rf "$CRUN"; mkdir -p "$CRUN/clone/src" "$CRUN/out"
   : > "$CRUN/refs.before"; : > "$CRUN/clone/src/a.go"
+  # A command run inspects a real clean worktree. Keep its repository independent of the host's Git configuration and templates.
+  mkdir -p "$W/git-template"
+  fixture_git() {
+    env -i PATH="$PATH" HOME="$W" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+      GIT_AUTHOR_NAME=Conformance GIT_COMMITTER_NAME=Conformance \
+      GIT_AUTHOR_EMAIL=conformance@example.invalid GIT_COMMITTER_EMAIL=conformance@example.invalid \
+      git -c core.hooksPath=/dev/null -c protocol.allow=never "$@"
+  }
+  if ! { fixture_git init -q --template="$W/git-template" "$CRUN/clone" &&
+         fixture_git -C "$CRUN/clone" add src/a.go &&
+         fixture_git -C "$CRUN/clone" commit -q -m 'Conformance fixture'; }; then
+    COUT=''; CRC=1; return
+  fi
   if [ "$cls" = write ]; then printf 'build\n' > "$CRUN/ability"; else printf 'review\n' > "$CRUN/ability"; fi
   printf 'TASK: conformance task\nDONE: true\n' > "$CRUN/task.md"
   : > "$W/cmd.log"; rm -f "$W/cmd.env" "$W/cmd.home" "$W/cmd.cfg"

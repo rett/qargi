@@ -6,11 +6,13 @@ branches, worktrees and the files two features both change are derived from git 
 stored. The records are local to this host by default; to share them across machines and developers
 through git refs, see `qargi marshal enable` below.
 
+Status shows every open feature's lead, status, goal, tasks and overlap. Check before starting work or changing a plan; it exits 1 if another live lead holds the feature. Claim becomes the lead (`set` adds a plan or note); release hands over, and the next session runs `qargi marshal take NAME`.
+
 ```
-qargi marshal status --all            # every open feature: lead, status, goal, tasks, overlap
-qargi marshal check NAME              # before starting work or changing a plan (exit 1: another live lead holds it)
-qargi marshal claim NAME --goal "..." # become the lead; set adds a plan or note
-qargi marshal release NAME --note "..." # hand over; the next session runs: qargi marshal take NAME
+qargi marshal status --all
+qargi marshal check NAME
+qargi marshal claim NAME --goal "..."
+qargi marshal release NAME --note "..."
 ```
 
 A lead holds a lease of `marshal.lease_minutes` minutes (a whole number from 1 to 1440, default 15; `qargi project set
