@@ -284,7 +284,7 @@ temporary worktrees are not flagged.
 qargi moves develop and master without touching a working tree, so neither can be checked out in the project's main checkout
 (`need_free` refuses and says so). The checkout rests on a parking branch instead: `repo.parking_branch` in the answers, `scratch` by
 default. `git -C DIR switch -c scratch develop` makes it; `qargi feature park` refreshes it later: `checkout -B scratch develop` in the
-main checkout, refused when the tree is dirty or when `scratch` has commits develop lacks (it lists them: re-implement them with an
-agent task based on develop). After `feature finish`, `release finish` and `release finish --hotfix` moved develop, a clean main
+main checkout, refused when tracked files are dirty, a checkout would collide with untracked or ignored files, or `scratch` has commits develop lacks (it lists them: re-implement them with an
+agent task based on develop). After `feature finish`, `release finish` and `release finish --hotfix` moved develop, a tracked-clean main
 checkout on the parking branch with no commits of its own is fast-forwarded to develop; otherwise one line says why not. The parking
-branch is never pushed or merged.
+branch is never pushed or merged. Noncolliding untracked and ignored files are preserved; a collision can leave the branch behind with the generic reason `the fast-forward failed`.

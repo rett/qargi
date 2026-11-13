@@ -8,7 +8,7 @@
 #                                                  makes its worktree at <worktrees.root>/feature/NAME and prints the path
 #   feature.sh list [--project P]                  the open features: purpose, distance from develop, and the files two features both change
 #   feature.sh park [--project P]                  refresh the parking branch (answers repo.parking_branch, default scratch) in the main checkout:
-#                                                  checkout -B it onto develop; refused when the tree is dirty or the branch has commits develop lacks
+#                                                  checkout -B it onto develop; refused for tracked changes or commits develop lacks
 #   feature.sh sync NAME [--project P]             merge develop into the feature (do it before its checkpoint, after another feature landed). With the answer
 #                                                  release.changelog.numbered it warns of duplicate changelog item numbers (finish refuses them)
 #   feature.sh merge NAME BRANCH [--project P]     merge a verified task branch into feature/NAME with --no-ff. NAME may instead be a detached
@@ -206,7 +206,7 @@ case $verb in
   park)
     # the main checkout rests on the parking branch (answers repo.parking_branch, default scratch), so qargi can move develop under it
     branch_exists develop || die "no develop branch to park on"
-    [ -z "$(git -C "$REPO" status --porcelain)" ] || die "the main checkout $REPO has uncommitted changes: commit or discard them, then qargi feature park"
+    [ -z "$(git -C "$REPO" status --porcelain --untracked-files=no)" ] || die "the main checkout $REPO has uncommitted changes: commit or discard them, then qargi feature park"
     w=$(held "$PARK"); [ -z "$w" ] || [ "$(readlink -f "$w")" = "$(readlink -f "$REPO")" ] || die "$PARK is checked out in $w, not in the main checkout: leave it there first"
     old=$(sha_of "$PARK")
     if [ -n "$old" ] && [ "$(g rev-list --count "develop..$PARK")" != 0 ]; then
@@ -214,7 +214,7 @@ case $verb in
       g log --format='  %h %s' "develop..$PARK" | head -20 >&2
       die "re-implement them with an agent task based on develop (qargi local prepare --base develop), or keep them on a branch of their own (git branch NAME $PARK), then run qargi feature park again"
     fi
-    git -C "$REPO" checkout -q -B "$PARK" develop || die "could not check out $PARK in $REPO"
+    git -C "$REPO" checkout -q --no-overwrite-ignore -B "$PARK" develop || die "could not check out $PARK in $REPO"
     journal_ref "$REPO" "refs/heads/$PARK" "$old" "$(sha_of "$PARK")" feature:park
     echo "$REPO is on $PARK at develop ($(g rev-parse --short develop))$([ -n "$old" ] || echo "; created $PARK")";;
   start)

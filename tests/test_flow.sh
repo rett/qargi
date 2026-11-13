@@ -343,11 +343,14 @@ feat() { # name: a verified feature with one commit
 }
 feat p1; t=$($F finish p1 | tok)
 out=$($F finish p1 --plan "$t" --approved go 2>&1) && no "develop was moved under the main checkout" || { grep -q "git -C $R5 switch -c scratch develop" <<<"$out" && ok "a branch held by the main checkout is refused with the parking branch to switch to" || no "message: $out"; }
+mkdir -p "$R5/.agents" "$R5/.codex"; echo settings > "$R5/.agents/config"; chmod 600 "$R5/.agents/config"; ln -s ../.agents/config "$R5/.codex/link"
 out=$($F park 2>&1); rc=$?
-[ $rc = 0 ] && [ "$(git -C "$R5" branch --show-current)" = scratch ] && [ "$(git -C "$R5" rev-parse scratch)" = "$(git -C "$R5" rev-parse develop)" ] && ok "park creates the parking branch at develop and checks it out in the main checkout" || no "park rc=$rc: $out"
-echo wip > "$R5/wip.txt"
+[ $rc = 0 ] && [ "$(git -C "$R5" branch --show-current)" = scratch ] && [ "$(git -C "$R5" rev-parse scratch)" = "$(git -C "$R5" rev-parse develop)" ] && [ -z "$(git -C "$R5" status --porcelain --untracked-files=no)" ] && ok "park creates the parking branch at develop with clean tracked files" || no "park rc=$rc: $out"
+echo wip >> "$R5/VERSION"
 out=$($F park 2>&1) && no "park accepted a dirty tree" || { grep -q "uncommitted changes" <<<"$out" && ok "park refuses a dirty main checkout" || no "dirty message: $out"; }
-rm "$R5/wip.txt"
+git -C "$R5" add VERSION
+out=$($F park 2>&1) && no "park accepted staged changes" || { grep -q "uncommitted changes" <<<"$out" && ok "park refuses staged changes" || no "staged message: $out"; }
+git -C "$R5" restore --staged --worktree VERSION
 git -C "$R5" switch -q develop; git -C "$R5" switch -q -c other; git -C "$R5" switch -q scratch
 git -C "$R5" commit -q --allow-empty -m "kept on scratch"
 out=$($F park 2>&1) && no "park discarded commits of the parking branch" || { grep -q "kept on scratch" <<<"$out" && grep -q "agent task" <<<"$out" && ok "park refuses a parking branch with commits develop lacks, lists them and says what to do" || no "ahead message: $out"; }
@@ -361,13 +364,37 @@ out=$($F finish p2 --plan "$t" --approved go 2>&1)
 grep -q "parking branch scratch: not advanced (scratch has 1 commit(s) that develop lacks)" <<<"$out" && ok "a parking branch with commits of its own is not advanced (and the line says so)" || no "ahead finish: $out"
 git -C "$R5" reset -q --hard develop
 feat p3; t=$($F finish p3 | tok); d_old=$(git -C "$R5" rev-parse develop)
-echo dirty > "$R5/dirty.txt"
+echo dirty >> "$R5/VERSION"
 out=$($F finish p3 --plan "$t" --approved go 2>&1)
 grep -q "parking branch scratch: not advanced (the main checkout has uncommitted changes)" <<<"$out" && [ "$(git -C "$R5" rev-parse scratch)" = "$d_old" ] && ok "a dirty main checkout is not touched" || no "dirty finish: $out"
-rm "$R5/dirty.txt"; git -C "$R5" merge -q --ff-only develop
+git -C "$R5" restore VERSION; git -C "$R5" merge -q --ff-only develop
 feat p4; t=$($F finish p4 | tok)
 out=$($F finish p4 --plan "$t" --approved go 2>&1)
-grep -q "parking branch scratch: fast-forwarded to develop" <<<"$out" && [ "$(git -C "$R5" rev-parse scratch)" = "$(git -C "$R5" rev-parse develop)" ] && [ "$(git -C "$R5" branch --show-current)" = scratch ] && [ -z "$(git -C "$R5" status --porcelain)" ] && ok "after a finish, a clean main checkout on the parking branch is fast-forwarded to develop" || no "ff finish: $out"
+grep -q "parking branch scratch: fast-forwarded to develop" <<<"$out" && [ "$(git -C "$R5" rev-parse scratch)" = "$(git -C "$R5" rev-parse develop)" ] && [ "$(cat "$R5/.agents/config")" = settings ] && [ "$(stat -c %a "$R5/.agents/config")" = 600 ] && [ "$(readlink "$R5/.codex/link")" = ../.agents/config ] && ok "parking preserves untracked runtime files, modes and symlinks through park and follow" || no "ff finish: $out"
+# Both ignored and untracked collisions must block checkout -B and merge --ff-only.
+for kind in ignored untracked; do
+  path="collision-$kind"; [ "$kind" != ignored ] || printf '%s\n' "$path" >> "$R5/.git/info/exclude"
+  feat "park-$kind"; t=$($F finish "park-$kind" | tok)
+  w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R5" worktree add -q "$w" "feature/park-$kind"
+  echo tracked > "$w/$path"; git -C "$w" add -f "$path"; git -C "$w" commit -q -m "add $path"; git -C "$R5" worktree remove --force "$w"
+  $F verify "park-$kind" >/dev/null 2>&1; t=$($F finish "park-$kind" | tok)
+  echo user > "$R5/$path"; chmod 600 "$R5/$path"; d_old=$(git -C "$R5" rev-parse scratch)
+  out=$($F finish "park-$kind" --plan "$t" --approved go 2>&1); rc=$?
+  [ $rc = 0 ] && grep -q 'parking branch scratch: not advanced (the fast-forward failed)' <<<"$out" && [ "$(git -C "$R5" rev-parse scratch)" = "$d_old" ] && [ "$(git -C "$R5" rev-parse develop)" != "$d_old" ] && [ "$(cat "$R5/$path")" = user ] && [ "$(stat -c %a "$R5/$path")" = 600 ] && ok "follow preserves $kind collision and finished integration" || no "follow $kind rc=$rc: $out"
+  out=$($F park 2>&1); rc=$?
+  [ $rc != 0 ] && grep -q "could not check out scratch" <<<"$out" && [ "$(git -C "$R5" rev-parse scratch)" = "$d_old" ] && [ "$(git -C "$R5" branch --show-current)" = scratch ] && [ -z "$(git -C "$R5" status --porcelain --untracked-files=no)" ] && [ "$(cat "$R5/$path")" = user ] && [ "$(stat -c %a "$R5/$path")" = 600 ] && ok "park refuses $kind collision and preserves branch" || no "park $kind rc=$rc: $out"
+  rm "$R5/$path"; git -C "$R5" merge -q --ff-only develop
+done
+# A parent-directory symlink to an ignored directory must not be replaced by a tracked directory.
+feat park-link; w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R5" worktree add -q "$w" feature/park-link
+mkdir "$w/linkdir"; echo tracked > "$w/linkdir/file"; git -C "$w" add linkdir/file; git -C "$w" commit -q -m 'add link directory'; git -C "$R5" worktree remove --force "$w"
+$F verify park-link >/dev/null 2>&1; t=$($F finish park-link | tok)
+mkdir "$R5/ignored-dir"; echo user > "$R5/ignored-dir/file"; printf 'ignored-dir/\n' >> "$R5/.git/info/exclude"; ln -s ignored-dir "$R5/linkdir"
+d_old=$(git -C "$R5" rev-parse scratch); out=$($F finish park-link --plan "$t" --approved go 2>&1); rc=$?
+[ $rc = 0 ] && grep -q 'parking branch scratch: not advanced (the fast-forward failed)' <<<"$out" && [ "$(git -C "$R5" rev-parse scratch)" = "$d_old" ] && [ "$(git -C "$R5" branch --show-current)" = scratch ] && [ "$(readlink "$R5/linkdir")" = ignored-dir ] && [ "$(cat "$R5/ignored-dir/file")" = user ] && [ -z "$(git -C "$R5" status --porcelain --untracked-files=no)" ] && ok "follow preserves a parent symlink and ignored directory" || no "follow symlink rc=$rc: $out"
+out=$($F park 2>&1); rc=$?
+[ $rc != 0 ] && grep -q 'could not check out scratch' <<<"$out" && [ "$(git -C "$R5" rev-parse scratch)" = "$d_old" ] && [ "$(git -C "$R5" branch --show-current)" = scratch ] && [ "$(readlink "$R5/linkdir")" = ignored-dir ] && [ "$(cat "$R5/ignored-dir/file")" = user ] && ok "park refuses the parent symlink collision" || no "park symlink rc=$rc: $out"
+rm "$R5/linkdir"; git -C "$R5" merge -q --ff-only develop
 [ -z "$(git -C "$O5" for-each-ref refs/heads/scratch)" ] && ok "the parking branch is never pushed" || no "scratch pushed"
 $F park >/dev/null 2>&1 && jq '.repo.parking_branch = "rest"' "$T/c/projects/app5.json" > "$T/c/projects/app5.new" && mv "$T/c/projects/app5.new" "$T/c/projects/app5.json" && $F park >/dev/null 2>&1 && [ "$(git -C "$R5" branch --show-current)" = rest ] && ok "repo.parking_branch names another branch" || no "custom parking branch"
 # --- branch lifecycle answers: branches.delete_merged and branches.push_features
