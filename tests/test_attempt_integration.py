@@ -603,6 +603,34 @@ A.save_product(s, Path(s.path + '/prepared.refs').read_bytes())
                 self.assertFalse((Path(self.store.area) / self.store.clean_name).exists())
                 self.assertIn("cleaned already", self.cmd("local", "clean", self.run))
 
+    def test_retry_epoch_precedes_slow_remote_snapshot(self):
+        remote = self.root / "remote.git"
+        self.git("init", "--bare", "-q", str(remote))
+        self.git("remote", "add", "origin", str(remote))
+        self.prepare()
+        self.verify()
+        probe = self.root / "remote-probe"
+        real_git = shutil.which("git")
+        shim = self.bin / "git"
+        shim.write_text(f"#!{sys.executable}\nimport os, sys, time\nfrom pathlib import Path\n"
+                        "if 'ls-remote' in sys.argv:\n"
+                        "    epoch = int(time.time())\n"
+                        f"    Path({str(probe)!r}).write_text(str(epoch))\n"
+                        "    while int(time.time()) == epoch: time.sleep(.02)\n"
+                        f"os.execv({real_git!r}, [{real_git!r}] + sys.argv[1:])\n")
+        shim.chmod(0o755)
+        self.dispatch()
+        self.assertLessEqual(self.state_json()["attempts"][-1]["epoch"], int(probe.read_text()))
+
+    def test_report_manifests_use_private_prepared_base(self):
+        for command in (("review", "save"), ("local", "report")):
+            with self.subTest(command=command):
+                self.prepare("review")
+                (self.run / "refs.before").write_text("local refs/heads/develop " + "f" * 40 + "\n")
+                self.cmd(*command, self.run, input="# Findings\nNo findings.\n")
+                manifest = json.loads((self.run / "out/manifest.json").read_text())
+                self.assertEqual(manifest["base"]["sha"], self.sha)
+
     def test_dead_owner_unknown_window_refuses_even_discard(self):
         self.prepare()
         # A real short-lived owning process commits begin without member().

@@ -1357,7 +1357,8 @@ $vout}"
       echo "kept $SOUT/manifest.json (the member wrote one)"
     else
       rbase=$(reg_get "$RUN" base)
-      rsha=$(awk -v b="refs/heads/$rbase" '$1=="local" && $2==b {print $3}' "$RUN/refs.before" 2>/dev/null | head -n 1)
+      if [ "$(reg_json "$RUN" 'has("lifecycle")')" = true ]; then rsha=$(lc_base_sha "$RUN") || exit 3
+      else rsha=$(awk -v b="refs/heads/$rbase" '$1=="local" && $2==b {print $3}' "$RUN/refs.before" 2>/dev/null | head -n 1); fi
       RMAN=$(mktemp "$SOUT/.manifest.XXXXXX") || die "could not write the manifest in $SOUT"
       jq -n --arg b "$rbase" --arg s "$rsha" --arg slug "$(reg_get "$RUN" slug)" --arg role "$(reg_get "$RUN" ability)" --arg f "$RNAME" \
         '{status:"DONE", blocked_reason:"", task:("read-only run " + $role + " " + $slug + ": the report was written by the member (qargi local report)"),
@@ -1439,8 +1440,9 @@ $vout}"
       RUN=$(readlink -m -- "$RUN")
       lc_ready "$RUN" || exit 2
       [ "$LC_SCHEMA" = true ] || die "legacy run: actual runtime dispatch requires re-prepare"
+      gate_epoch=$(date +%s)
       NOREC=1 check_run "$RUN" || { cat "$CHECK_DIR/refs.diff" >&2; die "pre-dispatch refs refused; previous evidence retained"; }
-      jq -nc --rawfile refs "$CHECK_DIR/refs.after" --argjson epoch "$(date +%s)" --argjson owner_pid "$$" \
+      jq -nc --rawfile refs "$CHECK_DIR/refs.after" --argjson epoch "$gate_epoch" --argjson owner_pid "$$" \
         '{refs:$refs,epoch:$epoch,owner_pid:$owner_pid}' | lc gate-pending "$RUN" > "$CHECK_DIR/pending" || exit 3
       jq -nc --slurpfile pending "$CHECK_DIR/pending" --rawfile refs "$CHECK_DIR/refs.after" \
         '{pending:$pending[0],refs:$refs}' > "$CHECK_DIR/start"

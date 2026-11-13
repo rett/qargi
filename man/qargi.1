@@ -1831,6 +1831,8 @@ the providers the pack works with (default: the catalog entry's, else asked).
 .RE
 .SS Run a task
 .PP
+Retry epochs are captured before ref collection. Lead\-written report manifests use the private prepared base commit rather than a writable snapshot mirror.
+.PP
 Lifecycle clean records directory ownership and atomically renames saved output and attempt state before committing cleaned in the registry and deleting them. Rerun local clean RUN after interruption; recorded deletion is idempotent even after partial marker or state removal. Unknown or replaced tombstones refuse cleanup. Cleaned lifecycle registry rows remain as recovery evidence.
 .PP
 Lifecycle dispatch handles TERM, HUP and INT before committing begin; caught prelaunch signals leave a not\-started attempt. Uncatchable death with no recorded child remains unknown and refuses recovery. Zombie\-only process groups are terminated; inaccessible process evidence remains unknown.

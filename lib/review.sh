@@ -203,7 +203,8 @@ if [ "$verb" = save ]; then
     echo "kept $SOUT/manifest.json (the member wrote one)"
   else
     sbase=$(reg_get "$RUN" base)
-    sha=$(awk -v b="refs/heads/$sbase" '$1=="local" && $2==b {print $3}' "$RUN/refs.before" 2>/dev/null | head -n 1)
+    if [ "$(reg_json "$RUN" 'has("lifecycle")')" = true ]; then sha=$(lc_base_sha "$RUN") || exit 3
+    else sha=$(awk -v b="refs/heads/$sbase" '$1=="local" && $2==b {print $3}' "$RUN/refs.before" 2>/dev/null | head -n 1); fi
     MAN=$(mktemp "$SOUT/.manifest.XXXXXX") || die "could not write the manifest in $SOUT"
     jq -n --arg b "$sbase" --arg s "$sha" --arg slug "$(reg_get "$RUN" slug)" --arg role "$(reg_get "$RUN" ability)" \
       '{status:"DONE", blocked_reason:"", task:("read-only run " + $role + " " + $slug + ": the report is the final message, stored by the lead (qargi review save)"),
