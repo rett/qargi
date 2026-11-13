@@ -7,6 +7,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
+- Installation examples distinguish user and project choices, and the memory tiers example aligns its columns.
 - Documentation examples and explanatory tables fit narrower GitHub views more readily.
 - Ordinary clean retains the read-only product refusal independently of refs-only observation: unexpected patches or a bundle preserve the run even with zero extra clone commits. An unchanged internal refs verdict grants neither verification nor artifact acceptance; explicit discard deliberately recovers it and reports actual refs.
 - Inspection failures now show sanitized reasons in run, verify, review check and clean. The 0.2.13 limits stay fixed: 512 MiB copied metadata (the whole object store included), 1 MiB config, 100,000 traversal/read steps, 64 directory levels and 60 seconds for copy traversal and each Git subprocess. Ordinary prepared clones are supported only within those bounds. Ordinary clean preserves every artifact when worktree state is unknown, including when commit inspection succeeds; explicit discard remains deliberate recovery after preserving wanted work.
