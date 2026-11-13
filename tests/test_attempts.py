@@ -74,8 +74,14 @@ class Attempts(unittest.TestCase):
     def saved(self, n):
         (self.state / "runs").mkdir(mode=0o700, exist_ok=True)
         path = self.state / "runs" / self.store.id
-        record = json.loads(self.record.read_bytes()) if self.record.exists() else {"prepared": {"identity": "0" * 32}}
-        self.write(path / "attempt", A.Store._marker(record, n))
+        if self.record.exists() and (self.state / "local-runs.jsonl").exists():
+            marker = self.store.prepare_save().encode()
+            if n != self.store.show()["current"]:
+                parts = marker.split()
+                marker = b" ".join((parts[0], str(n).encode(), parts[2])) + b"\n"
+        else:
+            marker = b"0" * 32 + b" " + str(n).encode() + b" " + b"0" * 32 + b"\n"
+        self.write(path / "attempt", marker)
         self.write(path / "output", b"kept output\n")
         return path
 
@@ -262,6 +268,7 @@ class Attempts(unittest.TestCase):
             self.assertEqual(self.record.read_bytes(), before)
             self.register()
             self.saved(1)
+            before = self.record.read_bytes()
             with mock.patch.object(A.os, "replace", side_effect=OSError("rename failed")):
                 with self.assertRaises(OSError):
                     self.store.verified(b"new snapshot")
@@ -276,7 +283,8 @@ class Attempts(unittest.TestCase):
                 self.store.verified(b"refs")
             with self.assertRaises(A.Refuse):
                 self.store.reconcile()
-            self.write(saved / "attempt", A.Store._marker(self.store.show(), 1))
+            record = self.store.show()
+            self.write(saved / "attempt", A.Store._marker(record, 1, record["attempts"][0]["save_nonce"]))
             outside = self.root / "outside-marker"
             self.write(outside, b"1\n")
             (saved / "attempt").unlink()
@@ -284,7 +292,7 @@ class Attempts(unittest.TestCase):
             with self.assertRaises(OSError):
                 self.store.verified(b"refs")
             (saved / "attempt").unlink()
-            self.write(saved / "attempt", A.Store._marker(self.store.show(), 1))
+            self.write(saved / "attempt", A.Store._marker(record, 1, record["attempts"][0]["save_nonce"]))
             self.store.begin(self.store.gate_pending(b"accepted", epoch=20), b"accepted")
             record = self.store.show()
             for key in record["attempts"][0]["dispatch"]:
@@ -374,10 +382,112 @@ class Attempts(unittest.TestCase):
                 if stat.S_ISDIR(os.fstat(fd).st_mode):
                     raise OSError("directory fsync")
                 fsync(fd)
-            with mock.patch.object(A.os, "fsync", side_effect=fail_directory):
+            with mock.patch.object(A.os, "fsync", side_effect=fail_directory), mock.patch("sys.stderr", new_callable=__import__("io").StringIO) as err:
                 self.store.begin(pending, b"gate")
+            self.assertIn("warning:", err.getvalue())
             self.assertIsNotNone(self.store.show()["attempts"][0]["dispatch"])
             self.store.end("not-started")
+
+    def test_registry_historical_lock_and_unsafe_kinds(self):
+        with self.locked():
+            lock = self.state / "local-runs.jsonl.lock"
+            lock.write_bytes(b"")
+            lock.chmod(0o644)
+            inode = lock.stat().st_ino
+            self.prepare()
+            self.assertEqual((lock.stat().st_ino, stat.S_IMODE(lock.stat().st_mode)), (inode, 0o600))
+            os.link(lock, self.root / "hardlink")
+            with self.assertRaises(A.Refuse):
+                self.store.show()
+            (self.root / "hardlink").unlink()
+            with mock.patch.object(A.os, "geteuid", return_value=lock.stat().st_uid + 1):
+                with self.assertRaises(A.Refuse):
+                    self.store.registry()
+            lock.unlink()
+            lock.symlink_to(self.root / "hardlink")
+            with self.assertRaises(OSError):
+                self.store.registry()
+            lock.unlink()
+            os.mkfifo(lock)
+            with self.assertRaises(A.Refuse):
+                self.store.registry()
+
+    def test_save_nonce_rejects_failed_replacement_and_wrong_markers(self):
+        with self.locked():
+            self.prepare()
+            first = self.saved(1)
+            self.write(first / "output", b"C1")
+            self.store.verified(b"R1")
+            marker = self.store.prepare_save()
+            self.assertEqual((Path(self.store.path) / "a1.saved.1/output").read_bytes(), b"C1")
+            self.write(first / "attempt", marker.encode())
+            self.write(first / "output", b"C2")
+            with mock.patch.object(self.store, "_commit", side_effect=OSError("verification failed")):
+                with self.assertRaises(OSError):
+                    self.store.verified(b"R2")
+            with self.assertRaises(A.Refuse):
+                self.store.saved_copy()
+            parts = marker.split()
+            for identity, nonce in (("f" * 32, parts[2]), (parts[0], "f" * 32)):
+                self.write(first / "attempt", (identity + " 1 " + nonce + "\n").encode())
+                with self.assertRaises(A.Refuse):
+                    self.store.verified(b"R2")
+                with self.assertRaises(A.Refuse):
+                    self.store.saved_copy()
+            self.write(first / "attempt", marker.encode())
+            with mock.patch.object(A, "MAX_VERIFICATIONS", 0):
+                with self.assertRaises(A.Refuse):
+                    self.store.verified(b"R2")
+            with self.assertRaises(A.Refuse):
+                self.store.saved_copy()
+
+    def test_malformed_superseded_and_surrogate_refuse(self):
+        with self.locked():
+            record = self.prepare()
+            bad = copy.deepcopy(record)
+            bad["prepared"]["base"] = "\ud800"
+            self.write(self.record, A.encode(bad))
+            with self.assertRaisesRegex(A.Refuse, "invalid prepared base"):
+                self.store.show()
+            bad = copy.deepcopy(record)
+            bad["attempts"][0]["superseded_at"] = bad["prepared"]["at"]
+            second = copy.deepcopy(bad["attempts"][0])
+            second.update(n=2, superseded_at=None, baseline="a2.base." + second["baseline_sha256"] + ".refs")
+            self.write(Path(self.store.path) / second["baseline"], b"lead refs\n")
+            bad["attempts"].append(second)
+            bad["current"] = 2
+            self.write(self.record, A.encode(bad))
+            with self.assertRaisesRegex(A.Refuse, "invalid superseded"):
+                self.store.show()
+
+    def test_begin_reserves_dispatch_headroom(self):
+        with self.locked():
+            self.prepare()
+            pending = self.store.gate_pending(b"gate", epoch=20)
+            before = self.record.read_bytes()
+            with mock.patch.object(A, "MAX_RECORD", len(before) + 500):
+                with self.assertRaisesRegex(A.Refuse, "headroom"):
+                    self.store.begin(pending, b"gate")
+            self.assertEqual(self.record.read_bytes(), before)
+
+    def test_retention_and_drop_fsync_warnings_leave_recoverable_state(self):
+        with self.locked():
+            self.prepare()
+            self.saved(1)
+            fsync = A.os.fsync
+            def fail_directory(fd):
+                if stat.S_ISDIR(os.fstat(fd).st_mode):
+                    raise OSError("directory fsync")
+                fsync(fd)
+            with mock.patch.object(A.os, "fsync", side_effect=fail_directory), mock.patch("sys.stderr", new_callable=__import__("io").StringIO) as err:
+                result = self.store.reconcile()
+                self.assertEqual(result["attempts"][0]["saved"], ["a1.saved.1"])
+                self.register(cleaned="2026-01-01T00:00:00Z")
+                self.store.drop()
+                self.store.drop()
+            self.assertIn("retention rename committed", err.getvalue())
+            self.assertIn("cleanup committed", err.getvalue())
+            self.assertFalse(Path(self.store.path).exists())
 
     def test_base_names_timestamps_and_registry_snapshot(self):
         with self.locked():

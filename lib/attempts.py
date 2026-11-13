@@ -24,7 +24,8 @@ API (snapshots are bounded bytes, never filenames supplied by the member):
   end(outcome) -> owner records completion after its member group is gone
   reconcile() -> refuse live/unknown dispatch, mark a dead dispatch lost, retain
                  stale saved copies; idempotent after interrupted begin/verify
-  verified(refs) -> commit verification AFTER saving runs/ID with marker N
+  prepare_save() -> retain the old copy, commit and return a fresh marker
+  verified(refs) -> commit verification AFTER installing the prepared copy
   saved_copy() -> current verified saved path with the exact attempt marker
   drop() -> after registry cleaned/drop commit; remove state, KEEP lock inode
 
@@ -39,10 +40,15 @@ Snapshots are immutable; verified snapshots are hash named. Failure before recor
 leaves no new authority. Retention commits before dispatch. A rename interrupted before its record commit
 is recovered by reconcile. Directory fsync failure after atomic replacement is
 treated as committed, though persistence across power loss is not guaranteed.
-Saved markers are "<prepared.identity> <attempt>\n"; integration must create
-them in a private temporary copy and rename it into runs/ID. Never copy a member
-marker. Retention and verification history are bounded to 32 per attempt; base
-names are bounded to 1024 UTF-8 bytes without controls; caller validates Git refs. Never infer verification from RUN, saved output, or an orphaned snapshot.
+Under the lock, reconcile first, then call prepare_save before each save. Build
+the copy in a private temporary directory on the same filesystem, write its
+returned marker as mode 600, chmod the directory 700, and rename it to runs/ID.
+Only then verify and call verified(refs). Never use a member-provided marker.
+Interrupted retention is recovered by reconcile; retry drop after interrupted
+cleanup. Post-effect directory fsync failures warn without undoing the effect.
+Retention and verification history are bounded to 32 per attempt; base names
+are bounded to 1024 UTF-8 bytes without C0 controls or DEL; caller validates Git refs.
+Never infer verification from RUN, saved output, or an orphaned snapshot.
 The integration caller clears registry/RUN verification mirrors after begin's
 commit; reg_del is a leaf operation under this lock. It must use record snapshots
 for verification, including --saved, rather than saved/member-writable refs.
@@ -76,6 +82,7 @@ import paths
 from procenv import now
 
 MAX_RECORD = 256 * 1024
+DISPATCH_HEADROOM = 1024
 MAX_REFS = 1024 * 1024
 MAX_REGISTRY = 8 * 1024 * 1024
 MAX_ATTEMPTS = 256
@@ -153,6 +160,13 @@ def private(st, mode):
          "lifecycle state must be lead-owned with private permissions")
 
 
+def sync_dir(fd, effect):
+    try:
+        os.fsync(fd)
+    except OSError as e:
+        print("qargi: lifecycle: warning: %s committed; directory fsync failed: %s" % (effect, e), file=sys.stderr)
+
+
 def directory(path, create=False):
     """Anchor every component with O_NOFOLLOW; never mkdir through a symlink."""
     path = canonical(path)
@@ -200,10 +214,7 @@ def atomic(fd, name, data):
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(tmp, name, src_dir_fd=fd, dst_dir_fd=fd)
-        try:
-            os.fsync(fd)
-        except OSError:
-            pass  # rename committed; durability after power loss is not guaranteed
+        sync_dir(fd, "replacement")
     finally:
         try:
             os.unlink(tmp, dir_fd=fd)
@@ -334,7 +345,11 @@ class Store:
         try:
             lock = os.open("local-runs.jsonl.lock", os.O_RDWR | os.O_CREAT | NOFOLLOW, 0o600, dir_fd=fd)
             try:
-                private(os.fstat(lock), 0o600)
+                st = os.fstat(lock)
+                need(stat.S_ISREG(st.st_mode) and st.st_nlink == 1 and st.st_uid == os.geteuid(),
+                     "not an owner-owned plain registry lock")
+                if stat.S_IMODE(st.st_mode) != 0o600:
+                    os.fchmod(lock, 0o600)
                 fcntl.flock(lock, fcntl.LOCK_SH)
                 try:
                     data = read_at(fd, "local-runs.jsonl", MAX_REGISTRY, 0o600)
@@ -380,7 +395,11 @@ class Store:
         need(isinstance(p["identity"], str) and re.fullmatch(r"[0-9a-f]{32}", p["identity"]), "invalid prepared identity")
         need(integer(p["epoch"], 0, MAX_EPOCH), "invalid prepared epoch")
         stamp(p["at"])
-        need(isinstance(p["base"], str) and 1 <= len(p["base"].encode("utf-8")) <= 1024
+        try:
+            base_bytes = p["base"].encode("utf-8") if isinstance(p["base"], str) else b""
+        except UnicodeError as e:
+            raise Refuse("invalid prepared base") from e
+        need(1 <= len(base_bytes) <= 1024
              and all(ord(c) >= 32 and ord(c) != 127 for c in p["base"]), "invalid prepared base")
         need(isinstance(p["base_sha"], str) and re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", p["base_sha"]), "invalid base SHA")
         self._snapshot(fd, p["refs"], p["refs_sha256"], "prepared.refs")
@@ -389,7 +408,8 @@ class Store:
              and integer(record["current"]) and record["current"] == len(attempts), "invalid current attempt")
         previous_epoch = p["epoch"]
         for n, a in enumerate(attempts, 1):
-            shape(a, "n epoch baseline baseline_sha256 gate dispatch verified history saved superseded_at")
+            shape(a, "n epoch baseline baseline_sha256 gate dispatch verified history saved superseded_at save_nonce")
+            need(a["save_nonce"] is None or (isinstance(a["save_nonce"], str) and re.fullmatch(r"[0-9a-f]{32}", a["save_nonce"])), "invalid save nonce")
             need(type(a["n"]) is int and a["n"] == n and integer(a["epoch"], previous_epoch, MAX_EPOCH), "invalid attempt epoch/number")
             previous_epoch = a["epoch"]
             expected = "prepared.refs" if n == 1 else "a%d.base.%s.refs" % (n, a["baseline_sha256"])
@@ -405,7 +425,7 @@ class Store:
                 need(name == "a%d.saved.%d" % (n, k), "invalid saved-copy path")
                 saved = directory(self.path + "/" + name)
                 try:
-                    need(read_at(saved, "attempt", 64, 0o600) == self._marker(record, n), "retained saved-copy marker mismatch")
+                    self._parse_marker(read_at(saved, "attempt", 96, 0o600), record, n)
                 finally:
                     os.close(saved)
             d = a["dispatch"]
@@ -424,12 +444,13 @@ class Store:
                     need(d["outcome"] is None, "unfinished dispatch has outcome")
             need(type(a["history"]) is list and len(a["history"]) <= MAX_VERIFICATIONS, "invalid verification history")
             for v in a["history"] + ([a["verified"]] if a["verified"] is not None else []):
-                shape(v, "at snapshot sha256")
+                shape(v, "at snapshot sha256 nonce")
+                need(isinstance(v["nonce"], str) and re.fullmatch(r"[0-9a-f]{32}", v["nonce"]), "invalid verification nonce")
                 stamp(v["at"])
                 need(d is None or d["ended"] is not None, "unfinished dispatch is verified")
                 self._snapshot(fd, v["snapshot"], v["sha256"], "a%d.verified.%s.refs" % (n, v["sha256"]))
             if n < len(attempts):
-                need((d is None or d["ended"] is not None) and (d is not None or v is not None),
+                need((d is None or d["ended"] is not None) and (d is not None or a["verified"] is not None or a["history"]),
                      "invalid superseded attempt")
 
     def _snapshot(self, fd, name, sha, expected):
@@ -474,7 +495,7 @@ class Store:
     @staticmethod
     def _attempt(n, epoch, baseline, sha):
         return dict(n=n, epoch=epoch, baseline=baseline, baseline_sha256=sha,
-                    gate="strict", dispatch=None, verified=None, history=[], saved=[], superseded_at=None)
+                    gate="strict", dispatch=None, verified=None, history=[], saved=[], superseded_at=None, save_nonce=None)
 
     def init(self, refs, *, epoch, base, base_sha):
         self.require_lock()
@@ -489,10 +510,7 @@ class Store:
                               base_sha=base_sha, refs="prepared.refs", refs_sha256=sha, identity=uuid.uuid4().hex), current=1,
                               attempts=[self._attempt(1, epoch, "prepared.refs", sha)])
                 self._commit(record)
-                try:
-                    os.fsync(area)
-                except OSError:
-                    pass  # state was committed; persistence is uncertain
+                sync_dir(area, "initialization")
                 return record
             except BaseException:
                 shutil.rmtree(self.id, dir_fd=area)
@@ -552,6 +570,7 @@ class Store:
             record["attempts"].append(a)
             record["current"] = n
         a["dispatch"] = dict(started=now(), runner=owner(), member=None, ended=None, outcome=None)
+        need(len(encode(record)) + DISPATCH_HEADROOM <= MAX_RECORD, "lifecycle record has insufficient dispatch headroom")
         self._commit(record)
         return record
 
@@ -592,18 +611,21 @@ class Store:
         need(d is None or d["ended"] is not None, "unfinished dispatch; reconcile before continuing")
 
     @staticmethod
-    def _marker(record, n):
-        return (record["prepared"]["identity"] + " " + str(n) + "\n").encode()
+    def _marker(record, n, nonce):
+        return (record["prepared"]["identity"] + " " + str(n) + " " + nonce + "\n").encode()
+
+    @staticmethod
+    def _parse_marker(raw, record, expected=None):
+        match = re.fullmatch(rb"([0-9a-f]{32}) ([1-9][0-9]{0,2}) ([0-9a-f]{32})\n", raw)
+        need(match is not None and match[1].decode() == record["prepared"]["identity"], "invalid saved attempt marker")
+        n = int(match[2])
+        need(integer(n) and (expected is None or n == expected), "invalid saved attempt marker")
+        return n, match[3].decode()
 
     def _saved_marker(self, record):
         fd = directory(self.root + "/runs/" + self.id)
         try:
-            raw = read_at(fd, "attempt", 64, 0o600)
-            match = re.fullmatch(rb"([0-9a-f]{32}) ([1-9][0-9]{0,2})\n", raw)
-            need(match is not None and match[1].decode() == record["prepared"]["identity"], "invalid saved attempt marker")
-            n = int(match[2])
-            need(integer(n), "invalid saved attempt marker")
-            return n
+            return self._parse_marker(read_at(fd, "attempt", 96, 0o600), record)
         finally:
             os.close(fd)
 
@@ -615,7 +637,7 @@ class Store:
                 need(k <= MAX_SAVED, "saved-copy limit reached")
                 fd = directory(self.path + "/" + target)
                 try:
-                    need(read_at(fd, "attempt", 64, 0o600) == self._marker(record, a["n"]), "retained copy marker mismatch")
+                    self._parse_marker(read_at(fd, "attempt", 96, 0o600), record, a["n"])
                 finally:
                     os.close(fd)
                 a["saved"].append(target)
@@ -628,21 +650,27 @@ class Store:
             need(not os.path.lexists(self.root + "/runs/" + self.id), "saved copy lacks an attempt marker")
             return
         current = record["attempts"][-1]
-        if not force and marker == current["n"] and current["verified"] is not None:
+        if not force and current["verified"] is not None and marker == (current["n"], current["verified"]["nonce"]):
             return
-        need(marker <= current["n"], "saved marker is ahead of lifecycle state")
-        a = record["attempts"][marker - 1]
+        n, _ = marker
+        need(n <= current["n"], "saved marker is ahead of lifecycle state")
+        a = record["attempts"][n - 1]
         k = len(a["saved"]) + 1
         need(k <= MAX_SAVED, "saved-copy limit reached; clean or re-prepare")
-        target = "a%d.saved.%d" % (marker, k)
+        target = "a%d.saved.%d" % (n, k)
+        a["saved"].append(target)
+        try:
+            need(len(encode(record)) <= MAX_RECORD, "lifecycle record limit reached")
+        finally:
+            a["saved"].pop()
         fd = directory(self.path)
         try:
             need(not os.path.lexists(self.path + "/" + target), "retained saved copy already exists")
             runs = directory(self.root + "/runs")
             try:
                 os.rename(self.id, target, src_dir_fd=runs, dst_dir_fd=fd)
-                os.fsync(runs)
-                os.fsync(fd)
+                sync_dir(runs, "retention rename")
+                sync_dir(fd, "retention rename")
             finally:
                 os.close(runs)
         finally:
@@ -666,21 +694,39 @@ class Store:
         self._retain(record)
         return record
 
+    def prepare_save(self):
+        """Retain any installed copy and issue a fresh, lead-owned marker.
+
+        Call under fd 7 after reconcile and before creating the replacement.
+        The returned ASCII string is the complete marker file content. A failed
+        save or verification cannot make the previous verification authorize it.
+        """
+        self.require_lock()
+        self.authority(True)
+        record = self.show()
+        a = record["attempts"][-1]
+        self._quiescent(a)
+        self._recover_retained(record)
+        self._retain(record, force=True)
+        a["save_nonce"] = uuid.uuid4().hex
+        self._commit(record)
+        return self._marker(record, a["n"], a["save_nonce"]).decode("ascii")
+
     def verified(self, refs):
         self.require_lock()
         self.authority(True)
         record = self.show()
         a = record["attempts"][-1]
         self._quiescent(a)
-        need(self._saved_marker(record) == a["n"], "saved copy does not match current attempt")
+        need(a["save_nonce"] is not None and self._saved_marker(record) == (a["n"], a["save_nonce"]), "saved copy does not match prepared save")
         need(type(refs) is bytes and len(refs) <= MAX_REFS, "invalid verification snapshot")
         sha = digest(refs)
         name = "a%d.verified.%s.refs" % (a["n"], sha)
         self._refs(name, refs)
-        if a["verified"] is not None and a["verified"]["sha256"] != sha:
+        if a["verified"] is not None and (a["verified"]["sha256"] != sha or a["verified"]["nonce"] != a["save_nonce"]):
             need(len(a["history"]) < MAX_VERIFICATIONS, "verification history limit reached")
             a["history"].append(a["verified"])
-        a["verified"] = dict(at=now(), snapshot=name, sha256=sha)
+        a["verified"] = dict(at=now(), snapshot=name, sha256=sha, nonce=a["save_nonce"])
         self._commit(record)
         return record
 
@@ -688,7 +734,8 @@ class Store:
         self.require_lock()
         self.authority(True)
         record = self.show()
-        need(record["attempts"][-1]["verified"] is not None and self._saved_marker(record) == record["current"], "no current verified saved copy")
+        v = record["attempts"][-1]["verified"]
+        need(v is not None and self._saved_marker(record) == (record["current"], v["nonce"]), "no current verified saved copy")
         return self.root + "/runs/" + self.id
 
     def drop(self):
@@ -707,7 +754,7 @@ class Store:
                 os.close(child)
             need(shutil.rmtree.avoids_symlink_attacks, "safe cleanup unavailable")
             shutil.rmtree(self.id, dir_fd=fd)
-            os.fsync(fd)
+            sync_dir(fd, "cleanup")
         finally:
             os.close(fd)
 
@@ -729,7 +776,7 @@ def main(argv=None):
         if cmd in ("lock-match", "lock-check"):
             (store.lock_match if cmd == "lock-match" else store.require_lock)()
             return 0
-        if cmd in ("show", "gate", "reconcile", "saved-copy", "drop"):
+        if cmd in ("show", "gate", "reconcile", "prepare-save", "saved-copy", "drop"):
             result = getattr(store, cmd.replace("-", "_"))()
         else:
             data = sys.stdin.buffer.read(2 * MAX_REFS + MAX_RECORD + 1)
