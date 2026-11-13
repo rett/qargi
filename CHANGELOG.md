@@ -7,6 +7,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- `agent for` resolves command-runtime profiles to logical worker/reviewer bases without member files or registration, using the runtime's catalog and ignoring legacy member model/effort answers. Invalid profile models, tiers and effort levels are refused; text output uses the catalog model ID when no alias exists, and JSON marks command mode. Effort remains the requested level, including when the runtime has no native control. Prepare/run persistence is unchanged.
 - `local close` again names the applied branch and rewrite remedy when refusing a completed authoritative apply; unfinished applies still refuse early.
 - Help, the manual and verification guidance qualify discard ownership and quiescence guarantees as lifecycle protections; legacy recovery remains explicitly weaker.
 - Lifecycle cleanup completes bookkeeping after an already removed work directory’s parent changes or its tombstone is recreated, preserving foreign entries. Replacements are reported only when observed through the original parent.

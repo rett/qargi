@@ -37,6 +37,7 @@ AGENT_PY=$(cat <<'PYEOF'
 # The member renderer, run by lib/agent.sh as: python3 -I -c "$AGENT_PY" LIBDIR VERB ARGS...  (stdlib only, isolated)
 #   pdesc PROV SURFACE                                the runtime on a surface, as provider.summary() gives it: tiers, aliases, effort, model_pattern, reserved_names, adapter
 #   names                                             the providers that have a definition, one per line
+#   dmode PROV [PROJECT]                              the local dispatch mode, composed with the project's extensions
 #   render PROV NAME ABILITIES CLASS MODEL EFFORT [PROJECT]
 #                                                     the member file the runtime of PROV renders: {runtime, path, content, sha256, inputs_hash, notes, agents}
 #                                                     With a PROJECT the runtime is the one composed with the extensions the project enabled (its
@@ -214,6 +215,8 @@ def main(argv):
             print(json.dumps(P.summary(a[0], a[1])))
         elif verb == "names" and not a:
             print("\n".join(P.names()))
+        elif verb == "dmode" and len(a) in (1, 2):
+            print((P.composed(a[0], "local", (a[1] if len(a) == 2 else "") or None).get("dispatch") or {}).get("mode") or "")
         elif verb == "render" and len(a) in (6, 7):
             print(json.dumps(render_member(a[0], a[1], [x for x in a[2].split(",") if x], a[3], a[4], a[5], (a[6] if len(a) == 7 else "") or None)))
         elif verb == "states" and len(a) == 3:
@@ -603,9 +606,47 @@ RESOLVEJQ="$RESOLVE_HEAD"'
           tier: $p.tier, model: $p.model, model_id: $p.model_id, effort: $p.effort, opt_in: $p.opt_in, purpose: $p.purpose}} end
     )'
 
+# A command runtime starts a process, so the base is logical and no registered member is needed.
+# Keep the shared role/base/class refusals, then check raw catalog requests before pclean can drop
+# invalid values and inherit defaults. Per-role member answers do not select command profiles.
+CMDJQ="$RESOLVE_HEAD"'
+  def raw: if ($pf.profiles | type) == "object" then $pf.profiles[$pn] else null end;
+  def rawerr: raw as $r
+    | if ($r | type) != "object" then null
+      elif $r.effort != null and ($r.effort | okeff | not) then "effort \($r.effort | tojson) is not a level (low, medium, high, xhigh, max)"
+      elif $r.model != null and ($r.model | okmod | not) then "model \($r.model | tojson) is not a model id (letters, digits, . -)"
+      elif $r.model != null and tier_of($r.model) == null and ($r.model | test($pat) | not) then "model \($r.model) is not in the catalog of \($prov) and does not match its pattern \($pat)"
+      elif $r.tier != null and (($r.tier | type) != "string" or $tiers[$r.tier] == null) then "tier \($r.tier | tojson) is not in the catalog of \($prov)"
+      else null end;
+  def lerr: if $p.model_id == null then "the tier of the \($pn) profile (\($p.tier // "none")) is not in the catalog of \($prov)"
+      elif $p.effort != null and ($efforts | has($p.effort) | not) then "effort \($p.effort) is not a level of \($prov) (\($efforts | keys | join(", ")))"
+      else null end;
+  refusal
+    // (rawerr | if . == null then null else {code: 2, err: "the \($pn) profile is refused on \($prov): \(.)"} end)
+    // (lerr | if . == null then null else {code: 2, err: "the \($pn) profile cannot run on \($prov): \(.)"} end)
+    // {code: 0, out: {role: $role, class: $rclass, profile: $pn, mode: "command", profile_source: (if $want == null then "class-fallback" elif $p.source == "project" then "project" else "shipped" end),
+      base: $p.base, member: $p.base, tier: $p.tier, model: $p.model, model_id: $p.model_id, effort: $p.effort, opt_in: $p.opt_in, purpose: $p.purpose}}'
+
+resolve_command() { # role profile-or-empty project runtime -> as resolve_for, for a runtime that dispatches by command line: the logical base, its model and effort
+  local role=$1 prof=$2 proj=$3 prov=$4 pf pd res code pat
+  # Per-role member answers do not apply; effort stays a level, even when its native value is null.
+  pf=$(pf_json "$proj" | jq -c 'del(.roles, .lead)')
+  pd=$(pdesc "$prov" local) || exit 1
+  pat=$(jq -r '.model_pattern // "^.+$"' <<<"$pd")
+  res=$(jq -n --slurpfile d "$DEFAULTS" --argjson pf "$pf" --argjson tiers "$(jq -c .tiers <<<"$pd")" --argjson aliases "$(jq -c '.aliases // {}' <<<"$pd")" \
+    --argjson efforts "$(jq -c '.effort // {}' <<<"$pd")" --argjson rc "$(role_classes)" --argjson noeffort false --arg prov "$prov" --arg pat "$pat" \
+    --arg role "$role" --arg rclass "$(role_class "$role")" --arg prof "$prof" "$PJQ$CMDJQ") || die "could not resolve the profile"
+  code=$(jq -r .code <<<"$res")
+  if [ "$code" != 0 ]; then echo "qargi: $(jq -r .err <<<"$res")" >&2; exit "$code"; fi
+  if [ -n "$JSON" ]; then jq '.out' <<<"$res"; return 0; fi
+  jq -r '.out | "\(.member) \(.model // .model_id) \(.effort // "default") \(.profile)"' <<<"$res"
+}
+
 resolve_for() { # role profile-or-empty project-or-empty -> prints the answer, or the reason on stderr (exit 1, or 2 for a refusal)
-  local role=$1 prof=$2 proj=$3 pf prov pd res code noeff=false mem mm want ov
+  local role=$1 prof=$2 proj=$3 pf prov pd res code noeff=false mem mm want ov mode
   pf=$(pf_json "$proj"); prov=$(provider_for "$proj" local) || exit $?
+  mode=$(apy dmode "$prov" "$proj") || exit 1
+  if [ "$mode" = command ]; then resolve_command "$role" "$prof" "$proj" "$prov"; return; fi
   ! no_effort "$prov" local || noeff=true
   pd=$(pdesc "$prov" local) || exit 1
   res=$(jq -n --slurpfile d "$DEFAULTS" --slurpfile m "$MEMBERS_FILE" --argjson pf "$pf" --argjson tiers "$(jq -c .tiers <<<"$pd")" \

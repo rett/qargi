@@ -482,5 +482,95 @@ $DA tool unlink kb --scope project --project pbase >/dev/null
 $DA agent list | grep -q "mcp0 .*(STALE: qargi agent refresh mcp0 --project pbase)$" && ok "a member is STALE once the pack is unlinked" || no "not stale after the unlink"
 $DA agent refresh mcp0 >/dev/null 2>&1
 [ "$(tools_of mcp0)" = "$BASE_TOOLS" ] && [ "$(hook_of mcp0)" = "qargi __guard" ] && ok "refresh takes the MCP tools away again" || no "after the unlink: $(tools_of mcp0) / $(hook_of mcp0)"
+
+# --- command-mode runtimes (dispatch.mode command): a profile resolves to its logical base (worker or reviewer) from the runtime's catalog alone, with no renderer, no member
+# in agents.json, and no influence from the legacy answers (roles, lead, members with a stale Claude model); none of them is written
+mkcmd() { # name pattern fast-id other-id effort-json -> a library runtime that dispatches by command line and has no member renderer
+  local d=$T/c/packs/providers/$1; mkdir -p "$d"
+  jq --arg n "$1" --arg pat "$2" --arg s "$3" --arg m "$4" --argjson e "$5" '.provider = $n | del(.renderers, .resources.agents, .agents)
+    | .models = {pattern: $pat, tiers: {fast: {model: $s, alias: null, verified_on: null, source: "test"}, "*": {model: $m, alias: null, verified_on: null, source: "test"}}, effort: $e}
+    | .dispatch = {mode: "command", argv: ["fakecmd", "--model", "{model}", {"if": "effort_native", "then": ["--effort", "{effort_native}"]}], prompt: {via: "stdin"}}' "$LIB/definition.json" > "$d/definition.json"
+  python3 -I tests/handseal.py "$d"
+}
+mkcmd cmda '^cmda-[a-z0-9.-]+$' cmda-s cmda-m '{"low":"l","medium":"m","high":"h","xhigh":null,"max":null}'
+mkcmd cmdb '^cmdb-[a-z0-9.-]+$' cmdb-y cmdb-x '{"low":"1","medium":"2","high":"3","xhigh":"4","max":"5"}'
+mkcmd cmdc '^cmdc-[a-z0-9.-]+$' cmdc-s cmdc-m 'null'
+PROF='{"write":{"effort":"turbo"},"advisor":{"model":"cmdb-x"},"badnumber":{"base":"worker","model":7},"badtiertype":{"base":"worker","tier":7},"badeffort":{"base":"worker","effort":"turbo"},"badmodel":{"base":"worker","model":"claude-opus-5-5"},"badshape":{"base":"worker","model":"Bad Model"},"badtier":{"base":"worker","tier":"nosuchtier"},"okmodel":{"base":"worker","model":"cmda-custom-1"},"deep":{"base":"worker","effort":"xhigh"},"wrong":{"base":"worker","abilities":["review"]},"nobase":{"base":"nosuch"}}'
+LEGACY='{"roles":{"build":{"base":"main","push":{"mode":"none"},"model":"claude-haiku-5-5","effort":"low"},"review":{"model":"claude-opus-5-5","effort":"max"}},"lead":{"model":"claude-opus-5-5","effort":"max"}}'
+mkproj() { # project provider [legacy-json] -> the answers of a project on that runtime, with the profiles above and, when given, the legacy per-role answers
+  local lg=${3:-}; [ -n "$lg" ] || lg='{}'; git init -q "$T/repo-$1"
+  jq -n --arg n "$1" --arg p "$T/repo-$1" --arg v "$2" --argjson pr "$PROF" --argjson lg "$lg" \
+    '{schema:1,project:$n,repo:{url:("https://github.com/example/"+$n),path:$p,long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},profiles:$pr,models:{provider:$v},memory:{},budget_cents:500} + $lg' > "$T/c/projects/$1.json"
+}
+mkproj cmdap cmda "$LEGACY"; mkproj cmdbp cmdb; mkproj cmdcp cmdc
+mkproj cmdxp cmda
+jq '.models.extensions = ["missingext"]' "$T/c/projects/cmdxp.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/cmdxp.json"
+# cmdap also holds legacy members (models no command runtime has, files that do not exist); cmdbp and cmdcp have no member at all
+jq --arg root "$T" '.projects.cmdap = {worker: {roles: ["build","write","test"], file: ($root + "/legacy/worker.md"), model: "claude-haiku-5-5", effort: "low", provider: "claude-code", surface: "local", seq: 900}, reviewer: {roles: ["review"], file: ($root + "/legacy/reviewer.md"), model: "claude-opus-5-5", effort: "max", provider: "claude-code", surface: "local", seq: 901}}' "$T/c/agents.json" > "$T/a.json" && mv "$T/a.json" "$T/c/agents.json"
+# Include file contents, modes, links and directory entries, including Git excludes and member copies.
+snap() {
+  python3 -I - "$T" <<'PY'
+import hashlib
+import os
+import stat
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+digest = hashlib.sha256()
+for name in ("c", "s", "repo-cmdap", "repo-cmdbp", "repo-cmdcp", "repo-cmdxp"):
+    base = root / name
+    for path in sorted([base, *base.rglob("*")]):
+        mode = path.lstat().st_mode
+        digest.update(str(path.relative_to(root)).encode() + b"\0" + str(mode).encode())
+        if stat.S_ISLNK(mode):
+            digest.update(os.readlink(path).encode())
+        elif stat.S_ISREG(mode):
+            digest.update(path.read_bytes())
+print(digest.hexdigest())
+PY
+}
+s0=$(snap)
+fcj() { $DA agent for "$@" --json 2>&1; }
+fcj build --project cmdap | jq -e '.mode == "command" and .member == "worker" and .base == "worker" and .class == "write" and .profile == "build" and .profile_source == "shipped" and .model == null and .model_id == "cmda-m" and .effort == "high"' >/dev/null && ok "command runtime cmda: build is the logical worker from its catalog, not the legacy haiku/low answers or the legacy member" || no "cmda build: $(fcj build --project cmdap)"
+[ "$($DA agent for test --project cmdap)" = "worker cmda-m low test" ] && ok "cmda: the text answer is MEMBER MODEL EFFORT PROFILE, with the catalog id when there is no alias" || no "cmda test: $($DA agent for test --project cmdap 2>&1)"
+fcj review --project cmdap | jq -e '.mode == "command" and .member == "reviewer" and .class == "read-only" and .profile == "review" and .effort == "high" and (.model_id | startswith("cmda-"))' >/dev/null && ok "cmda: review is the logical reviewer (the legacy opus/max answers decide nothing)" || no "cmda review: $(fcj review --project cmdap)"
+[ "$($DA agent for review --profile auditor --project cmdap)" = "reviewer cmda-s low auditor" ] && ok "cmda: the fast tier is its own id" || no "cmda auditor: $($DA agent for review --profile auditor --project cmdap 2>&1)"
+[ "$($DA agent for build --project cmdbp)" = "worker cmdb-x high build" ] && [ "$($DA agent for review --profile auditor --project cmdbp)" = "reviewer cmdb-y low auditor" ] && fcj review --project cmdbp | jq -e '.member == "reviewer" and (.model_id | startswith("cmdb-"))' >/dev/null && ok "cmdb: another catalog, no renderer, no member at all: build and review resolve" || no "cmdb: $($DA agent for build --project cmdbp 2>&1)"
+[ "$(fcj build --project cmdap | jq -r .model_id)" != "$(fcj build --project cmdbp | jq -r .model_id)" ] && ok "the two catalogs give different ids for the same profile" || no "same ids for two catalogs"
+fcj build --profile okmodel --project cmdap | jq -e '.profile_source == "project" and .model == null and .model_id == "cmda-custom-1" and .effort == "medium"' >/dev/null && ok "cmda: a project model that matches the runtime's pattern is kept as it is" || no "okmodel: $(fcj build --profile okmodel --project cmdap)"
+fcj build --profile deep --project cmdap | jq -e '.effort == "xhigh" and .model_id == "cmda-m"' >/dev/null && ok "cmda: a level the runtime lists with no native value is kept (local run drops it with a note)" || no "deep: $(fcj build --profile deep --project cmdap)"
+fcj tw --project cmdbp | jq -e '.profile == "build" and .profile_source == "class-fallback" and .class == "write" and .model_id == "cmdb-x"' >/dev/null && fcj ro --project cmdbp | jq -e '.profile == "review" and .profile_source == "class-fallback" and .class == "read-only" and .member == "reviewer"' >/dev/null && ok "command profiles retain custom-role class fallbacks" || no "command class fallback"
+fcj build --profile deep --project cmdcp | jq -e '.effort == "xhigh" and .model_id == "cmdc-m"' >/dev/null && ok "a runtime without native effort control retains the requested effort level" || no "no native effort: $(fcj build --profile deep --project cmdcp)"
+fcj build --project cmdcp | jq -e '.effort == "high"' >/dev/null && ok "no native effort control preserves the shipped profile's effort request" || no "no native effort default"
+jq -e '.projects.cmdbp == null and .projects.cmdcp == null' "$T/c/agents.json" >/dev/null && [ ! -e "$T/c/agents/cmdbp" ] && [ ! -e "$T/c/agents/cmdcp" ] && ok "command resolution needs no member record or rendered copy" || no "unexpected command member"
+# refusals: the generic ones (profile, base, class) and the catalog's; each is "args|text of the reason|exit status"
+while IFS='|' read -r args want rc; do
+  e=$($DA agent for $args 2>&1); r=$?
+  { [ "$r" = "$rc" ] && grep -q -- "$want" <<<"$e"; } && ok "command runtime, for $args: exit $rc, '$want'" || no "for $args: rc=$r $e"
+done <<'EOS'
+build --profile badeffort --project cmdap|not a level|2
+build --profile badmodel --project cmdap|catalog of cmda|2
+build --profile badshape --project cmdap|not a model id|2
+build --profile badtier --project cmdap|catalog of cmda|2
+build --profile wrong --project cmdap|abilities|2
+build --profile nobase --project cmdap|nosuch|2
+build --profile nosuch --project cmdap|no profile named nosuch|1
+build --profile review --project cmdap|read-only|2
+review --profile build --project cmdap|write|2
+tw --profile review --project cmdap|read-only|2
+ro --profile build --project cmdap|write|2
+build --profile okmodel --project cmdbp|catalog of cmdb|2
+build --profile badnumber --project cmdap|not a model id|2
+build --profile badtiertype --project cmdap|catalog of cmda|2
+build --profile write --project cmdap|not a level|2
+review --profile advisor --project cmdap|catalog of cmda|2
+build --profile lead --project cmdap|never dispatched|2
+unknownrole --project cmdap|usage:|2
+build --project cmdxp|missingext|1
+EOS
+[ "$(snap)" = "$s0" ] && ok "command-mode resolution wrote nothing: agents.json, the answers, the config copies and the checkouts are as they were" || no "command-mode resolution changed state"
+out=$($DA agent for build --project pbase 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q 'qargi agent add worker --project pbase' <<<"$out"; } && ok "an in-session runtime (claude-code) is unchanged: it still needs its registered base member" || no "in-session regression: rc=$rc $out"
 rm -rf "$T"
 exit $fail
