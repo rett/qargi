@@ -2,8 +2,8 @@
  "purpose": "Resolve command-runtime profiles consistently and bind prepared model and effort requests through dispatch",
  "started": "2026-11-13T20:44:32Z",
  "goal": "Resolve command-runtime profiles consistently and bind prepared model and effort requests through dispatch",
- "plan": "Resolve Opus B1/B2/B3 via Sonnet corrective proposal and Sol ZUXg35 repair; lead checks and independent review; then prepared-request authority and agent models consistency; targeted tests, final advisor, whole suite, concrete merge plan.",
- "note": "Original CQz934 applied at18c4b89, not accepted or merged. Lead DONE185.33s/cloud53.3s/static10.24s passed. Sonnet repair proposal live and Sol queued. Follow-on task /tmp/qargi-command-prepared-request-task.md. Premature repair intake found no output, must repeat after completion.",
+ "plan": "Opus accepted B1/B2/B3 repair at13c8ec8; lead repair checks running. Sol k2T0OD implements prepared-request authority. Sonnet low authors command agent models/null-container fix proposal in parallel; package after Sol base returns. Then targeted intake, independent review, whole feature checkpoint and merge plan.",
+ "note": "Required compatibility decision: profiles:null accepted by project validator, restore as absent. No feature/develop merge yet. Native usage/rework ledger updated. Display task /tmp/qargi-command-models-display-task.md.",
  "status": "active",
  "lead": {
   "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
@@ -12,11 +12,11 @@
   "since": "2026-11-13T20:44:32Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-13T21:25:31Z",
+ "renewed_at": "2026-11-13T22:09:07Z",
  "finished_at": null,
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 5,
- "updated_at": "2026-11-13T21:25:31Z",
+ "rev": 6,
+ "updated_at": "2026-11-13T22:09:07Z",
  "feature": "command-profiles",
  "project": "qargi"
 }
