@@ -30,11 +30,11 @@ Authorized clean first records private ownership of the saved and lifecycle dire
 
 Actual dispatch, public verify, apply, close and clean share one nonblocking lifecycle lock. A busy lock refuses promptly, including `clean --discard`. Internal apply/verify and close/clean checks share only the actual held descriptor. Lock order is lifecycle, apply PID lock, then short registry or journal locks. Members, Git helpers, scrub commands and background lease renewers receive no lifecycle descriptor.
 
-The runtime owner records begin, member identity and end itself. Execution completion, termination of the recorded member process group, and verification of returned output are separate decisions. An active or unknown attempt cannot be verified, applied, closed or cleaned. After an owner dies, recovery can mark the attempt `lost` only when the recorded member group is proven gone.
+The runtime owner records begin, member identity and end itself. Execution completion, termination of the recorded member process group, and verification of returned output are separate decisions. An active or unknown attempt cannot be verified, applied, closed or cleaned. After an owner dies, recovery can mark the attempt `lost` only when the kernel reports the recorded member group absent (`killpg` with signal 0 fails with ESRCH). A member can fork after a `/proc` enumeration and exit before inspection, leaving an unlisted live child. An addressable group with no observed live member remains unknown for completion, recovery, retry and discard.
 
 There is an intentional unknown-spawn window: if the owner dies after begin and no member identity was committed, qargi cannot prove whether a child was launched. Retry, verification and discard refuse with an unknown-liveness diagnostic. Do not edit the record to fabricate an ended member or rely on `dispatch.json` to recover it. Preserve the evidence and investigate outside these lifecycle verbs. This implementation provides no automatic recovery protocol for that window.
 
-Handlers for TERM, HUP and INT are installed before begin. A caught prelaunch signal records an honest `not-started` outcome; SIGKILL and power loss still leave the uncertain window above. A group containing only exited zombies is terminated, consistent with the runner's process probe. Inaccessible process evidence remains unknown.
+Handlers for TERM, HUP and INT are installed before begin. A caught prelaunch signal records an honest `not-started` outcome; SIGKILL and power loss still leave the uncertain window above. A group containing only exited but unreaped processes remains busy or unknown until reaped, consistently with the runner. Its nonzero `group_left` value can stand for unknown membership rather than an exact live-process count. Inaccessible process evidence remains unknown. Hosts that do not reap orphaned zombies may require intervention outside these verbs before retry or cleanup.
 
 An unfinished apply marked `started` cannot be resumed, cleaned or discarded even after its shell dies: Git or a hook may still be alive, and the shell's PID is not evidence of child termination. Preserve its worktree and record for investigation. A `built` apply can still finish its recorded bookkeeping after its owner exits; its Git work has completed. Git and hooks must never inherit the lifecycle lock.
 
@@ -50,4 +50,3 @@ truthful BLOCKED report. Its structural verdict is diagnostic and does not
 attribute that output to the unsuccessful attempt or accept it. Local verify
 and review apply still refuse such output. Changes to already accepted OUT are
 refused by check, verify and apply; prepare a new run for revised output.
-

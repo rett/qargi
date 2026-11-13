@@ -269,7 +269,15 @@ def group_alive(pgid):
                     return True
     except OSError as e:
         raise Refuse("unknown process group liveness") from e
-    return False
+    # A listed member may fork, then exit before its stat is read. Even a
+    # zombie-only sample cannot establish that this addressable group is empty.
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError as e:
+        raise Refuse("unknown process group liveness") from e
+    raise Refuse("process group remains addressable; quiescence unknown")
 
 
 def owner(pid=None):

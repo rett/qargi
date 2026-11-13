@@ -1146,7 +1146,7 @@ rc = L.main([sys.argv[1], "--project", "rproj", "--runtime", "codex", "--class",
 print("CLASSIFICATION_RC=%d" % rc)
 PY
 )
-{ grep -q '^CLASSIFICATION_RC=1$' <<<"$got" && grep -q '^OUTCOME=failed' <<<"$got" && grep -q '1 process of the member.s process group .* survived TERM and KILL' <<<"$got" \
+{ grep -q '^CLASSIFICATION_RC=1$' <<<"$got" && grep -q '^OUTCOME=failed' <<<"$got" && grep -q '1 process observed or unknown in the member.s process group .* after TERM and KILL' <<<"$got" \
   && ! grep -q 'process group was stopped' <<<"$got" && [ "$(jq -r .group_left "$RUN/dispatch.json")" = 1 ]; } \
   && ok "normal exit with a reported survivor fails and never says the group stopped" || no "normal survivor: $got"
 for s in TERM HUP; do
@@ -1162,7 +1162,7 @@ else no "stubborn: the member did not start: $(cat "$T/ir.out")"; fi
 got=$(python3 -I -c 'import subprocess, sys; sys.path.insert(0, "lib"); import local_run as L
 p = subprocess.Popen(["sleep", "30"], start_new_session=True); L.group_left = lambda pg: [pg, 1]
 n = L.kill_group(p, grace=0.1); print(n, p.wait(5), L.stopped_text(n), "|", L.stopped_text(1), "|", L.stopped_text(0))' 2>&1)
-[ "$got" = "2 -15 a descendant survived: 2 processes of the member's process group still alive after TERM and KILL | a descendant survived: 1 process of the member's process group still alive after TERM and KILL | the member's process group was stopped" ] \
+[ "$got" = "2 -15 the member's process group remains busy or unknown after TERM and KILL | the member's process group remains busy or unknown after TERM and KILL | the member's process group was stopped" ] \
   && ok "survivors of TERM and KILL are counted and said, never called a stopped group" || no "survivors: $got"
 # a background job of a script starts with SIGINT ignored, which the runner keeps (as under nohup): this launcher restores it first, as a terminal has it
 if ir_start python3 -I -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])'; then

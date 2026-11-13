@@ -94,7 +94,7 @@ written to RUN/dispatch.json (argv, class, model, outcome; never an environment 
 the runner and, once started, of the member), and again when it ends, whatever ended it: the member's exit, the bound, a run home, configuration file or
 transcript that cannot be made (refused, with the error), a command that cannot be started (transport), or SIGINT, SIGTERM or SIGHUP to the runner
 (interrupted, with the signal: the member's process group gets TERM, is watched for 5 seconds, then KILL for what is left of it, and the run
-home's links are removed; the output says the group was stopped only when none of it is alive, and otherwise how many of its processes survived). SIGKILL leaves the start
+home's links are removed; the output says the group was stopped only when the kernel reports it absent, and otherwise that it remains busy or unknown). SIGKILL leaves the start
 record: the next start of the run refuses while that runner or its member still runs (the member is found by QARGI_MEMBER_RUN in its environment),
 and otherwise needs --again, which replaces the links left in the run home and removes the stale last-message directories; qargi local clean
 removes the run with them, and qargi local list and verify name the links left. A run home a member moved or replaced is searched for the links
@@ -1206,16 +1206,16 @@ KILL_GRACE = 5   # seconds kill_group watches the member's process group after T
 
 
 def group_left(pgid):
-    """The pids of the live processes (not zombies) in the process group pgid, read from /proc; when /proc cannot be read, [pgid] while
-    the group can still be signalled, else []."""
+    """Observed live pids, or [pgid] for an addressable group of unknown membership.
+
+    A member can fork after enumeration and exit before inspection. Only ESRCH
+    proves the group gone; even a zombie-only sample remains busy or unknown.
+    Other probe errors propagate as unknown, never as an empty group.
+    """
     try:
         names = os.listdir("/proc")
     except OSError:
-        try:
-            os.killpg(pgid, 0)
-            return [pgid]
-        except ProcessLookupError:
-            return []
+        names = []
     want, left = str(pgid).encode(), []
     for n in names:
         if not n.isdigit():
@@ -1228,13 +1228,19 @@ def group_left(pgid):
         rest = st[st.rfind(b")") + 2:].split()      # after the command name: state, ppid, pgrp, ...
         if len(rest) > 2 and rest[0] not in (b"Z", b"X") and rest[2] == want:
             left.append(int(n))
-    return left
+    if left:
+        return left
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return []
+    return [pgid]
 
 
 def kill_group(proc, grace=KILL_GRACE):
     """Stop the member's process group: TERM to the group, which is then watched (the group, not only the member: a descendant may ignore TERM
     after the member has ended) until none of it is alive or grace seconds have passed; then KILL to what is left, watched the same way. The member
-    is reaped. The number of the group's processes still alive at the end: 0 when the group is gone. A process that moved to a process group of
+    is reaped. Returns an observed count or a nonzero unknown-membership sentinel: 0 only when the kernel reports the group gone. A process that moved to a process group of
     its own is not in the group and is not reached."""
     pg = proc.pid
     for sig in (signal.SIGTERM, signal.SIGKILL):
@@ -1262,10 +1268,10 @@ def kill_group(proc, grace=KILL_GRACE):
 
 
 def stopped_text(left):
-    """What became of the member's process group, for the output: stopped only when none of it is alive."""
+    """Say stopped only when the kernel reported the group absent."""
     if not left:
         return "the member's process group was stopped"
-    return ("a descendant survived: %d process%s of the member's process group still alive after TERM and KILL" % (left, "" if left == 1 else "es"))
+    return "the member's process group remains busy or unknown after TERM and KILL"
 
 
 def open_own(path, what):
@@ -2195,7 +2201,7 @@ def run_started(plan, run, store, dispatch_state, sig):
     for n in home_left:
         print("qargi: note: " + n, file=sys.stderr)
     if left:
-        print("qargi: note: %d process%s of the member's process group %d survived TERM and KILL and may still be running: look at it with ps -g %d"
+        print("qargi: note: %d process%s observed or unknown in the member's process group %d after TERM and KILL: look at it with ps -g %d"
               % (left, "" if left == 1 else "es", proc.pid, proc.pid), file=sys.stderr)
     if sig.sig is not None and outcome != "interrupted":
         print("qargi: note: %s arrived after the member had ended; the run was finished first" % signal.Signals(sig.sig).name, file=sys.stderr)

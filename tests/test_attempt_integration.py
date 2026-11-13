@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 import attempts as A
 import local_run as R
 import lead_usage
-from attempt_fixture import wire
+from attempt_fixture import wire, ForkAfterEnumeration
 
 
 class Integration(unittest.TestCase):
@@ -445,6 +445,37 @@ print('fixture transcript')
         self.cmd("local", "clean", "--stale", "0", "--scratch", self.root, "--yes", ok=False)
         self.assertEqual(retained.read_text(), "C1")
         self.assertTrue(self.record.exists())
+
+    def test_forked_group_refuses_public_retry_and_cleanup_preserving_evidence(self):
+        self.prepare('review')
+        self.cmd('review', 'save', self.run, input='# Findings\nNo findings.\nverdict: accept\n')
+        self.verify()
+        with ForkAfterEnumeration() as group:
+            with self.locked():
+                refs = (Path(self.store.path) / 'prepared.refs').read_bytes()
+                self.store.begin(self.store.gate_pending(refs, epoch=int(time.time())), refs)
+                self.store.member(group.pgid)
+                original = os.listdir
+                def enumerate_then_fork(path):
+                    names = original(path)
+                    if path == '/proc':
+                        group.fork_and_exit()
+                        self.assertNotIn(str(group.child), names)
+                    return names
+                with mock.patch.object(os, 'listdir', side_effect=enumerate_then_fork):
+                    with self.assertRaisesRegex(A.Refuse, 'quiescence unknown'):
+                        self.store.end('ok')
+                record = self.state_json()
+                record['attempts'][-1]['dispatch']['runner']['token'] = '0'
+                self.record.write_bytes(A.encode(record))
+            tmp = Path((self.run / 'tmpdir').read_text().strip())
+            (tmp / 'evidence').write_text('keep')
+            snapshot = lambda: [self.bytes_tree(p) for p in (self.run, tmp, Path(self.store.path))]
+            before = snapshot()
+            for args in (('run', self.run, '--again'), ('clean', self.run), ('clean', self.run, '--discard')):
+                self.assertIn('busy', self.cmd('local', *args, ok=False))
+                self.assertEqual(before, snapshot())
+        self.cmd('local', 'clean', self.run, '--discard')
 
     def test_real_prelaunch_signal_records_not_started(self):
         self.prepare()

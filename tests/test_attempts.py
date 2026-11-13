@@ -12,12 +12,15 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 import attempts as A
+import local_run as R
+from attempt_fixture import ForkAfterEnumeration
 
 
 class Attempts(unittest.TestCase):
@@ -114,14 +117,57 @@ class Attempts(unittest.TestCase):
         with self.assertRaises(OSError):
             A.directory(str(target), tighten=True)
 
-    def test_zombie_only_group_is_terminated(self):
+    def test_zombie_only_group_is_unknown_until_reaped(self):
         child = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
         try:
             # waitid observes exit but deliberately leaves the child unreaped.
-            os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOWAIT)
-            self.assertFalse(A.group_alive(child.pid))
+            deadline = time.monotonic() + 5
+            while not os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG):
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(.01)
+            with self.assertRaisesRegex(A.Refuse, 'quiescence unknown'):
+                A.group_alive(child.pid)
+            self.assertEqual(R.group_left(child.pid), [child.pid])
         finally:
             child.wait(timeout=5)
+        self.assertFalse(A.group_alive(child.pid))
+        self.assertEqual(R.group_left(child.pid), [])
+
+    def test_real_fork_after_enumeration_never_proves_group_gone(self):
+        for probe in (A.group_alive, R.group_left):
+            with self.subTest(probe=probe.__name__), ForkAfterEnumeration() as group:
+                original = os.listdir
+                def enumerate_then_fork(path):
+                    names = original(path)
+                    if path == '/proc':
+                        self.assertIn(str(group.pgid), names)
+                        group.fork_and_exit()
+                        self.assertNotIn(str(group.child), names)
+                    return names
+                with mock.patch.object(os, 'listdir', side_effect=enumerate_then_fork):
+                    if probe is A.group_alive:
+                        with self.assertRaisesRegex(A.Refuse, 'quiescence unknown'):
+                            probe(group.pgid)
+                    else:
+                        self.assertEqual(probe(group.pgid), [group.pgid])
+                self.assertEqual(A.process(group.child)['pgid'], group.pgid)
+                self.assertTrue(A.group_alive(group.pgid))
+            self.assertFalse(A.group_alive(group.pgid))
+
+    def test_unknown_group_probe_escalates_and_never_reports_stopped(self):
+        proc = mock.Mock(pid=12345)
+        with mock.patch.object(R, 'group_left', side_effect=PermissionError('unknown')), \
+                mock.patch.object(R.os, 'killpg') as kill:
+            with self.assertRaises(PermissionError):
+                R.kill_group(proc, grace=0)
+        self.assertEqual([c.args[1] for c in kill.call_args_list], [R.signal.SIGTERM, R.signal.SIGKILL])
+        with mock.patch.object(R.os, 'listdir', return_value=[]), \
+                mock.patch.object(R.os, 'killpg', side_effect=PermissionError('unknown')):
+            with self.assertRaises(PermissionError):
+                R.group_left(proc.pid)
+            with self.assertRaises(A.Refuse):
+                A.group_alive(proc.pid)
+        self.assertNotIn('was stopped', R.stopped_text(1))
 
     def test_history_limit_creates_no_snapshot(self):
         with self.locked():
