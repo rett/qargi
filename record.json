@@ -4,19 +4,13 @@
  "goal": "Reduce redundant member baseline, DONE and lint work while preserving per-change checks, honest evidence and feature full-suite checkpoints",
  "plan": "Prompt/contract task qargi.547zca (nonoverlapping with safety); inspect/verify/apply; companion documentation and Unreleased entry; sync, full suite and independent review; integrate fully tested/reviewed feature into develop through qargi",
  "note": "Owner requests dogfooding and process optimization. Observed contract mandates baseline + full DONE per change and defaults broad lint. Task uses exact-BASE CI evidence as context, never as a locally-run gate. Native backlog [workflow-efficiency]. Source instructions /tmp/qargi-workflow-efficiency-task.md; no publication or release.",
- "status": "active",
- "lead": {
-  "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-12T06:05:16Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-13T04:59:56Z",
- "finished_at": null,
+ "finished_at": "2026-11-13T05:02:57Z",
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 22,
- "updated_at": "2026-11-13T04:59:56Z",
+ "rev": 23,
+ "updated_at": "2026-11-13T05:02:57Z",
  "feature": "workflow-efficiency",
  "project": "qargi"
 }
