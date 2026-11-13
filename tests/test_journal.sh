@@ -115,9 +115,14 @@ jhas agent/a "$a0" "$Z" && jhas agent/b "$b0" "$Z" && [ "$(jn)" -ge $((n + 2)) ]
 [ "$(jq -c 'select(.new == "0000000000000000000000000000000000000000")' "$J" | tail -n "$dels" | wc -l)" = "$dels" ] && ok "one deletion line per deleted branch" || no "deletion lines vs '$pout'"
 out=$(verify "$RP"); [ $? = 0 ] && ok "a run prepared before the prune verifies" || no "verify after prune: $out"
 
-# --- what is still refused: each on a run prepared just before the change, which must verify untouched first
+# --- each strict run must pass an untouched refs-only check without accepting verification
 git -C "$A" branch zz develop; git -C "$A" branch agent/gone develop
-fresh() { local r; r=$(mkrun "$1"); out=$(verify "$r") || no "(setup) $1 does not verify on an untouched repository: $out"; rm -f "$r/verified"; echo "$r"; }
+fresh() {
+  local r; r=$(mkrun "$1")
+  out=$(QARGI_VERIFY_REFS_ONLY=1 $DA local verify "$r" 2>&1) || no "(setup) $1 does not pass the untouched refs check: $out"
+  [ ! -e "$T/s/runs/${r##*/}" ] || no "(setup) $1 unexpectedly saved output"
+  echo "$r"
+}
 R=$(fresh r-branchf); git -C "$A" branch -f feature/fa "$(hand feature/fa)" >/dev/null
 refused "$R" "an unjournaled git branch -f of feature/fa"
 R=$(fresh r-updateref); git -C "$A" update-ref refs/heads/zz "$(hand zz)"
@@ -135,6 +140,17 @@ R=$(fresh r-old); $F start j3 >/dev/null 2>&1; tamper '.epoch = 1 | .at = "1970-
 refused "$R" "a journal entry older than the run's start"
 R=$(fresh r-deleted); git -C "$A" branch -D agent/gone >/dev/null
 refused "$R" "a deleted branch that was not journaled"
+
+# Removing the public mirror cannot return a privately verified run to strict mode.
+git -C "$A" branch agent/pv develop
+RPV=$(mkrun r-postverify); out=$(verify "$RPV") || no "(setup) r-postverify: $out"
+rm -f "$RPV/verified"
+git -C "$A" branch -f agent/pv "$(hand agent/pv)" >/dev/null
+out=$(verify "$RPV"); rc=$?
+[ "$rc" = 0 ] && grep -q "agent/pv fast-forwarded (a lead-side move after the run's passing verify)" <<<"$out" && ok "private verification survives deletion of the public marker" || no "post-verify fast-forward: rc=$rc $out"
+git -C "$A" branch -f agent/pv "$(git -C "$A" commit-tree -m rewritten 'develop^{tree}')" >/dev/null
+refused "$RPV" "a hand rewrite of an agent branch after a passing verify"
+git -C "$A" branch -D agent/pv >/dev/null
 
 # --- finish journals develop's move and the branch deletion
 $F start fin >/dev/null 2>&1; task agent/t1 t1.txt t1; $F merge fin agent/t1 >/dev/null 2>&1
@@ -246,9 +262,29 @@ if [ $rc = 1 ] && grep -q "not merged into any branch yet" <<<"$out" && grep -qF
   ok "clean of a run whose applied branch was rewritten by hand names qargi ref record --rewrite with the branch and both tips"
 else no "clean hint: rc=$rc $out"; fi
 out=$($DA local close "$RH" --applied-by-am 2>&1); rc=$?
-if [ $rc = 1 ] && grep -q "merge that branch" <<<"$out" && grep -qF "qargi ref record --rewrite agent/rwh $ht $ht2 --why" <<<"$out"; then
+if [ $rc = 1 ] && grep -q "merge that branch" <<<"$out" && grep -qF "qargi ref record --rewrite agent/rwh $ht $ht2 --why" <<<"$out" && [ -d "$RH" ]; then
   ok "close --applied-by-am names the same fix"
 else no "close hint: rc=$rc $out"; fi
+# The public mirror is member-writable; the completed private record supplies the diagnostic.
+RHREC=$T/s/apply/${RH##*/}.json
+cp -p "$RH/applied" "$T/rh.applied" && cp -p "$RHREC" "$T/rh.rec" || no "(setup) save rwh records"
+for how in absent poisoned; do
+  if [ "$how" = absent ]; then rm -f "$RH/applied"; else printf 'agent/poisoned %040d now\n' 0 > "$RH/applied"; fi
+  out=$($DA local close "$RH" --applied-by-am 2>&1); rc=$?
+  if [ "$rc" = 1 ] && grep -qF "qargi ref record --rewrite agent/rwh $ht $ht2 --why" <<<"$out" && ! grep -q "agent/poisoned" <<<"$out" && [ -d "$RH/clone" ] && cmp -s "$RHREC" "$T/rh.rec"; then
+    ok "close uses the private record with public applied $how, keeping clone and record"
+  else no "close hint, applied $how: rc=$rc $out"; fi
+done
+cp -p "$T/rh.applied" "$RH/applied" || no "(setup) restore rwh applied"
+# Test-only status injection models unfinished records; restore the completed record afterwards.
+for st in started built; do
+  jq --arg s "$st" '.status = $s' "$T/rh.rec" > "$T/rh.$st" && cp "$T/rh.$st" "$RHREC" || no "(setup) record $st"
+  out=$($DA local close "$RH" --applied-by-am 2>&1); rc=$?
+  if [ "$rc" = 1 ] && grep -q "run has an authoritative apply record: finish/merge it, then clean" <<<"$out" && ! grep -q "merge that branch" <<<"$out" && [ -d "$RH/clone" ] && cmp -s "$RH/applied" "$T/rh.applied" && cmp -s "$RHREC" "$T/rh.$st"; then
+    ok "close refuses $st early, keeping clone and both records"
+  else no "close with apply $st: rc=$rc $out"; fi
+done
+cp -p "$T/rh.rec" "$RHREC" && cmp -s "$RHREC" "$T/rh.rec" || no "(setup) restore the done record of rwh"
 # the sentence is the fix in full: do what it says, and clean follows the rewrite once the branch is merged
 git -C "$A" branch -f agent/rwh "$ht" && $REF agent/rwh "$ht" "$ht2" --why "reworded by hand" >/dev/null 2>&1 || no "(setup) record the rewrite of rwh"
 out=$($DA local clean "$RH" 2>&1); rc=$?

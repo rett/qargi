@@ -7,6 +7,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- `local close` again names the applied branch and rewrite remedy when refusing a completed authoritative apply; unfinished applies still refuse early.
 - Help, the manual and verification guidance qualify discard ownership and quiescence guarantees as lifecycle protections; legacy recovery remains explicitly weaker.
 - Lifecycle cleanup completes bookkeeping after an already removed work directory’s parent changes or its tombstone is recreated, preserving foreign entries. Replacements are reported only when observed through the original parent.
 - A process reaped while `/proc/PID/stat` is open can return `ESRCH`; lifecycle probing now treats it as PID absence, like a missing file, only while `/proc` remains available. Other evidence errors stay unknown and process-group completion still requires the kernel absence check.

@@ -1308,7 +1308,11 @@ WRAP
     [ "$RCLASS" != read-only ] || die "$RUN is a read-only run: it has no patches to apply. qargi local clean $RUN removes it"
     if [ "$LC_SCHEMA" = true ]; then
       APPLIED_AUTH=$(lc applied "$RUN") || exit 3
-      [ "$APPLIED_AUTH" = null ] || die "run has an authoritative apply record: finish/merge it, then clean"
+      if [ "$APPLIED_AUTH" != null ]; then
+        [ "$(jq -r '.status // ""' <<<"$APPLIED_AUTH")" = "done" ] || die "run has an authoritative apply record: finish/merge it, then clean"
+        _ab=$(jq -r .branch <<<"$APPLIED_AUTH")
+        die "$RUN was applied with qargi review apply ($_ab): merge that branch (qargi feature merge), then qargi local clean $RUN$(rwh=$(rewrite_hint "$(reg_get "$RUN" repo)" "$_ab"); [ -z "$rwh" ] || printf '\n%s' "$rwh")"
+      fi
     fi
     if [ -f "$RUN/applied" ]; then
       read -r _ab _ < "$RUN/applied"
