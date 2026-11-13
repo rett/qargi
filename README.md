@@ -12,7 +12,7 @@ Requirements: Linux with bash, GNU coreutils (including `timeout`) and findutils
 
 ## Quick start
 
-Choose the installation for your lead's runtime. For a Claude Code lead, install skills in `~/.claude/skills` and the command in `~/.local/bin`:
+Choose the installation for your lead's runtime. Both user installations put the command in `~/.local/bin`. For a Claude Code lead, install skills in `~/.claude/skills`:
 
 ```sh
 ./install.sh --user

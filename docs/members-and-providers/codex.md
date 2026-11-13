@@ -96,7 +96,7 @@ Not verified: which sandbox and approval settings a Codex lead session needs for
 
 ## A complete local run
 
-A build member, with the project's local runtime `codex`:
+A build member runs with the project's local runtime `codex`.
 
 Prepare prints `RUN=...`, `CLONE=...`, `OUT=...` and `TASK_FILE=RUN/task.md` (the whole task block: ROLE, TASK, DONE, SCOPE and paths). The dry run shows the argv, run configuration path, tools, baseline and prompt without running anything. The run starts codex exec in the clone and prints `OUTCOME=`, `REPORT=` and `USAGE=`. Verify checks that the repository's refs are unchanged and OUT holds patches; review check checks the patches, manifest, SCOPE and DONE. Apply puts the patches on `agent/dots` with your go-ahead; clean after the work is applied and merged.
 

@@ -9,12 +9,27 @@ Installing qargi, keeping it current, binding a project to a cloud profile, and 
 
 ## Install
 
-Install skills for a Claude Code lead in `~/.claude/skills` and the command in `~/.local/bin`, or install for a Codex lead in `~/.codex/skills`. The project option installs skills for one repository only. Add a worker and then a read-only base:
+Choose one installation level. For a Claude Code lead, install user skills in `~/.claude/skills`:
 
 ```sh
 ./install.sh --user
+```
+
+For a Codex lead, install user skills in `~/.codex/skills`:
+
+```sh
 ./install.sh --user --runtime codex
+```
+
+Either user installation also installs the command in `~/.local/bin`. Alternatively, install skills for one repository only, choosing the lead's runtime (`claude-code` is the default):
+
+```sh
 ./install.sh --project /path/to/repo
+```
+
+For a Codex lead, use `./install.sh --project /path/to/repo --runtime codex`. Project installation does not install the command. For a project whose runtime supports member definitions, add a worker and a read-only reviewer:
+
+```sh
 qargi agent add worker --project P
 qargi agent add reviewer --project P
 ```
@@ -35,7 +50,7 @@ with or without `--force`. An existing real directory is never replaced without 
 skills directories come from the definition of the runtime whose session loads the
 skills (`--runtime NAME`, default `claude-code`: `~/.claude/skills`); a runtime
 with none is refused. Install at one level only. The command is
-always user-level, so install `--user` before `--project`. The instance
+always user-level. The instance
 registry, session tracker and profiles are per user, under `~/.qargi/config` and
 `~/.qargi/state` (`QARGI_HOME` replaces `~/.qargi`), whichever level installs the skills. Repository rules for
 agents go in a profile under `~/.qargi/config/profiles/`, also
