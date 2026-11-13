@@ -3,6 +3,7 @@
 import hermetic  # noqa: F401
 import contextlib
 import copy
+import errno
 import fcntl
 import io
 import json
@@ -997,6 +998,35 @@ if sys.argv[3] == 'member':
             self.assertEqual(runner.returncode, 0, runner.stderr)
             with self.assertRaisesRegex(A.Refuse, "liveness unknown"):
                 self.store.reconcile()
+
+    def test_process_stat_reaped_after_open_is_absent(self):
+        # Linux returns ESRCH from a stat fd opened before the process was reaped.
+        with subprocess.Popen([sys.executable, '-c', 'import sys; sys.stdin.buffer.read(1)'],
+                              stdin=subprocess.PIPE) as child:
+            with open('/proc/%d/stat' % child.pid, 'rb') as stream:
+                child.communicate(b'x', timeout=5)
+                with mock.patch('builtins.open', return_value=stream):
+                    self.assertIsNone(A.process(child.pid))
+
+    def test_process_stat_esrch_only_counts_as_absence_with_proc_available(self):
+        pid = 2**31 - 2
+        for operation in ('open', 'read'):
+            for error, available in ((ProcessLookupError(errno.ESRCH, 'vanished'), True),
+                                     (ProcessLookupError(errno.ESRCH, 'vanished'), False),
+                                     (PermissionError(errno.EACCES, 'denied'), True),
+                                     (OSError(errno.EIO, 'unreadable'), True)):
+                with self.subTest(operation=operation, error=error.errno, available=available):
+                    opened = mock.mock_open()
+                    if operation == 'open':
+                        opened.side_effect = error
+                    else:
+                        opened.return_value.read.side_effect = error
+                    with mock.patch('builtins.open', opened), mock.patch.object(A.os.path, 'isfile', return_value=available):
+                        if isinstance(error, ProcessLookupError) and available:
+                            self.assertIsNone(A.process(pid))
+                        else:
+                            with self.assertRaisesRegex(A.Refuse, 'unknown process liveness'):
+                                A.process(pid)
 
     def test_unknown_host_liveness_never_proves_death(self):
         with mock.patch.object(A.os, "killpg", side_effect=PermissionError("unknown")):

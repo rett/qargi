@@ -237,7 +237,7 @@ def process(pid):
     try:
         with open("/proc/%d/stat" % pid, "rb") as stream:
             data = stream.read(8193)
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         need(os.path.isfile("/proc/self/stat"), "unknown process liveness: /proc unavailable")
         return None
     except OSError as e:
