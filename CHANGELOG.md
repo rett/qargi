@@ -7,6 +7,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
+- Lifecycle safety guidance is generated from the canonical help source, keeping the manual and command help consistent.
 - Structural review can inspect unsuccessful attempts as diagnostic evidence; it explicitly says that inspection is not acceptance, and verification and apply still refuse their output.
 - A signal received after a local member finishes no longer marks its private attempt cancelled, so completed output can be verified.
 - Cleanup diagnostics explicitly name retained cleaned registry evidence; covering shell expectations retain branch, worktree, scrub and registry assertions under the conservative lifecycle policy.
