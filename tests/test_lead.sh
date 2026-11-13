@@ -131,7 +131,7 @@ B lead compact-check --project beta >/dev/null 2>&1 && ok "compact-check: nothin
 B feature start lc --project beta >/dev/null 2>&1
 task() { git -C "$RB" branch "agent/$1" develop; local w; w=$(mktemp -d "$T/w.XXXXXX"); git -C "$RB" worktree add -q "$w" "agent/$1"; echo "$1" > "$w/$1.txt"; git -C "$w" add -A; git -C "$w" commit -q -m "task $1"; git -C "$RB" worktree remove --force "$w"; }
 run_of() { local d=$T/run-$1; mkdir -p "$d"; printf 'agent/%s %s\n' "$1" "$(git -C "$RB" rev-parse "agent/$1")" > "$d/applied"; : > "$d/verified"
-  jq -nc --arg r "$d" --arg s "$1" --arg p "$RB" '{run:$r, slug:$s, ability:"build", base:"feature/lc", started:"1", repo:$p}' >> "$S/local-runs.jsonl"; }
+  jq -nc --arg r "$d" --arg s "$1" --arg p "$RB" '{run:$r, slug:$s, ability:"build", class:"write", base:"feature/lc", started:"1", repo:$p}' >> "$S/local-runs.jsonl"; }
 task t1; task t2; run_of t1; run_of t2
 out=$(B lead compact-check --project beta 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "applied and not merged" <<<"$out" && ok "compact-check: runs applied and not merged are not safe" || no "applied runs: rc=$rc $out"

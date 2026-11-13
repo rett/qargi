@@ -97,14 +97,16 @@ class_abilities() { # BASE [PROJECT_JSON] -> a JSON array: the abilities of a ba
     '(($d[0].bases[$b].abilities // []) + [($p.profiles // {})[] | select(.base == $b) | (.abilities // [])[]]) | unique' 2>/dev/null || echo '[]'
 }
 # run_class RUN -> the class of a local run: write or read-only. The lead's registry says (prepare records it: the run directory is a member's to
-# write, and a class file there would let a write run pass for a read-only one); a run the registry does not name, or names with no class, counts as
-# write, never as read-only. Nothing in the run directory is read.
+# write, and a class file there would let a write run pass for a read-only one). An absent or invalid class is refused. Nothing in the run directory is read.
 run_class() {
   local c
   reg_has "$1" || reg_load
-  c=$(reg_get "$1" class)
-  case $c in write|read-only) echo "$c"; return 0;; esac
-  echo write
+  reg_has "$1" || { echo "qargi: $1 is not in the lead's registry; nothing was done" >&2; return 1; }
+  # Validate the JSON value before decoding: shell substitution strips LF and NUL.
+  c=$(reg_json "$1" '.class | select(. == "write" or . == "read-only")')
+  case $c in '"write"') echo write; return 0;; '"read-only"') echo read-only; return 0;; esac
+  echo "qargi: the lead's registry has no valid class for $1 (expected write or read-only); nothing was done" >&2
+  return 1
 }
 # out_has_report OUT -> 0 when OUT holds a report: a regular file (not a link) named report.md or *-report.md directly in it. The one test local.sh and
 # lib/lead_usage.py (has_report) share.
@@ -141,7 +143,7 @@ reg_load() {
     [ -n "$rr" ] || continue
     [ -n "${LRUNS[$rr]+x}" ] || LRUNS_ORDER+=("$rr")
     LRUNS[$rr]=$line
-  done < <(jq -r 'select(type == "object" and (.run | type) == "string") | [.run, tojson] | @tsv' "$f" 2>/dev/null)
+  done < <(jq -Rr 'fromjson? | select(type == "object" and (.run | type) == "string") | [.run, tojson] | @tsv' "$f" 2>/dev/null)
 }
 reg_has() { local rr; rr=$(readlink -m -- "$1" 2>/dev/null) || return 1; [ -n "${LRUNS[$rr]+x}" ]; }
 reg_get() {

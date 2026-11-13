@@ -48,6 +48,79 @@ $F status search | grep -q "at an older head" && ok "a merge after verify makes 
 $F finish search >/dev/null 2>&1 && no "finish accepted a stale run" || ok "and finish refuses it"
 $F verify search >/dev/null 2>&1
 out=$($F finish search 2>&1); t=$(tok <<<"$out")
+# Finish must not proceed when the open-run list cannot be trusted, including on apply.
+refs_before=$(git -C "$R" show-ref); remote_before=$(git -C "$T/origin.git" show-ref)
+audit_before=$(cat "$T/s/audit.log" 2>/dev/null)
+real_python=$(command -v python3)
+cat > "$T/bin/python3" <<'PY'
+#!/usr/bin/env bash
+for arg in "$@"; do
+  if [ "$arg" = lead_usage ]; then
+    case ${READER_MODE:-error} in
+      error) exit 2;; empty) exit 1;; traceback) echo 'Traceback: reader fixture error'; exit 1;; noisy-success) echo 'reader fixture error' >&2; exit 0;;
+    esac
+  fi
+done
+exec "$REAL_PYTHON" "$@"
+PY
+chmod +x "$T/bin/python3"; export REAL_PYTHON=$real_python
+out=$($F finish search --plan "$t" --approved go 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q 'lead_usage.py exited 2.*finish refused' <<<"$out" && ok "finish refuses a reader error" || no "reader error rc=$rc: $out"
+for mode in empty traceback noisy-success; do
+  out=$(READER_MODE=$mode $F finish search --plan "$t" --approved go 2>&1); rc=$?
+  [ "$rc" = 1 ] && grep -q 'could not list the open runs.*finish refused' <<<"$out" && ! grep -q 'has 0 open run(s)' <<<"$out" \
+    && ok "finish distinguishes $mode reader output from rows of open runs" || no "reader $mode rc=$rc: $out"
+done
+rm "$T/bin/python3"
+# Missing repository identity cannot attribute live work; a confirmed absent
+# run cannot be open work, regardless of when its record was written.
+jq -nc --arg d "$T/absent-legacy-run" '{run:$d,slug:"legacy",ability:"build",base:"feature/search",started:"2026-01-01T00:00:00Z"}' > "$T/s/local-runs.jsonl"
+out=$($F finish search 2>&1); rc=$?
+[ "$rc" = 0 ] && ! grep -q 'could not list the open runs' <<<"$out" && ok "finish plans with an absent pre-identity legacy record" || no "legacy plan: rc=$rc $out"
+mkdir "$T/absent-legacy-run"
+out=$($F finish search --plan "$t" --approved go 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q 'cannot read the open-run registry' <<<"$out" && ok "finish refuses legacy identity when the run exists" || no "existing legacy: rc=$rc $out"
+rmdir "$T/absent-legacy-run"; rm "$T/s/local-runs.jsonl"
+mkdir -p "$T/open-run"
+jq -nc --arg d "$T/open-run" --arg r "$R" '{run:$d,repo:$r,base:"feature/search",slug:"unknown",ability:"build",class:"invalid"}' > "$T/s/local-runs.jsonl"
+out=$($F finish search --plan "$t" --approved go 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q 'registry has no valid class' <<<"$out" && ok "finish refuses an open run with an unknown class" || no "unknown class rc=$rc: $out"
+printf '%s\n' '{broken' > "$T/s/local-runs.jsonl"
+out=$($F finish search --plan "$t" --approved go 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q 'cannot read the open-run registry' <<<"$out" && ok "finish refuses a malformed registry" || no "malformed registry rc=$rc: $out"
+rm "$T/s/local-runs.jsonl"; mkdir "$T/s/local-runs.jsonl"
+out=$($F finish search --plan "$t" --approved go 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q 'cannot read the open-run registry' <<<"$out" && ok "finish refuses an unreadable registry" || no "unreadable registry rc=$rc: $out"
+rmdir "$T/s/local-runs.jsonl"
+ln -s "$T/missing-registry" "$T/s/local-runs.jsonl"
+out=$($F finish search --plan "$t" --approved go 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q 'cannot read the open-run registry' <<<"$out" && ok "finish refuses a dangling registry" || no "dangling registry rc=$rc: $out"
+rm "$T/s/local-runs.jsonl"
+# Corrupt the answers at the reader boundary, after the shell loaded the project.
+# The strict reader must refuse instead of losing repo/url identity and returning empty.
+cp "$T/c/projects/app.json" "$T/answers.keep"
+cat > "$T/bin/python3" <<'PY'
+#!/usr/bin/env bash
+for arg in "$@"; do
+  if [ "$arg" = lead_usage ]; then
+    case ${ANSWERS_MODE:-missing} in
+      missing) rm "$QARGI_CONF/projects/app.json";;
+      malformed) printf '%s\n' '{broken' > "$QARGI_CONF/projects/app.json";;
+    esac
+  fi
+done
+exec "$REAL_PYTHON" "$@"
+PY
+chmod +x "$T/bin/python3"
+for mode in missing malformed; do
+  out=$(ANSWERS_MODE=$mode $F finish search --plan "$t" --approved go 2>&1); rc=$?
+  [ "$rc" = 1 ] && grep -q 'open-run project answers are missing or malformed.*finish refused' <<<"$out" \
+    && ok "finish refuses $mode project answers at enumeration" || no "answers $mode rc=$rc: $out"
+  cp "$T/answers.keep" "$T/c/projects/app.json"
+done
+rm "$T/bin/python3"
+[ "$(git -C "$R" show-ref)" = "$refs_before" ] && [ "$(git -C "$T/origin.git" show-ref)" = "$remote_before" ] && [ "$(cat "$T/s/audit.log" 2>/dev/null)" = "$audit_before" ] && ok "gate errors leave local and remote refs and audit unchanged" || no "gate errors changed refs or audit"
+out=$($F finish search 2>&1); t=$(tok <<<"$out")
 grep -q "brings 6 commit(s) into develop" <<<"$out" && grep -q "task t1" <<<"$out" && grep -q "files changed: 3 files changed" <<<"$out" && grep -q "    t3.txt" <<<"$out" && ok "the finish plan lists the commits and files being merged" || no "plan content: $out"
 [ -n "$t" ] && [ "$(git -C "$R" rev-parse develop)" = "$dev0" ] && ok "the finish plan changes nothing" || no "plan: $out"
 $F finish search --plan 000000000000 --approved go >/dev/null 2>&1 && no "a wrong token was accepted" || ok "a wrong plan token is refused"
