@@ -48,7 +48,12 @@ collect() {
 R=$(mkrun nocollect)
 out=$(verify "$R"); rc=$?
 [ $rc = 0 ] && ok "(setup) a run with no commits and an empty OUT verifies: nothing to collect" || no "empty run: rc=$rc $out"
-commits "$R" a1.go; rm -f "$R/verified"
+echo changed > "$R/out/report.md"
+out=$(verify "$R"); rc=$?
+[ $rc != 0 ] && grep -q 'OUT changed since acceptance' <<<"$out" && ok "changed accepted output is refused" || no "changed accepted output: rc=$rc $out"
+out=$($DA local clean "$R" --discard 2>&1)
+R=$(mkrun uncollected)
+commits "$R" a1.go
 out=$(verify "$R"); rc=$?
 [ $rc = 1 ] && grep -q "OUT is empty: the member did not collect" <<<"$out" && grep -q "ls OUT/patches" <<<"$out" && grep -q "without running git in the clone.*git clone --no-local" <<<"$out" && ok "verify fails fast, naming the missing collect, when the clone has commits and OUT is empty; it says to take the commits through a clean copy, never git in the clone" || no "uncollected: rc=$rc $out"
 [ ! -f "$R/verified" ] && ok "and records nothing" || no "verified written for an uncollected run"
