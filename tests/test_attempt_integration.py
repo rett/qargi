@@ -463,6 +463,18 @@ print('fixture transcript')
                 self.assertEqual(self.state_json()["attempts"][-1]["dispatch"]["outcome"], "not-started")
         self.cmd("local", "clean", self.run, "--discard")
 
+    def test_failed_retry_cannot_accept_prior_external_output(self):
+        self.prepare()
+        self.collect()
+        self.verify()
+        original = self.bytes_tree(self.saved / "out")
+        self.fake.write_text("#!/usr/bin/env python3\nraise SystemExit(1)\n")
+        self.dispatch(ok=False)
+        self.assertEqual(self.state_json()["attempts"][-1]["dispatch"]["outcome"], "failed")
+        for args in [("local", "verify", self.run), ("review", "check", self.run / "out")]:
+            self.assertIn("cannot be attributed", self.cmd(*args, ok=False))
+        self.assertEqual(original, self.bytes_tree(Path(self.store.path) / "a1.saved.1/out"))
+
     def test_dead_apply_parent_keeps_live_hook_worktree(self):
         self.prepare()
         self.collect()

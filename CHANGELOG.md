@@ -7,6 +7,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
+- Cleanup diagnostics explicitly name retained cleaned registry evidence; covering shell expectations retain branch, worktree, scrub and registry assertions under the conservative lifecycle policy.
 - Retry epochs precede ref collection, including slow remote queries; lead-written report manifests take their base commit from private prepared authority.
 - Lifecycle clean records owned atomic tombstones before deletion and keeps its cleaned registry row. Repeating clean resumes interruptions before or after registry and lifecycle-state removal without adopting orphan paths or implicitly discarding retained evidence.
 - Save staging is limited to one privately recorded directory per run and recovered after owner death without leaving a copy child. Unknown or replaced staging refuses cleanup; retained-copy limits count directories, not bytes.

@@ -1160,7 +1160,8 @@ WRAP
       else
         reg_edit "$RUN" drop || die "could not drop the record of $RUN from $DA_STATE/local-runs.jsonl"
       fi
-      echo "dropped the record of $RUN (directory gone)${sv:+ and its saved copy $sv}"
+      if [ "$LC_SCHEMA" = true ]; then echo "cleaned $RUN (directory gone)${sv:+ and its saved copy $sv}; kept cleaned registry record"
+      else echo "dropped the record of $RUN (directory gone)${sv:+ and its saved copy $sv}"; fi
       exit 0
     fi
     [ ! -L "$RUN" ] || die "clean: $RUN is a link, not a directory prepare made"

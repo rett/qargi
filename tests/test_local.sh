@@ -619,10 +619,10 @@ out=$(./bin/qargi local clean "$RB1" 2>&1); rc=$?
 [ $rc != 0 ] && grep -q "never applied" <<<"$out" && grep -q "from-saved $ID1" <<<"$out" && [ -d "$SV1" ] && grep -q "$RB1" "$T/s/local-runs.jsonl" \
   && ok "clean of a vanished run whose saved work was never applied keeps the record and the copy, and says how to apply it" || no "clean gone, unapplied (rc=$rc): $out"
 out=$(./bin/qargi local clean "$RB1" --discard 2>&1); rc=$?
-{ [ $rc = 0 ] && grep -q "dropped the record of $RB1 (directory gone) and its saved copy" <<<"$out" && [ ! -e "$SV1" ] && ! grep -q "$RB1" "$T/s/local-runs.jsonl" \
+{ [ $rc = 0 ] && grep -q "cleaned $RB1 (directory gone) and its saved copy" <<<"$out" && [ ! -e "$SV1" ] && [ -n "$(jq -r --arg r "$RB1" 'select(.run == $r) | .cleaned // empty' "$T/s/local-runs.jsonl")" ] \
   && [ "$(stat -c %a "$T/s/local-runs.jsonl")" = 600 ] && ! grep -q "$RB1" <<<"$(./bin/qargi local list)"; } \
-  && ok "clean --discard of a vanished run drops its registry entry and its saved copy (the registry stays mode 600)" || no "discard gone (rc=$rc): $out"
-./bin/qargi local clean "$RB1" --discard >/dev/null 2>&1 && no "a run dropped from the registry was cleaned again" || ok "and then the run is unknown"
+  && ok "clean --discard of a vanished run removes its copy and keeps a cleaned registry entry (mode 600)" || no "discard gone (rc=$rc): $out"
+./bin/qargi local clean "$RB1" --discard >/dev/null 2>&1 && ok "repeated cleanup is idempotent" || no "repeated cleanup refused"
 # a clean marks the registry's line cleaned and removes the saved copy: the run is not listed as gone afterwards
 RB2=$(rbrun rb2); SV2=$T/s/runs/$(basename "$RB2")
 ./bin/qargi local clean "$RB2" --discard >/dev/null 2>&1
@@ -641,10 +641,10 @@ out=$(./bin/qargi local clean --stale 7 --scratch "$T/rb" 2>&1); rcs=$?
 { [ $rcs = 0 ] && grep -q "^would drop the record of $RB3 (directory gone, 20d old)" <<<"$out" && grep -q "^would drop the record of $RB4 (directory gone, saved copy" <<<"$out" \
   && grep -q "^plan: 3 " <<<"$out" && grep -q "$RB3" "$T/s/local-runs.jsonl"; } && ok "clean --stale plans the vanished runs older than DAYS, and changes nothing" || no "stale gone plan (rc=$rcs): $out"
 out=$(./bin/qargi local clean --stale 7 --scratch "$T/rb" --yes 2>&1); rcs=$?
-{ [ $rcs = 1 ] && grep -q "dropped the record of $RB3" <<<"$out" && grep -q "dropped the record of $RB5 (directory gone) and its saved copy" <<<"$out" \
-  && grep -q "kept $RB4: directory gone, and its saved copy .* never applied" <<<"$out" && grep -q '^cleaned 2 run(s), kept 1' <<<"$out" \
-  && ! grep -q "$RB3\|$RB5" "$T/s/local-runs.jsonl" && grep -q "$RB4" "$T/s/local-runs.jsonl"; } \
-  && ok "clean --stale --yes drops the vanished runs (none saved, or applied and merged) and keeps the one whose saved work was never applied" || no "stale gone --yes (rc=$rcs): $out"
+{ [ $rcs = 1 ] && grep -q "kept $RB3: no current copy; retained lifecycle evidence" <<<"$out" && grep -q "cleaned $RB5 (directory gone) and its saved copy" <<<"$out" \
+  && grep -q "kept $RB4: directory gone, and its saved copy .* never applied" <<<"$out" && grep -q '^cleaned 1 run(s), kept 2' <<<"$out" \
+  && [ -n "$(jq -r --arg r "$RB5" 'select(.run == $r) | .cleaned // empty' "$T/s/local-runs.jsonl")" ] && grep -q "$RB3" "$T/s/local-runs.jsonl" && grep -q "$RB4" "$T/s/local-runs.jsonl"; } \
+  && ok "stale cleanup keeps missing-current lifecycle evidence and unapplied work, and cleans only applied merged output" || no "stale gone --yes (rc=$rcs): $out"
 rm -rf "$T/rb"
 out=$(./bin/qargi local list --scratch "$T/rb" 2>&1); rcl=$?
 [ $rcl = 0 ] && grep -q "$RB4  directory gone" <<<"$out" && ok "a scratch directory that is gone itself is still listed from the registry" || no "list of a gone scratch (rc=$rcl): $out"
