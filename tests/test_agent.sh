@@ -485,6 +485,8 @@ $DA agent refresh mcp0 >/dev/null 2>&1
 
 # --- command-mode runtimes (dispatch.mode command): a profile resolves to its logical base (worker or reviewer) from the runtime's catalog alone, with no renderer, no member
 # in agents.json, and no influence from the legacy answers (roles, lead, members with a stale Claude model); none of them is written
+session_models_before=$($DA agent models --json)
+session_models_text_before=$($DA agent models)
 mkcmd() { # name pattern fast-id other-id effort-json -> a library runtime that dispatches by command line and has no member renderer
   local d=$T/c/packs/providers/$1; mkdir -p "$d"
   jq --arg n "$1" --arg pat "$2" --arg s "$3" --arg m "$4" --argjson e "$5" '.provider = $n | del(.renderers, .resources.agents, .agents)
@@ -511,6 +513,7 @@ jq '.models.extensions = ["missingext"]' "$T/c/projects/cmdxp.json" > "$T/a.json
 mkdir -p "$T/c/packs/providers/cmdcat"
 jq -n '{schema:2,kind:"catalog",family:"cmdcat",version:"2026-11-13",pattern:"^cmdk-[a-z0-9.-]+$",
   tiers:{fast:{model:"cmdk-s-1",alias:"cmdk-s",verified_on:null,source:"test"},
+    deep:{model:"cmdk-d-1",alias:"",verified_on:null,source:"test"},
     frontier:{model:"cmdk-f-1",alias:null,verified_on:null,source:"test"},
     "*":{model:"cmdk-m-1",alias:"cmdk-m",verified_on:null,source:"test"}},effort:null}' > "$T/c/packs/providers/cmdcat/definition.json"
 python3 -I tests/handseal.py "$T/c/packs/providers/cmdcat"
@@ -548,6 +551,10 @@ mkprofiles cmdshapep '{"build":"cmdb-x","review":{"base":7},"auditor":{"abilitie
   "validroles":{"base":"worker","abilities":["build","tw"],"purpose":"works"},"emptyroles":{"base":"worker","abilities":[]}}'
 jq '.profiles.longpurpose = {base:"worker",purpose:("x" * 301)}' "$T/c/projects/cmdshapep.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/cmdshapep.json"
 mkprofiles cmdarrayp '[]'; mkprofiles cmdnumberp '5'; mkprofiles cmdstringp '"build"'; mkprofiles cmdnullp 'null'; mkprofiles cmdboolp 'false'
+# A complete valid project, rather than only a permissive resolver fixture: null is absent in project validate too.
+jq '.roles.build.effort = "high"' "$T/c/projects/cmdnullp.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/cmdnullp.json"
+$DA project validate "$T/c/projects/cmdnullp.json" > "$T/null-validate.txt" 2>&1 \
+  && ok "profiles:null is a valid project container" || no "null container validation: $(cat "$T/null-validate.txt")"
 # cmdap also holds legacy members (models no command runtime has, files that do not exist); cmdbp and cmdcp have no member at all
 jq --arg root "$T" '.projects.cmdap = {worker: {roles: ["build","write","test"], file: ($root + "/legacy/worker.md"), model: "claude-haiku-5-5", effort: "low", provider: "claude-code", surface: "local", seq: 900}, reviewer: {roles: ["review"], file: ($root + "/legacy/reviewer.md"), model: "claude-opus-5-5", effort: "max", provider: "claude-code", surface: "local", seq: 901}}' "$T/c/agents.json" > "$T/a.json" && mv "$T/a.json" "$T/c/agents.json"
 # Include file contents, modes, links and directory entries, including Git excludes and member copies.
@@ -606,13 +613,13 @@ PY
 }
 for use in inline alias id; do
   rt=cmd$use; p=${rt}p
-  for spec in 'build|build|balanced|high|worker' 'review|auditor|fast|low|reviewer' 'review|researcher|frontier|medium|reviewer' 'build|byalias|fast|medium|worker' 'build|byid|fast|medium|worker'; do
+  for spec in 'build|build|balanced|high|worker' 'review|auditor|fast|low|reviewer' 'review|review|deep|high|reviewer' 'review|researcher|frontier|medium|reviewer' 'build|byalias|fast|medium|worker' 'build|byid|fast|medium|worker'; do
     IFS='|' read -r role profile tier effort member <<<"$spec"
     want=$(mf "$rt" "$tier")
     out=$($DA agent for "$role" --profile "$profile" --project "$p" 2>&1); rc=$?
     answer=$(fcj "$role" --profile "$profile" --project "$p"); json_rc=$?
     { [ "$rc" = 0 ] && [ "$json_rc" = 0 ] && [ "$out" = "$member $want $effort $profile" ] &&
-      jq -e --arg want "$want" --arg use "$use" '(.model // .model_id) == $want and (if $use == "alias" and .tier != "frontier" then .model == $want else .model == null end)' <<<"$answer" >/dev/null; } \
+      jq -e --arg want "$want" --arg use "$use" '(.model // .model_id) == $want and (if $use == "alias" and (.tier == "balanced" or .tier == "fast") then .model == $want else .model == null end)' <<<"$answer" >/dev/null; } \
       && ok "$rt/$profile: text and JSON select the model command dispatch receives" || no "$rt/$profile: rc=$rc $out / $answer (want $want)"
   done
 done
@@ -676,9 +683,60 @@ build --profile unknownkey --project cmdshapep|unknown profile keys|2
 build --project cmdarrayp|profiles is not an object|2
 build --project cmdnumberp|profiles is not an object|2
 build --project cmdstringp|profiles is not an object|2
-build --project cmdnullp|profiles is not an object|2
 build --project cmdboolp|profiles is not an object|2
 EOS
+fcj build --project cmdnullp | jq -e '.mode == "command" and .profile == "build" and .profile_source == "shipped" and .base == "worker" and .model_id == "cmdb-x" and .effort == "high"' >/dev/null \
+  && [ "$($DA agent for build --project cmdnullp)" = "worker cmdb-x high build" ] \
+  && ok "command: a valid profiles:null project resolves the shipped default in text and JSON" || no "null default resolution: $(fcj build --project cmdnullp)"
+# Compare every displayed request/refusal to agent for and the text table. No member files are created for these runtimes.
+python3 -I - "$DA" <<'PY'
+import json
+import subprocess
+import sys
+
+da = sys.argv[1]
+keys = {"provider", "effort_control", "aliases", "bases", "profiles", "escalate", "members", "warnings"}
+metadata = {"name", "base", "class", "tier", "model", "model_id", "effort", "opt_in", "purpose", "abilities", "shipped", "project", "via_roles", "source", "refused", "flags"}
+for project in ("cmdap", "cmdbp", "cmdcp", "cmdinlinep", "cmdaliasp", "cmdidp", "cmdshapep", "cmdnullp", "cmdarrayp", "cmdnumberp", "cmdstringp", "cmdboolp"):
+    args = [da, "agent", "models", "--project", project]
+    table = json.loads(subprocess.check_output([*args, "--json"], text=True))
+    text = subprocess.check_output(args, text=True)
+    assert keys <= table.keys() and table["mode"] == "command", project
+    assert table["members"] == [] and table["bases"]["worker"]["logical"], project
+    assert all(b["flags"] == [] and not b["registered"] for b in table["bases"].values()), project
+    assert all(w["kind"] == "profile" for w in table["warnings"]), project
+    assert not any(s in text for s in ("not registered", "cannot dispatch", "STALE", "MISSING", "DRIFT", "effort: ignored", "(roles)", "definition of the member applies")), (project, text)
+    assert table["effort_control"] == (project in ("cmdap", "cmdbp", "cmdshapep", "cmdnullp", "cmdarrayp", "cmdnumberp", "cmdstringp", "cmdboolp")), project
+    for name, row in table["profiles"].items():
+        assert metadata <= row.keys() and not row["via_roles"], (project, name, row)
+        role = "review" if row["class"] == "read-only" else "build"
+        answer = subprocess.run([da, "agent", "for", role, "--profile", name, "--project", project, "--json"], text=True, capture_output=True)
+        if answer.returncode:
+            assert row["refused"] and row["refused"] in answer.stderr and not answer.stdout, (project, name, row, answer)
+            assert row["selected"] is None and row["requested_effort"] is None, (project, name)
+            assert any(w["name"] == name and row["refused"] in w["message"] for w in table["warnings"]), (project, name)
+            assert row["refused"] in text, (project, name, text)
+        else:
+            resolved = json.loads(answer.stdout)
+            assert row["refused"] is None and row["flags"] == [], (project, name, row)
+            for key in ("base", "class", "tier", "model", "model_id", "effort", "opt_in", "purpose"):
+                assert row[key] == resolved[key], (project, name, key, row, resolved)
+            assert row["source"] == resolved["profile_source"], (project, name)
+            assert row["selected"] == (resolved["model"] or resolved["model_id"]), (project, name)
+            assert row["requested_effort"] == resolved["effort"], (project, name)
+            line = next(line for line in text.splitlines() if line.split()[:1] == [name])
+            assert line.split()[:5] == [name, row["base"], row["selected"], row["requested_effort"], row["source"]], (project, name, line)
+            if row["opt_in"]:
+                assert "opt-in" in line, (project, name, line)
+    assert "lead" in table["profiles"], project
+    print("ok   command models parity: " + project)
+PY
+[ $? = 0 ] && ok "command models text/JSON agree with agent for, including refused entries, aliases, effort and logical bases" || no "command models parity"
+out=$($DA agent models --project cmdxp --json 2>"$T/cmd.err"); rc=$?
+{ [ "$rc" = 1 ] && [ -z "$out" ] && grep -q 'missingext' "$T/cmd.err"; } \
+  && ok "command models refuses broken extensions just as agent for does" || no "command models extension: rc=$rc $out / $(cat "$T/cmd.err")"
+[ "$($DA agent models --json)" = "$session_models_before" ] && [ "$($DA agent models)" = "$session_models_text_before" ] \
+  && ok "in-session models text and JSON remain byte-identical, including member states and warnings" || no "in-session models changed"
 [ "$(snap)" = "$s0" ] && ok "command-mode resolution wrote nothing: agents.json, the answers, the config copies and the checkouts are as they were" || no "command-mode resolution changed state"
 out=$($DA agent for build --project pbase 2>&1); rc=$?
 { [ $rc = 1 ] && grep -q 'qargi agent add worker --project pbase' <<<"$out"; } && ok "an in-session runtime (claude-code) is unchanged: it still needs its registered base member" || no "in-session regression: rc=$rc $out"

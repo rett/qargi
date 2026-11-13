@@ -525,12 +525,14 @@ role_classes() { # -> {role: class} for every role (a role without a readable cl
 }
 
 models() { # the bases, the profiles with the project's own merged in, the escalation and the registered members
-  local proj=$PROJ pf prov pd tiers aliases rc out noeff=false st
+  local proj=$PROJ pf prov pd tiers aliases rc out noeff=false st mode
   if [ -n "$proj" ]; then [ -f "$DA_CONF/projects/$proj.json" ] || die "no stored answers for $proj"
   else proj=$(pymod help infer); fi   # no project at all is refused just below, by provider_for: the provider is the project's
   pf=$(pf_json "$proj")
   prov=$(provider_for "$proj" local) || exit $?   # the members are local
   pd=$(pdesc "$prov" local) || exit 1
+  mode=$(apy dmode "$prov") || exit 1
+  if [ "$mode" = command ]; then models_command "$prov" "$proj"; return; fi
   tiers=$(jq -c .tiers <<<"$pd"); aliases=$(jq -c '.aliases // {}' <<<"$pd")
   rc=$(role_classes)
   ! no_effort "$prov" local || noeff=true
@@ -616,7 +618,7 @@ CMDJQ='
     elif ($d[0].profiles | has($role)) or (($pf.profiles | type) == "object" and ($pf.profiles | has($role))) then $role
     elif $rclass == "read-only" then "review" else "build" end;
   def rawerr($pn):
-    if ($pf | has("profiles") | not) then null
+    if ($pf | has("profiles") | not) or $pf.profiles == null then null
     elif ($pf.profiles | type) != "object" then "profiles is not an object (found \($pf.profiles | tojson))"
     elif ($pf.profiles | has($pn) | not) then null
     else $pf.profiles[$pn] as $r
@@ -642,20 +644,58 @@ CMDJQ='
   refusal
     // (lerr | if . == null then null else {code: 2, err: "the \($pn) profile cannot run on \($prov): \(.)"} end)
     // {code: 0, out: {role: $role, class: $rclass, profile: $pn, mode: "command", profile_source: (if $want == null then "class-fallback" elif $p.source == "project" then "project" else "shipped" end),
-      base: $p.base, member: $p.base, tier: $p.tier, model: (if $use == "alias" then $p.model else null end), model_id: $p.model_id, effort: $p.effort, opt_in: $p.opt_in, purpose: $p.purpose}}
+      base: $p.base, member: $p.base, tier: $p.tier, model: (if $use == "alias" and $p.model != "" then $p.model else null end), model_id: $p.model_id, effort: $p.effort, opt_in: $p.opt_in, purpose: $p.purpose}}
     end'
 
-resolve_command() { # role profile-or-empty project runtime -> as resolve_for, for a runtime that dispatches by command line: the logical base, its model and effort
-  local role=$1 prof=$2 proj=$3 prov=$4 pf pd res code pat
+command_query() { # project runtime jq-program [role profile class] -> shared command resolver inputs, without member state
+  local proj=$1 prov=$2 query=$3 role=${4:-} prof=${5:-} cls=${6:-} pf pd pat
   # Validate enabled extensions only after choosing command mode; extensions cannot change dispatch.mode.
   apy dmode "$prov" "$proj" >/dev/null || exit 1
   # Per-role member answers do not apply; effort stays a level, even when its native value is null.
   pf=$(pf_json "$proj" | jq -c 'del(.roles, .lead)')
   pd=$(pdesc "$prov" local) || exit 1
   pat=$(jq -r '.model_pattern // "^.+$"' <<<"$pd")
-  res=$(jq -n --slurpfile d "$DEFAULTS" --argjson pf "$pf" --argjson tiers "$(jq -c .tiers <<<"$pd")" --argjson aliases "$(jq -c '.aliases // {}' <<<"$pd")" \
+  jq -n --slurpfile d "$DEFAULTS" --argjson pf "$pf" --argjson tiers "$(jq -c .tiers <<<"$pd")" --argjson aliases "$(jq -c '.aliases // {}' <<<"$pd")" \
     --argjson efforts "$(jq -c '.effort // {}' <<<"$pd")" --argjson rc "$(role_classes)" --argjson noeffort false --arg prov "$prov" --arg pat "$pat" \
-    --arg role "$role" --arg rclass "$(role_class "$role")" --arg prof "$prof" --arg use "$(jq -r '.use // ""' <<<"$pd")" "$PJQ$CMDJQ") || die "could not resolve the profile"
+    --arg role "$role" --arg rclass "$cls" --arg prof "$prof" --arg use "$(jq -r '.use // ""' <<<"$pd")" "$PJQ$query" || die "could not resolve the profile"
+}
+
+models_command() { # runtime project -> each profile resolved under its logical base class, using the same CMDJQ as agent for
+  local prov=$1 proj=$2 out
+  out=$(command_query "$proj" "$prov" '
+    def answer($role; $rclass; $prof): '"$CMDJQ"';
+    [profiles | {key: .name, value: .}] | from_entries as $P
+    | (($pf.profiles // {}) | if type == "object" then . else {} end) as $raw
+    | (($d[0].profiles | keys_unsorted) + ($raw | keys_unsorted | map(select(test("^[a-z][a-z0-9-]{0,30}$")))))
+      | reduce .[] as $n ([]; if index($n) == null then . + [$n] else . end) | . as $names
+    | {provider: $prov, mode: "command", effort_control: any($efforts[]; . != null), aliases: $aliases,
+       bases: ($d[0].bases | with_entries(.value += {logical: true, registered: false, flags: []})),
+       profiles: ([$names[] as $n
+         | ($P[$n] // {name: $n, base: null, class: null, tier: null, abilities: null, opt_in: false, purpose: ""}) as $p
+         | answer($n; ($p.class // "write"); $n) as $a
+         | $p + {mode: "command", shipped: ($d[0].profiles | has($n)), project: ($raw | has($n)), via_roles: false,
+             source: (if $raw | has($n) then "project" else "shipped" end)}
+         | if $a.code == 0 then . + ($a.out | {base, class, tier, model, model_id, effort, opt_in, purpose})
+             + {source: $a.out.profile_source, selected: ($a.out.model // $a.out.model_id), requested_effort: $a.out.effort, refused: null, flags: []}
+           else . + {model: null, model_id: null, effort: null, selected: null, requested_effort: null,
+             refused: $a.err, flags: ["refused: " + $a.err]} end
+         | {key: $n, value: .}] | from_entries),
+       escalate: ($d[0].escalate | with_entries(.value = {tier: .value, model: $tiers[.value]})), members: []}
+    | .warnings = [.profiles[] | .name as $n | .flags[] | {kind: "profile", name: $n, message: .}]') || exit $?
+  if [ -n "$JSON" ]; then printf '%s\n' "$out"; return 0; fi
+  echo "bases (logical, by guard class; command dispatch needs no member registration)"
+  jq -r '.bases | to_entries[] | [.key, .value.class, (.value.abilities | join(","))] | @tsv' <<<"$out" \
+    | while IFS=$'\t' read -r n c a; do printf '  %-10s %-10s %s\n' "$n" "$c" "$a"; done
+  echo "profiles (provider: $prov, command mode; base, selected model id or alias, requested effort level, source)"
+  jq -r '.profiles[] | [.name, (.base // "-"), (.selected // "-"), (.requested_effort // "default"), .source,
+      ([if .opt_in then "opt-in" else empty end] + (.flags | map("! " + .)) | join("; "))] | @tsv' <<<"$out" \
+    | while IFS=$'\t' read -r n b m e s fl; do printf '  %-11s %-9s %-22s %-8s %-8s %s\n' "$n" "$b" "$m" "$e" "$s" "$fl"; done
+  jq -r '"  offer \(.escalate.build.tier) (\(.escalate.build.model)) for a hard task: only when asked"' <<<"$out"
+}
+
+resolve_command() { # role profile-or-empty project runtime -> the logical base, selected model and requested effort
+  local role=$1 prof=$2 proj=$3 prov=$4 res code
+  res=$(command_query "$proj" "$prov" "$CMDJQ" "$role" "$prof" "$(role_class "$role")") || exit $?
   code=$(jq -r .code <<<"$res")
   if [ "$code" != 0 ]; then echo "qargi: $(jq -r .err <<<"$res")" >&2; exit "$code"; fi
   if [ -n "$JSON" ]; then jq '.out' <<<"$res"; return 0; fi
