@@ -1972,7 +1972,7 @@ def run_owned(plan, run, pending, sig):
         check_own(os.path.join(out, name), "the transcript")
     store = A.Store(run)
     store.begin(pending["pending"], pending["refs"].encode())
-    dispatch_state = {"spawned": False, "recorded": False}
+    dispatch_state = {"spawned": False, "recorded": False, "interrupted": False}
     result = None
     try:
         sig.check()
@@ -1990,7 +1990,7 @@ def run_owned(plan, run, pending, sig):
         if not dispatch_state["spawned"]:
             store.end("not-started")
         elif dispatch_state["recorded"]:
-            store.end("cancelled" if sig.sig is not None else "ok" if result == 0 else "failed")
+            store.end("cancelled" if dispatch_state["interrupted"] else "ok" if result == 0 else "failed")
         # If Popen succeeded but member() did not commit, do not invent identity.
         # The foundation deliberately refuses recovery of that unknown window.
 
@@ -2070,6 +2070,7 @@ def run_started(plan, run, store, dispatch_state, sig):
         except Interrupted:
             sig.armed = False
             outcome = "interrupted"
+            dispatch_state["interrupted"] = True
             if proc is not None:
                 left = kill_group(proc)
                 code = proc.returncode

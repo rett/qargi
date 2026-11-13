@@ -56,12 +56,14 @@ class Integration(unittest.TestCase):
         (self.conf / "projects/demo.json").write_text(json.dumps(self.answers))
         self.fake = self.bin / "codex"
         self.fake.write_text('''#!/usr/bin/env python3
-import os, sys, time
+import os, subprocess, sys, time
 from pathlib import Path
 run = Path.cwd().parent
 assert not Path('/proc/self/fd/7').exists(), 'member inherited lifecycle lock'
 assert not Path('/proc/self/fd/8').exists(), 'member inherited pending plan'
 if (run / 'wait-member').exists():
+    if (run / 'spawn-child').exists():
+        subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
     (run / 'member-ready').write_text(str(os.getpid()))
     while not (run / 'release-member').exists():
         time.sleep(.02)
@@ -462,6 +464,47 @@ print('fixture transcript')
                 started.assert_not_called()
                 self.assertEqual(self.state_json()["attempts"][-1]["dispatch"]["outcome"], "not-started")
         self.cmd("local", "clean", self.run, "--discard")
+
+    def test_late_signal_preserves_completed_attempt_for_verify(self):
+        self.prepare()
+        self.collect()
+        original = R.clear_home
+        def late(*args):
+            result = original(*args)
+            os.kill(os.getpid(), signal.SIGTERM)
+            return result
+        with mock.patch.object(R, "main", R.main), mock.patch.object(R, "run_it", R.run_it), \
+                mock.patch.object(R, "clear_home", side_effect=late):
+            wire(R)
+            rc = R.main([str(self.run), "--project", "demo", "--runtime", "codex", "--class", "write"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads((self.run / "dispatch.json").read_text())["outcome"], "ok")
+        self.assertEqual(self.state_json()["attempts"][-1]["dispatch"]["outcome"], "ok")
+        self.verify()
+        self.assertIsNotNone(self.state_json()["attempts"][-1]["verified"])
+
+    def test_running_signal_cancels_attempt_and_stops_group(self):
+        self.prepare()
+        (self.run / "wait-member").touch()
+        (self.run / "spawn-child").touch()
+        original = subprocess.Popen.wait
+        def interrupt(proc, *args, **kwargs):
+            if kwargs.get("timeout") and not (self.run / "member-ready").exists():
+                deadline = time.monotonic() + 10
+                while not (self.run / "member-ready").exists() and time.monotonic() < deadline:
+                    time.sleep(.01)
+                self.assertTrue((self.run / "member-ready").exists())
+                os.kill(os.getpid(), signal.SIGTERM)
+            return original(proc, *args, **kwargs)
+        with mock.patch.object(R, "main", R.main), mock.patch.object(R, "run_it", R.run_it), \
+                mock.patch.object(subprocess.Popen, "wait", interrupt):
+            wire(R)
+            rc = R.main([str(self.run), "--project", "demo", "--runtime", "codex", "--class", "write"])
+        self.assertEqual(rc, 128 + signal.SIGTERM)
+        dispatch = json.loads((self.run / "dispatch.json").read_text())
+        self.assertEqual(dispatch["outcome"], "interrupted")
+        self.assertFalse(R.group_left(dispatch["member"]))
+        self.assertEqual(self.state_json()["attempts"][-1]["dispatch"]["outcome"], "cancelled")
 
     def test_failed_retry_cannot_accept_prior_external_output(self):
         self.prepare()
