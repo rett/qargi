@@ -19,20 +19,76 @@ Two resources the definition can carry, both text:
 A minimal command runtime, complete:
 
 ```json
-{"schema": 2,"kind": "provider","provider": "fakecli","family": null,
-  "surface": "local","description": "fakecli, a command-line model runner",
-  "models": {"pattern": "^fake-.+$","effort": null,
-  "tiers": {"*": {"model": "fake-1","alias": null,"verified_on": null,
-  "source": "fakecli --list-models"}}},
-  "capabilities": {"skills": {"value": "yes"}},
-  "resources": {"skills": {"project_dir": ".fake/skills",
-  "items": "dir-per-item","entry": "SKILL.md","format": "skill-md",
-  "link": {"project": "dir-symlink","user": "none"}}},"agents": null,
-  "dispatch": {"mode": "command","argv": ["fakecli","run","--model",
-  "{model}"],"class_argv": {"read-only": ["--sandbox","read-only"]},
-  "prompt": {"via": "stdin"},"cwd": "{clone}","env_pass": ["FAKECLI_API_KEY"],
-  "timeout_s": 1800,"output": {"format": "text"}},
-  "barrier": {"kind": "sandbox-args"},"session": {"render_target": "fakecli"}}
+{
+  "schema": 2,
+  "kind": "provider",
+  "provider": "fakecli",
+  "family": null,
+  "surface": "local",
+  "description": "fakecli, a command-line model runner",
+  "models": {
+    "pattern": "^fake-.+$",
+    "effort": null,
+    "tiers": {
+      "*": {
+        "model": "fake-1",
+        "alias": null,
+        "verified_on": null,
+        "source": "fakecli --list-models"
+      }
+    }
+  },
+  "capabilities": {
+    "skills": {
+      "value": "yes"
+    }
+  },
+  "resources": {
+    "skills": {
+      "project_dir": ".fake/skills",
+      "items": "dir-per-item",
+      "entry": "SKILL.md",
+      "format": "skill-md",
+      "link": {
+        "project": "dir-symlink",
+        "user": "none"
+      }
+    }
+  },
+  "agents": null,
+  "dispatch": {
+    "mode": "command",
+    "argv": [
+      "fakecli",
+      "run",
+      "--model",
+      "{model}"
+    ],
+    "class_argv": {
+      "read-only": [
+        "--sandbox",
+        "read-only"
+      ]
+    },
+    "prompt": {
+      "via": "stdin"
+    },
+    "cwd": "{clone}",
+    "env_pass": [
+      "FAKECLI_API_KEY"
+    ],
+    "timeout_s": 1800,
+    "output": {
+      "format": "text"
+    }
+  },
+  "barrier": {
+    "kind": "sandbox-args"
+  },
+  "session": {
+    "render_target": "fakecli"
+  }
+}
 ```
 
 `fakecli` itself is installed by the person and found on `PATH`; the review lists it as "needs on PATH". Run `qargi provider show claude-code` for a runtime with agents, a hook barrier and in-session dispatch.
