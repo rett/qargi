@@ -101,7 +101,7 @@ removes the run with them, and qargi local list and verify name the links left. 
 qargi made, which are removed where found and named where not. When the member could write the clone's .git (git_watch: the argv names it, or the
 run's class has no sandbox arguments of its own), what git in the clone would run (.git/config, hooks/, info/) is read before the member starts and
 compared when it ends; a change other than what git branch sets is named (GITDIR=, git_dir in dispatch.json: key and entry names, never a value), not
-restored, so the lead knows not to run git in that clone (worktree_changes runs it there only with what the member could set switched off).
+restored, so the lead knows not to run git in that clone (worktree_changes uses a bounded private metadata copy with a minimal trusted config).
 --dry-run prints the argv and the prompt and writes nothing. The exit status: 0 ok, 1 failed (or a usage error), 2 refused, 3 the runtime cannot be
 run this way, 4 transport, 128+N interrupted by signal N.
 """
@@ -116,6 +116,7 @@ import stat
 import subprocess
 import sys
 import time
+import tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
@@ -451,7 +452,10 @@ def make_home(run, home):
             os.symlink(src, to, dir_fd=fd)
             made.append(to)
     except BaseException:
-        clear_home(run, home, made)
+        try:
+            clear_home(run, home, made)
+        except BaseException:
+            home["cleanup_failed"] = True  # the start failure stays primary; planned links remain observable
         raise
     finally:
         os.close(fd)
@@ -1192,12 +1196,22 @@ def earlier_start(run, again):
         rec = json.loads(read_run_file(path, 1 << 20, "the dispatch record") or "{}")
     except (ValueError, Stop):
         rec = {}
-    if isinstance(rec, dict) and rec.get("outcome") == "running":
+    if isinstance(rec, dict):
         if proc_of_run(rec.get("runner"), run, "runner"):
             fail("%s is being run now (qargi local run, process %d); it is started once at a time" % (run, rec["runner"]))
         if proc_of_run(rec.get("member"), run, "member"):
             fail("the member of an earlier start of %s is still running (process group %d), its runner is gone: stop it first (kill -TERM -- -%d), then "
                  "qargi local run %s --again" % (run, rec["member"], rec["member"], run))
+        member = rec.get("member")
+        if type(member) is int and member > 1:
+            try:
+                survivors = group_left(member)
+            except OSError:
+                survivors = None
+            if survivors is None or survivors:
+                fail("the original process group of an earlier start of %s is not known to be quiescent; inspect process group %d before retrying "
+                     "(its identity may have changed); nothing was started" % (run, member))
+    if isinstance(rec, dict) and rec.get("outcome") == "running":
         if not again:
             fail("%s was started and did not end: its runner is gone (killed with SIGKILL, or the machine restarted), so %s still says running and the run "
                  "home may still hold its links. qargi local run %s --again starts it again and replaces them; qargi local clean %s --discard drops the run"
@@ -1218,7 +1232,7 @@ def group_left(pgid):
         try:
             os.killpg(pgid, 0)
             return [pgid]
-        except OSError:
+        except ProcessLookupError:
             return []
     want, left = str(pgid).encode(), []
     for n in names:
@@ -1227,7 +1241,7 @@ def group_left(pgid):
         try:
             with open("/proc/%s/stat" % n, "rb") as f:
                 st = f.read()
-        except OSError:
+        except (FileNotFoundError, ProcessLookupError):
             continue
         rest = st[st.rfind(b")") + 2:].split()      # after the command name: state, ppid, pgrp, ...
         if len(rest) > 2 and rest[0] not in (b"Z", b"X") and rest[2] == want:
@@ -1251,7 +1265,11 @@ def kill_group(proc, grace=KILL_GRACE):
         end = time.monotonic() + grace
         while True:
             proc.poll()
-            if not group_left(pg):
+            try:
+                remaining = group_left(pg)
+            except OSError:
+                remaining = None  # unknown must not stop TERM-to-KILL escalation
+            if remaining == []:
                 proc.poll()
                 return 0
             if time.monotonic() >= end:
@@ -1517,31 +1535,204 @@ def out_has_patches(out):
 
 
 WORKTREE_TIMEOUT = 60
+INSPECTION_GIT = shutil.which("git", path=clean_path())
+if INSPECTION_GIT:
+    INSPECTION_GIT = os.path.realpath(INSPECTION_GIT)
+INSPECTION_BYTES_MAX = 512 << 20
+INSPECTION_ENTRIES_MAX = 100000
 
 
-def worktree_changes(clone):
-    """None (it cannot be told), or (tracked, untracked): the paths of the clone with uncommitted changes to tracked files (staged or not, deleted
-    included) and the untracked files git does not ignore. The clone is a member's to write, its .git included: git runs on it with no system or
-    global configuration, the work tree named outright (not the clone's core.worktree), no fsmonitor and every filter driver the clone's
-    configuration names emptied, so nothing the member put in its configuration runs; it reads and writes nothing else (no optional locks)."""
-    if not os.path.isdir(clone) or os.path.islink(clone) or os.path.islink(os.path.join(clone, ".git")) or not os.path.isdir(os.path.join(clone, ".git")):
-        return None
-    env = {"PATH": clean_path(), "HOME": "/nonexistent", "LC_ALL": "C", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_ATTR_NOSYSTEM": "1",
-           "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0", "GIT_DIR": os.path.join(clone, ".git"), "GIT_WORK_TREE": clone}
-    def git(args):
-        return subprocess.run(["git"] + args, cwd=clone, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                              timeout=WORKTREE_TIMEOUT, check=False)
+class InspectionError(ValueError):
+    """A fixed diagnostic, never source configuration or subprocess stderr."""
+
+
+def inspection_unknown(reasons, why):
+    if reasons is not None:
+        reasons.append(why)
+    return None
+
+
+def inspection_env():
+    return {"PATH": PE.DEFAULT_PATH, "HOME": "/nonexistent", "LC_ALL": "C", "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_ATTR_NOSYSTEM": "1", "GIT_OPTIONAL_LOCKS": "0",
+            "GIT_TERMINAL_PROMPT": "0", "GIT_ALLOW_PROTOCOL": "", "GIT_NO_LAZY_FETCH": "1",
+            "GIT_SSH_COMMAND": "false", "GIT_ASKPASS": "false", "GIT_NO_REPLACE_OBJECTS": "1"}
+
+
+def inspection_copy(gfd, dest):
+    """Copy bounded regular metadata through directory fds, never a source link.
+
+    The copy can mix moments of a concurrent writer. It is not an immutable view
+    of the source; importantly Git never opens the source metadata or its config.
+    """
+    deadline = time.monotonic() + WORKTREE_TIMEOUT
+    budget = [INSPECTION_ENTRIES_MAX, INSPECTION_BYTES_MAX]
+    def tick():
+        budget[0] -= 1
+        if budget[0] < 0:
+            raise InspectionError("metadata traversal/read-step limit exceeded")
+        if time.monotonic() > deadline:
+            raise InspectionError("metadata copy time limit exceeded")
+    def copy(srcfd, name, target, depth=0):
+        tick()
+        if os.path.relpath(target, dest) in ("objects/info/alternates", "objects/info/http-alternates"):
+            raise InspectionError("unsupported metadata layout or indirection")
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=srcfd)
+        try:
+            st = os.fstat(fd)
+            if stat.S_ISDIR(st.st_mode):
+                if depth > 64:
+                    raise InspectionError("metadata directory depth limit exceeded")
+                os.mkdir(target)
+                with os.scandir(fd) as it:
+                    for entry in it:
+                        copy(fd, entry.name, os.path.join(target, entry.name), depth + 1)
+            elif stat.S_ISREG(st.st_mode):
+                if st.st_size > budget[1]:
+                    raise InspectionError("metadata byte limit exceeded (512 MiB in 0.2.13)")
+                if target == os.path.join(dest, "config") and st.st_size > GIT_CONFIG_MAX:
+                    raise InspectionError("Git config byte limit exceeded (1 MiB)")
+                with open(target, "xb") as out:
+                    remaining = st.st_size
+                    while remaining:
+                        tick()
+                        data = os.read(fd, min(1 << 20, remaining))
+                        if not data:
+                            raise InspectionError("metadata changed during copying")
+                        out.write(data)
+                        remaining -= len(data)
+                    if os.read(fd, 1):
+                        raise InspectionError("metadata changed during copying")
+                budget[1] -= st.st_size
+                after = os.fstat(fd)
+                if (st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns) != (after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+                    raise InspectionError("metadata changed during copying")
+                # Git compares index entry times with the index file's timestamp
+                # to detect same-length writes within a filesystem clock tick.
+                # A fresh copy timestamp can incorrectly make a racy entry clean.
+                if target == os.path.join(dest, "index"):
+                    os.utime(target, ns=(st.st_atime_ns, st.st_mtime_ns))
+            else:
+                raise InspectionError("metadata contains a special file")
+        finally:
+            os.close(fd)
+    # Unsupported layouts and indirections are rejected even though not copied.
+    with os.scandir(gfd) as it:
+        for entry in it:
+            tick()
+            if entry.name in ("commondir", "config.worktree", "reftable", "shallow") or entry.name.startswith("sharedindex."):
+                raise InspectionError("unsupported metadata layout or indirection")
+    for parent, forbidden in (("info", ("grafts",)), ("objects/info", ("alternates", "http-alternates"))):
+        fd = os.dup(gfd)
+        try:
+            for part in parent.split("/"):
+                newfd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                os.close(fd)
+                fd = newfd
+            with os.scandir(fd) as it:
+                for entry in it:
+                    tick()
+                    if entry.name in forbidden:
+                        raise InspectionError("unsupported metadata layout or indirection")
+        except FileNotFoundError:
+            pass
+        finally:
+            os.close(fd)
+    for name in ("HEAD", "config", "index", "packed-refs", "objects", "refs"):
+        try:
+            mode = os.stat(name, dir_fd=gfd, follow_symlinks=False).st_mode
+        except FileNotFoundError:
+            if name in ("HEAD", "config", "objects", "refs"):
+                raise
+            continue
+        if not (stat.S_ISDIR(mode) if name in ("objects", "refs") else stat.S_ISREG(mode)):
+            raise InspectionError("metadata is not a regular file or plain directory")
+        if name == "config" and os.stat(name, dir_fd=gfd, follow_symlinks=False).st_size > GIT_CONFIG_MAX:
+            raise InspectionError("Git config byte limit exceeded (1 MiB)")
+        copy(gfd, name, os.path.join(dest, name))
+    with open(os.path.join(dest, "config"), "rb") as f:
+        entries = config_entries(f.read(GIT_CONFIG_MAX + 1))
+    if entries is None or any(k.startswith(("include.", "includeif.")) or
+                              (k.startswith("extensions.") and k != "extensions.objectformat") for k in entries):
+        raise InspectionError("unsupported or unreadable Git configuration")
+    if entries.get("core.repositoryformatversion", ["0"]) not in (["0"], ["1"]):
+        raise InspectionError("unsupported repository format")
+    fmt = entries.get("extensions.objectformat", ["sha1"])
+    if len(fmt) != 1 or fmt[0] not in ("sha1", "sha256"):
+        raise InspectionError("unsupported object format")
+    boolean = ("true", "false", "yes", "no", "on", "off", "0", "1", "")
+    safe = ""
+    for key, allowed in (("filemode", boolean), ("ignorecase", boolean), ("symlinks", boolean),
+                         ("autocrlf", boolean + ("input",)), ("eol", ("lf", "crlf", "native"))):
+        values = entries.get("core." + key)
+        if values:
+            value = "true" if values[-1] is None and key != "eol" else values[-1]
+            value = value.lower() if isinstance(value, str) else value
+            if value not in allowed:
+                raise InspectionError("unsupported core configuration value")
+            safe += " %s = %s\n" % (key, value or "false")
+    with open(os.path.join(dest, "config"), "w") as f:
+        f.write("[core]\n repositoryformatversion = " + ("1" if fmt[0] == "sha256" else "0") +
+                "\n bare = false\n fsmonitor = false\n hooksPath = /dev/null\n untrackedCache = false\n" + safe)
+        if fmt[0] == "sha256":
+            f.write("[extensions]\n objectFormat = sha256\n")
+
+
+def clone_git(clone, args, reasons=None):
+    """Inspect through a private metadata copy and trusted config, or unknown.
+
+    Trusted run ancestors may be links; clone and .git must be plain directories.
+    No process outside the original process group is contained by this inspection.
+    """
+    clone = os.path.abspath(clone)
+    clone = os.path.join(os.path.realpath(os.path.dirname(clone)), os.path.basename(clone))
     try:
-        cf = git(["config", "-z", "--name-only", "--get-regexp", r"^filter\."])
-        off = ["-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-c", "core.hooksPath=/dev/null"]
-        for name in sorted({k.decode("utf-8", "replace")[len("filter."):].rpartition(".")[0] for k in cf.stdout.split(b"\0") if k.startswith(b"filter.")}):
-            if not name or "=" in name:
-                return None                                  # a driver that cannot be emptied on the command line: git is not run over it
-            off += [a for k in ("clean", "smudge", "process") for a in ("-c", "filter.%s.%s=" % (name, k))] + ["-c", "filter.%s.required=false" % name]
-        st = git(off + ["status", "--porcelain=v1", "-z", "--no-renames", "--ignore-submodules=all", "--untracked-files=all"])
-    except (OSError, subprocess.SubprocessError):
+        if not INSPECTION_GIT or os.path.commonpath((INSPECTION_GIT, os.path.dirname(clone))) == os.path.dirname(clone):
+            return inspection_unknown(reasons, "trusted inspection Git is unavailable")
+        private = os.path.realpath(paths.state())
+        if any(os.path.commonpath((private, p)) == p for p in (clone, os.path.join(os.path.dirname(clone), "out"))):
+            return inspection_unknown(reasons, "inspection state directory is inside member output or clone")
+        os.makedirs(private, mode=0o700, exist_ok=True)
+        cfd = os.open(clone, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            gfd = os.open(".git", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=cfd)
+        finally:
+            os.close(cfd)
+        try:
+            with tempfile.TemporaryDirectory(prefix="inspect.", dir=private) as gd:
+                inspection_copy(gfd, gd)
+                env = dict(inspection_env(), GIT_DIR=gd, GIT_WORK_TREE=clone)
+                result = subprocess.run([INSPECTION_GIT] + args, cwd=gd, env=env, stdin=subprocess.DEVNULL,
+                                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=WORKTREE_TIMEOUT, check=False)
+                if result.returncode:
+                    inspection_unknown(reasons, "Git inspection failed (invalid or unsupported repository data)")
+                return result
+        finally:
+            os.close(gfd)
+    except InspectionError as e:
+        return inspection_unknown(reasons, str(e))
+    except subprocess.TimeoutExpired:
+        return inspection_unknown(reasons, "Git inspection time limit exceeded")
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return inspection_unknown(reasons, "inspection metadata or trusted storage could not be read or copied")
+
+
+def clone_commits(clone, branches=False, reasons=None):
+    args = ["rev-list", "--count"] + (["--branches"] if branches else []) + ["HEAD", "--not", "--remotes=origin"]
+    r = clone_git(clone, args, reasons)
+    if r is None or r.returncode:
         return None
-    if st.returncode != 0:
+    if not r.stdout.strip().isdigit():
+        return inspection_unknown(reasons, "Git inspection returned an invalid commit count")
+    return int(r.stdout.strip())
+
+
+def worktree_changes(clone, reasons=None):
+    """None (it cannot be told), or (tracked, untracked): the paths of the clone with uncommitted changes to tracked files (staged or not, deleted
+    included) and untracked files Git does not ignore. Only the private metadata
+    copy and its minimal configuration reach Git; no member filter is defined."""
+    st = clone_git(clone, ["status", "--porcelain=v1", "-z", "--no-renames", "--ignore-submodules=all", "--untracked-files=all"], reasons)
+    if st is None or st.returncode != 0:
         return None
     tracked, untracked = [], []
     for ent in st.stdout.split(b"\0"):
@@ -1619,6 +1810,10 @@ def git_state(clone):
             os.close(fd)
     tree = {}
     try:
+        for name in ("commondir", "config.worktree", "objects/info/alternates", "objects/info/http-alternates"):
+            p = os.path.join(gd, name)
+            if os.path.lexists(p):
+                tree[name] = _git_sig(p)
         for top in GIT_WATCHED:
             p = os.path.join(gd, top)
             if not os.path.lexists(p):
@@ -1644,26 +1839,31 @@ def git_state(clone):
 def config_entries(data):
     """{key: [values]} of a git configuration file's bytes, read by git from a private copy (no include followed, no system, global or repository
     configuration, nothing run), or None when git cannot read it."""
-    import tempfile
-    d = tempfile.mkdtemp(prefix="qargi-gitcfg.")
+    if not INSPECTION_GIT:
+        return None
+    d = None
     try:
+        private = os.path.realpath(paths.state())
+        os.makedirs(private, mode=0o700, exist_ok=True)
+        d = tempfile.mkdtemp(prefix="gitcfg.", dir=private)
         p = os.path.join(d, "config")
         with open(p, "wb") as f:
             f.write(data)
-        env = {"PATH": clean_path(), "HOME": "/nonexistent", "LC_ALL": "C", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_TERMINAL_PROMPT": "0"}
-        r = subprocess.run(["git", "config", "--file", p, "--no-includes", "--list", "-z"], cwd=d, env=env, stdin=subprocess.DEVNULL,
+        env = inspection_env()
+        r = subprocess.run([INSPECTION_GIT, "config", "--file", p, "--no-includes", "--list", "-z"], cwd=d, env=env, stdin=subprocess.DEVNULL,
                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=WORKTREE_TIMEOUT, check=False)
     except (OSError, subprocess.SubprocessError):
         return None
     finally:
-        shutil.rmtree(d, ignore_errors=True)
+        if d:
+            shutil.rmtree(d, ignore_errors=True)
     if r.returncode != 0:
         return None
     out = {}
     for ent in r.stdout.split(b"\0"):
         if ent:
-            k, _, v = ent.decode("utf-8", "replace").partition("\n")
-            out.setdefault(k, []).append(v)
+            k, sep, v = ent.decode("utf-8", "replace").partition("\n")
+            out.setdefault(k, []).append(v if sep else None)
     return out
 
 
@@ -1795,6 +1995,7 @@ def run_it(plan, run):
     git0 = git_state(os.path.join(run, "clone")) if plan["git_watch"] else None   # before the member starts: what git in the clone would run
     proc = code = error = outcome = left = None
     timed_out, stop_code = False, 2
+    unexpected = None
     previous = prev_manifest = False
     try:
         try:
@@ -1822,11 +2023,15 @@ def run_it(plan, run):
                     except OSError as e:
                         outcome, error = "transport", "could not start %s: %s" % (plan["argv"][0], e.strerror or e)
                     if proc is not None:
-                        write_private(dispatch, json.dumps(dict(begun, member=proc.pid), indent=2, sort_keys=True) + "\n")
+                        begun["member"] = proc.pid
+                        write_private(dispatch, json.dumps(begun, indent=2, sort_keys=True) + "\n")
                         try:
                             sig.armed = True             # from here a signal stops the member where the lead waits for it
                             sig.check()
                             code = proc.wait(timeout=plan["timeout_s"])
+                            sig.armed = False
+                            if group_left(proc.pid):
+                                left = kill_group(proc)
                         except subprocess.TimeoutExpired:
                             sig.armed = False
                             timed_out = True
@@ -1848,19 +2053,58 @@ def run_it(plan, run):
             if proc is not None:                         # the start record could not be rewritten once the member had started: it is stopped, never
                 left = kill_group(proc)                  # left running after the runner has gone
                 code = proc.returncode
+    except BaseException as e:
+        # Anything after Popen must stop the original group before links go.
+        # Keep the original exception even if stopping or unlinking also fails.
+        unexpected = e
+        sig.armed = False
+        if proc is not None:
+            try:
+                left = kill_group(proc)
+            except BaseException:
+                try:
+                    left = len(group_left(proc.pid))
+                except BaseException:
+                    left = None    # unknown is neither zero nor a fabricated count
+            code = proc.returncode
     finally:
         sig.armed = False
-        home_left = clear_home(run, home, made) if home else []
+        try:
+            home_left = clear_home(run, home, made) if home else []
+        except BaseException as e:
+            home_left = ["run home cleanup failed; links and refreshed files may remain (inspect the run home)"]
+            if unexpected is None:
+                unexpected = e
+        if home and home.get("cleanup_failed"):
+            home_left.append("cleanup during run home setup failed; inspect the planned link names for residue")
+    if unexpected is not None:
+        try:
+            rec = dict(begun, outcome="refused", exit=code, seconds=round(time.time() - started, 1), timed_out=timed_out,
+                       error="unexpected runner error", transcript=os.path.join(out, "transcript"))
+            if proc is not None:
+                rec["group_left"] = left
+            if home:
+                rec["home"].update(left=home_left, not_linked=home["missing"], residue=home["residue"])
+            write_private(dispatch, json.dumps(rec, indent=2, sort_keys=True) + "\n")
+        except BaseException:
+            pass
+        sig.restore()
+        raise unexpected.with_traceback(unexpected.__traceback__)
     if outcome is None:
         outcome = "failed" if timed_out else plan["exit"].get(str(code), plan["exit"].get("*", "failed"))
+        if left and outcome == "ok":
+            outcome = "failed"
     seconds = round(time.time() - started, 1)
     gitdir = None
     if plan["git_watch"] and proc is not None:
         gitdir = {"watched": plan["git_watch"], "changed": git_changes(git0, git_state(os.path.join(run, "clone")))}
     work = None
     if plan["class"] == "write" and outcome == "ok" and not out_has_patches(out):
-        ch = worktree_changes(os.path.join(run, "clone"))
-        if ch is not None and (ch[0] or ch[1]):
+        reasons = []
+        ch = worktree_changes(os.path.join(run, "clone"), reasons)
+        if ch is None:
+            outcome, error = "refused", "the clone's worktree state is unknown; inspection failed: " + "; ".join(reasons)
+        elif ch[0] or ch[1]:
             work = {"tracked": len(ch[0]), "untracked": len(ch[1]), "patches": False, "refused": bool(ch[0])}
             if ch[0]:                                    # a change to a tracked file left uncommitted with nothing collected is a refusal, never a
                 outcome = "refused"                      # finished task; new files never added (untracked) are only reported
@@ -1872,7 +2116,7 @@ def run_it(plan, run):
     else:
         report, text = None, None
     manifest = package(run, out, plan, report, text, outcome, code, started, seconds, prev_manifest) if pk else None
-    rec = dict(head, started=PE.now(started), seconds=seconds, exit=code, timed_out=timed_out, outcome=outcome, transcript=os.path.join(out, "transcript"))
+    rec = dict(begun, seconds=seconds, exit=code, timed_out=timed_out, outcome=outcome, transcript=os.path.join(out, "transcript"))
     if outcome == "interrupted":
         rec["signal"] = signal.Signals(sig.sig).name
     if left is not None:                                 # the member's process group was stopped: how many of its processes are still alive
@@ -1880,7 +2124,8 @@ def run_it(plan, run):
     if error:
         rec["error"] = error
     if home:
-        rec["home"] = {"env": home["env"], "dir": home["dir"], "links": made, "not_linked": home["missing"], "left": home_left,
+        names = [to for to, _ in home["links"]] if home.get("cleanup_failed") else made
+        rec["home"] = {"env": home["env"], "dir": home["dir"], "links": names, "not_linked": home["missing"], "left": home_left,
                        "residue": home["residue"]}     # names in the run home, never a value
     if plan["usage"] and proc is not None:
         rec["usage"] = read_usage(rec["transcript"], plan["usage"])

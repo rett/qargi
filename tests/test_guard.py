@@ -5074,6 +5074,17 @@ class McpTools(HookCase):
     KB = {"platform.list_items": "always_allow", "getStatus": "always_allow", "search": "always_allow", "settings_view": "always_allow",
           "platform.delete_knowledge": "always_allow", "repo/push": "auto", "issue-close": "always_ask"}
 
+    def test_unknown_registry_class_refuses_mcp(self):
+        path = os.path.join(self.state, "local-runs.jsonl")
+        for value in (None, 7, "unknown", "missing"):
+            rec = {"run": self.runs["build"], "ability": "build", "project": "alpha", "class": value}
+            if value == "missing":
+                del rec["class"]
+            self.put(path, json.dumps(rec) + "\n")
+            result = self.call("mcp__kb__platform.delete_knowledge", "build")
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn("no valid class", result.stderr)
+
     def setUp(self):
         self.t = os.path.realpath(tempfile.mkdtemp())
         self.home, self.conf, self.state, self.outside = (os.path.join(self.t, d) for d in ("home", "conf", "state", "outside"))
@@ -5197,6 +5208,20 @@ class McpTools(HookCase):
         self.put(os.path.join(self.state, "local-runs.jsonl"), json.dumps({"run": self.runs["build"], "ability": "review", "class": "read-only", "project": "alpha"}) + "\n")
         self.refused("build", (("mcp__kb__platform_delete_knowledge", "under the read-only class"), ("mcp__only-build__list_x", "linked to the role review of alpha")))
         self.allowed("build", ("mcp__for-reviewers__list_r",))
+
+    def test_exact_registry_class_enum_for_permission_tools(self):
+        with open(os.path.join(os.path.dirname(__file__), "fixtures", "run-classes.json")) as f:
+            cases = json.load(f)
+        for case in cases:
+            with self.subTest(case=case["name"]):
+                rec = {"run": self.runs["build"], "ability": "build", "project": "alpha"}
+                if "value" in case:
+                    rec["class"] = case["value"]
+                self.put(os.path.join(self.state, "local-runs.jsonl"), json.dumps(rec) + "\n")
+                if case.get("valid"):
+                    self.allowed("build", ("mcp__kb__search",))
+                else:
+                    self.refused("build", (("mcp__kb__search", "no valid class"),))
 
     def test_the_member_mark_names_the_run_of_a_call_made_elsewhere(self):
         self.allowed(self.outside, ("mcp__kb__platform_delete_knowledge", "mcp__only-build__list_x"), QARGI_MEMBER_RUN=self.runs["build"])

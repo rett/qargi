@@ -1012,25 +1012,40 @@ out=$($DA local run "$RUN" --again 2>&1); rc=$?
 rm -f "$CLONE/new.txt"; : > "$T/wu-mode"
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
 { [ "$rc" = 0 ] && ! grep -q '^WORKTREE=' <<<"$out" && [ "$(jq -r 'has("worktree")' "$RUN/dispatch.json")" = false ]; } && ok "a clean clone says nothing of it" || no "clean clone: rc=$rc $out"
-# the lead reads the clone's state with git, but nothing the member put in the clone's git configuration runs: no fsmonitor, every filter driver it names
-# emptied, the work tree named outright, no system or global configuration, no optional locks (a git on PATH records how it is called)
+printf '%s\n' elsewhere > "$CLONE/.git/commondir"
+out=$($DA review check "$OUT" --allow-empty 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q 'worktree state is unknown: clone inspection failed: unsupported metadata layout or indirection' <<<"$out" \
+  && ok "review check refuses an unknown worktree state" || no "review check unknown worktree: rc=$rc $out"
+out=$($DA local verify "$RUN" 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q 'inspection: unsupported metadata layout or indirection' <<<"$out" \
+  && ok "verify explains the inspection failure without printing member metadata" || no "verify inspection reason: rc=$rc $out"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'worktree state is unknown; inspection failed: unsupported metadata layout or indirection' <<<"$out" \
+  && jq -e '.outcome == "refused" and (.error | contains("unsupported metadata layout or indirection"))' "$RUN/dispatch.json" >/dev/null; } \
+  && ok "run records and prints a sanitized inspection failure" || no "run inspection reason: rc=$rc $out"
+rm -f "$CLONE/.git/commondir"
+# A Git selected from the lead's controlled PATH records the private config and
+# scrubbed environment. Member filter configuration never reaches status.
 REALGIT=$(command -v git); mkdir -p "$T/fgit"
 cat > "$T/fgit/git" <<SH
 #!/usr/bin/env bash
 printf '%s\n' "ARGS \$*" "WT=\${GIT_WORK_TREE-} GD=\${GIT_DIR-} NOSYS=\${GIT_CONFIG_NOSYSTEM-} GLOBAL=\${GIT_CONFIG_GLOBAL-} LOCKS=\${GIT_OPTIONAL_LOCKS-}" >> "$T/fgit.log"
-case " \$* " in *" config "*) cat "$T/fgit.names"; exit 0;; esac
+case " \$* " in *" status "*) "$REALGIT" config --file "\$GIT_DIR/config" --no-includes --list >> "$T/fgit.config";; esac
 exec "$REALGIT" "\$@"
 SH
-chmod 755 "$T/fgit/git"; : > "$T/fgit.log"; printf 'c\n' > "$CLONE/tracked.txt"; printf 'filter.evil.clean\0filter.a.b.process\0' > "$T/fgit.names"
+chmod 755 "$T/fgit/git"; : > "$T/fgit.log"; printf 'c\n' > "$CLONE/tracked.txt"
+printf '\n[filter "evil"]\n clean = touch %s; cat\n[filter "a.b"]\n process = touch %s\n' "$T/filter-ran" "$T/filter-ran" >> "$CLONE/.git/config"
 got=$(PATH="$T/fgit:$PATH" python3 -I -c 'import sys; sys.path.insert(0, "lib"); import local_run as L; print(L.worktree_changes(sys.argv[1]))' "$CLONE" 2>&1)
 st=$(grep '^ARGS .*status' "$T/fgit.log")
-{ [ "$got" = "(['tracked.txt'], [])" ] && grep -q -- '-c core.fsmonitor=false' <<<"$st" && grep -q -- '-c filter.evil.clean= -c filter.evil.smudge= -c filter.evil.process= -c filter.evil.required=false' <<<"$st" \
-  && grep -q -- '-c filter.a.b.process=' <<<"$st" && grep -qx "WT=$CLONE GD=$CLONE/.git NOSYS=1 GLOBAL=/dev/null LOCKS=0" "$T/fgit.log"; } \
-  && ok "the lead's git status of the clone turns off fsmonitor and every filter driver the clone names, and names the work tree itself" || no "worktree git: $got $(cat "$T/fgit.log")"
-printf 'filter.x=y.clean\0' > "$T/fgit.names"
+{ [ "$got" = "(['tracked.txt'], [])" ] && [ -n "$st" ] && grep -qx 'core.fsmonitor=false' "$T/fgit.config" && grep -qx 'core.hookspath=/dev/null' "$T/fgit.config" \
+  && ! grep -q '^filter\.' "$T/fgit.config" && grep -q "^WT=$CLONE GD=$QARGI_STATE/inspect\..* NOSYS=1 GLOBAL=/dev/null LOCKS=0$" "$T/fgit.log" && [ ! -e "$T/filter-ran" ]; } \
+  && ok "the lead's Git inspects private metadata with no member filters, fsmonitor, hooks or inherited configuration" || no "worktree git: $got $(cat "$T/fgit.log")"
+printf '\n[filter "x=y"]\n clean = touch %s; cat\n' "$T/filter-ran" >> "$CLONE/.git/config"
 got=$(PATH="$T/fgit:$PATH" python3 -I -c 'import sys; sys.path.insert(0, "lib"); import local_run as L; print(L.worktree_changes(sys.argv[1]))' "$CLONE" 2>&1)
-[ "$got" = None ] && ok "a filter driver whose name cannot be emptied on the command line: git status is not run, the state is unknown" || no "bad filter name: $got $(cat "$T/fgit.log")"
-git -C "$CLONE" checkout -q tracked.txt; rm -rf "$T/fgit" "$T/fgit.log" "$T/fgit.names" "$T/wu-mode" "$T/wu-final.md" "$T/bin/codex"
+[ "$got" = "(['tracked.txt'], [])" ] && [ ! -e "$T/filter-ran" ] \
+  && ok "a driver name with equals is safely omitted from the private inspection config" || no "filter name with equals: $got $(cat "$T/fgit.log")"
+git -C "$CLONE" config --remove-section filter.evil; git -C "$CLONE" config --remove-section filter.a.b; git -C "$CLONE" config --remove-section 'filter.x=y'
+git -C "$CLONE" checkout -q tracked.txt; rm -rf "$T/fgit" "$T/fgit.log" "$T/fgit.config" "$T/wu-mode" "$T/wu-final.md" "$T/bin/codex"
 # a new file never added is not a refusal, so a clean of such a run removes it: never silently
 printf 'new\n' > "$CLONE/new.txt"
 out=$($DA local clean "$RUN" 2>&1); rc=$?
@@ -1063,6 +1078,18 @@ cat > "$T/bin/codex" <<SH
 #!/usr/bin/env bash
 cat > /dev/null
 [ "\$(cat "$T/ir-mode" 2>/dev/null)" = quick ] && exit 0
+if [ "\$(cat "$T/ir-mode" 2>/dev/null)" = normal-stubborn ]; then
+  (trap '' TERM; echo ready > "$T/ir-stubborn-ready"; exec sleep 3571) &
+  echo \$! > "$T/ir-child"
+  while [ ! -f "$T/ir-stubborn-ready" ]; do sleep 0.01; done
+  exit 0
+fi
+if [ "\$(cat "$T/ir-mode" 2>/dev/null)" = child ]; then
+  (trap '[ -L "\$CODEX_HOME/auth.json" ] && echo present > "$T/ir-link-seen"; exit 0' TERM; echo ready > "$T/ir-ready"; while :; do sleep 0.1; done) &
+  echo \$! > "$T/ir-child"
+  while [ ! -f "$T/ir-ready" ]; do sleep 0.01; done
+  exit 0
+fi
 if [ "\$(cat "$T/ir-mode" 2>/dev/null)" = stubborn ]; then (trap '' TERM; exec sleep 3571) & echo \$! > "$T/ir-child"; else sleep 3571 & echo \$! > "$T/ir-child"; fi
 echo \$\$ > "$T/ir-member"
 wait
@@ -1086,6 +1113,31 @@ ir_after() { # SIGNAL CODE: the run ended interrupted by SIGNAL with exit CODE, 
   for p in "$T/ir-member" "$T/ir-child"; do [ ! -s "$p" ] || kill -KILL "$(cat "$p")" 2>/dev/null; done
 }
 echo quick > "$T/ir-mode"; out=$($DA local run "$RUN" 2>&1) || no "ir1 first run: $out"
+echo child > "$T/ir-mode"; out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q '^OUTCOME=ok$' <<<"$out" && [ "$(jq -r .group_left "$RUN/dispatch.json")" = 0 ] \
+  && gone "$(cat "$T/ir-child")" && [ "$(cat "$T/ir-link-seen")" = present ] && [ ! -L "$LINK" ]; } \
+  && ok "a normally exiting member's child is stopped before the link is removed" || no "normal child: rc=$rc $out"
+[ ! -s "$T/ir-child" ] || kill -KILL "$(cat "$T/ir-child")" 2>/dev/null || true
+echo normal-stubborn > "$T/ir-mode"; out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(jq -r .group_left "$RUN/dispatch.json")" = 0 ] && gone "$(cat "$T/ir-child")"; } \
+  && ok "a normally exiting member's TERM-ignoring child is killed" || no "normal stubborn: rc=$rc $out"
+[ ! -s "$T/ir-child" ] || kill -KILL "$(cat "$T/ir-child")" 2>/dev/null || true
+echo quick > "$T/ir-mode"
+got=$(python3 -I - "$RUN" "$T" <<'PY' 2>&1
+import json, os, sys
+sys.path.insert(0, os.path.join(sys.argv[2], "tool", "lib"))
+import local_run as L
+earlier = json.load(open(os.path.join(sys.argv[1], "dispatch.json")))["member"]
+groups = L.group_left
+L.group_left = lambda pg: groups(pg) if pg == earlier else [pg]
+L.kill_group = lambda proc: 1
+rc = L.main([sys.argv[1], "--project", "rproj", "--runtime", "codex", "--class", "write", "--again"])
+print("CLASSIFICATION_RC=%d" % rc)
+PY
+)
+{ grep -q '^CLASSIFICATION_RC=1$' <<<"$got" && grep -q '^OUTCOME=failed' <<<"$got" && grep -q '1 process of the member.s process group .* survived TERM and KILL' <<<"$got" \
+  && ! grep -q 'process group was stopped' <<<"$got" && [ "$(jq -r .group_left "$RUN/dispatch.json")" = 1 ]; } \
+  && ok "normal exit with a reported survivor fails and never says the group stopped" || no "normal survivor: $got"
 for s in TERM HUP; do
   if ir_start; then kill -"$s" "$(jq -r .runner "$RUN/dispatch.json")"; ir_after "$s" "$([ "$s" = TERM ] && echo 143 || echo 129)"; else no "SIG$s: the member did not start: $(cat "$T/ir.out")"; fi
 done
@@ -1325,6 +1377,145 @@ PY
 { grep -q '^RC=2 LEFT=$' <<<"$got" && grep -q '^OUTCOME=refused$' <<<"$got" && grep -q 'injected' <<<"$got" && [ "$(jq -r .outcome "$RUN/dispatch.json")" = refused ] \
   && [ "$(jq -r .exit "$RUN/dispatch.json")" != null ]; } \
   && ok "a start record that cannot be rewritten after the member started: refused, and the member's process group is stopped" || no "record after start: $got"
+got=$(env FAKE_MODE=sleep python3 -I - "$T/tool/lib" "$RUN" "$DA" <<'PY' 2>&1
+import json, os, subprocess, sys
+from unittest.mock import patch
+sys.path.insert(0, sys.argv[1])
+import local_run as L
+run = os.path.realpath(sys.argv[2])
+build, write, stop, clear_home, groups = L.build, L.write_private, L.kill_group, L.clear_home, L.group_left
+source = os.path.join(run, "signin-fixture")
+secret = "fixture-credential-never-record"
+with open(source, "w") as f:
+    f.write(secret)
+for cleanup_fails in (False, True, "unknown"):
+    events, writes, procs = [], [0], []
+    link = os.path.join(run, "home/test-home/signin")
+    original = RuntimeError(secret)
+    def plan(*args, **kwargs):
+        p = build(*args, **kwargs)
+        p["home"] = {"env":"FAKE_HOME", "dir":"test-home", "path":os.path.dirname(link),
+                     "links":[("signin", source), ("refresh", source)], "missing":[], "residue":[], "start":{}}
+        return p
+    def wp(path, text):
+        writes[0] += 1
+        if writes[0] == 2:
+            raise original
+        return write(path, text)
+    def kill(proc):
+        assert os.path.islink(link)
+        events.append("stopping")
+        procs.append(proc)
+        left = stop(proc)
+        assert left == 0 and not L.group_left(proc.pid)
+        events.append("stopped")
+        if cleanup_fails == "unknown":
+            def unreadable(*args):
+                raise OSError(secret)
+            L.group_left = unreadable
+        if cleanup_fails:
+            raise OSError("secondary stop error (injected)")
+        return left
+    def clear(*args):
+        assert events[-1] == "stopped" and not groups(procs[0].pid)
+        events.append("unlink")
+        # Refresh one sign-in file while retaining the other real link on failure.
+        refresh = os.path.join(os.path.dirname(link), "refresh")
+        os.unlink(refresh)
+        with open(refresh, "w") as f:
+            f.write("refreshed-" + secret)
+        notes = clear_home(args[0], args[1], ["refresh"])
+        if cleanup_fails:
+            raise OSError(secret)
+        return notes + clear_home(args[0], args[1], ["signin"])
+    L.build, L.write_private, L.kill_group, L.clear_home = plan, wp, kill, clear
+    try:
+        L.main([run, "--project", "rproj", "--runtime", "fakecmd", "--class", "write", "--again"])
+        raise AssertionError("unexpected exception swallowed")
+    except RuntimeError as e:
+        assert e is original
+    L.group_left = groups
+    assert events == ["stopping", "stopped", "unlink"], events
+    rec = json.load(open(os.path.join(run, "dispatch.json")))
+    assert rec["outcome"] == "refused" and rec["group_left"] == (None if cleanup_fails == "unknown" else 0), rec
+    assert rec["member"] == procs[0].pid and rec["runner"] == os.getpid() and rec["started"]
+    assert rec["home"]["links"] == ["signin", "refresh"] and rec["home"]["residue"] == ["refresh.from-run"], rec
+    assert secret not in json.dumps(rec)
+    assert open(os.path.join(os.path.dirname(link), "refresh.from-run")).read() == "refreshed-" + secret
+    if cleanup_fails:
+        assert os.path.islink(link) and rec["home"]["left"]
+        for command in ([sys.argv[3], "local", "list"], [sys.argv[3], "local", "verify", run]):
+            result = subprocess.run(command, capture_output=True, text=True)
+            assert link in result.stdout + result.stderr, result
+            assert "refresh.from-run" in result.stdout + result.stderr, result
+            assert secret not in result.stdout + result.stderr
+    # Even a refused dispatch cannot retry beside original-group survivors.
+    for survivors in ([procs[0].pid], None):
+        rec["group_left"] = len(survivors) if survivors else None
+        write(os.path.join(run, "dispatch.json"), json.dumps(rec))
+        with patch.object(L, "group_left", return_value=survivors):
+            try:
+                L.earlier_start(run, True)
+                raise AssertionError("retry beside survivors")
+            except L.Stop as e:
+                assert "not known to be quiescent" in str(e)
+    L.earlier_start(run, True)  # actual group has stopped: safe to retry
+    if os.path.islink(link):
+        os.unlink(link)
+    os.unlink(os.path.join(os.path.dirname(link), "refresh.from-run"))
+# A failure before Popen must not invent a process-group observation.
+with patch.object(L, "make_home", side_effect=original):
+    try:
+        L.run_it(plan(run, "rproj", "fakecmd", "write", None, None, None, None, []), run)
+    except RuntimeError as e:
+        assert e is original
+assert "group_left" not in json.load(open(os.path.join(run, "dispatch.json")))
+# A setup failure can happen after only one link was made, before make_home
+# returns its list. A secondary cleanup error must still leave an honest note.
+symlink, calls = os.symlink, []
+def partial_link(src, to, **kwargs):
+    calls.append(to)
+    if len(calls) == 2:
+        raise original
+    return symlink(src, to, **kwargs)
+def partial_clear(run, home, names):
+    if names:
+        raise OSError(secret)
+    return []
+for original in (RuntimeError(secret), L.Stop("setup refused (fixture)", 3)):
+    calls.clear()
+    with patch.object(L.os, "symlink", partial_link), patch.object(L, "clear_home", partial_clear):
+        try:
+            rc = L.run_it(plan(run, "rproj", "fakecmd", "write", None, None, None, None, []), run)
+            assert isinstance(original, L.Stop) and rc == 3
+        except RuntimeError as e:
+            assert e is original
+    rec = json.load(open(os.path.join(run, "dispatch.json")))
+    assert os.path.islink(link) and rec["home"]["left"] and rec["member"] is None, rec
+    assert rec["home"]["links"] == ["signin", "refresh"], rec
+    assert "group_left" not in rec and secret not in json.dumps(rec)
+    for command in ([sys.argv[3], "local", "list"], [sys.argv[3], "local", "verify", run]):
+        result = subprocess.run(command, capture_output=True, text=True)
+        assert link in result.stdout + result.stderr, result
+        assert secret not in result.stdout + result.stderr
+    os.unlink(link)
+# An unreadable group probe must not abort escalation after TERM. The final
+# observation still raises: callers record unknown, never a false zero.
+from unittest.mock import Mock
+signals = []
+with patch.object(L.os, "killpg", side_effect=lambda pg, sig: signals.append(sig)), \
+     patch.object(L, "group_left", side_effect=PermissionError("fixture unreadable group")):
+    try:
+        stop(Mock(pid=12345), grace=0)
+        raise AssertionError("unknown group reported stopped")
+    except PermissionError:
+        pass
+assert signals == [L.signal.SIGTERM, L.signal.SIGKILL], signals
+print("unexpected-error cleanup ordering: PASS")
+PY
+); rc=$?
+[ "$rc" = 0 ] && grep -qx 'unexpected-error cleanup ordering: PASS' <<<"$got" \
+  && ok "unexpected-error cleanup ordering: PASS" || no "unexpected error: rc=$rc $got"
 rm -f "$RUN/task.md"
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?; [ "$rc" = 1 ] && grep -q 'no task block' <<<"$out" && ok "no task block: stated, exit 1" || no "no task: rc=$rc $out"
 echo 'TASK: x' > "$T/other-task.md"
@@ -1334,5 +1525,63 @@ out=$($DA local run "$RUN" --dry-run --project other 2>&1); rc=$?; [ "$rc" != 0 
 rm -f "$T/c/projects/rproj.json"
 out=$($DA local run "$RUN" --dry-run --task "$T/other-task.md" 2>&1); rc=$?; [ "$rc" = 2 ] && grep -q 'no stored project has the repository' <<<"$out" && ok "a run whose repository belongs to no stored project is refused" || no "no project: rc=$rc $out"
 
+got=$(python3 -I - "$T/r" "$T" <<'PY'
+import os, shutil, subprocess, sys
+sys.path.insert(0, os.path.abspath("lib"))
+import local_run as L
+source, root = sys.argv[1:]
+clone = os.path.join(root, "inspect")
+subprocess.run(["git", "clone", "--no-hardlinks", "-q", source, clone], check=True)
+gd = os.path.join(clone, ".git")
+assert L.clone_commits(clone) == 0
+assert L.worktree_changes(clone) == ([], [])
+before = L.git_state(clone)
+for name in ("commondir", "config.worktree", "objects/info/alternates", "objects/info/http-alternates"):
+    path = os.path.join(gd, name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f: f.write(source + "\n")
+    assert L.clone_commits(clone) is None and L.worktree_changes(clone) is None
+    assert any(name in x for x in L.git_changes(before, L.git_state(clone)))
+    os.unlink(path)
+alternate = os.path.join(gd, "objects/info/alternates")
+os.mkfifo(alternate)
+assert L.clone_commits(clone) is None
+os.unlink(alternate)
+head = os.path.join(gd, "HEAD")
+saved = open(head, "rb").read()
+os.unlink(head); os.mkfifo(head)
+assert L.clone_commits(clone) is None
+os.unlink(head)
+with open(head, "wb") as f: f.write(b"invalid head\n")
+assert L.clone_commits(clone) is None
+with open(head, "wb") as f: f.write(saved)
+marker = os.path.join(root, "helper-ran")
+cfg = os.path.join(gd, "config")
+with open(cfg, "a") as f:
+    f.write('\n[core]\n fsmonitor = touch %s\n sshCommand = touch %s\n[include]\n path = %s\n' % (marker, marker, os.path.join(root, "outside-config")))
+assert L.clone_commits(clone) is None and L.worktree_changes(clone) is None
+assert not os.path.exists(marker)
+subprocess.run(["git", "clone", "--no-hardlinks", "-q", source, os.path.join(root, "partial")], check=True)
+partial = os.path.join(root, "partial")
+subprocess.run(["git", "-C", partial, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", "new"], check=True)
+helper = os.path.join(root, "hostile-helper")
+with open(helper, "w") as f: f.write("#!/bin/sh\ntouch '%s'\n" % marker)
+os.chmod(helper, 0o755)
+for key, value in (("core.repositoryformatversion", "1"), ("extensions.partialClone", "origin"), ("remote.origin.promisor", "true"), ("remote.origin.url", "ext::" + helper)):
+    subprocess.run(["git", "-C", partial, "config", key, value], check=True)
+parent = subprocess.check_output(["git", "-C", partial, "rev-parse", "HEAD^"], text=True).strip()
+os.unlink(os.path.join(partial, ".git", "objects", parent[:2], parent[2:]))
+assert L.clone_commits(partial) is None and not os.path.exists(marker)
+shutil.rmtree(gd)
+with open(gd, "w") as f: f.write("gitdir: " + os.path.join(source, ".git") + "\n")
+assert L.clone_commits(clone) is None
+os.unlink(gd); os.symlink(os.path.join(source, ".git"), gd)
+assert L.clone_commits(clone) is None
+print("inspection: PASS")
+PY
+); rc=$?
+[ "$rc" = 0 ] && [ "$got" = 'inspection: PASS' ] && ok "clone inspection refuses redirection, special files and corrupt HEAD without running helpers" || no "clone inspection: rc=$rc $got"
+
+python3 tests/inspection_cases.py && ok "private Git inspection: PASS" || no "private Git inspection"
 rm -rf "$T"
 exit $fail
