@@ -81,6 +81,7 @@ full | par | 408 | 188 | bash tests/test_project.sh | lib/project.sh lib/owned_r
 fast | par | 300 | 4 | bash tests/test_project_profile.sh | lib/project_profile.py
 full | par | 564 | 277 | bash tests/test_local.sh | lib/local.sh lib/local_run.py lib/procenv.py lib/lib.sh
 full | par | 300 | 24 | bash tests/test_local_concurrency.sh | lib/local.sh lib/lib.sh
+fast | par | 60 | 4 | python3 tests/test_attempts.py | lib/attempts.py lib/lib.sh lib/paths.py lib/procenv.py bin/qargi
 full | par | 633 | 222 | bash tests/test_local_run.sh | lib/local*.sh lib/local*.py lib/procenv.py lib/review_check.py lib/lib.sh tests/inspection_cases.py
 full | par | 300 | 37 | bash tests/test_taskblock.sh | lib/local.sh lib/review_check.py roles/*/ROLE.md tests/golden/taskblock-*.md
 fast | par | 300 | 2 | bash tests/test_cred.sh | lib/cred.sh
