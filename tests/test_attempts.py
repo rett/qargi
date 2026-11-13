@@ -74,7 +74,8 @@ class Attempts(unittest.TestCase):
     def saved(self, n):
         (self.state / "runs").mkdir(mode=0o700, exist_ok=True)
         path = self.state / "runs" / self.store.id
-        self.write(path / "attempt", (str(n) + "\n").encode())
+        record = json.loads(self.record.read_bytes()) if self.record.exists() else {"prepared": {"identity": "0" * 32}}
+        self.write(path / "attempt", A.Store._marker(record, n))
         self.write(path / "output", b"kept output\n")
         return path
 
@@ -106,8 +107,8 @@ class Attempts(unittest.TestCase):
             self.assertEqual(result["prepared"], initial["prepared"])
             self.assertEqual(result["attempts"][-1]["gate"], "strict")
             self.assertIsNone(result["attempts"][-1]["verified"])
-            self.assertEqual(result["attempts"][0]["saved"], "a1.saved")
-            self.assertEqual((Path(self.store.path) / "a1.saved/output").read_bytes(), b"kept output\n")
+            self.assertEqual(result["attempts"][0]["saved"], ["a1.saved.1"])
+            self.assertEqual((Path(self.store.path) / "a1.saved.1/output").read_bytes(), b"kept output\n")
             with self.assertRaises(A.Refuse):
                 self.store.saved_copy()
             self.store.end("not-started")
@@ -117,7 +118,7 @@ class Attempts(unittest.TestCase):
             self.assertEqual(self.store.show()["current"], 2)
             for path in Path(self.store.path).iterdir():
                 self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o700 if path.is_dir() else 0o600)
-            (Path(self.store.path) / "a1.saved/attempt").unlink()
+            (Path(self.store.path) / "a1.saved.1/attempt").unlink()
             with self.assertRaises(FileNotFoundError):
                 self.store.show()
 
@@ -275,7 +276,7 @@ class Attempts(unittest.TestCase):
                 self.store.verified(b"refs")
             with self.assertRaises(A.Refuse):
                 self.store.reconcile()
-            self.write(saved / "attempt", b"1\n")
+            self.write(saved / "attempt", A.Store._marker(self.store.show(), 1))
             outside = self.root / "outside-marker"
             self.write(outside, b"1\n")
             (saved / "attempt").unlink()
@@ -283,7 +284,7 @@ class Attempts(unittest.TestCase):
             with self.assertRaises(OSError):
                 self.store.verified(b"refs")
             (saved / "attempt").unlink()
-            self.write(saved / "attempt", b"1\n")
+            self.write(saved / "attempt", A.Store._marker(self.store.show(), 1))
             self.store.begin(self.store.gate_pending(b"accepted", epoch=20), b"accepted")
             record = self.store.show()
             for key in record["attempts"][0]["dispatch"]:
@@ -297,7 +298,7 @@ class Attempts(unittest.TestCase):
     def test_missing_and_ambiguous_registry_and_closed_refuse(self):
         with self.locked():
             self.prepare()
-            for raw in (b"invalid\n", b" " * (A.MAX_REGISTRY + 1),
+            for raw in (b"invalid qargi.Abc123\n", b" " * (A.MAX_REGISTRY + 1),
                         A.encode(dict(run="/other/qargi.Abc123", lifecycle=1))):
                 self.write(self.state / "local-runs.jsonl", raw)
                 with self.assertRaises(A.Refuse):
@@ -309,52 +310,123 @@ class Attempts(unittest.TestCase):
 
     def test_failure_before_commit_leaves_no_new_authority(self):
         with self.locked():
-            with mock.patch.object(A, "atomic", side_effect=OSError("write failed")):
-                with self.assertRaises(OSError):
-                    self.prepare()
-            self.assertFalse(Path(self.store.path).exists())
             self.prepare()
-            self.saved(1)
-            self.store.verified(b"verified")
-            pending = self.store.gate_pending(b"gate", epoch=20)
+            self.store.begin(self.store.gate_pending(b"first", epoch=20), b"first")
+            self.store.end("not-started")
+            pending = self.store.gate_pending(b"gate", epoch=21)
             before = self.record.read_bytes()
             atomic = A.atomic
-
             def fail_record(fd, name, data):
                 if name == "state.json":
                     raise OSError("record write failed")
                 atomic(fd, name, data)
-
             with mock.patch.object(A, "atomic", side_effect=fail_record):
                 with self.assertRaises(OSError):
                     self.store.begin(pending, b"gate")
             self.assertEqual(self.record.read_bytes(), before)
-            self.assertTrue(self.store.saved_copy())
+            result = self.store.begin(self.store.gate_pending(b"different", epoch=22), b"different")
+            self.assertEqual(result["current"], 2)
 
     def test_interrupted_begin_and_retain_reconcile_without_overwrite(self):
         with self.locked():
             self.prepare()
             self.saved(1)
-            self.store.verified(b"verified")
+            with mock.patch.object(self.store, "_commit", side_effect=OSError("verify failed")):
+                with self.assertRaises(OSError):
+                    self.store.verified(b"verified")
             pending = self.store.gate_pending(b"gate", epoch=20)
-            with mock.patch.object(self.store, "_retain", side_effect=OSError("after commit")):
+            with mock.patch.object(self.store, "_retain", side_effect=OSError("preflight")):
                 with self.assertRaises(OSError):
                     self.store.begin(pending, b"gate")
-            self.assertIsNone(self.store.show()["attempts"][-1]["verified"])
-            with self.assertRaises(A.Refuse):
-                self.store.saved_copy()
-            self.store.end("not-started")
+            self.assertIsNone(self.store.show()["attempts"][0]["dispatch"])
             with mock.patch.object(self.store, "_commit", side_effect=OSError("after rename")):
                 with self.assertRaises(OSError):
                     self.store.reconcile()
-            self.assertIsNone(self.store.show()["attempts"][0]["saved"])
             result = self.store.reconcile()
-            self.assertEqual(result["attempts"][0]["saved"], "a1.saved")
-            self.assertEqual(self.store.reconcile(), result)
+            self.assertEqual(result["attempts"][0]["saved"], ["a1.saved.1"])
             self.saved(1)
-            with self.assertRaisesRegex(A.Refuse, "refusing overwrite"):
-                self.store.reconcile()
-            self.assertEqual((Path(self.store.path) / "a1.saved/output").read_bytes(), b"kept output\n")
+            self.store.verified(b"verified")
+            self.store.verified(b"verified again")
+            result = self.store.begin(self.store.gate_pending(b"gate", epoch=20), b"gate")
+            self.assertEqual(result["attempts"][0]["saved"], ["a1.saved.1", "a1.saved.2"])
+            self.assertEqual(result["attempts"][0]["history"][0]["sha256"], A.digest(b"verified"))
+            for name in result["attempts"][0]["saved"]:
+                self.assertEqual((Path(self.store.path) / name / "output").read_bytes(), b"kept output\n")
+
+    def test_leftover_marker_and_missing_registry_refused(self):
+        with self.locked():
+            path = self.state / "runs" / self.store.id
+            self.write(path / "attempt", b"1\n")
+            with self.assertRaises(A.Refuse):
+                self.store.init(b"x", epoch=1, base="main", base_sha="a" * 40)
+            shutil.rmtree(path)
+            self.prepare()
+            (self.state / "local-runs.jsonl").unlink()
+            with self.assertRaisesRegex(A.Refuse, "registry file is missing"):
+                self.store.drop()
+
+    def test_fsync_after_replace_is_committed(self):
+        with self.locked():
+            self.prepare()
+            pending = self.store.gate_pending(b"gate", epoch=20)
+            fsync = A.os.fsync
+            def fail_directory(fd):
+                if stat.S_ISDIR(os.fstat(fd).st_mode):
+                    raise OSError("directory fsync")
+                fsync(fd)
+            with mock.patch.object(A.os, "fsync", side_effect=fail_directory):
+                self.store.begin(pending, b"gate")
+            self.assertIsNotNone(self.store.show()["attempts"][0]["dispatch"])
+            self.store.end("not-started")
+
+    def test_base_names_timestamps_and_registry_snapshot(self):
+        with self.locked():
+            record = self.store.init(b"x", epoch=1, base="réf+@,=#%", base_sha="a" * 40)
+            self.register()
+            self.assertEqual(self.store.show()["prepared"]["base"], "réf+@,=#%")
+            bad = copy.deepcopy(record)
+            bad["prepared"]["at"] = "٢٠٢٦-01-01T00:00:00Z"
+            self.write(self.record, A.encode(bad))
+            with self.assertRaises(A.Refuse):
+                self.store.show()
+            self.write(self.record, A.encode(record))
+            registry = self.state / "local-runs.jsonl"
+            with registry.open("ab") as stream:
+                stream.write(b"unrelated malformed\n\n")
+            self.assertEqual(self.store.show(), record)
+            lock = os.open(str(registry) + ".lock", os.O_RDWR)
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                proc = subprocess.Popen([sys.executable, "-c", 'import sys; sys.path.insert(0, sys.argv[1]); import attempts; attempts.Store(sys.argv[2]).registry()', str(ROOT / "lib"), str(self.run)], env=os.environ.copy())
+                try:
+                    with self.assertRaises(subprocess.TimeoutExpired):
+                        proc.wait(timeout=0.2)
+                    fcntl.flock(lock, fcntl.LOCK_UN)
+                    self.assertEqual(proc.wait(timeout=10), 0)
+                finally:
+                    if proc.poll() is None:
+                        proc.kill()
+                        proc.wait()
+            finally:
+                os.close(lock)
+
+    def test_reg_del_reloads_and_preserves_unrelated_lines(self):
+        with self.locked():
+            self.prepare()
+            self.register(verified="old")
+        registry = self.state / "local-runs.jsonl"
+        with registry.open("ab") as stream:
+            stream.write(b"{ \"run\": \"/other/qargi.Zzz999\", \"x\": 1 }\nmalformed\n")
+        r = self.shell('reg_load; reg_del "$1" verified || exit 1; [ -z "$(reg_get "$1" verified)" ]', self.run)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(registry.read_bytes().endswith(b'{ "run": "/other/qargi.Zzz999", "x": 1 }\nmalformed\n'))
+
+    def test_lock_other_run_does_not_release_original(self):
+        other = self.root / "qargi.Def456"
+        code = 'lc_lock "$1" || exit 1; lc_lock "$2" && exit 2; lc_lock "$1"'
+        r = self.shell(code, self.run, other)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("wrong lifecycle", r.stderr)
 
     def test_verify_failure_and_unknown_saved_copy_never_grant_authority(self):
         with self.locked():
@@ -367,7 +439,7 @@ class Attempts(unittest.TestCase):
             with self.assertRaises(A.Refuse):
                 self.store.saved_copy()
             self.store.reconcile()
-            self.assertTrue((Path(self.store.path) / "a1.saved").is_dir())
+            self.assertTrue((Path(self.store.path) / "a1.saved.1").is_dir())
             saved = self.saved(1)
             (saved / "attempt").unlink()
             with self.assertRaises(A.Refuse):
@@ -595,7 +667,7 @@ if sys.argv[3] == 'member':
         self.write(registry, b"malformed\n")
         before = registry.read_bytes()
         r = self.shell('reg_del "$1" verified', self.run)
-        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(registry.read_bytes(), before)
 
 

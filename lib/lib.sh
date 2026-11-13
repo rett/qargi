@@ -176,13 +176,17 @@ reg_mark() {
 reg_del() {
   local f=$DA_STATE/local-runs.jsonl rr tmp
   rr=$(readlink -m -- "$1" 2>/dev/null) || return 1
-  [ -f "$f" ] || return 0
+  [ -f "$f" ] || { reg_load; return 0; }
   ( umask 077; flock 9 || exit 1
     tmp=$(mktemp "$f.tmp.XXXXXX") || exit 1
-    jq -c --arg r "$rr" --arg g "$1" --arg k "$2" \
-      'if type == "object" and ((.run | type) == "string") and (.run == $r or .run == $g) then del(.[$k]) else . end' \
-      "$f" > "$tmp" && chmod 600 "$tmp" && mv -f -- "$tmp" "$f" || { rm -f -- "$tmp"; exit 1; }
-  ) 9> "$f.lock"
+    while IFS= read -r line || [ -n "$line" ]; do
+      r=$(jq -r 'if type == "object" and (.run | type) == "string" then .run else empty end' <<<"$line" 2>/dev/null) || r=''
+      if [ -n "$r" ] && [ "$(readlink -m -- "$r" 2>/dev/null)" = "$rr" ]; then
+        line=$(jq -c --arg k "$2" 'del(.[$k])' <<<"$line") || exit 1
+      fi
+      printf '%s\n' "$line"
+    done < "$f" > "$tmp" && chmod 600 "$tmp" && mv -f -- "$tmp" "$f" || { rm -f -- "$tmp"; exit 1; }
+  ) 9> "$f.lock" && reg_load
 }
 
 # lc_lock RUN: nonblocking lifecycle lock on fd 7. Reuses the inherited open
@@ -198,7 +202,9 @@ lc_lock() {
   local lc_path lc_read lc_write lc_pid lc_rc=0
   local -a QARGI_LC_OPEN
   local QARGI_LC_OPEN_PID
-  if ! python3 -I "$QARGI_TOOL/lib/attempts.py" lock-match "$1" 2>/dev/null; then
+  if { : >&7; } 2>/dev/null; then
+    python3 -I "$QARGI_TOOL/lib/attempts.py" lock-match "$1" || return 1
+  else
     coproc QARGI_LC_OPEN { python3 -I "$QARGI_TOOL/lib/attempts.py" lock-open "$1" 7>&-; }
     lc_pid=$QARGI_LC_OPEN_PID
     lc_read=${QARGI_LC_OPEN[0]}; lc_write=${QARGI_LC_OPEN[1]}
