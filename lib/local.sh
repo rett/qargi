@@ -1084,6 +1084,20 @@ WRAP
     while [ "${RUN%/}" != "$RUN" ] && [ "$RUN" != / ]; do RUN=${RUN%/}; done   # a trailing slash makes rm -rf follow a link
     RUN=$(readlink -m -- "$RUN")
     lc_ready "$RUN" ready-clean || exit 3
+    if [ "$LC_SCHEMA" = true ]; then
+      pending_clean=$(lc clean-pending "$RUN") || exit 3
+      if [ "$pending_clean" != null ]; then
+        lc clean-stage "$RUN" >/dev/null || exit 3
+        rm -rf --one-file-system -- "$RUN"
+        scrub_ok_drop "$RUN"
+        apply_state_drop "$RUN"
+        reg_edit "$RUN" cleaned || die "could not commit cleanup in the registry"
+        lc clean-finish "$RUN" >/dev/null || exit 3
+        echo "finished interrupted cleanup of $RUN"
+        exit 0
+      fi
+      if [ -n "$(reg_get "$RUN" cleaned)" ]; then echo "$RUN was cleaned already"; exit 0; fi
+    fi
     # Explicit discard recovers a known legacy record without granting it a class.
     reg_has "$RUN" || { echo "qargi: $RUN is not in the lead's registry; nothing was done" >&2; exit 3; }
     APPLIED_AUTH=''
@@ -1132,11 +1146,20 @@ WRAP
         mrc=0; merged_tip "$rp" "${atip:-}" "${_ab:-}" "$RUN" || mrc=$?
         [ "$mrc" = 0 ] || die "$RUN's work (${atip:0:12}) is not merged into any branch yet: qargi feature merge NAME $_ab, then clean (--discard drops it on purpose)$(rwh=$(rewrite_hint "$rp" "$_ab"); [ -z "$rwh" ] || printf '\n%s' "$rwh")"
       fi
-      [ -z "$sv" ] || rm -rf --one-file-system -- "$sv"
+      if [ "$LC_SCHEMA" = true ]; then
+        clean_verb=clean-begin; [ -z "$DISCARD" ] || clean_verb=clean-discard
+        lc "$clean_verb" "$RUN" >/dev/null && lc clean-stage "$RUN" >/dev/null || exit 3
+      else
+        [ -z "$sv" ] || rm -rf --one-file-system -- "$sv"
+      fi
       scrub_ok_drop "$RUN"
       apply_state_drop "$RUN"   # the apply record, and what a killed apply of the run left in the state
-      reg_edit "$RUN" drop || die "could not drop the record of $RUN from $DA_STATE/local-runs.jsonl"
-      [ "$LC_SCHEMA" != true ] || lc drop "$RUN" >/dev/null || exit 3
+      if [ "$LC_SCHEMA" = true ]; then
+        reg_edit "$RUN" cleaned || die "could not commit cleanup in the registry"
+        lc clean-finish "$RUN" >/dev/null || exit 3
+      else
+        reg_edit "$RUN" drop || die "could not drop the record of $RUN from $DA_STATE/local-runs.jsonl"
+      fi
       echo "dropped the record of $RUN (directory gone)${sv:+ and its saved copy $sv}"
       exit 0
     fi
@@ -1219,17 +1242,23 @@ WRAP
     # what the clone holds that no commit has (new files never added, changes to tracked files), read the way local run reads it (nothing the member put
     # in the clone's git configuration runs): removed with the run, so it is said
     read -r wtt wtu _ <<<"$wt"
+    if [ "$LC_SCHEMA" = true ]; then
+      clean_verb=clean-begin; [ -z "$DISCARD" ] || clean_verb=clean-discard
+      lc "$clean_verb" "$RUN" >/dev/null && lc clean-stage "$RUN" >/dev/null || exit 3
+    fi
     rm -rf --one-file-system -- "$RUN"
     [ "$wtt" != unknown ] || echo "qargi: warning: the removed clone's worktree state was unknown" >&2
     [ -z "$res" ] || echo "qargi: note: removed with the run what its run home held: $(paste -sd ';' - <<<"$res" | LC_ALL=C tr -d '\000-\037\177')" >&2
     if [[ ${wtu:-0} =~ ^[1-9][0-9]*$ ]] || [[ ${wtt:-0} =~ ^[1-9][0-9]*$ ]]; then
       echo "qargi: warning: removed with the run what no commit had: $RUN/clone held ${wtu:-0} untracked file(s) (new files never added) and ${wtt:-0} uncommitted change(s) to tracked files; to keep such work, copy the files out of the clone before clean (never run git in a write member's clone)" >&2
     fi
-    sv=$(saved_of "$RUN"); [ -z "$sv" ] || rm -rf --one-file-system -- "$sv"   # the copy verify saved: the work is merged, or dropped on purpose
+    if [ "$LC_SCHEMA" != true ]; then
+      sv=$(saved_of "$RUN"); [ -z "$sv" ] || rm -rf --one-file-system -- "$sv"
+    fi
     scrub_ok_drop "$RUN"   # the record of a passed scrub that review check kept for a run never applied
     apply_state_drop "$RUN"   # the apply record of the run, and the temporary directories of a killed apply of it
-    reg_edit "$rrun" cleaned || echo "qargi: warning: could not mark $RUN cleaned in $DA_STATE/local-runs.jsonl (report and list may show it as directory gone)" >&2
-    [ "$LC_SCHEMA" != true ] || lc drop "$rrun" >/dev/null || exit 3
+    reg_edit "$rrun" cleaned || die "could not commit cleanup in the registry; rerun local clean"
+    [ "$LC_SCHEMA" != true ] || lc clean-finish "$rrun" >/dev/null || exit 3
     [ -z "$acc" ] || printf '%s\n' "$acc"
     echo "cleaned $RUN${rt:+ and $rt}";;
   close)

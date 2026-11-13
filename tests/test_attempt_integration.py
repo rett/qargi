@@ -553,6 +553,56 @@ A.save_product(s, Path(s.path + '/prepared.refs').read_bytes())
         self.assertFalse((Path(self.store.path) / "save.stage").exists())
         self.assertFalse((Path(self.store.path) / "save-stage.json").exists())
 
+    def test_interrupted_clean_resumes_at_each_private_boundary(self):
+        for boundary in ("intent", "saved-rename", "staged", "registry", "marker-removed", "state-removed"):
+            with self.subTest(boundary=boundary):
+                self.prepare()
+                (self.run / "out/report.md").write_text("retained product")
+                self.verify()
+                with self.locked():
+                    self.store.clean_begin(discard=True)
+                    if boundary == "saved-rename":
+                        rename = A.os.rename
+                        def interrupted_rename(*args, **kw):
+                            rename(*args, **kw)
+                            raise OSError("interrupted after rename")
+                        with mock.patch.object(A.os, "rename", side_effect=interrupted_rename):
+                            with self.assertRaises(OSError):
+                                self.store.clean_stage()
+                    elif boundary != "intent":
+                        self.store.clean_stage()
+                    if boundary in ("registry", "marker-removed", "state-removed"):
+                        p = subprocess.run(["bash", "-c", '. "$1/lib/lib.sh"; reg_edit "$2" cleaned',
+                                            "test", str(ROOT), str(self.run)], env=self.env, capture_output=True)
+                        self.assertEqual(p.returncode, 0, p.stderr)
+                        if boundary != "registry":
+                            remove = A.shutil.rmtree
+                            def interrupted_remove(name, **kw):
+                                if boundary == "marker-removed":
+                                    fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY, dir_fd=kw["dir_fd"])
+                                    try:
+                                        os.unlink("attempt", dir_fd=fd)
+                                    finally:
+                                        os.close(fd)
+                                    raise OSError("interrupted after marker deletion")
+                                remove(name, **kw)
+                                if name == self.run.name + ".clean":
+                                    raise OSError("interrupted after state removal")
+                            with mock.patch.object(A.shutil, "rmtree", side_effect=interrupted_remove) as removal:
+                                removal.avoids_symlink_attacks = True
+                                with self.assertRaises(OSError):
+                                    self.store.clean_finish()
+                    else:
+                        with self.assertRaisesRegex(A.Refuse, "registry must commit"):
+                            self.store.clean_finish()
+                self.assertIn("finished interrupted cleanup", self.cmd("local", "clean", self.run))
+                self.assertFalse(self.run.exists())
+                self.assertFalse(self.saved.exists())
+                self.assertFalse(Path(self.store.path).exists())
+                self.assertFalse(Path(self.store.path + ".clean").exists())
+                self.assertFalse((Path(self.store.area) / self.store.clean_name).exists())
+                self.assertIn("cleaned already", self.cmd("local", "clean", self.run))
+
     def test_dead_owner_unknown_window_refuses_even_discard(self):
         self.prepare()
         # A real short-lived owning process commits begin without member().

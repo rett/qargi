@@ -139,6 +139,24 @@ class Attempts(unittest.TestCase):
                 self.store.recover_stage()
             self.assertTrue(stage.exists())
 
+    def test_cleanup_refuses_unowned_or_replaced_tombstones(self):
+        with self.locked():
+            self.prepare()
+            tomb = Path(self.store.path + ".clean")
+            tomb.mkdir(mode=0o700)
+            with self.assertRaisesRegex(A.Refuse, "unowned cleanup"):
+                self.store.clean_begin(discard=True)
+            self.assertTrue(tomb.exists())
+            tomb.rmdir()
+            self.store.clean_begin(discard=True)
+            self.store.clean_stage()
+            tomb.rename(tomb.with_name("kept-tombstone"))
+            tomb.mkdir(mode=0o700)
+            self.register(cleaned="2026-01-01T00:00:00Z")
+            with self.assertRaisesRegex(A.Refuse, "ownership mismatch"):
+                self.store.clean_finish()
+            self.assertTrue(tomb.exists())
+
     def test_init_and_retry_preserve_prepared_authority(self):
         with self.locked():
             initial = self.prepare()

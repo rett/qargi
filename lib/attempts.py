@@ -303,6 +303,7 @@ class Store:
         self.area = self.root + "/attempts"
         self.path = self.area + "/" + self.id
         self.lock_path = self.area + "/.locks/" + self.id + ".lock"
+        self.clean_name = self.id + ".clean.json"
 
     def open_lock(self):
         """Create only private directories and a permanent, nontruncated lock."""
@@ -475,6 +476,7 @@ class Store:
 
     def show(self):
         self.authority()
+        need(not os.path.lexists(self.area + "/" + self.clean_name), "cleanup in progress; rerun local clean")
         fd = directory(self.path)
         try:
             record = decode(read_at(fd, "state.json", MAX_RECORD, 0o600))
@@ -516,6 +518,8 @@ class Store:
         self.require_lock()
         need(self.registry() is None, "run already registered; refusing lifecycle adoption")
         need(not os.path.lexists(self.root + "/runs/" + self.id), "leftover saved copy exists")
+        need(not os.path.lexists(self.area + "/" + self.clean_name)
+             and not os.path.lexists(self.path + ".clean"), "leftover cleanup ownership exists")
         area = directory(self.area)
         try:
             os.mkdir(self.id, 0o700, dir_fd=area)  # exclusive; never take over an orphan
@@ -806,25 +810,133 @@ class Store:
         need(v is not None and self._saved_marker(record) == (record["current"], v["nonce"]), "no current verified saved copy")
         return self.root + "/runs/" + self.id
 
-    def drop(self):
+    @staticmethod
+    def _dir_identity(path):
+        fd = directory(path)
+        try:
+            st = os.fstat(fd)
+            return [st.st_dev, st.st_ino]
+        finally:
+            os.close(fd)
+
+    def clean_pending(self):
         self.require_lock()
-        row = self.registry(require_file=True)
-        need(row is None or bool(row.get("cleaned")), "registry must commit cleaned/drop before lifecycle cleanup")
+        self.authority()
         fd = directory(self.area)
         try:
             try:
-                child = os.open(self.id, os.O_RDONLY | os.O_DIRECTORY | NOFOLLOW, dir_fd=fd)
+                row = decode(read_at(fd, self.clean_name, 4096, 0o600))
             except FileNotFoundError:
-                return
-            try:
-                private(os.fstat(child), 0o700)
-            finally:
-                os.close(child)
-            need(shutil.rmtree.avoids_symlink_attacks, "safe cleanup unavailable")
-            shutil.rmtree(self.id, dir_fd=fd)
-            sync_dir(fd, "cleanup")
+                return None
+            shape(row, "run identity state saved phase")
+            need(row["run"] == self.run and isinstance(row["identity"], str)
+                 and re.fullmatch(r"[0-9a-f]{32}", row["identity"])
+                 and row["phase"] in ("intent", "staged", "deleting"), "invalid cleanup record")
+            for key in ("state", "saved"):
+                value = row[key]
+                need((key == "saved" and value is None) or
+                     (type(value) is list and len(value) == 2 and all(type(n) is int and n >= 0 for n in value)),
+                     "invalid cleanup ownership")
+            return row
         finally:
             os.close(fd)
+
+    def _clean_commit(self, row):
+        fd = directory(self.area)
+        try:
+            atomic(fd, self.clean_name, encode(row))
+        finally:
+            os.close(fd)
+
+    def clean_begin(self, discard=False):
+        self.require_lock()
+        need(self.clean_pending() is None, "cleanup already in progress")
+        record = self.show()
+        self._quiescent(record["attempts"][-1])
+        applied = applied_record(self)
+        need(applied is None or applied["status"] != "started",
+             "unfinished apply: Git-child liveness is unknown; nothing was removed")
+        need(discard or self.authority().get("closed") or (applied and applied["status"] == "done")
+             or not any(a["saved"] for a in record["attempts"]),
+             "retained lifecycle evidence requires explicit discard")
+        self.recover_stage()
+        saved = self.root + "/runs/" + self.id
+        if os.path.lexists(saved):
+            self._saved_marker(record)
+            saved_id = self._dir_identity(saved)
+        else:
+            saved_id = None
+        need(not os.path.lexists(self.path + ".clean")
+             and not os.path.lexists(self.root + "/runs/.clean." + self.id),
+             "unowned cleanup tombstone; preserve it for investigation")
+        row = dict(run=self.run, identity=record["prepared"]["identity"],
+                   state=self._dir_identity(self.path), saved=saved_id, phase="intent")
+        self._clean_commit(row)
+        return row
+
+    def _clean_paths(self, row):
+        return [(self.root + "/runs", self.id, ".clean." + self.id, row["saved"]),
+                (self.area, self.id, self.id + ".clean", row["state"])]
+
+    def clean_stage(self):
+        row = self.clean_pending()
+        need(row is not None, "no recorded cleanup intent")
+        if row["phase"] == "deleting":
+            return
+        for parent, src, dst, expected in self._clean_paths(row):
+            original, tomb = parent + "/" + src, parent + "/" + dst
+            if expected is None:
+                need(not os.path.lexists(original) and not os.path.lexists(tomb), "unexpected cleanup path")
+                continue
+            if os.path.lexists(original):
+                need(not os.path.lexists(tomb) and self._dir_identity(original) == expected,
+                     "cleanup source ownership mismatch")
+                fd = directory(parent)
+                try:
+                    os.rename(src, dst, src_dir_fd=fd, dst_dir_fd=fd)
+                    sync_dir(fd, "cleanup rename")
+                finally:
+                    os.close(fd)
+            need(self._dir_identity(tomb) == expected, "cleanup tombstone ownership mismatch")
+        row["phase"] = "staged"
+        self._clean_commit(row)
+
+    def clean_finish(self):
+        row = self.clean_pending()
+        need(bool(self.authority().get("cleaned")), "registry must commit cleaned before lifecycle cleanup")
+        need(row is not None and row["phase"] in ("staged", "deleting"), "cleanup was not staged")
+        row["phase"] = "deleting"
+        self._clean_commit(row)
+        need(shutil.rmtree.avoids_symlink_attacks, "safe cleanup unavailable")
+        for parent, src, dst, expected in self._clean_paths(row):
+            need(not os.path.lexists(parent + "/" + src), "unexpected replacement during cleanup")
+            tomb = parent + "/" + dst
+            if os.path.lexists(tomb):
+                need(expected is not None and self._dir_identity(tomb) == expected,
+                     "cleanup tombstone ownership mismatch")
+                fd = directory(parent)
+                try:
+                    shutil.rmtree(dst, dir_fd=fd)
+                    sync_dir(fd, "cleanup")
+                finally:
+                    os.close(fd)
+        fd = directory(self.area)
+        try:
+            os.unlink(self.clean_name, dir_fd=fd)
+            sync_dir(fd, "cleanup record removal")
+        finally:
+            os.close(fd)
+
+    def drop(self):
+        self.require_lock()
+        row = self.registry(require_file=True)
+        need(row is not None and bool(row.get("cleaned")), "registry must commit cleaned before lifecycle cleanup")
+        if self.clean_pending() is None:
+            if not os.path.lexists(self.path):
+                return
+            self.clean_begin(discard=True)
+        self.clean_stage()
+        self.clean_finish()
 
 
 def ready(store, *, closed=False):
@@ -835,6 +947,10 @@ def ready(store, *, closed=False):
     except Legacy:
         print("qargi: warning: legacy run: writable snapshots provide limited inspection/recovery only; re-prepare before runtime dispatch", file=sys.stderr)
         return False
+    if closed and store.clean_pending() is not None:
+        return True
+    if closed and row.get("cleaned") and not os.path.lexists(store.path):
+        return True
     if closed and (row.get("closed") or row.get("cleaned")):
         store._quiescent(store.show()["attempts"][-1])
     else:
@@ -1056,6 +1172,10 @@ def main(argv=None):
         elif cmd == "product-matches":
             product_matches(store)
             result = True
+        elif cmd in ("clean-begin", "clean-discard"):
+            result = store.clean_begin(discard=cmd == "clean-discard")
+        elif cmd in ("clean-pending", "clean-stage", "clean-finish"):
+            result = getattr(store, cmd.replace("-", "_"))()
         elif cmd == "saved-copy":
             try:
                 result = store.saved_copy()
