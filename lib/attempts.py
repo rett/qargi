@@ -1134,6 +1134,20 @@ class Store:
                     continue
                 tombs[key] = os.path.basename(self._work_tomb(item, row['identity']))
                 internal = key == 'tmp' and item['path'] == self.run + '/tmp'
+                if item['phase'] == 'removed':
+                    present[key] = (False, False)
+                    # Only observe external paths through the original parent. A
+                    # removed internal TMP must never open a replacement RUN.
+                    if not internal:
+                        try:
+                            parent = directory(os.path.dirname(item['path']), private_leaf=False)
+                            stack.callback(os.close, parent)
+                            st = os.fstat(parent)
+                            if [st.st_dev, st.st_ino] == item['parent']:
+                                parents[key] = parent
+                        except (OSError, Refuse):
+                            pass
+                    continue
                 if internal:
                     source, staged = present['run']
                     if run['phase'] != 'source' or staged:
@@ -1163,6 +1177,15 @@ class Store:
                 if item is None:
                     continue
                 parent = parents.get(key)
+                if item['phase'] == 'removed':
+                    try:
+                        seen = parent is not None and self._work_entry(parent, os.path.basename(item['path'])) is not None
+                    except OSError:
+                        seen = False
+                    if seen:
+                        print('qargi: lifecycle: replacement preserved at %s; original cleanup completed' %
+                              item['path'], file=sys.stderr)
+                    continue
                 if parent is None:
                     if item['phase'] != 'removed':
                         item['phase'] = 'removed'

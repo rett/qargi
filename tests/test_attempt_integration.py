@@ -1010,6 +1010,47 @@ A.save_product(s, Path(s.path + '/prepared.refs').read_bytes())
                     self.assertTrue(self.registry_row().get('cleaned'))
                     shutil.rmtree(source)
 
+    def test_removed_parent_and_tombstone_recreation(self):
+        for kind in ('recreated', 'missing', 'tombstone'):
+            with self.subTest(kind=kind):
+                rt = self.root / ('rt-' + kind)
+                rt.mkdir(mode=0o700)
+                self.env['QARGI_RUN_TMP'] = str(rt)
+                self.prepare()
+                source, tomb = self.interrupted_work_cleanup('tmp', 'removed')
+                if kind != 'tombstone':
+                    rt.rename(rt.with_name(rt.name + '.old'))
+                    if kind == 'recreated':
+                        rt.mkdir(mode=0o700)
+                if kind != 'missing':
+                    for path in (source, tomb):
+                        path.mkdir(mode=0o700)
+                        (path / 'keep').write_text('foreign')
+                    before = [self.bytes_tree(p) for p in (source, tomb)]
+                out = self.cmd('local', 'clean', self.run)
+                if kind != 'missing':
+                    self.assertEqual(before, [self.bytes_tree(p) for p in (source, tomb)])
+                self.assertEqual('replacement preserved' in out, kind == 'tombstone')
+                self.assertTrue(self.registry_row().get('cleaned'))
+                self.assertFalse(self.run.exists())
+
+    def test_staged_parent_recreation_still_refuses(self):
+        for kind in ('recreated', 'missing'):
+            with self.subTest(kind=kind):
+                rt = self.root / ('staged-' + kind)
+                rt.mkdir(mode=0o700)
+                self.env['QARGI_RUN_TMP'] = str(rt)
+                self.prepare()
+                source, tomb = self.interrupted_work_cleanup('tmp', 'staged')
+                old = rt.with_name(rt.name + '.old')
+                rt.rename(old)
+                if kind == 'recreated':
+                    rt.mkdir(mode=0o700)
+                out = self.cmd('local', 'clean', self.run, ok=False)
+                self.assertRegex(out, 'parent (ownership mismatch|missing)')
+                self.assertTrue((old / tomb.name).is_dir())
+                self.assertTrue(self.run.exists())
+
     def test_internal_tmp_cleanup_never_traverses_replacement_run(self):
         self.env['QARGI_RUN_TMP'] = str(self.root / 'unavailable')
         for point in ('rename', 'staged', 'delete', 'removed'):
