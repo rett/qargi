@@ -1476,7 +1476,7 @@ $vout}"
     [ -n "$RPJ" ] || { echo "qargi: no stored project has the repository of this run, so no runtime is known: store it (qargi project attach) and give it a local provider (qargi project set PROJECT models.provider.local NAME)" >&2; exit 2; }
     RPROV=$(project_provider "$RPJ" local) || {
       rrc=$?
-      [ "$(reg_json "$RUN" | jq -r '.command_request // ""')" != 1 ] || echo "qargi: prepared command runtime is unavailable; re-prepare with qargi local prepare before running" >&2
+      [ "$(reg_json "$RUN" '.command_request // ""')" != 1 ] || echo "qargi: prepared command runtime is unavailable; re-prepare with qargi local prepare before running" >&2
       exit "$rrc"
     }
     DRY=''

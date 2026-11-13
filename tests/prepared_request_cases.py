@@ -235,14 +235,15 @@ class PreparedRequests(unittest.TestCase):
         self.assertEqual(self.tree(), before)
 
     def test_runtime_mode_catalog_profile_and_policy_drift_refuse_before_launch(self):
-        for change in ("runtime", "mode", "catalog", "profile", "policy", "dispatch"):
+        for change in ("runtime", "mode", "catalog", "profile", "policy", "dispatch", "barrier", "hidden-paths", "definition"):
             with self.subTest(change=change):
                 self.answers.pop("profiles", None)
                 self.answers["models"] = {"provider": {"local": "cmdone"}}
                 self.save_answers()
                 self.install("cmdone", self.definitions["cmdone"])
-                self.prepare()
+                self.prepare(*(["--role", "review"] if change in ("barrier", "hidden-paths") else []))
                 request = self.request()
+                original = self.record.read_bytes()
                 if change == "runtime":
                     self.answers["models"]["provider"]["local"] = "cmdtwo"
                 elif change == "profile":
@@ -255,6 +256,13 @@ class PreparedRequests(unittest.TestCase):
                         doc["dispatch"] = {"mode": "in-session"}
                     elif change == "catalog":
                         doc["models"]["tiers"]["*"]["model"] = "fake-changed"
+                    elif change == "barrier":
+                        doc["barrier"] = {"kind": "none"}
+                        doc["capabilities"].pop("read_only_barrier")
+                    elif change == "hidden-paths":
+                        doc["dispatch"]["hidden_paths"] = {"prefixes": [str(self.root)], "note": "offline hidden fixture"}
+                    elif change == "definition":
+                        doc["dispatch"]["argv"].append("{bogus}")
                     else:
                         doc["dispatch"]["argv"].append("changed")
                     self.install("cmdone", doc)
@@ -262,7 +270,22 @@ class PreparedRequests(unittest.TestCase):
                 (self.run / "request.json").write_text(json.dumps(request))
                 self.assertIn("re-prepare", self.cmd("local", "run", self.run, code=2))
                 self.assertFalse((self.run / "out/transcript").exists())
+                self.assertFalse((self.run / "dispatch.json").exists())
+                self.assertEqual(self.record.read_bytes(), original)
                 self.assertEqual(self.request(), request)
+
+    def test_unavailable_configured_provider_preserves_private_request(self):
+        self.prepare()
+        original = self.record.read_bytes()
+        (self.lib / "cmdone").rename(self.root / "unavailable-provider")
+        for controls in ((), ("--dry-run",)):
+            with self.subTest(controls=controls):
+                out = self.cmd("local", "run", self.run, *controls, code=2)
+                self.assertIn("prepared command runtime is unavailable; re-prepare with qargi local prepare before running", out)
+                self.assertNotIn("unbound variable", out)
+                self.assertFalse((self.run / "out/transcript").exists())
+                self.assertFalse((self.run / "dispatch.json").exists())
+                self.assertEqual(self.record.read_bytes(), original)
 
     def test_referenced_catalog_only_drift_preserves_previous_output(self):
         catalog = dict(self.models, schema=2, kind="catalog", family="fakecat")
