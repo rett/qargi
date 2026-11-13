@@ -284,7 +284,60 @@ def show_usage(u):
 
 # ---- is it safe to compact -----------------------------------------------------------------------------------------
 
-def registry(state):
+class OpenRunsError(Exception):
+    """A fixed refusal reason for the strict finishing command."""
+
+
+def registry_snapshot(state):
+    """Parse and validate one complete snapshot; a missing new registry is empty."""
+    path = os.path.join(state, "local-runs.jsonl")
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    except FileNotFoundError:
+        if not os.path.lexists(path):
+            return []
+        raise OpenRunsError("cannot read the open-run registry (dangling registry)") from None
+    except OSError:
+        raise OpenRunsError("cannot read the open-run registry") from None
+    try:
+        with os.fdopen(fd, encoding="utf-8") as f:
+            if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+                raise OpenRunsError("cannot read the open-run registry (not a regular file)")
+            snapshot = f.read()
+        rows = {}
+        def text(value):
+            return isinstance(value, str) and bool(value.strip()) and clean(value) == value
+        for line in snapshot.splitlines():
+            r = json.loads(line)
+            if (not isinstance(r, dict) or not text(r.get("run")) or not os.path.isabs(r["run"])
+                    or not text(r.get("base")) or not text(r.get("slug")) or not text(r.get("ability") or r.get("role"))):
+                raise ValueError()
+            for key in ("repo", "url", "ability", "role", "cleaned", "closed"):
+                if r.get(key) is not None and (not isinstance(r[key], str) or clean(r[key]) != r[key]):
+                    raise ValueError()
+            if not (text(r.get("repo")) or text(r.get("url"))):
+                # Identity is needed to attribute work that can still exist.
+                # Confirm absence without following a final link; an unreadable
+                # path is not absent. No record is rewritten or granted authority.
+                if os.path.normpath(r["run"]) != r["run"]:
+                    raise ValueError()
+                try:
+                    os.lstat(r["run"])
+                except FileNotFoundError:
+                    pass
+                else:
+                    raise ValueError()
+            if r.get("answers") is not None and not isinstance(r["answers"], dict):
+                raise ValueError()
+            rows[os.path.realpath(r["run"])] = r  # same last-record rule as the shell registry
+        return list(rows.values())
+    except (OSError, ValueError, UnicodeError):
+        raise OpenRunsError("cannot read the open-run registry (unreadable or malformed records)") from None
+
+
+def registry(state, strict=False):
+    if strict:
+        return registry_snapshot(state)
     out = []
     try:
         with open(os.path.join(state, "local-runs.jsonl"), errors="replace") as f:
@@ -311,11 +364,11 @@ class OpenRun(tuple):
     cls = None
 
 
-def open_runs(state, repo, url):
+def open_runs(state, repo, url, records=None):
     """The runs of this project that still need the lead: [OpenRun (run dir, slug, role, base, what)]."""
     rp = os.path.realpath(repo) if repo else ""
     res = []
-    for r in registry(state):
+    for r in registry(state) if records is None else records:
         d = r["run"]
         if not os.path.isdir(d) or r.get("cleaned") or r.get("closed"):
             continue                                      # cleaned, or closed (local close --applied-by-am: taken in by hand)
@@ -330,7 +383,8 @@ def open_runs(state, repo, url):
             res.append(run)
         if os.path.exists(os.path.join(d, "applied")):
             try:
-                words = open(os.path.join(d, "applied"), errors="replace").read().split()
+                with open(os.path.join(d, "applied"), errors="replace") as f:
+                    words = f.read().split()
             except OSError:
                 words = []
             tip, branch = (words[1] if len(words) > 1 else ""), (words[0] if words else None)
@@ -443,14 +497,8 @@ def features_of(repo):
 
 
 def read_only(d, cls=None):
-    """True when the run is a read-only one: its product is a report, never patches. The class is the lead's registry record's (cls: prepare writes it); only a
-    record with none falls back to RUN/class, a member's file, and a run with neither is a run of work (write)."""
-    if cls in ("write", "read-only"):
-        return cls == "read-only"
-    try:
-        return open(os.path.join(d, "class"), errors="replace").read().strip() == "read-only"
-    except OSError:
-        return False
+    """True when the lead's registry identifies a read-only run."""
+    return cls == "read-only"
 
 
 def has_report(d):
@@ -474,6 +522,8 @@ def closing(run):
     """The exact command that closes an open run (run: a tuple of open_runs): a read-only run with its report closes with a plain clean; a run
     of work closes by its next step, applied by hand (local close), applied and merged (clean), or dropped."""
     d, slug, role, base, what = run
+    if getattr(run, "cls", None) not in ("write", "read-only"):
+        return "the lead's registry has no valid class for %s; inspect the registry" % d
     if read_only(d, getattr(run, "cls", None)):
         if has_report(d):
             return "qargi local clean %s" % d
@@ -495,7 +545,9 @@ def check(a, conf, state):
     reasons, runs = [], open_runs(state, repo, url)
     for run in runs:
         d, slug, role, base, what = run
-        if read_only(d, run.cls):
+        if run.cls not in ("write", "read-only"):
+            reasons.append("a local run has an unknown class: %s; the lead's registry has no valid class" % d)
+        elif read_only(d, run.cls):
             reasons.append("a read-only local run is open: %s (%s %s on %s, %s); read its report, then close it: %s" % (d, role, slug, base, what, closing(run)))
         elif what == "prepared, not verified":
             reasons.append("a local run is prepared and not verified: %s (%s %s on %s); verify it (qargi local verify %s) or discard it" % (d, role, slug, base, d))
@@ -584,10 +636,25 @@ def cmd_check(a, conf, state):
 
 def cmd_open_runs(a, conf, state):
     """The open runs of feature/NAME, which finishing the feature refuses on: "RUN<TAB>SLUG<TAB>ROLE<TAB>STATE<TAB>CLOSING COMMAND" each; exit 1 when there are some."""
-    answers = answers_of(conf, a.project or "")
-    repo = repo_of(answers)
-    url = (answers.get("repo") or {}).get("url") if isinstance(answers.get("repo"), dict) else ""
-    found = [r for r in open_runs(state, repo, url) if r[3] == "feature/" + a.feature]
+    try:
+        if not a.project or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", a.project):
+            raise OpenRunsError("open-run project identity is unknown")
+        answers = answers_of(conf, a.project)
+        identity = answers.get("repo")
+        if answers.get("project") != a.project or not isinstance(identity, dict):
+            raise OpenRunsError("open-run project answers are missing or malformed")
+        for key in ("path", "url"):
+            value = identity.get(key)
+            if value is not None and (not isinstance(value, str) or clean(value) != value):
+                raise OpenRunsError("open-run project repository identity is malformed")
+        repo, url = repo_of(answers), identity.get("url") or ""
+        if not (repo.strip() or url.strip()):
+            raise OpenRunsError("open-run project repository identity is unknown")
+        records = registry(state, strict=True)
+        found = [r for r in open_runs(state, repo, url, records=records) if r[3] == "feature/" + a.feature]
+    except OpenRunsError as e:
+        print("qargi: " + str(e), file=sys.stderr)
+        return 2
     for run in found:
         d, slug, role, base, what = run
         print("%s\t%s\t%s\t%s\t%s" % (d, slug, role, what, closing(run)))
@@ -642,6 +709,9 @@ def main(argv):
     try:
         return {"usage": cmd_usage, "compact-check": cmd_check, "advice": cmd_advice, "open-runs": cmd_open_runs}[a.verb](a, a.conf, a.state)
     except Soft as e:
+        if a.verb == "open-runs":
+            print("qargi: open-run enumeration failed", file=sys.stderr)
+            return 2
         print("context: unknown (%s)" % e)
         return 0 if a.verb != "compact-check" else 1
 

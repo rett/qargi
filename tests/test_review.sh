@@ -144,10 +144,9 @@ out=$($DA review apply "$R1" 2>&1); rc=$?
 cp "$T/applied.keep" "$R1/applied"
 
 # a death in the middle of an apply is recoverable: a git shim kills the verb right after the Nth matching git call
-mkdir -p "$T/shim"; REALGIT=$(command -v git); export REALGIT
-cat > "$T/shim/git" <<'S'
-#!/usr/bin/env bash
-"$REALGIT" "$@"; rc=$?
+mkdir -p "$T/shim"; REALGIT=$(command -v git)
+printf '#!/usr/bin/env bash\n%q "$@"; rc=$?\n' "$REALGIT" > "$T/shim/git"
+cat >> "$T/shim/git" <<'S'
 # PAUSE_AFTER: wait inside the verb, once the real git ran, until $PAUSE_GO exists ($PAUSE_FLAG tells the test the verb is there)
 if [ -n "${PAUSE_AFTER:-}" ] && [ ! -e "${PAUSE_FLAG:-/nonexistent}" ]; then
   case " $* " in *"$PAUSE_AFTER"*) : > "$PAUSE_FLAG"; while [ ! -e "$PAUSE_GO" ]; do sleep 0.1; done;; esac
@@ -158,6 +157,8 @@ fi
 exit $rc
 S
 chmod +x "$T/shim/git"
+out=$(env -i PATH=/usr/bin:/bin HOME="$HOME" "$T/shim/git" --version 2>&1); rc=$?
+[ $rc = 0 ] && [[ $out == git\ version\ * ]] && ok "the git shim runs under a scrubbed environment" || no "scrubbed git shim: rc=$rc $out"
 # (1) after the branch was made, before the patches: the branch is only the base; the re-run removes it and applies the series
 R7=$(newrun halfway)
 PATH=$T/shim:$PATH DIE_AFTER="worktree add -q -b agent/halfway" DIE_FLAG=$T/die-1 $DA review apply "$R7" >/dev/null 2>&1; rc=$?
@@ -545,12 +546,20 @@ out=$($DA review check "$T/rep2" 2>&1); rc=$?
 MK=$T/scrub-ran; setans '.review.scrub = "touch '"$MK"'; exit 1"'
 R41=$(newrun membercheck)
 out=$(QARGI_MEMBER_RUN=$R41 $DA review check "$R41/out" 2>&1); rc=$?
-{ [ $rc = 0 ] && [ "$(scrubs "$out")" = 1 ] && grep -qx "scrub: not run (a member's check; the lead's check runs it)" <<<"$out" && [ ! -e "$MK" ]; } \
+{ [ $rc = 0 ] && [ "$(scrubs "$out")" = 1 ] && grep -qx "scrub: not run (a member's structural check; the lead's check runs it)" <<<"$out" && [ ! -e "$MK" ]; } \
   && ok "a member's check does not run the scrub, says so and does not fail" || no "member check: rc=$rc $out"
+out=$(QARGI_MEMBER_RUN=$R41-other QARGI_STATE=$T/member-state QARGI_CONF=$T/member-conf $DA review check "$R41/out" 2>&1); rc=$?
+{ [ "$rc" = 3 ] && grep -q 'member marker does not match the inspected run' <<<"$out" && [ ! -e "$MK" ] \
+  && [ ! -e "$T/member-state" ] && [ ! -e "$T/member-conf" ]; } \
+  && ok "a mismatched member marker refuses without state, scrub or cache writes" || no "mismatched member: rc=$rc $out"
+ln -s "$T/good" "$R41/linked-out"
+out=$(QARGI_MEMBER_RUN=$R41 QARGI_STATE=$T/member-state QARGI_CONF=$T/member-conf $DA review check "$R41/linked-out" 2>&1); rc=$?
+{ [ "$rc" = 3 ] && grep -q 'member marker does not match the inspected run' <<<"$out" && [ ! -e "$T/member-state" ] && [ ! -e "$T/member-conf" ]; } \
+  && ok "an OUT link to another run cannot borrow the member marker" || no "linked member OUT: rc=$rc $out"
 setans '.review.scrub = "touch '"$MK"'; exit 1" | .review.trailer_policy = "reject"'
 R42=$(newrun membertrail); r0=$(refs_all)
 out=$(QARGI_MEMBER_RUN=$R42 $DA review check "$R42/out" 2>&1); rc=$?
-{ [ $rc = 0 ] && grep -qx "scrub: not run (a member's check; the lead's check runs it)" <<<"$out" && [ ! -e "$MK" ] && [ "$(refs_all)" = "$r0" ]; } \
+{ [ $rc = 0 ] && grep -qx "scrub: not run (a member's structural check; the lead's check runs it)" <<<"$out" && [ ! -e "$MK" ] && [ "$(refs_all)" = "$r0" ]; } \
   && ok "and neither does a member's check make the checkout for a trailer policy" || no "member check, policy: rc=$rc $out"
 out=$($DA review check "$R42/out" 2>&1); rc=$?
 { [ $rc = 1 ] && grep -q '^scrub: FAIL' <<<"$out" && [ -e "$MK" ]; } && ok "the lead's check of the same run does run the scrub" || no "lead check: rc=$rc $out"

@@ -3515,6 +3515,8 @@ def mcp_refusal(call):
         if not (isinstance(project, str) and MEMBER_PROJECT.match(project) and isinstance(role, str) and MEMBER_ROLE.match(role)):
             return McpReason("the lead's registry names no project and role for the run %s, so the guard cannot tell which tool packs apply to the call of %s; a member "
                              "calls an MCP tool in a run the lead prepared for a stored project" % (run, M.shown(call.name)))
+        if rec.get("class") not in ("write", "read-only"):
+            return McpReason("the lead's registry has no valid class for the run %s, so the guard cannot authorize the call of %s" % (run, M.shown(call.name)))
         cases = [(role, is_review(run) or rec.get("class") == "read-only")]
     elif MEMBER["project"] and MEMBER["roles"]:
         project = MEMBER["project"]
