@@ -2,7 +2,7 @@
  "purpose": "Bind verification to the current execution attempt, preserve earlier evidence, and refuse active or accepted-work retries safely",
  "started": "2026-11-13T05:28:36Z",
  "goal": "Bind verification to the current execution attempt, preserve earlier evidence, and refuse active or accepted-work retries safely",
- "plan": "Sonnet authors quiescence/cleanup repair; qargi-managed validator tests and packages; lead targeted checks; Opus independent review; integrate and full feature checkpoint; then command-profiles",
+ "plan": "Sonnet medium implements Opus compatibility/recovery findings and TMP alias fix; qargi-managed validation; lead affected checks; independent exact-candidate follow-up; feature integration/full checkpoint; then command-profiles",
  "note": "Current isolated candidate agent/verification-independent-repair f8eadeb; broad checks require structural-inspection, fresh collection fixture, generated-manual corrections. Late signal fix UVa54h retained for incorporation, not applied due area heuristic. Active b5xQtT on same base. Receipts and efficiency/rework ledger under ~/.cache/qargi-runs. No develop merge or release yet.",
  "status": "active",
  "lead": {
@@ -12,11 +12,11 @@
   "since": "2026-11-13T05:28:36Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-13T13:07:31Z",
+ "renewed_at": "2026-11-13T13:21:29Z",
  "finished_at": null,
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 22,
- "updated_at": "2026-11-13T13:07:31Z",
+ "rev": 23,
+ "updated_at": "2026-11-13T13:21:29Z",
  "feature": "verification-lifecycle",
  "project": "qargi"
 }
