@@ -246,7 +246,7 @@ if [ $rc = 1 ] && grep -q "not merged into any branch yet" <<<"$out" && grep -qF
   ok "clean of a run whose applied branch was rewritten by hand names qargi ref record --rewrite with the branch and both tips"
 else no "clean hint: rc=$rc $out"; fi
 out=$($DA local close "$RH" --applied-by-am 2>&1); rc=$?
-if [ $rc = 1 ] && grep -q "merge that branch" <<<"$out" && grep -qF "qargi ref record --rewrite agent/rwh $ht $ht2 --why" <<<"$out"; then
+if [ $rc = 1 ] && grep -q "merge that branch" <<<"$out" && grep -qF "qargi ref record --rewrite agent/rwh $ht $ht2 --why" <<<"$out" && [ -d "$RH" ]; then
   ok "close --applied-by-am names the same fix"
 else no "close hint: rc=$rc $out"; fi
 # the sentence is the fix in full: do what it says, and clean follows the rewrite once the branch is merged
