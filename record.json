@@ -3,8 +3,8 @@
  "started": "2026-11-13T05:28:36Z",
  "goal": "Bind verification to the current execution attempt, preserve earlier evidence, and refuse active or accepted-work retries safely",
  "plan": "Opus accepted main compatibility repair; Sonnet supplies bounded terminal-cleanup/docs/concurrency-fixture corrections; validate and review; merge feature stack and full checkpoint; then command-profiles",
- "note": "Checkpoint candidate agent/verification-checkpoint 35cbadd; four patches applied, bundle tree identical. Opus medium source ACCEPT in 123.83s, observed claude-opus-5-5. Lead static/policy checks pass; behavioral DONE running. Sonnet implementation authorship and Codex reconstruction recorded separately. Next: integrate accepted stack, whole feature checkpoint, advisor; command-profiles follows with Sonnet-first implementation.",
- "status": "verifying",
+ "note": "Whole checkpoint da196d5 FAILED: five steps; archived verification-whole-checkpoint-da196d5. Two timeouts, journal assertions and codex conformance/private-lifecycle fixture failures. Final advisor1ZxT1O source ACCEPT and intake pass do not supersede failed gate. Sonnet high focused proposal running at /tmp/qargi-sonnet-suite-repair; lead targeted reproduction running. No develop integration.",
+ "status": "blocked",
  "lead": {
   "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
   "user": "rett",
@@ -12,11 +12,11 @@
   "since": "2026-11-13T05:28:36Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-13T15:34:34Z",
+ "renewed_at": "2026-11-13T15:36:06Z",
  "finished_at": null,
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 34,
- "updated_at": "2026-11-13T15:34:34Z",
+ "rev": 35,
+ "updated_at": "2026-11-13T15:36:06Z",
  "feature": "verification-lifecycle",
  "project": "qargi"
 }
