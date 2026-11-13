@@ -7,6 +7,9 @@
 # space separated; it lets a run be chosen by the files a change touches.
 # Every tests/test_* file is listed here and every tests/ path listed exists: tests/run.sh checks both in every run.
 # The command may not contain a `|`.
+# At the verification-lifecycle checkpoint, the eight-job whole run timed out local_run at 633s and runs_close at 600s.
+# Separate two-job targeted reruns passed in 361.56s and 293.15s respectively. The larger limits allow contention headroom;
+# the reference-machine budgets and historical durations are unchanged by those targeted measurements.
 
 fast | par | 300 | 13 | python3 tests/test_canon.py | lib/canon.sh lib/canon.py
 fast | par | 300 | 1 | bash tests/test_canon_audit.sh
@@ -83,7 +86,7 @@ full | par | 564 | 277 | bash tests/test_local.sh | lib/local.sh lib/local_run.p
 full | par | 300 | 24 | bash tests/test_local_concurrency.sh | lib/local.sh lib/lib.sh
 fast | par | 60 | 4 | python3 tests/test_attempts.py | lib/attempts.py lib/lib.sh lib/paths.py lib/procenv.py bin/qargi
 full | par | 900 | 195 | python3 tests/test_attempt_integration.py | lib/attempts.py lib/local.sh lib/local_run.py lib/lib.sh lib/review.sh lib/lead_usage.py lib/marshal.sh tests/attempt_fixture.py
-full | par | 633 | 222 | bash tests/test_local_run.sh | lib/local*.sh lib/local*.py lib/procenv.py lib/review_check.py lib/lib.sh tests/inspection_cases.py tests/attempt_fixture.py
+full | par | 975 | 222 | bash tests/test_local_run.sh | lib/local*.sh lib/local*.py lib/procenv.py lib/review_check.py lib/lib.sh tests/inspection_cases.py tests/attempt_fixture.py
 full | par | 300 | 37 | bash tests/test_taskblock.sh | lib/local.sh lib/review_check.py roles/*/ROLE.md tests/golden/taskblock-*.md
 fast | par | 300 | 2 | bash tests/test_cred.sh | lib/cred.sh
 full | par | 480 | 107 | bash tests/test_packs.sh | lib/packs.sh
@@ -111,7 +114,7 @@ fast | par | 300 | 6 | python3 tests/test_marshal_batch.py | lib/marshal*.py
 full | par | 300 | 40 | bash tests/test_marshal_batch.sh | lib/marshal*.sh lib/marshal*.py
 full | par | 300 | 17 | python3 tests/test_marshal_startup.py | lib/marshal*.sh lib/marshal*.py tests/startup-budget.txt
 full | par | 300 | 108 | bash tests/test_journal.sh | lib/merged.py
-full | par | 600 | 185 | bash tests/test_runs_close.sh | lib/local.sh lib/local_run.py lib/procenv.py lib/lib.sh lib/ref.sh lib/feature.sh lib/review.sh lib/review_check.py lib/lead_usage.py lib/merged.py lib/owned_refs.py tests/class_cases.py tests/fixtures/run-classes.json
+full | par | 850 | 185 | bash tests/test_runs_close.sh | lib/local.sh lib/local_run.py lib/procenv.py lib/lib.sh lib/ref.sh lib/feature.sh lib/review.sh lib/review_check.py lib/lead_usage.py lib/merged.py lib/owned_refs.py tests/class_cases.py tests/fixtures/run-classes.json
 fast | par | 300 | 19 | bash tests/test_upstream.sh | lib/upstream.sh
 fast | par | 300 | 21 | bash tests/test_team.sh | lib/team.sh
 fast | par | 300 | 5 | bash tests/test_leadcred.sh
