@@ -3,8 +3,8 @@
  "started": "2026-11-13T05:28:36Z",
  "goal": "Bind verification to the current execution attempt, preserve earlier evidence, and refuse active or accepted-work retries safely",
  "plan": "Opus accepted main compatibility repair; Sonnet supplies bounded terminal-cleanup/docs/concurrency-fixture corrections; validate and review; merge feature stack and full checkpoint; then command-profiles",
- "note": "Second whole checkpoint26ef66f FAILED1374s: site300s, conformance selftest432s, journal300s timeouts. No assertion failures logged; local_run816s/runs_close719s now pass. Archived verification-whole-checkpoint2-26ef66f. Sonnet medium scheduling proposal active; targeted three-step runner reproduction active at /tmp/qargi-checkpoint2-reproduction. Develop remains blocked.",
- "status": "blocked",
+ "note": "Checkpoint2 remains FAILED. Three-step reproduction PASSED at -j3 unchanged limits: site152s,journal171s,selftest248s. Active qargi.TDSFEK implements Sonnet proposal: selftest serial outside pool plus kill_bg convention, no timeout/budget changes. Need lead targeted intake, independent review and fresh whole checkpoint. Develop unchanged.",
+ "status": "active",
  "lead": {
   "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
   "user": "rett",
@@ -12,11 +12,11 @@
   "since": "2026-11-13T05:28:36Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-13T17:21:08Z",
+ "renewed_at": "2026-11-13T17:26:02Z",
  "finished_at": null,
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 45,
- "updated_at": "2026-11-13T17:21:08Z",
+ "rev": 46,
+ "updated_at": "2026-11-13T17:26:02Z",
  "feature": "verification-lifecycle",
  "project": "qargi"
 }
