@@ -120,6 +120,7 @@ import tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
+import attempts as A
 import provider as P  # noqa: E402
 import paths  # noqa: E402
 import procenv as PE  # noqa: E402
@@ -795,6 +796,10 @@ def registry_tmp(run):
 def base_sha(run, base):
     """The commit of BASE that `local prepare` recorded in RUN/refs.before (the line `local refs/heads/BASE SHA`), else "". Read as a file of the run:
     no link followed, no writer waited for, a regular file only (as review save and local report read it)."""
+    store = A.Store(run)
+    row = store.registry()
+    if row is not None and "lifecycle" in row:
+        return store.show()["prepared"]["base_sha"]
     want = "local refs/heads/%s " % base
     try:
         fd = os.open(os.path.join(run, "refs.before"), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -1187,37 +1192,14 @@ def proc_of_run(pid, run, what):
 
 
 def earlier_start(run, again):
-    """Refuse a start while an earlier one of this run is under way or its member still runs; a start record left by a runner that is gone (killed
-    with SIGKILL, or by a reboot) needs --again, which clears what it left. A record of a run that ended needs --again as before."""
-    path = os.path.join(run, "dispatch.json")
-    if not os.path.lexists(path):
-        return
-    try:
-        rec = json.loads(read_run_file(path, 1 << 20, "the dispatch record") or "{}")
-    except (ValueError, Stop):
-        rec = {}
-    if isinstance(rec, dict):
-        if proc_of_run(rec.get("runner"), run, "runner"):
-            fail("%s is being run now (qargi local run, process %d); it is started once at a time" % (run, rec["runner"]))
-        if proc_of_run(rec.get("member"), run, "member"):
-            fail("the member of an earlier start of %s is still running (process group %d), its runner is gone: stop it first (kill -TERM -- -%d), then "
-                 "qargi local run %s --again" % (run, rec["member"], rec["member"], run))
-        member = rec.get("member")
-        if type(member) is int and member > 1:
-            try:
-                survivors = group_left(member)
-            except OSError:
-                survivors = None
-            if survivors is None or survivors:
-                fail("the original process group of an earlier start of %s is not known to be quiescent; inspect process group %d before retrying "
-                     "(its identity may have changed); nothing was started" % (run, member))
-    if isinstance(rec, dict) and rec.get("outcome") == "running":
-        if not again:
-            fail("%s was started and did not end: its runner is gone (killed with SIGKILL, or the machine restarted), so %s still says running and the run "
-                 "home may still hold its links. qargi local run %s --again starts it again and replaces them; qargi local clean %s --discard drops the run"
-                 % (run, path, run, run))
-    elif not again:
-        fail("%s has been run already (%s); --again runs it again and replaces the transcript" % (run, path))
+    """Only private dispatch authority decides whether this is a retry."""
+    store = A.Store(run)
+    store.require_lock()
+    store.authority(True)
+    A.need(A.applied_record(store) is None, "run has an apply record; runtime retry refused")
+    record = store.reconcile()
+    if record["attempts"][-1]["dispatch"] is not None and not again:
+        fail("%s has been run already; --again opens a new unverified attempt" % run)
 
 
 KILL_GRACE = 5   # seconds kill_group watches the member's process group after TERM, and again after KILL
@@ -1961,7 +1943,7 @@ def manifest_lines(rec, out):
     return lines
 
 
-def run_it(plan, run):
+def run_it(plan, run, pending):
     out = os.path.join(run, "out")
     if os.path.islink(out) or (os.path.exists(out) and not os.path.isdir(out)):
         fail("%s is not a plain directory of the run; the transcript goes there and nowhere else" % out)
@@ -1975,6 +1957,35 @@ def run_it(plan, run):
         check_own(os.path.join(out, REPORT), "the report of an earlier run")
     if pk:                                               # and so does a manifest.json of a read-only run, whose manifest is the lead's
         check_own(os.path.join(out, MANIFEST), "the manifest of an earlier run")
+    for name in ("transcript", "transcript.err"):
+        check_own(os.path.join(out, name), "the transcript")
+    store = A.Store(run)
+    store.begin(pending["pending"], pending["refs"].encode())
+    dispatch_state = {"spawned": False, "recorded": False}
+    result = None
+    try:
+        # Authority commits first; these files are only display mirrors.
+        subprocess.run(["bash", "-c", '. "$1/lib.sh"; reg_del "$2" verified',
+                        "qargi", HERE, run], check=True, pass_fds=(7,), close_fds=True)
+        try:
+            os.unlink(os.path.join(run, "verified"))
+        except FileNotFoundError:
+            pass
+        result = run_started(plan, run, store, dispatch_state)
+        return result
+    finally:
+        if not dispatch_state["spawned"]:
+            store.end("not-started")
+        elif dispatch_state["recorded"]:
+            store.end("ok" if result == 0 else "failed")
+        # If Popen succeeded but member() did not commit, do not invent identity.
+        # The foundation deliberately refuses recovery of that unknown window.
+
+
+def run_started(plan, run, store, dispatch_state):
+    out = os.path.join(run, "out")
+    dispatch = os.path.join(run, "dispatch.json")
+    fin, pk = plan["final"], plan["package"]
     write_prompt(run, plan["prompt_file"], plan["prompt"])
     clear_stale_finals(run)
     argv = [plan["exe"]] + plan["argv"][1:]
@@ -2019,10 +2030,13 @@ def run_it(plan, run):
                         staged = True
                     sig.check()
                     try:
-                        proc = subprocess.Popen(argv, cwd=plan["cwd"], env=plan["env"], stdin=sin, stdout=so, stderr=se, shell=False, start_new_session=True)
+                        proc = subprocess.Popen(argv, cwd=plan["cwd"], env=plan["env"], stdin=sin, stdout=so, stderr=se, shell=False, start_new_session=True, close_fds=True)
                     except OSError as e:
                         outcome, error = "transport", "could not start %s: %s" % (plan["argv"][0], e.strerror or e)
                     if proc is not None:
+                        dispatch_state["spawned"] = True
+                        store.member(proc.pid)
+                        dispatch_state["recorded"] = True
                         begun["member"] = proc.pid
                         write_private(dispatch, json.dumps(begun, indent=2, sort_keys=True) + "\n")
                         try:
@@ -2222,7 +2236,12 @@ def main(argv):
         if o["dry"]:
             dry(plan, run)
             return 0
-        return run_it(plan, run)
+        with os.fdopen(8, "rb") as stream:
+            pending = A.decode(stream.read(2 * A.MAX_REFS + A.MAX_RECORD + 1))
+        return run_it(plan, run, pending)
+    except (A.Refuse, OSError) as e:
+        print("qargi: lifecycle: %s" % e, file=sys.stderr)
+        return 2
     except Stop as e:
         print("qargi: %s" % e, file=sys.stderr)
         return e.code

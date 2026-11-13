@@ -10,6 +10,9 @@ set -u
 cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
+# Lead-state fixtures use private modes and their own configured Git identities.
+umask 077
+unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_AUTHOR_DATE GIT_COMMITTER_DATE
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi
 # shellcheck source=fixtures.sh
 . tests/fixtures.sh

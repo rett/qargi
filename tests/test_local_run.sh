@@ -5,6 +5,9 @@ set -u
 cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
+# Lead-state fixtures use private modes and their own configured Git identities.
+umask 077
+unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_AUTHOR_DATE GIT_COMMITTER_DATE
 T=$(mktemp -d); trap 'rm -rf "$T" "$HERMETIC"' EXIT; fail=0
 export QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T TMPDIR=$T/tmp
 mkdir -p "$T/tmp" "$T/bin" "$T/c/projects"
@@ -1127,6 +1130,9 @@ got=$(python3 -I - "$RUN" "$T" <<'PY' 2>&1
 import json, os, sys
 sys.path.insert(0, os.path.join(sys.argv[2], "tool", "lib"))
 import local_run as L
+sys.path.insert(0, os.path.join(os.getcwd(), "tests"))
+from attempt_fixture import wire
+wire(L)
 earlier = json.load(open(os.path.join(sys.argv[1], "dispatch.json")))["member"]
 groups = L.group_left
 L.group_left = lambda pg: groups(pg) if pg == earlier else [pg]
@@ -1164,7 +1170,7 @@ rm -f "$T/ir-child" "$T/ir-member" "$T/ir.rc" "$T/ir.out"; echo wait > "$T/ir-mo
 if wait_until '[ -s "$T/ir-child" ] && [ -s "$T/ir-member" ] && [ "$(jq -r .member "$RUN/dispatch.json" 2>/dev/null)" = "$(cat "$T/ir-member")" ]' 30; then
   runner=$(jq -r .runner "$RUN/dispatch.json")
   out=$($DA local run "$RUN" --again 2>&1); rc=$?
-  { [ "$rc" = 2 ] && grep -qF "$RUN is being run now (qargi local run, process $runner)" <<<"$out" && tr '\0' '\n' < "/proc/$runner/cmdline" | grep -qxF "$RUN"; } \
+  { [ "$rc" = 2 ] && grep -q "lifecycle lock busy" <<<"$out" && tr '\0' '\n' < "/proc/$runner/cmdline" | grep -qxF "$RUN"; } \
     && ok "a run started by a relative path: its runner holds the real path, and a start from another directory refuses while it runs" || no "relative run: rc=$rc $out"
   kill -TERM "$runner"; ir_after TERM 143
 else no "relative run: the member did not start: $(cat "$T/ir.out")"; fi
@@ -1208,11 +1214,11 @@ if ir_start; then
   kill -KILL "$(jq -r .runner "$RUN/dispatch.json")"; wait_until '[ -s "$T/ir.rc" ]' 30
   { [ "$(jq -r .outcome "$RUN/dispatch.json")" = running ] && [ -L "$LINK" ] && ! gone "$(cat "$T/ir-member")"; } && ok "SIGKILL: the start record stays (running), the link stays, the member runs on" || no "sigkill state: $(jq -c . "$RUN/dispatch.json")"
   out=$($DA local run "$RUN" --again 2>&1); rc=$?
-  { [ "$rc" = 2 ] && grep -qF "the member of an earlier start of $RUN is still running (process group $(cat "$T/ir-member")), its runner is gone: stop it first (kill -TERM -- -$(cat "$T/ir-member"))" <<<"$out"; } \
-    && ok "the next start refuses while the member of the killed runner still runs, naming its process group" || no "sigkill member alive: rc=$rc $out"
+  { [ "$rc" = 2 ] && grep -q "member process group is busy" <<<"$out"; } \
+    && ok "the next start refuses while the recorded member group of the killed runner still runs" || no "sigkill member alive: rc=$rc $out"
   kill -TERM -- -"$(cat "$T/ir-member")"; wait_until 'gone "$(cat "$T/ir-member")" && gone "$(cat "$T/ir-child")"' 10 || no "the member's process group did not stop"
   out=$($DA local run "$RUN" 2>&1); rc=$?
-  { [ "$rc" = 2 ] && grep -q 'was started and did not end: its runner is gone' <<<"$out" && grep -qF "qargi local run $RUN --again" <<<"$out"; } && ok "without --again the start is refused with the way on" || no "sigkill no again: rc=$rc $out"
+  { [ "$rc" = 2 ] && grep -q 'has been run already' <<<"$out" && grep -q -- '--again' <<<"$out"; } && ok "without --again the start is refused with the way on" || no "sigkill no again: rc=$rc $out"
   out=$($DA local list 2>&1)
   grep -qF "  residue: $LINK (a link a start of qargi local run left: its runner did not end); qargi local run RUN --again replaces a link left there" <<<"$out" \
     && ok "local list names the link left in the run home" || no "list residue: $out"
@@ -1360,6 +1366,9 @@ setprov fakecmd
 got=$(env FAKE_MODE=sleep python3 -I - "$T/tool/lib" "$RUN" <<'PY' 2>&1
 import os, sys; sys.path.insert(0, sys.argv[1])
 import local_run as L
+sys.path.insert(0, os.path.join(os.getcwd(), "tests"))
+from attempt_fixture import wire
+wire(L)
 run, orig, n = os.path.realpath(sys.argv[2]), L.write_private, [0]
 def wp(path, text):
     n[0] += 1
@@ -1382,6 +1391,9 @@ import json, os, subprocess, sys
 from unittest.mock import patch
 sys.path.insert(0, sys.argv[1])
 import local_run as L
+sys.path.insert(0, os.path.join(os.getcwd(), "tests"))
+from attempt_fixture import wire, attempt
+wire(L)
 run = os.path.realpath(sys.argv[2])
 build, write, stop, clear_home, groups = L.build, L.write_private, L.kill_group, L.clear_home, L.group_left
 source = os.path.join(run, "signin-fixture")
@@ -1449,17 +1461,30 @@ for cleanup_fails in (False, True, "unknown"):
             assert link in result.stdout + result.stderr, result
             assert "refresh.from-run" in result.stdout + result.stderr, result
             assert secret not in result.stdout + result.stderr
-    # Even a refused dispatch cannot retry beside original-group survivors.
-    for survivors in ([procs[0].pid], None):
-        rec["group_left"] = len(survivors) if survivors else None
-        write(os.path.join(run, "dispatch.json"), json.dumps(rec))
-        with patch.object(L, "group_left", return_value=survivors):
-            try:
-                L.earlier_start(run, True)
-                raise AssertionError("retry beside survivors")
-            except L.Stop as e:
-                assert "not known to be quiescent" in str(e)
-    L.earlier_start(run, True)  # actual group has stopped: safe to retry
+    # Unfinished private dispatch authority, even with a forged ended mirror,
+    # refuses live or unknown groups. Inject the process probe, not RUN metadata.
+    import copy
+    with attempt(run):
+        store = L.A.Store(run)
+        ended = store.show()
+        unfinished = copy.deepcopy(ended)
+        unfinished["attempts"][-1]["dispatch"].update(ended=None, outcome=None)
+        store._commit(unfinished)
+        try:
+            for survivors in (True, None):
+                def alive(pg):
+                    if survivors is None:
+                        raise L.A.Refuse("unknown process group liveness")
+                    return survivors
+                with patch.object(L.A, "process", return_value=None), patch.object(L.A, "group_alive", side_effect=alive):
+                    try:
+                        L.earlier_start(run, True)
+                        raise AssertionError("retry beside survivors")
+                    except L.A.Refuse as e:
+                        assert "process group" in str(e)
+        finally:
+            store._commit(ended)
+        L.earlier_start(run, True)  # actual group has stopped: safe to retry
     if os.path.islink(link):
         os.unlink(link)
     os.unlink(os.path.join(os.path.dirname(link), "refresh.from-run"))

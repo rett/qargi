@@ -113,7 +113,7 @@ marshal_hold_start() { # PROJ NAME
   period=${QARGI_MARSHAL_RENEW_SEC:-$(( $(marshal_ttl "$proj") * 60 / 3 ))}
   case $period in ''|*[!0-9]*|0) period=1;; esac
   (
-    exec >/dev/null 2>&1 </dev/null
+    exec >/dev/null 2>&1 </dev/null 7>&-
     sp=''
     trap '[ -z "$sp" ] || kill "$sp" 2>/dev/null; exit 0' TERM INT
     tick=0

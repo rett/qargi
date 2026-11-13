@@ -370,7 +370,7 @@ def open_runs(state, repo, url, records=None):
     res = []
     for r in registry(state) if records is None else records:
         d = r["run"]
-        if not os.path.isdir(d) or r.get("cleaned") or r.get("closed"):
+        if (not os.path.isdir(d) and "lifecycle" not in r) or r.get("cleaned") or r.get("closed"):
             continue                                      # cleaned, or closed (local close --applied-by-am: taken in by hand)
         same = (r.get("repo") and rp and os.path.realpath(r["repo"]) == rp) or (r.get("url") and url and r["url"] == url)
         if not same:
@@ -381,6 +381,25 @@ def open_runs(state, repo, url, records=None):
             run = OpenRun((d, slug, role, base, what))
             run.cls = r.get("class") if r.get("class") in ("write", "read-only") else None
             res.append(run)
+        if "lifecycle" in r:
+            # Feature gates and compact-check never accept member-written mirrors.
+            import attempts as A
+            try:
+                store = A.Store(d)
+                A.need(store.root == os.path.realpath(state), "state root mismatch")
+                store.show()  # Missing/corrupt new state remains open, never legacy.
+                applied = A.applied_record(store)
+                if applied is not None:
+                    if applied["status"] != "done" or not merged(repo, applied.get("tip", ""), state,
+                            applied.get("branch"), r.get("answers")):
+                        add("applied, not merged")
+                elif A.current_verified(store):
+                    add("verified, not applied")
+                else:
+                    add("prepared, not verified")
+            except (A.Refuse, OSError, ValueError):
+                add("prepared, not verified")
+            continue
         if os.path.exists(os.path.join(d, "applied")):
             try:
                 with open(os.path.join(d, "applied"), errors="replace") as f:

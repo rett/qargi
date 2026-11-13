@@ -4,6 +4,9 @@ set -u
 cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
+# Lead-state fixtures use private modes and their own configured Git identities.
+umask 077
+unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_AUTHOR_DATE GIT_COMMITTER_DATE
 T=$(mktemp -d); trap 'rm -rf "$T" "$HERMETIC"' EXIT; fail=0
 export QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T
 git init -q -b main "$T/r" && git -C "$T/r" -c user.name=t -c user.email=t@example.net commit -q --allow-empty -m one
@@ -14,6 +17,12 @@ jq -n --arg p "$T/r" '{schema:1,project:"rproj",repo:{url:"https://github.com/ex
 eval "$(./bin/qargi local prepare --repo "$T/r" --base main --slug demo --scratch "$T" | sed '/^$/,$d' | sed 's/^/export /')"
 # shellcheck source=fixtures.sh
 . tests/fixtures.sh
+# A lead-created apply fixture accompanies the compatibility mirror.
+record_applied() { # RUN BRANCH TIP
+  mkdir -p "$T/s/apply"; chmod 700 "$T/s/apply"
+  jq -nc --arg run "$1" --arg branch "$2" --arg tip "$3" \
+    '{schema:1,run:$run,branch:$branch,tip:$tip,status:"done"}' > "$T/s/apply/${1##*/}.json"
+}
 [ "$($GIT -C "$CLONE" branch --show-current)" = agent/demo ] && ok "clone is on agent/demo" || no "branch"
 echo x > "$CLONE/f"; $GIT -C "$CLONE" add f && $GIT -C "$CLONE" commit -q -m work && ok "commit through the wrapper"
 [ "$($GIT -C "$CLONE" log -1 --format=%an)" = qargi ] && ok "author is qargi" || no "author"
@@ -86,7 +95,7 @@ echo y > "$CL4/g"; $G4 -C "$CL4" add g && $G4 -C "$CL4" commit -q -m work; echo 
 ./bin/qargi local clean "$C4" >/dev/null 2>&1 && no "clean removed a run with commits that were never applied" || ok "clean refuses a run whose commits were never applied"
 [ -d "$C4" ] && ok "and the finished work stays" || no "unapplied work was removed"
 TREE=$(git -C "$T/r2" rev-parse 'main^{tree}'); AT=$(git -C "$T/r2" -c user.name=t -c user.email=t@example.net commit-tree -p main -m work "$TREE")
-git -C "$T/r2" update-ref refs/heads/agent/c4 "$AT"; printf 'agent/c4 %s now\n' "$AT" > "$C4/applied"
+git -C "$T/r2" update-ref refs/heads/agent/c4 "$AT"; printf 'agent/c4 %s now\n' "$AT" > "$C4/applied"; record_applied "$C4" agent/c4 "$AT"
 ./bin/qargi local clean "$C4" >/dev/null 2>&1 && no "clean removed an applied but unmerged run" || ok "clean refuses a run applied to agent/c4 but not merged into another branch"
 git -C "$T/r2" update-ref refs/heads/feature/x "$AT"
 ./bin/qargi local clean "$C4" >/dev/null 2>&1 && [ ! -e "$C4" ] && ok "clean removes it once the applied tip is on another branch" || no "clean after merge"
@@ -372,7 +381,7 @@ lrun() { # slug scratch -> the run directory, with one commit in its clone, a ma
 }
 applied() { # run branch -> a commit on top of main named for the run, recorded in RUN/applied; prints the sha
   local sha; sha=$($LC -C "$T/r6" commit-tree -p main -m "applied $1" "$(git -C "$T/r6" rev-parse 'main^{tree}')")
-  printf '%s %s now\n' "$2" "$sha" > "$1/applied"; echo "$sha"
+  printf '%s %s now\n' "$2" "$sha" > "$1/applied"; record_applied "$1" "$2" "$sha"; echo "$sha"
 }
 LA=$(lrun la "$T/ls"); LB=$(lrun lb "$T/ls"); LCC=$(lrun lc "$T/ls"); LD=$(lrun ld "$T/ls2")
 TMA=$(cat "$LA/tmpdir"); TMB=$(cat "$LB/tmpdir")
@@ -423,7 +432,7 @@ for w in --merged=HEAD --no-contains --help abc1234 "$(printf 'a%.0s' $(seq 1 41
     && ok "list: an applied word '$w' that is no full commit name is not passed to git (merged shows ?)" || no "list '$w' (rc=$rcl): $out; git saw: $(cat "$T/gl/argv")"
   : > "$T/gl/argv"
   out=$(PATH="$T/gl:$PATH" ./bin/qargi local clean "$LX" 2>&1); rcc=$?
-  { [ $rcc != 0 ] && [ -d "$LX" ] && grep -q 'second word' <<<"$out" && ! grep -q -- "$w" "$T/gl/argv"; } \
+  { [ $rcc != 0 ] && [ -d "$LX" ] && grep -q 'no completed authoritative apply record' <<<"$out" && ! grep -q -- "$w" "$T/gl/argv"; } \
     && ok "clean refuses it with a message and keeps the run ('$w')" || no "clean '$w' (rc=$rcc): $out; git saw: $(cat "$T/gl/argv")"
 done
 SX=$(applied "$LX" agent/lx); git -C "$T/r6" update-ref refs/heads/feature/lx "$SX"
@@ -591,13 +600,14 @@ rbrun() { # slug -> a run under $T/rb with one commit, a manifest, a bundle besi
   r=$(sed -n '1,/^$/s/^RUN=//p' <<<"$o"); g=$(sed -n '1,/^$/s/^GIT=//p' <<<"$o"); c=$(sed -n '1,/^$/s/^CLONE=//p' <<<"$o")
   echo "$1" > "$c/f-$1"; "$g" -C "$c" add "f-$1"; "$g" -C "$c" commit -q -m "work $1"; echo '{"status":"DONE"}' > "$r/out/manifest.json"; echo r > "$r/out/report.md"
   "$g" -C "$c" bundle create -q "$r/run.bundle" main..HEAD 2>/dev/null
+  ln -s /etc/hostname "$r/out/link-out"
   ./bin/qargi local verify "$r" > "$T/vout" 2>&1; echo "$r"
 }
 RB1=$(rbrun rb1); ID1=$(basename "$RB1"); SV1=$T/s/runs/$ID1
 { [ -f "$SV1/out/manifest.json" ] && [ -f "$SV1/run.bundle" ] && [ -f "$SV1/refs.before" ] && [ -f "$SV1/verified" ] && [ -f "$SV1/started" ] && [ "$(cat "$SV1/class")" = write ] \
   && [ "$(jq -r .slug "$SV1/record.json")" = rb1 ] && grep -q "saved a copy of the run's output in $SV1" "$T/vout"; } \
   && ok "a passing verify copies OUT, the run bundle, the snapshots and the registry's record to <state>/runs/<run id>/" || no "saved copy: $(ls -A "$SV1" 2>&1); $(cat "$T/vout")"
-ln -s /etc/hostname "$RB1/out/link-out"; ./bin/qargi local verify "$RB1" >/dev/null 2>&1
+./bin/qargi local verify "$RB1" >/dev/null 2>&1
 [ -L "$SV1/out/link-out" ] && ok "a link in OUT is copied as a link, never followed" || no "link in OUT: $(ls -l "$SV1/out")"
 # the directory vanishes (a reboot that emptied a tmpfs): list and report say so and name the saved copy; clean keeps the work
 TRB1=$(jq -r --arg r "$RB1" 'select(.run == $r) | .tmpdir' "$T/s/local-runs.jsonl"); rm -rf "$RB1" "$TRB1"
@@ -622,6 +632,7 @@ RB2=$(rbrun rb2); SV2=$T/s/runs/$(basename "$RB2")
 RB3=$(rbrun rb3); RB4=$(rbrun rb4); RB5=$(rbrun rb5); SV5=$T/s/runs/$(basename "$RB5")
 rm -rf "$T/s/runs/$(basename "$RB3")"                                         # nothing saved of rb3
 A5=$($LC -C "$T/r7" commit-tree -p main -m "applied rb5" "$(git -C "$T/r7" rev-parse 'main^{tree}')"); git -C "$T/r7" update-ref refs/heads/feature/rb5 "$A5"
+record_applied "$RB5" agent/rb5 "$A5"
 printf 'agent/rb5 %s now\n' "$A5" > "$SV5/applied"                            # applied (from the saved copy) and merged
 old=$(date -u -d '20 days ago' +%Y-%m-%dT%H:%M:%SZ)
 for r in "$RB3" "$RB4" "$RB5"; do jq -c --arg r "$r" --arg t "$old" 'if .run == $r then .started = $t else . end' "$T/s/local-runs.jsonl" > "$T/s/lr.new" && mv "$T/s/lr.new" "$T/s/local-runs.jsonl"; rm -rf "$r"; done

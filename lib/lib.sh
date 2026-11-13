@@ -222,6 +222,15 @@ lc_lock() {
   flock -n 7 || { echo 'qargi: lifecycle lock busy or unsupported; nothing was done' >&2; return 1; }
   python3 -I "$QARGI_TOOL/lib/attempts.py" lock-check "$1"
 }
+# Shared production entry points. Only an inherited, actually held fd grants
+# nesting; environment values never suppress a lifecycle check.
+lc() { python3 -I "$QARGI_TOOL/lib/attempts.py" "$@"; }
+lc_ready() {
+  lc_lock "$1" || return 1
+  # shellcheck disable=SC2034 # consumed by local.sh/review.sh
+  LC_SCHEMA=$(lc "${2:-ready}" "$1") || return 1
+}
+lc_base_sha() { lc base-sha "$1" | jq -er .; }
 reg_record() {
   RUN_REPO='' RUN_URL='' RUN_CRED='' RUN_ANS=''
   reg_has "$1" || { echo "qargi: $1 is not in the lead's registry ($DA_STATE/local-runs.jsonl): only a run made by qargi local prepare on this machine is trusted" >&2; return 1; }
@@ -413,7 +422,7 @@ need_val() { # OPTION "$#" -> exit 2 when a valued option is the last word: call
 }
 run_clean() { # DIR COMMAND...: runs a command in DIR without the project's cloud binding: a suite, a release check or a scrub must not see it
   local dir=$1; shift
-  (cd "$dir" && env -u ANTHROPIC_PROFILE -u QARGI_CLOUD_WORKSPACE -u QARGI_CLOUD_PROJECT "$@")
+  (cd "$dir" && env -u ANTHROPIC_PROFILE -u QARGI_CLOUD_WORKSPACE -u QARGI_CLOUD_PROJECT "$@") 7>&-
 }
 
 # Cloud verbs that create or drive a session need --asked "<what the user

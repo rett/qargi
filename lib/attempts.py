@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Internal lifecycle state; deliberately has no production callers yet.
+"""Lead-owned lifecycle authority for prepared local runs.
 
 Store(run) selects the lead's root with paths.state(), never from RUN. The exact
 registry lifecycle:1 marker authorizes reads/transitions; absent means Legacy,
@@ -29,7 +29,7 @@ API (snapshots are bounded bytes, never filenames supplied by the member):
   saved_copy() -> current verified saved path with the exact attempt marker
   drop() -> after registry cleaned/drop commit; remove state, KEEP lock inode
 
-Gate comparison belongs to the next integration: compare against the baseline
+Gate comparison belongs to local.sh: compare against the baseline
 and phase returned by gate(), and only call gate_pending with an accepted lead
 snapshot. It does not prove a git comparison. begin attaches to the first unused
 attempt, otherwise opens a strict attempt whose epoch is the accepted gate time.
@@ -74,7 +74,9 @@ import os
 import re
 import shutil
 import stat
+import subprocess
 import sys
+import tempfile
 import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -532,7 +534,7 @@ class Store:
         return dict(state_sha256=digest(encode(record)), owner=owner(owner_pid), epoch=epoch,
                     refs_sha256=digest(refs), current=record["current"])
 
-    def gate(self):
+    def gate(self, *, closed=False):
         """Use only under lock; read named bytes from this lead-owned store.
 
         Integration must use the verified snapshot for after-verify comparisons,
@@ -540,7 +542,7 @@ class Store:
         always return to strict. This method performs no git operation.
         """
         self.require_lock()
-        self.authority(True)
+        self.authority(not closed)
         record = self.show()
         a = record["attempts"][-1]
         self._quiescent(a)
@@ -551,6 +553,7 @@ class Store:
                     opens_new=v is not None or a["dispatch"] is not None)
 
     def begin(self, pending, refs):
+        """Commit before any accepted output mutation, including report rotation."""
         self.require_lock()
         self.authority(True)
         record = self.show()
@@ -573,6 +576,7 @@ class Store:
             record["attempts"].append(a)
             record["current"] = n
         a["dispatch"] = dict(started=now(), runner=owner(), member=None, ended=None, outcome=None)
+        a["save_nonce"] = None
         need(len(encode(record)) + DISPATCH_HEADROOM <= MAX_RECORD, "lifecycle record has insufficient dispatch headroom")
         self._commit(record)
         return record
@@ -762,6 +766,112 @@ class Store:
             os.close(fd)
 
 
+def ready(store, *, closed=False):
+    """Shared entry gate. Legacy inspection is explicit; runtime never adopts it."""
+    store.require_lock()
+    try:
+        row = store.authority()
+    except Legacy:
+        print("qargi: warning: legacy run: writable snapshots provide limited inspection/recovery only; re-prepare before runtime dispatch", file=sys.stderr)
+        return False
+    if closed and (row.get("closed") or row.get("cleaned")):
+        store._quiescent(store.show()["attempts"][-1])
+    else:
+        store.reconcile()
+    return True
+
+
+def applied_record(store):
+    """A private apply record, never RUN/applied. Invalid records fail closed."""
+    path = store.root + "/apply"
+    if not os.path.lexists(path):
+        return None
+    root = directory(store.root)
+    try:
+        fd = os.open("apply", os.O_RDONLY | os.O_DIRECTORY | NOFOLLOW, dir_fd=root)
+        need(os.fstat(fd).st_uid == os.geteuid(), "apply directory is not lead-owned")
+    finally:
+        os.close(root)
+    try:
+        try:
+            row = decode(read_at(fd, store.id + ".json", MAX_RECORD, 0o600))
+        except FileNotFoundError:
+            return None
+        need(type(row) is dict and row.get("run") == store.run
+             and row.get("status") in ("started", "built", "done"), "invalid apply authority")
+        if row["status"] in ("built", "done"):
+            need(isinstance(row.get("tip"), str) and re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", row["tip"])
+                 and isinstance(row.get("branch"), str) and bool(row["branch"]), "invalid applied branch/tip")
+        return row
+    finally:
+        os.close(fd)
+
+
+def current_verified(store):
+    """Read-only observation: a failed save is not a current verified product."""
+    record = store.show()
+    a = record["attempts"][-1]
+    store._quiescent(a)
+    v = a["verified"]
+    return v is not None and store._saved_marker(record) == (a["n"], v["nonce"])
+
+
+def save_product(store, refs):
+    """Publish a generation, then commit acceptance without intervening reconcile.
+
+    Repeated observation reuses the accepted product. A different OUT requires a
+    new dispatch (or explicit recovery after an interrupted save).
+    """
+    store.require_lock()
+    try:
+        if current_verified(store):
+            return store.saved_copy()
+    except FileNotFoundError:
+        pass
+    marker = store.prepare_save()  # Keep its newline; no shell decoding.
+    runs = store.root + "/runs"
+    os.close(directory(runs, True))
+    tmp = tempfile.mkdtemp(prefix=".save.", dir=runs)
+    try:
+        # cp -P copies even a replaced top-level OUT as a link; reject it below.
+        # Never traverse a member's symlink into unrelated lead files.
+        copied = subprocess.run(["cp", "-R", "--no-dereference", "--", store.run + "/out", tmp + "/out"],
+                                close_fds=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        need(copied.returncode == 0 and not os.path.islink(tmp + "/out") and os.path.isdir(tmp + "/out"),
+             "could not copy a plain OUT directory; re-verification required")
+        for name in ("run.bundle", "ability", "class", "profile", "task.md"):
+            src = store.run + "/" + name
+            if os.path.isfile(src) and not os.path.islink(src):
+                copied = subprocess.run(["cp", "--no-dereference", "--", src, tmp + "/" + name],
+                                        close_fds=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                need(copied.returncode == 0, "could not copy run metadata; re-verification required")
+        record = store.show()
+        fd = directory(tmp)
+        source = directory(store.path)
+        try:
+            atomic(fd, "attempt", marker.encode("ascii"))
+            atomic(fd, "refs.before", read_at(source, "prepared.refs", MAX_REFS, 0o600))
+            atomic(fd, "verified", refs)
+            atomic(fd, "started", str(record["prepared"]["epoch"]).encode() + b"\n")
+            atomic(fd, "record.json", encode(store.authority()))
+        finally:
+            os.close(fd)
+            os.close(source)
+        target = runs + "/" + store.id
+        need(not os.path.lexists(target), "saved target unexpectedly exists")
+        os.rename(tmp, target)
+        fd = directory(runs)
+        try:
+            sync_dir(fd, "saved generation publish")
+        finally:
+            os.close(fd)
+        store.verified(refs)
+        return target
+    finally:
+        if os.path.isdir(tmp):
+            shutil.rmtree(tmp)
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     try:
@@ -779,7 +889,28 @@ def main(argv=None):
         if cmd in ("lock-match", "lock-check"):
             (store.lock_match if cmd == "lock-match" else store.require_lock)()
             return 0
-        if cmd in ("show", "gate", "reconcile", "prepare-save", "saved-copy", "drop"):
+        if cmd in ("ready", "ready-clean"):
+            result = ready(store, closed=cmd == "ready-clean")
+        elif cmd == "base-sha":
+            result = store.show()["prepared"]["base_sha"]
+        elif cmd == "applied":
+            store.require_lock()
+            store.show()
+            result = applied_record(store)
+        elif cmd == "current":
+            store.require_lock()
+            need(current_verified(store), "re-verification required: no current verified saved generation")
+            result = True
+        elif cmd == "saved-copy":
+            try:
+                result = store.saved_copy()
+            except (FileNotFoundError, Refuse) as e:
+                raise Refuse("re-verification required: no current verified saved generation (%s)" % e) from e
+        elif cmd == "compare-input":
+            row = store.authority()
+            result = store.gate(closed=bool(row.get("closed")))
+            result["baseline"] = store.path + "/" + result["baseline"]
+        elif cmd in ("show", "gate", "reconcile", "prepare-save", "drop"):
             result = getattr(store, cmd.replace("-", "_"))()
         else:
             data = sys.stdin.buffer.read(2 * MAX_REFS + MAX_RECORD + 1)
@@ -789,10 +920,10 @@ def main(argv=None):
             if "refs" in args:
                 need(isinstance(args["refs"], str), "refs must be a string")
                 args["refs"] = args["refs"].encode()
-            need(cmd in ("init", "gate-pending", "begin", "member", "end", "verified"), "unknown lifecycle command")
+            need(cmd in ("init", "gate-pending", "begin", "member", "end", "verified", "save-product"), "unknown lifecycle command")
             if cmd == "gate-pending":
                 args.setdefault("owner_pid", os.getppid())
-            result = getattr(store, cmd.replace("-", "_"))(**args)
+            result = save_product(store, **args) if cmd == "save-product" else getattr(store, cmd.replace("-", "_"))(**args)
         print(json.dumps(result, sort_keys=True))
         return 0
     except (Refuse, OSError, TypeError, ValueError, RecursionError) as e:
