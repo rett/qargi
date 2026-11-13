@@ -2,8 +2,8 @@
  "purpose": "Bind verification to the current execution attempt, preserve earlier evidence, and refuse active or accepted-work retries safely",
  "started": "2026-11-13T05:28:36Z",
  "goal": "Bind verification to the current execution attempt, preserve earlier evidence, and refuse active or accepted-work retries safely",
- "plan": "",
- "note": "",
+ "plan": "Finish b5xQtT intake corrections; rerun failed/affected targeted checks; independent exact-candidate review; integrate feature, full checkpoint, finish into develop; then command-profiles.",
+ "note": "Current isolated candidate agent/verification-independent-repair f8eadeb; broad checks require structural-inspection, fresh collection fixture, generated-manual corrections. Late signal fix UVa54h retained for incorporation, not applied due area heuristic. Active b5xQtT on same base. Receipts and efficiency/rework ledger under ~/.cache/qargi-runs. No develop merge or release yet.",
  "status": "active",
  "lead": {
   "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
@@ -12,11 +12,11 @@
   "since": "2026-11-13T05:28:36Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-13T11:43:47Z",
+ "renewed_at": "2026-11-13T11:48:00Z",
  "finished_at": null,
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 14,
- "updated_at": "2026-11-13T11:43:47Z",
+ "rev": 15,
+ "updated_at": "2026-11-13T11:48:00Z",
  "feature": "verification-lifecycle",
  "project": "qargi"
 }
