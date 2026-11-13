@@ -25,7 +25,8 @@ fast | par | 300 | 19 | bash tests/test_provider_notes.sh | lib/provider*.sh lib
 fast | par | 300 | 20 | bash tests/conformance.sh claude-code
 fast | par | 300 | 8 | bash tests/conformance.sh claude-platform
 fast | par | 300 | 5 | bash tests/conformance.sh codex | lib/conformance/run.sh lib/conformance/cases.py lib/local_run.py lib/providers/codex.json lib/local.sh lib/lib.sh lib/attempts.py
-full | par | 432 | 179 | bash tests/test_conformance_selftest.sh
+# The selftest runs fault cases concurrently, so it runs alone after the pool.
+full | serial | 432 | 179 | bash tests/test_conformance_selftest.sh
 full | par | 300 | 43 | python3 tests/test_tierplan.py | lib/tierplan.py
 fast | par | 300 | 22 | bash tests/test_tier_hook.sh
 full | par | 300 | 17 | bash tests/test_tier_packet.sh

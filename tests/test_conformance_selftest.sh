@@ -12,7 +12,7 @@ fail=0
 # shellcheck source=fixtures.sh
 . tests/fixtures.sh
 T=$(mktemp -d -p "$HERMETIC")
-trap 'chmod 755 "$T/inst/zz-sentinel" 2>/dev/null || :; rm -rf "$HERMETIC"' EXIT
+trap 'chmod 755 "$T/inst/zz-sentinel" 2>/dev/null || :; kill_bg; rm -rf "$HERMETIC"' EXIT
 ROOT=$PWD
 BROKEN=tests/providers/broken
 tree_before=$(git status --porcelain --untracked-files=no tests lib 2>/dev/null; git diff tests lib 2>/dev/null | cksum)
