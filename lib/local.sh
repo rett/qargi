@@ -727,11 +727,16 @@ case $verb in
     # the run's TMP: a private directory on tmpfs when there is one (QARGI_RUN_TMP moves it, as the tests do, so a test never leaves anything in
     # /dev/shm), else RUN/tmp; made below, once RUN is
     SHM=${QARGI_RUN_TMP:-/dev/shm}
-    while [ "${SHM%/}" != "$SHM" ] && [ "$SHM" != / ]; do SHM=${SHM%/}; done   # clean compares the parent as written
+    while [ "${SHM%/}" != "$SHM" ] && [ "$SHM" != / ]; do SHM=${SHM%/}; done
     if [ -d "$SHM" ] && [ -w "$SHM" ]; then TMPW=$SHM/qargi-run.XXXXXX; else TMPW=$SCR/qargi.XXXXXX/tmp; fi
     # a runtime whose sandbox hides part of the filesystem from its member (dispatch.hidden_paths: a sandbox with a /dev of its own hides /dev/shm)
     # refuses a run whose member would not see a path it works with, before anything is made; local run asks again (lib/provider.py hidden_run_paths)
     if [ -n "$CPROV" ]; then pymod provider hidden-paths "$CPROV" local "$CLASS" "$SCR/qargi.XXXXXX" "$TMPW" --project "$CPJ" </dev/null || exit $?; fi
+    # Resolve the parent before creating RUN or TMP. Every persisted and displayed
+    # TMP path then has the same canonical spelling; cleanup does not reuse an alias.
+    if [ -d "$SHM" ] && [ -w "$SHM" ]; then
+      SHM=$(readlink -f -- "$SHM" 2>/dev/null) && [ -n "$SHM" ] && [ -d "$SHM" ] && [ -w "$SHM" ] || die "cannot resolve the run temporary parent ${QARGI_RUN_TMP:-/dev/shm}; nothing was made"
+    fi
     LEAD=''
     case $BASE in
       feature/?*)

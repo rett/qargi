@@ -362,7 +362,7 @@ out=$($DA local prepare --repo "$T/r" --base main --slug hd3 --scratch "$T/lnk" 
 { [ "$rc" = 2 ] && grep -qF "CONTRACT $HID/qargi.XXXXXX/contract lies under $HID" <<<"$out" && [ -z "$(ls -A "$HID")" ]; } \
   && ok "a --scratch that is a link into the hidden place is refused by its real path" || no "hidden link scratch: rc=$rc $out"
 out=$(QARGI_RUN_TMP=$T/lnk $DA local prepare --repo "$T/r" --base main --slug hd4 --scratch "$T/ok" 2>&1); rc=$?
-{ [ "$rc" = 0 ] && grep -q "^TMP=$T/lnk/qargi-run\." <<<"$out"; } && ok "a write run outside with its TMP in the hidden place is prepared: the class shows TMP" || no "hidden tmp, write: rc=$rc $out"
+{ [ "$rc" = 0 ] && grep -q "^TMP=$HID/qargi-run\." <<<"$out"; } && ok "a write run outside with its TMP in the hidden place is prepared: TMP names the canonical parent" || no "hidden tmp, write: rc=$rc $out"
 out=$(QARGI_RUN_TMP=$T/lnk $DA local prepare --repo "$T/r" --base main --slug hd5 --scratch "$T/ok" --role review 2>&1); rc=$?
 [ "$rc" = 0 ] && ok "and so is a read-only one: a read-only member writes no TMP" || no "hidden tmp, read-only: rc=$rc $out"
 setprov fakehidtmp; n0=$(ls "$T/ok" | wc -l)

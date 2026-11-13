@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `local prepare` again accepts symlinked, relative and `..`-containing `QARGI_RUN_TMP` parents. It resolves the parent before creating directories and consistently records and displays the canonical TMP path; repointing the alias later does not redirect cleanup. Hidden-path checks still inspect actual paths.
+
 ### Changed
 - Clean authorizes retained evidence before deleting TMP or RUN. Prepare records private directory identities; interrupted cleanup stages owned tombstones and refuses replaced paths, including a reused TMP pathname after deletion. Missing ownership evidence requires manual recovery.
 - Process-group completion requires a kernel absence report. A changing process listing or zombie-only sample cannot authorize retry or cleanup; runner diagnostics identify busy or unknown groups without claiming live survivors.

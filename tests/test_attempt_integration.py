@@ -101,6 +101,46 @@ print('fixture transcript')
     def state_json(self):
         return json.loads(self.record.read_text())
 
+    def test_prepare_canonical_tmp_paths_and_repointed_alias_cleanup(self):
+        parent = self.root / 'real-tmp'
+        parent.mkdir()
+        alias = self.root / 'alias-tmp'
+        alias.symlink_to(parent, target_is_directory=True)
+        decoy = self.root / 'decoy-tmp'
+        decoy.mkdir()
+        task = self.root / 'input-task'
+        task.write_text('Offline canonical path fixture')
+        for spelling in ('alias', 'relative', 'dotdot'):
+            for role in ('build', 'review'):
+                with self.subTest(spelling=spelling, role=role):
+                    named = {'alias': str(alias), 'relative': '../real-tmp',
+                             'dotdot': str(self.repo / '../real-tmp') + '/'}[spelling]
+                    self.env['QARGI_RUN_TMP'] = named
+                    out = self.cmd('local', 'prepare', '--repo', self.repo, '--base', 'develop',
+                                   '--slug', 'canonical', '--scratch', self.root, '--role', role,
+                                   '--task-file', task, '--done', 'true')
+                    run = Path(next(l[4:] for l in out.splitlines() if l.startswith('RUN=')))
+                    tmp = Path(next(l[4:] for l in out.splitlines() if l.startswith('TMP=')))
+                    self.assertEqual(tmp.parent, parent)
+                    self.assertEqual((run / 'tmpdir').read_text().strip(), str(tmp))
+                    self.assertIn('TMP: ' + str(tmp), (run / 'task.md').read_text())
+                    rows = [json.loads(l) for l in (self.state / 'local-runs.jsonl').read_text().splitlines()]
+                    self.assertEqual(next(r for r in rows if r['run'] == str(run))['tmpdir'], str(tmp))
+                    work = json.loads((Path(A.Store(run).path) / 'work.json').read_text())
+                    self.assertEqual(work['tmp']['path'], str(tmp))
+                    if spelling == 'alias':
+                        alias.unlink()
+                        alias.symlink_to(decoy, target_is_directory=True)
+                        other = decoy / tmp.name
+                        other.mkdir()
+                        (other / 'keep').write_text('decoy')
+                    self.cmd('local', 'clean', run, '--discard')
+                    self.assertFalse(tmp.exists() or run.exists())
+                    if spelling == 'alias':
+                        self.assertEqual((other / 'keep').read_text(), 'decoy')
+                        alias.unlink()
+                        alias.symlink_to(parent, target_is_directory=True)
+
     @contextlib.contextmanager
     def locked(self):
         fd = self.store.open_lock()
