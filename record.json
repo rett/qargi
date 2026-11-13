@@ -4,19 +4,13 @@
  "goal": "Make GitHub-facing Markdown examples and dense tables readable without routine horizontal scrolling",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-12T07:37:54Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-13T04:11:46Z",
- "finished_at": null,
+ "finished_at": "2026-11-13T04:11:59Z",
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 16,
- "updated_at": "2026-11-13T04:11:46Z",
+ "rev": 17,
+ "updated_at": "2026-11-13T04:11:59Z",
  "feature": "doc-readability",
  "project": "qargi"
 }
