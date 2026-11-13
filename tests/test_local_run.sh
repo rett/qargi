@@ -1465,13 +1465,15 @@ for cleanup_fails in (False, True, "unknown"):
     # refuses live or unknown groups. Inject the process probe, not RUN metadata.
     with attempt(run):
         store = L.A.Store(run)
-        previous = store.show()["attempts"][-1]["dispatch"]["member"]
         gate = store.gate()
         refs = open(os.path.join(store.path, gate["baseline"]), "rb").read()
         store.begin(store.gate_pending(refs, epoch=gate["epoch"]), refs)
-        unfinished = store.show()
-        unfinished["attempts"][-1]["dispatch"]["member"] = previous
-        store._commit(unfinished)
+        member = subprocess.Popen(["sleep", "30"], start_new_session=True)
+        try:
+            store.member(member.pid)
+        finally:
+            member.terminate()
+            member.wait()
         try:
             for survivors in (True, None):
                 def alive(pg):
