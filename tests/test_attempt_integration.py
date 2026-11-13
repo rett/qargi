@@ -517,6 +517,42 @@ print('fixture transcript')
         self.assertEqual(json.loads(record.read_text())["status"], "done")
         self.assertEqual(self.git("rev-parse", "agent/example"), tip)
 
+    def test_sigkill_during_save_recovers_single_owned_stage(self):
+        self.prepare()
+        (self.run / "out/report.md").write_text("product")
+        ready = self.root / "copy-ready"
+        code = '''import sys, os, fcntl, time
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import attempts as A
+s = A.Store(sys.argv[2]); fd = s.open_lock()
+if fd != 7: os.dup2(fd, 7); os.close(fd)
+fcntl.flock(7, fcntl.LOCK_EX)
+copy = A.copy_product
+def stop_after_copy(src, dst):
+    copy(src, dst)
+    Path(sys.argv[3]).touch()
+    while True: time.sleep(.02)
+A.copy_product = stop_after_copy
+A.save_product(s, Path(s.path + '/prepared.refs').read_bytes())
+'''
+        for _ in range(2):
+            p = subprocess.Popen([sys.executable, "-c", code, str(ROOT / "lib"), str(self.run), str(ready)], env=self.env)
+            try:
+                deadline = time.monotonic() + 10
+                while not ready.exists() and p.poll() is None and time.monotonic() < deadline:
+                    time.sleep(.02)
+                self.assertTrue(ready.exists())
+            finally:
+                p.kill()
+                p.wait(timeout=5)
+            self.assertTrue((Path(self.store.path) / "save.stage/out/report.md").exists())
+            ready.unlink()
+        self.verify()
+        self.assertEqual((self.saved / "out/report.md").read_text(), "product")
+        self.assertFalse((Path(self.store.path) / "save.stage").exists())
+        self.assertFalse((Path(self.store.path) / "save-stage.json").exists())
+
     def test_dead_owner_unknown_window_refuses_even_discard(self):
         self.prepare()
         # A real short-lived owning process commits begin without member().

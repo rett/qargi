@@ -74,9 +74,7 @@ import os
 import re
 import shutil
 import stat
-import subprocess
 import sys
-import tempfile
 import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -709,9 +707,58 @@ class Store:
             need(not group_alive(d["member"]["pid"]), "member process group is busy")
             d.update(ended=now(), outcome="lost")
             self._commit(record)
+        self.recover_stage()
         self._recover_retained(record)
         self._retain(record)
         return record
+
+    def recover_stage(self):
+        """Only the locked Python owner writes staging; it has no copy child."""
+        self.require_lock()
+        record = self.show()
+        fd = directory(self.path)
+        try:
+            try:
+                stage = decode(read_at(fd, "save-stage.json", 4096, 0o600))
+            except FileNotFoundError:
+                need(not os.path.lexists(self.path + "/save.stage"),
+                     "unowned save staging; preserve it for investigation")
+                return
+            shape(stage, "identity device inode")
+            need(stage["identity"] == record["prepared"]["identity"]
+                 and type(stage["device"]) is int and type(stage["inode"]) is int,
+                 "invalid save staging ownership")
+            try:
+                child = directory(self.path + "/save.stage")
+            except FileNotFoundError:
+                child = None  # Already published, or a completed interrupted deletion.
+            if child is not None:
+                try:
+                    st = os.fstat(child)
+                    need((st.st_dev, st.st_ino) == (stage["device"], stage["inode"]),
+                         "save staging ownership mismatch; preserve it")
+                finally:
+                    os.close(child)
+                need(shutil.rmtree.avoids_symlink_attacks, "safe cleanup unavailable")
+                shutil.rmtree("save.stage", dir_fd=fd)
+                sync_dir(fd, "save staging cleanup")
+            os.unlink("save-stage.json", dir_fd=fd)
+            sync_dir(fd, "save staging record removal")
+        finally:
+            os.close(fd)
+
+    def stage_product(self):
+        self.recover_stage()
+        record = self.show()
+        fd = directory(self.path)
+        try:
+            os.mkdir("save.stage", 0o700, dir_fd=fd)
+            st = os.stat("save.stage", dir_fd=fd, follow_symlinks=False)
+            atomic(fd, "save-stage.json", encode(dict(identity=record["prepared"]["identity"],
+                                                      device=st.st_dev, inode=st.st_ino)))
+        finally:
+            os.close(fd)
+        return self.path + "/save.stage"
 
     def prepare_save(self):
         """Retain any installed copy and issue a fresh, lead-owned marker.
@@ -880,6 +927,48 @@ def product_matches(store):
              "OUT changed since acceptance; retained product was not replaced; re-prepare")
 
 
+def copy_product(src, dst):
+    """Copy through no-follow descriptors in the owner, with no surviving child."""
+    source = os.open(src, os.O_RDONLY | os.O_DIRECTORY | NOFOLLOW)
+    try:
+        os.mkdir(dst, 0o700)
+        target = os.open(dst, os.O_RDONLY | os.O_DIRECTORY | NOFOLLOW)
+        try:
+            def copy_tree(sfd, tfd):
+                for name in os.listdir(sfd):
+                    st = os.stat(name, dir_fd=sfd, follow_symlinks=False)
+                    if stat.S_ISLNK(st.st_mode):
+                        os.symlink(os.readlink(name, dir_fd=sfd), name, dir_fd=tfd)
+                        continue
+                    child = os.open(name, os.O_RDONLY | NOFOLLOW, dir_fd=sfd)
+                    try:
+                        st = os.fstat(child)
+                        if stat.S_ISDIR(st.st_mode):
+                            os.mkdir(name, 0o700, dir_fd=tfd)
+                            dest = os.open(name, os.O_RDONLY | os.O_DIRECTORY | NOFOLLOW, dir_fd=tfd)
+                            try:
+                                copy_tree(child, dest)
+                            finally:
+                                os.close(dest)
+                        else:
+                            need(stat.S_ISREG(st.st_mode), "OUT contains a special file")
+                            dest = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW,
+                                           stat.S_IMODE(st.st_mode) & 0o777, dir_fd=tfd)
+                            with os.fdopen(dest, "wb") as stream:
+                                while block := os.read(child, 1024 * 1024):
+                                    stream.write(block)
+                                stream.flush()
+                                os.fsync(stream.fileno())
+                    finally:
+                        os.close(child)
+                sync_dir(tfd, "product copy")
+            copy_tree(source, target)
+        finally:
+            os.close(target)
+    finally:
+        os.close(source)
+
+
 def save_product(store, refs):
     """Publish a generation, then commit acceptance without intervening reconcile.
 
@@ -897,20 +986,18 @@ def save_product(store, refs):
     marker = store.prepare_save()  # Keep its newline; no shell decoding.
     runs = store.root + "/runs"
     os.close(directory(runs, True, tighten=True))
-    tmp = tempfile.mkdtemp(prefix=".save.", dir=runs)
+    tmp = store.stage_product()
     try:
-        # cp -P copies even a replaced top-level OUT as a link; reject it below.
-        # Never traverse a member's symlink into unrelated lead files.
-        copied = subprocess.run(["cp", "-R", "--no-dereference", "--", store.run + "/out", tmp + "/out"],
-                                close_fds=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        need(copied.returncode == 0 and not os.path.islink(tmp + "/out") and os.path.isdir(tmp + "/out"),
-             "could not copy a plain OUT directory; re-verification required")
+        copy_product(store.run + "/out", tmp + "/out")
         for name in ("run.bundle", "ability", "class", "profile", "task.md"):
             src = store.run + "/" + name
             if os.path.isfile(src) and not os.path.islink(src):
-                copied = subprocess.run(["cp", "--no-dereference", "--", src, tmp + "/" + name],
-                                        close_fds=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-                need(copied.returncode == 0, "could not copy run metadata; re-verification required")
+                child = os.open(src, os.O_RDONLY | NOFOLLOW)
+                with os.fdopen(child, "rb") as source, open(tmp + "/" + name, "xb") as target:
+                    need(stat.S_ISREG(os.fstat(child).st_mode), "run metadata changed kind")
+                    shutil.copyfileobj(source, target)
+                    target.flush()
+                    os.fsync(target.fileno())
         record = store.show()
         fd = directory(tmp)
         source = directory(store.path)
@@ -934,8 +1021,7 @@ def save_product(store, refs):
         store.verified(refs)
         return target
     finally:
-        if os.path.isdir(tmp):
-            shutil.rmtree(tmp)
+        store.recover_stage()
 
 
 def main(argv=None):

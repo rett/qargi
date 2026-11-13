@@ -20,6 +20,8 @@ Historical lead-owned, non-symlink `runs` directories are tightened to mode 0700
 
 Retention is bounded: at most 32 retained copies and 32 historical verification records per attempt, and 256 attempts per prepared run, subject also to the private record size limit. Reaching a limit refuses further transitions instead of deleting evidence. Preserve wanted evidence separately before cleaning and preparing another run. Clean removes the run's current and retained copies and private attempt state; the lifecycle lock inode remains stable.
 
+Save staging is bounded to one `attempts/ID/save.stage` directory. Before copying, the private `save-stage.json` records its device, inode and prepared identity. The lock-owning Python process copies without a child that could outlive it. After SIGKILL, the next locked reconciliation removes only that recorded stage before retrying. A crash between directory creation and its ownership record leaves an unowned stage: retry and cleanup refuse and preserve it for investigation. Unknown historical `.save.*` paths are never adopted or deleted. These bounds count generations and staging directories, not bytes.
+
 ## Execution, termination and acceptance
 
 Actual dispatch, public verify, apply, close and clean share one nonblocking lifecycle lock. A busy lock refuses promptly, including `clean --discard`. Internal apply/verify and close/clean checks share only the actual held descriptor. Lock order is lifecycle, apply PID lock, then short registry or journal locks. Members, Git helpers, scrub commands and background lease renewers receive no lifecycle descriptor.

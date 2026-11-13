@@ -3486,6 +3486,8 @@ the command to put in the snippet (default qargi).
 .RE
 .SS Review and apply
 .PP
+Save staging uses one private directory per run with recorded device, inode and prepared identity. Reconciliation recovers only that owned stage after interruption. An unowned or replaced stage refuses cleanup and is preserved for investigation; unknown historical .save.* paths are never adopted. Retention bounds count copies, not bytes.
+.PP
 An unfinished lifecycle apply marked started refuses resume, clean and discard even after its shell dies: Git or a hook may still be alive. Preserve the worktree and record. An apply marked built can finish its recorded bookkeeping after its owner exits.
 .PP
 For lifecycle runs, apply always scrubs the private patch copy it applies. A previous review check cannot authorize mutable replacement bytes. Verify, review check and apply refuse OUT changed since acceptance; re\-prepare for revised external/session output. Unsuccessful dispatch output cannot be accepted as a new attempt's product. Stale cleanup preserves retained generations when no current copy exists; only explicit discard drops that evidence. Historical lead\-owned runs directories are tightened to mode 0700 on save.

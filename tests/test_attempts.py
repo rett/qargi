@@ -123,6 +123,22 @@ class Attempts(unittest.TestCase):
         finally:
             child.wait(timeout=5)
 
+    def test_unowned_or_replaced_save_staging_refuses_deletion(self):
+        with self.locked():
+            self.prepare()
+            stage = Path(self.store.path) / "save.stage"
+            stage.mkdir(mode=0o700)
+            with self.assertRaisesRegex(A.Refuse, "unowned save staging"):
+                self.store.reconcile()
+            self.assertTrue(stage.exists())
+            stage.rmdir()
+            self.store.stage_product()
+            stage.rename(stage.with_name("kept-stage"))
+            stage.mkdir(mode=0o700)
+            with self.assertRaisesRegex(A.Refuse, "ownership mismatch"):
+                self.store.recover_stage()
+            self.assertTrue(stage.exists())
+
     def test_init_and_retry_preserve_prepared_authority(self):
         with self.locked():
             initial = self.prepare()

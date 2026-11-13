@@ -7,6 +7,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
+- Save staging is limited to one privately recorded directory per run and recovered after owner death without leaving a copy child. Unknown or replaced staging refuses cleanup; retained-copy limits count directories, not bytes.
 - Unfinished lifecycle applies refuse resume and cleanup after their parent dies because Git-child termination is unknown. Completed Git work marked built retains supported bookkeeping recovery; hooks still receive no lifecycle lock.
 - Dispatch installs signal handling before committing begin, records caught prelaunch cancellation as not-started, and treats zombie-only groups consistently as terminated while refusing unknown process evidence.
 - Lifecycle verification refuses changed accepted output and unsuccessful dispatch output; apply scrubs its private copy even after review check. Stale cleanup preserves retained evidence after a failed retry and directory loss. Historical lead-owned runs directories upgrade safely to private permissions.
