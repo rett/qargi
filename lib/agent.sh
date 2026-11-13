@@ -37,7 +37,7 @@ AGENT_PY=$(cat <<'PYEOF'
 # The member renderer, run by lib/agent.sh as: python3 -I -c "$AGENT_PY" LIBDIR VERB ARGS...  (stdlib only, isolated)
 #   pdesc PROV SURFACE                                the runtime on a surface, as provider.summary() gives it: tiers, aliases, effort, model_pattern, reserved_names, adapter
 #   names                                             the providers that have a definition, one per line
-#   dmode PROV [PROJECT]                              the local dispatch mode, composed with the project's extensions
+#   dmode PROV [PROJECT]                              the local dispatch mode; with PROJECT, also validate its extension composition
 #   render PROV NAME ABILITIES CLASS MODEL EFFORT [PROJECT]
 #                                                     the member file the runtime of PROV renders: {runtime, path, content, sha256, inputs_hash, notes, agents}
 #                                                     With a PROJECT the runtime is the one composed with the extensions the project enabled (its
@@ -629,6 +629,8 @@ CMDJQ="$RESOLVE_HEAD"'
 
 resolve_command() { # role profile-or-empty project runtime -> as resolve_for, for a runtime that dispatches by command line: the logical base, its model and effort
   local role=$1 prof=$2 proj=$3 prov=$4 pf pd res code pat
+  # Validate enabled extensions only after choosing command mode; extensions cannot change dispatch.mode.
+  apy dmode "$prov" "$proj" >/dev/null || exit 1
   # Per-role member answers do not apply; effort stays a level, even when its native value is null.
   pf=$(pf_json "$proj" | jq -c 'del(.roles, .lead)')
   pd=$(pdesc "$prov" local) || exit 1
@@ -645,7 +647,7 @@ resolve_command() { # role profile-or-empty project runtime -> as resolve_for, f
 resolve_for() { # role profile-or-empty project-or-empty -> prints the answer, or the reason on stderr (exit 1, or 2 for a refusal)
   local role=$1 prof=$2 proj=$3 pf prov pd res code noeff=false mem mm want ov mode
   pf=$(pf_json "$proj"); prov=$(provider_for "$proj" local) || exit $?
-  mode=$(apy dmode "$prov" "$proj") || exit 1
+  mode=$(apy dmode "$prov") || exit 1
   if [ "$mode" = command ]; then resolve_command "$role" "$prof" "$proj" "$prov"; return; fi
   ! no_effort "$prov" local || noeff=true
   pd=$(pdesc "$prov" local) || exit 1

@@ -587,5 +587,15 @@ EOS
 [ "$(snap)" = "$s0" ] && ok "command-mode resolution wrote nothing: agents.json, the answers, the config copies and the checkouts are as they were" || no "command-mode resolution changed state"
 out=$($DA agent for build --project pbase 2>&1); rc=$?
 { [ $rc = 1 ] && grep -q 'qargi agent add worker --project pbase' <<<"$out"; } && ok "an in-session runtime (claude-code) is unchanged: it still needs its registered base member" || no "in-session regression: rc=$rc $out"
+# Mode selection must not add composition failures to the existing in-session path.
+mkproj sessionxp claude-code
+$DA agent add worker --roles build --project sessionxp >/dev/null 2>&1 || no "in-session extension fixture: add worker"
+before=$($DA agent for build --project sessionxp 2>&1); before_rc=$?
+before_json=$(fcj build --project sessionxp); before_json_rc=$?
+jq '.models.extensions = ["missingext"]' "$T/c/projects/sessionxp.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/sessionxp.json"
+out=$($DA agent for build --project sessionxp 2>&1); rc=$?
+after_json=$(fcj build --project sessionxp); after_json_rc=$?
+{ [ "$before_rc" = 0 ] && [ "$before_json_rc" = 0 ] && [ "$rc" = 0 ] && [ "$after_json_rc" = 0 ] && [ "${out%% *}" = worker ] && [ "$out" = "$before" ] && [ "$after_json" = "$before_json" ]; } \
+  && ok "in-session resolution keeps the same text and JSON with a missing extension; command mode refuses it" || no "in-session broken extension: rc=$rc $out (before: $before)"
 rm -rf "$T"
 exit $fail
