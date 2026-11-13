@@ -169,6 +169,53 @@ reg_mark() {
       && chmod 600 "$f.tmp" && mv "$f.tmp" "$f"
   ) 9> "$f.lock" 2>/dev/null || true
 }
+# reg_del RUN KEY: delete a display mirror under the SAME stable registry lock
+# as prepare/reg_mark/reg_edit. Unlike reg_mark, report failure so a lifecycle
+# caller can warn/reconcile. Reload LRUNS after a successful edit. Never decide
+# attempt authority from a mirror; attempts.py owns that commit.
+reg_del() {
+  local f=$DA_STATE/local-runs.jsonl rr tmp
+  rr=$(readlink -m -- "$1" 2>/dev/null) || return 1
+  [ -f "$f" ] || return 0
+  ( umask 077; flock 9 || exit 1
+    tmp=$(mktemp "$f.tmp.XXXXXX") || exit 1
+    jq -c --arg r "$rr" --arg g "$1" --arg k "$2" \
+      'if type == "object" and ((.run | type) == "string") and (.run == $r or .run == $g) then del(.[$k]) else . end' \
+      "$f" > "$tmp" && chmod 600 "$tmp" && mv -f -- "$tmp" "$f" || { rm -f -- "$tmp"; exit 1; }
+  ) 9> "$f.lock"
+}
+
+# lc_lock RUN: nonblocking lifecycle lock on fd 7. Reuses the inherited open
+# description only for the same run; no environment token is trusted. Python
+# opens every path component without following links. The handshake keeps that
+# plain inode open until bash duplicates it through /proc, avoiding a shell
+# redirection through an attacker-selected pathname (or a FIFO that can block).
+# The permanent .locks/ID.lock is NEVER deleted by lifecycle drop/cleanup.
+# Order: lifecycle -> apply pid lock -> leaf locks. Nested execs retain fd 7;
+# members and arbitrary/background children MUST close it (7>&-/close_fds=True).
+# This helper does not unlock; process exit releases the open description.
+lc_lock() {
+  local lc_path lc_read lc_write lc_pid lc_rc=0
+  local -a QARGI_LC_OPEN
+  local QARGI_LC_OPEN_PID
+  if ! python3 -I "$QARGI_TOOL/lib/attempts.py" lock-match "$1" 2>/dev/null; then
+    coproc QARGI_LC_OPEN { python3 -I "$QARGI_TOOL/lib/attempts.py" lock-open "$1" 7>&-; }
+    lc_pid=$QARGI_LC_OPEN_PID
+    lc_read=${QARGI_LC_OPEN[0]}; lc_write=${QARGI_LC_OPEN[1]}
+    if IFS= read -r lc_path <&"$lc_read" && [[ $lc_path =~ ^/proc/[0-9]+/fd/[0-9]+$ ]]; then
+      exec 7>>"$lc_path" || lc_rc=1
+    else
+      lc_rc=1
+    fi
+    # Closing input releases the opener even on an error (read(1) sees EOF).
+    exec {lc_write}>&-
+    exec {lc_read}<&-
+    wait "$lc_pid" || lc_rc=1
+    [ "$lc_rc" = 0 ] || { echo 'qargi: could not open lifecycle lock; nothing was done' >&2; return 1; }
+  fi
+  flock -n 7 || { echo 'qargi: lifecycle lock busy or unsupported; nothing was done' >&2; return 1; }
+  python3 -I "$QARGI_TOOL/lib/attempts.py" lock-check "$1"
+}
 reg_record() {
   RUN_REPO='' RUN_URL='' RUN_CRED='' RUN_ANS=''
   reg_has "$1" || { echo "qargi: $1 is not in the lead's registry ($DA_STATE/local-runs.jsonl): only a run made by qargi local prepare on this machine is trusted" >&2; return 1; }
