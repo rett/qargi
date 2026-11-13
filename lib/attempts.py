@@ -19,7 +19,7 @@ API (snapshots are bounded bytes, never filenames supplied by the member):
   gate() -> baseline name/hash, epoch and strict/after-verify comparison phase
   gate_pending(refs, epoch=, owner_pid=None) -> bounded, state-bound plan owned
                  by this process, or a bounded ancestor before shell exec
-  begin(pending, refs) -> commit dispatch just before Popen; consumes plan once
+  begin(pending, refs) -> commit dispatch before accepted output mutation; consumes plan once
   member(pid) -> record a newly spawned child/session leader (pid == pgid)
   end(outcome) -> owner records completion after its member group is gone
   reconcile() -> refuse live/unknown dispatch, mark a dead dispatch lost, retain
@@ -164,7 +164,10 @@ def sync_dir(fd, effect):
     try:
         os.fsync(fd)
     except OSError as e:
-        print("qargi: lifecycle: warning: %s committed; directory fsync failed: %s" % (effect, e), file=sys.stderr)
+        try:
+            print("qargi: lifecycle: warning: %s committed; directory fsync failed: %s" % (effect, e), file=sys.stderr)
+        except OSError:
+            pass  # The filesystem effect already committed, even if stderr is broken.
 
 
 def directory(path, create=False):

@@ -275,6 +275,37 @@ class Attempts(unittest.TestCase):
             self.assertEqual(self.record.read_bytes(), before)
             self.assertEqual(list(Path(self.store.path).glob(".write.*")), [])
 
+    def test_initial_atomic_failure_cleans_state_directory(self):
+        with self.locked():
+            with mock.patch.object(A.os, "replace", side_effect=OSError("rename failed")):
+                with self.assertRaises(OSError):
+                    self.store.init(b"refs", epoch=10, base="main", base_sha="a" * 40)
+            self.assertFalse(Path(self.store.path).exists())
+            self.prepare()
+
+    def test_reconcile_is_idempotent_when_unchanged(self):
+        with self.locked():
+            self.prepare()
+            first = self.store.reconcile()
+            before = self.record.read_bytes()
+            self.assertEqual(self.store.reconcile(), first)
+            self.assertEqual(self.record.read_bytes(), before)
+
+    def test_broken_stderr_does_not_undo_committed_replacement(self):
+        with self.locked():
+            self.prepare()
+            pending = self.store.gate_pending(b"gate", epoch=20)
+            fsync = A.os.fsync
+            def fail_directory(fd):
+                if stat.S_ISDIR(os.fstat(fd).st_mode):
+                    raise OSError("directory fsync")
+                fsync(fd)
+            err = mock.Mock()
+            err.write.side_effect = BrokenPipeError("closed")
+            with mock.patch.object(A.os, "fsync", side_effect=fail_directory), mock.patch("sys.stderr", err):
+                self.store.begin(pending, b"gate")
+            self.assertIsNotNone(self.store.show()["attempts"][0]["dispatch"])
+
     def test_saved_marker_links_wrong_numbers_and_new_schema_gaps_refuse(self):
         with self.locked():
             self.prepare()
@@ -440,6 +471,30 @@ class Attempts(unittest.TestCase):
                     self.store.verified(b"R2")
             with self.assertRaises(A.Refuse):
                 self.store.saved_copy()
+
+    def test_failed_reverification_retains_c2_then_accepts_new_generation(self):
+        with self.locked():
+            self.prepare()
+            current = self.saved(1)
+            self.write(current / "output", b"C1")
+            self.store.verified(b"R1")
+            marker = self.store.prepare_save()
+            self.write(current / "attempt", marker.encode())
+            self.write(current / "output", b"C2")
+            with mock.patch.object(self.store, "_commit", side_effect=OSError("failed")):
+                with self.assertRaises(OSError):
+                    self.store.verified(b"R2")
+            state = self.store.reconcile()
+            self.assertEqual(state["attempts"][0]["verified"]["sha256"], A.digest(b"R1"))
+            self.assertEqual((Path(self.store.path) / "a1.saved.1/output").read_bytes(), b"C1")
+            self.assertEqual((Path(self.store.path) / "a1.saved.2/output").read_bytes(), b"C2")
+            with self.assertRaises((A.Refuse, FileNotFoundError)):
+                self.store.saved_copy()
+            marker = self.store.prepare_save()
+            self.write(current / "attempt", marker.encode())
+            self.write(current / "output", b"C2")
+            self.store.verified(b"R2")
+            self.assertEqual(Path(self.store.saved_copy()).joinpath("output").read_bytes(), b"C2")
 
     def test_malformed_superseded_and_surrogate_refuse(self):
         with self.locked():
