@@ -922,7 +922,10 @@ WRAP
           if [ -z "$SAVED" ]; then
             jq -nc --rawfile refs "$CHECK_DIR/refs.after" '{refs:$refs}' | lc save-product "$RUN" >/dev/null || die "saving verification failed; re-verification required"
             echo "saved a copy of the run's output in $DA_STATE/runs/${RUN##*/} (current verified generation; repeated observation reuses it)"
-          else lc current "$RUN" >/dev/null || exit 3; fi
+          else
+            lc current "$RUN" >/dev/null || exit 3
+            jq -nc --rawfile refs "$CHECK_DIR/refs.after" '{refs:$refs}' | lc save-product "$RUN" >/dev/null || die "saving verification failed; re-verification required"
+          fi
         else
           cp "$CHECK_DIR/refs.after" "$CHECK_DIR/verified" && mv -T -- "$CHECK_DIR/verified" "$SRC/verified" || exit 3
           [ -n "$SAVED" ] || save_run "$RUN"

@@ -314,7 +314,7 @@ done
 jq -c --arg r "$CX" 'select(.run != $r)' "$T/s/local-runs.jsonl" > "$T/s/lr.new" && mv "$T/s/lr.new" "$T/s/local-runs.jsonl"
 mkdir -p "$CX/tmp"; touch "$CX/tmp/x"; printf '%s\n' "$TY" > "$CX/tmpdir"
 out=$(./bin/qargi local clean "$CX" --discard 2>&1); rc=$?
-[ "$rc" = 3 ] && grep -q "not in the lead's registry" <<<"$out" && [ -f "$TY/precious" ] && [ -d "$CX/tmp" ] && [ -d "$TX" ] \
+[ "$rc" = 3 ] && grep -q "absent from the lead registry" <<<"$out" && [ -f "$TY/precious" ] && [ -d "$CX/tmp" ] && [ -d "$TX" ] \
   && ok "with no registry line clean refuses and leaves the run and temporary directories" || no "no record: rc=$rc $out"
 rm -rf "$CX" "$TX" "$TY" "$CY"
 # the repository, its URL and the credential path come from the lead's registry, never from the run directory (repo.path, repo.url and cred.path are a member's
@@ -352,7 +352,7 @@ mv "$CF/repo.path" "$T/repo.path.gone"
 mv "$T/repo.path.gone" "$CF/repo.path"
 cp "$T/s/local-runs.jsonl" "$T/lr.keep"; jq -c --arg r "$CF" 'select(.run != $r)' "$T/lr.keep" > "$T/s/local-runs.jsonl"
 out=$(./bin/qargi local verify "$CF" 2>&1); rcv=$?; out2=$(./bin/qargi local clean "$CF" 2>&1); rcc=$?
-{ [ $rcv != 0 ] && [ $rcc != 0 ] && [ -d "$CF" ] && grep -q "not in the lead's registry" <<<"$out$out2"; } && ok "a run the registry does not name is refused by verify and clean" || no "unregistered (rc=$rcv,$rcc): $out $out2"
+{ [ $rcv = 3 ] && [ $rcc = 3 ] && [ -d "$CF" ] && grep -q "absent from the lead registry" <<<"$out$out2"; } && ok "a run the registry does not name is refused by verify and clean" || no "unregistered (rc=$rcv,$rcc): $out $out2"
 cp "$T/lr.keep" "$T/s/local-runs.jsonl"
 # a run of a repository URL: the URL and the credential path the registry records are the ones used (the files must agree with it)
 jq -c --arg r "$CF" 'if .run == $r then del(.repo) | .url = "https://nowhere.invalid/real" | .cred = "'"$T"'/secret.txt" else . end' "$T/lr.keep" > "$T/s/local-runs.jsonl"

@@ -178,6 +178,40 @@ print('fixture transcript')
         self.git("push", "-q", "origin", "develop")
         self.assertIn("ref of origin moved", self.cmd("local", "verify", self.run, ok=False))
 
+    def test_repeated_verification_advances_refs_without_replacing_generation(self):
+        for saved in (False, True):
+            with self.subTest(saved=saved):
+                self.prepare()
+                self.dispatch()
+                self.verify()
+                first = self.state_json()["attempts"][-1]["verified"]
+                marker = (self.saved / "attempt").read_bytes()
+                output = self.bytes_tree(self.saved / "out")
+                old = self.git("rev-parse", "HEAD")
+                tip = self.commit()
+                self.git("branch", "agent/new2")
+                args = ("local", "verify", "--saved", self.run.name) if saved else ("local", "verify", self.run)
+                self.cmd(*args)
+                accepted = self.state_json()["attempts"][-1]
+                self.assertEqual(accepted["verified"]["nonce"], first["nonce"])
+                self.assertNotEqual(accepted["verified"]["sha256"], first["sha256"])
+                self.assertEqual(len(accepted["history"]), 1)
+                self.assertEqual(marker, (self.saved / "attempt").read_bytes())
+                self.assertEqual(output, self.bytes_tree(self.saved / "out"))
+                self.assertEqual(accepted["saved"], [])
+                before = self.record.read_bytes()
+                self.cmd(*args)
+                self.assertEqual(before, self.record.read_bytes())
+                self.git("branch", "-D", "agent/new2")
+                self.assertIn("REFS CHANGED", self.cmd(*args, ok=False))
+                self.git("branch", "agent/new2", tip)
+                self.git("reset", "--hard", old)
+                self.assertIn("REFS CHANGED", self.cmd(*args, ok=False))
+                self.git("commit", "-q", "--allow-empty", "-m", "unrelated rewrite")
+                self.assertIn("REFS CHANGED", self.cmd(*args, ok=False))
+                self.git("reset", "--hard", tip)
+                self.git("branch", "-D", "agent/new2")
+
     def test_dry_and_preflight_preserve_bytes(self):
         self.prepare()
         self.dispatch()

@@ -58,7 +58,7 @@ grep -q "returns the report as its final message, and the lead stores it with: q
 grep -q "refs: unchanged by the run" <<<"$out" && grep -q "clean RUN --discard" <<<"$out" && ok "it still compares the refs, says so next to the message, and keeps verify required" || no "uncollected refs line: $out"
 git -C "$A" branch stray-by-run develop
 out=$(verify "$R"); rc=$?
-[ $rc = 2 ] && grep -q "branch created: refs/heads/stray-by-run" <<<"$out" && grep -q "OUT is empty: the member did not collect" <<<"$out" && ok "a run that changed a ref and did not collect gets the ref verdict (exit 2) and the empty-OUT message" || no "uncollected and refs: rc=$rc $out"
+[ $rc = 2 ] && grep -q "branch created, not an allowed branch: refs/heads/stray-by-run" <<<"$out" && grep -q "OUT is empty: the member did not collect" <<<"$out" && ok "a run that changed a ref and did not collect gets the ref verdict (exit 2) and the empty-OUT message" || no "uncollected and refs: rc=$rc $out"
 [ ! -f "$R/verified" ] && ok "and still records nothing" || no "verified written for an uncollected run with a ref change"
 git -C "$A" branch -D stray-by-run >/dev/null
 collect "$R"
@@ -314,7 +314,7 @@ grep -E "closed-run +[0-9a-z?]+ +closed +- " <<<"$out" >/dev/null && ok "local l
 out=$($DA marshal status cl 2>&1)
 grep -q "closed (applied by hand): closed-run" <<<"$out" && ! grep -q "$R  closed-run" <<<"$out" && ok "marshal status lists it as closed, not as a task" || no "marshal status: $out"
 out=$($DA review apply "$R" 2>&1); rc=$?
-[ $rc = 1 ] && grep -q "this run was closed" <<<"$out" && [ -z "$(git -C "$A" branch --list agent/closed-run)" ] && ok "review apply refuses a closed run: its patches are not applied a second time" || no "apply closed: rc=$rc $out"
+[ $rc = 3 ] && grep -q "lifecycle run is closed or cleaned" <<<"$out" && [ -z "$(git -C "$A" branch --list agent/closed-run)" ] && ok "review apply refuses a closed run: its patches are not applied a second time" || no "apply closed: rc=$rc $out"
 out=$($DA local clean "$R" 2>&1); rc=$?
 [ $rc = 0 ] && grep -q "cleaned $R" <<<"$out" && ok "clean removes a closed run without asking for an applied tip" || no "clean closed: rc=$rc $out"
 # a read-only run is not closed this way, and a discarded or cleaned run does not block finish
@@ -458,9 +458,8 @@ printf '{"status":"DONE","commits":[]}\n' > "$R/out/manifest.json"
 printf '# Findings\n\nNone.\n\n# Checked\n\nEvidence.\n\nverdict: accept\n' > "$R/out/report.md"
 verify "$R" >/dev/null
 rtmp=$(cat "$R/tmpdir"); echo temporary-evidence > "$rtmp/keep"
-mkdir -p "$T/s/scrub_ok" "$T/s/apply"
+mkdir -p "$T/s/scrub_ok"
 echo scrub-evidence > "$T/s/scrub_ok/${R##*/}"
-printf '{"evidence":true}\n' > "$T/s/apply/${R##*/}.json"
 printf 'corrupt-index-fixture\n' > "$R/clone/.git/index"
 nc=$(python3 -I -c 'import sys; sys.path.insert(0, "lib"); import local_run as L; print(L.clone_commits(sys.argv[1]))' "$R/clone")
 [ "$nc" = 0 ] && ok "unknown worktree regression has known zero commits" || no "unknown worktree setup: $nc"

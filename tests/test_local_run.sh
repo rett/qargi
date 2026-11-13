@@ -1463,12 +1463,14 @@ for cleanup_fails in (False, True, "unknown"):
             assert secret not in result.stdout + result.stderr
     # Unfinished private dispatch authority, even with a forged ended mirror,
     # refuses live or unknown groups. Inject the process probe, not RUN metadata.
-    import copy
     with attempt(run):
         store = L.A.Store(run)
-        ended = store.show()
-        unfinished = copy.deepcopy(ended)
-        unfinished["attempts"][-1]["dispatch"].update(ended=None, outcome=None)
+        previous = store.show()["attempts"][-1]["dispatch"]["member"]
+        gate = store.gate()
+        refs = open(os.path.join(store.path, gate["baseline"]), "rb").read()
+        store.begin(store.gate_pending(refs, epoch=gate["epoch"]), refs)
+        unfinished = store.show()
+        unfinished["attempts"][-1]["dispatch"]["member"] = previous
         store._commit(unfinished)
         try:
             for survivors in (True, None):
@@ -1483,7 +1485,7 @@ for cleanup_fails in (False, True, "unknown"):
                     except L.A.Refuse as e:
                         assert "process group" in str(e)
         finally:
-            store._commit(ended)
+            store.end("failed")
         L.earlier_start(run, True)  # actual group has stopped: safe to retry
     if os.path.islink(link):
         os.unlink(link)

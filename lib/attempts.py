@@ -728,6 +728,8 @@ class Store:
         need(a["save_nonce"] is not None and self._saved_marker(record) == (a["n"], a["save_nonce"]), "saved copy does not match prepared save")
         need(type(refs) is bytes and len(refs) <= MAX_REFS, "invalid verification snapshot")
         sha = digest(refs)
+        if a["verified"] is not None and a["verified"]["sha256"] == sha and a["verified"]["nonce"] == a["save_nonce"]:
+            return record
         name = "a%d.verified.%s.refs" % (a["n"], sha)
         self._refs(name, refs)
         if a["verified"] is not None and (a["verified"]["sha256"] != sha or a["verified"]["nonce"] != a["save_nonce"]):
@@ -825,6 +827,7 @@ def save_product(store, refs):
     store.require_lock()
     try:
         if current_verified(store):
+            store.verified(refs)
             return store.saved_copy()
     except FileNotFoundError:
         pass

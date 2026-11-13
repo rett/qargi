@@ -200,7 +200,7 @@ rp=$(jq -r .pid "$rec12" 2>/dev/null)
 [ -e "$T/p-flag" ] && [[ $rp =~ ^[0-9]+$ ]] && kill -0 "$rp" 2>/dev/null && [ -n "$(jq -r .ptoken "$rec12")" ] && [ -n "$wt12" ] \
   && ok "(setup) the first apply is held inside: its record says started and carries its pid and start token, its worktree exists" || no "setup conc: flag=$([ -e "$T/p-flag" ] && echo yes || echo no) pid=$rp $(cat "$rec12" 2>&1)"
 out=$($DA review apply "$R12" 2>&1); rc=$?
-[ $rc != 0 ] && grep -q "another apply of .* is running (process" <<<"$out" && [ -d "$wt12" ] && git -C "$A" rev-parse -q --verify agent/conc >/dev/null && [ "$(jq -r .status "$rec12")" = started ] && [ "$(jq -r .pid "$rec12")" = "$rp" ] \
+[ $rc = 3 ] && grep -q "lifecycle lock busy" <<<"$out" && [ -d "$wt12" ] && git -C "$A" rev-parse -q --verify agent/conc >/dev/null && [ "$(jq -r .status "$rec12")" = started ] && [ "$(jq -r .pid "$rec12")" = "$rp" ] \
   && ok "a second apply of the run is refused while the first is alive, and removes neither its worktree, its branch nor its record" || no "second apply: rc=$rc $out"
 : > "$T/p-go"; wait "$cpid"; rc1=$?
 [ $rc1 = 0 ] && [ "$(jq -r .status "$rec12")" = "done" ] && [ "$(git -C "$A" rev-list --count "$dev..agent/conc")" = 2 ] && [ -f "$R12/applied" ] && [ ! -d "$rec12.run" ] \
@@ -290,8 +290,8 @@ out=$($DA review apply "$R7" 2>&1); rc=$?
 # what apply records in the run directory (applied, the new snapshot) is not written through a link a member planted there
 R8=$(newrun linknew); ln -s "$T/victim8" "$R8/refs.before.new"
 out=$($DA review apply "$R8" 2>&1); rc=$?
-{ [ $rc = 0 ] && [ ! -e "$T/victim8" ] && grep -q "^local refs/heads/agent/linknew " "$R8/refs.before" && [ ! -L "$R8/refs.before" ] && [ -f "$R8/applied" ] && [ ! -L "$R8/applied" ]; } \
-  && ok "a refs.before.new that is a link is not written through: the snapshot is replaced by a rename from the lead's state directory" || no "link refs.before.new: rc=$rc $out"
+{ [ $rc = 0 ] && [ ! -e "$T/victim8" ] && [ -L "$R8/refs.before.new" ] && [ -f "$R8/applied" ] && [ ! -L "$R8/applied" ]; } \
+  && ok "a refs.before.new link is irrelevant to private authority and its target is untouched" || no "link refs.before.new: rc=$rc $out"
 $DA local verify "$R8" >/dev/null 2>&1 && ok "and verify still accepts the run" || no "verify after apply"
 R9=$(newrun linkapplied); ln -s "$T/victim9" "$R9/applied"
 out=$($DA review apply "$R9" 2>&1); rc=$?

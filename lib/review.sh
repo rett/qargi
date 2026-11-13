@@ -396,7 +396,10 @@ case $verb in
     else "$lib/local.sh" verify "$RUN" || die "local verify refuses $RUN: nothing was applied"; fi
     if [ "$LC_SCHEMA" = true ]; then
       SRC=$(lc saved-copy "$RUN" | jq -er .) || die "re-verification required: no accepted product"
-      python3 -I "$lib/review_check.py" "$SRC/out" || die "review check refuses the accepted saved output"
+      # This is the lead-owned copy selected by private authority above. The
+      # public/member check already guarded the live input; its marker names
+      # that run, not this private copy.
+      env -u QARGI_MEMBER_RUN python3 -I "$lib/review_check.py" "$SRC/out" || die "review check refuses the accepted saved output"
     fi
     # the repository, the slug and the base are the lead's registry's (looked up by real path, so ./run and run/ are the same run), never the run directory's own files
     reg_load
