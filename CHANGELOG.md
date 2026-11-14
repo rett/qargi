@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.14] - 2026-11-13
+
 ### Fixed
 - The agent test runs serially after the parallel pool following checkpoint2 8a7a675's lone timeout at 678s without assertion failures (137 steps passed; suite total 2554s). Its agent code and test match 408b8ae, whose lead DONE passed in 440.82s. This scheduling mitigation lengthens the serial tail without changing cases, limits, budgets or recorded durations; it establishes neither a root cause nor a performance guarantee.
 - Conformance case 15 checks prepare's original-root plain-path diagnostics and unchanged scratch/TMP parent entries; runtime coverage is the symlink real-path branch only, not runtime plain paths or prepare real paths. Redirect fixtures read TMP through the trusted registry reader and stop on unknown labels or move/link failures, with focused negative probes. These are fixture checks, not product containment or qualification evidence.
