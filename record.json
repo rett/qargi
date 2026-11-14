@@ -2,9 +2,9 @@
  "purpose": "Resolve command-runtime profiles consistently and bind prepared model and effort requests through dispatch",
  "started": "2026-11-13T20:44:32Z",
  "goal": "Resolve command-runtime profiles consistently and bind prepared model and effort requests through dispatch",
- "plan": "Checkpoint2 FAILED only agent timeout678s, other137steps pass. Source agent.sh/test_agent unchanged since lead pass440.82s. Sol medium GIJqMZ changes agent manifest mode to serial only plus provenance/changelog; preserve138steps and all limits/coverage. Intake, independent source review and runner/CI lead checks, then integrate and whole checkpoint3.",
- "note": "Both failed checkpoints archived with timings/rework. No assertion failure in agent log. Long serial tail accepted as bounded mitigation, resource-aware runner/test subprocess-cost optimization queued separately. No develop merge/push/cutover.",
- "status": "active",
+ "plan": "Agent scheduling source accepted by Opus after supplied omitted2554s log; lead DONE39.25s passed and bundle tree matches. Integrated3edb756, contains develop. Whole checkpoint3 running all138steps with unchanged cases/limits/coverage. On pass final evidence advisor closure and concrete finish plan.",
+ "note": "Checkpoint1/2 failures and review packet omission rework retained. Active receipt /tmp/qargi-command-whole-checkpoint3.receipt.json, log /tmp/qargi-command-whole-checkpoint3.log. No develop merge/push/release/cutover.",
+ "status": "verifying",
  "lead": {
   "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
   "user": "rett",
@@ -12,11 +12,11 @@
   "since": "2026-11-13T20:44:32Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-14T04:51:54Z",
+ "renewed_at": "2026-11-14T04:52:39Z",
  "finished_at": null,
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 36,
- "updated_at": "2026-11-14T04:51:54Z",
+ "rev": 37,
+ "updated_at": "2026-11-14T04:52:39Z",
  "feature": "command-profiles",
  "project": "qargi"
 }
