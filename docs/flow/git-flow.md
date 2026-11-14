@@ -278,10 +278,12 @@ only marks display metadata. Contains edges are structural, features and archive
 remain unobserved, and reported state grants no acceptance or execution authority.
 The graph branch creates no state or audit records and changes no data. The
 public command and direct `backlog.sh graph` calls remain lead-only under the
-current guard, which allows members only `backlog list`. The pure Python reader
-has no write capability. The graph may observe an absolute configured backlog
-after its checkout has gone, while editing verbs still require a local
-repository. Missing, null, empty-string or false section values are unset.
+current guard, which allows members `backlog list` and direct use of the pure
+Python reader `lib/backlog_graph.py`. That reader has no write capability. The
+graph may observe an absolute configured backlog after its checkout has gone,
+while `backlog list`, `add` and `done` require a repository marker at `repo.path`.
+Missing, null, empty-string or false section values are unset. The reference
+also specifies the bounded differences from shell path expansion.
 
 ## The worktree root
 
