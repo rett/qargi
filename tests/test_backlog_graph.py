@@ -322,6 +322,27 @@ class Graph(unittest.TestCase):
         self.backlog.write_bytes(b'\xff')
         self.assertEqual(G.report_for("check", str(self.file), str(self.backlog))["findings"][0]["code"], "source-unreadable")
 
+    def test_malformed_graph_paths(self):
+        for name in ("nul\0.json", "surrogate\ud800.json"):
+            with self.subTest(name=name):
+                path = str(self.root / name)
+                r = G.report_for("check", path, str(self.backlog))
+                self.assertFalse(r["valid"])
+                self.assertEqual(r["findings"][0]["code"], "input-unreadable")
+                self.assertEqual(r["inputs"]["graph"], dict(path=path, digest=None))
+                self.assertEqual(r["inputs"]["backlog"], dict(path=str(self.backlog), digest=None))
+                self.assertEqual(json.loads(json.dumps(r)), r)
+
+    def test_oserror_diagnostics_preserved(self):
+        for path in (self.root / "missing.json", self.root):
+            with self.subTest(path=path):
+                with self.assertRaises(OSError) as caught:
+                    path.read_bytes()
+                r = G.report_for("check", str(path), str(self.backlog))
+                self.assertEqual(r["findings"], [dict(
+                    code="input-unreadable", severity="error",
+                    message="cannot read %s: %s" % (path, caught.exception.strerror))])
+
 
 class Public(unittest.TestCase):
     def setUp(self):
@@ -395,6 +416,36 @@ class Public(unittest.TestCase):
         self.assertEqual(r.returncode, 1, r.stderr)
         self.assertFalse(json.loads(r.stdout)["valid"])
         self.assertEqual(self.snapshot(), before)
+
+    def test_malformed_configured_backlog_paths(self):
+        value = json.loads(self.config.read_text())
+        for name in ("nul\0.md", "surrogate\ud800.md"):
+            with self.subTest(name=name):
+                # JSON escapes carry paths that cannot be passed in process argv.
+                value["backlog"]["file"] = name
+                self.config.write_text(json.dumps(value), encoding="utf-8")
+                before = self.snapshot()
+                for command in ("check", "show", "why"):
+                    with self.subTest(command=command):
+                        tail = ["--node", "backlog:aa"] if command == "why" else []
+                        r = self.run_cli(command, "--graph", str(self.file),
+                                         "--project", "acme", *tail, "--json")
+                        self.assertEqual(r.returncode, 1, r.stderr)
+                        self.assertEqual(r.stderr, "")
+                        obj = json.loads(r.stdout)
+                        self.assertEqual(obj["format"], "backlog-graph-report")
+                        self.assertEqual(obj["version"], 1)
+                        self.assertNotIn("output", obj)
+                        self.assertFalse(obj["valid"])
+                        self.assertEqual(obj["findings"][0]["code"], "input-unreadable")
+                        self.assertEqual(obj["inputs"]["graph"], dict(
+                            path=str(self.file), digest=G.digest(self.file.read_bytes())))
+                        self.assertEqual(obj["inputs"]["backlog"], dict(
+                            path=str(self.repo / name), digest=None))
+                        for key in ("nodes", "relations", "evidence"):
+                            self.assertEqual(obj[key], [])
+                self.assertEqual(self.snapshot(), before)
+                self.assertFalse(self.state.exists())
 
     def test_relative_and_home_paths_and_missing_backlog_configuration(self):
         value = json.loads(self.config.read_text())

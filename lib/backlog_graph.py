@@ -103,8 +103,10 @@ def read_input(report, kind, path):
     require(path is not None, "configuration", "backlog.file is not configured")
     try:
         raw = Path(path).read_bytes()
-    except OSError as e:
-        raise Invalid("input-unreadable", "cannot read %s: %s" % (path, e.strerror)) from None
+    except (OSError, ValueError) as e:
+        # NUL paths and unencodable names (UnicodeEncodeError) raise ValueError.
+        reason = e.strerror if isinstance(e, OSError) else str(e)
+        raise Invalid("input-unreadable", "cannot read %s: %s" % (path, reason)) from None
     report["inputs"][kind]["digest"] = digest(raw)
     return raw
 
