@@ -33,6 +33,7 @@ full | par | 300 | 17 | bash tests/test_tier_packet.sh
 fast | par | 300 | 3 | python3 tests/test_help.py | lib/commands.py lib/help.py man/qargi.1 completions/* skills/qargi-verify/SKILL.md
 full | par | 360 | 130 | python3 tests/test_startup.py | bin/qargi lib/help.py lib/commands.py lib/cloud.py lib/paths.py
 full | par | 300 | 46 | python3 tests/test_startup_modules.py | bin/qargi lib/lib.sh lib/provider.py lib/marshal_store.py lib/help.py lib/gates.py lib/lead_usage.py
+fast | par | 300 | 1 | python3 tests/test_site.py Converter.test_the_changelog_converts_with_the_literal_option | CHANGELOG.md
 full | par | 300 | 140 | python3 tests/test_site.py | lib/site.py lib/site_md.py lib/site/*
 full | par | 300 | 42 | python3 tests/test_membackend.py | lib/membackend.py
 full | par | 300 | 31 | python3 tests/test_transfer.py | lib/transfer.py

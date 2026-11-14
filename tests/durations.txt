@@ -36,6 +36,7 @@
 32 python3 tests/test_supervise.py
 26 python3 tests/test_env.py
 127 python3 tests/test_site.py
+1 python3 tests/test_site.py Converter.test_the_changelog_converts_with_the_literal_option
 31 bash tests/test_session.sh
 28 python3 tests/test_transfer.py
 30 bash tests/test_models.sh

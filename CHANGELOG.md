@@ -10,6 +10,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `qargi backlog graph check|show|why --graph FILE` inspects a closed native v1 graph against the configured open backlog. It validates declared relationships, pins reported evidence to parser source revisions, propagates unknown prerequisites conservatively, and explains proposed needs and stale evidence with deterministic reports. Contains edges describe structure. Archives and feature lifecycle have unknown observation state. Evaluation and execution follow existing governance. The public contract in `docs/reference/backlog-graph.md` documents manual editing, the current lead-only guard boundary and compatibility limits.
 - Backlog graph reports malformed input paths, including configured `backlog.file` values containing NUL or unencodable Unicode, as `input-unreadable` findings with `valid:false` JSON and exit 1 instead of a traceback. Unread inputs retain null digests, and ordinary filesystem errors retain their diagnostics. Text reports escape characters that the output encoding cannot represent.
 - Graph path resolution follows existing backlog leading-tilde prefix rules so both readers inspect the configured source.
+- Changelog changes select a fast targeted gate for the strict literal converter.
 
 ## [0.2.14] - 2026-11-13
 
