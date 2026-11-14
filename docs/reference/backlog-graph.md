@@ -16,8 +16,10 @@ qargi backlog graph why --graph graph.json --node backlog:some-id [--project P] 
 `--graph FILE` is required. Its path is relative to the caller's directory unless
 absolute. `why` requires `--node REF`, a node declared in that graph. The other
 actions reject `--node`. Project inference and `QARGI_PROJECT` work as for other
-backlog commands. The project's `backlog.file` uses the existing configuration
-rules for absolute paths, a leading `~/`, or a path relative to `repo.path`.
+backlog commands. The project's `backlog.file` follows the existing backlog
+prefix rules. A leading `~` is replaced literally by the operator's home path,
+including forms such as `~name`. Remaining relative paths resolve against
+`repo.path`. Absolute paths are used directly.
 
 `check` validates and reports findings. `show` also displays node projections.
 `why` explains a selected node. JSON returns the native report below directly,
