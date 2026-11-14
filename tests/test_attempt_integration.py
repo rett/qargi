@@ -707,12 +707,17 @@ print('fixture transcript')
         (self.run / "wait-member").touch()
         (self.run / "spawn-child").touch()
         original = subprocess.Popen.wait
+        signalled = []
         def interrupt(proc, *args, **kwargs):
-            if kwargs.get("timeout") and not (self.run / "member-ready").exists():
+            # Profile resolution also waits for subprocesses before run_it. Target
+            # only this runtime child, once, even if it is ready before wait starts.
+            if proc.args[:2] == [str(self.fake), "exec"] and kwargs.get("timeout") and not signalled:
                 deadline = time.monotonic() + 10
                 while not (self.run / "member-ready").exists() and time.monotonic() < deadline:
                     time.sleep(.01)
                 self.assertTrue((self.run / "member-ready").exists())
+                self.assertEqual(int((self.run / "member-ready").read_text()), proc.pid)
+                signalled.append(proc.pid)
                 os.kill(os.getpid(), signal.SIGTERM)
             return original(proc, *args, **kwargs)
         with mock.patch.object(R, "main", R.main), mock.patch.object(R, "run_it", R.run_it), \
@@ -721,6 +726,7 @@ print('fixture transcript')
             rc = R.main([str(self.run), "--project", "demo", "--runtime", "codex", "--class", "write"])
         self.assertEqual(rc, 128 + signal.SIGTERM)
         dispatch = json.loads((self.run / "dispatch.json").read_text())
+        self.assertEqual(signalled, [dispatch["member"]])
         self.assertEqual(dispatch["outcome"], "interrupted")
         self.assertFalse(R.group_left(dispatch["member"]))
         self.assertEqual(self.state_json()["attempts"][-1]["dispatch"]["outcome"], "cancelled")
