@@ -2,9 +2,9 @@
  "purpose": "Resolve command-runtime profiles consistently and bind prepared model and effort requests through dispatch",
  "started": "2026-11-13T20:44:32Z",
  "goal": "Resolve command-runtime profiles consistently and bind prepared model and effort requests through dispatch",
- "plan": "All implementation slices returned and applied through408b8ae. Six bundle tree proofs pass. Final polish lead checks active; Astra Go0OWT reviews final source/integration. On accept/pass, verify/close advisor, merge descendant stack into feature, sync, full feature checkpoint, final evidence closure, prepare merge plan.",
- "note": "Ataniq FD512 oracle queued separately. Repeated monolith heuristic rework preserved and prioritized. No develop merge/push authorized by relay. Ledger current.",
- "status": "active",
+ "plan": "Reviewed stack merged into feature at e77c682, synchronized with develop bf002a2; full feature checkpoint1 running. After pass, evidence closure advisor and concrete finish plan. Prepare merge boundary per latest owner instruction.",
+ "note": "Source Astra accept at identical tree408b8ae; all targeted lead gates passed. Whole log /tmp/qargi-command-whole-checkpoint1.log; receipt /tmp/qargi-command-whole-checkpoint1.receipt.json. No develop merge or push yet.",
+ "status": "verifying",
  "lead": {
   "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
   "user": "rett",
@@ -12,11 +12,11 @@
   "since": "2026-11-13T20:44:32Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-14T00:50:02Z",
+ "renewed_at": "2026-11-14T00:51:07Z",
  "finished_at": null,
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 11,
- "updated_at": "2026-11-14T00:50:02Z",
+ "rev": 12,
+ "updated_at": "2026-11-14T00:51:07Z",
  "feature": "command-profiles",
  "project": "qargi"
 }
