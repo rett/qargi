@@ -16,19 +16,30 @@ qargi backlog graph why --graph graph.json --node backlog:some-id [--project P] 
 `--graph FILE` is required. Its path is relative to the caller's directory unless
 absolute. `why` requires `--node REF`, a node declared in that graph. The other
 actions reject `--node`. Project inference and `QARGI_PROJECT` work as for other
-backlog commands. Malformed registry records and non-string repository paths
-are skipped during inference. A valid explicit project or `QARGI_PROJECT`
+backlog commands. Malformed registry records, including JSON nesting beyond the
+decoder's recursion limit, and non-string repository paths are skipped during
+inference. A valid explicit project or `QARGI_PROJECT`
 still wins, and valid repository matches use the longest containing path.
-The project's `repo.path` and `backlog.file` follow the existing backlog prefix
-rules. A leading `~` is replaced literally by the raw `HOME` value, including
+The graph replaces a leading `~` in `repo.path` and `backlog.file` literally
+with the raw `HOME` value, including
 forms such as `~name`, trailing slashes and an empty `HOME`. Relative backlog
 paths are joined to `repo.path`. Remaining relative paths, including `--graph`,
-are prefixed with the caller's directory. Paths retain symlink and `..` segments
-so the kernel resolves them without lexical normalization.
+are prefixed with the caller's directory. Paths retain symlink, `..`, `/./` and
+terminal slash syntax so the kernel selects the file. A slash after a regular
+file fails as unreadable rather than reading that file.
+
+These are bounded prefix rules, not exact shell equivalence. With Bash's
+`patsub_replacement` enabled, `backlog list` may replace `&` in `HOME` with the
+matched tilde; the graph and shared project inference use raw literal `HOME`.
+Shell command substitution of jq output also removes embedded NUL and trailing
+newlines. The graph preserves those configured characters: NUL is unreadable,
+and a trailing-newline filename is read literally or fails as `input-unreadable`
+if absent. It does not silently select the shell's stripped filename.
 
 Missing, null, empty-string and false `backlog.section` values mean no section
-filter. Other values must be nonempty heading strings. Unlike editing verbs,
-this reader can observe an absolute configured backlog after the checkout has
+filter. Other values must be nonempty heading strings. Unlike `backlog list`,
+`add` and `done`, which require a repository marker at `repo.path`, this reader
+can observe an absolute configured backlog after the checkout has
 gone. It requires a configured `repo.path` string but does not require a local
 repository or create one. This narrow observation boundary grants no editing
 authority.
@@ -41,21 +52,31 @@ Exit 1 means invalid or unreadable data, missing configuration, or an undeclared
 `why` node. Those failures also produce `valid:false` reports with `--json`.
 Usage errors exit 2 and print usage on stderr.
 
+An unavailable current directory prevents inference of a containing project.
+With an explicit or environment project, absolute graph and backlog paths remain
+usable with an accessible configuration. A relative graph path that needs the
+missing directory produces an `input-unreadable` report. The public CLI's Bash
+entrypoints can also print their own getcwd startup warnings in this situation;
+the pure Python reader has no shell startup. This covers the graph and shared
+inference boundaries, not every other command's cwd handling.
+
 The graph branch sets `DA_NOSETUP` before shared initialization. It creates no
 configuration or state directories, registry files, audit records, archives or
 graph data. It uses no network and invokes no provider or forge. Existing
 `backlog list`, `add` and `done` behavior is unchanged. Under the current guard,
 **the public graph command remains lead-only**. Members may run `backlog list`,
 and direct `backlog.sh graph` calls receive the same guard denial. The pure
-`lib/backlog_graph.py` reader is read-only and has no write capability. Public
+`lib/backlog_graph.py` reader is permitted directly for members and has no write
+capability. Public
 CLI compatibility and guard policy do not grant access to future graph writes.
 
 The input syntax below is supported independently of source observation. A valid
 feature reference does not establish that a feature exists. Host support follows
 qargi's Linux, bash and GNU tool requirements. The implementation uses only
-Python 3.11+ standard-library APIs and syntax. Introduction checks ran on Linux
-with Python 3.14 and included a Python 3.11 grammar check. They do not certify a
-Python 3.11 runtime or other operating systems.
+Python 3.11+ standard-library APIs and syntax. Follow-up checks ran on Linux with
+Python 3.14.8 and re-ran Python 3.11 AST grammar checks on the changed Python
+source and tests. Grammar checks do not certify a Python 3.11 runtime, its date
+parser behavior, or other operating systems.
 
 ## Closed input schema
 
@@ -89,6 +110,12 @@ Every object is closed. Unknown fields and duplicate JSON keys at any depth are
 errors. Types are strict. Strings are strings, arrays are arrays, and `version`
 is integer `1`, excluding booleans and floating-point `1.0`. Non-JSON numeric
 constants are invalid. There is no accepted evidence input or runnable output.
+
+Free-text `by`, `basis` and `ref` strings must contain only Unicode scalar
+values. Escaped lone surrogates fail with a `provenance` finding; valid JSON
+surrogate pairs decode to a scalar and are allowed, as is printable Unicode.
+This is a constraint of the new, unreleased input contract, not a general JSON
+security guarantee.
 
 | Field | Contract |
 |---|---|

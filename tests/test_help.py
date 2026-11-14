@@ -539,6 +539,27 @@ class Rich(Env):
 
 
 class Infer(Env):
+    def test_deep_registry_is_skipped_inference_and_public_preamble(self):
+        os.chdir(self.repo)
+        target = os.path.join(self.t, "c", "projects", "deep.json")
+        with open(target, "w") as stream:
+            stream.write("[" * 100000)
+        self.assertEqual(H.infer_project(), "alpha")
+        result = subprocess.run([BIN, "project", "show"], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertIn("alpha", result.stdout)
+
+    def test_removed_cwd_inference_preserves_environment_precedence(self):
+        gone = os.path.join(self.t, "removed")
+        os.mkdir(gone)
+        os.chdir(gone)
+        os.rmdir(gone)
+        self.assertIsNone(H.infer_project())
+        self.assertEqual(H.resolve(["lead", "status", "beta"]), ["lead", "status", "beta"])
+        os.environ["QARGI_PROJECT"] = "alpha"
+        self.assertEqual(H.infer_project(), "alpha")
+
     def test_malformed_registry_shapes_and_path_types_are_skipped(self):
         os.chdir(os.path.join(self.repo, "sub"))
         target = os.path.join(self.t, "c", "projects", "broken.json")

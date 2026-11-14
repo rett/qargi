@@ -48,6 +48,12 @@ def words(value):
     return type(value) is str and bool(value.strip())
 
 
+def scalar_words(value):
+    require(words(value), "provenance", "by/basis/ref must have words")
+    require(all(not 0xD800 <= ord(c) <= 0xDFFF for c in value),
+            "provenance", "by/basis/ref must contain only Unicode scalar values")
+
+
 def at(value):
     require(type(value) is str, "provenance", "at must be an ISO8601 date or timestamp")
     try:
@@ -103,7 +109,8 @@ def read_input(report, kind, path):
     report["inputs"][kind]["path"] = str(path) if path is not None else None
     require(path is not None, "configuration", "backlog.file is not configured")
     try:
-        raw = Path(path).read_bytes()
+        with open(path, "rb") as stream:
+            raw = stream.read()
     except (OSError, ValueError) as e:
         # NUL paths and unencodable names (UnicodeEncodeError) raise ValueError.
         reason = e.strerror if isinstance(e, OSError) else str(e)
@@ -143,7 +150,8 @@ def validate(graph):
         require(semantic not in semantics, "duplicate-relation", "duplicate relation semantics: " + rel["id"])
         semantics.add(semantic)
         fields(rel["provenance"], "by at basis")
-        require(all(words(rel["provenance"][k]) for k in ("by", "basis")), "provenance", "by/basis must have words")
+        for key in ("by", "basis"):
+            scalar_words(rel["provenance"][key])
         at(rel["provenance"]["at"])
     for ev in graph["evidence"]:
         fields(ev, "id node level for_digest ref by at")
@@ -152,7 +160,8 @@ def validate(graph):
         require(ev["node"].startswith("backlog:"), "feature-evidence", "feature evidence is unsupported")
         require(type(ev["level"]) is str and ev["level"] == "reported", "schema", "only reported evidence is supported")
         require(type(ev["for_digest"]) is str and DIGEST.fullmatch(ev["for_digest"]), "schema", "for_digest must be sha256: and 64 lowercase hex digits")
-        require(words(ev["ref"]) and words(ev["by"]), "provenance", "evidence ref/by must have words")
+        for key in ("ref", "by"):
+            scalar_words(ev[key])
         at(ev["at"])
     return sorted(nodes), sorted(graph["relations"], key=lambda r: r["id"]), sorted(graph["evidence"], key=lambda e: e["id"])
 
@@ -255,7 +264,7 @@ def structure(report, nodes, relations):
 
 
 def literal_home(path):
-    """Match gitflow.sh's literal replacement of any leading tilde."""
+    """Use a raw HOME prefix; Bash patsub_replacement can differ for '&'."""
     if path.startswith("~"):
         return os.environ.get("HOME", "") + path[1:]
     return path
@@ -265,7 +274,10 @@ def absolute_path(path):
     """Prefix cwd without changing the kernel's symlink/.. traversal."""
     if os.path.isabs(path):
         return path
-    return os.getcwd() + "/" + path
+    try:
+        return os.getcwd() + "/" + path
+    except OSError as e:
+        raise Invalid("input-unreadable", "cannot resolve path %s: %s" % (path, e.strerror)) from None
 
 
 def project_source(project):
@@ -278,7 +290,7 @@ def project_source(project):
         repo = config.get("repo", {}).get("path")
         backlog = config.get("backlog") or {}
         path, section = backlog.get("file"), backlog.get("section")
-    except (OSError, ValueError, AttributeError, TypeError) as e:
+    except (OSError, ValueError, AttributeError, TypeError, RecursionError) as e:
         raise Invalid("configuration", "cannot read project backlog configuration: " + str(e)) from None
     require(words(repo), "configuration", "repo.path is not configured")
     require(path is None or words(path), "configuration", "backlog.file must be a path")
@@ -448,8 +460,9 @@ def main(argv):
     args = parser.parse_args(argv)
     if (args.command == "why") != (args.node is not None):
         parser.error("--node REF is required for why and belongs only to why")
-    graph_path = absolute_path(args.graph)
+    graph_path = args.graph
     try:
+        graph_path = absolute_path(graph_path)
         backlog_path, section = project_source(args.project)
     except Invalid as e:
         report = dict(format="backlog-graph-report", version=1, command=args.command, valid=False,
