@@ -12,11 +12,11 @@
   "since": "2026-11-12T10:14:38Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-14T11:52:14Z",
+ "renewed_at": "2026-11-14T11:57:19Z",
  "finished_at": null,
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 25,
- "updated_at": "2026-11-14T11:52:14Z",
+ "rev": 26,
+ "updated_at": "2026-11-14T11:57:19Z",
  "feature": "campaign-kernel",
  "project": "qargi"
 }
