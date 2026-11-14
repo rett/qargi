@@ -116,8 +116,7 @@ constants are invalid. There is no accepted evidence input or runnable output.
 Free-text `by`, `basis` and `ref` strings must contain only Unicode scalar
 values. Escaped lone surrogates fail with a `provenance` finding; valid JSON
 surrogate pairs decode to a scalar and are allowed, as is printable Unicode.
-This is a constraint of the new, unreleased input contract, not a general JSON
-security guarantee.
+This is a field-level constraint of the v1 input contract.
 
 | Field | Contract |
 |---|---|
@@ -230,6 +229,11 @@ The full relation records identify which path steps are proposed. Contains
 edges are not traversed. This bounded explanation does not enumerate every
 possible path. Superseded historical records remain diagnostics even when a
 newer current record permits effective reported state.
+
+`why` stores a complete path for every explained node. A chain of `n` nodes
+with a reason at each node produces `n(n+1)/2` node entries across those paths.
+Path construction and output can therefore grow quadratically. Iterative
+traversal visits each reachable node once.
 
 Each node reason and each `why` reason has one of these complete shapes.
 
