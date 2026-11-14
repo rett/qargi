@@ -1,5 +1,7 @@
 # Reference
 
+- [Backlog graph v1](backlog-graph.md): the native read-only schema, reports, source revision evidence and planning limits.
+
 ## Help, manual page and completion
 
 - `qargi help` lists the commands by task; `qargi help COMMAND` shows its verbs and `qargi help COMMAND VERB` the arguments and options of one. Every command also takes `--help`. `qargi help concepts`, `roles`, `approvals`, `guard`, `naming`, `memory-stores`, `push`, `environment`, `files` and `dev` explain the ideas.

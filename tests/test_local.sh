@@ -653,23 +653,61 @@ out=$(./bin/qargi local list --scratch "$T/rb" 2>&1); rcl=$?
 [ $rcl = 0 ] && grep -q "$RB4  directory gone" <<<"$out" && ok "a scratch directory that is gone itself is still listed from the registry" || no "list of a gone scratch (rc=$rcl): $out"
 ./bin/qargi local clean "$RB4" --discard >/dev/null 2>&1
 
-# clean --orphans: the qargi-run.* directories of the temporary parent that no registry names. A fake parent (QARGI_RUN_TMP), never /dev/shm: the real one is only
-# listed before and after, to show it was not touched.
-# hermetic: allow tmp (the real parent of the run directories: only listed, never written or removed)
-real_runs() { ls -d /dev/shm/qargi-run.* 2>/dev/null | sort | sha256sum; }
-SHM0=$(real_runs)
+# clean --orphans: only owned fixtures, with $T as the default parent and $OS as the override.
+# An old default-parent sentinel would be eligible if the override were ignored. Observe default
+# entries only during override actions: earlier/later tests legitimately prepare and clean in $T.
 OS=$T/shm-o; mkdir -p "$OS" "$T/os-scr"
+DS=$T/qargi-run.OWNDEF; ADJ=$HERMETIC/adjacent
+mkdir -p "$DS" "$ADJ/qargi-run.KEEPER"
+printf 'default parent must survive\n' > "$DS/keep"
+printf 'adjacent parent must survive\n' > "$ADJ/qargi-run.KEEPER/keep"
+chmod 700 "$DS" "$ADJ/qargi-run.KEEPER"; chmod 600 "$DS/keep" "$ADJ/qargi-run.KEEPER/keep"
+touch -d '10 days ago' "$DS/keep" "$DS" "$ADJ/qargi-run.KEEPER/keep" "$ADJ/qargi-run.KEEPER"
+owned_snapshot() {
+  find "$@" -printf '%p %y %m %T@ %l\n' | sort
+  find "$@" -type f -print0 | sort -z | xargs -0 -r sha256sum
+}
+default_runs() {
+  find "$T" -maxdepth 1 -name 'qargi-run.??????' -printf '%f %y %m %T@ %l\n' | sort
+  owned_snapshot "$DS"
+}
+DEFAULT0=$(default_runs); ADJ0=$(owned_snapshot "$ADJ/qargi-run.KEEPER")
 mkorph() { # NAME DAYS_OLD -> $OS/qargi-run.NAME, with a file in it, both that old
   mkdir -p "$OS/qargi-run.$1" && echo x > "$OS/qargi-run.$1/f" && touch -d "$2 days ago" "$OS/qargi-run.$1/f" "$OS/qargi-run.$1"
 }
 OL=$(QARGI_RUN_TMP=$OS ./bin/qargi local prepare --repo "$T/r6" --base main --slug orlive --scratch "$T/os-scr" | sed -n '1,/^$/s/^RUN=//p')
-OLT=$(cat "$OL/tmpdir"); touch -d "10 days ago" "$OLT"                       # a live run's directory, old
+OLT=$(cat "$OL/tmpdir")
+case $OLT in "$OS"/qargi-run.??????) ;; *) no "prepare ignored the private parent: $OLT"; exit 1;; esac
+touch -d "10 days ago" "$OLT"                                             # a live run's directory, old
 OG=$(QARGI_RUN_TMP=$OS ./bin/qargi local prepare --repo "$T/r6" --base main --slug orgone --scratch "$T/os-scr" | sed -n '1,/^$/s/^RUN=//p')
-OGT=$(cat "$OG/tmpdir"); rm -rf "$OG"; touch -d "10 days ago" "$OGT"          # its run directory is gone, the registry still names the temporary one
+OGT=$(cat "$OG/tmpdir")
+case $OGT in "$OS"/qargi-run.??????) ;; *) no "prepare ignored the private parent: $OGT"; exit 1;; esac
+rm -rf "$OG"; touch -d "10 days ago" "$OGT"                                # its run directory is gone, the registry still names the temporary one
+[ "$DEFAULT0" = "$(default_runs)" ] || { no "override prepare changed the default parent"; exit 1; }
 mkorph AAAAAA 5; mkorph BBBBBB 3; mkorph NEWNEW 0; mkorph FRESHF 5; echo y > "$OS/qargi-run.FRESHF/g"; touch -d "5 days ago" "$OS/qargi-run.FRESHF"   # an old directory with a file that is new
 mkdir -p "$T/victim" && echo v > "$T/victim/keep"; ln -s "$T/victim" "$OS/qargi-run.LINKED"; echo f > "$OS/qargi-run.AFILES"
-orph() { QARGI_RUN_TMP=$OS ./bin/qargi local clean --orphans "$@" 2>&1; }
+OUTSIDE0=$(owned_snapshot "$T/victim")
+orph() {
+  local rc
+  [ "$DEFAULT0" = "$(default_runs)" ] || { no "default parent changed before override clean"; return 1; }
+  QARGI_RUN_TMP=$OS ./bin/qargi local clean --orphans "$@" 2>&1; rc=$?
+  [ "$DEFAULT0" = "$(default_runs)" ] || { no "override clean changed the default parent"; return 1; }
+  return "$rc"
+}
+# Refuse an unexpected plan immediately, before even a wrong/stale token can reach apply.
+# Require the exact target and exact owned deletion set, excluding state-directory orphans too.
+require_orphan_plan() { # OUTPUT OWNED_SUFFIX...
+  local plan=$1 expected actual count; shift
+  count=$#
+  expected=$(printf "$OS/qargi-run.%s\n" "$@" | sort)
+  actual=$(sed -n 's/^orphan \(.*\) ([0-9]*d old, .*$/\1/p' <<<"$plan" | sort)
+  { [ "$actual" = "$expected" ] && [ "$(grep -c '^orphan ' <<<"$plan")" = "$count" ] \
+    && grep -Fxq "plan: remove $count orphaned director(ies) under $OS (the ones marked orphan above); nothing changed" <<<"$plan" \
+    && grep -Eq '^plan token: [0-9a-f]+ ' <<<"$plan"; } \
+    || { no "unsafe or unexpected orphan plan; refusing cleanup: $plan"; exit 1; }
+}
 out=$(orph); rcs=$?
+require_orphan_plan "$out" AAAAAA BBBBBB
 tok=$(sed -n 's/^plan token: \([0-9a-f]*\) .*/\1/p' <<<"$out")
 { [ $rcs = 0 ] && [ -n "$tok" ] && grep -q "^orphan $OS/qargi-run.AAAAAA (5d old, named by no registry)" <<<"$out" && grep -q "^orphan $OS/qargi-run.BBBBBB (3d old" <<<"$out" \
   && grep -q "^kept $OLT (10d old): named by the registry (its run directory $OL exists)" <<<"$out" && grep -q "^kept $OGT (10d old): named by the registry (the run directory $OG is gone)" <<<"$out" \
@@ -687,14 +725,25 @@ out=$(QARGI_NESTED=1 orph --approved "go"); rcs=$?
 out=$(QARGI_NESTED=1 orph --plan 000000000000 --approved "go"); rcs=$?
 { [ $rcs != 0 ] && [ -d "$OS/qargi-run.AAAAAA" ] && [ -d "$OS/qargi-run.BBBBBB" ]; } && ok "and a wrong token removes nothing under QARGI_NESTED either" || no "nested, wrong token (rc=$rcs): $out"
 out=$(orph --days 4); tok4=$(sed -n 's/^plan token: \([0-9a-f]*\) .*/\1/p' <<<"$out")
+require_orphan_plan "$out" AAAAAA
 { grep -q "^orphan $OS/qargi-run.AAAAAA" <<<"$out" && ! grep -q "^orphan $OS/qargi-run.BBBBBB" <<<"$out" && grep -q "^kept $OS/qargi-run.BBBBBB (3d old): named by no registry, but" <<<"$out" && [ "$tok4" != "$tok" ]; } \
   && ok "--days 4 lists only what is older than 4 days, with its own token" || no "days 4: $out"
 out=$(orph --days 4 --plan "$tok" --approved "go"); rcs=$?
 { [ $rcs != 0 ] && [ -d "$OS/qargi-run.AAAAAA" ]; } && ok "the token of another plan is refused" || no "token of another plan (rc=$rcs): $out"
 mkorph CCCCCC 9                                                                # a new orphan after the plan: the plan changed
+current=$(orph); require_orphan_plan "$current" AAAAAA BBBBBB CCCCCC
 out=$(orph --plan "$tok" --approved "go"); rcs=$?
 { [ $rcs != 0 ] && grep -q "the plan changed" <<<"$out" && [ -d "$OS/qargi-run.AAAAAA" ] && [ -d "$OS/qargi-run.CCCCCC" ]; } && ok "a directory that appeared since the plan changes it: nothing is removed" || no "plan changed (rc=$rcs): $out"
 out=$(orph); tok=$(sed -n 's/^plan token: \([0-9a-f]*\) .*/\1/p' <<<"$out")
+require_orphan_plan "$out" AAAAAA BBBBBB CCCCCC
+# Controlled adjacent activity between plan and apply must neither invalidate the token nor
+# change the default-parent observation. No shared host directory is observed or modified.
+mkdir "$ADJ/qargi-run.NOISE1"; printf 'unrelated work\n' > "$ADJ/qargi-run.NOISE1/f"
+adjacent_plan=$(orph); adjacent_tok=$(sed -n 's/^plan token: \([0-9a-f]*\) .*/\1/p' <<<"$adjacent_plan")
+require_orphan_plan "$adjacent_plan" AAAAAA BBBBBB CCCCCC
+{ [ "$adjacent_tok" = "$tok" ] && [ "$DEFAULT0" = "$(default_runs)" ]; } \
+  && ok "an unrelated directory appearing in a controlled sibling leaves the plan and default parent unchanged" || { no "adjacent activity changed the plan"; exit 1; }
+rm -rf "$ADJ/qargi-run.NOISE1"
 out=$(orph --plan "$tok" --approved "the owner said go"); rcs=$?
 { [ $rcs = 0 ] && grep -q "^removed $OS/qargi-run.AAAAAA\$" <<<"$out" && grep -q "^removed $OS/qargi-run.BBBBBB\$" <<<"$out" && grep -q "^removed $OS/qargi-run.CCCCCC\$" <<<"$out" \
   && grep -q "removed 3 orphaned director" <<<"$out" && [ ! -e "$OS/qargi-run.AAAAAA" ] && [ ! -e "$OS/qargi-run.BBBBBB" ] && [ ! -e "$OS/qargi-run.CCCCCC" ]; } \
@@ -708,6 +757,7 @@ for bad in "--orphans --scratch $T/os-scr" "--orphans $OL" "--orphans --discard"
   out=$(QARGI_RUN_TMP=$OS ./bin/qargi local clean $bad 2>&1); rcs=$?
   [ $rcs = 2 ] && [ -d "$OLT" ] && ok "clean $bad is a usage error" || no "clean $bad (rc=$rcs): $out"
 done
-[ "$SHM0" = "$(real_runs)" ] && ok "the tests listed and removed only in the fake parent: the real parent is as it was" || no "the real parent changed"
+{ [ "$DEFAULT0" = "$(default_runs)" ] && [ "$ADJ0" = "$(owned_snapshot "$ADJ/qargi-run.KEEPER")" ] && [ "$OUTSIDE0" = "$(owned_snapshot "$T/victim")" ]; } \
+  && ok "override cleanup preserves default-parent entries and outside-parent sentinel contents and modes despite adjacent changes" || no "an owned outside-parent sentinel changed"
 ./bin/qargi local clean "$OL" --discard >/dev/null 2>&1; rm -rf "$OS"
 exit $fail

@@ -684,15 +684,29 @@ def infer_project():
     p = os.environ.get("QARGI_PROJECT")
     if p:
         return p
-    here, best, blen = os.path.realpath(os.getcwd()), None, -1
+    try:
+        here = os.path.realpath(os.getcwd())
+    except OSError:
+        # No containing repository can be inferred from a removed cwd. Keep
+        # explicit arguments usable; QARGI_PROJECT already won above.
+        return None
+    best, blen = None, -1
     for f in project_files():
         try:
-            rp = load_json(f).get("repo", {}).get("path") or ""
-        except (OSError, ValueError):
+            record = load_json(f)
+            if not isinstance(record, dict) or not isinstance(record.get("repo"), dict):
+                continue
+            rp = record["repo"].get("path")
+            if not isinstance(rp, str) or not rp:
+                continue
+            # Use raw HOME for any leading tilde (Bash '&' replacement differs).
+            if rp.startswith("~"):
+                rp = os.environ.get("HOME", "") + rp[1:]
+            if not rp:
+                continue
+            rp = os.path.realpath(rp)
+        except (OSError, ValueError, RecursionError):
             continue
-        if not rp:
-            continue
-        rp = os.path.realpath(os.path.expanduser(rp))
         if (here == rp or here.startswith(rp + os.sep)) and len(rp) > blen:
             best, blen = os.path.basename(f)[:-5], len(rp)
     return best

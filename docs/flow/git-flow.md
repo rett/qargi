@@ -269,6 +269,22 @@ whose id appears (as a whole slug) in the messages of the commits being merged. 
 nothing is done with it. With `backlog.file` unset, or its file missing, nothing is printed. With `backlog.section` set, only the items under
 that heading are looked for (a heading the file lacks names nothing).
 
+`qargi backlog graph check|show|why --graph FILE [--project P] [--json]` reads a
+manually edited native graph against the configured open backlog. `why` also
+requires `--node REF`. The [public v1 contract](../reference/backlog-graph.md)
+defines the closed schema, source digests, reported evidence and conservative
+planning projections. Graph identity uses the whole backlog; `backlog.section`
+only marks display metadata. Contains edges are structural, features and archives
+remain unobserved, and reported state grants no acceptance or execution authority.
+The graph branch creates no state or audit records and changes no data. The
+public command and direct `backlog.sh graph` calls remain lead-only under the
+current guard, which allows members `backlog list` and direct use of the pure
+Python reader `lib/backlog_graph.py`. That reader has no write capability. The
+graph may observe an absolute configured backlog after its checkout has gone,
+while `backlog list`, `add` and `done` require a repository marker at `repo.path`.
+Missing, null, empty-string or false section values are unset. The reference
+also specifies the bounded differences from shell path expansion.
+
 ## The worktree root
 
 qargi makes the worktrees it creates under one root, `worktrees.root` in the answers (default `<state>/worktrees/PROJECT`), one

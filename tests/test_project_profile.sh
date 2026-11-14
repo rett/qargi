@@ -84,8 +84,50 @@ out=$(cd "$R" && $DA project profile check 2>&1); rc=$?
 git init -q -b main "$T/bare-repo"; printf '## Gates\n- `make lint`\n' > "$T/p2.md"; printf 'lint:\n\techo\n' > "$T/bare-repo/Makefile"
 out=$(cd "$T/bare-repo" && $DA project profile check --profile "$T/p2.md" 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -q "^ok   1 gate commands" <<<"$out"; } && ok "with no project, the repository of the current directory is used" || no "no project (rc=$rc): $out"
+# Keep a public invocation from the scratch directory independently of ancestor markers.
+# The exact missing-repository semantics are checked by the controlled case below.
 out=$(cd "$T" && $DA project profile check --profile "$T/p2.md" 2>&1); rc=$?
-{ [ "$rc" = 0 ] && grep -q "^WARN the repository directory is not known" <<<"$out"; } && ok "outside any repository the gates are not checked, said as a warning" || no "no repo (rc=$rc): $out"
+{ [ "$rc" = 0 ] && head -n 1 <<<"$out" | grep -Fq "profile: $T/p2.md"; } \
+  && ok "public profile check loads the explicit profile from scratch ancestry" || no "scratch ancestry (rc=$rc): $out"
+# Model NO-MARKERS independently of host ancestor markers. Only exists() calls for .git
+# on the real cwd ancestry are mocked; profile reads and all other filesystem calls are real.
+# repo_dir, check and main remain real. The CLI cases above still cover stored/inferred
+# projects and an unregistered Git repo; the CLI usage cases below remain public invocations.
+out=$(cd "$T" && python3 -I - "$ROOT/lib" "$QARGI_CONF" "$T/p2.md" 2>&1 <<'PY'
+import os
+import sys
+from unittest.mock import patch
+
+sys.path.insert(0, sys.argv[1])
+import project_profile
+
+markers = []
+here = os.path.realpath(os.getcwd())
+while True:
+    markers.append(os.path.join(here, ".git"))
+    up = os.path.dirname(here)
+    if up == here:
+        break
+    here = up
+exists = os.path.exists
+observed = []
+
+def no_markers(path):
+    if path in markers:
+        observed.append(path)
+        return False
+    return exists(path)
+
+with patch.object(project_profile.os.path, "exists", side_effect=no_markers):
+    rc = project_profile.main(["project_profile.py", "check", sys.argv[2], "", sys.argv[3]])
+assert observed == markers, (observed, markers)
+sys.exit(rc)
+PY
+); rc=$?
+{ [ "$rc" = 0 ] && grep -Fxq "profile: $T/p2.md" <<<"$out" \
+  && grep -Fxq 'WARN the repository directory is not known or not found, so the gate commands were not checked (answers repo.path)' <<<"$out" \
+  && grep -q '^1 warning (gates are only looked for in those files;' <<<"$out"; } \
+  && ok "outside any repository the gates are not checked, said as a warning" || no "no repo (rc=$rc): $out"
 
 # --- usage errors
 $DA project profile >/dev/null 2>&1; [ $? = 2 ] && ok "profile without a verb is a usage error" || no "profile alone"
