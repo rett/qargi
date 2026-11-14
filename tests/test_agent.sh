@@ -555,6 +555,9 @@ mkprofiles cmdarrayp '[]'; mkprofiles cmdnumberp '5'; mkprofiles cmdstringp '"bu
 jq '.roles.build.effort = "low"' "$T/c/projects/cmdnullp.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/cmdnullp.json"
 $DA project validate "$T/c/projects/cmdnullp.json" > "$T/null-validate.txt" 2>&1 \
   && ok "profiles:null is a valid project container" || no "null container validation: $(cat "$T/null-validate.txt")"
+# Also cover an absent container on a healthy runtime with no native effort control.
+mkproj cmdhealthyp cmdc "$LEGACY"
+jq 'del(.profiles)' "$T/c/projects/cmdhealthyp.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/cmdhealthyp.json"
 # cmdap also holds legacy members (models no command runtime has, files that do not exist); cmdbp and cmdcp have no member at all
 jq --arg root "$T" '.projects.cmdap = {worker: {roles: ["build","write","test"], file: ($root + "/legacy/worker.md"), model: "claude-haiku-5-5", effort: "low", provider: "claude-code", surface: "local", seq: 900}, reviewer: {roles: ["review"], file: ($root + "/legacy/reviewer.md"), model: "claude-opus-5-5", effort: "max", provider: "claude-code", surface: "local", seq: 901}}' "$T/c/agents.json" > "$T/a.json" && mv "$T/a.json" "$T/c/agents.json"
 # Include file contents, modes, links and directory entries, including Git excludes and member copies.
@@ -697,7 +700,7 @@ import sys
 da = sys.argv[1]
 keys = {"provider", "effort_control", "aliases", "bases", "profiles", "escalate", "members", "warnings"}
 metadata = {"name", "base", "class", "tier", "model", "model_id", "effort", "opt_in", "purpose", "abilities", "shipped", "project", "via_roles", "source", "refused", "flags"}
-for project in ("cmdap", "cmdbp", "cmdcp", "cmdinlinep", "cmdaliasp", "cmdidp", "cmdshapep", "cmdnullp", "cmdarrayp", "cmdnumberp", "cmdstringp", "cmdboolp"):
+for project in ("cmdap", "cmdbp", "cmdcp", "cmdinlinep", "cmdaliasp", "cmdidp", "cmdshapep", "cmdnullp", "cmdhealthyp", "cmdarrayp", "cmdnumberp", "cmdstringp", "cmdboolp"):
     args = [da, "agent", "models", "--project", project]
     table = json.loads(subprocess.check_output([*args, "--json"], text=True))
     text = subprocess.check_output(args, text=True)
@@ -707,10 +710,15 @@ for project in ("cmdap", "cmdbp", "cmdcp", "cmdinlinep", "cmdaliasp", "cmdidp", 
     assert all(w["kind"] == "profile" for w in table["warnings"]), project
     assert not any(s in text for s in ("not registered", "cannot dispatch", "STALE", "MISSING", "DRIFT", "effort: ignored", "(roles)", "definition of the member applies")), (project, text)
     assert table["effort_control"] == (project in ("cmdap", "cmdbp", "cmdshapep", "cmdnullp", "cmdarrayp", "cmdnumberp", "cmdstringp", "cmdboolp")), project
-    if project == "cmdnullp":
+    if project in ("cmdnullp", "cmdhealthyp"):
         assert table["warnings"] == [] and "! " not in text, (project, table["warnings"], text)
         assert table["profiles"]["build"]["requested_effort"] == "high", project
         print("ok   healthy command models: no warnings despite conflicting legacy effort")
+    if project == "cmdhealthyp":
+        assert table["effort_control"] is False, project
+        assert table["profiles"]["lead"]["source"] == "shipped", project
+        assert "effort: ignored" not in text, text
+        print("ok   healthy command models: absent profiles and null native effort keep shipped requests without warnings")
     for name, row in table["profiles"].items():
         assert metadata <= row.keys() and not row["via_roles"], (project, name, row)
         role = "review" if row["class"] == "read-only" else "build"
