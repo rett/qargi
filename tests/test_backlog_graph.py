@@ -447,6 +447,31 @@ class Public(unittest.TestCase):
                 self.assertEqual(self.snapshot(), before)
                 self.assertFalse(self.state.exists())
 
+    def test_text_diagnostics_escape_unencodable_values(self):
+        config = json.loads(self.config.read_text())
+        for bad_source in (True, False):
+            with self.subTest(bad_source=bad_source):
+                config["backlog"]["file"] = (
+                    "surrogate\ud800.md" if bad_source else str(self.backlog))
+                self.config.write_text(json.dumps(config), encoding="utf-8")
+                value = graph("backlog:aa", "backlog:bb")
+                if not bad_source:
+                    value["nodes"].append("backlog:surrogate\ud800")
+                self.file.write_text(json.dumps(value), encoding="utf-8")
+                before = self.snapshot()
+                for command in ("check", "show", "why"):
+                    with self.subTest(command=command):
+                        tail = ["--node", "backlog:aa"] if command == "why" else []
+                        result = self.run_cli(command, "--graph", str(self.file),
+                                              "--project", "acme", *tail)
+                        self.assertEqual(result.returncode, 1, result.stderr)
+                        self.assertEqual(result.stderr, "")
+                        expected = "input-unreadable" if bad_source else "typed-ref"
+                        self.assertIn(expected, result.stdout)
+                        self.assertIn(r"\ud800", result.stdout)
+                self.assertEqual(self.snapshot(), before)
+                self.assertFalse(self.state.exists())
+
     def test_relative_and_home_paths_and_missing_backlog_configuration(self):
         value = json.loads(self.config.read_text())
         value["backlog"]["file"] = "../backlog.md"

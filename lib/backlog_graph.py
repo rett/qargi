@@ -389,8 +389,10 @@ def text_report(report):
             if report["command"] == "why" and n["ref"] != report.get("node"):
                 continue
             print("  %s: own %s; effective %s; prerequisites %s" % (n["ref"], n["own"], n["effective"], n["prerequisites"]))
+    encoding = sys.stdout.encoding or "utf-8"
     for f in report["findings"]:
-        print("  %s: %s%s" % (f["code"], f.get("node", ""), " " + f["message"]))
+        message = f["message"].encode(encoding, "backslashreplace").decode(encoding)
+        print("  %s: %s%s" % (f["code"], f.get("node", ""), " " + message))
     for why in report.get("why", []):
         print("  %s: %s%s" % (" -> ".join(why["path"]),
               ", ".join(r["code"] + (" (" + r["relation"] + ")" if "relation" in r else "") for r in why["reasons"]),
