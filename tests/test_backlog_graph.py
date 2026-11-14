@@ -472,6 +472,38 @@ class Public(unittest.TestCase):
                 self.assertEqual(self.snapshot(), before)
                 self.assertFalse(self.state.exists())
 
+    def test_leading_tilde_matches_existing_backlog_prefix_rules(self):
+        value = json.loads(self.config.read_text())
+        home = self.root / "operator-home"
+        home.mkdir()
+        self.env["HOME"] = str(home)
+        for spelling in ("~notes.md", "~/notes.md", "~other/notes.md"):
+            with self.subTest(spelling=spelling):
+                # gitflow.sh backlog_path substitutes any leading tilde prefix.
+                expected = Path(str(home) + spelling[1:])
+                expected.parent.mkdir(parents=True, exist_ok=True)
+                expected.write_text(self.backlog.read_text(), encoding="utf-8")
+                value["backlog"]["file"] = spelling
+                self.config.write_text(json.dumps(value), encoding="utf-8")
+                before = self.snapshot()
+                result = self.run_cli("check", "--graph", str(self.file),
+                                      "--project", "acme", "--json")
+                report = json.loads(result.stdout)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue(report["valid"], report["findings"])
+                self.assertEqual(report["inputs"]["backlog"]["path"], str(expected))
+                self.assertTrue(all(n["source"] for n in report["nodes"]))
+                self.assertEqual(self.snapshot(), before)
+                self.assertFalse(self.state.exists())
+        value["backlog"]["file"] = "~"
+        self.config.write_text(json.dumps(value), encoding="utf-8")
+        result = self.run_cli("check", "--graph", str(self.file),
+                              "--project", "acme", "--json")
+        self.assertEqual(result.returncode, 1)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["inputs"]["backlog"], dict(path=str(home), digest=None))
+        self.assertEqual(report["findings"][0]["code"], "input-unreadable")
+
     def test_relative_and_home_paths_and_missing_backlog_configuration(self):
         value = json.loads(self.config.read_text())
         value["backlog"]["file"] = "../backlog.md"

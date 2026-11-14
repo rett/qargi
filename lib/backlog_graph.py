@@ -257,9 +257,9 @@ def project_source(project):
     require(path is None or words(path), "configuration", "backlog.file must be a path")
     require(section is None or words(section), "configuration", "backlog.section must name a heading")
     if path is not None:
-        # Same expansion rules as gitflow.sh backlog_path (only leading ~/).
-        if path.startswith("~/"):
-            path = os.path.join(os.path.expanduser("~"), path[2:])
+        # Match backlog_path's literal substitution of any leading tilde.
+        if path.startswith("~"):
+            path = os.path.expanduser("~") + path[1:]
         if not os.path.isabs(path):
             path = os.path.join(os.path.expanduser(repo), path)
         path = os.path.abspath(path)
