@@ -56,7 +56,9 @@
 #      the command in its run home while it runs (in: home), and recorded in RUN/dispatch.json; whether the runtime honours a key is live
 #  15  with dispatch.hidden_paths, a write run and a read-only one (as in 12) whose run directory lies in a hidden place are refused (exit 2)
 #      before the stub starts, naming each run path the member of the class works with and the class does not show (CLONE, CONTRACT, GIT;
-#      for a write run OUT and TMP too), and a run on another place whose TMP alone is hidden is refused or goes on by the same rule
+#      for a write run OUT and TMP too), and a run on another place whose TMP alone is hidden is refused or goes on by the same rule.
+#      Prepare checks the original hidden roots; run checks paths redirected into the hidden place after a valid prepare, without changing
+#      the bound definition or private request. A hidden RUN cannot be prepared under the same definition merely to test run's recheck.
 # The command cases run a definition with dispatch.hidden_paths from a copy that hides a directory of the suite in place of its prefixes:
 # the suite's own directory may lie under one of them (a TMPDIR under /dev/shm for a runtime that hides /dev); whether the runtime's sandbox
 # hides what it declares is live
@@ -564,6 +566,11 @@ cmdprep() {   # CLASS [SCRATCH [TMP-PARENT]]: a run of the class made by qargi l
   out=$( umask 077; QARGI_RUN_TMP=${3:-$CSHM} "$PTOOL/bin/qargi" local prepare --repo "$CREPO" --base main --slug "conf-$cls" --scratch "${2:-$CSCR}" --role "$role" 2>"$W/cmd.err" ) || { CRC=$?; return; }
   CRUN=$(sed -n 's/^RUN=//p' <<<"$out" | head -1)
   if [ -z "$CRUN" ]; then echo "internal: qargi local prepare named no run" > "$W/cmd.err"; CRC=1; return; fi
+  # These are current command runs: both the marker and the private prepared request must survive every fixture transform.
+  python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import attempts as A
+s = A.Store(sys.argv[2])
+assert s.registry().get("command_request") == 1
+assert s.show()["prepared"]["request"]["runtime"] == sys.argv[3]' "$CTOOL/lib" "$CRUN" "$NAME" 2>>"$W/cmd.err" || { CRC=1; return; }
   printf 'TASK: conformance task\nDONE: true\n' > "$CRUN/task.md"
 }
 cmdgo() {   # qargi local run of CRUN with the stub in place of the command (the project, the runtime and the class are the lead's record's); COUT, CRC
@@ -590,15 +597,13 @@ mktool() {   # DEST JQ-FILTER: copy tool entries, substituting entries supplied 
   jq "$2" "$TOOL/lib/providers/$NAME.json" > "$1.new/lib/providers/$NAME.json.new" \
     && mv "$1.new/lib/providers/$NAME.json.new" "$1.new/lib/providers/$NAME.json" && mv "$1.new" "$1"
 }
-cmdtools() {   # CLASS: PTOOL, the tool root that prepares the runs (the definition without its hidden places, so that a run can be made where the sandbox would hide it), and CTOOL, the one
-               # that runs them: the definition that hides HIDDEN (HIDF) and, for a read-only run of a read_only_barrier claim not yet dated, dates it (as it is once verified: what a run
-               # carries is the case, not the claim). Each is made once.
-  local dated='' pf='del(.dispatch.hidden_paths)' cf=${HIDF:-.}
+cmdtools() {   # One definition for prepare and run: the private request binds it. Date an undated barrier claim for both classes;
+               # what the command cases check is what a run carries, not whether the claim has been verified live.
+  local dated='' cf=${HIDF:-.}
   [ "$(eff local read_only_barrier)" != no ] || dated=".capabilities.read_only_barrier.verified_on = \"$(date +%F)\""
-  [ -z "$dated" ] || pf="$pf | $dated"
-  [ "$1" != read-only ] || [ -z "$dated" ] || cf="${HIDF:+$HIDF | }$dated"
-  mktool "$W/ptool" "$pf" && mktool "$W/ctool.$1" "$cf" || return 1
-  PTOOL=$W/ptool; CTOOL=$W/ctool.$1
+  [ -z "$dated" ] || cf="${HIDF:+$HIDF | }$dated"
+  mktool "$W/ctool" "$cf" || return 1
+  PTOOL=$W/ctool; CTOOL=$W/ctool
 }
 cmd_skip() {   # why case 12 or 13 cannot run, or nothing
   if ! listed local; then echo "the provider has no local surface"
@@ -734,7 +739,7 @@ print(json.dumps(tomllib.loads(data.decode()) if sys.argv[2] == "toml" else json
 
 case15() {
   begin
-  local title="a run the sandbox would hide from its member is refused before it starts" why cls where want got lbl runs=""
+  local title="a run the sandbox would hide from its member is refused before it starts" why cls where want got lbl path dest runs=""
   if [ -z "$HIDF" ]; then nothing "dispatch.hidden_paths declares no place"; finish 15 "$title"; return; fi
   why=$(cmd_skip)
   if [ -n "$why" ]; then nothing "$why"; finish 15 "$title"; return; fi
@@ -750,8 +755,27 @@ hp = json.load(open(sys.argv[2]))["dispatch"]["hidden_paths"]
 shown = (hp.get("shown") or {}).get(sys.argv[3]) or []
 print(" ".join(P.RUN_PATHS[n] for n in P.MEMBER_NEEDS[sys.argv[3]] if n not in shown and (sys.argv[4] == "run" or n == "tmp")))' "$ROOT/lib" "$DESC" "$cls" "$where") \
         || { ran; problem "internal: the run paths of the class could not be read"; continue; }
-      if [ "$where" = run ]; then cmdrun "$cls" "$HIDDEN" "$W/no-shm"; else cmdrun "$cls" "$CSCR" "$HIDDEN"; fi
       ran
+      : > "$W/cmd.log"
+      if [ "$where" = run ]; then cmdprep "$cls" "$HIDDEN" "$W/no-shm"; else cmdprep "$cls" "$CSCR" "$HIDDEN"; fi
+      if [ -n "$want" ]; then
+        [ "$CRC" = 2 ] && [ -z "$CRUN" ] || problem "$cls, $where hidden: prepare did not refuse before making a run (exit $CRC)"
+        got=$(sed -n 's/^  \([A-Z_]*\) .* lies under .*/\1/p' "$W/cmd.err" | paste -sd' ' -)
+        [ "$got" = "$want" ] || problem "$cls, $where hidden: prepare names $got, not $want"
+        # Reach run's independent check with legitimate private authority. Only member paths change: RUN and its authority stay put.
+        cmdprep "$cls"
+        if [ "$CRC" != 0 ]; then problem "$cls, $where hidden: valid prepare exited $CRC: $(tail -2 "$W/cmd.err" | paste -sd' ' - | cut -c1-200)"; continue; fi
+        dest=$HIDDEN/${CRUN##*/}; mkdir -p "$dest"
+        for lbl in $want; do
+          case $lbl in
+            CLONE) path=$CRUN/clone;; CONTRACT) path=$CRUN/contract;; GIT) path=$CRUN/git;; OUT) path=$CRUN/out;;
+            TMP) path=$(cat "$CRUN/tmpdir");;
+          esac
+          mv "$path" "$dest/$lbl" && ln -s "$dest/$lbl" "$path" || { problem "internal: could not redirect $lbl into the hidden place"; }
+        done
+      fi
+      if [ "$CRC" != 0 ] || [ -z "$CRUN" ]; then problem "$cls, $where hidden: prepare made no usable run (exit $CRC)"; continue; fi
+      cmdgo
       if [ -z "$want" ]; then
         { [ "$CRC" = 0 ] && grep -qx 'OUTCOME=ok' <<<"$COUT"; } || problem "$cls, $where hidden: nothing the member works with is hidden, but qargi local run exited $CRC: $(tail -2 "$W/cmd.err" | paste -sd' ' - | cut -c1-200)"
         runs="$runs $cls/$where:ran"; continue

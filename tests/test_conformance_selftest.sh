@@ -2,7 +2,8 @@
 # The conformance suite (tests/conformance.sh) catches what it claims to catch: it passes the claude-code and claude-platform adapters,
 # the command runtime codex and the broken fixture without a fault, and fails the fixture, naming the case, for each fault the fixture can
 # be told to have; the command cases 11 to 14 fail on faulty copies of the codex definition and of its stub (one gives a read-only run the
-# write class's writable .git).
+# write class's writable .git). Case 15 checks prepare's hidden-root refusal and run's recheck after member paths are redirected;
+# every successfully prepared command fixture retains its private request and marker.
 # Run: tests/test_conformance_selftest.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
