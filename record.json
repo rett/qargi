@@ -1,7 +1,7 @@
 {
  "purpose": "Canonical campaign intent, dependencies and retained evidence with restart-safe local state; existing execution and release authorities remain authoritative",
  "started": "2026-11-12T10:14:38Z",
- "goal": "Canonical campaign intent, dependencies and retained evidence with restart-safe local state; existing execution and release authorities remain authoritative",
+ "goal": "Native read-only dependency graph contract under campaign-canonical",
  "plan": "",
  "note": "",
  "status": "active",
@@ -12,11 +12,11 @@
   "since": "2026-11-12T10:14:38Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-14T09:37:27Z",
+ "renewed_at": "2026-11-14T09:53:57Z",
  "finished_at": null,
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 10,
- "updated_at": "2026-11-14T09:37:27Z",
+ "rev": 11,
+ "updated_at": "2026-11-14T09:53:57Z",
  "feature": "campaign-kernel",
  "project": "qargi"
 }
