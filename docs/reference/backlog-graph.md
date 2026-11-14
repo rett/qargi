@@ -200,6 +200,7 @@ spelling. Unconfigured paths are null. Digests are null for inputs not read
 successfully or not reached before a configuration/read failure.
 Paths containing NUL or characters that cannot be encoded for the filesystem
 produce `input-unreadable` findings, just like ordinary filesystem read errors.
+Text diagnostics escape characters that the output encoding cannot represent.
 Byte digests intentionally change on graph reordering even when projections do
 not. Invalid reports may have empty or partial result arrays. Consumers must
 check `valid` before using projections.
