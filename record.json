@@ -2,8 +2,8 @@
  "purpose": "Resolve command-runtime profiles consistently and bind prepared model and effort requests through dispatch",
  "started": "2026-11-13T20:44:32Z",
  "goal": "Resolve command-runtime profiles consistently and bind prepared model and effort requests through dispatch",
- "plan": "Whole checkpoint1 FAILED7 at e77c682. Preserve log/receipt. Sonnet low authors conformance/open-provider fixture corrections; Sol high fggaAN queued for deterministic fixtures, signal injection phase and note word-budget repairs. Unchanged-tree guard targeted reproduction passed; local-run reduced-concurrency reproduction active. Independent review and targeted gates before another checkpoint.",
- "note": "Gate remains FAILED. No timeouts, budgets or production safety bounds changed. Archive command-whole-checkpoint1-e77c682; ledger records missed coverage and rework. No merge plan until whole pass.",
+ "plan": "Checkpoint1 remains FAILED. Sol fggaAN deterministic repairs verified/applied21bcedf; exact lead DONE and Opus review active. Unchanged-tree local_run PASS748.49s and guard timings PASS. Sol medium W0SLXo isolates those existing manifest steps serial with unchanged bounds/coverage; then intake/review and full checkpoint2.",
+ "note": "Archive command-checkpoint-repair-fggaAN includes native usage/rework/reproduction. Conformance revised hidden-path boundary explicitly documented, private request marker retained, fault coverage retained pending independent review. No merge plan or develop push yet.",
  "status": "active",
  "lead": {
   "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
@@ -12,11 +12,11 @@
   "since": "2026-11-13T20:44:32Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-14T02:19:13Z",
+ "renewed_at": "2026-11-14T02:21:30Z",
  "finished_at": null,
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 20,
- "updated_at": "2026-11-14T02:19:13Z",
+ "rev": 21,
+ "updated_at": "2026-11-14T02:21:30Z",
  "feature": "command-profiles",
  "project": "qargi"
 }
