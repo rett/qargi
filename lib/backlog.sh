@@ -16,7 +16,16 @@
 #   backlog file) and backlog.section (a heading: only the list under it holds items).
 # An item is a top-level list line, `- [ID] text`, ID a lowercase slug (letters, digits, hyphens; two characters or more), with the indented
 # lines after it. feature finish and release finish list the open items whose id the merged commits' messages name (lib/gitflow.sh backlog_note).
+# This branch is pure: skip shared configuration/state setup before sourcing it.
+# Keep the existing member guard boundary (only list is allowed), including for
+# any future graph verbs. The Python reader never calls project_load (it mkdirs).
+if [ "${1:-}" = graph ]; then export DA_NOSETUP=1; fi
 . "$(dirname "$0")/lib.sh"
+if [ "${1:-}" = graph ]; then
+  shift
+  export QARGI_CONF=$DA_CONF
+  exec python3 -B -I "$(dirname "$0")/backlog_graph.py" "$@"
+fi
 
 verb=${1:-}; shift || true
 PROJ='' PLAN_ARG='' APPROVED='' JSON='' EVIDENCE='' EVSET='' DETAIL='' DETSET='' POS=()
