@@ -2,9 +2,9 @@
  "purpose": "Resolve command-runtime profiles consistently and bind prepared model and effort requests through dispatch",
  "started": "2026-11-13T20:44:32Z",
  "goal": "Resolve command-runtime profiles consistently and bind prepared model and effort requests through dispatch",
- "plan": "Unchanged-tree local.sh reproduction passed286.56s. Whole checkpoint4 now running exact3edb756 with stored bash tests/run.sh -j3, all138steps/cases/limits/coverage unchanged. Observer startup metadata and interruption sidecar retain PID/PGID/time evidence. On pass final advisor evidence closure and concrete finish plan.",
- "note": "Prior3FAILEDcheckpoints retained, checkpoint3 supervisor receipt absent with reconciled evidence instead. No develop merge/push/release/cutover. Live files /tmp/qargi-command-whole-checkpoint4.started.json, .log, .receipt.json.",
- "status": "verifying",
+ "plan": "All138steps passed checkpoint4 exact3edb756 with stored -j3; final Astra accept/no blockers, report verified/archived/cleaned. Concrete finish plan5c1896a404a5 prepared (merge24commits into develop, push develop, delete local feature). Owner requested prepare merge; plan not applied.",
+ "note": "Evidence archive command-whole-checkpoint4-3edb756 and command-checkpoint4-final-astra-q4bzGr. Three failed checkpoints/rework retained; checkpoint3 missing observer receipt labelled. Minor signal wording doc-truth followup recorded. Persistent -j3 concurrency choice disclosed. No release/cutover.",
+ "status": "active",
  "lead": {
   "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
   "user": "rett",
@@ -12,11 +12,11 @@
   "since": "2026-11-13T20:44:32Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-14T07:00:15Z",
+ "renewed_at": "2026-11-14T07:05:59Z",
  "finished_at": null,
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 61,
- "updated_at": "2026-11-14T07:00:15Z",
+ "rev": 62,
+ "updated_at": "2026-11-14T07:05:59Z",
  "feature": "command-profiles",
  "project": "qargi"
 }
