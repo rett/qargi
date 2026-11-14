@@ -2,9 +2,9 @@
  "purpose": "Resolve command-runtime profiles consistently and bind prepared model and effort requests through dispatch",
  "started": "2026-11-13T20:44:32Z",
  "goal": "Resolve command-runtime profiles consistently and bind prepared model and effort requests through dispatch",
- "plan": "Reviewed stack merged into feature at e77c682, synchronized with develop bf002a2; full feature checkpoint1 running. After pass, evidence closure advisor and concrete finish plan. Prepare merge boundary per latest owner instruction.",
- "note": "Source Astra accept at identical tree408b8ae; all targeted lead gates passed. Whole log /tmp/qargi-command-whole-checkpoint1.log; receipt /tmp/qargi-command-whole-checkpoint1.receipt.json. No develop merge or push yet.",
- "status": "verifying",
+ "plan": "Whole checkpoint1 FAILED7 at e77c682. Preserve log/receipt. Sonnet low authors conformance/open-provider fixture corrections; Sol high fggaAN queued for deterministic fixtures, signal injection phase and note word-budget repairs. Unchanged-tree guard targeted reproduction passed; local-run reduced-concurrency reproduction active. Independent review and targeted gates before another checkpoint.",
+ "note": "Gate remains FAILED. No timeouts, budgets or production safety bounds changed. Archive command-whole-checkpoint1-e77c682; ledger records missed coverage and rework. No merge plan until whole pass.",
+ "status": "active",
  "lead": {
   "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
   "user": "rett",
@@ -12,11 +12,11 @@
   "since": "2026-11-13T20:44:32Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-14T01:35:45Z",
+ "renewed_at": "2026-11-14T01:36:50Z",
  "finished_at": null,
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 18,
- "updated_at": "2026-11-14T01:35:45Z",
+ "rev": 19,
+ "updated_at": "2026-11-14T01:36:50Z",
  "feature": "command-profiles",
  "project": "qargi"
 }
