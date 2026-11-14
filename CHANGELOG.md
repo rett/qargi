@@ -6,10 +6,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.14] - 2026-11-13
+
 ### Fixed
 - The agent test runs serially after the parallel pool following checkpoint2 8a7a675's lone timeout at 678s without assertion failures (137 steps passed; suite total 2554s). Its agent code and test match 408b8ae, whose lead DONE passed in 440.82s. This scheduling mitigation lengthens the serial tail without changing cases, limits, budgets or recorded durations; it establishes neither a root cause nor a performance guarantee.
 - Conformance case 15 checks prepare's original-root plain-path diagnostics and unchanged scratch/TMP parent entries; runtime coverage is the symlink real-path branch only, not runtime plain paths or prepare real paths. Redirect fixtures read TMP through the trusted registry reader and stop on unknown labels or move/link failures, with focused negative probes. These are fixture checks, not product containment or qualification evidence.
-- Signal cancellation tests exercise regular and symlinked runtime executables using dispatch's real path, failing promptly on an unexpected runtime command while retaining readiness, PID and group assertions without changing limits.
+- Signal cancellation tests exercise regular and symlinked runtime executables using dispatch's real path, failing promptly on an executable-path mismatch in the timed exec-child wait while retaining readiness, PID and group assertions without changing limits.
 - Both guard test selections and the local-run workflow test run serially after the suite's parallel pool to mitigate contention observed at checkpoint1 e77c682. Reduced-concurrency reproductions passed; this scheduling mitigation increases the serial tail without changing cases, limits, budgets or recorded durations, and does not establish a root cause or guarantee performance.
 - Codex spawn guidance fits the existing 393-word provider-notes budget while retaining prepared defaults, override and identity qualifications, drift refusal and sandbox guidance.
 - The running-signal lifecycle test targets the runtime child's wait after proving its readiness and PID, so prepared-profile resolution subprocesses cannot receive the injection; cancellation and process-group shutdown remain required.
