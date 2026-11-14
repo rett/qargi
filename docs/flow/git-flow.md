@@ -270,14 +270,18 @@ nothing is done with it. With `backlog.file` unset, or its file missing, nothing
 that heading are looked for (a heading the file lacks names nothing).
 
 `qargi backlog graph check|show|why --graph FILE [--project P] [--json]` reads a
-manually edited native graph against the configured open backlog; `why` also
+manually edited native graph against the configured open backlog. `why` also
 requires `--node REF`. The [public v1 contract](../reference/backlog-graph.md)
 defines the closed schema, source digests, reported evidence and conservative
 planning projections. Graph identity uses the whole backlog; `backlog.section`
 only marks display metadata. Contains edges are structural, features and archives
 remain unobserved, and reported state grants no acceptance or execution authority.
-The graph branch creates no state or audit records and changes no data. It
-remains lead-only under the current guard, which allows members only `backlog list`.
+The graph branch creates no state or audit records and changes no data. The
+public command and direct `backlog.sh graph` calls remain lead-only under the
+current guard, which allows members only `backlog list`. The pure Python reader
+has no write capability. The graph may observe an absolute configured backlog
+after its checkout has gone, while editing verbs still require a local
+repository. Missing, null, empty-string or false section values are unset.
 
 ## The worktree root
 
