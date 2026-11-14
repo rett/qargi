@@ -495,7 +495,7 @@ COMMANDS = {
         },
     },
     "backlog": {
-        "summary": "The project's backlog: list, add, and archive the done ones",
+        "summary": "The project's backlog: list, inspect a graph, add, and archive the done ones",
         "desc": ("The backlog is a markdown file that the project answer backlog.file names (a path: ~/ works, a relative path is taken from the repository, "
                  "and the file may live outside it, in a memory store for instance; qargi project set PROJECT backlog.file PATH). "
                  "An item is a top-level list line written '- [ID] text' (or '* [ID] text'), ID a lowercase slug of letters, digits and hyphens, two characters or more "
@@ -506,8 +506,22 @@ COMMANDS = {
                  "heading of the same or a higher level (a deeper heading belongs to it), also for that plan line; a heading the file lacks is an error for the verbs and names nothing in the plan line. "
                  "backlog.archive says where the archive goes: a directory (created when absent; a ~/ or relative path works as for the file) that receives NAME-archive-YYYY-MM.md, "
                  "or a path ending in .md for one archive file whatever the month; by default the archive is beside the backlog file."),
-        "scripts": ["backlog.sh"],
+        "scripts": ["backlog.sh", "backlog_graph.py"],
         "verbs": {
+            "graph": verb("Check, show or explain a manually edited read-only backlog graph v1", [("ACTION", ("check", "show", "why"))],
+                          [PROJECT_OPT, opt("--graph", "the graph JSON file (required)", "FILE", "file"),
+                           opt("--node", "a declared typed reference, required only for why", "REF"),
+                           opt("--json", "print the native backlog-graph-report v1 object, including invalid input reports")],
+                          desc=("Use check|show|why --graph FILE; why also needs --node backlog:ID or feature:NAME. Reads the configured backlog.file; "
+                                "backlog.section affects display metadata only, and identities resolve across the whole backlog. "
+                                "Reported evidence is pinned to the parser's full item lines; revised items supersede that evidence. "
+                                "Confirmed requires point from dependent to prerequisite; contains is structural only. "
+                                "Projections describe planning, never acceptance or execution permission. Features and archives are unobserved. "
+                                "No state setup, audit writes, network or data changes. Lead only under the current member guard; future graph verbs get no member permission. "
+                                "Exit 0 for a valid graph (warnings allowed), 1 for invalid/unreadable inputs or an undeclared why node, 2 for usage errors. "
+                                "The normative schema, findings codes and limitations are in docs/reference/backlog-graph.md."),
+                          examples=["qargi backlog graph check --graph graph.json --json",
+                                    "qargi backlog graph why --graph graph.json --node backlog:fix-names"]),
             "list": verb("List the open items with their ids; an item without an id is shown as '-', a duplicated id is flagged", [],
                          [PROJECT_OPT, opt("--json", "print the file, the items (id, line, text, full text, duplicate) and the duplicated ids as one JSON object")],
                          desc="Read only, so a member may run it. Exit 1 when backlog.file is unset or its file is missing.",
