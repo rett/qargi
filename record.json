@@ -4,19 +4,13 @@
  "goal": "Native read-only dependency graph contract under campaign-canonical",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-12T10:14:38Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-14T22:22:48Z",
- "finished_at": null,
+ "finished_at": "2026-11-14T22:24:40Z",
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 49,
- "updated_at": "2026-11-14T22:22:48Z",
+ "rev": 50,
+ "updated_at": "2026-11-14T22:24:40Z",
  "feature": "campaign-kernel",
  "project": "qargi"
 }
