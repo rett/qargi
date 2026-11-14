@@ -12,11 +12,11 @@
   "since": "2026-11-13T20:44:32Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-14T00:23:42Z",
+ "renewed_at": "2026-11-14T00:50:02Z",
  "finished_at": null,
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 10,
- "updated_at": "2026-11-14T00:23:42Z",
+ "rev": 11,
+ "updated_at": "2026-11-14T00:50:02Z",
  "feature": "command-profiles",
  "project": "qargi"
 }
