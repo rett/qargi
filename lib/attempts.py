@@ -421,7 +421,13 @@ class Store:
         need(type(record["schema"]) is int and record["schema"] == 1 and record["run"] == self.run,
              "unsupported or mismatched lifecycle record")
         p = record["prepared"]
-        shape(p, "epoch at base base_sha refs refs_sha256 identity")
+        shape(p, "epoch at base base_sha refs refs_sha256 identity" + (" request" if type(p) is dict and "request" in p else ""))
+        if "request" in p:
+            import prepared_request
+            try:
+                prepared_request.validate(p["request"])
+            except prepared_request.Invalid as e:
+                raise Refuse(str(e)) from e
         need(isinstance(p["identity"], str) and re.fullmatch(r"[0-9a-f]{32}", p["identity"]), "invalid prepared identity")
         need(integer(p["epoch"], 0, MAX_EPOCH), "invalid prepared epoch")
         stamp(p["at"])
@@ -489,12 +495,20 @@ class Store:
         need(digest(read_at(fd, name, MAX_REFS, 0o600)) == sha, "lifecycle snapshot hash mismatch")
 
     def show(self):
-        self.authority()
+        row = self.authority()
         need(not os.path.lexists(self.area + "/" + self.clean_name), "cleanup in progress; rerun local clean")
         fd = directory(self.path)
         try:
             record = decode(read_at(fd, "state.json", MAX_RECORD, 0o600))
             self._validate(record, fd)
+            if "command_request" in row:
+                need(type(row["command_request"]) is int and row["command_request"] == 1
+                     and "request" in record["prepared"], "prepared command request is missing or unsupported; re-prepare")
+            if "request" in record["prepared"]:
+                request = record["prepared"]["request"]
+                need(all(row.get(k) == request[v] for k, v in (
+                    ("project", "project"), ("ability", "role"), ("class", "class"), ("profile", "profile"))),
+                     "prepared command request disagrees with lead registry; re-prepare")
             return record
         finally:
             os.close(fd)
@@ -528,7 +542,7 @@ class Store:
         return dict(n=n, epoch=epoch, baseline=baseline, baseline_sha256=sha,
                     gate="strict", dispatch=None, verified=None, history=[], saved=[], superseded_at=None, save_nonce=None)
 
-    def init(self, refs, *, epoch, base, base_sha, tmpdir=None):
+    def init(self, refs, *, epoch, base, base_sha, tmpdir=None, request=None):
         self.require_lock()
         need(self.registry() is None, "run already registered; refusing lifecycle adoption")
         need(not os.path.lexists(self.root + "/runs/" + self.id), "leftover saved copy exists")
@@ -542,6 +556,8 @@ class Store:
                 record = dict(schema=1, run=self.run, prepared=dict(epoch=epoch, at=now(), base=base,
                               base_sha=base_sha, refs="prepared.refs", refs_sha256=sha, identity=uuid.uuid4().hex), current=1,
                               attempts=[self._attempt(1, epoch, "prepared.refs", sha)])
+                if request is not None:
+                    record["prepared"]["request"] = request
                 self._commit(record)
                 work = dict(run=self._work_identity(self.run), tmp=None)
                 if tmpdir is not None:
@@ -1399,6 +1415,10 @@ def save_product(store, refs):
             atomic(fd, "verified", refs)
             atomic(fd, "started", str(record["prepared"]["epoch"]).encode() + b"\n")
             atomic(fd, "record.json", encode(store.authority()))
+            if "request" in record["prepared"]:
+                # Evidence mirror only; recovery and dispatch still require the
+                # original private lifecycle authority, never this saved file.
+                atomic(fd, "request.json", encode(record["prepared"]["request"]))
         finally:
             os.close(fd)
             os.close(source)
