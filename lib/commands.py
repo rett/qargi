@@ -263,11 +263,12 @@ COMMANDS = {
                                 "Everything else is a profile {base, tier, effort, purpose} resolved at dispatch: the shipped ones are in lib/model-defaults.json "
                                 "(build, write, test, review, auditor, advisor, researcher, lead), a project adds or overrides its own under profiles.NAME in its answers, "
                                 "and a provider file (lib/providers/NAME.json; the project's models.provider) maps the tiers fast, balanced, deep and frontier to models. "
-                                "The frontier tier (researcher) is opt-in. Problems are flagged on their row, never fatal: a member that is not a base (nothing "
+                                "The frontier tier (researcher) is opt-in. In-session member registration and alias problems are flagged on their row: a member that is not a base (nothing "
                                 "dispatches it), a missing base, a refused project profile, a mixed-class member, a tier with no alias, a frontier member outside researcher. "
                                 "For command runtimes, bases are logical: no member registration is needed. Rows use the same resolver as agent for, ignoring legacy roles/lead answers, and show the selected model ID or alias, requested effort level and source. "
                                 "JSON keeps the existing keys and profile metadata, adding mode: command, profile selected and requested_effort, and base logical: true; members and base registration flags are empty. Refused profiles carry the resolver's reason. "
-                                "effort_control describes native support; a requested level remains visible with null native control. A null profiles container is absent; malformed non-null containers and selected entries refuse. The lead row is never dispatched. "
+                                "effort_control describes native support; a requested level remains visible with null native control. A null profiles container is absent; malformed non-null containers and selected entries refuse. The lead row is informational (never dispatched), while agent for --profile lead still refuses. "
+                                "Row flags do not fail the display; command-mode extension composition or load errors may fail the command. "
                                 "A project is needed, because its models.provider decides the models: --project, else the one in effect (with none, exit 2). In-session members shown are that project's (`agent list` shows all projects'). Read-only."),
             "remove": verb("Delete a member's definition and its record", [("NAME", "member")], [MEMBER_PROJECT_OPT],
                            desc="The project is found as for rename: --project, else the one in effect, else the only project that has the member; a name in two or more projects with none named is refused (exit 2)."),

@@ -678,7 +678,9 @@ models_command() { # runtime project -> each profile resolved under its logical 
          | if $a.code == 0 then . + ($a.out | {base, class, tier, model, model_id, effort, opt_in, purpose})
              + {source: $a.out.profile_source, selected: ($a.out.model // $a.out.model_id), requested_effort: $a.out.effort, refused: null, flags: []}
            else . + {model: null, model_id: null, effort: null, selected: null, requested_effort: null,
-             refused: $a.err, flags: ["refused: " + $a.err]} end
+             refused: $a.err, flags: ["refused: " + $a.err]}
+             | if $n == "lead" and $a.err == "the lead profile has no base and is never dispatched"
+               then . + {refused: null, flags: []} else . end end
          | {key: $n, value: .}] | from_entries),
        escalate: ($d[0].escalate | with_entries(.value = {tier: .value, model: $tiers[.value]})), members: []}
     | .warnings = [.profiles[] | .name as $n | .flags[] | {kind: "profile", name: $n, message: .}]') || exit $?
@@ -688,7 +690,7 @@ models_command() { # runtime project -> each profile resolved under its logical 
     | while IFS=$'\t' read -r n c a; do printf '  %-10s %-10s %s\n' "$n" "$c" "$a"; done
   echo "profiles (provider: $prov, command mode; base, selected model id or alias, requested effort level, source)"
   jq -r '.profiles[] | [.name, (.base // "-"), (.selected // "-"), (.requested_effort // "default"), .source,
-      ([if .opt_in then "opt-in" else empty end] + (.flags | map("! " + .)) | join("; "))] | @tsv' <<<"$out" \
+      ([if .opt_in then "opt-in" elif .name == "lead" and .refused == null then "never dispatched" else empty end] + (.flags | map("! " + .)) | join("; "))] | @tsv' <<<"$out" \
     | while IFS=$'\t' read -r n b m e s fl; do printf '  %-11s %-9s %-22s %-8s %-8s %s\n' "$n" "$b" "$m" "$e" "$s" "$fl"; done
   jq -r '"  offer \(.escalate.build.tier) (\(.escalate.build.model)) for a hard task: only when asked"' <<<"$out"
 }

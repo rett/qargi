@@ -552,7 +552,7 @@ mkprofiles cmdshapep '{"build":"cmdb-x","review":{"base":7},"auditor":{"abilitie
 jq '.profiles.longpurpose = {base:"worker",purpose:("x" * 301)}' "$T/c/projects/cmdshapep.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/cmdshapep.json"
 mkprofiles cmdarrayp '[]'; mkprofiles cmdnumberp '5'; mkprofiles cmdstringp '"build"'; mkprofiles cmdnullp 'null'; mkprofiles cmdboolp 'false'
 # A complete valid project, rather than only a permissive resolver fixture: null is absent in project validate too.
-jq '.roles.build.effort = "high"' "$T/c/projects/cmdnullp.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/cmdnullp.json"
+jq '.roles.build.effort = "low"' "$T/c/projects/cmdnullp.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/cmdnullp.json"
 $DA project validate "$T/c/projects/cmdnullp.json" > "$T/null-validate.txt" 2>&1 \
   && ok "profiles:null is a valid project container" || no "null container validation: $(cat "$T/null-validate.txt")"
 # cmdap also holds legacy members (models no command runtime has, files that do not exist); cmdbp and cmdcp have no member at all
@@ -707,10 +707,22 @@ for project in ("cmdap", "cmdbp", "cmdcp", "cmdinlinep", "cmdaliasp", "cmdidp", 
     assert all(w["kind"] == "profile" for w in table["warnings"]), project
     assert not any(s in text for s in ("not registered", "cannot dispatch", "STALE", "MISSING", "DRIFT", "effort: ignored", "(roles)", "definition of the member applies")), (project, text)
     assert table["effort_control"] == (project in ("cmdap", "cmdbp", "cmdshapep", "cmdnullp", "cmdarrayp", "cmdnumberp", "cmdstringp", "cmdboolp")), project
+    if project == "cmdnullp":
+        assert table["warnings"] == [] and "! " not in text, (project, table["warnings"], text)
+        assert table["profiles"]["build"]["requested_effort"] == "high", project
+        print("ok   healthy command models: no warnings despite conflicting legacy effort")
     for name, row in table["profiles"].items():
         assert metadata <= row.keys() and not row["via_roles"], (project, name, row)
         role = "review" if row["class"] == "read-only" else "build"
         answer = subprocess.run([da, "agent", "for", role, "--profile", name, "--project", project, "--json"], text=True, capture_output=True)
+        if name == "lead" and "has no base and is never dispatched" in answer.stderr:
+            assert answer.returncode == 2 and not answer.stdout, (project, answer)
+            assert row["base"] is None and row["refused"] is None and row["flags"] == [], (project, row)
+            assert row["selected"] is None and row["requested_effort"] is None, (project, row)
+            assert not any(w["name"] == name for w in table["warnings"]), project
+            line = next(line for line in text.splitlines() if line.split()[:1] == [name])
+            assert "never dispatched" in line and "! " not in line and "refused" not in line, (project, line)
+            continue
         if answer.returncode:
             assert row["refused"] and row["refused"] in answer.stderr and not answer.stdout, (project, name, row, answer)
             assert row["selected"] is None and row["requested_effort"] is None, (project, name)
