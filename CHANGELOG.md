@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-14
+
 ### Added
 - Graph timestamps restrict hours to 00 through 23 consistently across Python runtimes. Direct-reader tests suppress bytecode writes, and the reader contract documents import-cache behavior and unresolved paths in invalid reports.
 - `qargi backlog graph check|show|why --graph FILE` inspects a closed native v1 graph against the configured open backlog. It validates declared relationships, pins reported evidence to parser source revisions, propagates unknown prerequisites conservatively, and explains proposed needs and stale evidence with deterministic reports. Contains edges describe structure. Archives and feature lifecycle have unknown observation state. Evaluation and execution follow existing governance. The public contract in `docs/reference/backlog-graph.md` documents manual editing, the current lead-only guard boundary and compatibility limits.
