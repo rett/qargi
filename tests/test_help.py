@@ -539,6 +539,40 @@ class Rich(Env):
 
 
 class Infer(Env):
+    def test_malformed_registry_shapes_and_path_types_are_skipped(self):
+        os.chdir(os.path.join(self.repo, "sub"))
+        target = os.path.join(self.t, "c", "projects", "broken.json")
+        for record in ([], None, "x", {"repo": "x"}, {"repo": []},
+                       {"repo": {"path": [self.repo]}}, {"repo": {"path": 1}},
+                       {"repo": {"path": "nul\0path"}}):
+            with self.subTest(record=record):
+                self.put(target, record)
+                self.assertEqual(H.infer_project(), "alpha")
+                self.assertEqual(H.resolve(["lead", "status", "beta"]), ["lead", "status", "beta"])
+        self.put(os.path.join(self.t, "c", "projects", "nested.json"),
+                 {"repo": {"path": os.path.join(self.repo, "sub")}})
+        self.assertEqual(H.infer_project(), "nested")
+        os.environ["QARGI_PROJECT"] = "beta"
+        self.assertEqual(H.infer_project(), "beta")
+
+    def test_literal_leading_tilde_repository_inference(self):
+        previous = os.environ.get("HOME")
+        self.addCleanup(lambda: os.environ.__setitem__("HOME", previous) if previous is not None
+                        else os.environ.pop("HOME", None))
+        for home, spelling, expected in ((self.t + "/home", "~repo", "tilde"),
+                                        (self.t + "/home/", "~repo", "tilde"),
+                                        ("", "~.", "tilde"), ("", "~", None)):
+            with self.subTest(home=home):
+                os.chdir(self.t)
+                os.environ["HOME"] = home
+                path = home + spelling[1:]
+                if not os.path.isabs(path):
+                    path = os.path.join(self.t, path)
+                os.makedirs(path, exist_ok=True)
+                self.put(os.path.join(self.t, "c", "projects", "tilde.json"), {"repo": {"path": spelling}})
+                os.chdir(path)
+                self.assertEqual(H.infer_project(), expected)
+
     def test_project_is_implied_inside_its_repository(self):
         os.chdir(os.path.join(self.repo, "sub"))
         self.assertEqual(H.infer_project(), "alpha")

@@ -16,10 +16,22 @@ qargi backlog graph why --graph graph.json --node backlog:some-id [--project P] 
 `--graph FILE` is required. Its path is relative to the caller's directory unless
 absolute. `why` requires `--node REF`, a node declared in that graph. The other
 actions reject `--node`. Project inference and `QARGI_PROJECT` work as for other
-backlog commands. The project's `backlog.file` follows the existing backlog
-prefix rules. A leading `~` is replaced literally by the operator's home path,
-including forms such as `~name`. Remaining relative paths resolve against
-`repo.path`. Absolute paths are used directly.
+backlog commands. Malformed registry records and non-string repository paths
+are skipped during inference. A valid explicit project or `QARGI_PROJECT`
+still wins, and valid repository matches use the longest containing path.
+The project's `repo.path` and `backlog.file` follow the existing backlog prefix
+rules. A leading `~` is replaced literally by the raw `HOME` value, including
+forms such as `~name`, trailing slashes and an empty `HOME`. Relative backlog
+paths are joined to `repo.path`. Remaining relative paths, including `--graph`,
+are prefixed with the caller's directory. Paths retain symlink and `..` segments
+so the kernel resolves them without lexical normalization.
+
+Missing, null, empty-string and false `backlog.section` values mean no section
+filter. Other values must be nonempty heading strings. Unlike editing verbs,
+this reader can observe an absolute configured backlog after the checkout has
+gone. It requires a configured `repo.path` string but does not require a local
+repository or create one. This narrow observation boundary grants no editing
+authority.
 
 `check` validates and reports findings. `show` also displays node projections.
 `why` explains a selected node. JSON returns the native report below directly,
@@ -33,8 +45,10 @@ The graph branch sets `DA_NOSETUP` before shared initialization. It creates no
 configuration or state directories, registry files, audit records, archives or
 graph data. It uses no network and invokes no provider or forge. Existing
 `backlog list`, `add` and `done` behavior is unchanged. Under the current guard,
-**graph remains lead-only**. Members may run `backlog list`, and no blanket graph
-permission is given to unknown future graph mutations.
+**the public graph command remains lead-only**. Members may run `backlog list`,
+and direct `backlog.sh graph` calls receive the same guard denial. The pure
+`lib/backlog_graph.py` reader is read-only and has no write capability. Public
+CLI compatibility and guard policy do not grant access to future graph writes.
 
 The input syntax below is supported independently of source observation. A valid
 feature reference does not establish that a feature exists. Host support follows
@@ -165,6 +179,8 @@ Each node has the following descriptive fields.
 
 | Field | Rule |
 |---|---|
+| `ref` | The node's typed reference string. |
+| `source` | Null when unobserved, otherwise `digest`, `line` and `in_section` from the whole open backlog. |
 | `own` | `reported` only with current matching reported evidence. Otherwise `unknown`. |
 | `effective` | `reported` only if `own` is reported and every confirmed requires prerequisite is effectively reported. Otherwise `unknown`. |
 | `prerequisites` | `unconstrained` with no requires edges. `proposed` with any proposed need. Otherwise `unknown` if any confirmed need is effectively unknown, or `reported` if every confirmed need is effectively reported. |
@@ -186,6 +202,16 @@ edges are not traversed. This bounded explanation does not enumerate every
 possible path. Superseded historical records remain diagnostics even when a
 newer current record permits effective reported state.
 
+Each node reason and each `why` reason has one of these complete shapes.
+
+| Reason | Fields |
+|---|---|
+| `source-not-open`, `feature-not-observed`, `no-current-reported` | `code` only. |
+| `evidence-superseded` | `code` and `evidence`, a list of superseded evidence IDs. |
+| `prerequisite-unknown`, `proposed-need` | `code`, singular `relation` containing one relation ID, and `node` containing the target typed reference. |
+
+Reasons retain superseded evidence even when current evidence is also present.
+
 ## Report contract and stable codes
 
 Every data report has `format:"backlog-graph-report"`, integer `version:1`,
@@ -202,14 +228,28 @@ spelling. Unconfigured paths are null. Digests are null for inputs not read
 successfully or not reached before a configuration/read failure.
 Paths containing NUL or characters that cannot be encoded for the filesystem
 produce `input-unreadable` findings, just like ordinary filesystem read errors.
-Text diagnostics escape characters that the output encoding cannot represent.
+Text diagnostics escape all non-printable characters as explicit backslash
+notation, including ESC, CR, newline, C1 and bidi controls. Printable Unicode is
+preserved when the output encoding supports it. Other characters use escaped
+notation rather than causing an encoding failure. Untrusted provenance text is
+not displayed in text projections.
 Byte digests intentionally change on graph reordering even when projections do
 not. Invalid reports may have empty or partial result arrays. Consumers must
-check `valid` before using projections.
+check `valid` before using projections. Validation stops at the first error.
+Input order can determine which schema error is found first. This does not
+promise a complete inventory of invalid declarations.
 
 Findings have `code`, `severity` (`error` or `warning`) and a human `message`.
 Details such as `node`, `evidence`, `kind`, `nodes` and `relations` appear where
-applicable. Messages can change. The following codes are the v1 contract.
+applicable. Finding `evidence` is a single evidence ID, unlike the list in a
+reason. Confirmed cycle errors include `kind`, sorted participant `nodes` and
+sorted `relations` containing only confirmed edges inside cyclic components.
+Text structure diagnostics also name their participant nodes and relations.
+Multiple containment parent errors include `kind`, the child `node`, sorted
+`nodes` containing that child and its confirmed parents, and sorted incoming
+confirmed `relations`. If multiple children have multiple parents, the first
+sorted child is reported. Messages can change. The following codes are the v1
+contract.
 
 | Codes | Meaning |
 |---|---|
