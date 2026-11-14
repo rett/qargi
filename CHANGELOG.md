@@ -7,6 +7,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- Conformance case 15 checks prepare's original-root plain-path diagnostics and unchanged scratch/TMP parent entries; runtime coverage is the symlink real-path branch only, not runtime plain paths or prepare real paths. Redirect fixtures read TMP through the trusted registry reader and stop on unknown labels or move/link failures, with focused negative probes. These are fixture checks, not product containment or qualification evidence.
 - Signal cancellation tests exercise regular and symlinked runtime executables using dispatch's real path, failing promptly on an unexpected runtime command while retaining readiness, PID and group assertions without changing limits.
 - Both guard test selections and the local-run workflow test run serially after the suite's parallel pool to mitigate contention observed at checkpoint1 e77c682. Reduced-concurrency reproductions passed; this scheduling mitigation increases the serial tail without changing cases, limits, budgets or recorded durations, and does not establish a root cause or guarantee performance.
 - Codex spawn guidance fits the existing 393-word provider-notes budget while retaining prepared defaults, override and identity qualifications, drift refusal and sandbox guidance.

@@ -2,7 +2,8 @@
 # The conformance suite (tests/conformance.sh) catches what it claims to catch: it passes the claude-code and claude-platform adapters,
 # the command runtime codex and the broken fixture without a fault, and fails the fixture, naming the case, for each fault the fixture can
 # be told to have; the command cases 11 to 14 fail on faulty copies of the codex definition and of its stub (one gives a read-only run the
-# write class's writable .git). Case 15 checks prepare's hidden-root refusal and run's recheck after member paths are redirected;
+# write class's writable .git). Case 15 checks prepare's original-root plain-path refusal, diagnostics and parent snapshots;
+# runtime covers the symlink real-path branch only (not runtime plain paths or prepare real paths).
 # every successfully prepared command fixture retains its private request and marker.
 # Run: tests/test_conformance_selftest.sh
 set -u
@@ -17,6 +18,37 @@ trap 'chmod 755 "$T/inst/zz-sentinel" 2>/dev/null || :; kill_bg; rm -rf "$HERMET
 ROOT=$PWD
 BROKEN=tests/providers/broken
 tree_before=$(git status --porcelain --untracked-files=no tests lib 2>/dev/null; git diff tests lib 2>/dev/null | cksum)
+
+# Probe the actual redirect helper in isolation; the registry-reader stand-in
+# supplies a trusted TMP distinct from the poisoned member mirror. No runtime is
+# started here. Unknown labels and failed operations must stop before OUT moves.
+for fault in none unknown mv ln registry; do
+  (
+    eval "$(sed -n '/^cmdredirect() {/,/^}/p' lib/conformance/run.sh)"
+    CRUN=$T/redirect.$fault/run
+    dest=$T/redirect.$fault/hidden
+    trusted=$T/redirect.$fault/trusted-tmp
+    decoy=$T/redirect.$fault/decoy
+    mkdir -p "$CRUN/contract" "$CRUN/out" "$trusted" "$decoy"
+    printf '%s\n' "$decoy" > "$CRUN/tmpdir"
+    cmdregistry() { [ "$fault" != registry ] && printf '%s\n' "$trusted"; }
+    mv() { [ "$fault" != mv ] && command mv "$@"; }
+    ln() { [ "$fault" != ln ] && command ln "$@"; }
+    labels=(CONTRACT TMP OUT)
+    [ "$fault" != unknown ] || labels=(CONTRACT UNKNOWN OUT)
+    cmdredirect "$dest" "${labels[@]}" > "$T/redirect.$fault.log" 2>&1; rc=$?
+    if [ "$fault" = none ]; then
+      [ "$rc" = 0 ] && [ -L "$trusted" ] && [ -d "$dest/TMP" ] && [ ! -L "$decoy" ] && [ -d "$decoy" ]
+    else
+      [ "$rc" != 0 ] && [ -d "$CRUN/out" ] && [ ! -L "$CRUN/out" ] && [ ! -e "$dest/OUT" ] || exit 1
+      case $fault in
+        unknown) grep -q 'unknown hidden-path label UNKNOWN' "$T/redirect.$fault.log" && [ ! -e "$dest/UNKNOWN" ];;
+        mv|ln) grep -q 'could not redirect CONTRACT' "$T/redirect.$fault.log" && [ ! -e "$dest/TMP" ];;
+        registry) [ ! -e "$dest" ];;
+      esac
+    fi
+  ) && ok "redirect probe '$fault' uses authority TMP or stops before later labels" || no "redirect probe '$fault' failed"
+done
 
 # the validator: a good value passes, a bad one is named
 V="python3 -I lib/conformance/validate.py"
