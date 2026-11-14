@@ -55,7 +55,10 @@ full | par | 300 | 17 | bash tests/test_prompt.sh
 # reduced-concurrency TrimmedExpansions passed in 5.18s. Isolate both guard selections from the pool.
 full | serial | 390 | 150 | python3 tests/test_guard.py | lib/guard.py lib/packs_mcp.py
 fast | serial | 300 | 15 | python3 tests/test_guard.py Guard FailsClosed HookProtocol Substitutions GlobBound TrimmedExpansions InPlaceScripts SubprocessContract McpTools | lib/guard.py lib/packs_mcp.py lib/packs_check.py
-full | par | 678 | 235 | bash tests/test_agent.sh | lib/agent.sh lib/packs_mcp.py
+# Checkpoint2 8a7a675: agent alone timed out at 678s without assertion failures (137 steps passed);
+# its agent code/test match 408b8ae's passing lead DONE (440.82s). Serial scheduling mitigates
+# contention with a longer serial tail; this establishes neither a root cause nor a performance guarantee.
+full | serial | 678 | 235 | bash tests/test_agent.sh | lib/agent.sh lib/packs_mcp.py
 full | par | 300 | 74 | bash tests/test_agent_cloud.sh | lib/agent*.sh
 full | par | 300 | 38 | bash tests/test_valued_opts.sh
 fast | par | 300 | 14 | bash tests/test_role.sh | lib/role.py roles/*/ROLE.md
