@@ -687,12 +687,20 @@ def infer_project():
     here, best, blen = os.path.realpath(os.getcwd()), None, -1
     for f in project_files():
         try:
-            rp = load_json(f).get("repo", {}).get("path") or ""
+            record = load_json(f)
+            if not isinstance(record, dict) or not isinstance(record.get("repo"), dict):
+                continue
+            rp = record["repo"].get("path")
+            if not isinstance(rp, str) or not rp:
+                continue
+            # project_load replaces any leading tilde with the raw HOME value.
+            if rp.startswith("~"):
+                rp = os.environ.get("HOME", "") + rp[1:]
+            if not rp:
+                continue
+            rp = os.path.realpath(rp)
         except (OSError, ValueError):
             continue
-        if not rp:
-            continue
-        rp = os.path.realpath(os.path.expanduser(rp))
         if (here == rp or here.startswith(rp + os.sep)) and len(rp) > blen:
             best, blen = os.path.basename(f)[:-5], len(rp)
     return best

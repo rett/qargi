@@ -28,8 +28,9 @@ STAMP = re.compile(DAY + r"[Tt][0-9]{2}:[0-9]{2}(?::[0-9]{2}(?:[.,][0-9]+)?)?(?:
 
 
 class Invalid(Exception):
-    def __init__(self, code, message):
+    def __init__(self, code, message, **details):
         self.code = code
+        self.details = details
         super().__init__(message)
 
 
@@ -222,12 +223,24 @@ def structure(report, nodes, relations):
     for kind in ("requires", "contains"):
         edges = [r for r in relations if r["kind"] == kind]
         confirmed = [r for r in edges if r["status"] == "confirmed"]
-        require(len(order(nodes, confirmed)) == len(nodes), kind + "-cycle", "confirmed " + kind + " cycle")
+        if len(order(nodes, confirmed)) != len(nodes):
+            groups = components(nodes, confirmed)
+            membership = {n: i for i, group in enumerate(groups) for n in group if len(group) > 1}
+            cycle_edges = [r["id"] for r in confirmed if r["from"] in membership
+                           and membership[r["from"]] == membership.get(r["to"])]
+            raise Invalid(kind + "-cycle", "confirmed " + kind + " cycle",
+                          kind=kind, nodes=sorted(membership), relations=sorted(cycle_edges))
         if kind == "contains":
-            parents = set()
+            parents = defaultdict(list)
             for r in confirmed:
-                require(r["to"] not in parents, "contains-multiple-parents", "multiple confirmed parents: " + r["to"])
-                parents.add(r["to"])
+                parents[r["to"]].append(r)
+            for child in sorted(parents):
+                incoming = parents[child]
+                if len(incoming) > 1:
+                    raise Invalid("contains-multiple-parents", "multiple confirmed parents: " + child,
+                                  kind=kind, node=child,
+                                  nodes=sorted({child} | {r["from"] for r in incoming}),
+                                  relations=sorted(r["id"] for r in incoming))
         # A cycle warning names only the proposals participating in that cycle.
         groups = components(nodes, edges)
         membership = {n: i for i, group in enumerate(groups) for n in group}
@@ -239,6 +252,20 @@ def structure(report, nodes, relations):
         for i, ids in cycle_ids.items():
             finding(report, "proposed-cycle", "proposed edges participate in a " + kind + " cycle",
                     kind=kind, nodes=groups[i], relations=sorted(ids))
+
+
+def literal_home(path):
+    """Match gitflow.sh's literal replacement of any leading tilde."""
+    if path.startswith("~"):
+        return os.environ.get("HOME", "") + path[1:]
+    return path
+
+
+def absolute_path(path):
+    """Prefix cwd without changing the kernel's symlink/.. traversal."""
+    if os.path.isabs(path):
+        return path
+    return os.getcwd() + "/" + path
 
 
 def project_source(project):
@@ -255,14 +282,14 @@ def project_source(project):
         raise Invalid("configuration", "cannot read project backlog configuration: " + str(e)) from None
     require(words(repo), "configuration", "repo.path is not configured")
     require(path is None or words(path), "configuration", "backlog.file must be a path")
+    if section is None or section is False or section == "":
+        section = None
     require(section is None or words(section), "configuration", "backlog.section must name a heading")
     if path is not None:
-        # Match backlog_path's literal substitution of any leading tilde.
-        if path.startswith("~"):
-            path = os.path.expanduser("~") + path[1:]
+        path = literal_home(path)
         if not os.path.isabs(path):
-            path = os.path.join(os.path.expanduser(repo), path)
-        path = os.path.abspath(path)
+            path = literal_home(repo) + "/" + path
+        path = absolute_path(path)
     return path, section
 
 
@@ -377,9 +404,16 @@ def report_for(command, graph_path, backlog_path, section=None, node=None):
             report["why"] = explain(node, records, needs)
         report["valid"] = True
     except Invalid as e:
-        report["findings"].append(dict(code=e.code, severity="error", message=str(e)))
+        report["findings"].append(dict(code=e.code, severity="error", message=str(e), **e.details))
     report["findings"].sort(key=lambda f: json.dumps(f, sort_keys=True))
     return report
+
+
+def text_value(value):
+    """Keep printable Unicode, escaping controls and output encoding failures."""
+    escaped = "".join(c if c.isprintable() else ascii(c)[1:-1] for c in value)
+    encoding = sys.stdout.encoding or "utf-8"
+    return escaped.encode(encoding, "backslashreplace").decode(encoding)
 
 
 def text_report(report):
@@ -389,10 +423,15 @@ def text_report(report):
             if report["command"] == "why" and n["ref"] != report.get("node"):
                 continue
             print("  %s: own %s; effective %s; prerequisites %s" % (n["ref"], n["own"], n["effective"], n["prerequisites"]))
-    encoding = sys.stdout.encoding or "utf-8"
+    # Other slots contain constants, validated ASCII typed refs, or slug IDs.
+    # Finding messages can contain arbitrary input paths, keys and references.
     for f in report["findings"]:
-        message = f["message"].encode(encoding, "backslashreplace").decode(encoding)
-        print("  %s: %s%s" % (f["code"], f.get("node", ""), " " + message))
+        message = text_value(f["message"])
+        if "nodes" in f:
+            message += " (nodes " + ", ".join(f["nodes"]) + ")"
+        if "relations" in f:
+            message += " (relations " + ", ".join(f["relations"]) + ")"
+        print("  %s: %s%s" % (f["code"], f["node"] + " " if "node" in f else "", message))
     for why in report.get("why", []):
         print("  %s: %s%s" % (" -> ".join(why["path"]),
               ", ".join(r["code"] + (" (" + r["relation"] + ")" if "relation" in r else "") for r in why["reasons"]),
@@ -409,7 +448,7 @@ def main(argv):
     args = parser.parse_args(argv)
     if (args.command == "why") != (args.node is not None):
         parser.error("--node REF is required for why and belongs only to why")
-    graph_path = os.path.abspath(args.graph)
+    graph_path = absolute_path(args.graph)
     try:
         backlog_path, section = project_source(args.project)
     except Invalid as e:

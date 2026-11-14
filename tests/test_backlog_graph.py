@@ -57,6 +57,47 @@ class Graph(unittest.TestCase):
         self.assertEqual(r["format"], "backlog-graph-report")
         self.assertEqual(r["version"], 1)
 
+    def test_fixed_iso_dates(self):
+        for stamp in ("2024-02-29", "2026-11-14t12:34z", "2026-11-14T12:34:56.123456789Z",
+                      "2026-11-14T12:34:56,125+02:30", "2026-11-14T12:34:56-23:59"):
+            with self.subTest(stamp=stamp):
+                value = graph("backlog:aa", "backlog:bb")
+                value["relations"] = [relation("need", "backlog:aa", "backlog:bb")]
+                value["evidence"] = [evidence("report", "backlog:aa", "- [aa] A\n  detail")]
+                value["relations"][0]["provenance"]["at"] = stamp
+                value["evidence"][0]["at"] = stamp
+                self.assertTrue(self.report(value)["valid"])
+        for stamp in ("2026-02-29", "2026-11-14T25:00", "2026-11-14T12:34:60Z",
+                      "2026-11-14T12:34:56+24:00", "20261114", "2026-11-14 12:34"):
+            with self.subTest(stamp=stamp):
+                value["evidence"][0]["at"] = stamp
+                self.invalid(value, "provenance")
+
+    def test_confirmed_structure_participants_are_precise_and_deterministic(self):
+        for kind in ("requires", "contains"):
+            value = graph("backlog:aa", "backlog:bb", "backlog:cc", "backlog:dd")
+            value["relations"] = [relation("ab", "backlog:aa", "backlog:bb", kind),
+                                  relation("ba", "backlog:bb", "backlog:aa", kind),
+                                  relation("ca", "backlog:cc", "backlog:aa", kind),
+                                  relation("proposal", "backlog:bb", "backlog:dd", kind, "proposed")]
+            expected = self.report(value)["findings"]
+            self.assertEqual(expected, [dict(code=kind + "-cycle", severity="error",
+                             message="confirmed " + kind + " cycle", kind=kind,
+                             nodes=["backlog:aa", "backlog:bb"], relations=["ab", "ba"])])
+            value["relations"].reverse()
+            value["nodes"].reverse()
+            self.assertEqual(self.report(value)["findings"], expected)
+        value["relations"] = [relation("ab", "backlog:aa", "backlog:bb", "contains"),
+                              relation("cb", "backlog:cc", "backlog:bb", "contains"),
+                              relation("db", "backlog:dd", "backlog:bb", "contains", "proposed")]
+        expected = self.report(value)["findings"]
+        self.assertEqual(expected, [dict(code="contains-multiple-parents", severity="error",
+                         message="multiple confirmed parents: backlog:bb", kind="contains",
+                         node="backlog:bb", nodes=["backlog:aa", "backlog:bb", "backlog:cc"],
+                         relations=["ab", "cb"])])
+        value["relations"].reverse()
+        self.assertEqual(self.report(value)["findings"], expected)
+
     def test_closed_schema_and_strict_types(self):
         base = graph("backlog:aa")
         for key in base:
@@ -365,6 +406,209 @@ class Public(unittest.TestCase):
     def snapshot(self):
         return {str(p.relative_to(self.root)): (p.stat().st_mode, p.stat().st_mtime_ns, p.read_bytes() if p.is_file() else None)
                 for p in self.root.rglob("*")}
+
+    def assert_source_matches_list(self, value, expected, graph_arg=None):
+        self.config.write_text(json.dumps(value), encoding="utf-8")
+        # Legacy project_load creates its release directory even with DA_NOSETUP.
+        # Keep that existing behavior inside this isolated fixture.
+        listed = subprocess.run([str(ROOT / "bin" / "qargi"), "backlog", "list",
+                                 "--project", "acme", "--json"], cwd=self.repo,
+                                env=dict(self.env, DA_NOSETUP="1"), text=True, capture_output=True)
+        self.assertEqual(listed.returncode, 0, listed.stderr)
+        before = self.snapshot()
+        result = self.run_cli("show", "--graph", graph_arg or str(self.file),
+                              "--project", "acme", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertTrue(report["valid"], report["findings"])
+        self.assertEqual(report["inputs"]["backlog"], dict(path=expected,
+                         digest=G.digest(Path(expected).read_bytes())))
+        listed_report = json.loads(listed.stdout)
+        listed_path = listed_report["file"]
+        if not os.path.isabs(listed_path):
+            listed_path = str(self.repo) + "/" + listed_path
+        self.assertEqual(Path(listed_path).read_bytes(), Path(expected).read_bytes())
+        for item in listed_report["items"]:
+            node = next(n for n in report["nodes"] if n["ref"] == "backlog:" + item["id"])
+            self.assertEqual(node["source"]["digest"], G.digest(item["full"].encode()))
+            self.assertTrue(node["source"]["in_section"])
+        self.assertEqual(self.snapshot(), before)
+        return report
+
+    def test_symlink_parent_paths_keep_kernel_source_identity(self):
+        real = self.root / "real"
+        (real / "repo" / ".git").mkdir(parents=True)
+        (real / "backlog.md").write_bytes(self.backlog.read_bytes())
+        links = self.root / "links"
+        links.mkdir()
+        (links / "repo").symlink_to(real / "repo", target_is_directory=True)
+        (links / "backlog.md").write_text("## Now\n- [aa] DECOY\n")
+        value = json.loads(self.config.read_text())
+        value["repo"]["path"] = str(links / "repo")
+        value["backlog"]["file"] = "../backlog.md"
+        report = self.assert_source_matches_list(value, str(links / "repo") + "/../backlog.md")
+        self.assertEqual(report["nodes"][0]["source"]["digest"], G.digest(b"- [aa] A\n  detail"))
+
+    def test_graph_argument_symlink_parent_selects_real_graph(self):
+        real = self.root / "real"
+        (real / "repo").mkdir(parents=True)
+        links = self.root / "links"
+        links.mkdir()
+        (links / "repo").symlink_to(real / "repo", target_is_directory=True)
+        (real / "graph.json").write_bytes(self.file.read_bytes())
+        (links / "graph.json").write_text("{}")
+        # Relative --graph paths also retain the symlink/.. traversal.
+        arg = "../links/repo/../graph.json"
+        value = json.loads(self.config.read_text())
+        report = self.assert_source_matches_list(value, str(self.backlog), arg)
+        self.assertEqual(report["inputs"]["graph"], dict(path=str(self.repo) + "/" + arg,
+                         digest=G.digest(self.file.read_bytes())))
+
+    def test_public_structure_errors_name_participants_in_text_and_json(self):
+        for kind in ("requires", "contains"):
+            for cycle in (True, False):
+                if not cycle and kind == "requires":
+                    continue
+                value = graph("backlog:aa", "backlog:bb", "backlog:cc")
+                value["relations"] = [relation("ab", "backlog:aa", "backlog:bb", kind)]
+                if cycle:
+                    value["relations"].append(relation("ba", "backlog:bb", "backlog:aa", kind))
+                else:
+                    value["relations"].append(relation("cb", "backlog:cc", "backlog:bb", kind))
+                self.file.write_text(json.dumps(value))
+                before = self.snapshot()
+                result = self.run_cli("check", "--graph", str(self.file), "--json")
+                self.assertEqual(result.returncode, 1, result.stderr)
+                finding = json.loads(result.stdout)["findings"][0]
+                result = self.run_cli("check", "--graph", str(self.file))
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn("nodes " + ", ".join(finding["nodes"]), result.stdout)
+                self.assertIn("relations " + ", ".join(finding["relations"]), result.stdout)
+                self.assertEqual(self.snapshot(), before)
+
+    def test_literal_repo_prefix_and_raw_home_path_rules(self):
+        value = json.loads(self.config.read_text())
+        home = self.root / "home"
+        home.mkdir()
+        for raw_home, repo, file in ((str(home), "~repo", "backlog.md"),
+                                     (str(home) + "/", "~/repo", "~notes.md"),
+                                     ("", "~repo", "~notes.md"),
+                                     (str(home), "relative-repo", "backlog.md")):
+            with self.subTest(home=raw_home, repo=repo, file=file):
+                self.env["HOME"] = raw_home
+                repo_path = raw_home + repo[1:] if repo.startswith("~") else repo
+                file_path = raw_home + file[1:] if file.startswith("~") else file
+                if not os.path.isabs(file_path):
+                    file_path = repo_path + "/" + file_path
+                if not os.path.isabs(file_path):
+                    file_path = str(self.repo) + "/" + file_path
+                actual_repo = repo_path if os.path.isabs(repo_path) else str(self.repo) + "/" + repo_path
+                Path(actual_repo, ".git").mkdir(parents=True, exist_ok=True)
+                Path(file_path).write_bytes(self.backlog.read_bytes())
+                value["repo"]["path"], value["backlog"]["file"] = repo, file
+                self.assert_source_matches_list(value, file_path)
+
+    def test_section_unset_values_and_missing_checkout_boundary(self):
+        self.file.write_text(json.dumps(graph("backlog:aa", "backlog:bb", "backlog:cc")))
+        value = json.loads(self.config.read_text())
+        for section in (None, "", False):
+            value["backlog"]["section"] = section
+            report = self.assert_source_matches_list(value, str(self.backlog))
+            self.assertTrue(all(n["source"]["in_section"] for n in report["nodes"]))
+        value["backlog"].pop("section")
+        self.assert_source_matches_list(value, str(self.backlog))
+        for section in (True, 0, [], {}, "   "):
+            value["backlog"]["section"] = section
+            self.config.write_text(json.dumps(value))
+            result = self.run_cli("check", "--graph", str(self.file), "--project", "acme", "--json")
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertEqual(json.loads(result.stdout)["findings"][0]["code"], "configuration")
+        value["repo"]["path"] = str(self.root / "gone")
+        value["backlog"]["section"] = "Now"
+        self.config.write_text(json.dumps(value))
+        before = self.snapshot()
+        result = self.run_cli("show", "--graph", str(self.file), "--project", "acme", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["inputs"]["backlog"]["digest"], G.digest(self.backlog.read_bytes()))
+        self.assertTrue(report["nodes"][0]["source"]["in_section"])
+        self.assertFalse(report["nodes"][1]["source"]["in_section"])
+        self.assertEqual(report["nodes"][1]["source"]["digest"], G.digest(b"- [bb] B"))
+        self.assertEqual(self.snapshot(), before)
+
+    def test_malformed_registry_inference_stays_a_public_data_error(self):
+        for bad in ([], dict(repo="x")):
+            self.config.write_text(json.dumps(bad))
+            for command in ("check", "show", "why"):
+                tail = ["--node", "backlog:aa"] if command == "why" else []
+                before = self.snapshot()
+                for output in ([], ["--json"]):
+                    result = self.run_cli(command, "--graph", str(self.file), *tail, *output)
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    self.assertEqual(result.stderr, "")
+                    if output:
+                        self.assertEqual(json.loads(result.stdout)["findings"][0]["code"], "configuration")
+                    else:
+                        self.assertIn("backlog graph " + command + ": invalid", result.stdout)
+                self.assertEqual(self.snapshot(), before)
+        self.config.write_text(json.dumps(dict(repo=dict(path=str(self.repo)),
+                                              backlog=dict(file=str(self.backlog)))))
+        (self.config.parent / "broken.json").write_text('[]')
+        for selection in ({}, {"QARGI_PROJECT": "acme"}):
+            self.env.update(selection)
+            before = self.snapshot()
+            for flags in ([], ["--project", "acme"]):
+                result = self.run_cli("check", "--graph", str(self.file), *flags, "--json")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue(json.loads(result.stdout)["valid"])
+            self.assertEqual(self.snapshot(), before)
+
+    def test_text_control_characters_are_data_in_all_public_reports(self):
+        controls = "\x1b[1A\x1b[2K\r\n\x85\x1b]52;c;payload\x07\u202e\u2066"
+        printable = "café 雪"
+        value = json.loads(self.config.read_text())
+        bad_ref = json.dumps(graph("backlog:" + printable + controls))
+        key = json.dumps(printable + controls)
+        for raw, bad_path in ((bad_ref, False), ('{' + key + ':1,' + key + ':2}', False),
+                              (json.dumps(graph()), True)):
+            self.file.write_text(raw, encoding="utf-8")
+            value["backlog"]["file"] = str(self.root / (printable + controls)) if bad_path else str(self.backlog)
+            self.config.write_text(json.dumps(value))
+            before = self.snapshot()
+            for command in ("check", "show", "why"):
+                tail = ["--node", "backlog:aa"] if command == "why" else []
+                for output in ([], ["--json"]):
+                    result = self.run_cli(command, "--graph", str(self.file),
+                                          "--project", "acme", *tail, *output)
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    self.assertEqual(result.stderr, "")
+                    self.assertTrue(all(c.isprintable() or c == "\n" for c in result.stdout))
+                    if output:
+                        self.assertFalse(json.loads(result.stdout)["valid"])
+                    else:
+                        self.assertEqual(result.stdout.splitlines()[0], "backlog graph " + command + ": invalid")
+                        self.assertEqual(len(result.stdout.splitlines()), 2)
+                        self.assertIn(printable, result.stdout)
+                        for escaped in (r"\x1b", r"\r", r"\n", r"\x85", r"\x07", r"\u202e", r"\u2066"):
+                            self.assertIn(escaped, result.stdout)
+            self.assertEqual(self.snapshot(), before)
+        # Valid output prints only typed refs and slug IDs, never provenance/ref text.
+        valid = graph("backlog:aa", "backlog:bb")
+        valid["relations"] = [relation("need", "backlog:aa", "backlog:bb")]
+        valid["relations"][0]["provenance"]["basis"] = controls
+        valid["evidence"] = [evidence("stale", "backlog:aa", "old")]
+        valid["evidence"][0]["ref"] = controls
+        valid["evidence"][0]["by"] = printable + controls
+        self.file.write_text(json.dumps(valid))
+        value["backlog"]["file"] = str(self.backlog)
+        self.config.write_text(json.dumps(value))
+        before = self.snapshot()
+        for command in ("check", "show", "why"):
+            tail = ["--node", "backlog:aa"] if command == "why" else []
+            result = self.run_cli(command, "--graph", str(self.file), *tail)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(all(c.isprintable() or c == "\n" for c in result.stdout))
+        self.assertEqual(self.snapshot(), before)
 
     def test_public_json_text_inference_and_no_mutation(self):
         before = self.snapshot()
