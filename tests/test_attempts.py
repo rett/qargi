@@ -1099,5 +1099,35 @@ if sys.argv[3] == 'member':
         self.assertEqual(registry.read_bytes(), before)
 
 
+    def test_schema_one_without_request_stays_unchanged_and_extended_request_survives_retry(self):
+        with self.locked():
+            original = self.prepare()
+            before = self.record.read_bytes()
+            self.assertNotIn("request", self.store.show()["prepared"])
+            self.assertEqual(self.record.read_bytes(), before)
+            # Test the additive shape explicitly, without adopting any RUN file.
+            request = dict(schema=1, project="demo", runtime="fake", mode="command", role="build",
+                           **{"class": "write"}, selector=None, profile="build", base="worker",
+                           model="fake-id", model_id="fake-id", effort="high",
+                           binding={key: "a" * 64 for key in R.PR.BINDINGS})
+            original["prepared"]["request"] = request
+            self.store._commit(original)
+            self.register(command_request=1, project="demo", ability="build", **{"class": "write"}, profile="build")
+            self.saved(1)
+            self.store.verified(b"accepted refs\n")
+            pending = self.store.gate_pending(b"next refs\n", epoch=20)
+            self.store.begin(pending, b"next refs\n")
+            self.assertEqual(self.store.show()["prepared"]["request"], request)
+            self.assertEqual(self.store.show()["attempts"][0]["saved"], ["a1.saved.1"])
+            self.store.end("not-started")
+            # A missing request under the new registry marker cannot fall back.
+            del original["prepared"]["request"]
+            self.write(self.record, A.encode(original))
+            with self.assertRaisesRegex(A.Refuse, "request is missing"):
+                self.store.show()
+
+
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

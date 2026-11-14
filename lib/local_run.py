@@ -121,6 +121,7 @@ import tempfile
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import attempts as A
+import prepared_request as PR
 import provider as P  # noqa: E402
 import paths  # noqa: E402
 import procenv as PE  # noqa: E402
@@ -848,6 +849,14 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     out = os.path.join(run, "out")
     clone = os.path.join(run, "clone")
     tmp = registry_tmp(run) or os.path.join(run, "tmp")
+    # Only private authority may select or bind a prepared command request.
+    store = A.Store(run)
+    row = store.registry()
+    request = None
+    if row is not None and "lifecycle" in row:
+        request = store.show()["prepared"].get("request")
+    if request is not None:
+        PR.current(request, project, runtime, cls)
     comp = P.compose(runtime, "local", project)          # the definition the project's extensions complete, not the runtime's alone
     doc = comp["definition"]
     disp = doc.get("dispatch")
@@ -944,9 +953,12 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     prompt = compose_prompt(doc, task_text, cls, run, tmp)
     if via == "arg" and len(prompt.encode("utf-8")) > MAX_ARG:
         fail("the prompt is %d bytes, too long for an argument (%d); use a runtime whose dispatch.prompt.via is stdin or file" % (len(prompt.encode("utf-8")), MAX_ARG))
-    mname, native, notes = models_values(runtime, model, effort, project)
+    if request is None:
+        mname, native, notes = models_values(runtime, model, effort, project)
+    else:
+        mname, native, notes, effort = PR.values(request, model, effort)
     pfile = os.path.join(run, PROMPT_DIR, pname)
-    member = read_run_file(os.path.join(run, "profile"), 256, "the run's profile").strip()
+    member = request["base"] if request else read_run_file(os.path.join(run, "profile"), 256, "the run's profile").strip()
     member = member or read_run_file(os.path.join(run, "ability"), 256, "the run's ability").strip()
     if not member:
         fail("%s is missing or empty: a run made by qargi local prepare records its ability there" % os.path.join(run, "ability"))
@@ -2257,6 +2269,9 @@ def main(argv):
         return run_it(plan, run, pending)
     except (A.Refuse, OSError) as e:
         print("qargi: lifecycle: %s" % e, file=sys.stderr)
+        return 2
+    except PR.Invalid as e:
+        print("qargi: %s" % e, file=sys.stderr)
         return 2
     except Stop as e:
         print("qargi: %s" % e, file=sys.stderr)
