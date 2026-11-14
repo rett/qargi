@@ -66,9 +66,11 @@ graph data. It uses no network and invokes no provider or forge. Existing
 `backlog list`, `add` and `done` behavior is unchanged. Under the current guard,
 **the public graph command remains lead-only**. Members may run `backlog list`,
 and direct `backlog.sh graph` calls receive the same guard denial. The pure
-`lib/backlog_graph.py` reader is permitted directly for members and has no write
-capability. Public
-CLI compatibility and guard policy do not grant access to future graph writes.
+`lib/backlog_graph.py` reader is permitted directly for members. Invoke it with
+`python3 -B -I lib/backlog_graph.py` to suppress Python import-cache writes.
+It performs no graph, configuration or state writes. Python may create bytecode
+caches when invoked without `-B`. Public CLI compatibility and guard policy
+do not grant access to future graph writes.
 
 The input syntax below is supported independently of source observation. A valid
 feature reference does not establish that a feature exists. Host support follows
@@ -127,7 +129,7 @@ security guarantee.
 | Relation `from`, `to` | Declared typed nodes. Self edges are invalid. |
 | Relation `status` | `confirmed` or `proposed`, both manual declarations. |
 | Relation `provenance` | Exactly `by`, `at`, `basis`. All are strings, with nonempty words in `by` and `basis`. |
-| `at` | A valid extended ISO8601 date `YYYY-MM-DD`, or timestamp with `T` and `HH:MM`, optional seconds (with optional fractional seconds), and optional `Z` or `±HH:MM` offset. Lowercase `t`/`z` and a decimal comma are also supported. Calendar dates, clock times and offsets are validated. No current time is inferred. |
+| `at` | A valid extended ISO8601 date `YYYY-MM-DD`, or timestamp with `T` and `HH:MM`, optional seconds (with optional fractional seconds), and optional `Z` or `±HH:MM` offset. Lowercase `t`/`z` and a decimal comma are also supported. Calendar dates, clock times and offsets are validated. Hours are restricted to 00 through 23 on every runtime. No current time is inferred. |
 
 `requires` points from dependent to prerequisite. `contains` points from parent
 to child. Duplicate relation semantics `(kind, from, to)` are invalid even if the
@@ -249,7 +251,9 @@ ID. Findings use a stable sort over their contents. No current timestamps are ad
 Array input order does not affect projections or explanations.
 
 `inputs.graph` and `inputs.backlog` each contain `path` and `digest`. Paths are
-absolute for public calls. Digests cover the complete bytes actually read,
+absolute after successful resolution. When the caller's directory is unavailable,
+an invalid report can retain the original relative graph argument. Digests cover
+the complete bytes actually read,
 including original line endings and JSON ordering, and use the same `sha256:`
 spelling. Unconfigured paths are null. Digests are null for inputs not read
 successfully or not reached before a configuration/read failure.
@@ -262,7 +266,9 @@ notation rather than causing an encoding failure. Untrusted provenance text is
 not displayed in text projections.
 Byte digests intentionally change on graph reordering even when projections do
 not. Invalid reports may have empty or partial result arrays. Consumers must
-check `valid` before using projections. Validation stops at the first error.
+check `valid` before using projections. Invalid reports can contain escaped lone
+surrogates in input paths and diagnostic messages. The Unicode scalar requirement
+applies to provenance fields in valid reports. Validation stops at the first error.
 Input order can determine which schema error is found first. This does not
 promise a complete inventory of invalid declarations.
 
