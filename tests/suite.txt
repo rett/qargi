@@ -51,8 +51,10 @@ fast | par | 300 | 6 | python3 tests/test_cloud.py | lib/cloud.py
 fast | par | 300 | 6 | python3 tests/test_upgrade.py | lib/upgrade.sh
 full | par | 300 | 36 | python3 tests/test_supervise.py | lib/supervise.sh lib/supervise.py lib/procenv.py
 full | par | 300 | 17 | bash tests/test_prompt.sh
-full | par | 390 | 150 | python3 tests/test_guard.py | lib/guard.py lib/packs_mcp.py
-fast | par | 300 | 15 | python3 tests/test_guard.py Guard FailsClosed HookProtocol Substitutions GlobBound TrimmedExpansions InPlaceScripts SubprocessContract McpTools | lib/guard.py lib/packs_mcp.py lib/packs_check.py
+# Checkpoint1 e77c682: two guard long-chain cases hit the 5s runtime budget with eight jobs;
+# reduced-concurrency TrimmedExpansions passed in 5.18s. Isolate both guard selections from the pool.
+full | serial | 390 | 150 | python3 tests/test_guard.py | lib/guard.py lib/packs_mcp.py
+fast | serial | 300 | 15 | python3 tests/test_guard.py Guard FailsClosed HookProtocol Substitutions GlobBound TrimmedExpansions InPlaceScripts SubprocessContract McpTools | lib/guard.py lib/packs_mcp.py lib/packs_check.py
 full | par | 678 | 235 | bash tests/test_agent.sh | lib/agent.sh lib/packs_mcp.py
 full | par | 300 | 74 | bash tests/test_agent_cloud.sh | lib/agent*.sh
 full | par | 300 | 38 | bash tests/test_valued_opts.sh
@@ -87,7 +89,10 @@ full | par | 564 | 277 | bash tests/test_local.sh | lib/local.sh lib/local_run.p
 full | par | 300 | 24 | bash tests/test_local_concurrency.sh | lib/local.sh lib/lib.sh
 fast | par | 60 | 4 | python3 tests/test_attempts.py | lib/attempts.py lib/prepared_request.py lib/lib.sh lib/paths.py lib/procenv.py bin/qargi
 full | par | 900 | 195 | python3 tests/test_attempt_integration.py | lib/attempts.py lib/local.sh lib/local_run.py lib/lib.sh lib/review.sh lib/lead_usage.py lib/marshal.sh tests/attempt_fixture.py
-full | par | 975 | 222 | bash tests/test_local_run.sh | lib/local*.sh lib/local*.py lib/prepared_request.py lib/procenv.py lib/review_check.py lib/lib.sh tests/inspection_cases.py tests/prepared_request_cases.py tests/attempt_fixture.py
+# Checkpoint1 e77c682: local_run exceeded 975s without assertion failures; the unchanged-tree
+# reduced-concurrency reproduction passed all cases in 748.49s. Serial scheduling mitigates contention
+# with a longer serial tail; it is neither a root-cause finding nor a universal performance guarantee.
+full | serial | 975 | 222 | bash tests/test_local_run.sh | lib/local*.sh lib/local*.py lib/prepared_request.py lib/procenv.py lib/review_check.py lib/lib.sh tests/inspection_cases.py tests/prepared_request_cases.py tests/attempt_fixture.py
 full | par | 300 | 37 | bash tests/test_taskblock.sh | lib/local.sh lib/review_check.py roles/*/ROLE.md tests/golden/taskblock-*.md
 fast | par | 300 | 2 | bash tests/test_cred.sh | lib/cred.sh
 full | par | 480 | 107 | bash tests/test_packs.sh | lib/packs.sh

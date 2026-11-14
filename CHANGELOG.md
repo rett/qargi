@@ -7,6 +7,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- Both guard test selections and the local-run workflow test run serially after the suite's parallel pool to mitigate contention observed at checkpoint1 e77c682. Reduced-concurrency reproductions passed; this scheduling mitigation increases the serial tail without changing cases, limits, budgets or recorded durations, and does not establish a root cause or guarantee performance.
 - Codex spawn guidance fits the existing 393-word provider-notes budget while retaining prepared defaults, override and identity qualifications, drift refusal and sandbox guidance.
 - The running-signal lifecycle test targets the runtime child's wait after proving its readiness and PID, so prepared-profile resolution subprocesses cannot receive the injection; cancellation and process-group shutdown remain required.
 - Provider acceptance tests distinguish logical command profiles from stale in-session member rows and verify prepared high effort, unsupported override refusals, policy drift and supported explicit tier/effort overrides.
