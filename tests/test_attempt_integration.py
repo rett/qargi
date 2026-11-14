@@ -703,6 +703,16 @@ print('fixture transcript')
         self.assertIsNotNone(self.state_json()["attempts"][-1]["verified"])
 
     def test_running_signal_cancels_attempt_and_stops_group(self):
+        for linked in (False, True):
+            with self.subTest(symlink=linked):
+                if linked:
+                    target = self.fake.with_suffix('.real')
+                    self.fake.rename(target)
+                    self.fake.symlink_to(target)
+                    self.assertNotEqual(str(self.fake), os.path.realpath(self.fake))
+                self.check_running_signal_cancels_attempt_and_stops_group()
+
+    def check_running_signal_cancels_attempt_and_stops_group(self):
         self.prepare()
         (self.run / "wait-member").touch()
         (self.run / "spawn-child").touch()
@@ -711,7 +721,10 @@ print('fixture transcript')
         def interrupt(proc, *args, **kwargs):
             # Profile resolution also waits for subprocesses before run_it. Target
             # only this runtime child, once, even if it is ready before wait starts.
-            if proc.args[:2] == [str(self.fake), "exec"] and kwargs.get("timeout") and not signalled:
+            if proc.args[1:2] == ["exec"] and kwargs.get("timeout") and not signalled:
+                # Fail immediately on a dispatch-path mismatch rather than waiting
+                # for the looping member's full run timeout without an injection.
+                self.assertEqual(proc.args[:2], [os.path.realpath(self.fake), "exec"])
                 deadline = time.monotonic() + 10
                 while not (self.run / "member-ready").exists() and time.monotonic() < deadline:
                     time.sleep(.01)
