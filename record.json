@@ -2,8 +2,8 @@
  "purpose": "Resolve command-runtime profiles consistently and bind prepared model and effort requests through dispatch",
  "started": "2026-11-13T20:44:32Z",
  "goal": "Resolve command-runtime profiles consistently and bind prepared model and effort requests through dispatch",
- "plan": "Checkpoint deterministic repair lead DONE passed851.36s but Opus REVISE3. Scheduling W0SLXo verified/applied1b2e178, lead runner/CI checks active. Sol medium i5dALi addresses resolved signal path, prepare-refusal evidence, fail-closed redirect and registry TMP with focused regressions. Then independent review, lead checks, integrate descendant and whole checkpoint2.",
- "note": "Full gate remains FAILED; no blanket retry/limit changes. Case15 coverage is prepare root refusal plus runtime realpath recheck, not unchanged plain-path runtime coverage. Ledger retains all misses/rework.",
+ "plan": "Review corrections i5dALi verified/applied at e3b8cf7, focused lead signal+conformance+selftest gates active. Opus re-review includes all3 findings and scheduling mitigation. Scheduling lead DONE38.19s passed. On accept/pass merge corrected descendant into feature, sync, whole checkpoint2; gate1 remains failed.",
+ "note": "No migration/cutover/session/config changes. Current operational CLI0.2.12; dev lifecycle capabilities distinct. Coverage limits and all rework retained in outcomes ledger/archive. No develop merge plan until passing full checkpoint.",
  "status": "active",
  "lead": {
   "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
@@ -12,11 +12,11 @@
   "since": "2026-11-13T20:44:32Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-14T02:51:41Z",
+ "renewed_at": "2026-11-14T03:33:30Z",
  "finished_at": null,
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 22,
- "updated_at": "2026-11-14T02:51:41Z",
+ "rev": 23,
+ "updated_at": "2026-11-14T03:33:30Z",
  "feature": "command-profiles",
  "project": "qargi"
 }
