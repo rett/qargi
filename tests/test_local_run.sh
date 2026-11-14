@@ -5,6 +5,9 @@ set -u
 cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
+# Lead-state fixtures use private modes and their own configured Git identities.
+umask 077
+unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_AUTHOR_DATE GIT_COMMITTER_DATE
 T=$(mktemp -d); trap 'rm -rf "$T" "$HERMETIC"' EXIT; fail=0
 export QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T TMPDIR=$T/tmp
 mkdir -p "$T/tmp" "$T/bin" "$T/c/projects"
@@ -14,7 +17,8 @@ mkdir -p "$T/tmp" "$T/bin" "$T/c/projects"
 # the test runs a copy of the tool whose codex hides CXHID, a directory of the test, in its place, so what it shows of codex holds wherever it runs
 CXHID=$(realpath "$T")/cxhid
 copy_tool . "$T/tool"
-jq --arg h "$CXHID" '.dispatch.hidden_paths.prefixes = [$h]' lib/providers/codex.json > "$T/tool/lib/providers/codex.json"
+# Only the offline fake claims verified overrides; the shipped runtime stays unverified.
+jq --arg h "$CXHID" '.dispatch.hidden_paths.prefixes = [$h] | .capabilities.per_dispatch_model_override.verified_on = "2026-11-02" | .capabilities.per_dispatch_effort_override.verified_on = "2026-11-02"' lib/providers/codex.json > "$T/tool/lib/providers/codex.json"
 CX=$T/tool/lib/providers/codex.json
 DA=$T/tool/bin/qargi
 LC="git -c user.name=t -c user.email=t@example.net"
@@ -50,7 +54,7 @@ mk() { # name definition-json -> the library definition
 M='{"pattern":"^fake-.+$","tiers":{"*":{"model":"fake-m-1","alias":null,"verified_on":null,"source":"test"}},"effort":{"low":"l","medium":"m","high":"h","xhigh":null,"max":null}}'
 ROCELL='{"value":"yes","verified_on":"2026-11-02","source":"test","note":"sandbox flags"}'
 mk fakecmd "$(jq -n --argjson m "$M" --argjson c "$ROCELL" '{schema:2,kind:"provider",provider:"fakecmd",family:null,surface:"local",models:$m,
-  capabilities:{read_only_barrier:$c},agents:null,resources:{},barrier:{kind:"sandbox-args"},
+  capabilities:{read_only_barrier:$c,per_dispatch_model_override:$c,per_dispatch_effort_override:$c},agents:null,resources:{},barrier:{kind:"sandbox-args"},
   dispatch:{mode:"command",argv:["fakellm","run","--model","{model}",{"if":"effort","then":["--effort","{effort}"]},"--clone","{clone}","--out","{out}"],
     class_argv:{"read-only":["--sandbox","read-only"]},prompt:{via:"stdin"},cwd:"{clone}",env_pass:["FAKE_KEY","FAKE_MODE"],timeout_s:60,
     output:{format:"text"},exit:{"0":"ok","3":"refused","*":"failed"}}}')"
@@ -68,11 +72,46 @@ n = sys.argv[1]
 P.record_verification(n, {"read_only_barrier": {"hash": P.definition_hash(n), "by": "attest", "at": "2026-11-02", "note": "test"}})
 PY
 }
-verify_ro fakecmd
+verify_controls() { # Offline fakes only: their argv tests verify the control mappings.
+  python3 -I - "$1" <<'PY'
+import sys; sys.path.insert(0, "lib")
+import provider as P
+n = sys.argv[1]
+P.record_verification(n, {k: {"hash": P.definition_hash(n), "by": "attest", "at": "2026-11-02", "note": "fake argv"}
+                          for k in ("read_only_barrier", "per_dispatch_model_override", "per_dispatch_effort_override")})
+PY
+}
+verify_controls fakecmd
 proj rproj "$T/r" fakecmd; proj cproj "$T/r2" claude-code
 
 prep() { # repo slug [ability] -> exports RUN CLONE OUT
   eval "$($DA local prepare --repo "$1" --base main --slug "$2" --scratch "$T" ${3:+--role "$3"} | sed '/^$/,$d' | sed 's/^/export /')"; }
+old_request() { # Trusted fixture of a schema-1 lifecycle record from before command requests.
+  # Only cases deliberately switching runtime after prepare use this fixture;
+  # prepared_request_cases.py checks that current records refuse drift.
+  python3 -I - "$RUN" <<'PY'
+import json, os, sys
+sys.path.insert(0, "lib")
+import attempts as A
+s = A.Store(sys.argv[1])
+p = s.path + "/state.json"
+v = json.load(open(p)); v["prepared"].pop("request", None)
+with open(p, "w") as f: json.dump(v, f)
+p = os.environ["QARGI_STATE"] + "/local-runs.jsonl"
+rows = [json.loads(line) for line in open(p)]
+for row in rows:
+    if row.get("run") == s.run: row.pop("command_request", None)
+with open(p, "w") as f:
+    for row in rows: f.write(json.dumps(row) + "\n")
+PY
+}
+prep_unheld_review() { # Make a historical review fixture so run's barrier checks, not prepare's, are exercised.
+  cp "$T/c/projects/rproj.json" "$T/barrier.answers"
+  jq '.models.accept_no_barrier = {local: {by: "fixture", at: "2026-11-02", reason: "historical run fixture"}}' "$T/barrier.answers" > "$T/c/projects/rproj.json"
+  prep "$T/r" "$1" review
+  old_request
+  mv "$T/barrier.answers" "$T/c/projects/rproj.json"
+}
 task() { printf 'TASK: change the thing\nDONE: it is changed\n' > "$RUN/task.md"; }
 arg0() { sed -n 's/^ARGV=//p'; }
 finarg() { # the argv on stdin with the value of -o, when it is the run's own new {final_message} file (RUN/final.XXXXXXXXXXXX/message.md), as FINAL
@@ -81,7 +120,7 @@ finarg() { # the argv on stdin with the value of -o, when it is the run's own ne
 # --- dry run: the exact argv and the prompt, nothing written -----------------------------------------------------------------------
 prep "$T/r" w1; task
 out=$($DA local run "$RUN" --dry-run 2>"$T/err"); rc=$?
-want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["fakellm","run","--model","fake-m-1","--clone",$c,"--out",$o]')
+want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["fakellm","run","--model","fake-m-1","--effort","h","--clone",$c,"--out",$o]')
 [ "$rc" = 0 ] && [ "$(arg0 <<<"$out")" = "$want" ] && ok "dry run: the argv is the data's, with the placeholders filled" || no "dry argv: rc=$rc [$(arg0 <<<"$out")] want [$want] $(cat "$T/err")"
 grep -q '^You are a qargi member: a task-scoped worker' <<<"$out" && grep -q '^TASK: change the thing' <<<"$out" && grep -q '^CLASS=write' <<<"$out" \
   && ok "dry run: the prompt is the member body and the task block, with the class qargi recorded" || no "dry prompt: $out"
@@ -100,7 +139,7 @@ out=$($DA local run "$RUN" --dry-run --model other 2>&1); rc=$?; [ "$rc" != 0 ] 
 # --- the read-only class adds the definition's class arguments ---------------------------------------------------------------------
 prep "$T/r" rv review; task
 out=$($DA local run "$RUN" --dry-run 2>"$T/err"); rc=$?
-want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["fakellm","run","--model","fake-m-1","--clone",$c,"--out",$o,"--sandbox","read-only"]')
+want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["fakellm","run","--model","fake-m-1","--effort","h","--clone",$c,"--out",$o,"--sandbox","read-only"]')
 [ "$rc" = 0 ] && [ "$(arg0 <<<"$out")" = "$want" ] && grep -q '^CLASS=read-only' <<<"$out" && ok "read-only: class_argv (the sandbox arguments) is in the argv" || no "ro argv: rc=$rc [$(arg0 <<<"$out")] want [$want] $(cat "$T/err")"
 
 # --- what a run writes in the member-writable run directory is never written through a link, a pipe or a second name ---------------------------------------
@@ -123,10 +162,10 @@ prep "$T/r" lk-out; task; rm -rf "$OUT"; ln -s "$T" "$OUT"
 out=$($DA local run "$RUN" 2>&1); rc=$?
 { [ "$rc" = 2 ] && [ ! -e "$T/transcript" ]; } && ok "an out directory that is a link elsewhere is refused" || no "out link: rc=$rc $out"
 rm -f "$OUT"; mkdir "$OUT"
-# the run's own files are read as files: a pipe in place of the ability or the task block does not stop the lead, and no ability is a refusal, not a traceback
+# A private request selects without the ability mirror; task text is still opened without waiting for a writer.
 prep "$T/r" lk-ab; task; rm -f "$RUN/ability"
 out=$(python3 -I lib/local_run.py "$RUN" --project rproj --runtime fakecmd --class write --dry-run 2>&1); rc=$?
-{ [ "$rc" = 2 ] && grep -q 'ability' <<<"$out" && ! grep -q Traceback <<<"$out"; } && ok "a run with no ability file is refused with a message" || no "no ability: rc=$rc $out"
+{ [ "$rc" = 0 ] && grep -q '^MODEL=fake-m-1$' <<<"$out" && ! grep -q Traceback <<<"$out"; } && ok "private command requests do not select from the ability mirror, even when absent" || no "no ability mirror: rc=$rc $out"
 echo build > "$RUN/ability"; rm -f "$RUN/task.md"; mkfifo "$RUN/task.md"
 out=$(timeout 30 $DA local run "$RUN" --dry-run 2>&1); rc=$?
 { [ "$rc" = 2 ] && grep -q 'not a regular file' <<<"$out"; } && ok "a task block that is a pipe is refused, without waiting for a writer" || no "task pipe: rc=$rc $out"
@@ -150,7 +189,7 @@ grep -q '^STDIN-BEGIN' "$tr" && sed -n '/^STDIN-BEGIN/,/^STDIN-END/p' "$tr" | gr
 grep -q '^KEY=envval-k1$' "$tr" && grep -q '^OTHER=unset$' "$tr" && ok "only env_pass names reach it (FAKE_KEY did, OTHER_SECRET did not)" || no "env: $(grep -E 'KEY|OTHER' "$tr")"
 grep -q "^HOME=$RUN/home\$" "$tr" && grep -q '^GITCFG=/dev/null$' "$tr" && grep -q "^GITWRAP=$RUN/git\$" "$tr" && ok "it has the git wrapper's environment (no home, no global git configuration)" || no "git env: $(grep -E 'HOME|GIT' "$tr")"
 grep -q "^MEMBERMARK=$RUN\$" "$tr" && ok "it carries the member mark QARGI_MEMBER_RUN (the run directory), so the marshal knows it from any directory" || no "member mark: $(grep MEMBERMARK "$tr")"
-[ "$(jq -r .outcome "$RUN/dispatch.json")" = ok ] && [ "$(jq -r '.argv | join(" ")' "$RUN/dispatch.json")" = "fakellm run --model fake-m-1 --clone $CLONE --out $OUT" ] && ! grep -q 'envval-k1' "$RUN/dispatch.json" \
+[ "$(jq -r .outcome "$RUN/dispatch.json")" = ok ] && [ "$(jq -r '.argv | join(" ")' "$RUN/dispatch.json")" = "fakellm run --model fake-m-1 --effort h --clone $CLONE --out $OUT" ] && ! grep -q 'envval-k1' "$RUN/dispatch.json" \
   && ok "dispatch.json records the argv and the outcome, not an environment value" || no "dispatch.json: $(jq -c . "$RUN/dispatch.json" 2>&1) (wanted outcome ok, argv: fakellm run --model fake-m-1 --clone $CLONE --out $OUT)"
 $DA local verify "$RUN" >/dev/null 2>&1 && ok "verify passes after the run" || no "verify after run"
 out=$($DA local run "$RUN" 2>&1); rc=$?; [ "$rc" = 2 ] && grep -q 'has been run already' <<<"$out" && ok "a second run is refused" || no "second run: rc=$rc $out"
@@ -205,7 +244,7 @@ out=$($DA local run "$RUN" 2>&1); rc=$?
 setprov fakeobj
 
 # --- a read-only run needs a barrier, or the project's acceptance --------------------------------------------------------------------
-setprov fakecmd; prep "$T/r" rv2 review; task
+setprov fakecmd; prep "$T/r" rv2 review; task; old_request
 setprov fakeobj
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
 { [ "$rc" = 2 ] && grep -q 'has no read-only barrier on local' <<<"$out" && grep -q 'qargi provider accept fakeobj --surface local --no-barrier --project rproj' <<<"$out"; } \
@@ -222,7 +261,7 @@ mk fakeclaim "$(jq -n --argjson m "$M" --argjson c "$ROCELL" '{schema:2,kind:"pr
   capabilities:{read_only_barrier:$c},agents:null,resources:{},barrier:{kind:"none"},
   dispatch:{mode:"command",argv:["fakellm","run","--model","{model}","--out","{out}"],prompt:{via:"stdin"},cwd:"{clone}",timeout_s:60,output:{format:"text"}}}')"
 verify_ro fakeclaim
-setprov fakeclaim; prep "$T/r" rv2c review; task
+setprov fakeclaim; prep_unheld_review rv2c; task
 [ "$(python3 -I lib/provider.py effective fakeclaim local read_only_barrier 2>&1)" = no ] && ok "fail-open claim: the attested claim with nothing behind it reads as no" || no "fail-open setup: $(python3 -I lib/provider.py effective fakeclaim local read_only_barrier 2>&1)"
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
 { [ "$rc" = 2 ] && grep -q 'fakeclaim' <<<"$out" && grep -q 'on local' <<<"$out" && grep -q 'barrier.kind is none' <<<"$out" && grep -q 'qargi provider accept fakeclaim --surface local --no-barrier --project rproj' <<<"$out" && ! grep -q '^ARGV=' <<<"$out"; } \
@@ -248,7 +287,7 @@ for v in write empty; do
     capabilities:{read_only_barrier:$c},agents:null,resources:{},barrier:{kind:"none"},
     dispatch:{mode:"command",argv:["fakellm","run","--model","{model}","--out","{out}"],class_argv:$ca,prompt:{via:"stdin"},cwd:"{clone}",timeout_s:60,output:{format:"text"}}}')"
   verify_ro "fakeclaim$v"
-  setprov "fakeclaim$v"; prep "$T/r" "rv2$v" review; task
+  setprov "fakeclaim$v"; prep_unheld_review "rv2$v"; task
   out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
   { [ "$rc" = 2 ] && grep -q "fakeclaim$v" <<<"$out" && grep -q "qargi provider accept fakeclaim$v --surface local --no-barrier" <<<"$out" && ! grep -q '^ARGV=' <<<"$out"; } \
     && ok "a read-only run whose only class arguments are $v ones is refused: they hold no read-only member" || no "class arguments ($v): rc=$rc $out"
@@ -327,7 +366,7 @@ mk capext "$(jq -n '{schema:2,kind:"extension",extension:"capext",description:"c
   adds:{capabilities:{read_only_barrier:{value:"yes",note:"claim"}}}}')"
 attest_ext capext fakenobar
 jq '.models.extensions = ["capext"]' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
-prep "$T/r" rv5 review; task
+prep_unheld_review rv5; task
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
 { [ "$rc" = 2 ] && grep -q 'capext' <<<"$out"; } && ok "an extension that only claims read_only_barrier is refused the same way" || no "extension claim: rc=$rc $out"
 jq '.models.extensions = ["sandext", "skillext"]' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
@@ -359,7 +398,7 @@ out=$($DA local prepare --repo "$T/r" --base main --slug hd3 --scratch "$T/lnk" 
 { [ "$rc" = 2 ] && grep -qF "CONTRACT $HID/qargi.XXXXXX/contract lies under $HID" <<<"$out" && [ -z "$(ls -A "$HID")" ]; } \
   && ok "a --scratch that is a link into the hidden place is refused by its real path" || no "hidden link scratch: rc=$rc $out"
 out=$(QARGI_RUN_TMP=$T/lnk $DA local prepare --repo "$T/r" --base main --slug hd4 --scratch "$T/ok" 2>&1); rc=$?
-{ [ "$rc" = 0 ] && grep -q "^TMP=$T/lnk/qargi-run\." <<<"$out"; } && ok "a write run outside with its TMP in the hidden place is prepared: the class shows TMP" || no "hidden tmp, write: rc=$rc $out"
+{ [ "$rc" = 0 ] && grep -q "^TMP=$HID/qargi-run\." <<<"$out"; } && ok "a write run outside with its TMP in the hidden place is prepared: TMP names the canonical parent" || no "hidden tmp, write: rc=$rc $out"
 out=$(QARGI_RUN_TMP=$T/lnk $DA local prepare --repo "$T/r" --base main --slug hd5 --scratch "$T/ok" --role review 2>&1); rc=$?
 [ "$rc" = 0 ] && ok "and so is a read-only one: a read-only member writes no TMP" || no "hidden tmp, read-only: rc=$rc $out"
 setprov fakehidtmp; n0=$(ls "$T/ok" | wc -l)
@@ -367,15 +406,16 @@ out=$(QARGI_RUN_TMP=$T/lnk $DA local prepare --repo "$T/r" --base main --slug hd
 { [ "$rc" = 2 ] && grep -qF "TMP $T/lnk/qargi-run.XXXXXX (its real path $HID/qargi-run.XXXXXX) lies under $HID" <<<"$out" \
   && grep -q 'set QARGI_RUN_TMP to a directory on another filesystem' <<<"$out" && ! grep -q -- '--scratch on another' <<<"$out" && [ "$(ls "$T/ok" | wc -l)" = "$n0" ]; } \
   && ok "a write run whose sandbox does not show TMP is refused when TMP is hidden, by its real path, with the QARGI_RUN_TMP fix" || no "hidden tmp, not shown: rc=$rc $out"
-# local run asks again: the runtime of the project may have changed since prepare (here: prepared on fakecmd, which hides nothing)
+# Historical records still ask hidden-path questions after a runtime change.
+# Current records refuse that drift earlier (prepared_request_cases.py).
 setprov fakecmd
-eval "$($DA local prepare --repo "$T/r" --base main --slug hd8 --scratch "$HID" --role review | sed '/^$/,$d' | sed 's/^/export /')"; task
+eval "$($DA local prepare --repo "$T/r" --base main --slug hd8 --scratch "$HID" --role review | sed '/^$/,$d' | sed 's/^/export /')"; task; old_request
 setprov fakehid
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
 { [ "$rc" = 2 ] && grep -qF "CONTRACT $RUN/contract lies under $HID" <<<"$out" && ! grep -q '^ARGV=' <<<"$out"; } && ok "local run refuses a read-only run in the hidden place (dry run)" || no "hidden ro run, dry: rc=$rc $out"
 out=$($DA local run "$RUN" 2>&1); rc=$?
 { [ "$rc" = 2 ] && grep -q 'Nothing was started' <<<"$out" && [ ! -e "$RUN/dispatch.json" ] && [ ! -e "$OUT/transcript" ]; } && ok "and a real one starts nothing" || no "hidden ro run: rc=$rc $out"
-setprov fakecmd; eval "$($DA local prepare --repo "$T/r" --base main --slug hd9 --scratch "$HID" | sed '/^$/,$d' | sed 's/^/export /')"; task
+setprov fakecmd; eval "$($DA local prepare --repo "$T/r" --base main --slug hd9 --scratch "$HID" | sed '/^$/,$d' | sed 's/^/export /')"; task; old_request
 setprov fakehid
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
 { [ "$rc" = 2 ] && grep -qF "GIT $RUN/git lies under $HID" <<<"$out" && ! grep -qF "CLONE $RUN" <<<"$out"; } && ok "and a write run there, for what its class does not show" || no "hidden write run: rc=$rc $out"
@@ -388,7 +428,7 @@ setprov fakecmd
 cp "$T/bin/fakellm" "$T/bin/codex"
 setprov codex; prep "$T/r" cx1; task
 out=$($DA local run "$RUN" --dry-run 2>"$T/err"); rc=$?
-want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["codex","exec","--json","--ephemeral","--ignore-rules","--strict-config","-C",$c,"-m","gpt-6.1-terra","-o","FINAL","--sandbox","workspace-write","--add-dir",$o,"--add-dir",($c + "/.git")]')
+want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["codex","exec","--json","--ephemeral","--ignore-rules","--strict-config","-C",$c,"-m","gpt-6.1-terra","-c","model_reasoning_effort=high","-o","FINAL","--sandbox","workspace-write","--add-dir",$o,"--add-dir",($c + "/.git")]')
 { [ "$rc" = 0 ] && [ "$(arg0 <<<"$out" | finarg)" = "$want" ] && grep -qxF "COMMAND=$(realpath "$T/bin/codex")" <<<"$out" && grep -q '^PROMPT_VIA=stdin$' <<<"$out" && grep -q '^CLASS=write$' <<<"$out"; } \
   && ok "codex, write: codex exec in the clone, the balanced model, the last message to the run's own new file, the workspace-write sandbox with OUT and the clone's .git added" || no "codex write argv: rc=$rc [$(arg0 <<<"$out")] want [$want] $(cat "$T/err")"
 # the clone's .git is a writable root of the sandbox: one an earlier run left as a link (to anywhere) refuses the run, so the grant never leaves the run
@@ -410,7 +450,7 @@ out=$($DA local prepare --repo "$T/r" --base main --slug cxr0 --scratch "$T" --r
   && ok "codex, read-only: its sandbox barrier is dated (partial), so prepare takes the review role with no acceptance" || no "codex ro prepare: rc=$rc $out"
 prep "$T/r" cxr review; task
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
-want=$(jq -nc --arg c "$CLONE" '["codex","exec","--json","--ephemeral","--ignore-rules","--strict-config","-C",$c,"-m","gpt-6.1-terra","-o","FINAL","--sandbox","read-only"]')
+want=$(jq -nc --arg c "$CLONE" '["codex","exec","--json","--ephemeral","--ignore-rules","--strict-config","-C",$c,"-m","gpt-6.1-sol","-c","model_reasoning_effort=high","-o","FINAL","--sandbox","read-only"]')
 { [ "$rc" = 0 ] && [ "$(arg0 <<<"$out" | finarg)" = "$want" ] && grep -q '^CLASS=read-only$' <<<"$out" && ! grep -q -e '--add-dir' -e '[.]git' <<<"$(arg0 <<<"$out")" \
   && grep -q '^NOTE=codex has only a partial read-only barrier on local' <<<"$out"; } \
   && ok "codex, read-only: the read-only sandbox, no write group (no writable directory, the clone's .git included) and the partial barrier's note" || no "codex ro argv: rc=$rc [$(arg0 <<<"$out")] want [$want] $out"
@@ -438,18 +478,18 @@ jq '.models.accept_no_barrier = {local: {by: "owner", at: "2026-11-11", reason: 
 prep "$T/r" cxu review; task
 jq 'del(.models.accept_no_barrier)' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
-{ [ "$rc" = 2 ] && grep -q 'qargi provider accept codexundated --surface local --no-barrier --project rproj' <<<"$out" && ! grep -q '^ARGV=' <<<"$out"; } \
+{ [ "$rc" = 2 ] && grep -q 're-prepare' <<<"$out" && ! grep -q '^ARGV=' <<<"$out"; } \
   && ok "and local run refuses it too, once the acceptance it was prepared under is gone" || no "codex undated ro: rc=$rc $out"
 jq '.models.accept_no_barrier = {local: {by: "owner", at: "2026-11-11", reason: "test"}}' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
-want=$(jq -nc --arg c "$CLONE" '["codex","exec","--json","--ephemeral","--ignore-rules","--strict-config","-C",$c,"-m","gpt-6.1-terra","-o","FINAL","--sandbox","read-only"]')
+want=$(jq -nc --arg c "$CLONE" '["codex","exec","--json","--ephemeral","--ignore-rules","--strict-config","-C",$c,"-m","gpt-6.1-sol","-c","model_reasoning_effort=high","-o","FINAL","--sandbox","read-only"]')
 { [ "$rc" = 0 ] && [ "$(arg0 <<<"$out" | finarg)" = "$want" ] && grep -q '^CLASS=read-only$' <<<"$out"; } \
   && ok "codex undated, read-only (accepted): the same read-only sandbox" || no "codex undated ro argv: rc=$rc [$(arg0 <<<"$out")] want [$want]"
 jq 'del(.models.accept_no_barrier)' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
 # copies in the library, attested: with the read-only group the barrier holds (partial, with its note); without it a read-only run is refused
 mk codexro "$(jq '.provider = "codexro" | del(.resources.contract_addenda)' "$CX")"
 mk codexnoro "$(jq '.provider = "codexnoro" | del(.resources.contract_addenda) | .dispatch.argv |= map(select((type == "object" and .class == "read-only") | not))' "$CX")"
-verify_ro codexro; verify_ro codexnoro
+verify_controls codexro; verify_ro codexnoro
 setprov codexro; prep "$T/r" cxr2 review; task
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
 { [ "$rc" = 0 ] && [ "$(arg0 <<<"$out" | jq -c '.[-2:]')" = '["--sandbox","read-only"]' ] && grep -q '^NOTE=codexro has only a partial read-only barrier on local' <<<"$out"; } \
@@ -859,7 +899,7 @@ out=$($DA local run "$RUN" --effort low 2>&1); rc=$?
   && [ "$(jq -r .manifest.state "$RUN/dispatch.json")" = written ]; } && ok "e2e: a read-only codex run (the stub) returns its report as OUT/report.md and the lead writes OUT/manifest.json" || no "e2e run: rc=$rc $out"
 jq -e --arg b "$BSHA" --arg id "${RUN##*/}" '.status == "DONE" and .commits == [] and .gates == [] and .done.exit_code == null and .touched_paths == [] and .scope == []
   and .base == {branch: "main", sha: $b} and .artifacts == [{path: "report.md", kind: "report"}] and (has("verdict") | not)
-  and .run.id == $id and .run.role == "review" and .run.runtime == "codexro" and .run.class == "read-only" and .run.model == "gpt-6.1-terra"
+  and .run.id == $id and .run.role == "review" and .run.runtime == "codexro" and .run.class == "read-only" and .run.model == "gpt-6.1-sol"
   and .run.effort == "low" and .run.effort_native == "low" and .run.outcome == "ok" and .run.exit == 0 and .run.packaged_by == "qargi local run"' "$OUT/manifest.json" >/dev/null \
   && ok "the manifest is the minimal report-only one, with the run's id, role, runtime, class, model, effort and base from the lead's record; no test, no verdict" || no "e2e manifest: $(cat "$OUT/manifest.json")"
 out=$($DA local verify "$RUN" 2>&1); rc=$?
@@ -1003,8 +1043,13 @@ echo tracked untracked blocked > "$T/wu-mode"
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
 out=$($DA review check "$OUT" 2>&1); rc2=$?
 { [ "$rc" = 2 ] && [ "$rc2" = 0 ] && grep -q '^OK no commits (status BLOCKED): the commit was refused$' <<<"$out" && grep -q '^NOTE .*holds 1 uncommitted change(s) to tracked files (tracked.txt); the run is BLOCKED' <<<"$out" \
-  && grep -q '^WARN .*holds 1 untracked file(s) no commit has (new.txt)' <<<"$out"; } \
+  && grep -q '^WARN .*holds 1 untracked file(s) no commit has (new.txt)' <<<"$out" \
+  && grep -q 'structural validation of unsuccessful-attempt output is not acceptance' <<<"$out"; } \
   && ok "a BLOCKED manifest with the change left uncommitted passes review check as a refusal, with a note and a warning" || no "blocked uncommitted: rc=$rc rc2=$rc2 $out"
+out=$($DA local verify "$RUN" 2>&1); rc=$?
+[ "$rc" != 0 ] && ok "BLOCKED inspection does not verify the attempt" || no "BLOCKED verify: rc=$rc $out"
+out=$($DA review apply "$RUN" 2>&1); rc=$?
+[ "$rc" != 0 ] && ok "BLOCKED inspection does not permit apply" || no "BLOCKED apply: rc=$rc $out"
 git -C "$CLONE" checkout -q tracked.txt; echo untracked > "$T/wu-mode"
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -q '^OUTCOME=ok$' <<<"$out" && grep -qF "WORKTREE=untracked: $CLONE holds 1 untracked file(s) no commit has and OUT holds no patches: new files never added are reported, not a refusal (the refusal covers changes to tracked files)" <<<"$out" \
@@ -1127,6 +1172,9 @@ got=$(python3 -I - "$RUN" "$T" <<'PY' 2>&1
 import json, os, sys
 sys.path.insert(0, os.path.join(sys.argv[2], "tool", "lib"))
 import local_run as L
+sys.path.insert(0, os.path.join(os.getcwd(), "tests"))
+from attempt_fixture import wire
+wire(L)
 earlier = json.load(open(os.path.join(sys.argv[1], "dispatch.json")))["member"]
 groups = L.group_left
 L.group_left = lambda pg: groups(pg) if pg == earlier else [pg]
@@ -1135,7 +1183,7 @@ rc = L.main([sys.argv[1], "--project", "rproj", "--runtime", "codex", "--class",
 print("CLASSIFICATION_RC=%d" % rc)
 PY
 )
-{ grep -q '^CLASSIFICATION_RC=1$' <<<"$got" && grep -q '^OUTCOME=failed' <<<"$got" && grep -q '1 process of the member.s process group .* survived TERM and KILL' <<<"$got" \
+{ grep -q '^CLASSIFICATION_RC=1$' <<<"$got" && grep -q '^OUTCOME=failed' <<<"$got" && grep -q '1 process observed or unknown in the member.s process group .* after TERM and KILL' <<<"$got" \
   && ! grep -q 'process group was stopped' <<<"$got" && [ "$(jq -r .group_left "$RUN/dispatch.json")" = 1 ]; } \
   && ok "normal exit with a reported survivor fails and never says the group stopped" || no "normal survivor: $got"
 for s in TERM HUP; do
@@ -1151,7 +1199,7 @@ else no "stubborn: the member did not start: $(cat "$T/ir.out")"; fi
 got=$(python3 -I -c 'import subprocess, sys; sys.path.insert(0, "lib"); import local_run as L
 p = subprocess.Popen(["sleep", "30"], start_new_session=True); L.group_left = lambda pg: [pg, 1]
 n = L.kill_group(p, grace=0.1); print(n, p.wait(5), L.stopped_text(n), "|", L.stopped_text(1), "|", L.stopped_text(0))' 2>&1)
-[ "$got" = "2 -15 a descendant survived: 2 processes of the member's process group still alive after TERM and KILL | a descendant survived: 1 process of the member's process group still alive after TERM and KILL | the member's process group was stopped" ] \
+[ "$got" = "2 -15 the member's process group remains busy or unknown after TERM and KILL | the member's process group remains busy or unknown after TERM and KILL | the member's process group was stopped" ] \
   && ok "survivors of TERM and KILL are counted and said, never called a stopped group" || no "survivors: $got"
 # a background job of a script starts with SIGINT ignored, which the runner keeps (as under nohup): this launcher restores it first, as a terminal has it
 if ir_start python3 -I -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])'; then
@@ -1164,7 +1212,7 @@ rm -f "$T/ir-child" "$T/ir-member" "$T/ir.rc" "$T/ir.out"; echo wait > "$T/ir-mo
 if wait_until '[ -s "$T/ir-child" ] && [ -s "$T/ir-member" ] && [ "$(jq -r .member "$RUN/dispatch.json" 2>/dev/null)" = "$(cat "$T/ir-member")" ]' 30; then
   runner=$(jq -r .runner "$RUN/dispatch.json")
   out=$($DA local run "$RUN" --again 2>&1); rc=$?
-  { [ "$rc" = 2 ] && grep -qF "$RUN is being run now (qargi local run, process $runner)" <<<"$out" && tr '\0' '\n' < "/proc/$runner/cmdline" | grep -qxF "$RUN"; } \
+  { [ "$rc" = 2 ] && grep -q "lifecycle lock busy" <<<"$out" && tr '\0' '\n' < "/proc/$runner/cmdline" | grep -qxF "$RUN"; } \
     && ok "a run started by a relative path: its runner holds the real path, and a start from another directory refuses while it runs" || no "relative run: rc=$rc $out"
   kill -TERM "$runner"; ir_after TERM 143
 else no "relative run: the member did not start: $(cat "$T/ir.out")"; fi
@@ -1208,11 +1256,11 @@ if ir_start; then
   kill -KILL "$(jq -r .runner "$RUN/dispatch.json")"; wait_until '[ -s "$T/ir.rc" ]' 30
   { [ "$(jq -r .outcome "$RUN/dispatch.json")" = running ] && [ -L "$LINK" ] && ! gone "$(cat "$T/ir-member")"; } && ok "SIGKILL: the start record stays (running), the link stays, the member runs on" || no "sigkill state: $(jq -c . "$RUN/dispatch.json")"
   out=$($DA local run "$RUN" --again 2>&1); rc=$?
-  { [ "$rc" = 2 ] && grep -qF "the member of an earlier start of $RUN is still running (process group $(cat "$T/ir-member")), its runner is gone: stop it first (kill -TERM -- -$(cat "$T/ir-member"))" <<<"$out"; } \
-    && ok "the next start refuses while the member of the killed runner still runs, naming its process group" || no "sigkill member alive: rc=$rc $out"
+  { [ "$rc" = 2 ] && grep -q "member process group is busy" <<<"$out"; } \
+    && ok "the next start refuses while the recorded member group of the killed runner still runs" || no "sigkill member alive: rc=$rc $out"
   kill -TERM -- -"$(cat "$T/ir-member")"; wait_until 'gone "$(cat "$T/ir-member")" && gone "$(cat "$T/ir-child")"' 10 || no "the member's process group did not stop"
   out=$($DA local run "$RUN" 2>&1); rc=$?
-  { [ "$rc" = 2 ] && grep -q 'was started and did not end: its runner is gone' <<<"$out" && grep -qF "qargi local run $RUN --again" <<<"$out"; } && ok "without --again the start is refused with the way on" || no "sigkill no again: rc=$rc $out"
+  { [ "$rc" = 2 ] && grep -q 'has been run already' <<<"$out" && grep -q -- '--again' <<<"$out"; } && ok "without --again the start is refused with the way on" || no "sigkill no again: rc=$rc $out"
   out=$($DA local list 2>&1)
   grep -qF "  residue: $LINK (a link a start of qargi local run left: its runner did not end); qargi local run RUN --again replaces a link left there" <<<"$out" \
     && ok "local list names the link left in the run home" || no "list residue: $out"
@@ -1280,7 +1328,7 @@ out=$($DA local run "$RUN" --again 2>&1); rc=$?
 bad() { # NAME dispatch-json: a runtime with this dispatch, project set to it
   mk "$1" "$(jq -n --arg n "$1" --argjson m "$M" --argjson d "$2" '{schema:2,kind:"provider",provider:$n,family:null,surface:"local",models:$m,capabilities:{},agents:null,resources:{},barrier:{kind:"none"},dispatch:$d}')"
   setprov "$1"; }
-setprov fakecmd; prep "$T/r" w6; task   # the pack above has drifted: prepare would refuse it
+setprov fakecmd; prep "$T/r" w6; task; old_request   # definition-validation compatibility cases below switch runtimes on this old record
 tryrun() { out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?; }
 bad fakeb1 '{"mode":"command","argv":["fakellm","{bogus}"],"prompt":{"via":"stdin"}}'; tryrun
 [ "$rc" = 2 ] && grep -q 'unknown placeholder {bogus}' <<<"$out" && ok "an unknown placeholder is refused" || no "bogus: rc=$rc $out"
@@ -1360,6 +1408,9 @@ setprov fakecmd
 got=$(env FAKE_MODE=sleep python3 -I - "$T/tool/lib" "$RUN" <<'PY' 2>&1
 import os, sys; sys.path.insert(0, sys.argv[1])
 import local_run as L
+sys.path.insert(0, os.path.join(os.getcwd(), "tests"))
+from attempt_fixture import wire
+wire(L)
 run, orig, n = os.path.realpath(sys.argv[2]), L.write_private, [0]
 def wp(path, text):
     n[0] += 1
@@ -1382,6 +1433,9 @@ import json, os, subprocess, sys
 from unittest.mock import patch
 sys.path.insert(0, sys.argv[1])
 import local_run as L
+sys.path.insert(0, os.path.join(os.getcwd(), "tests"))
+from attempt_fixture import wire, attempt
+wire(L)
 run = os.path.realpath(sys.argv[2])
 build, write, stop, clear_home, groups = L.build, L.write_private, L.kill_group, L.clear_home, L.group_left
 source = os.path.join(run, "signin-fixture")
@@ -1449,17 +1503,34 @@ for cleanup_fails in (False, True, "unknown"):
             assert link in result.stdout + result.stderr, result
             assert "refresh.from-run" in result.stdout + result.stderr, result
             assert secret not in result.stdout + result.stderr
-    # Even a refused dispatch cannot retry beside original-group survivors.
-    for survivors in ([procs[0].pid], None):
-        rec["group_left"] = len(survivors) if survivors else None
-        write(os.path.join(run, "dispatch.json"), json.dumps(rec))
-        with patch.object(L, "group_left", return_value=survivors):
-            try:
-                L.earlier_start(run, True)
-                raise AssertionError("retry beside survivors")
-            except L.Stop as e:
-                assert "not known to be quiescent" in str(e)
-    L.earlier_start(run, True)  # actual group has stopped: safe to retry
+    # Unfinished private dispatch authority, even with a forged ended mirror,
+    # refuses live or unknown groups. Inject the process probe, not RUN metadata.
+    with attempt(run):
+        store = L.A.Store(run)
+        gate = store.gate()
+        refs = open(os.path.join(store.path, gate["baseline"]), "rb").read()
+        store.begin(store.gate_pending(refs, epoch=gate["epoch"]), refs)
+        member = subprocess.Popen(["sleep", "30"], start_new_session=True)
+        try:
+            store.member(member.pid)
+        finally:
+            member.terminate()
+            member.wait()
+        try:
+            for survivors in (True, None):
+                def alive(pg):
+                    if survivors is None:
+                        raise L.A.Refuse("unknown process group liveness")
+                    return survivors
+                with patch.object(L.A, "process", return_value=None), patch.object(L.A, "group_alive", side_effect=alive):
+                    try:
+                        L.earlier_start(run, True)
+                        raise AssertionError("retry beside survivors")
+                    except L.A.Refuse as e:
+                        assert "process group" in str(e)
+        finally:
+            store.end("failed")
+        L.earlier_start(run, True)  # actual group has stopped: safe to retry
     if os.path.islink(link):
         os.unlink(link)
     os.unlink(os.path.join(os.path.dirname(link), "refresh.from-run"))
@@ -1583,5 +1654,6 @@ PY
 [ "$rc" = 0 ] && [ "$got" = 'inspection: PASS' ] && ok "clone inspection refuses redirection, special files and corrupt HEAD without running helpers" || no "clone inspection: rc=$rc $got"
 
 python3 tests/inspection_cases.py && ok "private Git inspection: PASS" || no "private Git inspection"
+python3 tests/prepared_request_cases.py && ok "prepared command requests: PASS" || no "prepared command requests"
 rm -rf "$T"
 exit $fail

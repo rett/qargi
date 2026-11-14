@@ -2,7 +2,9 @@
 # The conformance suite (tests/conformance.sh) catches what it claims to catch: it passes the claude-code and claude-platform adapters,
 # the command runtime codex and the broken fixture without a fault, and fails the fixture, naming the case, for each fault the fixture can
 # be told to have; the command cases 11 to 14 fail on faulty copies of the codex definition and of its stub (one gives a read-only run the
-# write class's writable .git).
+# write class's writable .git). Case 15 checks prepare's original-root plain-path refusal, diagnostics and parent snapshots;
+# runtime covers the symlink real-path branch only (not runtime plain paths or prepare real paths).
+# every successfully prepared command fixture retains its private request and marker.
 # Run: tests/test_conformance_selftest.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -12,9 +14,41 @@ fail=0
 # shellcheck source=fixtures.sh
 . tests/fixtures.sh
 T=$(mktemp -d -p "$HERMETIC")
+trap 'chmod 755 "$T/inst/zz-sentinel" 2>/dev/null || :; kill_bg; rm -rf "$HERMETIC"' EXIT
 ROOT=$PWD
 BROKEN=tests/providers/broken
 tree_before=$(git status --porcelain --untracked-files=no tests lib 2>/dev/null; git diff tests lib 2>/dev/null | cksum)
+
+# Probe the actual redirect helper in isolation; the registry-reader stand-in
+# supplies a trusted TMP distinct from the poisoned member mirror. No runtime is
+# started here. Unknown labels and failed operations must stop before OUT moves.
+for fault in none unknown mv ln registry; do
+  (
+    eval "$(sed -n '/^cmdredirect() {/,/^}/p' lib/conformance/run.sh)"
+    CRUN=$T/redirect.$fault/run
+    dest=$T/redirect.$fault/hidden
+    trusted=$T/redirect.$fault/trusted-tmp
+    decoy=$T/redirect.$fault/decoy
+    mkdir -p "$CRUN/contract" "$CRUN/out" "$trusted" "$decoy"
+    printf '%s\n' "$decoy" > "$CRUN/tmpdir"
+    cmdregistry() { [ "$fault" != registry ] && printf '%s\n' "$trusted"; }
+    mv() { [ "$fault" != mv ] && command mv "$@"; }
+    ln() { [ "$fault" != ln ] && command ln "$@"; }
+    labels=(CONTRACT TMP OUT)
+    [ "$fault" != unknown ] || labels=(CONTRACT UNKNOWN OUT)
+    cmdredirect "$dest" "${labels[@]}" > "$T/redirect.$fault.log" 2>&1; rc=$?
+    if [ "$fault" = none ]; then
+      [ "$rc" = 0 ] && [ -L "$trusted" ] && [ -d "$dest/TMP" ] && [ ! -L "$decoy" ] && [ -d "$decoy" ]
+    else
+      [ "$rc" != 0 ] && [ -d "$CRUN/out" ] && [ ! -L "$CRUN/out" ] && [ ! -e "$dest/OUT" ] || exit 1
+      case $fault in
+        unknown) grep -q 'unknown hidden-path label UNKNOWN' "$T/redirect.$fault.log" && [ ! -e "$dest/UNKNOWN" ];;
+        mv|ln) grep -q 'could not redirect CONTRACT' "$T/redirect.$fault.log" && [ ! -e "$dest/TMP" ];;
+        registry) [ ! -e "$dest" ];;
+      esac
+    fi
+  ) && ok "redirect probe '$fault' uses authority TMP or stops before later labels" || no "redirect probe '$fault' failed"
+done
 
 # the validator: a good value passes, a bad one is named
 V="python3 -I lib/conformance/validate.py"
@@ -140,6 +174,18 @@ jq --slurpfile c lib/providers/catalogs/claude.json '.models = {pattern: $c[0].p
   lib/providers/claude-platform.json > "$T/inline/lib/providers/claude-platform.json"
 conf claude-platform --tool "$T/inline" > "$T/inline.out" 2>&1; rc=$?
 { [ $rc = 0 ] && ! grep -q '^FAIL' "$T/inline.out" && grep -q 'effort null rule on a changed copy' "$T/inline.out"; } && ok "a schema 2 definition with inline models passes, and the effort rule runs on its models" || { no "inline models: rc=$rc"; sed 's/^/     /' "$T/inline.out"; }
+
+# An unreadable unrelated entry in an installed layout must never be copied.
+if [ "$(id -u)" = 0 ]; then
+  echo "skip: the sentinel check needs a non-root user"
+else
+  copy_tool "$ROOT" "$T/inst"
+  mkdir "$T/inst/zz-sentinel" && echo x > "$T/inst/zz-sentinel/f" && chmod 000 "$T/inst/zz-sentinel" || no "(setup) sentinel"
+  bash "$T/inst/lib/conformance/run.sh" codex --stub "$ROOT/tests/providers/codex" > "$T/inst.out" 2>&1; rc=$?
+  chmod 755 "$T/inst/zz-sentinel"
+  { [ "$rc" = 0 ] && ! grep -q '^FAIL' "$T/inst.out" && grep -Eq '^ok +\[12\] .*runs: write read-only' "$T/inst.out"; } \
+    && ok "installed layout ignores an unrelated root entry" || { no "sentinel: rc=$rc"; sed 's/^/     /' "$T/inst.out"; }
+fi
 
 # an adapter that is null is a skip, not a failure; an unknown provider is a usage error
 mkdir -p "$T/null/lib/providers/catalogs"; cp lib/providers/catalogs/claude.json "$T/null/lib/providers/catalogs/"

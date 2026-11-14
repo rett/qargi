@@ -62,4 +62,6 @@ copy_tool "$T/src" "$T/some" lib VERSION
 # 5. the Python tests read the same list
 py=$(python3 -I -c 'import sys; sys.path.insert(0, "tests"); import hermetic; print(" ".join(hermetic.TOOL_DIRS))' 2>&1)
 [ "$py" = "$TOOL_DIRS" ] && ok "tests/hermetic.py has the list of tests/hermetic.sh" || no "hermetic.py: $py"
+cr=$(sed -n 's/^MKTOOL_ENTRIES="\(.*\)"$/\1/p' lib/conformance/run.sh)
+[ "$cr" = "$TOOL_DIRS" ] && ok "conformance copies the entries of TOOL_DIRS" || no "MKTOOL_ENTRIES differs from TOOL_DIRS: $cr"
 exit $fail

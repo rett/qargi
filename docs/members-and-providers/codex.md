@@ -106,7 +106,7 @@ qargi local prepare --repo ~/src/myproject --base feature/dots --slug dots \
   --scratch ~/.cache/qargi-runs --role build --task-file ~/tasks/dots.md \
   --done "make test" --scope src --scope tests
 qargi local run "$RUN" --dry-run
-qargi local run "$RUN" --model fast --effort low
+qargi local run "$RUN"
 qargi local verify "$RUN"
 qargi review check "$RUN/out"
 qargi review apply "$RUN"
@@ -123,13 +123,15 @@ printf 'Review the series on agent/dots against feature/dots.\n' \
 qargi local prepare --repo ~/src/myproject --base agent/dots \
   --slug dots-review --scratch ~/.cache/qargi-runs --role review \
   --task-file ~/tasks/dots-review.md --done "make test"
-qargi local run "$RUN" --model deep --effort high
+qargi local run "$RUN"
 qargi local verify "$RUN"
 qargi review check "$RUN/out"
 qargi local clean "$RUN"
 ```
 
 `qargi local run "$RUN" --again` runs the member again in the same run (the earlier report is set aside as above); `qargi local clean "$RUN" --discard` drops a run you do not want.
+
+Prepare resolves the role's profile and retains its requested model and effort privately; omitted run options use those values (build: balanced/high; review: deep/high in the shipped table). Use `prepare --profile NAME` to select another project or shipped profile. Run-time changes through `--model` or a non-null native `--effort` require the corresponding supported override capability; Codex's overrides remain unverified, so different explicit values refuse. Repeating the prepared values is permitted. These are requested controls, not an assertion of the model or effort Codex actually used. Changes to the bound runtime, mode, catalog, profile or policy require a new prepare; editing `RUN/request.json` cannot accept them. [Model profiles](models.md) describes the override and compatibility rules.
 
 ## Sending a message to a Codex session
 

@@ -94,7 +94,7 @@ written to RUN/dispatch.json (argv, class, model, outcome; never an environment 
 the runner and, once started, of the member), and again when it ends, whatever ended it: the member's exit, the bound, a run home, configuration file or
 transcript that cannot be made (refused, with the error), a command that cannot be started (transport), or SIGINT, SIGTERM or SIGHUP to the runner
 (interrupted, with the signal: the member's process group gets TERM, is watched for 5 seconds, then KILL for what is left of it, and the run
-home's links are removed; the output says the group was stopped only when none of it is alive, and otherwise how many of its processes survived). SIGKILL leaves the start
+home's links are removed; the output says the group was stopped only when the kernel reports it absent, and otherwise that it remains busy or unknown). SIGKILL leaves the start
 record: the next start of the run refuses while that runner or its member still runs (the member is found by QARGI_MEMBER_RUN in its environment),
 and otherwise needs --again, which replaces the links left in the run home and removes the stale last-message directories; qargi local clean
 removes the run with them, and qargi local list and verify name the links left. A run home a member moved or replaced is searched for the links
@@ -120,6 +120,8 @@ import tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
+import attempts as A
+import prepared_request as PR
 import provider as P  # noqa: E402
 import paths  # noqa: E402
 import procenv as PE  # noqa: E402
@@ -795,6 +797,10 @@ def registry_tmp(run):
 def base_sha(run, base):
     """The commit of BASE that `local prepare` recorded in RUN/refs.before (the line `local refs/heads/BASE SHA`), else "". Read as a file of the run:
     no link followed, no writer waited for, a regular file only (as review save and local report read it)."""
+    store = A.Store(run)
+    row = store.registry()
+    if row is not None and "lifecycle" in row:
+        return store.show()["prepared"]["base_sha"]
     want = "local refs/heads/%s " % base
     try:
         fd = os.open(os.path.join(run, "refs.before"), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -843,6 +849,14 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     out = os.path.join(run, "out")
     clone = os.path.join(run, "clone")
     tmp = registry_tmp(run) or os.path.join(run, "tmp")
+    # Only private authority may select or bind a prepared command request.
+    store = A.Store(run)
+    row = store.registry()
+    request = None
+    if row is not None and "lifecycle" in row:
+        request = store.show()["prepared"].get("request")
+    if request is not None:
+        PR.current(request, project, runtime, cls)
     comp = P.compose(runtime, "local", project)          # the definition the project's extensions complete, not the runtime's alone
     doc = comp["definition"]
     disp = doc.get("dispatch")
@@ -939,9 +953,12 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     prompt = compose_prompt(doc, task_text, cls, run, tmp)
     if via == "arg" and len(prompt.encode("utf-8")) > MAX_ARG:
         fail("the prompt is %d bytes, too long for an argument (%d); use a runtime whose dispatch.prompt.via is stdin or file" % (len(prompt.encode("utf-8")), MAX_ARG))
-    mname, native, notes = models_values(runtime, model, effort, project)
+    if request is None:
+        mname, native, notes = models_values(runtime, model, effort, project)
+    else:
+        mname, native, notes, effort = PR.values(request, model, effort)
     pfile = os.path.join(run, PROMPT_DIR, pname)
-    member = read_run_file(os.path.join(run, "profile"), 256, "the run's profile").strip()
+    member = request["base"] if request else read_run_file(os.path.join(run, "profile"), 256, "the run's profile").strip()
     member = member or read_run_file(os.path.join(run, "ability"), 256, "the run's ability").strip()
     if not member:
         fail("%s is missing or empty: a run made by qargi local prepare records its ability there" % os.path.join(run, "ability"))
@@ -1104,7 +1121,7 @@ class Signals:
     run home is cleared;
     before the member starts it is acted on at the next check, and after the member has ended it is only noted, so the run's end is never cut short.
     A later one is recorded by nothing. A signal the runner was started with set to be ignored (nohup) stays ignored. SIGKILL cannot be caught:
-    then RUN/dispatch.json still says running, with the runner's and the member's process ids, and the next start or qargi local clean clears it."""
+    then private lifecycle evidence must prove member termination; an unknown spawn refuses recovery."""
     def __init__(self):
         self.sig, self.armed, self.old = None, False, {}
 
@@ -1187,53 +1204,30 @@ def proc_of_run(pid, run, what):
 
 
 def earlier_start(run, again):
-    """Refuse a start while an earlier one of this run is under way or its member still runs; a start record left by a runner that is gone (killed
-    with SIGKILL, or by a reboot) needs --again, which clears what it left. A record of a run that ended needs --again as before."""
-    path = os.path.join(run, "dispatch.json")
-    if not os.path.lexists(path):
-        return
-    try:
-        rec = json.loads(read_run_file(path, 1 << 20, "the dispatch record") or "{}")
-    except (ValueError, Stop):
-        rec = {}
-    if isinstance(rec, dict):
-        if proc_of_run(rec.get("runner"), run, "runner"):
-            fail("%s is being run now (qargi local run, process %d); it is started once at a time" % (run, rec["runner"]))
-        if proc_of_run(rec.get("member"), run, "member"):
-            fail("the member of an earlier start of %s is still running (process group %d), its runner is gone: stop it first (kill -TERM -- -%d), then "
-                 "qargi local run %s --again" % (run, rec["member"], rec["member"], run))
-        member = rec.get("member")
-        if type(member) is int and member > 1:
-            try:
-                survivors = group_left(member)
-            except OSError:
-                survivors = None
-            if survivors is None or survivors:
-                fail("the original process group of an earlier start of %s is not known to be quiescent; inspect process group %d before retrying "
-                     "(its identity may have changed); nothing was started" % (run, member))
-    if isinstance(rec, dict) and rec.get("outcome") == "running":
-        if not again:
-            fail("%s was started and did not end: its runner is gone (killed with SIGKILL, or the machine restarted), so %s still says running and the run "
-                 "home may still hold its links. qargi local run %s --again starts it again and replaces them; qargi local clean %s --discard drops the run"
-                 % (run, path, run, run))
-    elif not again:
-        fail("%s has been run already (%s); --again runs it again and replaces the transcript" % (run, path))
+    """Only private dispatch authority decides whether this is a retry."""
+    store = A.Store(run)
+    store.require_lock()
+    store.authority(True)
+    A.need(A.applied_record(store) is None, "run has an apply record; runtime retry refused")
+    record = store.reconcile()
+    if record["attempts"][-1]["dispatch"] is not None and not again:
+        fail("%s has been run already; --again opens a new unverified attempt" % run)
 
 
 KILL_GRACE = 5   # seconds kill_group watches the member's process group after TERM, and again after KILL
 
 
 def group_left(pgid):
-    """The pids of the live processes (not zombies) in the process group pgid, read from /proc; when /proc cannot be read, [pgid] while
-    the group can still be signalled, else []."""
+    """Observed live pids, or [pgid] for an addressable group of unknown membership.
+
+    A member can fork after enumeration and exit before inspection. Only ESRCH
+    proves the group gone; even a zombie-only sample remains busy or unknown.
+    Other probe errors propagate as unknown, never as an empty group.
+    """
     try:
         names = os.listdir("/proc")
     except OSError:
-        try:
-            os.killpg(pgid, 0)
-            return [pgid]
-        except ProcessLookupError:
-            return []
+        names = []
     want, left = str(pgid).encode(), []
     for n in names:
         if not n.isdigit():
@@ -1246,13 +1240,19 @@ def group_left(pgid):
         rest = st[st.rfind(b")") + 2:].split()      # after the command name: state, ppid, pgrp, ...
         if len(rest) > 2 and rest[0] not in (b"Z", b"X") and rest[2] == want:
             left.append(int(n))
-    return left
+    if left:
+        return left
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return []
+    return [pgid]
 
 
 def kill_group(proc, grace=KILL_GRACE):
     """Stop the member's process group: TERM to the group, which is then watched (the group, not only the member: a descendant may ignore TERM
-    after the member has ended) until none of it is alive or grace seconds have passed; then KILL to what is left, watched the same way. The member
-    is reaped. The number of the group's processes still alive at the end: 0 when the group is gone. A process that moved to a process group of
+    after the member has ended) until the kernel reports it absent or grace seconds have passed; then KILL to what is left, watched the same way. The member
+    is reaped. Returns an observed count or a nonzero unknown-membership sentinel: 0 only when the kernel reports the group gone. A process that moved to a process group of
     its own is not in the group and is not reached."""
     pg = proc.pid
     for sig in (signal.SIGTERM, signal.SIGKILL):
@@ -1280,10 +1280,10 @@ def kill_group(proc, grace=KILL_GRACE):
 
 
 def stopped_text(left):
-    """What became of the member's process group, for the output: stopped only when none of it is alive."""
+    """Say stopped only when the kernel reported the group absent."""
     if not left:
         return "the member's process group was stopped"
-    return ("a descendant survived: %d process%s of the member's process group still alive after TERM and KILL" % (left, "" if left == 1 else "es"))
+    return "the member's process group remains busy or unknown after TERM and KILL"
 
 
 def open_own(path, what):
@@ -1961,7 +1961,18 @@ def manifest_lines(rec, out):
     return lines
 
 
-def run_it(plan, run):
+def run_it(plan, run, pending):
+    sig = Signals()
+    sig.install()
+    try:
+        return run_owned(plan, run, pending, sig)
+    except Interrupted as e:
+        return 128 + e.signum
+    finally:
+        sig.restore()
+
+
+def run_owned(plan, run, pending, sig):
     out = os.path.join(run, "out")
     if os.path.islink(out) or (os.path.exists(out) and not os.path.isdir(out)):
         fail("%s is not a plain directory of the run; the transcript goes there and nowhere else" % out)
@@ -1975,6 +1986,37 @@ def run_it(plan, run):
         check_own(os.path.join(out, REPORT), "the report of an earlier run")
     if pk:                                               # and so does a manifest.json of a read-only run, whose manifest is the lead's
         check_own(os.path.join(out, MANIFEST), "the manifest of an earlier run")
+    for name in ("transcript", "transcript.err"):
+        check_own(os.path.join(out, name), "the transcript")
+    store = A.Store(run)
+    store.begin(pending["pending"], pending["refs"].encode())
+    dispatch_state = {"spawned": False, "recorded": False, "interrupted": False}
+    result = None
+    try:
+        sig.check()
+        # Authority commits first; these files are only display mirrors.
+        subprocess.run(["bash", "-c", '. "$1/lib.sh"; reg_del "$2" verified',
+                        "qargi", HERE, run], check=True, pass_fds=(7,), close_fds=True)
+        try:
+            os.unlink(os.path.join(run, "verified"))
+        except FileNotFoundError:
+            pass
+        sig.check()
+        result = run_started(plan, run, store, dispatch_state, sig)
+        return result
+    finally:
+        if not dispatch_state["spawned"]:
+            store.end("not-started")
+        elif dispatch_state["recorded"]:
+            store.end("cancelled" if dispatch_state["interrupted"] else "ok" if result == 0 else "failed")
+        # If Popen succeeded but member() did not commit, do not invent identity.
+        # The foundation deliberately refuses recovery of that unknown window.
+
+
+def run_started(plan, run, store, dispatch_state, sig):
+    out = os.path.join(run, "out")
+    dispatch = os.path.join(run, "dispatch.json")
+    fin, pk = plan["final"], plan["package"]
     write_prompt(run, plan["prompt_file"], plan["prompt"])
     clear_stale_finals(run)
     argv = [plan["exe"]] + plan["argv"][1:]
@@ -1989,8 +2031,6 @@ def run_it(plan, run):
     if home:
         begun["home"] = {"env": home["env"], "dir": home["dir"], "links": [to for to, _ in home["links"]]}
     write_private(dispatch, json.dumps(begun, indent=2, sort_keys=True) + "\n")
-    sig = Signals()
-    sig.install()
     made, home_left, staged = [], [], False
     git0 = git_state(os.path.join(run, "clone")) if plan["git_watch"] else None   # before the member starts: what git in the clone would run
     proc = code = error = outcome = left = None
@@ -2019,10 +2059,13 @@ def run_it(plan, run):
                         staged = True
                     sig.check()
                     try:
-                        proc = subprocess.Popen(argv, cwd=plan["cwd"], env=plan["env"], stdin=sin, stdout=so, stderr=se, shell=False, start_new_session=True)
+                        proc = subprocess.Popen(argv, cwd=plan["cwd"], env=plan["env"], stdin=sin, stdout=so, stderr=se, shell=False, start_new_session=True, close_fds=True)
                     except OSError as e:
                         outcome, error = "transport", "could not start %s: %s" % (plan["argv"][0], e.strerror or e)
                     if proc is not None:
+                        dispatch_state["spawned"] = True
+                        store.member(proc.pid)
+                        dispatch_state["recorded"] = True
                         begun["member"] = proc.pid
                         write_private(dispatch, json.dumps(begun, indent=2, sort_keys=True) + "\n")
                         try:
@@ -2045,6 +2088,7 @@ def run_it(plan, run):
         except Interrupted:
             sig.armed = False
             outcome = "interrupted"
+            dispatch_state["interrupted"] = True
             if proc is not None:
                 left = kill_group(proc)
                 code = proc.returncode
@@ -2088,7 +2132,6 @@ def run_it(plan, run):
             write_private(dispatch, json.dumps(rec, indent=2, sort_keys=True) + "\n")
         except BaseException:
             pass
-        sig.restore()
         raise unexpected.with_traceback(unexpected.__traceback__)
     if outcome is None:
         outcome = "failed" if timed_out else plan["exit"].get(str(code), plan["exit"].get("*", "failed"))
@@ -2119,7 +2162,7 @@ def run_it(plan, run):
     rec = dict(begun, seconds=seconds, exit=code, timed_out=timed_out, outcome=outcome, transcript=os.path.join(out, "transcript"))
     if outcome == "interrupted":
         rec["signal"] = signal.Signals(sig.sig).name
-    if left is not None:                                 # the member's process group was stopped: how many of its processes are still alive
+    if left is not None:                                 # observed count, or a nonzero sentinel for unknown membership
         rec["group_left"] = left
     if error:
         rec["error"] = error
@@ -2170,11 +2213,10 @@ def run_it(plan, run):
     for n in home_left:
         print("qargi: note: " + n, file=sys.stderr)
     if left:
-        print("qargi: note: %d process%s of the member's process group %d survived TERM and KILL and may still be running: look at it with ps -g %d"
+        print("qargi: note: %d process%s observed or unknown in the member's process group %d after TERM and KILL: look at it with ps -g %d"
               % (left, "" if left == 1 else "es", proc.pid, proc.pid), file=sys.stderr)
     if sig.sig is not None and outcome != "interrupted":
         print("qargi: note: %s arrived after the member had ended; the run was finished first" % signal.Signals(sig.sig).name, file=sys.stderr)
-    sig.restore()
     print("next: read the transcript and OUT, then qargi local verify " + run)
     if outcome == "interrupted":
         return 128 + sig.sig
@@ -2222,7 +2264,15 @@ def main(argv):
         if o["dry"]:
             dry(plan, run)
             return 0
-        return run_it(plan, run)
+        with os.fdopen(8, "rb") as stream:
+            pending = A.decode(stream.read(2 * A.MAX_REFS + A.MAX_RECORD + 1))
+        return run_it(plan, run, pending)
+    except (A.Refuse, OSError) as e:
+        print("qargi: lifecycle: %s" % e, file=sys.stderr)
+        return 2
+    except PR.Invalid as e:
+        print("qargi: %s" % e, file=sys.stderr)
+        return 2
     except Stop as e:
         print("qargi: %s" % e, file=sys.stderr)
         return e.code

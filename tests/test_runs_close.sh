@@ -10,6 +10,9 @@ set -u
 cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
+# Lead-state fixtures use private modes and their own configured Git identities.
+umask 077
+unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_AUTHOR_DATE GIT_COMMITTER_DATE
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi
 # shellcheck source=fixtures.sh
 . tests/fixtures.sh
@@ -45,7 +48,12 @@ collect() {
 R=$(mkrun nocollect)
 out=$(verify "$R"); rc=$?
 [ $rc = 0 ] && ok "(setup) a run with no commits and an empty OUT verifies: nothing to collect" || no "empty run: rc=$rc $out"
-commits "$R" a1.go; rm -f "$R/verified"
+echo changed > "$R/out/report.md"
+out=$(verify "$R"); rc=$?
+[ $rc != 0 ] && grep -q 'OUT changed since acceptance' <<<"$out" && ok "changed accepted output is refused" || no "changed accepted output: rc=$rc $out"
+out=$($DA local clean "$R" --discard 2>&1)
+R=$(mkrun uncollected)
+commits "$R" a1.go
 out=$(verify "$R"); rc=$?
 [ $rc = 1 ] && grep -q "OUT is empty: the member did not collect" <<<"$out" && grep -q "ls OUT/patches" <<<"$out" && grep -q "without running git in the clone.*git clone --no-local" <<<"$out" && ok "verify fails fast, naming the missing collect, when the clone has commits and OUT is empty; it says to take the commits through a clean copy, never git in the clone" || no "uncollected: rc=$rc $out"
 [ ! -f "$R/verified" ] && ok "and records nothing" || no "verified written for an uncollected run"
@@ -311,7 +319,7 @@ grep -E "closed-run +[0-9a-z?]+ +closed +- " <<<"$out" >/dev/null && ok "local l
 out=$($DA marshal status cl 2>&1)
 grep -q "closed (applied by hand): closed-run" <<<"$out" && ! grep -q "$R  closed-run" <<<"$out" && ok "marshal status lists it as closed, not as a task" || no "marshal status: $out"
 out=$($DA review apply "$R" 2>&1); rc=$?
-[ $rc = 1 ] && grep -q "this run was closed" <<<"$out" && [ -z "$(git -C "$A" branch --list agent/closed-run)" ] && ok "review apply refuses a closed run: its patches are not applied a second time" || no "apply closed: rc=$rc $out"
+[ $rc = 3 ] && grep -q "lifecycle run is closed or cleaned" <<<"$out" && [ -z "$(git -C "$A" branch --list agent/closed-run)" ] && ok "review apply refuses a closed run: its patches are not applied a second time" || no "apply closed: rc=$rc $out"
 out=$($DA local clean "$R" 2>&1); rc=$?
 [ $rc = 0 ] && grep -q "cleaned $R" <<<"$out" && ok "clean removes a closed run without asking for an applied tip" || no "clean closed: rc=$rc $out"
 # a read-only run is not closed this way, and a discarded or cleaned run does not block finish
@@ -455,9 +463,8 @@ printf '{"status":"DONE","commits":[]}\n' > "$R/out/manifest.json"
 printf '# Findings\n\nNone.\n\n# Checked\n\nEvidence.\n\nverdict: accept\n' > "$R/out/report.md"
 verify "$R" >/dev/null
 rtmp=$(cat "$R/tmpdir"); echo temporary-evidence > "$rtmp/keep"
-mkdir -p "$T/s/scrub_ok" "$T/s/apply"
+mkdir -p "$T/s/scrub_ok"
 echo scrub-evidence > "$T/s/scrub_ok/${R##*/}"
-printf '{"evidence":true}\n' > "$T/s/apply/${R##*/}.json"
 printf 'corrupt-index-fixture\n' > "$R/clone/.git/index"
 nc=$(python3 -I -c 'import sys; sys.path.insert(0, "lib"); import local_run as L; print(L.clone_commits(sys.argv[1]))' "$R/clone")
 [ "$nc" = 0 ] && ok "unknown worktree regression has known zero commits" || no "unknown worktree setup: $nc"
