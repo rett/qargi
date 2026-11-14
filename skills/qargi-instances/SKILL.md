@@ -23,15 +23,13 @@ There are two base members, one per guard class (`qargi help guard`): `worker` (
 
 Cloud verbs need `--asked "<the user's request that names the cloud instance>"`; changes to existing resources also need `--approved` after you have shown the printed PLAN.
 
-| Verb | Command | Notes |
-|---|---|---|
-| init (existing) | `qargi instances init --location cloud --deployment ID [--name N] [--budget CENTS] [--model M] [--effort E] [--no-session] --asked "..." [--approved "..."]` | Records the deployment and its agent, starts a standby session and tracks it. A differing `--model` or `--effort` prints a PLAN; with `--approved` the agent gets a new version and the deployment is re-pointed. |
-| init (new) | `qargi instances init --location cloud --provision --name N [--model M] [--effort E] [--budget CENTS] [--apt "pkg ..."] [--networking unrestricted\|limited] --asked "..." [--approved "..."]` | Plan without `--approved`; with it, creates the resources via `/qargi-provision`, seeds both memory stores, registers and starts a session. |
-| list | `qargi instances list [--reconcile]` | Instances (`prompt STALE` when the prompt changed since it was pushed) and active sessions; `--reconcile` flags live sessions missing from the tracker (ORPHAN, never touched). |
-| show | `qargi instances show NAME [--reconcile]` | The record plus staleness: prompt hash, agent newer than pinned, changed agent file, archived or paused deployment; NAMING lines. |
-| budget | `qargi instances budget NAME CENTS --asked "..." [--session SID]` | The deployment's spend ceiling, inherited by new sessions; `--session` also changes a running session that has a budget. |
-| refresh-prompt | `qargi instances refresh-prompt NAME [--if-stale] --asked "..." [--plan TOKEN --approved "..."]` | Rebuilds the cloud agent's prompt from the current contract, preamble and role addendum, prints a plan token; applying creates a new agent version and re-points the deployment. Run it when the contract changes. |
-| normalize | `qargi instances normalize NAME --asked "..." [--approved "..."]` | Renames the agent, environment, deployment and stores to the `<project>-...` names; plan first. |
-| remove | `qargi instances remove NAME` | Registry entry only; refuses with open sessions. |
+- **init (existing)**: Command: `qargi instances init --location cloud --deployment ID [--name N] [--budget CENTS] [--model M] [--effort E] [--no-session] --asked "..." [--approved "..."]`; Notes: Records the deployment and its agent, starts a standby session and tracks it. A differing `--model` or `--effort` prints a PLAN; with `--approved` the agent gets a new version and the deployment is re-pointed.
+- **init (new)**: Command: `qargi instances init --location cloud --provision --name N [--model M] [--effort E] [--budget CENTS] [--apt "pkg ..."] [--networking unrestricted|limited] --asked "..." [--approved "..."]`; Notes: Plan without `--approved`; with it, creates the resources via `/qargi-provision`, seeds both memory stores, registers and starts a session.
+- **list**: Command: `qargi instances list [--reconcile]`; Notes: Instances (`prompt STALE` when the prompt changed since it was pushed) and active sessions; `--reconcile` flags live sessions missing from the tracker (ORPHAN, never touched).
+- **show**: Command: `qargi instances show NAME [--reconcile]`; Notes: The record plus staleness: prompt hash, agent newer than pinned, changed agent file, archived or paused deployment; NAMING lines.
+- **budget**: Command: `qargi instances budget NAME CENTS --asked "..." [--session SID]`; Notes: The deployment's spend ceiling, inherited by new sessions; `--session` also changes a running session that has a budget.
+- **refresh-prompt**: Command: `qargi instances refresh-prompt NAME [--if-stale] --asked "..." [--plan TOKEN --approved "..."]`; Notes: Rebuilds the cloud agent's prompt from the current contract, preamble and role addendum, prints a plan token; applying creates a new agent version and re-points the deployment. Run it when the contract changes.
+- **normalize**: Command: `qargi instances normalize NAME --asked "..." [--approved "..."]`; Notes: Renames the agent, environment, deployment and stores to the `<project>-...` names; plan first.
+- **remove**: Command: `qargi instances remove NAME`; Notes: Registry entry only; refuses with open sessions.
 
 Instance names are `<project>-<role>` with a role from the fixed list (`build`, `review`, `write`, `test`, `lead`), for example `myproject-build`, or a base: `<project>-worker` (class write) or `<project>-reviewer` (read-only; first accept the missing cloud read-only barrier with `qargi provider accept NAME --surface cloud --no-barrier`). An existing deployment needs a conforming `--name`.

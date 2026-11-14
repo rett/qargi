@@ -10,6 +10,9 @@ set -u
 cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
+# Lead-state fixtures use private modes and their own configured Git identities.
+umask 077
+unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_AUTHOR_DATE GIT_COMMITTER_DATE
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi
 # shellcheck source=fixtures.sh
 . tests/fixtures.sh
@@ -45,7 +48,12 @@ collect() {
 R=$(mkrun nocollect)
 out=$(verify "$R"); rc=$?
 [ $rc = 0 ] && ok "(setup) a run with no commits and an empty OUT verifies: nothing to collect" || no "empty run: rc=$rc $out"
-commits "$R" a1.go; rm -f "$R/verified"
+echo changed > "$R/out/report.md"
+out=$(verify "$R"); rc=$?
+[ $rc != 0 ] && grep -q 'OUT changed since acceptance' <<<"$out" && ok "changed accepted output is refused" || no "changed accepted output: rc=$rc $out"
+out=$($DA local clean "$R" --discard 2>&1)
+R=$(mkrun uncollected)
+commits "$R" a1.go
 out=$(verify "$R"); rc=$?
 [ $rc = 1 ] && grep -q "OUT is empty: the member did not collect" <<<"$out" && grep -q "ls OUT/patches" <<<"$out" && grep -q "without running git in the clone.*git clone --no-local" <<<"$out" && ok "verify fails fast, naming the missing collect, when the clone has commits and OUT is empty; it says to take the commits through a clean copy, never git in the clone" || no "uncollected: rc=$rc $out"
 [ ! -f "$R/verified" ] && ok "and records nothing" || no "verified written for an uncollected run"
@@ -311,7 +319,7 @@ grep -E "closed-run +[0-9a-z?]+ +closed +- " <<<"$out" >/dev/null && ok "local l
 out=$($DA marshal status cl 2>&1)
 grep -q "closed (applied by hand): closed-run" <<<"$out" && ! grep -q "$R  closed-run" <<<"$out" && ok "marshal status lists it as closed, not as a task" || no "marshal status: $out"
 out=$($DA review apply "$R" 2>&1); rc=$?
-[ $rc = 1 ] && grep -q "this run was closed" <<<"$out" && [ -z "$(git -C "$A" branch --list agent/closed-run)" ] && ok "review apply refuses a closed run: its patches are not applied a second time" || no "apply closed: rc=$rc $out"
+[ $rc = 3 ] && grep -q "lifecycle run is closed or cleaned" <<<"$out" && [ -z "$(git -C "$A" branch --list agent/closed-run)" ] && ok "review apply refuses a closed run: its patches are not applied a second time" || no "apply closed: rc=$rc $out"
 out=$($DA local clean "$R" 2>&1); rc=$?
 [ $rc = 0 ] && grep -q "cleaned $R" <<<"$out" && ok "clean removes a closed run without asking for an applied tip" || no "clean closed: rc=$rc $out"
 # a read-only run is not closed this way, and a discarded or cleaned run does not block finish
@@ -372,14 +380,104 @@ R=$(mkrun ro-patches feature/ro review); mkdir -p "$R/out/patches"; echo x > "$R
 out=$(verify "$R"); rc=$?
 [ $rc = 2 ] && grep -q "is a read-only run" <<<"$out" && ok "a read-only run's patches are refused though a member set the class file to write" || no "ro with patches: rc=$rc $out"
 $DA local clean "$R" --discard >/dev/null 2>&1
-# a record with no class counts as a run of work, whatever file the run directory holds: only the registry says (no fallback to the class file)
+# The class must be supported registry metadata; a member's class file cannot supply it.
+R=$(mkrun ro-patch-evidence feature/ro review); echo '# report' > "$R/out/report.md"
+mkdir -p "$R/out/patches"; echo 'unexpected product' > "$R/out/patches/0001-evidence.patch"
+nc=$(python3 -I -c 'import sys; sys.path.insert(0, "lib"); from local_run import clone_commits; print(clone_commits(sys.argv[1]))' "$R/clone")
+[ "$nc" = 0 ] && ok "read-only product regression has zero extra commits" || no "read-only product setup: $nc"
+out=$($DA local clean "$R" 2>&1); rc=$?
+{ [ "$rc" = 1 ] && grep -q "read-only run's product is a report, never patches" <<<"$out" && [ -f "$R/out/patches/0001-evidence.patch" ]; } \
+  && ok "ordinary clean preserves unexpected read-only patches with zero commits" || no "read-only product clean: rc=$rc $out"
+out=$(QARGI_VERIFY_REFS_ONLY=1 $DA local verify "$R" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q 'refs unchanged' <<<"$out" && [ ! -e "$R/verified" ] && [ ! -e "$T/s/runs/${R##*/}" ]; } \
+  && ok "refs-only observation of an invalid product grants no verify or accepted output" || no "read-only product refs: rc=$rc $out"
+out=$($DA local clean "$R" --discard 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q 'refs unchanged' <<<"$out" && [ ! -e "$R" ]; } \
+  && ok "invalid read-only product: explicit discard still reports actual refs" || no "read-only product discard: rc=$rc $out"
 R=$(mkrun oldrec feature/ro); echo "# report" > "$R/out/report.md"; rm -f "$R/class"
-jq -c --arg r "$R" 'if .run == $r then del(.class) else . end' "$T/s/local-runs.jsonl" > "$T/reg.new" && mv "$T/reg.new" "$T/s/local-runs.jsonl"
-out=$($DA local clean "$R" 2>&1); rc=$?
-[ $rc = 1 ] && grep -q "holds no manifest" <<<"$out" && ok "a record with no class and no class file is a run of work, not a read-only one" || no "no class at all: rc=$rc $out"
 echo read-only > "$R/class"
+python3 tests/class_cases.py "$R" "$T/s/local-runs.jsonl" "$DA" && ok "exact registry classes: PASS" || no "exact registry classes"
+# Structural checks in the real member HOME have no lead registry and write no trusted state.
+printf '# Findings\n\nNone.\n\n# Checked\n\nStructural check.\n\nverdict: accept\n' > "$R/out/report.md"
+printf '{"status":"DONE","commits":[],"artifacts":[{"path":"report.md","kind":"report"}]}\n' > "$R/out/manifest.json"
+cp "$T/s/local-runs.jsonl" "$T/class-reg.keep"
+jq -c --arg r "$R" 'select(.run != $r)' "$T/class-reg.keep" > "$T/s/local-runs.jsonl"
+out=$($DA review check "$R/out" 2>&1); rc=$?
+{ [ "$rc" = 3 ] && grep -q 'registry names no run' <<<"$out" && [ -f "$R/out/report.md" ] && [ ! -e "$R/verified" ]; } \
+  && ok "lead check without a registry record refuses and preserves evidence" || no "unregistered lead check: rc=$rc $out"
+cp "$T/class-reg.keep" "$T/s/local-runs.jsonl"
+mkdir -p "$R/home"
+out=$(env -u QARGI_CONF -u QARGI_STATE -u QARGI_HOME HOME="$R/home" QARGI_MEMBER_RUN="$R" "$DA" review check "$R/out" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q 'OK report-only run' <<<"$out" && [ ! -e "$R/home/.qargi" ] && [ ! -e "$R/verified" ]; } \
+  && ok "member structural check without lead state: PASS" || no "member structural check: rc=$rc $out"
+out=$(env -u QARGI_CONF -u QARGI_STATE -u QARGI_HOME HOME="$R/home" QARGI_MEMBER_RUN="$R-other" "$DA" review check "$R/out" 2>&1); rc=$?
+{ [ "$rc" = 3 ] && grep -q 'member marker does not match the inspected run' <<<"$out" && ! grep -q 'OK report-only run' <<<"$out" \
+  && [ ! -e "$R/home/.qargi" ] && [ ! -e "$R/verified" ]; } \
+  && ok "mismatched member marker refuses without borrowing lead state" || no "mismatched marker: rc=$rc $out"
+out=$(QARGI_MEMBER_RUN="$R-other" python3 -I lib/review_check.py "$R/out" 2>&1); rc=$?
+[ "$rc" = 3 ] && grep -q 'member marker does not match' <<<"$out" && ok "direct structural reader also rejects mismatched marker" || no "direct mismatched marker: rc=$rc $out"
+# Explicit discard can close only a KNOWN legacy record and intentionally drops its evidence.
+for form in existing changed gone; do
+  R=$(mkrun legacy feature/ro)
+  cp "$T/s/local-runs.jsonl" "$T/class-reg.keep"
+  jq -c --arg r "$R" 'if .run == $r then del(.class) else . end' "$T/class-reg.keep" > "$T/s/local-runs.jsonl"
+  if [ "$form" != gone ]; then
+    [ "$form" != changed ] || git -C "$A" branch unexplained-legacy develop
+    before_registry=$(cat "$T/s/local-runs.jsonl")
+    out=$(QARGI_VERIFY_REFS_ONLY=1 "$DA" local verify "$R" 2>&1); rc=$?
+    want=0; [ "$form" != changed ] || want=2
+    { [ "$rc" = "$want" ] && [ ! -e "$R/verified" ] && [ ! -e "$T/s/runs/${R##*/}" ] && [ "$(cat "$T/s/local-runs.jsonl")" = "$before_registry" ]; } \
+      && ok "legacy $form refs-only observation grants no verify or saved output" || no "legacy observation $form: rc=$rc $out"
+    if [ "$form" = changed ]; then
+      grep -q 'REFS CHANGED' <<<"$out" && grep -q 'unexplained-legacy' <<<"$out" && ok "legacy observation finds the unexplained real ref" || no "legacy changed verdict: $out"
+    else
+      grep -q 'refs unchanged' <<<"$out" && ok "legacy observation reports unchanged refs" || no "legacy unchanged verdict: $out"
+    fi
+    ordinary=$($DA local verify "$R" 2>&1); rc=$?
+    [ "$rc" = 3 ] && grep -q 'registry has no valid class' <<<"$ordinary" && ok "ordinary legacy verify still refuses unknown class" || no "ordinary legacy verify: $ordinary"
+  fi
+  [ "$form" != gone ] || rm -rf "$R"
+  out=$($DA local clean "$R" --discard 2>&1); rc=$?
+  { [ "$rc" = 0 ] && [ ! -e "$R" ]; } \
+    && ok "explicit discard recovers $form legacy run: PASS" || no "discard legacy $form: rc=$rc $out"
+  case $form in
+    existing) grep -q 'refs unchanged' <<<"$out" && ok "discard reports the actual unchanged verdict" || no "discard unchanged verdict: $out";;
+    changed) grep -q 'REFS CHANGED' <<<"$out" && grep -q 'unexplained-legacy' <<<"$out" && ok "discard reports the changed real ref while continuing deliberately" || no "discard changed verdict: $out"
+      git -C "$A" branch -D unexplained-legacy >/dev/null;;
+  esac
+  out=$($DA lead compact-check --project app 2>&1)
+  ! grep -qF "$R" <<<"$out" && ok "compact-check no longer counts discarded $form legacy run" || no "discarded legacy still counted: $out"
+  cp "$T/s/local-runs.jsonl" "$T/class-reg.keep"
+  jq -c --arg r "$R" 'select(.run != $r)' "$T/class-reg.keep" > "$T/s/local-runs.jsonl"
+  if [ "$form" != gone ]; then mkdir -p "$R/out"; touch "$R/refs.before" "$R/ability"; fi
+  out=$($DA local clean "$R" --discard 2>&1); rc=$?
+  { [ "$rc" = 3 ] && { [ "$form" = gone ] || [ -d "$R" ]; }; } \
+    && ok "unregistered $form run cannot be discarded" || no "unregistered discard: rc=$rc $out"
+  rm -rf "$R"
+done
+
+# Commit traversal can succeed with a corrupt index while status is unknown.
+# Ordinary clean must refuse before deleting TMP, output, saved evidence or state.
+R=$(mkrun unknown-index feature/ro)
+printf '{"status":"DONE","commits":[]}\n' > "$R/out/manifest.json"
+printf '# Findings\n\nNone.\n\n# Checked\n\nEvidence.\n\nverdict: accept\n' > "$R/out/report.md"
+verify "$R" >/dev/null
+rtmp=$(cat "$R/tmpdir"); echo temporary-evidence > "$rtmp/keep"
+mkdir -p "$T/s/scrub_ok"
+echo scrub-evidence > "$T/s/scrub_ok/${R##*/}"
+printf 'corrupt-index-fixture\n' > "$R/clone/.git/index"
+nc=$(python3 -I -c 'import sys; sys.path.insert(0, "lib"); import local_run as L; print(L.clone_commits(sys.argv[1]))' "$R/clone")
+[ "$nc" = 0 ] && ok "unknown worktree regression has known zero commits" || no "unknown worktree setup: $nc"
+artifacts_before=$(find "$R" "$T/s" "$rtmp" -type f -exec sha256sum {} + | sort)
 out=$($DA local clean "$R" 2>&1); rc=$?
-[ $rc = 1 ] && grep -q "holds no manifest" <<<"$out" && ok "a record with no class does not fall back to a class file in the run directory" || no "class file believed: rc=$rc $out"
+{ [ "$rc" = 1 ] && grep -q 'cannot inspect worktree' <<<"$out" && grep -q 'Git inspection failed' <<<"$out" \
+  && [ "$(find "$R" "$T/s" "$rtmp" -type f -exec sha256sum {} + | sort)" = "$artifacts_before" ]; } \
+  && ok "unknown worktree: ordinary clean preserves every artifact and state file" || no "unknown worktree clean: rc=$rc $out"
+out=$($DA review check "$R/out" 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q 'worktree state is unknown.*Git inspection failed' <<<"$out" && ok "review check explains unknown worktree inspection" || no "unknown worktree review: rc=$rc $out"
+out=$($DA local clean "$R" --discard 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ ! -e "$R" ] && [ ! -e "$rtmp" ] && [ ! -e "$T/s/runs/${R##*/}" ] && grep -q 'worktree state is unknown.*dropped on purpose' <<<"$out"; } \
+  && ok "unknown worktree: explicit discard remains deliberate recovery" || no "unknown worktree discard: rc=$rc $out"
 # what counts as a report: a regular file named report.md or NAME-report.md directly in OUT, for clean and for compact-check alike
 R=$(mkrun rep-kinds feature/ro review)
 ln -s /etc/hostname "$R/out/report.md"

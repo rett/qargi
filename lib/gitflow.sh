@@ -184,12 +184,12 @@ parking_follow() {
   local cur old n why
   cur=$(git -C "$REPO" branch --show-current 2>/dev/null)
   if [ "$cur" != "$PARK" ]; then why="the main checkout is on ${cur:-a detached head}"
-  elif [ -n "$(git -C "$REPO" status --porcelain 2>/dev/null)" ]; then why="the main checkout has uncommitted changes"
+  elif [ -n "$(git -C "$REPO" status --porcelain --untracked-files=no 2>/dev/null)" ]; then why="the main checkout has uncommitted changes"
   else
     n=$(g rev-list --count "develop..$PARK"); old=$(sha_of "$PARK")
     if [ "$n" != 0 ]; then why="$PARK has $n commit(s) that develop lacks"
     elif [ "$old" = "$(sha_of develop)" ]; then echo "parking branch $PARK: already at develop"; return 0
-    elif git -C "$REPO" merge -q --ff-only develop >/dev/null 2>&1; then
+    elif git -C "$REPO" merge -q --ff-only --no-overwrite-ignore develop >/dev/null 2>&1; then
       journal_ref "$REPO" "refs/heads/$PARK" "$old" "$(sha_of "$PARK")" park:follow
       echo "parking branch $PARK: fast-forwarded to develop ($(g rev-parse --short develop))"; return 0
     else why="the fast-forward failed"; fi

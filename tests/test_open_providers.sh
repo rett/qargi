@@ -163,7 +163,17 @@ flow() {   # (the 6th argument is the name of the member made: member names are 
   jq '.renderers.agent.fields += [{from:"abilities", to:"serves", transform:[{join:" "}]}]' "$LIB/$rt/definition.json" > "$T/d.json" && cp "$T/d.json" "$LIB/$rt/definition.json"
   seal "$rt"
   "$DA" agent list | grep -q "^$p  *$mem .*$mem$ext (STALE: qargi agent refresh $mem --project $p)\$" && ok "$rt: a definition changed and sealed again makes its members STALE" || no "$rt stale: $("$DA" agent list | grep " $mem ")"
-  "$DA" agent models --project "$p" --json | jq -e '[.members[] | select(.name == "'"$mem"'")] | length == 1 and (.[0].state == ["STALE"])' >/dev/null && ok "$rt: agent models says so too" || no "$rt models stale"
+  out=$("$DA" agent models --project "$p" --json 2>&1); rc=$?
+  if [ "$rt" = fakecli ]; then
+    { [ $rc = 0 ] && jq -e '.provider == "fakecli" and .mode == "command" and .members == []
+      and .bases.worker.logical == true and .bases.worker.registered == false
+      and .profiles.build.base == "worker" and .profiles.build.selected == "fc-main"
+      and .profiles.build.requested_effort == "high" and .profiles.build.refused == null and .profiles.build.flags == []' <<<"$out" >/dev/null; } \
+      && ok "$rt: agent models resolves logical command profiles with requested high effort despite stale rendered members" || no "$rt command models: rc=$rc $out"
+  else
+    { [ $rc = 0 ] && jq -e --arg m "$mem" '[.members[] | select(.name == $m)] | length == 1 and (.[0].state == ["STALE"])' <<<"$out" >/dev/null; } \
+      && ok "$rt: in-session agent models says STALE too" || no "$rt models stale: rc=$rc $out"
+  fi
   "$DA" agent refresh "$mem" >/dev/null 2>&1
   { ! "$DA" agent list | grep " $mem " | grep -q '('; } && grep -q "serves" "$f" && ok "$rt: refresh renders the new definition" || no "$rt refresh: $("$DA" agent list | grep " $mem ")"
   out=$("$DA" provider check "$rt" 2>&1); [ "$("$DA" provider effective "$rt" local skills)" = yes ] && ok "$rt: and check records the verification of the new content" || no "$rt recheck: $out"
@@ -190,15 +200,38 @@ P=pfakecli; REPO=$T/r-fakecli
 prep() { eval "$("$DA" local prepare --repo "$1" --base main --slug "$2" --scratch "$T" ${3:+--role "$3"} | sed '/^$/,$d' | sed 's/^/export /')"; printf 'TASK: change the thing\nDONE: it is changed\n' > "$RUN/task.md"; }
 argv() { sed -n 's/^ARGV=//p'; }
 prep "$REPO" w1
+[ "$EFFORT" = high ] && [ "$MODEL" = fc-main ] && ok "fakecli: implicit build preparation requests high effort and fc-main, independently of rendered medium effort" || no "fakecli implicit request: model=$MODEL effort=$EFFORT"
 out=$("$DA" local run "$RUN" --dry-run 2>&1); rc=$?
-want=$(jq -nc --arg c "$CLONE" '["fakecli-bin","run","--model","fc-main","--cd",$c]')
+want=$(jq -nc --arg c "$CLONE" '["fakecli-bin","run","--model","fc-main","--effort","h","--cd",$c]')
 { [ $rc = 0 ] && [ "$(argv <<<"$out")" = "$want" ]; } && ok "fakecli: local run --dry-run prints the argv of the data" || no "fakecli dry argv: rc=$rc [$(argv <<<"$out")] want [$want]"
 grep -q '^PROMPT_VIA=stdin' <<<"$out" && grep -q '^TASK: change the thing' <<<"$out" && grep -q '^CLASS=write' <<<"$out" && ok "fakecli: the prompt goes to standard input, and is the member and the task block" || no "fakecli dry prompt: $out"
-out=$("$DA" local run "$RUN" --dry-run --model fast --effort high 2>&1)
+out=$("$DA" local run "$RUN" --dry-run --model balanced --effort high 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(argv <<<"$out")" = "$want" ]; } && ok "fakecli: repeating the prepared model tier and effort needs no override capability" || no "fakecli same request: rc=$rc $out"
+for cap in per_dispatch_model_override per_dispatch_effort_override; do
+  [ "$("$DA" provider effective fakecli local "$cap")" = no ] && ok "fakecli: $cap is unverified and counts as no" || no "fakecli $cap already supported"
+  if [ "$cap" = per_dispatch_model_override ]; then opts=(--model fast); else opts=(--effort low); fi
+  out=$("$DA" local run "$RUN" --dry-run "${opts[@]}" 2>&1); rc=$?
+  { [ $rc = 2 ] && [ -z "$(argv <<<"$out")" ] && grep -q "$cap" <<<"$out"; } && ok "fakecli: an unsupported override refuses naming $cap without argv" || no "fakecli $cap refusal: rc=$rc $out"
+done
+out=$("$DA" local run "$RUN" --dry-run --effort max 2>&1); rc=$?
+{ [ $rc = 0 ] && ! grep -q -- '--effort' <<<"$(argv <<<"$out")"; } && grep -q '^NOTE=effort max is dropped' <<<"$out" && ok "fakecli: an effort it has no value for is dropped with a note" || no "fakecli max: rc=$rc $out"
+
+# Give the fixture's declared override controls verification, then prepare against that policy. A refusal-only branch would not test tier expansion.
+for cap in per_dispatch_model_override per_dispatch_effort_override; do
+  opts=(--asked "verify fixture override" --did "offline fixture declares per-invocation model and effort argv" --result pass --cost-cents 0 --cleanup "scratch fixture only")
+  out=$("$DA" provider attest fakecli "$cap" "${opts[@]}" 2>&1); tok=$(tokp <<<"$out")
+  out=$("$DA" provider attest fakecli "$cap" "${opts[@]}" --plan "$tok" --approved test 2>&1); rc=$?
+  { [ $rc = 0 ] && [ "$("$DA" provider effective fakecli local "$cap")" = yes ]; } && ok "fakecli: attested $cap is supported" || no "fakecli $cap attestation: rc=$rc $out"
+done
+out=$("$DA" local run "$RUN" --dry-run --model fast --effort low 2>&1); rc=$?
+{ [ $rc = 2 ] && [ -z "$(argv <<<"$out")" ] && grep -q 'prepared command request runtime/mode/catalog/profile/policy drift' <<<"$out"; } && ok "fakecli: changed capability policy still requires reprepare, even with explicit overrides" || no "fakecli policy drift: rc=$rc $out"
+prep "$REPO" w2
+out=$("$DA" local run "$RUN" --dry-run --model fast --effort high 2>&1); rc=$?
 want=$(jq -nc --arg c "$CLONE" '["fakecli-bin","run","--model","fc-mini","--effort","h","--cd",$c]')
-[ "$(argv <<<"$out")" = "$want" ] && ok "fakecli: --model fast is the fast tier's model and --effort high the runtime's own word, in the {if} group" || no "fakecli tier argv: [$(argv <<<"$out")]"
-out=$("$DA" local run "$RUN" --dry-run --effort max 2>&1)
-{ ! grep -q -- '--effort' <<<"$(argv <<<"$out")"; } && grep -q '^NOTE=effort max is dropped' <<<"$out" && ok "fakecli: an effort it has no value for is dropped with a note" || no "fakecli max: $out"
+{ [ $rc = 0 ] && [ "$(argv <<<"$out")" = "$want" ]; } && ok "fakecli: supported --model fast selects fc-mini and --effort high becomes h" || no "fakecli tier argv: rc=$rc $out"
+out=$("$DA" local run "$RUN" --dry-run --model fast --effort low 2>&1); rc=$?
+want=$(jq -nc --arg c "$CLONE" '["fakecli-bin","run","--model","fc-mini","--effort","l","--cd",$c]')
+{ [ $rc = 0 ] && [ "$(argv <<<"$out")" = "$want" ]; } && ok "fakecli: supported native effort override selects l with the fast tier" || no "fakecli effort argv: rc=$rc $out"
 
 # a read-only member and run need a barrier or the project's acceptance
 out=$("$DA" agent add judge --roles review --project "$P" 2>&1); rc=$?
@@ -212,7 +245,7 @@ out=$("$DA" provider accept "${ACC[@]}" 2>&1); tok=$(tokp <<<"$out")
 jq -e '.models.accept_no_barrier.local.reason == "the fixture runtime has no barrier"' "$T/c/projects/$P.json" >/dev/null && ok "fakecli: applied, the acceptance is in the project's answers" || no "fakecli accept record"
 prep "$REPO" r1 review
 out=$("$DA" local run "$RUN" --dry-run 2>&1); rc=$?
-want=$(jq -nc --arg c "$CLONE" '["fakecli-bin","run","--model","fc-main","--cd",$c,"--sandbox","read-only"]')
+want=$(jq -nc --arg c "$CLONE" '["fakecli-bin","run","--model","fc-main","--effort","h","--cd",$c,"--sandbox","read-only"]')
 { [ $rc = 0 ] && [ "$(argv <<<"$out")" = "$want" ] && grep -q '^CLASS=read-only' <<<"$out"; } && ok "fakecli: after the acceptance the read-only run adds the class arguments (--sandbox read-only)" || no "fakecli ro argv: rc=$rc [$(argv <<<"$out")] want [$want]"
 out=$("$DA" agent add judge --roles review --project "$P" 2>&1); rc=$?
 { [ $rc = 0 ] && [ -f "$T/s/render/$P/fakecli.agents/judge.toml" ]; } && jq -e '.mode == "read-only"' <<<"$(toml "$T/s/render/$P/fakecli.agents/judge.toml")" >/dev/null && ok "fakecli: and the read-only member is made, with its class in the file" || no "fakecli review after accept: rc=$rc $out"

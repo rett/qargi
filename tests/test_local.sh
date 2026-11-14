@@ -4,6 +4,9 @@ set -u
 cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
+# Lead-state fixtures use private modes and their own configured Git identities.
+umask 077
+unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_AUTHOR_DATE GIT_COMMITTER_DATE
 T=$(mktemp -d); trap 'rm -rf "$T" "$HERMETIC"' EXIT; fail=0
 export QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T
 git init -q -b main "$T/r" && git -C "$T/r" -c user.name=t -c user.email=t@example.net commit -q --allow-empty -m one
@@ -14,6 +17,12 @@ jq -n --arg p "$T/r" '{schema:1,project:"rproj",repo:{url:"https://github.com/ex
 eval "$(./bin/qargi local prepare --repo "$T/r" --base main --slug demo --scratch "$T" | sed '/^$/,$d' | sed 's/^/export /')"
 # shellcheck source=fixtures.sh
 . tests/fixtures.sh
+# A lead-created apply fixture accompanies the compatibility mirror.
+record_applied() { # RUN BRANCH TIP
+  mkdir -p "$T/s/apply"; chmod 700 "$T/s/apply"
+  jq -nc --arg run "$1" --arg branch "$2" --arg tip "$3" \
+    '{schema:1,run:$run,branch:$branch,tip:$tip,status:"done"}' > "$T/s/apply/${1##*/}.json"
+}
 [ "$($GIT -C "$CLONE" branch --show-current)" = agent/demo ] && ok "clone is on agent/demo" || no "branch"
 echo x > "$CLONE/f"; $GIT -C "$CLONE" add f && $GIT -C "$CLONE" commit -q -m work && ok "commit through the wrapper"
 [ "$($GIT -C "$CLONE" log -1 --format=%an)" = qargi ] && ok "author is qargi" || no "author"
@@ -53,7 +62,7 @@ out=$(./bin/qargi local prepare --repo "$T/rs2" --base main --slug sub2 --scratc
   && ok "a submodule whose objects are not on this host is a note, nothing is fetched and the run is still made" || no "unavailable submodule: $out $(cat "$T/sub2.err")"
 [ ! -e "$S2/clone/vendor/acme-test/.git" ] && ok "and the clone's submodule is left alone" || no "submodule fetched"
 rm -rf "$S1" "$S2" "$T/c/projects/rs2proj.json"; mv "$T/rproj.bak" "$T/c/projects/rproj.json"; sed -i '/"slug":"sub[12]"/d' "$T/s/local-runs.jsonl"
-# clean: a collected, verified run goes away with its temporary directory; anything else is refused
+# clean: collected output can be removed after its safety checks, without granting verification
 git init -q -b main "$T/r2" && git -C "$T/r2" -c user.name=t -c user.email=t@example.net commit -q --allow-empty -m one
 out=$(./bin/qargi local prepare --repo "$T/r2" --base main --slug c1 --scratch "$T"); C1=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out"); TM=$(sed -n '1,/^$/s/^TMP=//p' <<<"$out")
 [ -d "$TM" ] && [ "$(cat "$C1/tmpdir")" = "$TM" ] && ok "prepare makes a private temporary directory and prints it as TMP" || no "TMP: $out"
@@ -71,8 +80,8 @@ echo '{}' > "$C2/out/p--manifest.json"; touch "$TM2/leftover"
 [ -d "$TM" ] && ok "another run's temporary directory is untouched" || no "touched another run's tmp"
 # the registry (one line per run) records the clean: the line stays, marked cleaned, so a cleaned run is never listed as an open task
 regline() { jq -c --arg r "$1" 'select(.run == $r)' "$T/s/local-runs.jsonl"; }
-[ "$(regline "$C2" | wc -l)" = 1 ] && [ -n "$(regline "$C2" | jq -r '.cleaned // ""')" ] && [ "$(regline "$C2" | jq -r '.verified // ""')" != "" ] \
-  && ok "clean marks the run's registry line cleaned (and the verify it ran, verified), still one line per run" || no "registry after clean: $(regline "$C2")"
+[ "$(regline "$C2" | wc -l)" = 1 ] && [ -n "$(regline "$C2" | jq -r '.cleaned // ""')" ] && [ "$(regline "$C2" | jq -r '.verified // ""')" = "" ] \
+  && ok "clean marks the run cleaned without granting verification, still one line per run" || no "registry after clean: $(regline "$C2")"
 [ "$(stat -c %a "$T/s/local-runs.jsonl")" = 600 ] && ok "the registry keeps mode 600 after the mark" || no "registry mode $(stat -c %a "$T/s/local-runs.jsonl")"
 [ -z "$(regline "$C1" | jq -r '.cleaned // ""')" ] && ok "a run clean refused is not marked cleaned" || no "refused clean marked: $(regline "$C1")"
 out=$(./bin/qargi local prepare --repo "$T/r2" --base main --slug c3 --scratch "$T"); C3=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out")
@@ -86,7 +95,7 @@ echo y > "$CL4/g"; $G4 -C "$CL4" add g && $G4 -C "$CL4" commit -q -m work; echo 
 ./bin/qargi local clean "$C4" >/dev/null 2>&1 && no "clean removed a run with commits that were never applied" || ok "clean refuses a run whose commits were never applied"
 [ -d "$C4" ] && ok "and the finished work stays" || no "unapplied work was removed"
 TREE=$(git -C "$T/r2" rev-parse 'main^{tree}'); AT=$(git -C "$T/r2" -c user.name=t -c user.email=t@example.net commit-tree -p main -m work "$TREE")
-git -C "$T/r2" update-ref refs/heads/agent/c4 "$AT"; printf 'agent/c4 %s now\n' "$AT" > "$C4/applied"
+git -C "$T/r2" update-ref refs/heads/agent/c4 "$AT"; printf 'agent/c4 %s now\n' "$AT" > "$C4/applied"; record_applied "$C4" agent/c4 "$AT"
 ./bin/qargi local clean "$C4" >/dev/null 2>&1 && no "clean removed an applied but unmerged run" || ok "clean refuses a run applied to agent/c4 but not merged into another branch"
 git -C "$T/r2" update-ref refs/heads/feature/x "$AT"
 ./bin/qargi local clean "$C4" >/dev/null 2>&1 && [ ! -e "$C4" ] && ok "clean removes it once the applied tip is on another branch" || no "clean after merge"
@@ -219,17 +228,59 @@ err=$(./bin/qargi local clean "$C1" --discard 2>&1 >/dev/null); rcd=$?
   && ok "--discard removes a run whose refs changed, with its temporary directory, and prints the verify outcome as a warning" || no "discard after changed refs (rc=$rcd): $err"
 # a recorded temporary directory outside /dev/shm and QARGI_RUN_TMP is not removed
 out=$(./bin/qargi local prepare --repo "$T/r2" --base main --slug c6 --scratch "$T"); C6=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out"); TM6=$(sed -n '1,/^$/s/^TMP=//p' <<<"$out")
-settmp() { # RUN PATH: make the registry say that PATH is RUN's temporary directory (what clean trusts)
+settmp() { # RUN PATH: change the registry claim (private prepare ownership must still agree)
   jq -c --arg r "$1" --arg t "$2" 'if .run == $r then .tmpdir = $t else . end' "$T/s/local-runs.jsonl" > "$T/s/lr.new" && mv "$T/s/lr.new" "$T/s/local-runs.jsonl"
 }
 mkdir -p "$T/elsewhere/qargi-run.abcdef"; touch "$T/elsewhere/qargi-run.abcdef/precious"; settmp "$C6" "$T/elsewhere/qargi-run.abcdef"
-err=$(./bin/qargi local clean "$C6" --discard 2>&1 >/dev/null); [ ! -e "$C6" ] && [ -f "$T/elsewhere/qargi-run.abcdef/precious" ] && grep -q 'left .* alone' <<<"$err" \
-  && ok "a recorded TMP that is not under QARGI_RUN_TMP or the shared tmpfs is left alone, with a note" || no "foreign tmpdir: $err"
+err=$(./bin/qargi local clean "$C6" --discard 2>&1 >/dev/null); rc=$?
+[ "$rc" != 0 ] && [ -d "$C6" ] && [ -d "$TM6" ] && [ -f "$T/elsewhere/qargi-run.abcdef/precious" ] && grep -q 'prepared ownership disagree' <<<"$err" \
+  && ok "a foreign registry TMP claim refuses cleanup and preserves RUN and both temporary directories" || no "foreign tmpdir: $err"
+settmp "$C6" "$TM6"; ./bin/qargi local clean "$C6" --discard >/dev/null 2>&1 || no "discard restored c6 ownership"
 rm -rf "$TM6" "$T/elsewhere"
 # a recorded temporary directory is never followed: a link to another directory (also written with a trailing slash, which makes rm -rf empty what the
 # link leads to), a link inside its path, and a run directory that is itself a link all leave that other directory as it was
 VIC=$T/victim; mkdir -p "$VIC/sub"; echo keep > "$VIC/sub/precious"
 mkc() { ./bin/qargi local prepare --repo "$T/r2" --base main --slug "$1" --scratch "$T" | sed -n '1,/^$/s/^\(RUN\|TMP\)=//p' | paste -sd' '; }
+read -r CU _ <<<"$(mkc unknown-git)"; echo '{}' > "$CU/out/manifest.json"
+printf 'corrupt head\n' > "$CU/clone/.git/HEAD"
+out=$(./bin/qargi local verify "$CU" 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q 'state is unknown' <<<"$out" && [ ! -f "$CU/verified" ] \
+  && ok "verify does not record a corrupt clone as zero commits" || no "verify corrupt clone: rc=$rc $out"
+out=$(./bin/qargi local clean "$CU" 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q 'state is unknown' <<<"$out" && [ -d "$CU" ] \
+  && ok "clean keeps a clone whose commit state is unknown" || no "clean corrupt clone: rc=$rc $out"
+out=$(./bin/qargi local clean "$CU" --discard 2>&1); rc=$?
+[ "$rc" = 0 ] && [ ! -e "$CU" ] && grep -q 'commit state is unknown' <<<"$out" \
+  && ok "discard explicitly drops a clone with unknown commit state" || no "discard corrupt clone: rc=$rc $out"
+read -r CI _ <<<"$(mkc indirect-git)"; echo '{}' > "$CI/out/manifest.json"
+external_before=$(git -C "$T/r2" show-ref)
+for meta in commondir config.worktree objects/info/alternates objects/info/http-alternates; do
+  mkdir -p "$(dirname "$CI/clone/.git/$meta")"
+  printf '%s\n' "$T/r2/.git" > "$CI/clone/.git/$meta"
+  out=$(./bin/qargi local verify "$CI" 2>&1); vr=$?
+  out2=$(./bin/qargi local clean "$CI" 2>&1); cr=$?
+  { [ "$vr" != 0 ] && [ "$cr" != 0 ] && grep -q 'state is unknown' <<<"$out" && grep -q 'state is unknown' <<<"$out2" && [ -d "$CI" ]; } \
+    && ok "verify and clean refuse clone indirection $meta" || no "indirection $meta: verify=$vr clean=$cr $out $out2"
+  rm -f "$CI/clone/.git/$meta"
+done
+mkfifo "$CI/clone/.git/objects/info/alternates"
+out=$(./bin/qargi local clean "$CI" 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q 'state is unknown' <<<"$out" && [ -d "$CI" ] \
+  && ok "clean refuses a FIFO in clone alternates" || no "FIFO alternates: rc=$rc $out"
+rm -f "$CI/clone/.git/objects/info/alternates"
+mv "$CI/clone/.git" "$CI/clone/git.saved"
+printf 'gitdir: %s\n' "$T/r2/.git" > "$CI/clone/.git"
+out=$(./bin/qargi local verify "$CI" 2>&1); vr=$?
+out2=$(./bin/qargi local clean "$CI" 2>&1); cr=$?
+[ "$vr" != 0 ] && [ "$cr" != 0 ] && grep -q 'state is unknown' <<<"$out" && grep -q 'state is unknown' <<<"$out2" && [ -d "$CI" ] \
+  && ok "verify and clean refuse a gitfile pointing to another repository" || no "gitfile: verify=$vr clean=$cr $out $out2"
+rm -f "$CI/clone/.git"; ln -s "$T/r2/.git" "$CI/clone/.git"
+out=$(./bin/qargi local clean "$CI" 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q 'state is unknown' <<<"$out" && [ -d "$CI" ] \
+  && ok "clean refuses a linked Git directory" || no "linked git directory: rc=$rc $out"
+rm -f "$CI/clone/.git"; mv "$CI/clone/git.saved" "$CI/clone/.git"
+[ "$(git -C "$T/r2" show-ref)" = "$external_before" ] && ok "inspection did not change the external repository refs" || no "external refs changed"
+./bin/qargi local clean "$CI" --discard >/dev/null 2>&1 || no "discard indirect test run"
 ln -s "$VIC" "$T/qargi-run.abcde"; ln -s "$VIC" "$T/qargi-run.abcdef"
 mkdir -p "$T/realroot/qargi-run.ghijkl"; touch "$T/realroot/qargi-run.ghijkl/precious"; ln -s "$T/realroot" "$T/linkroot"
 n=0
@@ -240,8 +291,9 @@ for form in 'T/qargi-run.abcde/' 'T/qargi-run.abcde' 'T/qargi-run.abcdef' 'T/qar
     T/*) rec="$T/${form#T/}";;
   esac
   settmp "$CV" "$rec"
-  ./bin/qargi local clean "$CV" --discard >/dev/null 2>&1
-  [ -f "$VIC/sub/precious" ] && [ -f "$T/realroot/qargi-run.ghijkl/precious" ] && [ ! -e "$CV" ] && ok "a recorded tmpdir '$form' is left alone: what it leads to is untouched" || no "tmpdir '$form' damaged something"
+  ./bin/qargi local clean "$CV" --discard >/dev/null 2>&1; rc=$?
+  [ "$rc" != 0 ] && [ -f "$VIC/sub/precious" ] && [ -f "$T/realroot/qargi-run.ghijkl/precious" ] && [ -d "$CV" ] && [ -d "$TV" ] && ok "a recorded tmpdir '$form' refuses cleanup: RUN, TMP and link targets are untouched" || no "tmpdir '$form' damaged something"
+  settmp "$CV" "$TV"; ./bin/qargi local clean "$CV" --discard >/dev/null 2>&1 || no "discard restored link-test ownership"
   rm -rf "$TV"
 done
 read -r CV TV <<<"$(mkc lk-slash)"; touch "$TV/x"; settmp "$CV" "$TV/"
@@ -261,12 +313,13 @@ for form in "$TY" "$TY/" "${TY%/*}//${TY##*/}" "${TY%/*}/./${TY##*/}"; do
     || no "forged tmpdir file '$form': other=$(ls "$TY" 2>&1) run=$(ls -d "$CX" 2>&1) own=$(ls -d "$TX" 2>&1)"
   read -r CX TX <<<"$(mkc fg-x)"
 done
-# a run with no line in the registry loses only RUN/tmp, whatever its tmpdir file says
+# A run with no registry line is refused, even with --discard.
 jq -c --arg r "$CX" 'select(.run != $r)' "$T/s/local-runs.jsonl" > "$T/s/lr.new" && mv "$T/s/lr.new" "$T/s/local-runs.jsonl"
 mkdir -p "$CX/tmp"; touch "$CX/tmp/x"; printf '%s\n' "$TY" > "$CX/tmpdir"
-./bin/qargi local clean "$CX" --discard >/dev/null 2>&1
-[ -f "$TY/precious" ] && [ ! -e "$CX" ] && [ -d "$TX" ] && ok "with no registry line only RUN/tmp goes: the tmpdir file's directory and the unrecorded temporary directory are left" || no "no record: other=$(ls "$TY" 2>&1) run=$(ls -d "$CX" 2>&1)"
-rm -rf "$TX" "$TY" "$CY"
+out=$(./bin/qargi local clean "$CX" --discard 2>&1); rc=$?
+[ "$rc" = 3 ] && grep -q "absent from the lead registry" <<<"$out" && [ -f "$TY/precious" ] && [ -d "$CX/tmp" ] && [ -d "$TX" ] \
+  && ok "with no registry line clean refuses and leaves the run and temporary directories" || no "no record: rc=$rc $out"
+rm -rf "$CX" "$TX" "$TY" "$CY"
 # the repository, its URL and the credential path come from the lead's registry, never from the run directory (repo.path, repo.url and cred.path are a member's
 # to write): a run whose files disagree with the registry is refused by verify, clean and run before any git is run for it
 read -r CF TF <<<"$(mkc rf-a)"; echo '{}' > "$CF/out/manifest.json"
@@ -302,7 +355,7 @@ mv "$CF/repo.path" "$T/repo.path.gone"
 mv "$T/repo.path.gone" "$CF/repo.path"
 cp "$T/s/local-runs.jsonl" "$T/lr.keep"; jq -c --arg r "$CF" 'select(.run != $r)' "$T/lr.keep" > "$T/s/local-runs.jsonl"
 out=$(./bin/qargi local verify "$CF" 2>&1); rcv=$?; out2=$(./bin/qargi local clean "$CF" 2>&1); rcc=$?
-{ [ $rcv != 0 ] && [ $rcc != 0 ] && [ -d "$CF" ] && grep -q "not in the lead's registry" <<<"$out$out2"; } && ok "a run the registry does not name is refused by verify and clean" || no "unregistered (rc=$rcv,$rcc): $out $out2"
+{ [ $rcv = 3 ] && [ $rcc = 3 ] && [ -d "$CF" ] && grep -q "absent from the lead registry" <<<"$out$out2"; } && ok "a run the registry does not name is refused by verify and clean" || no "unregistered (rc=$rcv,$rcc): $out $out2"
 cp "$T/lr.keep" "$T/s/local-runs.jsonl"
 # a run of a repository URL: the URL and the credential path the registry records are the ones used (the files must agree with it)
 jq -c --arg r "$CF" 'if .run == $r then del(.repo) | .url = "https://nowhere.invalid/real" | .cred = "'"$T"'/secret.txt" else . end' "$T/lr.keep" > "$T/s/local-runs.jsonl"
@@ -331,7 +384,7 @@ lrun() { # slug scratch -> the run directory, with one commit in its clone, a ma
 }
 applied() { # run branch -> a commit on top of main named for the run, recorded in RUN/applied; prints the sha
   local sha; sha=$($LC -C "$T/r6" commit-tree -p main -m "applied $1" "$(git -C "$T/r6" rev-parse 'main^{tree}')")
-  printf '%s %s now\n' "$2" "$sha" > "$1/applied"; echo "$sha"
+  printf '%s %s now\n' "$2" "$sha" > "$1/applied"; record_applied "$1" "$2" "$sha"; echo "$sha"
 }
 LA=$(lrun la "$T/ls"); LB=$(lrun lb "$T/ls"); LCC=$(lrun lc "$T/ls"); LD=$(lrun ld "$T/ls2")
 TMA=$(cat "$LA/tmpdir"); TMB=$(cat "$LB/tmpdir")
@@ -382,7 +435,7 @@ for w in --merged=HEAD --no-contains --help abc1234 "$(printf 'a%.0s' $(seq 1 41
     && ok "list: an applied word '$w' that is no full commit name is not passed to git (merged shows ?)" || no "list '$w' (rc=$rcl): $out; git saw: $(cat "$T/gl/argv")"
   : > "$T/gl/argv"
   out=$(PATH="$T/gl:$PATH" ./bin/qargi local clean "$LX" 2>&1); rcc=$?
-  { [ $rcc != 0 ] && [ -d "$LX" ] && grep -q 'second word' <<<"$out" && ! grep -q -- "$w" "$T/gl/argv"; } \
+  { [ $rcc != 0 ] && [ -d "$LX" ] && grep -q 'no completed authoritative apply record' <<<"$out" && ! grep -q -- "$w" "$T/gl/argv"; } \
     && ok "clean refuses it with a message and keeps the run ('$w')" || no "clean '$w' (rc=$rcc): $out; git saw: $(cat "$T/gl/argv")"
 done
 SX=$(applied "$LX" agent/lx); git -C "$T/r6" update-ref refs/heads/feature/lx "$SX"
@@ -550,13 +603,14 @@ rbrun() { # slug -> a run under $T/rb with one commit, a manifest, a bundle besi
   r=$(sed -n '1,/^$/s/^RUN=//p' <<<"$o"); g=$(sed -n '1,/^$/s/^GIT=//p' <<<"$o"); c=$(sed -n '1,/^$/s/^CLONE=//p' <<<"$o")
   echo "$1" > "$c/f-$1"; "$g" -C "$c" add "f-$1"; "$g" -C "$c" commit -q -m "work $1"; echo '{"status":"DONE"}' > "$r/out/manifest.json"; echo r > "$r/out/report.md"
   "$g" -C "$c" bundle create -q "$r/run.bundle" main..HEAD 2>/dev/null
+  ln -s /etc/hostname "$r/out/link-out"
   ./bin/qargi local verify "$r" > "$T/vout" 2>&1; echo "$r"
 }
 RB1=$(rbrun rb1); ID1=$(basename "$RB1"); SV1=$T/s/runs/$ID1
 { [ -f "$SV1/out/manifest.json" ] && [ -f "$SV1/run.bundle" ] && [ -f "$SV1/refs.before" ] && [ -f "$SV1/verified" ] && [ -f "$SV1/started" ] && [ "$(cat "$SV1/class")" = write ] \
   && [ "$(jq -r .slug "$SV1/record.json")" = rb1 ] && grep -q "saved a copy of the run's output in $SV1" "$T/vout"; } \
   && ok "a passing verify copies OUT, the run bundle, the snapshots and the registry's record to <state>/runs/<run id>/" || no "saved copy: $(ls -A "$SV1" 2>&1); $(cat "$T/vout")"
-ln -s /etc/hostname "$RB1/out/link-out"; ./bin/qargi local verify "$RB1" >/dev/null 2>&1
+./bin/qargi local verify "$RB1" >/dev/null 2>&1
 [ -L "$SV1/out/link-out" ] && ok "a link in OUT is copied as a link, never followed" || no "link in OUT: $(ls -l "$SV1/out")"
 # the directory vanishes (a reboot that emptied a tmpfs): list and report say so and name the saved copy; clean keeps the work
 TRB1=$(jq -r --arg r "$RB1" 'select(.run == $r) | .tmpdir' "$T/s/local-runs.jsonl"); rm -rf "$RB1" "$TRB1"
@@ -568,10 +622,10 @@ out=$(./bin/qargi local clean "$RB1" 2>&1); rc=$?
 [ $rc != 0 ] && grep -q "never applied" <<<"$out" && grep -q "from-saved $ID1" <<<"$out" && [ -d "$SV1" ] && grep -q "$RB1" "$T/s/local-runs.jsonl" \
   && ok "clean of a vanished run whose saved work was never applied keeps the record and the copy, and says how to apply it" || no "clean gone, unapplied (rc=$rc): $out"
 out=$(./bin/qargi local clean "$RB1" --discard 2>&1); rc=$?
-{ [ $rc = 0 ] && grep -q "dropped the record of $RB1 (directory gone) and its saved copy" <<<"$out" && [ ! -e "$SV1" ] && ! grep -q "$RB1" "$T/s/local-runs.jsonl" \
+{ [ $rc = 0 ] && grep -q "cleaned $RB1 (directory gone) and its saved copy" <<<"$out" && [ ! -e "$SV1" ] && [ -n "$(jq -r --arg r "$RB1" 'select(.run == $r) | .cleaned // empty' "$T/s/local-runs.jsonl")" ] \
   && [ "$(stat -c %a "$T/s/local-runs.jsonl")" = 600 ] && ! grep -q "$RB1" <<<"$(./bin/qargi local list)"; } \
-  && ok "clean --discard of a vanished run drops its registry entry and its saved copy (the registry stays mode 600)" || no "discard gone (rc=$rc): $out"
-./bin/qargi local clean "$RB1" --discard >/dev/null 2>&1 && no "a run dropped from the registry was cleaned again" || ok "and then the run is unknown"
+  && ok "clean --discard of a vanished run removes its copy and keeps a cleaned registry entry (mode 600)" || no "discard gone (rc=$rc): $out"
+./bin/qargi local clean "$RB1" --discard >/dev/null 2>&1 && ok "repeated cleanup is idempotent" || no "repeated cleanup refused"
 # a clean marks the registry's line cleaned and removes the saved copy: the run is not listed as gone afterwards
 RB2=$(rbrun rb2); SV2=$T/s/runs/$(basename "$RB2")
 ./bin/qargi local clean "$RB2" --discard >/dev/null 2>&1
@@ -581,6 +635,7 @@ RB2=$(rbrun rb2); SV2=$T/s/runs/$(basename "$RB2")
 RB3=$(rbrun rb3); RB4=$(rbrun rb4); RB5=$(rbrun rb5); SV5=$T/s/runs/$(basename "$RB5")
 rm -rf "$T/s/runs/$(basename "$RB3")"                                         # nothing saved of rb3
 A5=$($LC -C "$T/r7" commit-tree -p main -m "applied rb5" "$(git -C "$T/r7" rev-parse 'main^{tree}')"); git -C "$T/r7" update-ref refs/heads/feature/rb5 "$A5"
+record_applied "$RB5" agent/rb5 "$A5"
 printf 'agent/rb5 %s now\n' "$A5" > "$SV5/applied"                            # applied (from the saved copy) and merged
 old=$(date -u -d '20 days ago' +%Y-%m-%dT%H:%M:%SZ)
 for r in "$RB3" "$RB4" "$RB5"; do jq -c --arg r "$r" --arg t "$old" 'if .run == $r then .started = $t else . end' "$T/s/local-runs.jsonl" > "$T/s/lr.new" && mv "$T/s/lr.new" "$T/s/local-runs.jsonl"; rm -rf "$r"; done
@@ -589,10 +644,10 @@ out=$(./bin/qargi local clean --stale 7 --scratch "$T/rb" 2>&1); rcs=$?
 { [ $rcs = 0 ] && grep -q "^would drop the record of $RB3 (directory gone, 20d old)" <<<"$out" && grep -q "^would drop the record of $RB4 (directory gone, saved copy" <<<"$out" \
   && grep -q "^plan: 3 " <<<"$out" && grep -q "$RB3" "$T/s/local-runs.jsonl"; } && ok "clean --stale plans the vanished runs older than DAYS, and changes nothing" || no "stale gone plan (rc=$rcs): $out"
 out=$(./bin/qargi local clean --stale 7 --scratch "$T/rb" --yes 2>&1); rcs=$?
-{ [ $rcs = 1 ] && grep -q "dropped the record of $RB3" <<<"$out" && grep -q "dropped the record of $RB5 (directory gone) and its saved copy" <<<"$out" \
-  && grep -q "kept $RB4: directory gone, and its saved copy .* never applied" <<<"$out" && grep -q '^cleaned 2 run(s), kept 1' <<<"$out" \
-  && ! grep -q "$RB3\|$RB5" "$T/s/local-runs.jsonl" && grep -q "$RB4" "$T/s/local-runs.jsonl"; } \
-  && ok "clean --stale --yes drops the vanished runs (none saved, or applied and merged) and keeps the one whose saved work was never applied" || no "stale gone --yes (rc=$rcs): $out"
+{ [ $rcs = 1 ] && grep -q "kept $RB3: no current copy; retained lifecycle evidence" <<<"$out" && grep -q "cleaned $RB5 (directory gone) and its saved copy" <<<"$out" \
+  && grep -q "kept $RB4: directory gone, and its saved copy .* never applied" <<<"$out" && grep -q '^cleaned 1 run(s), kept 2' <<<"$out" \
+  && [ -n "$(jq -r --arg r "$RB5" 'select(.run == $r) | .cleaned // empty' "$T/s/local-runs.jsonl")" ] && grep -q "$RB3" "$T/s/local-runs.jsonl" && grep -q "$RB4" "$T/s/local-runs.jsonl"; } \
+  && ok "stale cleanup keeps missing-current lifecycle evidence and unapplied work, and cleans only applied merged output" || no "stale gone --yes (rc=$rcs): $out"
 rm -rf "$T/rb"
 out=$(./bin/qargi local list --scratch "$T/rb" 2>&1); rcl=$?
 [ $rcl = 0 ] && grep -q "$RB4  directory gone" <<<"$out" && ok "a scratch directory that is gone itself is still listed from the registry" || no "list of a gone scratch (rc=$rcl): $out"

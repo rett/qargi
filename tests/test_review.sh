@@ -5,6 +5,9 @@ set -u
 cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
+# Lead-state fixtures use private modes and their own configured Git identities.
+umask 077
+unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_AUTHOR_DATE GIT_COMMITTER_DATE
 T=$(mktemp -d); trap 'rm -rf "$T" "$HERMETIC"' EXIT; fail=0; DA=$PWD/bin/qargi
 # shellcheck source=fixtures.sh
 . tests/fixtures.sh
@@ -144,10 +147,9 @@ out=$($DA review apply "$R1" 2>&1); rc=$?
 cp "$T/applied.keep" "$R1/applied"
 
 # a death in the middle of an apply is recoverable: a git shim kills the verb right after the Nth matching git call
-mkdir -p "$T/shim"; REALGIT=$(command -v git); export REALGIT
-cat > "$T/shim/git" <<'S'
-#!/usr/bin/env bash
-"$REALGIT" "$@"; rc=$?
+mkdir -p "$T/shim"; REALGIT=$(command -v git)
+printf '#!/usr/bin/env bash\n%q "$@"; rc=$?\n' "$REALGIT" > "$T/shim/git"
+cat >> "$T/shim/git" <<'S'
 # PAUSE_AFTER: wait inside the verb, once the real git ran, until $PAUSE_GO exists ($PAUSE_FLAG tells the test the verb is there)
 if [ -n "${PAUSE_AFTER:-}" ] && [ ! -e "${PAUSE_FLAG:-/nonexistent}" ]; then
   case " $* " in *"$PAUSE_AFTER"*) : > "$PAUSE_FLAG"; while [ ! -e "$PAUSE_GO" ]; do sleep 0.1; done;; esac
@@ -158,15 +160,30 @@ fi
 exit $rc
 S
 chmod +x "$T/shim/git"
-# (1) after the branch was made, before the patches: the branch is only the base; the re-run removes it and applies the series
+# Test teardown only: these shims killed the shell after the real Git returned.
+# Production has no such affirmative evidence and must preserve started applies.
+clear_started_fixture() {
+  local r=$1 branch=$2 wt
+  for wt in "$T/s/apply-wt.${r##*/}."*; do
+    [ -d "$wt" ] && [ ! -L "$wt" ] || continue
+    git -C "$A" worktree remove --force "$wt"
+  done
+  rm -rf "$T/s/apply/${r##*/}.json" "$T/s/apply/${r##*/}.json.run"
+  $DA local clean "$r" --discard >/dev/null 2>&1 || no "fixture teardown: $r"
+  git -C "$A" branch -D "$branch" >/dev/null
+}
+out=$(env -i PATH=/usr/bin:/bin HOME="$HOME" "$T/shim/git" --version 2>&1); rc=$?
+[ $rc = 0 ] && [[ $out == git\ version\ * ]] && ok "the git shim runs under a scrubbed environment" || no "scrubbed git shim: rc=$rc $out"
+# (1) after the branch was made, before the patches: the branch is only the base; recovery preserves unknown child liveness
 R7=$(newrun halfway)
 PATH=$T/shim:$PATH DIE_AFTER="worktree add -q -b agent/halfway" DIE_FLAG=$T/die-1 $DA review apply "$R7" >/dev/null 2>&1; rc=$?
 [ $rc != 0 ] && [ -e "$T/die-1" ] && git -C "$A" rev-parse -q --verify agent/halfway >/dev/null && [ ! -e "$R7/applied" ] && [ "$(jq -r .status "$T/s/apply/${R7##*/}.json")" = started ] \
   && ok "(setup) a death after the branch was made leaves the branch, no applied file and a record that says started" || no "setup 1: rc=$rc $(cat "$T/s/apply/${R7##*/}.json" 2>&1)"
 git -C "$A" worktree prune
 out=$($DA review apply "$R7" 2>&1); rc=$?
-[ $rc = 0 ] && grep -q "cut off while making agent/halfway" <<<"$out" && [ "$(git -C "$A" rev-list --count "$dev..agent/halfway")" = 2 ] && [ -f "$R7/applied" ] && [ "$(jq -r .status "$T/s/apply/${R7##*/}.json")" = "done" ] \
-  && ok "the re-run removes the half-made branch, applies the series and records it" || no "re-run 1: rc=$rc $out"
+[ $rc != 0 ] && grep -q "Git-child liveness is unknown" <<<"$out" && [ "$(git -C "$A" rev-parse agent/halfway)" = "$dev" ] && [ ! -f "$R7/applied" ] && [ "$(jq -r .status "$T/s/apply/${R7##*/}.json")" = started ] \
+  && ok "the re-run preserves the unfinished branch and record without child termination evidence" || no "re-run 1: rc=$rc $out"
+clear_started_fixture "$R7" agent/halfway
 # (2) after the branch was built and the journal and audit lines were written, before the run's own files: the re-run finishes without applying again
 R8=$(newrun built)
 PATH=$T/shim:$PATH DIE_AFTER="log --reverse" DIE_FLAG=$T/die-2 $DA review apply "$R8" >/dev/null 2>&1; rc=$?
@@ -196,13 +213,12 @@ rp=$(jq -r .pid "$rec12" 2>/dev/null)
 [ -e "$T/p-flag" ] && [[ $rp =~ ^[0-9]+$ ]] && kill -0 "$rp" 2>/dev/null && [ -n "$(jq -r .ptoken "$rec12")" ] && [ -n "$wt12" ] \
   && ok "(setup) the first apply is held inside: its record says started and carries its pid and start token, its worktree exists" || no "setup conc: flag=$([ -e "$T/p-flag" ] && echo yes || echo no) pid=$rp $(cat "$rec12" 2>&1)"
 out=$($DA review apply "$R12" 2>&1); rc=$?
-[ $rc != 0 ] && grep -q "another apply of .* is running (process" <<<"$out" && [ -d "$wt12" ] && git -C "$A" rev-parse -q --verify agent/conc >/dev/null && [ "$(jq -r .status "$rec12")" = started ] && [ "$(jq -r .pid "$rec12")" = "$rp" ] \
+[ $rc = 3 ] && grep -q "lifecycle lock busy" <<<"$out" && [ -d "$wt12" ] && git -C "$A" rev-parse -q --verify agent/conc >/dev/null && [ "$(jq -r .status "$rec12")" = started ] && [ "$(jq -r .pid "$rec12")" = "$rp" ] \
   && ok "a second apply of the run is refused while the first is alive, and removes neither its worktree, its branch nor its record" || no "second apply: rc=$rc $out"
 : > "$T/p-go"; wait "$cpid"; rc1=$?
 [ $rc1 = 0 ] && [ "$(jq -r .status "$rec12")" = "done" ] && [ "$(git -C "$A" rev-list --count "$dev..agent/conc")" = 2 ] && [ -f "$R12/applied" ] && [ ! -d "$rec12.run" ] \
   && ok "the first apply then finishes: two commits on the branch, the record done, its lock removed" || no "first apply: rc=$rc1 $(cat "$T/conc1.out")"
-# (5) the record of a dead process is resumed (test 1 above); one whose process is alive is not, even with no lock directory: only a pid that is gone, or
-# that now belongs to another process (its start token differs), counts as a death
+# (5) a live owner is refused even without its PID lock; a reused PID still cannot prove Git-child termination
 R13=$(newrun livepid); id13=${R13##*/}; rec13=$T/s/apply/$id13.json
 PATH=$T/shim:$PATH DIE_AFTER="worktree add -q -b agent/livepid" DIE_FLAG=$T/die-5 $DA review apply "$R13" >/dev/null 2>&1
 git -C "$A" worktree prune
@@ -215,8 +231,9 @@ out=$($DA review apply "$R13" 2>&1); rc=$?
   && ok "a started record whose process is alive is refused even with no lock directory, and nothing is removed" || no "live record: rc=$rc $out"
 jq '.ptoken = "1"' "$rec13" > "$T/rec13.json" && cp "$T/rec13.json" "$rec13"   # the pid now names another process than the one that made the record
 out=$($DA review apply "$R13" 2>&1); rc=$?
-[ $rc = 0 ] && grep -q "cut off while making agent/livepid" <<<"$out" && [ "$(jq -r .status "$rec13")" = "done" ] && ok "and a pid whose start token differs is a dead apply: it is resumed" || no "reused pid: rc=$rc $out"
+[ $rc != 0 ] && grep -q "Git-child liveness is unknown" <<<"$out" && [ "$(jq -r .status "$rec13")" = started ] && ok "a reused parent pid still provides no Git-child termination evidence" || no "reused pid: rc=$rc $out"
 kill "$sp" 2>/dev/null; wait "$sp" 2>/dev/null
+clear_started_fixture "$R13" agent/livepid
 # `local clean RUN` removes the apply record of the run and what a killed apply of it left in the state (its apply-in.RUN-ID.* and apply-wt.RUN-ID.* directories and the
 # worktree), and nothing of another run; `local clean --orphans` lists and removes the ones no run of the registry accounts for
 id9=${R9##*/}
@@ -228,9 +245,10 @@ PATH=$T/shim:$PATH DIE_AFTER="worktree add -q -b agent/wtleft" DIE_FLAG=$T/die-4
   && ok "(setup) an apply killed after its worktree was made leaves the record, the patch copy, the worktree directory and the registered worktree" || no "setup wt: $(ls -A "$T/s"; git -C "$A" worktree list)"
 mkdir "$T/outside"; echo keep > "$T/outside/f"; ln -s "$T/outside" "$T/s/apply-in.$id10.link"   # a link in the name of a temporary directory: removed by no one's rm -r
 out=$($DA local clean "$R10" --discard 2>&1); rc=$?
-{ [ $rc = 0 ] && [ ! -e "$R10" ] && [ ! -e "$T/s/apply/$id10.json" ] && [ ! -e "$T/s/apply/$id10.json.run" ] && [ -z "$(find "$T/s" -maxdepth 1 \( -name "apply-in.$id10.*" -o -name "apply-wt.$id10.*" \) ! -name '*.link')" ] \
-  && [ "$(git -C "$A" worktree list | wc -l)" = 1 ] && [ -L "$T/s/apply-in.$id10.link" ] && [ "$(cat "$T/outside/f")" = keep ]; } \
-  && ok "clean removes the apply record, the patch copy and the worktree of a killed apply of the run (and prunes the worktree), and follows no link" || no "clean wt: rc=$rc $out $(ls -A "$T/s")"
+{ [ $rc != 0 ] && grep -q "Git-child liveness is unknown" <<<"$out" && [ -e "$R10" ] && [ -e "$T/s/apply/$id10.json" ] && [ -e "$T/s/apply/$id10.json.run" ] \
+  && [ "$(git -C "$A" worktree list | wc -l)" = 2 ] && [ -L "$T/s/apply-in.$id10.link" ] && [ "$(cat "$T/outside/f")" = keep ]; } \
+  && ok "clean preserves an unfinished apply, its worktree and links when child liveness is unknown" || no "clean wt: rc=$rc $out $(ls -A "$T/s")"
+clear_started_fixture "$R10" agent/wtleft
 { [ -f "$T/s/apply/$id9.json" ] && [ "$(astate "$id9")" = 1 ] && [ -d "$R9" ]; } && ok "and leaves the record and the directory of another run alone" || no "other run: $(ls -A "$T/s" "$T/s/apply")"
 rm -f "$T/s/apply-in.$id10.link"
 out=$($DA local clean "$R9" --discard 2>&1); rc=$?
@@ -286,8 +304,8 @@ out=$($DA review apply "$R7" 2>&1); rc=$?
 # what apply records in the run directory (applied, the new snapshot) is not written through a link a member planted there
 R8=$(newrun linknew); ln -s "$T/victim8" "$R8/refs.before.new"
 out=$($DA review apply "$R8" 2>&1); rc=$?
-{ [ $rc = 0 ] && [ ! -e "$T/victim8" ] && grep -q "^local refs/heads/agent/linknew " "$R8/refs.before" && [ ! -L "$R8/refs.before" ] && [ -f "$R8/applied" ] && [ ! -L "$R8/applied" ]; } \
-  && ok "a refs.before.new that is a link is not written through: the snapshot is replaced by a rename from the lead's state directory" || no "link refs.before.new: rc=$rc $out"
+{ [ $rc = 0 ] && [ ! -e "$T/victim8" ] && [ -L "$R8/refs.before.new" ] && [ -f "$R8/applied" ] && [ ! -L "$R8/applied" ]; } \
+  && ok "a refs.before.new link is irrelevant to private authority and its target is untouched" || no "link refs.before.new: rc=$rc $out"
 $DA local verify "$R8" >/dev/null 2>&1 && ok "and verify still accepts the run" || no "verify after apply"
 R9=$(newrun linkapplied); ln -s "$T/victim9" "$R9/applied"
 out=$($DA review apply "$R9" 2>&1); rc=$?
@@ -545,12 +563,20 @@ out=$($DA review check "$T/rep2" 2>&1); rc=$?
 MK=$T/scrub-ran; setans '.review.scrub = "touch '"$MK"'; exit 1"'
 R41=$(newrun membercheck)
 out=$(QARGI_MEMBER_RUN=$R41 $DA review check "$R41/out" 2>&1); rc=$?
-{ [ $rc = 0 ] && [ "$(scrubs "$out")" = 1 ] && grep -qx "scrub: not run (a member's check; the lead's check runs it)" <<<"$out" && [ ! -e "$MK" ]; } \
+{ [ $rc = 0 ] && [ "$(scrubs "$out")" = 1 ] && grep -qx "scrub: not run (a member's structural check; the lead's check runs it)" <<<"$out" && [ ! -e "$MK" ]; } \
   && ok "a member's check does not run the scrub, says so and does not fail" || no "member check: rc=$rc $out"
+out=$(QARGI_MEMBER_RUN=$R41-other QARGI_STATE=$T/member-state QARGI_CONF=$T/member-conf $DA review check "$R41/out" 2>&1); rc=$?
+{ [ "$rc" = 3 ] && grep -q 'member marker does not match the inspected run' <<<"$out" && [ ! -e "$MK" ] \
+  && [ ! -e "$T/member-state" ] && [ ! -e "$T/member-conf" ]; } \
+  && ok "a mismatched member marker refuses without state, scrub or cache writes" || no "mismatched member: rc=$rc $out"
+ln -s "$T/good" "$R41/linked-out"
+out=$(QARGI_MEMBER_RUN=$R41 QARGI_STATE=$T/member-state QARGI_CONF=$T/member-conf $DA review check "$R41/linked-out" 2>&1); rc=$?
+{ [ "$rc" = 3 ] && grep -q 'member marker does not match the inspected run' <<<"$out" && [ ! -e "$T/member-state" ] && [ ! -e "$T/member-conf" ]; } \
+  && ok "an OUT link to another run cannot borrow the member marker" || no "linked member OUT: rc=$rc $out"
 setans '.review.scrub = "touch '"$MK"'; exit 1" | .review.trailer_policy = "reject"'
 R42=$(newrun membertrail); r0=$(refs_all)
 out=$(QARGI_MEMBER_RUN=$R42 $DA review check "$R42/out" 2>&1); rc=$?
-{ [ $rc = 0 ] && grep -qx "scrub: not run (a member's check; the lead's check runs it)" <<<"$out" && [ ! -e "$MK" ] && [ "$(refs_all)" = "$r0" ]; } \
+{ [ $rc = 0 ] && grep -qx "scrub: not run (a member's structural check; the lead's check runs it)" <<<"$out" && [ ! -e "$MK" ] && [ "$(refs_all)" = "$r0" ]; } \
   && ok "and neither does a member's check make the checkout for a trailer policy" || no "member check, policy: rc=$rc $out"
 out=$($DA review check "$R42/out" 2>&1); rc=$?
 { [ $rc = 1 ] && grep -q '^scrub: FAIL' <<<"$out" && [ -e "$MK" ]; } && ok "the lead's check of the same run does run the scrub" || no "lead check: rc=$rc $out"
@@ -574,12 +600,12 @@ R51=$(newrun applypass)
 out=$($DA review apply "$R51" 2>&1); rc=$?
 { [ $rc = 0 ] && grep -qx 'scrub: ok' <<<"$out" && [ "$(runs)" = 1 ] && git -C "$A" rev-parse -q --verify agent/applypass >/dev/null; } \
   && ok "a scrub that passes at apply (no check before) runs once and the series is applied" || no "apply scrub pass: rc=$rc $out"
-# a passing check for the same series: the apply does not run the scrub again, and says so on one line
+# a passing check of mutable output does not authorize the private apply input
 : > "$CNT"; R52=$(newrun applyskip)
 $DA review check "$R52/out" >/dev/null 2>&1; rc=$?
 out=$($DA review apply "$R52" 2>&1); rc2=$?
-{ [ $rc = 0 ] && [ $rc2 = 0 ] && [ "$(runs)" = 1 ] && [ "$(grep -c '^scrub:' <<<"$out")" = 1 ] && grep -qx 'scrub: skipped (review check passed it for this series)' <<<"$out" && git -C "$A" rev-parse -q --verify agent/applyskip >/dev/null; } \
-  && ok "a passing check for the same series: apply does not run the scrub again and says so on one line" || no "apply skip: rc=$rc/$rc2 runs=$(runs) $out"
+{ [ $rc = 0 ] && [ $rc2 = 0 ] && [ "$(runs)" = 2 ] && [ "$(grep -c '^scrub:' <<<"$out")" = 1 ] && grep -qx 'scrub: ok' <<<"$out" && git -C "$A" rev-parse -q --verify agent/applyskip >/dev/null; } \
+  && ok "a passing mutable check still requires scrubbing the private lifecycle apply input" || no "apply scrub: rc=$rc/$rc2 runs=$(runs) $out"
 # the series changed after the check (a patch message edited): apply runs the scrub again
 : > "$CNT"; R53=$(newrun applychanged)
 $DA review check "$R53/out" >/dev/null 2>&1
@@ -616,8 +642,8 @@ setans '.review.scrub = "echo ran >> '"$CNT"'; exit 0"'
 : > "$CNT"; RS6=$(newrun savedskip); IS6=$(basename "$RS6")
 $DA review check "$RS6/out" >/dev/null 2>&1; $DA local verify "$RS6" >/dev/null 2>&1; rm -rf "$RS6"
 out=$($DA review apply --from-saved "$IS6" 2>&1); rc=$?
-{ [ $rc = 0 ] && [ "$(runs)" = 1 ] && grep -qx 'scrub: skipped (review check passed it for this series)' <<<"$out" && git -C "$A" rev-parse -q --verify agent/savedskip >/dev/null; } \
-  && ok "--from-saved skips the scrub a passing check recorded for the saved series" || no "from-saved skip: rc=$rc runs=$(runs) $out"
+{ [ $rc = 0 ] && [ "$(runs)" = 2 ] && grep -qx 'scrub: ok' <<<"$out" && git -C "$A" rev-parse -q --verify agent/savedskip >/dev/null; } \
+  && ok "--from-saved scrubs its private apply input even after a passing check" || no "from-saved scrub: rc=$rc runs=$(runs) $out"
 RS7=$(newrun savedrun); IS7=$(basename "$RS7"); $DA local verify "$RS7" >/dev/null 2>&1; rm -rf "$RS7"; n=$(runs)
 out=$($DA review apply --from-saved "$IS7" 2>&1); rc=$?
 { [ $rc = 0 ] && [ "$(runs)" = $((n + 1)) ] && grep -qx 'scrub: ok' <<<"$out"; } && ok "--from-saved with no check before it runs the scrub from the saved copy" || no "from-saved run: rc=$rc $out"

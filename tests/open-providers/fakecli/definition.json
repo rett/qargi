@@ -30,6 +30,16 @@
     }
   },
   "capabilities": {
+    "per_dispatch_model_override": {
+      "value": "yes",
+      "verified_on": null,
+      "source": "fixture: --model selects a model per invocation"
+    },
+    "per_dispatch_effort_override": {
+      "value": "yes",
+      "verified_on": null,
+      "source": "fixture: --effort selects a native effort per invocation"
+    },
     "agent_definitions": {
       "value": "yes",
       "verified_on": null,

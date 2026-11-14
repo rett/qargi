@@ -10,6 +10,7 @@ set -u
 cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
+umask 077
 T=$(mktemp -d); trap 'rm -rf "$T" "$HERMETIC"' EXIT; fail=0
 export QARGI_CONF=$T/c QARGI_STATE=$T/s
 mkdir -p "$T/c" "$T/s"
@@ -66,11 +67,32 @@ concurrent_round() { # own|shared -> ten prepares at once, ten verifies at once,
   [ -z "$bad" ] && [ "$na" = $((nb + n)) ] && [ "$(jq -r --arg m "$mode-" 'select((.slug | startswith($m)) and (.verified | type) == "string") | .run' "$REG" | sort)" = "$(printf '%s\n' "${runs[@]}" | sort)" ] \
     && ok "$n verifies at once each passed, saved its copy and marked its own line verified; the registry still has $((nb + n)) whole lines" \
     || no "concurrent $mode verifies:$bad registry $na lines; $(cat "$scr"/log/v*)"
-  for i in $(seq $n); do   # applied and merged: a commit on main's tree, recorded in RUN/applied and on a feature branch of the repository
-    sha=$($LC -C "$T/r" commit-tree -p main -m "applied $mode-$i" "$(git -C "$T/r" rev-parse 'main^{tree}')")
-    printf 'agent/%s %s now\n' "$mode-$i" "$sha" > "${runs[i - 1]}/applied"; git -C "$T/r" update-ref "refs/heads/feature/$mode-$i" "$sha"
+  for i in $(seq $n); do   # Import each real member commit; the feature branch contains its work.
+    r=${runs[i - 1]}
+    git -C "$T/r" fetch -q "$r/clone" HEAD
+    sha=$(git -C "$T/r" rev-parse FETCH_HEAD)
+    printf 'agent/%s %s now\n' "$mode-$i" "$sha" > "$r/applied"
+    git -C "$T/r" update-ref "refs/heads/feature/$mode-$i" "$sha"
   done
-  mkdir "$scr/qargi.zzzzzz" "$rt/qargi-run.zzzzzz"   # lookalikes the registry does not name: clean must leave them
+  mkdir "$scr/qargi.zzzzzz" "$rt/qargi-run.zzzzzz"   # unregistered lookalikes
+  o=$(QARGI_RUN_TMP=$rt ./bin/qargi local clean --applied --scratch "$scr" 2>&1); rc=$?
+  bad=''
+  for i in $(seq $n); do
+    [ -d "${runs[i - 1]}" ] && [ -d "${tmps[i - 1]}" ] && [ -d "$T/s/runs/$(basename "${runs[i - 1]}")" ] || bad="$bad lost($i)"
+  done
+  [ "$rc" != 0 ] && [ -z "$bad" ] && grep -q "^cleaned 0 run(s), kept $n$" <<<"$o" \
+    && [ "$(reg_ok)" = $((nb + n)) ] && [ -d "$scr/qargi.zzzzzz" ] && [ -d "$rt/qargi-run.zzzzzz" ] \
+    && ok "forged RUN/applied alone refuses cleanup and preserves all artifacts" \
+    || no "forged applied cleanup: rc=$rc $bad $o"
+  # Test-only completed apply authority, matching the real imported member tip.
+  mkdir -p "$T/s/apply"; chmod 700 "$T/s" "$T/s/apply"
+  for i in $(seq $n); do
+    r=${runs[i - 1]}
+    sha=$(git -C "$T/r" rev-parse "refs/heads/feature/$mode-$i")
+    jq -nc --arg run "$r" --arg branch "agent/$mode-$i" --arg tip "$sha" \
+      '{schema:1,run:$run,branch:$branch,tip:$tip,status:"done"}' > "$T/s/apply/${r##*/}.json"
+  done
+  bad=''
   o=$(QARGI_RUN_TMP=$rt ./bin/qargi local clean --applied --scratch "$scr" 2>&1); rc=$?
   na=$(reg_ok) || na=torn
   { [ $rc = 0 ] && grep -q "^cleaned $n run(s), kept 0\$" <<<"$o" && [ "$(grep -c '^cleaned ' <<<"$o")" = $((n + 1)) ]; } || bad=" clean rc=$rc"

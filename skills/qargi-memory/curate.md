@@ -2,11 +2,9 @@ Load when you seed a role, promote a note to shared, audit cross-role writes, or
 
 # Curating the stores
 
-| Verb | Command | Notes |
-|---|---|---|
-| seed-role | `qargi canon seed-role PROJECT --role R --approved "..."` | Writes the role's skeleton (`provision/role-seeds/R/`) into the stores without overwriting. |
-| promote | `qargi canon promote PROJECT --kind K --path /roles/R/... --approved "..."` | Moves a role's file to `shared/` when every role needs it. |
-| audit | `qargi canon audit PROJECT` | Read-only: reports a session of one role writing under another role's folder; a cloud base session is attributed through its role in the local session tracker, and one that cannot be attributed is counted in a NOTE. |
+- **seed-role**: Command: `qargi canon seed-role PROJECT --role R --approved "..."`; Notes: Writes the role's skeleton (`provision/role-seeds/R/`) into the stores without overwriting.
+- **promote**: Command: `qargi canon promote PROJECT --kind K --path /roles/R/... --approved "..."`; Notes: Moves a role's file to `shared/` when every role needs it.
+- **audit**: Command: `qargi canon audit PROJECT`; Notes: Read-only: reports a session of one role writing under another role's folder; a cloud base session is attributed through its role in the local session tracker, and one that cannot be attributed is counted in a NOTE.
 
 A new project's stores start from `provision/role-seeds/`: `shared/` (gates, source map, test conventions) and one folder per role. A seed file ships only with baseline content; write the rest when you have it, from the repository, with `Sources:` and an index row: `shared/architecture/overview.md`, `shared/knowledge/facts.md` (checked behaviour that cost time) and `roles/<role>/preferences/preferences.md` (what the maintainer stated, never inferred). A seed file ends with a `### Project specifics` slot: a project statement replaces the baseline bullet it covers.
 

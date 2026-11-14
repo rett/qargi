@@ -30,9 +30,9 @@ Both stores share one shape: `shared/` for what every role needs, and
 /roles/<role>/...          that role's files
 /_conflicts/<date>/...     content the reconciler could not place without losing
                            something; a curator resolves it, then deletes it
-/_archive/<date>/...       optional: notes `qargi memory split` moved out of the store;
-                           the Sources: line records where each came from, and
-                           `qargi memory merge` moves them back
+/_archive/<date>/...       optional: notes `qargi memory split` moved out of
+                           the store; the Sources: line records where each came
+                           from, and `qargi memory merge` moves them back
 ```
 
 `/_archive/` is tolerated, not required, and does not change the canon version:

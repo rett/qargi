@@ -6,7 +6,7 @@ Sources: qargi seed
 
 ## Contents
 
-The order of work (orient, baseline, implement, check, commit as you go, report) is in the contract. Load only the notes the task needs, and propose reference updates in the report instead of editing the store.
+The order of work (orient, baseline, each checked change and commit, final DONE, report) is in the contract. Load only the notes the task needs, and propose reference updates in the report instead of editing the store.
 
 ### Definition of done, by kind of change
 - **Bug fix:** a test that failed before and passes now; the cause is fixed, not the symptom; neighbouring code with the same flaw is named in the report.

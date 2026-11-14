@@ -134,3 +134,5 @@
 15 python3 tests/test_marshal_startup.py
 0 python3 tests/test_prose_lint.py
 12 bash tests/test_audit_lock.sh
+3 python3 tests/test_attempts.py
+177 python3 tests/test_attempt_integration.py

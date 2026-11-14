@@ -3,7 +3,8 @@
 Nothing reads the real session files: HOME is a fresh directory and the transcripts are written under it, where the runtime's definition
 (resources.transcripts of lib/providers/claude-code.json) says they live. Offline. Run: python3 tests/test_lead_usage.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
-import json, os, re, subprocess, sys, tempfile, time, unittest
+import argparse, io, json, os, re, subprocess, sys, tempfile, time, unittest
+from unittest.mock import patch
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "lib"))
@@ -251,20 +252,162 @@ class Check(Base):
             for r in runs:
                 f.write(json.dumps(r) + "\n")
 
-    def run_dir(self, name, *files, base="feature/lc", repo=None, slug=None, cls=None):
+    def run_dir(self, name, *files, base="feature/lc", repo=None, slug=None, cls="write"):
         d = os.path.join(self.t, name)
         os.makedirs(d)
         for fn, text in files:
             with open(os.path.join(d, fn), "w") as f:
                 f.write(text)
         rec = {"run": d, "slug": slug or name, "ability": "build", "base": base, "started": "1", "repo": repo or self.repo}
-        if cls:
+        if cls is not None:
             rec["class"] = cls                                                                            # the class prepare records in the lead's registry
         self.registry(rec)
         return d
 
     def check(self, *args, **env):
         return self.run_cli("lead", "compact-check", *args, **env)
+
+    def open_cli(self, project="app"):
+        return subprocess.run([sys.executable, '-I', LEADPY, 'open-runs', '--state', self.state, '--conf', self.conf,
+                               '--project', project, '--feature', 'lc'], env=self.env(), capture_output=True, text=True, timeout=10)
+
+    def test_strict_open_cli_distinguishes_empty_open_and_errors(self):
+        result = self.open_cli()
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        d = self.run_dir('strict-open')
+        result = self.open_cli()
+        self.assertEqual((result.returncode, result.stderr), (1, ''))
+        self.assertTrue(result.stdout.startswith(d + '\tstrict-open\tbuild\t'))
+        for project in ('', 'missing'):
+            result = self.open_cli(project)
+            self.assertEqual((result.returncode, result.stdout), (2, ''))
+            self.assertNotIn('Traceback', result.stderr)
+
+    def test_strict_open_cli_refuses_unknown_answers_and_repository_identity(self):
+        self.run_dir('answers-open')
+        path = os.path.join(self.conf, 'projects/app.json')
+        for data in (None, b'{broken', b'[]', b'{}', b'{"project":"other","repo":{"path":"/example"}}',
+                     b'{"project":"app","repo":{}}', b'{"project":"app","repo":{"path":[]}}',
+                     b'{"project":"app","repo":{"url":17}}'):
+            with self.subTest(data=data):
+                if data is None:
+                    os.unlink(path)
+                else:
+                    with open(path, 'wb') as f:
+                        f.write(data)
+                result = self.open_cli()
+                self.assertEqual((result.returncode, result.stdout), (2, ''))
+                self.assertIn('qargi:', result.stderr)
+                self.assertNotIn('Traceback', result.stderr)
+                self.write_answers()
+
+    def test_strict_open_cli_keeps_url_identity(self):
+        d = os.path.join(self.t, 'url-run')
+        os.makedirs(d)
+        url = self.answers['repo']['url']
+        self.answers['repo'] = {'url': url}
+        self.write_answers()
+        self.registry({'run': d, 'url': url, 'base': 'feature/lc', 'slug': 'url-run', 'role': 'build', 'class': 'write'})
+        self.assertEqual(self.open_cli().returncode, 1)
+
+    def test_strict_open_missing_identity_requires_confirmed_absence(self):
+        d = os.path.join(self.t, 'legacy-gone')
+        row = {'run': d, 'slug': 'legacy', 'ability': 'build', 'base': 'feature/lc', 'started': '2026-01-01T00:00:00Z',
+               'lead': 'old-lead', 'profile': '', 'tmpdir': os.path.join(self.t, 'old-tmp')}
+        path = os.path.join(self.state, 'local-runs.jsonl')
+        def write(value):
+            with open(path, 'w') as f:
+                f.write(json.dumps(value) + '\n')
+        write(row)
+        with open(path, 'rb') as f:
+            before = f.read()
+        result = self.open_cli()
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        with open(path, 'rb') as f:
+            self.assertEqual(f.read(), before)
+        os.mkdir(d)
+        self.assertEqual(self.open_cli().returncode, 2)
+        os.rmdir(d)
+        os.symlink(os.path.join(self.t, 'missing-target'), d)
+        self.assertEqual(self.open_cli().returncode, 2)
+        os.unlink(d)
+        with patch.object(lead_usage.os, 'lstat', side_effect=PermissionError('private-error')):
+            with self.assertRaises(lead_usage.OpenRunsError):
+                lead_usage.registry_snapshot(self.state)
+        for inactive in (dict(row, **{'class': 'write'}), dict(row, cleaned='2026-01-02T00:00:00Z'), dict(row, lead=None)):
+            write(inactive)
+            self.assertEqual(self.open_cli().returncode, 0)
+        for invalid in (dict(row, repo=17), dict(row, url=[]), dict(row, closed=True), dict(row, answers=[]), dict(row, run=d + '/')):
+            write(invalid)
+            self.assertEqual(self.open_cli().returncode, 2)
+        write(row)
+        current = self.run_dir('current-open')
+        result = self.open_cli()
+        self.assertEqual(result.returncode, 1)
+        self.assertTrue(result.stdout.startswith(current + '\t'))
+
+    def test_strict_open_cli_refuses_every_damaged_registry_without_partial_rows(self):
+        self.run_dir('registry-open')
+        path = os.path.join(self.state, 'local-runs.jsonl')
+        with open(path, 'rb') as f:
+            valid = f.read()
+        row = json.loads(valid)
+        invalid = [b'{broken\n', b'[]\n', b'null\n', b'{}\n', b'\xff\n']
+        for key, value in (('run', ''), ('repo', 17), ('base', []), ('slug', None), ('ability', {}), ('answers', []), ('closed', True)):
+            invalid.append((json.dumps(dict(row, **{key: value})) + '\n').encode())
+        for data in invalid:
+            with self.subTest(data=data):
+                with open(path, 'wb') as f:
+                    f.write(valid + data)
+                result = self.open_cli()
+                self.assertEqual((result.returncode, result.stdout), (2, ''))
+                self.assertIn('cannot read the open-run registry', result.stderr)
+                self.assertNotIn('Traceback', result.stderr)
+        os.unlink(path)
+        for kind in ('dangling', 'directory', 'fifo'):
+            with self.subTest(kind=kind):
+                if kind == 'dangling':
+                    os.symlink(os.path.join(self.t, 'missing-registry'), path)
+                elif kind == 'directory':
+                    os.mkdir(path)
+                else:
+                    os.mkfifo(path)
+                result = self.open_cli()
+                self.assertEqual((result.returncode, result.stdout), (2, ''))
+                self.assertIn('cannot read the open-run registry', result.stderr)
+                os.rmdir(path) if kind == 'directory' else os.unlink(path)
+
+    def test_strict_open_command_enumerates_the_same_validated_snapshot(self):
+        d = self.run_dir('snapshot-open')
+        original, calls = lead_usage.registry, []
+        def replaced_after_read(state, strict=False):
+            calls.append(strict)
+            records = original(state, strict=strict)
+            with open(os.path.join(state, 'local-runs.jsonl'), 'w') as f:
+                f.write('{replacement-is-malformed\n')
+            return records
+        out, err = io.StringIO(), io.StringIO()
+        with patch.object(lead_usage, 'registry', replaced_after_read), patch('sys.stdout', out), patch('sys.stderr', err):
+            rc = lead_usage.cmd_open_runs(argparse.Namespace(project='app', feature='lc'), self.conf, self.state)
+        self.assertEqual((rc, calls, err.getvalue()), (1, [True], ''))
+        self.assertTrue(out.getvalue().startswith(d + '\t'))
+
+    def test_strict_open_registry_permission_error_is_sanitized(self):
+        out, err = io.StringIO(), io.StringIO()
+        with patch.object(lead_usage.os, 'open', side_effect=PermissionError('fixture-permission-secret')), patch('sys.stdout', out), patch('sys.stderr', err):
+            rc = lead_usage.cmd_open_runs(argparse.Namespace(project='app', feature='lc'), self.conf, self.state)
+        self.assertEqual((rc, out.getvalue()), (2, ''))
+        self.assertEqual(err.getvalue(), 'qargi: cannot read the open-run registry\n')
+
+    def test_merged_git_errors_keep_the_applied_run_open(self):
+        tip = self.git('rev-parse', 'HEAD')
+        d = self.run_dir('git-error', ('applied', 'agent/error ' + tip))
+        module = lead_usage.load('merged')
+        for result in (OSError('fixture-exception-secret'), subprocess.CompletedProcess([], 1, '', 'fixture-stderr-secret')):
+            kwargs = {'side_effect': result} if isinstance(result, Exception) else {'return_value': result}
+            with patch.object(module.subprocess, 'run', **kwargs):
+                rows = lead_usage.open_runs(self.state, self.repo, '')
+            self.assertEqual([r[0] for r in rows], [d])
 
     def test_nothing_open_is_safe_and_prints_the_restart_block(self):
         rc, out, _ = self.check()
@@ -336,7 +479,7 @@ class Check(Base):
         for fn, text in (("applied", "agent/x %s\n" % old), ("refs.before", ""), ("ability", "build\n")):                # what local list needs of a run directory
             with open(os.path.join(d, fn), "w") as f:
                 f.write(text)
-        self.registry({"run": d, "slug": "old", "ability": "build", "base": "feature/lc", "started": "1", "repo": self.repo})
+        self.registry({"run": d, "slug": "old", "ability": "build", "class": "write", "base": "feature/lc", "started": "1", "repo": self.repo})
         rc, out, _ = self.check()
         self.assertEqual(rc, 1)                                                                          # not journaled: the old commit is nowhere, so the run is not merged
         self.assertIn("a local run is applied and not merged: " + d, out)
@@ -376,11 +519,11 @@ class Check(Base):
     def test_every_open_run_names_the_command_that_closes_it(self):
         """open-runs (what feature finish lists) carries the exact closing command: a read-only run with its report closes with a plain clean, a run of
         work by the next step it waits for."""
-        ro = self.run_dir("ro", ("class", "read-only\n"), slug="advice")
+        ro = self.run_dir("ro", ("class", "read-only\n"), slug="advice", cls="read-only")
         os.makedirs(os.path.join(ro, "out"))
         with open(os.path.join(ro, "out", "report.md"), "w") as f:
             f.write("# report\n")
-        ro2 = self.run_dir("ro2", ("class", "read-only\n"), slug="waiting")
+        ro2 = self.run_dir("ro2", ("class", "read-only\n"), slug="waiting", cls="read-only")
         wr = self.run_dir("wr", ("class", "write\n"), ("verified", "refs"), slug="work")
         pr = self.run_dir("pr", slug="fresh")
         rc, out, _ = self.run_cli("lead", "compact-check")
@@ -401,11 +544,10 @@ class Check(Base):
         self.assertTrue(rows["fresh"][4].startswith("qargi local verify %s" % pr))
 
     def test_the_class_is_the_registrys_and_a_report_is_a_regular_file_named_report_md(self):
-        """The class file of a run directory is a member's: the registry's class wins; a record with none falls back to the file, and a run with neither is a
-        run of work. A report is a regular file named report.md or NAME-report.md directly in OUT, as lib.sh out_has_report says."""
+        """Only the registry class is trusted. A report must be a regular file directly in OUT."""
         fg = self.run_dir("fg", ("class", "read-only\n"), cls="write", slug="forged")
-        old = self.run_dir("old", ("class", "read-only\n"), slug="oldrec")
-        none = self.run_dir("none", slug="nothing")
+        old = self.run_dir("old", ("class", "read-only\n"), slug="oldrec", cls=None)
+        none = self.run_dir("none", slug="nothing", cls=None)
         sym = self.run_dir("sym", cls="read-only", slug="symrep")
         pre = self.run_dir("pre", cls="read-only", slug="prerep")
         for d, make in ((sym, lambda o: os.symlink("/etc/hostname", os.path.join(o, "report.md"))),
@@ -415,10 +557,19 @@ class Check(Base):
         rc, out, _ = self.run_cli("lead", "compact-check")
         self.assertEqual(rc, 1)
         self.assertNotIn("a read-only local run is open: " + fg, out)          # the registry says write; the member's file does not matter
-        self.assertNotIn("a read-only local run is open: " + none, out)        # neither: a run of work
-        self.assertIn("a read-only local run is open: " + old, out)            # an older record: the file
+        self.assertIn("a local run has an unknown class: " + none, out)
+        self.assertIn("a local run has an unknown class: " + old, out)
         self.assertIn("close it: qargi local clean %s (once the member has written OUT/report.md" % sym, out)   # a link is no report
         self.assertIn("close it: qargi local clean %s\n" % pre, out)           # NAME-report.md is
+
+    def test_exact_registry_classes_agree_with_permission_consumers(self):
+        with open(os.path.join(ROOT, "tests", "fixtures", "run-classes.json")) as f:
+            cases = json.load(f)
+        for i, case in enumerate(cases):
+            d = self.run_dir("class%02d" % i, ("class", "read-only\n"), cls=case.get("value"))
+            rows = [r for r in lead_usage.open_runs(self.state, self.repo, "") if r[0] == d]
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0].cls, case["value"] if case.get("valid") else None, case["name"])
 
     def test_runs_of_another_repository_and_cleaned_runs_are_not_counted(self):
         self.run_dir("other", repo=os.path.join(self.t, "elsewhere"))
@@ -640,7 +791,7 @@ class Advice(Base):
         d = os.path.join(self.t, "r1")
         os.makedirs(d)
         with open(os.path.join(self.state, "local-runs.jsonl"), "w") as f:
-            f.write(json.dumps({"run": d, "slug": "r1", "ability": "build", "base": "feature/lc", "repo": self.repo}) + "\n")
+            f.write(json.dumps({"run": d, "slug": "r1", "ability": "build", "class": "write", "base": "feature/lc", "repo": self.repo}) + "\n")
         out = self.advice()
         self.assertEqual(out, "lead: 50%%, 100k tokens of context%s; compact is not safe yet: a local run is prepared and not verified (qargi lead compact-check)\n" % NOTE)
 
@@ -649,7 +800,7 @@ class Advice(Base):
         d = os.path.join(self.t, "r1")
         os.makedirs(d)
         with open(os.path.join(self.state, "local-runs.jsonl"), "w") as f:
-            f.write(json.dumps({"run": d, "slug": "r1", "ability": "build", "base": "feature/lc", "repo": self.repo}) + "\n")
+            f.write(json.dumps({"run": d, "slug": "r1", "ability": "build", "class": "write", "base": "feature/lc", "repo": self.repo}) + "\n")
         self.assertEqual(self.advice("--feature", "lc"), "")                                              # a run of feature/lc is still open
         self.assertIn("compact is not safe yet", self.advice("--feature", "other"))                       # not a run of that feature
         subprocess.run(["rm", "-rf", d])

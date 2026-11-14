@@ -67,7 +67,7 @@ grep -qF "run_in_background" lib/providers/claude-code/local-run.md && grep -qF 
 grep -qiw "push" provision/templates/cloud-preamble.md lib/providers/claude-platform/cloud-run.md && no "the preamble or the cloud addendum repeats the contract's no-push rule" || ok "the contract alone says never to push (the preamble and the cloud addendum do not repeat it)"
 grep -qi "detached" provision/templates/cloud-preamble.md && no "the preamble repeats the detached-start recipe" || ok "the cloud addendum alone owns the detached-start recipe"
 # hermetic: allow pgrep (the text the build prompt must hold, not a command)
-for k in 'mktemp -d -p "$TMP"' 'TMPDIR="$TMP"' 'interpret-trailers --parse' 'pgrep -f' '"always" gates' "profile's rules for examples"; do
+for k in 'mktemp -d -p "$TMP"' 'TMPDIR="$TMP"' 'interpret-trailers --parse' 'pgrep -f' '"always" gates' 'follow profile example rules'; do
   grep -qF -- "$k" <<<"$RB" && ok "the build prompt holds: $k" || no "the build prompt lacks: $k"
 done
 # no project, a project without a cloud runtime, an unknown one: no addendum, and no default runtime. A project whose cloud runtime is set
