@@ -35,7 +35,9 @@ class Graph(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        # Canonicalize only the fixture root: production paths below deliberately
+        # retain symlink/.. spelling to exercise kernel file identity.
+        self.root = Path(self.tmp.name).resolve()
         self.backlog = self.root / "backlog.md"
         self.file = self.root / "graph.json"
         self.backlog.write_text("## Now\n- [aa] A\n  detail\n## Later\n- [bb] B\n- [cc] C\n", encoding="utf-8")
@@ -72,6 +74,31 @@ class Graph(unittest.TestCase):
             with self.subTest(stamp=stamp):
                 value["evidence"][0]["at"] = stamp
                 self.invalid(value, "provenance")
+
+    def test_free_text_requires_unicode_scalars(self):
+        base = graph("backlog:aa", "backlog:bb")
+        base["relations"] = [relation("need", "backlog:aa", "backlog:bb")]
+        base["evidence"] = [evidence("report", "backlog:aa", "- [aa] A\n  detail")]
+        for collection, container, key in (("relations", "provenance", "by"),
+                                            ("relations", "provenance", "basis"),
+                                            ("evidence", None, "by"),
+                                            ("evidence", None, "ref")):
+            for text in ("\ud800", "text\udfff", "café 雪 😀"):
+                with self.subTest(collection=collection, key=key, text=ascii(text)):
+                    value = copy.deepcopy(base)
+                    target = value[collection][0]
+                    if container:
+                        target = target[container]
+                    target[key] = text
+                    # ensure_ascii emits escapes, including a valid surrogate
+                    # pair for the emoji, which JSON decodes to one scalar.
+                    report = self.report(value)
+                    self.assertEqual(report["valid"], text == "café 雪 😀", report)
+                    if not report["valid"]:
+                        self.assertEqual(report["findings"][0]["code"], "provenance")
+                        self.assertIn("Unicode scalar", report["findings"][0]["message"])
+                    elif collection == "evidence":
+                        self.assertEqual(report["evidence"][0][key], text)
 
     def test_confirmed_structure_participants_are_precise_and_deterministic(self):
         for kind in ("requires", "contains"):
@@ -407,6 +434,101 @@ class Public(unittest.TestCase):
         return {str(p.relative_to(self.root)): (p.stat().st_mode, p.stat().st_mtime_ns, p.read_bytes() if p.is_file() else None)
                 for p in self.root.rglob("*")}
 
+    def test_terminal_slash_and_dot_segments_use_kernel_paths(self):
+        value = json.loads(self.config.read_text())
+        for kind in ("graph", "backlog"):
+            value["backlog"]["file"] = str(self.backlog) + ("/" if kind == "backlog" else "")
+            self.config.write_text(json.dumps(value))
+            arg = str(self.file) + ("/" if kind == "graph" else "")
+            for output in ([], ["--json"]):
+                result = self.run_cli("check", "--graph", arg, "--project", "acme", *output)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertEqual(result.stderr, "")
+                if output:
+                    report = json.loads(result.stdout)
+                    self.assertFalse(report["valid"])
+                    self.assertEqual(report["findings"][0]["code"], "input-unreadable")
+                    self.assertTrue(report["inputs"][kind]["path"].endswith("/"))
+                else:
+                    self.assertIn("backlog graph check: invalid", result.stdout)
+                    self.assertIn("input-unreadable", result.stdout)
+        # A /./ after a regular file must also reach the kernel unchanged.
+        value["backlog"]["file"] = str(self.backlog) + "/./"
+        self.config.write_text(json.dumps(value))
+        result = self.run_cli("check", "--graph", str(self.file), "--json")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["findings"][0]["code"], "input-unreadable")
+
+    def test_deep_registry_and_selected_configuration(self):
+        deep = "[" * 100000
+        (self.conf / "projects" / "deep.json").write_text(deep)
+        for output in ([], ["--json"]):
+            result = self.run_cli("check", "--graph", str(self.file), *output)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stderr, "")
+        self.env["QARGI_PROJECT"] = "deep"
+        result = self.run_cli("check", "--graph", str(self.file), "--project", "acme", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(json.loads(result.stdout)["valid"])
+        # resolve() runs before the selected graph reader in the public CLI.
+        self.config.write_text(deep)
+        self.env["QARGI_PROJECT"] = "acme"
+        for selection in ([], ["--project", "acme"]):
+            for output in ([], ["--json"]):
+                result = self.run_cli("check", "--graph", str(self.file), *selection, *output)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertEqual(result.stderr, "")
+                if output:
+                    report = json.loads(result.stdout)
+                    self.assertFalse(report["valid"])
+                    self.assertEqual(report["findings"][0]["code"], "configuration")
+                else:
+                    self.assertIn("configuration", result.stdout)
+
+    def test_removed_cwd_direct_and_public_boundaries(self):
+        launcher = ("import os, subprocess, sys; os.chdir(sys.argv[1]); "
+                    "os.rmdir(sys.argv[1]); "
+                    "p = subprocess.run(sys.argv[2:]); sys.exit(p.returncode)")
+        for public in (False, True):
+            for relative in (False, True):
+                for selected in (False, True):
+                    with self.subTest(public=public, relative=relative, selected=selected):
+                        gone = self.root / "removed"
+                        gone.mkdir()
+                        entry = ([str(ROOT / "bin" / "qargi"), "backlog", "graph"] if public else
+                                 [sys.executable, "-I", str(ROOT / "lib" / "backlog_graph.py")])
+                        arg = "graph.json" if relative else str(self.file)
+                        env = dict(self.env)
+                        if selected:
+                            env["QARGI_PROJECT"] = "acme"
+                        result = subprocess.run([sys.executable, "-I", "-c", launcher, str(gone),
+                                                 *entry, "check", "--graph", arg,
+                                                 "--project", "acme", "--json"], env=env,
+                                                text=True, capture_output=True)
+                        self.assertNotIn("Traceback", result.stderr)
+                        self.assertEqual(result.returncode, 1 if relative else 0, result.stderr)
+                        report = json.loads(result.stdout)
+                        self.assertEqual(report["valid"], not relative)
+                        if relative:
+                            self.assertEqual(report["findings"][0]["code"], "input-unreadable")
+
+    def test_raw_home_ampersand_is_literal_in_graph(self):
+        home = self.root / "a&b"
+        home.mkdir()
+        (home / "backlog.md").write_bytes(self.backlog.read_bytes())
+        decoy = self.root / "a~b"
+        decoy.mkdir()
+        (decoy / "backlog.md").write_text("## Now\n- [aa] DECOY\n")
+        self.env["HOME"] = str(home)
+        value = json.loads(self.config.read_text())
+        value["backlog"]["file"] = "~/backlog.md"
+        self.config.write_text(json.dumps(value))
+        result = self.run_cli("show", "--graph", str(self.file), "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["inputs"]["backlog"]["path"], str(home / "backlog.md"))
+        self.assertEqual(report["nodes"][0]["source"]["digest"], G.digest(b"- [aa] A\n  detail"))
+
     def assert_source_matches_list(self, value, expected, graph_arg=None):
         self.config.write_text(json.dumps(value), encoding="utf-8")
         # Legacy project_load creates its release directory even with DA_NOSETUP.
@@ -663,7 +785,7 @@ class Public(unittest.TestCase):
 
     def test_malformed_configured_backlog_paths(self):
         value = json.loads(self.config.read_text())
-        for name in ("nul\0.md", "surrogate\ud800.md"):
+        for name in ("nul\0.md", "surrogate\ud800.md", "../backlog.md\n"):
             with self.subTest(name=name):
                 # JSON escapes carry paths that cannot be passed in process argv.
                 value["backlog"]["file"] = name
@@ -723,7 +845,7 @@ class Public(unittest.TestCase):
         self.env["HOME"] = str(home)
         for spelling in ("~notes.md", "~/notes.md", "~other/notes.md"):
             with self.subTest(spelling=spelling):
-                # gitflow.sh backlog_path substitutes any leading tilde prefix.
+                # These HOME values have no Bash replacement metacharacters.
                 expected = Path(str(home) + spelling[1:])
                 expected.parent.mkdir(parents=True, exist_ok=True)
                 expected.write_text(self.backlog.read_text(), encoding="utf-8")
