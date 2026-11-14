@@ -2,9 +2,9 @@
  "purpose": "Resolve command-runtime profiles consistently and bind prepared model and effort requests through dispatch",
  "started": "2026-11-13T20:44:32Z",
  "goal": "Resolve command-runtime profiles consistently and bind prepared model and effort requests through dispatch",
- "plan": "Agent scheduling source accepted by Opus after supplied omitted2554s log; lead DONE39.25s passed and bundle tree matches. Integrated3edb756, contains develop. Whole checkpoint3 running all138steps with unchanged cases/limits/coverage. On pass final evidence advisor closure and concrete finish plan.",
- "note": "Checkpoint1/2 failures and review packet omission rework retained. Active receipt /tmp/qargi-command-whole-checkpoint3.receipt.json, log /tmp/qargi-command-whole-checkpoint3.log. No develop merge/push/release/cutover.",
- "status": "verifying",
+ "plan": "Checkpoint3 FAILED only local.sh timeout564, other137pass. Supervisor exit143 directly observed, normal receipt absent; suite log and retained qargi gate reconciled/archived. Exact-tree local.sh reproduction active. Stored test command now bash tests/run.sh -j3 to bound pool load, all138steps/limits/coverage/serial modes preserved. After reproduction pass, checkpoint4 on same3edb756 with interruption-aware observer metadata.",
+ "note": "No source change after independently accepted scheduling. Prior3FAILEDcheckpoints retained. Config concurrency decision recorded for owner review. No merge/push/release/cutover. Active reproduction /tmp/qargi-command-local-reproduction-results.",
+ "status": "active",
  "lead": {
   "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
   "user": "rett",
@@ -12,11 +12,11 @@
   "since": "2026-11-13T20:44:32Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-14T05:50:06Z",
+ "renewed_at": "2026-11-14T05:52:40Z",
  "finished_at": null,
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 47,
- "updated_at": "2026-11-14T05:50:06Z",
+ "rev": 48,
+ "updated_at": "2026-11-14T05:52:40Z",
  "feature": "command-profiles",
  "project": "qargi"
 }
