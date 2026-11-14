@@ -16,7 +16,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Fast plans using `--changed-files` add the full-tier strict literal converter subset when `CHANGELOG.md` changes. An empty changed-file list excludes this subset from fast selection. Whole runs retain both the subset and the complete site step.
 
 ### Changed
-- Shared project inference introduces a **breaking change** for `~name` repository paths. It treats any leading tilde in `repo.path`, including `~name`, as the raw `HOME` prefix plus the remaining text, rather than expanding a named user's home. This follows ordinary backlog prefix rules with the documented Bash `&` exception; explicit project arguments and `QARGI_PROJECT` retain precedence.
+- Shared project inference introduces a **breaking change** to leading-tilde repository matching. It treats any leading tilde in `repo.path`, including `~name`, as the raw `HOME` prefix plus the remaining text, rather than expanding a named user's home. With `HOME` unset it uses an empty prefix in place of the former password-database fallback. This follows ordinary backlog prefix rules with the documented Bash `&` exception; explicit project arguments and `QARGI_PROJECT` retain precedence.
 - The graph v1 input contract requires Unicode scalar values in free-text `by`, `basis` and `ref` fields. Escaped lone surrogates produce invalid provenance reports; valid surrogate pairs and printable Unicode remain supported. This does not establish general JSON security.
 
 ### Fixed
