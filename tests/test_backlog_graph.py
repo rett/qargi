@@ -69,7 +69,8 @@ class Graph(unittest.TestCase):
                 value["relations"][0]["provenance"]["at"] = stamp
                 value["evidence"][0]["at"] = stamp
                 self.assertTrue(self.report(value)["valid"])
-        for stamp in ("2026-02-29", "2026-11-14T25:00", "2026-11-14T12:34:60Z",
+        for stamp in ("2026-02-29", "2026-11-14T24:00", "2026-11-14T24:00:00Z",
+                      "2026-11-14T25:00", "2026-11-14T12:34:60Z",
                       "2026-11-14T12:34:56+24:00", "20261114", "2026-11-14 12:34"):
             with self.subTest(stamp=stamp):
                 value["evidence"][0]["at"] = stamp
@@ -496,7 +497,7 @@ class Public(unittest.TestCase):
                         gone = self.root / "removed"
                         gone.mkdir()
                         entry = ([str(ROOT / "bin" / "qargi"), "backlog", "graph"] if public else
-                                 [sys.executable, "-I", str(ROOT / "lib" / "backlog_graph.py")])
+                                 [sys.executable, "-B", "-I", str(ROOT / "lib" / "backlog_graph.py")])
                         arg = "graph.json" if relative else str(self.file)
                         env = dict(self.env)
                         if selected:

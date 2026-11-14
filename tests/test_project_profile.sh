@@ -84,6 +84,11 @@ out=$(cd "$R" && $DA project profile check 2>&1); rc=$?
 git init -q -b main "$T/bare-repo"; printf '## Gates\n- `make lint`\n' > "$T/p2.md"; printf 'lint:\n\techo\n' > "$T/bare-repo/Makefile"
 out=$(cd "$T/bare-repo" && $DA project profile check --profile "$T/p2.md" 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -q "^ok   1 gate commands" <<<"$out"; } && ok "with no project, the repository of the current directory is used" || no "no project (rc=$rc): $out"
+# Keep a public invocation from the scratch directory independently of ancestor markers.
+# The exact missing-repository semantics are checked by the controlled case below.
+out=$(cd "$T" && $DA project profile check --profile "$T/p2.md" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && head -n 1 <<<"$out" | grep -Fq "profile: $T/p2.md"; } \
+  && ok "public profile check loads the explicit profile from scratch ancestry" || no "scratch ancestry (rc=$rc): $out"
 # Model NO-MARKERS independently of host ancestor markers. Only exists() calls for .git
 # on the real cwd ancestry are mocked; profile reads and all other filesystem calls are real.
 # repo_dir, check and main remain real. The CLI cases above still cover stored/inferred
