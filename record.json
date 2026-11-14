@@ -4,19 +4,13 @@
  "goal": "Resolve command-runtime profiles consistently and bind prepared model and effort requests through dispatch",
  "plan": "All138steps passed checkpoint4 exact3edb756 with stored -j3; final Astra accept/no blockers, report verified/archived/cleaned. Concrete finish plan5c1896a404a5 prepared (merge24commits into develop, push develop, delete local feature). Owner requested prepare merge; plan not applied.",
  "note": "Evidence archive command-whole-checkpoint4-3edb756 and command-checkpoint4-final-astra-q4bzGr. Three failed checkpoints/rework retained; checkpoint3 missing observer receipt labelled. Minor signal wording doc-truth followup recorded. Persistent -j3 concurrency choice disclosed. No release/cutover.",
- "status": "active",
- "lead": {
-  "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-13T20:44:32Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-14T08:01:48Z",
- "finished_at": null,
+ "finished_at": "2026-11-14T08:02:29Z",
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 63,
- "updated_at": "2026-11-14T08:01:48Z",
+ "rev": 64,
+ "updated_at": "2026-11-14T08:02:29Z",
  "feature": "command-profiles",
  "project": "qargi"
 }
