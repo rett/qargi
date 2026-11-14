@@ -7,6 +7,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- Codex spawn guidance fits the existing 393-word provider-notes budget while retaining prepared defaults, override and identity qualifications, drift refusal and sandbox guidance.
 - The running-signal lifecycle test targets the runtime child's wait after proving its readiness and PID, so prepared-profile resolution subprocesses cannot receive the injection; cancellation and process-group shutdown remain required.
 - Provider acceptance tests distinguish logical command profiles from stale in-session member rows and verify prepared high effort, unsupported override refusals, policy drift and supported explicit tier/effort overrides.
 - Command conformance uses one bound provider definition for prepare and run, retaining private request authority. Hidden-path coverage checks prepare's refusal and runtime's independent recheck after member paths are redirected into a hidden place.
