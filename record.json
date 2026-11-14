@@ -2,8 +2,8 @@
  "purpose": "Resolve command-runtime profiles consistently and bind prepared model and effort requests through dispatch",
  "started": "2026-11-13T20:44:32Z",
  "goal": "Resolve command-runtime profiles consistently and bind prepared model and effort requests through dispatch",
- "plan": "Checkpoint1 remains FAILED. Sol fggaAN deterministic repairs verified/applied21bcedf; exact lead DONE and Opus review active. Unchanged-tree local_run PASS748.49s and guard timings PASS. Sol medium W0SLXo isolates those existing manifest steps serial with unchanged bounds/coverage; then intake/review and full checkpoint2.",
- "note": "Archive command-checkpoint-repair-fggaAN includes native usage/rework/reproduction. Conformance revised hidden-path boundary explicitly documented, private request marker retained, fault coverage retained pending independent review. No merge plan or develop push yet.",
+ "plan": "Checkpoint deterministic repair lead DONE passed851.36s but Opus REVISE3. Scheduling W0SLXo verified/applied1b2e178, lead runner/CI checks active. Sol medium i5dALi addresses resolved signal path, prepare-refusal evidence, fail-closed redirect and registry TMP with focused regressions. Then independent review, lead checks, integrate descendant and whole checkpoint2.",
+ "note": "Full gate remains FAILED; no blanket retry/limit changes. Case15 coverage is prepare root refusal plus runtime realpath recheck, not unchanged plain-path runtime coverage. Ledger retains all misses/rework.",
  "status": "active",
  "lead": {
   "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
@@ -12,11 +12,11 @@
   "since": "2026-11-13T20:44:32Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-14T02:21:30Z",
+ "renewed_at": "2026-11-14T02:51:41Z",
  "finished_at": null,
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 21,
- "updated_at": "2026-11-14T02:21:30Z",
+ "rev": 22,
+ "updated_at": "2026-11-14T02:51:41Z",
  "feature": "command-profiles",
  "project": "qargi"
 }
