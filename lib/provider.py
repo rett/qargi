@@ -1957,6 +1957,42 @@ def resolve_runtime(name, surface, root=None, library=None):
     return _resolve(name, surface, root, library)[0]
 
 
+def render_runtime(project, target=None, root=None, library=None, conf=None):
+    """Select a qualified local packs runtime by session.render_target. The member runtime wins for its own target,
+    without inspecting unrelated definitions. A secondary target must identify exactly one registry entry, then pass
+    the same seal, schema, layout and verified-skills checks. Project extensions cannot silently disappear."""
+    answers = _stored_answers(project, conf)
+    default = provider_of(answers, "local", project, root, library)
+    runtime = default
+    if target and _dict(definition(default, "local", root, library).get("session")).get("render_target") != target:
+        candidates = []
+        for name, entries in _scan(root, library).items():
+            for entry in entries:
+                doc = _runtime_docs(entry).get("local") if _kind(entry) == "provider" else None
+                if doc and _dict(doc.get("session")).get("render_target") == target:
+                    candidates.append(name)
+        if len(candidates) != 1:
+            raise Refused("render target '%s' needs exactly one local runtime (found: %s)" % (target, ", ".join(sorted(candidates)) or "none"))
+        runtime = candidates[0]
+    doc = definition(runtime, "local", root, library)
+    bad = [m for level, m in validate2(doc, runtime) if level == "fail"]
+    if bad:
+        raise Refused("provider %s is invalid: %s" % (runtime, bad[0]))
+    comp = compose(runtime, "local", project, root=root, library=library, conf=conf)
+    if runtime != default and comp["ignored"]:
+        raise Refused("project %s extensions do not apply to render runtime %s: %s" %
+                      (project, runtime, "; ".join(x["extension"] + ": " + x["why"] for x in comp["ignored"])))
+    if runtime == default:
+        return runtime              # consumers retain their existing operation-specific capability/layout refusals
+    would = "render or audit the project's packs for a local session"
+    require_skills(runtime, would, root, library, project=project, conf=conf)
+    require(runtime, "project_skills_dir", would, root, library=library, project=project, conf=conf)
+    selected = require(runtime, "render_target", would, root, library=library, project=project, conf=conf)
+    if target and selected != target:
+        raise Refused("render target changed while selecting %s" % target)
+    return runtime
+
+
 def _resolve(name, surface, root, library):
     """(runtime, True when the name was a family)."""
     if surface not in SURFACES:
@@ -2728,6 +2764,9 @@ def main(argv):
             return cmd_of(rest)
         if verb == "of-if-set":
             return cmd_of(rest, if_set=True)
+        if verb == "render-runtime" and len(rest) in (1, 2):
+            print(render_runtime(rest[0], rest[1] if len(rest) == 2 and rest[1] else None))
+            return 0
         if verb in ("layout", "require-skills", "launch"):
             opts, pos, i = {}, [], 0
             while i < len(rest):

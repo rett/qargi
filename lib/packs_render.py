@@ -227,6 +227,8 @@ def target_of(inp):
     rt = inp["provider"]
     home = inp.get("home") or os.path.expanduser("~")
     project = inp.get("project") if isinstance(inp.get("project"), str) else None   # with a project, the definition is the composed one (its extensions' resources and renderers)
+    if "requested_target" in inp and P.render_runtime(project, inp["requested_target"] or None) != rt:
+        raise P.Refused("the inputs name a different render runtime")
     skills_dir = P.require(rt, "project_skills_dir", WOULD, home=home, project=project)
     lay = P.layout(rt, home=home, project=project)
     surfaces = P.surfaces_of(rt)
@@ -610,10 +612,25 @@ def tool_files(inp, tools):
     lists = tg["mcp"]["lists"] if tools else None
     if lists:
         form = {"rule": tg["mcp"]["rule"], "name_key": tg["mcp"]["name_key"]}
-        roles = sorted({r for p in tools for r in p["roles"]})
         M = packs_mcp()
         try:     # the tools of a role are those of the packs that reach it, so the union over the roles gives each pack what its own roles may call
-            got = member_lists(lib_module("paths").conf(), inp["project"], roles, {r: role_read_only(r) for r in roles}, form)
+            # These packs have already been selected for this runtime and vetted. Do not reselect through the member runtime.
+            # Use the same Tool facts and refusal policy as the member guard, with the render's explicit role membership.
+            C = lib_module("packs_check")
+            tables = {}
+            for p in tools:
+                doc, hints = C.read_tool(p["path"]), C.tool_list_of(p["path"])
+                for key, policy in doc["tools"].items():
+                    read = policy == "always_allow" and not C.write_like(key) and (hints is None or hints["tools"].get(key) == "read-only")
+                    t = M.Tool(p["name"], key, policy, read, None if read else "not a declared read", None)
+                    for role in p["roles"]:
+                        if role != "lead":
+                            tables.setdefault(role, {}).setdefault(M.native(form, p["name"], key), []).append(t)
+            got = {}
+            for role, table in tables.items():
+                for name, found in table.items():
+                    if M.refusal(lib_module("paths").conf(), inp["project"], role, role_read_only(role), name, form, table) is None:
+                        got.setdefault(found[0].pack, set()).add(found[0].tool)
         except M.McpError as e:
             die("the tools a member may call cannot be worked out: %s; refusing" % e)
         allowed = {p["name"]: got.get(p["name"], set()) for p in tools}
@@ -701,6 +718,61 @@ def identity(manifest):
     return {k: v for k, v in manifest.items() if k != "generated"}
 
 
+def binding(inp):
+    """The project/runtime/target and composed definition the plan authorizes, including sealed executable content."""
+    P = provider_module()
+    rt, project = inp["provider"], inp["project"]
+    comp = P.compose(rt, "local", project)
+    body = {"base": P.definition_hash(rt), "definition": comp["definition"],
+            "extensions": {x: P.extension_hash(x, rt, "local") for x in comp["extensions"]}}
+    return {"runtime": rt, "target": P.layout(rt, project=project)["render_target"],
+            "composition": sha(json.dumps(body, sort_keys=True).encode())}
+
+
+def manifest_binding_problem(inp, manifest, current=False):
+    if manifest["project"] != inp["project"]:
+        return "manifest belongs to another project"
+    expected = binding(inp)
+    keys = ("runtime", "target", "composition")
+    if not any(k in manifest for k in keys):
+        P = provider_module()
+        if inp["provider"] != P.provider_of_project(inp["project"], surface="local"):
+            return "manifest has no runtime identity for a secondary target"
+        # Default-only metadata compatibility requires the paths to be ones this definition actually renders.
+        tg = inp.get("target") if isinstance(inp.get("target"), dict) else target_of(inp)
+        prefix = tg["skills_dir"] + "/"
+        if any(not r.startswith(prefix + p["name"] + "/") for p in manifest["packs"] if p["kind"] == "skill" for r in p["files"]):
+            return "manifest skills layout differs from this runtime"
+        shared = {x["file"] for x in (tg.get("mcp"), tg.get("settings")) if x}
+        if set(manifest.get("files", {})) - shared:
+            return "manifest shared resources differ from this runtime"
+        return None
+    if any(manifest.get(k) != expected[k] for k in (keys if current else ("runtime", "target"))):
+        return "manifest runtime, target or composition differs from the selected render"
+    if not isinstance(manifest.get("composition"), str) or not re.fullmatch(r"[a-f0-9]{64}", manifest["composition"]):
+        return "manifest composition identity is invalid"
+    return None
+
+
+def owned_manifest(inp, live, current=False):
+    """Refuse foreign or unsupported secondary metadata before replacing a render or linking it."""
+    old = read_manifest(live)
+    if old is None:
+        try:
+            raw = load(os.path.join(live, "MANIFEST.json"))
+        except (OSError, ValueError):
+            raw = None
+        if isinstance(raw, dict) and any(k in raw and raw[k] != v for k, v in {"project": inp["project"], **binding(inp)}.items() if k != "composition"):
+            die("manifest belongs to another project, runtime or target; refusing to overwrite or link it")
+        if inp["provider"] != provider_module().provider_of_project(inp["project"], surface="local"):
+            die("secondary render has no valid manifest; refusing to overwrite or link it")
+        return None                 # the existing default repair route
+    why = manifest_binding_problem(inp, old, current=current)
+    if why:
+        die(why + "; refusing to overwrite or link the render")
+    return old
+
+
 def valid_manifest(m):
     """None when m has the shape this adapter writes, else a sentence saying what is wrong."""
     if not isinstance(m, dict):
@@ -764,9 +836,9 @@ def cmd_plan(inp, tokenfile):
     try:
         os.chmod(stage, 0o755)
         packs, shared, creds, listed = render(inp, stage)
-        old = read_manifest(live)
+        old = owned_manifest(inp, live) if os.path.lexists(live) else None
         manifest = {"schema": 1, "project": inp["project"], "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    "role_scoping": "advisory", "packs": packs, "files": shared}
+                    "role_scoping": "advisory", "packs": packs, "files": shared, **binding(inp)}
         if old and identity(old) == identity(manifest):
             manifest["generated"] = old.get("generated", manifest["generated"])
         with open(os.path.join(stage, "MANIFEST.json"), "w") as fh:
@@ -790,6 +862,9 @@ def report(inp, live, manifest, old, creds, listed=None):
     newp = {(p["kind"], p["name"]): p for p in packs}
     tg = inp["target"]
     print("%s target for %s -> %s" % (tg["target"], inp["project"], live))
+    print("  runtime: %s; project: %s; target: %s" % (tg["runtime"], inp["project"], tg["target"]))
+    print("  resources: skills=%s%s%s" % (tg["skills_dir"], "; mcp=" + tg["mcp"]["file"] if tg["mcp"] else "",
+                                            "; settings=" + tg["settings"]["file"] if tg["settings"] else ""))
     print("  role scoping is advisory: %s cannot enforce per-role skills; the set is the union over the project's roles" % tg["label"])
     if not old:
         print("  no earlier render")
@@ -852,7 +927,9 @@ def cmd_swap(inp, stagefile, token):
         staged = load(os.path.join(stage, "MANIFEST.json"))
     except (OSError, ValueError):
         die("the staged manifest is unreadable; refusing to install it")
-    if valid_manifest(staged) is not None or info.get("token") != token or token_of(staged, read_manifest(live)) != token:
+    old = owned_manifest(inp, live) if os.path.lexists(live) else None
+    if (valid_manifest(staged) is not None or manifest_binding_problem(inp, staged, current=True)
+            or info.get("token") != token or token_of(staged, old) != token):
         die("the staged tree is not the one the approved plan describes (or the live render changed since); nothing was installed")
     have, modes, _ = scan(stage)
     want = dict(staged.get("files", {}))
@@ -908,6 +985,9 @@ def cmd_check(inp):
         print("qargi: the manifest %s is malformed; re-apply to rewrite it" % mpath, file=sys.stderr)
         sys.exit(1)
     findings += ["library: " + b for b in vet(inp, False)]
+    why = manifest_binding_problem(inp, m, current=True)
+    if why:
+        findings.append("manifest: " + why)
     if m["project"] != inp["project"]:
         findings.append("manifest: project is %r, expected %r" % (m["project"], inp["project"]))
     if m.get("role_scoping") != "advisory":
@@ -985,7 +1065,9 @@ def link_note(inp, live):
     from packs_link import linked
     sk = inp["target"]["skills_dir"]
     if not linked(os.path.join(co, sk), os.path.join(live, sk)):
-        print("note: repo %s is not linked to the render (qargi packs link %s)" % (sk, inp["project"]))
+        secondary = inp["provider"] != provider_module().provider_of_project(inp["project"], surface="local")
+        print("note: repo %s is not linked to the render (qargi packs link %s%s)" %
+              (sk, inp["project"], " --target " + inp["requested_target"] if secondary and inp.get("requested_target") else ""))
 
 
 def main():

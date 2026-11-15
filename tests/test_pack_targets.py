@@ -1,0 +1,307 @@
+#!/usr/bin/env python3
+"""Explicit local render targets, with two fake eligible runtimes and isolated source/config/checkout fixtures."""
+import hermetic  # noqa: F401
+import copy
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "lib"))
+import packs_check as C
+import packs_audit as A
+import provider as P
+
+
+def put(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value))
+
+
+class Targets(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="targets."))
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.tool = self.tmp / "tool"
+        self.tool.mkdir()
+        for name in hermetic.TOOL_DIRS:
+            src = ROOT / name
+            if src.is_dir():
+                shutil.copytree(src, self.tool / name, ignore=shutil.ignore_patterns("__pycache__"))
+            elif src.exists():
+                shutil.copy2(src, self.tool / name)
+        self.conf, self.state, self.repo = (self.tmp / x for x in ("conf", "state", "repo"))
+        self.repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        self.env = dict(os.environ, QARGI_CONF=str(self.conf), QARGI_STATE=str(self.state))
+        self.providers = self.tool / "lib" / "providers"
+        self.base = json.loads((self.providers / "claude-code.json").read_text())
+        self.base["resources"].pop("contract_addenda", None)
+        self.runtime("first", ".first")
+        self.runtime("second", ".second")
+        self.answers = {"schema": 1, "project": "alpha", "repo": {"path": str(self.repo)},
+                        "models": {"provider": {"local": "first", "cloud": "claude-platform"}},
+                        "roles": {"build": {}, "review": {}, "lead": {}}}
+        self.save_answers()
+        self.links = []
+        self.pack("shared", ["any"])
+        self.pack("first-only", ["first"])
+        self.pack("second-only", ["second"])
+        self.pack("operator", ["any"], role="lead")
+        self.pack("remote", ["second"], kind="tool", role="review")
+        self.pack("lead-tool", ["any"], kind="tool", role="lead")
+
+    def runtime(self, name, directory, target=None):
+        doc = copy.deepcopy(self.base)
+        doc["provider"] = name
+        doc["session"] = {"render_target": target or name + "-view"}
+        doc["resources"]["skills"]["project_dir"] = directory + "/skills"
+        doc["resources"]["skills"]["user_dir"] = "~/" + directory + "/skills"
+        doc["resources"]["settings"]["files"] = [{"scope": "project", "path": directory + "/settings.json"},
+                                                  {"scope": "project-local", "path": directory + "/settings.local.json"},
+                                                  {"scope": "user", "path": "~/" + directory + "/settings.json"}]
+        # Exercise the existing per-role MCP policy as well as target-specific pack compatibility.
+        doc["resources"]["mcp"]["tool_lists"] = {"allow": "/enabled_tools"}
+        put(self.providers / (name + ".json"), doc)
+        return doc
+
+    def save_answers(self, project="alpha"):
+        put(self.conf / "projects" / (project + ".json"), self.answers | {"project": project})
+
+    def pack(self, name, compatible, kind="skill", role=None):
+        path = self.conf / "packs" / ("skills" if kind == "skill" else "tools") / (name if kind == "skill" else name + ".json")
+        if kind == "skill":
+            path.mkdir(parents=True)
+            (path / "SKILL.md").write_text(f"---\nname: {name}\ndescription: Guidance for {name}.\n---\nRead the source.\n")
+            record = path / ".pack.json"
+        else:
+            put(path, {"name": name, "url": "https://mcp.example.net/", "write_ok": True,
+                       "tools": {"lookup": "always_allow", "deleteItem": "auto", "ask": "always_ask"}})
+            record = path.with_suffix(".pack.json")
+        put(record, {"compatible_providers": compatible})
+        put(record, {"compatible_providers": compatible, "sha256": C.content_hash(str(path))})
+        self.links.append({"pack": kind + ":" + name, "scope": "project-role" if role else "project", "project": "alpha", **({"role": role} if role else {})})
+        put(self.conf / "packs" / "links.json", {"links": self.links})
+
+    def cli(self, *args, ok=True):
+        p = subprocess.run([str(self.tool / "bin" / "qargi"), *args], env=self.env, cwd=self.repo,
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=30)
+        if ok:
+            self.assertEqual(p.returncode, 0, p.stdout)
+        else:
+            self.assertNotEqual(p.returncode, 0, p.stdout)
+            self.assertNotIn("plan token:", p.stdout)
+        return p.stdout
+
+    def token(self, *args):
+        text = self.cli(*args)
+        match = re.search(r"^plan token: ([0-9a-f]+)", text, re.M)
+        self.assertIsNotNone(match, text)
+        return match[1]
+
+    def apply(self, *args):
+        return self.cli(*args, "--plan", self.token(*args), "--approved", "fixture approval")
+
+    def render(self, runtime="second", project="alpha"):
+        return ("packs", "apply", project, "--target", runtime + "-view")
+
+    def live(self, runtime="second", project="alpha"):
+        return self.state / "render" / project / runtime
+
+    def manifest(self, runtime="second", project="alpha"):
+        return json.loads((self.live(runtime, project) / "MANIFEST.json").read_text())
+
+    def test_side_by_side_render_check_link_unlink_and_member_defaults(self):
+        original = (self.conf / "projects" / "alpha.json").read_bytes()
+        for rt in ("first", "second"):
+            plan = self.cli(*self.render(rt))
+            self.assertIn(f"runtime: {rt}; project: alpha; target: {rt}-view", plan)
+            self.assertIn(f"resources: skills=.{rt}/skills", plan)
+            self.assertIn(f"skipped skill {'second' if rt == 'first' else 'first'}-only", plan)
+            self.apply(*self.render(rt))
+            m = self.manifest(rt)
+            self.assertEqual((m["runtime"], m["target"]), (rt, rt + "-view"))
+            self.assertEqual({p["name"] for p in m["packs"]}, {"shared", rt + "-only", "operator"} | ({"remote"} if rt == "second" else set()))
+            self.cli("packs", "check", "alpha", "--target", rt + "-view")
+            self.apply("packs", "link", "alpha", "--target", rt + "-view")
+            self.assertEqual((self.repo / ("." + rt) / "skills").resolve(), self.live(rt) / ("." + rt) / "skills")
+        data = json.loads((self.live() / "mcp.json").read_text())
+        self.assertEqual(data["mcpServers"]["remote"]["enabled_tools"], ["lookup"])
+        self.assertNotIn("lead-tool", data["mcpServers"])
+        # The default routes still use the member runtime, including the combined project linker.
+        self.assertIn("already linked", self.cli("packs", "link", "alpha"))
+        self.assertIn("already linked", self.cli("project", "link", "alpha", "--resource", "skills"))
+        self.cli("packs", "check", "alpha", ok=False)
+        self.cli("packs", "apply", "alpha", ok=False)  # omitted target still selects the cloud verb
+        self.apply("packs", "unlink", "alpha", "--target", "second-view")
+        self.assertFalse((self.repo / ".second" / "skills").exists())
+        self.assertTrue((self.repo / ".first" / "skills").is_symlink())
+        self.apply("packs", "unlink", "alpha")
+        self.assertEqual((self.conf / "projects" / "alpha.json").read_bytes(), original)
+
+    def test_secondary_render_does_not_require_member_runtime_equality(self):
+        self.apply(*self.render())
+        self.assertEqual(self.manifest()["runtime"], "second")
+        self.assertEqual(json.loads((self.conf / "projects" / "alpha.json").read_text())["models"]["provider"]["local"], "first")
+
+    def test_target_specific_acceptance_and_unowned_legacy_records(self):
+        for rt in ("first", "second"):
+            path = self.repo / ("." + rt) / "skills" / "outside"
+            path.mkdir(parents=True)
+            (path / "SKILL.md").write_text("---\nname: outside\ndescription: Outside guidance.\n---\nRead carefully.\n")
+        accepted = self.conf / "packs" / "accepted.json"
+        unowned_hash = A.strict_hash(str(self.repo / ".first" / "skills" / "outside"))
+        put(accepted, {"schema": 1, "user": {"outside": {"sha256": unowned_hash}}, "projects": {}})
+        self.assertRegex(self.cli("packs", "check", "alpha", "--target", "first-view"), r"unmanaged\s+outside")
+        self.assertIn("unmanaged", self.cli("packs", "check", "alpha", "--target", "second-view"))
+        first_token = self.token("skill", "accept", "alpha", "outside", "--target", "first-view")
+        self.cli("skill", "accept", "alpha", "outside", "--target", "second-view", "--plan", first_token, "--approved", "fixture", ok=False)
+        for rt in ("first", "second"):
+            self.apply("skill", "accept", "alpha", "outside", "--target", rt + "-view")
+        records = json.loads(accepted.read_text())["projects"]["alpha"]
+        self.assertEqual({r["provider"] for r in records.values()}, {"first", "second"})
+        self.assertTrue(all(r["resource"] == "skills" for r in records.values()))
+        self.apply("skill", "unaccept", "alpha", "outside", "--target", "second-view")
+        self.assertIn("accepted", self.cli("packs", "check", "alpha", "--target", "first-view"))
+        self.assertIn("unmanaged", self.cli("packs", "check", "alpha", "--target", "second-view"))
+        self.assertEqual(json.loads(accepted.read_text())["user"]["outside"]["sha256"], unowned_hash)
+
+    def test_exclusion_settings_follow_selected_runtime(self):
+        for rt in ("first", "second"):
+            skill = self.repo / ("." + rt) / "skills" / "outside"
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text("---\nname: outside\ndescription: Outside guidance.\n---\nRead carefully.\n")
+        put(self.repo / ".first" / "settings.json", {"skillOverrides": {"outside": "off"}})
+        first = self.cli("packs", "check", "alpha", "--target", "first-view")
+        second = self.cli("packs", "check", "alpha", "--target", "second-view")
+        self.assertRegex(first, r"excluded\s+outside")
+        self.assertRegex(second, r"unmanaged\s+outside")
+        self.assertIn("skill accept alpha outside --target second-view", second)
+        self.cli("skill", "accept", "alpha", "outside", "--target", "first-view", ok=False)
+
+    def test_ambiguity_unverified_layout_surface_and_extension_refuse(self):
+        self.runtime("duplicate", ".dup", "second-view")
+        self.assertIn("exactly one", self.cli(*self.render(), ok=False))
+        (self.providers / "duplicate.json").unlink()
+        doc = json.loads((self.providers / "second.json").read_text())
+        for change, expected in ((lambda d: d["capabilities"]["skills"].update(verified_on=None), "no skills support"),
+                                 (lambda d: d["resources"]["skills"].update(project_dir=None), "resources.skills.project_dir"),
+                                 (lambda d: d.update(surface="cloud"), "exactly one"),
+                                 (lambda d: d.update(schema=999), "exactly one")):
+            bad = copy.deepcopy(doc)
+            change(bad)
+            put(self.providers / "second.json", bad)
+            self.assertIn(expected, self.cli(*self.render(), ok=False))
+        put(self.providers / "second.json", doc)
+        self.answers["models"]["extensions"] = ["only-first"]
+        self.save_answers()
+        self.assertIn("extensions do not apply", self.cli(*self.render(), ok=False))
+        self.assertFalse(self.live().exists())
+
+    def test_unsealed_drifted_invalid_secondary_library_and_unrelated_malformed_default(self):
+        doc = json.loads((self.providers / "second.json").read_text())
+        (self.providers / "second.json").unlink()
+        directory = self.conf / "packs" / "providers" / "second"
+        put(directory / "definition.json", doc)
+        self.assertIn("never reviewed", self.cli(*self.render(), ok=False))
+        put(directory / ".pack.json", {"sealed": True, "sha256": P.tree_hash(str(directory))})
+        # A library capability needs bound verification evidence, not a date copied into its definition.
+        self.assertIn("no skills support", self.cli(*self.render(), ok=False))
+        (directory / "extra").write_text("drift")
+        self.assertIn("changed since", self.cli(*self.render(), ok=False))
+        invalid = copy.deepcopy(doc)
+        invalid["models"] = {"pattern": "["}
+        put(directory / "definition.json", invalid)
+        put(directory / ".pack.json", {"sealed": True, "sha256": P.tree_hash(str(directory))})
+        self.assertIn("invalid", self.cli(*self.render(), ok=False))
+        (self.conf / "packs" / "providers" / "broken").mkdir()
+        (self.conf / "packs" / "providers" / "broken" / "definition.json").write_text("{")
+        self.token(*self.render("first"))
+        self.assertFalse(self.live().exists())
+
+    def test_stale_cross_target_project_tokens_and_foreign_manifests(self):
+        # Equal payloads and layouts must still have different plan identities.
+        first = json.loads((self.providers / "first.json").read_text())
+        second = json.loads((self.providers / "second.json").read_text())
+        second["resources"] = copy.deepcopy(first["resources"])
+        put(self.providers / "second.json", second)
+        put(self.conf / "packs" / "links.json", {"links": [self.links[0]]})
+        token = self.token(*self.render("first"))
+        self.assertNotEqual(token, self.token(*self.render()))
+        self.cli(*self.render(), "--plan", token, "--approved", "fixture", ok=False)
+        token = self.token(*self.render())
+        doc = json.loads((self.providers / "second.json").read_text())
+        doc["description"] += " changed"
+        put(self.providers / "second.json", doc)
+        self.cli(*self.render(), "--plan", token, "--approved", "fixture", ok=False)
+        self.save_answers("beta")
+        self.cli(*self.render(project="beta"), "--plan", self.token(*self.render()), "--approved", "fixture", ok=False)
+        self.apply(*self.render())
+        self.apply(*self.render("first"))
+        self.assertEqual(self.manifest()["packs"], self.manifest("first")["packs"])
+        self.assertEqual(self.manifest()["files"], self.manifest("first")["files"])
+        path = self.live() / "MANIFEST.json"
+        original = self.manifest()
+        for field, value in (("runtime", "first"), ("target", "first-view"), ("project", "beta")):
+            put(path, original | {field: value})
+            before = path.read_bytes()
+            self.cli(*self.render(), ok=False)
+            self.cli("packs", "check", "alpha", "--target", "second-view", ok=False)
+            self.cli("packs", "link", "alpha", "--target", "second-view", ok=False)
+            self.assertEqual(path.read_bytes(), before)
+
+    def test_default_metadata_compatibility_and_secondary_metadata_refusal(self):
+        for rt in ("first", "second"):
+            self.apply(*self.render(rt))
+            m = self.manifest(rt)
+            for k in ("runtime", "target", "composition"):
+                del m[k]
+            put(self.live(rt) / "MANIFEST.json", m)
+        self.cli("packs", "check", "alpha", "--target", "first-view")
+        self.apply("project", "link", "alpha", "--resource", "skills")
+        self.apply(*self.render("first"))
+        self.assertEqual(self.manifest("first")["runtime"], "first")
+        self.cli(*self.render(), ok=False)
+        self.cli("packs", "link", "alpha", "--target", "second-view", ok=False)
+
+    def test_foreign_and_tracked_link_collisions_and_backup_restore(self):
+        self.apply(*self.render())
+        self.apply(*self.render("first"))
+        dest = self.repo / ".second" / "skills"
+        self.save_answers("beta")
+        self.apply(*self.render(project="beta"))
+        self.apply("packs", "link", "beta", "--target", "second-view")
+        self.cli("packs", "link", "alpha", "--target", "second-view", ok=False)
+        self.assertEqual(dest.resolve(), self.live(project="beta") / ".second" / "skills")
+        self.apply("packs", "unlink", "beta", "--target", "second-view")
+        self.assertTrue((self.live() / "MANIFEST.json").exists())
+        dest.symlink_to(self.repo)
+        self.cli("packs", "link", "alpha", "--target", "second-view", ok=False)
+        dest.unlink()
+        dest.mkdir()
+        (dest / "keep.txt").write_text("mine")
+        subprocess.run(["git", "-C", str(self.repo), "add", ".second/skills/keep.txt"], check=True)
+        self.cli("packs", "link", "alpha", "--target", "second-view", ok=False)
+        subprocess.run(["git", "-C", str(self.repo), "rm", "--cached", ".second/skills/keep.txt"], check=True, stdout=subprocess.PIPE)
+        args = ("packs", "link", "alpha", "--target", "second-view")
+        token = self.token(*args)
+        doc = json.loads((self.providers / "second.json").read_text())
+        doc["description"] += " changed"
+        put(self.providers / "second.json", doc)
+        self.apply(*self.render())
+        self.cli(*args, "--plan", token, "--approved", "fixture", ok=False)
+        self.assertEqual((dest / "keep.txt").read_text(), "mine")
+        self.cli("packs", "link", "alpha", "--target", "first-view", "--plan", token, "--approved", "fixture", ok=False)
+        self.apply(*args)
+        self.apply("packs", "unlink", "alpha", "--target", "second-view")
+        self.assertEqual((dest / "keep.txt").read_text(), "mine")
+
+
+if __name__ == "__main__":
+    unittest.main()

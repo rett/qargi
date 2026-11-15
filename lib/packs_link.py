@@ -59,7 +59,7 @@ def bind(inp):
     co = (answers.get("repo") or {}).get("path") or ""
     if (inp.get("checkout") or "") != co:
         die("the inputs name the checkout %r, not the project's repo.path %r; refusing" % (inp.get("checkout"), co))
-    if inp.get("provider") != provider.provider_of(answers, "local", project):
+    if inp.get("provider") != provider.render_runtime(project, inp.get("requested_target") or None):
         die("the inputs name the provider %r, not the project's; refusing" % (inp.get("provider"),))
     inp["state"] = paths.state()
     return inp
@@ -85,7 +85,15 @@ class SkillsLink(linker.Link):
         self.inp = inp
         rel = skills_dir(inp)
         super().__init__("skills", inp["project"], inp.get("checkout") or "", rel, render_path(inp), "dir-symlink", inp["state"],
-                         dict(WORDS, unlink="qargi packs unlink %s" % inp["project"]))
+                         dict(WORDS, unlink="qargi packs unlink %s%s" % (inp["project"], " --target " + inp["requested_target"] if inp.get("requested_target") else "")))
+        # Share ownership validation with project link's default Skills path. Missing sources still use the engine's recovery.
+        live = packs_render.render_dir(inp["state"], inp["project"], inp["provider"])
+        if os.path.isdir(live):
+            packs_render.owned_manifest(inp, live, current=True)
+        res = provider.composed(inp["provider"], "local", inp["project"]).get("resources") or {}
+        mode = ((res.get("skills") or {}).get("link") or {}).get("project")
+        if inp.get("requested_target") and mode != "dir-symlink":
+            raise provider.Unsupported("packs link --target requires skills link.project dir-symlink")
 
     def source_missing(self):
         target = provider.layout(self.inp["provider"], project=self.project)["render_target"]
@@ -126,13 +134,32 @@ class SkillsLink(linker.Link):
         return "  Skills that are not imported and linked stop loading in the checkout until they are; they stay in the backup."
 
 
+def plan(verb, link):
+    """Keep the engine's ownership/recovery facts and bind the selected render definition into its token."""
+    return linker.plan(verb, link) | {"render_binding": packs_render.binding(link.inp)}
+
+
 def main():
     if len(sys.argv) < 5 or sys.argv[1] not in ("plan", "apply") or sys.argv[2] not in ("link", "unlink"):
         die("usage: packs_link.py plan|apply link|unlink INPUTS TOKENFILE|TOKEN")
     try:
         with open(sys.argv[3]) as fh:
             inp = bind(json.load(fh))
-        (linker.cmd_plan if sys.argv[1] == "plan" else linker.cmd_apply)(sys.argv[2], SkillsLink(inp), sys.argv[4])
+        link, verb = SkillsLink(inp), sys.argv[2]
+        if sys.argv[1] == "apply":
+            linker.refuse_member_run(verb, link)
+        facts = plan(verb, link)
+        if sys.argv[1] == "plan":
+            if facts["state"] == "linked":
+                say("already linked: %s -> %s" % (clean(facts["link"]), clean(facts["source"])))
+                return
+            linker.show_plan(facts, link)
+            with open(sys.argv[4], "w") as fh:
+                fh.write(linker.token_of(facts))
+        else:
+            if facts["state"] == "linked" or linker.token_of(facts) != sys.argv[4]:
+                die("the plan changed since it was approved; nothing was changed")
+            linker.apply_planned(verb, link, facts)
     except provider.Unsupported as e:
         print("qargi: %s" % e, file=sys.stderr)
         sys.exit(3)

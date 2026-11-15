@@ -100,9 +100,10 @@ WOULD = "audit the skills a session would load"
 
 def layout(inp):
     """The provider's layout (with ~ expanded for inp["home"]); exit 3 unless it can serve an audit."""
-    provider.require_skills(inp["provider"], WOULD)
-    provider.require(inp["provider"], "project_skills_dir", WOULD)
-    return provider.layout(inp["provider"], home=inp.get("home") or None)
+    project = inp.get("project")
+    provider.require_skills(inp["provider"], WOULD, project=project)
+    provider.require(inp["provider"], "project_skills_dir", WOULD, project=project)
+    return provider.layout(inp["provider"], home=inp.get("home") or None, project=project)
 
 
 def expand(path, inp):
@@ -117,7 +118,7 @@ def resources(inp):
     """The resources of the provider's local definition (its first surface when it has no local one), after the checks of layout()."""
     layout(inp)
     surfaces = provider.surfaces_of(inp["provider"])
-    res = provider.definition(inp["provider"], "local" if "local" in surfaces else surfaces[0]).get("resources")
+    res = provider.composed(inp["provider"], "local" if "local" in surfaces else surfaces[0], inp.get("project")).get("resources")
     return res if isinstance(res, dict) else {}
 
 
@@ -442,12 +443,14 @@ def offers(inp, e):
     """The commands that would deal with a skill, as text to paste: every name and path quoted. A name that is not a pack name gets
     none ("skipped: unusual name"): it could not be imported or accepted by name, and its text is the repository's, not ours."""
     p, n = inp["project"], e["name"]
+    secondary = inp.get("requested_target") and inp["provider"] != provider.provider_of_project(p, surface="local")
+    target = " --target " + q(inp["requested_target"]) if secondary and inp.get("requested_target") else ""
     if e["state"] not in ("drifted", "unmanaged"):
         return []
     if not NAME_RE.fullmatch(n):
         return ["    skipped: unusual name (no command is offered for it)"]
     if e["state"] == "drifted":
-        return ["    review it, then accept the new content: qargi skill accept %s %s%s" % (q(p), q(n), "" if "checkout" in e["where"] else " --user")]
+        return ["    review it, then accept the new content: qargi skill accept %s %s%s%s" % (q(p), q(n), "" if "checkout" in e["where"] else " --user", target)]
     out = []
     if "checkout" in e["where"]:
         lib = e.get("lib")
@@ -456,9 +459,9 @@ def offers(inp, e):
                     "                               qargi skill link %s --scope project --project %s" % (q(n), q(p))]
         else:
             out += ["    a library pack of this name has other content or is not approved: qargi skill show %s" % q(n)]
-        out += ["    or accept it as it is:      qargi skill accept %s %s" % (q(p), q(n))]
+        out += ["    or accept it as it is:      qargi skill accept %s %s%s" % (q(p), q(n), target)]
     else:
-        out += ["    to accept it as it is: qargi skill accept %s %s --user" % (q(p), q(n))]
+        out += ["    to accept it as it is: qargi skill accept %s %s --user%s" % (q(p), q(n), target)]
     return out + hide_offer(inp, e)
 
 
@@ -532,7 +535,8 @@ def cmd_target(inp, name, scope, outfile):
     if not cand:
         e = ents[0]
         hint = {"qargi": "it is managed by qargi already", "excluded": "it is hidden (%s), so a session does not load it" % e["detail"],
-                "accepted": "it is accepted already (qargi skill unaccept %s %s first, to change the scope)" % (inp["project"], name)}[e["state"]]
+                "accepted": "it is accepted already (qargi skill unaccept %s %s%s first, to change the scope)" %
+                (inp["project"], name, " --target " + inp["requested_target"] if inp.get("requested_target") else "")}[e["state"]]
         die("%s is %s: %s; nothing to accept" % (name, e["state"], hint))
     kept = [e for e in ents if e["state"] not in ("qargi", "excluded")]
     if len({e.get("hash") for e in kept}) > 1:
@@ -544,6 +548,7 @@ def cmd_target(inp, name, scope, outfile):
     t = {"name": name, "hash": e["hash"], "path": e["shown"], "real": e["real"], "where": e["where"], "state": e["state"], "scope": scope}
     say("accept plan for %s: skill %s (%s, content %s)" % (clean(inp["project"]), name, e["state"], e["hash"]))
     say("  at:    %s" % clean(e["shown"]))
+    say("  runtime: %s; target: %s" % (inp["provider"], layout(inp)["render_target"]))
     say("  scope: %s" % ("every project (--user)" if scope == "user" else "project " + inp["project"]))
     if e["state"] == "drifted":
         say("  %s" % clean(e["detail"]))
@@ -591,9 +596,11 @@ def write_atomic(path, data):
         raise
 
 
-def project_runtime(project, required):
+def project_runtime(project, required, target=None):
     """The project's local runtime (what its acceptances belong to). None when it has none and that is not required: an acceptance can
     still be read and removed then."""
+    if target:
+        return provider.render_runtime(project, target)
     try:
         return provider.provider_of_project(project, paths.conf(), "local")
     except provider.ProviderError:
@@ -602,9 +609,9 @@ def project_runtime(project, required):
         return None
 
 
-def cmd_acceptance(path, scope, project, name):
+def cmd_acceptance(path, scope, project, name, target=None):
     t = table(read_for_write(path), scope, project, False)
-    k = acceptance_key(t, RESOURCE, project_runtime(project, False), name)
+    k = acceptance_key(t, RESOURCE, project_runtime(project, False, target), name)
     r = t.get(k) if k is not None else None
     if not isinstance(r, dict):
         die("%s is not accepted %s" % (name, "for every project (--user)" if scope == "user" else "for project " + project))
@@ -612,7 +619,7 @@ def cmd_acceptance(path, scope, project, name):
     print(json.dumps({k: clean(v) if k in ("path", "approved", "at") else v for k, v in r.items()}))
 
 
-def cmd_store(verb, path, scope, project, name, rest):
+def cmd_store(verb, path, scope, project, name, rest, target=None):
     if not NAME_RE.fullmatch(name):
         die("not a skill name: " + name)
     if marshal_refs.in_member_run():
@@ -625,7 +632,7 @@ def cmd_store(verb, path, scope, project, name, rest):
         h, p, approved, at = (rest + ["", "", "", ""])[:4]
         if not h:
             die("internal error: no content hash to record")
-        prov = project_runtime(project, True)
+        prov = project_runtime(project, True, target)
         t = table(data, scope, project, True)
         slot = "%s/%s/%s" % (RESOURCE, prov, name)
         if not (isinstance(t.get(name), dict) and acceptance_key(t, RESOURCE, prov, name) != name):
@@ -634,7 +641,7 @@ def cmd_store(verb, path, scope, project, name, rest):
         t[slot] = {"sha256": h, "path": p, "approved": approved, "at": at, "resource": RESOURCE, "provider": prov}
     else:
         t = table(data, scope, project, False)
-        k = acceptance_key(t, RESOURCE, project_runtime(project, False), name)
+        k = acceptance_key(t, RESOURCE, project_runtime(project, False, target), name)
         if k is None:
             die("%s is not accepted %s" % (name, "for every project (--user)" if scope == "user" else "for project " + project))
         del t[k]
@@ -645,6 +652,9 @@ def cmd_store(verb, path, scope, project, name, rest):
 
 def main():
     a = sys.argv[1:]
+    target = None
+    if len(a) >= 2 and a[-2] == "--target":
+        target, a = a[-1], a[:-2]
     try:
         if len(a) == 3 and a[0] == "scan":
             with open(a[2], "w") as fh:
@@ -654,9 +664,9 @@ def main():
         elif len(a) == 5 and a[0] == "target":
             cmd_target(load(a[1]), a[2], a[3], a[4])
         elif len(a) == 5 and a[0] == "acceptance":
-            cmd_acceptance(*a[1:])
+            cmd_acceptance(*a[1:], target=target)
         elif len(a) >= 6 and a[0] == "store" and a[1] in ("accept", "unaccept"):
-            cmd_store(a[1], a[2], a[3], a[4], a[5], a[6:])
+            cmd_store(a[1], a[2], a[3], a[4], a[5], a[6:], target=target)
         else:
             die("usage: packs_audit.py scan|report|target|acceptance|store ...")
     except provider.Unsupported as e:

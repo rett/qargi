@@ -21,6 +21,16 @@ The plan refuses, writing nothing, a skill whose `SKILL.md` name differs from it
 - The guard refuses a member's ordinary writes under `state/render/`; only you apply the render, and `local verify` is the backstop.
 - A tool whose pack lists vault credentials (`vault_ids`) cannot authenticate locally; the plan names it and you configure its credentials yourself.
 
+## Explicit project targets
+
+Explicit local targets resolve through the existing provider registry's `session.render_target`, independently of `models.provider.local` and member profiles. The member runtime resolves its own target directly even if unrelated library definitions are malformed. A secondary target must identify exactly one local runtime with a valid sealed definition, verified skills support and a project skills layout; ambiguous targets, missing or drifted definitions and inapplicable project extensions refuse before changing active resources. This component changes no shipped capability claims: an unverified runtime still needs separate qualification.
+
+For a qualified secondary target, use `qargi packs apply PROJECT --target TARGET`, `qargi packs check PROJECT --target TARGET`, and `qargi packs link PROJECT --target TARGET` (plan, token, approval). Renders live side by side at `<state>/render/PROJECT/RUNTIME`; plans name project, runtime, target, included/skipped compatible packs and resources. Manifests and tokens bind that identity and the composed definition. Foreign metadata refuses replacement or linking; metadata without runtime identity is supported conservatively only for the member runtime and can be strengthened under a fresh plan without changing rendered contents.
+
+Secondary checkout links support only skills with `link.project: dir-symlink`. Different runtime paths coexist; a shared path owned by another runtime, a foreign link or git-tracked content refuses. `qargi packs unlink PROJECT --target TARGET` removes only that runtime's owned link and restores its backup. `qargi project link|unlink PROJECT` keeps its default skills/agents/memory behavior and takes no target. Omitted targets on `packs link|unlink` and `skill accept|unaccept` retain the member runtime; omitted `packs apply` retains the cloud route, and `packs check` still requires a target.
+
+Use `qargi skill accept|unaccept PROJECT NAME --target TARGET [--user]` for approvals in the selected runtime. Existing resource/provider/name slots preserve another runtime's approval, and unowned records accept nothing during a provider-bound audit. Exclusions also follow the selected runtime. Skills retain the advisory role union and include lead-only instruction packs; lead never joins the member MCP permission union. Rendering and linking are distribution steps, not member snapshots or canonical library activation.
+
 ## Tool packs
 
 A tool pack is a JSON file: the `name` of the pack (lower-case letters, digits, `-`), the `url` of an MCP server, and `tools`, the allowlist: a map from the name the server gives a tool to its policy, `always_allow`, `always_ask` or `auto`.

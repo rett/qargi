@@ -194,7 +194,7 @@ def select(ctx, verb, named):
             continue
         if verb == "link":
             try:
-                facts = linker.plan("link", lk)
+                facts = (packs_link.plan if resource == "skills" else linker.plan)("link", lk)
             except Missing as e:
                 if named:
                     die(str(e))
@@ -202,7 +202,7 @@ def select(ctx, verb, named):
                 continue
             out.append((resource, lk, facts))
             continue
-        facts, why = quiet(linker.plan, "unlink", lk)
+        facts, why = quiet(packs_link.plan if resource == "skills" else linker.plan, "unlink", lk)
         if facts is None:
             if named:
                 die(why)
