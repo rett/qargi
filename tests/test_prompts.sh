@@ -68,4 +68,38 @@ steps=$(awk '/^# Order of work/{f=1;next} /^# /{f=0} f && /^[1-6]\. /{printf "%s
 [ "$steps" = "orient: baseline: for run report " ] && ok "the contract orders orientation, baseline, each change, final DONE and report" || no "the contract's order of work: '$steps'"
 ! grep -q 'Orient\.' provision/role-seeds/build/reference/workflow/workflow.md && ok "the build seed's workflow does not repeat the lifecycle" || no "the build seed repeats the lifecycle"
 
+# P8: commit boundaries follow concrete dependencies and keep their supporting material together
+if python3 -I - <<'PY'
+from pathlib import Path
+
+contract = Path("contract/contract.md").read_text()
+rule = next(line for line in contract.splitlines() if line.startswith("- A role that commits makes"))
+changelog = Path("packs/skills/keep-a-changelog/SKILL.md").read_text()
+when = changelog.split("## When\n", 1)[1].split("\n## ", 1)[0]
+review = Path("packs/skills/review-findings/SKILL.md").read_text()
+contributing = Path("CONTRIBUTING.md").read_text()
+guide = " ".join(contributing.split("## Changes\n", 1)[1].split("\n## ", 1)[0].split())
+for text in (rule, when, review):
+    for term in ("concrete changes and dependencies", "buildable", "directory counts", "patch size", "advisory prompts"):
+        assert term in text, (term, text)
+for text in (rule, when, review, guide):
+    for delayed in ("three or more", "in the next", "then docs and changelog"):
+        assert delayed not in text, (delayed, text)
+assert "same commit as the change" in guide
+assert "one logical change with its supporting tests, docs and changelog entry" in guide
+assert "builds and passes independently" in guide
+assert "Concrete changes and dependencies determine commit boundaries" in guide
+assert "Directory counts and patch size prompt substantive cohesion review" in guide
+assert "one logical change per commit with its tests" in rule
+assert "Keep its supporting docs and changelog entry in that commit" in rule
+assert "same commit as the change" in when and "with its tests and docs" in when
+assert "Never add the entry later as a separate fix-up commit" in when
+assert "supporting tests, documentation and changelog" in review
+assert "one patch per actual commit" in review
+assert "Reject semantically mixed work with evidence naming independent changes or broken dependencies" in review
+assert "Source acceptance requires independent inspection" in review
+PY
+then ok "commit policy keeps supporting material together and uses evidence for cohesive buildable boundaries"
+else no "commit policy must keep supporting material together and use evidence for cohesive buildable boundaries"; fi
+
 exit $fail

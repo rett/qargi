@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# `qargi review check`: a series of change-specific patches passes; monolithic or unexplained
-# ones do not. Run: tests/test_review.sh
+# Area counts prompt cohesion review. Structural defects fail in `qargi review check`.
+# Run: tests/test_review.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
@@ -44,10 +44,61 @@ printf 'TASK: x\nSCOPE: none\n' > "$T/sctask/task.md"
 out=$($DA review check "$T/sctask/out" 2>&1); [ $? = 0 ] && ok "a task block with SCOPE: none leaves the manifest's scope[] as the limit" || no "scope none: $out"
 $DA review check "$T/good" 2>&1 | grep -q "outside SCOPE" && no "a series with no scope was checked against one" || ok "without a recorded scope nothing is checked against one"
 
-# one monolithic patch over three areas
+# A wide single patch prompts substantive cohesion inspection.
 git reset -q --soft "$BASE"; mk "all the work" "everything" "2026-10-27T11:00:00"
-run mono; manifest "$T/mono"; echo "# s" > "$T/mono/series.md"
-out=$($DA review check "$T/mono" 2>&1); [ $? = 1 ] && echo "$out" | grep -q "monolithic" && ok "one patch over several areas is refused as monolithic" || no "monolith: $out"
+run wide; manifest "$T/wide"; echo "# s" > "$T/wide/series.md"
+area_warning() { grep -q '^WARN .*areas.*This advisory area-count warning requires substantive cohesion review\.' <<<"$1" && grep -q 'Source acceptance requires independent review of concrete changes and dependencies, including supporting tests, docs and changelog\.' <<<"$1"; }
+out=$($DA review check "$T/wide" 2>&1); rc=$?
+[ "$rc" = 0 ] && area_warning "$out" && grep -qx '0 fail, 1 warn' <<<"$out" && ok "a wide single patch warns to inspect cohesion without granting source acceptance" || no "wide patch: rc=$rc $out"
+
+# Keep the old generic bad-out fixture independently invalid for its later run-directory assertion.
+cp -r "$T/wide" "$T/mono"; jq '.scope = ["internal/"]' "$T/mono/manifest.json" > "$T/mono/m.json" && mv "$T/mono/m.json" "$T/mono/manifest.json"
+out=$($DA review check "$T/mono" 2>&1); rc=$?
+[ "$rc" = 1 ] && area_warning "$out" && grep -q '^FAIL .*outside SCOPE' <<<"$out" && ok "an area warning does not excuse an out-of-scope patch" || no "wide scope defect: rc=$rc $out"
+
+# The dominant-patch heuristic in a multi-commit series is advisory too.
+git reset -q --hard "$BASE"
+for path in internal/a.go docs/a.md man/a.1; do printf 'period rule\nperiod example\n' >> "$path"; done
+git add -A; mk "names: accept and describe periods" "Implement the period rule and its documentation." "2026-10-27T11:00:00"
+echo d >> internal/a.go; git add -A; mk "rollback: explain compatibility" "Record the independent compatibility decision." "2026-10-27T11:20:00"
+run dominant; manifest "$T/dominant"; echo "# s" > "$T/dominant/series.md"
+out=$($DA review check "$T/dominant" 2>&1); rc=$?
+[ "$rc" = 0 ] && area_warning "$out" && grep -q '^WARN .*holds .*% of the changed lines' <<<"$out" && grep -qx '0 fail, 1 warn' <<<"$out" && ok "a dominant wide patch in a series requires the same cohesion inspection" || no "dominant patch: rc=$rc $out"
+
+# A logical change may include supporting code/tests/changelog or README/docs/changelog in one commit.
+for kind in code docs; do
+  git reset -q --hard "$BASE"
+  if [ "$kind" = code ]; then
+    mkdir -p tests; echo 'period regression' > tests/names.txt; echo 'period rule' >> internal/a.go
+  else
+    echo 'period rule' > README.md; echo 'period example' >> docs/a.md
+  fi
+  echo 'Describe the period rule.' > CHANGELOG.md; git add -A
+  mk "names: document the period rule ($kind)" "Implement the period rule with its supporting checks and changelog." "2026-10-27T11:40:00"
+  run "coherent-$kind"; manifest "$T/coherent-$kind"; echo "# one logical change" > "$T/coherent-$kind/series.md"
+  out=$($DA review check "$T/coherent-$kind" 2>&1); rc=$?
+  [ "$rc" = 0 ] && area_warning "$out" && grep -qx '0 fail, 1 warn' <<<"$out" && ok "a coherent $kind change with its supporting files passes structural checks with an advisory warning" || no "coherent $kind: rc=$rc $out"
+done
+
+# Hard structural defects still fail when the area warning is present.
+for defect in cardinality body numbering manifest; do
+  cp -r "$T/coherent-code" "$T/wide-$defect"
+  case "$defect" in
+    cardinality) jq '.commits = []' "$T/wide-$defect/manifest.json" > "$T/wide-$defect/m.json" && mv "$T/wide-$defect/m.json" "$T/wide-$defect/manifest.json"; why='one patch per commit';;
+    body) sed -i '/^Implement the period rule with its supporting checks and changelog\.$/d' "$T/wide-$defect/patches/"*.patch; why='no body';;
+    numbering) mv "$T/wide-$defect/patches/"*.patch "$T/wide-$defect/patches/0002-wrong.patch"; why='not numbered';;
+    manifest) printf '{invalid\n' > "$T/wide-$defect/manifest.json"; why='manifest.json missing or unreadable';;
+  esac
+  out=$($DA review check "$T/wide-$defect" 2>&1); rc=$?
+  [ "$rc" = 1 ] && area_warning "$out" && grep -q "^FAIL .*$why" <<<"$out" && ok "an area warning retains the $defect hard failure" || no "wide $defect: rc=$rc $out"
+done
+mkdir -p "$T/wide-done"; cp -r "$T/coherent-code" "$T/wide-done/out"
+printf 'TASK: x\nDONE: bash tests/check.sh\n\nBASE: main\n' > "$T/wide-done/task.md"
+jq '.done.command = "true"' "$T/wide-done/out/manifest.json" > "$T/wide-done/m.json" && mv "$T/wide-done/m.json" "$T/wide-done/out/manifest.json"
+out=$($DA review check "$T/wide-done/out" 2>&1); rc=$?
+[ "$rc" = 1 ] && area_warning "$out" && grep -q "^FAIL .*not the DONE of the task block" <<<"$out" && ok "an area warning does not excuse a different DONE command" || no "wide DONE: rc=$rc $out"
+out=$($DA review check "$T/wide" --force 2>&1); rc=$?
+[ "$rc" = 2 ] && grep -q 'unknown option --force' <<<"$out" && ok "a wide patch has no force override" || no "wide force: rc=$rc $out"
 
 # a commit without a message body
 git reset -q --hard "$BASE"; echo d >> internal/a.go; git add -A; git commit -q -m "bare subject only"
@@ -78,7 +129,8 @@ out=$($DA review check "$T/good" "$T/flat" 2>&1); rc=$?; [ $rc = 2 ] && ok "two 
 mkdir -p "$T/rundir"; cp -r "$T/good" "$T/rundir/out"
 out=$($DA review check "$T/rundir" 2>&1); rc=$?; [ $rc = 0 ] && echo "$out" | grep -q "NOTE checked $T/rundir/out" && echo "$out" | grep -q "0 fail" && ok "a run directory is checked as its out directory, with a note" || no "run dir: rc=$rc $out"
 cp -r "$T/mono/patches" "$T/rundir/out/patches.bad"; rm -rf "$T/rundir/out/patches"; mv "$T/rundir/out/patches.bad" "$T/rundir/out/patches"; cp "$T/mono/manifest.json" "$T/rundir/out/manifest.json"
-$DA review check "$T/rundir" >/dev/null 2>&1; [ $? = 1 ] && ok "a run directory's out directory that fails is refused" || no "run dir with a bad out"
+out=$($DA review check "$T/rundir" 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q 'outside SCOPE' <<<"$out" && ok "a run directory's out directory with a scope failure is refused" || no "run dir with a bad out: rc=$rc $out"
 mkdir -p "$T/outwins/out"; cp -r "$T/good/." "$T/outwins/"
 out=$($DA review check "$T/outwins" 2>&1); rc=$?; [ $rc = 0 ] && ! echo "$out" | grep -q "NOTE checked" && ok "a directory that holds patches itself is checked as it is, even with a subdirectory named out" || no "out wins: rc=$rc $out"
 # a review run returns a report instead of patches
