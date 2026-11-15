@@ -21,7 +21,8 @@ Budgets: decode limits spec bytes to 512 KiB. Depth counts the root as 1; values
 include object keys. All APIs bound the tree before copying/encoding it. The
 256 KiB budget applies to the canonical *revision envelope*, not input bytes:
 snapshots reserve the maximum v1 envelope overhead (9-digit rev, digest parent).
-The store must use the documented envelope and still check its final bytes.
+The store checks the final envelope bytes and budgets its fixed header separately.
+Document value and depth limits apply independently inside that envelope.
 No floats are supported: v1 has only integer numeric fields. Text is preserved
 exactly (no Unicode, whitespace or date normalization). JSON integer spellings
 use Python's integer semantics, including -0 becoming 0.
@@ -77,7 +78,7 @@ def _need(ok, code, message, path):
         raise Invalid(code, message, path)
 
 
-def _tree(value, *, canonical_budget=False):
+def _tree(value, *, canonical_budget=False, max_values=MAX_VALUES, max_depth=MAX_DEPTH):
     """Iterative preflight, including cyclic/aliased caller-owned containers.
 
     Repeated aliases count repeatedly, matching their serialized allocation.
@@ -89,7 +90,7 @@ def _tree(value, *, canonical_budget=False):
     while stack:
         item, depth = stack.pop()
         count += 1
-        _need(count <= MAX_VALUES and depth <= MAX_DEPTH, "bounds", "JSON tree budget exceeded", "$")
+        _need(count <= max_values and depth <= max_depth, "bounds", "JSON tree budget exceeded", "$")
         kind = type(item)
         if kind is str:
             _need(len(item) <= 4096, "bounds", "string budget exceeded", "$")
@@ -101,14 +102,14 @@ def _tree(value, *, canonical_budget=False):
             if canonical_budget:
                 encoded_size += len(_encode(item)) - 1
         elif kind is dict:
-            _need(len(item) * 2 + count + len(stack) <= MAX_VALUES,
+            _need(len(item) * 2 + count + len(stack) <= max_values,
                   "bounds", "JSON value budget exceeded", "$")
             for key, val in item.items():
                 _need(type(key) is str, "schema", "object keys must be strings", "$")
                 stack.extend(((key, depth + 1), (val, depth + 1)))
             encoded_size += 2 + max(0, len(item) - 1) + len(item)  # braces, commas, colons
         elif kind is list:
-            _need(len(item) + count + len(stack) <= MAX_VALUES,
+            _need(len(item) + count + len(stack) <= max_values,
                   "bounds", "JSON value budget exceeded", "$")
             stack.extend((val, depth + 1) for val in item)
             encoded_size += 2 + max(0, len(item) - 1)
@@ -128,8 +129,17 @@ def decode(raw):
     A lexical nesting check bounds decoder recursion before allocation; the raw
     byte limit bounds parser allocation before the exact tree/value preflight.
     """
+    return _decode(raw, max_bytes=MAX_SPEC_BYTES, max_values=MAX_VALUES, max_depth=MAX_DEPTH)
+
+
+def _decode(raw, *, max_bytes, max_values, max_depth):
+    """Shared strict parser for the fixed document and store envelope bounds.
+
+    Callers supply finite format bounds. Store readers also validate the nested
+    document with its independent public budgets after checking the header.
+    """
     _need(type(raw) is bytes, "invalid-json", "input must be UTF-8 bytes", "$")
-    _need(len(raw) <= MAX_SPEC_BYTES, "bounds", "spec byte budget exceeded", "$")
+    _need(len(raw) <= max_bytes, "bounds", "spec byte budget exceeded", "$")
     try:
         text = raw.decode("utf-8", errors="strict")
     except UnicodeError:
@@ -147,7 +157,7 @@ def decode(raw):
             quoted = True
         elif char in "[{":
             depth += 1
-            _need(depth <= MAX_DEPTH, "bounds", "JSON depth budget exceeded", "$")
+            _need(depth <= max_depth, "bounds", "JSON depth budget exceeded", "$")
         elif char in "]}":
             depth -= 1
 
@@ -173,7 +183,7 @@ def decode(raw):
                            parse_float=noninteger, parse_constant=constant)
     except (ValueError, RecursionError):
         raise Invalid("invalid-json", "malformed JSON") from None
-    _tree(value)
+    _tree(value, max_values=max_values, max_depth=max_depth)
     return value
 
 
