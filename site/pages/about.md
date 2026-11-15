@@ -20,13 +20,17 @@ qargi is alpha. It is versioned with Semantic Versioning and is below 1.0, so a 
 
 ## 4. How the pages are checked
 
-Every `qargi` command and option that a page names is looked up in the command description of the release. Links and anchors must resolve. A page that names a command that does not exist, or a private name from the list of forbidden words, fails the build and is not published. The check proves that a command exists and takes that option; it does not prove that the advice is right for your project, so read the plan a command prints before you apply it.
+The build checks recognized `qargi` examples in inline code and supported shell fences against the release's command descriptions. It checks command and verb names and recognized options. It does not execute examples, validate every argument or check all prose as commands. The generated reference comes from those same descriptions, so these checks cannot independently establish implementation behavior.
+
+Internal links and anchors must resolve, and the build checks forbidden names and the generated output's structure. Structural output checking provides no independent visual review or deployed-site verification. Read the plan a command prints before applying it and verify the advice against your project's requirements.
 
 The examples use these names: the project `myproject`, the members `forge`, `scribe` and `reader`, and the run slug `rename-verb`. Words in capitals such as `NAME`, `RUN` and `TOKEN` stand for a value you supply.
 
 ## 5. Which release a page describes
 
 The header and the footer of each page name the release it was checked against. When the hand pages are ahead of a release the stamp says so. If you run an older qargi than the stamp, `qargi version` tells you which one you have, and the [releases](/releases/) page tells you what differs.
+
+Commands introduced after that release wait for a source and site-version update. Before publishing a new release, the lead builds against its actual source, inspects the layout and independently reviews the source. Publication requires its own approval.
 
 ## 6. Report a problem
 
