@@ -47,7 +47,7 @@ A tool pack is a JSON file: the `name` of the pack (lower-case letters, digits, 
 
 ## Baseline packs
 
-qargi ships seven skills of its own in `packs/` (listed in `packs/baseline.json`, one `skills/NAME/SKILL.md` each), written to be portable:
+qargi ships eight skills of its own in `packs/` (listed in `packs/baseline.json`, one `skills/NAME/SKILL.md` each), written to be portable:
 
 - `shellcheck-gate`: lint every shell file you add or change with shellcheck and quote the verdict among the gates.
 - `keep-a-changelog`: record each user-visible change under Unreleased in `CHANGELOG.md`, in the same commit.
@@ -56,6 +56,7 @@ qargi ships seven skills of its own in `packs/` (listed in `packs/baseline.json`
 - `secrets-scan`: run a secret scanner over your commits before the report, if one is installed, and quote its verdict among the gates; the lead scans again.
 - `docs-site-member`: work on a documentation branch that shares no history with the main branches, based on that branch and never merged into a long-lived one; no line starts with `<`, and the project's render check runs before the report.
 - `qargi-contributing`: habits for a member who changes qargi itself (quoting in Python scripts and in `echo`, no foreground `sleep`, fail-first tests, shrink-only ceilings, targeted tests only). The commit-message and stash rules are in the member contract, not here.
+- `bubble-tea`: opt-in guidance for developing and debugging Go terminal UIs and coordinated terminal-console clients, preserving the project's pinned Bubble Tea version, lifecycle boundaries and terminal qualification. Shipped source is guidance and does not activate it. The baseline's `propose` hints are informational, with no automatic proposal matching.
 
 Install and upgrade add the ones your library lacks with `qargi packs seed --install`, which needs no token and links nothing. `qargi packs seed` shows a plan (one line per pack: `add`, `update`, `current` or `kept`) and a plan token; `--plan TOKEN --approved "<your words>"` applies it, adding missing packs and replacing a copy you never edited when qargi ships a newer text. A copy you edited and sealed, or a pack of your own with the same name, is kept and never overwritten. To take the shipped version of an edited pack again, unlink it, remove it (`qargi skill remove NAME`) and seed.
 
