@@ -47,7 +47,7 @@ $DA review check "$T/good" 2>&1 | grep -q "outside SCOPE" && no "a series with n
 # A wide single patch prompts inspection; directory counts cannot decide cohesion.
 git reset -q --soft "$BASE"; mk "all the work" "everything" "2026-10-27T11:00:00"
 run wide; manifest "$T/wide"; echo "# s" > "$T/wide/series.md"
-area_warning() { grep -q '^WARN .*areas.*advisory.*inspect commit cohesion and dependencies' <<<"$1" && grep -q 'warning is not source acceptance' <<<"$1"; }
+area_warning() { grep -q '^WARN .*areas.*This advisory area-count warning requires substantive cohesion review\.' <<<"$1" && grep -q 'Source acceptance requires independent review of concrete changes and dependencies, including supporting tests, docs and changelog\.' <<<"$1"; }
 out=$($DA review check "$T/wide" 2>&1); rc=$?
 [ "$rc" = 0 ] && area_warning "$out" && grep -qx '0 fail, 1 warn' <<<"$out" && ok "a wide single patch warns to inspect cohesion without granting source acceptance" || no "wide patch: rc=$rc $out"
 
