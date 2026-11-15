@@ -81,8 +81,10 @@ CHECKPY=$(dirname "$(readlink -f "$0")")/packs_check.py   # the per-pack work of
 
 # The provider of a project serves a verb only when its descriptor says so (lib/provider.py layout, require-skills): a null layout
 # field or an unverified skills capability ends the verb here with exit 3 and "provider NAME has no FACILITY: WOULD".
-prov_of() { # project: sets PROV (the runtime of the project's local surface, where a session loads the render; there is no default, none is exit 2), RTOP (<state>/render), RPRJ (the project's renders) and RLIVE (the render for PROV)
-  PROV=$(pymod provider render-runtime "$1" "$TARGET") || exit $?; RTOP=$DA_STATE/render; RPRJ=$RTOP/$1; RLIVE=$RPRJ/$PROV
+prov_of() { # project [operation]: sets PROV and render paths; only the parsed unlink verb permits cleanup selection
+  local selector=render-runtime
+  [ "${2:-}" != unlink ] || selector='skills-cleanup-runtime'
+  PROV=$(pymod provider "$selector" "$1" "$TARGET") || exit $?; RTOP=$DA_STATE/render; RPRJ=$RTOP/$1; RLIVE=$RPRJ/$PROV
 }
 prov_need() { # project would field...: prov_of, then the refusals above
   local prj=$1 would=$2 f; prov_of "$prj"; shift 2
@@ -257,9 +259,16 @@ set_off() { # project role json-array
 }
 
 # The render target: the facts only this script knows (links, review, hashes) go to packs_render.py as one JSON file.
-rn_inputs() { # project outfile
+rn_inputs() { # project outfile [operation]
   local prj=$1 out=$2 roles r e rows
   [ -f "$DA_CONF/projects/$prj.json" ] || die "no stored answers for project '$prj'"
+  if [ "${3:-}" = unlink ]; then
+    # Removal needs identity and ownership facts, never the current library's loading/review facts.
+    jq -n --arg p "$prj" --arg v "$PROV" --arg t "$TARGET" --arg s "$DA_STATE" --arg h "$HOME" \
+      --arg c "$(jq -r '.repo.path // ""' "$DA_CONF/projects/$prj.json")" \
+      '{project:$p, provider:$v, requested_target:$t, state:$s, home:$h, checkout:$c, packs:[], skipped:[]}' > "$out"
+    return
+  fi
   roles=$(jq -r '.roles | keys[]' "$DA_CONF/projects/$prj.json" | grep -vx lead)
   # Gather the role union first; compatibility is evaluated against the selected local render runtime below.
   rows=''
@@ -372,9 +381,13 @@ rn_main() { # verb: apply|check
 # target. The shell gathers the facts only it knows (the content hashes of a real skills directory's skills and of the library
 # packs of the same names), packs_link.py
 # classifies, plans and acts. Same gating as rn_main: no --approved prints the token; apply re-plans and needs the token to match.
-cl_inputs() { # project outfile: the render inputs plus the skills of a real project skills directory in the checkout
+cl_inputs() { # project outfile operation: the render inputs plus the skills of a real project skills directory in the checkout
   local prj=$1 out=$2 co sk d n kids='[]'
-  rn_inputs "$prj" "$out.cc"
+  rn_inputs "$prj" "$out.cc" "$3"
+  if [ "$3" = unlink ]; then
+    jq '. + {kids:[]}' "$out.cc" > "$out"; rm -f "$out.cc"
+    return
+  fi
   co=$(jq -r .checkout "$out.cc"); sk=$co/$(pymod provider layout "$PROV" project_skills_dir --project "$prj" --render-context)
   if [ -n "$co" ] && [ -d "$(dirname "$sk")" ] && [ ! -L "$(dirname "$sk")" ] && [ -d "$sk" ] && [ ! -L "$sk" ]; then
     while IFS= read -r -d '' d; do
@@ -390,15 +403,16 @@ cl_main() { # verb: link|unlink
   [ -n "$prj" ] || usage_die "packs $1 needs PROJECT"
   valid_project "$prj" || die "not a project name: $prj"
   PY=$(dirname "$(readlink -f "$0")")/packs_link.py
-  prov_need "$prj" "link the checkout's skills directory to the render" project_skills_dir
+  if [ "$1" = unlink ]; then prov_of "$prj" "$1"
+  else prov_need "$prj" "link the checkout's skills directory to the render" project_skills_dir; fi
   RN_W=$(mktemp -d); RN_LK=''; trap rn_cleanup EXIT
   # the same per-project lock as the render's apply; without a render directory there is nothing to race with
   if [ -d "$RTOP" ] && [ ! -L "$RTOP" ]; then rn_lock "$prj"; fi
-  cl_inputs "$prj" "$RN_W/in.json"
+  cl_inputs "$prj" "$RN_W/in.json" "$1"
   jq -r '.skipped[]? | "skipped \(.kind) \(.name): \(.why)"' "$RN_W/in.json"
   python3 -I "$PY" plan "$1" "$RN_W/in.json" "$RN_W/token" || exit 1
   # the plan is shown with what a session would load now (a drifted skill is not a reason to stop here: it only informs)
-  [ -n "$APPROVED" ] || au_report "$RN_W/in.json" "$RN_W" || true
+  [ "$1" = unlink ] || [ -n "$APPROVED" ] || au_report "$RN_W/in.json" "$RN_W" || true
   [ -s "$RN_W/token" ] || exit 0   # already linked: no plan, no token
   tok=$(cat "$RN_W/token")
   if [ -z "$APPROVED" ]; then

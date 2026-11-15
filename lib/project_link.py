@@ -118,7 +118,7 @@ def kids_of(checkout, rel, conf):
 class Context:
     """What the verb knows: the project's answers, its local runtime, its definition's resources and the checkout of the current directory."""
 
-    def __init__(self, project):
+    def __init__(self, project, operation="link"):
         if not isinstance(project, str) or not linker.NAME_RE.fullmatch(project) or ".." in project:
             die("not a project name: %s" % (project,))
         self.project = project
@@ -128,24 +128,25 @@ class Context:
             die("no stored answers for project '%s'" % project)
         self.runtime = provider.provider_of(self.answers, "local", project)
         # the resources of the runtime as composed with the extensions the project enabled (provider.compose): what an extension adds is linked
-        self.res = (provider.composed(self.runtime, "local", project).get("resources") or {})
+        self.res = (provider.composed(self.runtime, "local", project, operation=operation).get("resources") or {})
         repo = (self.answers.get("repo") or {}).get("path") or ""
         if not repo:
             die("project %s has no checkout (repo.path is empty): qargi project set %s repo.path DIR" % (project, project))
         self.repo = repo
         self.checkout = linker.resolve_checkout(repo)
 
-    def link_of(self, resource):
+    def link_of(self, resource, operation="link"):
         """The Link of one resource, or Skip (the runtime does not link it)."""
         p, st, rt, co = self.project, self.state, self.runtime, self.checkout
         if resource == "skills":
             r, mode = mode_of(self.res, "skills", "project")
-            provider.require_skills(rt, "link the checkout's skills directory to the render", project=p)
+            if operation != "unlink":
+                provider.require_skills(rt, "link the checkout's skills directory to the render", project=p)
             rel = r.get("project_dir")
             if not rel:
                 raise Skip("the runtime has no project skills directory")
-            lk = Skills({"project": p, "provider": rt, "state": st, "checkout": co, "kids": kids_of(co, rel, self.conf)})
-            lk.mode = mode
+            lk = Skills({"project": p, "provider": rt, "state": st, "checkout": co,
+                         "kids": kids_of(co, rel, self.conf) if operation == "link" else []}, operation, mode)
             lk.words.update(words(p, "skills"))
             return lk
         if resource == "agents":
@@ -186,7 +187,7 @@ def select(ctx, verb, named):
     out, notes = [], []
     for resource in (named or RESOURCES):
         try:
-            lk = ctx.link_of(resource)
+            lk = ctx.link_of(resource, verb)
         except Skip as e:
             if named:
                 raise provider.Unsupported("provider %s has no %s link: %s" % (ctx.runtime, resource, e))
@@ -265,7 +266,7 @@ def main():
     if bad or len(set(named)) != len(named):
         die("--resource: %s (one or more of %s, each once)" % ("not a resource: " + ", ".join(bad) if bad else "a resource given twice", ", ".join(RESOURCES)))
     try:
-        ctx = Context(project)
+        ctx = Context(project, verb)
         (cmd_plan if phase == "plan" else cmd_apply)(verb, ctx, named, sys.argv[5])
     except provider.Unsupported as e:
         print("qargi: %s" % e, file=sys.stderr)

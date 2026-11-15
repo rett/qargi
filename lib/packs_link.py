@@ -46,7 +46,7 @@ WORDS = {"plural": "skills", "singular": "skill", "dir": "skills directory", "so
          "loads": "the project's packs from the render", "cli": "packs"}
 
 
-def bind(inp):
+def bind(inp, operation="link"):
     """Make the inputs say what the environment and the stored answers say: the state directory is paths.state(), and the
     checkout and provider must be the project's own (an inputs file written by hand cannot point the link at another repository
     or render). Dies when they differ."""
@@ -59,39 +59,44 @@ def bind(inp):
     co = (answers.get("repo") or {}).get("path") or ""
     if (inp.get("checkout") or "") != co:
         die("the inputs name the checkout %r, not the project's repo.path %r; refusing" % (inp.get("checkout"), co))
-    if inp.get("provider") != provider.render_runtime(project, inp.get("requested_target") or None):
+    select = provider.skills_cleanup_runtime if operation == "unlink" else provider.render_runtime
+    if inp.get("provider") != select(project, inp.get("requested_target") or None):
         die("the inputs name the provider %r, not the project's; refusing" % (inp.get("provider"),))
     inp["state"] = paths.state()
     return inp
 
 
-def skills_dir(inp):
+def skills_dir(inp, operation="link"):
     """The project skills directory of the project's provider (relative to a checkout or a render), or exit 3."""
     context = provider.render_context(inp["project"], inp["provider"])
-    provider.require_skills(inp["provider"], "link the checkout's skills directory to the render", project=inp["project"], render=context)
-    return provider.require(inp["provider"], "project_skills_dir", "link the checkout's skills directory to the render", project=inp["project"], render=context)
+    if operation != "unlink":
+        provider.require_skills(inp["provider"], "link the checkout's skills directory to the render", project=inp["project"], render=context)
+    elif inp["provider"] != provider.skills_cleanup_runtime(inp["project"], inp.get("requested_target") or None):
+        die("cleanup inputs do not identify the selected runtime; refusing")
+    return provider.require(inp["provider"], "project_skills_dir", "link the checkout's skills directory to the render",
+                            project=inp["project"], render=context, operation=operation)
 
 
-def render_path(inp):
+def render_path(inp, operation="link"):
     project = inp["project"]
     if not NAME_RE.fullmatch(project) or ".." in project:
         die("not a project name: " + project)
-    return os.path.join(packs_render.render_dir(inp["state"], project, inp["provider"]), skills_dir(inp))
+    return os.path.join(packs_render.render_dir(inp["state"], project, inp["provider"]), skills_dir(inp, operation))
 
 
 class SkillsLink(linker.Link):
     """The link of the skills directory: what is specific to skills is the comparison of a real directory's skills with the library."""
 
-    def __init__(self, inp):
+    def __init__(self, inp, operation="link", mode="dir-symlink"):
         self.inp = inp
-        rel = skills_dir(inp)
-        super().__init__("skills", inp["project"], inp.get("checkout") or "", rel, render_path(inp), "dir-symlink", inp["state"],
+        rel = skills_dir(inp, operation)
+        super().__init__("skills", inp["project"], inp.get("checkout") or "", rel, render_path(inp, operation), mode, inp["state"],
                          dict(WORDS, unlink="qargi packs unlink %s%s" % (inp["project"], " --target " + inp["requested_target"] if inp.get("requested_target") else "")))
         res = provider.composed(inp["provider"], "local", inp["project"],
-                                render=provider.render_context(inp["project"], inp["provider"])).get("resources") or {}
-        mode = ((res.get("skills") or {}).get("link") or {}).get("project")
-        if inp.get("requested_target") and mode != "dir-symlink":
-            raise provider.Unsupported("packs link --target requires skills link.project dir-symlink")
+                                render=provider.render_context(inp["project"], inp["provider"]), operation=operation).get("resources") or {}
+        declared_mode = ((res.get("skills") or {}).get("link") or {}).get("project")
+        if (inp.get("requested_target") or operation == "unlink") and declared_mode != mode:
+            raise provider.Unsupported("packs %s requires skills link.project %s" % (operation, mode))
 
     def source_missing(self):
         target = provider.layout(self.inp["provider"], project=self.project,
@@ -141,16 +146,18 @@ def plan(verb, link):
             if os.path.lexists(os.path.join(live, "MANIFEST.json")) and packs_render.read_manifest(live) is None:
                 die("render has no valid manifest; refusing to link it (apply a fresh render first)")
             packs_render.owned_manifest(link.inp, live, current=True)
-    return linker.plan(verb, link) | {"render_binding": packs_render.binding(link.inp)}
+    facts = linker.plan(verb, link)
+    return facts | {"render_binding": packs_render.binding(link.inp)} if verb == "link" else facts
 
 
 def main():
     if len(sys.argv) < 5 or sys.argv[1] not in ("plan", "apply") or sys.argv[2] not in ("link", "unlink"):
         die("usage: packs_link.py plan|apply link|unlink INPUTS TOKENFILE|TOKEN")
     try:
+        verb = sys.argv[2]
         with open(sys.argv[3]) as fh:
-            inp = bind(json.load(fh))
-        link, verb = SkillsLink(inp), sys.argv[2]
+            inp = bind(json.load(fh), verb)
+        link = SkillsLink(inp, verb)
         if sys.argv[1] == "apply":
             linker.refuse_member_run(verb, link)
         facts = plan(verb, link)

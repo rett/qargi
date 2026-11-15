@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Explicit local render targets, with two fake eligible runtimes and isolated source/config/checkout fixtures."""
 import hermetic  # noqa: F401
+import contextlib
 import copy
 import json
 import os
@@ -284,6 +285,228 @@ class Targets(unittest.TestCase):
                         path = self.live(rt) / "mcp.json"
                         servers = json.loads(path.read_text())["mcpServers"] if path.exists() else {}
                         self.assertNotIn("remote", servers)  # an empty allow list can mean unrestricted access to a runtime
+
+    def test_skill_render_requires_prior_library_approval(self):
+        for rt in ("first", "second"):
+            for role in ("lead", "build"):
+                with self.subTest(runtime=rt, role=role):
+                    name = "operator" if role == "lead" else "shared"
+                    path = self.conf / "packs" / "skills" / name
+                    record = path / ".pack.json"
+                    original = record.read_bytes()
+                    put(self.conf / "packs" / "links.json", {"links": [
+                        {"pack": "skill:" + name, "scope": "project-role", "project": "alpha", "role": role}]})
+                    approved_token = self.token(*self.render(rt))
+                    self.cli(*self.render(rt), "--plan", approved_token, "--approved", "fixture approval")
+                    before = {str(p.relative_to(self.live(rt))): p.read_bytes()
+                              for p in self.live(rt).rglob("*") if p.is_file()}
+                    # Retain valid front matter and compatibility: review still passes after this content change.
+                    skill = path / "SKILL.md"
+                    content = skill.read_text()
+                    for changed in (False, True):
+                        skill.write_text(content + ("More valid guidance.\n" if changed else ""))
+                        for approval in (None, ""):
+                            rec = {"compatible_providers": ["any"]}
+                            if approval is not None:
+                                rec["sha256"] = approval
+                            put(record, rec)
+                            self.assertEqual(C.review("skill", str(path), C.compat_of(str(path)))[1], 0)
+                            args = self.render(rt)
+                            refused = self.cli(*args, ok=False)
+                            self.assertIn("no content approval", refused)
+                            # Render authorization cannot serve as the missing prior library approval.
+                            self.assertIn("no content approval", self.cli(*args, "--plan", approved_token,
+                                "--approved", "fixture render approval", ok=False))
+                            self.assertEqual(before, {str(p.relative_to(self.live(rt))): p.read_bytes()
+                                                     for p in self.live(rt).rglob("*") if p.is_file()})
+                    record.write_bytes(original)
+                    self.assertIn("library drift", self.cli(*self.render(rt), ok=False))
+                    self.assertEqual(before, {str(p.relative_to(self.live(rt))): p.read_bytes()
+                                             for p in self.live(rt).rglob("*") if p.is_file()})
+                    put(record, {"compatible_providers": ["any"], "sha256": C.content_hash(str(path))})
+                    self.apply(*self.render(rt))
+                    self.assertEqual((self.live(rt) / ("." + rt) / "skills" / name / "SKILL.md").read_text(),
+                                     skill.read_text())
+                    skill.write_text(content)
+                    record.write_bytes(original)
+
+    @contextlib.contextmanager
+    def cleanup_fixture(self, rt, rel=None):
+        """Restore each scenario even when a subtest fails, so refusals cannot cascade into fixture errors."""
+        record = self.conf / "packs" / "skills" / "shared" / ".pack.json"
+        approved = record.read_bytes()
+        try:
+            yield
+        finally:
+            record.write_bytes(approved)
+            directory = self.conf / "packs" / "providers" / rt
+            if directory.exists():
+                shutil.rmtree(directory)
+            self.runtime(rt, "." + rt)
+            dest = self.repo / (rel or ("." + rt + "/skills"))
+            for path in (dest, dest.with_name("skills.qargi-backup")):
+                if path.is_symlink():
+                    path.unlink()
+                elif path.exists():
+                    shutil.rmtree(path)
+
+    def test_cleanup_after_skills_verification_or_support_loss(self):
+        for route in ("default", "secondary", "combined"):
+            for loss in ("verification", "support", "reseal"):
+                rt = "second" if route == "secondary" else "first"
+                with self.subTest(route=route, loss=loss), self.cleanup_fixture(rt):
+                    shipped = self.providers / (rt + ".json")
+                    doc = json.loads(shipped.read_text())
+                    shipped.unlink()
+                    directory = self.conf / "packs" / "providers" / rt
+                    definition = directory / "definition.json"
+                    put(definition, doc)
+                    seal = directory / ".pack.json"
+                    put(seal, {"sealed": True, "sha256": P.tree_hash(str(directory))})
+                    verified = self.state / "providers" / rt / "verified.json"
+                    put(verified, {"skills": {"hash": P.definition_hash(rt, root=str(self.providers),
+                        library=str(self.conf / "packs" / "providers")), "by": "conformance", "at": "fixture"}})
+                    dest = self.repo / ("." + rt) / "skills"
+                    dest.mkdir(parents=True)
+                    (dest / "keep.txt").write_text("owner content")
+                    target = ("--target", rt + "-view") if route == "secondary" else ()
+                    link = ("project" if route == "combined" else "packs", "link", "alpha", *target)
+                    unlink = (link[0], "unlink", "alpha", *target)
+                    self.apply(*self.render(rt))
+                    self.apply(*link)
+                    if loss == "verification":
+                        verified.unlink()
+                    else:
+                        if loss == "support":
+                            doc["capabilities"]["skills"]["value"] = "no"
+                        else:
+                            doc["description"] += " harmless reseal"
+                        put(definition, doc)
+                        put(seal, {"sealed": True, "sha256": P.tree_hash(str(directory))})
+                    self.assertIn("no skills support", self.cli(*self.render(rt), ok=False))
+                    self.cli("packs", "check", "alpha", "--target", rt + "-view", ok=False)
+                    self.cli(*link, ok=False)
+                    # Corrupt linked pack records must not become cleanup authorization gates either.
+                    library_record = self.conf / "packs" / "skills" / "shared" / ".pack.json"
+                    old_record = library_record.read_bytes()
+                    library_record.write_text("{")
+                    self.apply(*unlink)
+                    self.assertFalse(dest.is_symlink())
+                    self.assertEqual((dest / "keep.txt").read_text(), "owner content")
+                    backup = dest.with_name("skills.qargi-backup")
+                    dest.rename(backup)
+                    self.apply(*unlink)
+                    self.assertEqual((dest / "keep.txt").read_text(), "owner content")
+                    shutil.rmtree(dest)
+                    dest.symlink_to(self.repo)
+                    # Explicit selection requires a refusal; combined selection must leave foreign links alone.
+                    foreign_args = (*unlink, "--resource", "skills") if route == "combined" else unlink
+                    self.cli(*foreign_args, ok=False)
+                    self.assertEqual(dest.resolve(), self.repo)
+                    dest.unlink()
+                    library_record.write_bytes(old_record)
+
+    def test_cleanup_refuses_unresolved_identity_and_unsafe_layout(self):
+        rt = "second"
+        shipped = self.providers / "second.json"
+        doc = json.loads(shipped.read_text())
+        shipped.unlink()
+        directory = self.conf / "packs" / "providers" / rt
+        definition = directory / "definition.json"
+        seal = directory / ".pack.json"
+        put(definition, doc)
+        put(seal, {"sealed": True, "sha256": P.tree_hash(str(directory))})
+        put(self.state / "providers" / rt / "verified.json", {"skills": {
+            "hash": P.definition_hash(rt, root=str(self.providers), library=str(self.conf / "packs" / "providers")),
+            "by": "conformance", "at": "fixture"}})
+        self.apply(*self.render(rt))
+        self.apply("packs", "link", "alpha", "--target", "second-view")
+        dest = self.repo / ".second" / "skills"
+        source = dest.readlink()
+        args = ("packs", "unlink", "alpha", "--target", "second-view")
+        for case in ("missing", "unsealed", "drifted", "ambiguous", "path", "mode"):
+            with self.subTest(case=case):
+                bad = copy.deepcopy(doc)
+                if case == "missing":
+                    definition.unlink()
+                elif case == "unsealed":
+                    seal.unlink()
+                elif case == "drifted":
+                    (directory / "extra").write_text("unapproved change")
+                elif case == "ambiguous":
+                    self.runtime("duplicate", ".duplicate", "second-view")
+                else:
+                    if case == "path":
+                        bad["resources"]["skills"]["project_dir"] = "../unsafe/skills"
+                    else:
+                        bad["resources"]["skills"]["link"]["project"] = "none"
+                    put(definition, bad)
+                    put(seal, {"sealed": True, "sha256": P.tree_hash(str(directory))})
+                self.cli(*args, ok=False)
+                self.assertEqual(dest.readlink(), source)
+                for extra in (directory / "extra", self.providers / "duplicate.json"):
+                    if extra.exists():
+                        extra.unlink()
+                put(definition, doc)
+                put(seal, {"sealed": True, "sha256": P.tree_hash(str(directory))})
+        self.apply(*args)
+
+    def test_cleanup_keeps_sealed_extension_layout_without_verification(self):
+        for rt in ("first", "second"):
+            doc = json.loads((self.providers / (rt + ".json")).read_text())
+            doc["capabilities"].pop("skills")
+            doc["resources"].pop("skills")
+            doc["resources"].pop("settings")
+            put(self.providers / (rt + ".json"), doc)
+        self.extension()
+        self.answers["models"]["extensions"] = ["addon"]
+        self.save_answers()
+        for rt in ("first", "second"):
+            with self.subTest(runtime=rt):
+                verified = self.state / "providers" / "addon" / "verified.json"
+                h = P.extension_hash("addon", rt, "local", root=str(self.providers), library=str(self.conf / "packs" / "providers"))
+                put(verified, {"skills": {"hash": h, "by": "conformance", "at": "fixture"}})
+                dest = self.repo / ".extended" / "skills"
+                dest.mkdir(parents=True, exist_ok=True)
+                (dest / "keep.txt").write_text("extension owner content")
+                self.apply(*self.render(rt))
+                link = ("packs", "link", "alpha", "--target", rt + "-view")
+                self.apply(*link)
+                verified.unlink()
+                self.cli(*self.render(rt), ok=False)
+                self.cli(*link, ok=False)
+                # The default combined route and explicit secondary route must resolve the same extension path.
+                args = (("project", "unlink", "alpha", "--resource", "skills") if rt == "first" else
+                        ("packs", "unlink", "alpha", "--target", rt + "-view"))
+                self.apply(*args)
+                self.assertEqual((dest / "keep.txt").read_text(), "extension owner content")
+
+    def test_cleanup_skips_skills_verification_in_extension_requirements(self):
+        for rt in ("first", "second"):
+            doc = json.loads((self.providers / (rt + ".json")).read_text())
+            doc["resources"].pop("skills")
+            doc["resources"].pop("settings")
+            put(self.providers / (rt + ".json"), doc)
+        # This extension owns the safe layout but requires the base's verified skills capability for fresh loading.
+        adds = {"resources": {k: copy.deepcopy(self.base["resources"][k]) for k in ("skills", "settings")}}
+        adds["resources"]["skills"]["project_dir"] = ".required/skills"
+        self.extension(provides=[], adds=adds, requires={"capabilities": ["skills"]})
+        self.answers["models"]["extensions"] = ["addon"]
+        self.save_answers()
+        for rt in ("first", "second"):
+            with self.subTest(runtime=rt), self.cleanup_fixture(rt, ".required/skills"):
+                self.apply(*self.render(rt))
+                link = ("packs", "link", "alpha", "--target", rt + "-view")
+                self.apply(*link)
+                doc = json.loads((self.providers / (rt + ".json")).read_text())
+                doc["capabilities"]["skills"]["value"] = "no"
+                put(self.providers / (rt + ".json"), doc)
+                self.cli(*self.render(rt), ok=False)
+                self.cli(*link, ok=False)
+                args = (("project", "unlink", "alpha", "--resource", "skills") if rt == "first" else
+                        ("packs", "unlink", "alpha", "--target", rt + "-view"))
+                self.apply(*args)
+                self.assertFalse((self.repo / ".required" / "skills").exists())
 
     def extension(self, name="addon", **updates):
         doc = {"schema": 2, "kind": "extension", "extension": name, "description": "Shared skills extension",

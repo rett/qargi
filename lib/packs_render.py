@@ -397,6 +397,8 @@ def vet(inp, strict):
             bad.append("%s: linked but not in the library" % e)
         elif not p["review_ok"]:
             bad.append("%s: fails its review (qargi %s check)" % (e, p["kind"]))
+        elif p["kind"] == "skill" and not p["approved"]:
+            bad.append("%s: has no content approval; review it and seal it before rendering" % e)
         elif p["approved"] and p["approved"] != p["sha256"]:
             bad.append("%s: library drift, changed since it was approved (%s -> %s); review it and seal it again"
                        % (e, p["approved"], p["sha256"]))

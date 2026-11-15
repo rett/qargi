@@ -619,14 +619,14 @@ def definition(name, surface=None, root=None, library=None):
     return copy.deepcopy(docs[surface])
 
 
-def composed(name, surface=None, project=None, root=None, library=None, conf=None, render=False):
+def composed(name, surface=None, project=None, root=None, library=None, conf=None, render=False, operation=None):
     """The definition a consumer of a PROJECT acts on: definition(name, surface), and with a project the runtime composed with the
     extensions the project enabled (compose()), so the resources, renderers, barrier and capabilities an extension adds are there. The
     same as definition() without a project, or when the project enables none. Without a surface the runtime must serve only one."""
     base = definition(name, surface, root, library)
     if not project:
         return base
-    return compose(name, base["surface"], project, root=root, library=library, conf=conf, render=render)["definition"]
+    return compose(name, base["surface"], project, root=root, library=library, conf=conf, render=render, operation=operation)["definition"]
 
 
 def definitions_unsealed(name, root=None, library=None):
@@ -1645,13 +1645,15 @@ def _applies(doc, name, surface, base, root=None, library=None):
     return True, ""
 
 
-def _unmet(doc, name, surface, base, root, library, state):
+def _unmet(doc, name, surface, base, root, library, state, operation=None):
     """Why the extension's requires do not hold on the runtime alone, or None."""
     rq = doc.get("requires") if isinstance(doc.get("requires"), dict) else {}
     for r in rq.get("resources") or []:
         if _dict(base.get("resources")).get(r) is None:
             return "needs the %s resource, which %s does not have" % (r, name)
     for c in rq.get("capabilities") or []:
+        if c == "skills" and operation == "unlink":
+            continue                # owned removal does not load skills; retain sealed composition after verification loss
         if effective(name, surface, c, root, library, state) == "no":
             return "needs %s, which %s does not have verified" % (c, name)
     q = rq.get("qargi")
@@ -1701,7 +1703,7 @@ def _merge(out, x, doc, prov, name):
         out["definition"].setdefault("extension_verbs", {})[v] = {"pack": x, "path": path}
 
 
-def compose(name, surface, project=None, extensions=None, root=None, library=None, conf=None, render=False):
+def compose(name, surface, project=None, extensions=None, root=None, library=None, conf=None, render=False, operation=None):
     """The effective definition of a runtime on one surface: the definition plus the extensions the project enabled (models.extensions),
     merged in name order. {definition: the merged schema 2 definition (a copy; extension_verbs: {VERB: {pack, path}} is added),
     provenance: {path: pack} for what the runtime and the extensions provide (capabilities.CAP, resources.NAME, renderers.NAME,
@@ -1732,7 +1734,7 @@ def compose(name, surface, project=None, extensions=None, root=None, library=Non
         e, doc = _extension(x, root, library)
         ok, why = _applies(doc, name, surface, base, root, library)
         if ok:
-            why = _unmet(doc, name, surface, base, root, library, None)
+            why = _unmet(doc, name, surface, base, root, library, None, operation)
             ok = why is None
         if not ok:
             out["ignored"].append({"extension": x, "why": why})
@@ -1811,7 +1813,7 @@ def _layout_from(doc):
             "transcripts": dict(tr) if isinstance(tr.get("user_dir"), str) else None}
 
 
-def layout(name, root=None, home=None, library=None, project=None, conf=None, render=False):
+def layout(name, root=None, home=None, library=None, project=None, conf=None, render=False, operation=None):
     """The layout of a provider: every field of LAYOUT_FIELDS (None where the definition has none, or has no resources at all). It is
     read from the resources and the session. A leading ~ is expanded here with home (default:
     $HOME), so the definition stays portable. Project paths stay relative to the checkout. With a project, the resources are those of the
@@ -1824,7 +1826,7 @@ def layout(name, root=None, home=None, library=None, project=None, conf=None, re
         raise ProviderError("provider '%s' has a bad layout: %s" % (name, bad[0]))
     doc = docs.get("local") or next(iter(docs.values()), {})
     if project and doc:
-        doc = compose(name, doc["surface"], project, root=root, library=library, conf=conf, render=render)["definition"]
+        doc = compose(name, doc["surface"], project, root=root, library=library, conf=conf, render=render, operation=operation)["definition"]
     out = _layout_from(doc)
     home = home or os.path.expanduser("~")
     for k in _HOME_FIELDS:
@@ -1838,11 +1840,11 @@ def layout(name, root=None, home=None, library=None, project=None, conf=None, re
     return out
 
 
-def require(name, field, would, root=None, home=None, library=None, project=None, conf=None, render=False):
+def require(name, field, would, root=None, home=None, library=None, project=None, conf=None, render=False, operation=None):
     """The layout field, or Unsupported: provider NAME has no FACILITY: WOULD (what the verb would have done with it)."""
     if field not in LAYOUT_FIELDS:
         raise ProviderError("unknown layout field '%s'" % field)
-    v = layout(name, root, home, library, project, conf, render=render)[field]
+    v = layout(name, root, home, library, project, conf, render=render, operation=operation)[field]
     if v is None or v == []:
         raise Unsupported("provider %s has no %s: %s" % (name, FACILITY[field], would))
     return v
@@ -2003,6 +2005,25 @@ def render_runtime(project, target=None, root=None, library=None, conf=None, qua
 def render_context(project, runtime):
     """Whether this render uses explicit secondary composition; member/default consumers retain ordinary composition."""
     return runtime != provider_of_project(project, surface="local")
+
+
+def skills_cleanup_runtime(project, target=None, root=None, library=None, conf=None):
+    """Resolve sealed identity and the current safe skills layout for owned removal, without skills verification.
+    Never infer an old path from a render or accept an unsealed definition. Compose the same extensions as loading."""
+    runtime = render_runtime(project, target, root, library, conf, qualify=False)
+    doc = definition(runtime, "local", root, library)
+    bad = [m for level, m in validate2(doc, runtime) if level == "fail"]
+    if bad:
+        raise Refused("provider %s is invalid: %s" % (runtime, bad[0]))
+    default = provider_of(_stored_answers(project, conf), "local", project, root, library)
+    context = runtime != default
+    compose(runtime, "local", project, root=root, library=library, conf=conf, render=context, operation="unlink")
+    would = "remove the checkout's owned skills link or restore its backup"
+    require(runtime, "project_skills_dir", would, root, library=library, project=project, conf=conf, render=context, operation="unlink")
+    selected = require(runtime, "render_target", would, root, library=library, project=project, conf=conf, render=context, operation="unlink")
+    if target and selected != target:
+        raise Refused("render target changed while selecting %s" % target)
+    return runtime
 
 
 def _resolve(name, surface, root, library):
@@ -2778,6 +2799,9 @@ def main(argv):
             return cmd_of(rest, if_set=True)
         if verb == "render-runtime" and len(rest) in (1, 2):
             print(render_runtime(rest[0], rest[1] if len(rest) == 2 and rest[1] else None))
+            return 0
+        if verb == "skills-cleanup-runtime" and len(rest) in (1, 2):
+            print(skills_cleanup_runtime(rest[0], rest[1] if len(rest) == 2 and rest[1] else None))
             return 0
         if verb in ("layout", "require-skills", "launch"):
             opts, pos, i = {}, [], 0
