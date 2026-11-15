@@ -4,19 +4,13 @@
  "goal": "Evidence-based structural review with advisory directory-count heuristics, preserving scope, artifact and independent cohesion gates",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-15T00:37:13Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-15T03:47:48Z",
- "finished_at": null,
+ "finished_at": "2026-11-15T03:49:54Z",
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 22,
- "updated_at": "2026-11-15T03:47:48Z",
+ "rev": 23,
+ "updated_at": "2026-11-15T03:49:54Z",
  "feature": "review-structure",
  "project": "qargi"
 }
