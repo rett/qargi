@@ -995,10 +995,10 @@ COMMANDS = {
                                "never overwritten; an untouched shipped copy is updated when qargi ships a newer text. Seeding never links a pack: nothing "
                                "reaches a project or an agent until you link it.")),
             "check": verb("Check a render for drift (read only)", [("PROJECT", "project")], [TARGET],
-                          desc=("Needs --target claude-code. Writes nothing and exits 1 on any finding: library drift (a pack changed or failed review since it "
+                          desc=("Needs --target claude-code for that runtime, or another eligible local target selected as for apply. Writes nothing and exits 1 on any finding: library drift (a pack changed or failed review since it "
                                 "was rendered), rendered tampering (a file differs from the manifest, or an extra or missing file), enablement drift (a pack "
                                 "enabled or disabled, or its roles changed, since the render), shadowing of a rendered skill by ~/.claude/skills or by the "
-                                "checkout's .claude/skills, and a render directory that has no manifest (a broken render). A project with no render at all is not a failure: "
+                                "checkout's .claude/skills (another runtime uses the corresponding paths of its resources), and a render directory that has no manifest (a broken render). A project with no render at all is not a failure: "
                                 "the check prints a not applied line with the command that applies it and exits 0. The answer packs.none: true says the project uses no project packs; "
                                 "the check then passes with no render, and fails if a pack is linked to a role of the project. It also reports a rendered file that differs from "
                                 "the library copy (even when the manifest was edited with it), a changed file mode, a group- or world-writable "
