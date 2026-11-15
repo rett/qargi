@@ -138,7 +138,7 @@ fast | par | 300 | 2 | python3 tests/role_seed_sim.py review
 fast | par | 300 | 2 | python3 tests/role_seed_sim.py test
 full | par | 438 | 97 | bash tests/test_open_providers.sh
 fast | par | 300 | 2 | bash tests/test_neutral.sh | *
-fast | par | 300 | 1 | bash tests/test_skill_budget.sh | skills/*/SKILL.md tests/skill-budget.txt
+fast | par | 300 | 1 | bash tests/test_skill_budget.sh | skills/* packs/skills/*.md contract/*.md roles/*/ROLE.md agents/member.md agents/member.body.md provision/templates/*.md lib/providers/*.md lib/providers/*.json tests/skill-budget.txt tests/skill-dup-allowlist.txt tests/skill-verbs-allowlist.txt lib/commands.py
 fast | par | 300 | 1 | bash tests/test_prompts.sh | contract/* roles/*/ROLE.md agents/member.body.md packs/skills/* lib/providers/claude-code* skills/qargi-flow/SKILL.md skills/qargi-verify/SKILL.md
 fast | serial | 300 | 2 | bash tests/test_tool_copy.sh | install.sh tests/hermetic.sh tests/hermetic.py
 fast | par | 300 | 37 | bash tests/test_hermetic.sh | tests/hermetic.sh tests/hermetic.py tests/hermetic_lint.py CONTRIBUTING.md

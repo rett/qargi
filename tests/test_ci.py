@@ -133,6 +133,38 @@ class Pins(unittest.TestCase):
 
 
 class Manifest(unittest.TestCase):
+    def test_skill_budget_changed_inputs_select_the_step(self):
+        command = "bash tests/test_skill_budget.sh"
+        manifest = text(os.path.join(ROOT, "tests", "suite.txt"))
+        row = next(line for line in manifest.splitlines() if command in line)
+        self.assertEqual([field.strip() for field in row.split("|")[:5]],
+                         ["fast", "par", "300", "1", command])
+        # A full-tier copy makes selection depend on coverage, rather than its fast tier.
+        with tempfile.TemporaryDirectory() as scratch:
+            suite = os.path.join(scratch, "suite.txt")
+            changed = os.path.join(scratch, "changed.txt")
+            with open(suite, "w") as stream:
+                stream.write(manifest.replace(row, "full" + row[len("fast"):]))
+            cases = [
+                "skills/qargi-flow/SKILL.md", "skills/qargi-flow/marshal.md",
+                "skills/example/data.txt", "skills/example/nested/reference.md",
+                "packs/skills/review-findings/SKILL.md", "packs/skills/example/nested/reference.md",
+                "contract/contract.md", "contract/output-format.md", "contract/nested/addendum.md",
+                "roles/build/ROLE.md", "agents/member.md", "agents/member.body.md",
+                "provision/templates/provider-notes.md", "lib/providers/codex/local-run.md",
+                "lib/providers/example/nested/addendum.md", "lib/providers/codex.json",
+                "tests/skill-budget.txt", "tests/skill-dup-allowlist.txt",
+                "tests/skill-verbs-allowlist.txt", "lib/commands.py", "tests/test_skill_budget.sh",
+            ]
+            for path in cases + ["", "README.md", "lib/unrelated.py", "packs/baseline.json"]:
+                with self.subTest(path=path):
+                    with open(changed, "w") as stream:
+                        stream.write(path + "\n" if path else "")
+                    _, steps = plan("--tier", "fast", "--manifest", suite, "--changed-files", changed)
+                    self.assertEqual(command in [c for _, c in steps], path in cases)
+        _, fast = plan("--tier", "fast")
+        self.assertIn(command, [c for _, c in fast])
+
     def test_changelog_selects_the_full_tier_strict_converter_in_fast_plans(self):
         command = "python3 tests/test_site.py Converter.test_the_changelog_converts_with_the_literal_option"
         rows = [line.split("|") for line in text(os.path.join(ROOT, "tests", "suite.txt")).splitlines()
