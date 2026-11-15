@@ -26,7 +26,8 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 import campaign_doc as C  # noqa: E402
 import campaign_store as S  # noqa: E402
-from test_campaign_doc import CAMPAIGN, Q, document, json_bytes, link, participant  # noqa: E402
+from test_campaign_doc import (CAMPAIGN, Q, dense_document, document, json_bytes,  # noqa: E402
+                               link, participant, value_count)
 
 
 def digest(raw):
@@ -202,6 +203,88 @@ class CampaignStore(unittest.TestCase):
         self.assertEqual(snapshot(self.root), before)
         self.assertEqual(self.store.check()["transition"], "checked-current-parent")
 
+    def test_dense_value_boundaries_create_update_read_retry(self):
+        for count in (32759, 32767, 32768):
+            with self.subTest(values=count), patch.dict(
+                    os.environ, QARGI_STATE=str(self.root / ("dense-%d" % count))):
+                store = S.Store(CAMPAIGN)
+                doc = dense_document(count)
+                first = store.commit(C.decode(json_bytes(doc)), create=True)
+                self.assertEqual(first["durability"], "fsync-acknowledged")
+                if count == 32768:
+                    self.assertEqual(store.check()["transition"], "checked-create")
+                self.assertEqual(store.commit(doc, create=True)["result"], "already-current")
+                child = dict(doc, label="child")
+                second = store.commit(child, expected_head=first["revision"]["digest"])
+                self.assertEqual(second["durability"], "fsync-acknowledged")
+                self.assertEqual(store.commit(child, expected_head=first["revision"]["digest"])
+                                 ["result"], "already-current")
+                shown = store.show()
+                self.assertEqual(shown["document"], C.validate(child))
+                if count == 32768:
+                    self.assertEqual(store.show(first["revision"]["digest"])["document"], C.validate(doc))
+                self.assertEqual(store.check()["revision"], second["revision"])
+                page = store.log()
+                self.assertEqual([e["rev"] for e in page["entries"]], [2, 1])
+                self.assertEqual(page["revision"], second["revision"])
+                self.assertTrue(page["complete"])
+                self.assertEqual(value_count(shown["document"]), count)
+                before = snapshot(Path(os.environ["QARGI_STATE"]))
+                error = self.error("bounds", store.commit, dense_document(32769),
+                                   expected_head=second["revision"]["digest"])
+                self.assertEqual(error.details["publication"], "not-assessed")
+                self.assertEqual(snapshot(Path(os.environ["QARGI_STATE"])), before)
+
+    def test_pre_repair_dense_envelope_remains_readable(self):
+        self.create()
+        doc = C.validate(dense_document())
+        self.assertEqual(value_count(doc), 32761)
+        self.assertEqual(len(json_bytes(doc)), 232549)
+        self.assertEqual(digest(json_bytes(doc)),
+                         "sha256:837bbba2d07c2f6ea8d4ac8322cb21dd68c2f8af5b2d1725147c01caed756275")
+        # These bytes use the first component's unchanged v1 encoding directly.
+        raw = json_bytes(dict(format="campaign-revision", version=1, rev=1,
+                              previous=None, document=doc))
+        self.assertEqual(value_count(json.loads(raw)), 32761 + 10)
+        ident = digest(raw)
+        write_private(self.object_path(ident), raw)
+        write_private(self.campaign / "head.json", json_bytes(dict(
+            format="campaign-head", version=1, rev=1, revision=ident)))
+        before = snapshot(self.root)
+        self.assertEqual(self.store.show()["document"], doc)
+        self.assertEqual(self.store.check()["transition"], "checked-create")
+        self.assertEqual(self.store.log()["revision"]["digest"], ident)
+        self.assertEqual(self.store.commit(doc, create=True)["result"], "already-current")
+        self.assertEqual(snapshot(self.root), before)
+
+    def test_dense_envelope_parser_stays_strict_and_bounded(self):
+        self.create()
+        doc = C.validate(dense_document(32768))
+        raw = json_bytes(dict(format="campaign-revision", version=1, rev=1,
+                              previous=None, document=doc))
+        invalid = [raw + b" ", raw.replace(b'"rev":1', b'"rev":1,"rev":1'),
+                   raw.replace(b'"label":"l"', b'"label":"l","label":"l"'),
+                   raw.replace(b'"version":1', b'"version":1.0', 1),
+                   raw[:-2], raw.replace(b'"label":"l"', b'"label":"\\ud800"'),
+                   b'[' * 18 + b'0' + b']' * 18,
+                   b'[' + b','.join([b'0'] * (32768 + 10)) + b']',
+                   json_bytes(dict(format="campaign-revision", version=1, rev=1,
+                                   previous=None, document=dense_document(32769)))]
+        for data in invalid:
+            with self.subTest(shape=data[:30]):
+                ident = digest(data)
+                write_private(self.object_path(ident), data)
+                write_private(self.campaign / "head.json", json_bytes(dict(
+                    format="campaign-head", version=1, rev=1, revision=ident)))
+                before = snapshot(self.root)
+                operations = [self.store.show]
+                if data == invalid[-1]:
+                    operations.extend([self.store.check, self.store.log,
+                                       lambda: self.store.commit(doc, create=True)])
+                for operation in operations:
+                    self.error("corrupt-store", operation)
+                self.assertEqual(snapshot(self.root), before)
+
     def test_invalid_input_and_absent_operations_create_nothing(self):
         before = snapshot(self.root)
         for method in (self.store.show, self.store.check, self.store.log):
@@ -295,6 +378,105 @@ print(json.dumps(codes))
         self.assertEqual(snapshot(self.state), {})
         self.assertEqual(list(before), ["."])
 
+    def test_actual_deleted_cwd_fails_closed_through_every_public_method(self):
+        first = self.create()
+        before = snapshot(self.state)
+        code = r'''
+import json, os, sys
+sys.path[:0] = [sys.argv[1], sys.argv[2]]
+import campaign_store as S
+from test_campaign_doc import CAMPAIGN, document
+store = S.Store(CAMPAIGN)
+os.chdir(sys.argv[3])
+os.rmdir(sys.argv[3])
+outcomes = []
+for operation in (store.show, store.check, store.log,
+                  lambda: store.commit(document(), create=True),
+                  lambda: store.commit(dict(document(), label="child"), expected_head=sys.argv[4])):
+    try:
+        operation()
+    except S.Error as error:
+        outcomes.append(dict(code=error.code, details=error.details))
+print(json.dumps(outcomes))
+'''
+        gone = self.root / "gone"
+        gone.mkdir()
+        env = dict(os.environ)
+        env.pop("QARGI_MEMBER_RUN", None)
+        result = subprocess.run([sys.executable, "-B", "-I", "-c", code,
+                                 str(Path(S.__file__).parent), str(Path(__file__).parent.resolve()),
+                                 str(gone), first], cwd=self.root, env=env,
+                                capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        outcomes = json.loads(result.stdout)
+        self.assertEqual([r["code"] for r in outcomes], ["lead-only"] * 5)
+        for outcome in outcomes[-2:]:
+            self.assertEqual(outcome["details"],
+                             dict(publication="not-assessed", durability="not-assessed"))
+        self.assertEqual(snapshot(self.state), before)
+
+    def test_caller_and_state_oserrors_are_structured_without_mutation(self):
+        first = self.create()
+        before = snapshot(self.root)
+        operations = [self.store.show, self.store.check, self.store.log,
+                      lambda: self.store.commit(document(), create=True),
+                      lambda: self.store.commit(dict(document(), label="child"), expected_head=first)]
+        for boundary, attribute, code in ((S.marshal_refs, "in_member_run", "lead-only"),
+                                           (S, "_open", "storage-error")):
+            with patch.object(boundary, attribute, side_effect=OSError(errno.EIO, "private text")):
+                for index, operation in enumerate(operations):
+                    error = self.error(code, operation)
+                    if index >= 3:
+                        self.assertEqual(error.details["publication"], "not-assessed")
+                        self.assertEqual(error.details["durability"], "not-assessed")
+        self.assertEqual(snapshot(self.root), before)
+
+    def test_ancestor_preconditions_fail_closed_and_retry_settles_links(self):
+        first = self.create()
+        before = snapshot(self.root)
+        original_open, original_fsync = S._open, S.os.fsync
+
+        def denied(name, flags, **kwargs):
+            if name == self.root.name:
+                raise S.Error("private-state")
+            return original_open(name, flags, **kwargs)
+
+        with patch.object(S, "_open", denied):
+            for operation in (self.store.show, self.store.check, self.store.log,
+                              lambda: self.store.commit(document(), create=True)):
+                error = self.error("private-state", operation)
+                self.assertEqual(error.details["stage"], "ancestor-access")
+
+        def unsupported(fd):
+            if os.readlink("/proc/self/fd/%d" % fd) == str(self.root):
+                raise OSError(errno.EINVAL, "injected unsupported ancestor fsync")
+            return original_fsync(fd)
+
+        with patch.object(S.os, "fsync", unsupported):
+            self.store.show()
+            error = self.error("storage-error", self.store.commit,
+                               dict(document(), label="child"), expected_head=first)
+            self.assertEqual(error.details["stage"], "ancestor-fsync")
+            self.assertEqual(error.details["publication"], "none")
+            self.assertEqual(error.details["parent_durability"], "unknown")
+            retry = self.error("durability-unknown", self.store.commit, document(), create=True)
+            self.assertEqual(retry.details["publication"], "visible")
+        self.assertEqual(snapshot(self.root), before)
+        self.assertEqual(self.store.commit(document(), create=True)["result"], "already-current")
+
+    @unittest.skipIf(os.geteuid() == 0, "root bypasses directory read permissions")
+    def test_actual_traverse_only_ancestor_is_explicitly_unsupported(self):
+        self.create()
+        before = snapshot(self.root)
+        self.root.chmod(0o111)
+        try:
+            error = self.error("private-state", self.store.show)
+            self.assertEqual(error.details["stage"], "ancestor-access")
+            self.assertEqual(stat.S_IMODE(self.root.stat().st_mode), 0o111)
+        finally:
+            self.root.chmod(0o700)
+        self.assertEqual(snapshot(self.root), before)
+
     def test_root_alias_resolution_once_and_permissions(self):
         target = self.root / "trusted" / "missing" / "state"
         (self.root / "trusted").mkdir()
@@ -352,13 +534,16 @@ print(json.dumps(codes))
             path.chmod(0o600)
             other = path.with_name("saved-file")
             path.rename(other)
-            for kind in ("symlink", "hardlink", "fifo", "directory"):
+            for kind in ("symlink", "hardlink", "fifo", "directory", "socket"):
                 if kind == "symlink":
                     path.symlink_to(other)
                 elif kind == "hardlink":
                     os.link(other, path)
                 elif kind == "fifo":
                     os.mkfifo(path, 0o600)
+                elif kind == "socket":
+                    # A socket inode suffices for the file-type check without binding.
+                    os.mknod(path, stat.S_IFSOCK | 0o600)
                 else:
                     path.mkdir(mode=0o700)
                 before = snapshot(self.root)
@@ -491,7 +676,8 @@ print(json.dumps(codes))
 
         with patch.object(S.fcntl, "flock", replace_lock):
             error = self.error("lock-replaced", self.store.commit, document(), create=True)
-        self.assertEqual(error.details["publication"], "none")
+        # Acquisition failed before the candidate could be classified.
+        self.assertEqual(error.details["publication"], "not-assessed")
 
     def test_object_reuse_is_exact_bytes_and_not_membership(self):
         first = self.create()
@@ -554,6 +740,30 @@ print(json.dumps(codes))
         self.error("not-in-history", self.store.log,
                    cursor="v1:" + ids[-1][7:] + ":" + orphan["digest"][7:])
         self.assertEqual(snapshot(self.root), before)
+
+    def test_later_pages_report_selected_head_findings_after_advance(self):
+        first = self.create()
+        second = self.child(first)
+        page = self.store.log(limit=1)
+        child = dict(document(), label="advanced head", coordination=[])
+        third = self.store.commit(child, expected_head=second)["revision"]["digest"]
+        current = self.store.show()
+        self.assertNotEqual(current["findings"], C.findings(document()))
+        final = self.store.log(cursor=page["cursor"], limit=1)
+        self.assertEqual(final["revision"], current["revision"])
+        self.assertEqual(final["findings"], current["findings"])
+        self.assertEqual(final["selected_head"], third)
+        self.assertEqual(final["selected_start"], second)
+        self.assertEqual(final["entries"][0]["digest"], first)
+        self.assertIsNone(final["cursor"])
+        self.assertTrue(final["complete"])
+        later = self.store.log(limit=1)
+        middle = self.store.log(cursor=later["cursor"], limit=1)
+        self.assertEqual(middle["revision"]["digest"], third)
+        self.assertEqual(middle["findings"], current["findings"])
+        self.assertEqual(middle["entries"][0]["digest"], second)
+        self.assertEqual(middle["selected_start"], third)
+        self.assertEqual(middle["cursor"], "v1:" + third[7:] + ":" + first[7:])
 
     def test_history_4095_4096_4097_edges_and_advancing_head(self):
         ids = self.chain(4098)
@@ -830,19 +1040,173 @@ print(json.dumps(codes))
             self.assertEqual(error.details["publication"], "none")
             self.assertEqual(error.details["parent_durability"], "unknown")
 
+    def test_head_replace_faults_reconcile_under_lock_and_retry(self):
+        real_replace, real_head, real_lock_check = S.os.replace, S._Session.head, S._Session.lock_check
+        for create in (True, False):
+            for after_effect in (False, True):
+                for observation in ("ok", "io", "corrupt", "lock", "other"):
+                    with self.subTest(create=create, after_effect=after_effect, observation=observation):
+                        case = self.root / ("rename-%s-%s-%s" % (create, after_effect, observation))
+                        with patch.dict(os.environ, QARGI_STATE=str(case)):
+                            store = S.Store(CAMPAIGN)
+                            first = None if create else store.commit(document(), create=True)["revision"]["digest"]
+                            child = dict(document(), label="rename child")
+                            kwargs = dict(create=True) if create else dict(expected_head=first)
+                            attempted, head_attempts, observations = [False], [], []
+
+                            def replacement(src, dst, **args):
+                                if dst != "head.json":
+                                    return real_replace(src, dst, **args)
+                                head_attempts.append(dst)
+                                if after_effect:
+                                    real_replace(src, dst, **args)
+                                attempted[0] = True
+                                raise OSError(errno.EIO, "injected ambiguous rename")
+
+                            def observed(session):
+                                if attempted[0]:
+                                    observations.append(True)
+                                    if observation == "io":
+                                        raise OSError(errno.EIO, "injected observation failure")
+                                    if observation == "corrupt":
+                                        raise C.Invalid("invalid-json", "injected malformed head")
+                                    if observation == "other":
+                                        return dict(format="campaign-head", version=1, rev=1,
+                                                    revision="sha256:" + "f" * 64)
+                                return real_head(session)
+
+                            def authority(session):
+                                real_lock_check(session)
+                                if attempted[0] and observation == "lock":
+                                    raise S.Error("lock-replaced")
+
+                            publication = ("visible" if after_effect else "none") if observation == "ok" else "unknown"
+                            code = {"visible": "durability-unknown", "none": "storage-error",
+                                    "unknown": "publication-unknown"}[publication]
+                            with patch.object(S.os, "replace", replacement), \
+                                    patch.object(S._Session, "head", observed), \
+                                    patch.object(S._Session, "lock_check", authority):
+                                error = self.error(code, store.commit, child, **kwargs)
+                            self.assertEqual(error.details["publication"], publication)
+                            self.assertEqual(error.details["durability"],
+                                             "not-assessed" if publication == "none" else "unknown")
+                            self.assertEqual(len(head_attempts), 1)
+                            self.assertEqual(len(observations), 0 if observation == "lock" else 1)
+                            if after_effect:
+                                self.assertEqual(store.show()["document"], C.validate(child))
+                            elif create:
+                                self.error("not-found", store.show)
+                            else:
+                                self.assertEqual(store.show()["revision"]["digest"], first)
+                            retry = store.commit(child, **kwargs)
+                            self.assertEqual(retry["result"], "already-current" if after_effect else "committed")
+                            self.assertEqual(retry["durability"], "fsync-acknowledged")
+
+    def test_object_replace_after_effect_never_attempts_head(self):
+        real_replace = S.os.replace
+        for create in (True, False):
+            with self.subTest(create=create), patch.dict(
+                    os.environ, QARGI_STATE=str(self.root / ("object-fault-%s" % create))):
+                store = S.Store(CAMPAIGN)
+                first = None if create else store.commit(document(), create=True)["revision"]["digest"]
+                kwargs = dict(create=True) if create else dict(expected_head=first)
+                child = dict(document(), label="orphan object")
+
+                def replacement(src, dst, **args):
+                    self.assertNotEqual(dst, "head.json")
+                    real_replace(src, dst, **args)
+                    raise OSError(errno.EIO, "injected object rename after effect")
+
+                with patch.object(S.os, "replace", replacement):
+                    error = self.error("storage-error", store.commit, child, **kwargs)
+                self.assertEqual(error.details["publication"], "none")
+                self.assertEqual(error.details["durability"], "not-assessed")
+                if create:
+                    self.error("not-found", store.show)
+                else:
+                    self.assertEqual(store.show()["revision"]["digest"], first)
+                self.assertEqual(store.commit(child, **kwargs)["result"], "committed")
+
+    def test_early_exact_retry_errors_do_not_deny_visible_candidate(self):
+        first = self.create()
+        child = dict(document(), label="uncertain child")
+        original_settle = S._Session.settle
+
+        def unsettled(session, head):
+            if head["revision"] != first:
+                raise OSError(errno.EIO, "injected visible settle failure")
+            return original_settle(session, head)
+
+        with patch.object(S._Session, "settle", unsettled):
+            error = self.error("durability-unknown", self.store.commit, child, expected_head=first)
+        self.assertEqual(error.details["publication"], "visible")
+        before = snapshot(self.root)
+        fd = os.open(self.campaign / ".lock", os.O_RDWR)
+        try:
+            S.fcntl.flock(fd, S.fcntl.LOCK_EX | S.fcntl.LOCK_NB)
+            error = self.error("lock-busy", self.store.commit, child, expected_head=first)
+            self.assertEqual(error.details["publication"], "not-assessed")
+            self.assertEqual(error.details["durability"], "not-assessed")
+        finally:
+            os.close(fd)
+        for boundary, attribute in ((S._Session, "head"), (S, "_open")):
+            with patch.object(boundary, attribute, side_effect=OSError(errno.EIO, "injected early error")):
+                error = self.error("storage-error", self.store.commit, child, expected_head=first)
+            self.assertEqual(error.details["publication"], "not-assessed")
+            self.assertEqual(error.details["durability"], "not-assessed")
+        self.assertEqual(snapshot(self.root), before)
+        self.assertEqual(self.store.commit(child, expected_head=first)["result"], "already-current")
+
+    def test_close_failures_before_and_after_head_publication(self):
+        first = self.create()
+        real_close, real_replace = S.os.close, S.os.replace
+        for after_effect in (False, True):
+            child = dict(document(), label="close-%s" % after_effect)
+            visible, injected = [False], []
+
+            def replacement(src, dst, **kwargs):
+                result = real_replace(src, dst, **kwargs)
+                if dst == "head.json":
+                    visible[0] = True
+                return result
+
+            def close(fd):
+                name = os.readlink("/proc/self/fd/%d" % fd)
+                real_close(fd)
+                if not injected and (visible[0] if after_effect else "/.tmp-" in name):
+                    injected.append(name)
+                    raise OSError(errno.EIO, "injected close failure after actual close")
+
+            with patch.object(S.os, "close", close), patch.object(S.os, "replace", replacement):
+                error = self.error("durability-unknown" if after_effect else "storage-error",
+                                   self.store.commit, child, expected_head=first)
+            self.assertEqual(len(injected), 1)
+            self.assertEqual(error.details["publication"], "visible" if after_effect else "none")
+            self.assertEqual(self.store.show()["document"], C.validate(child if after_effect else document()))
+            retry = self.store.commit(child, expected_head=first)
+            self.assertEqual(retry["result"], "already-current" if after_effect else "committed")
+            first = retry["revision"]["digest"]
+
     def test_creation_fsync_links_and_publication_write_failures(self):
         import shutil
         trace = []
         real_fsync = S.os.fsync
+        real_settle_links = S._Session.settle_links
+        classified = [False]
 
         def record(fd):
-            trace.append(os.readlink("/proc/self/fd/%d" % fd))
+            trace.append((classified[0], os.readlink("/proc/self/fd/%d" % fd)))
             return real_fsync(fd)
 
-        with patch.object(S.os, "fsync", record):
+        def settle_links(session):
+            classified[0] = True
+            return real_settle_links(session)
+
+        with patch.object(S.os, "fsync", record), \
+                patch.object(S._Session, "settle_links", settle_links):
             self.create()
         # Directory creation syncs the new directory before its parent link.
-        self.assertEqual(trace[:2], [str(self.state), str(self.root)])
+        self.assertEqual([name for _, name in trace[:2]], [str(self.state), str(self.root)])
         for index in range(len(trace)):
             shutil.rmtree(self.state)
             calls = [0]
@@ -859,9 +1223,25 @@ print(json.dumps(codes))
                     self.create()
             error = caught.exception
             published = (self.campaign / "head.json").exists()
-            self.assertEqual(error.details["publication"], "visible" if published else "none")
+            # Setup fsyncs precede classification under the acquired lock.
+            expected = "visible" if published else "none" if trace[index][0] else "not-assessed"
+            self.assertEqual(error.details["publication"], expected)
             self.assertEqual(error.code, "durability-unknown" if published else "storage-error")
-            self.store.commit(document(), create=True)
+            retried = []
+
+            def synced(fd):
+                retried.append(os.readlink("/proc/self/fd/%d" % fd))
+                return real_fsync(fd)
+
+            with patch.object(S.os, "fsync", synced):
+                self.store.commit(document(), create=True)
+            # A later successful call settles every possibly uncertain link.
+            failed_path = Path(trace[index][1])
+            if failed_path.name.startswith((".tmp-", ".head-")):
+                self.assertIn(str(failed_path.parent), retried)
+            else:
+                self.assertIn(str(failed_path), retried)
+            self.assertIn("/", retried)
         first = self.store.show()["revision"]["digest"]
         for target in ("object", "head"):
             real_replace = S.os.replace

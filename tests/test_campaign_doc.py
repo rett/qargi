@@ -60,6 +60,51 @@ def document():
                 provenance=dict(basis="owner direction", **attribution()))
 
 
+def value_count(value):
+    stack, count = [value], 0
+    while stack:
+        item = stack.pop()
+        count += 1
+        if type(item) is dict:
+            stack.extend(item.keys())
+            stack.extend(item.values())
+        elif type(item) is list:
+            stack.extend(item)
+    return count
+
+
+def dense_document(values=32761):
+    """Reconstruct the supplied dense declaration without an external fixture.
+
+    Complete links contribute 17 values. One requirement and distinct work
+    references fill the remainder for exact boundary counts.
+    """
+    doc = document()
+    doc.update(label="l", objective="o", requirements=[], work=[], coordination=[])
+    for number in range(59):
+        item = work("r1:w%d" % number)
+        item.update(requirements=[], source=dict(kind="external", ref="x", pin=None))
+        doc["work"].append(item)
+    count = value_count(doc)
+    for item in doc["work"]:
+        for number in range(32):
+            declaration = dict(link("outcome", dict(kind="ref", ref=str(number))), by="a")
+            if count + value_count(declaration) > values:
+                break
+            item["links"].append(declaration)
+            count += value_count(declaration)
+    remaining = values - count
+    if remaining:
+        if remaining < 7:
+            next(w for w in reversed(doc["work"]) if w["links"])["links"].pop()
+            remaining += 17
+        doc["requirements"] = [dict(id="r1:fill", text="fill", state="active")]
+        for item in doc["work"][:remaining - 7]:
+            item["requirements"] = ["r1:fill"]
+    assert value_count(doc) == values
+    return doc
+
+
 def brief(rev=1):
     return dict(design_rev=rev, ref="task text", **attribution())
 
@@ -756,6 +801,22 @@ class Campaign(unittest.TestCase):
         cycle = []
         cycle.append(cycle)
         self.invalid(C.validate, cycle, "bounds")
+
+    def test_dense_snapshot_value_budget_stays_independent(self):
+        for count in (32758, 32759, 32761, 32767, 32768):
+            with self.subTest(values=count):
+                doc = dense_document(count)
+                self.assertEqual(value_count(doc), count)
+                self.assertEqual(C.validate(C.decode(json_bytes(doc))), C.validate(doc))
+                C.transition(None, doc, rev=1)
+        oversized = dense_document(32769)
+        for operation in (C.validate, C.canonicalize, C.findings,
+                          lambda d: C.transition(None, d, rev=1),
+                          lambda d: C.decode(json_bytes(d))):
+            self.invalid(operation, oversized, "bounds")
+        # Public decode still has the exact original depth and raw byte bounds.
+        self.invalid(C.decode, b'[' * 16 + b'0' + b']' * 16, "bounds")
+        self.invalid(C.decode, b'0' + b' ' * C.MAX_SPEC_BYTES, "bounds")
 
     def test_joint_canonical_envelope_bound(self):
         doc = document()

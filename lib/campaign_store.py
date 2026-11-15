@@ -16,6 +16,14 @@ Other stale expectations conflict without inspecting history. Object reuse
 verifies bytes and grants no committed membership. Successful writes report
 fsync-acknowledged, which describes syscall results without a power-loss claim.
 Failures distinguish candidate publication from pre-existing parent uncertainty.
+Publication describes the candidate's observed selection, including exact retries.
+It is not-assessed until classification under the writer lock, none after proving
+the candidate unselected, and visible after selecting or observing that candidate.
+An attempted head replacement with an unreconciled outcome reports unknown.
+The writer reconciles replacement errors under its held lock without repeating
+the effect or changing the selected head. Unknown and not-assessed failures grant
+no acceptance credit. Durability is a separate field. Visible or unknown failures
+report unknown durability. An unpublished child can have an uncertain parent.
 
 History proves selected-head ancestry on every request, including cursor pages.
 The total budget is 4096 predecessor edges across head to start, start to next
@@ -26,6 +34,8 @@ to 256 KiB, plus a 512-byte head. The conservative aggregate byte bound is
 4099 * 262144 + 512 = 1074528768 bytes per historical request. Memory retains
 a constant number of documents and at most 200 small summaries. Current reads
 and commits use at most two distinct objects and have no history-length limit.
+Log revision and findings describe the selected head. Entries, selected_start
+and cursor describe the historical page within that selected head's ancestry.
 Stray temporary files are ignored. Reads never repair, fsync or create state.
 
 Configured root aliases and trusted ancestors are resolved once. The root must
@@ -37,6 +47,13 @@ flock serializes each campaign. Writers check its named and held identity.
 Qualification assumes cooperating writers, atomic same-directory rename,
 directory fsync and local flock. Malicious same-user/root mutation and network
 filesystem behavior fall outside this boundary.
+Every operation requires readable and searchable ancestors through the configured
+root. Every write requires successful directory fsync through those ancestors to
+slash, including links left uncertain by earlier creation attempts. Ancestor
+failures carry an ancestor-access or ancestor-fsync stage with fixed diagnostics.
+Traverse-only ancestors and ancestor filesystems without directory fsync remain
+unsupported. The traced 16-large-object test measures instrumented fixture cost.
+It does not establish ordinary latency or qualify power loss or kernel EIO.
 """
 import contextlib
 import errno
@@ -55,6 +72,8 @@ MAX_HEAD_BYTES = 512
 MAX_HISTORY_EDGES = 4096
 MAX_PAGE = 200
 DEFAULT_PAGE = 50
+# Envelope root, five keys and four header scalar values surround the document.
+_REVISION_HEADER_VALUES = 10
 _FLAGS = os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
 _CURSOR = re.compile(r"v1:([0-9a-f]{64}):([0-9a-f]{64})")
 _MESSAGES = {
@@ -69,6 +88,7 @@ _MESSAGES = {
     "corrupt-store": "campaign state failed byte or lineage validation",
     "storage-error": "campaign storage operation failed",
     "durability-unknown": "candidate is visible with uncertain durability",
+    "publication-unknown": "candidate publication could not be established",
     "history-walk-limit": "campaign history traversal budget exhausted",
     "not-in-history": "revision is outside selected head ancestry",
     "cursor": "invalid campaign history cursor",
@@ -110,7 +130,8 @@ def _open(name, flags, *, parent=None, mode=0o600):
     try:
         return os.open(name, flags | _FLAGS, mode, dir_fd=parent)
     except OSError as error:
-        if error.errno in (errno.ELOOP, errno.ENOTDIR, errno.EISDIR, errno.EACCES, errno.EPERM):
+        if error.errno in (errno.ELOOP, errno.ENOTDIR, errno.EISDIR, errno.EACCES,
+                           errno.EPERM, errno.ENXIO):
             raise Error("private-state") from None
         raise
 
@@ -172,7 +193,10 @@ def _read(parent, name, limit):
 
 
 def _parse(raw, fields, kind):
-    value = doc.decode(raw)
+    value = (doc._decode(raw, max_bytes=doc.MAX_REVISION_BYTES,
+                         max_values=doc.MAX_VALUES + _REVISION_HEADER_VALUES,
+                         max_depth=doc.MAX_DEPTH + 1)
+             if kind == "campaign-revision" else doc.decode(raw))
     _need(type(value) is dict and set(value) == set(fields.split()), "corrupt-store")
     _need(value["format"] == kind and type(value["version"]) is int
           and value["version"] == 1, "corrupt-store")
@@ -183,6 +207,22 @@ def _parse(raw, fields, kind):
 
 class _Session:
     def __init__(self, store, create, stack):
+        try:
+            self._ancestors(store, create, stack)
+        except Error as error:
+            error.details["stage"] = "ancestor-access"
+            raise
+        except OSError as error:
+            raise Error("not-found" if isinstance(error, FileNotFoundError) else "storage-error",
+                        stage="ancestor-access") from None
+        self.campaigns = _directory(self.root, "campaigns", create)
+        stack.callback(os.close, self.campaigns)
+        self.campaign = _directory(self.campaigns, store.campaign, create)
+        stack.callback(os.close, self.campaign)
+        self.store = store
+        self.stack = stack
+
+    def _ancestors(self, store, create, stack):
         fd = _open("/", os.O_RDONLY | os.O_DIRECTORY)
         stack.callback(os.close, fd)
         self.ancestors = [fd]
@@ -195,12 +235,6 @@ class _Session:
         _need(root_stat.st_uid == os.geteuid() and not root_stat.st_mode & 0o022,
               "private-state")
         self.root = fd
-        self.campaigns = _directory(fd, "campaigns", create)
-        stack.callback(os.close, self.campaigns)
-        self.campaign = _directory(self.campaigns, store.campaign, create)
-        stack.callback(os.close, self.campaign)
-        self.store = store
-        self.stack = stack
 
     def objects(self, create=False):
         try:
@@ -291,15 +325,20 @@ class _Session:
         os.fsync(self.campaigns)
         os.fsync(self.root)
         # A retry must also settle a previously uncertain configured-root link.
-        for fd in reversed(self.ancestors[:-1]):
-            os.fsync(fd)
+        self.settle_ancestors()
 
     def settle_links(self):
         os.fsync(self.lockfd)
         for fd in (self.objdir, self.campaign, self.campaigns, self.root):
             os.fsync(fd)
-        for fd in reversed(self.ancestors[:-1]):
-            os.fsync(fd)
+        self.settle_ancestors()
+
+    def settle_ancestors(self):
+        try:
+            for fd in reversed(self.ancestors[:-1]):
+                os.fsync(fd)
+        except OSError:
+            raise Error("storage-error", stage="ancestor-fsync") from None
 
     def temporary(self, parent, raw, prefix):
         name = prefix + uuid.uuid4().hex
@@ -377,9 +416,13 @@ class Store:
 
     @contextlib.contextmanager
     def _session(self, create=False):
-        if marshal_refs.in_member_run():
-            raise Error("lead-only")
         try:
+            try:
+                member = marshal_refs.in_member_run()
+            except OSError:
+                raise Error("lead-only") from None
+            if member:
+                raise Error("lead-only")
             if self._root is None:
                 self._root = os.path.realpath(paths.state())
             with contextlib.ExitStack() as stack:
@@ -408,7 +451,7 @@ class Store:
         A failed parent settle also includes parent_durability='unknown'.
         No stale candidate receives credit for appearing further down history.
         """
-        visible = False
+        publication = "not-assessed"
         parent_settling = False
         try:
             _need(type(create) is bool and ((create and expected_head is None)
@@ -444,11 +487,12 @@ class Store:
                                 candidate = None
                 exact = current is not None and candidate is not None \
                     and candidate["digest"] == current["digest"]
+                if candidate is not None:
+                    publication = "visible" if exact else "none"
                 if current is not None and not exact and (create or expected_head != current["digest"]):
                     raise Error("conflict", current_head=current["digest"],
                                 candidate=None if candidate is None else candidate["digest"],
                                 candidate_in_history="not-checked")
-                visible = exact
                 if current is not None:
                     parent_settling = not exact
                     session.settle(head)
@@ -461,9 +505,26 @@ class Store:
                     temporary = session.temporary(session.campaign, doc._encode(new_head), ".head-")
                     try:
                         session.lock_check()
-                        os.replace(temporary, "head.json", src_dir_fd=session.campaign,
-                                   dst_dir_fd=session.campaign)
-                        visible = True
+                        publication = "unknown"
+                        try:
+                            os.replace(temporary, "head.json", src_dir_fd=session.campaign,
+                                       dst_dir_fd=session.campaign)
+                        except OSError:
+                            # POSIX excludes EIO from rename's unchanged-destination
+                            # guarantee. Observe once under the held writer authority.
+                            # https://man7.org/linux/man-pages/man3/rename.3p.html
+                            try:
+                                session.lock_check()
+                                observed = session.head()
+                                session.lock_check()
+                                if observed == new_head:
+                                    publication = "visible"
+                                elif observed == head:
+                                    publication = "none"
+                            except (Error, OSError, doc.Invalid, MemoryError):
+                                pass
+                            raise
+                        publication = "visible"
                     finally:
                         session.remove_temporary(session.campaign, temporary)
                     session.settle(new_head)
@@ -474,14 +535,16 @@ class Store:
                 return result
         except doc.Invalid as error:
             raise Error(error.code, message=error.message, **error.details,
-                        publication="none", durability="not-assessed") from None
+                        publication=publication, durability="not-assessed") from None
         except Error as error:
-            error.details.update(publication="visible" if visible else "none",
-                                 durability="unknown" if visible else "not-assessed")
+            error.details.update(publication=publication,
+                                 durability="unknown" if publication in ("visible", "unknown")
+                                 else "not-assessed")
             if parent_settling:
                 error.details["parent_durability"] = "unknown"
-            if visible and error.code == "storage-error":
-                raise Error("durability-unknown", **error.details) from None
+            if error.code == "storage-error" and publication in ("visible", "unknown"):
+                raise Error("durability-unknown" if publication == "visible" else "publication-unknown",
+                            **error.details) from None
             raise
 
     def show(self, revision=None):
@@ -518,7 +581,8 @@ class Store:
             doc.transition(None if parent is None else parent["document"],
                            current["document"], rev=current["rev"])
             result = self._report("check", current)
-            result.update(selected_head=head["revision"], transition="checked-current-parent")
+            result.update(selected_head=head["revision"],
+                          transition="checked-create" if parent is None else "checked-current-parent")
             return result
 
     @staticmethod
@@ -562,6 +626,7 @@ class Store:
                     raise Error("not-found")
                 session.objects()
                 current = session.current(head)
+                result = self._report("log", current)
                 start = current
                 budget = [0]
                 if cursor is not None:
@@ -579,7 +644,6 @@ class Store:
                     if current["rev"] == 1 or len(entries) == limit:
                         break
                     current = self._previous(session, current, budget, ())
-                result = self._report("log", current)
                 complete = current["rev"] == 1
                 result.update(entries=entries, selected_head=head["revision"],
                               selected_start=start["digest"], verified_scope="selected-head-ancestry",
