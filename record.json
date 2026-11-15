@@ -4,19 +4,13 @@
  "goal": "Provider-neutral version-aware Bubble Tea guidance in a canonical opt-in skill pack for Go terminal-console development",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-15T09:19:57Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-15T18:57:46Z",
- "finished_at": null,
+ "finished_at": "2026-11-15T18:57:59Z",
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 17,
- "updated_at": "2026-11-15T18:57:46Z",
+ "rev": 18,
+ "updated_at": "2026-11-15T18:57:59Z",
  "feature": "bubble-tea-pack",
  "project": "qargi"
 }
