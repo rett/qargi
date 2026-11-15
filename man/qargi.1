@@ -1,4 +1,4 @@
-.TH QARGI 1 "2026-11-13" "qargi 0.2.14"
+.TH QARGI 1 "2026-11-14" "qargi 0.3.0"
 .SH NAME
 qargi \- A gathering place for agent work: dispatch, review, remember
 .SH SYNOPSIS
@@ -2854,9 +2854,36 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .RE
 .TP
 .B qargi backlog
-The project's backlog: list, add, and archive the done ones.
+The project's backlog: list, inspect a graph, add, and archive the done ones.
 .PP
 The backlog is a markdown file that the project answer backlog.file names (a path: ~/ works, a relative path is taken from the repository, and the file may live outside it, in a memory store for instance; qargi project set PROJECT backlog.file PATH). An item is a top\-level list line written '\- [ID] text' (or '* [ID] text'), ID a lowercase slug of letters, digits and hyphens, two characters or more (so a task\-list box '\- [x] text' is no id), with the indented lines after it. Any other top\-level list line is an item without an id and is listed as unnumbered; headings, paragraphs and fenced code blocks are not items. feature finish and release finish print a plan line, 'backlog items named in these commits: ID, ...', for the open items whose id the messages of the commits being merged contain; it is information only and nothing is done, and nothing is printed when backlog.file is unset or its file is missing. backlog.section names a heading of the file (its text, with or without the #s): only the list under it holds items, up to the next heading of the same or a higher level (a deeper heading belongs to it), also for that plan line; a heading the file lacks is an error for the verbs and names nothing in the plan line. backlog.archive says where the archive goes: a directory (created when absent; a ~/ or relative path works as for the file) that receives NAME\-archive\-YYYY\-MM.md, or a path ending in .md for one archive file whatever the month; by default the archive is beside the backlog file.
+.RS
+.TP
+.BI "graph " "ACTION"
+Check, show or explain a manually edited read\-only backlog graph v1.
+.br
+Use check|show|why \-\-graph FILE; why also needs \-\-node backlog:ID or feature:NAME. Reads the configured backlog.file; backlog.section affects display metadata only, and identities resolve across the whole backlog. Reported evidence is pinned to the parser's full item lines; revised items supersede that evidence. Confirmed requires point from dependent to prerequisite; contains is structural only. Projections describe planning, never acceptance or execution permission. Features and archives are unobserved. No state setup, audit writes, network or data changes. Lead only under the current member guard; future graph verbs get no member permission. Exit 0 for a valid graph (warnings allowed), 1 for invalid/unreadable inputs or an undeclared why node, 2 for usage errors. The normative schema, findings codes and limitations are in docs/reference/backlog\-graph.md.
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
+.RE
+.RS
+.TP
+.BI "\-\-graph " "FILE"
+the graph JSON file (required).
+.RE
+.RS
+.TP
+.BI "\-\-node " "REF"
+a declared typed reference, required only for why.
+.RE
+.RS
+.TP
+.B \-\-json
+print the native backlog\-graph\-report v1 object, including invalid input reports.
+.RE
+.RE
 .RS
 .TP
 .B list

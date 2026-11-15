@@ -1559,6 +1559,22 @@ class Marshal(HookCase):
             res = self.bash(c)
             self.assertEqual(res.returncode, 0, (c, res.stderr))
 
+    def test_backlog_graph_cli_is_the_leads_for_build_and_review(self):
+        for role in ("build", "review"):
+            with self.subTest(role=role):
+                with open(os.path.join(self.run_dir, "ability"), "w") as f:
+                    f.write(role)
+                for prefix in ("qargi backlog", "bash lib/backlog.sh", "lib/backlog.sh"):
+                    result = self.bash(prefix + " graph check --graph graph.json")
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn("qargi backlog graph is a read-only query reserved for the lead", result.stderr)
+                    self.assertNotIn("rewrites the file", result.stderr)
+                self.assertEqual(self.bash("qargi backlog list --json").returncode, 0)
+                self.assertEqual(self.bash("bash lib/backlog.sh list").returncode, 0)
+                # The pure reader has no write verb. CLI policy does not turn it
+                # into a new write capability or add future graph verbs to OPEN.
+                self.assertEqual(self.bash("python3 lib/backlog_graph.py check --graph graph.json").returncode, 0)
+
     def test_ref_record_is_the_leads(self):
         """qargi ref record --rewrite moves an agent branch of the lead's repository and writes the lead's ref journal, which local verify trusts."""
         cmds = ["qargi ref record --rewrite agent/x a b --why w", "qargi ref record", "qargi ref", "/opt/q/bin/qargi ref record --rewrite agent/x a b --why w",

@@ -5,7 +5,7 @@ keys are as intended, each job's timeout is not below what the manifest's budget
 recomputed here), and tests/durations.txt balances four shards (the slowest shard plans at most 1.3 times the fastest).
 Run: python3 tests/test_ci.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
-import math, os, re, subprocess, unittest
+import math, os, re, subprocess, tempfile, unittest
 
 try:
     import yaml
@@ -133,6 +133,25 @@ class Pins(unittest.TestCase):
 
 
 class Manifest(unittest.TestCase):
+    def test_changelog_selects_the_full_tier_strict_converter_in_fast_plans(self):
+        command = "python3 tests/test_site.py Converter.test_the_changelog_converts_with_the_literal_option"
+        rows = [line.split("|") for line in text(os.path.join(ROOT, "tests", "suite.txt")).splitlines()
+                if command in line]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][0].strip(), "full")
+        self.assertEqual(rows[0][-1].strip(), "CHANGELOG.md")
+        with tempfile.NamedTemporaryFile(mode="w+") as changed:
+            for content, selected in (("", False), ("CHANGELOG.md\n", True)):
+                changed.seek(0)
+                changed.truncate()
+                changed.write(content)
+                changed.flush()
+                _, steps = plan("--tier", "fast", "--changed-files", changed.name)
+                self.assertEqual(command in [c for _, c in steps], selected)
+        _, whole = plan()
+        self.assertIn(command, [c for _, c in whole])
+        self.assertIn("python3 tests/test_site.py", [c for _, c in whole])
+
     def test_the_header_states_what_a_budget_is_and_not_that_it_only_shrinks(self):
         head = " ".join(l.lstrip("# ") for l in text(os.path.join(ROOT, "tests", "suite.txt")).splitlines() if l.startswith("#"))
         self.assertIn("a budget is the last recorded duration of the step on the reference machine, rounded up by a tenth; "

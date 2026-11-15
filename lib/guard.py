@@ -3025,6 +3025,9 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
             return OwnReason("qargi changelog %s rewrites the changelog of a work tree and is the lead's to run; only qargi changelog renumber --check (it writes nothing) is available to an agent; "
                              "report the duplicate item numbers in your task output" % (verb or "(no verb)"))
     if area == "backlog" and verb not in BACKLOG_OPEN:
+        if verb == "graph":
+            return OwnReason("qargi backlog graph is a read-only query reserved for the lead under the current CLI policy; "
+                             "report graph findings in your task output")
         return OwnReason("qargi backlog %s moves an item out of the backlog file into the dated archive and rewrites the file (from a plan and a token) and is the lead's to run "
                          "(qargi backlog list only reads and is allowed); report in your task output which backlog items your change finishes, with the evidence" % (verb or "(no verb)"))
     if area == "upstream" and verb not in UPSTREAM_OPEN:
