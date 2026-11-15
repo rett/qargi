@@ -3,6 +3,12 @@
   "packs": [
     {
       "kind": "skill",
+      "name": "campaign-coordination",
+      "propose": "project supplies campaign or dependency context",
+      "compatible_providers": ["any"]
+    },
+    {
+      "kind": "skill",
       "name": "shellcheck-gate",
       "propose": "tracked *.sh",
       "compatible_providers": ["any"]

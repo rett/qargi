@@ -53,7 +53,7 @@ on `refs/qargi/done/NAME`, of the project's remote (`lib/marshal_refs.py`).
   render machinery, the take-in check, help, the site generator.
 - Providers are data: `lib/providers/NAME.json` describes a runtime (its tools, hook protocol, barrier, dispatch, renderers).
   Code reads the definition; the adapter of a runtime (`lib/providers/claude-code/adapter`) is the code for what data cannot say.
-- Packs are skills and tools with a content hash, imported, sealed and linked by scope; `packs/` ships seven.
+- Packs are skills and tools with a content hash, imported, sealed and linked by scope; `packs/` ships eight.
 - A methodology (`methodologies/NAME/methodology.json` and `scaffold/`) is data read by `project new|attach|adopt`; see
   [Flow](../flow/README.md#methodologies) for what it configures.
 - `skills/`, `roles/`, `contract/` and `agents/` are prompts: the lead's skills, the role texts, the member contract and the
