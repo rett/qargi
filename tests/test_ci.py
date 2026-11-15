@@ -5,7 +5,7 @@ keys are as intended, each job's timeout is not below what the manifest's budget
 recomputed here), and tests/durations.txt balances four shards (the slowest shard plans at most 1.3 times the fastest).
 Run: python3 tests/test_ci.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
-import math, os, re, subprocess, tempfile, unittest
+import math, os, re, shutil, subprocess, tempfile, unittest
 
 try:
     import yaml
@@ -20,9 +20,9 @@ SETUP = 600     # seconds for checkout, packages and the git identity
 SHARDS = 4
 
 
-def plan(*args):
+def plan(*args, root=ROOT):
     """tests/run.sh --plan: (the shard-plan line or '', [(weight, command)])."""
-    p = subprocess.run(["bash", "tests/run.sh", "--plan", *args], cwd=ROOT, capture_output=True, text=True)
+    p = subprocess.run(["bash", "tests/run.sh", "--plan", *args], cwd=root, capture_output=True, text=True)
     assert p.returncode == 0, p.stdout + p.stderr
     lines = p.stdout.splitlines()
     head = lines[0] if lines and lines[0].startswith("shard plan") else ""
@@ -141,10 +141,15 @@ class Manifest(unittest.TestCase):
                          ["fast", "par", "300", "1", command])
         # A full-tier copy makes selection depend on coverage, rather than its fast tier.
         with tempfile.TemporaryDirectory() as scratch:
-            suite = os.path.join(scratch, "suite.txt")
+            # Plan mode checks inventory before selection. Keep that inventory small
+            # while exercising the current runner and the actual coverage row.
+            os.mkdir(os.path.join(scratch, "tests"))
+            for name in ("run.sh", "test_skill_budget.sh"):
+                shutil.copyfile(os.path.join(ROOT, "tests", name), os.path.join(scratch, "tests", name))
+            suite = os.path.join(scratch, "tests", "suite.txt")
             changed = os.path.join(scratch, "changed.txt")
             with open(suite, "w") as stream:
-                stream.write(manifest.replace(row, "full" + row[len("fast"):]))
+                stream.write("full" + row[len("fast"):] + "\n")
             cases = [
                 "skills/qargi-flow/SKILL.md", "skills/qargi-flow/marshal.md",
                 "skills/example/data.txt", "skills/example/nested/reference.md",
@@ -160,7 +165,7 @@ class Manifest(unittest.TestCase):
                 with self.subTest(path=path):
                     with open(changed, "w") as stream:
                         stream.write(path + "\n" if path else "")
-                    _, steps = plan("--tier", "fast", "--manifest", suite, "--changed-files", changed)
+                    _, steps = plan("--tier", "fast", "--manifest", suite, "--changed-files", changed, root=scratch)
                     self.assertEqual(command in [c for _, c in steps], path in cases)
         _, fast = plan("--tier", "fast")
         self.assertIn(command, [c for _, c in fast])
