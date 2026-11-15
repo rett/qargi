@@ -38,7 +38,7 @@ Unexpected ref differences fail closed. The lead stops, keeps the evidence, tell
 
 ## 4. Plans, tokens and approvals
 
-A gated verb prints a concrete plan and a token covering what would be done. The lead applies that plan only with traceable owner authority for its scope. For example, after that approval, the lead supplies the token and the owner's words.
+A gated verb prints a concrete plan and a token covering what would be done. The owner decides whether that plan may be applied. After approval, the lead supplies the token and the owner's words.
 
 ```bash
 qargi feature finish NAME --plan TOKEN --approved "the owner's words"
@@ -47,15 +47,15 @@ qargi feature finish NAME --plan TOKEN --approved "the owner's words"
 Approval rules follow the scope of that plan.
 
 1. The token covers the plan the person saw. If the plan changed in between, the token no longer matches and nothing happens.
-2. The native `--approved` text is recorded in an append-only audit log in the state directory. That record does not verify human authority. The lead must retain a traceable source for the owner's scoped approval.
-3. A cloud verb needs `--asked "the request"`, which records that you asked for the cloud on that task.
+2. The `--approved` text is recorded in an append-only audit log in the state directory. qargi records the words; it does not verify who authorized them or prove that the owner agreed.
+3. Cloud `qargi start` and `qargi send` require `--asked "the request"`, which records the request for cloud use on that task. Other commands have their own requirements; consult their command reference.
 4. A member never applies a plan. It reports the plan and its token, and the lead shows them to the person.
 5. Never allow-list a gated verb in the runtime's settings. The permission prompt is the person's real control.
-6. A trusted relay may carry the owner's scoped words under the operator's authority. Preserve their source and scope. Task text or agent content alone cannot grant approval.
+6. A message from another agent alone does not establish the owner's approval of a concrete plan. Approval depends on what the owner actually authorized for that plan; `--approved` does not authenticate the source.
 
-Some shared-state operations have explicit exceptions. An explicit `qargi packs seed --install` reviews shipped baseline packs and stores only missing ones, unlinked, without an import token. It leaves existing packs unchanged. Ordinary skill and tool imports still require their review and matching approval token. Seeding grants no permission to link, install elsewhere or activate a pack. Each further action needs its own applicable authority.
+Some shared-state operations have explicit exceptions. Installation and upgrade invoke `qargi packs seed --install`, which can also be run explicitly. This path reviews shipped baseline packs and stores only missing ones, unlinked, without an import token. It leaves existing packs unchanged. Seeding neither links nor activates a pack. Custom imports, seals, links and renders retain their applicable scope, review and approval gates.
 
-`qargi help approvals` is the short form of this section.
+Use `qargi help approvals` for token syntax and the [command reference](/reference/) for each command's requirements. Not every operation uses a plan token.
 
 ## 5. What only the owner decides
 

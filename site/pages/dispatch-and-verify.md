@@ -37,7 +37,7 @@ This makes a clone on `agent/rename-verb`, an output directory, a temporary dire
 
 A warning about uncommitted memory concerns the repo tier in the lead's checkout. The clone contains that tier's committed version. Other tiers remain subject to the task's scope, access constraints and runtime support.
 
-Source baseline `50679d5` binds the prepared request to its runtime, mode, catalog, profile and policy inputs. Changes to those inputs require a new prepare. Editing the run's request mirror grants no authority to accept drift.
+Since 0.2.14, command-runtime requests bind the prepared request to its runtime, mode, catalog, profile and policy inputs. Changes to those inputs require a new prepare. Editing the run's request mirror grants no authority to accept drift. This behavior is already part of the published 0.3.0 baseline used by these pages.
 
 ## 4. Send the task block
 
@@ -63,9 +63,11 @@ qargi review check RUN/out
 
 `local verify` must pass before you continue reviewing the returned work. It accounts for recognized lead moves and qualified runtime ref allowances under the policy retained at preparation. Unexpected ref differences fail closed. Stop, preserve the evidence and tell the owner. A passing verify grants no permission for a member to change the real repository or for later policy edits to excuse earlier differences.
 
-`review check` checks artifact structure and exits 1 on a `FAIL`. Hard checks include patch numbering, a commit message body explaining what changed and why, scope limits and matching manifest commit counts. A review run returns no patches and needs a manifest and a report with a Findings section and a final line of `verdict: accept` or `verdict: revise`.
+`review check` checks artifact structure and exits 1 on a `FAIL`. Hard checks include patch numbering, the presence of a commit message body, scope limits and matching manifest commit counts. The lead judges whether the message explains what changed and why. A review run returns no patches and needs a manifest and a report with a Findings section and a final line of `verdict: accept` or `verdict: revise`.
 
-One logical change may be one commit and one patch with its supporting tests, docs and any required changelog entry. The 0.3.0 checker also fails a single patch touching three or more top-level areas. In source baseline `50679d5`, area counts and patch size produce advisory warnings that require substantive independent cohesion review. Directory boundaries alone do not decide commit boundaries.
+One logical change may be one commit and one patch with its supporting tests, docs and any required changelog entry. The published 0.3.0 checker also fails a single patch touching three or more top-level areas.
+
+The supplied source for the upcoming 0.3.1 candidate makes area counts and patch size advisory warnings that call for substantive independent cohesion review. Its campaign declarations and additional baseline packs are also candidate additions; declarations and pack seeding grant no execution or approval authority. These pages remain checked against 0.3.0. The lead must update the version and pinned source links after the release source is settled, rebuild against the final release, inspect the layout and obtain separate website publication approval. This baseline build does not qualify or publish 0.3.1. Directory boundaries alone do not decide commit boundaries.
 
 Then read the manifest.
 
