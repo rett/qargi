@@ -25,7 +25,7 @@ Local or cloud: local (a member on this machine) is the default. The cloud is us
 .PP
 You decide: the coordinator re\-verifies everything an agent returns (qargi review check), applies it as separate commits, and asks you before anything is pushed.
 .SH APPROVALS
-A command that changes something shared prints a plan first. The plan ends with a plan token, a hash of what would be done.
+A command that requires a plan token prints a plan first. The plan ends with a plan token, a hash of what would be done.
 .PP
 To apply, run the same command with \-\-plan TOKEN \-\-approved "your words". If the plan changed in between, the token no longer matches and nothing happens.
 .PP
@@ -3305,7 +3305,7 @@ the request, in your words, that names the cloud instance; recorded in the audit
 .B qargi local
 Prepare, verify, close, list and clean a local run, its git without credentials.
 .PP
-The agent works in a clone of a bare copy that has no remote, runs git through a credential\-less wrapper, and verify compares every ref of the real repository before and after. It is a guard, not a sandbox.
+The agent works in a clone whose origin points to a bare copy. The bare copy has no remote, and the clone's origin push URL is disabled. The agent runs git through a credential\-less wrapper, and verify compares every ref of the real repository before and after. It is a guard, not a sandbox.
 .RS
 .TP
 .BI "run " "RUN"

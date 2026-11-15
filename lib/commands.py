@@ -1227,7 +1227,8 @@ COMMANDS = {
     },
     "local": {
         "summary": "Prepare, verify, close, list and clean a local run, its git without credentials",
-        "desc": ("The agent works in a clone of a bare copy that has no remote, runs git through a credential-less wrapper, and "
+        "desc": ("The agent works in a clone whose origin points to a bare copy. The bare copy has no remote, and the clone's origin push URL is disabled. "
+                 "The agent runs git through a credential-less wrapper, and "
                  "verify compares every ref of the real repository before and after. It is a guard, not a sandbox."),
         "scripts": ["local.sh"],
         "verbs": {
@@ -1759,7 +1760,7 @@ TOPICS = {
         "dispatch spawns. A cloud agent serves one role, is named <project>-<role> and carries its role text in its prompt.",
         ]),
     "approvals": ("Plans, tokens and your go-ahead", [
-        "A command that changes something shared prints a plan first. The plan ends with a plan token, a hash of what would be done.",
+        "A command that requires a plan token prints a plan first. The plan ends with a plan token, a hash of what would be done.",
         "To apply, run the same command with --plan TOKEN --approved \"your words\". If the plan changed in between, the token no longer "
         "matches and nothing happens.",
         "Add --json to any verb to get the plan as one JSON object instead of text: {verb, plan, token, apply, exit}, where apply is the command "
