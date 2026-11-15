@@ -38,6 +38,19 @@ TYPES = {"none": None, "project": 1, "instance": 1, "session": 1, "target": 1, "
 
 
 class Sync(unittest.TestCase):
+    def test_campaign_metadata_help_and_completion(self):
+        self.assertEqual(set(verbs("campaign")), {"commit", "show", "check", "log"})
+        for spec in verbs("campaign").values():
+            self.assertIn("--json", {o["flag"] for o in spec["opts"]})
+        self.assertEqual(set(H.complete(["campaign", ""])), {"commit", "show", "check", "log"})
+        self.assertEqual(H.complete(["campaign", "check", "--spec", ""]), ["@file"])
+        for args in (["help", "campaign"], ["campaign", "--help"],
+                     ["help", "campaign", "log"], ["campaign", "log", "--help"]):
+            result = subprocess.run([BIN, *args], capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("4096", result.stdout)
+            self.assertNotIn("dev run", result.stderr)
+
     def test_every_dispatched_command_is_described_and_back(self):
         src = slurp(BIN)
         body = src[src.index("area=${1:-}"):]

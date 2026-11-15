@@ -2946,6 +2946,94 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .RE
 .RE
 .TP
+.B qargi campaign
+Record and inspect local campaign declarations.
+.PP
+Campaign v1 records declarations only: it grants no participant, execution, acceptance or merge authority. Invalidation policy is undecided. Participant locators, source refs and link targets are never opened. State verbs are lead\-only and need no project registration, repository adoption or cloud configuration. Pure check \-\-spec reads only the selected regular file (including a user\-selected symlink), with no configuration or state resolution. Spec input is bounded to 512 KiB before parsing; special files are refused. JSON is a native campaign\-report v1, with valid false and exit 1 for data, conflict, lock, storage and uncertain outcomes. Usage errors exit 2 on stderr. Exit 0 qualifies only the reported declaration scope. Text prints fixed summaries and identifiers; show \-\-json includes the supplied document. Historical responses prove selected\-head ancestry within one 4096\-edge traversal bound; exhaustion returns no successful partial history. Reads never repair state and report durability not\-assessed. Writes use a permanent local lock and compare\-and\-swap head; publication and durability are separate outcomes. Fsync\-acknowledged describes returned syscalls on a trusted local filesystem, not power\-loss safety. No retry, rollback, orphan adoption or acceptance inference is automatic.
+.RS
+.TP
+.BI "commit " "ID"
+Publish a declaration or settle an exact\-current retry.
+.br
+Supply \-\-spec FILE and exactly one of \-\-create or \-\-expected\-head DIGEST. An exact\-current retry settles the selected candidate and reports already\-current; a stale expectation otherwise conflicts without rebasing or checking candidate history. Failures preserve publication (not\-assessed, none, visible or unknown), durability and any parent uncertainty. Retry only by explicitly issuing the same command after inspecting the outcome.
+.RS
+.TP
+.BI "\-\-spec " "FILE"
+required declaration document.
+.RE
+.RS
+.TP
+.B \-\-create
+create revision 1; requires exactly one of \-\-create or \-\-expected\-head.
+.RE
+.RS
+.TP
+.BI "\-\-expected\-head " "DIGEST"
+compare\-and\-swap from this sha256 digest.
+.RE
+.RS
+.TP
+.B \-\-json
+print the native campaign report.
+.RE
+.RE
+.RS
+.TP
+.BI "show " "ID"
+Read the current declaration or a proven historical revision.
+.br
+Historical selection must prove ancestry from one selected head within 4096 predecessor edges. Exhaustion reports history\-walk\-limit. Current reads remain available beyond that bound.
+.RS
+.TP
+.BI "\-\-revision " "DIGEST"
+select a retained sha256 revision digest.
+.RE
+.RS
+.TP
+.B \-\-json
+include the declaration in the native campaign report.
+.RE
+.RE
+.RS
+.TP
+.BI "check " "[ID]"
+Check current state or only a supplied declaration.
+.br
+Choose ID or \-\-spec FILE, never both. Only the pure supplied\-document form is available to members; it reports transition not\-checked and coordination scope supplied\-document. A current\-state check verifies the actual parent transition.
+.RS
+.TP
+.BI "\-\-spec " "FILE"
+check this supplied document instead of an ID; no transition or state check.
+.RE
+.RS
+.TP
+.B \-\-json
+print the native campaign report.
+.RE
+.RE
+.RS
+.TP
+.BI "log " "ID"
+Read a bounded page of proven declaration history.
+.br
+Each response proves selected\-head ancestry within one 4096\-edge bound shared by proof and page traversal. Exhaustion fails with no partial entries and complete false. Complete means the page reached revision 1. A cursor pins a selected start and next revision; every page proves them again. Current reads and commits have no history\-length limit.
+.RS
+.TP
+.BI "\-\-cursor " "CURSOR"
+continue a page; an untrusted cursor grants no ancestry proof.
+.RE
+.RS
+.TP
+.BI "\-\-limit " "N"
+page entries: decimal integer 1 to 200 (default 50).
+.RE
+.RS
+.TP
+.B \-\-json
+print the native campaign report.
+.RE
+.RE
+.TP
 .B qargi ref
 Record in the lead's ref journal a branch move or a branch that no flow verb made.
 .PP

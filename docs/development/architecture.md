@@ -36,6 +36,7 @@ State (`state/`), what the commands write as they run:
 | `ref-journal.jsonl` | every branch move the lead made, so `verify` and `clean` can tell them from a member's |
 | `features/`, `marshal/` | the marshal's local records, and per project its switch and trusted signers |
 | `sessions.json` | the tracker of cloud sessions (role, profile, model, effort, state) |
+| `campaigns/UUID/` | declaration objects, the publishing head and permanent local writer lock (`lib/campaign_store.py`) |
 | `render/`, `providers/`, `env/` | rendered packs, provider verification records, environment records |
 
 With the shared marshal backend the records of open features are also commits on `refs/qargi/features/NAME`, and finished ones
@@ -46,12 +47,13 @@ on `refs/qargi/done/NAME`, of the project's remote (`lib/marshal_refs.py`).
 - `bin/qargi` is the dispatcher. It answers `help`, `version`, completion and the guard itself, wraps `--json`, runs a
   preamble (`lib/help.py`: dev-run banner, the project implied by the current directory) and then `exec`s the script of the command.
 - `lib/commands.py` is the one description of the commands, verbs and options. Help, the manual page and completion are generated from it.
+- `lib/campaign.py` routes native campaign reports; its member-safe `check --spec` imports no store or configuration. State commands are lead-only. `lib/campaign_doc.py` owns the pure closed schema, normalization and parent-relative transitions; `lib/campaign_store.py` owns private local storage, CAS publication, durability outcomes and bounded ancestry proofs. See [Campaign records v1](../reference/campaign-records.md) for the normative contract.
 - `lib/*.sh` are the verbs. Each takes its arguments, calls `lib/lib.sh` helpers (state paths, `audit_log`, `need_plan`, locks) and git.
 - `lib/*.py` are the engines that need real parsing or data structures: the guard, the marshal, packs, the provider and
   render machinery, the take-in check, help, the site generator.
 - Providers are data: `lib/providers/NAME.json` describes a runtime (its tools, hook protocol, barrier, dispatch, renderers).
   Code reads the definition; the adapter of a runtime (`lib/providers/claude-code/adapter`) is the code for what data cannot say.
-- Packs are skills and tools with a content hash, imported, sealed and linked by scope; `packs/` ships eight.
+- Packs are skills and tools with a content hash, imported, sealed and linked by scope; `packs/` ships nine.
 - A methodology (`methodologies/NAME/methodology.json` and `scaffold/`) is data read by `project new|attach|adopt`; see
   [Flow](../flow/README.md#methodologies) for what it configures.
 - `skills/`, `roles/`, `contract/` and `agents/` are prompts: the lead's skills, the role texts, the member contract and the
@@ -71,6 +73,7 @@ A cloud run replaces step 1 and 2 with `start` and a session of an instance (`li
 
 ## What is advice and what is checked
 
+- Campaign records have declarations-only authority: source observation is not performed, acceptance is not recorded, measurements are not computed and invalidation policy is undecided. Briefings and evidence links remain supplied claims and unresolved pointers. Fresh actual-dependency review is required before merge acceptance, but these records do not enforce it. The store qualifies cooperating local writers, not orchestration or a provider adapter.
 - The member guard (`lib/guard.py`) is a best-effort text check of a member's tool calls. It is advice that refuses the ordinary
   ways; a member runs as the lead's operating-system user, so it is not a boundary. A real sandbox is not yet built.
 - The checks are what run after the member: `local verify` (refs), `review check` (series, SCOPE, manifest, scrub),

@@ -1,6 +1,7 @@
 # Reference
 
 - [Backlog graph v1](backlog-graph.md): the native read-only schema, reports, source revision evidence and planning limits.
+- [Campaign records v1](campaign-records.md): local declarations, the closed schema, publication outcomes and bounded history.
 
 ## Help, manual page and completion
 
