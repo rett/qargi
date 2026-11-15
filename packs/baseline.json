@@ -48,6 +48,12 @@
       "name": "qargi-contributing",
       "propose": "tracked tests/skill-budget.txt",
       "compatible_providers": ["any"]
+    },
+    {
+      "kind": "skill",
+      "name": "bubble-tea",
+      "propose": "Go terminal UI with Bubble Tea, including terminal-console clients",
+      "compatible_providers": ["any"]
     }
   ]
 }
