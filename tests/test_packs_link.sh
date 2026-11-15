@@ -343,7 +343,9 @@ out=$($FX packs unlink gamma 2>&1); rc=$?
 projp delta unverified; out=$($FX packs link delta 2>&1); rc=$?
 [ "$rc" = 3 ] && grep -q "^qargi: provider unverified has no skills support on the local surface: " <<<"$out" && ok "a provider whose skills capability is not verified: link is refused with exit 3" || no "unverified: rc=$rc $out"
 projp eps notarget; out=$($FX provider layout notarget render_target --would "render the project's packs for a local session" 2>&1); rc=$?
-[ "$rc" = 3 ] && [ "$out" = "qargi: provider notarget has no packs render target: render the project's packs for a local session" ] && ok "a provider with no render target: packs check --target is refused with exit 3" || no "notarget check: rc=$rc $out"
+[ "$rc" = 3 ] && [ "$out" = "qargi: provider notarget has no packs render target: render the project's packs for a local session" ] && ok "provider layout refuses a missing render target with exit 3" || no "notarget layout: rc=$rc $out"
+out=$($FX packs check --target claude-code gamma 2>&1); rc=$?
+[ "$rc" = 3 ] && grep -q '^qargi: provider noskills has no project skills directory:' <<<"$out" && ok "packs check refuses a selected runtime without project skills layout with exit 3" || no "noskills public check: rc=$rc $out"
 out=$($FX packs apply --target claude-code beta 2>&1); rc=$?
 [ "$rc" != 0 ] && [ "$rc" != 3 ] && grep -q "render target 'claude-code' needs exactly one local runtime" <<<"$out" && ok "an ambiguous secondary render target refuses rather than guessing among the copied definitions" || no "wrong target: rc=$rc $out"
 out=$($FX packs check beta 2>&1); rc=$?

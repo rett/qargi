@@ -31,6 +31,12 @@ Secondary checkout links support only skills with `link.project: dir-symlink`. D
 
 Use `qargi skill accept|unaccept PROJECT NAME --target TARGET [--user]` for approvals in the selected runtime. Existing resource/provider/name slots preserve another runtime's approval, and unowned records accept nothing during a provider-bound audit. Exclusions also follow the selected runtime. Skills retain the advisory role union and include lead-only instruction packs; lead never joins the member MCP permission union. Rendering and linking are distribution steps, not member snapshots or canonical library activation.
 
+An applicable sealed extension composes onto the selected secondary runtime, including its verified capabilities, resources, renderer and exclusions. Its verification must match that base runtime; missing, unsealed, drifted, inapplicable, unmet or conflicting extensions refuse fresh loading. Member dispatch and the default runtime retain their usual composition rules.
+
+Owned cleanup remains available after a composition change or corrupt render manifest: `packs unlink` and combined `project unlink` use the link engine's exact destination/source and backup guards, without treating damaged render contents as loadable. Fresh render, check and link checks remain strict. `skill unaccept` also works after skills support, verification or project layout is lost when runtime/target identity is still unambiguous; a removed or ambiguous definition requires resolving that identity first. It removes only the selected provider's record in the requested project or user scope. Accept tokens bind project, runtime, target and composed definition; unaccept tokens bind the exact record and scope. A changed plan needs a fresh token, including tokens issued before this repair.
+
+MCP tool lists use the same approval, review and permission facts as member dispatch. A missing or empty approval hash grants no tools; always-ask tools, role restrictions, read-only hints, write-like names and collisions keep their existing checks. A server with no permitted tools is omitted when its allow-list format would treat an empty list as unrestricted.
+
 ## Tool packs
 
 A tool pack is a JSON file: the `name` of the pack (lower-case letters, digits, `-`), the `url` of an MCP server, and `tools`, the allowlist: a map from the name the server gives a tool to its policy, `always_allow`, `always_ask` or `auto`.

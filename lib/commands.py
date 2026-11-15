@@ -1025,7 +1025,8 @@ COMMANDS = {
             "unlink": verb("Undo packs link", [("PROJECT", "project")], [LOCAL_TARGET, PLAN, APPROVED],
                            desc=("Use the same --target as link for a secondary runtime. Removes only the symbolic link that points to this project's selected runtime render and, if the backup exists, moves it back to the skills "
                                  "directory. Refuses a link to anywhere else, a real directory in its place, and a backup with no link of ours. Same plan token "
-                                 "and approval as link; nothing else is deleted.")),
+                                 "and approval as link; nothing else is deleted. Owned unlink and backup recovery remain available after composition drift or render manifest corruption; "
+                                 "fresh loading still needs a valid current render.")),
         },
     },
     "start": {
@@ -1726,7 +1727,7 @@ SKILL_VERBS = dict(PACK_VERBS)
 SKILL_VERBS["accept"] = verb("Accept a skill a session loads that qargi does not manage", [("PROJECT", "project"), ("NAME", "none")], [LOCAL_TARGET, USER_OPT, PLAN, APPROVED],
     desc=("Finds NAME among the skills a session opened in the project's checkout would load (the checkout, the render and the user's skills directory; "
           "see qargi packs check) and applies only to one that is unmanaged or drifted. Without --plan it prints the same review as skill import "
-          "(files, scripts, URLs, network commands, secret findings) and a plan token that covers the scope, the name and the content hash. With "
+          "(files, scripts, URLs, network commands, secret findings) and a plan token that covers project, runtime, target, composed definition, scope, name and content hash. With "
           "--plan and --approved it records the name, the content hash, the path and your words in the acceptances file, for this project or, with "
           "--user, for every project, and writes an audit line. An accepted skill shows as accepted in packs check; if its content changes it shows "
           "as drifted and packs check exits 1. qargi skills, excluded skills and skills already accepted are refused with the reason. A local "
@@ -1734,7 +1735,8 @@ SKILL_VERBS["accept"] = verb("Accept a skill a session loads that qargi does not
           "including --user approvals; another runtime's record and unowned records accept nothing for the selected runtime."))
 SKILL_VERBS["unaccept"] = verb("Remove the acceptance of a skill", [("PROJECT", "project"), ("NAME", "none")], [LOCAL_TARGET, USER_OPT, PLAN, APPROVED],
     desc=("Gated like accept. Removes only the record: the skill itself is not touched and shows as unmanaged again. Refused when there is no such "
-          "acceptance in that scope."))
+          "acceptance in that scope. The token binds the exact provider-owned record and scope, so replacement needs a fresh plan. Revocation remains available "
+          "after skills capability, verification or project layout is lost, when runtime/target identity is valid and unambiguous. Removed or ambiguous definitions refuse."))
 COMMANDS["skill"]["verbs"] = SKILL_VERBS
 TOOL_LIST = opt("--tool-list", "the server's own tool listing, saved to a file (the JSON result of MCP tools/list): the review also judges the pack's tools by it", "FILE", "file")
 TOOL_VERBS = dict(PACK_VERBS)

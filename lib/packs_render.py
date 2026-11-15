@@ -229,10 +229,11 @@ def target_of(inp):
     project = inp.get("project") if isinstance(inp.get("project"), str) else None   # with a project, the definition is the composed one (its extensions' resources and renderers)
     if "requested_target" in inp and P.render_runtime(project, inp["requested_target"] or None) != rt:
         raise P.Refused("the inputs name a different render runtime")
-    skills_dir = P.require(rt, "project_skills_dir", WOULD, home=home, project=project)
-    lay = P.layout(rt, home=home, project=project)
+    context = P.render_context(project, rt) if project else False
+    skills_dir = P.require(rt, "project_skills_dir", WOULD, home=home, project=project, render=context)
+    lay = P.layout(rt, home=home, project=project, render=context)
     surfaces = P.surfaces_of(rt)
-    d = P.composed(rt, "local" if "local" in surfaces else surfaces[0], project)
+    d = P.composed(rt, "local" if "local" in surfaces else surfaces[0], project, render=context)
     res = d.get("resources") if isinstance(d.get("resources"), dict) else {}
     user_dir = (res.get("skills") or {}).get("user_dir")
     packs = (d.get("renderers") or {}).get("packs") if isinstance(d.get("renderers"), dict) else None
@@ -614,18 +615,14 @@ def tool_files(inp, tools):
         form = {"rule": tg["mcp"]["rule"], "name_key": tg["mcp"]["name_key"]}
         M = packs_mcp()
         try:     # the tools of a role are those of the packs that reach it, so the union over the roles gives each pack what its own roles may call
-            # These packs have already been selected for this runtime and vetted. Do not reselect through the member runtime.
-            # Use the same Tool facts and refusal policy as the member guard, with the render's explicit role membership.
-            C = lib_module("packs_check")
+            # Compatibility follows this runtime, not member selection. Reuse approval/review facts and refusal policy from
+            # the member guard, with the render's explicit role membership; a missing approval must still withhold every tool.
             tables = {}
             for p in tools:
-                doc, hints = C.read_tool(p["path"]), C.tool_list_of(p["path"])
-                for key, policy in doc["tools"].items():
-                    read = policy == "always_allow" and not C.write_like(key) and (hints is None or hints["tools"].get(key) == "read-only")
-                    t = M.Tool(p["name"], key, policy, read, None if read else "not a declared read", None)
+                for t in M.pack_tools(p["path"], p["name"]):
                     for role in p["roles"]:
                         if role != "lead":
-                            tables.setdefault(role, {}).setdefault(M.native(form, p["name"], key), []).append(t)
+                            tables.setdefault(role, {}).setdefault(M.native(form, t.pack, t.tool), []).append(t)
             got = {}
             for role, table in tables.items():
                 for name, found in table.items():
@@ -722,10 +719,10 @@ def binding(inp):
     """The project/runtime/target and composed definition the plan authorizes, including sealed executable content."""
     P = provider_module()
     rt, project = inp["provider"], inp["project"]
-    comp = P.compose(rt, "local", project)
+    comp = P.compose(rt, "local", project, render=P.render_context(project, rt))
     body = {"base": P.definition_hash(rt), "definition": comp["definition"],
             "extensions": {x: P.extension_hash(x, rt, "local") for x in comp["extensions"]}}
-    return {"runtime": rt, "target": P.layout(rt, project=project)["render_target"],
+    return {"runtime": rt, "target": P.layout(rt, project=project, render=P.render_context(project, rt))["render_target"],
             "composition": sha(json.dumps(body, sort_keys=True).encode())}
 
 

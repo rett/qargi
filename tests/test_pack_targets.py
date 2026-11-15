@@ -117,6 +117,238 @@ class Targets(unittest.TestCase):
     def manifest(self, runtime="second", project="alpha"):
         return json.loads((self.live(runtime, project) / "MANIFEST.json").read_text())
 
+    def outside(self, rt="second", user=False):
+        base = Path(self.env["HOME"]) if user else self.repo
+        path = base / ("." + rt) / "skills" / "outside"
+        path.mkdir(parents=True, exist_ok=True)
+        (path / "SKILL.md").write_text("---\nname: outside\ndescription: Outside guidance.\n---\nRead carefully.\n")
+        return path
+
+    def test_owned_teardown_after_drift_and_corruption(self):
+        for rt in ("first", "second"):
+            with self.subTest(runtime=rt):
+                dest = self.repo / ("." + rt) / "skills"
+                dest.mkdir(parents=True)
+                (dest / "keep.txt").write_text("owner content")
+                if rt == "first":
+                    doc = json.loads((self.providers / "first.json").read_text())
+                    doc["resources"]["agents"]["link"]["project"] = "dir-symlink"
+                    put(self.providers / "first.json", doc)
+                self.apply(*self.render(rt))
+                self.apply("packs", "link", "alpha", "--target", rt + "-view")
+                if rt == "first":
+                    members = Path(str(self.live(rt)) + ".agents")
+                    members.mkdir()
+                    (members / "fixture.md").write_text("Fixture member")
+                    self.apply("project", "link", "alpha", "--resource", "agents")
+                doc = json.loads((self.providers / (rt + ".json")).read_text())
+                doc["description"] += " changed"
+                put(self.providers / (rt + ".json"), doc)
+                self.cli("packs", "link", "alpha", "--target", rt + "-view", ok=False)
+                if rt == "second":
+                    (self.live(rt) / "MANIFEST.json").write_text("{")
+                    self.cli(*self.render(rt), ok=False)
+                    self.cli("packs", "check", "alpha", "--target", rt + "-view", ok=False)
+                args = (("project", "unlink", "alpha", "--resource", "skills,agents") if rt == "first" else
+                        ("packs", "unlink", "alpha", "--target", rt + "-view"))
+                self.apply(*args)
+                if rt == "first":
+                    self.assertFalse((self.repo / ".claude" / "agents" / "fixture.md").exists())
+                    args = ("project", "unlink", "alpha", "--resource", "skills")
+                self.assertEqual((dest / "keep.txt").read_text(), "owner content")
+                self.assertFalse(dest.is_symlink())
+                # Backup-only crash recovery uses the same engine guards even with an unusable render.
+                backup = dest.with_name("skills.qargi-backup")
+                dest.rename(backup)
+                self.apply(*args)
+                self.assertEqual((dest / "keep.txt").read_text(), "owner content")
+                shutil.rmtree(dest)
+                dest.symlink_to(self.repo)
+                self.cli(*args, ok=False)
+                self.assertEqual(dest.resolve(), self.repo)
+
+    def test_default_packs_unlink_after_composition_change(self):
+        self.apply(*self.render("first"))
+        self.apply("packs", "link", "alpha")
+        doc = json.loads((self.providers / "first.json").read_text())
+        doc["description"] += " changed"
+        put(self.providers / "first.json", doc)
+        self.apply("packs", "unlink", "alpha")
+        self.assertFalse((self.repo / ".first" / "skills").exists())
+
+    def test_default_corrupt_manifest_refuses_loading_but_allows_owned_unlink(self):
+        self.apply(*self.render("first"))
+        self.apply("packs", "link", "alpha")
+        (self.live("first") / "MANIFEST.json").write_text("{")
+        self.cli("packs", "link", "alpha", ok=False)
+        self.cli("packs", "check", "alpha", "--target", "first-view", ok=False)
+        self.apply("packs", "unlink", "alpha")
+        # A fresh render repairs by rebuilding from vetted source, rather than loading corrupt render content.
+        self.apply(*self.render("first"))
+        self.apply("packs", "link", "alpha")
+
+    def test_revoke_after_capability_and_layout_loss(self):
+        original = json.loads((self.providers / "second.json").read_text())
+        for user in (False, True):
+            for loss in ("verification", "support", "layout"):
+                with self.subTest(user=user, loss=loss):
+                    doc = copy.deepcopy(original)
+                    put(self.providers / "second.json", doc)
+                    put(self.conf / "packs" / "accepted.json", {"schema": 1, "user": {}, "projects": {}})
+                    for rt in ("first", "second"):
+                        self.outside(rt, user)
+                        self.apply("skill", "accept", "alpha", "outside", "--target", rt + "-view", *(["--user"] if user else []))
+                    accepted = self.conf / "packs" / "accepted.json"
+                    before = json.loads(accepted.read_text())
+                    bad = copy.deepcopy(doc)
+                    if loss == "layout":
+                        bad["resources"]["skills"].pop("project_dir")
+                    else:
+                        bad["capabilities"]["skills"].update({"verified_on": None} if loss == "verification" else {"value": "no"})
+                    put(self.providers / "second.json", bad)
+                    flags = ["--target", "second-view", *(["--user"] if user else [])]
+                    self.cli("skill", "accept", "alpha", "outside", *flags, ok=False)
+                    self.apply("skill", "unaccept", "alpha", "outside", *flags)
+                    after = json.loads(accepted.read_text())
+                    old = before["user"] if user else before["projects"]["alpha"]
+                    new = after["user"] if user else after["projects"]["alpha"]
+                    self.assertEqual(new, {k: v for k, v in old.items() if v["provider"] != "second"})
+                    put(self.providers / "second.json", doc)
+                    self.apply("skill", "unaccept", "alpha", "outside", "--target", "first-view", *(["--user"] if user else []))
+
+    def test_accept_token_binds_same_provider_composition(self):
+        self.outside()
+        args = ("skill", "accept", "alpha", "outside", "--target", "second-view")
+        token = self.token(*args)
+        doc = json.loads((self.providers / "second.json").read_text())
+        doc["description"] += " changed"
+        put(self.providers / "second.json", doc)
+        self.cli(*args, "--plan", token, "--approved", "fixture", ok=False)
+
+    def test_accept_token_binds_same_provider_target(self):
+        self.outside()
+        args = ("skill", "accept", "alpha", "outside", "--target", "second-view")
+        token = self.token(*args)
+        doc = json.loads((self.providers / "second.json").read_text())
+        doc["session"]["render_target"] = "renamed-view"
+        put(self.providers / "second.json", doc)
+        self.cli(*args[:-1], "renamed-view", "--plan", token, "--approved", "fixture", ok=False)
+
+    def test_revoke_token_binds_exact_record_and_scope(self):
+        self.outside()
+        self.apply("skill", "accept", "alpha", "outside", "--target", "second-view")
+        args = ("skill", "unaccept", "alpha", "outside", "--target", "second-view")
+        token = self.token(*args)
+        accepted = self.conf / "packs" / "accepted.json"
+        data = json.loads(accepted.read_text())
+        data["projects"]["alpha"]["outside"]["approved"] = "replacement authorization"
+        put(accepted, data)
+        self.cli(*args, "--plan", token, "--approved", "fixture", ok=False)
+        self.assertEqual(json.loads(accepted.read_text()), data)
+        self.apply(*args)
+
+    def test_revoke_refuses_removed_ambiguous_identity_and_foreign_slot(self):
+        self.outside()
+        self.apply("skill", "accept", "alpha", "outside", "--target", "second-view")
+        args = ("skill", "unaccept", "alpha", "outside", "--target", "second-view")
+        accepted = self.conf / "packs" / "accepted.json"
+        before = accepted.read_bytes()
+        self.runtime("duplicate", ".duplicate", "second-view")
+        self.cli(*args, ok=False)
+        (self.providers / "duplicate.json").unlink()
+        doc = (self.providers / "second.json").read_text()
+        (self.providers / "second.json").unlink()
+        self.cli(*args, ok=False)
+        self.assertEqual(accepted.read_bytes(), before)
+        (self.providers / "second.json").write_text(doc)
+        data = json.loads(before)
+        record = data["projects"]["alpha"].pop("outside")
+        data["projects"]["alpha"]["skills/second/outside"] = record | {"provider": "first"}
+        put(accepted, data)
+        self.cli(*args, ok=False)
+        self.assertEqual(json.loads(accepted.read_text()), data)
+
+    def test_missing_approval_never_grants_tools(self):
+        # Exercise rendering itself, beyond the member selector: either role can receive this pack on either runtime.
+        for rt in ("first", "second"):
+            for role in ("build", "review"):
+                for approval in (None, ""):
+                    with self.subTest(runtime=rt, role=role, approval=approval):
+                        links = [{"pack": "tool:remote", "scope": "project-role", "project": "alpha", "role": role}]
+                        put(self.conf / "packs" / "links.json", {"links": links})
+                        record = {"compatible_providers": ["any"]}
+                        if approval is not None:
+                            record["sha256"] = approval
+                        put(self.conf / "packs" / "tools" / "remote.pack.json", record)
+                        self.apply(*self.render(rt))
+                        path = self.live(rt) / "mcp.json"
+                        servers = json.loads(path.read_text())["mcpServers"] if path.exists() else {}
+                        self.assertNotIn("remote", servers)  # an empty allow list can mean unrestricted access to a runtime
+
+    def extension(self, name="addon", **updates):
+        doc = {"schema": 2, "kind": "extension", "extension": name, "description": "Shared skills extension",
+               "extends": self.base["family"], "surface": "local", "provides": ["skills"],
+               "adds": {"capabilities": {"skills": {"value": "yes", "note": "fixture"}},
+                        "resources": {"skills": copy.deepcopy(self.base["resources"]["skills"]),
+                                      "settings": copy.deepcopy(self.base["resources"]["settings"])}}}
+        doc["adds"]["resources"]["skills"].update(project_dir=".extended/skills", user_dir="~/.extended/skills")
+        doc["adds"]["resources"]["settings"]["files"] = [{"scope": s, "path": p} for s, p in
+              (("project", ".extended/settings.json"), ("project-local", ".extended/settings.local.json"),
+               ("user", "~/.extended/settings.json"))]
+        doc.update(updates)
+        directory = self.conf / "packs" / "providers" / name
+        put(directory / "definition.json", doc)
+        put(directory / ".pack.json", {"sealed": True, "sha256": P.tree_hash(str(directory))})
+        return directory
+
+    def test_secondary_extension_context_and_qualification(self):
+        for rt in ("first", "second"):
+            doc = json.loads((self.providers / (rt + ".json")).read_text())
+            doc["capabilities"].pop("skills")
+            doc["resources"].pop("skills")
+            doc["resources"].pop("settings")
+            put(self.providers / (rt + ".json"), doc)
+        directory = self.extension()
+        self.answers["models"]["extensions"] = ["addon"]
+        self.save_answers()
+        # Records are bound to each fake base in turn; no qualification calls or claims about a real runtime.
+        for rt in ("first", "second"):
+            with self.subTest(runtime=rt):
+                h = P.extension_hash("addon", rt, "local", root=str(self.providers), library=str(self.conf / "packs" / "providers"))
+                put(self.state / "providers" / "addon" / "verified.json", {"skills": {"hash": h, "by": "conformance", "at": "fixture"}})
+                self.outside("extended")
+                put(self.repo / ".extended" / "settings.json", {"skillOverrides": {"outside": "off"}})
+                self.assertIn("skills=.extended/skills", self.cli(*self.render(rt)))
+                self.apply(*self.render(rt))
+                files = next(p["files"] for p in self.manifest(rt)["packs"] if p["name"] == "shared")
+                self.assertIn(".extended/skills/shared/SKILL.md", files)
+                self.assertRegex(self.cli("packs", "check", "alpha", "--target", rt + "-view"), r"excluded\s+outside")
+                args = ("packs", "link", "alpha", "--target", rt + "-view")
+                self.apply(*args)
+                self.assertEqual((self.repo / ".extended" / "skills").resolve(), self.live(rt) / ".extended" / "skills")
+                self.apply("packs", "unlink", "alpha", "--target", rt + "-view")
+        (self.state / "providers" / "addon" / "verified.json").unlink()
+        self.cli(*self.render(), ok=False)
+        (directory / ".pack.json").unlink()
+        self.cli(*self.render(), ok=False)
+        put(directory / ".pack.json", {"sealed": True, "sha256": P.tree_hash(str(directory))})
+        (directory / "extra").write_text("drift")
+        self.cli(*self.render(), ok=False)
+        (directory / "extra").unlink()
+        self.extension(extends="first")
+        self.assertIn("extensions do not apply", self.cli(*self.render(), ok=False))
+        self.extension(requires={"resources": ["transcripts"]})
+        # Remove a genuinely known required resource, so refusal exercises unmet requirements rather than schema validation.
+        doc = json.loads((self.providers / "second.json").read_text())
+        doc["resources"].pop("transcripts", None)
+        put(self.providers / "second.json", doc)
+        self.assertIn("needs the transcripts resource", self.cli(*self.render(), ok=False))
+        self.extension()
+        self.extension("collision")
+        self.answers["models"]["extensions"] = ["addon", "collision"]
+        self.save_answers()
+        self.assertIn("both add", self.cli(*self.render(), ok=False))
+
     def test_side_by_side_render_check_link_unlink_and_member_defaults(self):
         original = (self.conf / "projects" / "alpha.json").read_bytes()
         for rt in ("first", "second"):
@@ -201,7 +433,7 @@ class Targets(unittest.TestCase):
         put(self.providers / "second.json", doc)
         self.answers["models"]["extensions"] = ["only-first"]
         self.save_answers()
-        self.assertIn("extensions do not apply", self.cli(*self.render(), ok=False))
+        self.assertIn("no such extension", self.cli(*self.render(), ok=False))
         self.assertFalse(self.live().exists())
 
     def test_unsealed_drifted_invalid_secondary_library_and_unrelated_malformed_default(self):

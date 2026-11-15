@@ -1429,7 +1429,7 @@ Refused while it is linked.
 .BI "accept " "[PROJECT] NAME"
 Accept a skill a session loads that qargi does not manage.
 .br
-Finds NAME among the skills a session opened in the project's checkout would load (the checkout, the render and the user's skills directory; see qargi packs check) and applies only to one that is unmanaged or drifted. Without \-\-plan it prints the same review as skill import (files, scripts, URLs, network commands, secret findings) and a plan token that covers the scope, the name and the content hash. With \-\-plan and \-\-approved it records the name, the content hash, the path and your words in the acceptances file, for this project or, with \-\-user, for every project, and writes an audit line. An accepted skill shows as accepted in packs check; if its content changes it shows as drifted and packs check exits 1. qargi skills, excluded skills and skills already accepted are refused with the reason. A local member's guard refuses it. \-\-target selects an eligible local runtime; omitted uses the member runtime. Approvals belong to resource/provider/name, including \-\-user approvals; another runtime's record and unowned records accept nothing for the selected runtime.
+Finds NAME among the skills a session opened in the project's checkout would load (the checkout, the render and the user's skills directory; see qargi packs check) and applies only to one that is unmanaged or drifted. Without \-\-plan it prints the same review as skill import (files, scripts, URLs, network commands, secret findings) and a plan token that covers project, runtime, target, composed definition, scope, name and content hash. With \-\-plan and \-\-approved it records the name, the content hash, the path and your words in the acceptances file, for this project or, with \-\-user, for every project, and writes an audit line. An accepted skill shows as accepted in packs check; if its content changes it shows as drifted and packs check exits 1. qargi skills, excluded skills and skills already accepted are refused with the reason. A local member's guard refuses it. \-\-target selects an eligible local runtime; omitted uses the member runtime. Approvals belong to resource/provider/name, including \-\-user approvals; another runtime's record and unowned records accept nothing for the selected runtime.
 .RS
 .TP
 .BI "\-\-target " "TARGET"
@@ -1456,7 +1456,7 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .BI "unaccept " "[PROJECT] NAME"
 Remove the acceptance of a skill.
 .br
-Gated like accept. Removes only the record: the skill itself is not touched and shows as unmanaged again. Refused when there is no such acceptance in that scope.
+Gated like accept. Removes only the record: the skill itself is not touched and shows as unmanaged again. Refused when there is no such acceptance in that scope. The token binds the exact provider\-owned record and scope, so replacement needs a fresh plan. Revocation remains available after skills capability, verification or project layout is lost, when runtime/target identity is valid and unambiguous. Removed or ambiguous definitions refuse.
 .RS
 .TP
 .BI "\-\-target " "TARGET"
@@ -1755,7 +1755,7 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .BI "unlink " "[PROJECT]"
 Undo packs link.
 .br
-Use the same \-\-target as link for a secondary runtime. Removes only the symbolic link that points to this project's selected runtime render and, if the backup exists, moves it back to the skills directory. Refuses a link to anywhere else, a real directory in its place, and a backup with no link of ours. Same plan token and approval as link; nothing else is deleted.
+Use the same \-\-target as link for a secondary runtime. Removes only the symbolic link that points to this project's selected runtime render and, if the backup exists, moves it back to the skills directory. Refuses a link to anywhere else, a real directory in its place, and a backup with no link of ours. Same plan token and approval as link; nothing else is deleted. Owned unlink and backup recovery remain available after composition drift or render manifest corruption; fresh loading still needs a valid current render.
 .RS
 .TP
 .BI "\-\-target " "TARGET"

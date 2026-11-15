@@ -86,8 +86,8 @@ prov_of() { # project: sets PROV (the runtime of the project's local surface, wh
 }
 prov_need() { # project would field...: prov_of, then the refusals above
   local prj=$1 would=$2 f; prov_of "$prj"; shift 2
-  pymod provider require-skills "$PROV" --would "$would" --project "$prj" || exit $?
-  for f; do pymod provider layout "$PROV" "$f" --would "$would" --project "$prj" >/dev/null || exit $?; done
+  pymod provider require-skills "$PROV" --would "$would" --project "$prj" --render-context || exit $?
+  for f; do pymod provider layout "$PROV" "$f" --would "$would" --project "$prj" --render-context >/dev/null || exit $?; done
 }
 case $KIND in skill|tool|packs) ;; *) usage_die "usage: packs.sh skill|tool|packs <verb> ...";; esac
 [ -z "$TOOL_LIST" ] || case $KIND:$VERB in tool:import|tool:seal) ;; *) usage_die "--tool-list FILE (the server's own tool listing) goes with qargi tool import and qargi tool seal";; esac
@@ -334,7 +334,7 @@ rt_main() { # verb: apply|check with --target
   [ -n "$TARGET" ] || die "$(rt_say "$prj")"
   [ -n "$prj" ] || usage_die "$1 --target $TARGET needs PROJECT"
   prov_of "$prj"
-  pymod provider layout "$PROV" render_target --would "render the project's packs for a local session" --project "$prj" >/dev/null || exit $?
+  pymod provider layout "$PROV" render_target --would "render the project's packs for a local session" --project "$prj" --render-context >/dev/null || exit $?
   rn_main "$1"
 }
 rn_main() { # verb: apply|check
@@ -375,7 +375,7 @@ rn_main() { # verb: apply|check
 cl_inputs() { # project outfile: the render inputs plus the skills of a real project skills directory in the checkout
   local prj=$1 out=$2 co sk d n kids='[]'
   rn_inputs "$prj" "$out.cc"
-  co=$(jq -r .checkout "$out.cc"); sk=$co/$(pymod provider layout "$PROV" project_skills_dir --project "$prj")
+  co=$(jq -r .checkout "$out.cc"); sk=$co/$(pymod provider layout "$PROV" project_skills_dir --project "$prj" --render-context)
   if [ -n "$co" ] && [ -d "$(dirname "$sk")" ] && [ ! -L "$(dirname "$sk")" ] && [ -d "$sk" ] && [ ! -L "$sk" ]; then
     while IFS= read -r -d '' d; do
       [ -f "$d/SKILL.md" ] || continue
@@ -415,7 +415,7 @@ cl_main() { # verb: link|unlink
 # and apply re-plans and needs the token to match. The --approved text is stored with the record, not verified. One lock
 # for the file, since the acceptances of every project share it; the script writes it atomically, mode 600.
 ac_main() { # verb: accept|unaccept
-  local prj=${ARGS[0]:-} name=${ARGS[1]:-} scope=project who tok hash real shown AUPY ACC rec
+  local prj=${ARGS[0]:-} name=${ARGS[1]:-} scope=project who tok hash real shown AUPY ACC rec binding
   [ "$KIND" = skill ] || die "$1 is for skills: qargi skill $1 PROJECT NAME"
   [ -n "$prj" ] && [ -n "$name" ] || usage_die "skill $1 needs PROJECT NAME"
   valid_project "$prj" || die "not a project name: $prj"
@@ -423,7 +423,7 @@ ac_main() { # verb: accept|unaccept
   { [[ $name =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && [[ $name != *$'\n'* ]]; } || die "not a skill name: $name"
   [ -z "$USER_SCOPE" ] || scope=user
   who=$scope; [ "$scope" = user ] || who=project:$prj
-  if [ "$1" = accept ] || [ -n "$TARGET" ]; then prov_need "$prj" "audit the skills a session would load" project_skills_dir
+  if [ "$1" = accept ]; then prov_need "$prj" "audit the skills a session would load" project_skills_dir
   else PROV=$(project_provider "$prj" local 2>/dev/null) || PROV=''; fi
   AUPY=$(dirname "$(readlink -f "$0")")/packs_audit.py; ACC=$PACKS/accepted.json
   RN_W=$(mktemp -d); RN_LK=''; trap rn_cleanup EXIT
@@ -436,14 +436,17 @@ ac_main() { # verb: accept|unaccept
     hash=$(jq -r .hash "$RN_W/target.json"); real=$(jq -r .real "$RN_W/target.json"); shown=$(jq -r .path "$RN_W/target.json")
     echo "== review of skill $name at $(printf '%s' "$shown" | tr -d '\000-\037\177')"
     review skill "$real" || echo "note: the review has FAIL findings; accepting takes the skill as it is, qargi does not store or change it"
-    tok=$(printf 'skill-accept|%s|%s|%s|%s|%s' "$prj" "$PROV" "$who" "$name" "$hash" | plan_token)
+    binding=$(jq -cS .render_binding "$RN_W/target.json")
+    tok=$(printf 'skill-accept|%s|%s|%s|%s|%s|%s' "$prj" "$PROV" "$who" "$name" "$hash" "$binding" | plan_token)
   else
     rec=$(python3 -I "$AUPY" acceptance "$ACC" "$scope" "$prj" "$name" ${TARGET:+--target "$TARGET"}) || exit 1
     hash=$(jq -r .sha256 <<<"$rec")
+    PROV=$(jq -r '.provider // ""' <<<"$rec")
     echo "unaccept plan for $prj: remove the acceptance of skill $name ($who, runtime ${PROV:-unowned}, content $hash)"
     echo "  accepted at $(jq -r '.at // "?"' <<<"$rec") from $(jq -r '.path // "?"' <<<"$rec"), approved: $(jq -r '.approved // ""' <<<"$rec")"
     echo "  the skill itself is not touched; qargi lists it as unmanaged again."
-    tok=$(printf 'skill-unaccept|%s|%s|%s|%s|%s' "$prj" "$PROV" "$who" "$name" "$hash" | plan_token)
+    binding=$(jq -r .record_binding <<<"$rec")
+    tok=$(printf 'skill-unaccept|%s|%s|%s|%s|%s|%s' "$prj" "$PROV" "$who" "$name" "$hash" "$binding" | plan_token)
   fi
   if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: --plan $tok --approved \"<the user's go-ahead>\")"; exit 0; fi
   need_token "$tok"

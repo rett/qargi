@@ -67,8 +67,9 @@ def bind(inp):
 
 def skills_dir(inp):
     """The project skills directory of the project's provider (relative to a checkout or a render), or exit 3."""
-    provider.require_skills(inp["provider"], "link the checkout's skills directory to the render", project=inp["project"])
-    return provider.require(inp["provider"], "project_skills_dir", "link the checkout's skills directory to the render", project=inp["project"])
+    context = provider.render_context(inp["project"], inp["provider"])
+    provider.require_skills(inp["provider"], "link the checkout's skills directory to the render", project=inp["project"], render=context)
+    return provider.require(inp["provider"], "project_skills_dir", "link the checkout's skills directory to the render", project=inp["project"], render=context)
 
 
 def render_path(inp):
@@ -86,17 +87,15 @@ class SkillsLink(linker.Link):
         rel = skills_dir(inp)
         super().__init__("skills", inp["project"], inp.get("checkout") or "", rel, render_path(inp), "dir-symlink", inp["state"],
                          dict(WORDS, unlink="qargi packs unlink %s%s" % (inp["project"], " --target " + inp["requested_target"] if inp.get("requested_target") else "")))
-        # Share ownership validation with project link's default Skills path. Missing sources still use the engine's recovery.
-        live = packs_render.render_dir(inp["state"], inp["project"], inp["provider"])
-        if os.path.isdir(live):
-            packs_render.owned_manifest(inp, live, current=True)
-        res = provider.composed(inp["provider"], "local", inp["project"]).get("resources") or {}
+        res = provider.composed(inp["provider"], "local", inp["project"],
+                                render=provider.render_context(inp["project"], inp["provider"])).get("resources") or {}
         mode = ((res.get("skills") or {}).get("link") or {}).get("project")
         if inp.get("requested_target") and mode != "dir-symlink":
             raise provider.Unsupported("packs link --target requires skills link.project dir-symlink")
 
     def source_missing(self):
-        target = provider.layout(self.inp["provider"], project=self.project)["render_target"]
+        target = provider.layout(self.inp["provider"], project=self.project,
+                                 render=provider.render_context(self.project, self.inp["provider"]))["render_target"]
         how = "run qargi packs apply --target %s %s first" % (target, self.project) if target else "qargi does not make one for this provider"
         die("there is no render of %s yet: %s" % (self.project, how))
 
@@ -136,6 +135,12 @@ class SkillsLink(linker.Link):
 
 def plan(verb, link):
     """Keep the engine's ownership/recovery facts and bind the selected render definition into its token."""
+    if verb == "link":
+        live = packs_render.render_dir(link.inp["state"], link.project, link.inp["provider"])
+        if os.path.isdir(live):
+            if os.path.lexists(os.path.join(live, "MANIFEST.json")) and packs_render.read_manifest(live) is None:
+                die("render has no valid manifest; refusing to link it (apply a fresh render first)")
+            packs_render.owned_manifest(link.inp, live, current=True)
     return linker.plan(verb, link) | {"render_binding": packs_render.binding(link.inp)}
 
 

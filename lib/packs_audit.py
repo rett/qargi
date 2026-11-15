@@ -101,9 +101,10 @@ WOULD = "audit the skills a session would load"
 def layout(inp):
     """The provider's layout (with ~ expanded for inp["home"]); exit 3 unless it can serve an audit."""
     project = inp.get("project")
-    provider.require_skills(inp["provider"], WOULD, project=project)
-    provider.require(inp["provider"], "project_skills_dir", WOULD, project=project)
-    return provider.layout(inp["provider"], home=inp.get("home") or None, project=project)
+    context = provider.render_context(project, inp["provider"]) if project else False
+    provider.require_skills(inp["provider"], WOULD, project=project, render=context)
+    provider.require(inp["provider"], "project_skills_dir", WOULD, project=project, render=context)
+    return provider.layout(inp["provider"], home=inp.get("home") or None, project=project, render=context)
 
 
 def expand(path, inp):
@@ -118,7 +119,9 @@ def resources(inp):
     """The resources of the provider's local definition (its first surface when it has no local one), after the checks of layout()."""
     layout(inp)
     surfaces = provider.surfaces_of(inp["provider"])
-    res = provider.composed(inp["provider"], "local" if "local" in surfaces else surfaces[0], inp.get("project")).get("resources")
+    project = inp.get("project")
+    res = provider.composed(inp["provider"], "local" if "local" in surfaces else surfaces[0], project,
+                            render=provider.render_context(project, inp["provider"]) if project else False).get("resources")
     return res if isinstance(res, dict) else {}
 
 
@@ -384,7 +387,7 @@ def acceptance_key(table, resource, prov, name):
     or under "resource/provider/name" when another provider's record holds the name. A record counts only when it names this
     resource and this provider: one that lacks either is nobody's."""
     k = "%s/%s/%s" % (resource, prov, name)
-    if isinstance(table.get(k), dict):
+    if isinstance(table.get(k), dict) and table[k].get("resource") == resource and table[k].get("provider") == prov:
         return k
     r = table.get(name)
     if not isinstance(r, dict):
@@ -546,6 +549,7 @@ def cmd_target(inp, name, scope, outfile):
     if not e.get("hash"):
         die("cannot read the content of %s" % e["shown"])
     t = {"name": name, "hash": e["hash"], "path": e["shown"], "real": e["real"], "where": e["where"], "state": e["state"], "scope": scope}
+    t["render_binding"] = {"project": inp["project"], **packs_render.binding(inp)}
     say("accept plan for %s: skill %s (%s, content %s)" % (clean(inp["project"]), name, e["state"], e["hash"]))
     say("  at:    %s" % clean(e["shown"]))
     say("  runtime: %s; target: %s" % (inp["provider"], layout(inp)["render_target"]))
@@ -600,7 +604,7 @@ def project_runtime(project, required, target=None):
     """The project's local runtime (what its acceptances belong to). None when it has none and that is not required: an acceptance can
     still be read and removed then."""
     if target:
-        return provider.render_runtime(project, target)
+        return provider.render_runtime(project, target, qualify=required)
     try:
         return provider.provider_of_project(project, paths.conf(), "local")
     except provider.ProviderError:
@@ -611,12 +615,17 @@ def project_runtime(project, required, target=None):
 
 def cmd_acceptance(path, scope, project, name, target=None):
     t = table(read_for_write(path), scope, project, False)
-    k = acceptance_key(t, RESOURCE, project_runtime(project, False, target), name)
+    prov = project_runtime(project, False, target)
+    k = acceptance_key(t, RESOURCE, prov, name)
     r = t.get(k) if k is not None else None
     if not isinstance(r, dict):
         die("%s is not accepted %s" % (name, "for every project (--user)" if scope == "user" else "for project " + project))
     # the text fields are printed by the shell in the unaccept plan: no control character (a newline would forge a line of the plan)
-    print(json.dumps({k: clean(v) if k in ("path", "approved", "at") else v for k, v in r.items()}))
+    # Bind the raw provider-owned record and its exact slot/scope before sanitizing displayed fields. This is plan metadata,
+    # never a new acceptance schema, and does not depend on current capability, layout or extension qualification.
+    binding = {"project": project, "scope": scope, "runtime": prov, "target": target, "slot": k, "record": r}
+    digest = hashlib.sha256(json.dumps(binding, sort_keys=True).encode()).hexdigest()
+    print(json.dumps({k: clean(v) if k in ("path", "approved", "at") else v for k, v in r.items()} | {"record_binding": digest}))
 
 
 def cmd_store(verb, path, scope, project, name, rest, target=None):
