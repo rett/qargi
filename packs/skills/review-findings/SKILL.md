@@ -11,5 +11,7 @@ description: How a reviewer writes findings: severity high, medium or low, file:
   - a concrete failure scenario: the input or sequence of events that goes wrong, and what the user sees;
   - the evidence: run it, or trace it and quote the lines; say if you only reasoned.
 - Leave out style nits unless the task asks for them.
+- Assess cohesion from concrete changes and dependencies. Keep each logical change with its supporting tests, documentation and changelog. Preserve meaningful buildable boundaries and one patch per actual commit. Reject semantically mixed work with evidence naming independent changes or broken dependencies.
+- Use directory counts and patch size as advisory prompts for cohesion review. Source acceptance requires independent inspection. Choose commit boundaries from that evidence.
 - Report only: write no patch and change no file; show a suggested fix as a fenced diff in the report.
 - No findings: say so, and list what you checked under `# Checked`. The last line is `verdict: accept` or `verdict: revise`.

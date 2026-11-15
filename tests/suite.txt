@@ -108,7 +108,7 @@ full | par | 804 | 214 | bash tests/test_packs_link.sh | lib/packs*.sh lib/packs
 fast | par | 300 | 20 | bash tests/test_linker.sh | lib/linker.py
 full | par | 1038 | 313 | bash tests/test_packs_audit.sh | lib/packs*.sh lib/packs*.py
 full | par | 612 | 108 | bash tests/test_packs_claude_hostile.sh | lib/packs*.sh lib/packs*.py
-full | par | 1356 | 226 | bash tests/test_review.sh | lib/review.sh lib/review_check.py lib/local.sh lib/local_run.py lib/procenv.py lib/lib.sh lib/merged.py
+full | par | 1356 | 226 | bash tests/test_review.sh | lib/review.sh lib/review_check.py lib/local.sh lib/local_run.py lib/procenv.py lib/lib.sh lib/merged.py contract/contract.md
 full | par | 306 | 61 | bash tests/test_marshal.sh | lib/marshal.sh
 full | par | 300 | 32 | bash tests/test_marshal_flow.sh | lib/marshal*.sh lib/marshal*.py
 full | par | 300 | 20 | bash tests/test_marshal_lease.sh | lib/marshal*.sh lib/marshal*.py lib/review.sh lib/local.sh lib/feature.sh
@@ -138,8 +138,8 @@ fast | par | 300 | 2 | python3 tests/role_seed_sim.py review
 fast | par | 300 | 2 | python3 tests/role_seed_sim.py test
 full | par | 438 | 97 | bash tests/test_open_providers.sh
 fast | par | 300 | 2 | bash tests/test_neutral.sh | *
-fast | par | 300 | 1 | bash tests/test_skill_budget.sh | skills/*/SKILL.md tests/skill-budget.txt
-fast | par | 300 | 1 | bash tests/test_prompts.sh | contract/* roles/*/ROLE.md agents/member.body.md packs/skills/* lib/providers/claude-code* skills/qargi-flow/SKILL.md skills/qargi-verify/SKILL.md
+fast | par | 300 | 1 | bash tests/test_skill_budget.sh | skills/* packs/skills/*.md contract/*.md roles/*/ROLE.md agents/member.md agents/member.body.md provision/templates/*.md lib/providers/*.md lib/providers/*.json tests/skill-budget.txt tests/skill-dup-allowlist.txt tests/skill-verbs-allowlist.txt lib/commands.py
+fast | par | 300 | 1 | bash tests/test_prompts.sh | contract/* roles/*/ROLE.md agents/member.body.md packs/skills/* lib/providers/claude-code* skills/qargi-flow/SKILL.md skills/qargi-verify/SKILL.md CONTRIBUTING.md
 fast | serial | 300 | 2 | bash tests/test_tool_copy.sh | install.sh tests/hermetic.sh tests/hermetic.py
 fast | par | 300 | 37 | bash tests/test_hermetic.sh | tests/hermetic.sh tests/hermetic.py tests/hermetic_lint.py CONTRIBUTING.md
 fast | par | 300 | 26 | bash tests/test_gitflow_detached.sh
