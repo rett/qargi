@@ -160,7 +160,7 @@ class Campaign(unittest.TestCase):
                 self.invalid(api, doc, "schema")
         doc = document()
         doc["label"] = "café 雪 😀\u202e"
-        # Printable formatting scalars are data, never echoed in diagnostics.
+        # U+202E is a non-printable scalar, permitted as data. CLI text must escape it.
         C.validate(doc)
         for field in ("label", "campaign"):
             doc = document()
@@ -171,6 +171,33 @@ class Campaign(unittest.TestCase):
         self.invalid(C.validate, doc, "schema")
         doc = document()
         doc["\x1b"] = "bad"
+        self.invalid(C.validate, doc, "schema")
+        for field in ("objective", "requirement"):
+            for control in ("\t", "\r\n"):
+                doc = document()
+                if field == "objective":
+                    doc[field] = "bad" + control + "text"
+                else:
+                    doc["requirements"][0]["text"] = "bad" + control + "text"
+                for api in (C.validate, lambda d: C.decode(json.dumps(d).encode())):
+                    self.invalid(api, doc, "schema")
+
+    def test_exact_json_types_refuse_subclasses(self):
+        from collections import OrderedDict
+        from enum import IntEnum
+
+        class Number(IntEnum):
+            ONE = 1
+
+        class Text(str):
+            pass
+
+        self.invalid(C.validate, OrderedDict(document()), "schema")
+        doc = document()
+        doc["version"] = Number.ONE
+        self.invalid(C.validate, doc, "schema")
+        doc = document()
+        doc["label"] = Text("label")
         self.invalid(C.validate, doc, "schema")
 
     def test_strict_integer_fields(self):
@@ -317,6 +344,52 @@ class Campaign(unittest.TestCase):
         child["work"][-1]["design"] = design(2)
         self.bad_transition(parent, child)
 
+    def test_transition_input_provenance_and_preservation(self):
+        child = document()
+        child["label"] = "Revised"
+        missing = document()
+        del missing["label"]
+        oversized = document()
+        oversized["objective"] = "x" * 4097
+        joint = document()
+        joint["requirements"] = [dict(id="r1:req%d" % i, text="x" * 2048, state="active") for i in range(128)]
+        for w in joint["work"]:
+            w["requirements"] = []
+        label = document()
+        label["label"] = "a" * 129
+        for parent, code, path in (([], "schema", "$parent"), (0, "schema", "$parent"),
+                                   (False, "schema", "$parent"), (missing, "schema", "$parent"),
+                                   (oversized, "bounds", "$parent"), (joint, "bounds", "$parent"),
+                                   (label, "bounds", "$parent.label")):
+            before_parent, before_child = copy.deepcopy(parent), copy.deepcopy(child)
+            error = self.invalid(lambda d: C.transition(parent, d, rev=2), child, code)
+            self.assertEqual(error.path, path)
+            self.assertEqual(parent, before_parent)
+            self.assertEqual(child, before_child)
+        # Both successful and refused transitions leave both input trees untouched.
+        for parent, candidate, code in ((document(), child, None),
+                                        (document(), document(), "no-change"),
+                                        (document(), dict(child, label=""), "schema"),
+                                        (missing, dict(child, label=""), "schema"),
+                                        (document(), dict(child, campaign=Q), "transition")):
+            before_parent, before_child = copy.deepcopy(parent), copy.deepcopy(candidate)
+            if code is None:
+                normalized = C.transition(parent, candidate, rev=2)
+                normalized["participants"][0]["label"] = "detached"
+            else:
+                error = self.invalid(lambda d: C.transition(parent, d, rev=2), candidate, code)
+                self.assertTrue(error.path == "$" or error.path.startswith("$."))
+            self.assertEqual(parent, before_parent)
+            self.assertEqual(candidate, before_child)
+        parent = document()
+        parent["work"].append(work("r3:future"))
+        candidate = copy.deepcopy(parent)
+        candidate["label"] = "Revised"
+        before_parent, before_child = copy.deepcopy(parent), copy.deepcopy(candidate)
+        self.bad_transition(parent, candidate, "identity", rev=2)
+        self.assertEqual(parent, before_parent)
+        self.assertEqual(candidate, before_child)
+
     def test_briefing_corrections_and_warning_wording(self):
         parent = document()
         parent["work"][1]["design"] = design(3)
@@ -413,6 +486,18 @@ class Campaign(unittest.TestCase):
         pin["graph"]["digest"] = "sha256:" + "b" * 64
         C.transition(parent, child, rev=2)  # Same relation ID grants no authority.
 
+    def test_graph_pin_refuses_same_source_endpoint(self):
+        doc = graph_document()
+        doc["work"][1]["source"] = copy.deepcopy(doc["work"][0]["source"])
+        pin = doc["coordination"][0]["graph_pin"]
+        pin["to"] = pin["from"]
+        self.invalid(C.validate, doc, "graph-pin")
+        doc["coordination"][0]["graph_pin"] = None
+        doc["work"][0]["design"] = design()
+        doc["coordination"].append(dict(id="r1:reverse", dependent="r1:api-design", upstream="r1:client",
+                                        briefed=None, graph_pin=None))
+        C.transition(None, doc, rev=1)  # Unpinned notification cycles still work.
+
     def test_graph_rule_parity(self):
         self.assertIs(C.typed_ref, G.typed_ref)
         self.assertIs(C.at, G.at)
@@ -453,6 +538,73 @@ class Campaign(unittest.TestCase):
             else:
                 C.validate(doc)
 
+    def test_v1_literal_typed_ref_and_date_grammar(self):
+        # Literal v1 expectations complement helper parity; future helper changes
+        # must be reviewed against the campaign version contract, not inherited silently.
+        refs = (("backlog:aa", True), ("backlog:a", False), ("backlog:a--b", True),
+                ("backlog:0a", True), ("backlog:a-", False), ("backlog:-a", False),
+                ("backlog:develop", True), ("backlog:雪", False), ("backlog:Aa", False),
+                ("backlog:a_b", False), ("backlog:aa:bb", False),
+                ("feature:a", True), ("feature:0", True), ("feature:a-b", True),
+                ("feature:a--b", False), ("feature:master", False), ("feature:develop", False),
+                ("feature:" + "a" * 40, True), ("feature:" + "a" * 41, False),
+                ("feature:aa/branch", False))
+        for ref, valid in refs:
+            with self.subTest(ref=ref):
+                doc = document()
+                doc["participants"][0]["qargi_project"] = "declared"
+                doc["work"][0]["source"] = dict(kind=ref.partition(":")[0], ref=ref, pin=None)
+                if valid:
+                    C.validate(doc)
+                else:
+                    self.invalid(C.validate, doc, "schema")
+        dates = (("2024-02-29", True), ("2026-02-29", False), ("0000-01-01", False),
+                 ("9999-12-31", True), ("2026-1-01", False), ("20261114", False),
+                 ("2026-11-14T12:34", True), ("2026-11-14t12:34z", True),
+                 ("2026-11-14T12:34:56.123456789Z", True),
+                 ("2026-11-14T12:34:56,125+02:30", True),
+                 ("2026-11-14T23:59:59-23:59", True),
+                 ("2026-11-14T24:00", False), ("2026-11-14T12:60", False),
+                 ("2026-11-14T12:34:60Z", False), ("2026-11-14T12:34+24:00", False),
+                 ("2026-11-14T12:34+02:60", False), ("2026-11-14T12:34+0230", False),
+                 ("2026-11-14 12:34Z", False), ("2026-11-14T1234Z", False))
+        for stamp, valid in dates:
+            with self.subTest(stamp=stamp):
+                doc = document()
+                doc["provenance"]["at"] = stamp
+                if valid:
+                    C.validate(doc)
+                else:
+                    self.invalid(C.validate, doc, "schema")
+
+    def test_v1_literal_source_pin_grammar(self):
+        # Source kinds and pin types are separate from the payload grammar.
+        allowed = {"backlog": {None, "item-digest", "file-digest", "commit"},
+                   "feature": {None, "commit"},
+                   "external": {None, "file-digest", "commit", "opaque"}}
+        payloads = (("item-digest", DIGEST, True), ("file-digest", DIGEST, True),
+                    ("item-digest", "sha256:" + "A" * 64, False),
+                    ("file-digest", "sha256:" + "a" * 63, False),
+                    ("file-digest", "a" * 64, False),
+                    ("commit", "a" * 40, True), ("commit", "b" * 64, True),
+                    ("commit", "A" * 40, False), ("commit", "a" * 39, False),
+                    ("commit", "a" * 41, False), ("commit", "a" * 65, False),
+                    ("commit", "sha256:" + "a" * 64, False),
+                    ("opaque", "$(never execute); https://example.org/pin", True),
+                    ("opaque", "", False), ("opaque", "   ", False))
+        for kind, permitted in allowed.items():
+            for typ, value, valid_payload in ((None, None, True), *payloads):
+                with self.subTest(kind=kind, typ=typ, value=value):
+                    doc = document()
+                    doc["participants"][0]["qargi_project"] = "declared"
+                    doc["work"][0]["source"] = dict(kind=kind,
+                        ref="opaque issue" if kind == "external" else kind + ":client",
+                        pin=None if typ is None else dict(type=typ, value=value))
+                    if typ in permitted and valid_payload:
+                        C.validate(doc)
+                    else:
+                        self.invalid(C.validate, doc, "schema")
+
     def test_unresolved_attempts_and_opaque_pointers(self):
         for target in (dict(kind="ref", ref="$(never execute); file:///not-opened"),
                        dict(kind="qargi-attempt", run="qargi.Ab12Cd", prepared_identity=None,
@@ -463,7 +615,9 @@ class Campaign(unittest.TestCase):
             doc["work"][0]["links"] = [link(purpose, target) for purpose in C.PURPOSES]
             C.validate(doc)
         for field, value, code in (("run", "qargi.bad", "schema"), ("prepared_identity", "A" * 32, "schema"),
-                                   ("prepared_epoch", -1, "bounds"), ("attempt", 257, "bounds")):
+                                   ("prepared_epoch", -1, "bounds"),
+                                   ("prepared_epoch", C.MAX_EPOCH + 1, "bounds"),
+                                   ("attempt", 257, "bounds")):
             doc = document()
             bad = dict(target, **{field: value})
             doc["work"][0]["links"] = [link(target=bad)]
@@ -472,13 +626,44 @@ class Campaign(unittest.TestCase):
         doc["work"][0]["links"] = [dict(link(), status="resolved")]
         self.invalid(C.validate, doc, "schema")
 
+    def test_complete_canonical_link_identity(self):
+        target = dict(kind="qargi-attempt", run="qargi.Ab12Cd", prepared_identity=None,
+                      prepared_epoch=None, attempt=1)
+        first = link("source-review", target)
+        distinct = [first, dict(first, by="second reviewer"),
+                    dict(first, at="2026-11-15"), dict(first, digest=DIGEST),
+                    dict(first, target=dict(target, prepared_identity="b" * 32)),
+                    link("source-review", dict(kind="ref", ref="review/report.md")),
+                    link("source-review", dict(kind="ref", ref="review/other.md"))]
+        doc = document()
+        doc["work"][0]["links"] = distinct
+        expected = C.canonicalize(doc)
+        normalized = C.validate(doc)
+        client = next(w for w in normalized["work"] if w["id"] == "r1:client")
+        self.assertEqual(len(client["links"]), len(distinct))
+        doc["work"][0]["links"].reverse()
+        self.assertEqual(C.canonicalize(doc), expected)
+        # Dictionary insertion order is irrelevant; each complete duplicate is refused.
+        for original in distinct:
+            duplicate = dict(reversed(list(original.items())))
+            duplicate["target"] = dict(reversed(list(original["target"].items())))
+            doc["work"][0]["links"] = [original, duplicate]
+            before = copy.deepcopy(doc)
+            self.invalid(C.validate, doc, "reference")
+            self.assertEqual(doc, before)
+
     def test_deterministic_semantic_order_and_duplicates(self):
         doc = document()
         doc["participants"].append(participant(Q))
         doc["requirements"].extend(dict(id=ident, text=ident, state="active") for ident in ("r10:aa", "r2:zz"))
         doc["work"][0]["requirements"] += ["r10:aa", "r2:zz"]
         doc["work"][0]["links"] = [link("outcome"), link("evaluation")]
+        doc["work"][0]["state"] = "withdrawn"
+        doc["coordination"].append(dict(id="r2:also-follows", dependent="r1:api-design", upstream="r1:client",
+                                        briefed=brief(), graph_pin=None))
+        doc["work"][0]["design"] = design(2)
         expected = C.canonicalize(doc)
+        expected_findings = C.findings(doc)
         rng = random.Random(23)
         for _ in range(20):
             shuffled = copy.deepcopy(doc)
@@ -488,11 +673,12 @@ class Campaign(unittest.TestCase):
                 rng.shuffle(w["requirements"])
                 rng.shuffle(w["links"])
             self.assertEqual(C.canonicalize(shuffled), expected)
+            self.assertEqual(C.findings(shuffled), expected_findings)
         self.assertEqual([r["id"] for r in C.validate(doc)["requirements"]], ["r1:api", "r2:zz", "r10:aa"])
         self.assertTrue(expected.endswith(b"\n"))
         self.assertEqual(expected, (json.dumps(C.validate(doc), sort_keys=True, separators=(",", ":"),
                                              ensure_ascii=True) + "\n").encode())
-        doc["work"][0]["links"].append(dict(link("outcome"), by="different", digest=DIGEST))
+        doc["work"][0]["links"].append(link("outcome"))
         self.invalid(C.validate, doc, "reference")
         doc = document()
         doc["work"][0]["requirements"].append("r1:api")
@@ -503,10 +689,13 @@ class Campaign(unittest.TestCase):
                    (4096, lambda d, v: d.update(objective=v)),
                    (2048, lambda d, v: d["requirements"][0].update(text=v)),
                    (1024, lambda d, v: d["participants"][0].update(locator=v)),
+                   (128, lambda d, v: d["participants"][0].update(label=v)),
                    (1024, lambda d, v: d["provenance"].update(basis=v)),
                    (128, lambda d, v: d["provenance"].update(by=v)),
                    (1024, lambda d, v: d["work"][0]["source"].update(ref=v)),
                    (1024, lambda d, v: d["work"][1]["design"].update(ref=v)),
+                   (1024, lambda d, v: d["work"][0].update(links=[link(target=dict(kind="ref", ref=v))])),
+                   (1024, lambda d, v: d["coordination"][0].update(briefed=dict(brief(), ref=v))),
                    (128, lambda d, v: d["work"][0]["source"].update(pin=dict(type="opaque", value=v)))]
         for limit, setter in setters:
             for unit in ("a", "é"):
@@ -515,6 +704,13 @@ class Campaign(unittest.TestCase):
                 setter(doc, value)
                 C.validate(doc)
                 setter(doc, value + "a")
+                self.invalid(C.validate, doc, "bounds")
+        for size in (1024, 1025):
+            doc = graph_document()
+            doc["coordination"][0]["graph_pin"]["graph"]["locator"] = "a" * size
+            if size == 1024:
+                C.validate(doc)
+            else:
                 self.invalid(C.validate, doc, "bounds")
         for text in ("", " ", "\n"):
             doc = document()
@@ -630,7 +826,24 @@ class Campaign(unittest.TestCase):
         doc["work"][0]["source"] = dict(kind="backlog", ref="feature:client", pin=None)
         self.invalid(C.validate, doc, "schema")
 
-    def test_pure_apis_no_mutation_files_config_or_lifecycle(self):
+    def test_aliased_attribution_normalization_is_detached(self):
+        doc = document()
+        doc["work"][0]["design"] = doc["work"][1]["design"]
+        doc["work"][0]["links"] = [link()]
+        doc["work"][1]["links"] = doc["work"][0]["links"]
+        before = copy.deepcopy(doc)
+        normalized = C.validate(doc)
+        first, second = normalized["work"]
+        self.assertIsNot(first["design"], second["design"])
+        self.assertIsNot(first["links"][0], second["links"][0])
+        first["design"]["by"] = "changed"
+        first["links"][0]["by"] = "changed"
+        self.assertEqual(second["design"]["by"], "lead")
+        self.assertEqual(second["links"][0]["by"], "lead")
+        self.assertEqual(doc, before)
+
+    def test_pure_api_calls_and_campaign_reload_under_io_mocks(self):
+        # Dependencies were imported earlier; their import behavior is a static review.
         doc = graph_document()
         original = copy.deepcopy(doc)
         raw = json.dumps(doc).encode()

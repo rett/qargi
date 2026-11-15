@@ -19,6 +19,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The new, unreleased graph input contract requires Unicode scalar values in free-text `by`, `basis` and `ref` fields. Escaped lone surrogates produce invalid provenance reports; valid surrogate pairs and printable Unicode remain supported. This does not establish general JSON security.
 
 ### Fixed
+- Campaign declaration v1 links retain distinct attribution and digest provenance, refusing only complete canonical duplicates. Pure transition errors identify invalid parents with `$parent` paths, and graph pins refuse identical source endpoints. Literal grammar and detached-input regressions pin the current v1 contract; store and command integration remain separate.
 - Graph inputs preserve terminal slash and `/./` kernel semantics instead of silently opening a regular file after path normalization. Deeply nested unrelated registry JSON is skipped by shared inference, and a selected deep project configuration yields an invalid graph report. Relative graph paths from an unavailable current directory produce `input-unreadable`; absolute inputs remain usable with an accessible configuration and explicit project. The public shell entrypoints may still print getcwd startup warnings. `backlog list`, `add` and `done` require a repository marker even though graph observation of an absolute backlog does not.
 
 ## [0.2.14] - 2026-11-13

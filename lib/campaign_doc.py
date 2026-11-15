@@ -12,6 +12,10 @@ All refusals raise Invalid with code, path and details['path']; messages and pat
 are ASCII safe for text output and never include supplied free text. Codes are
 invalid-json, duplicate-json-key, schema, version, bounds, identity, reference,
 graph-pin, transition, no-change. Errors are first-error, warnings are separate.
+In transition, child errors use $ and invalid-parent errors use $parent, keeping
+the same codes; child validation runs first. Invalid.message has no path prefix.
+Shared graph grammar is part of campaign v1: incompatible changes require an
+explicit version contract. Snapshot validation does not verify digest lineage.
 
 Budgets: decode limits spec bytes to 512 KiB. Depth counts the root as 1; values
 include object keys. All APIs bound the tree before copying/encoding it. The
@@ -24,7 +28,8 @@ use Python's integer semantics, including -0 becoming 0.
 Free text limits are UTF-8 bytes: label/by/at and opaque pins 128, locator/ref/
 basis and graph relation IDs 1024, objective 4096, requirement text 2048.
 Grammar fields have their own finite bounds (birth slugs 48, project names 64).
-Semantic link identity is (purpose, target), independent of digest/attribution.
+Link identity is the complete canonical link object, including attribution and
+digest; only identical declarations are duplicates.
 """
 import json
 import re
@@ -63,6 +68,7 @@ class Invalid(Exception):
         self.code = code
         self.path = path
         self.details = {"path": path}
+        self.message = message
         super().__init__(path + ": " + message)
 
 
@@ -303,6 +309,7 @@ def _graph_pin(pin, dependent, upstream, path):
     _enum(pin["verification"], ("unverified",), path + ".verification")
     for key in ("from", "to"):
         _typed(pin[key], path + "." + key)
+    _need(pin["from"] != pin["to"], "graph-pin", "graph endpoints must differ", path)
     _need(dependent["participant"] == upstream["participant"],
           "graph-pin", "graph endpoints require same participant", path)
     for key, work in (("from", dependent), ("to", upstream)):
@@ -386,13 +393,12 @@ def validate(document):
             _text(design["ref"], 1024, path + ".design.ref")
             _attribution(design, path + ".design")
         _array(w["links"], 32, path + ".links")
-        semantics = set()
+        declarations = set()
         for j, link in enumerate(w["links"]):
             _link(link, path + ".links[%d]" % j)
-            # Attribution/digest changes cannot disguise the same semantic link.
-            semantic = (link["purpose"], _encode(link["target"]))
-            _need(semantic not in semantics, "reference", "duplicate semantic link", path + ".links")
-            semantics.add(semantic)
+            declaration = _encode(link)
+            _need(declaration not in declarations, "reference", "duplicate link declaration", path + ".links")
+            declarations.add(declaration)
         work[w["id"]] = w
     pairs = set()
     for i, c in enumerate(document["coordination"]):
@@ -438,10 +444,17 @@ def canonicalize(document):
 
 
 def transition(parent, child, *, rev):
-    """Check a child against an actual parent; do not infer a parent from a spec."""
+    """Check against an actual parent, with invalid-parent paths rooted at $parent.
+
+    Revision and child validation precede parent validation. All returned data is
+    detached; neither input is changed on success or refusal.
+    """
     _integer(rev, 1, MAX_REV, "$.revision")
     current = validate(child)
-    old = None if parent is None else validate(parent)
+    try:
+        old = None if parent is None else validate(parent)
+    except Invalid as error:
+        raise Invalid(error.code, error.message, "$parent" + error.path[1:]) from None
     _need((old is None) == (rev == 1), "transition", "create requires revision 1 and no parent", "$")
     if old is not None:
         for key in ("campaign", "continues"):
