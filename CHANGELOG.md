@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- `qargi review check` treats area-count heuristics as advisory warnings requiring substantive commit-cohesion review, including supporting tests, docs and changelog. Directory counts cannot establish semantic unrelatedness, and warnings never grant source acceptance. The shipped review-findings pack requires independent review of concrete changes and dependencies; structural hard checks remain required.
+
 ## [0.3.0] - 2026-11-14
 
 ### Added

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Checks that an agent's output is a series of change-specific patches with their context,
-not one monolithic patch. Usage: review_check.py OUT [--allow-empty]   (exit 1 on any FAIL, 2 on a usage error)
+"""Checks the structure of an agent's patch series and its context; area counts only prompt substantive cohesion review,
+never source acceptance. Usage: review_check.py OUT [--allow-empty]   (exit 1 on any FAIL, 2 on a usage error)
 OUT is the member's output directory (RUN/out; given RUN, whose out directory exists, it checks RUN/out): it holds manifest.json and the patches in OUT/patches/*.patch, the one place `review apply` reads them from.
 SCOPE is a hard limit: the SCOPE line of RUN/task.md (beside OUT) when it records one, else the manifest's scope[]; a patch outside it fails.
 The DONE line of RUN/task.md is the check the lead set: a manifest whose done.command is another command fails (a missing done.command is a warning).
@@ -218,15 +218,16 @@ if man:
 if not os.path.exists(os.path.join(run, "series.md")) and not os.path.exists(os.path.join(run, "patches", "series.md")):
     W("no series.md (a short account of each patch in order)")
 
-# monolith heuristics
+# Area-count heuristics are advisory: directory layout cannot establish semantic unrelatedness.
 total = sum(i["changed"] for i in info) or 1
 allareas = set().union(*[i["areas"] for i in info])
+cohesion_review = "advisory only; inspect commit cohesion and dependencies, including supporting tests, docs and changelog; directory counts cannot establish semantic unrelatedness and this warning is not source acceptance"
 if n == 1 and len(allareas) >= 3:
-    F("one patch touches %d areas (%s): this looks monolithic; split it into change-specific commits" % (len(allareas), ", ".join(sorted(allareas))))
+    W("one patch touches %d areas (%s): %s" % (len(allareas), ", ".join(sorted(allareas)), cohesion_review))
 if n > 1:
     big = max(info, key=lambda i: i["changed"])
     if big["changed"] / total > 0.7 and len(big["areas"]) >= 3:
-        W("%s holds %d%% of the changed lines across %d areas: check it is one change, not several combined" % (big["name"], 100 * big["changed"] // total, len(big["areas"])))
+        W("%s holds %d%% of the changed lines across %d areas: %s" % (big["name"], 100 * big["changed"] // total, len(big["areas"]), cohesion_review))
 ts = [i["ts"] for i in info if i["ts"]]
 if n >= 3 and len(ts) == n and max(ts) - min(ts) < 120:
     W("all %d commits are dated within %d seconds: they look made in one batch at the end, and the contract says to commit as you go; make sure each one really stands alone and its message records the reasoning at that step" % (n, int(max(ts) - min(ts))))
