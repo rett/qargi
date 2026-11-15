@@ -140,3 +140,4 @@
 177 python3 tests/test_attempt_integration.py
 10 python3 tests/test_campaign_doc.py
 113 python3 tests/test_campaign_store.py
+17 python3 tests/test_campaign.py
