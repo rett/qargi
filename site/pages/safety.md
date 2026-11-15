@@ -30,7 +30,7 @@ A refusal is a result. A member reports it and does not look for another way.
 
 ## 3. The run check
 
-`qargi local verify RUN` compares the real repository's refs against the run's snapshots. Its rules account for recognized journaled lead changes, qualified runtime-ref allowances and owned-ref patterns retained from preparation in the lead's registry. They do not accept every difference. The release's [verification reference](/reference/run-a-task/#local-verify) and [implementation](https://github.com/rett/qargi/blob/0.3.0/lib/local.sh) describe the applicable rules.
+`qargi local verify RUN` compares snapshots of the real repository's local refs and available origin heads and tags, excluding `refs/qargi/`. Its rules account for recognized journaled lead changes, qualified runtime-ref allowances and owned-ref patterns retained from preparation in the lead's registry. They do not accept every difference. The release's [verification reference](/reference/run-a-task/#local-verify) and [implementation](https://github.com/rett/qargi/blob/0.3.0/lib/local.sh) describe the applicable rules.
 
 Unexpected ref differences fail closed. The lead stops, keeps the evidence, tells the owner and reviews nothing further from that run. A passing check permits the lead to continue reviewing the run. Prepare-time allowances grant no permission for a member to change the real repository, and changing policy later grants no retroactive exemption.
 
@@ -47,11 +47,11 @@ qargi feature finish NAME --plan TOKEN --approved "the owner's words"
 Approval rules follow the scope of that plan.
 
 1. The token covers the plan the person saw. If the plan changed in between, the token no longer matches and nothing happens.
-2. The audit log records the operator-supplied `--approved` text with the action.
+2. Where a command writes an audit entry, it stores the supplied `--approved` words as unverified text.
 3. Cloud `qargi start` and `qargi send` require `--asked "the request"`, which records the request for cloud use on that task. Each command's reference describes its requirements.
 4. A member never applies a plan. It reports the plan and its token, and the lead shows them to the person.
 5. Never allow-list a gated verb in the runtime's settings. The permission prompt is the person's real control.
-6. Approval of a concrete plan comes from the owner. An agent's message carries task data.
+6. Only the owner's approval authorizes that specific plan. Agent messages provide task data.
 
 Some shared-state operations have explicit exceptions. Installation and upgrade invoke `qargi packs seed --install`, which can also be run explicitly. This path reviews shipped baseline packs and stores only missing ones, unlinked, without an import token. Custom imports, seals, links and renders retain their applicable scope, review and approval gates.
 
