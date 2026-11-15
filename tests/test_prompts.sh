@@ -77,11 +77,19 @@ rule = next(line for line in contract.splitlines() if line.startswith("- A role 
 changelog = Path("packs/skills/keep-a-changelog/SKILL.md").read_text()
 when = changelog.split("## When\n", 1)[1].split("\n## ", 1)[0]
 review = Path("packs/skills/review-findings/SKILL.md").read_text()
+contributing = Path("CONTRIBUTING.md").read_text()
+guide = " ".join(contributing.split("## Changes\n", 1)[1].split("\n## ", 1)[0].split())
 for text in (rule, when, review):
     for term in ("concrete changes and dependencies", "buildable", "directory counts", "patch size", "advisory prompts"):
         assert term in text, (term, text)
+for text in (rule, when, review, guide):
     for delayed in ("three or more", "in the next", "then docs and changelog"):
         assert delayed not in text, (delayed, text)
+assert "same commit as the change" in guide
+assert "one logical change with its supporting tests, docs and changelog entry" in guide
+assert "builds and passes independently" in guide
+assert "Concrete changes and dependencies determine commit boundaries" in guide
+assert "Directory counts and patch size prompt substantive cohesion review" in guide
 assert "one logical change per commit with its tests" in rule
 assert "Keep its supporting docs and changelog entry in that commit" in rule
 assert "same commit as the change" in when and "with its tests and docs" in when
