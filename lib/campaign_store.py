@@ -533,6 +533,13 @@ class Store:
                 result.update(result="already-current" if exact else "committed",
                               publication="visible", durability="fsync-acknowledged")
                 return result
+        except MemoryError:
+            details = dict(publication=publication,
+                           durability="unknown" if publication in ("visible", "unknown")
+                           else "not-assessed")
+            if parent_settling:
+                details["parent_durability"] = "unknown"
+            raise Error("bounds", **details) from None
         except doc.Invalid as error:
             raise Error(error.code, message=error.message, **error.details,
                         publication=publication, durability="not-assessed") from None

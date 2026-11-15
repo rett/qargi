@@ -415,6 +415,34 @@ print(json.dumps(outcomes))
                              dict(publication="not-assessed", durability="not-assessed"))
         self.assertEqual(snapshot(self.state), before)
 
+    def test_commit_validation_allocation_failure_before_state_access(self):
+        doc = C.validate(document())
+        before = snapshot(self.root)
+        # A recoverable injection exercises the handler, not memory exhaustion.
+        with patch.object(C, "validate", side_effect=MemoryError) as validate, \
+                patch.object(S.paths, "state") as state:
+            error = self.error("bounds", self.store.commit, doc, create=True)
+            validate.assert_called_once_with(doc)
+            state.assert_not_called()
+        self.assertIsNone(self.store._root)
+        self.assertEqual(error.details,
+                         dict(publication="not-assessed", durability="not-assessed"))
+        self.assertEqual(snapshot(self.root), before)
+
+    def test_commit_create_candidate_allocation_failure_before_state_access(self):
+        doc = C.validate(document())
+        before = snapshot(self.root)
+        # The initial validation remains real; only candidate construction fails.
+        with patch.object(S, "_candidate", side_effect=MemoryError) as candidate, \
+                patch.object(S.paths, "state") as state:
+            error = self.error("bounds", self.store.commit, doc, create=True)
+            candidate.assert_called_once_with(None, doc)
+            state.assert_not_called()
+        self.assertIsNone(self.store._root)
+        self.assertEqual(error.details,
+                         dict(publication="not-assessed", durability="not-assessed"))
+        self.assertEqual(snapshot(self.root), before)
+
     def test_caller_and_state_oserrors_are_structured_without_mutation(self):
         first = self.create()
         before = snapshot(self.root)
