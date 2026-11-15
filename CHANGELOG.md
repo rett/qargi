@@ -7,7 +7,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
-- The portable `bubble-tea` baseline skill provides opt-in guidance for Go terminal UIs and coordinated terminal-console clients. It preserves pinned module APIs, separates UI and managed-session lifecycles, and guides focused tests and terminal qualification. The shipped library now has eight packs. Seeding and informational proposal hints do not activate a skill or adopt a dependency.
+- The portable `bubble-tea` baseline skill provides opt-in guidance for Go terminal UIs and coordinated terminal-console clients. It directs agents to preserve pinned module APIs, separate UI and managed-session lifecycles, and run focused tests and terminal qualification. The shipped library now has eight packs. Seeding and informational proposal hints do not activate a skill or adopt a dependency.
 
 ### Changed
 - `qargi review check` emits advisory area-count warnings that require substantive commit-cohesion review, including supporting tests, docs and changelog. Source acceptance requires independent review of concrete changes and dependencies. The shipped review-findings pack guides that inspection. The checker enforces structural hard checks. Changed-file plans select its regressions when the member contract changes.
