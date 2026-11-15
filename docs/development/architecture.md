@@ -72,7 +72,7 @@ A cloud run replaces step 1 and 2 with `start` and a session of an instance (`li
 
 The wrapper uses a run-specific home, disables global and system Git configuration, clears inherited credentials and disables Git SSH transport and prompts. Together with the disabled push URL, these protections block ordinary pushes through the supplied setup. They do not prove that a push is impossible. Runtime sandbox and guard behavior has its own qualified scope, described for [members and providers](../members-and-providers/README.md) and [Codex](../members-and-providers/codex.md).
 
-The memory packet uses the clone's committed repo tier as its base and directs members to propose notes in the report for the lead to file. Its instructions reserve tier writes for the lead and limit reads of other configured tiers to task scope and available access. Filesystem permissions depend on the runtime and run class. A write member can have a writable clone. `lib/tiercontext.py` reports tier availability and uncommitted repo-tier changes. Tier precedence and locations are described in the [memory tiers documentation](../skills-tools-and-memory/memory.md#memory-tiers).
+The memory packet uses the clone's committed repo tier as its base and directs members to avoid tier writes and propose new or changed notes in the report for the lead to file. It lists other configured tiers and their locations. Filesystem permissions depend on the runtime and run class. A write member can have a writable clone. `lib/tiercontext.py` reports tier availability and uncommitted repo-tier changes. Tier precedence and locations are described in the [memory tiers documentation](../skills-tools-and-memory/memory.md#memory-tiers).
 
 ## What is advice and what is checked
 

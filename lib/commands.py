@@ -60,7 +60,7 @@ HOOK_REC = ("Reads the hook's JSON on stdin and appends one small line to the ru
 ASKED = opt("--asked", "your request, in your words, naming the cloud instance for this operation", "REQUEST")
 WORKTREE = opt("--worktree", "write the repo tier into DIR, another worktree of the project's repository (the same path inside it), instead of its checkout; the plan says on which branch to commit it", "DIR", "dir")
 PLAN = opt("--plan", "the plan token printed by the same command without --approved", "TOKEN")
-APPROVED = opt("--approved", "your go-ahead for exactly that plan, in your words; recorded in the audit log", "WORDS")
+APPROVED = opt("--approved", "your go-ahead for exactly that plan, in your words", "WORDS")
 EXEC = opt("--approve-exec", "name every executable the pack holds, separated by commas, to approve running them", "NAMES")
 TARGET = opt("--target", "claude-code renders for a local session; managed-agents (the default for apply) is the cloud update", "TARGET", ("claude-code", "managed-agents"))
 PREFIX = opt("--prefix", "pick the notes under this path (repeat for several)", "PATH")
@@ -1230,6 +1230,7 @@ COMMANDS = {
         "desc": ("The agent works in a clone whose origin points to a bare copy. The bare copy has no remote, and the clone's origin push URL is disabled. "
                  "The agent runs git through a credential-less wrapper, and "
                  "verify compares snapshots of the real repository's local refs and origin's heads and tags, excluding refs/qargi/. "
+                 "Filesystem and network protections depend on the selected runtime. "
                  "See docs/development/architecture.md for accepted differences and runtime protection boundaries."),
         "scripts": ["local.sh"],
         "verbs": {
@@ -1882,7 +1883,7 @@ FILES = [
     ("~/.qargi/config/credentials/", "token files, mode 600"),
     ("~/.qargi/config/install.json", "the tool root install.sh recorded; a checkout run from elsewhere is a dev run"),
     ("~/.qargi/state/sessions.json", "the tracker of cloud sessions"),
-    ("~/.qargi/state/audit.log", "append-only record of every approved or cloud verb, with your words"),
+    ("~/.qargi/state/audit.log", "append-only entries from commands that call audit_log, with supplied --asked and --approved words"),
     ("~/.qargi/state/runs/", "collected outputs of runs"),
 ]
 
