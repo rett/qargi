@@ -100,7 +100,7 @@ full | serial | 975 | 222 | bash tests/test_local_run.sh | lib/local*.sh lib/loc
 full | par | 300 | 37 | bash tests/test_taskblock.sh | lib/local.sh lib/review_check.py roles/*/ROLE.md tests/golden/taskblock-*.md
 fast | par | 300 | 2 | bash tests/test_cred.sh | lib/cred.sh
 full | par | 480 | 107 | bash tests/test_packs.sh | lib/packs.sh
-full | par | 300 | 79 | bash tests/test_packs_seed.sh | lib/packs*.sh lib/packs*.py
+full | par | 300 | 79 | bash tests/test_packs_seed.sh | lib/packs*.sh lib/packs*.py packs/baseline.json packs/skills/*/SKILL.md
 fast | par | 300 | 9 | python3 tests/test_packs_check.py | lib/packs*.sh lib/packs*.py lib/conformance/review.py
 fast | par | 300 | 3 | python3 tests/test_packs_mcp.py | lib/packs_mcp.py lib/packs_check.py lib/packs.sh lib/providers/claude-code.json
 full | par | 882 | 204 | bash tests/test_packs_render.sh | lib/packs*.sh lib/packs*.py
@@ -159,7 +159,7 @@ fast | par | 300 | 1 | python3 tests/test_backlog.py | lib/backlog.py
 fast | par | 300 | 33 | python3 tests/test_backlog_graph.py | lib/backlog_graph.py lib/backlog.sh lib/commands.py lib/jsonplan.py
 fast | par | 60 | 11 | python3 tests/test_campaign_doc.py | lib/campaign_doc.py lib/backlog_graph.py lib/backlog.py lib/paths.py tests/test_campaign_doc.py tests/hermetic.py tests/hermetic.sh
 full | par | 300 | 125 | python3 tests/test_campaign_store.py | lib/campaign_store.py lib/campaign_doc.py lib/backlog_graph.py lib/backlog.py lib/paths.py lib/marshal_refs.py tests/test_campaign_store.py tests/test_campaign_doc.py tests/hermetic.py tests/hermetic.sh
-fast | par | 60 | 19 | python3 tests/test_campaign.py | bin/qargi lib/campaign.py lib/campaign_doc.py lib/campaign_store.py lib/commands.py lib/guard.py lib/backlog_graph.py lib/backlog.py lib/paths.py lib/marshal_refs.py tests/test_campaign.py tests/test_campaign_doc.py tests/test_campaign_store.py tests/hermetic.py tests/hermetic.sh
+fast | par | 60 | 19 | python3 tests/test_campaign.py | bin/qargi lib/campaign.py lib/campaign_doc.py lib/campaign_store.py lib/commands.py lib/guard.py lib/backlog_graph.py lib/backlog.py lib/paths.py lib/marshal_refs.py tests/test_campaign.py tests/test_campaign_doc.py tests/test_campaign_store.py tests/hermetic.py tests/hermetic.sh docs/reference/campaign-records.md
 full | par | 300 | 40 | bash tests/test_backlog.sh | lib/backlog.py lib/backlog.sh lib/gitflow.sh lib/feature.sh lib/release.sh lib/project.sh
 fast | par | 300 | 8 | bash tests/test_nested_plan.sh | lib/lib.sh lib/branch.sh lib/cred.sh lib/marshal.sh lib/project.sh lib/provider.sh lib/registry.sh
 full | par | 300 | 28 | bash tests/test_resume.sh | lib/release.sh lib/feature.sh lib/gitflow.sh lib/review.sh
