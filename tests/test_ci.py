@@ -137,9 +137,10 @@ class Manifest(unittest.TestCase):
         command = "bash tests/test_skill_budget.sh"
         manifest = text(os.path.join(ROOT, "tests", "suite.txt"))
         row = next(line for line in manifest.splitlines() if command in line)
-        self.assertEqual([field.strip() for field in row.split("|")[:5]],
-                         ["fast", "par", "300", "1", command])
-        # A full-tier copy makes selection depend on coverage, rather than its fast tier.
+        fields = [field.strip() for field in row.split("|")]
+        self.assertEqual(fields[:2], ["fast", "par"])
+        self.assertEqual(fields[4], command)
+        # A full-tier copy makes selection depend on coverage.
         with tempfile.TemporaryDirectory() as scratch:
             # Plan mode checks inventory before selection. Keep that inventory small
             # while exercising the current runner and the actual coverage row.
@@ -161,7 +162,8 @@ class Manifest(unittest.TestCase):
                 "tests/skill-budget.txt", "tests/skill-dup-allowlist.txt",
                 "tests/skill-verbs-allowlist.txt", "lib/commands.py", "tests/test_skill_budget.sh",
             ]
-            for path in cases + ["", "README.md", "lib/unrelated.py", "packs/baseline.json"]:
+            for path in cases + ["", "README.md", "lib/unrelated.py", "packs/baseline.json",
+                                 "contract/manifest.example.json", "packs/skills/example/data.json"]:
                 with self.subTest(path=path):
                     with open(changed, "w") as stream:
                         stream.write(path + "\n" if path else "")

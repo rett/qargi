@@ -123,9 +123,10 @@ Every user-visible change adds a line under `## [Unreleased]` in
 logical change with its supporting tests, docs and changelog entry, and
 builds and passes independently. Concrete changes and dependencies determine
 commit boundaries. Directory counts and patch size prompt substantive
-cohesion review. Shell scripts must pass `shellcheck -S warning`. Commit
-messages state what changed and why. No private hostnames, addresses,
-usernames, home paths or credentials appear in the repository or its history.
+cohesion review. Shell scripts must pass
+`shellcheck -S warning`. Commit messages state what changed and why; no
+private hostnames, addresses, usernames, home paths or credentials appear in
+the repository or its history.
 
 ## Add a runtime with no code
 

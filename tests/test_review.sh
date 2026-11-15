@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# `qargi review check`: area counts prompt cohesion review; structural defects fail.
+# Area counts prompt cohesion review. Structural defects fail in `qargi review check`.
 # Run: tests/test_review.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -44,7 +44,7 @@ printf 'TASK: x\nSCOPE: none\n' > "$T/sctask/task.md"
 out=$($DA review check "$T/sctask/out" 2>&1); [ $? = 0 ] && ok "a task block with SCOPE: none leaves the manifest's scope[] as the limit" || no "scope none: $out"
 $DA review check "$T/good" 2>&1 | grep -q "outside SCOPE" && no "a series with no scope was checked against one" || ok "without a recorded scope nothing is checked against one"
 
-# A wide single patch prompts inspection; directory counts cannot decide cohesion.
+# A wide single patch prompts substantive cohesion inspection.
 git reset -q --soft "$BASE"; mk "all the work" "everything" "2026-10-27T11:00:00"
 run wide; manifest "$T/wide"; echo "# s" > "$T/wide/series.md"
 area_warning() { grep -q '^WARN .*areas.*This advisory area-count warning requires substantive cohesion review\.' <<<"$1" && grep -q 'Source acceptance requires independent review of concrete changes and dependencies, including supporting tests, docs and changelog\.' <<<"$1"; }
@@ -129,7 +129,8 @@ out=$($DA review check "$T/good" "$T/flat" 2>&1); rc=$?; [ $rc = 2 ] && ok "two 
 mkdir -p "$T/rundir"; cp -r "$T/good" "$T/rundir/out"
 out=$($DA review check "$T/rundir" 2>&1); rc=$?; [ $rc = 0 ] && echo "$out" | grep -q "NOTE checked $T/rundir/out" && echo "$out" | grep -q "0 fail" && ok "a run directory is checked as its out directory, with a note" || no "run dir: rc=$rc $out"
 cp -r "$T/mono/patches" "$T/rundir/out/patches.bad"; rm -rf "$T/rundir/out/patches"; mv "$T/rundir/out/patches.bad" "$T/rundir/out/patches"; cp "$T/mono/manifest.json" "$T/rundir/out/manifest.json"
-$DA review check "$T/rundir" >/dev/null 2>&1; [ $? = 1 ] && ok "a run directory's out directory that fails is refused" || no "run dir with a bad out"
+out=$($DA review check "$T/rundir" 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q 'outside SCOPE' <<<"$out" && ok "a run directory's out directory with a scope failure is refused" || no "run dir with a bad out: rc=$rc $out"
 mkdir -p "$T/outwins/out"; cp -r "$T/good/." "$T/outwins/"
 out=$($DA review check "$T/outwins" 2>&1); rc=$?; [ $rc = 0 ] && ! echo "$out" | grep -q "NOTE checked" && ok "a directory that holds patches itself is checked as it is, even with a subdirectory named out" || no "out wins: rc=$rc $out"
 # a review run returns a report instead of patches
