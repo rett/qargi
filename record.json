@@ -1,0 +1,22 @@
+{
+ "purpose": "Correct source and release documentation claims and add portable recurring release-doc review guidance",
+ "started": "2026-11-15T19:23:47Z",
+ "goal": "Correct source and release documentation claims and add portable recurring release-doc review guidance",
+ "plan": "",
+ "note": "",
+ "status": "active",
+ "lead": {
+  "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
+  "user": "rett",
+  "host": "arc",
+  "since": "2026-11-15T19:23:47Z",
+  "worktree": "94b9af1305afafc4"
+ },
+ "renewed_at": "2026-11-15T19:23:47Z",
+ "finished_at": null,
+ "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
+ "rev": 1,
+ "updated_at": "2026-11-15T19:23:47Z",
+ "feature": "release-claims-audit",
+ "project": "qargi"
+}
