@@ -57,10 +57,10 @@ def verb(summary, args=(), opts=(), desc="", examples=()):
 HOOK_REC = ("Reads the hook's JSON on stdin and appends one small line to the run's event file under the state directory "
             "(ids, times, names and hashes; never command, message or error text). It always exits 0 at once, even on malformed input, "
             "so it cannot block an agent. Register it with qargi supervise hooks.")
-ASKED = opt("--asked", "the request, in your words, that names the cloud instance; recorded in the audit log", "REQUEST")
+ASKED = opt("--asked", "your request, in your words, naming the cloud instance for this operation", "REQUEST")
 WORKTREE = opt("--worktree", "write the repo tier into DIR, another worktree of the project's repository (the same path inside it), instead of its checkout; the plan says on which branch to commit it", "DIR", "dir")
 PLAN = opt("--plan", "the plan token printed by the same command without --approved", "TOKEN")
-APPROVED = opt("--approved", "your go-ahead for exactly that plan, in your words; recorded in the audit log", "WORDS")
+APPROVED = opt("--approved", "your go-ahead for exactly that plan, in your words", "WORDS")
 EXEC = opt("--approve-exec", "name every executable the pack holds, separated by commas, to approve running them", "NAMES")
 TARGET = opt("--target", "claude-code renders for a local session; managed-agents (the default for apply) is the cloud update", "TARGET", ("claude-code", "managed-agents"))
 PREFIX = opt("--prefix", "pick the notes under this path (repeat for several)", "PATH")
@@ -908,7 +908,7 @@ COMMANDS = {
     "instances": {
         "summary": "Register, inspect and manage agent instances",
         "desc": ("An instance is <project>-<role>, for example acme-build, or the lead acme-lead. The registry records where it "
-                 "runs and which resources it uses. Verbs that change cloud resources need --asked, and show a plan first."),
+                 "runs and which resources it uses. Cloud operations follow the request and approval requirements documented by each verb."),
         "scripts": ["registry.sh"],
         "verbs": {
             "init": verb("Register an instance", [],
@@ -1227,8 +1227,11 @@ COMMANDS = {
     },
     "local": {
         "summary": "Prepare, verify, close, list and clean a local run, its git without credentials",
-        "desc": ("The agent works in a clone of a bare copy that has no remote, runs git through a credential-less wrapper, and "
-                 "verify compares every ref of the real repository before and after. It is a guard, not a sandbox."),
+        "desc": ("The agent works in a clone whose origin points to a bare copy. The bare copy has no remote, and the clone's origin push URL is disabled. "
+                 "The agent runs git through a credential-less wrapper, and "
+                 "verify compares snapshots of the real repository's local refs and origin's heads and tags, excluding refs/qargi/. "
+                 "Filesystem and network protections depend on the selected runtime. "
+                 "See docs/development/architecture.md for accepted differences and runtime protection boundaries."),
         "scripts": ["local.sh"],
         "verbs": {
             "run": verb("Run a task through a command runtime (a vendor CLI) in a prepared run; --dry-run prints what would run", [("RUN", "dir")],
@@ -1745,7 +1748,7 @@ TOPICS = {
         "Roles are build, write, review, test and lead: build changes code, write writes the operational docs, review judges a change and changes no file, test writes and runs tests, lead coordinates a team. Each role is defined by its role text, which comes with the task block. The local workers are members you name and give roles (qargi agent add NAME --roles build,test); qargi agent for ROLE prints the member that serves it. "
         "A role has its own model, effort, skills and packages, stored in the project's answers.",
         "Local or cloud: local (a member on this machine) is the default. The cloud is used only when your request for that task names it, "
-        "and every cloud verb records your words with --asked.",
+        "and start and send require and log your words with --asked. Other commands describe their gates in their own help.",
         "You decide: the coordinator re-verifies everything an agent returns (qargi review check), applies it as separate commits, and "
         "asks you before anything is pushed."]),
     "roles": ("Roles and members", [
@@ -1759,7 +1762,7 @@ TOPICS = {
         "dispatch spawns. A cloud agent serves one role, is named <project>-<role> and carries its role text in its prompt.",
         ]),
     "approvals": ("Plans, tokens and your go-ahead", [
-        "A command that changes something shared prints a plan first. The plan ends with a plan token, a hash of what would be done.",
+        "A command that requires a plan token prints a plan first. The plan ends with a plan token, a hash of what would be done.",
         "To apply, run the same command with --plan TOKEN --approved \"your words\". If the plan changed in between, the token no longer "
         "matches and nothing happens.",
         "Add --json to any verb to get the plan as one JSON object instead of text: {verb, plan, token, apply, exit}, where apply is the command "
@@ -1767,8 +1770,9 @@ TOPICS = {
         "A verb that printed no plan token (it ran, or refused) gives {verb, plan: null, token: null, output, exit}; the exit status is the verb's and its error "
         "messages stay on stderr. --json never supplies --plan or --approved, and a call that carries them runs as it would without --json, wrapped the same way "
         "with a null token. A verb that describes a --json option of its own keeps it.",
-        "--asked \"your request\" is required by every cloud verb: it records that you asked for the cloud. Both are written to an "
-        "append-only audit log in the state directory.",
+        "start and send require --asked \"your request\" naming the cloud instance. The gate records it in the state directory's "
+        "append-only audit log. Consult each command's help for its request and approval requirements. "
+        "Audit entries record supplied --asked and --approved words only where the command calls audit_log.",
         "qargi lead grant and revoke are interactive instead: you confirm each step at the terminal, and that is the approval.",
         "The rules. The token covers the plan the person saw, and an apply refuses when the plan is no longer that one. The --approved text is "
         "recorded, not verified: it is not proof that a person agreed. Never allow-list a gated verb in the runtime's settings: the permission "
@@ -1879,7 +1883,7 @@ FILES = [
     ("~/.qargi/config/credentials/", "token files, mode 600"),
     ("~/.qargi/config/install.json", "the tool root install.sh recorded; a checkout run from elsewhere is a dev run"),
     ("~/.qargi/state/sessions.json", "the tracker of cloud sessions"),
-    ("~/.qargi/state/audit.log", "append-only record of every approved or cloud verb, with your words"),
+    ("~/.qargi/state/audit.log", "append-only entries from commands that call audit_log, with supplied --asked and --approved words"),
     ("~/.qargi/state/runs/", "collected outputs of runs"),
 ]
 

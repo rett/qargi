@@ -56,10 +56,12 @@ what was not loaded. When you dispatch a member, `qargi local prepare` prints a
 when the repo tier has uncommitted changes, because the member's clone has only the
 committed copy.
 
-Two rules for agents: members and cloud agents write only under `roles/<their role>/` of
-the memory store, and `shared/` is curated, so an agent proposes a shared note in its report
-and the lead or the person promotes it. `init` and `move` are the lead's: the guard refuses
-them to a member. There are no remote shares.
+The local dispatch packet instructs members to avoid tier writes and propose new or
+changed memory notes in their reports for the lead to file. The recipes-store attachment
+created by cloud provisioning includes an instruction to write only under `roles/<their role>/`.
+Shared notes are curated, with proposals promoted by the lead or the person. `init` and
+`move` are lead operations. Guard and sandbox coverage depends on the selected runtime,
+as described in [members and providers](../members-and-providers/README.md).
 
 ## Splitting, merging and moving memory
 

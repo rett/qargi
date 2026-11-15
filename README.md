@@ -53,6 +53,8 @@ qargi backlog list
 
 Start cuts `feature/dots` from develop; the member works in its own clone and returns patches, and review apply puts the checked patches on `agent/<slug>`. Verify runs the whole suite once (`test_command`, or the declared gates of tier feature). Finish is the only merge into develop and names the open backlog items its commits mention. Backlog list shows the open items of the backlog file (the answer `backlog.file`).
 
+For read-only planning reports, `qargi backlog graph check|show|why --graph FILE` reads a manually declared graph against the configured open backlog. It pins reported evidence to item revisions and leaves feature and archive state unobserved. Reports grant no acceptance or execution authority. The [backlog graph reference](docs/reference/backlog-graph.md) gives the schema, examples, limits and current lead-only public-command guard policy.
+
 `/qargi-task` is the Claude Code slash command of the `qargi-task` skill; another lead loads that skill by name or runs the verbs
 it describes (`qargi local prepare`, `qargi local run`, `qargi local verify`); a Codex lead's setup is in
 [Codex as the lead](docs/members-and-providers/codex.md#codex-as-the-lead).
@@ -71,6 +73,6 @@ it describes (`qargi local prepare`, `qargi local run`, `qargi local verify`); a
 The overview of the documentation is [docs/README.md](docs/README.md). Task-oriented guides are on the documentation site, <https://qargi.rettware.com/>.
 `man qargi` is the complete reference (`qargi help` lists the commands by task; `qargi help --man | man -l -` if the page is not installed).
 
-Status: pre-release, see [CHANGELOG.md](CHANGELOG.md). Licensed under the MIT license, see [LICENSE](LICENSE).
+Qargi is in pre-1.0 development and has published releases. See [CHANGELOG.md](CHANGELOG.md) for released versions and unreleased changes. Licensed under the MIT license, see [LICENSE](LICENSE).
 
 Copyright (c) 2026 Everett C. Haimes III

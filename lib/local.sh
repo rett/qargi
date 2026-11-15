@@ -980,10 +980,10 @@ WRAP
         mv -T -- "$CHECK_DIR/verified" "$SRC/verified"
       fi   # refs-only observation never verifies or saves output
       if [ -s "$CHECK_DIR/refs.accepted" ]; then
-        if grep -q 'per runs\.owned_refs)$' "$CHECK_DIR/refs.accepted"; then echo "refs differ from the snapshot only by the lead's own moves and the refs the project declares the runtime's own (runs.owned_refs); nothing was pushed by the run:"
-        else echo "refs differ from the snapshot only by the lead's own moves; nothing was pushed by the run:"; fi
+        if grep -q 'per runs\.owned_refs)$' "$CHECK_DIR/refs.accepted"; then echo "refs differ from the snapshot only by accepted moves and the refs the project declares the runtime's own (runs.owned_refs); observed local refs and available origin heads/tags, excluding refs/qargi/ (snapshots only):"
+        else echo "refs differ from the snapshot only by accepted moves; observed local refs and available origin heads/tags, excluding refs/qargi/ (snapshots only):"; fi
         sed 's/^/  /' "$CHECK_DIR/refs.accepted"
-      else echo "refs unchanged: nothing was pushed to the repository or its remote"; fi
+      else echo "refs unchanged: observed local refs and available origin heads/tags, excluding refs/qargi/ (snapshots only)"; fi
     else
       echo "REFS CHANGED during the run (the agent must not have pushed):" >&2
       cat "$CHECK_DIR/refs.diff" >&2
