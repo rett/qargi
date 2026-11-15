@@ -57,7 +57,7 @@ def verb(summary, args=(), opts=(), desc="", examples=()):
 HOOK_REC = ("Reads the hook's JSON on stdin and appends one small line to the run's event file under the state directory "
             "(ids, times, names and hashes; never command, message or error text). It always exits 0 at once, even on malformed input, "
             "so it cannot block an agent. Register it with qargi supervise hooks.")
-ASKED = opt("--asked", "the request, in your words, that names the cloud instance; recorded in the audit log", "REQUEST")
+ASKED = opt("--asked", "the request, in your words, that names the cloud instance; logging is command-specific", "REQUEST")
 WORKTREE = opt("--worktree", "write the repo tier into DIR, another worktree of the project's repository (the same path inside it), instead of its checkout; the plan says on which branch to commit it", "DIR", "dir")
 PLAN = opt("--plan", "the plan token printed by the same command without --approved", "TOKEN")
 APPROVED = opt("--approved", "your go-ahead for exactly that plan, in your words; recorded in the audit log", "WORDS")
@@ -1229,7 +1229,8 @@ COMMANDS = {
         "summary": "Prepare, verify, close, list and clean a local run, its git without credentials",
         "desc": ("The agent works in a clone whose origin points to a bare copy. The bare copy has no remote, and the clone's origin push URL is disabled. "
                  "The agent runs git through a credential-less wrapper, and "
-                 "verify compares every ref of the real repository before and after. It is a guard, not a sandbox."),
+                 "verify compares snapshots of the real repository's local refs and origin's heads and tags, excluding refs/qargi/. "
+                 "See docs/development/architecture.md for accepted differences and coverage limits. It is a guard, not a sandbox."),
         "scripts": ["local.sh"],
         "verbs": {
             "run": verb("Run a task through a command runtime (a vendor CLI) in a prepared run; --dry-run prints what would run", [("RUN", "dir")],
@@ -1746,7 +1747,7 @@ TOPICS = {
         "Roles are build, write, review, test and lead: build changes code, write writes the operational docs, review judges a change and changes no file, test writes and runs tests, lead coordinates a team. Each role is defined by its role text, which comes with the task block. The local workers are members you name and give roles (qargi agent add NAME --roles build,test); qargi agent for ROLE prints the member that serves it. "
         "A role has its own model, effort, skills and packages, stored in the project's answers.",
         "Local or cloud: local (a member on this machine) is the default. The cloud is used only when your request for that task names it, "
-        "and every cloud verb records your words with --asked.",
+        "and start and send require and log your words with --asked. Other commands have their own gates; see their help.",
         "You decide: the coordinator re-verifies everything an agent returns (qargi review check), applies it as separate commits, and "
         "asks you before anything is pushed."]),
     "roles": ("Roles and members", [
@@ -1768,8 +1769,9 @@ TOPICS = {
         "A verb that printed no plan token (it ran, or refused) gives {verb, plan: null, token: null, output, exit}; the exit status is the verb's and its error "
         "messages stay on stderr. --json never supplies --plan or --approved, and a call that carries them runs as it would without --json, wrapped the same way "
         "with a null token. A verb that describes a --json option of its own keeps it.",
-        "--asked \"your request\" is required by every cloud verb: it records that you asked for the cloud. Both are written to an "
-        "append-only audit log in the state directory.",
+        "start and send require --asked \"your request\" naming the cloud instance; their gate records it in the state directory's "
+        "append-only audit log. Other commands have their own gates: there is no universal --asked or audit requirement for cloud verbs. "
+        "Audit entries record supplied --asked and --approved words only where the command calls audit_log.",
         "qargi lead grant and revoke are interactive instead: you confirm each step at the terminal, and that is the approval.",
         "The rules. The token covers the plan the person saw, and an apply refuses when the plan is no longer that one. The --approved text is "
         "recorded, not verified: it is not proof that a person agreed. Never allow-list a gated verb in the runtime's settings: the permission "

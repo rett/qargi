@@ -31,7 +31,10 @@ git -C "$CLONE" remote -v | grep -q "$T/r" && no "the clone knows the real repos
 out=$(./bin/qargi local verify "$RUN" 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "OUT is empty: the member did not collect" <<<"$out" && ok "verify fails first when the clone has commits and OUT holds neither patches nor a report" || no "verify of an uncollected run (rc=$rc): $out"
 echo "# report" > "$RUN/out/report.md"
-./bin/qargi local verify "$RUN" >/dev/null 2>&1 && ok "verify passes after a clean run" || no "verify clean"
+out=$(./bin/qargi local verify "$RUN" 2>&1); rc=$?
+[ "$rc" = 0 ] && ok "verify passes after a clean run" || no "verify clean: $out"
+{ grep -q '^refs unchanged: observed local refs and available origin heads/tags, excluding refs/qargi/ (snapshots only)$' <<<"$out" && ! grep -qiE 'nothing was pushed|no push|never pushed' <<<"$out"; } \
+  && ok "unchanged success names snapshot coverage without a universal no-push assurance" || no "unchanged success claim: $out"
 [ "$(cat "$RUN/ability")" = build ] && ok "the run records its ability (build by default)" || no "ability file"
 R2=$(./bin/qargi local prepare --repo "$T/r" --base main --slug rev --scratch "$T" --role review | sed -n '1,/^$/s/^RUN=//p')
 [ "$(cat "$R2/ability")" = review ] && ok "--role review is recorded for the guard" || no "review ability"
@@ -183,6 +186,8 @@ git -C "$T/r3" remote add origin "$T/remote.git"; out=$(mk p3); P3=$(runof <<<"$
 [ "$(rc "$P3")" = 0 ] && ok "verify passes with a remote" || no "p3 verify"
 git -C "$T/r3" fetch -q origin; out=$(./bin/qargi local verify "$P3" 2>&1); r=$?
 [ $r = 0 ] && grep -q "origin/main created to what origin has" <<<"$out" && ok "a fetch (remote-tracking refs that say what origin has) is accepted and named" || no "fetch: $r $out"
+{ [ "$r" = 0 ] && grep -q '^refs differ from the snapshot only by accepted moves; observed local refs and available origin heads/tags, excluding refs/qargi/ (snapshots only):$' <<<"$out" && ! grep -qiE 'nothing was pushed|no push|never pushed' <<<"$out"; } \
+  && ok "accepted-difference success names snapshot coverage without a universal no-push assurance" || no "accepted-difference success claim: $out"
 git --git-dir="$T/remote.git" update-ref refs/heads/elsewhere "$(git --git-dir="$T/remote.git" rev-parse main)"
 [ "$(rc "$P3")" = 2 ] && ok "a remote ref change fails with exit 2 after a passing verify" || no "remote change accepted"
 git --git-dir="$T/remote.git" update-ref -d refs/heads/elsewhere
