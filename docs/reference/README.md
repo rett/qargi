@@ -1,7 +1,13 @@
 # Reference
 
-- [Backlog graph v1](backlog-graph.md): the native read-only schema, reports, source revision evidence and planning limits.
-- [Campaign records v1](campaign-records.md): local declarations, the closed schema, publication outcomes and bounded history.
+- [Backlog graph v1](backlog-graph.md) documents the native read-only schema, reports, source revision evidence and planning limits.
+- [Campaign records v1](campaign-records.md) documents bounded local declarations, the closed schema, publication outcomes and bounded history.
+
+## Planning reports and declarations
+
+`qargi backlog graph check|show|why --graph FILE` reads manually declared relationships against the configured open backlog. `why` also needs `--node REF`. Reported evidence follows the parser's item digest. Feature references and archived items remain unobserved. The reports grant no approval, acceptance, scheduling or execution authority. The public command remains lead-only under the current member guard. The [graph reference](backlog-graph.md#commands-and-boundaries) describes the member-safe direct Python reader and its limits.
+
+`qargi campaign check --spec FILE` validates a supplied declaration without configuration or state probes and is available to members. The lead owns local `commit`, stored `check`, `show` and `log` operations. Campaign records retain supplied design and briefing claims and unresolved evidence links. They do not observe source state or record acceptance. [Campaign records v1](campaign-records.md) specifies the qualified local-store boundary and bounded history. Ataniq owns its separate orchestration work. Fresh review against actual dependencies remains required before merge acceptance, and declarations do not enforce that review.
 
 ## Help, manual page and completion
 

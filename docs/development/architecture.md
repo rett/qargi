@@ -53,7 +53,7 @@ on `refs/qargi/done/NAME`, of the project's remote (`lib/marshal_refs.py`).
   render machinery, the take-in check, help, the site generator.
 - Providers are data: `lib/providers/NAME.json` describes a runtime (its tools, hook protocol, barrier, dispatch, renderers).
   Code reads the definition; the adapter of a runtime (`lib/providers/claude-code/adapter`) is the code for what data cannot say.
-- Packs are skills and tools with a content hash, imported, sealed and linked by scope; `packs/` ships nine.
+- Packs are skills and tools with a content hash, imported, sealed and linked by scope. `packs/` ships ten skills, including opt-in [release documentation review guidance](../../packs/skills/release-docs-review/SKILL.md). Distribution and informational proposal hints leave activation to the existing approval workflow.
 - A methodology (`methodologies/NAME/methodology.json` and `scaffold/`) is data read by `project new|attach|adopt`; see
   [Flow](../flow/README.md#methodologies) for what it configures.
 - `skills/`, `roles/`, `contract/` and `agents/` are prompts: the lead's skills, the role texts, the member contract and the
@@ -61,21 +61,24 @@ on `refs/qargi/done/NAME`, of the project's remote (`lib/marshal_refs.py`).
 
 ## The life of a local run
 
-1. `local prepare` clones the repository into a run directory with no remote and a git wrapper without credentials, records
-   the run in `local-runs.jsonl`, takes the refs of the real repository, and writes the task block.
-2. A member works in the clone under the guard and writes patches and a manifest to `OUT`.
-3. `local verify` compares every ref of the real repository (and its remote) with the ones taken at prepare, and saves the output.
+1. `local prepare` makes a bare copy of the repository and removes that copy's origin. It clones the bare copy into the run directory, leaving the clone's origin pointed at the bare copy with push URL `DISABLED`. It supplies a credentialless Git wrapper, records the run in `local-runs.jsonl`, snapshots the real repository's refs and writes the task block (`lib/local.sh`).
+2. A member works in the clone under its runtime's configured protections and writes patches and a manifest to `OUT`.
+3. `local verify` compares snapshots of the real repository's local refs and origin's heads and tags, excluding `refs/qargi/`. It applies the lead ref journal and configured runtime-owned ref rules and saves passing output. These comparisons cover the recorded destinations and observation times. They cannot establish that no transient push occurred or that other destinations stayed unchanged.
 4. `review check` reads the series and the manifest (the shape of the patches and the commits, paths against SCOPE, the scrub when the project has one); a review run returns a report instead and is checked for its findings and verdict line.
 5. `review apply` puts the series on `agent/<slug>`, then `feature merge` brings it into the feature branch.
 6. `local clean` removes the run and its temporary directory; `feature verify` and `feature finish` end the feature.
 
 A cloud run replaces step 1 and 2 with `start` and a session of an instance (`lib/session.sh`) and is collected with `collect`.
 
+The wrapper uses a run-specific home, disables global and system Git configuration, clears inherited credentials and disables Git SSH transport and prompts. Together with the disabled push URL, these protections block ordinary pushes through the supplied setup. They do not prove that a push is impossible. Runtime sandbox and guard behavior has its own qualified scope, described for [members and providers](../members-and-providers/README.md) and [Codex](../members-and-providers/codex.md).
+
+The memory packet uses the clone's committed repo tier as its base. Other configured tiers remain read-only within task scope and actual access. `lib/tiercontext.py` reports tier availability and uncommitted repo-tier changes. The [memory tiers documentation](../skills-tools-and-memory/memory.md#memory-tiers) describes their precedence and locations.
+
 ## What is advice and what is checked
 
 - Campaign records have declarations-only authority: source observation is not performed, acceptance is not recorded, measurements are not computed and invalidation policy is undecided. Briefings and evidence links remain supplied claims and unresolved pointers. Fresh actual-dependency review is required before merge acceptance, but these records do not enforce it. The store qualifies cooperating local writers, not orchestration or a provider adapter.
 - The member guard (`lib/guard.py`) is a best-effort text check of a member's tool calls. It is advice that refuses the ordinary
-  ways; a member runs as the lead's operating-system user, so it is not a boundary. A real sandbox is not yet built.
+  ways. A member runs as the lead's operating-system user, so the guard provides no operating-system isolation. The [Codex runtime](../members-and-providers/codex.md#platform-and-sandbox) uses a sandbox with separately qualified limits.
 - The checks are what run after the member: `local verify` (refs), `review check` (series, SCOPE, manifest, scrub),
   `feature verify` and `release verify` (the project's gates or test command, run by qargi), and the lead's own re-run of the DONE command.
 - A plan token binds the plan the person saw to the apply (a hash of the state the plan describes); `--approved` words are

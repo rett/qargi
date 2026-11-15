@@ -47,7 +47,7 @@ A tool pack is a JSON file: the `name` of the pack (lower-case letters, digits, 
 
 ## Baseline packs
 
-qargi ships nine skills of its own in `packs/` (listed in `packs/baseline.json`, one `skills/NAME/SKILL.md` each), written to be portable:
+qargi ships ten skills of its own in `packs/` (listed in `packs/baseline.json`, one `skills/NAME/SKILL.md` each), written to be portable.
 
 - `shellcheck-gate`: lint every shell file you add or change with shellcheck and quote the verdict among the gates.
 - `keep-a-changelog`: record each user-visible change under Unreleased in `CHANGELOG.md`, in the same commit.
@@ -58,6 +58,7 @@ qargi ships nine skills of its own in `packs/` (listed in `packs/baseline.json`,
 - `qargi-contributing`: habits for a member who changes qargi itself (quoting in Python scripts and in `echo`, no foreground `sleep`, fail-first tests, shrink-only ceilings, targeted tests only). The commit-message and stash rules are in the member contract, not here.
 - `bubble-tea`: opt-in guidance for developing and debugging Go terminal UIs and coordinated terminal-console clients, preserving the project's pinned Bubble Tea version, lifecycle boundaries and terminal qualification. Shipped source is guidance and does not activate it.
 - `campaign-coordination`: when a project supplies campaign/dependency context, record the actual design and dependency basis, surface drift and provisional claims, and require fresh actual-dependency review before acceptance. It guides decisions without mechanically enforcing them; [campaign records](../reference/campaign-records.md) supply bounded declarations, while Ataniq orchestration remains separately owned.
+- [release-docs-review](../../packs/skills/release-docs-review/SKILL.md) provides opt-in guidance for reviewing README, website, release notes and pack guidance against concrete source, release and ref evidence. It distinguishes source checks from deployed observations and retains gaps for lead disposition. Existing owner permission, independent review, publication and session gates still apply.
 
 The manifest's human-readable `propose` hints are informational; they do not implement automatic recommendation or enforcement. Custom import, seal, link, render and activation retain their applicable existing scope, review and approval gates. Keep project-specific adaptations in canonical memory through the lead's normal workflow. Editing the distribution source does not change an installed library or activate a pack; source distribution is not activation.
 
