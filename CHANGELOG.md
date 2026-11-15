@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- The Python campaign store supports local declaration commits, exact-current retries, current checks and bounded historical inspection. Each cursor page proves ancestry from a selected head within 4096 predecessor edges. Private state checks and a permanent writer lock protect cooperating local writers. Commit results distinguish visible publication from uncertain durability. This component adds no command integration or acceptance authority.
+
 ### Changed
 - `qargi review check` emits advisory area-count warnings that require substantive commit-cohesion review, including supporting tests, docs and changelog. Source acceptance requires independent review of concrete changes and dependencies. The shipped review-findings pack guides that inspection. The checker enforces structural hard checks. Changed-file plans select its regressions when the member contract changes.
 - The contributor guide, canonical member contract and changelog pack keep each logical change with its supporting tests, docs and changelog in a cohesive, buildable commit. Directory counts and patch size prompt review, and concrete changes and dependencies determine commit boundaries. The prompt word-count manifest tracks the updated guidance, and the planner coverage includes every source family and policy input checked by the prompt budget validator. Coverage regressions use the current runner with a small inventory to reduce repeated planning work while preserving every changed-path case and an ordinary fast-plan check.
