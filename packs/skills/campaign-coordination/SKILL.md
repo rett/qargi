@@ -4,7 +4,7 @@ description: "Use when a project supplies campaign or dependency context to trac
 ---
 # Campaign and dependency context
 
-Apply this guidance to the supplied coordination scope. External participant projects need no registration or adoption. Declarations are planning claims, and evidence or outcome links remain unresolved pointers until separately inspected within your authority.
+Apply this guidance to the supplied coordination scope. External participant projects need no registration or adoption. Declarations are planning claims. Evidence or outcome links persist as unresolved v1 declarations, even with a digest. Separate inspection within your authority supplies an attributed observation; it does not change the declaration's unresolved status.
 
 - In the permitted task report, record the supplied campaign identity, revision, work ID and participant identity, with their source. Record the design revision and dependency basis actually used: inspected references or pins, what you observed, and what remains assumed. Mark missing or inaccessible data `unknown`; do not invent identities or treat a declaration as observed source state.
 - Attribute briefing claims to their source and revision. A recorded briefing does not establish delivery or acknowledgment. Say separately whether you observed either, and cite that observation; otherwise mark it unknown.

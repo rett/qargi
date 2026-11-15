@@ -1,10 +1,11 @@
 # Campaign records v1
 
 `qargi campaign` records bounded, editable coordination declarations in a
-private local store. This is the first bounded capability in the canonical
-campaign roadmap. Ataniq orchestration remains separately owned. Role transfer,
-scheduling, ingestion, notifications, automated feedback or adoption,
-release/deploy and federation are future work.
+private local store for projects managed inside or outside Qargi. Ataniq is
+the related, separately developed orchestration project; its orchestration
+remains separately owned. Role transfer, scheduling, ingestion, notifications,
+automated feedback or adoption, release/deploy and federation are future
+campaign work.
 
 These records are supplied claims. They establish neither observed project or
 source state, acceptance, message delivery nor computed measurements. Every
@@ -39,23 +40,37 @@ All forms start with `qargi campaign`:
 - `log UUID [--cursor CURSOR] [--limit N] [--json]`: newest-first revision
   summaries, default 50, maximum 200, with bounded ancestry verification.
 
-Every state form, including reads, is lead-only. There is no project or cloud
-setup requirement. The selected UUID must equal the document's campaign UUID.
+Every state form, including reads, is lead-only through cooperative
+member-context refusal and a best-effort guard. Unknown caller context fails
+closed. These checks do not authenticate a hostile same-user process or
+establish OS isolation. There is no project or cloud setup requirement. The
+selected UUID must equal the document's campaign UUID.
+
 Options have exact spellings; valued options also accept `--option=value`.
-Duplicates, abbreviations, mixed check forms, and incompatible creation/parent
-options are usage errors. `--` ends option parsing. Limits use unpadded ASCII
+A separated valued option cannot consume a word beginning `--`; use
+`--spec=--filename` for such a filename. `--` ends option parsing: subsequent
+words are positional, not options or spec values. Limits use unpadded ASCII
 decimal integers from 1 through 200.
 
 The spec is a bounded regular file; a user-selected symlink is followed.
 Directories, FIFOs and other special files are refused. Declared locators,
 references, pins and links are never opened, executed, fetched or ingested.
 
-Exit 0 means a valid report (warnings may remain); ordinary validation, store
-or output failure exits 1. Usage errors exit 2 with a diagnostic on stderr and
-no report, including with `--json`. A failed stdout write cannot roll back a
-published commit and grants no additional credit. Native `--json` routes a
-campaign report directly, rather than wrapping text in the global plan format.
-Any development-run banner is on stderr.
+Exit 0 means a valid report (warnings may remain). CLI syntax usage errors
+exit 2 with a diagnostic on stderr and no native report, including with
+`--json`: malformed or nil positional UUIDs, bad `--expected-head` or
+`--revision` digests, invalid or out-of-range log limits, empty/missing values,
+duplicate options, abbreviations, mixed check forms and incompatible
+creation/parent options. A malformed nonempty cursor instead exits 1 with a
+native `cursor` failure report when reached in a lead context. Document/schema identity
+failures also exit 1 with native reports, including `identity` for an invalid
+document UUID and `identity-mismatch` for a document differing from the selected
+UUID. These are distinct from malformed positional UUID usage errors.
+
+Ordinary validation, store or output failure exits 1. A failed stdout write
+cannot roll back a published commit and grants no additional credit. Native
+`--json` routes a campaign report directly, rather than wrapping text in the
+global plan format. Any development-run banner is on stderr.
 
 ## Closed declaration schema
 
@@ -76,8 +91,9 @@ Common grammar and limits:
   characters are refused except LF, which is allowed only in objective and
   requirement text. All field lengths below count UTF-8 bytes.
 - `by` and `at` are at most 128 bytes. `at` is a valid graph ISO8601 date
-  `YYYY-MM-DD` or timestamp: date, `T`/`t`, hour/minute, optional seconds
-  and fractional seconds, optional `Z`/`z` or signed hour/minute offset.
+  `YYYY-MM-DD` or timestamp: date, `T`/`t`, `HH:MM`, optional `:SS`
+  and fractional seconds, optional `Z`/`z` or signed `HH:MM` offset.
+  Time and offset colons are required by the implemented grammar.
   Hours are 00..23; calendar/time validity is checked. Fractions use dot or
   comma and require seconds. Timezone omission is allowed.
 - A typed reference is `backlog:ID` or `feature:NAME`. Backlog IDs match
@@ -281,7 +297,9 @@ Log returns at most 200 small summaries. `complete` means this page reached
 revision 1; a cursor's presence does not certify the next object exists or
 authenticate page consumption. Exhaustion returns `history-walk-limit`,
 `entries: []`, `complete: false`, with no successful partial result.
-An existing orphan yields `not-in-history`; missing requested objects can yield
+An existing orphan yields `not-in-history` when the bounded ancestry proof can
+establish exclusion; sufficiently distant orphan selection can instead exhaust
+that proof and return `history-walk-limit`. Missing requested objects can yield
 `not-found`. Current show/check and new commits remain available beyond this
 history limit, using at most two distinct objects without a full-history walk.
 
@@ -296,20 +314,23 @@ power-loss/kernel-EIO qualification.
 
 Machine reports have `format: campaign-report`, `version: 1`, `command`,
 `valid`, `campaign`, `revision`, `findings`, `constants`, and `durability`.
-`revision` is null or `{digest, rev, previous}`. Show adds `document`,
+`revision` is null or `{digest, rev, previous}`. Successful show adds `document`,
 `selected_head`, `selected_start`, and
-`verified_scope: selected-head-ancestry`. Log's revision and findings describe
-the selected head; `entries`, `selected_start`, `cursor` and `complete`
-describe its historical page. Check adds `transition: not-checked` for pure
-input, `checked-create` at stored revision 1 or `checked-current-parent`.
-Commit adds the result/publication fields described above. Failure reports
-have `valid: false`, null revision and an error finding; contextual details
-such as stage, conflict or parent durability fields are conditional.
+`verified_scope: selected-head-ancestry`. Successful log includes `selected_head`
+and the same `verified_scope`; its revision and findings describe the selected
+head, while `entries`, `selected_start`, `cursor` and `complete` describe its
+historical page. Check adds `transition: not-checked` for pure input. Successful
+stored check adds `selected_head` and `transition: checked-create` at revision 1
+or `checked-current-parent` otherwise. Commit adds the result/publication fields
+described above. Failure reports have `valid: false`, null revision and an error
+finding; additional fields such as stage, conflict or parent durability appear
+only when applicable.
 
 Findings have `code`, `severity`, `message` and, when applicable, `path` or
-warning `entity`. Validation is first-error, with child paths rooted at `$`
-and invalid-parent paths at `$parent`. Warnings are deterministic and do not
-invalidate a report: `requirement-uncovered`, `brief-claim-missing`,
+warning `entity`. When an error supplies a path, the failure report also has
+that optional top-level `path`. Validation is first-error, with child paths
+rooted at `$` and invalid-parent paths at `$parent`. Warnings are deterministic
+and do not invalidate a report: `requirement-uncovered`, `brief-claim-missing`,
 `brief-claim-behind`, `coordination-target-withdrawn`.
 
 Declaration error codes are `invalid-json`, `duplicate-json-key`, `schema`,
