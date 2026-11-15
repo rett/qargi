@@ -106,7 +106,7 @@ HOTFIX_OPT = opt("--hotfix", "a hotfix: branch from master, finish into master a
 
 GROUPS = [
     ("Set up", ["project", "methodology", "cloud", "agent", "role", "provider", "provision", "env", "doctor", "instances", "skill", "tool", "packs", "discover"]),
-    ("Run a task", ["feature", "marshal", "release", "branch", "changelog", "upstream", "backlog", "ref", "start", "send", "status", "report", "noticed", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
+    ("Run a task", ["feature", "marshal", "release", "branch", "changelog", "upstream", "backlog", "campaign", "ref", "start", "send", "status", "report", "noticed", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
     ("Lead and credentials", ["lead", "credential", "hook"]),
@@ -492,6 +492,43 @@ COMMANDS = {
                                "upstream.overlay_check set, the command then runs on a trial merge of the branch into develop in a temporary worktree (the fast-forward "
                                "stands either way; a failure or a merge conflict exits 1)."),
                          examples=["qargi upstream sync", "qargi upstream sync --plan TOKEN --approved \"yes, take the upstream commits\""]),
+        },
+    },
+    "campaign": {
+        "summary": "Record and inspect local campaign declarations",
+        "scripts": ["campaign.py"],
+        "desc": ("Campaign v1 records declarations only: it grants no participant, execution, acceptance or merge authority. "
+                 "Invalidation policy is undecided. Participant locators, source refs and link targets are never opened. "
+                 "State verbs are lead-only and need no project registration, repository adoption or cloud configuration. "
+                 "Pure check --spec reads only the selected regular file (including a user-selected symlink), with no configuration or state resolution. "
+                 "Spec input is bounded to 512 KiB before parsing; special files are refused. "
+                 "JSON is a native campaign-report v1, with valid false and exit 1 for data, conflict, lock, storage and uncertain outcomes. "
+                 "Usage errors exit 2 on stderr. Exit 0 qualifies only the reported declaration scope. "
+                 "Text prints fixed summaries and identifiers; show --json includes the supplied document. "
+                 "Historical responses prove selected-head ancestry within one 4096-edge traversal bound; exhaustion returns no successful partial history. "
+                 "Reads never repair state and report durability not-assessed. Writes use a permanent local lock and compare-and-swap head; "
+                 "publication and durability are separate outcomes. Fsync-acknowledged describes returned syscalls on a trusted local filesystem, not power-loss safety. "
+                 "No retry, rollback, orphan adoption or acceptance inference is automatic."),
+        "verbs": {
+            "commit": verb("Publish a declaration or settle an exact-current retry", [("ID", "none")],
+                           [opt("--spec", "required declaration document", "FILE", "file"),
+                            opt("--create", "create revision 1; requires exactly one of --create or --expected-head"),
+                            opt("--expected-head", "compare-and-swap from this sha256 digest", "DIGEST"),
+                            opt("--json", "print the native campaign report")],
+                           desc="Supply --spec FILE and exactly one of --create or --expected-head DIGEST. An exact-current retry settles the selected candidate and reports already-current; a stale expectation otherwise conflicts without rebasing or checking candidate history. Failures preserve publication (not-assessed, none, visible or unknown), durability and any parent uncertainty. Retry only by explicitly issuing the same command after inspecting the outcome."),
+            "show": verb("Read the current declaration or a proven historical revision", [("ID", "none")],
+                         [opt("--revision", "select a retained sha256 revision digest", "DIGEST"),
+                          opt("--json", "include the declaration in the native campaign report")],
+                         desc="Historical selection must prove ancestry from one selected head within 4096 predecessor edges. Exhaustion reports history-walk-limit. Current reads remain available beyond that bound."),
+            "check": verb("Check current state or only a supplied declaration", [("ID", "none", True)],
+                          [opt("--spec", "check this supplied document instead of an ID; no transition or state check", "FILE", "file"),
+                           opt("--json", "print the native campaign report")],
+                          desc="Choose ID or --spec FILE, never both. Only the pure supplied-document form is available to members; it reports transition not-checked and coordination scope supplied-document. A current-state check verifies the actual parent transition."),
+            "log": verb("Read a bounded page of proven declaration history", [("ID", "none")],
+                        [opt("--cursor", "continue a page; an untrusted cursor grants no ancestry proof", "CURSOR"),
+                         opt("--limit", "page entries: decimal integer 1 to 200 (default 50)", "N"),
+                         opt("--json", "print the native campaign report")],
+                        desc="Each response proves selected-head ancestry within one 4096-edge bound shared by proof and page traversal. Exhaustion fails with no partial entries and complete false. Complete means the page reached revision 1. A cursor pins a selected start and next revision; every page proves them again. Current reads and commits have no history-length limit."),
         },
     },
     "backlog": {

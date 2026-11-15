@@ -261,7 +261,7 @@ GIT_OUTPUT_DIRS = {"format-patch", "archive"}                    # git subcomman
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
 SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
            "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "project_link.py", "gated_answers.py", "project.sh", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py", "local_run.py", "local.sh", "release.sh", "release_sign.py",
-           "agent.sh", "team.sh", "env.py", "env_apply.py", "branch.sh", "changelog.sh", "changelog_numbers.py", "upstream.sh", "backlog.sh", "backlog.py", "ref.sh", "jsonplan.py")
+           "agent.sh", "team.sh", "env.py", "env_apply.py", "branch.sh", "changelog.sh", "changelog_numbers.py", "upstream.sh", "backlog.sh", "backlog.py", "campaign.py", "ref.sh", "jsonplan.py")
 # the command and the scripts behind the refused verbs (packs_link.py is packs link|unlink, packs_audit.py store is skill accept|unaccept,
 # marshal_handoff.py is marshal handoff: the shell verbs call them, and a member could call them directly with a hand-made inputs file;
 # linker.py, the link engine packs_link.py calls, is packs link, and render.py renders member definitions and runs the command a definition names)
@@ -2034,6 +2034,7 @@ def _protected_roots():
     roots.update(render_roots(P, home))
     roots.update(providers_state_roots(P, home))
     roots.update(feature_roots(P, home))
+    roots.update(state_sub("campaigns", P, home))
     roots.update(switch_roots(P, home))
     roots.update(lead_state_roots(P, home))
     roots.update(saved_runs_roots(P, home))
@@ -2929,6 +2930,39 @@ def own_script(path, here):
     return os.path.dirname(resolve(here, path)) in libs
 
 
+def pure_campaign_args(args):
+    """Only the literal supplied-file check, with no positional campaign ID.
+
+    Keep option values: dropping all '-' words mistakes a filename for a flag.
+    Dynamic words and glob expansion cannot establish this exception safely.
+    """
+    if not args or args[0] != "check" or any(
+            builds_word(w) or any(c in w for c in "*?[]{}") for w in args):
+        return False
+    seen = set()
+    i = 1
+    while i < len(args):
+        flag, equal, value = args[i].partition("=")
+        i += 1
+        if flag == "--" and i == len(args):
+            break
+        if flag in seen:
+            return False
+        seen.add(flag)
+        if flag == "--json" and not equal:
+            continue
+        if flag != "--spec":
+            return False
+        if not equal:
+            if i == len(args) or args[i].startswith("--"):
+                return False
+            value = args[i]
+            i += 1
+        if not value:
+            return False
+    return "--spec" in seen
+
+
 def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
     """The reason a qargi command (or the script behind it, run directly) is a verb that changes a skill, or None. via_xargs: xargs
     stands before the program, so its arguments come from standard input, where --write could be. here: the directory the command runs
@@ -2944,6 +2978,15 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
             return None
     if name in OWN_ONLY and not own_script(script, here):
         return None
+    if name == "campaign.py" or (name in ("qargi", "jsonplan.py") and words[:1] == ["campaign"]):
+        args = rest
+        if prog not in SCRIPTS:
+            args = rest[rest.index(script) + 1:]
+        if name != "campaign.py":
+            args = args[1:]
+        if not via_xargs and pure_campaign_args(args):
+            return None
+        return OwnReason("campaign state requires a lead context; only literal campaign check --spec FILE [--json] is available to a member")
     if name == "linker.py":                              # the engine behind packs link and unlink: any use of it is the verb
         words = ["packs", "link"]
     if name == "render.py":
