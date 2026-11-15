@@ -14,6 +14,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -68,6 +69,38 @@ class Campaign(unittest.TestCase):
 
     def create(self):
         return self.run_cli("commit", CAMPAIGN, "--spec", str(self.spec), "--create", "--json")
+
+    def test_documented_external_example(self):
+        text = (ROOT / "docs/reference/campaign-records.md").read_text()
+        blocks = re.findall(r"^```(json|sh)\n(.*?)^```$", text, re.M | re.S)
+        self.assertEqual([kind for kind, _ in blocks], ["json", "sh"])
+        for _, body in blocks:
+            self.assertTrue(all(len(line) <= 80 for line in body.splitlines()))
+        raw = blocks[0][1].encode("utf-8")
+        value = D.decode(raw)
+        normalized = D.transition(None, value, rev=1)
+        self.assertTrue(all(p["qargi_project"] is None for p in normalized["participants"]))
+        (self.root / "campaign.json").write_bytes(raw)
+        # Execute the literal documented shell, through the public dispatcher.
+        (self.root / "bin/qargi").symlink_to(ROOT / "bin/qargi")
+        result = subprocess.run(["bash", "-eu", "-c", blocks[1][1]], cwd=self.root,
+                                env=self.env, capture_output=True, text=True,
+                                timeout=20, stdin=subprocess.DEVNULL)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        def report(name):
+            return json.loads((self.root / name).read_text())
+        created, shown = report("created.json"), report("shown.json")
+        updated, retried = report("updated.json"), report("update-retry.json")
+        self.assertEqual(shown["document"], normalized)
+        self.assertEqual(created["revision"], shown["revision"])
+        self.assertEqual(report("create-retry.json")["result"], "already-current")
+        self.assertEqual((updated["result"], updated["revision"]["rev"]), ("committed", 2))
+        self.assertEqual(updated["revision"]["previous"], created["revision"]["digest"])
+        self.assertEqual(retried["revision"], updated["revision"])
+        self.assertEqual(retried["result"], "already-current")
+        current = self.run_cli("show", value["campaign"], "--json")
+        self.assertEqual(current["document"]["work"][0]["design"]["rev"], 2)
+        self.assertFalse(self.conf.exists())
 
     def update(self, previous, label="changed"):
         self.value["label"] = label
