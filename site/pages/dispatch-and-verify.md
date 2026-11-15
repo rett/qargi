@@ -67,7 +67,7 @@ qargi review check RUN/out
 
 One logical change may be one commit and one patch with its supporting tests, docs and any required changelog entry. The published 0.3.0 checker also fails a single patch touching three or more top-level areas.
 
-The supplied source for the upcoming 0.3.1 candidate makes area counts and patch size advisory warnings that call for substantive independent cohesion review. Its campaign declarations and additional baseline packs are also candidate additions; declarations and pack seeding grant no execution or approval authority. These pages remain checked against 0.3.0. The lead must update the version and pinned source links after the release source is settled, rebuild against the final release, inspect the layout and obtain separate website publication approval. This baseline build does not qualify or publish 0.3.1. Directory boundaries alone do not decide commit boundaries.
+The supplied source for the upcoming 0.3.1 candidate makes area counts and patch size advisory warnings that call for substantive independent cohesion review. The candidate also adds declaration-only campaign records and baseline guidance packs. These pages remain checked against 0.3.0. Final 0.3.1 documentation requires the settled release source, updated version and source links, a rebuilt site, layout inspection and website publication approval. Cohesion review considers the concrete change and its supporting files.
 
 Then read the manifest.
 
