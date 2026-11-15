@@ -104,7 +104,7 @@ full | par | 300 | 79 | bash tests/test_packs_seed.sh | lib/packs*.sh lib/packs*
 fast | par | 300 | 9 | python3 tests/test_packs_check.py | lib/packs*.sh lib/packs*.py lib/conformance/review.py
 fast | par | 300 | 3 | python3 tests/test_packs_mcp.py | lib/packs_mcp.py lib/packs_check.py lib/packs.sh lib/providers/claude-code.json
 full | par | 882 | 204 | bash tests/test_packs_render.sh | lib/packs*.sh lib/packs*.py
-full | par | 300 | 132.9 | python3 tests/test_pack_targets.py | lib/provider.py lib/packs.sh lib/packs_render.py lib/packs_link.py lib/packs_audit.py lib/packs_compat.py lib/project_link.py lib/commands.py
+full | par | 300 | 133 | python3 tests/test_pack_targets.py | lib/provider.py lib/packs.sh lib/packs_render.py lib/packs_link.py lib/packs_audit.py lib/packs_compat.py lib/project_link.py lib/commands.py
 full | par | 804 | 214 | bash tests/test_packs_link.sh | lib/packs*.sh lib/packs*.py
 fast | par | 300 | 20 | bash tests/test_linker.sh | lib/linker.py
 full | par | 1038 | 313 | bash tests/test_packs_audit.sh | lib/packs*.sh lib/packs*.py
