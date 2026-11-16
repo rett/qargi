@@ -747,6 +747,10 @@ case $verb in
       # Mode comes from the runtime alone; an in-session selection must retain
       # its existing extension handling. Command resolution composes below.
       CMODE=$(python3 -I "$(dirname "$0")/prepared_request.py" mode "$CPROV" </dev/null) || exit 2
+      if [ "$CMODE" != command ]; then
+        member_status=$(pymod member_skills plan "$CPJ" status) || die "member skill status could not be read; correct the diagnostic above before preparing"
+        jq -e '.old == false' <<<"$member_status" >/dev/null || die "member skills opt-in requires command dispatch; in-session delivery is unsupported"
+      fi
       if [ "$CMODE" = command ]; then
         reqargs=("$CPJ" "$CPROV" "$ROLE" "$CLASS")
         [ -z "$SELECTOR" ] || reqargs+=("$SELECTOR")

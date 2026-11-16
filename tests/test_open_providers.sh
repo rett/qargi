@@ -178,6 +178,14 @@ flow() {   # (the 6th argument is the name of the member made: member names are 
   { ! "$DA" agent list | grep " $mem " | grep -q '('; } && grep -q "serves" "$f" && ok "$rt: refresh renders the new definition" || no "$rt refresh: $("$DA" agent list | grep " $mem ")"
   out=$("$DA" provider check "$rt" 2>&1); [ "$("$DA" provider effective "$rt" local skills)" = yes ] && ok "$rt: and check records the verification of the new content" || no "$rt recheck: $out"
 
+  # A resealed definition changes the render binding; refresh it before auditing checkout skills.
+  out=$("$DA" packs check --target "$target" "$p" 2>&1); rc=$?
+  { [ "$rc" != 0 ] && grep -q "manifest runtime, target or composition differs" <<<"$out"; } && ok "$rt: the old render is stale after the definition is resealed" || no "$rt stale render: rc=$rc $out"
+  out=$("$DA" packs apply --target "$target" "$p" 2>&1); tok=$(tokp <<<"$out")
+  [ -n "$tok" ] && ok "$rt: a fresh render plan is required after resealing" || no "$rt fresh render plan: $out"
+  out=$("$DA" packs apply --target "$target" "$p" --plan "$tok" --approved test 2>&1); rc=$?
+  { [ "$rc" = 0 ] && "$DA" packs check --target "$target" "$p" >/dev/null 2>&1; } && ok "$rt: the fresh plan restores the current render binding" || no "$rt refreshed render: rc=$rc $out"
+
   # the audit: a skill of the user's own in the main checkout is unmanaged until the runtime's exclusion hides it
   mkdir -p "$repo/$skdir/mine"; printf -- '---\nname: mine\ndescription: mine\n---\n' > "$repo/$skdir/mine/SKILL.md"
   out=$(cd "$repo" && "$DA" packs link "$p" 2>&1)

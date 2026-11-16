@@ -133,6 +133,34 @@ class Pins(unittest.TestCase):
 
 
 class Manifest(unittest.TestCase):
+    def test_member_snapshots_select_all_selection_review_provider_and_path_inputs(self):
+        command = 'python3 tests/test_member_skills.py'
+        row = next(line for line in text(os.path.join(ROOT, 'tests/suite.txt')).splitlines() if command in line)
+        cases = ['lib/member_skills.py', 'lib/attempts.py', 'lib/local_run.py', 'lib/local.sh',
+                 'lib/gated_answers.py', 'lib/packs.sh', 'lib/project.sh', 'lib/provider.py',
+                 'lib/providers/codex.json', 'lib/providers/codex/local-run.md',
+                 'lib/packs_check.py', 'lib/packs_compat.py', 'lib/packs_mcp.py',
+                 'lib/packs_render.py', 'lib/conformance/review.py', 'lib/prepared_request.py',
+                 'lib/paths.py', 'lib/linker.py', 'lib/role.py', 'lib/agent.sh', 'lib/lib.sh',
+                 'lib/model-defaults.json', 'lib/project_profile.py', 'lib/render.py', 'lib/procenv.py',
+                 'roles/review/role.json', 'agents/member.body.md',
+                 'contract/contract.md', 'tests/prepared_request_cases.py',
+                 'tests/member_skills_fixture.py', 'tests/attempt_fixture.py',
+                 'tests/hermetic.py', 'tests/hermetic.sh']
+        with tempfile.TemporaryDirectory() as scratch:
+            os.mkdir(os.path.join(scratch, 'tests'))
+            for name in ('run.sh', 'test_member_skills.py'):
+                shutil.copyfile(os.path.join(ROOT, 'tests', name), os.path.join(scratch, 'tests', name))
+            suite, changed = (os.path.join(scratch, name) for name in ('tests/suite.txt', 'changed.txt'))
+            with open(suite, 'w') as stream:
+                stream.write(row + '\n')
+            for path in cases + ['', 'README.md', 'lib/unrelated.py']:
+                with self.subTest(path=path):
+                    with open(changed, 'w') as stream:
+                        stream.write(path + '\n' if path else '')
+                    _, steps = plan('--tier', 'fast', '--manifest', suite, '--changed-files', changed, root=scratch)
+                    self.assertEqual(command in [c for _, c in steps], path in cases)
+
     def test_skill_budget_changed_inputs_select_the_step(self):
         command = "bash tests/test_skill_budget.sh"
         manifest = text(os.path.join(ROOT, "tests", "suite.txt"))

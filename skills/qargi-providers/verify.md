@@ -4,6 +4,8 @@ Load when verifying, attesting or enabling a runtime or extension.
 
 ## What counts
 
+`dispatch.home.skills_dir` declares a command runtime's structural destination only. It does not verify loading or change capability dates. Managed member delivery remains default off and requires the project's separate gate. Qualify the actual client and source layout with approved marker calls; fixtures establish mechanics only. Inspect contract addenda for real protection: hookless runtimes have no qargi guard.
+
 The review of a pack with executables gives each one's path, sha256, interpreter, first lines, the URLs and network commands it mentions and the commands the argv would run. qargi runs an approved executable only from a private copy, after its hash and the pack's were checked against the sealed record.
 
 - A shipped definition is verified by the `verified_on` date and `source` of each cell.
@@ -21,7 +23,7 @@ A runtime held by `sandbox-args` (the shipped `codex`) passes `bash tests/confor
 - **Smoke run**: one `qargi local run` on the fast tier at `low` effort: the run signs in through the run home's link, the last message lands in `OUT/report.md`, and `USAGE=` shows the tokens. A model or effort override is verified only when an event names what was used.
 - **Before members rely on it**: a sign-in the runtime rewrites during a run reaches your file through the link, or is kept as `auth.json.from-run` for you; the MCP tool names have the form of `permission_rule`; `enabled_tools` hides a server's other tools; a write member can commit (the write class makes the clone's `.git` writable); the run's `baseline` holds (no approval asked, no network for commands, no hosted search, the features it turns off are gone) and a clone's own `.codex/` does not load. The offline checks of what loads, with a scratch `CODEX_HOME` and no sign-in, cost nothing: `codex debug prompt-input`, `codex mcp list --json`, `codex features list`.
 
-A shipped runtime records each result as `verified_on` and `source` in its definition, a change to the repository; a library pack records it with `attest`. The shipped `codex` has headless dispatch, its barrier (partial) and its token report verified (codex-cli 0.167.1, 2026-11-11), so a review role runs on it without `provider accept`; its model and effort overrides (no event names them), skills and MCP are not verified.
+A shipped runtime records each result as `verified_on` and `source` in its definition, a change to the repository; a library pack records it with `attest`. The shipped `codex` has headless dispatch, its barrier (partial) and its token report verified (codex-cli 0.167.1, 2026-11-11), so a review role runs on it without `provider accept`; its model and effort overrides (no event names them), interactive skill loading and MCP remain unqualified. The Codex guide records two narrower headless skill-marker observations from codex-cli 0.169.0 on 2026-11-16 UTC; the skills capability verification date remains unset.
 
 A read-only role on a surface whose barrier is not supported is refused unless the person accepts that for the project: `qargi provider accept NAME --surface S --no-barrier --asked "..."` (plan token, then `--plan TOKEN --approved "..."`).
 

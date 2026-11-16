@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""The one place that stores the two answers no `qargi project` verb stores: models.extensions (what a project adds to its runtime) and
+"""Store dedicated gated answers: packs.member_skills, models.extensions and models.accept_no_barrier.SURFACE.
+
+The member-skills path is boolean and stores only through its dedicated packs
+gate. Project validation is shared; ordinary project writes cannot bypass it.
+The provider answers are models.extensions (what a project adds to its runtime) and
 models.accept_no_barrier.SURFACE (the owner's acceptance of a provider surface with no read-only barrier). Both change what an agent may run
 on, so each has its own verb with a plan token and an approval (`qargi provider enable|disable`, `qargi provider accept`), and those verbs
 store through here, after their gate, and nowhere else: `qargi project set` and `qargi project init` refuse the keys always, and nothing a
 caller can set (no environment variable, no option) opens them there.
 
-  gated_answers.py store PROJECT PATH JSON [--conf DIR]     PATH is models.extensions or models.accept_no_barrier.local|cloud
+  gated_answers.py store PROJECT PATH JSON [--conf DIR]     PATH is packs.member_skills, models.extensions or models.accept_no_barrier.local|cloud
 
 A module for lib/conformance/library.py (store()) and the script lib/provider.sh calls. The script has no gate of its own, as lib/project_link.py
 has none: the verb that calls it has passed its plan token first. The guard therefore refuses any use of the script to a member (lib/guard.py),
@@ -30,18 +34,22 @@ class Refused(Exception):
 
 
 def check_path(path):
-    """The two paths that may be stored here, or Refused."""
-    if path == "models.extensions":
+    """Only the exact dedicated gated paths may be stored here."""
+    if path in ("models.extensions", "packs.member_skills"):
         return
     m = re.fullmatch(r"models\.accept_no_barrier\.([a-z]+)", path or "")
     if m and m.group(1) in SURFACES:
         return
-    raise Refused("%s is not stored here: only models.extensions and models.accept_no_barrier.%s" % (path, "|".join(SURFACES)))
+    raise Refused("%s is not stored here: only models.extensions, packs.member_skills and models.accept_no_barrier.%s" % (path, "|".join(SURFACES)))
 
 
 def store(project, path, value, conf=None):
     """Set the answer at path (JSON value) in the stored answers of project, after the validation of project.sh; nothing changes when it fails."""
     check_path(path)
+    if path == 'packs.member_skills':
+        import marshal_refs
+        if os.environ.get('QARGI_MEMBER_RUN') or marshal_refs.in_member_run():
+            raise Refused('packs.member_skills is not stored in a member run')
     conf = conf or paths.conf()
     if not re.fullmatch(r"[a-z][a-z0-9]{0,23}", project or ""):
         raise Refused("no project named %r" % project)
@@ -54,11 +62,12 @@ def store(project, path, value, conf=None):
         raise Refused("no readable stored answers for project %s" % project)
     if not isinstance(doc, dict):
         raise Refused("the stored answers of project %s are not an object" % project)
-    models = doc.get("models")
+    root = path.split('.')[0]
+    models = doc.get(root)
     if models is None:
-        models = doc["models"] = {}
+        models = doc[root] = {}
     if not isinstance(models, dict):
-        raise Refused("models of project %s is not an object" % project)
+        raise Refused("%s of project %s is not an object" % (root, project))
     key = path.split(".")[1:]
     node = models
     for n, k in enumerate(key[:-1]):
