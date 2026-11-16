@@ -10,8 +10,9 @@ and what was learned is kept in memory.
 Qargi is a CLI and a set of skills that dispatch one-off, task-scoped development
 tasks to agents and take the work back as reviewable patches. An agent
 works on one task in its own clone, whose git has no credentials and whose only remote is
-a copy with its push URL disabled; the dispatching session checks that the real repository's
-refs did not move, verifies the result and applies it.
+a copy with its push URL disabled. The dispatching session compares selected before/after
+ref snapshots under the documented exclusions and acceptance rules, verifies the result
+and applies it.
 
 Two kinds of agent do the work, each on a **runtime** the project names for that surface (see
 [Providers and runtimes](members-and-providers/providers.md); there is no default):

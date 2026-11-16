@@ -3,6 +3,12 @@
   "packs": [
     {
       "kind": "skill",
+      "name": "release-docs-review",
+      "propose": "README, website, release notes or pack guidance accuracy review",
+      "compatible_providers": ["any"]
+    },
+    {
+      "kind": "skill",
       "name": "campaign-coordination",
       "propose": "project supplies campaign or dependency context",
       "compatible_providers": ["any"]

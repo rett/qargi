@@ -432,7 +432,7 @@ run_clean() { # DIR COMMAND...: runs a command in DIR without the project's clou
 
 # Cloud verbs that create or drive a session need --asked "<what the user
 # said>": the quote is stored in the tracker so the choice is auditable.
-# Every approval-gated or cloud-driving verb leaves an append-only line here.
+# Commands that call audit_log append their supplied request and approval words here.
 audit_log() { # verb [detail]
   local f=$DA_STATE/audit.log line rc=0
   # AUDIT_ORIGIN (set by the supervisor only) adds an origin field, so its lines can be told from the owner's
