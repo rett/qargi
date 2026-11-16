@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # install.sh: the skills it installs agree with skills/, their front matter is YAML a strict parser reads, an install links them,
-# a second run changes nothing, an existing real directory is kept unless --force, an uninstall removes the links, and a project install hides them through the local
-# exclude file without touching the owner's lines. Hermetic home; nothing touches the real ~/.claude. Run: tests/test_install.sh
+# a second run changes nothing (not a link, not a record), an existing real directory is kept unless --force, an uninstall removes the links,
+# and a project install hides them through the local exclude file without touching the owner's lines. The records are in <conf>/install.d
+# (tests/test_install_runtimes.sh covers several runtimes side by side). Hermetic home; nothing touches the real ~/.claude. Run: tests/test_install.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
@@ -122,9 +123,13 @@ out=$(bash "$INSTALL" --user 2>&1); rc=$?
 miss=''; for s in $CURRENT; do [ "$(readlink "$S/$s")" = "$ROOT/skills/$s" ] && [ -d "$S/$s" ] || miss="$miss $s"; done
 [ -z "$miss" ] && ok "the skills are installed as links into the checkout" || no "skills missing:$miss"
 
-before=$(find "$S" -maxdepth 1 -type l -printf "%f -> %l\n" | sort)
+R=$QARGI_CONF/install.d
+[ -f "$R/runtime-claude-code.manifest" ] && [ -f "$R/shared.manifest" ] && [ ! -e "$QARGI_CONF/install.manifest" ] && ok "the install is recorded in install.d: the runtime's manifest and the shared one" || no "records: $(ls -A "$QARGI_CONF" "$R" 2>&1)"
+[ "$(stat -c %a "$R")" = 700 ] && [ "$(stat -c %a "$R/runtime-claude-code.manifest")" = 600 ] && ok "install.d is private (700, its manifests 600)" || no "modes: $(stat -c '%a %n' "$R" "$R"/*)"
+links() { find "$S" "$HOME/.local" "$XDG_CONFIG_HOME" -type l -printf "%p %i -> %l\n" | sort; }
+before=$(links); mbefore=$(cat "$R"/*.manifest)
 bash "$INSTALL" --user >/dev/null 2>&1; rc=$?
-[ "$rc" = 0 ] && [ "$before" = "$(find "$S" -maxdepth 1 -type l -printf "%f -> %l\n" | sort)" ] && ok "a second run changes nothing" || no "second run: rc=$rc"
+[ "$rc" = 0 ] && [ "$before" = "$(links)" ] && [ "$mbefore" = "$(cat "$R"/*.manifest)" ] && ok "a second run changes nothing: the same links (same inodes) and the same records" || no "second run: rc=$rc $(diff <(echo "$before") <(links))"
 
 # a real directory in the way is kept without --force and replaced with it
 rm -f "$S/qargi-task"; mkdir "$S/qargi-task"; echo mine > "$S/qargi-task/notes.md"
@@ -138,8 +143,9 @@ out=$(bash "$INSTALL" --user --uninstall 2>&1); rc=$?
 [ "$rc" = 0 ] && ok "uninstall succeeds" || no "uninstall: rc=$rc $out"
 left=''; for s in $CURRENT; do [ ! -e "$S/$s" ] && [ ! -L "$S/$s" ] || left="$left $s"; done
 [ -z "$left" ] && ok "uninstall removes the skills" || no "skills left:$left"
+[ ! -e "$S" ] && [ ! -e "$R" ] && ok "and the skills directory and install.d it made go too, once empty" || no "left: $(ls -A "$S" "$R" 2>&1)"
 # no manifest: nothing is recorded, so uninstall removes nothing and fails, with --force too (no guessing at fixed paths)
-mkdir "$S/qargi-flow"; echo mine > "$S/qargi-flow/notes.md"; ln -s "$T/elsewhere" "$S/qargi-team"; echo mine > "$S/other-skill"
+mkdir -p "$S/qargi-flow"; echo mine > "$S/qargi-flow/notes.md"; ln -s "$T/elsewhere" "$S/qargi-team"; echo mine > "$S/other-skill"
 out=$(bash "$INSTALL" --user --uninstall 2>&1); rc=$?
 { [ "$rc" != 0 ] && [ -f "$S/qargi-flow/notes.md" ] && [ -L "$S/qargi-team" ] && echo "$out" | grep -q "no install manifest" && echo "$out" | grep -q "nothing was removed"; } && ok "without a manifest uninstall says so and removes nothing" || no "uninstall without a manifest: rc=$rc $out"
 out=$(bash "$INSTALL" --user --uninstall --force 2>&1); rc=$?
@@ -194,13 +200,15 @@ bash "$INSTALL" --user --uninstall --force >/dev/null 2>&1; bash "$INSTALL" --pr
 H2=$T/h2; mkdir -p "$H2"
 inst2() { HOME=$H2 XDG_CONFIG_HOME=$H2/.config bash "$INSTALL" "$@"; }
 out=$(inst2 --user --copy 2>&1); rc=$?
-M=$QARGI_CONF/install.manifest
-{ [ "$rc" = 0 ] && [ -s "$M" ] && grep -q "^C	$H2/.local/share/qargi$" "$M" && grep -q "^C	$H2/.claude/skills/qargi-task$" "$M" && grep -q "^C	$H2/.local/share/man/man1/qargi.1$" "$M"; } && ok "a copy install records what it wrote in the manifest" || no "copy install manifest (rc=$rc): $out"
+M=$QARGI_CONF/install.d/shared.manifest MR=$QARGI_CONF/install.d/runtime-claude-code.manifest
+{ [ "$rc" = 0 ] && [ -s "$M" ] && grep -q "^C	$H2/.local/share/qargi$" "$M" && grep -q "^C	$H2/.claude/skills/qargi-task$" "$MR" && grep -q "^C	$H2/.local/share/man/man1/qargi.1$" "$M" \
+  && grep -q "^f	$H2/.local/share/qargi/lib/install_record.py$" "$M" && grep -q "^f	$H2/.claude/skills/qargi-task/SKILL.md$" "$MR"; } \
+  && ok "a copy install records what it wrote in the manifests (the tool copy in the shared one, the skills in the runtime's)" || no "copy install manifest (rc=$rc): $out"
 echo mine > "$H2/.local/share/qargi/keep-me.txt"; mkdir -p "$H2/.claude/skills/mine"; echo mine > "$H2/.claude/skills/mine/SKILL.md"
 echo stray > "$H2/.local/share/man/man1/other.1"
 "$H2/.local/bin/qargi" help >/dev/null 2>&1   # runs the copy, which leaves bytecode in it
 out=$(inst2 --user --uninstall 2>&1); rc=$?
-{ [ "$rc" = 0 ] && [ ! -e "$M" ] && [ ! -e "$H2/.local/bin/qargi" ] && [ ! -e "$H2/.local/share/man/man1/qargi.1" ] && [ ! -e "$H2/.local/share/bash-completion" ] \
+{ [ "$rc" = 0 ] && [ ! -e "$M" ] && [ ! -e "$MR" ] && [ ! -e "$QARGI_CONF/install.d" ] && [ ! -e "$QARGI_CONF/install.json" ] && [ ! -e "$H2/.local/bin/qargi" ] && [ ! -e "$H2/.local/share/man/man1/qargi.1" ] && [ ! -e "$H2/.local/share/bash-completion" ] \
   && [ ! -e "$H2/.local/share/zsh" ] && [ ! -e "$H2/.config" ] && [ ! -e "$H2/.claude/skills/qargi-task" ] && [ ! -e "$H2/.local/share/qargi/lib" ]; } && ok "uninstall after --copy removes the skills, command, man page, completions and the copied tool" || no "uninstall after --copy (rc=$rc): $out"
 { [ -f "$H2/.local/share/qargi/keep-me.txt" ] && [ -f "$H2/.claude/skills/mine/SKILL.md" ] && [ -f "$H2/.local/share/man/man1/other.1" ] && echo "$out" | grep -q "kept $H2/.local/share/qargi"; } && ok "files the install did not write are kept (and a directory holding one is said to be kept)" || no "uninstall removed or hid a file that was not in the manifest: $out"
 files=$(cd "$H2" && find . -type f | sort | tr '\n' ' ')
@@ -253,13 +261,13 @@ fi
 H4=$T/h4; P4=$T/proj4; mkdir -p "$H4" "$P4"; git init -q "$P4"
 inst4() { env -u QARGI_CONF -u QARGI_HOME HOME="$H4" bash "$INSTALL" "$@"; }
 out=$(inst4 --project "$P4" 2>&1); rc=$?
-{ [ "$rc" = 0 ] && [ -d "$H4/.qargi/config" ] && grep -q "^c	$H4/.qargi/config$" "$H4"/.qargi/config/project-*.manifest; } && ok "a project install records the config directory it made" || no "project install config record (rc=$rc): $out"
+{ [ "$rc" = 0 ] && [ -d "$H4/.qargi/config" ] && grep -q "^c	$H4/.qargi/config$" "$H4"/.qargi/config/install.d/project-*-claude-code.manifest; } && ok "a project install records the config directory it made" || no "project install config record (rc=$rc): $out"
 inst4 --project "$P4" >/dev/null 2>&1   # a reinstall keeps the record of the directory the first one made
 out=$(inst4 --project "$P4" --uninstall 2>&1); rc=$?
 { [ "$rc" = 0 ] && [ ! -e "$H4/.qargi" ] && [ ! -e "$P4/.claude/skills/qargi-task" ]; } && ok "its uninstall removes the empty config directory it made, and ~/.qargi with it" || no "project uninstall left (rc=$rc): $(find "$H4" -mindepth 1) $out"
 inst4 --project "$P4" >/dev/null 2>&1; echo '{}' > "$H4/.qargi/config/answers.json"
 inst4 --project "$P4" --uninstall >/dev/null 2>&1
-{ [ -f "$H4/.qargi/config/answers.json" ] && [ -z "$(find "$H4/.qargi/config" -name 'project-*.manifest')" ]; } && ok "a config directory that holds anything else is kept" || no "config with a file of yours: $(find "$H4" -mindepth 1)"
+{ [ -f "$H4/.qargi/config/answers.json" ] && [ -z "$(find "$H4/.qargi/config" -name 'project-*.manifest')" ] && [ ! -e "$H4/.qargi/config/install.d" ] && [ ! -e "$H4/.qargi/config/install.lock" ]; } && ok "a config directory that holds anything else is kept" || no "config with a file of yours: $(find "$H4" -mindepth 1)"
 rm -rf "$H4/.qargi"; mkdir -p "$H4/.qargi/config"
 inst4 --project "$P4" >/dev/null 2>&1; inst4 --project "$P4" --uninstall >/dev/null 2>&1
 [ -d "$H4/.qargi/config" ] && ok "an empty config directory the install did not make is kept" || no "uninstall removed a config directory it did not make"
