@@ -18,8 +18,8 @@ full | par | 300 | 21 | python3 tests/test_tiers.py | lib/tiers.py
 full | par | 300 | 33 | bash tests/test_models.sh
 full | par | 366 | 158 | bash tests/test_no_default_provider.sh
 full | par | 654 | 244 | python3 tests/test_provider.py | lib/provider.sh lib/provider.py
-# Member snapshots: 46 cases measured 188.857s with the targeted Python command; ceil = 189s, budget ceil(189 * 1.10) = 208s, headroom 19s, timeout 480s. No whole-suite remeasurement.
-full | par | 480 | 208 | python3 tests/test_member_skills.py | lib/member_skills.py lib/attempts.py lib/local_run.py lib/local.sh lib/gated_answers.py lib/packs.sh lib/project.sh lib/provider.py lib/providers/* lib/packs_check.py lib/packs_compat.py lib/packs_mcp.py lib/packs_render.py lib/conformance/review.py lib/prepared_request.py lib/paths.py lib/linker.py lib/role.py lib/agent.sh lib/lib.sh lib/model-defaults.json lib/project_profile.py lib/render.py lib/procenv.py roles/*/* agents/member* contract/*.md tests/prepared_request_cases.py tests/member_skills_fixture.py tests/attempt_fixture.py tests/hermetic.py tests/hermetic.sh
+# Member snapshots: 48 snapshot/ownership cases measured 198.246s by the native lead; ceil = 199s, budget ceil(199 * 1.10) = 219s, timeout 480s.
+full | par | 480 | 219 | python3 tests/test_member_skills.py | lib/member_skills.py lib/attempts.py lib/local_run.py lib/local.sh lib/gated_answers.py lib/packs.sh lib/project.sh lib/provider.py lib/providers/* lib/packs_check.py lib/packs_compat.py lib/packs_mcp.py lib/packs_render.py lib/conformance/review.py lib/prepared_request.py lib/paths.py lib/linker.py lib/role.py lib/agent.sh lib/lib.sh lib/model-defaults.json lib/project_profile.py lib/render.py lib/procenv.py roles/*/* agents/member* contract/*.md tests/prepared_request_cases.py tests/member_skills_fixture.py tests/attempt_fixture.py tests/hermetic.py tests/hermetic.sh
 fast | par | 300 | 8 | python3 tests/test_render.py | lib/render.py
 full | par | 300 | 68 | python3 tests/test_provider_adapter.py | lib/provider*.sh lib/provider*.py
 full | par | 300 | 59 | bash tests/test_provider_degrade.sh | lib/provider*.sh lib/provider*.py

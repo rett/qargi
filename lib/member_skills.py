@@ -94,11 +94,11 @@ def collect(root, budget=None, prefix=''):
     # advertised size before reading, and bound reads by the remaining bytes.
     budget = [0, 0] if budget is None else budget
 
-    def walk(dfd, prefix=''):
+    def walk(dfd, relative_prefix=''):
         names = os.listdir(dfd)
         need(len(names) <= MAX_ENTRIES, "too many entries")
         for name in sorted(names):
-            rel = prefix + name
+            rel = relative_prefix + name
             budget[0] += 1
             need(budget[0] <= MAX_ENTRIES, 'too many entries')
             need(safe_path(prefix + rel), 'unsafe path: ' + (prefix + rel)[:512])

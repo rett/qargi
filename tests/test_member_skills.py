@@ -9,6 +9,7 @@ import shutil
 import shlex
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 from unittest import mock
@@ -24,6 +25,41 @@ import packs_check as C
 import provider as P
 import local_run as R
 from attempt_fixture import attempt
+
+
+class SnapshotPaths(unittest.TestCase):
+    def test_depth_boundary_counts_the_pack_prefix_once(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pack = root / 'fixture'
+            relative = '/'.join(['d'] * 14 + ['support.txt'])
+            support = pack / relative
+            support.parent.mkdir(parents=True)
+            support.write_bytes(b'bounded support\n')
+
+            files, _ = MS.collect(str(pack), prefix='fixture/')
+            frozen, _ = MS.collect(str(root))
+            self.assertEqual(files[relative][0], b'bounded support\n')
+            self.assertEqual(frozen['fixture/' + relative][0], files[relative][0])
+            with self.assertRaisesRegex(MS.Invalid, 'unsafe path:'):
+                MS.collect(str(pack), prefix='fixture/extra/')
+
+    def test_byte_boundary_counts_the_pack_prefix_once(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pack = root / 'fixture'
+            relative = '/'.join(['a' * 200, 'b' * 200, 'c' * 102])
+            support = pack / relative
+            support.parent.mkdir(parents=True)
+            support.write_bytes(b'bounded support\n')
+
+            self.assertEqual(len(('fixture/' + relative).encode()), 512)
+            files, _ = MS.collect(str(pack), prefix='fixture/')
+            frozen, _ = MS.collect(str(root))
+            self.assertEqual(files[relative][0], b'bounded support\n')
+            self.assertEqual(frozen['fixture/' + relative][0], files[relative][0])
+            with self.assertRaisesRegex(MS.Invalid, 'unsafe path:'):
+                MS.collect(str(pack), prefix='fixturex/')
 
 
 class DeliveryOwnership(unittest.TestCase):
