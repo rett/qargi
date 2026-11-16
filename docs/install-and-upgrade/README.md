@@ -21,7 +21,7 @@ For a Codex lead, install user skills in `~/.codex/skills`:
 ./install.sh --user --runtime codex
 ```
 
-Either user installation also installs the command in `~/.local/bin`. Alternatively, install skills for one repository only, choosing the lead's runtime (`claude-code` is the default):
+Either user installation also installs the command in `~/.local/bin`. The two install side by side, from one tool: installing one runtime leaves the skills of the other as they are, and the command, the manual page and the completions are shared. `./install.sh --user` without `--runtime` refreshes every runtime already installed (and installs `claude-code` when none is), so it is the line to run after `git pull`; `--runtime NAME` narrows a run to that runtime. Alternatively, install skills for one repository only, choosing the lead's runtime (`claude-code` is the default):
 
 ```sh
 ./install.sh --project /path/to/repo
@@ -41,16 +41,28 @@ For a Codex lead, install with `./install.sh --user --runtime codex`: the skills
 Both link to this checkout, so `git pull` updates them; add `--copy` for real
 files (the whole tool is copied to `~/.local/share/qargi` for `--user`),
 `--uninstall` to remove. The install records every path it wrote (links, copied
-files, the directories it had to create) in `install.manifest` beside
-`install.json`, and `--uninstall` removes exactly those, copies included, and
+files, the directories it had to create) before it writes it, in manifests under
+`install.d/` beside `install.json` in `~/.qargi/config`: `runtime-NAME.manifest` for the skills of a runtime,
+`shared.manifest` for the command, the manual page, the completions and the `--copy` tool, and `project-N-NAME.manifest` for the skills of a
+runtime in one project. `--uninstall` removes exactly what they list, copies included, and
 nothing else: a file of yours inside a copied skill is kept, and so is `~/.qargi`,
 unless the install made its `config` directory and nothing else is left in it.
-Without the manifest `--uninstall` removes nothing and says so (exit status 1),
-with or without `--force`. An existing real directory is never replaced without `--force`. The
+Every line of a manifest is checked when it is read, and one bad line stops the run with nothing changed. A run holds `install.lock`
+(beside `install.d/`) while it reads or changes the records, so a second run waits briefly and then refuses.
+Without a manifest `--uninstall` removes nothing and says so (exit status 1),
+with or without `--force`. An existing real file or directory, or a link no install recorded, is never replaced without `--force`; a link
+that already points where the install would point it is left as it is. The
 skills directories come from the definition of the runtime whose session loads the
 skills (`--runtime NAME`, default `claude-code`: `~/.claude/skills`); a runtime
-with none is refused. Install at one level only. The command is
-always user-level. The instance
+with none is refused, and one skills directory belongs to one runtime. The command is
+always user-level.
+
+`./install.sh --user --uninstall --runtime NAME` removes the skills of one runtime; the command, the manual page, the completions, `install.json` and
+`install.d/` go with the last runtime. `./install.sh --user --uninstall` alone removes every installed runtime and lists them first. A runtime whose definition has gone is skipped with a note when refreshing, and can still be uninstalled.
+The runtimes come from one tool, all linked or all copied: `--runtime NAME` from another tool or in the other mode is refused while another runtime is installed
+(`./install.sh --user [--copy]` without `--runtime` moves them all), and a `--user --copy` run copies every installed runtime again, since it rewrites the tool copy they come from.
+A project takes both runtimes too (`--project DIR --runtime NAME`), each hidden through the repository's local exclude file and removed on its own.
+Installs made by qargi 0.3.1 kept one `install.manifest`; the first run of a newer `install.sh` moves it into `install.d/` once, while that directory does not exist, and keeps a link only while it still points into the tool. That migration goes in 0.3.3. A member cannot run the tool's own `install.sh`, and the guard protects the records. The instance
 registry, session tracker and profiles are per user, under `~/.qargi/config` and
 `~/.qargi/state` (`QARGI_HOME` replaces `~/.qargi`), whichever level installs the skills. Repository rules for
 agents go in a profile under `~/.qargi/config/profiles/`, also
@@ -66,7 +78,7 @@ Installing also adds the baseline packs that ship with qargi (`packs/`) to your 
 
 ### Where the data lives
 
-Everything qargi keeps about you is under `~/.qargi`: `config/` (projects, instances, profiles, the pack library of skills, tools and provider packs, credentials, `install.json`) and `state/` (the session tracker, the audit log, runs, backups, the renders under `render/`, the provider verification records). `QARGI_HOME` replaces the root; `QARGI_CONF` and `QARGI_STATE` name either directory and win over it. `XDG_CONFIG_HOME` and `XDG_STATE_HOME` are not used (the `ant` CLI keeps its login there).
+Everything qargi keeps about you is under `~/.qargi`: `config/` (projects, instances, profiles, the pack library of skills, tools and provider packs, credentials, `install.json`, the `install.d/` records) and `state/` (the session tracker, the audit log, runs, backups, the renders under `render/`, the provider verification records). `QARGI_HOME` replaces the root; `QARGI_CONF` and `QARGI_STATE` name either directory and win over it. `XDG_CONFIG_HOME` and `XDG_STATE_HOME` are not used (the `ant` CLI keeps its login there).
 
 ### Running a branch checkout
 

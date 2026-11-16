@@ -17,6 +17,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `install.sh --user --runtime NAME` from another tool or in the other link/copy mode is refused while another runtime is installed; `install.sh --user` without `--runtime` moves them all.
 - The first `install.sh` run moves the single `install.manifest` (and `project-N.manifest`) of 0.3.1 into `install.d/` once, carrying a link only while it still points into the tool and refusing any other line outside the install; a leftover `install.d.new` or temporary manifest is removed unread.
 - Help and the manual page name the install records (`install.d/`, `install.lock`), the bare `--user` refresh of every runtime and what the guard refuses (the records and the tool's own `install.sh`).
+- The install, architecture and Codex documents describe the install records (`install.d/`, `install.lock`), side-by-side runtimes, `--uninstall --runtime` and the guard's protection of the install records and the tool's `install.sh`.
 
 ### Fixed
 - The member guard refuses the tool's own `install.sh` (run, by a shell or sourced; a project's or clone's `install.sh` stays allowed) and protects `install.d/`, `install.lock` and, until 0.3.3, the legacy `install.manifest` beside `install.json`.
