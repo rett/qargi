@@ -3,10 +3,12 @@
 # a leftover install.d.new removed unread); then the lead skills of Claude Code and Codex installed side by side from one tool, each removable on its own,
 # the command, man page and completions shared and removed with the last runtime; an install of one runtime leaves the links of the other
 # as they are (same inodes); install --user without --runtime refreshes every runtime installed, and a runtime whose definition is gone is
-# skipped with a note and still removable; a record that fails its check stops the run with nothing changed; the lock keeps a second run out;
+# skipped with a note and still removable; a record that fails its check stops the run with nothing changed; the lock keeps a second run out,
+# also one that waited on a lock file removed under it, and a lock file that is a link is not opened;
 # the runtimes come from one tool (another source for one runtime is refused while another is installed, a bare --user moves them all) and a
 # --copy run copies them all again; --uninstall alone removes every runtime and lists them; a link no install recorded is not replaced
-# without --force and one already pointing at the tool is adopted; one skills directory holds one runtime; a project takes both runtimes;
+# without --force and one already pointing at the tool is adopted; a recorded link you replaced with a file is yours (a run refuses with
+# nothing changed, every time); one skills directory holds one runtime; a project takes both runtimes;
 # entries of yours in a skills directory stay byte- and inode-identical throughout. Scratch homes only. Run: tests/test_install_runtimes.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -111,6 +113,33 @@ out=$(inst --user --runtime codex 2>&1); rc=$?
 { [ "$rc" = 1 ] && echo "$out" | grep -q "another install is running" && [ "$(inventory "$H")" = "$before" ]; } && ok "a run while another holds the lock waits briefly, then gives up with nothing changed" || no "lock (rc=$rc): $out"
 kill_bg
 
+# --- two overlapping runs: B waits on the lock file; the run holding it removes the file (as the uninstall of the last record does) and a
+# third run holds a new one at the path. B, once it holds the removed file, takes the lock at the path again, so it waits for the third run
+swap() {
+  exec 8>>"$C/install.lock"; flock 8; : > "$T/swap.held"
+  until [ -e "$T/swap.go" ]; do sleep 0.05; done
+  rm "$C/install.lock"; exec 7>>"$C/install.lock"; flock 7; exec 8>&-
+  exec sleep 60    # holds the new lock (fd 7) in a process kill_bg can stop
+}
+spawn_bg swap >/dev/null 2>&1
+wait_until '[ -e "$T/swap.held" ]' || no "the first lock was not taken"
+before=$(inventory "$H" | grep -v install.lock)
+env -u QARGI_CONF -u QARGI_HOME HOME="$H" XDG_CONFIG_HOME="$H/.config" bash "$INSTALL" --user --runtime codex > "$T/b.out" 2>&1 & bpid=$!
+wait_until '[ "$(readlink "/proc/$bpid/fd/9" 2>/dev/null)" = "$C/install.lock" ]' || no "run B did not open the lock file"
+: > "$T/swap.go"
+wait "$bpid"; rc=$?; out=$(cat "$T/b.out")
+{ [ "$rc" = 1 ] && echo "$out" | grep -q "another install is running" && [ "$(inventory "$H" | grep -v install.lock)" = "$before" ]; } \
+  && ok "a run that waited on a lock file removed under it takes the lock at the path again and does not run beside the holder of the new one" || no "overlapping runs (rc=$rc): $out"
+kill_bg
+
+# --- the lock is never opened or chmod-ed through a link
+mv "$C/install.lock" "$T/lock.saved"; echo theirs > "$T/lockdest"; chmod 644 "$T/lockdest"; ln -s "$T/lockdest" "$C/install.lock"
+before=$(inventory "$H")
+out=$(inst --user --runtime codex 2>&1); rc=$?
+{ [ "$rc" = 1 ] && echo "$out" | grep -q "install.lock is a link or not a regular file, so it is not opened; nothing was changed" && [ "$(stat -c %a "$T/lockdest")" = 644 ] \
+  && [ "$(cat "$T/lockdest")" = theirs ] && [ "$(inventory "$H")" = "$before" ]; } && ok "a lock file that is a link is refused before it is opened, with nothing changed" || no "linked lock (rc=$rc): $out"
+rm "$C/install.lock"; mv "$T/lock.saved" "$C/install.lock"
+
 # --- one source: the runtimes come from one tool, linked or copied alike
 TL=$T/tool; copy_tool "$ROOT" "$TL"; cp "$ROOT/install.sh" "$TL/"; mkdir -p "$TL/completions" "$TL/man"; cp "$ROOT"/completions/* "$TL/completions/"; cp "$ROOT/man/qargi.1" "$TL/man/"
 before=$(inventory "$H"); j0=$(cat "$C/install.json")
@@ -149,6 +178,19 @@ out=$(inst --user --uninstall 2>&1); rc=$?
 left=$(find "$H" -mindepth 1 \( -path "$XS" -o -path "$H/.qargi" \) -prune -o -print | grep -v -x -e "$H/.codex" -e "$H/precious")
 [ "$(yours)" = "$y0" ] && [ -z "$left" ] && [ -z "$(find "$C" -maxdepth 1 -name 'install*')" ] && ok "only your entries (and qargi's data in ~/.qargi, no install record) are left in the home" || no "left: $left $(ls "$C")"
 
+# --- after the full uninstall a project-N.manifest of 0.3.1 planted in the config (no install.manifest, no install.json beside it) is removed
+# unread: an install of that project does not take your own qargi-task for its own, and an uninstall removes nothing
+PP=$T/pp; mkdir -p "$PP/.claude/skills/qargi-task"; echo mine > "$PP/.claude/skills/qargi-task/SKILL.md"
+key=$(cd "$PP" && pwd -P | cksum | cut -d' ' -f1)
+printf 'C\t%s\nf\t%s\n' "$PP/.claude/skills/qargi-task" "$PP/.claude/skills/qargi-task/SKILL.md" > "$C/project-$key.manifest"
+p0=$(inventory "$PP")
+out=$(inst --project "$PP" 2>&1); rc=$?
+{ [ "$rc" = 1 ] && echo "$out" | grep -q "removed $C/project-$key.manifest: a project record of qargi 0.3.1 with no install.manifest and no install.json beside it, so it was not read" \
+  && echo "$out" | grep -q "refusing to replace existing $PP/.claude/skills/qargi-task (use --force)" && [ ! -e "$C/project-$key.manifest" ] && [ ! -e "$C/install.d" ] \
+  && [ "$(inventory "$PP")" = "$p0" ]; } && ok "a planted project manifest of 0.3.1 alone is removed unread: the install refuses to replace your skill" || no "planted project manifest (rc=$rc): $out"
+out=$(inst --project "$PP" --uninstall 2>&1); rc=$?
+{ [ "$rc" = 1 ] && echo "$out" | grep -q "no install manifest" && [ "$(inventory "$PP")" = "$p0" ]; } && ok "and the uninstall of that project removes nothing" || no "uninstall after a planted project manifest (rc=$rc): $out"
+
 # --- links nobody recorded; one skills directory per runtime; a link the user retargeted
 fresh; mkdir -p "$XS" "$H/.local/bin"
 ln -s "$T/elsewhere" "$XS/qargi-flow"
@@ -170,6 +212,21 @@ rm "$CS"
 rm "$XS/qargi-task"; ln -s "$T/elsewhere" "$XS/qargi-task"
 out=$(inst --user --uninstall --runtime codex 2>&1); rc=$?
 { [ "$rc" = 0 ] && [ "$(readlink "$XS/qargi-task")" = "$T/elsewhere" ] && echo "$out" | grep -q "kept $XS/qargi-task (a link to $T/elsewhere, not the one the install made)"; } && ok "an uninstall keeps a link the user pointed elsewhere, and says so" || no "retargeted link (rc=$rc): $out"
+
+# --- a recorded link you replaced with a file of yours (a wrapper for the command): a run from a moved checkout refuses before it changes
+# anything, the same way each time, and says what to do; once the file is moved aside the run goes through
+fresh; inst --user >/dev/null 2>&1
+rm "$H/.local/bin/qargi"; printf '#!/bin/sh\nexec %s "$@"\n' "$ROOT/bin/qargi" > "$H/.local/bin/qargi"; chmod 755 "$H/.local/bin/qargi"
+before=$(inventory "$H")
+for n in 1 2; do
+  out=$(env -u QARGI_CONF -u QARGI_HOME HOME="$H" XDG_CONFIG_HOME="$H/.config" bash "$TL/install.sh" --user 2>&1); rc=$?
+  { [ "$rc" = 1 ] && echo "$out" | grep -q "refusing to replace $H/.local/bin/qargi: the install recorded a link there and it is now a file, which is yours; nothing was changed: move it aside and install again, or install with --force" \
+    && ! echo "$out" | grep -q "run the install again" && [ "$(inventory "$H")" = "$before" ]; } \
+    && ok "run $n from a moved checkout over a recorded link you replaced with a file refuses with nothing changed (skills, man page, records, install.json)" || no "replaced link, run $n (rc=$rc): $out $(diff <(echo "$before") <(inventory "$H"))"
+done
+mv "$H/.local/bin/qargi" "$H/wrapper"
+out=$(env -u QARGI_CONF -u QARGI_HOME HOME="$H" XDG_CONFIG_HOME="$H/.config" bash "$TL/install.sh" --user 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(readlink "$H/.local/bin/qargi")" = "$TL/bin/qargi" ] && [ "$(readlink "$CS/qargi-task")" = "$TL/skills/qargi-task" ]; } && ok "and with the file moved aside the run moves the install to the new checkout" || no "after moving the wrapper aside (rc=$rc): $out"
 
 # --- a project with two runtimes: each hidden and removed on its own
 fresh; P=$T/proj; mkdir -p "$P"; git init -q "$P"; X=$P/.git/info/exclude

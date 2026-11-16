@@ -42,7 +42,8 @@ Verbs (install.sh runs them as python3 -I lib/install_record.py VERB; status 1 i
   migrate --conf CONF --data DIR --slot PATH... --tool-root DIR
         first remove what an interrupted run left (install.d.new, temporary manifests; never read). Then, once, while install.d does not
         exist, turn the single CONF/install.manifest and CONF/project-N.manifest of qargi 0.3.1 into install.d (see migrate below); with
-        install.d there they are removed unread. The migration goes in 0.3.3.
+        install.d there they are removed unread, and so is a project-N.manifest with neither install.manifest nor install.json beside it.
+        The migration goes in 0.3.3.
 PLAN: one item per line, fields separated by tabs. "M FILE KEY=VALUE..." starts a part, recorded in FILE, with the header fields given;
 "D DIR" a directory the part needs (the parents it makes are recorded as P); "L PATH TARGET" a link; "C PATH SRC [NAME...]" a copy of SRC,
 or of the NAMEs inside SRC, at PATH; "c DIR" the configuration directory, or a parent, that this run made. The parts are applied in order.
@@ -262,18 +263,49 @@ def write(path, h, lines):
 
 # ---- removing what a manifest lists
 
+def copy_tops(m):
+    """The roots of the copies in m: its C paths, its data directories and the qargi-* entries in its skills directories."""
+    tops = {p for k, p, _ in m.lines if k == "C"} | set(m.header.get("data", []))
+    for r in m.header.get("root", []):
+        tops |= {r + "/" + p[len(r) + 1:].split("/")[0] for k, p, _ in m.lines if k in "fd" and under(p, r)}
+    return tops
+
+
+def linked_ancestor(p, tops):
+    """The first link on the way from the copy root that holds p (that root included) down to the parent of p, or None. The checks of a
+    line are lexical: a directory you replaced with a link inside a copy (a development checkout's lib, say) is not followed."""
+    base = max((t for t in tops if under(p, t)), key=len, default=None)
+    if base is None:
+        return None
+    q = base
+    if os.path.islink(q):
+        return q
+    for part in p[len(base) + 1:].split("/")[:-1]:
+        q += "/" + part
+        if os.path.islink(q):
+            return q
+    return None
+
+
 def remove(m, say, keep=frozenset()):
     """Remove exactly the paths m lists, except the (kind, path) pairs in keep. A link goes only while it points at a target the manifest
     records; a directory only once it is empty (the bytecode Python wrote inside a copied directory goes with it); c lines are left to the
-    caller. Anything that is no longer what the install made is kept and said."""
+    caller. Anything that is no longer what the install made is kept and said: an f or d line below a link inside its copy is not followed."""
     targets = {}
     for k, p, t in m.lines:
         if k == "L":
             targets.setdefault(p, set()).add(t)
-    dirs, links = set(), set()
+    dirs, links, tops, through = set(), set(), copy_tops(m), set()
     for k, p, t in m.lines:
         if (k, p) in keep:
             continue
+        if k in "fd":
+            a = linked_ancestor(p, tops)
+            if a:
+                if a not in through:
+                    through.add(a)
+                    say("kept what the record lists under %s (a link now, not the directory the install made; not followed)" % a)
+                continue
         if k == "L":
             if p in links:
                 continue
@@ -327,13 +359,26 @@ def tree(p):
 
 
 def ours(p, m):
-    """p and everything under it is in the manifest m (the bytecode inside a recorded directory aside), so it is not something of yours."""
-    rec = {q for k, q, _ in m.lines if k != "c"}
+    """p and everything under it is in the manifest m as what it is now (the bytecode inside a recorded directory aside), so it is not
+    something of yours: a directory is recorded as C or d, a link inside a copy as f, any other file as C or f. A recorded directory that is
+    a link now (to a development checkout, say) is not ours."""
+    rec = {}
+    for k, q, _ in m.lines:
+        if k != "c":
+            rec.setdefault(q, set()).add(k)
     copied = {q for k, q, _ in m.lines if k in "Cd"}
     try:
         for x in tree(p):
             if x in rec:
-                continue
+                if os.path.islink(x):
+                    fits = "fL"
+                elif os.path.isdir(x):
+                    fits = "Cd"
+                else:
+                    fits = "Cf"
+                if rec[x] & set(fits):
+                    continue
+                return False
             parts = x.split("/")
             if "__pycache__" in parts and "/".join(parts[:parts.index("__pycache__")]) in copied:
                 continue
@@ -429,7 +474,9 @@ def to_make(d):
 
 def slot_state(p, target, old, force):
     """What becomes of the path p a part writes: new (nothing there), keep (already a link to target), ours (the earlier install wrote it
-    and nothing else is in it), force (something else, replaced under --force). Something else without --force is refused."""
+    and nothing else is in it), force (something else, replaced under --force). Something else without --force is refused. A path that is
+    not a link is ours only when the earlier install copied it there (a C line): a recorded link that is now a file or a directory is yours.
+    Every part is judged before anything changes, so a refusal here changes nothing."""
     if not os.path.lexists(p):
         return "new"
     if os.path.islink(p):
@@ -441,10 +488,14 @@ def slot_state(p, target, old, force):
         if force:
             return "force"
         raise Refused("refusing to replace %s, a link to %s that no install recorded (use --force)" % (p, to))
-    if old and ours(p, old):
+    copied = old is not None and ("C", p, None) in old.lines
+    if copied and ours(p, old):
         return "ours"
     if force:
         return "force"
+    if old and not copied and p in old.paths():
+        raise Refused("refusing to replace %s: the install recorded a link there and it is now a %s, which is yours; nothing was changed: "
+                      "move it aside and install again, or install with --force to replace it" % (p, "directory" if os.path.isdir(p) else "file"))
     raise Refused("refusing to replace existing %s (use --force)" % p)
 
 
@@ -508,7 +559,8 @@ def apply(conf, text, force):
         for p, s in part.state.items():
             if s != "keep" and os.path.lexists(p):
                 if not force:
-                    raise Refused("refusing to replace existing %s (use --force); run the install again" % p)
+                    raise Refused("%s is still there once what the earlier install wrote is removed (something changed it during this run); "
+                                  "the record lists it, so install with --force to replace it" % p)
                 if os.path.isdir(p) and not os.path.islink(p):
                     shutil.rmtree(p)
                 else:
@@ -690,7 +742,9 @@ def migrate(conf, data, slots, tool_root, say):
     """Turn the legacy manifests into install.d, once: only while install.d does not exist. install.d.new is built from the legacy files
     alone, every line checked (a link is carried with its target only while it still points into the tool; any other line only inside the
     skills directory, the data directory or a fixed slot, else the migration is refused with nothing changed), committed with one directory
-    rename, and then the legacy files are removed. With install.d already there a legacy file is removed and not read."""
+    rename, and then the legacy files are removed. With install.d already there a legacy file is removed and not read. A project-N.manifest
+    is read only beside an install.manifest or an install.json (a 0.3.1 install): alone (after a full uninstall, or on a host that never
+    installed) it is removed unread, so a file left or planted there cannot arm the migration."""
     tidy(conf, say)
     legacy = legacy_files(conf)
     records = records_dir(conf)
@@ -700,6 +754,13 @@ def migrate(conf, data, slots, tool_root, say):
         for f in legacy:
             os.unlink(f)
             say("removed %s: the records are in %s, so it was not read" % (f, records))
+        return
+    rec = os.path.join(conf, "install.json")
+    if os.path.join(conf, LEGACY_USER) not in legacy and not (os.path.isfile(rec) and not os.path.islink(rec)):
+        for f in legacy:
+            os.unlink(f)
+            say("removed %s: a project record of qargi 0.3.1 with no install.manifest and no install.json beside it, so it was not read "
+                "(install.sh --project DIR records that project again)" % f)
         return
     roots = {data, os.path.realpath(data), tool_root, os.path.realpath(tool_root)}
     try:

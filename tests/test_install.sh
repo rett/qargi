@@ -131,10 +131,10 @@ before=$(links); mbefore=$(cat "$R"/*.manifest)
 bash "$INSTALL" --user >/dev/null 2>&1; rc=$?
 [ "$rc" = 0 ] && [ "$before" = "$(links)" ] && [ "$mbefore" = "$(cat "$R"/*.manifest)" ] && ok "a second run changes nothing: the same links (same inodes) and the same records" || no "second run: rc=$rc $(diff <(echo "$before") <(links))"
 
-# a real directory in the way is kept without --force and replaced with it
+# a real directory in the way (where the install recorded a link) is yours: kept without --force and replaced with it
 rm -f "$S/qargi-task"; mkdir "$S/qargi-task"; echo mine > "$S/qargi-task/notes.md"
 out=$(bash "$INSTALL" --user 2>&1); rc=$?
-{ [ "$rc" != 0 ] && [ -f "$S/qargi-task/notes.md" ] && echo "$out" | grep -q "refusing to replace existing $S/qargi-task"; } && ok "a real directory is not replaced without --force" || no "real directory: rc=$rc $out"
+{ [ "$rc" != 0 ] && [ -f "$S/qargi-task/notes.md" ] && echo "$out" | grep -q "refusing to replace $S/qargi-task: the install recorded a link there and it is now a directory, which is yours"; } && ok "a real directory is not replaced without --force" || no "real directory: rc=$rc $out"
 bash "$INSTALL" --user --force >/dev/null 2>&1
 [ "$(readlink "$S/qargi-task")" = "$ROOT/skills/qargi-task" ] && ok "--force replaces it with the link" || no "--force left the directory"
 
@@ -216,10 +216,36 @@ files=$(cd "$H2" && find . -type f | sort | tr '\n' ' ')
 rm -rf "$H2"; mkdir -p "$H2"
 [ -d "$QARGI_CONF/packs" ] && ok "uninstall leaves the user's data (the pack library under the config) alone" || no "uninstall removed the pack library"
 
+# a directory of the tool copy you pointed at a development checkout (a link) is not followed: a --copy refresh refuses before it changes
+# anything, and the uninstall removes nothing through it (the bytecode there included)
+H5=$T/h5 DEV=$T/dev; mkdir -p "$H5" "$DEV"; cp -r "$ROOT/lib" "$DEV/lib"; mkdir -p "$DEV/lib/__pycache__"; echo dev > "$DEV/lib/__pycache__/x.pyc"
+inst5() { HOME=$H5 XDG_CONFIG_HOME=$H5/.config bash "$INSTALL" "$@"; }
+devstate() { find "$DEV" -printf '%p %y %i\n' | sort; find "$DEV" -type f -exec md5sum {} + | sort; }
+inst5 --user --copy >/dev/null 2>&1
+rm -rf "$H5/.local/share/qargi/lib"; ln -s "$DEV/lib" "$H5/.local/share/qargi/lib"
+d0=$(devstate); h0=$(find "$H5" "$QARGI_CONF/install.d" -printf '%p %y %i\n' | sort)
+out=$(inst5 --user --copy 2>&1); rc=$?
+{ [ "$rc" = 1 ] && echo "$out" | grep -q "refusing to replace existing $H5/.local/share/qargi (use --force)" && [ "$(devstate)" = "$d0" ] \
+  && [ "$(find "$H5" "$QARGI_CONF/install.d" -printf '%p %y %i\n' | sort)" = "$h0" ]; } && ok "a --copy refresh over a tool copy whose lib is a link refuses with nothing changed" || no "copy refresh over a linked lib (rc=$rc): $out"
+out=$(inst5 --user --uninstall 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(devstate)" = "$d0" ] && [ -L "$H5/.local/share/qargi/lib" ] && echo "$out" | grep -q "kept what the record lists under $H5/.local/share/qargi/lib (a link now" \
+  && [ ! -e "$H5/.local/share/qargi/bin" ] && [ ! -e "$QARGI_CONF/install.d" ]; } && ok "its uninstall removes the rest and nothing through the link, and says so" || no "uninstall over a linked lib (rc=$rc): $out"
+rm -rf "$H5" "$DEV"
+
 # a second --copy install over the first needs no --force (it is the install's own), a link install over a copy leaves no copy behind
 inst2 --user --copy >/dev/null 2>&1; rc=$?
 inst2 --user --copy >/dev/null 2>&1; rc2=$?
 [ "$rc" = 0 ] && [ "$rc2" = 0 ] && ok "a copy install repeated over its own copy needs no --force" || no "repeated copy install: rc=$rc rc2=$rc2"
+# but not over a file no install wrote in the tool copy ($data): the run refuses with nothing changed, and a bare --uninstall keeps the file
+echo stray > "$H2/.local/share/qargi/stray.txt"
+h0=$(find "$H2" "$QARGI_CONF/install.d" -printf '%p %y %i\n' | sort)
+out=$(inst2 --user --copy 2>&1); rc=$?
+{ [ "$rc" != 0 ] && echo "$out" | grep -q "refusing to replace existing $H2/.local/share/qargi (use --force)" && [ "$(find "$H2" "$QARGI_CONF/install.d" -printf '%p %y %i\n' | sort)" = "$h0" ]; } \
+  && ok "a --copy run over a tool copy holding a file no install wrote refuses with nothing changed" || no "copy over a stray file in the data directory (rc=$rc): $out"
+out=$(inst2 --user --uninstall 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(cat "$H2/.local/share/qargi/stray.txt" 2>&1)" = stray ] && [ ! -e "$H2/.local/share/qargi/bin" ] && [ ! -e "$H2/.local/bin/qargi" ] \
+  && echo "$out" | grep -q "kept $H2/.local/share/qargi (it holds files the install did not write)"; } && ok "and a bare --uninstall removes the install but keeps that file" || no "uninstall with a stray file in the data directory (rc=$rc): $out"
+rm -rf "$H2"; mkdir -p "$H2"; inst2 --user --copy >/dev/null 2>&1
 echo mine > "$H2/.claude/skills/qargi-task/notes.md"
 out=$(inst2 --user --copy 2>&1); rc=$?
 { [ "$rc" != 0 ] && echo "$out" | grep -q "refusing to replace existing $H2/.claude/skills/qargi-task"; } && ok "a copied skill with a file of yours inside is not replaced without --force" || no "copy with a stray file: rc=$rc $out"

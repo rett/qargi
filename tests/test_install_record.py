@@ -244,6 +244,32 @@ class Apply(Base):
         self.apply(self.plan(), force=True)
         self.assertEqual(os.readlink(os.path.join(sk, "qargi-flow")), os.path.join(self.tool, "skills", "qargi-flow"))
 
+    def test_a_recorded_link_replaced_by_a_file_or_a_directory_is_yours_and_nothing_changes(self):
+        self.apply(self.plan("codex"))
+        self.apply(self.plan())
+        moved = os.path.join(self.t, "moved")
+        subprocess.run(["cp", "-r", self.tool, moved], check=True)
+        again = (self.plan("codex") + self.plan()).replace(self.tool, moved)     # one run: codex first, then claude-code, from a moved tool
+        task, flow = os.path.join(self.sk(), "qargi-task"), os.path.join(self.sk(), "qargi-flow")
+        os.unlink(task)
+        spit(task, "#!/bin/sh\nexec mine\n")                         # a wrapper of yours where the install recorded a link
+        os.unlink(flow)
+        os.mkdir(flow)                                               # and an empty directory of yours
+        snap, recs = self.snapshot(self.home), {n: slurp(os.path.join(self.rdir, n)) for n in os.listdir(self.rdir)}
+        for _ in range(2):                                           # a second run refuses the same way: no change, no loop
+            msg = self.refused(self.apply, again)
+            self.assertIn("refusing to replace %s: the install recorded a link there and it is now a file, which is yours" % task, msg)
+            self.assertIn("nothing was changed: move it aside and install again, or install with --force", msg)
+            self.assertNotIn("run the install again", msg)
+            self.assertEqual(self.snapshot(self.home), snap, "the codex part before it is not touched either")
+            self.assertEqual({n: slurp(os.path.join(self.rdir, n)) for n in os.listdir(self.rdir)}, recs)
+        os.rename(task, os.path.join(self.t, "wrapper"))
+        self.assertIn("%s: the install recorded a link there and it is now a directory" % flow, self.refused(self.apply, again))
+        os.rmdir(flow)
+        self.apply(again)
+        self.assertEqual(os.readlink(task), os.path.join(moved, "skills", "qargi-task"))
+        self.assertEqual(os.readlink(os.path.join(self.sk("codex"), "qargi-task")), os.path.join(moved, "skills", "qargi-task"))
+
     def test_a_link_to_the_target_is_adopted_as_it_is(self):
         sk = self.sk()
         os.makedirs(sk)
@@ -319,6 +345,37 @@ class Remove(Base):
         self.refused(R.uninstall, self.conf, [self.mf(), self.mf("codex")], False, print)
         self.assertEqual(self.snapshot(self.home), snap)
         self.assertTrue(os.path.isfile(self.mf()))
+
+    def test_a_link_inside_a_copy_is_not_followed(self):
+        spit(os.path.join(self.tool, "skills", "qargi-task", "lib", "x.py"), "tool\n")
+        self.apply(self.plan(copy=True))
+        sk, dev = self.sk(), os.path.join(self.t, "dev")
+        for d in ("lib", "flow"):
+            spit(os.path.join(dev, d, "x.py"), "dev\n")
+            spit(os.path.join(dev, d, "SKILL.md"), "dev\n")
+            spit(os.path.join(dev, d, "__pycache__", "x.pyc"), "dev\n")
+        lib = os.path.join(sk, "qargi-task", "lib")
+        subprocess.run(["rm", "-rf", lib], check=True)
+        os.symlink(os.path.join(dev, "lib"), lib)                   # a directory inside a copy pointed at a development checkout
+        flow = os.path.join(sk, "qargi-flow")
+        subprocess.run(["rm", "-rf", flow], check=True)
+        os.symlink(os.path.join(dev, "flow"), flow)                 # and a copied skill itself
+        snap, devsnap = self.snapshot(self.home), self.snapshot(dev)
+        self.assertIn("refusing to replace existing %s/qargi-task" % sk, self.refused(self.apply, self.plan(copy=True)))
+        self.assertEqual(self.snapshot(self.home), snap, "a refresh refuses before it changes anything")
+        said = []
+        R.uninstall(self.conf, [self.mf()], False, said.append)
+        self.assertEqual(self.snapshot(dev), devsnap, "nothing is removed through the links, the bytecode there included")
+        self.assertIn("kept what the record lists under %s (a link now, not the directory the install made; not followed)" % lib, said)
+        self.assertTrue(os.path.islink(lib))
+        self.assertFalse(os.path.lexists(os.path.join(sk, "qargi-task", "SKILL.md")), "what is not below a link goes")
+        os.unlink(lib)
+        os.rmdir(os.path.join(sk, "qargi-task"))
+        self.apply(self.plan(copy=True))
+        subprocess.run(["rm", "-rf", lib], check=True)
+        os.symlink(os.path.join(dev, "lib"), lib)
+        self.apply(self.plan(copy=True), force=True)
+        self.assertEqual(self.snapshot(dev), devsnap, "and --force replaces the copy without following the link")
 
     def test_the_bytecode_inside_a_copied_directory_goes_with_it(self):
         self.apply(self.plan(copy=True))
@@ -414,6 +471,35 @@ class Migrate(Base):
         self.assertEqual(m.header["project"], proj)
         self.assertIn(("L", root + "/qargi-task", os.path.join(self.tool, "skills", "qargi-task")), m.lines)
         self.assertFalse(os.path.exists(os.path.join(self.conf, "project-123.manifest")))
+
+    def test_a_project_manifest_alone_is_not_read(self):
+        proj = os.path.join(self.t, "proj")
+        root = os.path.join(proj, ".claude", "skills")
+        mine = os.path.join(root, "qargi-task", "SKILL.md")
+        spit(mine, "mine\n")                                        # a qargi-* skill of your own
+        planted = os.path.join(self.conf, "project-123.manifest")
+        os.unlink(self.legacy)
+        for keep_json in (False, True):
+            with self.subTest(install_json=keep_json):
+                if not keep_json:
+                    os.rename(os.path.join(self.conf, "install.json"), os.path.join(self.t, "install.json"))
+                else:
+                    os.rename(os.path.join(self.t, "install.json"), os.path.join(self.conf, "install.json"))
+                spit(planted, "C\t%s/qargi-task\nf\t%s\n" % (root, mine))
+                snap = self.snapshot(proj)
+                self.migrate()
+                self.assertFalse(os.path.exists(planted))
+                self.assertEqual(self.snapshot(proj), snap)
+                if not keep_json:                                   # after a full uninstall: no install.manifest, no install.json
+                    self.assertFalse(os.path.lexists(self.rdir), "a project manifest alone does not arm the migration")
+                    self.assertIn("removed %s: a project record of qargi 0.3.1 with no install.manifest and no install.json beside it, so it "
+                                  "was not read (install.sh --project DIR records that project again)" % planted, self.said)
+                    with self.assertRaises(R.Refused):          # so an install does not take your skill for its own
+                        self.apply("M\t%s\tkind=project\tname=claude-code\tproject=%s\troot=%s\nL\t%s/qargi-task\t%s/skills/qargi-task\n"
+                                   % (os.path.join(self.rdir, "project-123-claude-code.manifest"), proj, root, root, self.tool))
+                    self.assertEqual(self.snapshot(proj), snap)
+                else:                                               # beside the install.json of a 0.3.1 install it is migrated
+                    self.assertEqual(os.listdir(self.rdir), ["project-123-claude-code.manifest"])
 
     def test_it_runs_once_and_an_interrupted_one_starts_again_from_the_legacy_files(self):
         with mock.patch.object(R.os, "rename", side_effect=KeyboardInterrupt), self.assertRaises(KeyboardInterrupt):

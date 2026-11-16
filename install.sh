@@ -31,7 +31,8 @@
 # A --project install never touches the repository's committed files: the paths
 # are hidden through the repository's local .git/info/exclude, and the install
 # is refused if any of them is already tracked. The instance registry, session
-# tracker and profiles are always per user (~/.qargi). Install at one level only.
+# tracker and profiles are always per user (~/.qargi). The user install and the installs in projects stand side by side, each with its
+# own records, installed and removed on its own.
 #
 # Every path an install writes (links, copied files and the directories it had to create) is recorded in an install manifest in
 # <live config>/install.d, before it is written: runtime-NAME.manifest for the skills of a runtime, shared.manifest for the command, man page,
@@ -40,7 +41,8 @@
 # skill is kept, and so is ~/.qargi (the live config directory and its parents go only when the install made them and they are empty once
 # the records are removed). Without a manifest --uninstall removes nothing and says so (exit 1), with or without --force. A run holds
 # <live config>/install.lock while it reads or changes the records. The single install.manifest (and project-N.manifest) of qargi 0.3.1
-# becomes install.d once, on the first run, while install.d does not exist (the migration goes in 0.3.3).
+# becomes install.d once, on the first run, while install.d does not exist (the migration goes in 0.3.3); a project-N.manifest is read only
+# beside an install.manifest or an install.json, and removed unread when it is alone.
 #
 # --user also records the tool it installed in <live config>/install.json (~/.qargi/config, or QARGI_CONF /
 # QARGI_HOME when set; the uninstall of the last runtime removes it). A checkout run from any other place is then a dev run that keeps its data
@@ -105,11 +107,23 @@ if [ "$mode" = project ] && git -C "$proj" rev-parse --git-dir >/dev/null 2>&1; 
   case $exclude_file in /*) ;; *) exclude_file=$proj/$exclude_file;; esac
 fi
 
-# hold the lock of the records for the rest of the run: another install.sh waits a few seconds for it, then gives up
+# hold the lock of the records for the rest of the run: another install.sh waits a few seconds for it, then gives up. The lock file is never
+# opened through a link. The uninstall of the last record removes it while it is held, so a run that waited on the removed file finds, once
+# it holds that one, that the path names another file, and takes the lock again at the path.
 lock() {
-  exec 9>>"$liveconf/install.lock"
-  chmod 600 "$liveconf/install.lock"
-  flock -w 5 9 || { echo "qargi: install.sh: another install is running (it holds $liveconf/install.lock); nothing was changed, try again once it is done" >&2; exit 1; }
+  local f=$liveconf/install.lock n
+  for n in 1 2 3; do
+    if [ -L "$f" ] || { [ -e "$f" ] && [ ! -f "$f" ]; }; then
+      echo "qargi: install.sh: $f is a link or not a regular file, so it is not opened; nothing was changed: move it aside and run again" >&2; exit 1
+    fi
+    exec 9>>"$f" || { echo "qargi: install.sh: cannot open $f (another install may have removed $liveconf); nothing was changed" >&2; exit 1; }
+    chmod 600 "$f"
+    flock -w 5 9 || { echo "qargi: install.sh: another install is running (it holds $f); nothing was changed, try again once it is done" >&2; exit 1; }
+    [ "$f" -ef "/proc/$$/fd/9" ] && return 0
+    exec 9>&-
+  done
+  echo "qargi: install.sh: $f was removed again each time this run took it ($n times: other installs are running); nothing was changed, try again once they are done" >&2
+  exit 1
 }
 # the records as they are: RUNTIMES (the user runtimes recorded), SHARED (the shared manifest, or empty), PRUNTIMES (the runtimes recorded for
 # this project directory) and REC_ROOT, REC_SOURCE (the tool install.json records). A record with a line that fails its check stops the run here.
@@ -131,7 +145,8 @@ no_record() {
   exit 1
 }
 # Under the lock, before the records are read: what an interrupted run left is removed unread (install.d.new, temporary manifests), and the
-# single install.manifest (and project-N.manifest) of qargi 0.3.1 becomes install.d once, while install.d does not exist. Remove in 0.3.3.
+# single install.manifest (and project-N.manifest) of qargi 0.3.1 becomes install.d once, while install.d does not exist (a project-N.manifest
+# only beside an install.manifest or an install.json). Remove in 0.3.3.
 migrate_legacy() {
   records migrate --conf "$liveconf" --data "$data" --tool-root "$here" \
     --slot "$cmd" --slot "$manpage" --slot "$completion" --slot "$zshcomp" --slot "$fishcomp" || { [ "$(type -t undo_conf)" != function ] || undo_conf; exit 1; }

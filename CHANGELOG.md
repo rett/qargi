@@ -17,14 +17,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `install.sh --user` without `--runtime` refreshes every installed runtime (claude-code when none is), skipping one whose definition is gone with a note; `--user --copy` copies every installed runtime again.
 - `install.sh --user --runtime NAME` from another tool or in the other link/copy mode is refused while another runtime is installed; `install.sh --user` without `--runtime` moves them all.
 - The `qargi upgrade` plan lists the runtimes recorded for the install, one line each with its skills directory: `install.sh --user` relinks every one of them, and the plan token does not bind them. An apply with no runtime recorded refuses before anything is fetched or moved and says to run `install.sh --user` first; a record that cannot be read stops the plan and the apply.
-- The first `install.sh` run moves the single `install.manifest` (and `project-N.manifest`) of 0.3.1 into `install.d/` once, carrying a link only while it still points into the tool and refusing any other line outside the install; a leftover `install.d.new` or temporary manifest is removed unread.
-- Help and the manual page name the install records (`install.d/`, `install.lock`), the bare `--user` refresh of every runtime and what the guard refuses (the records and the tool's own `install.sh`).
-- The install, architecture and Codex documents describe the install records (`install.d/`, `install.lock`), side-by-side runtimes, `--uninstall --runtime` and the guard's protection of the install records and the tool's `install.sh`.
-- The install guide describes the `qargi doctor` `install` check and the runtimes the upgrade plan lists (depends on the doctor and upgrade change).
+- The first `install.sh` run moves the single `install.manifest` (and `project-N.manifest`) of 0.3.1 into `install.d/` once, carrying a link only while it still points into the tool and refusing any other line outside the install; a leftover `install.d.new` or temporary manifest is removed unread. A `project-N.manifest` is migrated only beside an `install.manifest` or `install.json`; alone (after a full uninstall) it is removed unread.
+- Help, the manual page and the install, architecture and Codex documents describe the install records, side-by-side runtimes, the `qargi doctor` `install` check and what the guard refuses.
 
 ### Fixed
 - The member guard refuses the tool's own `install.sh` (run, by a shell or sourced; a project's or clone's `install.sh` stays allowed) and protects `install.d/`, `install.lock` and, until 0.3.3, the legacy `install.manifest` beside `install.json`.
 - The member guard also refuses the tool's own `lib/install_record.py` in any use (run, through `python3`, a shell or sourced; a project's or clone's file of that name stays allowed): its `uninstall` and `apply` remove and relink installed files where the guard sees no write.
+- `install.sh` treats a recorded link you replaced with a file or directory (a wrapper for `~/.local/bin/qargi`, say) as yours: the run refuses before it changes anything and says to move it aside or use `--force`.
+- `install.sh` no longer follows a link inside a copy it made (a copied tool's `lib` pointed at a development checkout): `--uninstall` keeps what lies below it and says so, and a `--copy` refresh refuses before it changes anything.
+- `install.sh` refuses an `install.lock` that is a link (it is never opened or chmod-ed through one), and a run that waited on a lock file the uninstall of the last record removed takes the lock again at its path, so two runs never hold the records at once.
 
 ## [0.3.1] - 2026-11-16
 
