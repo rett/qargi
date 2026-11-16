@@ -6,7 +6,8 @@
 # skipped with a note and still removable; a record that fails its check stops the run with nothing changed; the lock keeps a second run out;
 # the runtimes come from one tool (another source for one runtime is refused while another is installed, a bare --user moves them all) and a
 # --copy run copies them all again; --uninstall alone removes every runtime and lists them; a link no install recorded is not replaced
-# without --force and one already pointing at the tool is adopted; one skills directory holds one runtime; a project takes both runtimes;
+# without --force and one already pointing at the tool is adopted; a recorded link you replaced with a file is yours (a run refuses with
+# nothing changed, every time); one skills directory holds one runtime; a project takes both runtimes;
 # entries of yours in a skills directory stay byte- and inode-identical throughout. Scratch homes only. Run: tests/test_install_runtimes.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -170,6 +171,21 @@ rm "$CS"
 rm "$XS/qargi-task"; ln -s "$T/elsewhere" "$XS/qargi-task"
 out=$(inst --user --uninstall --runtime codex 2>&1); rc=$?
 { [ "$rc" = 0 ] && [ "$(readlink "$XS/qargi-task")" = "$T/elsewhere" ] && echo "$out" | grep -q "kept $XS/qargi-task (a link to $T/elsewhere, not the one the install made)"; } && ok "an uninstall keeps a link the user pointed elsewhere, and says so" || no "retargeted link (rc=$rc): $out"
+
+# --- a recorded link you replaced with a file of yours (a wrapper for the command): a run from a moved checkout refuses before it changes
+# anything, the same way each time, and says what to do; once the file is moved aside the run goes through
+fresh; inst --user >/dev/null 2>&1
+rm "$H/.local/bin/qargi"; printf '#!/bin/sh\nexec %s "$@"\n' "$ROOT/bin/qargi" > "$H/.local/bin/qargi"; chmod 755 "$H/.local/bin/qargi"
+before=$(inventory "$H")
+for n in 1 2; do
+  out=$(env -u QARGI_CONF -u QARGI_HOME HOME="$H" XDG_CONFIG_HOME="$H/.config" bash "$TL/install.sh" --user 2>&1); rc=$?
+  { [ "$rc" = 1 ] && echo "$out" | grep -q "refusing to replace $H/.local/bin/qargi: the install recorded a link there and it is now a file, which is yours; nothing was changed: move it aside and install again, or install with --force" \
+    && ! echo "$out" | grep -q "run the install again" && [ "$(inventory "$H")" = "$before" ]; } \
+    && ok "run $n from a moved checkout over a recorded link you replaced with a file refuses with nothing changed (skills, man page, records, install.json)" || no "replaced link, run $n (rc=$rc): $out $(diff <(echo "$before") <(inventory "$H"))"
+done
+mv "$H/.local/bin/qargi" "$H/wrapper"
+out=$(env -u QARGI_CONF -u QARGI_HOME HOME="$H" XDG_CONFIG_HOME="$H/.config" bash "$TL/install.sh" --user 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(readlink "$H/.local/bin/qargi")" = "$TL/bin/qargi" ] && [ "$(readlink "$CS/qargi-task")" = "$TL/skills/qargi-task" ]; } && ok "and with the file moved aside the run moves the install to the new checkout" || no "after moving the wrapper aside (rc=$rc): $out"
 
 # --- a project with two runtimes: each hidden and removed on its own
 fresh; P=$T/proj; mkdir -p "$P"; git init -q "$P"; X=$P/.git/info/exclude

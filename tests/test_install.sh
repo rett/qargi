@@ -131,10 +131,10 @@ before=$(links); mbefore=$(cat "$R"/*.manifest)
 bash "$INSTALL" --user >/dev/null 2>&1; rc=$?
 [ "$rc" = 0 ] && [ "$before" = "$(links)" ] && [ "$mbefore" = "$(cat "$R"/*.manifest)" ] && ok "a second run changes nothing: the same links (same inodes) and the same records" || no "second run: rc=$rc $(diff <(echo "$before") <(links))"
 
-# a real directory in the way is kept without --force and replaced with it
+# a real directory in the way (where the install recorded a link) is yours: kept without --force and replaced with it
 rm -f "$S/qargi-task"; mkdir "$S/qargi-task"; echo mine > "$S/qargi-task/notes.md"
 out=$(bash "$INSTALL" --user 2>&1); rc=$?
-{ [ "$rc" != 0 ] && [ -f "$S/qargi-task/notes.md" ] && echo "$out" | grep -q "refusing to replace existing $S/qargi-task"; } && ok "a real directory is not replaced without --force" || no "real directory: rc=$rc $out"
+{ [ "$rc" != 0 ] && [ -f "$S/qargi-task/notes.md" ] && echo "$out" | grep -q "refusing to replace $S/qargi-task: the install recorded a link there and it is now a directory, which is yours"; } && ok "a real directory is not replaced without --force" || no "real directory: rc=$rc $out"
 bash "$INSTALL" --user --force >/dev/null 2>&1
 [ "$(readlink "$S/qargi-task")" = "$ROOT/skills/qargi-task" ] && ok "--force replaces it with the link" || no "--force left the directory"
 

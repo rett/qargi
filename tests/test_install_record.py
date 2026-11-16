@@ -244,6 +244,32 @@ class Apply(Base):
         self.apply(self.plan(), force=True)
         self.assertEqual(os.readlink(os.path.join(sk, "qargi-flow")), os.path.join(self.tool, "skills", "qargi-flow"))
 
+    def test_a_recorded_link_replaced_by_a_file_or_a_directory_is_yours_and_nothing_changes(self):
+        self.apply(self.plan("codex"))
+        self.apply(self.plan())
+        moved = os.path.join(self.t, "moved")
+        subprocess.run(["cp", "-r", self.tool, moved], check=True)
+        again = (self.plan("codex") + self.plan()).replace(self.tool, moved)     # one run: codex first, then claude-code, from a moved tool
+        task, flow = os.path.join(self.sk(), "qargi-task"), os.path.join(self.sk(), "qargi-flow")
+        os.unlink(task)
+        spit(task, "#!/bin/sh\nexec mine\n")                         # a wrapper of yours where the install recorded a link
+        os.unlink(flow)
+        os.mkdir(flow)                                               # and an empty directory of yours
+        snap, recs = self.snapshot(self.home), {n: slurp(os.path.join(self.rdir, n)) for n in os.listdir(self.rdir)}
+        for _ in range(2):                                           # a second run refuses the same way: no change, no loop
+            msg = self.refused(self.apply, again)
+            self.assertIn("refusing to replace %s: the install recorded a link there and it is now a file, which is yours" % task, msg)
+            self.assertIn("nothing was changed: move it aside and install again, or install with --force", msg)
+            self.assertNotIn("run the install again", msg)
+            self.assertEqual(self.snapshot(self.home), snap, "the codex part before it is not touched either")
+            self.assertEqual({n: slurp(os.path.join(self.rdir, n)) for n in os.listdir(self.rdir)}, recs)
+        os.rename(task, os.path.join(self.t, "wrapper"))
+        self.assertIn("%s: the install recorded a link there and it is now a directory" % flow, self.refused(self.apply, again))
+        os.rmdir(flow)
+        self.apply(again)
+        self.assertEqual(os.readlink(task), os.path.join(moved, "skills", "qargi-task"))
+        self.assertEqual(os.readlink(os.path.join(self.sk("codex"), "qargi-task")), os.path.join(moved, "skills", "qargi-task"))
+
     def test_a_link_to_the_target_is_adopted_as_it_is(self):
         sk = self.sk()
         os.makedirs(sk)

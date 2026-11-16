@@ -429,7 +429,9 @@ def to_make(d):
 
 def slot_state(p, target, old, force):
     """What becomes of the path p a part writes: new (nothing there), keep (already a link to target), ours (the earlier install wrote it
-    and nothing else is in it), force (something else, replaced under --force). Something else without --force is refused."""
+    and nothing else is in it), force (something else, replaced under --force). Something else without --force is refused. A path that is
+    not a link is ours only when the earlier install copied it there (a C line): a recorded link that is now a file or a directory is yours.
+    Every part is judged before anything changes, so a refusal here changes nothing."""
     if not os.path.lexists(p):
         return "new"
     if os.path.islink(p):
@@ -441,10 +443,14 @@ def slot_state(p, target, old, force):
         if force:
             return "force"
         raise Refused("refusing to replace %s, a link to %s that no install recorded (use --force)" % (p, to))
-    if old and ours(p, old):
+    copied = old is not None and ("C", p, None) in old.lines
+    if copied and ours(p, old):
         return "ours"
     if force:
         return "force"
+    if old and not copied and p in old.paths():
+        raise Refused("refusing to replace %s: the install recorded a link there and it is now a %s, which is yours; nothing was changed: "
+                      "move it aside and install again, or install with --force to replace it" % (p, "directory" if os.path.isdir(p) else "file"))
     raise Refused("refusing to replace existing %s (use --force)" % p)
 
 
@@ -508,7 +514,8 @@ def apply(conf, text, force):
         for p, s in part.state.items():
             if s != "keep" and os.path.lexists(p):
                 if not force:
-                    raise Refused("refusing to replace existing %s (use --force); run the install again" % p)
+                    raise Refused("%s is still there once what the earlier install wrote is removed (something changed it during this run); "
+                                  "the record lists it, so install with --force to replace it" % p)
                 if os.path.isdir(p) and not os.path.islink(p):
                     shutil.rmtree(p)
                 else:
