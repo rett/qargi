@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- The member guard refuses the tool's own `install.sh` (run, by a shell or sourced; a project's or clone's `install.sh` stays allowed) and protects `install.d/`, `install.lock` and, until 0.3.3, the legacy `install.manifest` beside `install.json`.
+
 ## [0.3.1] - 2026-11-16
 
 ### Added

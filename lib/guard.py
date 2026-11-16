@@ -38,12 +38,14 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     install, qargi packs apply|seed|link|unlink|member-skills, qargi project link|unlink (they link the project's skills, agents and memory into the
     checkout and the runtime's memory directory, which changes what a session loads) and qargi import (it restores the pack library).
     Read-only verbs (list, show, check, effective, search, render, export) stay allowed. The verb is found after wrappers, inside `sh|bash -c STRING` and
-    `eval STRING`, in the program a shell reads on its standard input (below), inside $(...) and backticks, and when the script is named directly (packs.sh, discover.py, and the scripts the shell
+    `eval STRING`, in the program a shell reads on its standard input (below), inside $(...) and backticks, and when the script is named directly or sourced (packs.sh, discover.py, and the scripts the shell
     verbs call: env_apply.py is env apply in any use (qargi env plan and apply run the project's dry-run and bootstrap commands: project code; env.py is env,
     found like linker.py, so env show stays open), jsonplan.py (the --json wrapper) is the verb it is given, packs_link.py is packs link|unlink and project_link.py is project link|unlink in any use, packs_audit.py store is skill accept|unaccept, marshal_handoff.py is marshal handoff,
     linker.py (the link engine) is packs link in any use, and render.py (it can run the command a definition names) is refused in any use;
     the last two have names a project may use for its own scripts, so only the files in the lib directory of the tool or of the installed
-    copy count, found from the directory the command runs in);
+    copy count, found from the directory the command runs in; install.sh, the installer, is refused in any use (it writes and removes the
+    links in the skills and agents directories and the install records, and the guard sees none of those writes in the command), and of it
+    only the file at the top of the tool or of the installed copy counts, so an install.sh of a project or of the clone stays the member's);
   - qargi project init (it stores a whole answers file, so it is a way to models.extensions and models.accept_no_barrier, which have gated verbs;
     found like the skill verbs), and qargi project set of any models answer, of release.*, of test_command, of gates, of env.*, of site.* (the commands, environment and site the lead later runs or builds), of packs.* (the opt-out of the render check), of git.* and review.* (the identity and the author rule qargi review apply gives the commits it applies, and the scrub command and trailer policy qargi review check runs), of ci.* and methodology_accepted (the CI jobs left out of the gate comparison, the deviations the lead accepts), of runs.* (the refs that verify and clean accept as a runtime's own) and of
     roles.<role>.tools, a whole role or roles (the tools env apply installs and local prepare checks out; the other answers stay open). A project verb the guard cannot read is
@@ -54,7 +56,8 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
   - setting QARGI_NESTED (it makes some verbs skip their plan-token check);
   - a write under a protected location: the pack library ($QARGI_CONF/packs, else $QARGI_HOME/config/packs, else
     ~/.qargi/config/packs), the credentials
-    directory and install.json of the same configuration directories (not the rest of it: a member may run qargi verbs that
+    directory and the install records of the same configuration directories (install.json, the install.d directory of the manifests, the lock
+    install.lock and, while the one-time migration that reads it is there, until 0.3.3, the legacy install.manifest; not the rest of it: a member may run qargi verbs that
     change instances, agents or projects; the guard decides by the path a write construct names, never by the verb, and a
     read of a protected path stays allowed), the skills and agents directories the provider definitions name in their resources (user_dir, below
     the home: for Claude Code ~/.claude/skills and ~/.claude/agents; project_dir, found in any path outside the run's clone, a project's
@@ -261,11 +264,13 @@ GIT_OUTPUT_DIRS = {"format-patch", "archive"}                    # git subcomman
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
 SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
            "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "project_link.py", "gated_answers.py", "project.sh", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py", "local_run.py", "local.sh", "release.sh", "release_sign.py",
-           "agent.sh", "team.sh", "env.py", "env_apply.py", "branch.sh", "changelog.sh", "changelog_numbers.py", "upstream.sh", "backlog.sh", "backlog.py", "campaign.py", "ref.sh", "jsonplan.py")
+           "agent.sh", "team.sh", "env.py", "env_apply.py", "branch.sh", "changelog.sh", "changelog_numbers.py", "upstream.sh", "backlog.sh", "backlog.py", "campaign.py", "ref.sh", "jsonplan.py",
+           "install.sh")
 # the command and the scripts behind the refused verbs (packs_link.py is packs link|unlink, packs_audit.py store is skill accept|unaccept,
 # marshal_handoff.py is marshal handoff: the shell verbs call them, and a member could call them directly with a hand-made inputs file;
 # linker.py, the link engine packs_link.py calls, is packs link, and render.py renders member definitions and runs the command a definition names)
-OWN_ONLY = ("linker.py", "render.py", "env.py")                       # names too common to refuse by name alone: only the file of the tool is the script (own_script)
+OWN_ONLY = ("linker.py", "render.py", "env.py", "install.sh")         # names too common to refuse by name alone: only the file of the tool is the script (own_script)
+ROOT_SCRIPTS = ("install.sh",)                                       # of those, the ones at the top of the tool, not in its lib directory
 # Known limit, by design: the scripts are recognized by the NAME the command gives. `python3 LINK` where LINK is a symlink to lib/linker.py or
 # lib/render.py, a copy of them under another name, and `python3 -c 'import linker'` (with lib on the path) are not recognized. A check on the
 # resolved path would catch only a link that already exists when the call is judged, not one made earlier in the same command line
@@ -2017,14 +2022,15 @@ def _protected_roots():
     import paths as P                                     # here, not at the top: an import failure is then a refusal (see main)
     home = os.path.expanduser("~")
     # the library where the data lives, the default and the QARGI_HOME one beside an override
-    # Besides the library, only the credentials and the install record of each configuration directory: not the rest of
-    # <conf> (instances, agents, projects, profiles), which qargi verbs a member runs legitimately change.
+    # Besides the library, only the credentials and the install records of each configuration directory (install.json, the manifests in
+    # install.d/, the lock install.lock beside it, and the legacy install.manifest the one-time migration still reads, until 0.3.3 removes it):
+    # not the rest of <conf> (instances, agents, projects, profiles), which qargi verbs a member runs legitimately change.
     # The user's skills and agents directories are the ones the definitions name. No resource names a plugins directory yet, so the one
     # of Claude Code is kept here.
     roots = set(resource_dirs()[1]) | {os.path.join(home, ".claude", "plugins")}
     # (the live configuration directory is one of these: QARGI_CONF, QARGI_HOME/config or ~/.qargi/config)
     for conf in conf_dirs(P, home):
-        roots.update(os.path.join(conf, name) for name in ("packs", "credentials", "install.json"))
+        roots.update(os.path.join(conf, name) for name in ("packs", "credentials", "install.json", "install.d", "install.lock", "install.manifest"))
     roots.add(os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config"), "anthropic"))   # the ant profiles and logins
     # the installed copy of the tool: ~/.claude/skills/qargi-* are links into it, and a write through such a link resolves
     # here, so it must be a root itself (it holds the skills, the member definition and the roles a member is launched with)
@@ -2922,12 +2928,14 @@ def fed_refusal(prog, why):
 
 
 def own_script(path, here):
-    """True when path, named from the directory here, is a file in the lib directory of this tool or of the installed copy (real paths)."""
+    """True when path, named from the directory here, is a file in the lib directory of this tool or of the installed copy (real paths), or,
+    for a script of the top of the tool (ROOT_SCRIPTS: install.sh), a file in the root of this tool or of the installed copy."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import paths as P
     installed = P.installed_tool_root()
-    libs = {os.path.dirname(os.path.realpath(os.path.abspath(__file__)))} | ({os.path.join(installed, "lib")} if installed else set())
-    return os.path.dirname(resolve(here, path)) in libs
+    roots = {os.path.dirname(os.path.dirname(os.path.realpath(os.path.abspath(__file__))))} | ({os.path.realpath(installed)} if installed else set())
+    top = os.path.basename(path) in ROOT_SCRIPTS
+    return os.path.dirname(resolve(here, path)) in (roots if top else {os.path.join(r, "lib") for r in roots})
 
 
 def pure_campaign_args(args):
@@ -2971,8 +2979,8 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
     # runs `qargi upgrade` in an arithmetic subscript): the command ends there, so the verb is read without it
     words = [t.split(")")[0] if ")" in t and "(" not in t else t for t in rest if not t.startswith("-")]
     name, script = prog, exe or prog
-    if prog not in SCRIPTS:
-        if (prog in SHELLS or re.match(r"^python[0-9.]*$", prog)) and words and os.path.basename(words[0]) in SCRIPTS:
+    if prog not in SCRIPTS:                              # also a script a shell runs, or sources into itself (`. install.sh` runs it as `sh install.sh` does)
+        if (prog in SHELLS or prog in SOURCES or re.match(r"^python[0-9.]*$", prog)) and words and os.path.basename(words[0]) in SCRIPTS:
             name, script, words = os.path.basename(words[0]), words[0], words[1:]
         else:
             return None
@@ -2989,6 +2997,9 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         return OwnReason("campaign state requires a lead context; only literal campaign check --spec FILE [--json] is available to a member")
     if name == "linker.py":                              # the engine behind packs link and unlink: any use of it is the verb
         words = ["packs", "link"]
+    if name == "install.sh":                             # the tool's installer: it writes and removes the user's skills, agents and install records, outside every path the guard reads
+        return OwnReason("install.sh of the tool installs, refreshes and uninstalls qargi (the links in the skills and agents directories and the install records) and is the lead's "
+                         "to run; an install.sh of the clone you work in stays yours, and a change to the tool's install you report in your task output")
     if name == "render.py":
         return "lib/render.py is the renderer of member definitions and can run the command a definition names; it is not available to an agent"
     if name == "env.py":                                 # qargi env: show reads; plan and apply are refused below

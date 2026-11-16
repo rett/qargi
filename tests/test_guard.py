@@ -1118,6 +1118,23 @@ class Skills(HookCase):
                     self.assertEqual(r.returncode, 2, (name, tool, target, r.stderr))
             for c in ("rm -rf %s/credentials" % base, "mv %s/credentials /tmp/x" % base, "mv %s/install.json %s/run/out/" % (base, self.t)):
                 self.assertEqual(self.bash(c, **env).returncode, 2, (name, c))
+            # the install records beside install.json: the manifests in install.d, its lock, and the legacy manifest the one-time migration reads
+            os.makedirs(os.path.join(base, "install.d"), exist_ok=True)
+            for f in ("install.d/shared", "install.lock", "install.manifest"):
+                with open(os.path.join(base, f), "w") as fh:
+                    fh.write("")
+            for target in (os.path.join(base, f) for f in ("install.d/shared", "install.d/claude-code", "install.lock", "install.manifest")):
+                for c in ("echo x > %s" % target, "echo x >> %s" % target, "cp /dev/null %s" % target, "rm -f %s" % target, "touch %s" % target,
+                          "sed -i s/a/b/ %s" % target, "ln -sf /x %s" % target):
+                    r = self.bash(c, **env)
+                    self.assertEqual(r.returncode, 2, (name, c, r.stderr))
+                    self.assertIn("protected location", r.stderr)
+                for tool in ("Write", "Edit"):
+                    self.assertEqual(self.call(tool, {"file_path": target}, **env).returncode, 2, (name, tool, target))
+            for c in ("rm -rf %s/install.d" % base, "mv %s/install.d %s/run/out/" % (base, self.t), "mv %s/install.lock /tmp/x" % base, "rm -r %s/install.d" % base):
+                self.assertEqual(self.bash(c, **env).returncode, 2, (name, c))
+            for c in ("cat %s/install.d/shared" % base, "ls %s/install.d" % base, "cat %s/install.manifest" % base):
+                self.assertEqual(self.bash(c, **env).returncode, 0, (name, c))
             # a link in the clone that leads to a protected path is followed and refused
             link = os.path.join(self.clone, "to-%d" % len(os.listdir(self.clone)))
             os.symlink(os.path.join(base, "credentials"), link)
@@ -4281,6 +4298,53 @@ class LibraryScripts(HookCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
         r = self.bash("python3 -I lib/render.py render s d", cwd=self.proj)           # a project's own, with no lib of the tool
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+
+class InstallScript(HookCase):
+    """install.sh of the tool installs, refreshes and uninstalls qargi: it writes and removes the links in the skills and agents directories and
+    the install records, and the guard sees none of those writes in the command that runs it. Only the lead runs it; the file at the top of the
+    tool or of the installed copy is refused in any use, and an install.sh of a project or of the clone a member works in is its work product."""
+    setUp, tearDown, bash, call = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
+    refused = LibraryScripts.refused
+    ROOT = os.path.realpath(os.path.join(os.path.dirname(BIN), ".."))
+    WHY = "install.sh of the tool installs, refreshes and uninstalls qargi"
+
+    def test_refuses_the_tools_own_installer(self):
+        root = self.ROOT
+        for c in ("%s/install.sh --user --uninstall", "bash %s/install.sh --user --uninstall", "sh %s/install.sh --user", "bash -x %s/install.sh --user --uninstall",
+                  "sudo %s/install.sh --user", "env X=1 bash %s/install.sh --user --uninstall", "bash -c '%s/install.sh --user --uninstall'",
+                  "echo $(bash %s/install.sh --user --uninstall)", "cd src && bash %s/install.sh --user --uninstall", "bash %s/lib/../install.sh --user --uninstall",
+                  "true; %s/install.sh --user --uninstall --runtime codex", ". %s/install.sh --user --uninstall", "source %s/install.sh --user",
+                  "nohup %s/install.sh --user --uninstall", "xargs bash %s/install.sh < /dev/null"):
+            self.refused(c % root, self.WHY)
+        self.refused("./install.sh --user --uninstall", self.WHY, cwd=root)
+        self.refused("bash install.sh --user --uninstall", self.WHY, cwd=root)
+        self.refused("cd %s && bash install.sh --user --uninstall" % root, self.WHY)
+        os.symlink(root, os.path.join(self.clone, "tool"))                          # a link in the clone to the tool is followed
+        self.refused("bash tool/install.sh --user --uninstall", self.WHY)
+
+    def test_refuses_the_installed_copys_installer(self):
+        opt = os.path.join(self.t, "opt/qargi")
+        os.makedirs(os.path.join(opt, "lib"))
+        with open(os.path.join(opt, "install.sh"), "w") as f:
+            f.write("#!/bin/sh\n")
+        with open(os.path.join(self.conf, "install.json"), "w") as f:
+            json.dump({"tool_root": opt}, f)
+        for c in ("%s/install.sh --user --uninstall", "bash %s/install.sh --user --uninstall", "bash -c 'bash %s/install.sh --user'"):
+            self.refused(c % opt, self.WHY)
+        self.refused("./install.sh --user --uninstall", self.WHY, cwd=opt)
+        self.assertEqual(self.bash("bash %s/lib/install.sh --user" % opt).returncode, 0)     # only the one at the top of the tool
+
+    def test_an_install_sh_that_is_not_the_tools_is_not_refused(self):
+        with open(os.path.join(self.clone, "install.sh"), "w") as f:
+            f.write("#!/bin/sh\n")
+        for c in ("bash install.sh --user --uninstall", "./install.sh --user --uninstall", "sh %s/install.sh --user" % self.clone, "cd scripts && bash ../install.sh", ". ./install.sh", "source install.sh --user",
+                  "bash %s/proj/install.sh --user --uninstall" % self.t, "bash lib/install.sh", "cat %s/install.sh" % self.ROOT, "shellcheck -x %s/install.sh" % self.ROOT,
+                  "grep -n uninstall %s/install.sh" % self.ROOT, "echo bash %s/install.sh --user" % self.ROOT):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+        r = self.bash("bash install.sh --user --uninstall", cwd=self.proj)        # a project's own, outside the tool
         self.assertEqual(r.returncode, 0, r.stderr)
 
 
