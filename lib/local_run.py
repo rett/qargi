@@ -2290,8 +2290,8 @@ def main(argv):
     except (A.Refuse, OSError) as e:
         print("qargi: lifecycle: %s" % e, file=sys.stderr)
         return 2
-    except (PR.Invalid, MS.Invalid) as e:
-        print("qargi: %s" % e, file=sys.stderr)
+    except (PR.Invalid, MS.Invalid, MS.M.McpError) as e:
+        print("qargi: %s" % str(e)[:1000], file=sys.stderr)
         return 2
     except Stop as e:
         print("qargi: %s" % e, file=sys.stderr)

@@ -81,6 +81,8 @@ import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import paths
+import packs_mcp
+import provider
 from procenv import now, clean_path
 
 MAX_RECORD = 256 * 1024
@@ -1534,8 +1536,9 @@ def main(argv=None):
             result = save_product(store, **args) if cmd == "save-product" else getattr(store, cmd.replace("-", "_"))(**args)
         print(json.dumps(result, sort_keys=True))
         return 0
-    except (Refuse, OSError, TypeError, ValueError, RecursionError, subprocess.CalledProcessError) as e:
-        print("qargi: lifecycle: %s" % e, file=sys.stderr)
+    except (Refuse, OSError, TypeError, ValueError, RecursionError, subprocess.CalledProcessError,
+            packs_mcp.McpError, provider.ProviderError) as e:
+        print("qargi: lifecycle: %s" % str(e)[:1000], file=sys.stderr)
         return 1
 
 

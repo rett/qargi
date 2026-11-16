@@ -26,6 +26,7 @@ import packs_mcp as M
 import packs_render
 import paths
 import provider as P
+import role as R
 
 MAX_SKILLS = 64
 MAX_ENTRIES = 4096
@@ -81,21 +82,23 @@ def destination(comp):
     return 'home/' + home['dir'] + '/' + home['skills_dir']
 
 
-def collect(root):
+def collect(root, budget=None, prefix=''):
     """Bounded nofollow reads; reject hardlinks/specials before opening a body."""
     import attempts as A
     fd = A.directory(os.path.abspath(root), private_leaf=False)
     files, dirs = {}, []
-    total = count = 0
+    # The caller shares [entries, bytes] across included packs. Check the
+    # advertised size before reading, and bound reads by the remaining bytes.
+    budget = [0, 0] if budget is None else budget
 
     def walk(dfd, prefix=''):
-        nonlocal total, count
         names = os.listdir(dfd)
         need(len(names) <= MAX_ENTRIES, "too many entries")
         for name in sorted(names):
             rel = prefix + name
-            count += 1
-            need(count <= MAX_ENTRIES and safe_path(rel), "unsafe path or too many entries")
+            budget[0] += 1
+            need(budget[0] <= MAX_ENTRIES, 'too many entries')
+            need(safe_path(prefix + rel), 'unsafe path: ' + (prefix + rel)[:512])
             st = os.stat(name, dir_fd=dfd, follow_symlinks=False)
             need(st.st_uid == os.geteuid(), "source is not owner-owned")
             if stat.S_ISDIR(st.st_mode):
@@ -109,25 +112,26 @@ def collect(root):
             else:
                 need(stat.S_ISREG(st.st_mode) and st.st_nlink == 1 and st.st_size <= MAX_FILE,
                      "symlink, hardlink, special or oversized file: " + rel)
+                need(budget[1] + st.st_size <= MAX_TOTAL, 'aggregate content exceeds 16 MiB')
                 child = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dfd)
                 try:
                     now = os.fstat(child)
                     need((now.st_dev, now.st_ino) == (st.st_dev, st.st_ino), "file changed")
                     data = b''
-                    while len(data) <= MAX_FILE:
-                        chunk = os.read(child, min(65536, MAX_FILE + 1 - len(data)))
+                    limit = min(MAX_FILE, MAX_TOTAL - budget[1])
+                    while len(data) <= limit:
+                        chunk = os.read(child, min(65536, limit + 1 - len(data)))
                         if not chunk:
                             break
                         data += chunk
-                    need(len(data) <= MAX_FILE and stat.S_ISREG(now.st_mode) and now.st_nlink == 1,
+                    need(len(data) <= limit and stat.S_ISREG(now.st_mode) and now.st_nlink == 1,
                          'file changed or exceeds bound')
                     after = os.fstat(child)
                     need((after.st_size, after.st_mtime_ns, after.st_ctime_ns) ==
                          (now.st_size, now.st_mtime_ns, now.st_ctime_ns), "file changed while reading")
                 finally:
                     os.close(child)
-                total += len(data)
-                need(total <= MAX_TOTAL, "aggregate content exceeds 16 MiB")
+                budget[1] += len(data)
                 files[rel] = (data, 0o700 if st.st_mode & 0o111 else 0o600)
     try:
         walk(fd)
@@ -154,39 +158,50 @@ def selection(project, role, runtime, comp=None):
     need(len(entries) <= MAX_ENTRIES, "too many links")
     links_path = os.path.join(conf, 'packs', 'links.json')
     links = M._load(links_path, 'pack links')['links'] if os.path.exists(links_path) else []
-    relevant = [x for x in links if x.get('scope') == 'user'
-                or x.get('scope') == 'user-role' and x.get('role') == role
-                or x.get('scope') == 'project' and x.get('project') == project
-                or x.get('scope') == 'project-role' and x.get('project') == project and x.get('role') == role]
+    relevant = [x for x in links if M.reaches(x, project, role)]
     answers = P.project_answers(project, conf)
     off = ((answers.get('roles') or {}).get(role) or {}).get('packs_off', [])
     packs, bodies, dirs, skipped = [], {}, [], []
+    skills = []
     for entry in entries:
         kind, sep, name = entry.partition(':')
         need(sep and kind in ('skill', 'tool') and M.PACK_NAME.fullmatch(name), "unsupported linked kind/name")
         if kind == 'tool':
             continue
-        files, subdirs = collect(os.path.join(conf, 'packs', 'skills', name))
-        need('.pack.json' in files and 'SKILL.md' in files, "missing record or SKILL.md: " + name)
+        skills.append(name)
+    need(len(skills) <= MAX_SKILLS, 'too many skills')
+    budget = [0, 0]
+    import attempts as A
+    for name in skills:
+        root = os.path.join(conf, 'packs', 'skills', name)
+        fd = A.directory(root, private_leaf=False)
         try:
-            rec = json.loads(files['.pack.json'][0])
+            metadata = A.read_at(fd, '.pack.json', MAX_FILE)
+        finally:
+            os.close(fd)
+        try:
+            rec = json.loads(metadata)
         except (ValueError, UnicodeError) as e:
             raise Invalid('member skills: malformed pack record') from e
-        approval = rec.get('sha256') if isinstance(rec, dict) else None
-        need(isinstance(approval, str) and re.fullmatch(r'[0-9a-f]{16}', approval), "missing/empty content approval: " + name)
+        need(isinstance(rec, dict), 'malformed pack record')
         declared = rec.get('compatible_providers')
         need(packs_compat.problem(declared) is None, "invalid compatibility: " + name)
         ok, reason = packs_compat.evaluate(declared, answers, project, ['local'])
-        # Keep excluded content identity too: approval/content changes require a new prepare.
-        packs.append(dict(name=name, approved=approval, files=descriptions(files), dirs=subdirs, included=ok))
         if not ok:
             skipped.append(dict(name=name, reason=reason.strip()))
+            packs.append(dict(name=name, approved=None, files=[], dirs=[], included=False, compatibility=declared))
+            continue
+        approval = rec.get('sha256')
+        need(isinstance(approval, str) and re.fullmatch(r'[0-9a-f]{16}', approval), "missing/empty content approval: " + name)
+        budget[0] += 1  # The pack directory is part of the cross-pack inventory.
+        need(budget[0] <= MAX_ENTRIES, 'too many entries')
+        files, subdirs = collect(root, budget, name + '/')
+        need('.pack.json' in files and 'SKILL.md' in files, "missing record or SKILL.md: " + name)
+        need(files['.pack.json'][0] == metadata, 'compatibility metadata changed: ' + name)
+        packs.append(dict(name=name, approved=approval, files=descriptions(files), dirs=subdirs, included=True, compatibility=declared))
         for p, value in files.items():
             bodies[name + '/' + p] = value
         dirs.extend([name] + [name + '/' + d for d in subdirs])
-    need(len(packs) <= MAX_SKILLS and len(bodies) + len(dirs) <= MAX_ENTRIES,
-         "too many skills or entries")
-    need(sum(len(v[0]) for v in bodies.values()) <= MAX_TOTAL, "aggregate content exceeds 16 MiB")
     home = comp['definition']['dispatch']['home']
     facts = dict(project=project, role=role, runtime=runtime, composition=sha(encode(comp)),
                  delivery_root='home/' + home['dir'] + '/' + home['skills_dir'].split('/')[0],
@@ -237,6 +252,8 @@ def put_tree(root, files, dirs):
 def qualify(root, facts):
     """Review the bounded safe private copy, explicitly require matching approval."""
     for pack in facts['packs']:
+        if not pack['included']:
+            continue
         p = os.path.join(root, pack['name'])
         need(C.approved_of(p) == pack['approved'] and C.content_hash(p) == pack['approved'],
              "content/approval drift: " + pack['name'])
@@ -298,10 +315,11 @@ def manifest(store, ref, full=False):
          and len(doc['files']) + len(doc['dirs']) <= MAX_ENTRIES, 'invalid manifest inventory')
     need(type(facts['packs']) is list and len(facts['packs']) <= MAX_SKILLS, 'invalid manifest skills')
     for pack in facts['packs']:
-        need(type(pack) is dict and set(pack) == {'name', 'approved', 'files', 'dirs', 'included'}
+        need(type(pack) is dict and set(pack) == {'name', 'approved', 'files', 'dirs', 'included', 'compatibility'}
              and isinstance(pack['name'], str) and M.PACK_NAME.fullmatch(pack['name'])
-             and isinstance(pack['approved'], str) and re.fullmatch(r'[0-9a-f]{16}', pack['approved'])
-             and type(pack['included']) is bool, 'invalid manifest skill')
+             and type(pack['included']) is bool and packs_compat.problem(pack['compatibility']) is None
+             and (isinstance(pack['approved'], str) and re.fullmatch(r'[0-9a-f]{16}', pack['approved']) if pack['included'] else
+                  pack['approved'] is None and pack['files'] == [] and pack['dirs'] == []), 'invalid manifest skill')
     if full:
         files, dirs = collect(store.path + '/skills')
         need(descriptions(files) == doc['files'] and sorted(dirs) == sorted(doc['dirs']), 'snapshot bytes changed')
@@ -429,22 +447,37 @@ def deliver(store, prepared):
         raise
 
 
+def role_inventory(answers):
+    """Inventory prepare's catalogue, without granting or restricting access."""
+    declarations = answers.get('roles') or {}
+    rows = []
+    for name in sorted(set(R.role_names()) | set(declarations)):
+        if name == 'lead':
+            continue
+        directory = R.role_dir(name) if R.NAME.fullmatch(name) else None
+        cls = R.role_class(name) if directory else None
+        problems = R.check_one(name)[0] if directory else ['role files unavailable']
+        applicable = directory is not None and cls in ('write', 'read-only')
+        rows.append(dict(role=name, declared=name in declarations, cls=cls,
+                         status='qualified' if applicable else 'invalid' if directory else 'unavailable',
+                         metadata='invalid' if problems else 'valid', problems=problems))
+    return rows
+
+
 def gate(project, choice):
     """Recomputed plan; disabling never loads new pack content or runtime data."""
     old = enabled(project)
     if choice is None:
         return dict(project=project, old=old, new=old)
     answers = P.project_answers(project)
-    roles = sorted(r for r in (answers.get('roles') or {}) if r != 'lead')
-    config = dict(models={k: (answers.get('models') or {}).get(k) for k in ('provider', 'extensions')},
-                  roles={r: dict(exclusions=(answers['roles'][r] or {}).get('packs_off', []),
+    inventory = role_inventory(answers)
+    roles = [r['role'] for r in inventory if r['status'] == 'qualified']
+    config = dict(inventory=inventory, models={k: (answers.get('models') or {}).get(k) for k in ('provider', 'extensions')},
+                  roles={r: dict(exclusions=((answers.get('roles') or {}).get(r) or {}).get('packs_off', []),
                                  selected=M.effective(paths.conf(), project, r)) for r in roles})
     link_file = os.path.join(paths.conf(), 'packs', 'links.json')
     links = M._load(link_file, 'pack links')['links'] if os.path.exists(link_file) else []
-    config['links'] = sorted([x for x in links if x.get('scope') == 'user'
-        or x.get('scope') == 'user-role' and x.get('role') in roles
-        or x.get('scope') == 'project' and x.get('project') == project
-        or x.get('scope') == 'project-role' and x.get('project') == project and x.get('role') in roles], key=encode)
+    config['links'] = sorted([x for x in links if any(M.reaches(x, project, r) for r in roles)], key=encode)
     facts = []
     if choice:
         runtime = P.resolve_project(answers, 'local', project)[0]
@@ -488,12 +521,13 @@ def gate(project, choice):
 
 
 def main(argv):
+    import attempts as A
     try:
         need(len(argv) == 3 and argv[0] == 'plan' and argv[2] in ('enable', 'disable', 'status'), 'usage: plan PROJECT enable|disable|status')
         print(encode(gate(argv[1], {'enable': True, 'disable': False, 'status': None}[argv[2]])).decode(), end='')
         return 0
-    except (Invalid, M.McpError, P.ProviderError, OSError, ValueError) as e:
-        print('qargi: ' + str(e), file=sys.stderr)
+    except (Invalid, A.Refuse, M.McpError, P.ProviderError, OSError, ValueError) as e:
+        print('qargi: ' + str(e)[:1000], file=sys.stderr)
         return 2
 
 

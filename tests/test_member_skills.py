@@ -6,6 +6,7 @@ import fcntl
 import os
 from pathlib import Path
 import shutil
+import shlex
 import subprocess
 import sys
 import time
@@ -165,6 +166,145 @@ class MemberSkills(unittest.TestCase):
         self.cmd('local', 'run', self.run)
         self.assertEqual({p.split('/')[0] for p in self.transcript()}, {'qargi-lead-instructions'})
 
+    def test_incompatible_unapproved_bad_body_is_excluded_until_inclusion(self):
+        self.configure()
+        p = self.pack('other-client', compatible=['cmdtwo'])
+        (p / 'SKILL.md').write_text('invalid body for an excluded runtime')
+        rec = json.loads((p / '.pack.json').read_text())
+        rec.pop('sha256')
+        (p / '.pack.json').write_text(json.dumps(rec))
+        self.prepare('--role', 'review')
+        self.assertFalse((Path(self.store.path) / 'skills/other-client').exists())
+        self.cmd('local', 'run', self.run, '--dry-run')
+        rec['compatible_providers'] = ['cmdone']
+        (p / '.pack.json').write_text(json.dumps(rec))
+        self.assertIn('approval', self.cmd('local', 'run', self.run, '--dry-run', code=2))
+
+    def test_enable_inventory_includes_dispatchable_undeclared_review_role(self):
+        self.configure()
+        self.pack('fixture')
+        del self.answers['roles']['review']
+        self.answers['roles']['unavailable'] = {}
+        self.save_answers()
+        plan = MS.gate('demo', True)
+        self.assertIn('review', [x['role'] for x in plan['roles']])
+        self.assertNotIn('lead', [x['role'] for x in plan['roles']])
+        self.assertEqual(next(x for x in plan['config']['inventory'] if x['role'] == 'unavailable')['status'], 'unavailable')
+        self.prepare('--role', 'review')
+        self.assertEqual(self.store.show()['prepared']['request']['role'], 'review')
+        self.cmd('local', 'run', self.run)
+        self.assertIn('fixture/SKILL.md', self.transcript())
+
+    def test_enable_inventory_recomputes_new_roles_and_reports_invalid_metadata(self):
+        self.configure()
+        before = MS.gate('demo', True)
+        for name, metadata in [('extra', {'class': 'read-only'}), ('defaultclass', {}), ('invalidclass', {'class': 'invalid'})]:
+            root = self.conf / 'roles' / name
+            root.mkdir(parents=True)
+            (root / 'ROLE.md').write_text('Offline fixture role.\n')
+            (root / 'role.json').write_text(json.dumps(metadata))
+        after = MS.gate('demo', True)
+        self.assertNotEqual(before, after)
+        rows = {x['role']: x for x in after['config']['inventory']}
+        self.assertEqual(rows['extra']['status'], 'qualified')
+        self.assertEqual(rows['defaultclass']['cls'], 'write')
+        self.assertEqual(rows['defaultclass']['metadata'], 'invalid')
+        self.assertEqual(rows['invalidclass']['status'], 'invalid')
+        self.assertIn('extra', [x['role'] for x in after['roles']])
+        self.assertNotIn('invalidclass', [x['role'] for x in after['roles']])
+
+    def test_selection_bounds_before_body_collection(self):
+        self.configure()
+        with mock.patch.object(MS.M, 'effective', return_value=['skill:p' + str(i) for i in range(MS.MAX_SKILLS + 1)]), \
+                mock.patch.object(MS, 'collect') as collect:
+            with self.assertRaisesRegex(MS.Invalid, 'too many skills'):
+                MS.selection('demo', 'review', 'cmdone')
+            collect.assert_not_called()
+        for bad in ('unknown:a', 'skill:../escape'):
+            with mock.patch.object(MS.M, 'effective', return_value=['skill:first', bad]), \
+                    mock.patch.object(MS, 'collect') as collect:
+                with self.assertRaisesRegex(MS.Invalid, 'unsupported linked kind/name'):
+                    MS.selection('demo', 'review', 'cmdone')
+                collect.assert_not_called()
+
+    def test_native_malformed_links_refuse_without_traceback(self):
+        self.configure()
+        self.pack('fixture')
+        self.prepare('--role', 'review')
+        (self.conf / 'packs/links.json').write_text('invalid links JSON')
+        for args in [('packs', 'member-skills', 'demo', '--enable'),
+                     ('local', 'run', self.run, '--dry-run'), ('local', 'run', self.run)]:
+            out = self.cmd(*args, code=2)
+            self.assertIn('cannot be read', out)
+            self.assertNotIn('Traceback', out)
+
+    def test_unknown_member_context_refuses_before_plan_or_token(self):
+        self.configure(on=False)
+        self.pack('fixture')
+        shim = self.bin / 'python3'
+        shim.write_text('#!/bin/bash\ncase "$*" in *marshal_refs.in_member_run*) exit 7;; esac\nexec ' +
+                        shlex.quote(sys.executable) + ' "$@"\n')
+        shim.chmod(0o755)
+        out = self.cmd('packs', 'member-skills', 'demo', '--enable', code=2)
+        self.assertIn('could not tell whether this is a member run', out)
+        self.assertNotIn('plan token:', out)
+        self.assertNotIn('member skills for demo:', out)
+        self.assertFalse(MS.enabled('demo'))
+
+    def test_private_path_and_provider_failures_are_native_refusals(self):
+        self.configure()
+        self.pack('fixture')
+        alias = self.root / 'conf-alias'
+        alias.symlink_to(self.conf, target_is_directory=True)
+        with mock.patch.dict(self.env, QARGI_CONF=str(alias)):
+            out = self.cmd('packs', 'member-skills', 'demo', '--enable', code=2)
+        self.assertIn('canonical absolute path', out)
+        self.assertNotIn('Traceback', out)
+        with mock.patch.object(MS.P, 'compose', side_effect=P.ProviderError('injected provider refusal')):
+            with mock.patch.object(sys, 'stderr') as err:
+                self.assertEqual(MS.main(['plan', 'demo', 'enable']), 2)
+            self.assertIn('injected provider refusal', ''.join(x.args[0] for x in err.write.call_args_list))
+
+    def test_actual_entry_depth_length_and_cross_pack_byte_bounds(self):
+        self.configure()
+        tree = self.root / 'bounds'
+        tree.mkdir(mode=0o700)
+        for i in range(MS.MAX_ENTRIES + 1):
+            (tree / ('e' + str(i))).touch()
+        with self.assertRaisesRegex(MS.Invalid, 'too many entries'):
+            MS.collect(str(tree))
+        shutil.rmtree(tree)
+        tree.mkdir(mode=0o700)
+        for components in (['d'] * 17, ['x' * 255, 'y' * 255, 'z']):
+            path = tree.joinpath(*components)
+            path.mkdir(parents=True)
+            with self.assertRaisesRegex(MS.Invalid, 'unsafe path:'):
+                MS.collect(str(tree))
+            shutil.rmtree(tree)
+            tree.mkdir(mode=0o700)
+        # Each pack passes the canonical 2 MB/100-file review and the 16 MiB
+        # collector individually; the ninth exceeds the shared byte budget.
+        for i in range(9):
+            p = self.pack('bytes' + str(i))
+            (p / 'reference.txt').write_text('support text\n' * 73_000)
+            (p / 'second.txt').write_text('support text\n' * 73_000)
+            self.seal(p)
+            self.assertEqual(C.review('skill', str(p))[1], 0)
+            MS.collect(str(p))
+        with self.assertRaisesRegex(MS.Invalid, 'aggregate content exceeds 16 MiB'):
+            MS.selection('demo', 'review', 'cmdone')
+
+    def test_cross_pack_entry_budget(self):
+        self.configure()
+        for i in range(59):
+            p = self.pack('entries' + str(i))
+            for j in range(68):
+                (p / ('e' + str(j))).touch()
+            self.seal(p)
+            self.assertEqual(C.review('skill', str(p))[1], 0)
+        with self.assertRaisesRegex(MS.Invalid, 'too many entries'):
+            MS.selection('demo', 'review', 'cmdone')
+
     def test_content_approval_scope_optin_and_exclusion_drift(self):
         self.configure()
         p = self.pack('fixture')
@@ -307,14 +447,16 @@ class MemberSkills(unittest.TestCase):
                 else:
                     for i in range(100): (p / ('extra-' + str(i))).write_text('x')
                     self.seal(p)
-                self.cmd('packs', 'member-skills', 'demo', '--enable', code=2)
+                reason = ('unsafe path:' if kind == 'unsafe' else 'fails review: fixture' if kind == 'count'
+                          else 'symlink, hardlink, special or oversized file:')
+                self.assertIn(reason, self.cmd('packs', 'member-skills', 'demo', '--enable', code=2))
                 if kind == 'count':
                     for i in range(100): (p / ('extra-' + str(i))).unlink()
                 else: target.unlink()
                 target = p / 'entry'
         # Aggregate limits apply across otherwise ordinary packs too.
         with mock.patch.object(MS, 'MAX_TOTAL', 10):
-            with self.assertRaises(MS.Invalid):
+            with self.assertRaisesRegex(MS.Invalid, 'aggregate content exceeds 16 MiB'):
                 MS.selection('demo', 'review', 'cmdone')
 
     def test_private_body_tamper_refuses_launch_and_save(self):

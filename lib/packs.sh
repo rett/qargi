@@ -82,11 +82,18 @@ if [ "$KIND:$VERB" = packs:member-skills ]; then
   [ "${#ARGS[@]}" = 1 ] || usage_die "qargi packs member-skills PROJECT [--enable|--disable] [--plan TOKEN --approved WORDS]"
   [ "$MEMBER_CHOICE" != status ] || [ -z "$PLAN_ARG$APPROVED" ] || usage_die "member-skills status takes no plan or approval"
   # Native refusal applies even on a runtime with no qargi guard hook.
-  if [ -n "${QARGI_MEMBER_RUN:-}" ] || python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import marshal_refs; sys.exit(0 if marshal_refs.in_member_run() else 1)' "$(dirname "$0")"; then
-    [ "$MEMBER_CHOICE" = status ] || die "packs member-skills mutation is not available in a member run"
+  mrc=0
+  if [ -z "${QARGI_MEMBER_RUN:-}" ]; then
+    python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import marshal_refs; sys.exit(0 if marshal_refs.in_member_run() else 3)' "$(dirname "$0")" || mrc=$?
   fi
+  case $mrc in
+    3) ;;
+    0) [ "$MEMBER_CHOICE" = status ] || die "packs member-skills mutation is not available in a member run";;
+    *) echo "qargi: packs member-skills could not tell whether this is a member run (the check failed with status $mrc); refused before planning" >&2; exit 2;;
+  esac
   plan=$(pymod member_skills plan "${ARGS[0]}" "$MEMBER_CHOICE") || exit $?
   jq -r '"member skills for \(.project): \(.old) -> \(.new)", (.roles[]? | "  role \(.role): \(.destination)", (.packs[] | "    \(.name) \(.approved) (included: \(.included))"))' <<<"$plan"
+  jq -r '.config.inventory[]? | select(.status != "qualified" or .metadata != "valid") | "  role \(.role): \(.status), metadata \(.metadata) (\(.problems | join("; ")))"' <<<"$plan"
   [ "$MEMBER_CHOICE" != status ] || exit 0
   tok=$(printf '%s\n' "$plan" | plan_token)
   if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: --plan $tok --approved \"<the user's go-ahead>\")"; exit 0; fi
