@@ -42,7 +42,8 @@ Verbs (install.sh runs them as python3 -I lib/install_record.py VERB; status 1 i
   migrate --conf CONF --data DIR --slot PATH... --tool-root DIR
         first remove what an interrupted run left (install.d.new, temporary manifests; never read). Then, once, while install.d does not
         exist, turn the single CONF/install.manifest and CONF/project-N.manifest of qargi 0.3.1 into install.d (see migrate below); with
-        install.d there they are removed unread. The migration goes in 0.3.3.
+        install.d there they are removed unread, and so is a project-N.manifest with neither install.manifest nor install.json beside it.
+        The migration goes in 0.3.3.
 PLAN: one item per line, fields separated by tabs. "M FILE KEY=VALUE..." starts a part, recorded in FILE, with the header fields given;
 "D DIR" a directory the part needs (the parents it makes are recorded as P); "L PATH TARGET" a link; "C PATH SRC [NAME...]" a copy of SRC,
 or of the NAMEs inside SRC, at PATH; "c DIR" the configuration directory, or a parent, that this run made. The parts are applied in order.
@@ -741,7 +742,9 @@ def migrate(conf, data, slots, tool_root, say):
     """Turn the legacy manifests into install.d, once: only while install.d does not exist. install.d.new is built from the legacy files
     alone, every line checked (a link is carried with its target only while it still points into the tool; any other line only inside the
     skills directory, the data directory or a fixed slot, else the migration is refused with nothing changed), committed with one directory
-    rename, and then the legacy files are removed. With install.d already there a legacy file is removed and not read."""
+    rename, and then the legacy files are removed. With install.d already there a legacy file is removed and not read. A project-N.manifest
+    is read only beside an install.manifest or an install.json (a 0.3.1 install): alone (after a full uninstall, or on a host that never
+    installed) it is removed unread, so a file left or planted there cannot arm the migration."""
     tidy(conf, say)
     legacy = legacy_files(conf)
     records = records_dir(conf)
@@ -751,6 +754,13 @@ def migrate(conf, data, slots, tool_root, say):
         for f in legacy:
             os.unlink(f)
             say("removed %s: the records are in %s, so it was not read" % (f, records))
+        return
+    rec = os.path.join(conf, "install.json")
+    if os.path.join(conf, LEGACY_USER) not in legacy and not (os.path.isfile(rec) and not os.path.islink(rec)):
+        for f in legacy:
+            os.unlink(f)
+            say("removed %s: a project record of qargi 0.3.1 with no install.manifest and no install.json beside it, so it was not read "
+                "(install.sh --project DIR records that project again)" % f)
         return
     roots = {data, os.path.realpath(data), tool_root, os.path.realpath(tool_root)}
     try:

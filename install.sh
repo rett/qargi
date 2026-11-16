@@ -40,7 +40,8 @@
 # skill is kept, and so is ~/.qargi (the live config directory and its parents go only when the install made them and they are empty once
 # the records are removed). Without a manifest --uninstall removes nothing and says so (exit 1), with or without --force. A run holds
 # <live config>/install.lock while it reads or changes the records. The single install.manifest (and project-N.manifest) of qargi 0.3.1
-# becomes install.d once, on the first run, while install.d does not exist (the migration goes in 0.3.3).
+# becomes install.d once, on the first run, while install.d does not exist (the migration goes in 0.3.3); a project-N.manifest is read only
+# beside an install.manifest or an install.json, and removed unread when it is alone.
 #
 # --user also records the tool it installed in <live config>/install.json (~/.qargi/config, or QARGI_CONF /
 # QARGI_HOME when set; the uninstall of the last runtime removes it). A checkout run from any other place is then a dev run that keeps its data
@@ -143,7 +144,8 @@ no_record() {
   exit 1
 }
 # Under the lock, before the records are read: what an interrupted run left is removed unread (install.d.new, temporary manifests), and the
-# single install.manifest (and project-N.manifest) of qargi 0.3.1 becomes install.d once, while install.d does not exist. Remove in 0.3.3.
+# single install.manifest (and project-N.manifest) of qargi 0.3.1 becomes install.d once, while install.d does not exist (a project-N.manifest
+# only beside an install.manifest or an install.json). Remove in 0.3.3.
 migrate_legacy() {
   records migrate --conf "$liveconf" --data "$data" --tool-root "$here" \
     --slot "$cmd" --slot "$manpage" --slot "$completion" --slot "$zshcomp" --slot "$fishcomp" || { [ "$(type -t undo_conf)" != function ] || undo_conf; exit 1; }

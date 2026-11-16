@@ -178,6 +178,19 @@ out=$(inst --user --uninstall 2>&1); rc=$?
 left=$(find "$H" -mindepth 1 \( -path "$XS" -o -path "$H/.qargi" \) -prune -o -print | grep -v -x -e "$H/.codex" -e "$H/precious")
 [ "$(yours)" = "$y0" ] && [ -z "$left" ] && [ -z "$(find "$C" -maxdepth 1 -name 'install*')" ] && ok "only your entries (and qargi's data in ~/.qargi, no install record) are left in the home" || no "left: $left $(ls "$C")"
 
+# --- after the full uninstall a project-N.manifest of 0.3.1 planted in the config (no install.manifest, no install.json beside it) is removed
+# unread: an install of that project does not take your own qargi-task for its own, and an uninstall removes nothing
+PP=$T/pp; mkdir -p "$PP/.claude/skills/qargi-task"; echo mine > "$PP/.claude/skills/qargi-task/SKILL.md"
+key=$(cd "$PP" && pwd -P | cksum | cut -d' ' -f1)
+printf 'C\t%s\nf\t%s\n' "$PP/.claude/skills/qargi-task" "$PP/.claude/skills/qargi-task/SKILL.md" > "$C/project-$key.manifest"
+p0=$(inventory "$PP")
+out=$(inst --project "$PP" 2>&1); rc=$?
+{ [ "$rc" = 1 ] && echo "$out" | grep -q "removed $C/project-$key.manifest: a project record of qargi 0.3.1 with no install.manifest and no install.json beside it, so it was not read" \
+  && echo "$out" | grep -q "refusing to replace existing $PP/.claude/skills/qargi-task (use --force)" && [ ! -e "$C/project-$key.manifest" ] && [ ! -e "$C/install.d" ] \
+  && [ "$(inventory "$PP")" = "$p0" ]; } && ok "a planted project manifest of 0.3.1 alone is removed unread: the install refuses to replace your skill" || no "planted project manifest (rc=$rc): $out"
+out=$(inst --project "$PP" --uninstall 2>&1); rc=$?
+{ [ "$rc" = 1 ] && echo "$out" | grep -q "no install manifest" && [ "$(inventory "$PP")" = "$p0" ]; } && ok "and the uninstall of that project removes nothing" || no "uninstall after a planted project manifest (rc=$rc): $out"
+
 # --- links nobody recorded; one skills directory per runtime; a link the user retargeted
 fresh; mkdir -p "$XS" "$H/.local/bin"
 ln -s "$T/elsewhere" "$XS/qargi-flow"

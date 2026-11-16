@@ -472,6 +472,35 @@ class Migrate(Base):
         self.assertIn(("L", root + "/qargi-task", os.path.join(self.tool, "skills", "qargi-task")), m.lines)
         self.assertFalse(os.path.exists(os.path.join(self.conf, "project-123.manifest")))
 
+    def test_a_project_manifest_alone_is_not_read(self):
+        proj = os.path.join(self.t, "proj")
+        root = os.path.join(proj, ".claude", "skills")
+        mine = os.path.join(root, "qargi-task", "SKILL.md")
+        spit(mine, "mine\n")                                        # a qargi-* skill of your own
+        planted = os.path.join(self.conf, "project-123.manifest")
+        os.unlink(self.legacy)
+        for keep_json in (False, True):
+            with self.subTest(install_json=keep_json):
+                if not keep_json:
+                    os.rename(os.path.join(self.conf, "install.json"), os.path.join(self.t, "install.json"))
+                else:
+                    os.rename(os.path.join(self.t, "install.json"), os.path.join(self.conf, "install.json"))
+                spit(planted, "C\t%s/qargi-task\nf\t%s\n" % (root, mine))
+                snap = self.snapshot(proj)
+                self.migrate()
+                self.assertFalse(os.path.exists(planted))
+                self.assertEqual(self.snapshot(proj), snap)
+                if not keep_json:                                   # after a full uninstall: no install.manifest, no install.json
+                    self.assertFalse(os.path.lexists(self.rdir), "a project manifest alone does not arm the migration")
+                    self.assertIn("removed %s: a project record of qargi 0.3.1 with no install.manifest and no install.json beside it, so it "
+                                  "was not read (install.sh --project DIR records that project again)" % planted, self.said)
+                    with self.assertRaises(R.Refused):          # so an install does not take your skill for its own
+                        self.apply("M\t%s\tkind=project\tname=claude-code\tproject=%s\troot=%s\nL\t%s/qargi-task\t%s/skills/qargi-task\n"
+                                   % (os.path.join(self.rdir, "project-123-claude-code.manifest"), proj, root, root, self.tool))
+                    self.assertEqual(self.snapshot(proj), snap)
+                else:                                               # beside the install.json of a 0.3.1 install it is migrated
+                    self.assertEqual(os.listdir(self.rdir), ["project-123-claude-code.manifest"])
+
     def test_it_runs_once_and_an_interrupted_one_starts_again_from_the_legacy_files(self):
         with mock.patch.object(R.os, "rename", side_effect=KeyboardInterrupt), self.assertRaises(KeyboardInterrupt):
             self.migrate()
