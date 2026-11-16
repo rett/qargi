@@ -14,7 +14,7 @@ This branch holds the hand-written pages of the qargi documentation site and its
 | `.github/workflows/pages.yml` | check and build on pull requests; check, build and deploy on a push to this branch |
 | `tools/build-local.sh` | the same steps on your machine |
 
-The generator (`lib/site.py` and the stylesheet) lives in the main repository and is taken from the release named by `release` in `site/site.json`. If that release has no tag that carries the generator yet, the workflow and the script use `develop` and pass the unreleased flag; the pages then say so. The command reference and the releases page are generated from `lib/commands.py` and `CHANGELOG.md` at the same ref, so a page cannot name a command that does not exist there.
+The generator (`lib/site.py` and the stylesheet) lives in the main repository and is taken from the release named by `release` in `site/site.json`. If that release has no tag that carries the generator yet, the workflow and the script use `develop` and pass the unreleased flag; the pages then say so. The command reference and the releases page are generated from `lib/commands.py` and `CHANGELOG.md` at the same ref, and the build checks recognized command examples against those descriptions. Examples and prose still require review for argument and behavioral accuracy.
 
 ## Build it locally
 
@@ -33,9 +33,9 @@ The script reads the main repository and writes only to the output directory and
 ## Update the pages after a release
 
 1. Set `release` in `site/site.json` to the new version.
-2. Run `tools/build-local.sh`. A page that names a command or option the release no longer has fails the check, with the line number.
+2. Run `tools/build-local.sh`. A recognized command example with a command or option absent from the release fails the check, with the line number. Argument semantics and other prose require review.
 3. Fix the pages, commit on an `agent/*` branch cut from this branch, and open a pull request into `gh-pages`. The `build` check must be green.
 
 ## Publishing
 
-Pushes to this branch deploy through GitHub Actions. The repository owner sets Settings > Pages > Source to GitHub Actions once and lets the `github-pages` environment deploy from `gh-pages`. The Actions in the workflow are named by version tag; pin them to full commit SHAs before relying on it.
+Pushes to this branch deploy through GitHub Actions. The repository owner sets Settings > Pages > Source to GitHub Actions once and lets the `github-pages` environment deploy from `gh-pages`. The workflow pins Actions to full commit SHAs and records their version tags in comments. Review the corresponding upstream release when updating a pin.

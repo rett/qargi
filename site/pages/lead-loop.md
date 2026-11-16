@@ -5,7 +5,7 @@ doctype: how-to
 ---
 This is the loop for a project that follows git-flow: `master` holds tagged releases, `develop` integrates, and work happens on `feature/NAME` branches. Every merge is a merge commit that keeps the branch visible (no fast-forward). You are the lead: the session that dispatches, verifies, applies and merges. Members never merge.
 
-qargi makes each merge in a temporary worktree. Your checkout is not touched, a branch moves only after every merge in the command succeeded, and a refusal changes nothing.
+qargi performs merges in temporary worktrees and journals lead ref movements. The plan describes the branch and push effects. Interrupted operations retain recovery state for native retry.
 
 ## 1. Claim the feature
 
@@ -14,8 +14,10 @@ A feature is a broad, related theme, not one task. Unrelated work gets its own f
 ```bash
 qargi marshal check NAME
 qargi marshal status --all
-qargi marshal claim NAME --goal "what the feature should achieve"
-qargi feature start NAME --purpose "what it is about"
+qargi marshal claim NAME \
+  --goal "what the feature should achieve"
+qargi feature start NAME \
+  --purpose "what it is about"
 ```
 
 `marshal check` exits 1 when another live lead holds the feature. `feature list` shows every open feature and any file two of them both change: if they overlap, put the work in one feature or expect a conflict.
@@ -26,7 +28,9 @@ Each task is one change with an executable check. Give each its own slug and a s
 
 ```bash
 qargi agent for build
-qargi local prepare --repo . --base feature/NAME --slug rename-verb --scratch ~/qargi-runs --role build
+qargi local prepare --repo . \
+  --base feature/NAME --slug rename-verb \
+  --scratch ~/qargi-runs --role build
 ```
 
 `prepare` makes the run and prints the paths for the task block. The task and its check, the member and the checks to run are in [dispatch and verify](/dispatch-and-verify/). A task runs targeted checks only, never the whole suite.
@@ -39,7 +43,7 @@ When a member reports, before you apply anything:
 qargi local verify RUN
 ```
 
-This compares every ref of the real repository with the snapshot taken by `prepare`. A change means the member wrote where it must not: stop and tell the owner of the project, and review nothing further from that run.
+This compares observed snapshots of local refs and available origin heads and tags, excluding `refs/qargi/`. It accounts for recognized journaled lead changes and qualified runtime allowances retained at preparation. Unexpected differences stop acceptance. Preserve the evidence and tell the owner. The [safety reference](/safety/) describes coverage and transient-activity limits.
 
 ## 4. Review the series
 
@@ -80,7 +84,7 @@ qargi feature verify NAME
 qargi feature status NAME
 ```
 
-`sync` merges develop in. `verify` runs the project's whole test suite on the feature's head and records the result: this is the only whole-suite run of the feature. A merge or a change of the test command afterwards makes it stale, and `status` says so.
+`sync` merges develop in. `verify` runs the project's whole test suite on the feature's head and records the result. Run it when the feature is complete. A failed checkpoint requires repair and a fresh pass. A later merge or test-command change makes the result stale, and `status` says so.
 
 ## 8. Finish the feature
 
@@ -88,10 +92,11 @@ qargi feature status NAME
 
 ```bash
 qargi feature finish NAME
-qargi feature finish NAME --plan TOKEN --approved "the owner's words"
+qargi feature finish NAME --plan TOKEN \
+  --approved "the owner's words"
 ```
 
-Then release the claim with `qargi marshal release NAME --note "finished"`. A release is a separate step with its own plan: `qargi release start VERSION`, `release push`, `release finish`, and the same pattern for a hotfix with `--hotfix`.
+Finishing marks the feature's marshal record finished. A release follows its own plan through `qargi release start VERSION`, `release push` and `release finish`. A hotfix uses the same pattern with `--hotfix`.
 
 ## 9. See also
 

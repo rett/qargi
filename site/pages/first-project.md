@@ -3,7 +3,7 @@ title: Your first project
 description: Store a project's answers once, choose the runtime, name your first members and check that qargi can dispatch to them, using a project called myproject.
 doctype: tutorial
 ---
-This page sets up a project called `myproject`, adds two members and checks that qargi can dispatch to them. Every name is an example; use your own. You need qargi [installed](/install/).
+This page uses Claude Code as a worked example for `myproject`. You need qargi [installed](/install/) for your chosen lead runtime. For Codex, substitute `--provider-local codex` in the project plans below and follow the [Codex setup](https://github.com/rett/qargi/blob/0.3.1/docs/members-and-providers/codex.md#codex-as-the-lead). Codex command mode dispatches logical worker and reviewer profiles. Skip step 5's registered-member commands for that mode.
 
 The answers you give are stored under `~/.qargi`, outside the repository. Nothing qargi related is added to the project's committed files.
 
@@ -15,13 +15,16 @@ For an existing repository, run this from inside it. It reads the repository and
 
 ```bash
 cd ~/src/myproject
-qargi project attach --name myproject --provider-local claude-code
+qargi project attach --name myproject \
+  --provider-local claude-code
 ```
 
 For a new project, `project new` prints a plan for the directory, the branches and the generic files:
 
 ```bash
-qargi project new myproject --param test_command='make test' --provider-local claude-code
+qargi project new myproject \
+  --param test_command='make test' \
+  --provider-local claude-code
 ```
 
 `qargi provider list` shows the runtimes you can name. The project names one for the local surface and, if you use cloud agents, one for the cloud surface. qargi never guesses either.
@@ -31,7 +34,9 @@ qargi project new myproject --param test_command='make test' --provider-local cl
 Read the plan. If it is what you want, run the same command again with the token it printed and your go-ahead in your own words. The words are written to the audit log.
 
 ```bash
-qargi project attach --name myproject --provider-local claude-code --plan TOKEN --approved "store the answers for myproject"
+qargi project attach --name myproject \
+  --provider-local claude-code --plan TOKEN \
+  --approved "store the answers for myproject"
 ```
 
 If the plan changes between the two runs, the token no longer matches and nothing happens. `qargi help approvals` has the rules.
@@ -53,14 +58,17 @@ qargi project list
 
 The answers hold the repository, its branches, the roles and each role's base branch, model and effort, the memory stores and the push policy. To change one, use `qargi project set myproject PATH VALUE`, for example `roles.write.effort high`.
 
-## 5. Add members
+## 5. Add in-session members
 
 A member is a local agent you name. It serves one or more roles: build changes code, write writes documentation, review reads a change and changes no file, test writes and runs tests. Names are yours.
 
 ```bash
-qargi agent add forge --roles build,test --project myproject
-qargi agent add scribe --roles write --project myproject
-qargi agent add reader --roles review --project myproject
+qargi agent add forge --roles build,test \
+  --project myproject
+qargi agent add scribe --roles write \
+  --project myproject
+qargi agent add reader --roles review \
+  --project myproject
 qargi agent list --project myproject
 ```
 
@@ -68,21 +76,21 @@ qargi agent list --project myproject
 
 ## 6. Check dispatch
 
-`agent for` prints what dispatch would use for a role: the member, the model alias and the effort.
+`agent for` prints the selected member or logical base, requested model and requested effort for a role.
 
 ```bash
 qargi agent for build --project myproject
 qargi agent for review --project myproject
 ```
 
-If no member serves a role, add one. If `agent list` shows `STALE` or `DRIFT`, the definition changed since the member was written or was edited by hand; `qargi agent refresh NAME` writes it again.
+For in-session runtimes, add a member when none serves the role. Inspect `STALE` or `DRIFT` definitions before `qargi agent refresh NAME`. Command mode resolves the logical profile directly, and `qargi local run RUN` launches the prepared task.
 
 ## 7. Run a first task
 
 Start with a task that is small and has a check you can run: rename a function, add a test. The loop is in [the lead's loop](/lead-loop/) and one task in detail is in [dispatch and verify](/dispatch-and-verify/). In short:
 
 1. `qargi feature start first-task --purpose "learn the loop"` cuts a feature branch from develop.
-2. Prepare a run on that base, give the task and its check to the member `agent for` printed.
+2. Prepare a run on that base with its task and executable check, then dispatch through the selected runtime as [dispatch and verify](/dispatch-and-verify/) describes.
 3. When it reports, `qargi local verify RUN`, `qargi review check RUN/out`, `qargi review apply RUN`, run the check yourself, then merge.
 
 ## 8. See also

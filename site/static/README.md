@@ -1,7 +1,7 @@
 # Static files
 
 Everything in this directory is copied to the root of the built site, unchanged. File names use
-letters, digits, dot, hyphen and underscore. This README is copied too; it is harmless.
+letters, digits, dot, hyphen and underscore. The generator excludes this maintainer README from the published output.
 
 Two files belong here and are not here yet.
 
