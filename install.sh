@@ -39,7 +39,8 @@
 # them and checks every line it reads. --uninstall removes exactly what the manifests list and nothing else: a file you added inside a copied
 # skill is kept, and so is ~/.qargi (the live config directory and its parents go only when the install made them and they are empty once
 # the records are removed). Without a manifest --uninstall removes nothing and says so (exit 1), with or without --force. A run holds
-# <live config>/install.lock while it reads or changes the records.
+# <live config>/install.lock while it reads or changes the records. The single install.manifest (and project-N.manifest) of qargi 0.3.1
+# becomes install.d once, on the first run, while install.d does not exist (the migration goes in 0.3.3).
 #
 # --user also records the tool it installed in <live config>/install.json (~/.qargi/config, or QARGI_CONF /
 # QARGI_HOME when set; the uninstall of the last runtime removes it). A checkout run from any other place is then a dev run that keeps its data
@@ -129,10 +130,18 @@ no_record() {
   echo "qargi: no install manifest in $rdir${1:+ for $1}, so nothing is recorded to remove and nothing was removed (the manifests list every path an install wrote; without them your files cannot be told from ours)" >&2
   exit 1
 }
+# Under the lock, before the records are read: what an interrupted run left is removed unread (install.d.new, temporary manifests), and the
+# single install.manifest (and project-N.manifest) of qargi 0.3.1 becomes install.d once, while install.d does not exist. Remove in 0.3.3.
+migrate_legacy() {
+  records migrate --conf "$liveconf" --data "$data" --tool-root "$here" \
+    --slot "$cmd" --slot "$manpage" --slot "$completion" --slot "$zshcomp" --slot "$fishcomp" || { [ "$(type -t undo_conf)" != function ] || undo_conf; exit 1; }
+}
 
 if [ -n "$uninstall" ]; then
-  [ -d "$rdir" ] || no_record ""
-  lock; read_state
+  [ -d "$liveconf" ] || no_record ""
+  lock; migrate_legacy
+  [ -d "$rdir" ] || { rm -f "$liveconf/install.lock"; no_record ""; }
+  read_state
   if [ "$mode" = user ]; then have=$RUNTIMES; where=''; else have=$PRUNTIMES; where=" in $proj"; fi
   if [ -n "$runtime" ]; then
     case " $have " in
@@ -180,7 +189,7 @@ undo_conf() {   # a run refused before it recorded anything leaves no lock and n
   while IFS= read -r d; do [ -z "$d" ] || rmdir "$d" 2>/dev/null || true; done <<<"$cmade"
 }
 refuse() { echo "$1" >&2; undo_conf; exit 1; }
-lock; read_state
+lock; migrate_legacy; read_state
 recorded=$RUNTIMES; [ "$mode" = user ] || recorded=$PRUNTIMES
 
 # the runtimes this run installs: the one named, else every runtime recorded (claude-code when none is)

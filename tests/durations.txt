@@ -49,7 +49,7 @@
 52 bash tests/test_session_profiles.sh
 17 python3 tests/test_discover.py
 58 bash tests/test_install.sh
-50 bash tests/test_install_runtimes.sh
+53 bash tests/test_install_runtimes.sh
 1 python3 tests/test_install_record.py
 19 python3 tests/test_tiers.py
 29 bash tests/test_marshal_flow.sh

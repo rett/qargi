@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# install.sh with several runtimes: the lead skills of Claude Code and Codex installed side by side from one tool, each removable on its own,
+# install.sh with several runtimes. The first run over a 0.3.1 install moves its single install.manifest into install.d (links untouched,
+# a leftover install.d.new removed unread); then the lead skills of Claude Code and Codex installed side by side from one tool, each removable on its own,
 # the command, man page and completions shared and removed with the last runtime; an install of one runtime leaves the links of the other
 # as they are (same inodes); install --user without --runtime refreshes every runtime installed, and a runtime whose definition is gone is
 # skipped with a note and still removable; a record that fails its check stops the run with nothing changed; the lock keeps a second run out;
@@ -36,10 +37,31 @@ mine() {
 }
 yours() { inventory "$XS/.system" "$XS/synced" "$XS/other-skill"; }
 
-# --- side by side
+# --- the first install over a 0.3.1 install (what the 0.3.1 qargi upgrade runs: install.sh --user): its single install.manifest, a literal
+# fixture of two fields a line beside the links it lists, becomes install.d once; a leftover install.d.new is removed unread. (The migration
+# and this case go in 0.3.3.)
 fresh; mine; y0=$(yours)
+slots=("$H/.local/bin/qargi" "$H/.local/share/man/man1/qargi.1" "$H/.local/share/bash-completion/completions/qargi" "$H/.local/share/zsh/site-functions/_qargi" "$H/.config/fish/completions/qargi.fish")
+srcs=(bin/qargi man/qargi.1 completions/qargi.bash completions/_qargi completions/qargi.fish)
+legacy=$C/install.manifest; mkdir -p "$C" "$CS"; : > "$legacy"
+printf 'P\t%s\n' "$H/.claude" "$CS" >> "$legacy"
+for s in $(sed -n 's/^skills="\(.*\)"$/\1/p' "$INSTALL"); do ln -s "$ROOT/skills/$s" "$CS/$s"; printf 'L\t%s\n' "$CS/$s" >> "$legacy"; done
+for d in .local .local/bin .local/share .local/share/man .local/share/man/man1 .local/share/bash-completion .local/share/bash-completion/completions \
+         .local/share/zsh .local/share/zsh/site-functions .config .config/fish .config/fish/completions; do
+  mkdir "$H/$d"; printf 'P\t%s\n' "$H/$d" >> "$legacy"
+done
+for i in 0 1 2 3 4; do ln -s "$ROOT/${srcs[$i]}" "${slots[$i]}"; printf 'L\t%s\n' "${slots[$i]}" >> "$legacy"; done
+printf '{"tool_root": "%s", "installed_at": "2026-11-16T00:00:00Z", "version": "0.3.1"}\n' "$ROOT" > "$C/install.json"
+echo keep > "$H/precious"; mkdir -p "$C/install.d.new"
+printf '#qargi-manifest\t2\tkind=runtime\tname=codex\troot=%s\nC\t%s/qargi-x\nf\t%s/qargi-x/precious\n' "$H" "$H" "$H" > "$C/install.d.new/runtime-codex.manifest"
+c0=$(inventory "$CS" "$H/.local" "$H/.config")
 out=$(inst --user 2>&1); rc=$?
-[ "$rc" = 0 ] && ok "install --user (claude-code)" || no "install --user: rc=$rc $out"
+{ [ "$rc" = 0 ] && [ ! -e "$legacy" ] && [ ! -e "$C/install.d.new" ] && [ "$(cd "$C/install.d" && ls | tr '\n' ' ')" = "runtime-claude-code.manifest shared.manifest " ] \
+  && echo "$out" | grep -q "moved the install records of install.manifest"; } && ok "install --user over a 0.3.1 install moves its manifest into install.d and removes it" || no "migration (rc=$rc): $out"
+[ "$(inventory "$CS" "$H/.local" "$H/.config")" = "$c0" ] && ok "the links it recorded are left as they are (same inodes)" || no "the migration changed links: $(diff <(echo "$c0") <(inventory "$CS" "$H/.local" "$H/.config"))"
+{ [ -f "$H/precious" ] && echo "$out" | grep -q "install.d.new, left by an interrupted migration (not read)"; } && ok "a planted install.d.new is removed and never read" || no "install.d.new: $out"
+
+# --- side by side
 out=$(inst --user --runtime codex 2>&1); rc=$?
 { [ "$rc" = 0 ] && echo "$out" | grep -q "installed runtimes: claude-code, codex"; } && ok "install --user --runtime codex beside it, and says which runtimes are installed" || no "install codex: rc=$rc $out"
 shared=0; for p in "$H/.local/bin/qargi" "$H/.local/share/man/man1/qargi.1" "$H/.local/share/bash-completion/completions/qargi" "$H/.local/share/zsh/site-functions/_qargi" "$H/.config/fish/completions/qargi.fish"; do
@@ -124,7 +146,7 @@ out=$(inst --user --runtime codex --copy 2>&1); rc=$?
 out=$(inst --user --uninstall 2>&1); rc=$?
 { [ "$rc" = 0 ] && echo "$out" | grep -q "uninstalling the runtimes installed: claude-code, codex" && [ ! -e "$XS/qargi-task" ] && [ ! -e "$H/.claude" ] && [ ! -e "$H/.local" ] \
   && [ ! -e "$C/install.d" ] && [ ! -e "$C/install.json" ] && [ ! -e "$C/install.lock" ]; } && ok "uninstall without --runtime removes every runtime, named first, with the shared part, install.json, install.d and the lock" || no "bare uninstall (rc=$rc): $out"
-left=$(find "$H" -mindepth 1 \( -path "$XS" -o -path "$H/.qargi" \) -prune -o -print | grep -v -x -e "$H/.codex")
+left=$(find "$H" -mindepth 1 \( -path "$XS" -o -path "$H/.qargi" \) -prune -o -print | grep -v -x -e "$H/.codex" -e "$H/precious")
 [ "$(yours)" = "$y0" ] && [ -z "$left" ] && [ -z "$(find "$C" -maxdepth 1 -name 'install*')" ] && ok "only your entries (and qargi's data in ~/.qargi, no install record) are left in the home" || no "left: $left $(ls "$C")"
 
 # --- links nobody recorded; one skills directory per runtime; a link the user retargeted
