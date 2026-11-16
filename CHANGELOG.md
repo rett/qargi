@@ -26,6 +26,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The member guard refuses the tool's own `install.sh` (run, by a shell or sourced; a project's or clone's `install.sh` stays allowed) and protects `install.d/`, `install.lock` and, until 0.3.3, the legacy `install.manifest` beside `install.json`.
 - `install.sh` treats a recorded link you replaced with a file or directory (a wrapper for `~/.local/bin/qargi`, say) as yours: the run refuses before it changes anything and says to move it aside or use `--force`.
 - `install.sh` no longer follows a link inside a copy it made (a copied tool's `lib` pointed at a development checkout): `--uninstall` keeps what lies below it and says so, and a `--copy` refresh refuses before it changes anything.
+- `install.sh` refuses an `install.lock` that is a link (it is never opened or chmod-ed through one), and a run that waited on a lock file the uninstall of the last record removed takes the lock again at its path, so two runs never hold the records at once.
 
 ## [0.3.1] - 2026-11-16
 

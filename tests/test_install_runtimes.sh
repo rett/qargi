@@ -3,7 +3,8 @@
 # a leftover install.d.new removed unread); then the lead skills of Claude Code and Codex installed side by side from one tool, each removable on its own,
 # the command, man page and completions shared and removed with the last runtime; an install of one runtime leaves the links of the other
 # as they are (same inodes); install --user without --runtime refreshes every runtime installed, and a runtime whose definition is gone is
-# skipped with a note and still removable; a record that fails its check stops the run with nothing changed; the lock keeps a second run out;
+# skipped with a note and still removable; a record that fails its check stops the run with nothing changed; the lock keeps a second run out,
+# also one that waited on a lock file removed under it, and a lock file that is a link is not opened;
 # the runtimes come from one tool (another source for one runtime is refused while another is installed, a bare --user moves them all) and a
 # --copy run copies them all again; --uninstall alone removes every runtime and lists them; a link no install recorded is not replaced
 # without --force and one already pointing at the tool is adopted; a recorded link you replaced with a file is yours (a run refuses with
@@ -111,6 +112,33 @@ before=$(inventory "$H")
 out=$(inst --user --runtime codex 2>&1); rc=$?
 { [ "$rc" = 1 ] && echo "$out" | grep -q "another install is running" && [ "$(inventory "$H")" = "$before" ]; } && ok "a run while another holds the lock waits briefly, then gives up with nothing changed" || no "lock (rc=$rc): $out"
 kill_bg
+
+# --- two overlapping runs: B waits on the lock file; the run holding it removes the file (as the uninstall of the last record does) and a
+# third run holds a new one at the path. B, once it holds the removed file, takes the lock at the path again, so it waits for the third run
+swap() {
+  exec 8>>"$C/install.lock"; flock 8; : > "$T/swap.held"
+  until [ -e "$T/swap.go" ]; do sleep 0.05; done
+  rm "$C/install.lock"; exec 7>>"$C/install.lock"; flock 7; exec 8>&-
+  exec sleep 60    # holds the new lock (fd 7) in a process kill_bg can stop
+}
+spawn_bg swap >/dev/null 2>&1
+wait_until '[ -e "$T/swap.held" ]' || no "the first lock was not taken"
+before=$(inventory "$H" | grep -v install.lock)
+env -u QARGI_CONF -u QARGI_HOME HOME="$H" XDG_CONFIG_HOME="$H/.config" bash "$INSTALL" --user --runtime codex > "$T/b.out" 2>&1 & bpid=$!
+wait_until '[ "$(readlink "/proc/$bpid/fd/9" 2>/dev/null)" = "$C/install.lock" ]' || no "run B did not open the lock file"
+: > "$T/swap.go"
+wait "$bpid"; rc=$?; out=$(cat "$T/b.out")
+{ [ "$rc" = 1 ] && echo "$out" | grep -q "another install is running" && [ "$(inventory "$H" | grep -v install.lock)" = "$before" ]; } \
+  && ok "a run that waited on a lock file removed under it takes the lock at the path again and does not run beside the holder of the new one" || no "overlapping runs (rc=$rc): $out"
+kill_bg
+
+# --- the lock is never opened or chmod-ed through a link
+mv "$C/install.lock" "$T/lock.saved"; echo theirs > "$T/lockdest"; chmod 644 "$T/lockdest"; ln -s "$T/lockdest" "$C/install.lock"
+before=$(inventory "$H")
+out=$(inst --user --runtime codex 2>&1); rc=$?
+{ [ "$rc" = 1 ] && echo "$out" | grep -q "install.lock is a link or not a regular file, so it is not opened; nothing was changed" && [ "$(stat -c %a "$T/lockdest")" = 644 ] \
+  && [ "$(cat "$T/lockdest")" = theirs ] && [ "$(inventory "$H")" = "$before" ]; } && ok "a lock file that is a link is refused before it is opened, with nothing changed" || no "linked lock (rc=$rc): $out"
+rm "$C/install.lock"; mv "$T/lock.saved" "$C/install.lock"
 
 # --- one source: the runtimes come from one tool, linked or copied alike
 TL=$T/tool; copy_tool "$ROOT" "$TL"; cp "$ROOT/install.sh" "$TL/"; mkdir -p "$TL/completions" "$TL/man"; cp "$ROOT"/completions/* "$TL/completions/"; cp "$ROOT/man/qargi.1" "$TL/man/"
