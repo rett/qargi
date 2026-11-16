@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-16
+
 ### Added
 - Member delivery now populates through private lifecycle descriptors, persists identity before atomic no-replace publication and stages cleanup into private authority with identity validation before one-filesystem deletion. Recorded phases recover partial creation/copy and interrupted staging/deletion/retirement after native begin; read-only dry-run never recovers state. A member removing its delivery no longer strands retry. Foreign roots/parents and mismatched staging preserve data and evidence; recorded surviving or unknown process groups refuse skill cleanup. This cooperative Linux boundary requires run/private state on one filesystem and trusts controller-only private state, excluding arbitrary hostile same-user/root mutation, escaped groups and inode reuse as an independent proof.
 - Member snapshot selection validates kinds, names and skill count before body reads and enforces cumulative entry/byte bounds while collecting. Incompatible skills retain only bounded compatibility facts and cannot gate prepare through approval or body review; included skills still require both. The enable plan includes dispatchable library roles absent from project answers, binds the current inventory without freezing future roles, and distinguishes invalid metadata. Known link, provider and private-path failures return native diagnostics; unknown member context refuses before an enabling plan or token.
