@@ -14,7 +14,7 @@ This branch holds the hand-written pages of the qargi documentation site and its
 | `.github/workflows/pages.yml` | check and build on pull requests; check, build and deploy on a push to this branch |
 | `tools/build-local.sh` | the same steps on your machine |
 
-The generator (`lib/site.py` and the stylesheet) lives in the main repository and is taken from the release named by `release` in `site/site.json`. If that release has no tag that carries the generator yet, the workflow and the script use `develop` and pass the unreleased flag; the pages then say so. The command reference and the releases page are generated from `lib/commands.py` and `CHANGELOG.md` at the same ref, so a page cannot name a command that does not exist there.
+The generator (`lib/site.py` and the stylesheet) lives in the main repository and is taken from the release named by `release` in `site/site.json`. If that release has no tag that carries the generator yet, the workflow and the script use `develop` and pass the unreleased flag; the pages then say so. The command reference and the releases page are generated from `lib/commands.py` and `CHANGELOG.md` at the same ref, and the build checks recognized command examples against those descriptions. Examples and prose still require review for argument and behavioral accuracy.
 
 ## Build it locally
 

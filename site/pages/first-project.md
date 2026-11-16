@@ -3,7 +3,7 @@ title: Your first project
 description: Store a project's answers once, choose the runtime, name your first members and check that qargi can dispatch to them, using a project called myproject.
 doctype: tutorial
 ---
-This page sets up a project called `myproject`, adds two members and checks that qargi can dispatch to them. Every name is an example; use your own. You need qargi [installed](/install/).
+This page uses Claude Code as a worked example for `myproject`. You need qargi [installed](/install/) for your chosen lead runtime. For Codex, substitute `--provider-local codex` in the project plans below and follow the [Codex setup](https://github.com/rett/qargi/blob/0.3.1/docs/members-and-providers/codex.md#codex-as-the-lead). Codex command mode dispatches logical worker and reviewer profiles. Skip step 5's registered-member commands for that mode.
 
 The answers you give are stored under `~/.qargi`, outside the repository. Nothing qargi related is added to the project's committed files.
 
@@ -53,7 +53,7 @@ qargi project list
 
 The answers hold the repository, its branches, the roles and each role's base branch, model and effort, the memory stores and the push policy. To change one, use `qargi project set myproject PATH VALUE`, for example `roles.write.effort high`.
 
-## 5. Add members
+## 5. Add in-session members
 
 A member is a local agent you name. It serves one or more roles: build changes code, write writes documentation, review reads a change and changes no file, test writes and runs tests. Names are yours.
 
@@ -68,14 +68,14 @@ qargi agent list --project myproject
 
 ## 6. Check dispatch
 
-`agent for` prints what dispatch would use for a role: the member, the model alias and the effort.
+`agent for` prints the selected member or logical base, requested model and requested effort for a role.
 
 ```bash
 qargi agent for build --project myproject
 qargi agent for review --project myproject
 ```
 
-If no member serves a role, add one. If `agent list` shows `STALE` or `DRIFT`, the definition changed since the member was written or was edited by hand; `qargi agent refresh NAME` writes it again.
+For in-session runtimes, add a member when none serves the role. Inspect `STALE` or `DRIFT` definitions before `qargi agent refresh NAME`. Command mode resolves the logical profile directly, and `qargi local run RUN` launches the prepared task.
 
 ## 7. Run a first task
 

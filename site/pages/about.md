@@ -9,7 +9,7 @@ qargi is released under the MIT licence. The text is in the `LICENSE` file of th
 
 ## 2. Status
 
-qargi is alpha. It is versioned with Semantic Versioning and is below 1.0, so a command, an option or a file format can change in any release. The [releases](/releases/) page lists every change, and the Changed and Removed sections are the ones to read before you update. Expect rough edges and report them.
+qargi has published pre-1.0 releases and follows Semantic Versioning. Commands, options and file formats can change between these releases. The [releases](/releases/) page lists every change, and the Changed and Removed sections are the ones to read before you update. Expect rough edges and report them.
 
 ## 3. What is here and what is not
 
