@@ -186,6 +186,12 @@ class HookCase(unittest.TestCase):
 
 class Guard(HookCase):
 
+    def test_member_skills_gate_is_lead_only(self):
+        for command in ('qargi packs member-skills demo --enable', 'qargi packs member-skills demo --disable',
+                        'bash lib/packs.sh packs member-skills demo --enable',
+                        'python3 lib/gated_answers.py store demo packs.member_skills true'):
+            self.assertEqual(self.guard(command).returncode, 2, command)
+
     def test_refuses_what_publishes_or_reaches_out(self):
         for c in ("git push", "git push origin main", "/tmp/x/git -C /r push -f", "cd a && git push", "make gate-go; git push", "timeout 5 git push",
                   "echo hi | gh pr list", "gh api repos/x", "ssh host ls", "sudo scp a b:", "sftp host", "git remote add o u", "git remote set-url origin u"):
@@ -1312,6 +1318,50 @@ class RenderTree(HookCase):
     def test_the_verb_that_moved_the_earlier_renders_is_no_verb_the_guard_names(self):
         res = self.bash("qargi packs migrate-render --plan 000000000000 --approved x")
         self.assertEqual(res.returncode, 0, res.stderr)
+
+
+class Campaign(HookCase):
+    """Campaign state is lead-owned; only a literal supplied-file check reads."""
+    setUp, tearDown, bash, call = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
+
+    def test_only_the_pure_literal_form_is_open(self):
+        for prefix in ("qargi campaign", "python3 -B -I lib/campaign.py", "./lib/campaign.py",
+                       "python3 -I lib/jsonplan.py campaign"):
+            for args in ("check --spec spec.json", "check --json --spec spec.json",
+                         "check --spec='file with spaces.json' --json", "check --spec=--json",
+                         "check --spec ./--json", "check --spec=-name.json", "check --spec f --"):
+                command = prefix + " " + args
+                result = self.bash(command)
+                self.assertEqual(result.returncode, 0, (command, result.stderr))
+            for args in ("show id", "log id", "check id", "commit id --spec f --create",
+                         "commit id --spec f --expected-head digest", "check id --spec f",
+                         "check --spec f id", "check --spec f --json --json", "check --spec f --limit 2",
+                         "check --spec f --create", "check --spec f --revision digest",
+                         "check --spec --json", "check --spec=", "check --spe f", "check",
+                         "check --spec f --spec g", "check --spec '$FILE'", "check --spec *.json",
+                         "$VERB --spec f", "check --spec f --json=true", "check --spec f -- id"):
+                command = prefix + " " + args
+                result = self.bash(command)
+                self.assertEqual(result.returncode, 2, (command, result.stderr))
+                self.assertIn("lead context", result.stderr)
+        for command in ("xargs qargi campaign check --spec f", "qargi campaign check --spec $(cat filename)",
+                        "qargi campaign check --spec f $OPTS"):
+            self.assertEqual(self.bash(command).returncode, 2, command)
+
+    def test_campaign_state_is_protected_by_all_state_roots(self):
+        state = os.path.join(self.t, "state")
+        target = os.path.join(state, "campaigns", "id", "head.json")
+        os.makedirs(os.path.dirname(target))
+        for tool, data in (("Write", {"file_path": target, "content": "{}"}),
+                           ("Edit", {"file_path": target, "old_string": "x", "new_string": "y"}),
+                           ("Bash", {"command": "rm -f " + target})):
+            result = self.call(tool, data, QARGI_STATE=state)
+            self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(self.call("Bash", {"command": "cat " + target}, QARGI_STATE=state).returncode, 0)
+        for root, env in ((os.path.join(self.home, ".qargi", "state"), {}),
+                          (os.path.join(self.t, "alternate", "state"), {"QARGI_HOME": os.path.join(self.t, "alternate")})):
+            result = self.call("Write", {"file_path": os.path.join(root, "campaigns", "new")}, **env)
+            self.assertEqual(result.returncode, 2, result.stderr)
 
 
 class Marshal(HookCase):

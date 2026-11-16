@@ -86,7 +86,7 @@ def _names(P, declared, runtime, surface):
     return False
 
 
-def evaluate(declared, answers, project, surfaces):
+def evaluate(declared, answers, project, surfaces, runtime=None):
     bad = problem(declared)
     if bad:
         raise ValueError(bad)
@@ -95,14 +95,14 @@ def evaluate(declared, answers, project, surfaces):
     P = _provider()
     tried, why = [], ""
     for s in surfaces:
-        runtime, err = _runtime(P, answers, project, s) if isinstance(answers, dict) else (None, "no such project")
-        if runtime is None:
+        selected, err = (runtime, None) if runtime else (_runtime(P, answers, project, s) if isinstance(answers, dict) else (None, "no such project"))
+        if selected is None:
             why = why or err or ""
             continue
-        if _names(P, declared, runtime, s):
+        if _names(P, declared, selected, s):
             return True, ""
-        if runtime not in tried:
-            tried.append(runtime)
+        if selected not in tried:
+            tried.append(selected)
     names = ", ".join(declared)
     if not tried:
         return False, ("project %s names no provider to match against (it declares %s)" % (project or "?", names)
@@ -119,6 +119,23 @@ def matches(declared, project, answers, surfaces):
 
 def main(argv):
     try:
+        if len(argv) == 2 and argv[0] == "render-inputs":
+            with open(argv[1]) as f:
+                inp = json.load(f)
+            kept = []
+            for pack in inp["packs"]:
+                declared = pack.get("compatible_providers")
+                # Missing, malformed and drifted packs must fail review, rather than disappear as incompatible.
+                if pack["exists"] and problem(declared) is None and not (pack["approved"] and pack["approved"] != pack["sha256"]):
+                    ok, why = evaluate(declared, None, inp["project"], ["local"], runtime=inp["provider"])
+                    if not ok:
+                        inp["skipped"].append({k: pack[k] for k in ("kind", "name", "roles")} | {"why": why})
+                        continue
+                kept.append(pack)
+            inp["packs"] = kept
+            with open(argv[1], "w") as f:
+                json.dump(inp, f)
+            return 0
         if len(argv) == 2 and argv[0] == "valid":
             try:
                 declared = json.loads(argv[1]) if argv[1].strip() else None

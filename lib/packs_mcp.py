@@ -114,6 +114,14 @@ def _load(path, what):
         raise McpError("%s cannot be read (%s)" % (what, getattr(e, "strerror", None) or type(e).__name__))
 
 
+def reaches(link, project, role):
+    """The four canonical scopes; shared by effective selection and drift facts."""
+    s = link.get('scope')
+    return (s == 'user' or s == 'user-role' and link.get('role') == role
+            or s == 'project' and link.get('project') == project
+            or s == 'project-role' and link.get('project') == project and link.get('role') == role)
+
+
 def effective(conf, project, role):
     """The kind:name entries of the packs a role of a project gets, as `effective` of lib/packs.sh lists them: every pack linked at a scope that
     reaches the role, sorted, minus the role's packs_off."""
@@ -137,9 +145,7 @@ def effective(conf, project, role):
             raise McpError("roles.%s.packs_off of project %s is not a list" % (role, project))
     got = set()
     for x in links:
-        s = x.get("scope")
-        if (s == "user" or (s == "user-role" and x.get("role") == role) or (s == "project" and x.get("project") == project)
-                or (s == "project-role" and x.get("project") == project and x.get("role") == role)):
+        if reaches(x, project, role):
             if isinstance(x.get("pack"), str):
                 got.add(x["pack"])
     return sorted(e for e in got if e not in off)
@@ -156,34 +162,43 @@ def tools_of(conf, project, role, form):
         if kind != "tool" or skip is not None or not PACK_NAME.match(name):
             continue                                   # a pack the project's local runtime cannot use is not attached: its tools are not the role's
         p = C.item_path(packs, "tool", name)
-        unusable = None
-        if not os.path.isfile(p) or os.path.islink(p):
-            unusable = "is linked but not in the library"
-        else:
-            want = C.approved_of(p)
-            if not want or want != C.content_hash(p):
-                unusable = "changed since it was approved (qargi tool seal %s)" % name
-            elif C.review("tool", p)[1] != 0:
-                unusable = "fails its review (qargi tool show %s)" % name
-        doc = C.read_tool(p) if unusable != "is linked but not in the library" else None
-        tools = doc.get("tools") if isinstance(doc, dict) else None
-        if not isinstance(tools, dict):
-            continue
-        hints = C.tool_list_of(p)
-        if hints is C.BAD:                             # the review failed on it (the pack is unusable); nothing in it is a declared read
-            hints = {"tools": {}}
-        for key, policy in tools.items():
-            if not C.TOOL_KEY.match(key):
-                continue
-            why = None
-            if policy != "always_allow":
-                why = "its policy is %s, and only an always_allow tool is a declared read" % (policy if isinstance(policy, str) else "not a policy")
-            elif C.write_like(key):
-                why = "its name is write-like"
-            elif hints is not None and hints["tools"].get(key) != "read-only":
-                why = "the server's tool listing the pack was approved with does not mark it read-only (readOnlyHint)"
-            table.setdefault(native(form, name, key), []).append(Tool(name, key, policy, why is None, why, unusable))
+        for tool in pack_tools(p, name):
+            table.setdefault(native(form, name, tool.tool), []).append(tool)
     return table
+
+
+def pack_tools(path, name):
+    """Shared approval, review and declared-read facts for an already selected pack. Selection and role membership stay with
+    the caller; both member dispatch and explicit rendering use these facts with refusal(), including collisions."""
+    C = _check()
+    unusable = None
+    if not os.path.isfile(path) or os.path.islink(path):
+        return []
+    want = C.approved_of(path)
+    if not want or want != C.content_hash(path):
+        unusable = "changed since it was approved (qargi tool seal %s)" % name
+    elif C.review("tool", path)[1] != 0:
+        unusable = "fails its review (qargi tool show %s)" % name
+    doc = C.read_tool(path)
+    tools = doc.get("tools") if isinstance(doc, dict) else None
+    if not isinstance(tools, dict):
+        return []
+    hints = C.tool_list_of(path)
+    if hints is C.BAD:                             # failed review: nothing in it is a declared read
+        hints = {"tools": {}}
+    out = []
+    for key, policy in tools.items():
+        if not C.TOOL_KEY.match(key):
+            continue
+        why = None
+        if policy != "always_allow":
+            why = "its policy is %s, and only an always_allow tool is a declared read" % (policy if isinstance(policy, str) else "not a policy")
+        elif C.write_like(key):
+            why = "its name is write-like"
+        elif hints is not None and hints["tools"].get(key) != "read-only":
+            why = "the server's tool listing the pack was approved with does not mark it read-only (readOnlyHint)"
+        out.append(Tool(name, key, policy, why is None, why, unusable))
+    return out
 
 
 # --- a call

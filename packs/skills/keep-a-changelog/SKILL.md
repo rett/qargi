@@ -12,7 +12,7 @@ description: Record every user-visible change in CHANGELOG.md under Unreleased, 
 ## When
 - One entry per user-visible change: a command, a flag, an output, a config key, a file format, a behaviour.
 - Put it in the same commit as the change: one logical change per commit, with its tests and docs.
-- A change that spans three or more top-level directories is split into commits that each build: code and tests, then docs and changelog.
+- Choose cohesive, buildable commits from concrete changes and dependencies. Use directory counts and patch size as advisory prompts for review.
 - Never add the entry later as a separate fix-up commit.
 - Internal refactors, test changes and comment edits get no entry.
 

@@ -3,6 +3,18 @@
   "packs": [
     {
       "kind": "skill",
+      "name": "release-docs-review",
+      "propose": "README, website, release notes or pack guidance accuracy review",
+      "compatible_providers": ["any"]
+    },
+    {
+      "kind": "skill",
+      "name": "campaign-coordination",
+      "propose": "project supplies campaign or dependency context",
+      "compatible_providers": ["any"]
+    },
+    {
+      "kind": "skill",
       "name": "shellcheck-gate",
       "propose": "tracked *.sh",
       "compatible_providers": ["any"]
@@ -41,6 +53,12 @@
       "kind": "skill",
       "name": "qargi-contributing",
       "propose": "tracked tests/skill-budget.txt",
+      "compatible_providers": ["any"]
+    },
+    {
+      "kind": "skill",
+      "name": "bubble-tea",
+      "propose": "Go terminal UI with Bubble Tea, including terminal-console clients",
       "compatible_providers": ["any"]
     }
   ]

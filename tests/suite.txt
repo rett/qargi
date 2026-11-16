@@ -18,6 +18,8 @@ full | par | 300 | 21 | python3 tests/test_tiers.py | lib/tiers.py
 full | par | 300 | 33 | bash tests/test_models.sh
 full | par | 366 | 158 | bash tests/test_no_default_provider.sh
 full | par | 654 | 244 | python3 tests/test_provider.py | lib/provider.sh lib/provider.py
+# Member snapshots: 48 snapshot/ownership cases measured 198.246s by the native lead; ceil = 199s, budget ceil(199 * 1.10) = 219s, timeout 480s.
+full | par | 480 | 219 | python3 tests/test_member_skills.py | lib/member_skills.py lib/attempts.py lib/local_run.py lib/local.sh lib/gated_answers.py lib/packs.sh lib/project.sh lib/provider.py lib/providers/* lib/packs_check.py lib/packs_compat.py lib/packs_mcp.py lib/packs_render.py lib/conformance/review.py lib/prepared_request.py lib/paths.py lib/linker.py lib/role.py lib/agent.sh lib/lib.sh lib/model-defaults.json lib/project_profile.py lib/render.py lib/procenv.py roles/*/* agents/member* contract/*.md tests/prepared_request_cases.py tests/member_skills_fixture.py tests/attempt_fixture.py tests/hermetic.py tests/hermetic.sh
 fast | par | 300 | 8 | python3 tests/test_render.py | lib/render.py
 full | par | 300 | 68 | python3 tests/test_provider_adapter.py | lib/provider*.sh lib/provider*.py
 full | par | 300 | 59 | bash tests/test_provider_degrade.sh | lib/provider*.sh lib/provider*.py
@@ -100,15 +102,18 @@ full | serial | 975 | 222 | bash tests/test_local_run.sh | lib/local*.sh lib/loc
 full | par | 300 | 37 | bash tests/test_taskblock.sh | lib/local.sh lib/review_check.py roles/*/ROLE.md tests/golden/taskblock-*.md
 fast | par | 300 | 2 | bash tests/test_cred.sh | lib/cred.sh
 full | par | 480 | 107 | bash tests/test_packs.sh | lib/packs.sh
-full | par | 300 | 79 | bash tests/test_packs_seed.sh | lib/packs*.sh lib/packs*.py
+full | par | 300 | 79 | bash tests/test_packs_seed.sh | lib/packs*.sh lib/packs*.py packs/baseline.json packs/skills/*/SKILL.md
 fast | par | 300 | 9 | python3 tests/test_packs_check.py | lib/packs*.sh lib/packs*.py lib/conformance/review.py
 fast | par | 300 | 3 | python3 tests/test_packs_mcp.py | lib/packs_mcp.py lib/packs_check.py lib/packs.sh lib/providers/claude-code.json
 full | par | 882 | 204 | bash tests/test_packs_render.sh | lib/packs*.sh lib/packs*.py
+# Target duration 839s aggregates the earlier 23-case run, its separately timed added case and the four lead regressions.
+# Final combined 28-case timing is recorded independently in the lead gate receipt.
+full | par | 2200 | 923 | python3 tests/test_pack_targets.py | lib/provider.py lib/packs.sh lib/packs_render.py lib/packs_link.py lib/packs_audit.py lib/packs_compat.py lib/packs_check.py lib/packs_mcp.py lib/linker.py lib/paths.py lib/project_link.py lib/commands.py lib/providers/claude-code.json
 full | par | 804 | 214 | bash tests/test_packs_link.sh | lib/packs*.sh lib/packs*.py
 fast | par | 300 | 20 | bash tests/test_linker.sh | lib/linker.py
 full | par | 1038 | 313 | bash tests/test_packs_audit.sh | lib/packs*.sh lib/packs*.py
 full | par | 612 | 108 | bash tests/test_packs_claude_hostile.sh | lib/packs*.sh lib/packs*.py
-full | par | 1356 | 226 | bash tests/test_review.sh | lib/review.sh lib/review_check.py lib/local.sh lib/local_run.py lib/procenv.py lib/lib.sh lib/merged.py
+full | par | 1356 | 226 | bash tests/test_review.sh | lib/review.sh lib/review_check.py lib/local.sh lib/local_run.py lib/procenv.py lib/lib.sh lib/merged.py contract/contract.md
 full | par | 306 | 61 | bash tests/test_marshal.sh | lib/marshal.sh
 full | par | 300 | 32 | bash tests/test_marshal_flow.sh | lib/marshal*.sh lib/marshal*.py
 full | par | 300 | 20 | bash tests/test_marshal_lease.sh | lib/marshal*.sh lib/marshal*.py lib/review.sh lib/local.sh lib/feature.sh
@@ -138,8 +143,8 @@ fast | par | 300 | 2 | python3 tests/role_seed_sim.py review
 fast | par | 300 | 2 | python3 tests/role_seed_sim.py test
 full | par | 438 | 97 | bash tests/test_open_providers.sh
 fast | par | 300 | 2 | bash tests/test_neutral.sh | *
-fast | par | 300 | 1 | bash tests/test_skill_budget.sh | skills/*/SKILL.md tests/skill-budget.txt
-fast | par | 300 | 1 | bash tests/test_prompts.sh | contract/* roles/*/ROLE.md agents/member.body.md packs/skills/* lib/providers/claude-code* skills/qargi-flow/SKILL.md skills/qargi-verify/SKILL.md
+fast | par | 300 | 1 | bash tests/test_skill_budget.sh | skills/* packs/skills/*.md contract/*.md roles/*/ROLE.md agents/member.md agents/member.body.md provision/templates/*.md lib/providers/*.md lib/providers/*.json tests/skill-budget.txt tests/skill-dup-allowlist.txt tests/skill-verbs-allowlist.txt lib/commands.py
+fast | par | 300 | 1 | bash tests/test_prompts.sh | contract/* roles/*/ROLE.md agents/member.body.md packs/skills/* lib/providers/claude-code* skills/qargi-flow/SKILL.md skills/qargi-verify/SKILL.md CONTRIBUTING.md
 fast | serial | 300 | 2 | bash tests/test_tool_copy.sh | install.sh tests/hermetic.sh tests/hermetic.py
 fast | par | 300 | 37 | bash tests/test_hermetic.sh | tests/hermetic.sh tests/hermetic.py tests/hermetic_lint.py CONTRIBUTING.md
 fast | par | 300 | 26 | bash tests/test_gitflow_detached.sh
@@ -157,6 +162,9 @@ fast | par | 300 | 1 | python3 tests/test_backlog.py | lib/backlog.py
 # Graph follow-up: final 40-test coverage measured 29.195s on Python 3.14.8;
 # the targeted -j 1 runner recorded 30s. Budget = ceil(30 * 1.10) = 33s.
 fast | par | 300 | 33 | python3 tests/test_backlog_graph.py | lib/backlog_graph.py lib/backlog.sh lib/commands.py lib/jsonplan.py
+fast | par | 60 | 11 | python3 tests/test_campaign_doc.py | lib/campaign_doc.py lib/backlog_graph.py lib/backlog.py lib/paths.py tests/test_campaign_doc.py tests/hermetic.py tests/hermetic.sh
+full | par | 300 | 125 | python3 tests/test_campaign_store.py | lib/campaign_store.py lib/campaign_doc.py lib/backlog_graph.py lib/backlog.py lib/paths.py lib/marshal_refs.py tests/test_campaign_store.py tests/test_campaign_doc.py tests/hermetic.py tests/hermetic.sh
+fast | par | 60 | 19 | python3 tests/test_campaign.py | bin/qargi lib/campaign.py lib/campaign_doc.py lib/campaign_store.py lib/commands.py lib/guard.py lib/backlog_graph.py lib/backlog.py lib/paths.py lib/marshal_refs.py tests/test_campaign.py tests/test_campaign_doc.py tests/test_campaign_store.py tests/hermetic.py tests/hermetic.sh docs/reference/campaign-records.md
 full | par | 300 | 40 | bash tests/test_backlog.sh | lib/backlog.py lib/backlog.sh lib/gitflow.sh lib/feature.sh lib/release.sh lib/project.sh
 fast | par | 300 | 8 | bash tests/test_nested_plan.sh | lib/lib.sh lib/branch.sh lib/cred.sh lib/marshal.sh lib/project.sh lib/provider.sh lib/registry.sh
 full | par | 300 | 28 | bash tests/test_resume.sh | lib/release.sh lib/feature.sh lib/gitflow.sh lib/review.sh

@@ -11,9 +11,11 @@ TAGLINE = "A gathering place for agent work: dispatch, review, remember."
 INTRO = (
     "qargi dispatches one-off, task-scoped development tasks to agents and takes the work back as "
     "reviewable patches. An agent is a member on this machine (local, the default) or a "
-    "cloud agent (only when you ask for it in that request). Agents work in their own clone and "
-    "never push. A team adds a lead that coordinates members for build, write and review on one task. "
-    "Everything qargi stores about you and your projects lives outside every repository. Inside a project's repository you can leave out its name."
+    "cloud agent (only when you ask for it in that request). Members are instructed to work in their own clone and "
+    "return patches without pushing. Lead push grants are separate (qargi help push). A team adds a lead that "
+    "coordinates members for build, write and review on one task. User installations default to ~/.qargi for "
+    "configuration and state. Paths are configurable, and development mode uses checkout-local .qargi (qargi help dev). "
+    "Inside a project's repository you can leave out its name."
 )
 
 ROLES = ("build", "write", "review", "test", "lead")
@@ -57,12 +59,13 @@ def verb(summary, args=(), opts=(), desc="", examples=()):
 HOOK_REC = ("Reads the hook's JSON on stdin and appends one small line to the run's event file under the state directory "
             "(ids, times, names and hashes; never command, message or error text). It always exits 0 at once, even on malformed input, "
             "so it cannot block an agent. Register it with qargi supervise hooks.")
-ASKED = opt("--asked", "the request, in your words, that names the cloud instance; recorded in the audit log", "REQUEST")
+ASKED = opt("--asked", "your request, in your words, naming the cloud instance for this operation", "REQUEST")
 WORKTREE = opt("--worktree", "write the repo tier into DIR, another worktree of the project's repository (the same path inside it), instead of its checkout; the plan says on which branch to commit it", "DIR", "dir")
 PLAN = opt("--plan", "the plan token printed by the same command without --approved", "TOKEN")
-APPROVED = opt("--approved", "your go-ahead for exactly that plan, in your words; recorded in the audit log", "WORDS")
+APPROVED = opt("--approved", "your go-ahead for exactly that plan, in your words", "WORDS")
 EXEC = opt("--approve-exec", "name every executable the pack holds, separated by commas, to approve running them", "NAMES")
-TARGET = opt("--target", "claude-code renders for a local session; managed-agents (the default for apply) is the cloud update", "TARGET", ("claude-code", "managed-agents"))
+LOCAL_TARGET = opt("--target", "session.render_target of an eligible local runtime; omitted selects the project's member runtime", "TARGET")
+TARGET = opt("--target", "claude-code renders for a local session; any eligible local session.render_target is supported; managed-agents (the default for apply) is the cloud update", "TARGET", ("claude-code", "managed-agents"))
 PREFIX = opt("--prefix", "pick the notes under this path (repeat for several)", "PATH")
 ROLE_SEL = opt("--role", "pick the notes under /roles/ROLE/", "ROLE", ROLES)
 NOTE_KIND = opt("--note-kind", "pick the notes whose Kind: header is KIND (setup, gate, rule, ...)", "KIND")
@@ -106,7 +109,7 @@ HOTFIX_OPT = opt("--hotfix", "a hotfix: branch from master, finish into master a
 
 GROUPS = [
     ("Set up", ["project", "methodology", "cloud", "agent", "role", "provider", "provision", "env", "doctor", "instances", "skill", "tool", "packs", "discover"]),
-    ("Run a task", ["feature", "marshal", "release", "branch", "changelog", "upstream", "backlog", "ref", "start", "send", "status", "report", "noticed", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
+    ("Run a task", ["feature", "marshal", "release", "branch", "changelog", "upstream", "backlog", "campaign", "ref", "start", "send", "status", "report", "noticed", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
     ("Lead and credentials", ["lead", "credential", "hook"]),
@@ -120,7 +123,7 @@ COMMANDS = {
         "desc": ("The answers are the repository, its long-lived branches, the roles that exist (build, write, review, test) "
                  "with each role's base branch, model, effort, packages and skills, the memory stores, the budget, and "
                  "optionally a lead with teams and a push grant. Provisioning and dispatch read them. Push policy per role "
-                 "is none: an agent never pushes; the lead's grant is separate (qargi help push)."),
+                 "is none for members: they are instructed to return patches without pushing. The lead's grant is separate (qargi help push)."),
         "scripts": ["project.sh"],
         "verbs": {
             "template": verb("Print an answers file with defaults", [("NAME", "none")], desc="Edit it, then store it with init. models.provider is empty and must be set (the provider the project's agents run on; there is no default); project validate reports it while it is not. No role names a model: it takes the provider's tier once one is set."),
@@ -177,7 +180,7 @@ COMMANDS = {
                                 "Refused (exit 2) with a dirty working tree, a detached HEAD, no commits, a project that is not attached, and in a member run."),
                           examples=["qargi project adopt acme", 'qargi project adopt acme --plan TOKEN --approved "go ahead"']),
             "set": verb("Change one answer", [("NAME", "project"), ("PATH", "key"), ("VALUE", "value")],
-                        desc=("PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string. models.extensions and models.accept_no_barrier are refused here: they change only through qargi provider enable|disable and qargi provider accept. "
+                        desc=("PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string. packs.member_skills uses qargi packs member-skills PROJECT --enable|--disable and refuses direct set/unset or whole packs-object replacement. models.extensions and models.accept_no_barrier are refused here: they change only through qargi provider enable|disable and qargi provider accept. "
                               "methodology_accepted (a list of {gap, reason, date}: the deviations from the methodology the lead accepts) is the lead's: a member run is refused. "
                               "roles.ROLE.tools is the list of the tools a role needs beyond its apt packages, each {kind, name, ...}: kind go (name a package path, version a tag: go install NAME@VERSION), "
                               "kind binary (name the file name, version, url of the file itself, sha256 of it: downloaded to ~/.local/bin and kept only when the hash matches) and kind submodule "
@@ -492,6 +495,43 @@ COMMANDS = {
                                "upstream.overlay_check set, the command then runs on a trial merge of the branch into develop in a temporary worktree (the fast-forward "
                                "stands either way; a failure or a merge conflict exits 1)."),
                          examples=["qargi upstream sync", "qargi upstream sync --plan TOKEN --approved \"yes, take the upstream commits\""]),
+        },
+    },
+    "campaign": {
+        "summary": "Record and inspect local campaign declarations",
+        "scripts": ["campaign.py"],
+        "desc": ("Campaign v1 records declarations only: it grants no participant, execution, acceptance or merge authority. "
+                 "Invalidation policy is undecided. Participant locators, source refs and link targets are never opened. "
+                 "State verbs are lead-only and need no project registration, repository adoption or cloud configuration. "
+                 "Pure check --spec reads only the selected regular file (including a user-selected symlink), with no configuration or state resolution. "
+                 "Spec input is bounded to 512 KiB before parsing; special files are refused. "
+                 "JSON is a native campaign-report v1, with valid false and exit 1 for data, conflict, lock, storage and uncertain outcomes. "
+                 "Usage errors exit 2 on stderr. Exit 0 qualifies only the reported declaration scope. "
+                 "Text prints fixed summaries and identifiers; show --json includes the supplied document. "
+                 "Historical responses prove selected-head ancestry within one 4096-edge traversal bound; exhaustion returns no successful partial history. "
+                 "Reads never repair state and report durability not-assessed. Writes use a permanent local lock and compare-and-swap head; "
+                 "publication and durability are separate outcomes. Fsync-acknowledged describes returned syscalls on a trusted local filesystem, not power-loss safety. "
+                 "No retry, rollback, orphan adoption or acceptance inference is automatic."),
+        "verbs": {
+            "commit": verb("Publish a declaration or settle an exact-current retry", [("ID", "none")],
+                           [opt("--spec", "required declaration document", "FILE", "file"),
+                            opt("--create", "create revision 1; requires exactly one of --create or --expected-head"),
+                            opt("--expected-head", "compare-and-swap from this sha256 digest", "DIGEST"),
+                            opt("--json", "print the native campaign report")],
+                           desc="Supply --spec FILE and exactly one of --create or --expected-head DIGEST. An exact-current retry settles the selected candidate and reports already-current; a stale expectation otherwise conflicts without rebasing or checking candidate history. Failures preserve publication (not-assessed, none, visible or unknown), durability and any parent uncertainty. Retry only by explicitly issuing the same command after inspecting the outcome."),
+            "show": verb("Read the current declaration or a proven historical revision", [("ID", "none")],
+                         [opt("--revision", "select a retained sha256 revision digest", "DIGEST"),
+                          opt("--json", "include the declaration in the native campaign report")],
+                         desc="Historical selection must prove ancestry from one selected head within 4096 predecessor edges. Exhaustion reports history-walk-limit. Current reads remain available beyond that bound."),
+            "check": verb("Check current state or only a supplied declaration", [("ID", "none", True)],
+                          [opt("--spec", "check this supplied document instead of an ID; no transition or state check", "FILE", "file"),
+                           opt("--json", "print the native campaign report")],
+                          desc="Choose ID or --spec FILE, never both. Only the pure supplied-document form is available to members; it reports transition not-checked and coordination scope supplied-document. A current-state check verifies the actual parent transition."),
+            "log": verb("Read a bounded page of proven declaration history", [("ID", "none")],
+                        [opt("--cursor", "continue a page; an untrusted cursor grants no ancestry proof", "CURSOR"),
+                         opt("--limit", "page entries: decimal integer 1 to 200 (default 50)", "N"),
+                         opt("--json", "print the native campaign report")],
+                        desc="Each response proves selected-head ancestry within one 4096-edge bound shared by proof and page traversal. Exhaustion fails with no partial entries and complete false. Complete means the page reached revision 1. A cursor pins a selected start and next revision; every page proves them again. Current reads and commits have no history-length limit."),
         },
     },
     "backlog": {
@@ -871,7 +911,7 @@ COMMANDS = {
     "instances": {
         "summary": "Register, inspect and manage agent instances",
         "desc": ("An instance is <project>-<role>, for example acme-build, or the lead acme-lead. The registry records where it "
-                 "runs and which resources it uses. Verbs that change cloud resources need --asked, and show a plan first."),
+                 "runs and which resources it uses. Cloud operations follow the request and approval requirements documented by each verb."),
         "scripts": ["registry.sh"],
         "verbs": {
             "init": verb("Register an instance", [],
@@ -927,6 +967,15 @@ COMMANDS = {
         "summary": "Render, load or apply the skills and tools a role gets",
         "scripts": ["packs.sh"],
         "verbs": {
+            "member-skills": verb("Opt in to canonical role-specific member skill snapshots", [("PROJECT", "project")],
+                                  [opt("--enable", "enable snapshots"), opt("--disable", "disable snapshots without loading new content"), PLAN, APPROVED],
+                                  desc=("Absent packs.member_skills is off. With neither choice, show status read-only; --enable and --disable are mutually exclusive. Changes need the recomputed plan token and approval and refuse member callers. "
+                                        "The enable plan inventories currently dispatchable known work roles, including library roles without project entries, with canonical names and approval hashes. Invalid or unavailable role metadata is distinguished. The recomputed plan binds that inventory, project, old/new booleans, runtime composition, links, exclusions and bounded file identities; future roles use ordinary authorized prepare and current qualification. "
+                                        "Only composed command runtimes with dispatch.home.skills_dir qualify structurally; actual loading remains unqualified. Prepare freezes a private role-specific snapshot, including an empty one. "
+                                        "Four canonical scopes reach matching roles; broad user/project links reach each role, role-specific lead links stay out. Raw installed/checkout skills and rendered unions never select snapshots. "
+                                        "Before launch, content/approval, relevant selection, opt-in or runtime drift requires re-prepare. After native begin, delivery populates private staging through descriptors and publishes by identity-checked atomic no-replace rename; run and private state must share a filesystem. Cleanup requires recorded group quiescence and validates staged identity before one-filesystem deletion. Absent delivery under its matched original parent can retire state after begin; dry-run never recovers it. Replacements preserve data/evidence and refuse without adoption. Interrupted cleanup can resume on normal --again. This cooperative Linux/OS boundary trusts controller-only private state and excludes escaped groups, arbitrary hostile same-user/root mutation and inode reuse as an independent identity proof. Save/verify validate frozen manifest identity, bytes, modes and generation independently of current configuration/review, granting no launch permission. "
+                                        "MCP authority stays unchanged. A client can independently discover committed checkout skills or read other files under its qualified contract; pack prose grants no permission. "
+                                        "Validate linked names and skill count before body reads; accumulate cross-pack entry and byte limits during collection. Incompatible packs contribute bounded compatibility facts, no delivered bytes, and need no approval or body review until included. Bounds: 64 skills, 4096 entries, 2,000,000 bytes/file, 16 MiB total and 1 MiB manifest; canonical per-pack review limits also apply.")),
             "render": verb("Write what a role gets into a directory (used by provisioning)", [("PROJECT", "project"), ("ROLE", "role"), ("OUTDIR", "dir")]),
             "load": verb("Show what a role has enabled, or print one pack's text", [("[PACK]", "pack")], [opt("--role", "the role whose packs (required)", "ROLE", ROLES), opt("--project", "the project (default: inferred from here)", "PROJECT", "project")],
                          desc="Read-only, and evaluated from the links when called, so enabling or disabling a pack takes effect at once. Refuses a pack that fails its review or changed since it was approved."),
@@ -934,17 +983,23 @@ COMMANDS = {
                           desc=("Without --target (or with managed-agents) this updates the existing cloud agent INSTANCE with its skills and tools; "
                                 "the lead's GitHub tool arrives this way when the project grants a cloud push. It needs --asked, and always needs --plan "
                                 "(QARGI_NESTED does not skip it); a local member's guard refuses it.\n"
-                                "With --target claude-code it takes PROJECT instead of INSTANCE and needs no --asked. Without --approved it prints a plan token. "
-                                "With --plan and --approved it renders the project's enabled skills and tools into $QARGI_STATE/render/PROJECT/RUNTIME (claude-code for this target), replacing the "
-                                "previous render atomically, and prints the exact `claude --add-dir ...` launch line (with --mcp-config and --settings when the "
-                                "render has them). A local runtime cannot enforce role scoping, so the render is the union of the project's roles and role scoping "
-                                "is advisory there. Skills render under .claude/skills; tool packs render mcp.json and settings.json. Nothing is written into a "
-                                "repository or into ~/.claude, and members cannot write under the state's render/ directory.\n"
+                                "With --target claude-code it takes PROJECT instead of INSTANCE and needs no --asked. Any eligible local target works the same way: TARGET is session.render_target in the existing provider registry. "
+                                "The member runtime resolves its own target directly; a secondary target must identify exactly one local runtime with a valid sealed definition, "
+                                "verified skills capability and project skills layout. Inapplicable project extensions refuse a secondary target. No member runtime or profile changes. "
+                                "Without --approved it prints a plan token. With --plan and --approved it renders compatible enabled packs into $QARGI_STATE/render/PROJECT/RUNTIME (claude-code for this target), "
+                                "replacing that runtime's render atomically. Renders live side by side; their skills, MCP and settings paths come from provider resources. "
+                                "The plan names project, runtime, target, selected resources and included/skipped packs, and prints the definition's launch line when available. "
+                                "For this example the launch line is `claude --add-dir ...` with MCP/settings flags when needed. "
+                                "Skills render under .claude/skills in this example; the definition chooses all resource paths. "
+                                "Role scoping is advisory: skills include the member-role union and lead-only instructions; MCP permissions retain the member-role union without lead. "
+                                "Every included skill needs a present canonical library approval matching its content hash, including lead-only skills on every local target. Passing review or approving this render cannot replace that prior approval; refusal preserves the live render. "
+                                "Rendered resources go to the selected runtime's state tree. Member write protections depend on the runtime's qualified sandbox and guard coverage.\n"
                                 "The plan refuses, naming the pack and writing nothing, a skill whose SKILL.md name differs from the pack name, whose "
                                 "front matter is not closed or has more than one name key; a skill and a tool with the same name; and a tool allowlist "
                                 "name outside letters, digits, _, . and -. Each plan stages into its own hidden directory and a lock serializes "
                                 "concurrent applies; the second refuses if the render changed meanwhile. The swap installs only the tree the token "
-                                "approved; the token also covers the file modes, which the manifest records.")),
+                                "approved; the manifest and token bind project, runtime, target, composed definition and file modes. A foreign manifest refuses replacement. "
+                                "Metadata without runtime identity is supported conservatively only for the member runtime; a fresh plan upgrades that metadata.")),
             "seed": verb("Add or update the baseline packs shipped with qargi in your library", [],
                          [opt("--install", "only add the packs the library lacks, without a token (install.sh --user runs this)"), PLAN, APPROVED],
                          desc=("qargi ships a few packs (packs/ in its tree). Seeding stores them in your library. Without --approved it prints one line per pack "
@@ -952,10 +1007,10 @@ COMMANDS = {
                                "never overwritten; an untouched shipped copy is updated when qargi ships a newer text. Seeding never links a pack: nothing "
                                "reaches a project or an agent until you link it.")),
             "check": verb("Check a render for drift (read only)", [("PROJECT", "project")], [TARGET],
-                          desc=("Needs --target claude-code. Writes nothing and exits 1 on any finding: library drift (a pack changed or failed review since it "
+                          desc=("Needs --target claude-code for that runtime, or another eligible local target selected as for apply. Writes nothing and exits 1 on any finding: library drift (a pack changed or failed review since it "
                                 "was rendered), rendered tampering (a file differs from the manifest, or an extra or missing file), enablement drift (a pack "
                                 "enabled or disabled, or its roles changed, since the render), shadowing of a rendered skill by ~/.claude/skills or by the "
-                                "checkout's .claude/skills, and a render directory that has no manifest (a broken render). A project with no render at all is not a failure: "
+                                "checkout's .claude/skills (another runtime uses the corresponding paths of its resources), and a render directory that has no manifest (a broken render). A project with no render at all is not a failure: "
                                 "the check prints a not applied line with the command that applies it and exits 0. The answer packs.none: true says the project uses no project packs; "
                                 "the check then passes with no render, and fails if a pack is linked to a role of the project. It also reports a rendered file that differs from "
                                 "the library copy (even when the manifest was edited with it), a changed file mode, a group- or world-writable "
@@ -965,8 +1020,11 @@ COMMANDS = {
                                 "but its content changed: this exits 1), excluded (switched off in the provider's settings; qargi only reads them) or unmanaged "
                                 "(everything else, shown with what to do about it; this does not change the exit status). When the checkout's skills directory "
                                 "is not linked to the render it adds a note naming packs link.")),
-            "link": verb("Make the project's checkout load its packs by itself", [("PROJECT", "project")], [PLAN, APPROVED],
-                         desc=("The provider's project skills directory in the repository (for Claude Code .claude/skills) becomes a symbolic link to the render "
+            "link": verb("Make the project's checkout load its packs by itself", [("PROJECT", "project")], [LOCAL_TARGET, PLAN, APPROVED],
+                         desc=("--target selects an eligible local runtime by session.render_target; omitted uses the project's member runtime. A secondary target links only skills, "
+                               "with link.project dir-symlink. It does not link agents or memory; project link/unlink retain their default behavior and syntax. "
+                               "Distinct runtime paths can be linked side by side; a shared destination already owned by another runtime refuses. "
+                               "The provider's project skills directory in the repository (for Claude Code .claude/skills) becomes a symbolic link to the render "
                                "made by packs apply --target. Without --approved it prints the plan, the skills a session would load, and a plan token; apply with "
                                "--plan TOKEN --approved. If the directory is absent it creates the link; if it is already that link it says so and exits 0. It refuses "
                                "a link to anywhere else, a symlinked parent, a checkout that is not the top of a git work tree, a missing render, and files "
@@ -976,10 +1034,13 @@ COMMANDS = {
                                "it prints the line to add to .git/info/exclude and never edits that file. A provider that has no such directory is "
                                "refused (exit 3). Every verb that takes --target (packs apply, packs check), packs link and unlink, skill accept and marshal handoff "
                                "exit 2 when the project has no provider (qargi project set P models.provider NAME). A local member's guard refuses it.")),
-            "unlink": verb("Undo packs link", [("PROJECT", "project")], [PLAN, APPROVED],
-                           desc=("Removes only the symbolic link that points to this project's render and, if the backup exists, moves it back to the skills "
+            "unlink": verb("Undo packs link", [("PROJECT", "project")], [LOCAL_TARGET, PLAN, APPROVED],
+                           desc=("Use the same --target as link for a secondary runtime. Removes only the symbolic link that points to this project's selected runtime render and, if the backup exists, moves it back to the skills "
                                  "directory. Refuses a link to anywhere else, a real directory in its place, and a backup with no link of ours. Same plan token "
-                                 "and approval as link; nothing else is deleted.")),
+                                 "and approval as link; nothing else is deleted. Owned unlink and backup recovery remain available after composition drift or render manifest corruption. "
+                                 "They also survive lost skills support or verification, including a harmless library-provider reseal, when sealed runtime identity and a safe skills path and link mode remain available. "
+                                 "Cleanup preserves sealed extension composition and skips current pack reviews and capability-verification prerequisites. Missing, ambiguous, unsealed or drifted identity and unsafe layouts refuse. "
+                                 "Default cleanup retains optional target and link-mode compatibility. Explicit targets retain their identity and mode checks. Combined project unlink follows the same rule. Fresh apply, check and link retain their loading eligibility and render validation checks.")),
         },
     },
     "start": {
@@ -1114,7 +1175,7 @@ COMMANDS = {
                  "(fast, balanced, deep, frontier) maps to, with the date and source it was verified, the effort levels it understands, "
                  "the one surface it serves (local or cloud) and a capability matrix for it: model and effort overrides at dispatch, a fixed tool "
                  "list per agent, a read-only barrier, a session budget ceiling, memory stores, skills and MCP. A capability that is not "
-                 "verified counts as not supported. A provider with no read-only barrier on its surface cannot serve the review role there "
+                 "verified counts as not supported. Optional dispatch.home.skills_dir is a validated private-home destination for opt-in command member snapshots; this structural declaration does not qualify actual loading or change capability dates. A provider with no read-only barrier on its surface cannot serve the review role there "
                  "unless you accept that with qargi provider accept. The project's models.provider chooses the provider; there is no default, and a verb that needs one refuses a project with none (exit 2). "
                  "A family name (what several runtimes of one vendor share) stands for the runtime of a surface only in a project's models.provider and in provider of; "
                  "every verb that takes a NAME (show, check, model, addenda, adapter-run, effective, require-barrier, layout, launch, require-skills) takes a runtime name, and a family name is refused as an unknown provider."),
@@ -1190,8 +1251,11 @@ COMMANDS = {
     },
     "local": {
         "summary": "Prepare, verify, close, list and clean a local run, its git without credentials",
-        "desc": ("The agent works in a clone of a bare copy that has no remote, runs git through a credential-less wrapper, and "
-                 "verify compares every ref of the real repository before and after. It is a guard, not a sandbox."),
+        "desc": ("The agent works in a clone whose origin points to a bare copy. The bare copy has no remote, and the clone's origin push URL is disabled. "
+                 "The agent runs git through a credential-less wrapper, and "
+                 "verify compares snapshots of the real repository's local refs and origin's heads and tags, excluding refs/qargi/. "
+                 "Filesystem and network protections depend on the selected runtime. "
+                 "See docs/development/architecture.md for accepted differences and runtime protection boundaries."),
         "scripts": ["local.sh"],
         "verbs": {
             "run": verb("Run a task through a command runtime (a vendor CLI) in a prepared run; --dry-run prints what would run", [("RUN", "dir")],
@@ -1201,7 +1265,7 @@ COMMANDS = {
                         desc=("Command runs prepared now use the lead's private request when --model or --effort is omitted, independently for each option. The resolved profile, logical base, requested model/id and effort, role, class and runtime are private authority; RUN/request.json, RUN/profile, RUN/ability and RUN/class are mirrors. Changes to the runtime, dispatch mode, catalog, selected profile inputs, composition or effective capability/barrier policy refuse before launch with re-prepare guidance, even with explicit overrides. "
                               "Explicit model overrides follow the current catalog's id/alias policy; a pattern-matching id is accepted as syntax, without claiming vendor access. Changing the model or a non-null native effort control needs its capability verified yes or partial (unverified counts as unsupported). Repeating the prepared value needs no override capability; null effort controls are omitted with a note. Empty explicit model/effort values refuse. These are requests, never observed identity claims. "
                               "Existing lifecycle records without a prepared request retain their former balanced-model/no-effort defaults and override validation; no request is inferred or backfilled from RUN or saved files. Genuinely unmarked legacy runs still require re-prepare for runtime dispatch. "
-                              "New prepared runs use private attempt authority. Dispatch, verify, apply, close and clean share one lifecycle lock and refuse active or unknown members, including discard. Applied, closed or cleaned runs cannot be retried. Dry-run and preflight refusal preserve previous output; setup or spawn failure after the attempt commit leaves it unverified and retains earlier saved evidence. "
+                              "New prepared runs use private attempt authority. Dispatch, verify, apply, close and clean share one lifecycle lock and refuse active or unknown members, including discard. Applied, closed or cleaned runs cannot be retried. Dry-run and preflight refusal preserve previous output; setup or spawn failure after the attempt commit leaves it unverified and retains earlier saved evidence. Opted-in member snapshots validate content and selection drift read-only, print MEMBER_SKILLS_DIR and names/approval hashes on dry-run, and publish private staged bytes after lifecycle begin into dispatch.home.skills_dir. Foreign/replaced destinations or missing ownership refuse; cleanup requires recorded group quiescence and validates staged identity before deletion. Interrupted cleanup resumes through native --again; dry-run only inspects. Save/verify prove frozen evidence independently of current configuration/review. "
                               "Retry epochs precede ref collection. Lead-written report manifests use the private prepared base commit. TERM, HUP and INT before begin leave a not-started attempt; uncatchable death without a recorded child remains unknown and refuses recovery. Only a kernel report that the recorded process group is absent proves it gone. An addressable group with no live member in a process listing, including unreaped zombies, remains busy or unknown; inaccessible evidence remains unknown. "
                               "Only for a runtime whose dispatch mode is command; a runtime that works inside the session (dispatch mode in-session) is refused: dispatch it as its notes say (qargi provider notes spawn). "
                               "The command is built from the definition without a shell, runs in a scrubbed environment (only the names the pack's env_pass lists, which the review shows), and its output goes to OUT/transcript. "
@@ -1219,7 +1283,7 @@ COMMANDS = {
                              opt("--done", "the check that says the task is done, as one command line (with --task-file). Refused when it is empty, has several lines or bash -n cannot parse it, and when the word that starts any of its simple commands (at the start of the line and after ; & && || | ( or $(, past NAME=value words and redirections) is not an executable on PATH, a shell builtin or keyword, or a script, so prose that only contains an operator (coverage > 80%) is refused (a first word with a slash is a file of BASE, a file under a --scope path that the task may create, or an absolute one; with --repo-url a relative path is taken as given; a later word with a slash is not looked up, since a cd may precede it). Only command words are checked, never the arguments", "COMMAND"),
                              opt("--scope", "a path the task may change, relative, with no space, comma or .. in it (repeat for several; a directory, a file or a glob); written as the SCOPE: line, which qargi review check applies as the limit. Without it the line says none (with --task-file)", "PATH")],
                             desc=("Command runtimes resolve the role's explicit or implicit profile before RUN, TMP or the clone is made, without member registration. The logical worker/reviewer base, requested model and effort, class and runtime are retained in lead-owned private lifecycle authority, bound to runtime/mode/catalog/profile/policy inputs. RUN/request.json and RUN/profile mirror that request for inspection; they cannot authorize selection or accept drift. MEMBER names the logical base, MODEL the requested id or alias, and EFFORT the requested level, including when the runtime has no native effort control. "
-                                  "With --task-file, prepare writes RUN/task.md, the task block, for every runtime, and prints TASK_FILE=RUN/task.md; the lead hands the member that path unchanged. Its sections, in this order: "
+                                  "Managed member snapshots default off; the owner gate packs member-skills freezes canonical role-specific skills in private lifecycle authority, including empty selections. Exact prepared-request hashes stay unchanged, so a changed shipped home declaration requires re-prepare. With --task-file, prepare writes RUN/task.md, the task block, for every runtime, and prints TASK_FILE=RUN/task.md; the lead hands the member that path unchanged. Its sections, in this order: "
                                   "ROLE (with the class), ABILITY (the role's text), TASK (the file), DONE, PROFILE (the text of the repository's profile, ~/.qargi/config/profiles/<repository>.md, when there is one), "
                                   "BASE, BASE_SHA, SCOPE (one line, the paths comma separated, or none), RUN_DIR, CLONE, OUT, TMP, GIT, CONTRACT, then SUBMODULES and MEMORY when there are any. "
                                   "Every input is checked before anything is made, and a refusal makes no run. Without the flag no task.md is written and nothing else changes.\n"
@@ -1239,13 +1303,13 @@ COMMANDS = {
                                   "The runtime may refuse a run whose paths its sandbox hides from the member (dispatch.hidden_paths, /dev for codex): prepare refuses it "
                                   "before it makes anything (exit 2), naming the path and the fix (--scratch on another filesystem, or QARGI_RUN_TMP). "
                                   "The temporary parent is resolved once before directory creation: QARGI_RUN_TMP accepts aliases, relative paths and ..; TMP in the display, task, registry and private ownership record is the canonical path. Cleanup uses that recorded path even if an alias is later repointed.")),
-            "verify": verb("Compare the repository's refs with the snapshot taken by prepare", [("RUN_DIR", "dir", True)],
+            "verify": verb("Compare observed repository refs with the run's current authoritative snapshot", [("RUN_DIR", "dir", True)],
                            [opt("--saved", "verify the lead's saved copy of a passed run whose directory is gone (ID: the name of the run directory, qargi.XXXXXX)", "ID")],
                            desc=("OUT without a report, for an uncollected run or a read-only run, is said with its likely cause: a runtime can refuse the member's write tool for a report file, so the file never reached OUT; "
                                  "the member is told to collect again or return its report as the final message (for a read-only run it is a note, and the exit status stays the refs verdict). "
                                  "Fails first, with exit 1 and \"OUT is empty: the member did not collect\", when the clone holds commits past BASE_SHA and RUN/out holds neither patches nor a report: "
-                                 "the refs are compared all the same and their verdict is printed next to that message (exit 2 when they changed), but nothing is recorded: the run is not verified, and the member must collect (its DONE needs ls OUT/patches to list the patches) before apply or close. "
-                                 "Exits 2 when refs changed (1 before), 3 when the lead's registry does not vouch for the run: it is not in it, names no repository for it, or RUN/repo.path, repo.url or cred.path differ "
+                                 "the refs are compared all the same and their verdict is printed next to that message (exit 2 when the ref comparison fails), but nothing is recorded: the run is not verified, and the member must collect (its DONE needs ls OUT/patches to list the patches) before apply or close. "
+                                 "Exits 2 when the ref comparison fails, 3 when the lead's registry does not vouch for the run: it is not in it, names no repository for it, or RUN/repo.path, repo.url or cred.path differ "
                                  "from it (the repository and the credential come from the registry; a member can write the run directory). "
                                  "It accepts the lead's own moves and names each one (\"develop moved by qargi feature finish\"): what the lead's ref journal records (the branches and tags "
                                  "that qargi's flow verbs move, push to origin or delete: feature finish and park, release and hotfix finish and push, branch prune, review apply, "
@@ -1261,8 +1325,9 @@ COMMANDS = {
                                  "The answers verify and clean read (runs.owned_refs, repo.long_lived, repo.parking_branch) are the copy prepare took into your registry, "
                                  "not the stored file of the day: a change of them takes effect on the runs prepared after it. "
                                  "New runs compare against private prepared and attempt snapshots, epoch and phase; RUN/verified, refs.before, started and dispatch.json are diagnostic mirrors. After a passing verify, later verify and clean also accept "
-                                 "your fast-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there. Anything else (a push, a tag, "
-                                 "a deletion or a rewrite nobody journaled) fails. Run it on every run before merging any of them. "
+                                 "your fast-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there. Other observed, non-exempt ref differences fail. "
+                                 "For --repo runs, snapshots cover local refs and available origin heads/tags, excluding refs/qargi/. --repo-url observes only the URL's heads/tags. When the remote is unavailable at both observations, verification may pass while remote refs remain unobserved. A change in availability fails the comparison. Transient activity and other destinations require separate evidence. "
+                                 "Run it on every run before merging any of them. "
                                  "A passing verify saves OUT in <state>/runs/<run id>/ bound to the prepared identity, attempt and generation. Repeated live or --saved verification reuses that copy and advances the private ref snapshot; identical observations consume no history. --saved and review apply --from-saved require the current verified generation. Earlier copies and historical verifications are each bounded to 32 per attempt; a failed save requires re-verification from the run. Legacy inspection warns about its writable snapshots; missing new-schema authority fails closed.")),
             "close": verb("Close a verified run whose patches you applied by hand (git am): it is no longer open", [("RUN_DIR", "dir")],
                           [opt("--applied-by-am", "the way the run was taken in: you applied its patches by hand with git am (the only way close knows; required)")],
@@ -1270,12 +1335,12 @@ COMMANDS = {
                                 "A closed run is no longer listed as open or counted as applied and not merged by qargi lead compact-check and the compaction advice, no longer blocks "
                                 "qargi feature finish and is listed by marshal status as closed; qargi local list shows closed in the APPLIED column. qargi local clean then removes it "
                                 "without asking for an applied tip (its commits are taken as applied by hand); clean --applied removes it too. Refused for a run that has no passing "
-                                "local verify (verify it first: close must not hide changed refs), a run whose refs changed since that verify (close runs the refs check again), a read-only run, one applied with qargi review apply (merge that branch), "
+                                "local verify (verify it first: close must not hide a failed comparison), a run whose ref comparison fails since that verify (close runs the refs check again), a read-only run, one applied with qargi review apply (merge that branch), "
                                 "a run already closed or cleaned. When the applied branch was rewritten by hand (its tip is not the review:apply tip in your ref journal, the trees are the same and no rewrite is recorded), "
                                 "the refusal for an applied run also names the fix: qargi ref record --rewrite BRANCH OLD NEW --why ..., with the branch and both tips filled in. Not available in a member run."),
                           examples=["qargi local close ./run --applied-by-am"]),
             "clean": verb("Remove a collected, verified run and its temporary directory", [("RUN_DIR", "dir", True)],
-                          [opt("--discard", "drop the run on purpose: also a run whose output holds no manifest, whose commits were never merged or whose repository refs changed (verify's outcome is printed as a warning)"),
+                          [opt("--discard", "drop the run on purpose: also a run whose output holds no manifest, whose commits were never merged or whose ref comparison fails (verify's outcome is printed as a warning)"),
                            opt("--applied", "clean every run under --scratch whose work is recorded applied (review apply) and merged into a branch other than agent/*; the others are kept and named, and the exit status is 1 when an applied run was kept"),
                            opt("--stale", "list the finished runs (RUN/verified or RUN/applied exists) under --scratch that are at least DAYS days old, from the run's start (a run with no start time is named as skipped); with --yes clean each of them by the rules below, and keep and name those clean refuses; a run still in progress is never listed", "DAYS"),
                            opt("--yes", "with --stale: clean the runs it lists (without it nothing changes)"),
@@ -1289,7 +1354,7 @@ COMMANDS = {
                                 "sandboxes in; lifecycle clean removes it with the clone, the bare copy and the output only after private evidence and ownership authorization. Prepare records RUN and TMP directory identities (TMP must be a qargi-run.XXXXXX directory under /dev/shm or QARGI_RUN_TMP, or inside the run). Refused authorization preserves TMP, RUN and retained evidence. Interrupted cleanup uses owned tombstones and the lead registry, never RUN/tmpdir. A source replacement before staging, or missing prepare-time ownership evidence for a marked run, refuses. Once the original is proven staged or deleted, a replacement at its old pathname is preserved and reported while cleanup finishes the owned tombstone and exact registry row. An owned tombstone proves staging even before the phase commit. Internal TMP completion is recorded before RUN staging; recovery never traverses a replacement RUN to inspect TMP or tombstones beneath it. "
                                 "Genuinely unmarked registered legacy runs without private lifecycle remnants retain warned ordinary clean and explicit --discard recovery. This weaker recovery proves no process quiescence or directory identity and creates no lifecycle authority: preserve wanted work and establish process safety first. Legacy TMP comes only from the registry and is removed on one file system only as a non-symlink qargi-run.XXXXXX directly under the real /dev/shm or configured QARGI_RUN_TMP parent, or RUN/tmp. Other TMP paths are left and named. Stripped markers with retained state, cleanup tombstones or saved lifecycle markers still refuse. "
                                 "It refuses a run whose output has no manifest (collect first), except a read-only run (an advisor or a review: its product is a report, never patches) whose output holds a report.md (or NAME-report.md; a regular file, directly in OUT), "
-                                "which closes with a plain clean when its refs are unchanged and its clone holds no commit; and one whose repository refs changed (that is evidence); the lead's own moves that verify accepts "
+                                "which can close with a plain clean when its ref comparison passes, its clone holds no commit and retained lifecycle evidence does not require explicit disposition. Retained attempt history may require --discard even for a read-only run. Preserve its evidence first. Clean also refuses a run whose ref comparison fails (that is evidence); the lead's own moves that verify accepts "
                                 "(a feature finish since the run was prepared, for one) are no change and are named in its output. It also refuses a run whose clone holds commits that were "
                                 "never applied (review apply) or whose applied tip is on no branch but agent/* in the repository (feature merge first), so "
                                 "finished work is not deleted by mistake. --discard deliberately bypasses these product and inspection checks; it never bypasses a held lock, and for lifecycle runs never bypasses ownership or quiescence. "
@@ -1305,7 +1370,7 @@ COMMANDS = {
                                 "When the applied branch is not merged because you rewrote it by hand (its tip is not the review:apply tip in your ref journal, the trees are the same and no rewrite is recorded), "
                                 "the refusal also names the fix, with the branch and both tips filled in: git branch -f BRANCH OLD, then qargi ref record --rewrite BRANCH OLD NEW --why ...; clean then follows the rewrite. "
                                 "When the refusal for an OUT with no manifest finds no report either, it names the likely cause too: a runtime can refuse the member's write tool for a report file, "
-                                "so the files never reached OUT; the member writes them with the shell (a heredoc). "
+                                "so the files never reached OUT; follow the selected runtime's output rules, returning the report as the final message when writes are unavailable. "
                                 "--orphans is for what no run owns: prepare makes a qargi-run.XXXXXX directory under /dev/shm (QARGI_RUN_TMP moves it) for each run, and clean RUN removes only the one your registry names for that run, "
                                 "so a prepare that failed halfway, a dropped record or a replaced state directory leaves one behind. --orphans lists every such directory with its age (from its modification time) and says whether a run of "
                                 "the registry names it, live or not; a link and a file are named and left. Only the registry of this state directory is consulted: the runs of another state directory "
@@ -1347,7 +1412,9 @@ COMMANDS = {
                                 "Stale cleanup preserves retained generations without a current copy; only explicit discard drops that evidence. Historical lead-owned runs directories are tightened to mode 0700 on save. "
                                 "OUT is the member's output directory (RUN_DIR/out); the patches are read from OUT/patches only, where review apply reads them. "
                                 "Given a run directory instead (no patches or manifest.json in it, an out directory in it), it checks RUN_DIR/out and notes that it did. "
-                                "Refuses a monolithic patch, a commit without a message body and a manifest that does not match the patches. "
+                                "Refuses a commit without a message body and a manifest that does not match the patches. "
+                                "Area-count heuristics emit advisory warnings for a single wide patch or a dominant wide patch in a series. Reviewers must substantively assess commit cohesion, including supporting tests, docs and changelog. "
+                                "Source acceptance requires independent review of concrete changes and dependencies. Reject semantically mixed work with concrete evidence. Keep one patch per actual commit and meaningful buildable commit boundaries. "
                                 "A report-only run (a review) has no patches: it passes with a report.md (or PREFIXreport.md, as in a team run) that has a Findings section and whose last non-empty line is "
                                 "`verdict: accept` or `verdict: revise`, and the manifest.json (PREFIXmanifest.json) beside it; a missing manifest or verdict line fails, a missing Checked section warns. "
                                 "A patch, or a touched_paths entry of the manifest, outside SCOPE fails: SCOPE is the SCOPE line of RUN/task.md (beside OUT) when it records one, else the manifest's scope[]. "
@@ -1675,17 +1742,19 @@ PACK_VERBS = {
 }
 USER_OPT = opt("--user", "record it for every project instead of this one")
 SKILL_VERBS = dict(PACK_VERBS)
-SKILL_VERBS["accept"] = verb("Accept a skill a session loads that qargi does not manage", [("PROJECT", "project"), ("NAME", "none")], [USER_OPT, PLAN, APPROVED],
+SKILL_VERBS["accept"] = verb("Accept a skill a session loads that qargi does not manage", [("PROJECT", "project"), ("NAME", "none")], [LOCAL_TARGET, USER_OPT, PLAN, APPROVED],
     desc=("Finds NAME among the skills a session opened in the project's checkout would load (the checkout, the render and the user's skills directory; "
           "see qargi packs check) and applies only to one that is unmanaged or drifted. Without --plan it prints the same review as skill import "
-          "(files, scripts, URLs, network commands, secret findings) and a plan token that covers the scope, the name and the content hash. With "
+          "(files, scripts, URLs, network commands, secret findings) and a plan token that covers project, runtime, target, composed definition, scope, name and content hash. With "
           "--plan and --approved it records the name, the content hash, the path and your words in the acceptances file, for this project or, with "
           "--user, for every project, and writes an audit line. An accepted skill shows as accepted in packs check; if its content changes it shows "
           "as drifted and packs check exits 1. qargi skills, excluded skills and skills already accepted are refused with the reason. A local "
-          "member's guard refuses it."))
-SKILL_VERBS["unaccept"] = verb("Remove the acceptance of a skill", [("PROJECT", "project"), ("NAME", "none")], [USER_OPT, PLAN, APPROVED],
+          "member's guard refuses it. --target selects an eligible local runtime; omitted uses the member runtime. Approvals belong to resource/provider/name, "
+          "including --user approvals; another runtime's record and unowned records accept nothing for the selected runtime."))
+SKILL_VERBS["unaccept"] = verb("Remove the acceptance of a skill", [("PROJECT", "project"), ("NAME", "none")], [LOCAL_TARGET, USER_OPT, PLAN, APPROVED],
     desc=("Gated like accept. Removes only the record: the skill itself is not touched and shows as unmanaged again. Refused when there is no such "
-          "acceptance in that scope."))
+          "acceptance in that scope. The token binds the exact provider-owned record and scope, so replacement needs a fresh plan. Revocation remains available "
+          "after skills capability, verification or project layout is lost, when runtime/target identity is valid and unambiguous. Removed or ambiguous definitions refuse."))
 COMMANDS["skill"]["verbs"] = SKILL_VERBS
 TOOL_LIST = opt("--tool-list", "the server's own tool listing, saved to a file (the JSON result of MCP tools/list): the review also judges the pack's tools by it", "FILE", "file")
 TOOL_VERBS = dict(PACK_VERBS)
@@ -1702,13 +1771,13 @@ COMMANDS["tool"]["verbs"] = TOOL_VERBS
 TOPICS = {
     "concepts": ("The model in one page", [
         "Task: you describe one task and an executable check that decides it is done. An agent works on it in its own clone and hands back "
-        "numbered patches, one per commit, with a manifest. Nothing is pushed.",
+        "numbered patches, one per commit, with a manifest. Members are instructed to return patches without pushing; lead grants are described in qargi help push.",
         "Roles are build, write, review, test and lead: build changes code, write writes the operational docs, review judges a change and changes no file, test writes and runs tests, lead coordinates a team. Each role is defined by its role text, which comes with the task block. The local workers are members you name and give roles (qargi agent add NAME --roles build,test); qargi agent for ROLE prints the member that serves it. "
         "A role has its own model, effort, skills and packages, stored in the project's answers.",
         "Local or cloud: local (a member on this machine) is the default. The cloud is used only when your request for that task names it, "
-        "and every cloud verb records your words with --asked.",
+        "and start and send require and log your words with --asked. Other commands describe their gates in their own help.",
         "You decide: the coordinator re-verifies everything an agent returns (qargi review check), applies it as separate commits, and "
-        "asks you before anything is pushed."]),
+        "requests approval for pushes outside an existing scoped lead grant. Long-lived branch finishing and release commands retain their plan gates."]),
     "roles": ("Roles and members", [
         "Role build: changes the code with its tests, manual page, help and changelog.",
         "Role write: writes the operational documentation on its own branch.",
@@ -1720,7 +1789,7 @@ TOPICS = {
         "dispatch spawns. A cloud agent serves one role, is named <project>-<role> and carries its role text in its prompt.",
         ]),
     "approvals": ("Plans, tokens and your go-ahead", [
-        "A command that changes something shared prints a plan first. The plan ends with a plan token, a hash of what would be done.",
+        "A command that requires a plan token prints a plan first. The plan ends with a plan token, a hash of what would be done.",
         "To apply, run the same command with --plan TOKEN --approved \"your words\". If the plan changed in between, the token no longer "
         "matches and nothing happens.",
         "Add --json to any verb to get the plan as one JSON object instead of text: {verb, plan, token, apply, exit}, where apply is the command "
@@ -1728,17 +1797,18 @@ TOPICS = {
         "A verb that printed no plan token (it ran, or refused) gives {verb, plan: null, token: null, output, exit}; the exit status is the verb's and its error "
         "messages stay on stderr. --json never supplies --plan or --approved, and a call that carries them runs as it would without --json, wrapped the same way "
         "with a null token. A verb that describes a --json option of its own keeps it.",
-        "--asked \"your request\" is required by every cloud verb: it records that you asked for the cloud. Both are written to an "
-        "append-only audit log in the state directory.",
+        "start and send require --asked \"your request\" naming the cloud instance. The gate records it in the state directory's "
+        "append-only audit log. Consult each command's help for its request and approval requirements. "
+        "Audit entries record supplied --asked and --approved words only where the command calls audit_log.",
         "qargi lead grant and revoke are interactive instead: you confirm each step at the terminal, and that is the approval.",
         "The rules. The token covers the plan the person saw, and an apply refuses when the plan is no longer that one. The --approved text is "
         "recorded, not verified: it is not proof that a person agreed. Never allow-list a gated verb in the runtime's settings: the permission "
         "prompt is the person's real control. A member never applies: it reports the plan and its token, and the lead shows them to the person "
         "(what the member's guard refuses: qargi help guard)."]),
     "guard": ("What a member's guard refuses", [
-        "A best-effort text check, not a sandbox: a member runs as your OS user; qargi local verify and review check are the backstop.",
+        "These best-effort checks apply when the runtime adapter installs qargi __guard (qargi provider show RUNTIME). Members run as your OS user. qargi local verify compares snapshots.",
         "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
-        "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, gates, env, site, backlog, packs, runs, upstream, git, review, roles), init, new, link and unlink; "
+        "discover install; import; packs apply, seed, link, unlink, member-skills; project set (models, release, test_command, gates, env, site, backlog, packs, runs, upstream, git, review, roles), init, new, link and unlink; "
         "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (the rest "
         "read); release publish, sign, site, assets and fix; marshal claim, set, renew, release, take, "
         "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish, verify and park; branch prune; changelog renumber without --check; "
@@ -1752,7 +1822,7 @@ TOPICS = {
         "is refused even in text (not mid-sentence); any other refused verb is text when every command is echo, cat, tee, grep or git commit, "
         "as is a heredoc body cat or tee gets, bar lines starting qargi. "
         "Shell programs piped in or here-strings are read; curl | sh and bash < f are refused. A cd it cannot read refuses relative writes.",
-        "The read-only class (review) writes only OUT and TMP (its TMPDIR is the run's TMP): every change to the clone is refused. It runs build, vet and test commands with its given environment; assigning PATH, TMPDIR or GIT_* is refused, not the command.",
+        "The read-only class (review) may write only OUT and TMP (the run's TMPDIR). Recognized clone mutations are refused. It runs build, vet and test commands with its given environment; assigning PATH, TMPDIR or GIT_* is refused, not the command.",
         "Setting QARGI_NESTED (skips a plan token), or setting or unsetting QARGI_LEAD, is refused.",
         "A refusal is a result: report it."]),
     "naming": ("How resources are named", [
@@ -1771,11 +1841,10 @@ TOPICS = {
         "what leaves a store is archived under /_archive/<date>/, a collision goes to /_conflicts/<date>/, and the origin of every "
         "note written is added to its Sources: line."]),
     "push": ("Who may push", [
-        "Only the lead ever pushes, never a member, and only as the project's lead.push grant says. The default is nothing.",
-        "This Claude Code session as lead: lead.push.local lets it push agent/* branches and open pull requests without asking each time.",
-        "A cloud lead, or one started in the console: lead.push.cloud = branches. It has a GitHub tool with a fixed allowlist and the merge "
-        "tool asked of you. Set it up with qargi lead grant. A merge or a release always needs your explicit approval.",
-        "The GitHub tool cannot create releases; those stay with this session."]),
+        "Push policy reserves pushing to the lead. Without a scoped grant, ask before each push. Plan-gated flow commands retain their own approval requirements.",
+        "The stored lead.push.local grant permits scoped agent/* branch pushes and pull requests without asking each time. Enforcement depends on the selected runtime and its tool permissions; inspect that adapter before relying on it.",
+        "The cloud lead grant, lead.push.cloud = branches, supplies a GitHub tool with a fixed allowlist. It asks before merging when lead.push.merge is ask, and omits that tool when it is never. Set it up with qargi lead grant. Long-lived branch finishing and release/publication commands retain their command-specific approval gates.",
+        "The scoped cloud GitHub tool excludes release creation. Release publication remains a lead operation under the release gates."]),
     "environment": ("Declaring a development environment", [
         "There is no file format of this tool for it. A project says how to set up a checkout in what it already has: a section of AGENTS.md (or README.md) headed "
         "Development environment, Environment or Setup; version pins in go.mod, .tool-versions, mise.toml, .python-version, .nvmrc or package.json; "
@@ -1805,13 +1874,13 @@ TOPICS = {
         "Overrides: QARGI_HOME replaces ~/.qargi; QARGI_CONF and QARGI_STATE replace the two directories and win over it. XDG_CONFIG_HOME and XDG_STATE_HOME are not used. "
         "QARGI_PROJECT names the project when you are not inside its repository. QARGI_ROLES replaces the list of roles. "
         "QARGI_DRY_RUN prints a session request with secrets masked instead of sending it.",
-        "Nothing is stored in a repository."]),
+        "These are user-installation defaults. In dev mode, configuration and state can live in checkout-local .qargi (qargi help dev). Project repo-tier memory can be committed, and shared marshal records can be commits on the project remote."]),
     "dev": ("Running a branch checkout", [
         "install.sh --user records the tool it installed in ~/.qargi/config/install.json. A checkout run from any other place (its own bin/qargi, "
         "for example in a worktree) is then a dev run: it keeps its configuration and state in <checkout>/.qargi (ignored by version control), prints "
         "'qargi: dev run from ...' on stderr once per command, and never touches your live data. Without install.json every checkout is the installed one.",
         "QARGI_HOME, QARGI_CONF or QARGI_STATE, when set, win: QARGI_HOME=~/.qargi makes a dev run use live data on purpose.",
-        "help, version, completion, the guard and the run-event hooks print no banner. Members call qargi __guard from PATH, which is the installed "
+        "help, version, completion, the guard and the run-event hooks print no banner. Hook-enabled runtimes call qargi __guard from PATH, which normally resolves to the installed "
         "copy; put <checkout>/bin first on PATH to test the guard or the hooks of a branch."]),
 }
 
@@ -1840,7 +1909,7 @@ FILES = [
     ("~/.qargi/config/credentials/", "token files, mode 600"),
     ("~/.qargi/config/install.json", "the tool root install.sh recorded; a checkout run from elsewhere is a dev run"),
     ("~/.qargi/state/sessions.json", "the tracker of cloud sessions"),
-    ("~/.qargi/state/audit.log", "append-only record of every approved or cloud verb, with your words"),
+    ("~/.qargi/state/audit.log", "append-only entries from commands that call audit_log, with supplied --asked and --approved words"),
     ("~/.qargi/state/runs/", "collected outputs of runs"),
 ]
 

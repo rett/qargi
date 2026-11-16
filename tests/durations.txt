@@ -1,10 +1,12 @@
 213 bash tests/test_agent.sh
+199 python3 tests/test_member_skills.py
 98 bash tests/test_packs_claude_hostile.sh
 179 bash tests/test_marshal_refs.sh
 221 python3 tests/test_provider.py
 194 bash tests/test_packs_link.sh
 185 bash tests/test_packs_render.sh
 284 bash tests/test_packs_audit.sh
+839 python3 tests/test_pack_targets.py
 220 bash tests/test_flow.sh
 65 bash tests/test_fverify.sh
 251 bash tests/test_local.sh
@@ -138,3 +140,6 @@
 12 bash tests/test_audit_lock.sh
 3 python3 tests/test_attempts.py
 177 python3 tests/test_attempt_integration.py
+10 python3 tests/test_campaign_doc.py
+113 python3 tests/test_campaign_store.py
+19 python3 tests/test_campaign.py

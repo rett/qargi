@@ -35,7 +35,7 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     review apply|save, team run and task;
   - the verbs that change one: qargi skill|tool new|import|seal|remove|unlink|link|enable|disable, qargi skill accept|unaccept
     (they record which skills the owner accepts, in <packs>/accepted.json), qargi discover
-    install, qargi packs apply|seed|link|unlink, qargi project link|unlink (they link the project's skills, agents and memory into the
+    install, qargi packs apply|seed|link|unlink|member-skills, qargi project link|unlink (they link the project's skills, agents and memory into the
     checkout and the runtime's memory directory, which changes what a session loads) and qargi import (it restores the pack library).
     Read-only verbs (list, show, check, effective, search, render, export) stay allowed. The verb is found after wrappers, inside `sh|bash -c STRING` and
     `eval STRING`, in the program a shell reads on its standard input (below), inside $(...) and backticks, and when the script is named directly (packs.sh, discover.py, and the scripts the shell
@@ -261,7 +261,7 @@ GIT_OUTPUT_DIRS = {"format-patch", "archive"}                    # git subcomman
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
 SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
            "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "project_link.py", "gated_answers.py", "project.sh", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py", "local_run.py", "local.sh", "release.sh", "release_sign.py",
-           "agent.sh", "team.sh", "env.py", "env_apply.py", "branch.sh", "changelog.sh", "changelog_numbers.py", "upstream.sh", "backlog.sh", "backlog.py", "ref.sh", "jsonplan.py")
+           "agent.sh", "team.sh", "env.py", "env_apply.py", "branch.sh", "changelog.sh", "changelog_numbers.py", "upstream.sh", "backlog.sh", "backlog.py", "campaign.py", "ref.sh", "jsonplan.py")
 # the command and the scripts behind the refused verbs (packs_link.py is packs link|unlink, packs_audit.py store is skill accept|unaccept,
 # marshal_handoff.py is marshal handoff: the shell verbs call them, and a member could call them directly with a hand-made inputs file;
 # linker.py, the link engine packs_link.py calls, is packs link, and render.py renders member definitions and runs the command a definition names)
@@ -2034,6 +2034,7 @@ def _protected_roots():
     roots.update(render_roots(P, home))
     roots.update(providers_state_roots(P, home))
     roots.update(feature_roots(P, home))
+    roots.update(state_sub("campaigns", P, home))
     roots.update(switch_roots(P, home))
     roots.update(lead_state_roots(P, home))
     roots.update(saved_runs_roots(P, home))
@@ -2929,6 +2930,39 @@ def own_script(path, here):
     return os.path.dirname(resolve(here, path)) in libs
 
 
+def pure_campaign_args(args):
+    """Only the literal supplied-file check, with no positional campaign ID.
+
+    Keep option values: dropping all '-' words mistakes a filename for a flag.
+    Dynamic words and glob expansion cannot establish this exception safely.
+    """
+    if not args or args[0] != "check" or any(
+            builds_word(w) or any(c in w for c in "*?[]{}") for w in args):
+        return False
+    seen = set()
+    i = 1
+    while i < len(args):
+        flag, equal, value = args[i].partition("=")
+        i += 1
+        if flag == "--" and i == len(args):
+            break
+        if flag in seen:
+            return False
+        seen.add(flag)
+        if flag == "--json" and not equal:
+            continue
+        if flag != "--spec":
+            return False
+        if not equal:
+            if i == len(args) or args[i].startswith("--"):
+                return False
+            value = args[i]
+            i += 1
+        if not value:
+            return False
+    return "--spec" in seen
+
+
 def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
     """The reason a qargi command (or the script behind it, run directly) is a verb that changes a skill, or None. via_xargs: xargs
     stands before the program, so its arguments come from standard input, where --write could be. here: the directory the command runs
@@ -2944,6 +2978,15 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
             return None
     if name in OWN_ONLY and not own_script(script, here):
         return None
+    if name == "campaign.py" or (name in ("qargi", "jsonplan.py") and words[:1] == ["campaign"]):
+        args = rest
+        if prog not in SCRIPTS:
+            args = rest[rest.index(script) + 1:]
+        if name != "campaign.py":
+            args = args[1:]
+        if not via_xargs and pure_campaign_args(args):
+            return None
+        return OwnReason("campaign state requires a lead context; only literal campaign check --spec FILE [--json] is available to a member")
     if name == "linker.py":                              # the engine behind packs link and unlink: any use of it is the verb
         words = ["packs", "link"]
     if name == "render.py":
@@ -2994,8 +3037,8 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         words = ["team"] + words
     if name == "project.sh":
         words = ["project"] + words
-    if name == "gated_answers.py":                       # the store behind provider enable|disable|accept, with no gate of its own: any use of the script is the verbs
-        return "lib/gated_answers.py stores models.extensions and models.accept_no_barrier for the verbs that have a plan token (qargi provider enable, disable, accept) and is not available to an agent"
+    if name == "gated_answers.py":                       # store behind the dedicated provider and member-skills gates
+        return "lib/gated_answers.py stores models.extensions, models.accept_no_barrier and packs.member_skills for the verbs that have a plan token and is not available to an agent"
     if name == "packs_audit.py":                         # only `store` writes accepted.json; scan, report, target and acceptance read (scan and target write the file they are given)
         if words[:1] != ["store"] and not any("$" in w or "`" in w for w in words):
             return None
@@ -3112,7 +3155,7 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
     if (area, verb) in LEAD_VERBS or area == "task":
         return ("qargi %s%s is the lead's (it prepares, verifies or removes runs and agents, or dispatches work, with the lead's credentials and its own record) and is not "
                 "available to an agent; report what you need in your task output" % (area, " " + verb if verb else ""))
-    if (area in ("skill", "tool") and verb in SKILL_VERBS) or (area, verb) in (("discover", "install"), ("packs", "apply"), ("packs", "seed"), ("packs", "link"), ("packs", "unlink"), ("local", "run")) \
+    if (area in ("skill", "tool") and verb in SKILL_VERBS) or (area, verb) in (("packs", "member-skills"), ("discover", "install"), ("packs", "apply"), ("packs", "seed"), ("packs", "link"), ("packs", "unlink"), ("local", "run")) \
             or (area == "import" and name == "qargi") or (area == "cloud" and verb in ("set", "unset", "login")) or area == "upgrade":
         if area == "upgrade":
             return "qargi upgrade changes the installed tool and its skills and is not available to an agent"

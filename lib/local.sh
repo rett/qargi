@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Local dispatch without a way to push: the agent works in a clone of a bare copy that
-# has no remote, runs git through a credential-less wrapper, and the coordinator
-# compares every ref of the real repository (and of its remote) before and after.
+# Local dispatch through a credential-less Git wrapper and a clone of a bare copy.
+# The clone's origin push URL is disabled. Verification compares selected ref snapshots
+# using the documented exclusions and accepted-difference rules.
 #
 #   local.sh prepare (--repo DIR | --repo-url URL [--credential-file FILE]) --base BRANCH --slug SLUG --scratch DIR [--role R] [--profile NAME]
 #                                        [--task-file F --done CMD [--scope PATH]...]   (writes RUN/task.md, the task block, for every runtime: taskblock_write)
@@ -22,11 +22,11 @@
 #                                        start the member of a prepared run as a command line, for a runtime whose dispatch.mode is "command"
 #                                        (lib/local_run.py says how); a runtime that dispatches in the lead's session is refused
 #
-# This stops every ordinary push (`git push`, `git push origin`, a pushurl, a remote added
-# from a config). It is not a sandbox against an agent that deliberately goes around it
-# (it runs as the same user): `verify` is what turns such an attempt into a loud failure.
+# The disabled origin and wrapper obstruct ordinary pushes through those paths. Runtime sandbox
+# protection is separate. Verify compares observed snapshots and rejects unaccepted differences;
+# it cannot expose transient pushes, other destinations or a remote unavailable at both observations.
 # The run directory records the task's ability (RUN/ability, default build) and, under --profile, the profile (RUN/profile); under review the guard
-# (qargi __guard) refuses every change to the clone, so a review writes only to OUT.
+# (qargi __guard) checks supported tool requests in runtimes that install it. Read-only members are instructed to write reports only to OUT; runtime protection is separate.
 # A run based on feature/X of a stored project first asks the marshal (marshal_check): another live lead holds X -> refused, no run
 # is made; warnings go to stderr. The lead of X is recorded in the run line as "lead" (null when nobody leads it).
 # prepare also appends one JSON line per run to $QARGI_STATE/local-runs.jsonl (run directory, slug, ability, base,
@@ -747,6 +747,10 @@ case $verb in
       # Mode comes from the runtime alone; an in-session selection must retain
       # its existing extension handling. Command resolution composes below.
       CMODE=$(python3 -I "$(dirname "$0")/prepared_request.py" mode "$CPROV" </dev/null) || exit 2
+      if [ "$CMODE" != command ]; then
+        member_status=$(pymod member_skills plan "$CPJ" status) || die "member skill status could not be read; correct the diagnostic above before preparing"
+        jq -e '.old == false' <<<"$member_status" >/dev/null || die "member skills opt-in requires command dispatch; in-session delivery is unsupported"
+      fi
       if [ "$CMODE" = command ]; then
         reqargs=("$CPJ" "$CPROV" "$ROLE" "$CLASS")
         [ -z "$SELECTOR" ] || reqargs+=("$SELECTOR")
@@ -952,9 +956,9 @@ WRAP
     if [ "$crc" = 3 ]; then
       exit 3   # run_record said why: the registry does not vouch for this run directory, so no repository was asked
     elif [ -n "$EMPTY" ]; then
-      if [ "$crc" = 0 ]; then echo "refs: unchanged by the run (compared all the same; nothing was recorded)" >&2
+      if [ "$crc" = 0 ]; then echo "refs: comparison passed for observed snapshots (nothing was recorded)" >&2
       else
-        echo "REFS CHANGED during the run (the agent must not have pushed):" >&2
+        echo "REFS CHANGED or observation unavailable: ref comparison failed (see details):" >&2
         cat "$CHECK_DIR/refs.diff" >&2
         if [ -s "$CHECK_DIR/refs.accepted" ]; then echo "accepted as the lead's own moves:" >&2; sed 's/^/  /' "$CHECK_DIR/refs.accepted" >&2; fi
       fi
@@ -980,12 +984,12 @@ WRAP
         mv -T -- "$CHECK_DIR/verified" "$SRC/verified"
       fi   # refs-only observation never verifies or saves output
       if [ -s "$CHECK_DIR/refs.accepted" ]; then
-        if grep -q 'per runs\.owned_refs)$' "$CHECK_DIR/refs.accepted"; then echo "refs differ from the snapshot only by the lead's own moves and the refs the project declares the runtime's own (runs.owned_refs); nothing was pushed by the run:"
-        else echo "refs differ from the snapshot only by the lead's own moves; nothing was pushed by the run:"; fi
+        if grep -q 'per runs\.owned_refs)$' "$CHECK_DIR/refs.accepted"; then echo "refs differ from the snapshot only by accepted moves and the refs the project declares the runtime's own (runs.owned_refs); observed snapshots only; scope and unavailable remotes: qargi help local verify:"
+        else echo "refs differ from the snapshot only by accepted moves; observed snapshots only; scope and unavailable remotes: qargi help local verify:"; fi
         sed 's/^/  /' "$CHECK_DIR/refs.accepted"
-      else echo "refs unchanged: nothing was pushed to the repository or its remote"; fi
+      else echo "refs unchanged: observed snapshots only; scope and unavailable remotes: qargi help local verify"; fi
     else
-      echo "REFS CHANGED during the run (the agent must not have pushed):" >&2
+      echo "REFS CHANGED or observation unavailable: ref comparison failed (see details):" >&2
       cat "$CHECK_DIR/refs.diff" >&2
       if [ -s "$CHECK_DIR/refs.accepted" ]; then echo "accepted as the lead's own moves:" >&2; sed 's/^/  /' "$CHECK_DIR/refs.accepted" >&2; fi
       [ "$CHECK_PHASE" = strict ] && echo "(before the run's first passing verify a ref may differ only as far as the lead's ref journal names it, a remote-tracking ref follows origin, or the parking branch is fast-forwarded to develop)" >&2 \
@@ -1223,19 +1227,19 @@ WRAP
     [ -f "$RUN/refs.before" ] && [ -f "$RUN/ability" ] && case $(basename "$RUN") in qargi.??????) ;; *) false;; esac \
       || usage_die "clean needs a RUN dir made by prepare"
     # a read-only run (its class in the lead's registry: an advisor, a review) returns a report and no manifest: its OUT holds a report.md (or NAME-report.md, a
-    # regular file) and it closes with a plain clean, when its refs are unchanged (the check below) and its clone holds no commit (the check after that)
+    # regular file). Plain clean still requires a passing comparison, no clone commit and no retained lifecycle evidence requiring explicit disposition.
     [ -n "$DISCARD" ] || [ -f "$RUN/out/manifest.json" ] || [ -n "$(find "$RUN/out" -name '*manifest.json' 2>/dev/null | head -1)" ] \
       || { [ "$RCLASS" = read-only ] && out_has_report "$RUN/out"; } \
       || die "$RUN/out holds no manifest: collect the work first, or --discard to drop a run that produced none$([ "$RCLASS" != read-only ] || echo " (a read-only run closes with a plain clean once its OUT holds report.md)")$(out_has_report "$RUN/out" || printf '\n%s' "$NOREPORT_CAUSE")"
-    # changed refs are evidence: kept, unless the run is dropped on purpose (--discard), which says so and goes on
+    # A failed comparison is evidence: kept unless explicit --discard acknowledges dropping the run.
     vrc=0; vout=$(QARGI_VERIFY_REFS_ONLY=1 "$0" verify "$RUN" 2>&1 </dev/null) || vrc=$?
     if [ "$vrc" = 3 ]; then   # the registry does not vouch for the run directory: nothing was asked of any repository
       [ -n "$DISCARD" ] || die "${vout#qargi: }"
       echo "qargi: warning: the lead's registry does not vouch for $RUN; dropped on purpose:" >&2
       sed 's/^/  /' <<<"$vout" >&2
     elif [ "$vrc" != 0 ]; then
-      [ -n "$DISCARD" ] || die "the refs of the repository changed during this run: keep $RUN as evidence and tell the user (qargi local verify $RUN)"
-      echo "qargi: warning: the refs of the repository changed during this run; dropped on purpose:" >&2
+      [ -n "$DISCARD" ] || die "the refs of the repository changed or could not be compared: keep $RUN as evidence and tell the user (qargi local verify $RUN)"
+      echo "qargi: warning: the refs of the repository changed or could not be compared; dropped on purpose:" >&2
       sed 's/^/  /' <<<"$vout" >&2
     elif [ -n "$DISCARD" ]; then
       printf '%s\n' "$vout"   # even deliberate recovery reports the actual refs verdict

@@ -216,7 +216,6 @@ lib/commands.py:With --target claude-code it takes
 lib/commands.py:\(claude-code for this target\)
 lib/commands.py:`claude --add-dir
 lib/commands.py:Skills render under \.claude/skills
-lib/commands.py:into ~/\.claude, and members
 lib/commands.py:Needs --target claude-code
 lib/commands.py:by ~/\.claude/skills or by the
 lib/commands.py:checkout's \.claude/skills
@@ -230,13 +229,11 @@ lib/commands.py:the memory tiers, ~/\.config/anthropic
 lib/commands.py:"subagent-stop": verb
 lib/commands.py:cannot message a local subagent
 lib/commands.py:your Claude Code settings\.json
-lib/commands.py:This Claude Code session as lead
 lib/commands.py:and Anthropic's skills\. recommend
 lib/commands.py:Anthropic's skills"\)
 
 # lib/lead.sh, lib/project.sh, lib/transfer.py, lib/discover.py: "from Claude Code run it with !" and the like
 lib/lead.sh:from Claude Code: !
-lib/lead.sh:Releases stay with the Claude Code session
 lib/project.sh:Claude Code session leading may push
 lib/transfer.py:from Claude Code: !
 lib/discover.py:from Claude Code: !

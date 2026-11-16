@@ -204,7 +204,11 @@ out=$($FX packs check --target fk-render delta 2>&1); rc=$?
 echo '{}' > "$FD/rules.json"; $FX packs check --target fk-render delta 2>&1 | grep -q "differs from the manifest: rules.json" && ok "another runtime: a tampered settings file is reported by the name its definition gives" || no "fakert tamper"
 mkdir -p "$HOME/.fk/skills/s-all"; $FX packs check --target fk-render delta 2>&1 | grep -q "shadowing: skill s-all is also in ~/.fk/skills" && ok "another runtime: shadowing is looked for in its own user skills directory" || no "fakert shadow"
 rmdir "$HOME/.fk/skills/s-all" "$HOME/.fk/skills" "$HOME/.fk"
+# An eligible secondary target now plans independently; an enabled project extension cannot silently disappear on it.
+$FX packs apply --target claude-code delta >/dev/null 2>&1 && ok "another runtime: an explicit eligible secondary target plans independently" || no "secondary target did not plan"
+jq '.models.extensions = ["fakert-only"]' "$T/c/projects/delta.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/delta.json"
 $FX packs apply --target claude-code delta >/dev/null 2>&1; [ $? != 0 ] && ok "another runtime: its project is not rendered under the target of another" || no "fakert wrong target"
+jq 'del(.models.extensions)' "$T/c/projects/delta.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/delta.json"
 # its definition has no name_key: a name goes into a rule as written, so only a plain name does (a slash is refused, not guessed at)
 printf '%s' '{"name":"sl","url":"https://mcp.example.net/sl","tools":{"repo/read":"always_allow"}}' > "$T/sl.json"
 stok=$($DA tool import "$T/sl.json" --compatible any | tok_of); $DA tool import "$T/sl.json" --compatible any --plan "$stok" --approved test >/dev/null

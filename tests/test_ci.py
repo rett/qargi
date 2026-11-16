@@ -5,7 +5,7 @@ keys are as intended, each job's timeout is not below what the manifest's budget
 recomputed here), and tests/durations.txt balances four shards (the slowest shard plans at most 1.3 times the fastest).
 Run: python3 tests/test_ci.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
-import math, os, re, subprocess, tempfile, unittest
+import math, os, re, shutil, subprocess, tempfile, unittest
 
 try:
     import yaml
@@ -20,9 +20,9 @@ SETUP = 600     # seconds for checkout, packages and the git identity
 SHARDS = 4
 
 
-def plan(*args):
+def plan(*args, root=ROOT):
     """tests/run.sh --plan: (the shard-plan line or '', [(weight, command)])."""
-    p = subprocess.run(["bash", "tests/run.sh", "--plan", *args], cwd=ROOT, capture_output=True, text=True)
+    p = subprocess.run(["bash", "tests/run.sh", "--plan", *args], cwd=root, capture_output=True, text=True)
     assert p.returncode == 0, p.stdout + p.stderr
     lines = p.stdout.splitlines()
     head = lines[0] if lines and lines[0].startswith("shard plan") else ""
@@ -133,6 +133,73 @@ class Pins(unittest.TestCase):
 
 
 class Manifest(unittest.TestCase):
+    def test_member_snapshots_select_all_selection_review_provider_and_path_inputs(self):
+        command = 'python3 tests/test_member_skills.py'
+        row = next(line for line in text(os.path.join(ROOT, 'tests/suite.txt')).splitlines() if command in line)
+        cases = ['lib/member_skills.py', 'lib/attempts.py', 'lib/local_run.py', 'lib/local.sh',
+                 'lib/gated_answers.py', 'lib/packs.sh', 'lib/project.sh', 'lib/provider.py',
+                 'lib/providers/codex.json', 'lib/providers/codex/local-run.md',
+                 'lib/packs_check.py', 'lib/packs_compat.py', 'lib/packs_mcp.py',
+                 'lib/packs_render.py', 'lib/conformance/review.py', 'lib/prepared_request.py',
+                 'lib/paths.py', 'lib/linker.py', 'lib/role.py', 'lib/agent.sh', 'lib/lib.sh',
+                 'lib/model-defaults.json', 'lib/project_profile.py', 'lib/render.py', 'lib/procenv.py',
+                 'roles/review/role.json', 'agents/member.body.md',
+                 'contract/contract.md', 'tests/prepared_request_cases.py',
+                 'tests/member_skills_fixture.py', 'tests/attempt_fixture.py',
+                 'tests/hermetic.py', 'tests/hermetic.sh']
+        with tempfile.TemporaryDirectory() as scratch:
+            os.mkdir(os.path.join(scratch, 'tests'))
+            for name in ('run.sh', 'test_member_skills.py'):
+                shutil.copyfile(os.path.join(ROOT, 'tests', name), os.path.join(scratch, 'tests', name))
+            suite, changed = (os.path.join(scratch, name) for name in ('tests/suite.txt', 'changed.txt'))
+            with open(suite, 'w') as stream:
+                stream.write(row + '\n')
+            for path in cases + ['', 'README.md', 'lib/unrelated.py']:
+                with self.subTest(path=path):
+                    with open(changed, 'w') as stream:
+                        stream.write(path + '\n' if path else '')
+                    _, steps = plan('--tier', 'fast', '--manifest', suite, '--changed-files', changed, root=scratch)
+                    self.assertEqual(command in [c for _, c in steps], path in cases)
+
+    def test_skill_budget_changed_inputs_select_the_step(self):
+        command = "bash tests/test_skill_budget.sh"
+        manifest = text(os.path.join(ROOT, "tests", "suite.txt"))
+        row = next(line for line in manifest.splitlines() if command in line)
+        fields = [field.strip() for field in row.split("|")]
+        self.assertEqual(fields[:2], ["fast", "par"])
+        self.assertEqual(fields[4], command)
+        # A full-tier copy makes selection depend on coverage.
+        with tempfile.TemporaryDirectory() as scratch:
+            # Plan mode checks inventory before selection. Keep that inventory small
+            # while exercising the current runner and the actual coverage row.
+            os.mkdir(os.path.join(scratch, "tests"))
+            for name in ("run.sh", "test_skill_budget.sh"):
+                shutil.copyfile(os.path.join(ROOT, "tests", name), os.path.join(scratch, "tests", name))
+            suite = os.path.join(scratch, "tests", "suite.txt")
+            changed = os.path.join(scratch, "changed.txt")
+            with open(suite, "w") as stream:
+                stream.write("full" + row[len("fast"):] + "\n")
+            cases = [
+                "skills/qargi-flow/SKILL.md", "skills/qargi-flow/marshal.md",
+                "skills/example/data.txt", "skills/example/nested/reference.md",
+                "packs/skills/review-findings/SKILL.md", "packs/skills/example/nested/reference.md",
+                "contract/contract.md", "contract/output-format.md", "contract/nested/addendum.md",
+                "roles/build/ROLE.md", "agents/member.md", "agents/member.body.md",
+                "provision/templates/provider-notes.md", "lib/providers/codex/local-run.md",
+                "lib/providers/example/nested/addendum.md", "lib/providers/codex.json",
+                "tests/skill-budget.txt", "tests/skill-dup-allowlist.txt",
+                "tests/skill-verbs-allowlist.txt", "lib/commands.py", "tests/test_skill_budget.sh",
+            ]
+            for path in cases + ["", "README.md", "lib/unrelated.py", "packs/baseline.json",
+                                 "contract/manifest.example.json", "packs/skills/example/data.json"]:
+                with self.subTest(path=path):
+                    with open(changed, "w") as stream:
+                        stream.write(path + "\n" if path else "")
+                    _, steps = plan("--tier", "fast", "--manifest", suite, "--changed-files", changed, root=scratch)
+                    self.assertEqual(command in [c for _, c in steps], path in cases)
+        _, fast = plan("--tier", "fast")
+        self.assertIn(command, [c for _, c in fast])
+
     def test_changelog_selects_the_full_tier_strict_converter_in_fast_plans(self):
         command = "python3 tests/test_site.py Converter.test_the_changelog_converts_with_the_literal_option"
         rows = [line.split("|") for line in text(os.path.join(ROOT, "tests", "suite.txt")).splitlines()

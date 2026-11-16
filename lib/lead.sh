@@ -90,7 +90,7 @@ status() {
   local lp tf vid mode
   lp=$(jq -c '.lead.push // {}' "$PCFG")
   echo "Lead of $PROJECT: who may push"
-  echo "  members     never (they have no GitHub tool and the repository mount is read-only)"
+  echo "  members     instructed to return patches without pushing; protection depends on their runtime"
   ok "this session" "$(jq -r 'if .local then "may push agent branches and open pull requests; merges and releases need your explicit word" else "no grant: asks before every push" end' <<<"$lp")"
   if [ "$(jq -r '.cloud // "none"' <<<"$lp")" != branches ]; then
     ok "cloud lead" "no grant: it never pushes   (create one: qargi lead grant $PROJECT)"; return 0
@@ -157,7 +157,7 @@ EOF
   fi
   audit_log lead-grant "$PROJECT"
   echo; status
-  echo; echo "Done. Releases stay with the Claude Code session ('release it'). To undo this: qargi lead revoke $PROJECT"
+  echo; echo "Done. Releases remain lead-owned under the release gates. To undo this: qargi lead revoke $PROJECT"
 }
 
 revoke() {

@@ -81,6 +81,8 @@ import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import paths
+import packs_mcp
+import provider
 from procenv import now, clean_path
 
 MAX_RECORD = 256 * 1024
@@ -421,7 +423,15 @@ class Store:
         need(type(record["schema"]) is int and record["schema"] == 1 and record["run"] == self.run,
              "unsupported or mismatched lifecycle record")
         p = record["prepared"]
-        shape(p, "epoch at base base_sha refs refs_sha256 identity" + (" request" if type(p) is dict and "request" in p else ""))
+        shape(p, "epoch at base base_sha refs refs_sha256 identity" + (" request" if type(p) is dict and "request" in p else "")
+              + (" skills" if type(p) is dict and "skills" in p else ""))
+        if 'skills' in p:
+            import member_skills as MS
+            need('request' in p, 'member skills require prepared.request')
+            try:
+                MS.manifest(self, p['skills'])
+            except MS.Invalid as e:
+                raise Refuse(str(e)) from e
         if "request" in p:
             import prepared_request
             try:
@@ -557,7 +567,13 @@ class Store:
                               base_sha=base_sha, refs="prepared.refs", refs_sha256=sha, identity=uuid.uuid4().hex), current=1,
                               attempts=[self._attempt(1, epoch, "prepared.refs", sha)])
                 if request is not None:
+                    import prepared_request
+                    prepared_request.validate(request)
                     record["prepared"]["request"] = request
+                    import member_skills as MS
+                    skills = MS.freeze(self, request)
+                    if skills is not None:
+                        record['prepared']['skills'] = skills
                 self._commit(record)
                 work = dict(run=self._work_identity(self.run), tmp=None)
                 if tmpdir is not None:
@@ -853,6 +869,12 @@ class Store:
         record = self.show()
         v = record["attempts"][-1]["verified"]
         need(v is not None and self._saved_marker(record) == (record["current"], v["nonce"]), "no current verified saved copy")
+        if 'skills' in record['prepared']:
+            import member_skills as MS
+            MS.manifest(self, record['prepared']['skills'], full=True)
+            saved = Store(self.run)
+            saved.path = self.root + '/runs/' + self.id
+            MS.manifest(saved, record['prepared']['skills'], full=True)
         return self.root + "/runs/" + self.id
 
     @staticmethod
@@ -1381,6 +1403,10 @@ def save_product(store, refs):
     new dispatch (or explicit recovery after an interrupted save).
     """
     store.require_lock()
+    prepared = store.show()['prepared']
+    if 'skills' in prepared:
+        import member_skills as MS
+        MS.manifest(store, prepared['skills'], full=True)
     d = store.show()["attempts"][-1]["dispatch"]
     need(d is None or d["outcome"] == "ok",
          "dispatch did not succeed; output cannot be attributed to this attempt; re-prepare")
@@ -1419,6 +1445,13 @@ def save_product(store, refs):
                 # Evidence mirror only; recovery and dispatch still require the
                 # original private lifecycle authority, never this saved file.
                 atomic(fd, "request.json", encode(record["prepared"]["request"]))
+            if 'skills' in record['prepared']:
+                import member_skills as MS
+                doc = MS.manifest(store, record['prepared']['skills'], full=True)
+                atomic(fd, 'skills.json', MS.encode(doc))
+                os.mkdir(tmp + '/skills', 0o700)
+                files, dirs = MS.collect(store.path + '/skills')
+                MS.put_tree(tmp + '/skills', files, dirs)
         finally:
             os.close(fd)
             os.close(source)
@@ -1503,8 +1536,9 @@ def main(argv=None):
             result = save_product(store, **args) if cmd == "save-product" else getattr(store, cmd.replace("-", "_"))(**args)
         print(json.dumps(result, sort_keys=True))
         return 0
-    except (Refuse, OSError, TypeError, ValueError, RecursionError, subprocess.CalledProcessError) as e:
-        print("qargi: lifecycle: %s" % e, file=sys.stderr)
+    except (Refuse, OSError, TypeError, ValueError, RecursionError, subprocess.CalledProcessError,
+            packs_mcp.McpError, provider.ProviderError) as e:
+        print("qargi: lifecycle: %s" % str(e)[:1000], file=sys.stderr)
         return 1
 
 
