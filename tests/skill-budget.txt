@@ -32,8 +32,8 @@ skills/qargi-flow/marshal.md 449 # raised: says to raise marshal.lease_minutes b
 skills/qargi-instances/SKILL.md 882
 skills/qargi-memory/SKILL.md 933
 skills/qargi-memory/curate.md 281
-skills/qargi-packs/SKILL.md 908 # raised: combine reviewed local-target guidance with configured-path and adapter qualifications, explicit default compatibility and fail-closed composition limits
-skills/qargi-packs/apply.md 985 # raised: combine reviewed local-target guidance with configured-path and adapter qualifications, explicit default compatibility and fail-closed composition limits
+skills/qargi-packs/SKILL.md 908 # raised: combine selected-runtime target guidance with qualified config/state and adapter scope
+skills/qargi-packs/apply.md 977 # raised: document default omitted-field compatibility, explicit-target checks and fail-closed composition cleanup
 skills/qargi-packs/seed.md 250
 skills/qargi-project/SKILL.md 896 # raised: one line naming the answer lead.context_window (null derives the window from the model); for the lead's review
 skills/qargi-project/repository.md 206

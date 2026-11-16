@@ -88,6 +88,14 @@ class Sync(unittest.TestCase):
         dev = " ".join(C.TOPICS["dev"][1])
         self.assertIn("Hook-enabled runtimes", dev)
 
+    def test_canonical_target_guidance_preserves_selection_and_explicit_checks(self):
+        pack = " ".join(slurp(os.path.join(ROOT, "skills/qargi-packs/SKILL.md")).split())
+        self.assertIn("match the selected runtime", pack)
+        for name in ("skills/qargi-packs/apply.md", "docs/skills-tools-and-memory/local-session.md"):
+            text = " ".join(slurp(os.path.join(ROOT, name)).split())
+            self.assertIn("Explicit targets retain", text)
+            self.assertNotIn("Explicit secondary targets retain", text)
+
     def test_campaign_metadata_help_and_completion(self):
         self.assertEqual(set(verbs("campaign")), {"commit", "show", "check", "log"})
         for spec in verbs("campaign").values():

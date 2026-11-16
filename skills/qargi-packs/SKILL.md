@@ -12,7 +12,7 @@ Only you, with the person present, change a pack: a member never does (`qargi he
 
 ## Compatible providers
 
-Every skill and tool declares `compatible_providers`: the runtimes it works with, as runtime names, family names or `any`. It is required and part of the content hash, so it is approved with the content. A project renders only the packs that match its local runtime; one that does not is **skipped** with a note, never attached silently.
+Every skill and tool declares `compatible_providers`: the runtimes it works with, as runtime names, family names or `any`. It is required and part of the content hash, so it is approved with the content. A project renders only the packs that match the selected runtime; one that does not is **skipped** with a note, never attached silently.
 
 - `qargi skill|tool new NAME --compatible LIST` and `import SOURCE --compatible LIST` take it, and so does the install verb of `qargi discover` (it asks when the catalog entry has none).
 - A pack with none fails review: `qargi skill|tool seal NAME --compatible LIST` adds it.
