@@ -31,7 +31,8 @@
 # A --project install never touches the repository's committed files: the paths
 # are hidden through the repository's local .git/info/exclude, and the install
 # is refused if any of them is already tracked. The instance registry, session
-# tracker and profiles are always per user (~/.qargi). Install at one level only.
+# tracker and profiles are always per user (~/.qargi). The user install and the installs in projects stand side by side, each with its
+# own records, installed and removed on its own.
 #
 # Every path an install writes (links, copied files and the directories it had to create) is recorded in an install manifest in
 # <live config>/install.d, before it is written: runtime-NAME.manifest for the skills of a runtime, shared.manifest for the command, man page,
