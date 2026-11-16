@@ -236,6 +236,16 @@ rm -rf "$H5" "$DEV"
 inst2 --user --copy >/dev/null 2>&1; rc=$?
 inst2 --user --copy >/dev/null 2>&1; rc2=$?
 [ "$rc" = 0 ] && [ "$rc2" = 0 ] && ok "a copy install repeated over its own copy needs no --force" || no "repeated copy install: rc=$rc rc2=$rc2"
+# but not over a file no install wrote in the tool copy ($data): the run refuses with nothing changed, and a bare --uninstall keeps the file
+echo stray > "$H2/.local/share/qargi/stray.txt"
+h0=$(find "$H2" "$QARGI_CONF/install.d" -printf '%p %y %i\n' | sort)
+out=$(inst2 --user --copy 2>&1); rc=$?
+{ [ "$rc" != 0 ] && echo "$out" | grep -q "refusing to replace existing $H2/.local/share/qargi (use --force)" && [ "$(find "$H2" "$QARGI_CONF/install.d" -printf '%p %y %i\n' | sort)" = "$h0" ]; } \
+  && ok "a --copy run over a tool copy holding a file no install wrote refuses with nothing changed" || no "copy over a stray file in the data directory (rc=$rc): $out"
+out=$(inst2 --user --uninstall 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(cat "$H2/.local/share/qargi/stray.txt" 2>&1)" = stray ] && [ ! -e "$H2/.local/share/qargi/bin" ] && [ ! -e "$H2/.local/bin/qargi" ] \
+  && echo "$out" | grep -q "kept $H2/.local/share/qargi (it holds files the install did not write)"; } && ok "and a bare --uninstall removes the install but keeps that file" || no "uninstall with a stray file in the data directory (rc=$rc): $out"
+rm -rf "$H2"; mkdir -p "$H2"; inst2 --user --copy >/dev/null 2>&1
 echo mine > "$H2/.claude/skills/qargi-task/notes.md"
 out=$(inst2 --user --copy 2>&1); rc=$?
 { [ "$rc" != 0 ] && echo "$out" | grep -q "refusing to replace existing $H2/.claude/skills/qargi-task"; } && ok "a copied skill with a file of yours inside is not replaced without --force" || no "copy with a stray file: rc=$rc $out"
