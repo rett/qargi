@@ -9,6 +9,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 - Lead skills of several runtimes install side by side: `install.sh --user --runtime NAME` leaves the other runtimes as they are, `--uninstall --runtime NAME` removes one, and the command, man page and completions go with the last.
 - A bare `install.sh --user --uninstall` removes every installed runtime and lists them first.
+- `qargi doctor` has an `install` check: an ok line with the installed tool (source, version) and every runtime installed for the user and in a project, from the install records, read only. It warns on a legacy `install.manifest` still there, a recorded link that is missing, dangling or points elsewhere, a recorded version other than the tool's `VERSION`, and a record that cannot be read; `--json` carries the same facts as fields of the check.
 
 ### Changed
 - Install records live in `<conf>/install.d/` (one manifest per runtime, a shared one, one per project and runtime). Every line is checked when read, a manifest is written whole before the install acts, and a run holds `<conf>/install.lock`. `install.json` also records `source` (link or copy).
