@@ -41,8 +41,9 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     `eval STRING`, in the program a shell reads on its standard input (below), inside $(...) and backticks, and when the script is named directly or sourced (packs.sh, discover.py, and the scripts the shell
     verbs call: env_apply.py is env apply in any use (qargi env plan and apply run the project's dry-run and bootstrap commands: project code; env.py is env,
     found like linker.py, so env show stays open), jsonplan.py (the --json wrapper) is the verb it is given, packs_link.py is packs link|unlink and project_link.py is project link|unlink in any use, packs_audit.py store is skill accept|unaccept, marshal_handoff.py is marshal handoff,
-    linker.py (the link engine) is packs link in any use, and render.py (it can run the command a definition names) is refused in any use;
-    the last two have names a project may use for its own scripts, so only the files in the lib directory of the tool or of the installed
+    linker.py (the link engine) is packs link in any use, render.py (it can run the command a definition names) and install_record.py (the
+    install engine install.sh runs: its uninstall and apply remove and relink what the install records list) are refused in any use;
+    the last three have names a project may use for its own scripts, so only the files in the lib directory of the tool or of the installed
     copy count, found from the directory the command runs in; install.sh, the installer, is refused in any use (it writes and removes the
     links in the skills and agents directories and the install records, and the guard sees none of those writes in the command), and of it
     only the file at the top of the tool or of the installed copy counts, so an install.sh of a project or of the clone stays the member's);
@@ -265,11 +266,12 @@ SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "d
 SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
            "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "project_link.py", "gated_answers.py", "project.sh", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py", "local_run.py", "local.sh", "release.sh", "release_sign.py",
            "agent.sh", "team.sh", "env.py", "env_apply.py", "branch.sh", "changelog.sh", "changelog_numbers.py", "upstream.sh", "backlog.sh", "backlog.py", "campaign.py", "ref.sh", "jsonplan.py",
-           "install.sh")
+           "install.sh", "install_record.py")
 # the command and the scripts behind the refused verbs (packs_link.py is packs link|unlink, packs_audit.py store is skill accept|unaccept,
 # marshal_handoff.py is marshal handoff: the shell verbs call them, and a member could call them directly with a hand-made inputs file;
-# linker.py, the link engine packs_link.py calls, is packs link, and render.py renders member definitions and runs the command a definition names)
-OWN_ONLY = ("linker.py", "render.py", "env.py", "install.sh")         # names too common to refuse by name alone: only the file of the tool is the script (own_script)
+# linker.py, the link engine packs_link.py calls, is packs link, render.py renders member definitions and runs the command a definition names,
+# and install_record.py is the install engine install.sh runs: its uninstall and apply remove and relink what the install records list)
+OWN_ONLY = ("linker.py", "render.py", "env.py", "install.sh", "install_record.py")   # names a project may use too: only the file of the tool is the script (own_script)
 ROOT_SCRIPTS = ("install.sh",)                                       # of those, the ones at the top of the tool, not in its lib directory
 # Known limit, by design: the scripts are recognized by the NAME the command gives. `python3 LINK` where LINK is a symlink to lib/linker.py or
 # lib/render.py, a copy of them under another name, and `python3 -c 'import linker'` (with lib on the path) are not recognized. A check on the
@@ -3000,6 +3002,10 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
     if name == "install.sh":                             # the tool's installer: it writes and removes the user's skills, agents and install records, outside every path the guard reads
         return OwnReason("install.sh of the tool installs, refreshes and uninstalls qargi (the links in the skills and agents directories and the install records) and is the lead's "
                          "to run; an install.sh of the clone you work in stays yours, and a change to the tool's install you report in your task output")
+    if name == "install_record.py":                      # the engine behind install.sh: uninstall and apply remove and relink outside every path the guard reads
+        return OwnReason("lib/install_record.py of the tool is the install engine install.sh runs: its uninstall and apply remove and relink the skills, agents and "
+                         "files the install records list, and it is the lead's to run; one of the clone you work in stays yours, and a change to the tool's "
+                         "install you report in your task output")
     if name == "render.py":
         return "lib/render.py is the renderer of member definitions and can run the command a definition names; it is not available to an agent"
     if name == "env.py":                                 # qargi env: show reads; plan and apply are refused below

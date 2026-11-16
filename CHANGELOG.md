@@ -24,6 +24,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 - The member guard refuses the tool's own `install.sh` (run, by a shell or sourced; a project's or clone's `install.sh` stays allowed) and protects `install.d/`, `install.lock` and, until 0.3.3, the legacy `install.manifest` beside `install.json`.
+- The member guard also refuses the tool's own `lib/install_record.py` in any use (run, through `python3`, a shell or sourced; a project's or clone's file of that name stays allowed): its `uninstall` and `apply` remove and relink installed files where the guard sees no write.
 
 ## [0.3.1] - 2026-11-16
 
