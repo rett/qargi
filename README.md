@@ -5,7 +5,7 @@
 Qargi is a CLI and a set of skills that dispatch one-off, task-scoped development tasks to agents and take the work back as
 reviewable patches. The skills are instructions for the lead, the agent session you work in, which runs the `qargi` command: Claude Code
 and Codex are the leads and local runtimes qargi ships definitions for ([what is verified of Codex](docs/members-and-providers/codex.md)),
-and another runtime is defined as data ([Providers and runtimes](docs/members-and-providers/providers.md)). An agent works on one task in its own clone, whose git has no credentials and whose only remote is a copy with its push URL disabled, so an ordinary push has nothing to reach or authenticate with; that is what qargi supports, not a proof that no push can happen, so the dispatching session checks that the real repository's refs did not move, verifies the result and applies it. Local
+and another runtime is defined as data ([Providers and runtimes](docs/members-and-providers/providers.md)). An agent works on one task in its own clone, whose git has no credentials and whose only remote is a copy with its push URL disabled, so an ordinary push has nothing to reach or authenticate with; that is what qargi supports, not a proof that no push can happen, so the dispatching session compares selected before/after ref snapshots under the documented exclusions and acceptance rules, verifies the result and applies it. Local
 members are the default and cloud agents are used only when you ask for them in that request; each runs on a runtime the project names for that surface.
 
 Requirements: Linux with bash, GNU coreutils (including `timeout`) and findutils, git, jq, python3 3.11 or newer, `flock` (the locks) and `ssh-keygen` (the marshal's signed records). qargi uses GNU options throughout and nothing checks the platform before a verb runs, so another system is not supported. `make doctor` checks the tools of a checkout.
@@ -53,6 +53,8 @@ qargi backlog list
 
 Start cuts `feature/dots` from develop; the member works in its own clone and returns patches, and review apply puts the checked patches on `agent/<slug>`. Verify runs the whole suite once (`test_command`, or the declared gates of tier feature). Finish is the only merge into develop and names the open backlog items its commits mention. Backlog list shows the open items of the backlog file (the answer `backlog.file`).
 
+For read-only planning reports, `qargi backlog graph check|show|why --graph FILE` reads a manually declared graph against the configured open backlog. It pins reported evidence to item revisions and leaves feature and archive state unobserved. Reports grant no acceptance or execution authority. The [backlog graph reference](docs/reference/backlog-graph.md) gives the schema, examples, limits and current lead-only public-command guard policy.
+
 `/qargi-task` is the Claude Code slash command of the `qargi-task` skill; another lead loads that skill by name or runs the verbs
 it describes (`qargi local prepare`, `qargi local run`, `qargi local verify`); a Codex lead's setup is in
 [Codex as the lead](docs/members-and-providers/codex.md#codex-as-the-lead).
@@ -71,6 +73,6 @@ it describes (`qargi local prepare`, `qargi local run`, `qargi local verify`); a
 The overview of the documentation is [docs/README.md](docs/README.md). Task-oriented guides are on the documentation site, <https://qargi.rettware.com/>.
 `man qargi` is the complete reference (`qargi help` lists the commands by task; `qargi help --man | man -l -` if the page is not installed).
 
-Status: pre-release, see [CHANGELOG.md](CHANGELOG.md). Licensed under the MIT license, see [LICENSE](LICENSE).
+Qargi is in pre-1.0 development and has published releases. See [CHANGELOG.md](CHANGELOG.md) for released versions and unreleased changes. Licensed under the MIT license, see [LICENSE](LICENSE).
 
 Copyright (c) 2026 Everett C. Haimes III

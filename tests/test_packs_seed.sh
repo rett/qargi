@@ -181,17 +181,17 @@ if [ -d "$PK/skills" ] && [ -f "$PK/baseline.json" ]; then
   grep -qi "declare gates" "$PK/skills/gitflow-member/SKILL.md" && grep -q "stopping at the first failure" "$PK/skills/gitflow-member/SKILL.md" && grep -q '`feature verify` and `release verify`' "$PK/skills/gitflow-member/SKILL.md" \
     && grep -q 'declare `gates`' "$ROOT/skills/qargi-flow/SKILL.md" && grep -q "stop at the first failure" "$ROOT/skills/qargi-flow/SKILL.md" && grep -q "only the checks of its own change" "$ROOT/skills/qargi-flow/SKILL.md" \
     && ok "gitflow-member and qargi-flow tell that declared gates run in order and stop at the first failure, and that a member runs only its own checks" || no "the declared gates are not in gitflow-member and qargi-flow"
-  for n in gitflow-member keep-a-changelog; do
+  for n in gitflow-member keep-a-changelog release-docs-review; do
     [ "$(jq -r .sha256 "$LIB/skills/$n/.pack.json")" = "$(jq -r .shipped "$LIB/skills/$n/.pack.json")" ] && [ "$(jq -r .sha256 "$LIB/skills/$n/.pack.json")" = "$(hash_of "$PK/skills/$n")" ] && ok "shipped pack $n is recorded with the content hash of packs/skills/$n" || no "shipped pack $n hash"
   done
   listed=$(jq -r '.packs[].name' "$PK/baseline.json" | sort); present=$(ls "$PK/skills" | sort)
   [ "$listed" = "$present" ] && ok "every packs/skills directory is listed in baseline.json and the reverse" || no "listed [$listed] vs present [$present]"
-  # the nine shipped packs: three process packs and six practice packs, each text-only (a SKILL.md and nothing else)
-  want=$(printf '%s\n' bubble-tea campaign-coordination docs-site-member gitflow-member keep-a-changelog qargi-contributing review-findings secrets-scan shellcheck-gate)
-  [ "$listed" = "$want" ] && ok "the baseline ships exactly the nine expected packs (count $(wc -l <<<"$listed"))" || no "baseline packs are [$listed], expected [$want]"
+  # the ten shipped packs: three process packs and seven practice packs, each text-only (a SKILL.md and nothing else)
+  want=$(printf '%s\n' bubble-tea campaign-coordination docs-site-member gitflow-member keep-a-changelog qargi-contributing release-docs-review review-findings secrets-scan shellcheck-gate)
+  [ "$listed" = "$want" ] && ok "the baseline ships exactly the ten expected packs (count $(wc -l <<<"$listed"))" || no "baseline packs are [$listed], expected [$want]"
   textonly=1; for d in "$PK"/skills/*/; do [ "$(find "$d" -type f | wc -l)" = 1 ] && [ -f "${d}SKILL.md" ] || { textonly=0; echo "       | not text-only: $d"; }; done
   [ "$textonly" = 1 ] && ok "every shipped pack is a single SKILL.md" || no "a shipped pack holds more than SKILL.md"
-  for n in review-findings secrets-scan docs-site-member qargi-contributing bubble-tea campaign-coordination; do
+  for n in review-findings secrets-scan docs-site-member qargi-contributing bubble-tea campaign-coordination release-docs-review; do
     jq -e --arg n "$n" '.packs[] | select(.name==$n) | .kind=="skill" and (.propose|length>0) and .compatible_providers==["any"]' "$PK/baseline.json" >/dev/null \
       && ok "baseline.json lists $n with a propose value and [\"any\"]" || no "baseline.json entry for $n"
   done
