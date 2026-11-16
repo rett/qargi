@@ -34,13 +34,13 @@ skills/qargi-memory/SKILL.md 933
 skills/qargi-memory/curate.md 281
 skills/qargi-packs/SKILL.md 926 # raised: route opt-in member delivery to its canonical reference
 skills/qargi-packs/apply.md 1001 # raised: distinguish local rendering from gated member snapshots
-skills/qargi-packs/member-skills.md 648 # raised: specify descriptor ownership, private allocation recovery, staged identity and cooperative OS limits
+skills/qargi-packs/member-skills.md 643
 skills/qargi-packs/seed.md 250
 skills/qargi-project/SKILL.md 896 # raised: one line naming the answer lead.context_window (null derives the window from the model); for the lead's review
 skills/qargi-project/repository.md 206
 skills/qargi-providers/SKILL.md 767
 skills/qargi-providers/definition.md 772 # raised: pretty-print the complete JSON example with each nested value on its own line; one clause for dispatch.hidden_paths (the places a sandbox hides, what each class shows, a run there refused); the run_config clause names its baseline (settings in every run) beside the MCP servers (ten words); one clause each for dispatch.home, dispatch.run_config, dispatch.output.usage, resources.mcp.tool_lists and the {final_message} placeholder, the command-runtime fields the codex runtime brought; for the lead's review
-skills/qargi-providers/verify.md 863 # raised: separate structural skill destinations from loading and protection qualification
+skills/qargi-providers/verify.md 886 # raised: record bounded headless marker observations while preserving the interactive skills qualification gate
 skills/qargi-provision/SKILL.md 385
 skills/qargi-session/SKILL.md 926 # raised: two lines on local runs (no clean needed before the next feature finish; before a reboot apply verified runs or use the saved copy)
 skills/qargi-task/SKILL.md 920 # raised: qualify adapter guard and configurable config/state locations while preserving existing pack and snapshot guidance
