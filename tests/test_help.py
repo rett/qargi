@@ -77,6 +77,17 @@ class Sync(unittest.TestCase):
         self.assertIn("unavailable at both observations", text)
         self.assertIn("remote refs remain unobserved", text)
 
+    def test_storage_and_guard_topics_disclose_runtime_scope(self):
+        files = " ".join(C.TOPICS["files"][1])
+        self.assertIn("dev mode", files)
+        self.assertIn("repo-tier memory", files)
+        self.assertNotIn("Nothing is stored in a repository", files)
+        guard = " ".join(C.TOPICS["guard"][1])
+        self.assertIn("adapter installs", guard)
+        self.assertIn("qargi provider show", guard)
+        dev = " ".join(C.TOPICS["dev"][1])
+        self.assertIn("Hook-enabled runtimes", dev)
+
     def test_campaign_metadata_help_and_completion(self):
         self.assertEqual(set(verbs("campaign")), {"commit", "show", "check", "log"})
         for spec in verbs("campaign").values():

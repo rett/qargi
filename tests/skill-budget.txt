@@ -32,7 +32,7 @@ skills/qargi-flow/marshal.md 449 # raised: says to raise marshal.lease_minutes b
 skills/qargi-instances/SKILL.md 882
 skills/qargi-memory/SKILL.md 933
 skills/qargi-memory/curate.md 281
-skills/qargi-packs/SKILL.md 861 # raised: tool names are the server's own and a write word counts in any spelling (one clause); the server's tool listing, --tool-list FILE (one line); a member gets the MCP tools of its roles' tool packs, needs agent refresh after a link or seal, and its guard judges each call (one line); for the lead's review
+skills/qargi-packs/SKILL.md 862 # raised: qualify adapter guard and configurable config/state locations while preserving existing pack and snapshot guidance
 skills/qargi-packs/apply.md 639
 skills/qargi-packs/seed.md 250
 skills/qargi-project/SKILL.md 896 # raised: one line naming the answer lead.context_window (null derives the window from the model); for the lead's review
@@ -42,7 +42,7 @@ skills/qargi-providers/definition.md 772 # raised: pretty-print the complete JSO
 skills/qargi-providers/verify.md 807 # raised: a refreshed sign-in that replaced the link is kept as auth.json.from-run for you, never written over your file (four words); what the shipped codex has verified (with the CLI version and date) and what not, and a smoke run verifies a model or effort override only when an event names it (two sentences); the live checks before members rely on a sandbox runtime include its run baseline and a clone's own .codex/ not loading, and the offline checks of what loads, at no cost (two sentences); a refreshed sign-in reaches your file through the link or written back after a replace (three words); a write member commits because the write class makes the clone's .git writable (three words); the live checks of a sandbox runtime (the free barrier check with no model call, the smoke run, what to check before members rely on it) and where a shipped runtime records them; the sandbox-args case in the list of hermetic cases; for the lead's review
 skills/qargi-provision/SKILL.md 385
 skills/qargi-session/SKILL.md 926 # raised: two lines on local runs (no clean needed before the next feature finish; before a reboot apply verified runs or use the saved copy)
-skills/qargi-task/SKILL.md 910 # raised: report failed ref comparisons with observed evidence
+skills/qargi-task/SKILL.md 920 # raised: qualify adapter guard and configurable config/state locations while preserving existing pack and snapshot guidance
 skills/qargi-task/cloud.md 744
 skills/qargi-task/local-run.md 222 # raised: one sentence, a runtime whose sandbox hides a place refuses a run there and prepare names the fix (usually --scratch on disk); for the lead's review; lowered before: prepare writes RUN/task.md
 skills/qargi-team/SKILL.md 882

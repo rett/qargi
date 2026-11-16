@@ -235,7 +235,6 @@ lib/commands.py:Anthropic's skills"\)
 
 # lib/lead.sh, lib/project.sh, lib/transfer.py, lib/discover.py: "from Claude Code run it with !" and the like
 lib/lead.sh:from Claude Code: !
-lib/lead.sh:Releases stay with the Claude Code session
 lib/project.sh:Claude Code session leading may push
 lib/transfer.py:from Claude Code: !
 lib/discover.py:from Claude Code: !

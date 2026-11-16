@@ -952,7 +952,7 @@ WRAP
     if [ "$crc" = 3 ]; then
       exit 3   # run_record said why: the registry does not vouch for this run directory, so no repository was asked
     elif [ -n "$EMPTY" ]; then
-      if [ "$crc" = 0 ]; then echo "refs: unchanged by the run (compared all the same; nothing was recorded)" >&2
+      if [ "$crc" = 0 ]; then echo "refs: comparison passed for observed snapshots (nothing was recorded)" >&2
       else
         echo "REFS CHANGED or observation unavailable: ref comparison failed (see details):" >&2
         cat "$CHECK_DIR/refs.diff" >&2
@@ -1223,19 +1223,19 @@ WRAP
     [ -f "$RUN/refs.before" ] && [ -f "$RUN/ability" ] && case $(basename "$RUN") in qargi.??????) ;; *) false;; esac \
       || usage_die "clean needs a RUN dir made by prepare"
     # a read-only run (its class in the lead's registry: an advisor, a review) returns a report and no manifest: its OUT holds a report.md (or NAME-report.md, a
-    # regular file) and it closes with a plain clean, when its refs are unchanged (the check below) and its clone holds no commit (the check after that)
+    # regular file). Plain clean still requires a passing comparison, no clone commit and no retained lifecycle evidence requiring explicit disposition.
     [ -n "$DISCARD" ] || [ -f "$RUN/out/manifest.json" ] || [ -n "$(find "$RUN/out" -name '*manifest.json' 2>/dev/null | head -1)" ] \
       || { [ "$RCLASS" = read-only ] && out_has_report "$RUN/out"; } \
       || die "$RUN/out holds no manifest: collect the work first, or --discard to drop a run that produced none$([ "$RCLASS" != read-only ] || echo " (a read-only run closes with a plain clean once its OUT holds report.md)")$(out_has_report "$RUN/out" || printf '\n%s' "$NOREPORT_CAUSE")"
-    # changed refs are evidence: kept, unless the run is dropped on purpose (--discard), which says so and goes on
+    # A failed comparison is evidence: kept unless explicit --discard acknowledges dropping the run.
     vrc=0; vout=$(QARGI_VERIFY_REFS_ONLY=1 "$0" verify "$RUN" 2>&1 </dev/null) || vrc=$?
     if [ "$vrc" = 3 ]; then   # the registry does not vouch for the run directory: nothing was asked of any repository
       [ -n "$DISCARD" ] || die "${vout#qargi: }"
       echo "qargi: warning: the lead's registry does not vouch for $RUN; dropped on purpose:" >&2
       sed 's/^/  /' <<<"$vout" >&2
     elif [ "$vrc" != 0 ]; then
-      [ -n "$DISCARD" ] || die "the refs of the repository changed during this run: keep $RUN as evidence and tell the user (qargi local verify $RUN)"
-      echo "qargi: warning: the refs of the repository changed during this run; dropped on purpose:" >&2
+      [ -n "$DISCARD" ] || die "the refs of the repository changed or could not be compared: keep $RUN as evidence and tell the user (qargi local verify $RUN)"
+      echo "qargi: warning: the refs of the repository changed or could not be compared; dropped on purpose:" >&2
       sed 's/^/  /' <<<"$vout" >&2
     elif [ -n "$DISCARD" ]; then
       printf '%s\n' "$vout"   # even deliberate recovery reports the actual refs verdict

@@ -6,7 +6,7 @@ argument-hint: '"<task>" --done "<check>" [--instance NAME] [--base B] [--scope 
 
 # /qargi-task (dispatch and session lifecycle)
 
-A **role** says what a task is for (`qargi role list`): build, write, review and test ship with qargi; add your own in `~/.qargi/config/roles/NAME/`. Its **class** (write or read-only) is what the guard checks; its text cannot change it. A **member** is a local agent you named and gave roles (`qargi agent add`), written by the project's local runtime from one member definition (`/qargi-instances`); an **instance** is a registered cloud agent of one role. All of them obey `contract/contract.md`: one task, own clone, patches back, never push, no backlog.
+A **role** says what a task is for (`qargi role list`): build, write, review and test ship with qargi; add your own in `~/.qargi/config/roles/NAME/`. Its **class** (write or read-only) is checked by guard-enabled adapters; its text cannot change the stored class. A **member** is a local agent you named and gave roles (`qargi agent add`), written by the project's local runtime from one member definition (`/qargi-instances`); an **instance** is a registered cloud agent of one role. All of them obey `contract/contract.md`: one task, own clone, patches back, never push, no backlog.
 
 ## Quick form
 
@@ -17,7 +17,7 @@ If the first argument is not a session verb (`send`, `start`, `status`, `watch`,
 ## Hard rules
 
 - **Local is the default.** Load cloud.md only when the user's request names a cloud instance; never choose cloud on your own or fall back between local and cloud: report instead.
-- Agents never push. What the guard refuses: `qargi help guard`. Plan and token rules: `qargi help approvals`.
+- Members are instructed to return patches without pushing. Guard-enabled adapter checks appear in `qargi help guard`. Plan and token rules appear in `qargi help approvals`.
 - Every returned series goes through `/qargi-verify` before anything is applied.
 
 ## Task block

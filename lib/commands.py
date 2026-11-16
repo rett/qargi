@@ -122,7 +122,7 @@ COMMANDS = {
         "desc": ("The answers are the repository, its long-lived branches, the roles that exist (build, write, review, test) "
                  "with each role's base branch, model, effort, packages and skills, the memory stores, the budget, and "
                  "optionally a lead with teams and a push grant. Provisioning and dispatch read them. Push policy per role "
-                 "is none: an agent never pushes; the lead's grant is separate (qargi help push)."),
+                 "is none for members: they are instructed to return patches without pushing. The lead's grant is separate (qargi help push)."),
         "scripts": ["project.sh"],
         "verbs": {
             "template": verb("Print an answers file with defaults", [("NAME", "none")], desc="Edit it, then store it with init. models.provider is empty and must be set (the provider the project's agents run on; there is no default); project validate reports it while it is not. No role names a model: it takes the provider's tier once one is set."),
@@ -1348,7 +1348,7 @@ COMMANDS = {
                                 "When the applied branch is not merged because you rewrote it by hand (its tip is not the review:apply tip in your ref journal, the trees are the same and no rewrite is recorded), "
                                 "the refusal also names the fix, with the branch and both tips filled in: git branch -f BRANCH OLD, then qargi ref record --rewrite BRANCH OLD NEW --why ...; clean then follows the rewrite. "
                                 "When the refusal for an OUT with no manifest finds no report either, it names the likely cause too: a runtime can refuse the member's write tool for a report file, "
-                                "so the files never reached OUT; the member writes them with the shell (a heredoc). "
+                                "so the files never reached OUT; follow the selected runtime's output rules, returning the report as the final message when writes are unavailable. "
                                 "--orphans is for what no run owns: prepare makes a qargi-run.XXXXXX directory under /dev/shm (QARGI_RUN_TMP moves it) for each run, and clean RUN removes only the one your registry names for that run, "
                                 "so a prepare that failed halfway, a dropped record or a replaced state directory leaves one behind. --orphans lists every such directory with its age (from its modification time) and says whether a run of "
                                 "the registry names it, live or not; a link and a file are named and left. Only the registry of this state directory is consulted: the runs of another state directory "
@@ -1782,7 +1782,7 @@ TOPICS = {
         "prompt is the person's real control. A member never applies: it reports the plan and its token, and the lead shows them to the person "
         "(what the member's guard refuses: qargi help guard)."]),
     "guard": ("What a member's guard refuses", [
-        "A best-effort text check, not a sandbox: a member runs as your OS user; qargi local verify and review check are the backstop.",
+        "These best-effort checks apply when the runtime adapter installs qargi __guard (qargi provider show RUNTIME). Members run as your OS user. qargi local verify compares snapshots.",
         "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
         "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, gates, env, site, backlog, packs, runs, upstream, git, review, roles), init, new, link and unlink; "
         "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (the rest "
@@ -1798,7 +1798,7 @@ TOPICS = {
         "is refused even in text (not mid-sentence); any other refused verb is text when every command is echo, cat, tee, grep or git commit, "
         "as is a heredoc body cat or tee gets, bar lines starting qargi. "
         "Shell programs piped in or here-strings are read; curl | sh and bash < f are refused. A cd it cannot read refuses relative writes.",
-        "The read-only class (review) writes only OUT and TMP (its TMPDIR is the run's TMP): every change to the clone is refused. It runs build, vet and test commands with its given environment; assigning PATH, TMPDIR or GIT_* is refused, not the command.",
+        "The read-only class (review) may write only OUT and TMP (the run's TMPDIR). Recognized clone mutations are refused. It runs build, vet and test commands with its given environment; assigning PATH, TMPDIR or GIT_* is refused, not the command.",
         "Setting QARGI_NESTED (skips a plan token), or setting or unsetting QARGI_LEAD, is refused.",
         "A refusal is a result: report it."]),
     "naming": ("How resources are named", [
@@ -1817,10 +1817,9 @@ TOPICS = {
         "what leaves a store is archived under /_archive/<date>/, a collision goes to /_conflicts/<date>/, and the origin of every "
         "note written is added to its Sources: line."]),
     "push": ("Who may push", [
-        "Push policy reserves pushing to the lead within the project's lead.push grant. The default grant permits no pushes.",
+        "Push policy reserves pushing to the lead. Without a scoped grant, ask before each push. Plan-gated flow commands retain their own approval requirements.",
         "The stored lead.push.local grant permits scoped agent/* branch pushes and pull requests without asking each time. Enforcement depends on the selected runtime and its tool permissions; inspect that adapter before relying on it.",
-        "A cloud lead, or one started in the console: lead.push.cloud = branches. It has a GitHub tool with a fixed allowlist and the merge "
-        "tool asked of you. Set it up with qargi lead grant. Long-lived branch finishing and release/publication commands retain their command-specific approval gates.",
+        "The cloud lead grant, lead.push.cloud = branches, supplies a GitHub tool with a fixed allowlist. It asks before merging when lead.push.merge is ask, and omits that tool when it is never. Set it up with qargi lead grant. Long-lived branch finishing and release/publication commands retain their command-specific approval gates.",
         "The scoped cloud GitHub tool excludes release creation. Release publication remains a lead operation under the release gates."]),
     "environment": ("Declaring a development environment", [
         "There is no file format of this tool for it. A project says how to set up a checkout in what it already has: a section of AGENTS.md (or README.md) headed "
@@ -1851,13 +1850,13 @@ TOPICS = {
         "Overrides: QARGI_HOME replaces ~/.qargi; QARGI_CONF and QARGI_STATE replace the two directories and win over it. XDG_CONFIG_HOME and XDG_STATE_HOME are not used. "
         "QARGI_PROJECT names the project when you are not inside its repository. QARGI_ROLES replaces the list of roles. "
         "QARGI_DRY_RUN prints a session request with secrets masked instead of sending it.",
-        "Nothing is stored in a repository."]),
+        "These are user-installation defaults. In dev mode, configuration and state can live in checkout-local .qargi (qargi help dev). Project repo-tier memory can be committed, and shared marshal records can be commits on the project remote."]),
     "dev": ("Running a branch checkout", [
         "install.sh --user records the tool it installed in ~/.qargi/config/install.json. A checkout run from any other place (its own bin/qargi, "
         "for example in a worktree) is then a dev run: it keeps its configuration and state in <checkout>/.qargi (ignored by version control), prints "
         "'qargi: dev run from ...' on stderr once per command, and never touches your live data. Without install.json every checkout is the installed one.",
         "QARGI_HOME, QARGI_CONF or QARGI_STATE, when set, win: QARGI_HOME=~/.qargi makes a dev run use live data on purpose.",
-        "help, version, completion, the guard and the run-event hooks print no banner. Members call qargi __guard from PATH, which is the installed "
+        "help, version, completion, the guard and the run-event hooks print no banner. Hook-enabled runtimes call qargi __guard from PATH, which normally resolves to the installed "
         "copy; put <checkout>/bin first on PATH to test the guard or the hooks of a branch."]),
 }
 
