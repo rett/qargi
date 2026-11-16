@@ -3,7 +3,7 @@
  "started": "2026-11-15T19:59:29Z",
  "goal": "Qualified multi-runtime project skill access and opt-in canonical member snapshots without changing member defaults or frozen policy",
  "plan": "",
- "note": "",
+ "note": "Documentation integrated on develop01dcf6e with143/143 and CI pass. Member candidate applied as agent/project-member-skills06d37f3, still unmerged. Lead reproduced cleanup race; Fable and Opus both REVISE. Source-only dependent repair qargi.dKnv8H, Sol/high, pinned to actual applied candidate06d37f3. Qualification and acceptance remain pending. Original failed attempt and complete reviews archived in release-0.3.1 campaign evidence. No frozen run changes.",
  "status": "active",
  "lead": {
   "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
@@ -12,11 +12,11 @@
   "since": "2026-11-15T19:59:29Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-16T05:32:03Z",
+ "renewed_at": "2026-11-16T05:33:21Z",
  "finished_at": null,
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 24,
- "updated_at": "2026-11-16T05:32:03Z",
+ "rev": 25,
+ "updated_at": "2026-11-16T05:33:21Z",
  "feature": "project-skills-rollout",
  "project": "qargi"
 }
