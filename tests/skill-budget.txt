@@ -32,7 +32,7 @@ skills/qargi-instances/SKILL.md 882
 skills/qargi-memory/SKILL.md 933
 skills/qargi-memory/curate.md 281
 skills/qargi-packs/SKILL.md 907 # raised: explicit eligible local targets, secondary skills-only link route and provider-bound approvals; member defaults stay unchanged
-skills/qargi-packs/apply.md 946 # raised: prior canonical skill approval and safe owned cleanup after skills verification/support loss, including library-provider reseals
+skills/qargi-packs/apply.md 960 # raised: preserve default cleanup compatibility, remove verified-capability prerequisites for owned removal and scope approval claims to local targets
 skills/qargi-packs/seed.md 250
 skills/qargi-project/SKILL.md 896 # raised: one line naming the answer lead.context_window (null derives the window from the model); for the lead's review
 skills/qargi-project/repository.md 206

@@ -104,7 +104,9 @@ full | par | 300 | 79 | bash tests/test_packs_seed.sh | lib/packs*.sh lib/packs*
 fast | par | 300 | 9 | python3 tests/test_packs_check.py | lib/packs*.sh lib/packs*.py lib/conformance/review.py
 fast | par | 300 | 3 | python3 tests/test_packs_mcp.py | lib/packs_mcp.py lib/packs_check.py lib/packs.sh lib/providers/claude-code.json
 full | par | 882 | 204 | bash tests/test_packs_render.sh | lib/packs*.sh lib/packs*.py
-full | par | 2200 | 874 | python3 tests/test_pack_targets.py | lib/provider.py lib/packs.sh lib/packs_render.py lib/packs_link.py lib/packs_audit.py lib/packs_compat.py lib/packs_check.py lib/packs_mcp.py lib/linker.py lib/paths.py lib/project_link.py lib/commands.py
+# Target duration 839s aggregates the earlier 23-case run, its separately timed added case and the four lead regressions.
+# Final combined 28-case timing is recorded independently in the lead gate receipt.
+full | par | 2200 | 923 | python3 tests/test_pack_targets.py | lib/provider.py lib/packs.sh lib/packs_render.py lib/packs_link.py lib/packs_audit.py lib/packs_compat.py lib/packs_check.py lib/packs_mcp.py lib/linker.py lib/paths.py lib/project_link.py lib/commands.py lib/providers/claude-code.json
 full | par | 804 | 214 | bash tests/test_packs_link.sh | lib/packs*.sh lib/packs*.py
 fast | par | 300 | 20 | bash tests/test_linker.sh | lib/linker.py
 full | par | 1038 | 313 | bash tests/test_packs_audit.sh | lib/packs*.sh lib/packs*.py

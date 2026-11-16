@@ -11,8 +11,8 @@ Called by packs.sh, which holds the project's lock and gathers the facts only th
   {project, provider, state, checkout, kids:[{name, in_library}]}
 where kids are the skill directories of a real CHECKOUT/<skills dir> and in_library says whether the library has a pack of that
 name. The content of a kid and of its library pack is compared here with packs_audit.strict_hash (symbolic links, the executable
-bit, empty directories and nested .pack.json files count; the library pack's own top-level record does not). A provider without a project skills directory, or without verified skills support,
-is refused with exit status 3.
+bit, empty directories and nested .pack.json files count; the library pack's own top-level record does not). Loading needs a project skills
+directory and verified skills support. Owned removal needs a safe current layout and sealed runtime identity, without capability-verification prerequisites.
 
   packs_link.py plan  link|unlink INPUTS TOKENFILE   print the plan and write the plan token (none when there is nothing to do)
   packs_link.py apply link|unlink INPUTS TOKEN       re-plan, refuse if the plan changed, then change the file system
@@ -95,7 +95,7 @@ class SkillsLink(linker.Link):
         res = provider.composed(inp["provider"], "local", inp["project"],
                                 render=provider.render_context(inp["project"], inp["provider"]), operation=operation).get("resources") or {}
         declared_mode = ((res.get("skills") or {}).get("link") or {}).get("project")
-        if (inp.get("requested_target") or operation == "unlink") and declared_mode != mode:
+        if inp.get("requested_target") and declared_mode != mode:
             raise provider.Unsupported("packs %s requires skills link.project %s" % (operation, mode))
 
     def source_missing(self):

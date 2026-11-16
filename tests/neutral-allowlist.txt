@@ -216,7 +216,6 @@ lib/commands.py:With --target claude-code it takes
 lib/commands.py:\(claude-code for this target\)
 lib/commands.py:`claude --add-dir
 lib/commands.py:Skills render under \.claude/skills
-lib/commands.py:into ~/\.claude, and members
 lib/commands.py:Needs --target claude-code
 lib/commands.py:by ~/\.claude/skills or by the
 lib/commands.py:checkout's \.claude/skills

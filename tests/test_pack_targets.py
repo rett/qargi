@@ -508,6 +508,96 @@ class Targets(unittest.TestCase):
                 self.apply(*args)
                 self.assertFalse((self.repo / ".required" / "skills").exists())
 
+    def test_default_unlink_preserves_legacy_optional_link_mode(self):
+        for mode in (None, "copy"):
+            with self.subTest(mode=mode), self.cleanup_fixture("first"):
+                path = self.providers / "first.json"
+                doc = json.loads(path.read_text())
+                if mode is None:
+                    doc["resources"]["skills"]["link"].pop("project")
+                else:
+                    doc["resources"]["skills"]["link"]["project"] = mode
+                put(path, doc)
+                dest = self.repo / ".first" / "skills"
+                dest.mkdir(parents=True)
+                (dest / "keep.txt").write_text("legacy owner content")
+                self.apply(*self.render("first"))
+                self.apply("packs", "link", "alpha")
+                self.assertTrue(dest.is_symlink())
+                self.apply("packs", "unlink", "alpha")
+                self.assertFalse(dest.is_symlink())
+                self.assertEqual((dest / "keep.txt").read_text(), "legacy owner content")
+
+    def test_default_unlink_after_optional_render_target_is_removed(self):
+        dest = self.repo / ".first" / "skills"
+        dest.mkdir(parents=True)
+        (dest / "keep.txt").write_text("owner content")
+        self.apply(*self.render("first"))
+        self.apply("packs", "link", "alpha")
+        path = self.providers / "first.json"
+        doc = json.loads(path.read_text())
+        doc["session"].pop("render_target")
+        put(path, doc)
+        self.apply("packs", "unlink", "alpha")
+        self.assertFalse(dest.is_symlink())
+        self.assertEqual((dest / "keep.txt").read_text(), "owner content")
+
+    def test_combined_unlink_without_render_target_still_removes_agents(self):
+        path = self.providers / "first.json"
+        doc = json.loads(path.read_text())
+        doc["session"].pop("render_target")
+        doc["resources"]["agents"]["link"]["project"] = "dir-symlink"
+        put(path, doc)
+        members = Path(str(self.live("first")) + ".agents")
+        members.mkdir(parents=True)
+        (members / "fixture.md").write_text("Fixture member")
+        dest = self.repo / doc["resources"]["agents"]["project_dir"]
+        self.apply("project", "link", "alpha", "--resource", "agents")
+        self.assertTrue(dest.is_symlink())
+        self.apply("project", "unlink", "alpha")
+        self.assertFalse(dest.exists())
+        self.assertTrue((members / "fixture.md").is_file())
+
+    def test_cleanup_after_reseal_with_non_skills_capability_requirement(self):
+        for rt in ("first", "second"):
+            with self.subTest(runtime=rt), self.cleanup_fixture(rt, ".required/skills"):
+                path = self.providers / (rt + ".json")
+                doc = json.loads(path.read_text())
+                path.unlink()
+                doc["resources"].pop("skills")
+                doc["resources"].pop("settings")
+                directory = self.conf / "packs" / "providers" / rt
+                definition = directory / "definition.json"
+                seal = directory / ".pack.json"
+                put(definition, doc)
+                put(seal, {"sealed": True, "sha256": P.tree_hash(str(directory))})
+                digest = P.definition_hash(rt, root=str(self.providers),
+                                           library=str(self.conf / "packs" / "providers"))
+                put(self.state / "providers" / rt / "verified.json", {
+                    capability: {"hash": digest, "by": "conformance", "at": "fixture"}
+                    for capability in ("skills", "mcp")})
+                adds = {"resources": {
+                    key: copy.deepcopy(self.base["resources"][key]) for key in ("skills", "settings")}}
+                adds["resources"]["skills"]["project_dir"] = ".required/skills"
+                self.extension(provides=[], adds=adds, requires={"capabilities": ["mcp"]})
+                self.answers["models"]["extensions"] = ["addon"]
+                self.save_answers()
+                dest = self.repo / ".required" / "skills"
+                dest.mkdir(parents=True)
+                (dest / "keep.txt").write_text("extension owner content")
+                self.apply(*self.render(rt))
+                self.apply("packs", "link", "alpha", "--target", rt + "-view")
+                doc["description"] += " harmless reseal"
+                put(definition, doc)
+                put(seal, {"sealed": True, "sha256": P.tree_hash(str(directory))})
+                refusal = self.cli(*self.render(rt), ok=False)
+                self.assertIn("no skills support" if rt == "first" else "needs mcp", refusal)
+                args = (("project", "unlink", "alpha", "--resource", "skills") if rt == "first" else
+                        ("packs", "unlink", "alpha", "--target", rt + "-view"))
+                self.apply(*args)
+                self.assertFalse(dest.is_symlink())
+                self.assertEqual((dest / "keep.txt").read_text(), "extension owner content")
+
     def extension(self, name="addon", **updates):
         doc = {"schema": 2, "kind": "extension", "extension": name, "description": "Shared skills extension",
                "extends": self.base["family"], "surface": "local", "provides": ["skills"],

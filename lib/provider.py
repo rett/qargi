@@ -1646,16 +1646,15 @@ def _applies(doc, name, surface, base, root=None, library=None):
 
 
 def _unmet(doc, name, surface, base, root, library, state, operation=None):
-    """Why the extension's requires do not hold on the runtime alone, or None."""
+    """Why extension prerequisites fail. Owned unlink retains structural requirements and skips capability verification."""
     rq = doc.get("requires") if isinstance(doc.get("requires"), dict) else {}
     for r in rq.get("resources") or []:
         if _dict(base.get("resources")).get(r) is None:
             return "needs the %s resource, which %s does not have" % (r, name)
-    for c in rq.get("capabilities") or []:
-        if c == "skills" and operation == "unlink":
-            continue                # owned removal does not load skills; retain sealed composition after verification loss
-        if effective(name, surface, c, root, library, state) == "no":
-            return "needs %s, which %s does not have verified" % (c, name)
+    if operation != "unlink":
+        for c in rq.get("capabilities") or []:
+            if effective(name, surface, c, root, library, state) == "no":
+                return "needs %s, which %s does not have verified" % (c, name)
     q = rq.get("qargi")
     if isinstance(q, str):
         have = _qargi_version()
@@ -2020,9 +2019,10 @@ def skills_cleanup_runtime(project, target=None, root=None, library=None, conf=N
     compose(runtime, "local", project, root=root, library=library, conf=conf, render=context, operation="unlink")
     would = "remove the checkout's owned skills link or restore its backup"
     require(runtime, "project_skills_dir", would, root, library=library, project=project, conf=conf, render=context, operation="unlink")
-    selected = require(runtime, "render_target", would, root, library=library, project=project, conf=conf, render=context, operation="unlink")
-    if target and selected != target:
-        raise Refused("render target changed while selecting %s" % target)
+    if target or context:
+        selected = require(runtime, "render_target", would, root, library=library, project=project, conf=conf, render=context, operation="unlink")
+        if target and selected != target:
+            raise Refused("render target changed while selecting %s" % target)
     return runtime
 
 

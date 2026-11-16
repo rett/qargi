@@ -30,7 +30,7 @@
 #   packs.sh packs check --target T PROJECT                                  drift of that render, then the skills a session would load (read only)
 #                      (T is the render target of the project's local runtime, session.render_target in lib/providers/NAME.json: claude-code for Claude Code)
 #   packs.sh packs link|unlink PROJECT [--plan TOKEN --approved "..."]   make the checkout's project skills directory a symlink to that render, or undo it
-#                                                                       (the plan also lists the skills a session would load)
+#                                                                       (link plans also list the skills a session would load)
 #   packs.sh packs seed [--install] [--plan TOKEN --approved "..."]    add or update the baseline packs shipped in packs/
 #
 # Every pack declares which providers can use it, compatible_providers: runtime names, family names, or the single word "any"

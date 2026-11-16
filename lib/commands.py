@@ -982,7 +982,7 @@ COMMANDS = {
                                 "Skills render under .claude/skills in this example; the definition chooses all resource paths. "
                                 "Role scoping is advisory: skills include the member-role union and lead-only instructions; MCP permissions retain the member-role union without lead. "
                                 "Every included skill needs a present canonical library approval matching its content hash, including lead-only skills on every target. Passing review or approving this render cannot replace that prior approval; refusal preserves the live render. "
-                                "Nothing is written into a repository or into ~/.claude, and members cannot write under the state's render/ directory. The same holds for another runtime's user directory.\n"
+                                "Rendered resources go to the selected runtime's state tree. Member write protections depend on the runtime's qualified sandbox and guard coverage.\n"
                                 "The plan refuses, naming the pack and writing nothing, a skill whose SKILL.md name differs from the pack name, whose "
                                 "front matter is not closed or has more than one name key; a skill and a tool with the same name; and a tool allowlist "
                                 "name outside letters, digits, _, . and -. Each plan stages into its own hidden directory and a lock serializes "
@@ -1026,10 +1026,10 @@ COMMANDS = {
             "unlink": verb("Undo packs link", [("PROJECT", "project")], [LOCAL_TARGET, PLAN, APPROVED],
                            desc=("Use the same --target as link for a secondary runtime. Removes only the symbolic link that points to this project's selected runtime render and, if the backup exists, moves it back to the skills "
                                  "directory. Refuses a link to anywhere else, a real directory in its place, and a backup with no link of ours. Same plan token "
-                                 "and approval as link; nothing else is deleted. Owned unlink and backup recovery remain available after composition drift or render manifest corruption; "
-                                 "They also survive lost skills support or verification, including a harmless library-provider reseal, when sealed runtime/target identity and a safe skills path and link mode remain available. "
-                                 "Cleanup uses the same sealed extension composition, without current pack reviews or skills capability verification; missing, ambiguous, unsealed or drifted identity and unsafe layouts refuse. "
-                                 "Combined project unlink follows the same rule. Fresh apply, check and link retain their loading eligibility and render validation checks.")),
+                                 "and approval as link; nothing else is deleted. Owned unlink and backup recovery remain available after composition drift or render manifest corruption. "
+                                 "They also survive lost skills support or verification, including a harmless library-provider reseal, when sealed runtime identity and a safe skills path and link mode remain available. "
+                                 "Cleanup preserves sealed extension composition and skips current pack reviews and capability-verification prerequisites. Missing, ambiguous, unsealed or drifted identity and unsafe layouts refuse. "
+                                 "Default cleanup retains optional target and link-mode compatibility. Explicit targets retain their identity and mode checks. Combined project unlink follows the same rule. Fresh apply, check and link retain their loading eligibility and render validation checks.")),
         },
     },
     "start": {
