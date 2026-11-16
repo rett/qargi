@@ -3,8 +3,8 @@
  "started": "2026-11-15T19:59:29Z",
  "goal": "Finish verified skills rollout for 0.3.1, then pause",
  "plan": "",
- "note": "Documentation integrated on develop01dcf6e with143/143 and CI pass. Member candidate applied as agent/project-member-skills06d37f3, still unmerged. Lead reproduced cleanup race; Fable and Opus both REVISE. Source-only dependent repair qargi.dKnv8H, Sol/high, pinned to actual applied candidate06d37f3. Qualification and acceptance remain pending. Original failed attempt and complete reviews archived in release-0.3.1 campaign evidence. No frozen run changes.",
- "status": "active",
+ "note": "Reviewed repair merged at3608da15, exact a59 tree. Sixteen distinct final checks passed, coverage/input hashes retained. Opus source accepted. Two authorized probes returned random markers and cleaned links, snapshot tool trace/client inventory remains unqualified. Owner chose narrow release evidence with interactive Ataniq activation gated. Whole checkpoint running since07:37UTC. Essential accuracy corrections drafted for release preparation followed by exact-head targeted checks/review and full CI. Finish0.3.1 and configured website deployment, then pause. No new feature or host/session cutover.",
+ "status": "verifying",
  "lead": {
   "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
   "user": "rett",
@@ -12,11 +12,11 @@
   "since": "2026-11-15T19:59:29Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-16T07:42:36Z",
+ "renewed_at": "2026-11-16T07:44:37Z",
  "finished_at": null,
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 40,
- "updated_at": "2026-11-16T07:42:36Z",
+ "rev": 41,
+ "updated_at": "2026-11-16T07:44:37Z",
  "feature": "project-skills-rollout",
  "project": "qargi"
 }
