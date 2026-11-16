@@ -4,19 +4,13 @@
  "goal": "Finish verified skills rollout for 0.3.1, then pause",
  "plan": "",
  "note": "Checkpoint1 at3608da15 found stale open-provider fixture render after reseal. Failure and partial logs archived, only verified owned runner/groups stopped, no survivors. Isolated fix19acb5d passes whole open-provider script and shellcheck. Exact accepted7file accuracy draft committed ee1e9962 before replacement checkpoint. Opus final source closure pending. Skills date unset, Ataniq lead activation gated. Replacement full checkpoint will cover final task DONE checks with input hashes, plus3missing exact commands. Current0.3.1only thenpause.",
- "status": "verifying",
- "lead": {
-  "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-15T19:59:29Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-16T11:26:46Z",
- "finished_at": null,
+ "finished_at": "2026-11-16T11:27:01Z",
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 61,
- "updated_at": "2026-11-16T11:26:46Z",
+ "rev": 62,
+ "updated_at": "2026-11-16T11:27:01Z",
  "feature": "project-skills-rollout",
  "project": "qargi"
 }
