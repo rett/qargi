@@ -1,6 +1,6 @@
 ---
 title: About these docs
-description: The licence, the alpha status, what these pages cover and how they are checked, how to see which release they describe and how to report a problem.
+description: The licence, the release status, what these pages cover and how they are checked, how to see which release they describe and how to report a problem.
 doctype: explanation
 ---
 ## 1. Licence

@@ -33,7 +33,7 @@ The script reads the main repository and writes only to the output directory and
 ## Update the pages after a release
 
 1. Set `release` in `site/site.json` to the new version.
-2. Run `tools/build-local.sh`. A page that names a command or option the release no longer has fails the check, with the line number.
+2. Run `tools/build-local.sh`. A recognized command example with a command or option absent from the release fails the check, with the line number. Argument semantics and other prose require review.
 3. Fix the pages, commit on an `agent/*` branch cut from this branch, and open a pull request into `gh-pages`. The `build` check must be green.
 
 ## Publishing

@@ -82,7 +82,7 @@ For in-session runtimes, add a member when none serves the role. Inspect `STALE`
 Start with a task that is small and has a check you can run: rename a function, add a test. The loop is in [the lead's loop](/lead-loop/) and one task in detail is in [dispatch and verify](/dispatch-and-verify/). In short:
 
 1. `qargi feature start first-task --purpose "learn the loop"` cuts a feature branch from develop.
-2. Prepare a run on that base, give the task and its check to the member `agent for` printed.
+2. Prepare a run on that base with its task and executable check, then dispatch through the selected runtime as [dispatch and verify](/dispatch-and-verify/) describes.
 3. When it reports, `qargi local verify RUN`, `qargi review check RUN/out`, `qargi review apply RUN`, run the check yourself, then merge.
 
 ## 8. See also

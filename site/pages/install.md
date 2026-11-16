@@ -19,7 +19,7 @@ cd qargi
 ./install.sh --user --runtime claude-code
 ```
 
-Choose the lead runtime with `--runtime`. The example uses Claude Code. A Codex lead uses `./install.sh --user --runtime codex` and loads the skills from `~/.codex/skills`; its [setup guide](https://github.com/rett/qargi/blob/0.3.1/docs/members-and-providers/codex.md#codex-as-the-lead) records qualification limits.
+Choose the lead runtime with `--runtime`. The example uses Claude Code. A Codex lead uses `./install.sh --user --runtime codex`, which links skills into `~/.codex/skills`; its [setup guide](https://github.com/rett/qargi/blob/0.3.1/docs/members-and-providers/codex.md#codex-as-the-lead) records qualification limits.
 
 For Claude Code, this links the skills into `~/.claude/skills`, the command into `~/.local/bin`, the manual page and the shell completions (bash, zsh, fish) into your user directories, and adds the baseline packs to your pack library without linking any of them. It records what it installed in `~/.qargi/config/install.json`.
 
