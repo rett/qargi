@@ -236,7 +236,7 @@ COMMANDS = {
                  "text (roles/<role>/ROLE.md); there is no skill to load. Review is read-only as a "
                  "rule: the guard refuses changes to the clone under that role. Under every role it refuses the verbs that change "
                  "a skill (qargi skill|tool new, import, seal, remove, link, unlink, enable, disable; qargi discover install; qargi packs apply) "
-                 "and writes in the pack library, the credentials directory, the install records (install.json, install.d/, install.lock), ~/.claude/skills and any .claude/skills directory, and running the tool's own install.sh (an install.sh of the clone stays the member's); it fails closed. Dispatch spawns the member qargi agent for "
+                 "and writes in the pack library, the credentials directory, the install records (install.json, install.d/, install.lock), ~/.claude/skills and any .claude/skills directory, and running the tool's own install.sh or lib/install_record.py, the engine install.sh runs, in any use (those of the clone stay the member's); it fails closed. Dispatch spawns the member qargi agent for "
                  "ROLE prints."),
         "scripts": ["agent.sh"],
         "verbs": {
@@ -1123,7 +1123,7 @@ COMMANDS = {
         "desc": ("Works on the root-owned checkout install.sh recorded (for example /opt/qargi). Without --approved it fetches the target, "
                  "shows the commits and files that would change and prints a plan token. With --plan TOKEN --approved \"...\" it applies exactly "
                  "that: a branch on the current branch moves forward only (fast-forward), another branch is checked out at its tip, a tag is "
-                 "checked out detached; install.sh --user then runs as you (it refreshes every runtime installed, claude-code when none is) and the members to refresh are listed. The git commands that write "
+                 "checked out detached; install.sh --user then runs as you (it refreshes every runtime installed, the default runtime when none is) and the members to refresh are listed. The git commands that write "
                  "into the checkout run through sudo (QARGI_SUDO names another command). When the members file (~/.qargi/config/agents.json) is not in "
                  "the current shape, which every agent verb refuses, the plan and the end of the upgrade say so and how to redo it; nothing is "
                  "changed for that. A member or agent cannot use it."),
@@ -1817,6 +1817,7 @@ TOPICS = {
         "It refuses writes in the pack library, credentials, the install record, the runtime's skills, agents and plugin directories, the installed copy, "
         "the state's render, providers, marshal, feature and saved-run directories, its ref journal, the memory tiers, ~/.config/anthropic, and the "
         "lead's git configuration and session files. "
+        "It refuses the tool's own install.sh and lib/install_record.py (its engine) in any use. "
         "Reading stays allowed except the lead's signing key. It refuses git push, git remote changes, git -c or config of keys that run programs (alias.*), and rsync to a host.",
         "A command is cut at every ; && || | and newline, inside quotes and heredocs, and a substitution is a command. A piece that starts with git push, git tag NAME, ssh, scp, sftp or gh "
         "is refused even in text (not mid-sentence); any other refused verb is text when every command is echo, cat, tee, grep or git commit, "
