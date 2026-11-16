@@ -226,17 +226,21 @@ class Install(Base):
         self.assertFalse(os.path.exists(self.live + "/config/install.json"))
 
     def test_a_project_install_writes_only_its_manifest(self):
-        # the live location gets the project's install manifest and nothing else: no install.json, so no run turns into a dev run
+        # the live location gets the project's install manifest of its runtime (install.d/project-N-RUNTIME.manifest) and the lock of the
+        # records, nothing else: no install.json, so no run turns into a dev run
         proj = os.path.join(self.t, "proj")
         os.makedirs(proj)
         r = self.install("--project", proj)
         self.assertEqual(r.returncode, 0, r.stderr)
-        written = [os.path.relpath(os.path.join(d, f), self.live) for d, _, fs in os.walk(self.live) for f in fs]
-        self.assertEqual(len(written), 1, written)
-        self.assertRegex(written[0], r"^config/project-\d+\.manifest$")
+        written = sorted(os.path.relpath(os.path.join(d, f), self.live) for d, _, fs in os.walk(self.live) for f in fs)
+        self.assertEqual(len(written), 2, written)
+        self.assertRegex(written[0], r"^config/install\.d/project-\d+-claude-code\.manifest$")
+        self.assertEqual(written[1], "config/install.lock")
         self.assertEqual(self.where_installed(), False)
         self.assertEqual(self.install("--project", proj, "--uninstall").returncode, 0)
-        self.assertFalse(os.path.exists(os.path.join(self.live, written[0])), "the project uninstall removes its manifest")
+        for w in written:
+            self.assertFalse(os.path.exists(os.path.join(self.live, w)), "the uninstall of the last project runtime removes its manifest and the lock")
+        self.assertFalse(os.path.exists(os.path.join(self.live, "config", "install.d")))
         self.install("--project", proj)
         self.install("--user")
         before = slurp(self.live + "/config/install.json")
