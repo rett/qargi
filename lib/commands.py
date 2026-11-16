@@ -236,7 +236,7 @@ COMMANDS = {
                  "text (roles/<role>/ROLE.md); there is no skill to load. Review is read-only as a "
                  "rule: the guard refuses changes to the clone under that role. Under every role it refuses the verbs that change "
                  "a skill (qargi skill|tool new, import, seal, remove, link, unlink, enable, disable; qargi discover install; qargi packs apply) "
-                 "and writes in the pack library, the credentials directory and install.json, ~/.claude/skills and any .claude/skills directory; it fails closed. Dispatch spawns the member qargi agent for "
+                 "and writes in the pack library, the credentials directory, the install records (install.json, install.d/, install.lock), ~/.claude/skills and any .claude/skills directory, and running the tool's own install.sh (an install.sh of the clone stays the member's); it fails closed. Dispatch spawns the member qargi agent for "
                  "ROLE prints."),
         "scripts": ["agent.sh"],
         "verbs": {
@@ -1123,7 +1123,7 @@ COMMANDS = {
         "desc": ("Works on the root-owned checkout install.sh recorded (for example /opt/qargi). Without --approved it fetches the target, "
                  "shows the commits and files that would change and prints a plan token. With --plan TOKEN --approved \"...\" it applies exactly "
                  "that: a branch on the current branch moves forward only (fast-forward), another branch is checked out at its tip, a tag is "
-                 "checked out detached; install.sh --user then runs as you and the members to refresh are listed. The git commands that write "
+                 "checked out detached; install.sh --user then runs as you (it refreshes every runtime installed, claude-code when none is) and the members to refresh are listed. The git commands that write "
                  "into the checkout run through sudo (QARGI_SUDO names another command). When the members file (~/.qargi/config/agents.json) is not in "
                  "the current shape, which every agent verb refuses, the plan and the end of the upgrade say so and how to redo it; nothing is "
                  "changed for that. A member or agent cannot use it."),
@@ -1869,14 +1869,14 @@ TOPICS = {
         "The project's answers can replace a command and list accepted failures: env.doctor_command, env.bootstrap_command, env.dry_run_command "
         "and env.known_failures (qargi project set acme env.known_failures '[\"line\"]'). They are overrides, never a second description."]),
     "files": ("Where things are", [
-        "Configuration: ~/.qargi/config: projects/, instances.json, profiles/, packs/, credentials/, install.json.",
+        "Configuration: ~/.qargi/config: projects/, instances.json, profiles/, packs/, credentials/, install.json, install.d/, install.lock.",
         "State: ~/.qargi/state: sessions.json, local-runs.jsonl, audit.log, runs/, backups/, provision/.",
         "Overrides: QARGI_HOME replaces ~/.qargi; QARGI_CONF and QARGI_STATE replace the two directories and win over it. XDG_CONFIG_HOME and XDG_STATE_HOME are not used. "
         "QARGI_PROJECT names the project when you are not inside its repository. QARGI_ROLES replaces the list of roles. "
         "QARGI_DRY_RUN prints a session request with secrets masked instead of sending it.",
         "These are user-installation defaults. In dev mode, configuration and state can live in checkout-local .qargi (qargi help dev). Project repo-tier memory can be committed, and shared marshal records can be commits on the project remote."]),
     "dev": ("Running a branch checkout", [
-        "install.sh --user records the tool it installed in ~/.qargi/config/install.json. A checkout run from any other place (its own bin/qargi, "
+        "install.sh --user records the tool it installed in ~/.qargi/config/install.json (with whether it is linked or copied). A checkout run from any other place (its own bin/qargi, "
         "for example in a worktree) is then a dev run: it keeps its configuration and state in <checkout>/.qargi (ignored by version control), prints "
         "'qargi: dev run from ...' on stderr once per command, and never touches your live data. Without install.json every checkout is the installed one.",
         "QARGI_HOME, QARGI_CONF or QARGI_STATE, when set, win: QARGI_HOME=~/.qargi makes a dev run use live data on purpose.",
@@ -1908,6 +1908,8 @@ FILES = [
     ("~/.qargi/config/packs/", "the library of skills and tools, and their links"),
     ("~/.qargi/config/credentials/", "token files, mode 600"),
     ("~/.qargi/config/install.json", "the tool root install.sh recorded; a checkout run from elsewhere is a dev run"),
+    ("~/.qargi/config/install.d/", "the install records: one manifest per runtime, a shared one, one per project and runtime; --uninstall removes exactly what they list"),
+    ("~/.qargi/config/install.lock", "held by install.sh while it reads or changes the install records"),
     ("~/.qargi/state/sessions.json", "the tracker of cloud sessions"),
     ("~/.qargi/state/audit.log", "append-only entries from commands that call audit_log, with supplied --asked and --approved words"),
     ("~/.qargi/state/runs/", "collected outputs of runs"),
