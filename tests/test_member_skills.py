@@ -2,6 +2,7 @@
 """Managed member snapshots through public offline prepare/run/verify paths."""
 import hermetic  # noqa: F401
 import json
+import fcntl
 import os
 from pathlib import Path
 import shutil
@@ -324,6 +325,46 @@ class MemberSkills(unittest.TestCase):
         body.write_text('forged private body')
         self.assertIn('snapshot bytes', self.cmd('local', 'run', self.run, '--dry-run', code=2))
         self.cmd('local', 'verify', self.run, code=1)
+
+    def test_completed_output_saves_with_changed_configuration(self):
+        for on in (False, True):
+            with self.subTest(on=on):
+                self.configure(on=on)
+                if on:
+                    self.pack('fixture')
+                self.prepare('--role', 'review')
+                self.cmd('local', 'run', self.run)
+                self.answers['packs']['member_skills'] = not on
+                self.answers['models']['provider']['local'] = 'missing'
+                self.save_answers()
+                links = self.conf / 'packs/links.json'
+                links.write_text('malformed current links')
+                self.cmd('local', 'verify', self.run)
+                self.cmd('local', 'verify', '--saved', self.run.name)
+                links.unlink()
+
+    def test_frozen_evidence_does_not_requalify_current_review(self):
+        self.configure()
+        self.pack('fixture')
+        self.prepare('--role', 'review')
+        self.cmd('local', 'run', self.run)
+        fd = self.store.open_lock()
+        os.dup2(fd, 7)
+        if fd != 7:
+            os.close(fd)
+        fcntl.flock(7, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            gate = self.store.gate()
+            refs = (Path(self.store.path) / gate['baseline']).read_bytes()
+            with mock.patch.object(C, 'review', side_effect=AssertionError('current review used for frozen evidence')):
+                A.save_product(self.store, refs)
+                saved = self.store.saved_copy()
+                self.assertTrue((Path(saved) / 'skills/fixture/SKILL.md').exists())
+            with mock.patch.object(C, 'review', return_value=([], 1)):
+                with self.assertRaisesRegex(MS.Invalid, 'fails review: fixture'):
+                    MS.current(self.store, self.store.show()['prepared'], 'demo', 'cmdone')
+        finally:
+            os.close(7)
 
     def test_foreign_delivery_symlink_parent_and_missing_ownership(self):
         self.configure()

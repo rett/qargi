@@ -34,7 +34,7 @@ skills/qargi-memory/SKILL.md 933
 skills/qargi-memory/curate.md 281
 skills/qargi-packs/SKILL.md 926 # raised: route opt-in member delivery to its canonical reference
 skills/qargi-packs/apply.md 1001 # raised: distinguish local rendering from gated member snapshots
-skills/qargi-packs/member-skills.md 384 # raised: document the member snapshot selection, bounds, drift, ownership and qualification contract
+skills/qargi-packs/member-skills.md 424 # raised: distinguish frozen evidence integrity from current launch qualification
 skills/qargi-packs/seed.md 250
 skills/qargi-project/SKILL.md 896 # raised: one line naming the answer lead.context_window (null derives the window from the model); for the lead's review
 skills/qargi-project/repository.md 206

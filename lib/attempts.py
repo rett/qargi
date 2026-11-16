@@ -1402,10 +1402,9 @@ def save_product(store, refs):
     """
     store.require_lock()
     prepared = store.show()['prepared']
-    if 'request' in prepared:
+    if 'skills' in prepared:
         import member_skills as MS
-        req = prepared['request']
-        MS.current(store, prepared, req['project'], req['runtime'])
+        MS.manifest(store, prepared['skills'], full=True)
     d = store.show()["attempts"][-1]["dispatch"]
     need(d is None or d["outcome"] == "ok",
          "dispatch did not succeed; output cannot be attributed to this attempt; re-prepare")

@@ -311,7 +311,6 @@ def manifest(store, ref, full=False):
         # Modes in private evidence are normalized and owner-only.
         for row in doc['files']:
             need(stat.S_IMODE(os.stat(store.path + '/skills/' + row['path']).st_mode) == row['mode'], 'snapshot mode changed')
-        qualify(store.path + '/skills', doc['facts'])
     return doc
 
 
@@ -322,6 +321,7 @@ def current(store, prepared, project, runtime):
     if ref is None:
         return None
     doc = manifest(store, ref, full=True)
+    qualify(store.path + '/skills', doc['facts'])
     fresh, _, _ = selection(project, prepared['request']['role'], runtime)
     need(fresh == doc['facts'], 'selection/content/approval/runtime drift; re-prepare')
     return doc
