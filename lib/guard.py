@@ -280,8 +280,11 @@ ROOT_SCRIPTS = ("install.sh",)                                       # of those,
 # lib/render.py, a copy of them under another name, and `python3 -c 'import linker'` (with lib on the path) are not recognized. A check on the
 # resolved path would catch only a link that already exists when the call is judged, not one made earlier in the same command line
 # (`ln -s .../linker.py x && python3 x`), and an import can be spelled in too many ways (importlib, __import__, string joins) to read from
-# the command text; a half check would suggest a guarantee the guard does not give. Like the rest of the shell reading it is a heuristic
-# against a mistake, not a wall against a member that works to get round it; the local verify of the patches is the backstop.
+# the command text; a half check would suggest a guarantee the guard does not give. An interpreter's options are read as bash's and python's
+# (interpreted): the value of -X, -W, -o, -O, --rcfile and source -p is skipped, and an option it does not know makes any word naming a script
+# the script; an option of another shell that takes a value where bash has a flag of that letter is still read as the flag. Like the rest of
+# the shell reading it is a heuristic against a mistake, not a wall against a member that works to get round it; the local verify of the
+# patches is the backstop.
 MEMORY_VERBS = ("init", "move", "split", "merge", "copy")                          # qargi memory verbs that change a memory tier
 MEMORY_READ = ("tiers", "check", "get", "lint")
 PROVIDER_READ = ("", "list", "show", "effective", "require-barrier", "skills-dirs", "of", "layout", "require-skills", "launch", "addenda", "notes", "model")   # the provider verbs that only read; the rest, and any verb added later, change the definitions or run code (check, adapter-run)
@@ -2976,25 +2979,100 @@ def pure_campaign_args(args):
     return "--spec" in seen
 
 
+PY_FLAGS = frozenset("bBdEhiIOPqRsSuvVx?")                  # python's short options with no value; X and W take one (the rest of the word or the next word), c and m end the options
+PY_LONG = {"--help": 0, "--version": 0, "--help-env": 0, "--help-xoptions": 0, "--help-all": 0, "--check-hash-based-pycs": 1}   # python's long options: how many words each takes
+SHELL_FLAGS = frozenset("abefhkmnptuvxBCEHPTilrD")           # a shell's short options with no value (bash's); o and O take the next word each, c and s say where the program is
+SHELL_LONG = {"--rcfile": 1, "--init-file": 1, "--debug": 0, "--debugger": 0, "--dump-po-strings": 0, "--dump-strings": 0, "--help": 0, "--login": 0,
+              "--noediting": 0, "--noprofile": 0, "--norc": 0, "--posix": 0, "--pretty-print": 0, "--protected": 0, "--restricted": 0, "--verbose": 0, "--version": 0, "--wordexp": 0}
+UNREAD_NAME = re.compile(r"[$`*?\[{]")                      # a file name whose last part has one of these is built or expanded by the shell
+
+
+def is_redirection(t):
+    return not t.startswith(("<(", ">(")) and bool(LEADING_REDIR.match(t) or REDIR.match(t))
+
+
+def interpreted(prog, rest):
+    """Where an interpreter (a shell, . or source, python) finds the file it runs among its words rest: (k, True) when rest[k] is the file, (None, True)
+    when it runs no file (-c, -m, -s, a python `-`, no word left), (None, False) when the guard cannot read an option (one it does not know, one the
+    shell builds, a shell value stuck to its letter, which bash and zsh read apart) or the file's name. A redirection, with its file, is neither."""
+    py = bool(re.match(r"^python[0-9.]*$", prog))
+    k = 0
+    while k < len(rest):
+        tick()
+        t = rest[k]
+        if is_redirection(t):
+            k += 2 if BARE_REDIR.match(t) else 1                 # the operator alone: its target is the next word
+            continue
+        if t == "--" or (t == "-" and not py):                   # the end of the options (a shell's `-` too); python's `-` is its standard input
+            k += 1
+            break
+        if len(t) < 2 or not (t.startswith("-") or (t.startswith("+") and prog in SHELLS)):
+            break
+        if prog in SOURCES:                                      # source [-p PATH] FILE
+            if t != "-p":
+                return None, False
+            k += 2
+            continue
+        if t.startswith("--"):
+            n = (PY_LONG if py else SHELL_LONG).get(t)
+            if n is None:
+                return None, False
+            k += 1 + n
+            continue
+        step = 1
+        for j, c in enumerate(t[1:], 1):
+            if py and c in "XW":                                 # -X dev, -Xdev, -IX dev
+                step += 0 if t[j + 1:] else 1
+                break
+            if c in ("cm" if py else "cs"):
+                return None, True
+            if not py and c in "oO":                             # -euo pipefail, -oO errexit extglob: each takes the next word
+                if any(x not in "oO" for x in t[j + 1:]):         # -oerrexit: bash takes the next word, another shell may take "errexit"
+                    return None, False
+                step += 1
+                continue
+            if c not in (PY_FLAGS if py else SHELL_FLAGS):
+                return None, False
+        k += step
+    while k < len(rest) and is_redirection(rest[k]):
+        k += 2 if BARE_REDIR.match(rest[k]) else 1
+    if k >= len(rest) or (py and rest[k] == "-"):
+        return None, True
+    return (None, False) if UNREAD_NAME.search(os.path.basename(rest[k])) else (k, True)
+
+
+def script_of(prog, rest):
+    """The index in rest of the lead-only script (SCRIPTS) an interpreter prog runs, or None: the file it runs (interpreted) when that is one; the first
+    word that names one when the guard cannot read the options or the file's name (fail closed); when it runs no file (-c, -m, -s), the first word that
+    is no option, as before (shell_string reads the string of sh -c again)."""
+    if prog not in SHELLS and prog not in SOURCES and not re.match(r"^python[0-9.]*$", prog):
+        return None
+    k, readable = interpreted(prog, rest)
+    if k is None:
+        k = next((j for j, t in enumerate(rest) if (os.path.basename(t) in SCRIPTS if not readable else not t.startswith("-"))), None)
+    return k if k is not None and os.path.basename(rest[k]) in SCRIPTS else None
+
+
 def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
     """The reason a qargi command (or the script behind it, run directly) is a verb that changes a skill, or None. via_xargs: xargs
     stands before the program, so its arguments come from standard input, where --write could be. here: the directory the command runs
     in, and exe: the word that names the program, for the scripts that are only the tool's own (OWN_ONLY)."""
     # a ) with no ( in a word closes a substitution or group whose start the plain split cut off (`printf -v x 'b[%s(true; qargi upgrade)]' $`
     # runs `qargi upgrade` in an arithmetic subscript): the command ends there, so the verb is read without it
-    words = [t.split(")")[0] if ")" in t and "(" not in t else t for t in rest if not t.startswith("-")]
+    cut = [t.split(")")[0] if ")" in t and "(" not in t else t for t in rest]
+    words = [t for t in cut if not t.startswith("-")]
     name, script = prog, exe or prog
     if prog not in SCRIPTS:                              # also a script a shell runs, or sources into itself (`. install.sh` runs it as `sh install.sh` does)
-        if (prog in SHELLS or prog in SOURCES or re.match(r"^python[0-9.]*$", prog)) and words and os.path.basename(words[0]) in SCRIPTS:
-            name, script, words = os.path.basename(words[0]), words[0], words[1:]
-        else:
+        k = script_of(prog, cut)                         # past the interpreter's options and their values (python3 -X dev, bash -o errexit)
+        if k is None:
             return None
+        name, script, words = os.path.basename(cut[k]), cut[k], [t for t in cut[k + 1:] if not t.startswith("-")]
     if name in OWN_ONLY and not own_script(script, here):
         return None
     if name == "campaign.py" or (name in ("qargi", "jsonplan.py") and words[:1] == ["campaign"]):
         args = rest
         if prog not in SCRIPTS:
-            args = rest[rest.index(script) + 1:]
+            args = rest[k + 1:]
         if name != "campaign.py":
             args = args[1:]
         if not via_xargs and pure_campaign_args(args):
@@ -3191,10 +3269,12 @@ def protected_write(toks, i, here):
     """The reason a segment writes under a protected location, or None (the heuristic the docstring describes). i is past the last word when the segment
     is redirections alone."""
     prog, rest = (os.path.basename(toks[i]), toks[i + 1:]) if i < len(toks) else ("", [])
-    args = operands(rest, any(os.path.basename(t) == "xargs" for t in toks[:i]))
+    xargs = any(os.path.basename(t) == "xargs" for t in toks[:i])
+    args = operands(rest, xargs)
     cands = list(write_targets(toks, i))
-    if prog in SCRIPTS or (prog in SHELLS or re.match(r"^python[0-9.]*$", prog)) and args and os.path.basename(args[0]) in SCRIPTS:
-        words = args if prog in SCRIPTS else args[1:]
+    k = None if prog in SCRIPTS else script_of(prog, rest)       # a script an interpreter runs, past its options (bash -o errexit lib/packs.sh packs render)
+    if prog in SCRIPTS or k is not None:
+        words = args if prog in SCRIPTS else operands(rest[k + 1:], xargs)
         if words[:2] == ["packs", "render"]:                 # render writes its output directory: judge every operand
             cands += [("qargi packs render", c) for t in words[2:] for c in {t, t.split("=", 1)[-1]}]
     if prog == "find" and any(t in FIND_ACTIONS for t in rest):

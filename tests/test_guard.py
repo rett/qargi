@@ -1295,6 +1295,15 @@ class RenderTree(HookCase):
         # the default stays protected beside an override, as the pack library does
         self.assertEqual(self.call("Write", {"file_path": home_state + "/CLAUDE.md"}).returncode, 2)
 
+    def test_packs_render_into_the_render_through_an_interpreter_with_options_is_refused(self):
+        r = self.render
+        for c in ("bash -o errexit lib/packs.sh packs render p build %s" % r, "bash -euo pipefail lib/packs.sh packs render p build --out %s" % r,
+                  "sh -O extglob lib/packs.sh packs render p build %s" % r, ". -p lib lib/packs.sh packs render p build %s" % r):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 2, (c, res.stderr))
+            self.assertIn("managed by qargi and changed only by the lead", res.stderr)
+        self.assertEqual(self.bash("bash -o errexit lib/packs.sh packs render p build %s/run/out/r" % self.t).returncode, 0)
+
     def test_reads_of_the_render_stay_allowed(self):
         r = self.render
         for c in ("cat %s/CLAUDE.md" % r, "ls -la %s" % r, "grep -rn foo %s" % r, "cp %s/CLAUDE.md %s/run/out/" % (r, self.t),
@@ -4411,6 +4420,142 @@ class InstallRecordScript(HookCase):
             self.assertEqual(r.returncode, 0, (c, r.stderr))
         r = self.bash("python3 -I lib/install_record.py uninstall", cwd=self.proj)    # a project's own, with no lib of the tool
         self.assertEqual(r.returncode, 0, r.stderr)
+
+
+class InterpreterOptions(HookCase):
+    """An interpreter option that takes a value (python -X dev, -W ignore; a shell's -o errexit, -O extglob, +o, +O, --rcfile F; source -p PATH) does
+    not hide the script after it: its value is skipped, attached (-Xdev) or in the next word, alone or among combined flags (-IX dev, -euo pipefail).
+    A command whose options the guard cannot read (an unknown option, one the shell builds, an attached shell value) and that names a lead-only
+    script anywhere is judged as that script. A file of the clone, an unrelated script, and reading the tool's files stay allowed."""
+    setUp, tearDown, bash, call = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
+    refused = LibraryScripts.refused
+    LIB, ROOT = LibraryScripts.LIB, InstallScript.ROOT
+    RENDER = "lib/render.py is the renderer of member definitions"
+    LINK = "qargi packs link changes a skill"
+    UPGRADE = "qargi upgrade changes the installed tool"
+
+    def py(self, opts):
+        """Each python interpreter with the options before each of the tool's Python scripts, all refused."""
+        for prog in ("python3", "python"):
+            for script, why in (("%s/install_record.py uninstall" % self.LIB, InstallRecordScript.WHY), ("%s/render.py render s d" % self.LIB, self.RENDER)):
+                with self.subTest(prog=prog, opts=opts, script=script):
+                    self.refused("%s %s %s" % (prog, opts, script), why)
+
+    def sh(self, opts, progs=("bash", "sh")):
+        """Each shell with the options before each of the tool's shell scripts, all refused."""
+        for prog in progs:
+            for script, why in (("%s/install.sh --user --uninstall" % self.ROOT, InstallScript.WHY), ("lib/upgrade.sh --tag v1", self.UPGRADE),
+                                ("lib/packs.sh packs link p", self.LINK), ("%s/install_record.py uninstall" % self.LIB, InstallRecordScript.WHY)):
+                with self.subTest(prog=prog, opts=opts, script=script):
+                    self.refused("%s %s %s" % (prog, opts, script), why)
+
+    def test_python_X_with_its_value_in_the_next_word(self):
+        self.py("-X dev")
+        self.py("-I -X dev -X importtime")
+
+    def test_python_X_with_its_value_attached(self):
+        self.py("-Xdev")
+        self.py("-IXdev")
+
+    def test_python_W_with_its_value_in_the_next_word(self):
+        self.py("-W ignore")
+        self.py("-bbW ignore -X dev")
+
+    def test_python_W_with_its_value_attached(self):
+        self.py("-Wignore")
+        self.py("-IWignore::DeprecationWarning")
+
+    def test_python_check_hash_based_pycs_takes_a_value(self):
+        self.py("--check-hash-based-pycs never")
+
+    def test_python_after_double_dash(self):
+        self.py("-X dev --")
+
+    def test_shell_o_with_its_value_in_the_next_word(self):
+        self.sh("-o errexit")
+        self.sh("-x -o errexit -o nounset")
+        self.sh("-o errexit", progs=("zsh", "ksh", "dash"))
+
+    def test_shell_O_with_its_value_in_the_next_word(self):
+        self.sh("-O extglob")
+
+    def test_shell_plus_o_and_plus_O(self):
+        self.sh("+o errexit")
+        self.sh("+O extglob")
+
+    def test_shell_combined_short_options(self):
+        self.sh("-eo errexit")
+        self.sh("-eu -o pipefail")
+        self.sh("-euo pipefail")
+        self.sh("-oO errexit extglob")
+        self.sh("-O extglob -euo pipefail")
+
+    def test_shell_long_options_with_a_value(self):
+        self.sh("--rcfile rc --norc", progs=("bash",))
+        self.sh("--init-file rc", progs=("bash",))
+
+    def test_shell_end_of_options(self):
+        self.sh("-o errexit --")
+        self.sh("-o errexit -")
+
+    def test_source_with_a_path_option(self):
+        for c, why in ((". -p lib lib/upgrade.sh --tag v1", self.UPGRADE), ("source -p /x %s/install.sh --user" % self.ROOT, InstallScript.WHY),
+                       ("source -- lib/packs.sh packs link p", self.LINK)):
+            self.refused(c, why)
+
+    def test_a_redirection_before_the_script(self):
+        self.py("2>/dev/null -X dev")
+        self.sh("< /dev/null -o errexit")
+
+    def test_the_forms_in_other_wrappers(self):
+        lib = self.LIB
+        for c, why in (("sudo python3 -X dev %s/install_record.py uninstall" % lib, InstallRecordScript.WHY),
+                       ("env X=1 bash -o errexit %s/install.sh --user --uninstall" % self.ROOT, InstallScript.WHY),
+                       ("bash -c 'python3 -W ignore %s/install_record.py uninstall'" % lib, InstallRecordScript.WHY),
+                       ("echo $(bash -O extglob lib/upgrade.sh)", self.UPGRADE), ("cd src && python3 -Xdev %s/render.py render s d" % lib, self.RENDER),
+                       ("xargs python3 -X dev %s/install_record.py < /dev/null" % lib, InstallRecordScript.WHY)):
+            self.refused(c, why)
+        self.refused("python3 -X dev install_record.py uninstall", InstallRecordScript.WHY, cwd=lib)
+        self.refused("bash -euo pipefail ./install.sh --user --uninstall", InstallScript.WHY, cwd=self.ROOT)
+
+    def test_unreadable_options_fail_closed(self):
+        """An option the guard cannot read could take the next word or not: a lead-only script named anywhere after it is judged as the script."""
+        self.py("-J x")                                          # no such python option
+        self.py("--frobnicate")
+        self.py("$PYOPTS")                                      # options the shell builds
+        self.py("-X dev $MORE")
+        self.sh("--frobnicate x")
+        self.sh("-$X errexit")
+        self.sh("$SHOPTS")
+        self.sh("-oerrexit")                                    # bash reads it as -o and flags, another shell as an attached value
+        self.sh("-R x", progs=("ksh",))                         # a letter bash does not have
+        self.refused(". -x lib/upgrade.sh", self.UPGRADE)
+
+    def test_the_clones_own_files_stay_allowed(self):
+        os.makedirs(os.path.join(self.clone, "lib"))
+        for name in ("lib/install_record.py", "lib/render.py", "install.sh"):
+            with open(os.path.join(self.clone, name), "w") as f:
+                f.write("")
+        for c in ("python3 -X dev lib/install_record.py " + InstallRecordScript.UNINSTALL, "python3 -Xdev lib/install_record.py uninstall",
+                  "python -W ignore lib/render.py render s d", "python3 -IWignore lib/render.py", "python3 $PYOPTS lib/install_record.py uninstall",
+                  "bash -o errexit install.sh --user --uninstall", "sh -euo pipefail ./install.sh --user", "bash -O extglob +o nounset install.sh",
+                  "bash --frobnicate install.sh", "cd lib && python3 -X dev install_record.py uninstall"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_an_unrelated_script_after_the_options_stays_allowed(self):
+        for c in ("python3 -X dev tests/test_guard.py", "python3 -W error -X dev tests/check.py lib/render.py", "python -Wignore tools/x.py install_record.py",
+                  "bash -o errexit tests/run.sh lib/upgrade.sh", "bash -euo pipefail tests/run.sh --tier fast lib/packs.sh", "sh -O extglob scripts/x.sh install.sh",
+                  "bash --rcfile rc tests/run.sh", ". -p lib lib/lib.sh", "python3 -X dev -c 'print(1)'", "python3 -W error -m unittest tests/test_x.py",
+                  "bash -O extglob -c 'echo hi'", "bash -euo pipefail -c 'echo upgrade.sh'"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_reading_the_tools_files_stays_allowed(self):
+        for c in ("cat %s/install.sh" % self.ROOT, "grep -n -e uninstall %s/install_record.py" % self.LIB, "shellcheck -x -o all %s/install.sh" % self.ROOT,
+                  "head -n 5 %s/render.py" % self.LIB, "grep -W ignore %s/upgrade.sh" % self.LIB, "less -X %s/packs.sh" % self.LIB):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
 
 
 class ThirdReview(HookCase):
