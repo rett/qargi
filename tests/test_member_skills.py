@@ -14,6 +14,7 @@ import unittest
 from unittest import mock
 
 import prepared_request_cases
+from member_skills_fixture import DeliveryFixture
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'lib'))
@@ -21,6 +22,143 @@ import attempts as A
 import member_skills as MS
 import packs_check as C
 import provider as P
+import local_run as R
+from attempt_fixture import attempt
+
+
+class DeliveryOwnership(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.f = DeliveryFixture(self.tmp.name)
+
+    def test_checked_root_swap_preserves_foreign_tree(self):
+        self.f.existing()
+        original = MS.ownership
+        def swapped(store, dest):
+            result = original(store, dest)
+            self.f.swap_root()
+            return result
+        with mock.patch.object(MS, 'ownership', side_effect=swapped):
+            with self.assertRaisesRegex(MS.Invalid, 'replaced'):
+                MS.clear(self.f.store, 'home/.fake/skills')
+        self.assertEqual((self.f.delivery / 'sentinel').read_text(), 'foreign')
+        self.assertTrue(self.f.record.exists())
+
+    def test_member_removed_delivery_can_retire_record(self):
+        self.f.existing()
+        shutil.rmtree(self.f.delivery)
+        MS.ownership(self.f.store, 'home/.fake/skills')
+        self.assertTrue(self.f.record.exists())
+        MS.clear(self.f.store, 'home/.fake/skills')
+        self.assertFalse(self.f.record.exists())
+
+    def test_root_swap_after_open_is_validated_after_staging(self):
+        self.f.existing()
+        move = MS.move_new
+        def swap(source, name, target, new):
+            self.f.swap_root()
+            move(source, name, target, new)
+        with mock.patch.object(MS, 'move_new', side_effect=swap):
+            with self.assertRaisesRegex(MS.Invalid, 'staged delivery identity mismatch'):
+                MS.clear(self.f.store, 'home/.fake/skills')
+        self.assertEqual((self.f.private / 'skills.stage/sentinel').read_text(), 'foreign')
+        self.assertEqual((self.f.parent / 'owned-moved/original').read_text(), 'owned')
+        self.assertTrue(self.f.record.exists())
+
+    def test_parent_swap_after_check_never_deletes_replacement(self):
+        self.f.existing()
+        move = MS.move_new
+        def swap(source, name, target, new):
+            self.f.swap_parent()
+            move(source, name, target, new)
+        with mock.patch.object(MS, 'move_new', side_effect=swap):
+            with self.assertRaisesRegex(MS.Invalid, 'parent replaced'):
+                MS.clear(self.f.store, 'home/.fake/skills')
+        self.assertEqual((self.f.delivery / 'sentinel').read_text(), 'foreign')
+        self.assertTrue(self.f.record.exists())
+
+    def test_staged_replacement_is_preserved_before_deletion(self):
+        self.f.existing()
+        remove = MS.remove_staged
+        def swap(private, expected):
+            stage = self.f.private / 'skills.stage'
+            stage.rename(self.f.private / 'original-stage')
+            stage.mkdir(mode=0o700)
+            (stage / 'sentinel').write_text('foreign')
+            remove(private, expected)
+        with mock.patch.object(MS, 'remove_staged', side_effect=swap):
+            with self.assertRaisesRegex(MS.Invalid, 'staged delivery identity mismatch'):
+                MS.clear(self.f.store, 'home/.fake/skills')
+        self.assertEqual((self.f.private / 'skills.stage/sentinel').read_text(), 'foreign')
+        self.assertTrue(self.f.record.exists())
+
+    def test_cleanup_crash_windows_and_read_only_inspection(self):
+        for point in ('intent', 'rename', 'delete', 'retirement'):
+            with self.subTest(point=point):
+                self.f.existing()
+                if point == 'intent':
+                    original = A.atomic
+                    def crash(fd, name, data):
+                        original(fd, name, data)
+                        if name == MS.DELIVERY_RECORD:
+                            raise SystemExit('crash after intent')
+                    patch = mock.patch.object(A, 'atomic', side_effect=crash)
+                elif point == 'rename':
+                    original = MS.move_new
+                    def crash(*args):
+                        original(*args)
+                        raise SystemExit('crash after rename')
+                    patch = mock.patch.object(MS, 'move_new', side_effect=crash)
+                elif point == 'delete':
+                    original = MS.remove_staged
+                    def crash(*args):
+                        original(*args)
+                        raise SystemExit('crash after deletion')
+                    patch = mock.patch.object(MS, 'remove_staged', side_effect=crash)
+                else:
+                    original = os.unlink
+                    def crash(name, *args, **kwargs):
+                        original(name, *args, **kwargs)
+                        if name == MS.DELIVERY_RECORD:
+                            raise SystemExit('crash after retirement')
+                    patch = mock.patch.object(os, 'unlink', side_effect=crash)
+                with patch, self.assertRaises(SystemExit):
+                    MS.clear(self.f.store, 'home/.fake/skills')
+                before = self.f.record.read_bytes() if self.f.record.exists() else None
+                MS.ownership(self.f.store, 'home/.fake/skills')
+                self.assertEqual(before, self.f.record.read_bytes() if self.f.record.exists() else None)
+                MS.clear(self.f.store, 'home/.fake/skills')
+                self.assertFalse(self.f.record.exists())
+                self.assertFalse(self.f.delivery.exists())
+
+    def test_surviving_and_unknown_group_refuse_cleanup(self):
+        self.f.existing()
+        child = subprocess.Popen([sys.executable, '-c', 'import select; select.select([], [], [], 20)'], start_new_session=True)
+        try:
+            self.f.dispatch['member'] = dict(pid=child.pid)
+            with self.assertRaisesRegex(MS.Invalid, 'member process group is present'):
+                MS.clear(self.f.store, 'home/.fake/skills')
+            with mock.patch.object(A, 'group_alive', side_effect=A.Refuse('unknown')):
+                with self.assertRaisesRegex(MS.Invalid, 'cleanup group membership unknown'):
+                    MS.clear(self.f.store, 'home/.fake/skills')
+            self.assertTrue((self.f.delivery / 'original').exists())
+            self.assertTrue(self.f.record.exists())
+        finally:
+            child.terminate()
+            child.wait(timeout=10)
+        MS.clear(self.f.store, 'home/.fake/skills')
+        self.assertFalse(self.f.record.exists())
+
+    def test_unrecorded_spawn_and_absent_native_attempt_cannot_recover(self):
+        self.f.existing()
+        with self.assertRaisesRegex(MS.Invalid, 'cleanup membership unknown'):
+            MS.clear(self.f.store, 'home/.fake/skills', dict(spawned=True, recorded=False))
+        self.f.dispatch = None
+        with self.assertRaisesRegex(MS.Invalid, 'requires native attempt begin'):
+            MS.clear(self.f.store, 'home/.fake/skills')
+        self.assertTrue((self.f.delivery / 'original').exists())
 
 
 class MemberSkills(unittest.TestCase):
@@ -42,7 +180,7 @@ class MemberSkills(unittest.TestCase):
             doc['dispatch']['home'] = {'env': 'FAKE_HOME', 'dir': '.fake', 'skills_dir': 'skills', 'link': []}
             self.install(name, doc)
             exe = doc['dispatch']['argv'][0]
-            (self.bin / exe).write_text('#!/usr/bin/env python3\nimport json,os,time\nfrom pathlib import Path\n'
+            (self.bin / exe).write_text('#!/usr/bin/env python3\nimport json,os,time,shutil\nfrom pathlib import Path\n'
                 'home=Path(os.environ["FAKE_HOME"]); run=Path.cwd().parent\n'
                 'files={str(p.relative_to(home/"skills")):p.read_text() for p in (home/"skills").rglob("*") if p.is_file()}\n'
                 '(run/"out/report.md").write_text("DONE\\n")\nprint(json.dumps(files,sort_keys=True))\n'
@@ -50,7 +188,8 @@ class MemberSkills(unittest.TestCase):
                 ' (run/"ready").touch(); deadline=time.monotonic()+15\n'
                 ' while not (run/"release").exists() and time.monotonic()<deadline: time.sleep(.02)\n'
                 'if (run/"replace").exists():\n'
-                ' (home/"skills").rename(home/"owned-moved"); (home/"skills").mkdir(); (home/"skills/keep").write_text("foreign")\n')
+                ' (home/"skills").rename(home/"owned-moved"); (home/"skills").mkdir(); (home/"skills/keep").write_text("foreign")\n'
+                'if (run/"delete").exists(): shutil.rmtree(home/"skills")\n')
             (self.bin / exe).chmod(0o755)
 
     def pack(self, name, scopes=('project',), role=None, compatible=None):
@@ -544,8 +683,13 @@ class MemberSkills(unittest.TestCase):
         prepared = self.store.show()['prepared']
         home = self.run / 'home/.fake'
         home.mkdir(parents=True)
-        with mock.patch.object(MS, 'put_tree', side_effect=OSError('injected copy failure')):
-            with self.assertRaises(OSError): MS.deliver(self.store, prepared)
+        with attempt(self.run) as pending:
+            self.store.begin(pending['pending'], pending['refs'].encode())
+            try:
+                with mock.patch.object(MS, 'put_tree', side_effect=OSError('injected copy failure')):
+                    with self.assertRaises(OSError): MS.deliver(self.store, prepared)
+            finally:
+                self.store.end('not-started')
         self.assertFalse((home / 'skills').exists())
         self.assertFalse((Path(self.store.path) / 'skills-delivery.json').exists())
         with mock.patch.object(MS, 'MAX_MANIFEST', 10):
@@ -571,6 +715,228 @@ class MemberSkills(unittest.TestCase):
         self.cmd('local', 'run', self.run, '--again', code=2)
         self.assertEqual(foreign.read_text(), 'foreign')
         self.assertTrue((self.run / 'home/.fake/owned-moved/fixture/SKILL.md').exists())
+
+    def test_member_deletes_delivery_success_and_normal_retry(self):
+        self.configure()
+        self.pack('fixture')
+        self.prepare('--role', 'review')
+        (self.run / 'delete').touch()
+        self.cmd('local', 'run', self.run)
+        self.assertEqual(json.loads((self.run / 'dispatch.json').read_text())['outcome'], 'ok')
+        self.assertFalse((Path(self.store.path) / MS.DELIVERY_RECORD).exists())
+        self.cmd('local', 'run', self.run, '--again')
+        self.cmd('local', 'verify', self.run)
+
+    def test_interrupted_cleanup_retains_evidence_then_public_again_recovers(self):
+        self.configure()
+        self.pack('fixture')
+        self.prepare('--role', 'review')
+        plan = R.build(str(self.run), 'demo', 'cmdone', 'read-only', None, None, None, None, [])
+        original = MS.remove_staged
+        def interrupted(*args):
+            original(*args)
+            raise SystemExit('injected interruption after deletion')
+        with attempt(self.run) as pending:
+            with mock.patch.object(MS, 'remove_staged', side_effect=interrupted), self.assertRaises(SystemExit):
+                R.run_it(plan, str(self.run), pending)
+        owner = Path(self.store.path) / MS.DELIVERY_RECORD
+        self.assertTrue(owner.exists())
+        before = owner.read_bytes()
+        self.cmd('local', 'run', self.run, '--dry-run')
+        self.assertEqual(before, owner.read_bytes())
+        self.cmd('local', 'run', self.run, '--again')
+        self.assertFalse(owner.exists())
+
+    def test_population_and_publish_swaps_never_write_foreign_delivery(self):
+        self.configure()
+        self.pack('fixture')
+        for when in ('copy', 'publish', 'parent', 'empty-before-publish'):
+            with self.subTest(when=when):
+                self.prepare('--role', 'review')
+                home = self.run / 'home/.fake'
+                home.mkdir(parents=True)
+                target = home / 'skills'
+                def foreign():
+                    if target.exists():
+                        target.rename(home / 'owned-moved')
+                    target.mkdir(mode=0o700)
+                    if when != 'empty-before-publish':
+                        (target / 'sentinel').write_text('foreign')
+                put, move = MS.put_tree, MS.move_new
+                def copy(fd, files, dirs):
+                    self.assertIs(type(fd), int)
+                    if when == 'parent':
+                        home.rename(home.with_name('parent-moved'))
+                        home.mkdir(mode=0o700)
+                    foreign()
+                    put(fd, files, dirs)
+                def publish(source, name, destination, new):
+                    if name == MS.DELIVERY_STAGE:
+                        if when == 'empty-before-publish':
+                            foreign()
+                        move(source, name, destination, new)
+                        if when == 'publish':
+                            foreign()
+                    else:
+                        move(source, name, destination, new)
+                with attempt(self.run) as pending:
+                    self.store.begin(pending['pending'], pending['refs'].encode())
+                    try:
+                        with mock.patch.object(MS, 'put_tree', side_effect=copy if when in ('copy', 'parent') else put), \
+                                mock.patch.object(MS, 'move_new', side_effect=publish):
+                            with self.assertRaisesRegex(MS.Invalid, 'foreign|replaced'):
+                                MS.deliver(self.store, self.store.show()['prepared'])
+                    finally:
+                        self.store.end('not-started')
+                self.assertTrue(target.is_dir())
+                self.assertFalse((target / 'fixture').exists())
+                if when != 'empty-before-publish':
+                    self.assertEqual((target / 'sentinel').read_text(), 'foreign')
+                self.assertTrue((Path(self.store.path) / MS.DELIVERY_RECORD).exists())
+                self.assertFalse((self.run / 'out/transcript').exists())
+
+    def test_partial_creation_copy_and_publication_recover_after_native_begin(self):
+        self.configure()
+        self.pack('fixture')
+        for point in ('intent', 'mkdir', 'identity', 'copy', 'publish'):
+            with self.subTest(point=point):
+                self.prepare('--role', 'review')
+                (self.run / 'home/.fake').mkdir(parents=True)
+                if point in ('intent', 'identity'):
+                    original = A.atomic
+                    def crash(fd, name, data):
+                        original(fd, name, data)
+                        if name == MS.DELIVERY_RECORD and json.loads(data)['phase'] == ('allocating' if point == 'intent' else 'ready'):
+                            raise SystemExit('injected crash at ' + point)
+                    patch = mock.patch.object(A, 'atomic', side_effect=crash)
+                elif point == 'mkdir':
+                    original = os.mkdir
+                    def crash(name, *args, **kwargs):
+                        original(name, *args, **kwargs)
+                        if name == MS.DELIVERY_STAGE:
+                            raise SystemExit('injected crash after private mkdir')
+                    patch = mock.patch.object(os, 'mkdir', side_effect=crash)
+                elif point == 'copy':
+                    original = MS.put_tree
+                    def crash(root, files, dirs):
+                        original(root, {}, dirs)
+                        raise SystemExit('injected crash during copy')
+                    patch = mock.patch.object(MS, 'put_tree', side_effect=crash)
+                else:
+                    original = MS.move_new
+                    def crash(*args):
+                        original(*args)
+                        raise SystemExit('injected crash after publication')
+                    patch = mock.patch.object(MS, 'move_new', side_effect=crash)
+                with attempt(self.run) as pending:
+                    self.store.begin(pending['pending'], pending['refs'].encode())
+                    try:
+                        with patch, self.assertRaises(SystemExit):
+                            MS.deliver(self.store, self.store.show()['prepared'])
+                    finally:
+                        # This fixture knows no Popen occurred. A killed runner
+                        # with unknown spawn membership must still refuse.
+                        self.store.end('not-started')
+                owner = Path(self.store.path) / MS.DELIVERY_RECORD
+                before = owner.read_bytes()
+                self.cmd('local', 'run', self.run, '--dry-run')
+                self.assertEqual(before, owner.read_bytes())
+                self.cmd('local', 'run', self.run, '--again')
+                self.assertFalse(owner.exists())
+
+    def test_killed_runner_cleanup_is_recovered_by_public_again(self):
+        self.configure()
+        self.pack('fixture')
+        self.prepare('--role', 'review')
+        shim = self.bin / 'python3'
+        shim.write_text('#!' + sys.executable + '\nimport os,sys,signal\n'
+            'if len(sys.argv)>2 and sys.argv[1]=="-I" and sys.argv[2].endswith("/local_run.py"):\n'
+            ' sys.path.insert(0,os.path.dirname(sys.argv[2])); import local_run as R; import member_skills as M\n'
+            ' original=M.remove_staged\n'
+            ' def killed(*args):\n'
+            '  original(*args); os.kill(os.getpid(),signal.SIGKILL)\n'
+            ' M.remove_staged=killed; sys.exit(R.main(sys.argv[3:]))\n'
+            'os.execv(sys.executable,[sys.executable]+sys.argv[1:])\n')
+        shim.chmod(0o755)
+        try:
+            result = subprocess.run([str(ROOT / 'bin/qargi'), 'local', 'run', str(self.run)],
+                env=self.env, cwd=self.repo, text=True, capture_output=True, timeout=30)
+            self.assertIn(result.returncode, (-9, 137), result.stdout + result.stderr)
+        finally:
+            shim.unlink()
+        owner = Path(self.store.path) / MS.DELIVERY_RECORD
+        self.assertTrue(owner.exists())
+        self.assertFalse((self.run / 'home/.fake/skills').exists())
+        before = owner.read_bytes()
+        self.cmd('local', 'run', self.run, '--dry-run')
+        self.assertEqual(before, owner.read_bytes())
+        self.cmd('local', 'run', self.run, '--again')
+        self.assertFalse(owner.exists())
+
+    def test_shipped_codex_skills_auth_refresh_and_in_home_config(self):
+        self.configure('codex')
+        self.pack('fixture')
+        user_home = self.root / 'user-home'
+        auth = user_home / '.codex/auth.json'
+        auth.parent.mkdir(parents=True)
+        auth.write_text('harmless offline sign-in fixture\n')
+        auth.chmod(0o600)
+        (auth.parent / 'config.toml').write_text('unrelated_user_setting = true\n')
+        self.env['HOME'] = str(user_home)
+        fake = self.bin / 'codex'
+        fake.write_text('#!/usr/bin/env python3\nimport json,os,sys,tomllib\nfrom pathlib import Path\n'
+            'home=Path(os.environ["CODEX_HOME"]); auth=home/"auth.json"\n'
+            'assert auth.is_symlink() and auth.read_text()=="harmless offline sign-in fixture\\n"\n'
+            'config=tomllib.loads((home/"config.toml").read_text())\n'
+            'assert config["approval_policy"]=="never" and config["web_search"]=="disabled"\n'
+            'assert "unrelated_user_setting" not in config\n'
+            'skills=sorted(str(p.relative_to(home/"skills")) for p in (home/"skills").rglob("*") if p.is_file())\n'
+            'auth.unlink(); auth.write_text("harmless refreshed fixture\\n")\n'
+            'Path(sys.argv[sys.argv.index("-o")+1]).write_text("DONE\\n")\n'
+            'print(json.dumps({"skills":skills,"auth_link":True,"config_in_home":True}))\n')
+        fake.chmod(0o755)
+        self.prepare('--role', 'review')
+        self.cmd('local', 'run', self.run)
+        observed = self.transcript()
+        self.assertEqual(observed['skills'], ['fixture/SKILL.md', 'fixture/reference.txt'])
+        self.assertTrue(observed['auth_link'] and observed['config_in_home'])
+        home = self.run / 'home/.codex'
+        self.assertFalse((home / 'skills').exists() or (home / 'auth.json').exists())
+        self.assertEqual((home / 'auth.json.from-run').read_text(), 'harmless refreshed fixture\n')
+        self.assertEqual(auth.read_text(), 'harmless offline sign-in fixture\n')
+        self.assertTrue((home / 'config.toml').is_file())
+        self.cmd('local', 'verify', self.run)
+
+    def test_legacy_no_request_opt_in_refuses_before_launch(self):
+        self.configure()
+        self.prepare('--role', 'review')
+        from types import SimpleNamespace
+        legacy = SimpleNamespace(registry=lambda: {'lifecycle': 1}, show=lambda: {'prepared': {'identity': 'a' * 32}})
+        with mock.patch.object(R.A, 'Store', return_value=legacy):
+            with self.assertRaisesRegex(MS.Invalid, 'enabled request has no snapshot; re-prepare'):
+                R.build(str(self.run), 'demo', 'cmdone', 'read-only', None, None, None, None, [])
+
+    def test_last_prelaunch_check_refuses_replacement_without_starting_member(self):
+        self.configure()
+        self.pack('fixture')
+        self.prepare('--role', 'review')
+        plan = R.build(str(self.run), 'demo', 'cmdone', 'read-only', None, None, None, None, [])
+        deliver = MS.deliver
+        def replaced(*args):
+            deliver(*args)
+            home = self.run / 'home/.fake'
+            (home / 'skills').rename(home / 'owned-moved')
+            (home / 'skills').mkdir()
+            (home / 'skills/sentinel').write_text('foreign')
+        with attempt(self.run) as pending:
+            with mock.patch.object(MS, 'deliver', side_effect=replaced):
+                self.assertEqual(R.run_it(plan, str(self.run), pending), 2)
+        self.assertIsNone(self.store.show()['attempts'][-1]['dispatch']['member'])
+        dispatch = json.loads((self.run / 'dispatch.json').read_text())
+        self.assertEqual(dispatch['outcome'], 'refused')
+        self.assertIn('replaced', dispatch['error'])
+        self.assertNotEqual(dispatch['error'], 'unexpected runner error')
+        self.assertEqual((self.run / 'home/.fake/skills/sentinel').read_text(), 'foreign')
 
     def test_parallel_runs_and_concurrent_attempt_lock(self):
         self.configure()

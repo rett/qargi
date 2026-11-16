@@ -2073,6 +2073,8 @@ def run_started(plan, run, store, dispatch_state, sig):
                         make_final(run, fin)
                         staged = True
                     sig.check()
+                    if plan.get('skills') is not None:
+                        MS.launch_ready(store, plan['prepared'])
                     try:
                         proc = subprocess.Popen(argv, cwd=plan["cwd"], env=plan["env"], stdin=sin, stdout=so, stderr=se, shell=False, start_new_session=True, close_fds=True)
                     except OSError as e:
@@ -2107,6 +2109,11 @@ def run_started(plan, run, store, dispatch_state, sig):
             if proc is not None:
                 left = kill_group(proc)
                 code = proc.returncode
+        except (MS.Invalid, A.Refuse, MS.M.McpError, P.ProviderError) as e:
+            outcome, error, stop_code = 'refused', str(e)[:1000], 2
+            if proc is not None:
+                left = kill_group(proc)
+                code = proc.returncode
         except Stop as e:                                # the run home, the configuration file, the transcripts or the report could not be made as the run needs
             outcome, error, stop_code = "refused", str(e), e.code
             if proc is not None:                         # the start record could not be rewritten once the member had started: it is stopped, never
@@ -2130,7 +2137,9 @@ def run_started(plan, run, store, dispatch_state, sig):
         sig.armed = False
         if plan.get('skills') is not None:
             try:
-                MS.clear(store, plan['skills']['facts']['delivery_root'])
+                MS.clear(store, plan['skills']['facts']['delivery_root'], dispatch_state)
+            except (MS.Invalid, A.Refuse, OSError) as e:
+                outcome, error, stop_code = 'refused', str(e)[:1000], 2
             except BaseException as e:
                 unexpected = unexpected or e
         try:
@@ -2288,7 +2297,7 @@ def main(argv):
             pending = A.decode(stream.read(2 * A.MAX_REFS + A.MAX_RECORD + 1))
         return run_it(plan, run, pending)
     except (A.Refuse, OSError) as e:
-        print("qargi: lifecycle: %s" % e, file=sys.stderr)
+        print("qargi: lifecycle: %s" % str(e)[:1000], file=sys.stderr)
         return 2
     except (PR.Invalid, MS.Invalid, MS.M.McpError) as e:
         print("qargi: %s" % str(e)[:1000], file=sys.stderr)
@@ -2303,7 +2312,7 @@ def main(argv):
         print("qargi: %s" % e, file=sys.stderr)
         return 2
     except P.ProviderError as e:
-        print("qargi: %s" % e, file=sys.stderr)
+        print("qargi: %s" % str(e)[:1000], file=sys.stderr)
         return 1
     finally:
         for d in keep:

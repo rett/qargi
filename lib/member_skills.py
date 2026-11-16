@@ -8,6 +8,7 @@ retain their existing meaning; full SHA256s and normalized modes protect copies.
 No provider name, rendered union, RUN mirror or pack prose grants authority.
 """
 import hashlib
+import contextlib
 import json
 import os
 import re
@@ -15,6 +16,7 @@ import shutil
 import stat
 import sys
 import tempfile
+import subprocess
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
@@ -27,6 +29,7 @@ import packs_render
 import paths
 import provider as P
 import role as R
+import linker
 
 MAX_SKILLS = 64
 MAX_ENTRIES = 4096
@@ -214,7 +217,7 @@ def selection(project, role, runtime, comp=None):
 def put_tree(root, files, dirs):
     """Only inside an exclusively created owned tree."""
     import attempts as A
-    top = A.directory(root)
+    top = os.dup(root) if type(root) is int else A.directory(root)
 
     def parent(path):
         need(safe_path(path), 'unsafe copy path')
@@ -233,6 +236,7 @@ def put_tree(root, files, dirs):
             try:
                 os.mkdir(d.split('/')[-1], 0o700, dir_fd=fd)
             finally:
+                A.sync_dir(fd, 'skill copy')
                 os.close(fd)
         for p, (data, mode) in files.items():
             fd = parent(p)
@@ -244,6 +248,7 @@ def put_tree(root, files, dirs):
                     os.fchmod(target.fileno(), mode)
                     os.fsync(target.fileno())
             finally:
+                A.sync_dir(fd, 'skill copy')
                 os.close(fd)
     finally:
         os.close(top)
@@ -345,60 +350,186 @@ def current(store, prepared, project, runtime):
     return doc
 
 
-def ownership(store, dest):
-    """Read only; never adopt or delete an unrecorded/replaced destination."""
+DELIVERY_RECORD = 'skills-delivery.json'
+DELIVERY_STAGE = 'skills.stage'
+PRESERVE = '; preserve skills-delivery.json and skills.stage; inspect ownership, then re-prepare in a fresh run'
+
+
+def identity(st):
+    return [st.st_dev, st.st_ino]
+
+
+def entry(fd, name):
     import attempts as A
-    first = store.run + '/' + dest
-    # Own the first skills_dir component, including any nested destination.
-    parent, name = os.path.split(first)
+    return A.Store._work_entry(fd, name)
+
+
+def matched(st, expected):
+    return st is not None and stat.S_ISDIR(st.st_mode) and identity(st) == expected
+
+
+def anchored(path, fd):
+    """A moved anchor remains safe to use, but no longer qualifies for launch."""
+    import attempts as A
+    check = A.directory(path, private_leaf=False)
     try:
-        fd = A.directory(store.path)
+        need(identity(os.fstat(check)) == identity(os.fstat(fd)), 'delivery parent replaced' + PRESERVE)
+    finally:
+        os.close(check)
+
+
+@contextlib.contextmanager
+def delivery_state(store, dest):
+    """Hold original private and delivery parents through every mutation.
+
+    The private lifecycle directory is controller-only cooperative authority,
+    as for init's partial copies. Never infer creation ownership in RUN. The
+    allocation phase covers only children of that exclusive private directory;
+    an identity is persisted before any tree can leave it.
+    """
+    import attempts as A
+    path = store.run + '/' + dest
+    parent, name = os.path.split(path)
+    with contextlib.ExitStack() as stack:
+        private = A.directory(store.path)
+        stack.callback(os.close, private)
         try:
-            owner = A.decode(A.read_at(fd, 'skills-delivery.json', 4096, 0o600))
-        finally:
-            os.close(fd)
-    except FileNotFoundError:
-        owner = None
-    if owner is not None:
-        need(type(owner) is dict and set(owner) == {'path', 'dev', 'ino', 'parent_dev', 'parent_ino'} and owner['path'] == first
-             and all(type(owner[k]) is int and owner[k] >= 0 for k in ('dev', 'ino', 'parent_dev', 'parent_ino')),
-             'invalid delivery ownership')
-    try:
-        pfd = A.directory(parent, private_leaf=False)
-    except FileNotFoundError:
-        need(owner is None, 'delivery parent missing; preserve evidence')
-        return None
-    try:
-        pst = os.fstat(pfd)
-        try:
-            st = os.stat(name, dir_fd=pfd, follow_symlinks=False)
+            owner = A.decode(A.read_at(private, DELIVERY_RECORD, 4096, 0o600))
         except FileNotFoundError:
-            need(owner is None, 'owned delivery missing; preserve evidence')
-            return None
-        need(owner is not None and stat.S_ISDIR(st.st_mode) and (st.st_dev, st.st_ino) == (owner['dev'], owner['ino'])
-             and (pst.st_dev, pst.st_ino) == (owner['parent_dev'], owner['parent_ino']),
-             'foreign/replaced delivery or missing ownership; preserve evidence')
+            owner = None
+        if owner is not None:
+            need(type(owner) is dict and set(owner) == {'path', 'parent', 'private', 'identity', 'phase', 'inode'}
+                 and owner['path'] == path and owner['identity'] == store.show()['prepared']['identity']
+                 and owner['phase'] in ('allocating', 'ready', 'published', 'cleaning'), 'invalid delivery ownership')
+            for key in ('parent', 'private', 'inode'):
+                value = owner[key]
+                valid = type(value) is list and len(value) == 2 and all(type(n) is int and n >= 0 for n in value)
+                need((value is None if owner['phase'] == 'allocating' else valid) if key == 'inode' else valid,
+                     'invalid delivery identity')
+            need(owner['private'] == identity(os.fstat(private)), 'private delivery parent replaced' + PRESERVE)
+        try:
+            pfd = A.directory(parent, private_leaf=False)
+            stack.callback(os.close, pfd)
+        except FileNotFoundError:
+            need(owner is None, 'delivery parent missing' + PRESERVE)
+            need(entry(private, DELIVERY_STAGE) is None, 'unrecorded private delivery staging' + PRESERVE)
+            yield None, None, private
+            return
+        if owner is not None:
+            need(owner['parent'] == identity(os.fstat(pfd)), 'delivery parent replaced' + PRESERVE)
+        source, stage = entry(pfd, name), entry(private, DELIVERY_STAGE)
+        if owner is None:
+            need(source is None and stage is None, 'foreign delivery or missing ownership' + PRESERVE)
+        else:
+            if source is not None:
+                need(owner['phase'] != 'allocating' and matched(source, owner['inode']), 'foreign/replaced delivery' + PRESERVE)
+            if stage is not None:
+                # A partial allocation never left exclusive private authority.
+                # It is cleaned there, never adopted as a publishable snapshot.
+                need(owner['phase'] == 'allocating' and matched(stage, identity(stage))
+                     and stage.st_uid == os.geteuid() and stat.S_IMODE(stage.st_mode) == 0o700
+                     and stage.st_dev == os.fstat(private).st_dev
+                     or owner['phase'] != 'allocating' and matched(stage, owner['inode']),
+                     'staged delivery identity mismatch' + PRESERVE)
+            need(source is None or stage is None, 'ambiguous delivery/staging' + PRESERVE)
+        yield owner, pfd, private
+
+
+def ownership(store, dest):
+    """Read-only inspection, including recoverable absent and partial states."""
+    with delivery_state(store, dest) as (owner, _, __):
         return owner
-    finally:
-        os.close(pfd)
 
 
-def clear(store, dest):
+def cleanup_quiescent(store, dispatch_state=None):
     import attempts as A
-    owner = ownership(store, dest)
-    if owner is None:
-        return
-    parent, name = os.path.split(owner['path'])
-    fd = A.directory(parent, private_leaf=False)
+    store.require_lock()
+    record = store.show()
+    d = record['attempts'][-1]['dispatch']
+    need(d is not None, 'delivery cleanup requires native attempt begin' + PRESERVE)
+    need(not dispatch_state or not dispatch_state['spawned'] or dispatch_state['recorded'],
+         'member group was never recorded; cleanup membership unknown' + PRESERVE)
+    if d['member'] is not None:
+        try:
+            alive = A.group_alive(d['member']['pid'])
+        except A.Refuse as e:
+            raise Invalid('member skills: cleanup group membership unknown' + PRESERVE) from e
+        need(not alive, 'member process group is present; skill cleanup refused' + PRESERVE)
+    else:
+        store._owned_dispatch(record)  # Only this native pre-spawn runner may recover.
+
+
+def remove_staged(private, expected):
+    """Private anchored tombstone; retain mounted filesystems and mismatches."""
+    import attempts as A
+    need(shutil.rmtree.avoids_symlink_attacks, 'safe cleanup unavailable' + PRESERVE)
+    child = os.open(DELIVERY_STAGE, os.O_RDONLY | os.O_DIRECTORY | A.NOFOLLOW, dir_fd=private)
     try:
-        shutil.rmtree(name, dir_fd=fd)
+        need(matched(os.fstat(child), expected) and matched(entry(private, DELIVERY_STAGE), expected),
+             'staged delivery identity mismatch' + PRESERVE)
+        # Same anchored-parent, one-filesystem deletion as lifecycle clean_work.
+        try:
+            subprocess.run(['rm', '-rf', '--one-file-system', '--',
+                            '/proc/self/fd/%d/%s' % (private, DELIVERY_STAGE)],
+                           env={'PATH': A.clean_path()}, pass_fds=(private,), close_fds=True, check=True,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            raise Invalid('member skills: skill cleanup incomplete; retained staging' + PRESERVE) from e
+        need(entry(private, DELIVERY_STAGE) is None, 'skill cleanup incomplete; retained mounted filesystem' + PRESERVE)
+        A.sync_dir(private, 'skill staging deletion')
     finally:
-        os.close(fd)
-    fd = A.directory(store.path)
+        os.close(child)
+
+
+def move_new(source, name, target, new):
+    """Use existing Linux no-replace support, with both parents held open."""
     try:
-        os.unlink('skills-delivery.json', dir_fd=fd)
-    finally:
-        os.close(fd)
+        moved = linker.renameat2(source, name, '/proc/self/fd/%d/%s' % (target, new), 1)
+    except FileExistsError as e:
+        raise Invalid('member skills: foreign delivery/staging already exists' + PRESERVE) from e
+    need(moved, 'atomic no-replace directory rename unavailable' + PRESERVE)
+
+
+def clear(store, dest, dispatch_state=None):
+    import attempts as A
+    ownership(store, dest)  # Advisory read; mutations acquire and revalidate their own anchors.
+    with delivery_state(store, dest) as (owner, parent, private):
+        if owner is None:
+            return
+        cleanup_quiescent(store, dispatch_state)
+        path, name = os.path.split(owner['path'])
+        anchored(path, parent)
+        source, stage = entry(parent, name), entry(private, DELIVERY_STAGE)
+        if source is not None:
+            root = os.open(name, os.O_RDONLY | os.O_DIRECTORY | A.NOFOLLOW, dir_fd=parent)
+            try:
+                need(matched(os.fstat(root), owner['inode']), 'foreign/replaced delivery' + PRESERVE)
+                owner['phase'] = 'cleaning'
+                A.atomic(private, DELIVERY_RECORD, encode(owner))  # Intent precedes rename.
+                move_new(parent, name, private, DELIVERY_STAGE)
+                A.sync_dir(parent, 'skill cleanup rename')
+                A.sync_dir(private, 'skill cleanup rename')
+                need(matched(entry(private, DELIVERY_STAGE), owner['inode']), 'staged delivery identity mismatch' + PRESERVE)
+            finally:
+                os.close(root)
+            stage = entry(private, DELIVERY_STAGE)
+        if stage is not None:
+            expected = identity(stage) if owner['phase'] == 'allocating' else owner['inode']
+            remove_staged(private, expected)
+        anchored(path, parent)
+        need(entry(parent, name) is None, 'foreign/replaced delivery during cleanup' + PRESERVE)
+        os.unlink(DELIVERY_RECORD, dir_fd=private)
+        A.sync_dir(private, 'skill delivery record retirement')
+
+
+def launch_ready(store, prepared):
+    doc = manifest(store, prepared['skills'])
+    dest = doc['facts']['delivery_root']
+    with delivery_state(store, dest) as (owner, parent, _):
+        need(owner is not None and owner['phase'] == 'published'
+             and matched(entry(parent, os.path.basename(owner['path'])), owner['inode']),
+             'delivery incomplete or missing before launch' + PRESERVE)
+        anchored(os.path.dirname(owner['path']), parent)
 
 
 def deliver(store, prepared):
@@ -406,45 +537,59 @@ def deliver(store, prepared):
     doc = manifest(store, prepared['skills'], full=True)
     dest = doc['facts']['delivery_root']
     clear(store, dest)
-    # Use the frozen layout as well as frozen bodies. Current configuration is
-    # compared by preflight, never rebound here, even during a concurrent edit.
-    parent_rel, first = dest.rsplit('/', 1)
-    parent = store.run + '/' + parent_rel
-    fd = A.directory(parent, private_leaf=False)
-    try:
-        os.mkdir(first, 0o700, dir_fd=fd)
-        st, pst = os.stat(first, dir_fd=fd, follow_symlinks=False), os.fstat(fd)
-        owner = dict(path=parent + '/' + first, dev=st.st_dev, ino=st.st_ino, parent_dev=pst.st_dev, parent_ino=pst.st_ino)
-        private = A.directory(store.path)
+    cleanup_quiescent(store)
+    with delivery_state(store, dest) as (owner, parent, private):
+        need(owner is None and parent is not None, 'delivery parent unavailable' + PRESERVE)
+        need(os.fstat(parent).st_dev == os.fstat(private).st_dev,
+             'delivery and private state must share a filesystem; use --scratch on the state filesystem')
+        owner = dict(path=store.run + '/' + dest, parent=identity(os.fstat(parent)), private=identity(os.fstat(private)),
+                     identity=store.show()['prepared']['identity'], phase='allocating', inode=None)
+        A.atomic(private, DELIVERY_RECORD, encode(owner))
         try:
-            A.atomic(private, 'skills-delivery.json', encode(owner))
-        except BaseException:
-            os.rmdir(first, dir_fd=fd)
-            raise
-        finally:
-            os.close(private)
-    finally:
-        os.close(fd)
-    try:
-        root = store.run + '/' + doc['facts']['destination']
-        nested = doc['facts']['destination'][len(dest):].strip('/')
-        if nested:
-            fd = A.directory(parent + '/' + first)
+            # Only allocate inside existing exclusive lifecycle authority. A
+            # foreign RUN replacement can never become our creation identity.
+            os.mkdir(DELIVERY_STAGE, 0o700, dir_fd=private)
+            root = os.open(DELIVERY_STAGE, os.O_RDONLY | os.O_DIRECTORY | A.NOFOLLOW, dir_fd=private)
             try:
-                for part in nested.split('/'):
-                    os.mkdir(part, 0o700, dir_fd=fd)
-                    child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
-                    os.close(fd)
-                    fd = child
+                owner.update(inode=identity(os.fstat(root)), phase='ready')
+                A.sync_dir(private, 'skill allocation')
+                A.atomic(private, DELIVERY_RECORD, encode(owner))
+                target = os.dup(root)
+                try:
+                    nested = doc['facts']['destination'][len(dest):].strip('/')
+                    if nested:
+                        for part in nested.split('/'):
+                            os.mkdir(part, 0o700, dir_fd=target)
+                            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | A.NOFOLLOW, dir_fd=target)
+                            A.sync_dir(target, 'nested skill allocation')
+                            os.close(target)
+                            target = child
+                    files, dirs = collect(store.path + '/skills')
+                    need(descriptions(files) == doc['files'] and sorted(dirs) == sorted(doc['dirs']), 'snapshot bytes changed during delivery')
+                    names = {p['name'] for p in doc['facts']['packs'] if p['included']}
+                    put_tree(target, {p: v for p, v in files.items() if p.split('/')[0] in names and p.split('/', 1)[1] != '.pack.json'},
+                             [d for d in dirs if d.split('/')[0] in names])
+                finally:
+                    os.close(target)
+                anchored(os.path.dirname(owner['path']), parent)
+                name = os.path.basename(owner['path'])
+                need(entry(parent, name) is None, 'foreign delivery before publication' + PRESERVE)
+                move_new(private, DELIVERY_STAGE, parent, name)
+                A.sync_dir(private, 'skill publication')
+                A.sync_dir(parent, 'skill publication')
+                need(matched(entry(parent, name), owner['inode']), 'foreign/replaced delivery after publication' + PRESERVE)
+                anchored(os.path.dirname(owner['path']), parent)
+                owner['phase'] = 'published'
+                A.atomic(private, DELIVERY_RECORD, encode(owner))
             finally:
-                os.close(fd)
-        files, dirs = collect(store.path + '/skills')
-        names = {p['name'] for p in doc['facts']['packs'] if p['included']}
-        put_tree(root, {p: v for p, v in files.items() if p.split('/')[0] in names and p.split('/', 1)[1] != '.pack.json'},
-                 [d for d in dirs if d.split('/')[0] in names])
-    except BaseException:
-        clear(store, dest)
-        raise
+                os.close(root)
+        except BaseException:
+            # Native retries recover recorded partial work. Do not destroy
+            # evidence on a crash; ordinary caught failures can clean safely.
+            if sys.exc_info()[0] not in (KeyboardInterrupt, SystemExit):
+                clear(store, dest)
+            raise
+    launch_ready(store, prepared)
 
 
 def role_inventory(answers):
