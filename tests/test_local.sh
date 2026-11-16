@@ -33,7 +33,7 @@ out=$(./bin/qargi local verify "$RUN" 2>&1); rc=$?
 echo "# report" > "$RUN/out/report.md"
 out=$(./bin/qargi local verify "$RUN" 2>&1); rc=$?
 [ "$rc" = 0 ] && ok "verify passes after a clean run" || no "verify clean: $out"
-{ grep -q '^refs unchanged: observed local refs and available origin heads/tags, excluding refs/qargi/ (snapshots only)$' <<<"$out" && ! grep -qiE 'nothing was pushed|no push|never pushed' <<<"$out"; } \
+{ grep -q '^refs unchanged: observed snapshots only; scope and unavailable remotes: qargi help local verify$' <<<"$out" && ! grep -qiE 'nothing was pushed|no push|never pushed' <<<"$out"; } \
   && ok "unchanged success names snapshot coverage without a universal no-push assurance" || no "unchanged success claim: $out"
 [ "$(cat "$RUN/ability")" = build ] && ok "the run records its ability (build by default)" || no "ability file"
 R2=$(./bin/qargi local prepare --repo "$T/r" --base main --slug rev --scratch "$T" --role review | sed -n '1,/^$/s/^RUN=//p')
@@ -172,6 +172,8 @@ old=$(git -C "$T/r3" rev-parse develop)
 git -C "$T/r3" checkout -q --detach && git -C "$T/r3" branch -f develop "$(git -C "$T/r3" rev-parse develop~1)"
 err=$(./bin/qargi local verify "$P2" 2>&1 >/dev/null); r=$?
 [ $r = 2 ] && grep -q 'not a fast-forward' <<<"$err" && grep -q develop <<<"$err" && ok "a rewind of develop fails with exit 2 and the diff" || no "rewrite accepted: $r $err"
+{ grep -q '^REFS CHANGED or observation unavailable: ref comparison failed (see details):$' <<<"$err" && ! grep -q 'the agent must not have pushed' <<<"$err"; } \
+  && ok "comparison failure reports evidence without actor attribution" || no "comparison failure claim: $err"
 git -C "$T/r3" branch -f develop "$old"
 git -C "$T/r3" checkout -q --detach "$old~1" && $LC -C "$T/r3" commit -q --allow-empty -m other-line && git -C "$T/r3" branch -f develop HEAD
 [ "$(rc "$P2")" = 2 ] && ok "a non-ancestor develop is refused" || no "non-ancestor accepted"
@@ -186,7 +188,7 @@ git -C "$T/r3" remote add origin "$T/remote.git"; out=$(mk p3); P3=$(runof <<<"$
 [ "$(rc "$P3")" = 0 ] && ok "verify passes with a remote" || no "p3 verify"
 git -C "$T/r3" fetch -q origin; out=$(./bin/qargi local verify "$P3" 2>&1); r=$?
 [ $r = 0 ] && grep -q "origin/main created to what origin has" <<<"$out" && ok "a fetch (remote-tracking refs that say what origin has) is accepted and named" || no "fetch: $r $out"
-{ [ "$r" = 0 ] && grep -q '^refs differ from the snapshot only by accepted moves; observed local refs and available origin heads/tags, excluding refs/qargi/ (snapshots only):$' <<<"$out" && ! grep -qiE 'nothing was pushed|no push|never pushed' <<<"$out"; } \
+{ [ "$r" = 0 ] && grep -q '^refs differ from the snapshot only by accepted moves; observed snapshots only; scope and unavailable remotes: qargi help local verify:$' <<<"$out" && ! grep -qiE 'nothing was pushed|no push|never pushed' <<<"$out"; } \
   && ok "accepted-difference success names snapshot coverage without a universal no-push assurance" || no "accepted-difference success claim: $out"
 git --git-dir="$T/remote.git" update-ref refs/heads/elsewhere "$(git --git-dir="$T/remote.git" rev-parse main)"
 [ "$(rc "$P3")" = 2 ] && ok "a remote ref change fails with exit 2 after a passing verify" || no "remote change accepted"

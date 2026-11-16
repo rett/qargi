@@ -115,7 +115,7 @@ qargi local clean "$RUN"
 
 A review member reads the change and returns a report; it needs the read-only barrier. The Codex sandbox is verified as a partial barrier ([What is verified](#what-is-verified)), so `prepare --role review` takes the role and `local run` prints the barrier's note: the member's shell writes are refused, its reads are not.
 
-The last message becomes `OUT/report.md`; the lead writes `OUT/manifest.json`. Review check passes with the Findings and a last line `verdict: accept|revise`. A read-only run with its report closes with a plain clean.
+The last message becomes `OUT/report.md`; the lead writes `OUT/manifest.json`. Review check passes with the Findings and a last line `verdict: accept|revise`. A read-only run with its report can close with plain clean. Retained attempt history may require explicit discard. Preserve wanted evidence first.
 
 ```sh
 printf 'Review the series on agent/dots against feature/dots.\n' \

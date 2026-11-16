@@ -6,8 +6,10 @@ for what is generated from the command table.
 
 ## Where each kind of record lives
 
-All of it is outside every repository, under one root: `~/.qargi`, or `<checkout>/.qargi` in a dev run, or `QARGI_HOME`
-(`lib/paths.py`, `lib/lib.sh`; `QARGI_CONF` and `QARGI_STATE` name the two halves separately). The directories are mode 700.
+User-installation configuration and state default to `~/.qargi`. Development runs can use `<checkout>/.qargi`.
+`QARGI_HOME` replaces the root, and `QARGI_CONF` and `QARGI_STATE` name the two halves separately
+(`lib/paths.py`, `lib/lib.sh`). Qargi creates these directories with mode 700. Repo-tier memory can be committed
+in the project, and shared marshal records are commits on its remote as described below.
 
 Configuration (`config/`), what you set up and rarely change:
 
@@ -33,7 +35,7 @@ State (`state/`), what the commands write as they run:
 | `finish-intent/` | the intent of a `feature finish` or `release finish`, so a re-run after a death completes it |
 | `conflicts/` | the kept worktree of a merge that conflicted, to resolve and resume |
 | `suite-logs/` | the last whole-suite log and gate list of each project and branch |
-| `ref-journal.jsonl` | every branch move the lead made, so `verify` and `clean` can tell them from a member's |
+| `ref-journal.jsonl` | recorded lead branch moves used by the snapshot comparison acceptance rules |
 | `features/`, `marshal/` | the marshal's local records, and per project its switch and trusted signers |
 | `sessions.json` | the tracker of cloud sessions (role, profile, model, effort, state) |
 | `campaigns/UUID/` | declaration objects, the publishing head and permanent local writer lock (`lib/campaign_store.py`) |

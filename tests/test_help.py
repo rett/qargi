@@ -38,6 +38,56 @@ TYPES = {"none": None, "project": 1, "instance": 1, "session": 1, "target": 1, "
 
 
 class Sync(unittest.TestCase):
+    def test_shared_help_introductions_describe_command_specific_requirements(self):
+        guidance = "Request, plan and approval requirements are command-specific."
+        self.assertIn(guidance, H.show_overview())
+        introduction = H.man().split(".SH GLOBAL OPTIONS", 1)[0].replace("\\-", "-")
+        self.assertIn(guidance, introduction)
+        self.assertNotIn("A cloud verb needs", H.show_overview())
+        self.assertNotIn("a cloud command needs", introduction)
+
+    def test_standalone_verify_help_describes_observed_snapshot_scope(self):
+        for arguments in (("help", "local", "verify"), ("local", "verify", "--help")):
+            result = subprocess.run([BIN, *arguments], capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            text = " ".join(result.stdout.split())
+            for boundary in ("local refs", "available origin heads/tags", "excluding refs/qargi/",
+                             "Transient activity", "other destinations"):
+                self.assertIn(boundary, text)
+            self.assertNotIn("Anything else (a push", text)
+
+    def test_shared_policy_topics_and_exit_status_are_scoped(self):
+        overview = H.show_overview()
+        self.assertIn("Members are instructed", overview)
+        self.assertIn("qargi help push", overview)
+        self.assertIn("qargi help dev", overview)
+        concepts = " ".join(C.TOPICS["concepts"][1])
+        self.assertIn("scoped lead grant", concepts)
+        self.assertNotIn("Nothing is pushed", concepts)
+        self.assertNotIn("before anything is pushed", concepts)
+        push = " ".join(C.TOPICS["push"][1])
+        self.assertIn("selected runtime", push)
+        self.assertIn("Long-lived branch", push)
+        exit_status = H.man().split(".SH EXIT STATUS\n", 1)[1].split(".SH SEE ALSO", 1)[0]
+        self.assertIn("command-specific", exit_status)
+
+    def test_verify_help_describes_remote_observation_gaps(self):
+        text = " ".join(C.COMMANDS["local"]["verbs"]["verify"]["desc"].split())
+        self.assertIn("--repo-url observes only", text)
+        self.assertIn("unavailable at both observations", text)
+        self.assertIn("remote refs remain unobserved", text)
+
+    def test_storage_and_guard_topics_disclose_runtime_scope(self):
+        files = " ".join(C.TOPICS["files"][1])
+        self.assertIn("dev mode", files)
+        self.assertIn("repo-tier memory", files)
+        self.assertNotIn("Nothing is stored in a repository", files)
+        guard = " ".join(C.TOPICS["guard"][1])
+        self.assertIn("adapter installs", guard)
+        self.assertIn("qargi provider show", guard)
+        dev = " ".join(C.TOPICS["dev"][1])
+        self.assertIn("Hook-enabled runtimes", dev)
+
     def test_campaign_metadata_help_and_completion(self):
         self.assertEqual(set(verbs("campaign")), {"commit", "show", "check", "log"})
         for spec in verbs("campaign").values():

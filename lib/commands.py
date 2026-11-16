@@ -11,9 +11,11 @@ TAGLINE = "A gathering place for agent work: dispatch, review, remember."
 INTRO = (
     "qargi dispatches one-off, task-scoped development tasks to agents and takes the work back as "
     "reviewable patches. An agent is a member on this machine (local, the default) or a "
-    "cloud agent (only when you ask for it in that request). Agents work in their own clone and "
-    "never push. A team adds a lead that coordinates members for build, write and review on one task. "
-    "Everything qargi stores about you and your projects lives outside every repository. Inside a project's repository you can leave out its name."
+    "cloud agent (only when you ask for it in that request). Members are instructed to work in their own clone and "
+    "return patches without pushing. Lead push grants are separate (qargi help push). A team adds a lead that "
+    "coordinates members for build, write and review on one task. User installations default to ~/.qargi for "
+    "configuration and state. Paths are configurable, and development mode uses checkout-local .qargi (qargi help dev). "
+    "Inside a project's repository you can leave out its name."
 )
 
 ROLES = ("build", "write", "review", "test", "lead")
@@ -120,7 +122,7 @@ COMMANDS = {
         "desc": ("The answers are the repository, its long-lived branches, the roles that exist (build, write, review, test) "
                  "with each role's base branch, model, effort, packages and skills, the memory stores, the budget, and "
                  "optionally a lead with teams and a push grant. Provisioning and dispatch read them. Push policy per role "
-                 "is none: an agent never pushes; the lead's grant is separate (qargi help push)."),
+                 "is none for members: they are instructed to return patches without pushing. The lead's grant is separate (qargi help push)."),
         "scripts": ["project.sh"],
         "verbs": {
             "template": verb("Print an answers file with defaults", [("NAME", "none")], desc="Edit it, then store it with init. models.provider is empty and must be set (the provider the project's agents run on; there is no default); project validate reports it while it is not. No role names a model: it takes the provider's tier once one is set."),
@@ -1279,13 +1281,13 @@ COMMANDS = {
                                   "The runtime may refuse a run whose paths its sandbox hides from the member (dispatch.hidden_paths, /dev for codex): prepare refuses it "
                                   "before it makes anything (exit 2), naming the path and the fix (--scratch on another filesystem, or QARGI_RUN_TMP). "
                                   "The temporary parent is resolved once before directory creation: QARGI_RUN_TMP accepts aliases, relative paths and ..; TMP in the display, task, registry and private ownership record is the canonical path. Cleanup uses that recorded path even if an alias is later repointed.")),
-            "verify": verb("Compare the repository's refs with the snapshot taken by prepare", [("RUN_DIR", "dir", True)],
+            "verify": verb("Compare observed repository refs with the run's current authoritative snapshot", [("RUN_DIR", "dir", True)],
                            [opt("--saved", "verify the lead's saved copy of a passed run whose directory is gone (ID: the name of the run directory, qargi.XXXXXX)", "ID")],
                            desc=("OUT without a report, for an uncollected run or a read-only run, is said with its likely cause: a runtime can refuse the member's write tool for a report file, so the file never reached OUT; "
                                  "the member is told to collect again or return its report as the final message (for a read-only run it is a note, and the exit status stays the refs verdict). "
                                  "Fails first, with exit 1 and \"OUT is empty: the member did not collect\", when the clone holds commits past BASE_SHA and RUN/out holds neither patches nor a report: "
-                                 "the refs are compared all the same and their verdict is printed next to that message (exit 2 when they changed), but nothing is recorded: the run is not verified, and the member must collect (its DONE needs ls OUT/patches to list the patches) before apply or close. "
-                                 "Exits 2 when refs changed (1 before), 3 when the lead's registry does not vouch for the run: it is not in it, names no repository for it, or RUN/repo.path, repo.url or cred.path differ "
+                                 "the refs are compared all the same and their verdict is printed next to that message (exit 2 when the ref comparison fails), but nothing is recorded: the run is not verified, and the member must collect (its DONE needs ls OUT/patches to list the patches) before apply or close. "
+                                 "Exits 2 when the ref comparison fails, 3 when the lead's registry does not vouch for the run: it is not in it, names no repository for it, or RUN/repo.path, repo.url or cred.path differ "
                                  "from it (the repository and the credential come from the registry; a member can write the run directory). "
                                  "It accepts the lead's own moves and names each one (\"develop moved by qargi feature finish\"): what the lead's ref journal records (the branches and tags "
                                  "that qargi's flow verbs move, push to origin or delete: feature finish and park, release and hotfix finish and push, branch prune, review apply, "
@@ -1301,8 +1303,9 @@ COMMANDS = {
                                  "The answers verify and clean read (runs.owned_refs, repo.long_lived, repo.parking_branch) are the copy prepare took into your registry, "
                                  "not the stored file of the day: a change of them takes effect on the runs prepared after it. "
                                  "New runs compare against private prepared and attempt snapshots, epoch and phase; RUN/verified, refs.before, started and dispatch.json are diagnostic mirrors. After a passing verify, later verify and clean also accept "
-                                 "your fast-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there. Anything else (a push, a tag, "
-                                 "a deletion or a rewrite nobody journaled) fails. Run it on every run before merging any of them. "
+                                 "your fast-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there. Other observed, non-exempt ref differences fail. "
+                                 "For --repo runs, snapshots cover local refs and available origin heads/tags, excluding refs/qargi/. --repo-url observes only the URL's heads/tags. When the remote is unavailable at both observations, verification may pass while remote refs remain unobserved. A change in availability fails the comparison. Transient activity and other destinations require separate evidence. "
+                                 "Run it on every run before merging any of them. "
                                  "A passing verify saves OUT in <state>/runs/<run id>/ bound to the prepared identity, attempt and generation. Repeated live or --saved verification reuses that copy and advances the private ref snapshot; identical observations consume no history. --saved and review apply --from-saved require the current verified generation. Earlier copies and historical verifications are each bounded to 32 per attempt; a failed save requires re-verification from the run. Legacy inspection warns about its writable snapshots; missing new-schema authority fails closed.")),
             "close": verb("Close a verified run whose patches you applied by hand (git am): it is no longer open", [("RUN_DIR", "dir")],
                           [opt("--applied-by-am", "the way the run was taken in: you applied its patches by hand with git am (the only way close knows; required)")],
@@ -1310,12 +1313,12 @@ COMMANDS = {
                                 "A closed run is no longer listed as open or counted as applied and not merged by qargi lead compact-check and the compaction advice, no longer blocks "
                                 "qargi feature finish and is listed by marshal status as closed; qargi local list shows closed in the APPLIED column. qargi local clean then removes it "
                                 "without asking for an applied tip (its commits are taken as applied by hand); clean --applied removes it too. Refused for a run that has no passing "
-                                "local verify (verify it first: close must not hide changed refs), a run whose refs changed since that verify (close runs the refs check again), a read-only run, one applied with qargi review apply (merge that branch), "
+                                "local verify (verify it first: close must not hide a failed comparison), a run whose ref comparison fails since that verify (close runs the refs check again), a read-only run, one applied with qargi review apply (merge that branch), "
                                 "a run already closed or cleaned. When the applied branch was rewritten by hand (its tip is not the review:apply tip in your ref journal, the trees are the same and no rewrite is recorded), "
                                 "the refusal for an applied run also names the fix: qargi ref record --rewrite BRANCH OLD NEW --why ..., with the branch and both tips filled in. Not available in a member run."),
                           examples=["qargi local close ./run --applied-by-am"]),
             "clean": verb("Remove a collected, verified run and its temporary directory", [("RUN_DIR", "dir", True)],
-                          [opt("--discard", "drop the run on purpose: also a run whose output holds no manifest, whose commits were never merged or whose repository refs changed (verify's outcome is printed as a warning)"),
+                          [opt("--discard", "drop the run on purpose: also a run whose output holds no manifest, whose commits were never merged or whose ref comparison fails (verify's outcome is printed as a warning)"),
                            opt("--applied", "clean every run under --scratch whose work is recorded applied (review apply) and merged into a branch other than agent/*; the others are kept and named, and the exit status is 1 when an applied run was kept"),
                            opt("--stale", "list the finished runs (RUN/verified or RUN/applied exists) under --scratch that are at least DAYS days old, from the run's start (a run with no start time is named as skipped); with --yes clean each of them by the rules below, and keep and name those clean refuses; a run still in progress is never listed", "DAYS"),
                            opt("--yes", "with --stale: clean the runs it lists (without it nothing changes)"),
@@ -1329,7 +1332,7 @@ COMMANDS = {
                                 "sandboxes in; lifecycle clean removes it with the clone, the bare copy and the output only after private evidence and ownership authorization. Prepare records RUN and TMP directory identities (TMP must be a qargi-run.XXXXXX directory under /dev/shm or QARGI_RUN_TMP, or inside the run). Refused authorization preserves TMP, RUN and retained evidence. Interrupted cleanup uses owned tombstones and the lead registry, never RUN/tmpdir. A source replacement before staging, or missing prepare-time ownership evidence for a marked run, refuses. Once the original is proven staged or deleted, a replacement at its old pathname is preserved and reported while cleanup finishes the owned tombstone and exact registry row. An owned tombstone proves staging even before the phase commit. Internal TMP completion is recorded before RUN staging; recovery never traverses a replacement RUN to inspect TMP or tombstones beneath it. "
                                 "Genuinely unmarked registered legacy runs without private lifecycle remnants retain warned ordinary clean and explicit --discard recovery. This weaker recovery proves no process quiescence or directory identity and creates no lifecycle authority: preserve wanted work and establish process safety first. Legacy TMP comes only from the registry and is removed on one file system only as a non-symlink qargi-run.XXXXXX directly under the real /dev/shm or configured QARGI_RUN_TMP parent, or RUN/tmp. Other TMP paths are left and named. Stripped markers with retained state, cleanup tombstones or saved lifecycle markers still refuse. "
                                 "It refuses a run whose output has no manifest (collect first), except a read-only run (an advisor or a review: its product is a report, never patches) whose output holds a report.md (or NAME-report.md; a regular file, directly in OUT), "
-                                "which closes with a plain clean when its refs are unchanged and its clone holds no commit; and one whose repository refs changed (that is evidence); the lead's own moves that verify accepts "
+                                "which can close with a plain clean when its ref comparison passes, its clone holds no commit and retained lifecycle evidence does not require explicit disposition. Retained attempt history may require --discard even for a read-only run. Preserve its evidence first. Clean also refuses a run whose ref comparison fails (that is evidence); the lead's own moves that verify accepts "
                                 "(a feature finish since the run was prepared, for one) are no change and are named in its output. It also refuses a run whose clone holds commits that were "
                                 "never applied (review apply) or whose applied tip is on no branch but agent/* in the repository (feature merge first), so "
                                 "finished work is not deleted by mistake. --discard deliberately bypasses these product and inspection checks; it never bypasses a held lock, and for lifecycle runs never bypasses ownership or quiescence. "
@@ -1345,7 +1348,7 @@ COMMANDS = {
                                 "When the applied branch is not merged because you rewrote it by hand (its tip is not the review:apply tip in your ref journal, the trees are the same and no rewrite is recorded), "
                                 "the refusal also names the fix, with the branch and both tips filled in: git branch -f BRANCH OLD, then qargi ref record --rewrite BRANCH OLD NEW --why ...; clean then follows the rewrite. "
                                 "When the refusal for an OUT with no manifest finds no report either, it names the likely cause too: a runtime can refuse the member's write tool for a report file, "
-                                "so the files never reached OUT; the member writes them with the shell (a heredoc). "
+                                "so the files never reached OUT; follow the selected runtime's output rules, returning the report as the final message when writes are unavailable. "
                                 "--orphans is for what no run owns: prepare makes a qargi-run.XXXXXX directory under /dev/shm (QARGI_RUN_TMP moves it) for each run, and clean RUN removes only the one your registry names for that run, "
                                 "so a prepare that failed halfway, a dropped record or a replaced state directory leaves one behind. --orphans lists every such directory with its age (from its modification time) and says whether a run of "
                                 "the registry names it, live or not; a link and a file are named and left. Only the registry of this state directory is consulted: the runs of another state directory "
@@ -1744,13 +1747,13 @@ COMMANDS["tool"]["verbs"] = TOOL_VERBS
 TOPICS = {
     "concepts": ("The model in one page", [
         "Task: you describe one task and an executable check that decides it is done. An agent works on it in its own clone and hands back "
-        "numbered patches, one per commit, with a manifest. Nothing is pushed.",
+        "numbered patches, one per commit, with a manifest. Members are instructed to return patches without pushing; lead grants are described in qargi help push.",
         "Roles are build, write, review, test and lead: build changes code, write writes the operational docs, review judges a change and changes no file, test writes and runs tests, lead coordinates a team. Each role is defined by its role text, which comes with the task block. The local workers are members you name and give roles (qargi agent add NAME --roles build,test); qargi agent for ROLE prints the member that serves it. "
         "A role has its own model, effort, skills and packages, stored in the project's answers.",
         "Local or cloud: local (a member on this machine) is the default. The cloud is used only when your request for that task names it, "
         "and start and send require and log your words with --asked. Other commands describe their gates in their own help.",
         "You decide: the coordinator re-verifies everything an agent returns (qargi review check), applies it as separate commits, and "
-        "asks you before anything is pushed."]),
+        "requests approval for pushes outside an existing scoped lead grant. Long-lived branch finishing and release commands retain their plan gates."]),
     "roles": ("Roles and members", [
         "Role build: changes the code with its tests, manual page, help and changelog.",
         "Role write: writes the operational documentation on its own branch.",
@@ -1779,7 +1782,7 @@ TOPICS = {
         "prompt is the person's real control. A member never applies: it reports the plan and its token, and the lead shows them to the person "
         "(what the member's guard refuses: qargi help guard)."]),
     "guard": ("What a member's guard refuses", [
-        "A best-effort text check, not a sandbox: a member runs as your OS user; qargi local verify and review check are the backstop.",
+        "These best-effort checks apply when the runtime adapter installs qargi __guard (qargi provider show RUNTIME). Members run as your OS user. qargi local verify compares snapshots.",
         "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
         "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, gates, env, site, backlog, packs, runs, upstream, git, review, roles), init, new, link and unlink; "
         "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (the rest "
@@ -1795,7 +1798,7 @@ TOPICS = {
         "is refused even in text (not mid-sentence); any other refused verb is text when every command is echo, cat, tee, grep or git commit, "
         "as is a heredoc body cat or tee gets, bar lines starting qargi. "
         "Shell programs piped in or here-strings are read; curl | sh and bash < f are refused. A cd it cannot read refuses relative writes.",
-        "The read-only class (review) writes only OUT and TMP (its TMPDIR is the run's TMP): every change to the clone is refused. It runs build, vet and test commands with its given environment; assigning PATH, TMPDIR or GIT_* is refused, not the command.",
+        "The read-only class (review) may write only OUT and TMP (the run's TMPDIR). Recognized clone mutations are refused. It runs build, vet and test commands with its given environment; assigning PATH, TMPDIR or GIT_* is refused, not the command.",
         "Setting QARGI_NESTED (skips a plan token), or setting or unsetting QARGI_LEAD, is refused.",
         "A refusal is a result: report it."]),
     "naming": ("How resources are named", [
@@ -1814,11 +1817,10 @@ TOPICS = {
         "what leaves a store is archived under /_archive/<date>/, a collision goes to /_conflicts/<date>/, and the origin of every "
         "note written is added to its Sources: line."]),
     "push": ("Who may push", [
-        "Only the lead ever pushes, never a member, and only as the project's lead.push grant says. The default is nothing.",
-        "This Claude Code session as lead: lead.push.local lets it push agent/* branches and open pull requests without asking each time.",
-        "A cloud lead, or one started in the console: lead.push.cloud = branches. It has a GitHub tool with a fixed allowlist and the merge "
-        "tool asked of you. Set it up with qargi lead grant. A merge or a release always needs your explicit approval.",
-        "The GitHub tool cannot create releases; those stay with this session."]),
+        "Push policy reserves pushing to the lead. Without a scoped grant, ask before each push. Plan-gated flow commands retain their own approval requirements.",
+        "The stored lead.push.local grant permits scoped agent/* branch pushes and pull requests without asking each time. Enforcement depends on the selected runtime and its tool permissions; inspect that adapter before relying on it.",
+        "The cloud lead grant, lead.push.cloud = branches, supplies a GitHub tool with a fixed allowlist. It asks before merging when lead.push.merge is ask, and omits that tool when it is never. Set it up with qargi lead grant. Long-lived branch finishing and release/publication commands retain their command-specific approval gates.",
+        "The scoped cloud GitHub tool excludes release creation. Release publication remains a lead operation under the release gates."]),
     "environment": ("Declaring a development environment", [
         "There is no file format of this tool for it. A project says how to set up a checkout in what it already has: a section of AGENTS.md (or README.md) headed "
         "Development environment, Environment or Setup; version pins in go.mod, .tool-versions, mise.toml, .python-version, .nvmrc or package.json; "
@@ -1848,13 +1850,13 @@ TOPICS = {
         "Overrides: QARGI_HOME replaces ~/.qargi; QARGI_CONF and QARGI_STATE replace the two directories and win over it. XDG_CONFIG_HOME and XDG_STATE_HOME are not used. "
         "QARGI_PROJECT names the project when you are not inside its repository. QARGI_ROLES replaces the list of roles. "
         "QARGI_DRY_RUN prints a session request with secrets masked instead of sending it.",
-        "Nothing is stored in a repository."]),
+        "These are user-installation defaults. In dev mode, configuration and state can live in checkout-local .qargi (qargi help dev). Project repo-tier memory can be committed, and shared marshal records can be commits on the project remote."]),
     "dev": ("Running a branch checkout", [
         "install.sh --user records the tool it installed in ~/.qargi/config/install.json. A checkout run from any other place (its own bin/qargi, "
         "for example in a worktree) is then a dev run: it keeps its configuration and state in <checkout>/.qargi (ignored by version control), prints "
         "'qargi: dev run from ...' on stderr once per command, and never touches your live data. Without install.json every checkout is the installed one.",
         "QARGI_HOME, QARGI_CONF or QARGI_STATE, when set, win: QARGI_HOME=~/.qargi makes a dev run use live data on purpose.",
-        "help, version, completion, the guard and the run-event hooks print no banner. Members call qargi __guard from PATH, which is the installed "
+        "help, version, completion, the guard and the run-event hooks print no banner. Hook-enabled runtimes call qargi __guard from PATH, which normally resolves to the installed "
         "copy; put <checkout>/bin first on PATH to test the guard or the hooks of a branch."]),
 }
 

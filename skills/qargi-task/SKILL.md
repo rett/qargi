@@ -6,7 +6,7 @@ argument-hint: '"<task>" --done "<check>" [--instance NAME] [--base B] [--scope 
 
 # /qargi-task (dispatch and session lifecycle)
 
-A **role** says what a task is for (`qargi role list`): build, write, review and test ship with qargi; add your own in `~/.qargi/config/roles/NAME/`. Its **class** (write or read-only) is what the guard checks; its text cannot change it. A **member** is a local agent you named and gave roles (`qargi agent add`), written by the project's local runtime from one member definition (`/qargi-instances`); an **instance** is a registered cloud agent of one role. All of them obey `contract/contract.md`: one task, own clone, patches back, never push, no backlog.
+A **role** says what a task is for (`qargi role list`): build, write, review and test ship with qargi; add your own in `~/.qargi/config/roles/NAME/`. Its **class** (write or read-only) is checked by guard-enabled adapters; its text cannot change the stored class. A **member** is a local agent you named and gave roles (`qargi agent add`), written by the project's local runtime from one member definition (`/qargi-instances`); an **instance** is a registered cloud agent of one role. All of them obey `contract/contract.md`: one task, own clone, patches back, never push, no backlog.
 
 ## Quick form
 
@@ -17,7 +17,7 @@ If the first argument is not a session verb (`send`, `start`, `status`, `watch`,
 ## Hard rules
 
 - **Local is the default.** Load cloud.md only when the user's request names a cloud instance; never choose cloud on your own or fall back between local and cloud: report instead.
-- Agents never push. What the guard refuses: `qargi help guard`. Plan and token rules: `qargi help approvals`.
+- Members are instructed to return patches without pushing. Guard-enabled adapter checks appear in `qargi help guard`. Plan and token rules appear in `qargi help approvals`.
 - Every returned series goes through `/qargi-verify` before anything is applied.
 
 ## Task block
@@ -34,7 +34,7 @@ A profile holds a repository's gates, rules and coordinator review steps, in `~/
 2. Start the member as the project's local runtime says (`qargi provider show RUNTIME`), handing it the path of `RUN/task.md`: read it and follow it.
    - **In-session runtime.** Take MEMBER, MODEL and EFFORT from step 1 (or `qargi agent for <role> [--profile NAME]`). Spawn it as `qargi provider notes spawn` says, with that brief plus the four paths (`CLONE`, `OUT`, `GIT`, `BASE_SHA`) if the runtime needs them. No member serves the role: ask the user to add one (`qargi agent add NAME --roles <role> --project P`), never use another agent type. A member `qargi agent list` shows `STALE` or `DRIFT` is out of date: tell the user, and `qargi agent refresh NAME` only with their go-ahead.
    - **Command runtime** (`dispatch.mode` is command: a headless CLI, no member file): load `local-run.md`.
-3. When it reports, run `qargi local verify <RUN>` first: a change in the real repository's refs means stop and tell the user.
+3. When it reports, run `qargi local verify <RUN>` first: a failed ref comparison means stop and report the observed evidence to the user.
 4. Then `/qargi-verify` on `OUT`: it takes the work in.
 
 ## Parallel tasks
