@@ -8,14 +8,18 @@
 #                                                 ~/.config/fish)
 #   install.sh --project DIR [--runtime NAME] [--copy] [--force]   the skills in the runtime's project skills directory of DIR only
 #   install.sh --user|--project DIR --uninstall [--runtime NAME]
-#   --runtime NAME                                the runtime whose session loads the lead skills (default claude-code);
-#                                                 its skills directories come from its definition (lib/providers/NAME.json,
-#                                                 `qargi provider layout`), none is built in here. A runtime with no
-#                                                 skills directory (or an unknown one) is refused.
+#   --runtime NAME                                the runtime whose session loads the lead skills; without it every runtime
+#                                                 already installed (at that level, in that project) is refreshed, and
+#                                                 claude-code is installed when none is. Its skills directories come from its
+#                                                 definition (lib/providers/NAME.json, `qargi provider layout`), none is built in
+#                                                 here. A runtime with no skills directory (or an unknown one) is refused; an
+#                                                 installed runtime whose definition is gone is skipped with a note.
 #
 # Runtimes install side by side: an install of one runtime leaves the skills of the others as they are, and the command, man page and
 # completions are shared by them. --uninstall --runtime NAME removes one runtime; --uninstall alone removes every runtime installed (it
-# lists them first); the shared part goes with the last one.
+# lists them first); the shared part goes with the last one. The user runtimes come from one tool, all linked or all copied: --runtime NAME
+# from another tool or in the other mode is refused while another runtime is installed (install.sh --user [--copy] without --runtime moves
+# them all), and a --user --copy run copies every installed runtime again, since it rewrites the tool copy they come from.
 #
 # By default everything is a symlink to this checkout (updates follow `git pull`).
 # --copy installs real files: for --user the whole tool is copied to
@@ -107,16 +111,17 @@ lock() {
   flock -w 5 9 || { echo "qargi: install.sh: another install is running (it holds $liveconf/install.lock); nothing was changed, try again once it is done" >&2; exit 1; }
 }
 # the records as they are: RUNTIMES (the user runtimes recorded), SHARED (the shared manifest, or empty), PRUNTIMES (the runtimes recorded for
-# this project directory). A record with a line that fails its check stops the run here.
+# this project directory) and REC_ROOT, REC_SOURCE (the tool install.json records). A record with a line that fails its check stops the run here.
 read_state() {
-  local st k a
-  RUNTIMES='' SHARED='' PRUNTIMES=''
+  local st k a b
+  RUNTIMES='' SHARED='' PRUNTIMES='' REC_ROOT='' REC_SOURCE=''
   st=$(records state --conf "$liveconf" --data "$data" ${key:+--project-key "$key"}) || exit 1
-  while IFS=$'\t' read -r k a _; do
+  while IFS=$'\t' read -r k a b; do
     case $k in
       runtime) RUNTIMES="${RUNTIMES:+$RUNTIMES }$a";;
       shared) SHARED=$a;;
       project) PRUNTIMES="${PRUNTIMES:+$PRUNTIMES }$a";;
+      record) REC_ROOT=$a; REC_SOURCE=$b;;
     esac
   done <<<"$st"
 }
@@ -160,22 +165,10 @@ if [ -n "$uninstall" ]; then
   exit 0
 fi
 
-# the runtimes this run installs; a runtime named on the command line that has no skills directory is refused before anything is written
-runs=${runtime:-claude-code}
+# a runtime named on the command line that has no skills directory is refused before anything is written
 field=user_skills_dir; [ "$mode" = user ] || field=project_skills_dir
 declare -A skdir=()
-for r in $runs; do skdir[$r]=$(layout_of "$r" "$field") || exit 1; done
-
-if [ -n "$exclude_file" ]; then
-  pat=$(printf '%s|' $skills); pat=${pat%|}
-  for r in $runs; do
-    pagents=$(python3 "$here/lib/provider.py" layout "$r" project_agents_dir 2>/dev/null || true)
-    tracked=$(git -C "$proj" ls-files -- "${skdir[$r]}" ${pagents:+"$pagents"} | grep -E "(^|/)($pat)(/|\\.md\$)" || true)
-    if [ -n "$tracked" ]; then
-      echo "refusing: qargi paths are tracked in $proj; remove them from the repository first" >&2; exit 1
-    fi
-  done
-fi
+[ -z "$runtime" ] || skdir[$runtime]=$(layout_of "$runtime" "$field") || exit 1
 
 # the live config directory and the parents of it this run makes (c): an uninstall removes them once they are empty
 cmade=''; d=$liveconf
@@ -186,7 +179,47 @@ undo_conf() {   # a run refused before it recorded anything leaves no lock and n
   rm -f "$liveconf/install.lock"
   while IFS= read -r d; do [ -z "$d" ] || rmdir "$d" 2>/dev/null || true; done <<<"$cmade"
 }
+refuse() { echo "$1" >&2; undo_conf; exit 1; }
 lock; read_state
+recorded=$RUNTIMES; [ "$mode" = user ] || recorded=$PRUNTIMES
+
+# the runtimes this run installs: the one named, else every runtime recorded (claude-code when none is)
+runs=${runtime:-${recorded:-claude-code}}
+how="link"; [ -z "$copy" ] || how="copy"
+if [ "$mode" = user ]; then
+  # one source: the user runtimes all come from the same tool, linked or copied alike. A run that would move the source while it leaves
+  # another recorded runtime on the old one is refused; a run that refreshes every runtime moves them all.
+  others=''
+  if [ -n "$runtime" ]; then for r in $recorded; do [ "$r" = "$runtime" ] || others="${others:+$others }$r"; done; fi
+  newroot=$(realpath -m "$src")
+  if [ -n "$others" ] && [ -n "$REC_ROOT" ] && [ "$(realpath -m "$REC_ROOT") $REC_SOURCE" != "$newroot $how" ]; then
+    # shellcheck disable=SC2086  # the names are words
+    refuse "qargi: install.sh: the installed runtimes ($(commas $recorded)) come from $REC_ROOT ($REC_SOURCE); this run would install $runtime from $newroot ($how) and leave $(commas $others) behind. Run install.sh --user${copy:+ --copy} without --runtime to move them all; nothing was changed"
+  fi
+  # a copy rewrites the tool copy every runtime's skills come from: every recorded runtime is copied again with it
+  if [ -n "$copy" ]; then for r in $recorded; do case " $runs " in *" $r "*) ;; *) runs="$runs $r";; esac; done; fi
+fi
+keep=''
+for r in $runs; do
+  if [ -z "${skdir[$r]+set}" ]; then
+    case " $recorded " in *" $r "*) ;; *) skdir[$r]=$(layout_of "$r" "$field") || { undo_conf; exit 1; };; esac
+    if [ -z "${skdir[$r]+set}" ] && ! skdir[$r]=$(layout_of "$r" "$field" 2>/dev/null); then
+      echo "note: runtime $r is recorded but its definition has no $field now, so it was not refreshed (install.sh --$mode${proj:+ $proj} --uninstall --runtime $r removes it)" >&2
+      continue
+    fi
+  fi
+  keep="${keep:+$keep }$r"
+done
+runs=$keep
+
+if [ -n "$exclude_file" ]; then
+  pat=$(printf '%s|' $skills); pat=${pat%|}
+  for r in $runs; do
+    pagents=$(python3 "$here/lib/provider.py" layout "$r" project_agents_dir 2>/dev/null || true)
+    tracked=$(git -C "$proj" ls-files -- "${skdir[$r]}" ${pagents:+"$pagents"} | grep -E "(^|/)($pat)(/|\\.md\$)" || true)
+    [ -z "$tracked" ] || refuse "refusing: qargi paths are tracked in $proj; remove them from the repository first"
+  done
+fi
 
 # the plan: every part this run installs, each path it writes and where it comes from (lib/install_record.py apply reads it)
 plan=$tmp/plan; : > "$plan"
@@ -231,7 +264,6 @@ fi
 kind="symlinks to $here"; [ -z "$copy" ] || kind=copy
 for r in $runs; do echo "installed the skills of $r in ${skdir[$r]} ($kind)"; done
 if [ "$mode" = user ]; then
-  how="link"; [ -z "$copy" ] || how="copy"
   records record --conf "$liveconf" --tool-root "$(cd "$src" && pwd -P)" --version "$(cat "$src/VERSION")" --source "$how" || exit 1
   read_state
   echo "installed the command at $cmd, the man page at $manpage ($kind)"

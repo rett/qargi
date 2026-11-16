@@ -13,6 +13,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 - Install records live in `<conf>/install.d/` (one manifest per runtime, a shared one, one per project and runtime). Every line is checked when read, a manifest is written whole before the install acts, and a run holds `<conf>/install.lock`. `install.json` also records `source` (link or copy).
 - `install.sh` leaves a link that already points at its target untouched and does not replace a link no install recorded without `--force`.
+- `install.sh --user` without `--runtime` refreshes every installed runtime (claude-code when none is), skipping one whose definition is gone with a note; `--user --copy` copies every installed runtime again.
+- `install.sh --user --runtime NAME` from another tool or in the other link/copy mode is refused while another runtime is installed; `install.sh --user` without `--runtime` moves them all.
 
 ## [0.3.1] - 2026-11-16
 
