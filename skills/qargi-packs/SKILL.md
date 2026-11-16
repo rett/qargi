@@ -42,6 +42,8 @@ A role gets every pack linked at a scope that reaches it, unless that role disab
 
 ## Apply and link
 
+For opt-in command member snapshots, load [member-skills.md](member-skills.md). Canonical role selection governs managed delivery; independent client discovery remains possible.
+
 An explicit target names an eligible local provider's `session.render_target`, independently of the member runtime and profiles. Use `qargi packs link|unlink PROJECT --target TARGET` for secondary skills only; keep `project link|unlink` for the default skills, agents and memory. Skill `accept|unaccept` also takes `--target TARGET`; approvals remain provider-bound.
 
 Qargi-managed rendering and apply use a plan, a token and the person's go-ahead. `/qargi-provision` attaches a new instance's packs. For an existing cloud agent, `qargi packs apply INSTANCE --asked "..."` uploads the custom skills and replaces the agent's skill, MCP-server and tool lists. For a local session, `qargi packs apply --target RUNTIME PROJECT` renders the project's packs under the configured state directory; `packs check` reports drift; `packs link|unlink PROJECT` and `qargi project link PROJECT` link the render into a work tree. Vault credentials a tool needs are reported, never attached. Load `apply.md` before you render or apply, link, or handle unmanaged skills.

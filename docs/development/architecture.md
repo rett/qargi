@@ -1,5 +1,7 @@
 # Architecture
 
+`lib/member_skills.py` implements opt-in canonical role-specific command member snapshots. `packs.member_skills` is a dedicated gated answer; ordinary project writes cannot enable or change it. Prepare/init freezes bounded nofollow copies inside exclusive private lifecycle authority. `prepared.skills` is only a closed manifest reference/hash beside the unchanged prepared request. Bodies stay outside lifecycle JSON/stdin. Canonical approval/review and full per-file integrity hashes have distinct purposes. Build inspects drift read-only; after lifecycle begin, launch copies authoritative bytes beside private-home setup and records directory device/inode ownership. Finally removes only proven-owned delivery; retry restores the frozen snapshot or refuses. Saved generations retain the evidence and existing owned tombstone cleanup removes it. RUN mirrors confer no authority. See [the delivery contract](../../skills/qargi-packs/member-skills.md) for limits and upgrade boundaries. No generic dispatch path branches on provider names; destination structure and actual loading qualification remain separate.
+
 How qargi is put together, for someone who changes it. Every statement here can be found in the code; the paths are the ones
 to grep. See [CONTRIBUTING.md](../../CONTRIBUTING.md) for the workflow and [Help, manual page and completion](../reference/README.md#help-manual-page-and-completion)
 for what is generated from the command table.

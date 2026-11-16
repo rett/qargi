@@ -10,6 +10,8 @@ A command runtime is a headless CLI: there is no member file, so nothing to spaw
 
 The command is built from the definition as an array, without a shell, in a scrubbed environment (only what the pack's `env_pass` lists, which the review shows), with the member's prompt and the task block composed into one prompt; its output goes to `OUT/transcript`.
 
-A read-only run is refused unless the definition declares a verified barrier or the project accepted the lack of one (`qargi provider accept`). The runtime is not a sandbox: it runs as the user, so `qargi local verify` matters more. An in-session runtime is refused by `local run`, and a member's guard refuses it. A runtime whose sandbox hides a place from the member (`dispatch.hidden_paths`) refuses a run there: `prepare` names the path and the fix, usually `--scratch` on disk.
+A read-only run is refused unless the definition declares a verified barrier or the project accepted the lack of one (`qargi provider accept`). The runtime runs as the user; its qualified contract defines sandbox and guard protection, so `qargi local verify` remains necessary. An in-session runtime is refused by `local run`, and a member's guard refuses it. A runtime whose sandbox hides a place from the member (`dispatch.hidden_paths`) refuses a run there: `prepare` names the path and the fix, usually `--scratch` on disk.
 
 Then continue with step 3 of the local flow.
+
+Managed member skills default off. With the owner's gated opt-in, prepare freezes the actual role's canonical selection; dry-run shows names, hashes and destination. Drift requires re-prepare. Runtime loading and protection need their own qualification; committed checkout skills may load independently. Load the packs skill's `member-skills.md` for limits, ownership and upgrade boundaries.

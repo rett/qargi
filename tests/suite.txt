@@ -18,6 +18,8 @@ full | par | 300 | 21 | python3 tests/test_tiers.py | lib/tiers.py
 full | par | 300 | 33 | bash tests/test_models.sh
 full | par | 366 | 158 | bash tests/test_no_default_provider.sh
 full | par | 654 | 244 | python3 tests/test_provider.py | lib/provider.sh lib/provider.py
+# Member snapshots: 19 public-path cases measured 98.058s in the targeted runner; ceil = 99s, budget ceil(99 * 1.10) = 109s, timeout 480s.
+full | par | 480 | 109 | python3 tests/test_member_skills.py | lib/member_skills.py lib/attempts.py lib/local_run.py lib/local.sh lib/gated_answers.py lib/packs.sh lib/project.sh lib/provider.py lib/providers/* tests/prepared_request_cases.py
 fast | par | 300 | 8 | python3 tests/test_render.py | lib/render.py
 full | par | 300 | 68 | python3 tests/test_provider_adapter.py | lib/provider*.sh lib/provider*.py
 full | par | 300 | 59 | bash tests/test_provider_degrade.sh | lib/provider*.sh lib/provider*.py

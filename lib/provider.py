@@ -390,7 +390,7 @@ def env_pass_problem(name):
 
 # ---- the run home of a command runtime (dispatch.home) ----------------------------------------------------------------------------
 
-HOME_KEYS = ("env", "dir", "link")
+HOME_KEYS = ("env", "dir", "link", "skills_dir")
 HOME_ENV_SET = ("LANG", "LC_ALL", "TZ", "TERM")          # set by qargi local run for every member, beside what env_pass_problem refuses
 HOME_LINK_NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$")
 HOME_LINKS_MAX = 8
@@ -481,6 +481,12 @@ def home_problems(home, env_pass=(), shape=True):
             if to in seen:
                 bad.append("dispatch.home.link[%d].to: %s is linked twice" % (i, _show(to)))
             seen.add(to)
+    if 'skills_dir' in home:
+        skills = home['skills_dir']
+        if not isinstance(skills, str) or not _plain_relative(skills):
+            bad.append('dispatch.home.skills_dir: a relative directory inside the private home is required')
+        elif skills.split('/')[0] in seen | {x + '.from-run' for x in seen}:
+            bad.append('dispatch.home.skills_dir: overlaps a credential destination or its .from-run residue')
     return bad
 
 
@@ -1112,6 +1118,8 @@ def run_config_problems(disp, resources, shape=True):
             bad.append("dispatch.run_config.in: home needs dispatch.home, the run home the file goes in")
         elif any(isinstance(ln, dict) and ln.get("to") == rc.get("file") for ln in home.get("link") or [] if isinstance(home.get("link"), list)):
             bad.append("dispatch.run_config.file: %s is also a link of the run home" % _show(rc.get("file")))
+        if isinstance(home, dict) and isinstance(home.get('skills_dir'), str) and home['skills_dir'].split('/')[0] == rc.get('file'):
+            bad.append('dispatch.home.skills_dir: overlaps in-home run_config.file')
     mcp = resources.get("mcp") if isinstance(resources, dict) else None
     tl = mcp.get("tool_lists") if isinstance(mcp, dict) else None
     if not isinstance(tl, dict) or not (tl.get("allow") or tl.get("deny")):

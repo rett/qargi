@@ -122,6 +122,7 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import attempts as A
 import prepared_request as PR
+import member_skills as MS
 import provider as P  # noqa: E402
 import paths  # noqa: E402
 import procenv as PE  # noqa: E402
@@ -853,10 +854,17 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     store = A.Store(run)
     row = store.registry()
     request = None
+    prepared = None
     if row is not None and "lifecycle" in row:
-        request = store.show()["prepared"].get("request")
+        prepared = store.show()["prepared"]
+        request = prepared.get("request")
     if request is not None:
         PR.current(request, project, runtime, cls)
+    skills = MS.current(store, prepared, project, runtime) if prepared and request else None
+    if prepared and request is None and project:
+        MS.need(not MS.enabled(project), 'enabled request has no snapshot; re-prepare')
+    if skills:
+        MS.ownership(store, skills['facts']['delivery_root'])
     comp = P.compose(runtime, "local", project)          # the definition the project's extensions complete, not the runtime's alone
     doc = comp["definition"]
     disp = doc.get("dispatch")
@@ -989,7 +997,7 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     watched = git_watch(argv_t, class_extra(disp, cls, runtime), cls, argv, clone)
     return {"runtime": runtime, "class": cls, "argv": argv, "exe": exe, "exe_from": how, "cwd": cwd, "via": via, "prompt": prompt, "prompt_file": pfile,
             "timeout_s": to, "env_pass": passed, "env": child_env(run, tmp, passed, home), "exit": ex, "model": mname, "effort_native": native,
-            "home": home, "notes": exe_notes + notes + ([note] if note else []) + home_notes(home) + ([rcfg["note"]] if rcfg and rcfg["note"] else []),
+            "home": home, "skills": skills, "prepared": prepared, "notes": exe_notes + notes + ([note] if note else []) + home_notes(home) + ([rcfg["note"]] if rcfg and rcfg["note"] else []),
             "output_format": (disp.get("output") or {}).get("format", "text"), "usage": (disp.get("output") or {}).get("usage"), "run_config": rcfg,
             "final": final, "package": package, "git_watch": watched}
 
@@ -1011,6 +1019,10 @@ def dry(plan, run):
     print("CWD=" + plan["cwd"])
     print("TIMEOUT_S=%d" % plan["timeout_s"])
     print("ENV_PASS=" + ",".join(plan["env_pass"]))
+    if plan.get('skills') is not None:
+        facts = plan['skills']['facts']
+        print('MEMBER_SKILLS_DIR=' + run + '/' + facts['destination'])
+        print('MEMBER_SKILLS=' + ','.join(p['name'] + ':' + p['approved'] for p in facts['packs'] if p['included']))
     if plan["home"]:
         print("HOME_ENV=" + plan["home"]["env"])
         print("HOME_DIR=" + plan["home"]["path"])
@@ -2041,6 +2053,9 @@ def run_started(plan, run, store, dispatch_state, sig):
         try:
             if home:
                 made = make_home(run, home)              # the links exist for the length of the run only
+            if plan.get('skills') is not None:
+                MS.current(store, plan['prepared'], plan['prepared']['request']['project'], plan['runtime'])
+                MS.deliver(store, plan['prepared'])
             sig.check()
             if plan["run_config"]:
                 put_run_config(run, plan["run_config"], home)
@@ -2113,6 +2128,11 @@ def run_started(plan, run, store, dispatch_state, sig):
             code = proc.returncode
     finally:
         sig.armed = False
+        if plan.get('skills') is not None:
+            try:
+                MS.clear(store, plan['skills']['facts']['delivery_root'])
+            except BaseException as e:
+                unexpected = unexpected or e
         try:
             home_left = clear_home(run, home, made) if home else []
         except BaseException as e:
@@ -2270,7 +2290,7 @@ def main(argv):
     except (A.Refuse, OSError) as e:
         print("qargi: lifecycle: %s" % e, file=sys.stderr)
         return 2
-    except PR.Invalid as e:
+    except (PR.Invalid, MS.Invalid) as e:
         print("qargi: %s" % e, file=sys.stderr)
         return 2
     except Stop as e:

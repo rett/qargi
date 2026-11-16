@@ -737,7 +737,7 @@ prep "$T/r" mc3 review; task; echo build > "$RUN/ability"
 out=$($DA local run "$RUN" --dry-run 2>&1)
 grep -q '^RUN_CONFIG_TOOLS=mcp__cx__getStatus,mcp__cx__platform_list_items$' <<<"$out" && ok "an ability file rewritten in the run directory does not change the tools of the run" || no "mcp role source: $(grep '^RUN_CONFIG' <<<"$out")"
 jq 'del(.models.accept_no_barrier)' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
-# --- a Codex member gets no qargi skill: the lead's skills, linked where a Codex lead session finds them (~/.codex/skills, ~/.agents/skills, and
+# --- default-off managed delivery: the lead's skills, linked where a Codex lead session finds them (~/.codex/skills, ~/.agents/skills, and
 # untracked in the lead's checkout under .agents/skills), are in none of the places Codex reads skills from in a run (CODEX_HOME/skills, HOME/.agents/skills,
 # the clone's .agents/skills), and the run's configuration turns the bundled skills off. The fake codex lists every skill it could load.
 mkdir -p "$T/skillbin" "$HOME/.codex/skills" "$HOME/.agents/skills" "$T/r/.agents/skills"
@@ -756,7 +756,7 @@ setprov codex; prep "$T/r" sk1; task
 out=$(PATH=$T/skillbin:$PATH $DA local run "$RUN" 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -q '^SKILLROOTS-CHECKED$' "$OUT/transcript" && ! grep -q '^SKILL=' "$OUT/transcript" && [ ! -e "$CLONE/.agents" ] \
   && [ "$(tomljson "$RUN/home/.codex/config.toml" | jq -c .skills)" = '{"bundled":{"enabled":false}}' ]; } \
-  && ok "a codex member sees no skill of the lead (qargi-flow, qargi-verify, qargi-task), and its bundled skills are off" || no "member skills: rc=$rc $(grep -E '^SKILL' "$OUT/transcript")"
+  && ok "default-off delivery excludes these untracked lead links (qargi-flow, qargi-verify, qargi-task), and bundled skills are off" || no "member skills: rc=$rc $(grep -E '^SKILL' "$OUT/transcript")"
 rm -rf "$T/skillbin" "$HOME/.codex/skills" "$HOME/.agents" "$T/r/.agents"
 # the same file for a runtime that takes it by a flag: in run, RUN/config/FILE, and {run_config} in its argv (no flag without a tool)
 mk fakecfg "$(jq -n --argjson m "$M" '{schema:2,kind:"provider",provider:"fakecfg",family:null,surface:"local",models:$m,capabilities:{},agents:null,barrier:{kind:"none"},

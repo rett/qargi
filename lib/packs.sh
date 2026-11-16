@@ -48,11 +48,13 @@
 # does not mark readOnlyHint true is then refused as always_allow or auto without write_ok, one it marks destructiveHint true is
 # reported, and the record keeps the listing's sha256 and what it says of the pack's tools (tool_list). tool_list is covered by the
 # content hash like compatible_providers, so it is approved with the pack; a seal without --tool-list keeps the record's.
+[ "${1:-}:${2:-}" != packs:member-skills ] || export DA_NOSETUP=1
 . "$(dirname "$0")/lib.sh"
 
 PACKS=$DA_CONF/packs; LINKS=$PACKS/links.json
 KIND=${1:-}; VERB=${2:-}; shift 2 || true
 COMPAT_ARG='' INSTALL='' USER_SCOPE='' RENDER_ONLY='' TARGET='' SCOPE='' PROJECT='' ROLE='' NAME='' REF='' SUBPATH='' APPROVED='' PLAN_ARG='' TOOL_LIST='' ARGS=()
+MEMBER_CHOICE=status
 while [ $# -gt 0 ]; do
   case $1 in
     --scope) need_val "$1" $#; SCOPE=$2; shift 2;;
@@ -68,6 +70,7 @@ while [ $# -gt 0 ]; do
     --target) need_val "$1" $#; TARGET=$2; shift 2;;
     --tool-list) need_val "$1" $#; TOOL_LIST=$2; shift 2;;
     --install) INSTALL=1; shift;;
+    --enable|--disable) [ "$MEMBER_CHOICE" = status ] || usage_die "choose --enable or --disable, once"; MEMBER_CHOICE=${1#--}; shift;;
     --user) USER_SCOPE=1; shift;;
     '--render-only') RENDER_ONLY=1; shift;;   # internal (lib/local.sh): check the render alone, without the section of the skills a session would load
     --*) usage_die "unknown option $1";;
@@ -75,6 +78,27 @@ while [ $# -gt 0 ]; do
   esac
 done
 export PLAN_ARG ASKED
+if [ "$KIND:$VERB" = packs:member-skills ]; then
+  [ "${#ARGS[@]}" = 1 ] || usage_die "qargi packs member-skills PROJECT [--enable|--disable] [--plan TOKEN --approved WORDS]"
+  [ "$MEMBER_CHOICE" != status ] || [ -z "$PLAN_ARG$APPROVED" ] || usage_die "member-skills status takes no plan or approval"
+  # Native refusal applies even on a runtime with no qargi guard hook.
+  if [ -n "${QARGI_MEMBER_RUN:-}" ] || python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import marshal_refs; sys.exit(0 if marshal_refs.in_member_run() else 1)' "$(dirname "$0")"; then
+    [ "$MEMBER_CHOICE" = status ] || die "packs member-skills mutation is not available in a member run"
+  fi
+  plan=$(pymod member_skills plan "${ARGS[0]}" "$MEMBER_CHOICE") || exit $?
+  jq -r '"member skills for \(.project): \(.old) -> \(.new)", (.roles[]? | "  role \(.role): \(.destination)", (.packs[] | "    \(.name) \(.approved) (included: \(.included))"))' <<<"$plan"
+  [ "$MEMBER_CHOICE" != status ] || exit 0
+  tok=$(printf '%s\n' "$plan" | plan_token)
+  if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: --plan $tok --approved \"<the user's go-ahead>\")"; exit 0; fi
+  need_plan "$tok"
+  # Recompute immediately before store; stale content, scope or configuration cannot reuse approval.
+  fresh=$(pymod member_skills plan "${ARGS[0]}" "$MEMBER_CHOICE") || exit $?
+  [ "$fresh" = "$plan" ] || die "member skills plan changed; nothing stored"
+  pymod gated_answers store "${ARGS[0]}" packs.member_skills "$(jq -c .new <<<"$plan")" || exit $?
+  audit_log "packs:member-skills" "${ARGS[0]} $MEMBER_CHOICE: $APPROVED"
+  exit 0
+fi
+[ "$MEMBER_CHOICE" = status ] || usage_die "--enable|--disable goes with packs member-skills"
 COMPATPY=$(dirname "$(readlink -f "$0")")/packs_compat.py
 REVIEWPY=$(dirname "$(readlink -f "$0")")/conformance/review.py
 CHECKPY=$(dirname "$(readlink -f "$0")")/packs_check.py   # the per-pack work of check and list in one process: hash, review, compatibility

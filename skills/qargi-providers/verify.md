@@ -2,6 +2,8 @@ Load when verifying, attesting or enabling a runtime or extension.
 
 # Verification, attest, extensions
 
+`dispatch.home.skills_dir` declares a command runtime's structural destination only. It does not verify loading or change capability dates. Managed member delivery remains default off and requires the project's separate gate. Qualify the actual client and source layout with approved marker calls; fixtures establish mechanics only. Inspect contract addenda for real protection: hookless runtimes have no qargi guard.
+
 ## What counts
 
 The review of a pack with executables gives each one's path, sha256, interpreter, first lines, the URLs and network commands it mentions and the commands the argv would run. qargi runs an approved executable only from a private copy, after its hash and the pack's were checked against the sealed record.

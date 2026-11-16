@@ -93,6 +93,9 @@ provision_reads() {
 # named); JSON is the value being stored there (set) or the one being removed (unset). A whole models object counts when it holds those keys.
 gated_path() {
   case $1 in
+    packs.member_skills|packs.member_skills.*) echo "qargi packs member-skills PROJECT --enable|--disable"; return 0;;
+    packs) if jq -e 'type == "object" and has("member_skills")' >/dev/null 2>&1 <<<"$2"; then
+             echo "qargi packs member-skills PROJECT --enable|--disable"; return 0; fi;;
     models.extensions|models.extensions.*) echo "qargi provider enable PROJECT EXTENSION (and disable)"; return 0;;
     models.accept_no_barrier|models.accept_no_barrier.*) echo "qargi provider accept NAME --surface S --no-barrier"; return 0;;
     models) if jq -e 'type == "object" and (has("extensions") or has("accept_no_barrier"))' >/dev/null 2>&1 <<<"$2"; then
@@ -408,8 +411,9 @@ if anb is not None:
             need(isinstance(rec["at"], str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", rec["at"]), "%s.at: a UTC time like 2026-10-31T12:00:00Z" % p)
 pk_ = c.get("packs")
 if pk_ is not None:
-    need(isinstance(pk_, dict) and set(pk_) <= {"none"} and isinstance(pk_.get("none", False), bool),
-         "packs: an object like {none: true} (none: the project uses no project packs, so packs check passes without a render)")
+    need(isinstance(pk_, dict) and set(pk_) <= {"none", "member_skills"}
+         and all(type(v) is bool for v in pk_.values()),
+         "packs: an object of booleans none and member_skills (default off; member_skills uses qargi packs member-skills)")
 rn = c.get("runs")
 if rn is not None:
     need(isinstance(rn, dict) and set(rn) <= {"owned_refs"}, "runs: an object like {owned_refs: [\"refs/heads/foo-*\"]} (owned_refs: the refs a runtime or harness creates in the repository; verify and clean accept them)")
@@ -575,7 +579,9 @@ gated_keys_changed() { # NEWFILE [STOREDFILE]
         elif ($x | type) == "object" then ($x | to_entries | all(. as $e | $y[$e.key] == $e.value))
         else $x == $y end;
     ($n[0] | keys_of) as $a | ($s[0] | keys_of) as $b
-    | ["extensions", "accept_no_barrier"][] | . as $k | select(narrower($a; $b; $k) | not) | "models." + $k'
+    | (["extensions", "accept_no_barrier"][] | . as $k | select(narrower($a; $b; $k) | not) | "models." + $k),
+      (select(($n[0].packs | type) == "object" and ($n[0].packs | has("member_skills")))
+       | select(($n[0].packs.member_skills // false) != ($s[0].packs.member_skills // false)) | "packs.member_skills")'
 }
 gated_refuse() { # NEWFILE [STOREDFILE]: says so and returns 1 when the file would add or change a gated key
   local bad; bad=$(gated_keys_changed "$@" | paste -sd, | sed 's/,/, /g')
@@ -877,6 +883,9 @@ PY
     # object), for every caller and always. Those verbs store them through lib/gated_answers.py, which this verb never calls and nothing a
     # caller sets (an environment variable, an option) can reach from here
     gated=$(gated_path "$path" "$val") || gated=''
+    if [ -z "$gated" ] && [ "$path" = packs ]; then
+      gated=$(gated_path "$path" "$(answer_was "$PROJ_DIR/$n.json" packs)") || gated=''
+    fi
     [ -z "$gated" ] || { echo "qargi: $path is not set with project set: it changes what an agent may run on or accepts a surface with no read-only barrier, so it takes a plan token and an approval: $gated" >&2; exit 2; }
     # a runtime that exists but does not serve that surface cannot be what the project runs there: refused (exit 2), as attach and new refuse it,
     # before anything is changed. A name with no definition, an ambiguous family or a clash is stored with a finding, as before

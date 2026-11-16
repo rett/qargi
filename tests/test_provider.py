@@ -3094,7 +3094,7 @@ class RunHome(LibraryBase):
         return fake_runtime(dispatch=dict(self.CMD, home=home, **disp))
 
     def test_the_codex_runtime_links_only_its_sign_in(self):
-        self.assertEqual(shipped("codex.json")["dispatch"]["home"], {"env": "CODEX_HOME", "dir": ".codex", "link": [{"from": "~/.codex/auth.json", "to": "auth.json"}]})
+        self.assertEqual(shipped("codex.json")["dispatch"]["home"], {"env": "CODEX_HOME", "dir": ".codex", "skills_dir": "skills", "link": [{"from": "~/.codex/auth.json", "to": "auth.json"}]})
         self.assertEqual(P.home_problems(shipped("codex.json")["dispatch"]["home"]), [])
         self.assertEqual(fails(self.with_home({"env": "FAKECLI_HOME", "dir": ".fakecli"}), "fakecli"), [])                 # link is optional
 

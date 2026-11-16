@@ -2,6 +2,8 @@ Load when you render or apply packs, link a project or repository, or handle unm
 
 # Apply and link
 
+Member delivery is a separate default-off gate. Load [member-skills.md](member-skills.md) before enabling canonical role snapshots through command runtimes; a rendered role union never selects them.
+
 Every apply here prints a plan and a token first; show the person the plan and wait for their go-ahead before `--plan TOKEN --approved "..."`.
 
 Select a local target through the existing registry's `session.render_target`. The member runtime resolves directly; a secondary target needs exactly one valid, sealed local definition with verified skills support and a project layout. Unverified claims or inapplicable project extensions refuse. Member selection and profiles stay unchanged; apply without a target retains the cloud route.
