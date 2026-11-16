@@ -4347,6 +4347,16 @@ class InstallScript(HookCase):
         r = self.bash("bash install.sh --user --uninstall", cwd=self.proj)        # a project's own, outside the tool
         self.assertEqual(r.returncode, 0, r.stderr)
 
+    def test_sourcing_another_lead_only_script_is_refused(self):
+        """`.` and `source` run a file as `sh FILE` does, for every lead-only script, not install.sh alone."""
+        for c, why in ((". lib/upgrade.sh --tag v1", "qargi upgrade"), ("source lib/upgrade.sh --tag v1", "qargi upgrade"),
+                       ("source lib/packs.sh packs link p", "qargi packs link changes a skill"), (". lib/packs.sh packs link p --plan 0123456789ab", "qargi packs link changes a skill"),
+                       ("bash -c 'source lib/packs.sh packs link p'", "qargi packs link changes a skill")):
+            self.refused(c, why)
+        for c in (". lib/lib.sh", "source lib/lib.sh", "source lib/packs.sh skill list", ". ./env.sh", "source %s/proj/upgrade-notes.sh" % self.t):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
 
 class InstallRecordScript(HookCase):
     """lib/install_record.py is the install engine install.sh runs: run directly, its uninstall removes what the install records list and its
