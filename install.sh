@@ -3,35 +3,42 @@
 # bash, zsh and fish completion. It installs no agent definition: you create the members
 # (the local workers) yourself, with the names you choose: qargi agent add NAME.
 #
-#   install.sh --user [--copy] [--force]          skills in the runtime's user skills directory, command in
-#                                                 ~/.local/bin, man page and completions (bash, zsh under
-#                                                 ~/.local/share, fish under ~/.config/fish)
-#   install.sh --project DIR [--copy] [--force]   skills in the runtime's project skills directory of DIR only
-#   install.sh --user|--project DIR --uninstall
+#   install.sh --user [--runtime NAME] [--copy] [--force]   the lead skills in the runtime's user skills directory, the command in
+#                                                 ~/.local/bin, man page and completions (bash, zsh under ~/.local/share, fish under
+#                                                 ~/.config/fish)
+#   install.sh --project DIR [--runtime NAME] [--copy] [--force]   the skills in the runtime's project skills directory of DIR only
+#   install.sh --user|--project DIR --uninstall [--runtime NAME]
 #   --runtime NAME                                the runtime whose session loads the lead skills (default claude-code);
 #                                                 its skills directories come from its definition (lib/providers/NAME.json,
 #                                                 `qargi provider layout`), none is built in here. A runtime with no
 #                                                 skills directory (or an unknown one) is refused.
+#
+# Runtimes install side by side: an install of one runtime leaves the skills of the others as they are, and the command, man page and
+# completions are shared by them. --uninstall --runtime NAME removes one runtime; --uninstall alone removes every runtime installed (it
+# lists them first); the shared part goes with the last one.
 #
 # By default everything is a symlink to this checkout (updates follow `git pull`).
 # --copy installs real files: for --user the whole tool is copied to
 # $XDG_DATA_HOME/qargi (default ~/.local/share/qargi) and the skills and
 # command come from there; for --project the skill files are copied (the command
 # is user-level either way, so install --user first). An existing real file or
-# directory is never replaced without --force.
+# directory, or a link no install recorded, is never replaced without --force; a link already pointing where the install would point it is
+# left as it is (and recorded).
 # A --project install never touches the repository's committed files: the paths
 # are hidden through the repository's local .git/info/exclude, and the install
 # is refused if any of them is already tracked. The instance registry, session
 # tracker and profiles are always per user (~/.qargi). Install at one level only.
 #
-# Every path an install writes (links, copied files and the directories it had to create) is recorded in an install manifest
-# next to install.json (<live config>/install.manifest for --user, project-N.manifest for --project DIR). --uninstall removes
-# exactly what the manifest lists and nothing else: a file you added inside a copied skill is kept, and so is ~/.qargi (the live config
-# directory and its parents go only when the install made them and they are empty once the manifest is removed). Without a manifest
-# --uninstall removes nothing and says so (exit 1), with or without --force.
+# Every path an install writes (links, copied files and the directories it had to create) is recorded in an install manifest in
+# <live config>/install.d, before it is written: runtime-NAME.manifest for the skills of a runtime, shared.manifest for the command, man page,
+# completions and the --copy tool, project-N-NAME.manifest for the skills of a runtime in project DIR. lib/install_record.py reads and writes
+# them and checks every line it reads. --uninstall removes exactly what the manifests list and nothing else: a file you added inside a copied
+# skill is kept, and so is ~/.qargi (the live config directory and its parents go only when the install made them and they are empty once
+# the records are removed). Without a manifest --uninstall removes nothing and says so (exit 1), with or without --force. A run holds
+# <live config>/install.lock while it reads or changes the records.
 #
 # --user also records the tool it installed in <live config>/install.json (~/.qargi/config, or QARGI_CONF /
-# QARGI_HOME when set; --uninstall removes it). A checkout run from any other place is then a dev run that keeps its data
+# QARGI_HOME when set; the uninstall of the last runtime removes it). A checkout run from any other place is then a dev run that keeps its data
 # in its own .qargi directory (see docs/install-and-upgrade/README.md, Running a branch checkout).
 set -eu
 
@@ -41,27 +48,29 @@ python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>/dev/null || { e
 # tests/hermetic.sh, the directories a modified copy of the tool needs to run, and the end of tests/test_install.sh runs the copy)
 tool_dirs="bin lib provision contract canon catalog roles methodologies packs skills agents examples man completions VERSION"
 skills="qargi-task qargi-project qargi-instances qargi-provision qargi-memory qargi-packs qargi-providers qargi-verify qargi-flow qargi-team qargi-session"
-proj='' mode='' copy='' force='' uninstall='' runtime=claude-code
+proj='' mode='' copy='' force='' uninstall='' runtime=''
 while [ $# -gt 0 ]; do
   case $1 in
     --user) mode=user; shift;;
     --project) [ $# -ge 2 ] || { echo "--project needs DIR" >&2; exit 2; }
                mode=project; proj=$2; shift 2;;
     --runtime) [ $# -ge 2 ] || { echo "--runtime needs NAME" >&2; exit 2; }
-               runtime=$2; shift 2;;
+               runtime=$2; shift 2
+               case $runtime in ''|*[!a-z0-9-]*) echo "qargi: install.sh: bad runtime name '$runtime'" >&2; exit 2;; esac;;
     --copy) copy=1; shift;;
     --force) force=1; shift;;
     --uninstall) uninstall=1; shift;;
-    *) echo "usage: install.sh --user|--project DIR [--copy] [--force] [--uninstall] [--runtime NAME]" >&2; exit 2;;
+    *) echo "usage: install.sh --user|--project DIR [--runtime NAME] [--copy] [--force] [--uninstall]" >&2; exit 2;;
   esac
 done
 [ -n "$mode" ] || { echo "choose --user or --project DIR" >&2; exit 2; }
-case $runtime in ''|*[!a-z0-9-]*) echo "qargi: install.sh: bad runtime name '$runtime'" >&2; exit 2;; esac
 
-# where this runtime keeps its skills: the layout of its definition, never a path written here
-layout_field() {   # layout_field FIELD WOULD: the field, or a clear refusal (no such runtime, or the runtime has no such directory)
-  python3 "$here/lib/provider.py" layout "$runtime" "$1" --would "$2" || { echo "qargi: install.sh: cannot take $1 from the definition of runtime '$runtime' (--runtime NAME chooses another)" >&2; exit 1; }
+records() { python3 -I "$here/lib/install_record.py" "$@"; }
+# where a runtime keeps its skills: the layout of its definition, never a path written here
+layout_of() {   # layout_of NAME FIELD: the field, or a clear refusal (no such runtime, or the runtime has no such directory) and status 1
+  python3 "$here/lib/provider.py" layout "$1" "$2" --would "install the skills" || { echo "qargi: install.sh: cannot take $2 from the definition of runtime '$1' (--runtime NAME chooses another)" >&2; return 1; }
 }
+commas() { local out='' x; for x in "$@"; do out="${out:+$out, }$x"; done; printf '%s' "$out"; }
 
 data=${XDG_DATA_HOME:-$HOME/.local/share}/qargi
 cmd=$HOME/.local/bin/qargi
@@ -71,134 +80,145 @@ completion=$xdg/bash-completion/completions/qargi
 zshcomp=$xdg/zsh/site-functions/_qargi
 fishcomp=${XDG_CONFIG_HOME:-$HOME/.config}/fish/completions/qargi.fish
 src=$here
-liveconf=${QARGI_CONF:-${QARGI_HOME:-$HOME/.qargi}/config}   # where the install record goes: the live location, never a dev sandbox
+liveconf=${QARGI_CONF:-${QARGI_HOME:-$HOME/.qargi}/config}   # where the install records go: the live location, never a dev sandbox
+rdir=$liveconf/install.d
 [ -z "$copy" ] || [ "$mode" != user ] || src=$data   # where links/copies come from
 
-psk=
-if [ "$mode" = user ]; then
-  skdir=$(layout_field user_skills_dir "install the skills") || exit 1
-  mf=$liveconf/install.manifest
-else
-  psk=$(layout_field project_skills_dir "install the skills") || exit 1
-  skdir=$proj/$psk
+key=
+if [ "$mode" = project ]; then
   [ -n "$uninstall" ] || mkdir -p "$proj"
-  mf=$liveconf/project-$( (cd "$proj" 2>/dev/null && pwd -P || printf %s "$proj") | cksum | cut -d' ' -f1).manifest
+  key=$( (cd "$proj" 2>/dev/null && pwd -P || printf %s "$proj") | cksum | cut -d' ' -f1)   # names the records of this project directory
+  if real=$(cd "$proj" 2>/dev/null && pwd -P); then proj=$real; fi
 fi
+mfile() { if [ "$mode" = user ]; then printf '%s' "$rdir/runtime-$1.manifest"; else printf '%s' "$rdir/project-$key-$1.manifest"; fi; }
 
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
-
-paths=()
-for s in $skills; do paths+=("$skdir/$s"); done
-[ "$mode" != user ] || paths+=("$cmd" "$manpage" "$completion" "$zshcomp" "$fishcomp")
 
 exclude_file=
 if [ "$mode" = project ] && git -C "$proj" rev-parse --git-dir >/dev/null 2>&1; then
   exclude_file=$(git -C "$proj" rev-parse --git-path info/exclude)
   case $exclude_file in /*) ;; *) exclude_file=$proj/$exclude_file;; esac
-  pat=$(printf '%s|' $skills); pat=${pat%|}
-  pagents=$(python3 "$here/lib/provider.py" layout "$runtime" project_agents_dir 2>/dev/null || true)
-  tracked=$(git -C "$proj" ls-files -- "$psk" ${pagents:+"$pagents"} | grep -E "(^|/)($pat)(/|\\.md\$)" || true)
-  if [ -n "$tracked" ]; then
-    echo "refusing: qargi paths are tracked in $proj; remove them from the repository first" >&2; exit 1
-  fi
-fi
-entries=
-if [ "$mode" = project ]; then
-  for s in $skills; do entries="$entries/$psk/$s
-"; done
 fi
 
-# ---- the install manifest: one line per path an install wrote, "KIND<TAB>PATH"
-#   L a link we made         C a file or directory we copied (the root of a copy)
-#   f a file inside a copy   d a directory inside a copy      P a parent directory we had to create
-#   c the live config directory, or a parent of it, that an install had to create: --uninstall removes it once it is empty
-rec() { printf '%s\t%s\n' "$1" "$2" >> "$mf"; }
-rec_contents() {   # rec_contents DIR: what a copy put inside DIR
-  local x
-  while IFS= read -r x; do rec d "$x"; done < <(find "$1" -mindepth 1 -type d)
-  while IFS= read -r x; do rec f "$x"; done < <(find "$1" -mindepth 1 ! -type d)
+# hold the lock of the records for the rest of the run: another install.sh waits a few seconds for it, then gives up
+lock() {
+  exec 9>>"$liveconf/install.lock"
+  chmod 600 "$liveconf/install.lock"
+  flock -w 5 9 || { echo "qargi: install.sh: another install is running (it holds $liveconf/install.lock); nothing was changed, try again once it is done" >&2; exit 1; }
 }
-mk() {   # mk DIR: mkdir -p, recording each directory it created
-  local d=$1 x; local -a made=()
-  while [ ! -d "$d" ] && [ "$d" != / ] && [ "$d" != . ]; do made=("$d" ${made[@]+"${made[@]}"}); d=$(dirname "$d"); done
-  mkdir -p "$1"
-  for x in ${made[@]+"${made[@]}"}; do rec P "$x"; done
-}
-# ours PATH: PATH and everything under it is in the manifest of the earlier install (so it is not something of yours)
-ours() {
-  [ -f "$mf" ] || return 1
-  cut -f2 "$mf" | LC_ALL=C sort > "$tmp/paths"
-  [ -z "$(find "$1" 2>/dev/null | LC_ALL=C sort | LC_ALL=C comm -23 - "$tmp/paths")" ]
-}
-# remove_recorded FILE say|quiet: remove exactly the paths FILE lists; a path no longer what was installed is kept and said
-remove_recorded() {
-  local f=$1 mode_say=$2 k p d dk
-  say() { [ "$mode_say" = say ] || return 0; echo "$1"; }
-  : > "$tmp/dirs"
-  while IFS=$'\t' read -r k p; do
-    [ -n "$p" ] || continue
+# the records as they are: RUNTIMES (the user runtimes recorded), SHARED (the shared manifest, or empty), PRUNTIMES (the runtimes recorded for
+# this project directory). A record with a line that fails its check stops the run here.
+read_state() {
+  local st k a
+  RUNTIMES='' SHARED='' PRUNTIMES=''
+  st=$(records state --conf "$liveconf" --data "$data" ${key:+--project-key "$key"}) || exit 1
+  while IFS=$'\t' read -r k a _; do
     case $k in
-      L) if [ -L "$p" ]; then rm -f "$p"; say "removed $p"; elif [ -e "$p" ]; then say "kept $p (no longer the link the install made)"; fi;;
-      f) if [ -f "$p" ] || [ -L "$p" ]; then rm -f "$p"; fi;;
-      C) if [ -d "$p" ] && [ ! -L "$p" ]; then printf '%s\t%s\n' "$p" "$k" >> "$tmp/dirs"
-         elif [ -f "$p" ] || [ -L "$p" ]; then rm -f "$p"; say "removed $p"; fi;;
-      d|P) printf '%s\t%s\n' "$p" "$k" >> "$tmp/dirs";;
+      runtime) RUNTIMES="${RUNTIMES:+$RUNTIMES }$a";;
+      shared) SHARED=$a;;
+      project) PRUNTIMES="${PRUNTIMES:+$PRUNTIMES }$a";;
     esac
-  done < "$f"
-  # the directories, the deepest first; the bytecode Python wrote inside a copied directory is not in the manifest and goes with it
-  while IFS=$'\t' read -r d dk; do
-    [ -d "$d" ] && [ ! -L "$d" ] || continue
-    [ "$dk" = P ] || rm -rf "${d:?}/__pycache__"
-    if rmdir "$d" 2>/dev/null; then [ "$dk" != C ] || say "removed $d"
-    elif [ "$dk" = C ]; then say "kept $d (it holds files the install did not write)"; fi
-  done < <(LC_ALL=C sort -r "$tmp/dirs")
+  done <<<"$st"
+}
+no_record() {
+  echo "qargi: no install manifest in $rdir${1:+ for $1}, so nothing is recorded to remove and nothing was removed (the manifests list every path an install wrote; without them your files cannot be told from ours)" >&2
+  exit 1
 }
 
 if [ -n "$uninstall" ]; then
-  created=''; [ ! -f "$mf" ] || created=$(awk -F'\t' '$1 == "c" {print $2}' "$mf" | LC_ALL=C sort -r)   # the deepest first
-  if [ -f "$mf" ]; then
-    remove_recorded "$mf" say
-    rm -f "$mf"
+  [ -d "$rdir" ] || no_record ""
+  lock; read_state
+  if [ "$mode" = user ]; then have=$RUNTIMES; where=''; else have=$PRUNTIMES; where=" in $proj"; fi
+  if [ -n "$runtime" ]; then
+    case " $have " in
+      *" $runtime "*) drop=$runtime;;
+      *) echo "qargi: install.sh: runtime $runtime is not installed$where (installed: ${have:-none}); nothing was removed" >&2; exit 1;;
+    esac
   else
-    echo "qargi: no install manifest at $mf, so nothing is recorded to remove and nothing was removed (the manifest lists every path an install wrote; without it your files cannot be told from ours)" >&2
-    exit 1
+    drop=$have
   fi
+  files=() left=''
+  for r in $have; do
+    case " $drop " in *" $r "*) files+=("$(mfile "$r")");; *) left="${left:+$left }$r";; esac
+  done
+  last=''
+  if [ "$mode" = user ] && [ -z "$left" ]; then last=1; [ -z "$SHARED" ] || files+=("$SHARED"); fi
+  [ ${#files[@]} -gt 0 ] || no_record "$proj"
+  # shellcheck disable=SC2086  # the names are words
+  [ -n "$runtime" ] || [ -z "$drop" ] || echo "uninstalling the runtimes installed$where: $(commas $drop)"
+  : > "$tmp/excl"
+  if [ "$mode" = project ]; then
+    for f in "${files[@]}"; do records excludes "$f" >> "$tmp/excl" || exit 1; done
+  fi
+  records uninstall --conf "$liveconf" ${last:+--drop-record} "${files[@]}" || exit 1
   if [ -n "$exclude_file" ] && [ -f "$exclude_file" ]; then
-    grep -v -x -F "$entries" "$exclude_file" > "$exclude_file.tmp" || true
+    grep -v -x -F -f "$tmp/excl" "$exclude_file" > "$exclude_file.tmp" || true
     mv "$exclude_file.tmp" "$exclude_file"
   fi
-  [ "$mode" != user ] || [ ! -f "$liveconf/install.json" ] || { rm -f "$liveconf/install.json"; echo "removed $liveconf/install.json"; }
-  # the config directory the install made, once nothing is left in it (another install's manifest, answers or packs keep it)
-  while IFS= read -r d; do
-    [ -n "$d" ] && [ -d "$d" ] && [ ! -L "$d" ] || continue
-    if rmdir "$d" 2>/dev/null; then echo "removed $d"; fi
-  done <<<"$created"
+  # shellcheck disable=SC2086
+  [ -z "$left" ] || echo "still installed$where: $(commas $left)"
   exit 0
 fi
 
-# an existing real file or directory is yours unless the earlier install recorded it (and you added nothing inside it)
-for p in "${paths[@]}"; do
-  if [ -e "$p" ] && [ ! -L "$p" ] && [ -z "$force" ] && ! ours "$p"; then
-    echo "refusing to replace existing $p (use --force)" >&2; exit 1
-  fi
-done
+# the runtimes this run installs; a runtime named on the command line that has no skills directory is refused before anything is written
+runs=${runtime:-claude-code}
+field=user_skills_dir; [ "$mode" = user ] || field=project_skills_dir
+declare -A skdir=()
+for r in $runs; do skdir[$r]=$(layout_of "$r" "$field") || exit 1; done
 
-# a reinstall starts from a clean slate: what the earlier install wrote is removed first (a copy install made over a link install leaves nothing behind)
-# the live config directory and the parents of it this install makes are recorded (c), and so are those an earlier install made and recorded
+if [ -n "$exclude_file" ]; then
+  pat=$(printf '%s|' $skills); pat=${pat%|}
+  for r in $runs; do
+    pagents=$(python3 "$here/lib/provider.py" layout "$r" project_agents_dir 2>/dev/null || true)
+    tracked=$(git -C "$proj" ls-files -- "${skdir[$r]}" ${pagents:+"$pagents"} | grep -E "(^|/)($pat)(/|\\.md\$)" || true)
+    if [ -n "$tracked" ]; then
+      echo "refusing: qargi paths are tracked in $proj; remove them from the repository first" >&2; exit 1
+    fi
+  done
+fi
+
+# the live config directory and the parents of it this run makes (c): an uninstall removes them once they are empty
 cmade=''; d=$liveconf
 while [ ! -d "$d" ] && [ "$d" != / ] && [ "$d" != . ]; do cmade="$cmade$d"$'\n'; d=$(dirname "$d"); done
 mkdir -p "$liveconf"; chmod 700 "$liveconf"
-[ ! -f "$mf" ] || cmade="$cmade$(awk -F'\t' '$1 == "c" {print $2}' "$mf")"
-if [ -f "$mf" ]; then remove_recorded "$mf" quiet; fi
-: > "$mf"; chmod 600 "$mf"
-while IFS= read -r d; do [ -z "$d" ] || rec c "$d"; done < <(printf '%s\n' "$cmade" | LC_ALL=C sort -u)
+undo_conf() {   # a run refused before it recorded anything leaves no lock and no config directory it made
+  [ ! -d "$rdir" ] || return 0
+  rm -f "$liveconf/install.lock"
+  while IFS= read -r d; do [ -z "$d" ] || rmdir "$d" 2>/dev/null || true; done <<<"$cmade"
+}
+lock; read_state
 
-if [ -n "$copy" ] && [ "$mode" = user ]; then
-  rm -rf "$data"; mk "$(dirname "$data")"; mkdir "$data"; rec C "$data"
-  for d in $tool_dirs; do cp -r "$here/$d" "$data/"; done
-  rec_contents "$data"
-  echo "copied the tool to $data"
+# the plan: every part this run installs, each path it writes and where it comes from (lib/install_record.py apply reads it)
+plan=$tmp/plan; : > "$plan"
+item() { local IFS=$'\t'; printf '%s\n' "$*" >> "$plan"; }
+cdirs() { local d; while IFS= read -r d; do [ -z "$d" ] || item c "$d"; done <<<"$cmade"; }
+if [ "$mode" = user ]; then
+  item M "$rdir/shared.manifest" kind=shared "data=$data" "slot=$cmd" "slot=$manpage" "slot=$completion" "slot=$zshcomp" "slot=$fishcomp"
+  for p in "$cmd" "$manpage" "$completion" "$zshcomp" "$fishcomp"; do item D "$(dirname "$p")"; done
+  if [ -n "$copy" ]; then
+    item D "$(dirname "$data")"
+    # shellcheck disable=SC2086  # the list is words
+    item C "$data" "$here" $tool_dirs
+    item L "$cmd" "$data/bin/qargi"
+    item C "$manpage" "$here/man/qargi.1"; item C "$completion" "$here/completions/qargi.bash"
+    item C "$zshcomp" "$here/completions/_qargi"; item C "$fishcomp" "$here/completions/qargi.fish"
+  else
+    item L "$cmd" "$here/bin/qargi"; item L "$manpage" "$here/man/qargi.1"; item L "$completion" "$here/completions/qargi.bash"
+    item L "$zshcomp" "$here/completions/_qargi"; item L "$fishcomp" "$here/completions/qargi.fish"
+  fi
+  cdirs
 fi
+for r in $runs; do
+  sk=${skdir[$r]}
+  if [ "$mode" = user ]; then item M "$(mfile "$r")" kind=runtime "name=$r" "root=$sk"
+  else sk=$proj/$sk; item M "$(mfile "$r")" kind=project "name=$r" "project=$proj" "root=$sk"; cdirs; fi
+  skdir[$r]=$sk
+  item D "$sk"
+  for s in $skills; do
+    if [ -n "$copy" ]; then item C "$sk/$s" "$here/skills/$s"; else item L "$sk/$s" "$here/skills/$s"; fi
+  done
+done
+records apply --conf "$liveconf" ${force:+--force} < "$plan" || { undo_conf; exit 1; }
 
 # The bytecode of the tool, compiled now, as you, beside the source: the guard (qargi __guard, run on every tool call of a member) is imported
 # from lib/ (bin/qargi), and python caches only what it imports. A tool you cannot write to (a checkout installed with sudo) is compiled by
@@ -208,42 +228,25 @@ if [ "$mode" = user ] && ! python3 -I -m compileall -q "$src/lib" >/dev/null 2>&
   echo "note: the bytecode of $src/lib was not compiled (the tool is read-only for you), so qargi __guard starts slower; once, as the owner: sudo python3 -I -m compileall -q $src/lib" >&2
 fi
 
-mk "$skdir"
-for s in $skills; do
-  rm -rf "${skdir:?}/$s"
-  if [ -n "$copy" ]; then rec C "$skdir/$s"; cp -r "$src/skills/$s" "$skdir/$s"; rec_contents "$skdir/$s"
-  else ln -s "$src/skills/$s" "$skdir/$s"; rec L "$skdir/$s"; fi
-done
 kind="symlinks to $here"; [ -z "$copy" ] || kind=copy
+for r in $runs; do echo "installed the skills of $r in ${skdir[$r]} ($kind)"; done
 if [ "$mode" = user ]; then
-  for d in "$(dirname "$cmd")" "$(dirname "$manpage")" "$(dirname "$completion")" "$(dirname "$zshcomp")" "$(dirname "$fishcomp")"; do mk "$d"; done
-  rm -f "$cmd" "$manpage" "$completion" "$zshcomp" "$fishcomp"
-  ln -s "$src/bin/qargi" "$cmd"; rec L "$cmd"
-  if [ -n "$copy" ]; then
-    cp "$src/man/qargi.1" "$manpage"; cp "$src/completions/qargi.bash" "$completion"; cp "$src/completions/_qargi" "$zshcomp"; cp "$src/completions/qargi.fish" "$fishcomp"
-    for p in "$manpage" "$completion" "$zshcomp" "$fishcomp"; do rec C "$p"; done
-  else
-    ln -s "$src/man/qargi.1" "$manpage"; ln -s "$src/completions/qargi.bash" "$completion"; ln -s "$src/completions/_qargi" "$zshcomp"; ln -s "$src/completions/qargi.fish" "$fishcomp"
-    for p in "$manpage" "$completion" "$zshcomp" "$fishcomp"; do rec L "$p"; done
-  fi
-  echo "installed skills in $skdir, command at $cmd, man page at $manpage ($kind)"
+  how="link"; [ -z "$copy" ] || how="copy"
+  records record --conf "$liveconf" --tool-root "$(cd "$src" && pwd -P)" --version "$(cat "$src/VERSION")" --source "$how" || exit 1
+  read_state
+  echo "installed the command at $cmd, the man page at $manpage ($kind)"
   echo "completion: bash $completion, zsh $zshcomp, fish $fishcomp"
-  echo "recorded what was written in $mf (--uninstall removes exactly that)"
-  if command -v jq >/dev/null 2>&1; then
-    jq -n --arg r "$(cd "$src" && pwd -P)" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg v "$(cat "$src/VERSION")" '{tool_root:$r, installed_at:$t, version:$v}' > "$liveconf/install.json"
-    chmod 600 "$liveconf/install.json"
-    echo "recorded the install in $liveconf/install.json (a checkout run from elsewhere keeps its data in its own .qargi)"
-    # the baseline packs go into the library (only the missing ones, unlinked: an unlinked pack reaches nobody)
-    "$src/bin/qargi" packs seed --install || echo "note: the baseline packs were not seeded; run: qargi packs seed" >&2
-  else
-    echo "note: jq is not installed, so the install was not recorded in $liveconf/install.json" >&2
-  fi
+  echo "recorded what was written in $rdir (--uninstall removes exactly that)"
+  # shellcheck disable=SC2086
+  echo "installed runtimes: $(commas $RUNTIMES)"
+  echo "recorded the install in $liveconf/install.json (a checkout run from elsewhere keeps its data in its own .qargi)"
+  # the baseline packs go into the library (only the missing ones, unlinked: an unlinked pack reaches nobody)
+  "$src/bin/qargi" packs seed --install || echo "note: the baseline packs were not seeded; run: qargi packs seed" >&2
   ! command -v zsh >/dev/null 2>&1 || echo "note: for zsh add this to ~/.zshrc before compinit: fpath=($(dirname "$zshcomp") \$fpath)" >&2
   command -v man >/dev/null 2>&1 && ! man -w qargi >/dev/null 2>&1 && echo "note: man does not find it yet; add $xdg/man to MANPATH (or: man -l $manpage)" >&2 || true
   echo "note: bash loads the completion in new shells when bash-completion is installed; otherwise add to ~/.bashrc: source $completion" >&2
 else
   command -v qargi >/dev/null 2>&1 || echo "note: the qargi command is not on PATH; run: install.sh --user" >&2
-  echo "installed skills in $skdir ($kind)"
 fi
 
 echo "next: create the members that do the work, with names you choose, for example:"
@@ -251,9 +254,11 @@ echo "  qargi agent add worker --project NAME    (and reviewer: qargi agent add 
 
 if [ -n "$exclude_file" ]; then
   mkdir -p "$(dirname "$exclude_file")"; touch "$exclude_file"
-  printf '%s\n' "$entries" | while IFS= read -r line; do
-    [ -n "$line" ] || continue
-    grep -qx -F "$line" "$exclude_file" || printf '%s\n' "$line" >> "$exclude_file"
+  for r in $runs; do
+    for s in $skills; do
+      line=/${skdir[$r]#"$proj"/}/$s
+      grep -qx -F "$line" "$exclude_file" || printf '%s\n' "$line" >> "$exclude_file"
+    done
   done
   echo "hidden from git via $exclude_file (local only, nothing committed)"
 fi

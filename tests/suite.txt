@@ -88,7 +88,9 @@ full | par | 300 | 24 | bash tests/test_release_after_steps.sh | lib/release*.sh
 full | par | 300 | 30 | bash tests/test_release_assets.sh | lib/release*.sh lib/release*.py
 full | par | 300 | 41 | bash tests/test_release_site.sh | lib/release*.sh lib/release*.py
 full | par | 300 | 44 | python3 tests/test_home.py
-full | par | 300 | 64 | bash tests/test_install.sh
+full | par | 300 | 64 | bash tests/test_install.sh | install.sh lib/install_record.py
+full | par | 300 | 53 | bash tests/test_install_runtimes.sh | install.sh lib/install_record.py
+fast | par | 300 | 2 | python3 tests/test_install_record.py | lib/install_record.py
 full | par | 408 | 188 | bash tests/test_project.sh | lib/project.sh lib/owned_refs.py
 fast | par | 300 | 4 | bash tests/test_project_profile.sh | lib/project_profile.py
 full | par | 564 | 277 | bash tests/test_local.sh | lib/local.sh lib/local_run.py lib/procenv.py lib/lib.sh
