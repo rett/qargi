@@ -9,7 +9,7 @@ The member contract forbids pushes and changes to shared skills, tools and provi
 
 A local run is a clone of a bare copy of your repository. The bare copy has no remote. The member's clone has an `origin` pointing to that bare copy, with its push URL set to `DISABLED`. Git runs through a wrapper without credentials, global configuration or prompts. The member works on `agent/SLUG` and returns patches or a report according to its class.
 
-This setup obstructs ordinary pushes. It does not prove that an agent cannot bypass it, especially when code runs as the same operating-system user. Rely on the selected adapter's qualified barriers, ref verification and inspection of the returned work. Provider support and barrier guarantees vary. The release's [runtime documentation](https://github.com/rett/qargi/blob/0.3.0/docs/members-and-providers/providers.md) records those limits.
+This setup obstructs ordinary pushes. It does not prove that an agent cannot bypass it, especially when code runs as the same operating-system user. Rely on the selected adapter's qualified barriers, ref verification and inspection of the returned work. Provider support and barrier guarantees vary. The release's [runtime documentation](https://github.com/rett/qargi/blob/0.3.1/docs/members-and-providers/providers.md) records those limits.
 
 ## 2. The guard
 
@@ -20,17 +20,17 @@ In the Claude Code hook runtime, the guard checks a local member's tool calls. I
 - `git push`, changes to a git remote, `gh`, `ssh`, `scp`, `sftp` and `rsync` to a host.
 - reading or copying the lead's signing key.
 
-The hook scans shell segments split at operators and newlines, including quoted text and heredocs. A refused verb inside command-line text can trigger a refusal. Commit with a message file. This text check cannot resolve every shell construct or inspect arbitrary code's effects. Use `qargi help guard` and the release's [guard source](https://github.com/rett/qargi/blob/0.3.0/lib/guard.py) for the exact commands and limitations.
+The hook scans shell segments split at operators and newlines, including quoted text and heredocs. A refused verb inside command-line text can trigger a refusal. Commit with a message file. This text check cannot resolve every shell construct or inspect arbitrary code's effects. Use `qargi help guard` and the release's [guard source](https://github.com/rett/qargi/blob/0.3.1/lib/guard.py) for the exact commands and limitations.
 
 The read-only class forbids repository changes. In hook mode, the guard's rules permit report writes under the run's output and temporary directories. A runtime may still refuse its file-writing tool. Codex command-runtime members have no qargi guard hook. Their shell commands use the Codex sandbox, whose read-only barrier is qualified as partial. A read-only Codex member may write nothing, including OUT and its temporary directory. It returns its report in its final output, then the controller publishes the report and manifest. A class description alone does not grant output-directory writes across adapters.
 
-The Codex sandbox restricts shell writes and network access. It does not restrict all reads or the effects of hosted tools and MCP servers outside that sandbox. The release's [Codex runtime documentation](https://github.com/rett/qargi/blob/0.3.0/docs/members-and-providers/codex.md) and [adapter definition](https://github.com/rett/qargi/blob/0.3.0/lib/providers/codex.json) distinguish observed checks from unverified capabilities.
+The Codex sandbox restricts shell writes and network access. It does not restrict all reads or the effects of hosted tools and MCP servers outside that sandbox. The release's [Codex runtime documentation](https://github.com/rett/qargi/blob/0.3.1/docs/members-and-providers/codex.md) and [adapter definition](https://github.com/rett/qargi/blob/0.3.1/lib/providers/codex.json) distinguish observed checks from unverified capabilities.
 
 A refusal is a result. A member reports it and does not look for another way.
 
 ## 3. The run check
 
-`qargi local verify RUN` compares snapshots of the real repository's local refs and available origin heads and tags, excluding `refs/qargi/`. Its rules account for recognized journaled lead changes, qualified runtime-ref allowances and owned-ref patterns retained from preparation in the lead's registry. They do not accept every difference. The release's [verification reference](/reference/run-a-task/#local-verify) and [implementation](https://github.com/rett/qargi/blob/0.3.0/lib/local.sh) describe the applicable rules.
+`qargi local verify RUN` compares snapshots of the real repository's local refs and available origin heads and tags, excluding `refs/qargi/`. Its rules account for recognized journaled lead changes, qualified runtime-ref allowances and owned-ref patterns retained from preparation in the lead's registry. They do not accept every difference. The release's [verification reference](/reference/run-a-task/#local-verify) and [implementation](https://github.com/rett/qargi/blob/0.3.1/lib/local.sh) describe the applicable rules.
 
 Unexpected ref differences fail closed. The lead stops, keeps the evidence, tells the owner and reviews nothing further from that run. A passing check permits the lead to continue reviewing the run. Prepare-time allowances grant no permission for a member to change the real repository, and changing policy later grants no retroactive exemption.
 

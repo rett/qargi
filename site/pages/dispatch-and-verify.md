@@ -37,7 +37,7 @@ This makes a clone on `agent/rename-verb`, an output directory, a temporary dire
 
 A warning about uncommitted memory concerns the repo tier in the lead's checkout. The clone contains that tier's committed version. Other tiers remain subject to the task's scope, access constraints and runtime support.
 
-Since 0.2.14, command-runtime requests bind the prepared request to its runtime, mode, catalog, profile and policy inputs. Changes to those inputs require a new prepare. Editing the run's request mirror grants no authority to accept drift. This behavior is already part of the published 0.3.0 baseline used by these pages.
+Since 0.2.14, command-runtime requests bind the prepared request to its runtime, mode, catalog, profile and policy inputs. Changes to those inputs require a new prepare. Editing the run's request mirror grants no authority to accept drift. This behavior remains part of the 0.3.1 release used by these pages.
 
 ## 4. Send the task block
 
@@ -65,14 +65,14 @@ qargi review check RUN/out
 
 `review check` checks artifact structure and exits 1 on a `FAIL`. Hard checks include patch numbering, the presence of a commit message body, scope limits and matching manifest commit counts. The lead judges whether the message explains what changed and why. A review run returns no patches and needs a manifest and a report with a Findings section and a final line of `verdict: accept` or `verdict: revise`.
 
-One logical change may be one commit and one patch with its supporting tests, docs and any required changelog entry. The published 0.3.0 checker also fails a single patch touching three or more top-level areas.
+One logical change may be one commit and one patch with its supporting tests, docs and any required changelog entry. Area counts and patch size produce advisory warnings that call for substantive independent cohesion review. Review the concrete change and its dependencies.
 
-The supplied source for the upcoming 0.3.1 candidate makes area counts and patch size advisory warnings that call for substantive independent cohesion review. The candidate also adds declaration-only campaign records and baseline guidance packs. These pages remain checked against 0.3.0. Final 0.3.1 documentation requires the settled release source, updated version and source links, a rebuilt site, layout inspection and website publication approval. Cohesion review considers the concrete change and its supporting files.
+The 0.3.1 release adds bounded local campaign declarations, explicit project pack targets and default-off managed member skill snapshots. The release's [Codex guide](https://github.com/rett/qargi/blob/0.3.1/docs/members-and-providers/codex.md) records the narrow headless skill-marker observations. Interactive skill loading remains gated.
 
 Then read the manifest.
 
 1. The base SHA matches the commit recorded at preparation. Later accepted lead moves may leave the current branch at another commit. The lead reviews the work against its actual dependencies and current integration target, then handles any synchronization. The member does not rebase.
-2. `status` is DONE and `done.exit_code` is 0.
+2. A patch-returning task has `status` DONE and `done.exit_code` 0. A controller-packaged read-only result records the dispatch and report without a test result. Review its substantive verdict and evidence separately.
 3. Each gate has a verdict line; those marked not run are not evidence.
 4. The touched paths are inside the scope.
 5. The notes the member left about things it noticed and did not act on: `qargi noticed list`, then `qargi noticed resolve` when you have dealt with one.

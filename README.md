@@ -38,4 +38,4 @@ The script reads the main repository and writes only to the output directory and
 
 ## Publishing
 
-Pushes to this branch deploy through GitHub Actions. The repository owner sets Settings > Pages > Source to GitHub Actions once and lets the `github-pages` environment deploy from `gh-pages`. The Actions in the workflow are named by version tag; pin them to full commit SHAs before relying on it.
+Pushes to this branch deploy through GitHub Actions. The repository owner sets Settings > Pages > Source to GitHub Actions once and lets the `github-pages` environment deploy from `gh-pages`. The workflow pins Actions to full commit SHAs and records their version tags in comments. Review the corresponding upstream release when updating a pin.
