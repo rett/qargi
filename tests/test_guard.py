@@ -4347,6 +4347,71 @@ class InstallScript(HookCase):
         r = self.bash("bash install.sh --user --uninstall", cwd=self.proj)        # a project's own, outside the tool
         self.assertEqual(r.returncode, 0, r.stderr)
 
+    def test_sourcing_another_lead_only_script_is_refused(self):
+        """`.` and `source` run a file as `sh FILE` does, for every lead-only script, not install.sh alone."""
+        for c, why in ((". lib/upgrade.sh --tag v1", "qargi upgrade"), ("source lib/upgrade.sh --tag v1", "qargi upgrade"),
+                       ("source lib/packs.sh packs link p", "qargi packs link changes a skill"), (". lib/packs.sh packs link p --plan 0123456789ab", "qargi packs link changes a skill"),
+                       ("bash -c 'source lib/packs.sh packs link p'", "qargi packs link changes a skill")):
+            self.refused(c, why)
+        for c in (". lib/lib.sh", "source lib/lib.sh", "source lib/packs.sh skill list", ". ./env.sh", "source %s/proj/upgrade-notes.sh" % self.t):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+
+class InstallRecordScript(HookCase):
+    """lib/install_record.py is the install engine install.sh runs: run directly, its uninstall removes what the install records list and its
+    apply --force (a plan on standard input) relinks the skills directories to a directory of the caller's choice, all inside Python, where the
+    guard sees no write. The file in the lib directory of the tool or of the installed copy is refused in any use, like render.py; a file of that
+    name in a project or in the clone a member works in is its work product."""
+    setUp, tearDown, bash, call = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
+    refused = LibraryScripts.refused
+    LIB = LibraryScripts.LIB
+    WHY = "lib/install_record.py of the tool is the install engine install.sh runs"
+    UNINSTALL = ("uninstall --conf ~/.qargi/config --drop-record ~/.qargi/config/install.d/runtime-claude-code.manifest "
+                 "~/.qargi/config/install.d/shared.manifest")
+
+    def test_refuses_the_tools_own_install_engine(self):
+        lib = self.LIB
+        for c in ("python3 %s/install_record.py " + self.UNINSTALL, "python3 -I %s/install_record.py " + self.UNINSTALL,
+                  "python3 -I %s/install_record.py apply --force < plan.json", "cat plan.json | python3 %s/install_record.py apply --force",
+                  "python %s/install_record.py uninstall", "python3.12 %s/install_record.py uninstall", "%s/install_record.py uninstall",
+                  "bash -c 'python3 -I %s/install_record.py uninstall'", "sh -c \"python3 %s/install_record.py apply --force\"",
+                  "sudo python3 %s/install_record.py uninstall", "env X=1 python3 %s/install_record.py uninstall", "nohup python3 %s/install_record.py uninstall",
+                  "xargs python3 %s/install_record.py < /dev/null", "echo $(python3 %s/install_record.py uninstall)", "cd src && python3 %s/install_record.py uninstall",
+                  "python3 %s/../lib/install_record.py uninstall", ". %s/install_record.py", "source %s/install_record.py uninstall", "python3 %s/install_record.py"):
+            self.refused(c % lib, self.WHY)
+        self.refused("python3 install_record.py uninstall", self.WHY, cwd=lib)
+        self.refused("cd lib && python3 install_record.py " + self.UNINSTALL, self.WHY, cwd=os.path.dirname(lib))
+        self.refused("cd %s && python3 -I install_record.py apply --force < plan.json" % lib, self.WHY)
+        self.refused("python3 lib/install_record.py uninstall", self.WHY, cwd=os.path.dirname(lib))
+        os.symlink(lib, os.path.join(self.clone, "tool-lib"))                     # a link in the clone to the tool's lib is followed
+        self.refused("python3 tool-lib/install_record.py uninstall", self.WHY)
+        self.refused(". tool-lib/install_record.py", self.WHY)
+
+    def test_refuses_the_installed_copys_install_engine(self):
+        opt = os.path.join(self.t, "opt/qargi")
+        os.makedirs(os.path.join(opt, "lib"))
+        with open(os.path.join(self.conf, "install.json"), "w") as f:
+            json.dump({"tool_root": opt}, f)
+        for c in ("python3 %s/lib/install_record.py " + self.UNINSTALL, "python3 -I %s/lib/install_record.py apply --force < plan.json",
+                  "bash -c 'python3 %s/lib/install_record.py uninstall'", "sudo env X=1 python3 %s/lib/install_record.py uninstall"):
+            self.refused(c % opt, self.WHY)
+        self.refused("python3 install_record.py uninstall", self.WHY, cwd=os.path.join(opt, "lib"))
+        self.assertEqual(self.bash("python3 -I %s/install_record.py uninstall" % opt).returncode, 0)     # only the one in the lib directory of the tool
+
+    def test_an_install_record_py_that_is_not_the_tools_is_not_refused(self):
+        os.makedirs(os.path.join(self.clone, "lib"))
+        with open(os.path.join(self.clone, "lib/install_record.py"), "w") as f:
+            f.write("")
+        for c in ("python3 lib/install_record.py " + self.UNINSTALL, "python3 -I lib/install_record.py apply --force < plan.json", "cd lib && python3 install_record.py uninstall",
+                  "python3 %s/lib/install_record.py uninstall" % self.clone, "python3 -I %s/proj/install_record.py uninstall" % self.t,
+                  "cat %s/install_record.py" % self.LIB, "grep -n def %s/install_record.py" % self.LIB, "python3 -m unittest tests/test_install_record.py",
+                  "echo python3 %s/install_record.py uninstall" % self.LIB, "ls %s/install_record.py" % self.LIB):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+        r = self.bash("python3 -I lib/install_record.py uninstall", cwd=self.proj)    # a project's own, with no lib of the tool
+        self.assertEqual(r.returncode, 0, r.stderr)
+
 
 class ThirdReview(HookCase):
     """The third security review of the Bash reader. Every case here was allowed by the guard it reviewed and is refused now. The base is a run directory
