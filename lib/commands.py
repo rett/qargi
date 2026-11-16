@@ -1284,8 +1284,8 @@ COMMANDS = {
                            desc=("OUT without a report, for an uncollected run or a read-only run, is said with its likely cause: a runtime can refuse the member's write tool for a report file, so the file never reached OUT; "
                                  "the member is told to collect again or return its report as the final message (for a read-only run it is a note, and the exit status stays the refs verdict). "
                                  "Fails first, with exit 1 and \"OUT is empty: the member did not collect\", when the clone holds commits past BASE_SHA and RUN/out holds neither patches nor a report: "
-                                 "the refs are compared all the same and their verdict is printed next to that message (exit 2 when they changed), but nothing is recorded: the run is not verified, and the member must collect (its DONE needs ls OUT/patches to list the patches) before apply or close. "
-                                 "Exits 2 when refs changed (1 before), 3 when the lead's registry does not vouch for the run: it is not in it, names no repository for it, or RUN/repo.path, repo.url or cred.path differ "
+                                 "the refs are compared all the same and their verdict is printed next to that message (exit 2 when the ref comparison fails), but nothing is recorded: the run is not verified, and the member must collect (its DONE needs ls OUT/patches to list the patches) before apply or close. "
+                                 "Exits 2 when the ref comparison fails, 3 when the lead's registry does not vouch for the run: it is not in it, names no repository for it, or RUN/repo.path, repo.url or cred.path differ "
                                  "from it (the repository and the credential come from the registry; a member can write the run directory). "
                                  "It accepts the lead's own moves and names each one (\"develop moved by qargi feature finish\"): what the lead's ref journal records (the branches and tags "
                                  "that qargi's flow verbs move, push to origin or delete: feature finish and park, release and hotfix finish and push, branch prune, review apply, "
@@ -1301,8 +1301,9 @@ COMMANDS = {
                                  "The answers verify and clean read (runs.owned_refs, repo.long_lived, repo.parking_branch) are the copy prepare took into your registry, "
                                  "not the stored file of the day: a change of them takes effect on the runs prepared after it. "
                                  "New runs compare against private prepared and attempt snapshots, epoch and phase; RUN/verified, refs.before, started and dispatch.json are diagnostic mirrors. After a passing verify, later verify and clean also accept "
-                                 "your fast-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there. Anything else (a push, a tag, "
-                                 "a deletion or a rewrite nobody journaled) fails. Run it on every run before merging any of them. "
+                                 "your fast-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there. Other observed, non-exempt ref differences fail. "
+                                 "The snapshots cover local refs and available origin heads/tags, excluding refs/qargi/. Transient activity and other destinations require separate evidence. "
+                                 "Run it on every run before merging any of them. "
                                  "A passing verify saves OUT in <state>/runs/<run id>/ bound to the prepared identity, attempt and generation. Repeated live or --saved verification reuses that copy and advances the private ref snapshot; identical observations consume no history. --saved and review apply --from-saved require the current verified generation. Earlier copies and historical verifications are each bounded to 32 per attempt; a failed save requires re-verification from the run. Legacy inspection warns about its writable snapshots; missing new-schema authority fails closed.")),
             "close": verb("Close a verified run whose patches you applied by hand (git am): it is no longer open", [("RUN_DIR", "dir")],
                           [opt("--applied-by-am", "the way the run was taken in: you applied its patches by hand with git am (the only way close knows; required)")],

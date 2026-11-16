@@ -17,7 +17,7 @@ packs/skills/docs-site-member/SKILL.md 163 # raised: two rules: no line starts w
 packs/skills/gitflow-member/SKILL.md 229 # lowered: the commit-message, stash and SCOPE lines live in the contract only
 packs/skills/keep-a-changelog/SKILL.md 343 # lowered: concise evidence-based commit boundaries replace the directory-count split rule
 packs/skills/qargi-contributing/SKILL.md 77 # lowered: the commit-message and stash lines live in the contract only
-packs/skills/release-docs-review/SKILL.md 237 # raised: include shared option descriptions, file references and generated sections after the repeated audit claim was found
+packs/skills/release-docs-review/SKILL.md 243 # raised: include generator introductions and standalone verb output after final advisor found residual global claims
 packs/skills/review-findings/SKILL.md 215 # raised: require evidence-based cohesion review, supporting tests/docs/changelog, buildable boundaries, one patch per actual commit and independent source acceptance while retaining every finding obligation
 packs/skills/secrets-scan/SKILL.md 93
 packs/skills/shellcheck-gate/SKILL.md 358 # raised: two lines of guidance (a disable names the shellcheck version that introduced the code; the project's own lint severity wins); for the lead's review
@@ -46,4 +46,4 @@ skills/qargi-task/SKILL.md 909 # raised: correct clone origin and disabled push 
 skills/qargi-task/cloud.md 744
 skills/qargi-task/local-run.md 222 # raised: one sentence, a runtime whose sandbox hides a place refuses a run there and prepare names the fix (usually --scratch on disk); for the lead's review; lowered before: prepare writes RUN/task.md
 skills/qargi-team/SKILL.md 882
-skills/qargi-verify/SKILL.md 705 # raised: two sentences on local runs (feature finish refuses an open run, local close for one applied by hand; before a reboot apply verified runs or use the saved copy); a read-only run that returned its report in its final message (the lead stores it) or wrote it with local report (the member's own writer, 11 words)
+skills/qargi-verify/SKILL.md 705 # raised: describe unaccepted observed differences without attributing ref movement to an actor

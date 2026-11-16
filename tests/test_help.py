@@ -38,6 +38,24 @@ TYPES = {"none": None, "project": 1, "instance": 1, "session": 1, "target": 1, "
 
 
 class Sync(unittest.TestCase):
+    def test_shared_help_introductions_describe_command_specific_requirements(self):
+        guidance = "Request, plan and approval requirements are command-specific."
+        self.assertIn(guidance, H.show_overview())
+        introduction = H.man().split(".SH GLOBAL OPTIONS", 1)[0].replace("\\-", "-")
+        self.assertIn(guidance, introduction)
+        self.assertNotIn("A cloud verb needs", H.show_overview())
+        self.assertNotIn("a cloud command needs", introduction)
+
+    def test_standalone_verify_help_describes_observed_snapshot_scope(self):
+        for arguments in (("help", "local", "verify"), ("local", "verify", "--help")):
+            result = subprocess.run([BIN, *arguments], capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            text = " ".join(result.stdout.split())
+            for boundary in ("local refs", "available origin heads/tags", "excluding refs/qargi/",
+                             "Transient activity", "other destinations"):
+                self.assertIn(boundary, text)
+            self.assertNotIn("Anything else (a push", text)
+
     def test_campaign_metadata_help_and_completion(self):
         self.assertEqual(set(verbs("campaign")), {"commit", "show", "check", "log"})
         for spec in verbs("campaign").values():

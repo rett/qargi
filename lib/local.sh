@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Local dispatch without a way to push: the agent works in a clone of a bare copy that
-# has no remote, runs git through a credential-less wrapper, and the coordinator
-# compares every ref of the real repository (and of its remote) before and after.
+# Local dispatch through a credential-less Git wrapper and a clone of a bare copy.
+# The clone's origin push URL is disabled. Verification compares selected ref snapshots
+# using the documented exclusions and accepted-difference rules.
 #
 #   local.sh prepare (--repo DIR | --repo-url URL [--credential-file FILE]) --base BRANCH --slug SLUG --scratch DIR [--role R] [--profile NAME]
 #                                        [--task-file F --done CMD [--scope PATH]...]   (writes RUN/task.md, the task block, for every runtime: taskblock_write)

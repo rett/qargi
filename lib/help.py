@@ -20,6 +20,8 @@ import paths as P  # noqa: E402
 
 ROOT = os.path.dirname(HERE)
 BOLD = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+APPROVAL_GUIDANCE = ("Request, plan and approval requirements are command-specific. "
+                     "See each command's help and qargi help approvals.")
 
 
 def conf():
@@ -124,7 +126,7 @@ def show_overview():
         out.append("  " + title)
         out += ["    " + l for l in lines]
     out += ["", b("Global options") + "  (every verb)"] + opts_block(C.GLOBAL_OPTS, 2)
-    out += ["", "A cloud verb needs --asked \"<your request>\"; a change to shared resources prints a plan and needs --plan and --approved (qargi help approvals).",
+    out += ["", APPROVAL_GUIDANCE,
             "Manual page: qargi help --man | man -l -        Completion: see docs/reference/README.md."]
     return "\n".join(out)
 
@@ -263,8 +265,7 @@ def man(date_from=None):
     w(".SH DESCRIPTION")
     w(esc(C.INTRO))
     w(".PP")
-    w("Every command takes \\fB\\-\\-help\\fR. A command that changes shared resources prints a plan and applies it only with "
-      "\\fB\\-\\-plan\\fR and \\fB\\-\\-approved\\fR; a cloud command needs \\fB\\-\\-asked\\fR. See APPROVALS.")
+    w("Every command takes \\fB\\-\\-help\\fR. " + esc(APPROVAL_GUIDANCE))
     w(".SH GLOBAL OPTIONS")
     for op in C.GLOBAL_OPTS:
         w(".TP")
