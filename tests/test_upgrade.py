@@ -7,6 +7,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(ROOT, "bin", "qargi")
 GIT = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
 INSTALL = '#!/bin/sh\necho "$@" >> "$QARGI_TEST_MARK"\n'
+sys.path.insert(0, os.path.join(ROOT, "lib"))
+import install_record as IR  # noqa: E402
 
 
 def git(cwd, *a):
@@ -25,9 +27,18 @@ class T(unittest.TestCase):
         subprocess.run(["git", "clone", "-q", self.origin, self.tool], check=True)
         with open(os.path.join(self.conf, "install.json"), "w") as f:
             json.dump({"tool_root": self.tool}, f)
+        self.runtime(self.conf, "claude-code")
         with open(os.path.join(self.conf, "agents.json"), "w") as f:
             json.dump({"schema": 2, "projects": {"alpha": {"forge": {}}, "beta": {"forge": {}, "scribe": {}}}}, f)
         self.env = dict(os.environ, HOME=self.t, QARGI_CONF=self.conf, QARGI_STATE=self.state, QARGI_SUDO="", QARGI_TEST_MARK=self.mark)
+
+    def runtime(self, conf, name):
+        """Record the lead skills of runtime NAME for the install in conf, as install.sh does (lib/install_record.py writes the manifest)."""
+        root = os.path.join(self.t, "." + name, "skills")
+        os.makedirs(os.path.join(conf, "install.d"), exist_ok=True)
+        IR.write(os.path.join(conf, "install.d", "runtime-%s.manifest" % name), {"kind": "runtime", "name": name, "root": [root], "data": [], "slot": []},
+                 [("L", os.path.join(root, "qargi-task"), os.path.join(self.tool, "skills", "qargi-task"))])
+        return root
 
     def commit(self, version, msg):
         with open(os.path.join(self.origin, "VERSION"), "w") as f:
@@ -64,7 +75,7 @@ class T(unittest.TestCase):
         r = self.q("--branch", "develop", "--plan", tok, "--approved", "go")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.head(), git(self.origin, "rev-parse", "HEAD"))
-        self.assertIn("--user", open(self.mark).read())              # install.sh --user ran
+        self.assertEqual(self.marked(), "--user\n")                   # install.sh --user ran: it relinks every recorded runtime itself
         for cmd in ("qargi agent refresh forge --project alpha", "qargi agent refresh forge --project beta", "qargi agent refresh scribe --project beta"):
             self.assertIn(cmd, r.stdout)          # a name two projects hold is refreshed once for each
 
@@ -75,6 +86,7 @@ class T(unittest.TestCase):
         os.makedirs(conf)
         with open(os.path.join(conf, "install.json"), "w") as f:
             json.dump({"tool_root": self.tool}, f)
+        self.runtime(conf, "claude-code")
         path = os.path.join(conf, "agents.json")
         with open(path, "w") as f:
             f.write(body)
@@ -184,6 +196,74 @@ class T(unittest.TestCase):
         r = self.apply_upgrade()
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertFalse(os.path.exists(os.path.join(self.tool, "lib", "__pycache__")))   # install.sh --user compiles it (a stub here)
+
+    def marked(self):
+        """What the stub install.sh was called with, one line per call."""
+        with open(self.mark) as f:
+            return f.read()
+
+    def plan_token(self, out):
+        return [l.split()[2] for l in out.splitlines() if l.startswith("plan token")][0]
+
+    def test_the_plan_lists_every_recorded_runtime(self):
+        claude = os.path.join(self.t, ".claude-code", "skills")
+        codex = self.runtime(self.conf, "codex")
+        self.commit("0.2.0", "next")
+        r = self.q("--branch", "develop")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.splitlines()
+        i = lines.index("runtimes (install.sh --user relinks each):")
+        self.assertEqual(lines[i + 1:i + 3], ["  claude-code in " + claude, "  codex in " + codex])
+        self.assertTrue(lines[i + 3].startswith("plan token"), lines)
+
+    def test_the_token_does_not_bind_the_runtimes(self):
+        """The runtimes are shown, not bound: one recorded between the plan and the apply leaves the token as it was (install.sh decides)."""
+        self.commit("0.2.0", "next")
+        tok = self.plan_token(self.q("--branch", "develop").stdout)
+        self.runtime(self.conf, "codex")
+        self.assertEqual(self.plan_token(self.q("--branch", "develop").stdout), tok)
+        r = self.q("--branch", "develop", "--plan", tok, "--approved", "go")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.marked(), "--user\n")
+
+    def test_the_apply_refuses_without_a_runtime_before_anything_is_fetched_or_moved(self):
+        before, fetched = self.head(), git(self.tool, "rev-parse", "origin/develop")
+        self.commit("0.2.0", "next")
+        os.remove(os.path.join(self.conf, "install.d", "runtime-claude-code.manifest"))
+        r = self.q("--branch", "develop")
+        self.assertEqual(r.returncode, 0, r.stderr)                    # the plan still shows what would move, and says the apply refuses
+        self.assertIn("runtimes: none recorded in %s/install.d, so the apply refuses" % self.conf, r.stdout)
+        tok = self.plan_token(r.stdout)
+        git(self.tool, "update-ref", "refs/remotes/origin/develop", fetched)    # as it was before the plan fetched
+        log = os.path.join(self.t, "sudo.log")
+        stub = os.path.join(self.t, "sudo")
+        with open(stub, "w") as f:
+            f.write('#!/bin/sh\necho "$*" >> "$QARGI_TEST_SUDO"\n"$@"\n')
+        os.chmod(stub, 0o755)
+        self.env.update(QARGI_SUDO=stub, QARGI_TEST_SUDO=log)
+        os.chmod(os.path.join(self.tool, ".git"), 0o555)               # a checkout the user cannot write: every write would go through sudo
+        try:
+            r = self.q("--branch", "develop", "--plan", tok, "--approved", "go")
+        finally:
+            os.chmod(os.path.join(self.tool, ".git"), 0o755)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("no runtime is recorded for the install in %s/install.d" % self.conf, r.stderr)
+        self.assertIn("%s/install.sh --user" % self.tool, r.stderr)
+        self.assertFalse(os.path.exists(log), "sudo ran")
+        self.assertEqual((self.head(), git(self.tool, "rev-parse", "origin/develop")), (before, fetched))
+        self.assertFalse(os.path.exists(self.mark))
+        self.assertFalse(os.path.exists(os.path.join(self.state, "audit.log")))
+
+    def test_a_record_that_cannot_be_read_stops_the_plan_and_the_apply(self):
+        self.commit("0.2.0", "next")
+        with open(os.path.join(self.conf, "install.d", "runtime-claude-code.manifest"), "a") as f:
+            f.write("f\t/etc/passwd\n")
+        for args in ((), ("--plan", "000000000000", "--approved", "go")):
+            r = self.q("--branch", "develop", *args)
+            self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+            self.assertIn("cannot be read", r.stderr)
+            self.assertNotIn("plan token", r.stdout)
+        self.assertFalse(os.path.exists(self.mark))
 
     def test_guard_refuses_members(self):
         for cmd in ("qargi upgrade --branch develop", "bash lib/upgrade.sh --tag v1"):

@@ -13,6 +13,11 @@ The command does not fail on a finding: exit 0, or 1 with --strict when any chec
                  lead.context_window) and whether each model id the project's roles name is in it.
   tools          flock and timeout are on PATH: flock keeps two runs of a finishing verb, and the writers of the ref journal and the records, apart;
                  timeout bounds the questions put to a remote. A missing one warns, with what each is for and the package that has it.
+  install        the install records of install.sh in the live configuration directory (install.d, install.json; read with
+                 lib/install_record.py, the lock is not taken): the tool, its source and version, and every runtime installed for
+                 the user and in a project. It warns on a legacy install.manifest (or project-N.manifest) still there, a recorded
+                 link (or copy) that is missing, dangling or now points elsewhere, a recorded version other than the VERSION of the
+                 recorded tool, and a record that cannot be read; `unknown` when nothing is installed. --json adds the facts as fields.
   project-env    the last `qargi env check` recorded for the project (state/env/PROJECT.json): `last env check <verdict> at <time>`, a
                  warning when that verdict is not ENV OK, `unknown  never run` when none was recorded. It only reads the record: the
                  project's doctor is never run here (qargi env check runs it).
@@ -188,6 +193,156 @@ def check_tools():
     return check(name, "warn", detail, fix)
 
 
+# ---------------------------------------------------------------------------------------------------------------- install
+
+LIST_MAX = 3               # paths named in the line of a finding; --json lists them all
+
+
+def tilde(p):
+    """A path as a reader wants it: the home directory as ~."""
+    home = os.path.expanduser("~").rstrip("/")
+    return "~" + p[len(home):] if home and home != "/" and (p == home or p.startswith(home + "/")) else p
+
+
+def some(paths):
+    shown = ", ".join(clean(tilde(p), 160) for p in paths[:LIST_MAX])
+    return shown + (" and %d more" % (len(paths) - LIST_MAX) if len(paths) > LIST_MAX else "")
+
+
+def link_findings(m):
+    """(missing, moved) of the paths manifest m says the install made: a link or copy that is not there (or a link whose target is gone),
+    and a link that now points elsewhere or was replaced by something else. Paths only: nothing is opened but the links."""
+    missing, moved = [], []
+    for k, p, t in m.lines:
+        if k == "L":
+            if not os.path.lexists(p):
+                missing.append({"path": p, "target": t, "why": "not there"})
+            elif not os.path.islink(p):
+                moved.append({"path": p, "target": t, "now": None, "why": "no longer a link"})
+            else:
+                now = os.readlink(p)
+                if now != t:
+                    moved.append({"path": p, "target": t, "now": now, "why": "points elsewhere"})
+                elif not os.path.exists(p):
+                    missing.append({"path": p, "target": t, "why": "its target is gone"})
+        elif k == "C" and not os.path.lexists(p):
+            missing.append({"path": p, "target": None, "why": "not there"})
+    return missing, moved
+
+
+def skills_of(m):
+    """The qargi-* skills manifest m records directly in its skills directories."""
+    return sorted({os.path.basename(p) for k, p, _ in m.lines if k in "LC" and os.path.dirname(p) in m.header["root"]})
+
+
+def check_install():
+    """The install records of install.sh, read only (lib/install_record.py reads and checks them; the lock is not taken, a run that holds it
+    may be half way)."""
+    name = "install"
+    import install_record as IR
+    conf = PA.live_conf()
+    facts = {"conf": conf, "tool_root": None, "source": None, "version": None, "tool_version": None, "runtimes": [], "projects": [],
+             "legacy": [], "missing": [], "moved": [], "unreadable": []}
+    problems, fix = [], []
+    try:
+        legacy = IR.legacy_files(conf)
+    except OSError:
+        legacy = []
+    facts["legacy"] = legacy
+    try:
+        with open(os.path.join(conf, "install.json")) as f:
+            rec = json.load(f)
+        rec = rec if isinstance(rec, dict) else {}
+    except FileNotFoundError:
+        rec = None
+    except (OSError, ValueError) as e:
+        rec = {}
+        facts["unreadable"].append({"path": os.path.join(conf, "install.json"), "why": e.__class__.__name__})
+    if rec:
+        facts.update({k: rec.get(k) if isinstance(rec.get(k), str) and rec.get(k) else None for k in ("tool_root", "source", "version")})
+    root, source = facts["tool_root"], facts["source"]
+    try:
+        found = IR.manifests(conf, key=None)
+        records = IR.records_dir(conf)
+        names = sorted(os.listdir(records)) if os.path.isdir(records) else []
+    except (IR.Refused, OSError) as e:
+        found, names = [], []
+        facts["unreadable"].append({"path": os.path.join(conf, "install.d"), "why": str(e)})
+    found += [("project", IR.PROJECT_FILE.match(n).group(2), os.path.join(records, n)) for n in names if IR.PROJECT_FILE.match(n)]
+    for kind, rt, path in found:
+        try:
+            m = IR.read(path)
+        except IR.Refused as e:
+            facts["unreadable"].append({"path": path, "why": str(e)})
+            continue
+        missing, moved = link_findings(m)
+        for x in missing + moved:
+            x["manifest"] = path
+        facts["missing"] += missing
+        facts["moved"] += moved
+        if kind == "runtime":
+            facts["runtimes"].append({"name": rt, "skills_dir": m.header["root"], "skills": len(skills_of(m)), "manifest": path})
+        elif kind == "project":
+            facts["projects"].append({"name": rt, "project": m.header["project"], "skills_dir": m.header["root"], "skills": len(skills_of(m)),
+                                      "manifest": path})
+    if not (rec is not None or found or legacy or facts["unreadable"]):
+        return dict(check(name, "unknown", "no install record in %s (install.sh --user installs the tool and records it)" % clean(tilde(conf))), **facts)
+
+    # the tool the user install came from, and what each runtime holds
+    head = []
+    if root:
+        try:
+            with open(os.path.join(root, "VERSION")) as f:
+                facts["tool_version"] = f.read().strip() or None
+        except (OSError, UnicodeDecodeError):
+            pass
+        head.append("%s (%s, %s)" % (clean(tilde(root)), clean(source or "source not recorded", 40), clean(facts["version"] or "no version", 40)))
+    rts = ", ".join("%s (%d skill%s in %s)" % (clean(r["name"], 60), r["skills"], "" if r["skills"] == 1 else "s", ", ".join(clean(tilde(d)) for d in r["skills_dir"]))
+                    for r in facts["runtimes"])
+    head.append("runtimes " + rts if rts else "no user runtime recorded")
+    if facts["projects"]:
+        head.append("in projects " + ", ".join("%s (%d skill%s in %s)" % (clean(p["name"], 60), p["skills"], "" if p["skills"] == 1 else "s",
+                                                                          clean(tilde(p["project"]))) for p in facts["projects"]))
+    install = "%s/install.sh --user" % root if root and source != "copy" else "install.sh --user%s (from the checkout you installed)" % (
+        " --copy" if source == "copy" else "")
+
+    # the findings
+    for u in facts["unreadable"]:
+        problems.append("%s cannot be read: %s" % (clean(tilde(u["path"])), clean(u["why"], 400)))
+    if facts["unreadable"]:
+        fix.append("fix: a record that cannot be read is not used by install.sh either: move it aside, then remove by hand what it lists and install again")
+    if legacy:
+        if os.path.isdir(os.path.join(conf, "install.d")):
+            problems.append("the legacy %s is still there (the records are in install.d, so it is not read)" % some(legacy))
+            fix.append("fix: the next %s removes it unread" % install)
+        else:
+            problems.append("the legacy %s is not moved into install.d yet" % some(legacy))
+            fix.append("fix: %s moves it into install.d once (qargi upgrade runs it)" % install)
+    if rec is not None and not root and not facts["unreadable"]:
+        problems.append("install.json records no tool_root")
+        fix.append("fix: %s records it again" % install)
+    if rec is None and facts["runtimes"]:
+        problems.append("runtimes are recorded but install.json is not there")
+        fix.append("fix: %s records the tool again" % install)
+    if rec is not None and root and not facts["runtimes"] and not legacy and not facts["unreadable"]:
+        problems.append("install.json names the tool, but no user runtime is recorded in install.d")
+        fix.append("fix: %s installs the lead skills (claude-code; --runtime NAME for another)" % install)
+    if facts["missing"]:
+        problems.append("%d recorded path%s missing: %s" % (len(facts["missing"]), " is" if len(facts["missing"]) == 1 else "s are",
+                                                           some([x["path"] for x in facts["missing"]])))
+    if facts["moved"]:
+        problems.append("%d recorded link%s no longer what the install made: %s" % (len(facts["moved"]), " is" if len(facts["moved"]) == 1 else "s are",
+                                                                                 some([x["path"] for x in facts["moved"]])))
+    if facts["missing"] or facts["moved"]:
+        fix.append("fix: %s puts back what is missing (install.sh --project DIR for a project); a link you pointed elsewhere is kept (by --uninstall too) "
+                   "until you remove it or install again with --force" % install)
+    if facts["version"] and facts["tool_version"] and facts["version"] != facts["tool_version"]:
+        problems.append("install.json records version %s, the tool at %s is %s" % (clean(facts["version"], 40), clean(tilde(root)), clean(facts["tool_version"], 40)))
+        fix.append("fix: the tool changed without an install (a git pull, say): %s records it as it is now" % install)
+    detail = "; ".join(head + problems)
+    return dict(check(name, "warn" if problems else "ok", detail, fix), **facts)
+
+
 # ---------------------------------------------------------------------------------------------------------------- shm
 
 def check_shm():
@@ -348,7 +503,7 @@ def main(argv):
     if project is False:
         print("qargi doctor: no stored project '%s'" % names[0], file=sys.stderr)
         return 2
-    checks = [check_remove_ipc(), check_guard(project), check_shm(), check_tools(), check_window_source(project), check_project_env(project)]
+    checks = [check_remove_ipc(), check_guard(project), check_shm(), check_tools(), check_install(), check_window_source(project), check_project_env(project)]
     warns = sum(1 for c in checks if c["status"] == "warn")
     code = 1 if strict and warns else 0
     if as_json:

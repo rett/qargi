@@ -8,7 +8,9 @@
 # Without --branch or --tag the checkout's current branch is used. A branch on the current branch moves only forward
 # (merge --ff-only); another branch is checked out at the fetched tip; a tag is checked out detached. The git commands that
 # write into the root-owned checkout run through sudo (QARGI_SUDO names another command, '' none); install.sh --user then
-# runs as you. Members and agents cannot use it (the guard refuses the verb). Nothing is pushed anywhere.
+# runs as you and relinks every runtime recorded for the install (<live config>/install.d). The plan lists those runtimes, one
+# line each; the plan token does not bind them. With no runtime recorded the apply refuses before anything is fetched or moved
+# and says to run install.sh --user first. Members and agents cannot use it (the guard refuses the verb). Nothing is pushed anywhere.
 . "$(dirname "$0")/lib.sh"
 
 BRANCH='' TAG=''
@@ -28,9 +30,28 @@ for v in "$BRANCH" "$TAG"; do
   printf '%s' "$v" | grep -Eq '^[A-Za-z0-9._/-]*$' && [ "${v#-}" = "$v" ] || die "a branch or tag name: letters, digits, . _ / - only"
 done
 
-root=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import paths; print(paths.installed_tool_root() or "")' "$(dirname "$(readlink -f "$0")")")
+lib=$(dirname "$(readlink -f "$0")")
+root=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import paths; print(paths.installed_tool_root() or "")' "$lib")
 [ -n "$root" ] && [ -d "$root/.git" ] || die "no installed tool is recorded (install.json): install it first, for example sudo git clone https://github.com/rett/qargi /opt/qargi && /opt/qargi/install.sh --user"
 [ -x "$root/install.sh" ] || die "$root has no install.sh"
+# The runtimes recorded for the install (<live config>/install.d, read and checked by lib/install_record.py): one NAME<TAB>SKILLS DIRECTORY line
+# each. install.sh --user refreshes every one of them; the plan shows them, the plan token does not bind them (the installer of the new checkout
+# decides what is relinked), and an apply with none recorded refuses before anything is fetched or moved.
+liveconf=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import paths; print(paths.live_conf())' "$lib")
+runtimes=$(python3 -I -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+import install_record as IR
+try:
+    for kind, name, path in IR.manifests(sys.argv[2]):
+        if kind == "runtime":
+            print("%s\t%s" % (name, ", ".join(IR.read(path).header["root"])))
+except (IR.Refused, OSError) as e:
+    sys.exit("qargi: %s" % e)
+' "$lib" "$liveconf") || die "the install records in $liveconf/install.d cannot be read (above), so install.sh --user would refuse them; the installed checkout is not changed"
+if [ -n "$APPROVED" ] && [ -n "$PLAN_ARG" ] && [ -z "$runtimes" ]; then
+  die "no runtime is recorded for the install in $liveconf/install.d, so there is nothing to relink; install one first: $root/install.sh --user (claude-code; --runtime NAME for another), then plan again. The installed checkout is not changed"
+fi
 
 SUDO=${QARGI_SUDO-sudo}
 if [ -w "$root/.git" ]; then SUDO=''; fi
@@ -60,6 +81,12 @@ if [ -z "$APPROVED" ] || [ -z "$PLAN_ARG" ]; then
   echo "version: $(cat "$root/VERSION" 2>/dev/null || echo ?) -> $(g show "$new_sha:VERSION" 2>/dev/null || echo ?)"
   echo "commits:"; g log --oneline --no-decorate -30 "$cur_sha..$new_sha" 2>/dev/null | sed 's/^/  /'
   g diff --stat "$cur_sha" "$new_sha" | tail -1 | sed 's/^/files:/'
+  if [ -n "$runtimes" ]; then
+    echo "runtimes (install.sh --user relinks each):"
+    while IFS=$'\t' read -r rt dir; do echo "  $rt in $dir"; done <<<"$runtimes"
+  else
+    echo "runtimes: none recorded in $liveconf/install.d, so the apply refuses; install one first: $root/install.sh --user"
+  fi
   echo "plan token: $token   (apply with: --plan $token --approved \"...\")"
   exit 0
 fi

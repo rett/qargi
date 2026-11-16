@@ -9,12 +9,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 - Lead skills of several runtimes install side by side: `install.sh --user --runtime NAME` leaves the other runtimes as they are, `--uninstall --runtime NAME` removes one, and the command, man page and completions go with the last.
 - A bare `install.sh --user --uninstall` removes every installed runtime and lists them first.
+- `qargi doctor` has an `install` check: an ok line with the installed tool (source, version) and every runtime installed for the user and in a project, from the install records, read only. It warns on a legacy `install.manifest` still there, a recorded link that is missing, dangling or points elsewhere, a recorded version other than the tool's `VERSION`, and a record that cannot be read; `--json` carries the same facts as fields of the check.
 
 ### Changed
 - Install records live in `<conf>/install.d/` (one manifest per runtime, a shared one, one per project and runtime). Every line is checked when read, a manifest is written whole before the install acts, and a run holds `<conf>/install.lock`. `install.json` also records `source` (link or copy).
 - `install.sh` leaves a link that already points at its target untouched and does not replace a link no install recorded without `--force`.
 - `install.sh --user` without `--runtime` refreshes every installed runtime (claude-code when none is), skipping one whose definition is gone with a note; `--user --copy` copies every installed runtime again.
 - `install.sh --user --runtime NAME` from another tool or in the other link/copy mode is refused while another runtime is installed; `install.sh --user` without `--runtime` moves them all.
+- The `qargi upgrade` plan lists the runtimes recorded for the install, one line each with its skills directory: `install.sh --user` relinks every one of them, and the plan token does not bind them. An apply with no runtime recorded refuses before anything is fetched or moved and says to run `install.sh --user` first; a record that cannot be read stops the plan and the apply.
 - The first `install.sh` run moves the single `install.manifest` (and `project-N.manifest`) of 0.3.1 into `install.d/` once, carrying a link only while it still points into the tool and refusing any other line outside the install; a leftover `install.d.new` or temporary manifest is removed unread.
 
 ### Fixed
