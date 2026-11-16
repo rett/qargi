@@ -46,7 +46,8 @@ qargi help concepts
 ## 4. Install the skills for one repository only
 
 ```bash
-./install.sh --project /path/to/repo --runtime RUNTIME
+./install.sh --project /path/to/repo \
+  --runtime RUNTIME
 ```
 
 The selected runtime declares the checkout skill path, such as `.claude/skills` for Claude Code or `.agents/skills` for Codex. The paths are hidden from git through the repository's local exclude file. The command is always user-level, so install `--user` first. The installer refuses when any of those paths is already tracked.
@@ -64,7 +65,8 @@ If the installed tool is a root-owned checkout that `install.sh` recorded, `qarg
 
 ```bash
 qargi upgrade --tag TAG
-qargi upgrade --tag TAG --plan TOKEN --approved "upgrade to TAG"
+qargi upgrade --tag TAG --plan TOKEN \
+  --approved "upgrade to TAG"
 ```
 
 The current `upgrade` command invokes the installer with its Claude Code default. A Codex installation needs a separately reviewed runtime-preserving upgrade plan. Preserve active-run authority and obtain a shared-runtime idle boundary before changing a shared installation.

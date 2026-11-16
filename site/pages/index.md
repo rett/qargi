@@ -40,7 +40,8 @@ Local is the default: a member runs on your machine. A cloud agent is used only 
 ```bash
 qargi project show
 qargi agent for build
-qargi local prepare --repo . --base develop --slug rename-verb --scratch ~/qargi-runs
+qargi local prepare --repo . --base develop \
+  --slug rename-verb --scratch ~/qargi-runs
 qargi local verify RUN
 qargi review check RUN/out
 qargi review apply RUN

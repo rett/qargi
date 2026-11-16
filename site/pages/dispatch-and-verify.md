@@ -29,7 +29,8 @@ In Codex command mode, the first word names the logical `worker` or `reviewer` b
 ## 3. Prepare the run
 
 ```bash
-qargi local prepare --repo . --base feature/NAME --slug rename-verb \
+qargi local prepare --repo . \
+  --base feature/NAME --slug rename-verb \
   --scratch ~/qargi-runs --role build
 ```
 

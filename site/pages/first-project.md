@@ -15,13 +15,16 @@ For an existing repository, run this from inside it. It reads the repository and
 
 ```bash
 cd ~/src/myproject
-qargi project attach --name myproject --provider-local claude-code
+qargi project attach --name myproject \
+  --provider-local claude-code
 ```
 
 For a new project, `project new` prints a plan for the directory, the branches and the generic files:
 
 ```bash
-qargi project new myproject --param test_command='make test' --provider-local claude-code
+qargi project new myproject \
+  --param test_command='make test' \
+  --provider-local claude-code
 ```
 
 `qargi provider list` shows the runtimes you can name. The project names one for the local surface and, if you use cloud agents, one for the cloud surface. qargi never guesses either.
@@ -31,7 +34,9 @@ qargi project new myproject --param test_command='make test' --provider-local cl
 Read the plan. If it is what you want, run the same command again with the token it printed and your go-ahead in your own words. The words are written to the audit log.
 
 ```bash
-qargi project attach --name myproject --provider-local claude-code --plan TOKEN --approved "store the answers for myproject"
+qargi project attach --name myproject \
+  --provider-local claude-code --plan TOKEN \
+  --approved "store the answers for myproject"
 ```
 
 If the plan changes between the two runs, the token no longer matches and nothing happens. `qargi help approvals` has the rules.
@@ -58,9 +63,12 @@ The answers hold the repository, its branches, the roles and each role's base br
 A member is a local agent you name. It serves one or more roles: build changes code, write writes documentation, review reads a change and changes no file, test writes and runs tests. Names are yours.
 
 ```bash
-qargi agent add forge --roles build,test --project myproject
-qargi agent add scribe --roles write --project myproject
-qargi agent add reader --roles review --project myproject
+qargi agent add forge --roles build,test \
+  --project myproject
+qargi agent add scribe --roles write \
+  --project myproject
+qargi agent add reader --roles review \
+  --project myproject
 qargi agent list --project myproject
 ```
 

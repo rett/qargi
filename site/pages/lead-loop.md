@@ -14,8 +14,10 @@ A feature is a broad, related theme, not one task. Unrelated work gets its own f
 ```bash
 qargi marshal check NAME
 qargi marshal status --all
-qargi marshal claim NAME --goal "what the feature should achieve"
-qargi feature start NAME --purpose "what it is about"
+qargi marshal claim NAME \
+  --goal "what the feature should achieve"
+qargi feature start NAME \
+  --purpose "what it is about"
 ```
 
 `marshal check` exits 1 when another live lead holds the feature. `feature list` shows every open feature and any file two of them both change: if they overlap, put the work in one feature or expect a conflict.
@@ -26,7 +28,9 @@ Each task is one change with an executable check. Give each its own slug and a s
 
 ```bash
 qargi agent for build
-qargi local prepare --repo . --base feature/NAME --slug rename-verb --scratch ~/qargi-runs --role build
+qargi local prepare --repo . \
+  --base feature/NAME --slug rename-verb \
+  --scratch ~/qargi-runs --role build
 ```
 
 `prepare` makes the run and prints the paths for the task block. The task and its check, the member and the checks to run are in [dispatch and verify](/dispatch-and-verify/). A task runs targeted checks only, never the whole suite.
@@ -88,7 +92,8 @@ qargi feature status NAME
 
 ```bash
 qargi feature finish NAME
-qargi feature finish NAME --plan TOKEN --approved "the owner's words"
+qargi feature finish NAME --plan TOKEN \
+  --approved "the owner's words"
 ```
 
 Finishing marks the feature's marshal record finished. A release follows its own plan through `qargi release start VERSION`, `release push` and `release finish`. A hotfix uses the same pattern with `--hotfix`.

@@ -41,7 +41,8 @@ Unexpected ref differences fail closed. The lead stops, keeps the evidence, tell
 A gated verb prints a concrete plan and a token covering what would be done. The owner decides whether that plan may be applied. After approval, the lead supplies the token and the owner's words.
 
 ```bash
-qargi feature finish NAME --plan TOKEN --approved "the owner's words"
+qargi feature finish NAME --plan TOKEN \
+  --approved "the owner's words"
 ```
 
 Approval rules follow the scope of that plan.
