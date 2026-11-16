@@ -50,7 +50,7 @@ except (IR.Refused, OSError) as e:
     sys.exit("qargi: %s" % e)
 ' "$lib" "$liveconf") || die "the install records in $liveconf/install.d cannot be read (above), so install.sh --user would refuse them; the installed checkout is not changed"
 if [ -n "$APPROVED" ] && [ -n "$PLAN_ARG" ] && [ -z "$runtimes" ]; then
-  die "no runtime is recorded for the install in $liveconf/install.d, so there is nothing to relink; install one first: $root/install.sh --user (claude-code; --runtime NAME for another), then plan again. The installed checkout is not changed"
+  die "no runtime is recorded for the install in $liveconf/install.d, so there is nothing to relink; install one first: $root/install.sh --user (the default runtime; --runtime NAME for another), then plan again. The installed checkout is not changed"
 fi
 
 SUDO=${QARGI_SUDO-sudo}

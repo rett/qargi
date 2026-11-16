@@ -326,7 +326,7 @@ def check_install():
         fix.append("fix: %s records the tool again" % install)
     if rec is not None and root and not facts["runtimes"] and not legacy and not facts["unreadable"]:
         problems.append("install.json names the tool, but no user runtime is recorded in install.d")
-        fix.append("fix: %s installs the lead skills (claude-code; --runtime NAME for another)" % install)
+        fix.append("fix: %s installs the lead skills (the default runtime; --runtime NAME for another)" % install)
     if facts["missing"]:
         problems.append("%d recorded path%s missing: %s" % (len(facts["missing"]), " is" if len(facts["missing"]) == 1 else "s are",
                                                            some([x["path"] for x in facts["missing"]])))
