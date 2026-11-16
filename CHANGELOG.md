@@ -16,6 +16,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `install.sh` leaves a link that already points at its target untouched and does not replace a link no install recorded without `--force`.
 - `install.sh --user` without `--runtime` refreshes every installed runtime (claude-code when none is), skipping one whose definition is gone with a note; `--user --copy` copies every installed runtime again.
 - `install.sh --user --runtime NAME` from another tool or in the other link/copy mode is refused while another runtime is installed; `install.sh --user` without `--runtime` moves them all.
+- The `qargi upgrade` plan lists the runtimes recorded for the install, one line each with its skills directory: `install.sh --user` relinks every one of them, and the plan token does not bind them. An apply with no runtime recorded refuses before anything is fetched or moved and says to run `install.sh --user` first; a record that cannot be read stops the plan and the apply.
 - The first `install.sh` run moves the single `install.manifest` (and `project-N.manifest`) of 0.3.1 into `install.d/` once, carrying a link only while it still points into the tool and refusing any other line outside the install; a leftover `install.d.new` or temporary manifest is removed unread.
 
 ### Fixed
