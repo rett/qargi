@@ -262,18 +262,49 @@ def write(path, h, lines):
 
 # ---- removing what a manifest lists
 
+def copy_tops(m):
+    """The roots of the copies in m: its C paths, its data directories and the qargi-* entries in its skills directories."""
+    tops = {p for k, p, _ in m.lines if k == "C"} | set(m.header.get("data", []))
+    for r in m.header.get("root", []):
+        tops |= {r + "/" + p[len(r) + 1:].split("/")[0] for k, p, _ in m.lines if k in "fd" and under(p, r)}
+    return tops
+
+
+def linked_ancestor(p, tops):
+    """The first link on the way from the copy root that holds p (that root included) down to the parent of p, or None. The checks of a
+    line are lexical: a directory you replaced with a link inside a copy (a development checkout's lib, say) is not followed."""
+    base = max((t for t in tops if under(p, t)), key=len, default=None)
+    if base is None:
+        return None
+    q = base
+    if os.path.islink(q):
+        return q
+    for part in p[len(base) + 1:].split("/")[:-1]:
+        q += "/" + part
+        if os.path.islink(q):
+            return q
+    return None
+
+
 def remove(m, say, keep=frozenset()):
     """Remove exactly the paths m lists, except the (kind, path) pairs in keep. A link goes only while it points at a target the manifest
     records; a directory only once it is empty (the bytecode Python wrote inside a copied directory goes with it); c lines are left to the
-    caller. Anything that is no longer what the install made is kept and said."""
+    caller. Anything that is no longer what the install made is kept and said: an f or d line below a link inside its copy is not followed."""
     targets = {}
     for k, p, t in m.lines:
         if k == "L":
             targets.setdefault(p, set()).add(t)
-    dirs, links = set(), set()
+    dirs, links, tops, through = set(), set(), copy_tops(m), set()
     for k, p, t in m.lines:
         if (k, p) in keep:
             continue
+        if k in "fd":
+            a = linked_ancestor(p, tops)
+            if a:
+                if a not in through:
+                    through.add(a)
+                    say("kept what the record lists under %s (a link now, not the directory the install made; not followed)" % a)
+                continue
         if k == "L":
             if p in links:
                 continue
@@ -327,13 +358,26 @@ def tree(p):
 
 
 def ours(p, m):
-    """p and everything under it is in the manifest m (the bytecode inside a recorded directory aside), so it is not something of yours."""
-    rec = {q for k, q, _ in m.lines if k != "c"}
+    """p and everything under it is in the manifest m as what it is now (the bytecode inside a recorded directory aside), so it is not
+    something of yours: a directory is recorded as C or d, a link inside a copy as f, any other file as C or f. A recorded directory that is
+    a link now (to a development checkout, say) is not ours."""
+    rec = {}
+    for k, q, _ in m.lines:
+        if k != "c":
+            rec.setdefault(q, set()).add(k)
     copied = {q for k, q, _ in m.lines if k in "Cd"}
     try:
         for x in tree(p):
             if x in rec:
-                continue
+                if os.path.islink(x):
+                    fits = "fL"
+                elif os.path.isdir(x):
+                    fits = "Cd"
+                else:
+                    fits = "Cf"
+                if rec[x] & set(fits):
+                    continue
+                return False
             parts = x.split("/")
             if "__pycache__" in parts and "/".join(parts[:parts.index("__pycache__")]) in copied:
                 continue

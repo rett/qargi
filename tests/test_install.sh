@@ -216,6 +216,22 @@ files=$(cd "$H2" && find . -type f | sort | tr '\n' ' ')
 rm -rf "$H2"; mkdir -p "$H2"
 [ -d "$QARGI_CONF/packs" ] && ok "uninstall leaves the user's data (the pack library under the config) alone" || no "uninstall removed the pack library"
 
+# a directory of the tool copy you pointed at a development checkout (a link) is not followed: a --copy refresh refuses before it changes
+# anything, and the uninstall removes nothing through it (the bytecode there included)
+H5=$T/h5 DEV=$T/dev; mkdir -p "$H5" "$DEV"; cp -r "$ROOT/lib" "$DEV/lib"; mkdir -p "$DEV/lib/__pycache__"; echo dev > "$DEV/lib/__pycache__/x.pyc"
+inst5() { HOME=$H5 XDG_CONFIG_HOME=$H5/.config bash "$INSTALL" "$@"; }
+devstate() { find "$DEV" -printf '%p %y %i\n' | sort; find "$DEV" -type f -exec md5sum {} + | sort; }
+inst5 --user --copy >/dev/null 2>&1
+rm -rf "$H5/.local/share/qargi/lib"; ln -s "$DEV/lib" "$H5/.local/share/qargi/lib"
+d0=$(devstate); h0=$(find "$H5" "$QARGI_CONF/install.d" -printf '%p %y %i\n' | sort)
+out=$(inst5 --user --copy 2>&1); rc=$?
+{ [ "$rc" = 1 ] && echo "$out" | grep -q "refusing to replace existing $H5/.local/share/qargi (use --force)" && [ "$(devstate)" = "$d0" ] \
+  && [ "$(find "$H5" "$QARGI_CONF/install.d" -printf '%p %y %i\n' | sort)" = "$h0" ]; } && ok "a --copy refresh over a tool copy whose lib is a link refuses with nothing changed" || no "copy refresh over a linked lib (rc=$rc): $out"
+out=$(inst5 --user --uninstall 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(devstate)" = "$d0" ] && [ -L "$H5/.local/share/qargi/lib" ] && echo "$out" | grep -q "kept what the record lists under $H5/.local/share/qargi/lib (a link now" \
+  && [ ! -e "$H5/.local/share/qargi/bin" ] && [ ! -e "$QARGI_CONF/install.d" ]; } && ok "its uninstall removes the rest and nothing through the link, and says so" || no "uninstall over a linked lib (rc=$rc): $out"
+rm -rf "$H5" "$DEV"
+
 # a second --copy install over the first needs no --force (it is the install's own), a link install over a copy leaves no copy behind
 inst2 --user --copy >/dev/null 2>&1; rc=$?
 inst2 --user --copy >/dev/null 2>&1; rc2=$?

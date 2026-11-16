@@ -346,6 +346,37 @@ class Remove(Base):
         self.assertEqual(self.snapshot(self.home), snap)
         self.assertTrue(os.path.isfile(self.mf()))
 
+    def test_a_link_inside_a_copy_is_not_followed(self):
+        spit(os.path.join(self.tool, "skills", "qargi-task", "lib", "x.py"), "tool\n")
+        self.apply(self.plan(copy=True))
+        sk, dev = self.sk(), os.path.join(self.t, "dev")
+        for d in ("lib", "flow"):
+            spit(os.path.join(dev, d, "x.py"), "dev\n")
+            spit(os.path.join(dev, d, "SKILL.md"), "dev\n")
+            spit(os.path.join(dev, d, "__pycache__", "x.pyc"), "dev\n")
+        lib = os.path.join(sk, "qargi-task", "lib")
+        subprocess.run(["rm", "-rf", lib], check=True)
+        os.symlink(os.path.join(dev, "lib"), lib)                   # a directory inside a copy pointed at a development checkout
+        flow = os.path.join(sk, "qargi-flow")
+        subprocess.run(["rm", "-rf", flow], check=True)
+        os.symlink(os.path.join(dev, "flow"), flow)                 # and a copied skill itself
+        snap, devsnap = self.snapshot(self.home), self.snapshot(dev)
+        self.assertIn("refusing to replace existing %s/qargi-task" % sk, self.refused(self.apply, self.plan(copy=True)))
+        self.assertEqual(self.snapshot(self.home), snap, "a refresh refuses before it changes anything")
+        said = []
+        R.uninstall(self.conf, [self.mf()], False, said.append)
+        self.assertEqual(self.snapshot(dev), devsnap, "nothing is removed through the links, the bytecode there included")
+        self.assertIn("kept what the record lists under %s (a link now, not the directory the install made; not followed)" % lib, said)
+        self.assertTrue(os.path.islink(lib))
+        self.assertFalse(os.path.lexists(os.path.join(sk, "qargi-task", "SKILL.md")), "what is not below a link goes")
+        os.unlink(lib)
+        os.rmdir(os.path.join(sk, "qargi-task"))
+        self.apply(self.plan(copy=True))
+        subprocess.run(["rm", "-rf", lib], check=True)
+        os.symlink(os.path.join(dev, "lib"), lib)
+        self.apply(self.plan(copy=True), force=True)
+        self.assertEqual(self.snapshot(dev), devsnap, "and --force replaces the copy without following the link")
+
     def test_the_bytecode_inside_a_copied_directory_goes_with_it(self):
         self.apply(self.plan(copy=True))
         pyc = os.path.join(self.sk(), "qargi-task", "__pycache__")
