@@ -27,6 +27,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Local verification help, Codex guidance and success output describe snapshot coverage of local refs and origin heads/tags, excluding `refs/qargi/`, with separate evidence needed for transient activity. Architecture documents accepted differences, prepare-time runtime-owned patterns, report-only controller publication and the instruction to propose memory notes in the report. Cloud help explains command-specific request, plan and audit requirements. Task guidance names prepare's refusals and the member's memory obligations explicitly.
 - Campaign declaration v1 links retain distinct attribution and digest provenance, refusing only complete canonical duplicates. Pure transition errors identify invalid parents with `$parent` paths, and graph pins refuse identical source endpoints. Literal grammar and detached-input regressions pin the current v1 contract; store and command integration remain separate.
 - Storage and guard guidance now describes configured paths, development checkouts and hook-enabled runtimes. Report-recovery and cleanup guidance follows the selected runtime and retained-attempt evidence requirements.
+- Canonical target guidance preserves compatibility selection against the selected runtime and applies explicit-target identity and mode checks to both default and secondary targets.
 
 
 ## [0.3.0] - 2026-11-14
