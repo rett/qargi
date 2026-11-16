@@ -3,7 +3,7 @@
  "started": "2026-11-15T19:59:29Z",
  "goal": "Finish verified skills rollout for 0.3.1, then pause",
  "plan": "",
- "note": "Reviewed repair merged at3608da15, exact a59 tree. Sixteen distinct final checks passed, coverage/input hashes retained. Opus source accepted. Two authorized probes returned random markers and cleaned links, snapshot tool trace/client inventory remains unqualified. Owner chose narrow release evidence with interactive Ataniq activation gated. Whole checkpoint running since07:37UTC. Essential accuracy corrections drafted for release preparation followed by exact-head targeted checks/review and full CI. Finish0.3.1 and configured website deployment, then pause. No new feature or host/session cutover.",
+ "note": "Checkpoint1 at3608da15 found stale open-provider fixture render after reseal. Failure and partial logs archived, only verified owned runner/groups stopped, no survivors. Isolated fix19acb5d passes whole open-provider script and shellcheck. Exact accepted7file accuracy draft committed ee1e9962 before replacement checkpoint. Opus final source closure pending. Skills date unset, Ataniq lead activation gated. Replacement full checkpoint will cover final task DONE checks with input hashes, plus3missing exact commands. Current0.3.1only thenpause.",
  "status": "verifying",
  "lead": {
   "id": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
@@ -12,11 +12,11 @@
   "since": "2026-11-15T19:59:29Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-16T08:08:01Z",
+ "renewed_at": "2026-11-16T08:12:30Z",
  "finished_at": null,
  "updated_by": "codex-01a1cc7c-f897-7241-b4cb-5cb6a41fc832",
- "rev": 46,
- "updated_at": "2026-11-16T08:08:01Z",
+ "rev": 47,
+ "updated_at": "2026-11-16T08:12:30Z",
  "feature": "project-skills-rollout",
  "project": "qargi"
 }
