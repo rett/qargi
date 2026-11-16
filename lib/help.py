@@ -338,7 +338,7 @@ def man(date_from=None):
         w(".B " + k)
         w(esc(d + "."))
     w(".SH EXIT STATUS")
-    w("0 on success. 1 when a check fails or a command is refused (the message says why). 2 for a usage error.")
+    w("Exit statuses are command-specific. Consult the command's help and diagnostic output for its failure and refusal statuses.")
     w(".SH SEE ALSO")
     # a copy of qargi without its skills directory (a partial copy, a packaged lib) still writes the page
     sk = os.path.join(ROOT, "skills")

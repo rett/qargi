@@ -230,7 +230,6 @@ lib/commands.py:the memory tiers, ~/\.config/anthropic
 lib/commands.py:"subagent-stop": verb
 lib/commands.py:cannot message a local subagent
 lib/commands.py:your Claude Code settings\.json
-lib/commands.py:This Claude Code session as lead
 lib/commands.py:and Anthropic's skills\. recommend
 lib/commands.py:Anthropic's skills"\)
 

@@ -34,7 +34,7 @@ A profile holds a repository's gates, rules and coordinator review steps, in `~/
 2. Start the member as the project's local runtime says (`qargi provider show RUNTIME`), handing it the path of `RUN/task.md`: read it and follow it.
    - **In-session runtime.** Take MEMBER, MODEL and EFFORT from step 1 (or `qargi agent for <role> [--profile NAME]`). Spawn it as `qargi provider notes spawn` says, with that brief plus the four paths (`CLONE`, `OUT`, `GIT`, `BASE_SHA`) if the runtime needs them. No member serves the role: ask the user to add one (`qargi agent add NAME --roles <role> --project P`), never use another agent type. A member `qargi agent list` shows `STALE` or `DRIFT` is out of date: tell the user, and `qargi agent refresh NAME` only with their go-ahead.
    - **Command runtime** (`dispatch.mode` is command: a headless CLI, no member file): load `local-run.md`.
-3. When it reports, run `qargi local verify <RUN>` first: a change in the real repository's refs means stop and tell the user.
+3. When it reports, run `qargi local verify <RUN>` first: a failed ref comparison means stop and report the observed evidence to the user.
 4. Then `/qargi-verify` on `OUT`: it takes the work in.
 
 ## Parallel tasks

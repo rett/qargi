@@ -22,11 +22,11 @@
 #                                        start the member of a prepared run as a command line, for a runtime whose dispatch.mode is "command"
 #                                        (lib/local_run.py says how); a runtime that dispatches in the lead's session is refused
 #
-# This stops every ordinary push (`git push`, `git push origin`, a pushurl, a remote added
-# from a config). It is not a sandbox against an agent that deliberately goes around it
-# (it runs as the same user): `verify` is what turns such an attempt into a loud failure.
+# The disabled origin and wrapper obstruct ordinary pushes through those paths. Runtime sandbox
+# protection is separate. Verify compares observed snapshots and rejects unaccepted differences;
+# it cannot expose transient pushes, other destinations or a remote unavailable at both observations.
 # The run directory records the task's ability (RUN/ability, default build) and, under --profile, the profile (RUN/profile); under review the guard
-# (qargi __guard) refuses every change to the clone, so a review writes only to OUT.
+# (qargi __guard) checks supported tool requests in runtimes that install it. Read-only members are instructed to write reports only to OUT; runtime protection is separate.
 # A run based on feature/X of a stored project first asks the marshal (marshal_check): another live lead holds X -> refused, no run
 # is made; warnings go to stderr. The lead of X is recorded in the run line as "lead" (null when nobody leads it).
 # prepare also appends one JSON line per run to $QARGI_STATE/local-runs.jsonl (run directory, slug, ability, base,
@@ -954,7 +954,7 @@ WRAP
     elif [ -n "$EMPTY" ]; then
       if [ "$crc" = 0 ]; then echo "refs: unchanged by the run (compared all the same; nothing was recorded)" >&2
       else
-        echo "REFS CHANGED during the run (the agent must not have pushed):" >&2
+        echo "REFS CHANGED or observation unavailable: ref comparison failed (see details):" >&2
         cat "$CHECK_DIR/refs.diff" >&2
         if [ -s "$CHECK_DIR/refs.accepted" ]; then echo "accepted as the lead's own moves:" >&2; sed 's/^/  /' "$CHECK_DIR/refs.accepted" >&2; fi
       fi
@@ -980,12 +980,12 @@ WRAP
         mv -T -- "$CHECK_DIR/verified" "$SRC/verified"
       fi   # refs-only observation never verifies or saves output
       if [ -s "$CHECK_DIR/refs.accepted" ]; then
-        if grep -q 'per runs\.owned_refs)$' "$CHECK_DIR/refs.accepted"; then echo "refs differ from the snapshot only by accepted moves and the refs the project declares the runtime's own (runs.owned_refs); observed local refs and available origin heads/tags, excluding refs/qargi/ (snapshots only):"
-        else echo "refs differ from the snapshot only by accepted moves; observed local refs and available origin heads/tags, excluding refs/qargi/ (snapshots only):"; fi
+        if grep -q 'per runs\.owned_refs)$' "$CHECK_DIR/refs.accepted"; then echo "refs differ from the snapshot only by accepted moves and the refs the project declares the runtime's own (runs.owned_refs); observed snapshots only; scope and unavailable remotes: qargi help local verify:"
+        else echo "refs differ from the snapshot only by accepted moves; observed snapshots only; scope and unavailable remotes: qargi help local verify:"; fi
         sed 's/^/  /' "$CHECK_DIR/refs.accepted"
-      else echo "refs unchanged: observed local refs and available origin heads/tags, excluding refs/qargi/ (snapshots only)"; fi
+      else echo "refs unchanged: observed snapshots only; scope and unavailable remotes: qargi help local verify"; fi
     else
-      echo "REFS CHANGED during the run (the agent must not have pushed):" >&2
+      echo "REFS CHANGED or observation unavailable: ref comparison failed (see details):" >&2
       cat "$CHECK_DIR/refs.diff" >&2
       if [ -s "$CHECK_DIR/refs.accepted" ]; then echo "accepted as the lead's own moves:" >&2; sed 's/^/  /' "$CHECK_DIR/refs.accepted" >&2; fi
       [ "$CHECK_PHASE" = strict ] && echo "(before the run's first passing verify a ref may differ only as far as the lead's ref journal names it, a remote-tracking ref follows origin, or the parking branch is fast-forwarded to develop)" >&2 \

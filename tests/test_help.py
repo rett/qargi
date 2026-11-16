@@ -56,6 +56,27 @@ class Sync(unittest.TestCase):
                 self.assertIn(boundary, text)
             self.assertNotIn("Anything else (a push", text)
 
+    def test_shared_policy_topics_and_exit_status_are_scoped(self):
+        overview = H.show_overview()
+        self.assertIn("Members are instructed", overview)
+        self.assertIn("qargi help push", overview)
+        self.assertIn("qargi help dev", overview)
+        concepts = " ".join(C.TOPICS["concepts"][1])
+        self.assertIn("scoped lead grant", concepts)
+        self.assertNotIn("Nothing is pushed", concepts)
+        self.assertNotIn("before anything is pushed", concepts)
+        push = " ".join(C.TOPICS["push"][1])
+        self.assertIn("selected runtime", push)
+        self.assertIn("Long-lived branch", push)
+        exit_status = H.man().split(".SH EXIT STATUS\n", 1)[1].split(".SH SEE ALSO", 1)[0]
+        self.assertIn("command-specific", exit_status)
+
+    def test_verify_help_describes_remote_observation_gaps(self):
+        text = " ".join(C.COMMANDS["local"]["verbs"]["verify"]["desc"].split())
+        self.assertIn("--repo-url observes only", text)
+        self.assertIn("unavailable at both observations", text)
+        self.assertIn("remote refs remain unobserved", text)
+
     def test_campaign_metadata_help_and_completion(self):
         self.assertEqual(set(verbs("campaign")), {"commit", "show", "check", "log"})
         for spec in verbs("campaign").values():
