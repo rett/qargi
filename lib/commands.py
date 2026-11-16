@@ -62,7 +62,8 @@ WORKTREE = opt("--worktree", "write the repo tier into DIR, another worktree of 
 PLAN = opt("--plan", "the plan token printed by the same command without --approved", "TOKEN")
 APPROVED = opt("--approved", "your go-ahead for exactly that plan, in your words; recorded in the audit log", "WORDS")
 EXEC = opt("--approve-exec", "name every executable the pack holds, separated by commas, to approve running them", "NAMES")
-TARGET = opt("--target", "claude-code renders for a local session; managed-agents (the default for apply) is the cloud update", "TARGET", ("claude-code", "managed-agents"))
+LOCAL_TARGET = opt("--target", "session.render_target of an eligible local runtime; omitted selects the project's member runtime", "TARGET")
+TARGET = opt("--target", "claude-code renders for a local session; any eligible local session.render_target is supported; managed-agents (the default for apply) is the cloud update", "TARGET", ("claude-code", "managed-agents"))
 PREFIX = opt("--prefix", "pick the notes under this path (repeat for several)", "PATH")
 ROLE_SEL = opt("--role", "pick the notes under /roles/ROLE/", "ROLE", ROLES)
 NOTE_KIND = opt("--note-kind", "pick the notes whose Kind: header is KIND (setup, gate, rule, ...)", "KIND")
@@ -971,17 +972,23 @@ COMMANDS = {
                           desc=("Without --target (or with managed-agents) this updates the existing cloud agent INSTANCE with its skills and tools; "
                                 "the lead's GitHub tool arrives this way when the project grants a cloud push. It needs --asked, and always needs --plan "
                                 "(QARGI_NESTED does not skip it); a local member's guard refuses it.\n"
-                                "With --target claude-code it takes PROJECT instead of INSTANCE and needs no --asked. Without --approved it prints a plan token. "
-                                "With --plan and --approved it renders the project's enabled skills and tools into $QARGI_STATE/render/PROJECT/RUNTIME (claude-code for this target), replacing the "
-                                "previous render atomically, and prints the exact `claude --add-dir ...` launch line (with --mcp-config and --settings when the "
-                                "render has them). A local runtime cannot enforce role scoping, so the render is the union of the project's roles and role scoping "
-                                "is advisory there. Skills render under .claude/skills; tool packs render mcp.json and settings.json. Nothing is written into a "
-                                "repository or into ~/.claude, and members cannot write under the state's render/ directory.\n"
+                                "With --target claude-code it takes PROJECT instead of INSTANCE and needs no --asked. Any eligible local target works the same way: TARGET is session.render_target in the existing provider registry. "
+                                "The member runtime resolves its own target directly; a secondary target must identify exactly one local runtime with a valid sealed definition, "
+                                "verified skills capability and project skills layout. Inapplicable project extensions refuse a secondary target. No member runtime or profile changes. "
+                                "Without --approved it prints a plan token. With --plan and --approved it renders compatible enabled packs into $QARGI_STATE/render/PROJECT/RUNTIME (claude-code for this target), "
+                                "replacing that runtime's render atomically. Renders live side by side; their skills, MCP and settings paths come from provider resources. "
+                                "The plan names project, runtime, target, selected resources and included/skipped packs, and prints the definition's launch line when available. "
+                                "For this example the launch line is `claude --add-dir ...` with MCP/settings flags when needed. "
+                                "Skills render under .claude/skills in this example; the definition chooses all resource paths. "
+                                "Role scoping is advisory: skills include the member-role union and lead-only instructions; MCP permissions retain the member-role union without lead. "
+                                "Every included skill needs a present canonical library approval matching its content hash, including lead-only skills on every target. Passing review or approving this render cannot replace that prior approval; refusal preserves the live render. "
+                                "Rendered resources go to the selected runtime's state tree. Member write protections depend on the runtime's qualified sandbox and guard coverage.\n"
                                 "The plan refuses, naming the pack and writing nothing, a skill whose SKILL.md name differs from the pack name, whose "
                                 "front matter is not closed or has more than one name key; a skill and a tool with the same name; and a tool allowlist "
                                 "name outside letters, digits, _, . and -. Each plan stages into its own hidden directory and a lock serializes "
                                 "concurrent applies; the second refuses if the render changed meanwhile. The swap installs only the tree the token "
-                                "approved; the token also covers the file modes, which the manifest records.")),
+                                "approved; the manifest and token bind project, runtime, target, composed definition and file modes. A foreign manifest refuses replacement. "
+                                "Metadata without runtime identity is supported conservatively only for the member runtime; a fresh plan upgrades that metadata.")),
             "seed": verb("Add or update the baseline packs shipped with qargi in your library", [],
                          [opt("--install", "only add the packs the library lacks, without a token (install.sh --user runs this)"), PLAN, APPROVED],
                          desc=("qargi ships a few packs (packs/ in its tree). Seeding stores them in your library. Without --approved it prints one line per pack "
@@ -989,10 +996,10 @@ COMMANDS = {
                                "never overwritten; an untouched shipped copy is updated when qargi ships a newer text. Seeding never links a pack: nothing "
                                "reaches a project or an agent until you link it.")),
             "check": verb("Check a render for drift (read only)", [("PROJECT", "project")], [TARGET],
-                          desc=("Needs --target claude-code. Writes nothing and exits 1 on any finding: library drift (a pack changed or failed review since it "
+                          desc=("Needs --target claude-code for that runtime, or another eligible local target selected as for apply. Writes nothing and exits 1 on any finding: library drift (a pack changed or failed review since it "
                                 "was rendered), rendered tampering (a file differs from the manifest, or an extra or missing file), enablement drift (a pack "
                                 "enabled or disabled, or its roles changed, since the render), shadowing of a rendered skill by ~/.claude/skills or by the "
-                                "checkout's .claude/skills, and a render directory that has no manifest (a broken render). A project with no render at all is not a failure: "
+                                "checkout's .claude/skills (another runtime uses the corresponding paths of its resources), and a render directory that has no manifest (a broken render). A project with no render at all is not a failure: "
                                 "the check prints a not applied line with the command that applies it and exits 0. The answer packs.none: true says the project uses no project packs; "
                                 "the check then passes with no render, and fails if a pack is linked to a role of the project. It also reports a rendered file that differs from "
                                 "the library copy (even when the manifest was edited with it), a changed file mode, a group- or world-writable "
@@ -1002,8 +1009,11 @@ COMMANDS = {
                                 "but its content changed: this exits 1), excluded (switched off in the provider's settings; qargi only reads them) or unmanaged "
                                 "(everything else, shown with what to do about it; this does not change the exit status). When the checkout's skills directory "
                                 "is not linked to the render it adds a note naming packs link.")),
-            "link": verb("Make the project's checkout load its packs by itself", [("PROJECT", "project")], [PLAN, APPROVED],
-                         desc=("The provider's project skills directory in the repository (for Claude Code .claude/skills) becomes a symbolic link to the render "
+            "link": verb("Make the project's checkout load its packs by itself", [("PROJECT", "project")], [LOCAL_TARGET, PLAN, APPROVED],
+                         desc=("--target selects an eligible local runtime by session.render_target; omitted uses the project's member runtime. A secondary target links only skills, "
+                               "with link.project dir-symlink. It does not link agents or memory; project link/unlink retain their default behavior and syntax. "
+                               "Distinct runtime paths can be linked side by side; a shared destination already owned by another runtime refuses. "
+                               "The provider's project skills directory in the repository (for Claude Code .claude/skills) becomes a symbolic link to the render "
                                "made by packs apply --target. Without --approved it prints the plan, the skills a session would load, and a plan token; apply with "
                                "--plan TOKEN --approved. If the directory is absent it creates the link; if it is already that link it says so and exits 0. It refuses "
                                "a link to anywhere else, a symlinked parent, a checkout that is not the top of a git work tree, a missing render, and files "
@@ -1013,10 +1023,13 @@ COMMANDS = {
                                "it prints the line to add to .git/info/exclude and never edits that file. A provider that has no such directory is "
                                "refused (exit 3). Every verb that takes --target (packs apply, packs check), packs link and unlink, skill accept and marshal handoff "
                                "exit 2 when the project has no provider (qargi project set P models.provider NAME). A local member's guard refuses it.")),
-            "unlink": verb("Undo packs link", [("PROJECT", "project")], [PLAN, APPROVED],
-                           desc=("Removes only the symbolic link that points to this project's render and, if the backup exists, moves it back to the skills "
+            "unlink": verb("Undo packs link", [("PROJECT", "project")], [LOCAL_TARGET, PLAN, APPROVED],
+                           desc=("Use the same --target as link for a secondary runtime. Removes only the symbolic link that points to this project's selected runtime render and, if the backup exists, moves it back to the skills "
                                  "directory. Refuses a link to anywhere else, a real directory in its place, and a backup with no link of ours. Same plan token "
-                                 "and approval as link; nothing else is deleted.")),
+                                 "and approval as link; nothing else is deleted. Owned unlink and backup recovery remain available after composition drift or render manifest corruption. "
+                                 "They also survive lost skills support or verification, including a harmless library-provider reseal, when sealed runtime identity and a safe skills path and link mode remain available. "
+                                 "Cleanup preserves sealed extension composition and skips current pack reviews and capability-verification prerequisites. Missing, ambiguous, unsealed or drifted identity and unsafe layouts refuse. "
+                                 "Default cleanup retains optional target and link-mode compatibility. Explicit targets retain their identity and mode checks. Combined project unlink follows the same rule. Fresh apply, check and link retain their loading eligibility and render validation checks.")),
         },
     },
     "start": {
@@ -1714,17 +1727,19 @@ PACK_VERBS = {
 }
 USER_OPT = opt("--user", "record it for every project instead of this one")
 SKILL_VERBS = dict(PACK_VERBS)
-SKILL_VERBS["accept"] = verb("Accept a skill a session loads that qargi does not manage", [("PROJECT", "project"), ("NAME", "none")], [USER_OPT, PLAN, APPROVED],
+SKILL_VERBS["accept"] = verb("Accept a skill a session loads that qargi does not manage", [("PROJECT", "project"), ("NAME", "none")], [LOCAL_TARGET, USER_OPT, PLAN, APPROVED],
     desc=("Finds NAME among the skills a session opened in the project's checkout would load (the checkout, the render and the user's skills directory; "
           "see qargi packs check) and applies only to one that is unmanaged or drifted. Without --plan it prints the same review as skill import "
-          "(files, scripts, URLs, network commands, secret findings) and a plan token that covers the scope, the name and the content hash. With "
+          "(files, scripts, URLs, network commands, secret findings) and a plan token that covers project, runtime, target, composed definition, scope, name and content hash. With "
           "--plan and --approved it records the name, the content hash, the path and your words in the acceptances file, for this project or, with "
           "--user, for every project, and writes an audit line. An accepted skill shows as accepted in packs check; if its content changes it shows "
           "as drifted and packs check exits 1. qargi skills, excluded skills and skills already accepted are refused with the reason. A local "
-          "member's guard refuses it."))
-SKILL_VERBS["unaccept"] = verb("Remove the acceptance of a skill", [("PROJECT", "project"), ("NAME", "none")], [USER_OPT, PLAN, APPROVED],
+          "member's guard refuses it. --target selects an eligible local runtime; omitted uses the member runtime. Approvals belong to resource/provider/name, "
+          "including --user approvals; another runtime's record and unowned records accept nothing for the selected runtime."))
+SKILL_VERBS["unaccept"] = verb("Remove the acceptance of a skill", [("PROJECT", "project"), ("NAME", "none")], [LOCAL_TARGET, USER_OPT, PLAN, APPROVED],
     desc=("Gated like accept. Removes only the record: the skill itself is not touched and shows as unmanaged again. Refused when there is no such "
-          "acceptance in that scope."))
+          "acceptance in that scope. The token binds the exact provider-owned record and scope, so replacement needs a fresh plan. Revocation remains available "
+          "after skills capability, verification or project layout is lost, when runtime/target identity is valid and unambiguous. Removed or ambiguous definitions refuse."))
 COMMANDS["skill"]["verbs"] = SKILL_VERBS
 TOOL_LIST = opt("--tool-list", "the server's own tool listing, saved to a file (the JSON result of MCP tools/list): the review also judges the pack's tools by it", "FILE", "file")
 TOOL_VERBS = dict(PACK_VERBS)

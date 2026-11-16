@@ -12,7 +12,7 @@ Only you, with the person present, change a pack: a member never does (`qargi he
 
 ## Compatible providers
 
-Every skill and tool declares `compatible_providers`: the runtimes it works with, as runtime names, family names or `any`. It is required and part of the content hash, so it is approved with the content. A project renders only the packs that match its local runtime; one that does not is **skipped** with a note, never attached silently.
+Every skill and tool declares `compatible_providers`: the runtimes it works with, as runtime names, family names or `any`. It is required and part of the content hash, so it is approved with the content. A project renders only the packs that match the selected runtime; one that does not is **skipped** with a note, never attached silently.
 
 - `qargi skill|tool new NAME --compatible LIST` and `import SOURCE --compatible LIST` take it, and so does the install verb of `qargi discover` (it asks when the catalog entry has none).
 - A pack with none fails review: `qargi skill|tool seal NAME --compatible LIST` adds it.
@@ -41,5 +41,7 @@ A role gets every pack linked at a scope that reaches it, unless that role disab
 - A member gets the MCP tools of its roles' tool packs: run `qargi agent refresh` after a link or seal. Its guard refuses a tool of no linked pack and an `always_ask` tool, and a read-only run calls only declared reads (`qargi help tool`).
 
 ## Apply and link
+
+An explicit target names an eligible local provider's `session.render_target`, independently of the member runtime and profiles. Use `qargi packs link|unlink PROJECT --target TARGET` for secondary skills only; keep `project link|unlink` for the default skills, agents and memory. Skill `accept|unaccept` also takes `--target TARGET`; approvals remain provider-bound.
 
 A pack reaches an agent only after an apply, and each apply is a plan, a token and the person's go-ahead. `/qargi-provision` attaches a new instance's packs. For an existing cloud agent, `qargi packs apply INSTANCE --asked "..."` uploads the custom skills and replaces the agent's skill, MCP-server and tool lists. For a local session, `qargi packs apply --target RUNTIME PROJECT` renders the project's packs outside every repository; `packs check` reports drift; `packs link|unlink PROJECT` and `qargi project link PROJECT` link the render into a work tree. Vault credentials a tool needs are reported, never attached. Load `apply.md` before you render or apply, link, or handle unmanaged skills.

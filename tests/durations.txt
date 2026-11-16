@@ -5,6 +5,7 @@
 194 bash tests/test_packs_link.sh
 185 bash tests/test_packs_render.sh
 284 bash tests/test_packs_audit.sh
+839 python3 tests/test_pack_targets.py
 220 bash tests/test_flow.sh
 65 bash tests/test_fverify.sh
 251 bash tests/test_local.sh
