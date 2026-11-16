@@ -35,7 +35,7 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     review apply|save, team run and task;
   - the verbs that change one: qargi skill|tool new|import|seal|remove|unlink|link|enable|disable, qargi skill accept|unaccept
     (they record which skills the owner accepts, in <packs>/accepted.json), qargi discover
-    install, qargi packs apply|seed|link|unlink, qargi project link|unlink (they link the project's skills, agents and memory into the
+    install, qargi packs apply|seed|link|unlink|member-skills, qargi project link|unlink (they link the project's skills, agents and memory into the
     checkout and the runtime's memory directory, which changes what a session loads) and qargi import (it restores the pack library).
     Read-only verbs (list, show, check, effective, search, render, export) stay allowed. The verb is found after wrappers, inside `sh|bash -c STRING` and
     `eval STRING`, in the program a shell reads on its standard input (below), inside $(...) and backticks, and when the script is named directly (packs.sh, discover.py, and the scripts the shell
@@ -3037,8 +3037,8 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         words = ["team"] + words
     if name == "project.sh":
         words = ["project"] + words
-    if name == "gated_answers.py":                       # the store behind provider enable|disable|accept, with no gate of its own: any use of the script is the verbs
-        return "lib/gated_answers.py stores models.extensions and models.accept_no_barrier for the verbs that have a plan token (qargi provider enable, disable, accept) and is not available to an agent"
+    if name == "gated_answers.py":                       # store behind the dedicated provider and member-skills gates
+        return "lib/gated_answers.py stores models.extensions, models.accept_no_barrier and packs.member_skills for the verbs that have a plan token and is not available to an agent"
     if name == "packs_audit.py":                         # only `store` writes accepted.json; scan, report, target and acceptance read (scan and target write the file they are given)
         if words[:1] != ["store"] and not any("$" in w or "`" in w for w in words):
             return None
@@ -3155,7 +3155,7 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
     if (area, verb) in LEAD_VERBS or area == "task":
         return ("qargi %s%s is the lead's (it prepares, verifies or removes runs and agents, or dispatches work, with the lead's credentials and its own record) and is not "
                 "available to an agent; report what you need in your task output" % (area, " " + verb if verb else ""))
-    if (area in ("skill", "tool") and verb in SKILL_VERBS) or (area, verb) in (("discover", "install"), ("packs", "apply"), ("packs", "seed"), ("packs", "link"), ("packs", "unlink"), ("local", "run")) \
+    if (area in ("skill", "tool") and verb in SKILL_VERBS) or (area, verb) in (("packs", "member-skills"), ("discover", "install"), ("packs", "apply"), ("packs", "seed"), ("packs", "link"), ("packs", "unlink"), ("local", "run")) \
             or (area == "import" and name == "qargi") or (area == "cloud" and verb in ("set", "unset", "login")) or area == "upgrade":
         if area == "upgrade":
             return "qargi upgrade changes the installed tool and its skills and is not available to an agent"

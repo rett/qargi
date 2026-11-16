@@ -84,6 +84,7 @@
               "properties": {
                 "env": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
                 "dir": {"type": "string", "minLength": 1},
+                "skills_dir": {"type": "string", "minLength": 1, "description": "Optional managed member snapshot destination relative to this private home. Command mode only; no credential, .from-run or in-home run_config first-component overlap. Structural delivery support does not qualify actual skill loading."},
                 "link": {
                   "type": "array",
                   "items": {

@@ -114,6 +114,14 @@ def _load(path, what):
         raise McpError("%s cannot be read (%s)" % (what, getattr(e, "strerror", None) or type(e).__name__))
 
 
+def reaches(link, project, role):
+    """The four canonical scopes; shared by effective selection and drift facts."""
+    s = link.get('scope')
+    return (s == 'user' or s == 'user-role' and link.get('role') == role
+            or s == 'project' and link.get('project') == project
+            or s == 'project-role' and link.get('project') == project and link.get('role') == role)
+
+
 def effective(conf, project, role):
     """The kind:name entries of the packs a role of a project gets, as `effective` of lib/packs.sh lists them: every pack linked at a scope that
     reaches the role, sorted, minus the role's packs_off."""
@@ -137,9 +145,7 @@ def effective(conf, project, role):
             raise McpError("roles.%s.packs_off of project %s is not a list" % (role, project))
     got = set()
     for x in links:
-        s = x.get("scope")
-        if (s == "user" or (s == "user-role" and x.get("role") == role) or (s == "project" and x.get("project") == project)
-                or (s == "project-role" and x.get("project") == project and x.get("role") == role)):
+        if reaches(x, project, role):
             if isinstance(x.get("pack"), str):
                 got.add(x["pack"])
     return sorted(e for e in got if e not in off)

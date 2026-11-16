@@ -60,7 +60,7 @@ out=$(verify "$R"); rc=$?
 grep -q "refuse a member's write tool for a report file" <<<"$out" && grep -q "writes its OUT files (report, manifest, series) with its file tool" <<<"$out" && ! grep -qi "heredoc" <<<"$out" \
   && ok "verify of an OUT with no report names the likely cause: a refused write tool" || no "verify cause: $out"
 grep -q "returns the report as its final message, and the lead stores it with: qargi review save RUN" <<<"$out" && ok "and the way round: the final message, stored with qargi review save" || no "verify cause way round: $out"
-grep -q "refs: unchanged by the run" <<<"$out" && grep -q "clean RUN --discard" <<<"$out" && ok "it still compares the refs, says so next to the message, and keeps verify required" || no "uncollected refs line: $out"
+grep -q "^refs: comparison passed for observed snapshots (nothing was recorded)$" <<<"$out" && ! grep -q "unchanged by the run" <<<"$out" && grep -q "clean RUN --discard" <<<"$out" && ok "it still compares the refs, says so next to the message, and keeps verify required" || no "uncollected refs line: $out"
 git -C "$A" branch stray-by-run develop
 out=$(verify "$R"); rc=$?
 [ $rc = 2 ] && grep -q "branch created: refs/heads/stray-by-run" <<<"$out" && grep -q "OUT is empty: the member did not collect" <<<"$out" && ok "a run that changed a ref and did not collect gets the ref verdict (exit 2) and the empty-OUT message" || no "uncollected and refs: rc=$rc $out"

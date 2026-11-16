@@ -1,4 +1,5 @@
 213 bash tests/test_agent.sh
+199 python3 tests/test_member_skills.py
 98 bash tests/test_packs_claude_hostile.sh
 179 bash tests/test_marshal_refs.sh
 221 python3 tests/test_provider.py

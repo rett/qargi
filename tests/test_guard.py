@@ -186,6 +186,12 @@ class HookCase(unittest.TestCase):
 
 class Guard(HookCase):
 
+    def test_member_skills_gate_is_lead_only(self):
+        for command in ('qargi packs member-skills demo --enable', 'qargi packs member-skills demo --disable',
+                        'bash lib/packs.sh packs member-skills demo --enable',
+                        'python3 lib/gated_answers.py store demo packs.member_skills true'):
+            self.assertEqual(self.guard(command).returncode, 2, command)
+
     def test_refuses_what_publishes_or_reaches_out(self):
         for c in ("git push", "git push origin main", "/tmp/x/git -C /r push -f", "cd a && git push", "make gate-go; git push", "timeout 5 git push",
                   "echo hi | gh pr list", "gh api repos/x", "ssh host ls", "sudo scp a b:", "sftp host", "git remote add o u", "git remote set-url origin u"):

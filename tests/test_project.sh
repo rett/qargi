@@ -371,29 +371,34 @@ msg=$($DA project set demo review.scrub scripts/scrub 2>&1)
 { grep -qx 'was: null' <<<"$msg" && grep -q '"verb":"project:set"' "$AL" && grep -q 'demo review.scrub (was: null)' "$AL"; } && echo "ok   set prints was: and writes an audit line" || { echo "FAIL set was/audit: $msg"; fail=1; }
 msg=$($DA project set demo review.scrub scripts/other 2>&1); grep -qx 'was: "scripts/scrub"' <<<"$msg" && echo "ok   set prints the old value as JSON" || { echo "FAIL set was value: $msg"; fail=1; }
 msg=$($DA project set demo backlog.file /srv/b.md 2>&1); grep -qx 'was: (not set)' <<<"$msg" && echo "ok   set prints (not set) for a key that was absent" || { echo "FAIL set was absent: $msg"; fail=1; }
+# Ordinary unset callers belong to the scratch fixture, even when this test
+# runs from an active member clone. Explicit member-refusal cases below retain
+# their member directory/mark; the production check is never bypassed.
+PROJECT_TOOL=$PWD/bin/qargi
+project_unset() { (cd "$T" && "$PROJECT_TOOL" project unset "$@"); }
 rm -f "$AL"
-msg=$($DA project unset demo backlog.file 2>&1); rc=$?
+msg=$(project_unset demo backlog.file 2>&1); rc=$?
 { [ $rc = 0 ] && grep -qx 'demo: backlog.file removed' <<<"$msg" && grep -qx 'was: "/srv/b.md"' <<<"$msg" && ! jq -e '.backlog | has("file")' $T/c/projects/demo.json >/dev/null \
   && grep -q '"verb":"project:unset"' "$AL" && [ "$(jq -r .detail "$AL")" = 'demo backlog.file (was: "/srv/b.md")' ]; } && echo "ok   unset removes the key, prints was: and writes an audit line" || { echo "FAIL unset (rc=$rc): $msg"; fail=1; }
 $DA project validate demo >/dev/null 2>&1 && echo "ok   the project is valid after unset" || { echo "FAIL validate after unset"; fail=1; }
 cp $T/c/projects/demo.json $T/before.json
-msg=$($DA project unset demo backlog.file 2>&1); rc=$?
+msg=$(project_unset demo backlog.file 2>&1); rc=$?
 { [ $rc != 0 ] && grep -q 'backlog.file is not set; nothing to remove' <<<"$msg" && cmp -s $T/before.json $T/c/projects/demo.json; } && echo "ok   unset of an absent key says so and changes nothing" || { echo "FAIL unset absent (rc=$rc): $msg"; fail=1; }
-msg=$($DA project unset nosuch backlog.file 2>&1); rc=$?; { [ $rc != 0 ] && grep -q "no project named 'nosuch'" <<<"$msg"; } && echo "ok   unset of an unknown project is refused" || { echo "FAIL unset unknown project: $msg"; fail=1; }
-msg=$($DA project unset demo 2>&1); rc=$?; { [ $rc = 2 ] && grep -q 'unset needs NAME PATH' <<<"$msg"; } && echo "ok   unset without a path is a usage error" || { echo "FAIL unset usage (rc=$rc): $msg"; fail=1; }
-msg=$($DA project unset demo 'Bad Path' 2>&1); rc=$?; { [ $rc != 0 ] && grep -q 'PATH: dotted keys' <<<"$msg"; } && echo "ok   unset takes a dotted path only" || { echo "FAIL unset path (rc=$rc): $msg"; fail=1; }
+msg=$(project_unset nosuch backlog.file 2>&1); rc=$?; { [ $rc != 0 ] && grep -q "no project named 'nosuch'" <<<"$msg"; } && echo "ok   unset of an unknown project is refused" || { echo "FAIL unset unknown project: $msg"; fail=1; }
+msg=$(project_unset demo 2>&1); rc=$?; { [ $rc = 2 ] && grep -q 'unset needs NAME PATH' <<<"$msg"; } && echo "ok   unset without a path is a usage error" || { echo "FAIL unset usage (rc=$rc): $msg"; fail=1; }
+msg=$(project_unset demo 'Bad Path' 2>&1); rc=$?; { [ $rc != 0 ] && grep -q 'PATH: dotted keys' <<<"$msg"; } && echo "ok   unset takes a dotted path only" || { echo "FAIL unset path (rc=$rc): $msg"; fail=1; }
 # an answer the project needs: validate refuses, nothing changes
 for k in repo.url roles.build.base; do
-  msg=$($DA project unset demo "$k" 2>&1); rc=$?
+  msg=$(project_unset demo "$k" 2>&1); rc=$?
   { [ $rc != 0 ] && grep -q 'that would make the project invalid' <<<"$msg" && cmp -s $T/before.json $T/c/projects/demo.json; } && echo "ok   unset $k is refused by validate and changes nothing" || { echo "FAIL unset $k (rc=$rc): $msg"; fail=1; }
 done
 # the same gated paths as set, for every caller; and the marshal backend
 $DA project set demo marshal.lease_minutes 20 >/dev/null 2>&1; cp $T/c/projects/demo.json $T/before.json
-msg=$($DA project unset demo marshal.backend 2>&1); rc=$?; { [ $rc != 0 ] && grep -q 'marshal enable' <<<"$msg"; } && echo "ok   unset refuses marshal.backend and points to the marshal verbs" || { echo "FAIL unset marshal.backend (rc=$rc): $msg"; fail=1; }
+msg=$(project_unset demo marshal.backend 2>&1); rc=$?; { [ $rc != 0 ] && grep -q 'marshal enable' <<<"$msg"; } && echo "ok   unset refuses marshal.backend and points to the marshal verbs" || { echo "FAIL unset marshal.backend (rc=$rc): $msg"; fail=1; }
 jq '.models.extensions=["x"] | .models.accept_no_barrier={local:{by:"a",at:"2026-11-02T00:00:00Z",reason:"r"}}' $T/c/projects/demo.json > $T/gated.json; cp $T/gated.json $T/c/projects/demo.json
 for kw in 'models.extensions|provider enable' 'models.extensions.0|provider enable' 'models.accept_no_barrier.local|provider accept' 'models.accept_no_barrier|provider accept' 'models|provider enable'; do
   IFS='|' read -r k want <<<"$kw"
-  msg=$($DA project unset demo "$k" 2>&1); rc=$?
+  msg=$(project_unset demo "$k" 2>&1); rc=$?
   { [ $rc = 2 ] && grep -q "qargi $want" <<<"$msg" && cmp -s $T/gated.json $T/c/projects/demo.json; } && echo "ok   unset refuses $k with exit 2 and points to qargi $want" || { echo "FAIL unset $k (rc=$rc): $msg"; fail=1; }
 done
 cp $T/before.json $T/c/projects/demo.json
@@ -408,7 +413,7 @@ msg=$(env "QARGI_MEMBER_""RUN=1" $DA project unset demo backlog.file 2>&1); rc=$
 cp -r lib "$T/lib2"; printf 'raise RuntimeError("broken")\n' > "$T/lib2/marshal_refs.py"
 msg=$(cd "$T" && "$T/lib2/project.sh" unset demo backlog.file 2>&1); rc=$?
 { [ $rc = 2 ] && grep -q 'could not tell whether this is a member run' <<<"$msg" && grep -q 'broken' <<<"$msg" && cmp -s $T/before.json $T/c/projects/demo.json; } && echo "ok   unset is refused when the member check fails (fail closed)" || { echo "FAIL unset with a failing check (rc=$rc): $msg"; fail=1; }
-$DA project unset demo backlog.file >/dev/null 2>&1; cp $T/before.json $T/c/projects/demo.json
+project_unset demo backlog.file >/dev/null 2>&1; cp $T/before.json $T/c/projects/demo.json
 # the store the gated verbs use (provider enable|disable|accept) takes only those two keys, and only what the answers' own validation accepts
 GA="python3 -I lib/gated_answers.py"; cp $T/c/projects/demo.json $T/before.json
 for kv in 'budget_cents|5' 'models.provider.local|"claude"' 'models|{}' 'roles.build.effort|"low"' 'models.accept_no_barrier.moon|{"by":"a","at":"2026-11-02T00:00:00Z","reason":"r"}' \
