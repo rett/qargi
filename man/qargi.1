@@ -404,7 +404,7 @@ Log the project's profile in, bound to its workspace (your terminal only).
 .B qargi agent
 Name the members: the local agents that do the work.
 .PP
-A member is a local agent you name, rendered from the one member definition qargi ships, with the roles it serves: build, write, review, test (all four by default). The render is kept in the configuration directory (agents/PROJECT/NAME.EXT beside agents.json, outside every repository) and written from there to the runtime's agents location; a checkout cleaned or cloned afresh gets it back with agent refresh. The task block names the role and carries its role text (roles/<role>/ROLE.md); there is no skill to load. Review is read\-only as a rule: the guard refuses changes to the clone under that role. Under every role it refuses the verbs that change a skill (qargi skill|tool new, import, seal, remove, link, unlink, enable, disable; qargi discover install; qargi packs apply) and writes in the pack library, the credentials directory and install.json, ~/.claude/skills and any .claude/skills directory; it fails closed. Dispatch spawns the member qargi agent for ROLE prints.
+A member is a local agent you name, rendered from the one member definition qargi ships, with the roles it serves: build, write, review, test (all four by default). The render is kept in the configuration directory (agents/PROJECT/NAME.EXT beside agents.json, outside every repository) and written from there to the runtime's agents location; a checkout cleaned or cloned afresh gets it back with agent refresh. The task block names the role and carries its role text (roles/<role>/ROLE.md); there is no skill to load. Review is read\-only as a rule: the guard refuses changes to the clone under that role. Under every role it refuses the verbs that change a skill (qargi skill|tool new, import, seal, remove, link, unlink, enable, disable; qargi discover install; qargi packs apply) and writes in the pack library, the credentials directory, the install records (install.json, install.d/, install.lock), ~/.claude/skills and any .claude/skills directory, and running the tool's own install.sh (an install.sh of the clone stays the member's); it fails closed. Dispatch spawns the member qargi agent for ROLE prints.
 .RS
 .TP
 .BI "add " "NAME"
@@ -4307,7 +4307,7 @@ print the plan and stop; changes nothing.
 .B qargi upgrade
 Move the installed tool to a newer branch or tag of its origin.
 .PP
-Works on the root\-owned checkout install.sh recorded (for example /opt/qargi). Without \-\-approved it fetches the target, shows the commits and files that would change and prints a plan token. With \-\-plan TOKEN \-\-approved "..." it applies exactly that: a branch on the current branch moves forward only (fast\-forward), another branch is checked out at its tip, a tag is checked out detached; install.sh \-\-user then runs as you and the members to refresh are listed. The git commands that write into the checkout run through sudo (QARGI_SUDO names another command). When the members file (~/.qargi/config/agents.json) is not in the current shape, which every agent verb refuses, the plan and the end of the upgrade say so and how to redo it; nothing is changed for that. A member or agent cannot use it.
+Works on the root\-owned checkout install.sh recorded (for example /opt/qargi). Without \-\-approved it fetches the target, shows the commits and files that would change and prints a plan token. With \-\-plan TOKEN \-\-approved "..." it applies exactly that: a branch on the current branch moves forward only (fast\-forward), another branch is checked out at its tip, a tag is checked out detached; install.sh \-\-user then runs as you (it refreshes every runtime installed, claude\-code when none is) and the members to refresh are listed. The git commands that write into the checkout run through sudo (QARGI_SUDO names another command). When the members file (~/.qargi/config/agents.json) is not in the current shape, which every agent verb refuses, the plan and the end of the upgrade say so and how to redo it; nothing is changed for that. A member or agent cannot use it.
 .RS
 .TP
 .BI "\-\-branch " "BRANCH"
@@ -4388,6 +4388,12 @@ token files, mode 600.
 .TP
 .I ~/.qargi/config/install.json
 the tool root install.sh recorded; a checkout run from elsewhere is a dev run.
+.TP
+.I ~/.qargi/config/install.d/
+the install records: one manifest per runtime, a shared one, one per project and runtime; \-\-uninstall removes exactly what they list.
+.TP
+.I ~/.qargi/config/install.lock
+held by install.sh while it reads or changes the install records.
 .TP
 .I ~/.qargi/state/sessions.json
 the tracker of cloud sessions.

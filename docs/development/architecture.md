@@ -15,7 +15,9 @@ Configuration (`config/`), what you set up and rarely change:
 
 | Path | Holds |
 |---|---|
-| `install.json` | the tool root `install.sh --user` recorded; decides installed run or dev run |
+| `install.json` | the tool root `install.sh --user` recorded, with its version and whether it is linked or copied; decides installed run or dev run |
+| `install.d/` | the install manifests (`runtime-NAME`, `shared`, `project-N-NAME`): every path `install.sh` wrote, for `--uninstall` |
+| `install.lock` | held by `install.sh` while it reads or changes the manifests |
 | `projects/NAME.json` | a project's stored answers (repository, branches, models, gates, release, ...) |
 | `instances.json` | the registered cloud instances |
 | `agents.json`, `agents/PROJECT/` | the named members and the canonical copy of each one's render |
