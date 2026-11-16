@@ -46,7 +46,10 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     the last three have names a project may use for its own scripts, so only the files in the lib directory of the tool or of the installed
     copy count, found from the directory the command runs in; install.sh, the installer, is refused in any use (it writes and removes the
     links in the skills and agents directories and the install records, and the guard sees none of those writes in the command), and of it
-    only the file at the top of the tool or of the installed copy counts, so an install.sh of a project or of the clone stays the member's);
+    only the file at the top of the tool or of the installed copy counts, so an install.sh of a project or of the clone stays the member's.
+    Known limit: the clone's own install.sh (and its lib/install_record.py) is the member's file, and in a clone of qargi it is a whole
+    installer: run with the live HOME, `bash install.sh --user` moves every recorded runtime of the lead's install to the clone (a bare
+    --user from another tool moves them all). The guard does not refuse it; the lead's verify of the patches is the backstop);
   - qargi project init (it stores a whole answers file, so it is a way to models.extensions and models.accept_no_barrier, which have gated verbs;
     found like the skill verbs), and qargi project set of any models answer, of release.*, of test_command, of gates, of env.*, of site.* (the commands, environment and site the lead later runs or builds), of packs.* (the opt-out of the render check), of git.* and review.* (the identity and the author rule qargi review apply gives the commits it applies, and the scrub command and trailer policy qargi review check runs), of ci.* and methodology_accepted (the CI jobs left out of the gate comparison, the deviations the lead accepts), of runs.* (the refs that verify and clean accept as a runtime's own) and of
     roles.<role>.tools, a whole role or roles (the tools env apply installs and local prepare checks out; the other answers stay open). A project verb the guard cannot read is
