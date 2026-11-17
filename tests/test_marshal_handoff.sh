@@ -383,7 +383,8 @@ HH zlive --json; jq -e '(.features[0].worktrees | length) == 2 and (.worktrees_u
 HH --json; jq -e '[.features[].name][0] == "zlive"' "$T/o" >/dev/null && ok "--json: the live feature comes first" || no "SPEC json order: $(jq -c '[.features[].name]' "$T/o")"
 # enough features to pass the bound: the live one stays whole, the note stays within it, the last line names what is not there
 big=$(head -c 2000 /dev/zero | tr '\0' 'x')
-for i in $(seq -w 1 30); do jq --arg b "$big" '.goal = $b | .plan = $b | .note = $b | .purpose = $b' "$(hrec "old$i")" > "$T/rec.tmp" && mv "$T/rec.tmp" "$(hrec "old$i")"; done
+# one fixed renewal time on every old record: the order among them is then by name, not by how many minutes each claim took to make
+for i in $(seq -w 1 30); do jq --arg b "$big" '.goal = $b | .plan = $b | .note = $b | .purpose = $b | .renewed_at = "2026-01-01T00:00:00Z"' "$(hrec "old$i")" > "$T/rec.tmp" && mv "$T/rec.tmp" "$(hrec "old$i")"; done
 jq '.plan = "the live plan ends here"' "$(hrec zlive)" > "$T/rec.tmp" && mv "$T/rec.tmp" "$(hrec zlive)"
 HH; rc=$?
 sz=$(wc -c < "$T/o"); last=$(tail -n 1 "$T/o")
@@ -397,6 +398,77 @@ miss=""; for i in $(seq -w 1 30); do grep -q "^feature old$i\$" "$T/o" || { case
 tail -n 12 "$T/o" | grep -q "^== do not assume" && ok "cut: the closing 'do not assume' list is kept" || no "SPEC closing list lost"
 HH --json; sz=$(wc -c < "$T/o")
 jq -e '.truncated == true and .features[0].name == "zlive" and ((.features_left_out | length) == .features_omitted) and .features_omitted > 0' "$T/o" >/dev/null && [ "$sz" -le 16384 ] && ok "cut: --json says truncated, keeps the live feature first and names the features left out ($sz bytes)" || no "SPEC json cut: size=$sz $(jq -c '[.truncated, .features_omitted, .features_left_out]' "$T/o")"
+jq -e '(.features[0].tasks | length) == 1 and (.features[0].worktrees | length) == 2 and (.worktrees_unattributed | length) == 0' "$T/o" >/dev/null && ok "cut: --json trims from the last feature, the work trees of no feature first: the live feature keeps its task and work trees" || no "SPEC json live detail (tasks, worktrees, unattributed): $(jq -c '[.features[0].tasks, .features[0].worktrees, .worktrees_unattributed] | map(length)' "$T/o")"
+
+# --- the bound of the cut note and of --json, with the line builders replaced by sized text (constructed sizes: no clock, no randomness)
+while IFS= read -r l; do case $l in "ok "*) ok "${l#ok }";; *) no "SPEC ${l#FAIL }";; esac; done < <(python3 -I - "$TOOL/lib/marshal_handoff.py" <<'PY' 2>&1
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("mh", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+CAP, NM = m.CAP_BYTES, m.NAMES_MAX
+def say(good, text, detail=""):
+    print(("ok " if good else "FAIL ") + text + ("" if good else ": " + str(detail)).replace("\n", " ")[:400])
+def setup(head, entry, closing=("== do not assume", "- x")):
+    m.head_lines = lambda F: head
+    m.middle_lines = lambda F: []; m.rest_lines = lambda F: []; m.notes_lines = lambda F: []
+    m.closing_lines = lambda F: list(closing)
+    m.record_lines = lambda f: []
+    m.entry_lines = entry
+def note(names):
+    return m.render_text({"features": [{"name": n} for n in names]})
+MARK = "[truncated: the note is capped at 16 KiB"
+
+# 1. a feature that fits is never dropped for the line that names the rest: the first two features are small, the third (cut at a line, one
+#    byte per line) has the longest name, and the names that follow are many; the line made at the end names fewer features than the whole
+#    list and, past NAMES_MAX bytes, can print more of them than the line made for the whole list did. Swept over name lengths, counts
+#    and the parity of the room: every case must keep both small entries and stay within the bound.
+bad, cases, first = 0, 0, ""
+for L in range(20, 45):
+    for Lcut in (L + 10, L + 20):
+        for count in (70, 90, 110):
+            for par in range(3):
+                names = ["a%0*d" % (L - 1, i) for i in range(count)]
+                names[2] = "c%0*d" % (Lcut - 1, 2)
+                def ent(f, names=names):
+                    if f["name"] in names[:2]: return ["E " + f["name"]]
+                    return ["e"] * 20000 if f["name"] == names[2] else ["z" * 5000]
+                setup(["h" * (4000 + par)], ent)
+                out = note(names); cases += 1
+                lines = out.splitlines()
+                if not (("E " + names[0]) in out and ("E " + names[1]) in out and len(out.encode()) <= CAP and lines[-1].startswith(MARK) and "== do not assume" in out):
+                    bad += 1; first = first or "L=%d Lcut=%d count=%d par=%d size=%d" % (L, Lcut, count, par, len(out.encode()))
+say(bad == 0, "cut: a feature that fits is kept whatever the length of the line that names the rest (%d constructed cases)" % cases, "%d lost one: %s" % (bad, first))
+
+# 2. NAMES_MAX is bytes: multi-byte names (two bytes a character) are counted by their bytes in the line, and the note stays within the bound
+mb = ["\u00e9" * 30 + "%03d" % i for i in range(200)]          # 63 bytes each
+line = m.truncation_line(mb, [])
+left = line.split("; left out: ", 1)[1].rsplit("; ask for each", 1)[0]
+printed = left.split(" (and ", 1)[0]
+say(len(printed.encode()) <= NM and " (and " in left and len(printed.split(" ")) == NM // 64, "names: the names of the line are counted in bytes (%d bytes of at most %d, %d names)" % (len(printed.encode()), NM, len(printed.split(" "))), left[:80])
+setup(["h" * 600], lambda f: ["z" * 900])
+out = note(mb); last = out.splitlines()[-1]
+say(len(out.encode()) <= CAP and last.startswith(MARK) and len(last.encode()) <= NM + 400, "names: a note of multi-byte names stays within the bound, with a last line of bounded bytes (%d bytes, last line %d)" % (len(out.encode()), len(last.encode())), last[:80])
+
+# 5. the fixed parts alone over the bound: the sections after the index are cut and the line says so; a cut of the entries alone does not say it
+setup(["h" * 99] * 200, lambda f: ["e" * 50])
+out = note(["f1", "f2"]); last = out.splitlines()[-1]
+say(len(out.encode()) <= CAP and last.startswith(MARK) and "sections after the index were cut" in last and "f1" in last and "f2" in last and "== do not assume" in out, "cut: when the fixed parts alone are over the bound the line says the sections were cut too and the closing list is kept", last[:200])
+setup(["h" * 99] * 20, lambda f: ["e" * 5000])
+out = note(["f1", "f2", "f3", "f4"]); last = out.splitlines()[-1]
+say(len(out.encode()) <= CAP and last.startswith(MARK) and "sections" not in last, "cut: a cut of the entries alone does not claim the sections were cut", last[:200])
+
+# 3. --json: what no feature owns goes first, then the features from the last; the first, live, features keep their detail
+def feat(i, tasks):
+    return {"name": "f%d" % i, "commits": ["c" * 100] * 3, "tasks": [{"run": "r" * 200}] * tasks, "worktrees": [{"path": "/w", "branch": "b"}] * 2, "overlap": {"o": ["x"]}}
+F = {"features": [feat(i, 3) for i in range(4)], "worktrees_unattributed": [{"path": "/w" + "p" * 200, "branch": "b"}] * 100, "agent_unattributed": [{"branch": "a", "base": "b"}] * 3}
+j = json.loads(m.render_json(F))
+say(j.get("truncated") and j["worktrees_unattributed"] == [] and all(len(f["tasks"]) == 3 and len(f["worktrees"]) == 2 for f in j["features"]) and len(j["features"]) == 4 and "features_left_out" not in j,
+    "--json: the work trees of no feature go before the detail of any feature", [j.get("truncated"), len(j["worktrees_unattributed"]), [len(f["tasks"]) for f in j["features"]]])
+F = {"features": [feat(i, 40) for i in range(8)], "worktrees_unattributed": [], "agent_unattributed": []}
+j = json.loads(m.render_json(F)); n = len(j["features"])
+say(j["truncated"] and 0 < n < 8 and j["features_omitted"] == 8 - n and j["features_left_out"] == ["f%d" % i for i in range(n, 8)] and all(len(f["tasks"]) == 40 for f in j["features"][:n - 1]) and len(j["features"][0]["worktrees"]) == 2,
+    "--json: the last feature is trimmed, then dropped, before an earlier one is touched (%d of 8 kept)" % n, [len(f["tasks"]) for f in j["features"]])
+PY
+)
 
 [ $fail = 0 ] && echo "all marshal handoff tests passed" || echo "marshal handoff tests FAILED"
 exit $fail
