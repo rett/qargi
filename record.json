@@ -4,19 +4,13 @@
  "goal": "Release assets: release assets verb, asset-dir, release.assets globs, release.after_steps, release site _site fix",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "arc-claude-qargi",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-17T10:21:46Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-17T10:21:46Z",
- "finished_at": null,
+ "finished_at": "2026-11-17T10:21:50Z",
  "updated_by": "arc-claude-qargi",
- "rev": 2,
- "updated_at": "2026-11-17T10:21:46Z",
+ "rev": 3,
+ "updated_at": "2026-11-17T10:21:50Z",
  "feature": "assets",
  "project": "qargi"
 }
