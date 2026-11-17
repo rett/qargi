@@ -4882,16 +4882,19 @@ class WrapperOptions(HookCase):
 
     def test_many_unknown_wrapper_options_are_refused_with_the_reason(self):
         """Each unknown wrapper option is read both ways one reading deeper; more than three readings deep are refused (a false refusal, a known limit),
-        and the message names the number of such options, not shells."""
+        and the message names the number of such options, not shells. It is no skill refusal: the advice about skills is not added."""
         self.allowed(("sudo -h a -h b -h c ls",))
         r = self.bash("sudo -h a -h b -h c -h d ls")
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("after three such options or nested shells", r.stderr)
         self.assertNotIn("inside shells nested more than three deep", r.stderr)
+        self.assertTrue(r.stderr.rstrip().endswith("write the command with fewer of them or in parts."), r.stderr)
+        self.assertNotIn("changes a skill", r.stderr)
         r = self.bash("sudo -h a -h b -h c -p '<x' ls")                   # a known option whose value reads as a redirection: its value is what is not read
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("the wrapper option -p, whose value the guard cannot read", r.stderr)
         self.assertIn("after three such options or nested shells", r.stderr)
+        self.assertNotIn("changes a skill", r.stderr)
 
     def test_timeout_reads_its_duration_after_the_end_of_its_options(self):
         """timeout -- 5s PROGRAM: `--` ends the options, and the duration still comes before the program."""
@@ -5014,7 +5017,7 @@ class WrapperOptions(HookCase):
 
     def test_the_readings_of_a_segment_are_bounded(self):
         """Each word that reads as a redirection after an option that takes a value is one more reading of the segment: up to MAX_READINGS are judged, and a
-        segment with more is refused with the reason (a false refusal of a command no one writes by hand)."""
+        segment with more is refused with the reason (a false refusal of a command no one writes by hand), which is no skill refusal."""
         m = self.J.m
         n = m.MAX_READINGS
         many = "sudo -p " + " ".join("%d>/dev/null" % (k + 1) for k in range(n)) + " x ls"   # a distinct word each: equal readings are judged once
@@ -5025,6 +5028,8 @@ class WrapperOptions(HookCase):
         r = self.bash(more)
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("can be read in more than %d ways" % n, r.stderr)
+        self.assertTrue(r.stderr.rstrip().endswith("write the command with fewer of them or in parts."), r.stderr)
+        self.assertNotIn("changes a skill", r.stderr)
 
     def test_the_other_reading_of_a_wrapper_option_keeps_each_word(self):
         """The reading without an unknown option and its value keeps the words whole: the text of a here-string is still one word."""

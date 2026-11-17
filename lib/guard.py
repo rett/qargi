@@ -2858,16 +2858,16 @@ def bash_skill_refusal(command, here, depth, outer=None):
                             return why
             readings = wrapper_readings(seg)
             if len(readings) > MAX_READINGS:                     # bounded: at most MAX_READINGS other readings of a segment, each at most three deep
-                return ("a command whose wrapper options can be read in more than %d ways (options the guard cannot read, values that read as redirections) "
-                        "is not available to an agent; write the command with fewer of them or in parts" % MAX_READINGS)
+                return OwnReason("a command whose wrapper options can be read in more than %d ways (options the guard cannot read, values that read as redirections) "
+                                 "is not available to an agent; write the command with fewer of them or in parts" % MAX_READINGS)
             for alt in readings:                                 # a wrapper's option the guard cannot read may take the next word: that reading is judged too
                 if depth >= 3:                                   # each such option, like each nested shell, is one reading deeper
                     unread, valued = _parsed(seg)[2:]
-                    return ("the wrapper option %s, %s, is not available to an agent after three such options or nested shells (each such option is read "
-                            "both ways, one reading deeper); write the command with fewer of them or in parts"
-                            % (toks[(unread or valued)[0]], "which the guard cannot read (it may take the next word as its value, which changes what the program is)"
-                               if unread else "whose value the guard cannot read (it reads as a redirection, so the value may be that word or a later one, "
-                               "which changes what the program is)"))
+                    return OwnReason("the wrapper option %s, %s, is not available to an agent after three such options or nested shells (each such option is read "
+                                     "both ways, one reading deeper); write the command with fewer of them or in parts"
+                                     % (toks[(unread or valued)[0]], "which the guard cannot read (it may take the next word as its value, which changes what the program is)"
+                                        if unread else "whose value the guard cannot read (it reads as a redirection, so the value may be that word or a later one, "
+                                        "which changes what the program is)"))
                 why = bash_skill_refusal(alt, [at], depth + 1, assigned)
                 if why:
                     return why
