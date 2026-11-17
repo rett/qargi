@@ -37,14 +37,14 @@ you look like the restarted lead; any other case stays the owner's takeover.
 
 The lead's own context is the cost to keep low. `qargi lead usage` says how much of it is in use: the input, cache-read and
 cache-creation tokens of the last assistant turn of the session transcript, as a share of the window (the project answer
-`lead.context_window`, else the entry for the model of the last turn in the runtime's table of windows, else an assumed 200000 that the output labels as assumed; the entries `claude-code` ships match model ids that end in `[1m]` or `-1m`, so a plain id gets the assumed window until the answer is set). Where the transcripts are and how to read them is part of the runtime's definition
+`lead.context_window`, else the entry for the model of the last turn in the runtime's table of windows; the entries `claude-code` ships match model ids that end in `[1m]` or `-1m`, and `claude-opus-5-5`). For any other id the window is only assumed (the runtime's single window, 200000, a guess): the output then shows the tokens in use and says `window unknown; set lead.context_window`, with no percentage and no advice to compact (`--json` has `percent: null`, `window_source: "assumed"` and `window_exceeded`, which says whether the tokens are beyond the guess). Where the transcripts are and how to read them is part of the runtime's definition
 (`resources.transcripts`), not of the code. `qargi lead compact-check [--advise]` exits 0 when a `/compact` is safe now and 1 when it is
 not, naming the reasons (a local run prepared and not verified, verified and not applied, or applied and not merged; a merge waiting in
 the conflicts directory; a whole-suite run in progress; a handoff note older than the last merge; an open release or hotfix branch),
 and prints what to re-read afterwards (the handoff note, `qargi marshal status`, `qargi feature status`, the open runs). With
-`--advise` it adds "compact advised" from 50% of the window and "compact strongly advised" from 70%. `feature finish`, the last
+`--advise` it adds, on a known window, "compact advised" from 50% of the window and "compact strongly advised" from 70%. `feature finish`, the last
 `feature merge` of a feature's runs, `release finish` and `marshal handoff` print one line when the context is at or above
-`lead.compact_advice_pct` (default 40, 0 turns it off). qargi only measures and advises: no hook can run `/compact`, so the lead or the
+`lead.compact_advice_pct` (default 40, 0 turns it off); on an assumed window that line names the tokens and says the window is unknown, and does not mention compacting. qargi only measures and advises: no hook can run `/compact`, so the lead or the
 person does.
 
 Several machines or people on one project: `qargi marshal enable` (plan and token, then `--plan TOKEN --approved "<your words>"`)

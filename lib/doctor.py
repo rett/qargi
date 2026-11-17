@@ -393,15 +393,22 @@ def where(path):
 
 
 def lead_session_model(project, conf):
-    """The model id of the last turn of the lead's own session (lib/lead_usage.py, which only reads the transcript the project's runtime
-    keeps), or "" when it cannot be determined: no transcript, no runtime, a turn that names no model."""
+    """-> (model, found): the model id of the last turn of the lead's own session (lib/lead_usage.py, which only reads the transcript the
+    project's runtime keeps), and when there is none what was found instead: no transcript, a transcript with no counted turn, a turn with no
+    model id (a transcript that cannot be read is no transcript found)."""
     try:
         import argparse
         import lead_usage as LU
         u = LU.measure(argparse.Namespace(project=project, session=None, transcript=None, cwd="", json=False, advise=False), conf)
     except Exception:                                           # noqa: BLE001  (a check that cannot be made is unknown, never an error)
-        return ""
-    return u.get("model") or "" if u.get("known") else ""
+        return "", "no transcript of its session"
+    if not u.get("known"):
+        if u.get("transcript") and str(u.get("why", "")).startswith("no turn"):
+            return "", "its transcript has no counted turn"
+        return "", "no transcript of its session"
+    if not u.get("model"):
+        return "", "the last turn of its transcript names no model id"
+    return u["model"], ""
 
 
 def check_window_source(project):
@@ -433,7 +440,7 @@ def check_window_source(project):
         m = spec.get("model") if isinstance(spec, dict) else None
         if isinstance(m, str) and m.strip() and m.strip() not in ids:
             ids.append(m.strip())
-    lead_model = "" if ans else lead_session_model(project, conf)       # the answer settles the window of every model: nothing to look up
+    lead_model, lead_found = ("", "") if ans else lead_session_model(project, conf)       # the answer settles the window of every model: nothing to look up
     unknown = [] if ans else [m for m in ids if P.transcript_window(tr, m)[1] != "model"]
     lead_unknown = bool(lead_model) and P.transcript_window(tr, lead_model)[1] != "model"
     if unknown or lead_unknown:
@@ -445,8 +452,8 @@ def check_window_source(project):
         return check(name, "warn", table + "; " + "; ".join(said),
                      ["fix: set the answer lead.context_window, or add an entry for the id to the window table of the runtime's definition"])
     if not ids and not ans and not lead_model:
-        return check(name, "unknown", table + "; no role names a model id and the lead's own model cannot be determined (no transcript of its session)")
-    lead = "" if ans else ("; the lead's own model %s is in the table" % clean(lead_model, 80) if lead_model else "; the lead's own model cannot be determined (no transcript of its session)")
+        return check(name, "unknown", table + "; no role names a model id and the lead's own model cannot be determined (%s)" % lead_found)
+    lead = "" if ans else ("; the lead's own model %s is in the table" % clean(lead_model, 80) if lead_model else "; the lead's own model cannot be determined (%s)" % lead_found)
     if not ids:
         return check(name, "ok", table + "; no role names a model id (the tiers resolve at dispatch)" + lead)
     return check(name, "ok", table + "; %d model id%s checked" % (len(ids), "" if len(ids) == 1 else "s") + lead)

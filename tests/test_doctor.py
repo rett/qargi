@@ -253,12 +253,16 @@ class Shm(Base):
 
 class WindowSource(Base):
     def lead_session(self, model, tokens=1000):
-        """A transcript of the lead's own session for the directory the doctor runs in: one assistant turn of that model."""
+        """A transcript of the lead's own session for the directory the doctor runs in: one assistant turn of that model (model None: a turn
+        with no model id; tokens None: no turn that counts, only a user line)."""
         d = os.path.join(os.environ["HOME"], ".claude", "projects", re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(os.getcwd())))
         os.makedirs(d, exist_ok=True)
         self.addCleanup(shutil.rmtree, d, True)
+        msg = {} if model is None else {"model": model}
+        if tokens is not None:
+            msg["usage"] = {"input_tokens": tokens}
         with open(os.path.join(d, "lead-session.jsonl"), "w") as f:
-            f.write(json.dumps({"type": "assistant", "isSidechain": False, "message": {"model": model, "usage": {"input_tokens": tokens}}}) + "\n")
+            f.write(json.dumps({"type": "assistant" if tokens is not None else "user", "isSidechain": False, "message": msg}) + "\n")
 
     def test_no_project_is_unknown(self):
         rc, out, _ = self.doctor()
@@ -327,7 +331,20 @@ class WindowSource(Base):
         rc, out, _ = self.doctor("app", "--strict")
         st, text = self.lines(out)["window-source"]
         self.assertEqual((rc, st), (0, "unknown"), out)
-        self.assertIn("the lead's own model cannot be determined", text)
+        self.assertIn("the lead's own model cannot be determined (no transcript of its session)", text)
+
+    def test_what_was_found_of_the_leads_session_is_said(self):
+        for roles in ({"build": {"model": "model-a-1m"}}, {"build": {"model": None}}):                   # ok, and unknown: both carry the words
+            self.project(roles=roles)
+            self.lead_session("claude-plain-9", tokens=None)                                             # a transcript with no counted turn
+            st, text = self.lines(self.doctor("app")[1])["window-source"]
+            self.assertIn("the lead's own model cannot be determined (its transcript has no counted turn)", text)
+            self.assertNotIn("no transcript of its session", text)
+            self.lead_session(None)                                                                      # a counted turn that names no model id
+            st, text = self.lines(self.doctor("app")[1])["window-source"]
+            self.assertIn("the lead's own model cannot be determined (the last turn of its transcript names no model id)", text)
+            self.assertNotIn("no transcript of its session", text)
+            self.assertNotEqual(st, "warn", text)
 
     def test_it_writes_nothing(self):
         self.project(roles={"build": {"model": None}})
