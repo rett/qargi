@@ -4,13 +4,13 @@ description: Initialise a project for qargi by asking the preliminary questions 
 argument-hint: init|new|attach|adopt|show|list|validate|set|link|unlink NAME
 ---
 
-# /qargi-project
+# qargi-project
 
-Run this before the first `/qargi-provision` for a project. The answers live in `~/.qargi/config/projects/<project>.json` (never in a repository) and drive provisioning, the agent contracts and dispatch defaults.
+Run this before the first `qargi-provision` for a project. The answers live in `~/.qargi/config/projects/<project>.json` (never in a repository) and drive provisioning, the agent contracts and dispatch defaults.
 
 ## Ask first, then store
 
-Ask the user these, in batches (AskUserQuestion), with the stated defaults recommended; do not assume answers:
+Ask the user these, in batches, with the stated defaults recommended; do not assume answers:
 
 1. **Repository.** URL; local checkout path (optional); the long-lived branches no agent may ever touch (default `master`, `develop`). **Private repository?** If checking it out needs a credential, ask for a token file: a fine-grained, read-only token (contents: read), in a file only the user can read (chmod 600), outside every repository. Record its path as `repo.credential_file`, then run `qargi credential check NAME`: it proves the token can read and warns if it can also push. Public repositories need none. The token is never typed into a command, a log, the tracker or a repository.
 2. **Roles.** Which of the roles `build`, `write`, `review`, `test` this project uses.
@@ -21,11 +21,11 @@ Ask the user these, in batches (AskUserQuestion), with the stated defaults recom
    - `agent`: the agent itself may push branches matching the pattern with a credential. Only if the user insists; ask which credential (a vault id) and whether the repository's rulesets limit it to the pattern. Warn that the tool cannot enforce this server-side.
 
    Never offer merging, tagging or pushing long-lived branches; offer `coordinator` and `agent` only when the user wants them. A role that already pushes its own branch keeps doing so only as an explicit choice the user makes and you record, with its token file and vault ids.
-5. **Runtime, per surface.** Nothing is assumed: ask which runtime does the project's `local` work (agents on this machine) and which its `cloud` work, from `qargi provider list` (shipped: `claude-code` local, `claude-platform` cloud; a family name such as `claude` works when exactly one of its runtimes serves the surface). Leave a surface unset if the project never uses it. Store them with `qargi project set NAME models.provider.local X` and `models.provider.cloud Y`, or `--provider-local X --provider-cloud Y` on `project new` and `attach` (`--provider X` for one name). A runtime that does not serve the surface is refused; a verb that needs an unset surface exits 2 and says which, and `project validate` prints a `finding:` for it. A runtime with no read-only barrier cannot serve the review role until the person accepts that (`qargi provider accept`). For a runtime that is not shipped, see `/qargi-providers`.
+5. **Runtime, per surface.** Ask which runtime does the project's `local` work (agents on this machine) and which its `cloud` work, from `qargi provider list` (shipped: `claude-code` and `codex` local, `claude-platform` cloud; a family name such as `claude` works when exactly one of its runtimes serves the surface). Leave a surface unset if the project never uses it. Store them with `qargi project set NAME models.provider.local X` and `models.provider.cloud Y`, or `--provider-local X --provider-cloud Y` on `project new` and `attach` (`--provider X` for one name). A runtime that does not serve the surface is refused; a verb that needs an unset surface exits 2 and says which, and `project validate` prints a `finding:` for it. A runtime with no read-only barrier cannot serve the review role until the person accepts that (`qargi provider accept`). For a runtime that is not shipped, see `qargi-providers`.
 6. **Per role, model and effort** (tiers from the runtime's catalog), apt packages, pinned tools (`roles.ROLE.tools`: go, binary, submodule), hosted skills (`pdf`, `docx`, `pptx`, `xlsx`; write defaults to `pdf`).
 7. **Budget** per cloud session in cents (default 500, set on the deployment).
 8. **Memory.** Create the project's stores or attach existing ones (ids).
-9. **Members, once.** The local workers are agents the user names: ask for their names and roles, suggesting the two base members (`worker`, `reviewer`; the rest are profiles). `qargi agent add` is in `/qargi-instances`.
+9. **Members, once** (an in-session local runtime only). The local workers are agents the user names: ask for their names and roles, suggesting the two base members (`worker`, `reviewer`; the rest are profiles). `qargi agent add` is in `qargi-instances`.
 10. **Profile.** Which profile file holds the repository's gates and review steps (kept under the config directory, per role if the gates differ).
 
 To link a work tree (`project link`, in each checkout or worktree) or start from a repository (`project new`, `attach`, `adopt`), load `repository.md`. Or write the answers file and store it:
@@ -36,9 +36,9 @@ qargi project validate answers.json
 qargi project init NAME --answers answers.json
 ```
 
-`validate` explains every problem (a push pattern that matches a long-lived branch, a push by the agent without a credential, an unknown role or skill). `qargi project show NAME` prints what was stored. Change one answer at any time with `qargi project set NAME PATH VALUE` (for example `budget_cents 2500` or `roles.write.effort high`); it is validated first and applies to the next provision. A live deployment's ceiling changes with `qargi instances budget NAME CENTS --asked "..."` (add `--session SID` for a running session that already has a budget). `/qargi-provision` reads these answers; flags override them.
+`validate` explains every problem (a push pattern that matches a long-lived branch, a push by the agent without a credential, an unknown role or skill). `qargi project show NAME` prints what was stored. Change one answer with `qargi project set NAME PATH VALUE` (for example `budget_cents 2500` or `roles.write.effort high`); it is validated first and applies to the next provision. A live deployment's ceiling changes with `qargi instances budget NAME CENTS --asked "..."` (add `--session SID` for a running session that already has a budget). `qargi-provision` reads these answers; flags override them.
 
-Teams (optional): `lead` (model, effort; it cannot be a role) and `teams.<name>` define the teams `/qargi-team` runs (its definition section lists the fields). Set them with `qargi project set`.
+Teams (optional): `lead` (model, effort; it cannot be a role) and `teams.<name>` define the teams `qargi-team` runs (its definition section lists the fields). Set them with `qargi project set`.
 
 Lead context window (`lead.context_window`, default `null`: from the session's model): `project set` it (path `lead.context_window`, tokens) only when known.
 

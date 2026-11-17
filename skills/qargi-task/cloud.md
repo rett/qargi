@@ -22,7 +22,7 @@ In the task block, OUT is `/mnt/session/outputs`; CLONE is the repository mounte
 1. `qargi instances show NAME --reconcile`: stop on UNUSABLE; on STALE tell the user.
 2. `qargi send NAME "<task block>" --asked "<quote>"`.
 3. `qargi watch SID` in the background; wait for its line.
-4. `idle`: `qargi collect SID <fresh scratch dir>`, then `/qargi-verify`. `budget_reached` or `timeout`: `qargi stop SID`, collect what exists, report BLOCKED with cost. `auth`: ask the user to log in. `requires_action`: surface it, never approve.
+4. `idle`: `qargi collect SID <fresh scratch dir>`, then `qargi-verify`. `budget_reached` or `timeout`: `qargi stop SID`, collect what exists, report BLOCKED with cost. `auth`: ask the user to log in. `requires_action`: surface it, never approve.
 5. After the user's verdict: `qargi mark SID applied|rejected`, then `qargi close SID`. No verdict: leave it idle, list it as "awaiting close".
 
 ## Budget contingency

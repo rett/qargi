@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- The lead skills (`skills/qargi-*`) say the same to a lead on an in-session runtime and on a command runtime. A skill is named by its name (`qargi-verify`) where the text had a slash command, and the quick form of `qargi-task` says the slash form is one way to give its arguments. What only one runtime has is named as that: a compact and a reloaded conversation are the runtime's own, the session-start hook and a member's guard may be absent (`qargi hook session-start` can be run by hand), a handoff note may carry no launch line and no project render, member files and `qargi agent add` belong to an in-session runtime, and `--as` is an option of the marshal verbs only. The skills that list the shipped runtimes name `codex` beside `claude-code` and `claude-platform`. Every skill keeps its word ceiling.
+
 ## [0.3.3] - 2026-11-17
 
 ### Added
