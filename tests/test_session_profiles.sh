@@ -103,7 +103,7 @@ body=$(QARGI_DRY_RUN=1 "$YES" start alpha-reviewer --role review --profile audit
 jq -e '.metadata == {deployment_id: "depl_R"}' <<<"$body" >/dev/null && ok "and it copies the reviewer deployment" || no "reviewer metadata"
 out=$(QARGI_DRY_RUN=1 "$YES" start alpha-reviewer --role review --profile researcher --asked "research" 2>&1); rc=$?
 { [ $rc = 2 ] && grep -q 'opt-in' <<<"$out"; } && ok "an opt-in profile needs --opt-in" || no "researcher (rc=$rc): $out"
-QARGI_DRY_RUN=1 "$YES" start alpha-reviewer --role review --profile researcher --opt-in --asked "research" 2>&1 | jq -e '.agent.model.id == "claude-fable-5-1"' >/dev/null && ok "--opt-in passes it on" || no "researcher with --opt-in"
+QARGI_DRY_RUN=1 "$YES" start alpha-reviewer --role review --profile researcher --opt-in --asked "research" 2>&1 | jq -e '.agent.model.id == "claude-fable-5-2"' >/dev/null && ok "--opt-in passes it on" || no "researcher with --opt-in"
 
 # --- the role must belong to the base's class, the base must be usable, and the options are for bases
 out=$(QARGI_DRY_RUN=1 "$YES" start alpha-worker --role review --asked "x" 2>&1); rc=$?

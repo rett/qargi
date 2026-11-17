@@ -47,7 +47,7 @@ done
 jq --argjson v "$EFFUN" '.models = {provider: $v}' "$T/c/projects/epsilon.json" > "$T/e.json" && mv "$T/e.json" "$T/c/projects/epsilon.json"
 inst() { # name model effort -> one cloud instance record
   jq -n --arg m "$2" --arg e "$3" '{location:"cloud",deployment_id:"depl_x",environment_id:"env_1",agent:{id:"agent_x",version_pinned:1,model:$m,effort:$e}}'; }
-S=claude-sonnet-5-5; O=claude-opus-5-5; H=claude-haiku-5-5; F=claude-fable-5-1
+S=claude-sonnet-5-5; O=claude-opus-5-5; H=claude-haiku-5-5; F=claude-fable-5-2
 jq -n --argjson aw "$(inst x $S high)" --argjson ar "$(inst x $O high)" --argjson b "$(inst x $S high)" --argjson r "$(inst x $O high)" --argjson l "$(inst x $S high)" '{
   "alpha-worker": $aw, "alpha-reviewer": $ar, "alpha-build": $b, "alpha-review": $r,
   "beta-build": $b, "beta-review": $r, "beta-test": $l,
@@ -71,9 +71,13 @@ e=$("$YES" agent for review --profile build --surface cloud --project alpha 2>&1
 mkdir -p "$T/c/roles/tw"; echo '{"class":"write"}' > "$T/c/roles/tw/role.json"; echo "the tw role" > "$T/c/roles/tw/ROLE.md"
 cj "$YES" tw --project alpha | jq -e '.instance == "alpha-worker" and .profile == "build" and .class == "write"' >/dev/null && ok "a custom write role uses the build row on the worker" || no "custom role: $(cj "$YES" tw --project alpha)"
 # the project's profiles
-jq '.profiles = {pm:{base:"worker",model:"claude-opus-5-5"}, scout:{base:"reviewer",tier:"fast",effort:"medium"}}' "$T/c/projects/alpha.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/alpha.json"
+jq '.profiles = {pm:{base:"worker",model:"claude-opus-5-5"}, scout:{base:"reviewer",tier:"fast",effort:"medium"}, elder:{base:"reviewer",model:"claude-fable-5-1",effort:"high"}}' "$T/c/projects/alpha.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/alpha.json"
 [ "$(cl "$YES" build --profile pm --project alpha)" = "alpha-worker $O medium pm" ] && ok "verified: a project profile with another model still runs on the worker" || no "pm: $(cl "$YES" build --profile pm --project alpha)"
 [ "$(cl "$YES" review --profile scout --project alpha)" = "alpha-reviewer $H medium scout" ] && ok "a project-only reviewer profile" || no "scout"
+# the frontier tier is the catalog's model for it; the model the tier named before is used as it is written when a profile pins it by id
+[ "$F" = "$(jq -r .tiers.frontier.model "$TOOL/lib/providers/catalogs/claude.json")" ] && [ "$F" = claude-fable-5-2 ] && ok "the frontier model of the claude catalog is claude-fable-5-2" || no "frontier of the catalog"
+[ "$(cl "$YES" review --profile elder --project alpha)" = "alpha-reviewer claude-fable-5-1 high elder" ] && cj "$YES" review --profile elder --project alpha | jq -e '.model == "claude-fable-5-1" and .profile == "elder" and .instance == "alpha-reviewer"' >/dev/null \
+  && ok "a profile pinned to claude-fable-5-1 by id keeps that id on the cloud" || no "elder: $(cl "$YES" review --profile elder --project alpha)"
 
 # --- shipped: the override capability is unverified, so the base cannot be used and no instance of the role is chosen instead
 e=$("$SHIP" agent for build --surface cloud --project alpha 2>&1); rc=$?
@@ -136,7 +140,7 @@ leftover=''; for d in "$TMPDIR"/qargi-exec.*; do [ ! -e "$d" ] || leftover=$d; d
 e=$("$YES" agent for review --profile researcher --surface cloud --project alpha 2>&1 >/dev/null); rc=$?
 { [ $rc = 2 ] && grep -q 'opt-in' <<<"$e"; } && ok "researcher is refused without --opt-in (exit 2)" || no "researcher: rc=$rc $e"
 [ "$("$YES" agent for review --profile researcher --opt-in --surface cloud --project alpha 2>&1)" = "alpha-reviewer $F high researcher" ] && ok "researcher with --opt-in: the reviewer base at the frontier model" || no "researcher opt-in"
-"$YES" agent for review --profile researcher --opt-in --surface cloud --project alpha --json | jq -e '.model == "claude-fable-5-1" and .profile == "researcher"' >/dev/null && ok "and --json carries it" || no "researcher json"
+"$YES" agent for review --profile researcher --opt-in --surface cloud --project alpha --json | jq -e --arg m "$F" '.model == $m and .profile == "researcher"' >/dev/null && ok "and --json carries it" || no "researcher json"
 "$SHIP" agent for review --profile researcher --opt-in --surface cloud --project alpha >/dev/null 2>&1; [ $? = 2 ] && ok "opt-in does not lift the refusal of an unverified base" || no "researcher unverified"
 
 # --- nothing registered

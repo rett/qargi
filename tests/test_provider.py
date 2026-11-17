@@ -93,7 +93,7 @@ class Shipped(Tree):
 
     def test_the_catalog_keeps_the_ids_and_the_aliases_both_runtimes_pass(self):
         self.assertEqual({t: v["model"] for t, v in CATALOG["tiers"].items()},
-                         {"fast": "claude-haiku-5-5", "balanced": "claude-sonnet-5-5", "deep": "claude-opus-5-5", "frontier": "claude-fable-5-1"})
+                         {"fast": "claude-haiku-5-5", "balanced": "claude-sonnet-5-5", "deep": "claude-opus-5-5", "frontier": "claude-fable-5-2"})
         self.assertEqual({t: v["alias"] for t, v in CATALOG["tiers"].items()}, {"fast": "haiku", "balanced": "sonnet", "deep": "opus", "frontier": "fable"})
         self.assertEqual((CODE["family"], CODE["models"]), ("claude", {"catalog": "claude", "use": "alias"}))
         self.assertEqual((PLATFORM["family"], PLATFORM["models"]), ("claude", {"catalog": "claude", "use": "id"}))
@@ -449,7 +449,7 @@ class Cli(CliBase):
         rc, out, _ = self.run_cli("show", "claude-code")
         self.assertEqual(rc, 0)
         self.assertRegex(out, r"fast\s+claude-haiku-5-5\s+alias haiku\s+verified: no")
-        self.assertRegex(out, r"frontier\s+claude-fable-5-1\s+alias fable")
+        self.assertRegex(out, r"frontier\s+claude-fable-5-2\s+alias fable")
         self.assertRegex(out, r"xhigh\s+xhigh")
         self.assertRegex(out, r"per_dispatch_model_override\s+yes\s+verified 2026-10-31\s+Agent tool model parameter overrides the definition")
         self.assertRegex(out, r"read_only_barrier\s+partial\s+verified 2026-10-31")
@@ -1898,6 +1898,26 @@ class ShippedClaude(unittest.TestCase):
                 self.assertEqual(m["use"], use)
                 self.assertEqual({t: P.model_for(m, t) for t in P.TIERS}, {t: r["alias"] if use == "alias" else r["model"] for t, r in cat["tiers"].items()})
                 self.assertEqual((m["pattern"], m["effort"]), (cat["pattern"], cat["effort"]))
+
+    def test_the_frontier_tier_is_claude_fable_5_2_as_an_alias_in_session_and_as_an_id_in_the_cloud(self):
+        passed = {"claude-code": "fable", "claude-platform": "claude-fable-5-2"}
+        for name, _, _ in self.RUNTIMES:
+            with self.subTest(name):
+                m = P.models_of(name)
+                self.assertEqual((m["tiers"]["frontier"]["model"], P.model_for(m, "frontier")), ("claude-fable-5-2", passed[name]))
+        self.assertRegex("claude-fable-5-1", P.catalog("claude")["pattern"])          # the model before it is in no tier, and is still an id the pattern takes
+
+    def test_every_model_of_the_catalog_has_a_window_in_the_table_claude_code_ships(self):
+        """A tier moved to a model the table of windows (resources.transcripts.windows) does not name would leave the context window of a
+        session on that model only assumed: the catalog and the table change together."""
+        tr = P.transcripts("claude-code", "/x", home="/h")
+        self.assertLessEqual(len(tr["windows"]), P.WINDOWS_MAX)
+        tiers = P.catalog("claude")["tiers"]
+        self.assertEqual(sorted(tiers), sorted(P.TIERS))
+        for tier, row in tiers.items():
+            with self.subTest(tier):
+                self.assertEqual(P.transcript_window(tr, row["model"])[1], "model", "%s: no entry of the table names %s" % (tier, row["model"]))
+        self.assertEqual(P.transcript_window(tr, tiers["frontier"]["model"]), (1000000, "model"))
 
     def test_claude_code_has_the_notes_the_skills_point_at_and_claude_platform_the_two_directories(self):
         notes = P.definition("claude-code")["notes"]
