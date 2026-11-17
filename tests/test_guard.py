@@ -4959,6 +4959,20 @@ class WrapperOptions(HookCase):
                       "timeout -s '>x' 5 git status", "sudo -p '> ' bash install.sh --user", "sudo -u 2>/dev/null root ls",
                       "timeout -k 2>/dev/null 1 5 git status"))
 
+    def test_a_quoted_value_that_reads_as_a_bare_redirection_before_a_push(self):
+        """timeout -s '<' 5 git push: the value reads as a bare redirection, which takes the next word as its file, so the first reading finds no program
+        at all (timeout's duration is the last word); the reading where that word is the value is judged even then, for git push, ssh and gh as for the
+        lead-only verbs."""
+        for v in ("'<'", "'<<<'", "'0<'", "'<<'"):
+            with self.subTest(v=v):
+                self.pushes([f % v for f in ("timeout -s %s 5 git push", "timeout -k %s 5 git push", "xargs -I %s git push", "sudo -p %s git push",
+                                             "env -u %s git push", "exec -a %s git push", "time -f %s git push")])
+                for c, prog in (("timeout -s %s 5 ssh host" % v, "ssh"), ("sudo -p %s ssh host" % v, "ssh"), ("timeout -s %s 5 gh pr create" % v, "gh")):
+                    r = self.bash(c)
+                    self.assertEqual(r.returncode, 2, (c, r.stderr))
+                    self.assertIn("%s is not available to an agent" % prog, r.stderr, c)
+                self.allowed(("sudo -p %s git status" % v, "timeout -s %s 5 git log" % v, "env -u %s git log" % v))
+
     def test_the_other_reading_of_a_wrapper_option_keeps_each_word(self):
         """The reading without an unknown option and its value keeps the words whole: the text of a here-string is still one word."""
         self.verbs("sudo -h x bash <<< '@@'")

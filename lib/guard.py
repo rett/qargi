@@ -557,6 +557,24 @@ def config_refusal(args, via_xargs):
     return None
 
 
+def program_blocked(toks, i, depth):
+    """The reason the program toks[i] of a segment's words publishes or reaches out (gh, ssh, git push, rsync to a host, a shell string that does), or None."""
+    prog = os.path.basename(toks[i])
+    rest = toks[i + 1:]
+    if prog in ("gh", "ssh", "scp", "sftp"):
+        return "%s is not available to an agent" % prog
+    if prog in GIT_PUSH_PROGRAMS or prog in ("svn", "git-svn") and "dcommit" in rest:
+        return "%s is not available to an agent" % prog
+    if prog == "rsync" and any(remote_operand(t) for t in rest if not t.startswith("-")):
+        return "rsync to or from another host is not available to an agent"
+    if prog == "git":
+        why = git_refusal(toks[:i], rest)
+        if why:
+            return why
+    inner = shell_string(prog, rest) if depth < 3 else None
+    return blocked(inner, depth + 1) if inner is not None else None
+
+
 def blocked(command, depth=0):
     seen = set()
     for seg in segments(command):
@@ -565,26 +583,11 @@ def blocked(command, depth=0):
             continue
         seen.add(seg)
         toks, i = parsed(seg)
-        if i >= len(toks):
-            continue
-        prog = os.path.basename(toks[i])
-        rest = toks[i + 1:]
-        if prog in ("gh", "ssh", "scp", "sftp"):
-            return "%s is not available to an agent" % prog
-        if prog in GIT_PUSH_PROGRAMS or prog in ("svn", "git-svn") and "dcommit" in rest:
-            return "%s is not available to an agent" % prog
-        if prog == "rsync" and any(remote_operand(t) for t in rest if not t.startswith("-")):
-            return "rsync to or from another host is not available to an agent"
-        if prog == "git":
-            why = git_refusal(toks[:i], rest)
-            if why:
-                return why
-        inner = shell_string(prog, rest) if depth < 3 else None
-        why = blocked(inner, depth + 1) if inner is not None else None
+        why = program_blocked(toks, i, depth) if i < len(toks) else None
         if why:
             return why
-        for alt in wrapper_readings(seg) if depth < 3 else ():     # a wrapper's option the guard cannot read may take the next word: that reading too
-            why = blocked(alt, depth + 1)
+        for alt in wrapper_readings(seg) if depth < 3 else ():     # a wrapper's option the guard cannot read may take the next word: that reading too,
+            why = blocked(alt, depth + 1)                           # also when this one has no program (timeout -s '<' 5 git push: '<' read as a redirection takes 5)
             if why:
                 return why
     for _, ps in passes(command) if depth < 3 else ():       # a shell fed its program on its standard input or in a file the line writes: the text the line shows is read again
