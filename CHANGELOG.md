@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- While the context window of the lead is only assumed (no `lead.context_window`, and the model has no entry in the runtime's table), `qargi lead usage`, `lead compact-check --advise` and the stage-verb line print the tokens in use and say `window unknown; set lead.context_window`, with no percentage and no advice to compact (`lead usage --json` has `percent: null` then; `window_source: "assumed"` and the tokens stay). A window from the answer or the model is unchanged.
+
 ### Fixed
 - `claude-code`'s table of context windows names the plain id `claude-opus-5-5` (1,000,000 tokens), so `qargi lead usage` and the stage-verb line no longer measure a lead on that model against the assumed 200,000 window and advise a compact far too early; an id that ends in `[1m]` or `-1m` still means one million, and an id with no entry still gets the assumed window.
 
