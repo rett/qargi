@@ -790,7 +790,7 @@ NAME is a runtime name, not a family name. resources.contract_addenda of the def
 .BI "notes " "[TOPIC]"
 Print a note of the project's runtime (local unless \-\-surface cloud), or list the topics it has.
 .br
-The notes of a runtime's definition say how it does what a skill asks of it (how a lead starts a member, where it keeps its skills). With a TOPIC the text is printed; without, the names of the topics, one per line. The definition is the runtime's composed with the project's enabled extensions. A topic the runtime does not have, or a runtime with no notes, is exit 1, naming both and listing the topics there are; a project with no runtime on the surface, or a runtime that cannot be used as it stands (a library pack not sealed or changed since it was sealed, an unreadable definition), is exit 2 (a refusal; there is no default). Read\-only.
+The notes of a runtime's definition say how it does what a skill asks of it (how a lead starts a member, where it keeps its skills). With a TOPIC the text is printed; without, the names of the topics, one per line. The definition is the runtime's composed with the project's enabled extensions. A topic the runtime does not have, or a runtime with no notes, is exit 1, naming both and listing the topics there are; a project with no runtime on the surface, or a runtime that cannot be used as it stands (a library pack not sealed or changed since it was sealed, an unreadable definition), is exit 2 (a refusal; there is no default). Read\-only. A lead whose session runs on another runtime than the project's members names its own with \-\-lead\-runtime NAME or QARGI_LEAD_RUNTIME (the option wins). A definition lists the topics that are about the lead's own session (lead_notes: its identity, its own model, how it searches, where it loads its skills from); those are then answered by the lead runtime, and every other topic (how a member is started, what a member returns) by the project's runtime as before. The list of topics is both. A topic the lead runtime lists needs the project but not the project's runtime. NAME is a runtime of the local surface that can be used as it stands, by its own name (not a family's), whatever \-\-surface says; any other name is unsupported, exit 3, whatever is asked. A topic the project's runtime lists as about a lead's session and the lead runtime does not have is unsupported too, exit 3: it is never answered by the project's runtime. The name selects which definition is read and nothing else: nothing is stored or changed, and no identity, approval or permission depends on it.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -800,6 +800,11 @@ the project whose runtime is asked (default: the one in effect).
 .TP
 .BI "\-\-surface " "SURFACE"
 the surface whose runtime is asked (default local); the cloud runtime's notes say where a hosted session keeps its outputs and clones (output\-dir, clone\-dir).
+.RE
+.RS
+.TP
+.BI "\-\-lead\-runtime " "NAME"
+the runtime of the lead's own session, when it is not the project's: the notes about the lead's session are read from it (default: QARGI_LEAD_RUNTIME when it is set and not empty; with neither, every note is the project's runtime's, as before).
 .RE
 .RE
 .RS
