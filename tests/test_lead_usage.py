@@ -187,12 +187,13 @@ class Usage(Base):
             self.assertEqual(self.shipped_window(model), one, model)
         for model in ("claude-opus-4-5", "claude-opus-4-1", "claude-opus-4", "claude-sonnet-4-5", "claude-sonnet-4", "claude-haiku-4-5",
                       "claude-opus-4-5-20251101", "claude-haiku-4-5-20251001", "claude-opus-4-1-20250805", "claude-opus-4-20250514",
-                      "claude-sonnet-4-20250514", "claude-sonnet-4-5-20250929"):
+                      "claude-sonnet-4-20250514", "claude-sonnet-4-5-20250929", "claude-opus-4-0", "claude-sonnet-4-0"):
             self.assertEqual(self.shipped_window(model), two, model)
         # a generation the data does not name, a family of no entry, and an id of another runtime: only the assumed window
         for model in ("claude-opus-9", "claude-opus-6", "claude-sonnet-6", "claude-haiku-6", "claude-fable-6", "claude-opus-4-9", "claude-opus-5-6",
                       "claude-opus-50", "claude-opus-4-10", "claude-opus-4-100", "claude-haiku-5", "claude-haiku-4", "claude-sonnet-4-9", "claude-mythos-6",
-                      "claude-opus", "claude-plain-9", "gpt-5", "model-a", "", "claude-opus-4-9[1m]x"):
+                      "claude-opus", "claude-plain-9", "gpt-5", "model-a", "", "claude-opus-4-9[1m]x",
+                      "claude-opus-4-00", "claude-sonnet-4-01", "claude-opus-4-0-1"):
             self.assertEqual(self.shipped_window(model), (200000, "assumed"), model)
 
     def test_no_entry_of_the_shipped_table_takes_an_id_of_another_generation(self):
@@ -204,7 +205,8 @@ class Usage(Base):
         # past the two suffix entries the entries do not overlap: an id is taken by one of them, so their order does not matter
         for model in ("claude-opus-4", "claude-opus-4-1", "claude-opus-4-5", "claude-opus-4-6", "claude-opus-4-6-20260101", "claude-opus-4-20250514",
                       "claude-opus-4-1-20250805", "claude-opus-4-5-20251101", "claude-sonnet-4", "claude-sonnet-4-5", "claude-sonnet-4-6", "claude-sonnet-4-20250514",
-                      "claude-opus-5", "claude-opus-5-5", "claude-fable-5", "claude-fable-5-1", "claude-fable-5-2", "claude-mythos-5-2", "claude-haiku-4-5", "claude-haiku-5-5"):
+                      "claude-opus-5", "claude-opus-5-5", "claude-fable-5", "claude-fable-5-1", "claude-fable-5-2", "claude-mythos-5-2", "claude-haiku-4-5", "claude-haiku-5-5",
+                      "claude-opus-4-0", "claude-sonnet-4-0"):
             self.assertEqual(sum(1 for pat in patterns[2:] if P._glob(pat, model)), 1, model)
         self.assertEqual(self.shipped_window("claude-opus-4"), (200000, "model"))                      # claude-opus-4 is no prefix of claude-opus-4-6, nor the reverse
         self.assertEqual(self.shipped_window("claude-opus-4-6"), (1000000, "model"))

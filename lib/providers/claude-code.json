@@ -144,9 +144,11 @@
         {"model": "claude-opus-4-1-*", "tokens": 200000},
         {"model": "claude-opus-4", "tokens": 200000},
         {"model": "claude-opus-4-20*", "tokens": 200000},
+        {"model": "claude-opus-4-0", "tokens": 200000},
         {"model": "claude-sonnet-4-5*", "tokens": 200000},
         {"model": "claude-sonnet-4", "tokens": 200000},
         {"model": "claude-sonnet-4-20*", "tokens": 200000},
+        {"model": "claude-sonnet-4-0", "tokens": 200000},
         {"model": "claude-haiku-4-5*", "tokens": 200000}
       ],
       "usage": {
