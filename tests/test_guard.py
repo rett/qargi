@@ -4743,8 +4743,116 @@ class WrapperOptions(HookCase):
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("Agents never push", r.stderr)
         self.own_install()
-        self.allowed(("sudo -h x ls", "sudo --frobnicate x git status", "sudo -Z a b c qargi upgrade", "timeout --sig KILL 5 git status",
-                      "sudo -h x bash install.sh --user"))
+        self.allowed(("sudo -h x ls", "sudo --frobnicate x git status", "timeout --sig KILL 5 git status", "sudo -h x bash install.sh --user"))
+        # Known limit (guard.py, the known-limit comment): an unknown option is read as taking no word or one, so one that took three
+        # (`sudo -Z a b c qargi upgrade`) would hide the verb; it is not pinned here as allowed.
+
+    def pushes(self, commands):
+        for c in commands:
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, (c, r.stderr))
+            self.assertIn("Agents never push", r.stderr, c)
+
+    def read_only_refused(self, commands):
+        """Each command writes in the clone, which the read-only class refuses."""
+        for c in commands:
+            e = {k: v for k, v in os.environ.items() if k not in ("QARGI_CONF", "QARGI_STATE", "QARGI_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "HOME")}
+            e.update(HOME=self.home, QARGI_CONF=self.conf)
+            r = self.hook(["--class", "read-only"], {"tool_name": "Bash", "tool_input": {"command": c}, "cwd": self.clone}, e)
+            self.assertEqual(r.returncode, 2, (c, r.stderr))
+            self.assertIn("under the read-only class", r.stderr, c)
+
+    def test_an_assignment_whose_value_names_a_wrapper_is_no_wrapper(self):
+        """X=/usr/bin/timeout sets a variable: the word after it is the program, not timeout's duration (nor a value of any other wrapper's option)."""
+        for w in sorted(self.J.m.WRAP):                              # every wrapper the guard knows
+            self.verbs("X=/a/%s @@" % w)
+        for form in ("X=/usr/bin/timeout @@", "X=./timeout @@", "env X=/a/timeout @@", "env -i X=/a/timeout @@", "sudo X=/a/timeout @@",
+                     "timeout 5 X=/a/timeout @@", "X=/usr/bin/timeout bash -c '@@'", "X=/a/timeout bash <<< '@@'"):
+            self.verbs(form)
+        self.pushes(("X=/usr/bin/timeout git push", "env X=/a/timeout git push"))
+        self.read_only_refused(("X=/usr/bin/timeout touch foo", "env X=/a/timeout touch foo"))
+        self.own_install()
+        self.allowed(("X=/usr/bin/timeout git status", "env VAR=x python3 tests/test_env.py", "X=/a/timeout ls", "env X=/a/timeout bash install.sh --user",
+                      "X=/a/timeout timeout 5s git status"))
+
+    def test_parallel_max_lines_takes_the_next_word_only_when_it_is_a_number(self):
+        """parallel --max-lines and -l take an optional number: the word after them is the program unless it is one, so both readings are judged."""
+        self.verbs("parallel --max-lines @@ ::: 1")
+        self.verbs("parallel -l @@ ::: 1")
+        self.verbs("parallel --max-lines 2 @@ ::: 1")
+        self.verbs("parallel --replace @@ ::: 1")
+        self.pushes(("parallel --max-lines git push ::: 1",))
+        self.read_only_refused(("parallel --max-lines touch foo ::: 1",))
+        self.allowed(("parallel --max-lines 2 echo hi ::: 1", "parallel --max-lines echo hi ::: 1", "parallel -l 1.5 git status ::: 1",
+                      "xargs --max-lines echo", "xargs --max-lines=2 git status"))
+
+    def test_shell_c_with_a_substitution_glued_to_it(self):
+        """bash -c$(true) STRING: the substitution is cut out, and the string that follows it is read as the -c string."""
+        self.verbs("bash -c$(true) '@@'")
+        self.verbs("sh -c`true` '@@'")
+        self.allowed(("bash -c$(true) 'git status'",))
+
+    def test_timeout_reads_its_duration_after_the_end_of_its_options(self):
+        """timeout -- 5s PROGRAM: `--` ends the options, and the duration still comes before the program."""
+        for form in ("timeout -- 5s @@", "timeout -s KILL -- 5s @@", "timeout -k 1 -- 2.5 @@", "timeout -- 5s bash <<< '@@'", "sudo timeout -- 5 @@"):
+            self.verbs(form)
+        self.pushes(("timeout -- 5s git push",))
+        self.own_install()
+        self.allowed(("timeout -- 5s python3 tests/test_env.py", "timeout -s KILL -- 5s git status", "timeout -- 5s bash install.sh --user", "timeout 5s -- git status"))
+
+    def test_timeout_foreground_and_preserve_status_by_their_letters(self):
+        """timeout -f and -p (--foreground, --preserve-status) take no value: the word after them is the duration, not a value the other reading drops."""
+        self.verbs("timeout -f 5 @@")
+        self.verbs("timeout -p -f 5s @@")
+        self.allowed(("timeout -p 60 echo qargi upgrade", "timeout -f 5 grep -n qargi upgrade", "timeout -f -p 5s python3 tests/test_env.py"))
+
+    def test_env_split_string_by_its_other_spellings(self):
+        """GNU env takes any unambiguous abbreviation of --split-string (--s, --split), with the string in the next word or after `=`."""
+        for form in ("env --split '@@'", "env --s '@@'", "env --split='@@'", "env --s='@@'", "env --split-str '@@'", "env -i --spl 2>/dev/null '@@'"):
+            self.verbs(form)
+        self.pushes(("env --s='git push'", "env --split 'git push'"))
+        self.allowed(("env --split 'git status'", "env --s='python3 tests/test_env.py'"))
+
+    def test_env_split_string_ends_at_backslash_c(self):
+        """env -S stops reading its string at \\c (outside quotes): what comes after it is not run, what comes before it is."""
+        self.verbs("env -S '@@\\c x'")
+        self.verbs("env -S 'X=1 @@ \\c'")
+        self.pushes(("env -S 'git push\\c x'",))
+        self.allowed(("env -S 'git status\\c qargi upgrade'", "env -S 'echo hi \\c bash lib/upgrade.sh'"))
+
+    def test_source_p_with_its_directory_attached(self):
+        """. -pDIR NAME and source -pDIR NAME look NAME up in DIR, as the detached -p DIR does."""
+        for c in (". -p%s install.sh" % self.ROOT, "source -p%s: install.sh --user" % self.ROOT, ". -p/x:%s install.sh" % self.ROOT):
+            self.refused(c, InstallScript.WHY)
+        self.own_install()
+        self.allowed((". -p%s install.sh --user" % self.clone, "source -p. install.sh", ". -p/x: install.sh"))
+
+    def test_a_shell_reading_its_standard_input_past_one_dash_long_options(self):
+        """bash -norc, -rcfile F, -init-file F, -restricted, -protected: bash's long names with one dash are read as the file and -c paths read them, so the
+        program on the standard input (a here-string, a pipe) is found and read."""
+        for form in ("bash -norc <<< '@@'", "bash -rcfile /dev/null <<< '@@'", "bash -restricted <<< '@@'", "bash -protected <<< '@@'",
+                     "bash -init-file /dev/null <<< '@@'", "bash -norc -s <<< '@@'", "echo '@@' | bash -norc"):
+            self.verbs(form)
+        self.own_install()
+        self.allowed(("bash -norc <<< 'git status'", "echo 'git status' | bash -norc", "bash -norc install.sh --user", "bash -rcfile /dev/null -s <<< 'ls'"))
+
+    def test_a_redirection_glued_to_an_option(self):
+        """-X>/dev/null: the shell takes the redirection off the option, so the value is the next word (a quote would keep it in the word): an interpreter's
+        option word that holds < or > cannot be read (fail closed), and a wrapper's is judged both as it is and cut where the shell cuts it."""
+        lib = LibraryScripts.LIB
+        self.refused("python3 -X>/dev/null dev %s/install_record.py uninstall" % lib, InstallRecordScript.WHY)
+        self.refused("python3 -W>/dev/null ignore %s/render.py render s d" % lib, InterpreterOptions.RENDER)
+        for form in ("sudo -u>/dev/null root @@", "env -u>/dev/null X @@", "exec -a>/dev/null x @@", "env -S>/dev/null '@@'", "bash -c>/dev/null '@@'"):
+            self.verbs(form)
+        self.own_install()
+        self.allowed(("python3 -X>/dev/null dev tests/test_env.py", "sudo -u>/dev/null root ls", "env -u>/dev/null X git status", "bash -c>/dev/null 'git status'",
+                      "sudo -u>/dev/null root bash install.sh --user"))
+
+    def test_the_other_reading_of_a_wrapper_option_keeps_each_word(self):
+        """The reading without an unknown option and its value keeps the words whole: the text of a here-string is still one word."""
+        self.verbs("sudo -h x bash <<< '@@'")
+        self.verbs("sudo --frobnicate x bash <<< \"@@\"")
+        self.allowed(("sudo -h x bash <<< 'git status'", "sudo -h x echo 'qargi upgrade'"))
 
 
 class ThirdReview(HookCase):
