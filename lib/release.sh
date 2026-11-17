@@ -659,9 +659,43 @@ cut_get() { jq -r "$1" "$CUTREC" 2>/dev/null; }
 # cut_load: sets CUT=1 when --plan names the token of the approved cut of VER and the verb is a step of it; the approval words, the date, --allow-empty-notes
 # and --keep are then the cut's. Dies on a token of a cut that is not approved, on a step the cut does not have, on a kind that differs, in a member run or under
 # QARGI_NESTED (the words are the owner's), and on a --plan that is not the token of the recorded cut (without --approved: a step's own plan is not a cut's step).
+# It also dies when this lead is not the one that approved the cut, when the record names no lead, and when the identity cannot be determined (cut_lead_check).
 cut_lead_only() { # WHAT: exit 2 in a member run or under QARGI_NESTED (the lead's, with the owner's words)
   python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import marshal_refs as m; sys.exit(2 if m.in_member_run() else 0)' "$(dirname "$0")" && [ -z "${QARGI_NESTED:-}" ] \
     || { echo "qargi: $1 is not available in a member run or a nested call: it is the lead's, with the owner's words" >&2; exit 2; }
+}
+# cut_lead_id -> LEAD_ID, the identity of this lead as the marshal resolves it (marshal_store.Ctx: $QARGI_LEAD, else user@host, which is anonymous: every
+# session of the user on the host is that lead), and LEAD_WHY empty; when it cannot be determined (the identity is not valid, or the user cannot be looked
+# up) LEAD_ID is empty and LEAD_WHY says why.
+# The approval of the cut records LEAD_ID and every step under the cut must have the same one (cut_load). This binding is defence in depth only: QARGI_LEAD
+# is not authenticated, so it stops a confused or handed-over lead, not a hostile one that sets it to the recorded value; a project with no seat keeps that
+# gap, and the fence comes with the seat work in 0.3.4.
+cut_lead_id() {
+  local out
+  LEAD_ID='' LEAD_WHY=''
+  if ! out=$(python3 -I -c 'import sys, types; sys.path.insert(0, sys.argv[1]); import marshal_store as m
+try: c = m.Ctx(types.SimpleNamespace(state="", project="", repo="", ttl=0, as_id=None))
+except Exception as e: print(" ".join(str(e).split()) or type(e).__name__); sys.exit(1)
+print(("anon " if c.anon else "named ") + c.id)' "$(dirname "$0")" 2>/dev/null); then
+    LEAD_WHY=${out:-the marshal could not resolve it}; return 1
+  fi
+  case $out in anon\ ?*) LEAD_ID=${out#anon };; named\ ?*) LEAD_ID=${out#named };; *) LEAD_WHY="the marshal gave no identity"; return 1;; esac
+}
+# cut_lead_check: dies unless this lead is the one that approved the cut (the record's .lead.id); nothing has moved yet when it is called
+cut_lead_check() {
+  local rec own
+  own="qargi release $verb $VER$([ "$verb" = site ] || echo "${HOTFIX:+ --hotfix}"), then --plan and --approved"
+  rec=$(cut_get '.lead.id // empty')
+  if [ -z "$rec" ]; then
+    # the cut is approved again only while the release has not begun: with the branch or the tag there, plan --again discards the record and then refuses; with only the record saying start ran, it
+    # would plan the cut anew, but the steps after start need the branch, so the message offers the own plan of each step in every state (nothing writes a lead into an existing record)
+    if branch_exists "$BR" || g rev-parse -q --verify "refs/tags/$VER" >/dev/null 2>&1 || [ -n "$(cut_get '.done.start // empty')" ]; then
+      die "the cut record of $VER names no lead (it was approved before a cut was bound to the lead that approved it): nothing was changed. Approving the cut again is not offered, because the release has begun (plan --again would discard the record, and refuses while $BR or the tag $VER exists): this step and every later one is run with its own plan ($own)"
+    fi
+    die "the cut record of $VER names no lead (it was approved before a cut was bound to the lead that approved it): nothing was changed. The cut can be approved again, because the release has not begun (qargi release plan $VER${HOTFIX:+ --hotfix} --again, then --plan and --approved), or this step is run with its own plan ($own)"
+  fi
+  cut_lead_id || die "the lead identity cannot be determined ($LEAD_WHY), so $verb of $VER cannot run under the cut: nothing was changed. The lead that approved the cut runs the step, or this lead asks the owner to approve the step with its own plan ($own)"
+  [ "$LEAD_ID" = "$rec" ] || die "the cut of $VER was approved under another lead: nothing was changed. That lead runs $verb under the cut, or this lead asks the owner to approve the step with its own plan ($own)"
 }
 cut_load() {
   local rk
@@ -679,6 +713,7 @@ cut_load() {
     rk=$(cut_get .kind); [ "$rk" = "$KIND" ] || die "the cut $PLAN_ARG is the cut of a $rk of $VER: run it$([ "$rk" = hotfix ] && echo ' with --hotfix' || echo ' without --hotfix')";;
   esac
   cut_lead_only "running a step under the cut of a release (its approval words are the owner's)"
+  cut_lead_check
   CUT=1
   APPROVED=$(cut_get .approval.words)
   [ -n "$DATE" ] || DATE=$(cut_get '.date // empty')
@@ -786,10 +821,12 @@ case $verb in
     fi
     cut_lead_only "approving the cut of a release"
     need_plan "$tok"
+    # the approval is bound to the lead that records it (cut_lead_id; defence in depth only, see there): every step under the cut must be run by the same lead
+    cut_lead_id || die "the lead identity cannot be determined ($LEAD_WHY), so the cut of $VER cannot be bound to the lead that approves it: nothing was recorded"
     mkdir -p "$DA_STATE/release"
     jq -n --arg p "$PROJ" --arg v "$VER" --arg k "$KIND" --arg tok "$tok" --arg at "$(now)" --arg date "$DATE" --arg keep "$KEEP" --arg ae "$ALLOW_EMPTY" --arg b0 "$b0" --arg m "$msha" \
-      --arg second "$second" --arg st "$stok" --arg words "$APPROVED" --argjson steps "$(printf '%s\n' "${steps// /$'\n'}" | jq -R . | jq -sc .)" \
-      '{schema:1, project:$p, version:$v, kind:$k, token:$tok, at:$at, date:$date, keep:$keep, allow_empty:$ae, base_sha:$b0, master_sha:$m, second:$second, start_token:$st, steps:$steps, approval:{words:$words, at:$at}, done:{}}' > "$CUTREC.tmp" \
+      --arg second "$second" --arg st "$stok" --arg words "$APPROVED" --argjson steps "$(printf '%s\n' "${steps// /$'\n'}" | jq -R . | jq -sc .)" --arg lead "$LEAD_ID" \
+      '{schema:1, project:$p, version:$v, kind:$k, token:$tok, at:$at, date:$date, keep:$keep, allow_empty:$ae, base_sha:$b0, master_sha:$m, second:$second, start_token:$st, steps:$steps, approval:{words:$words, at:$at}, lead:{id:$lead}, done:{}}' > "$CUTREC.tmp" \
       && chmod 600 "$CUTREC.tmp" && mv "$CUTREC.tmp" "$CUTREC" || die "could not write the cut record $CUTREC"
     audit_log "release:cut" "$PROJ $VER $KIND plan $tok steps: $steps"
     echo "approved the cut $tok of $KIND $VER in the words: $APPROVED"

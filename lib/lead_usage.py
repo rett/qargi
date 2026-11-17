@@ -11,20 +11,22 @@ hook can run it) is safe. Where the transcripts are and how to read the context 
 (resources.transcripts of lib/providers/NAME.json, lib/provider.py): a directory of JSON-line files named for the session id, and
 JSON pointers that pick the last assistant turn and add up its input, cache-read and cache-creation tokens. The window is the answer
 lead.context_window, else the one the runtime's definition (resources.transcripts.windows) gives for the model id of that turn, else the
-definition's single window, which is only assumed: then every line that shows a percentage adds "(window assumed N; set lead.context_window)".
-When the tokens in use exceed that assumed window the real window is larger, so no line shows a percentage: it says "tokens exceed the assumed
-window N; set lead.context_window". --json says which in window_source: "answer", "model" or "assumed", keeps percent, and sets window_exceeded
-to true in that case. Nothing is written; a transcript that cannot be found or read is "unknown" (exit 0).
+definition's single window, which is only assumed. An assumed window is a guess, so no line shows a percentage of it and none advises a
+compact: each prints the tokens in use and says "window unknown; set lead.context_window" (when the tokens exceed the guess it adds that
+they do, since the real window is larger). --json says which window in window_source: "answer", "model" or "assumed"; while it is assumed
+percent is null (the window is the guess, kept for reference) and window_exceeded says whether the tokens are beyond it. Nothing is written;
+a transcript that cannot be found or read is "unknown" (exit 0).
 
 compact-check exits 0 when a compact is safe and 1 when it is not, naming every reason: a local run prepared and not verified, a run
 verified and not applied (or applied and not merged: lib/merged.py, the test local list and local clean use, so a tip rewritten with a recorded rewrite counts by its new commit), a merge waiting in the conflicts directory (a parked worktree, or the .done mark of a resolved one; the .master bookkeeping file of a release finish is not a merge), a whole-suite run in progress
 (a live pid file in $STATE/busy, which feature verify and release verify keep), a handoff note (the file `marshal handoff --write` records
 in $STATE/handoff/PROJECT.json) older than the last merge of the ref journal, and a release or hotfix branch that is open. Either way it
 prints the restart block: what the lead reads again after the compact to resume from stored state. --advise adds the verdict on the
-context: "compact advised" from 50% and "compact strongly advised" from 70% (when safe; when not, it says what to clear first).
+context: "compact advised" from 50% and "compact strongly advised" from 70% (when safe; when not, it says what to clear first); with
+an assumed window it gives no verdict, only the tokens and the way to set the window, so it never says to compact.
 
-advice prints one line when the context is at or above the answer lead.compact_advice_pct (default 40; 0 disables): that a compact is
-safe now, or why not. With --feature NAME it prints only when no open run of feature/NAME is left. It never fails.
+advice prints one line when the context is at or above the answer lead.compact_advice_pct (default 40; 0 disables; with an assumed window the
+guess only decides when to speak): that a compact is safe now, or why not; with an assumed window only the tokens and that the window is unknown. With --feature NAME it prints only when no open run of feature/NAME is left. It never fails.
 
 Environment: QARGI_LEAD (the session id, which names the transcript), QARGI_LEAD_NOW (epoch seconds; tests). Run through lib/lead.sh;
 python3 -I, standard library only."""
@@ -233,8 +235,8 @@ def measure(a, conf):
         out["tokens"], out["model"] = t
         if not out["window"]:
             out["window"], out["window_source"] = P.transcript_window(tr0, out["model"])
-        out["percent"] = round(t[0] * 100.0 / out["window"], 1)
         out["window_exceeded"] = out["window_source"] == "assumed" and t[0] > out["window"]
+        out["percent"] = None if out["window_source"] == "assumed" else round(t[0] * 100.0 / out["window"], 1)     # a share of a guess is not a fact
         out["known"] = True
     except Soft as e:
         out["why"] = str(e)
@@ -250,14 +252,10 @@ def human_bytes(n):
         n /= 1024.0
 
 
-def assumed(u):
-    """The words that keep a percentage of a guessed window from reading as fact; empty when the window is the answer's or the model's."""
-    return " (window assumed %s; set lead.context_window)" % format(u["window"], ",") if u.get("window_source") == "assumed" else ""
-
-
-def exceeded_note(u):
-    """What replaces a percentage when the tokens in use are more than the window that was only assumed: the real window is larger."""
-    return "tokens exceed the assumed window %s; set lead.context_window" % format(u["window"], ",")
+def unknown_note(u):
+    """What stands for a percentage while the window is only assumed: the window is unknown and the answer that sets it (more when the tokens in
+    use are beyond the guess: the real window is larger)."""
+    return "window unknown%s; set lead.context_window" % (" (tokens exceed the assumed %s)" % format(u["window"], ",") if u.get("window_exceeded") else "")
 
 
 def short(n):
@@ -273,10 +271,10 @@ def show_usage(u):
         if u["transcript"]:
             print("transcript: %s" % clean(u["transcript"]))
         return
-    if u.get("window_exceeded"):
-        print("context: %s tokens in use; %s" % (format(u["tokens"], ","), exceeded_note(u)))
+    if u["window_source"] == "assumed":
+        print("context: %s tokens in use; %s" % (format(u["tokens"], ","), unknown_note(u)))
     else:
-        print("context: %s of %s tokens in use (%s%%)%s" % (format(u["tokens"], ","), format(u["window"], ","), ("%.1f" % u["percent"]).rstrip("0").rstrip("."), assumed(u)))
+        print("context: %s of %s tokens in use (%s%%)" % (format(u["tokens"], ","), format(u["window"], ","), ("%.1f" % u["percent"]).rstrip("0").rstrip(".")))
     print("transcript: %s (%s)" % (clean(u["transcript"]), human_bytes(u["bytes"])))
     if u["model"]:
         print("model: %s" % u["model"])
@@ -602,20 +600,20 @@ def check(a, conf, state):
     return {"safe": not reasons, "reasons": reasons, "restart": restart, "open_runs": [{"run": r[0], "slug": r[1], "role": r[2], "base": r[3], "state": r[4]} for r in runs], "features": feats}
 
 
-def verdict(u, safe, pct_advised=ADVISED, pct_strong=STRONG, note=True):
-    """The advice on the context (a string), from the usage and whether a compact is safe; note adds the words about an assumed window."""
+def verdict(u, safe, pct_advised=ADVISED, pct_strong=STRONG):
+    """The advice on the context (a string), from the usage and whether a compact is safe. An assumed window gives no advice: it is a guess."""
     if not u["known"]:
         return "context unknown (%s): no advice on compacting" % u["why"]
+    if u["window_source"] == "assumed":
+        return "no advice on compacting: %s tokens in use, %s" % (short(u["tokens"]), unknown_note(u))
     p = u["percent"]
-    if u.get("window_exceeded"):
-        return "context window larger than assumed (%s tokens: %s)%s" % (short(u["tokens"]), exceeded_note(u), "" if safe else "; compact is not safe yet: clear the reasons above first")
     if p >= pct_strong:
         word = "compact strongly advised"
     elif p >= pct_advised:
         word = "compact advised"
     else:
-        return "no compact needed (%s%%, %s tokens of the context)%s" % ("%.0f" % p, short(u["tokens"]), assumed(u) if note else "")
-    return "%s (%s%%, %s tokens of the context)%s%s" % (word, "%.0f" % p, short(u["tokens"]), assumed(u) if note else "", "" if safe else ", but not safe yet: clear the reasons above first")
+        return "no compact needed (%s%%, %s tokens of the context)" % ("%.0f" % p, short(u["tokens"]))
+    return "%s (%s%%, %s tokens of the context)%s" % (word, "%.0f" % p, short(u["tokens"]), "" if safe else ", but not safe yet: clear the reasons above first")
 
 
 def cmd_usage(a, conf, state):
@@ -647,7 +645,7 @@ def cmd_check(a, conf, state):
         print("  - " + r)
     if u:
         show_usage(u)
-        print(verdict(u, c["safe"], note=False))
+        print(verdict(u, c["safe"]))
     print()
     print("\n".join(c["restart"]))
     return 0 if c["safe"] else 1
@@ -694,13 +692,16 @@ def cmd_advice(a, conf, state):
                 return 0
         ns = argparse.Namespace(project=a.project, session=None, transcript=None, cwd=a.cwd, json=False, advise=False)
         u = measure(ns, conf)
-        if not u["known"] or u["percent"] < pct:
+        if not u["known"]:
+            return 0
+        share = u["percent"] if u["percent"] is not None else u["tokens"] * 100.0 / u["window"]     # the rounded percent on a known window; an assumed one only decides when to speak, by the raw ratio
+        if share < pct:
+            return 0
+        if u["window_source"] == "assumed":
+            print("lead: %s tokens of context, %s" % (short(u["tokens"]), unknown_note(u)))     # no percentage, no word of compacting
             return 0
         c = check(ns, conf, state)
-        if u.get("window_exceeded"):
-            p = "%s tokens of context, %s" % (short(u["tokens"]), exceeded_note(u))
-        else:
-            p = "%.0f%%, %s tokens of context%s" % (u["percent"], short(u["tokens"]), assumed(u))
+        p = "%.0f%%, %s tokens of context" % (u["percent"], short(u["tokens"]))
         if c["safe"]:
             print("lead: %s; compact is safe now: run /compact" % p)
         else:

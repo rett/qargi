@@ -297,6 +297,39 @@ inst4 --project "$P4" --uninstall >/dev/null 2>&1
 rm -rf "$H4/.qargi"; mkdir -p "$H4/.qargi/config"
 inst4 --project "$P4" >/dev/null 2>&1; inst4 --project "$P4" --uninstall >/dev/null 2>&1
 [ -d "$H4/.qargi/config" ] && ok "an empty config directory the install did not make is kept" || no "uninstall removed a config directory it did not make"
+# --- the exclude file is rewritten while the lock is held: the engine removes install.lock with the last record, and a run that took the lock
+# at once could append to the file between the rewrite and the mv. Ordering, not timing: a copy of the tool whose engine records, at the moment
+# it removes the lock file, what the exclude file holds (a failing uninstall of it puts the removed lines back).
+TE=$T/tool-excl; copy_tool "$ROOT" "$TE"; cp "$ROOT/install.sh" "$TE/"; mkdir -p "$TE/completions" "$TE/man"; cp "$ROOT"/completions/* "$TE/completions/"; cp "$ROOT/man/qargi.1" "$TE/man/"
+mv "$TE/lib/install_record.py" "$TE/lib/install_record_real.py"
+cat > "$TE/lib/install_record.py" <<'PY'
+import os, runpy, sys
+real, snap = os.path.join(os.path.dirname(os.path.abspath(__file__)), "install_record_real.py"), os.environ["EXCL_SNAPSHOT"]
+unlink = os.unlink
+def watch(path, *a, **k):
+    if os.path.basename(str(path)) == "install.lock":
+        with open(os.environ["EXCL_FILE"]) as f, open(snap, "w") as o:
+            o.write(f.read())
+    return unlink(path, *a, **k)
+os.unlink = watch
+if sys.argv[1:2] == ["uninstall"] and os.environ.get("EXCL_FAIL"):
+    print("qargi: refused by the test", file=sys.stderr)
+    sys.exit(1)
+sys.argv[0] = real
+runpy.run_path(real, run_name="__main__")
+PY
+H7=$T/h7; P7=$T/proj7; mkdir -p "$H7" "$P7"; git init -q "$P7"; X7=$P7/.git/info/exclude; mkdir -p "$P7/.git/info"; echo "build/" > "$X7"
+inst7() { env -u QARGI_CONF -u QARGI_HOME HOME="$H7" EXCL_FILE="$X7" EXCL_SNAPSHOT="$T/excl-snap" bash "$TE/install.sh" "$@"; }
+inst7 --project "$P7" >/dev/null 2>&1
+n=$(grep -c "^/.claude/skills/qargi-" "$X7")
+out=$(EXCL_FAIL=1 inst7 --project "$P7" --uninstall 2>&1); rc=$?
+{ [ "$rc" = 1 ] && [ "$(grep -c "^/.claude/skills/qargi-" "$X7")" = "$n" ] && grep -qx "build/" "$X7" && [ -L "$P7/.claude/skills/qargi-task" ]; } \
+  && ok "a refused project uninstall puts its exclude lines back" || no "refused uninstall (rc=$rc): $out $(cat "$X7")"
+out=$(inst7 --project "$P7" --uninstall 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ -f "$T/excl-snap" ] && ! grep -q "qargi-" "$T/excl-snap" && grep -qx "build/" "$T/excl-snap" && ! grep -q "qargi-" "$X7" && grep -qx "build/" "$X7" \
+  && [ ! -e "$H7/.qargi" ]; } \
+  && ok "project uninstall rewrites the exclude file before the engine removes the lock file" || no "exclude order (rc=$rc): $out snapshot: $(cat "$T/excl-snap" 2>&1)"
+
 out=$(HOME=$H3 bash "$INSTALL" --user --runtime claude-platform 2>&1); rc=$?
 { [ "$rc" != 0 ] && echo "$out" | grep -q "no user skills directory" && echo "$out" | grep -q "cannot take user_skills_dir"; } && ok "a runtime with no skills directory is refused, with the reason" || no "runtime without a skills directory: rc=$rc $out"
 out=$(HOME=$H3 bash "$INSTALL" --user --runtime nosuch 2>&1); rc=$?

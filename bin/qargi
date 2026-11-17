@@ -21,7 +21,7 @@ case $area in
   # source, which install.sh --user and qargi upgrade fill (compileall); where the tool is read-only and nothing filled it, python skips the
   # write and the guard compiles as before, only slower. sys.argv is what the script had: the lib directory taken off the front.
   __guard) exec python3 -I -c 'import sys; sys.path.insert(0, sys.argv.pop(1)); import guard; sys.exit(guard.main())' "$lib" "$@";;
-  version) cat "$root/VERSION"; exit 0;;
+  version|--version) printf '%s\nsource: %s\n' "$(cat "$root/VERSION")" "$root"; exit 0;;
 esac
 # Campaign documents have native reports and a pure supplied-file check. Route
 # before even the JSON wrapper imports metadata, and before project/cloud setup.

@@ -9,12 +9,13 @@ from unittest.mock import patch
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "lib"))
 import lead_usage  # noqa: E402
+import provider as P  # noqa: E402
 BIN = os.path.join(ROOT, "bin", "qargi")
 LEADPY = os.path.join(ROOT, "lib", "lead_usage.py")
 GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.net", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.net"}
 
 
-NOTE = " (window assumed 200,000; set lead.context_window)"      # what every percentage of the runtime's guessed window carries
+UNKNOWN = "window unknown; set lead.context_window"             # what stands for a percentage while the window is only the runtime's guess
 
 
 def turn(inp=3, read=0, create=0, model="model-a", side=False, kind="assistant"):
@@ -33,7 +34,8 @@ class Base(unittest.TestCase):
         self.git("commit", "-q", "--allow-empty", "-m", "one")
         self.git("branch", "develop")
         self.answers = {"schema": 1, "project": "app", "methodology": "gitflow", "repo": {"url": "https://example.net/acme/app", "path": self.repo},
-                        "models": {"provider": {"local": "claude-code", "cloud": "claude-platform"}}, "test_command": "true"}
+                        "models": {"provider": {"local": "claude-code", "cloud": "claude-platform"}}, "test_command": "true",
+                        "lead": {"context_window": 200000}}                                              # a known window, so the fixtures' unknown model ids still give percentages
         self.write_answers()
         key = re.sub(r"[^A-Za-z0-9]", "-", self.repo)
         self.tdir = os.path.join(self.home, ".claude", "projects", key)
@@ -70,6 +72,11 @@ class Base(unittest.TestCase):
             os.utime(p, (mtime, mtime))
         return p
 
+    def assume(self):
+        """Take the answer away: the window is the model's, else only the runtime's assumed one."""
+        self.answers["lead"] = {}
+        self.write_answers()
+
     def pct(self, tokens):
         """A transcript whose last turn holds exactly that many tokens (window 200000)."""
         return self.transcript("s1", [turn(1, tokens - 1, 0)])
@@ -89,7 +96,7 @@ class Usage(Base):
         rc, out, _ = self.run_cli("lead", "usage", "--json")
         d = json.loads(out)
         self.assertEqual((rc, d["known"], d["tokens"], d["window"], d["percent"], d["session"]), (0, True, 50000, 200000, 25.0, "s1"))
-        self.assertEqual(d["window_source"], "assumed")
+        self.assertEqual(d["window_source"], "answer")
         self.assertGreater(d["bytes"], 0)
 
     def test_sidechain_and_empty_turns_do_not_count(self):
@@ -146,6 +153,7 @@ class Usage(Base):
         self.assertEqual(json.loads(self.run_cli("lead", "usage", "--json")[1])["window"], 200000)
 
     def test_the_window_follows_the_model_of_the_last_turn(self):
+        self.assume()
         self.transcript("s1", [turn(1, 99999, 0, model="model-a"), turn(1, 192117, 0, model="model-b[1m]")])
         d = json.loads(self.run_cli("lead", "usage", "--json")[1])
         self.assertEqual((d["window"], d["window_source"], d["percent"], d["model"]), (1000000, "model", 19.2, "model-b[1m]"))
@@ -155,38 +163,107 @@ class Usage(Base):
         d = json.loads(self.run_cli("lead", "usage", "--json")[1])
         self.assertEqual((d["window"], d["window_source"]), (200000, "assumed"))
 
-    def test_an_unknown_model_gets_the_runtimes_window_marked_assumed(self):
+    def test_a_plain_model_id_of_the_table_has_its_window_without_a_suffix(self):
+        self.assume()
+        self.transcript("s1", [turn(1, 197000, 0, model="claude-opus-5-5")])
+        d = json.loads(self.run_cli("lead", "usage", "--json")[1])
+        self.assertEqual((d["window"], d["window_source"], d["percent"], d["model"]), (1000000, "model", 19.7, "claude-opus-5-5"))
+        self.assertIs(d["window_exceeded"], False)
+        self.assertIn("context: 197,001 of 1,000,000 tokens in use (19.7%)\n", self.run_cli("lead", "usage")[1])
+        self.transcript("s1", [turn(1, 197000, 0, model="claude-opus-5-6")])                           # a sibling the table does not name: only assumed
+        self.assertEqual(json.loads(self.run_cli("lead", "usage", "--json")[1])["window_source"], "assumed")
+
+    def shipped_window(self, model):
+        """(tokens, source) of a model id by the table the runtime ships (lib/providers/claude-code.json), read through the provider module."""
+        tr = P.transcripts("claude-code", self.repo, root=os.path.join(ROOT, "lib", "providers"), home=self.home, conf=self.conf)
+        return P.transcript_window(tr, model)
+
+    def test_the_shipped_table_knows_the_claude_models_by_family_and_generation(self):
+        one, two = (1000000, "model"), (200000, "model")
+        for model in ("claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8", "claude-opus-5", "claude-opus-5-5", "claude-sonnet-4-6", "claude-sonnet-5",
+                      "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5", "claude-fable-5-1", "claude-fable-5-2", "claude-mythos-5", "claude-mythos-5-1",
+                      "claude-mythos-5-2", "claude-opus-4-6-20260101", "claude-fable-5-2-20260101", "claude-opus-5-20260101", "claude-opus-4-6[1m]",
+                      "claude-opus-4-5[1m]", "claude-opus-4-5-1m"):
+            self.assertEqual(self.shipped_window(model), one, model)
+        for model in ("claude-opus-4-5", "claude-opus-4-1", "claude-opus-4", "claude-sonnet-4-5", "claude-sonnet-4", "claude-haiku-4-5",
+                      "claude-opus-4-5-20251101", "claude-haiku-4-5-20251001", "claude-opus-4-1-20250805", "claude-opus-4-20250514",
+                      "claude-sonnet-4-20250514", "claude-sonnet-4-5-20250929", "claude-opus-4-0", "claude-sonnet-4-0"):
+            self.assertEqual(self.shipped_window(model), two, model)
+        # a generation the data does not name, a family of no entry, and an id of another runtime: only the assumed window
+        for model in ("claude-opus-9", "claude-opus-6", "claude-sonnet-6", "claude-haiku-6", "claude-fable-6", "claude-opus-4-9", "claude-opus-5-6",
+                      "claude-opus-50", "claude-opus-4-10", "claude-opus-4-100", "claude-haiku-5", "claude-haiku-4", "claude-sonnet-4-9", "claude-mythos-6",
+                      "claude-opus", "claude-plain-9", "gpt-5", "model-a", "", "claude-opus-4-9[1m]x",
+                      "claude-opus-4-00", "claude-sonnet-4-01", "claude-opus-4-0-1"):
+            self.assertEqual(self.shipped_window(model), (200000, "assumed"), model)
+
+    def test_no_entry_of_the_shipped_table_takes_an_id_of_another_generation(self):
+        tr = P.transcripts("claude-code", self.repo, root=os.path.join(ROOT, "lib", "providers"), home=self.home, conf=self.conf)
+        patterns = [pat for pat, _ in tr["windows"]]
+        self.assertEqual(patterns[:2], ["*[1m]", "*-1m"])                                              # the suffixes come first and win
+        self.assertLessEqual(len(patterns), P.WINDOWS_MAX)
+        self.assertEqual(len(patterns), len(set(patterns)))
+        # past the two suffix entries the entries do not overlap: an id is taken by one of them, so their order does not matter
+        for model in ("claude-opus-4", "claude-opus-4-1", "claude-opus-4-5", "claude-opus-4-6", "claude-opus-4-6-20260101", "claude-opus-4-20250514",
+                      "claude-opus-4-1-20250805", "claude-opus-4-5-20251101", "claude-sonnet-4", "claude-sonnet-4-5", "claude-sonnet-4-6", "claude-sonnet-4-20250514",
+                      "claude-opus-5", "claude-opus-5-5", "claude-fable-5", "claude-fable-5-1", "claude-fable-5-2", "claude-mythos-5-2", "claude-haiku-4-5", "claude-haiku-5-5",
+                      "claude-opus-4-0", "claude-sonnet-4-0"):
+            self.assertEqual(sum(1 for pat in patterns[2:] if P._glob(pat, model)), 1, model)
+        self.assertEqual(self.shipped_window("claude-opus-4"), (200000, "model"))                      # claude-opus-4 is no prefix of claude-opus-4-6, nor the reverse
+        self.assertEqual(self.shipped_window("claude-opus-4-6"), (1000000, "model"))
+        self.assertEqual(self.shipped_window("claude-sonnet-4"), (200000, "model"))
+        self.assertEqual(self.shipped_window("claude-sonnet-4-6"), (1000000, "model"))
+
+    def test_the_lead_usage_of_a_claude_model_uses_the_window_of_its_family(self):
+        self.assume()
+        for model, window in (("claude-opus-4-5", 200000), ("claude-opus-4-6", 1000000), ("claude-fable-5-2", 1000000), ("claude-sonnet-4-5-20250929", 200000)):
+            self.transcript("s1", [turn(1, 99999, 0, model=model)])
+            d = json.loads(self.run_cli("lead", "usage", "--json")[1])
+            self.assertEqual((d["window"], d["window_source"], d["percent"]), (window, "model", 100000 * 100 / window), model)
+        self.transcript("s1", [turn(1, 99999, 0, model="claude-opus-9")])
+        d = json.loads(self.run_cli("lead", "usage", "--json")[1])
+        self.assertEqual((d["window"], d["window_source"], d["percent"]), (200000, "assumed", None))
+
+    def test_an_unknown_model_gets_the_runtimes_window_marked_assumed_and_no_percentage(self):
+        self.assume()
         self.transcript("s1", [turn(1, 99999, 0, model="model-a")])
         d = json.loads(self.run_cli("lead", "usage", "--json")[1])
-        self.assertEqual((d["window"], d["window_source"], d["percent"]), (200000, "assumed", 50.0))
+        self.assertEqual((d["window"], d["window_source"], d["percent"], d["tokens"], d["window_exceeded"]), (200000, "assumed", None, 100000, False))
         for k in ("known", "tokens", "window", "percent", "model", "session", "transcript", "bytes", "why"):      # the keys that were there stay
             self.assertIn(k, d)
 
-    def test_a_guessed_window_says_so_and_a_known_one_does_not(self):
+    def test_an_assumed_window_shows_the_tokens_and_no_percentage(self):
+        self.assume()
         self.transcript("s1", [turn(1, 192117, 0, model="model-a")])
-        out = self.run_cli("lead", "usage")[1]
-        self.assertIn("context: 192,118 of 200,000 tokens in use (96.1%)" + NOTE + "\n", out)
+        rc, out, _ = self.run_cli("lead", "usage")
+        self.assertEqual(rc, 0)
+        self.assertIn("context: 192,118 tokens in use; " + UNKNOWN + "\n", out)
+        self.assertNotIn("%", out)
+        self.assertNotIn("200,000", out)
+        self.assertNotIn("compact", out)
         self.transcript("s1", [turn(1, 192117, 0, model="model-b[1m]")])
         out = self.run_cli("lead", "usage")[1]
         self.assertIn("context: 192,118 of 1,000,000 tokens in use (19.2%)\n", out)
-        self.assertNotIn("assumed", out)
+        self.assertNotIn("unknown", out)
         self.transcript("s1", [turn(1, 192117, 0, model="model-a")])
         self.answers["lead"] = {"context_window": 200000}                                                # the answer, even when it equals the guess
         self.write_answers()
-        self.assertNotIn("assumed", self.run_cli("lead", "usage")[1])
+        out = self.run_cli("lead", "usage")[1]
+        self.assertIn("context: 192,118 of 200,000 tokens in use (96.1%)\n", out)
+        self.assertNotIn("unknown", out)
 
     def test_tokens_beyond_an_assumed_window_say_the_window_is_larger_and_show_no_percentage(self):
+        self.assume()
         self.transcript("s1", [turn(1, 249999, 0, model="model-a")])
         rc, out, _ = self.run_cli("lead", "usage")
         self.assertEqual(rc, 0)
-        self.assertIn("context: 250,000 tokens in use; tokens exceed the assumed window 200,000; set lead.context_window\n", out)
+        self.assertIn("context: 250,000 tokens in use; window unknown (tokens exceed the assumed 200,000); set lead.context_window\n", out)
         self.assertNotIn("%", out)
         d = json.loads(self.run_cli("lead", "usage", "--json")[1])
-        self.assertEqual((d["window"], d["window_source"], d["percent"], d["window_exceeded"]), (200000, "assumed", 125.0, True))
+        self.assertEqual((d["window"], d["window_source"], d["percent"], d["window_exceeded"]), (200000, "assumed", None, True))
         self.transcript("s1", [turn(1, 199999, 0, model="model-a")])                                   # exactly the window: not beyond it
         d = json.loads(self.run_cli("lead", "usage", "--json")[1])
         self.assertIs(d["window_exceeded"], False)
-        self.assertIn("(100%)" + NOTE, self.run_cli("lead", "usage")[1])
+        self.assertIn("context: 200,000 tokens in use; " + UNKNOWN + "\n", self.run_cli("lead", "usage")[1])
         self.transcript("s1", [turn(1, 249999, 0, model="model-b[1m]")])                               # a window from the model: never flagged
         self.assertIs(json.loads(self.run_cli("lead", "usage", "--json")[1])["window_exceeded"], False)
         self.transcript("s1", [turn(1, 249999, 0, model="model-a")])
@@ -700,28 +777,42 @@ class Check(Base):
         self.assertIn("context unknown", out)
         self.assertNotIn("compact advised", out)
 
-    def test_advise_names_an_assumed_window_once_in_text_and_in_the_json_advice(self):
+    def test_advise_on_an_assumed_window_gives_the_tokens_and_never_says_to_compact(self):
+        self.assume()
+        for tokens in (50000, 100000, 140000, 250000):
+            self.pct(tokens)
+            rc, out, _ = self.check("--advise")
+            self.assertEqual(rc, 0, out)
+            self.assertIn("context: %s tokens in use; " % format(tokens, ","), out)
+            self.assertNotIn("%", out)
+            self.assertIn("no advice on compacting: %s tokens in use, " % lead_usage.short(tokens), out)
+            self.assertIn("window unknown", out)
+            self.assertIn("set lead.context_window", out)
+            for word in ("compact advised", "compact strongly advised", "no compact needed", "compact now", "safe yet"):
+                self.assertNotIn(word, out)
+        self.run_dir("r1")                                                                                 # not safe: still no word of compacting in the advice
         self.pct(140000)
         rc, out, _ = self.check("--advise")
-        self.assertEqual(out.count("window assumed"), 1)
+        self.assertEqual(rc, 1)
+        self.assertNotIn("not safe yet", out)
         d = json.loads(self.check("--advise", "--json")[1])
-        self.assertEqual(d["usage"]["window_source"], "assumed")
-        self.assertIn("compact strongly advised (70%, 140k tokens of the context)" + NOTE, d["advice"])
-        self.transcript("s1", [turn(1, 139999, 0, model="model-b[1m]")])                                   # a recognised model: no label, 14% of 1,000,000
+        self.assertEqual((d["usage"]["window_source"], d["usage"]["percent"], d["usage"]["tokens"]), ("assumed", None, 140000))
+        self.assertEqual(d["advice"], "no advice on compacting: 140k tokens in use, " + UNKNOWN)
+        self.assertIs(d["safe"], False)
+        self.transcript("s1", [turn(1, 139999, 0, model="model-b[1m]")])                                   # a recognised model: a verdict, 14% of 1,000,000
         rc, out, _ = self.check("--advise")
-        self.assertNotIn("assumed", out)
         self.assertIn("no compact needed (14%, 140k tokens of the context)", out)
-        self.assertNotIn("assumed", json.loads(self.check("--advise", "--json")[1])["advice"])
+        self.assertNotIn("unknown", out)
 
     def test_advice_beyond_an_assumed_window_says_so_without_a_percentage(self):
+        self.assume()
         self.pct(250000)
         rc, out, _ = self.check("--advise")
-        self.assertIn("context window larger than assumed (250k tokens: tokens exceed the assumed window 200,000; set lead.context_window)", out)
-        self.assertNotIn("%", out.split("context window larger")[1].split("\n")[0])
-        self.assertNotIn("window assumed", out)
+        self.assertIn("no advice on compacting: 250k tokens in use, window unknown (tokens exceed the assumed 200,000); set lead.context_window", out)
+        self.assertNotIn("%", out)
         d = json.loads(self.check("--advise", "--json")[1])
         self.assertIs(d["usage"]["window_exceeded"], True)
-        self.assertIn("exceed the assumed window 200,000", d["advice"])
+        self.assertIn("exceed the assumed 200,000", d["advice"])
         self.assertNotIn("%", d["advice"])
 
     def test_json_carries_the_reasons_and_the_restart_block(self):
@@ -753,7 +844,15 @@ class Advice(Base):
         self.pct(78000)                                                                                   # 39%
         self.assertEqual(self.advice(), "")
         self.pct(80000)                                                                                   # 40%
-        self.assertEqual(self.advice(), "lead: 40%%, 80k tokens of context%s; compact is safe now: run /compact\n" % NOTE)
+        self.assertEqual(self.advice(), "lead: 40%, 80k tokens of context; compact is safe now: run /compact\n")
+
+    def test_the_threshold_is_the_rounded_percent_on_a_known_window_and_the_raw_ratio_on_an_assumed_one(self):
+        self.pct(79990)                                                                                   # 39.995%: the percent rounds to 40.0, the raw ratio is below 40
+        self.assertEqual(self.advice(), "lead: 40%, 80k tokens of context; compact is safe now: run /compact\n")
+        self.assume()
+        self.assertEqual(self.advice(), "")                                                               # assumed window: the raw ratio decides, so it stays silent
+        self.pct(80000)
+        self.assertEqual(self.advice(), "lead: 80k tokens of context, " + UNKNOWN + "\n")
 
     def test_the_token_count_is_beside_the_percentage(self):
         self.transcript("s1", [turn(1, 179999, 0, model="model-b[1m]")])
@@ -766,23 +865,37 @@ class Advice(Base):
         self.assertEqual(self.advice(), "lead: 30%, 1.2M tokens of context; compact is safe now: run /compact\n")
 
     def test_a_known_window_has_no_label_in_the_line(self):
+        self.assume()
         self.transcript("s1", [turn(1, 499999, 0, model="model-b[1m]")])                                    # 50% of 1,000,000
         self.assertEqual(self.advice(), "lead: 50%, 500k tokens of context; compact is safe now: run /compact\n")
 
-    def test_the_stage_line_beyond_an_assumed_window_names_no_percentage(self):
+    def test_the_stage_line_on_an_assumed_window_names_the_tokens_and_no_percentage_or_compact(self):
+        self.assume()
+        self.pct(100000)
+        self.assertEqual(self.advice(), "lead: 100k tokens of context, " + UNKNOWN + "\n")
         self.pct(250000)
-        out = self.advice()
-        self.assertEqual(out, "lead: 250k tokens of context, tokens exceed the assumed window 200,000; set lead.context_window; compact is safe now: run /compact\n")
+        self.assertEqual(self.advice(), "lead: 250k tokens of context, window unknown (tokens exceed the assumed 200,000); set lead.context_window\n")
+        self.pct(78000)                                                                                   # below the threshold of the guess: nothing to say
+        self.assertEqual(self.advice(), "")
+        d = os.path.join(self.t, "r1")                                                                    # a compact that is not safe: still no word of it
+        os.makedirs(d)
+        with open(os.path.join(self.state, "local-runs.jsonl"), "w") as f:
+            f.write(json.dumps({"run": d, "slug": "r1", "ability": "build", "class": "write", "base": "feature/lc", "repo": self.repo}) + "\n")
+        self.pct(100000)
+        self.assertEqual(self.advice(), "lead: 100k tokens of context, " + UNKNOWN + "\n")
+        self.answers["lead"] = {"context_window": 200000}                                                 # the answer: the percentage and the advice are back
+        self.write_answers()
+        self.assertIn("lead: 50%, 100k tokens of context; compact is not safe yet", self.advice())
 
     def test_the_threshold_is_an_answer_and_zero_turns_it_off(self):
         self.pct(100000)
-        self.answers["lead"] = {"compact_advice_pct": 60}
+        self.answers["lead"] = {"compact_advice_pct": 60, "context_window": 200000}
         self.write_answers()
         self.assertEqual(self.advice(), "")
-        self.answers["lead"] = {"compact_advice_pct": 50}
+        self.answers["lead"] = {"compact_advice_pct": 50, "context_window": 200000}
         self.write_answers()
-        self.assertIn("lead: 50%, 100k tokens of context" + NOTE + ";", self.advice())
-        self.answers["lead"] = {"compact_advice_pct": 0}
+        self.assertIn("lead: 50%, 100k tokens of context;", self.advice())
+        self.answers["lead"] = {"compact_advice_pct": 0, "context_window": 200000}
         self.write_answers()
         self.assertEqual(self.advice(), "")
 
@@ -793,7 +906,7 @@ class Advice(Base):
         with open(os.path.join(self.state, "local-runs.jsonl"), "w") as f:
             f.write(json.dumps({"run": d, "slug": "r1", "ability": "build", "class": "write", "base": "feature/lc", "repo": self.repo}) + "\n")
         out = self.advice()
-        self.assertEqual(out, "lead: 50%%, 100k tokens of context%s; compact is not safe yet: a local run is prepared and not verified (qargi lead compact-check)\n" % NOTE)
+        self.assertEqual(out, "lead: 50%, 100k tokens of context; compact is not safe yet: a local run is prepared and not verified (qargi lead compact-check)\n")
 
     def test_for_a_merge_it_waits_for_the_last_open_run_of_the_feature(self):
         self.pct(100000)
@@ -812,7 +925,7 @@ class Advice(Base):
         self.assertEqual((r.returncode, r.stdout), (0, ""))
         os.makedirs(os.path.join(self.state, "ref-journal.jsonl"))                                          # a journal that is a directory
         self.pct(100000)
-        self.assertIn("lead: 50%, 100k tokens of context" + NOTE + ";", self.advice())
+        self.assertIn("lead: 50%, 100k tokens of context;", self.advice())
 
 
 if __name__ == "__main__":

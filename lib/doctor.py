@@ -10,12 +10,14 @@ The command does not fail on a finding: exit 0, or 1 with --strict when any chec
   shm            free space under the run temporary parent (/dev/shm, or QARGI_RUN_TMP) and the orphaned qargi-run.* directories
                  there (lib/orphans.sh, the listing `qargi local clean --orphans` prints).
   window-source  where the context-window table of the project's runtime comes from (its definition, or the answer
-                 lead.context_window) and whether each model id the project's roles name is in it.
+                 lead.context_window) and whether each model id the project's roles name is in it, and the model of the lead's own
+                 session (the last turn of its transcript, read only): a model that is in neither warns, since its window is only
+                 assumed and no percentage or compact advice is given for it. A lead model that cannot be determined is not a warning.
   tools          flock and timeout are on PATH: flock keeps two runs of a finishing verb, and the writers of the ref journal and the records, apart;
                  timeout bounds the questions put to a remote. A missing one warns, with what each is for and the package that has it.
   install        the install records of install.sh in the live configuration directory (install.d, install.json; read with
                  lib/install_record.py, the lock is not taken): the tool, its source and version, and every runtime installed for
-                 the user and in a project. It warns on a legacy install.manifest (or project-N.manifest) still there, a recorded
+                 the user and in a project. It warns on an install.manifest (or project-N.manifest) of qargi 0.3.1 or earlier still there (no longer read), a recorded
                  link (or copy) that is missing, dangling or now points elsewhere, a recorded version other than the VERSION of the
                  recorded tool, and a record that cannot be read; `unknown` when nothing is installed. --json adds the facts as fields.
   project-env    the last `qargi env check` recorded for the project (state/env/PROJECT.json): `last env check <verdict> at <time>`, a
@@ -244,8 +246,9 @@ def check_install():
     facts = {"conf": conf, "tool_root": None, "source": None, "version": None, "tool_version": None, "runtimes": [], "projects": [],
              "legacy": [], "missing": [], "moved": [], "unreadable": []}
     problems, fix = [], []
-    try:
-        legacy = IR.legacy_files(conf)
+    try:       # the records of qargi 0.3.1 or earlier: install.sh no longer reads them
+        legacy = [os.path.join(conf, n) for n in sorted(os.listdir(conf))
+                  if (n == "install.manifest" or re.match(r"^project-[0-9]+\.manifest$", n)) and os.path.isfile(os.path.join(conf, n))]
     except OSError:
         legacy = []
     facts["legacy"] = legacy
@@ -312,19 +315,15 @@ def check_install():
     if facts["unreadable"]:
         fix.append("fix: a record that cannot be read is not used by install.sh either: move it aside, then remove by hand what it lists and install again")
     if legacy:
-        if os.path.isdir(os.path.join(conf, "install.d")):
-            problems.append("the legacy %s is still there (the records are in install.d, so it is not read)" % some(legacy))
-            fix.append("fix: the next %s removes it unread" % install)
-        else:
-            problems.append("the legacy %s is not moved into install.d yet" % some(legacy))
-            fix.append("fix: %s moves it into install.d once (qargi upgrade runs it)" % install)
+        problems.append("%s from qargi 0.3.1 or earlier is no longer read" % some(legacy))
+        fix.append("fix: it can be removed by hand after checking that install.d holds the records of your installs (%s writes them)" % install)
     if rec is not None and not root and not facts["unreadable"]:
         problems.append("install.json records no tool_root")
         fix.append("fix: %s records it again" % install)
     if rec is None and facts["runtimes"]:
         problems.append("runtimes are recorded but install.json is not there")
         fix.append("fix: %s records the tool again" % install)
-    if rec is not None and root and not facts["runtimes"] and not legacy and not facts["unreadable"]:
+    if rec is not None and root and not facts["runtimes"] and not facts["unreadable"]:
         problems.append("install.json names the tool, but no user runtime is recorded in install.d")
         fix.append("fix: %s installs the lead skills (the default runtime; --runtime NAME for another)" % install)
     if facts["missing"]:
@@ -393,6 +392,25 @@ def where(path):
     return os.path.relpath(path, top) if path == top or path.startswith(top + os.sep) else path
 
 
+def lead_session_model(project, conf):
+    """-> (model, found): the model id of the last turn of the lead's own session (lib/lead_usage.py, which only reads the transcript the
+    project's runtime keeps), and when there is none what was found instead: no transcript, a transcript with no counted turn, a turn with no
+    model id (a transcript that cannot be read is no transcript found)."""
+    try:
+        import argparse
+        import lead_usage as LU
+        u = LU.measure(argparse.Namespace(project=project, session=None, transcript=None, cwd="", json=False, advise=False), conf)
+    except Exception:                                           # noqa: BLE001  (a check that cannot be made is unknown, never an error)
+        return "", "no transcript of its session"
+    if not u.get("known"):
+        if u.get("transcript") and str(u.get("why", "")).startswith("no turn"):
+            return "", "its transcript has no counted turn"
+        return "", "no transcript of its session"
+    if not u.get("model"):
+        return "", "the last turn of its transcript names no model id"
+    return u["model"], ""
+
+
 def check_window_source(project):
     name = "window-source"
     if not project:
@@ -417,18 +435,30 @@ def check_window_source(project):
     ans = ans if isinstance(ans, int) and not isinstance(ans, bool) and ans >= 1000 else None
     if ans:
         table = "answer lead.context_window = %s overrides the %s" % (format(ans, ","), table)
+    else:
+        table += " (the table gives the API's window, the runtime may cap it lower on some plans; the answer lead.context_window overrides it)"
     ids = []
     for role, spec in sorted((answers.get("roles") or {}).items()) if isinstance(answers.get("roles"), dict) else ():
         m = spec.get("model") if isinstance(spec, dict) else None
         if isinstance(m, str) and m.strip() and m.strip() not in ids:
             ids.append(m.strip())
-    if not ids:
-        return check(name, "ok", table + "; no role names a model id (the tiers resolve at dispatch)")
+    lead_model, lead_found = ("", "") if ans else lead_session_model(project, conf)       # the answer settles the window of every model: nothing to look up
     unknown = [] if ans else [m for m in ids if P.transcript_window(tr, m)[1] != "model"]
-    if unknown:
-        return check(name, "warn", table + "; not in the table: %s (their window is only assumed)" % ", ".join(clean(m, 80) for m in unknown),
+    lead_unknown = bool(lead_model) and P.transcript_window(tr, lead_model)[1] != "model"
+    if unknown or lead_unknown:
+        said = []
+        if unknown:
+            said.append("not in the table: %s (their window is only assumed)" % ", ".join(clean(m, 80) for m in unknown))
+        if lead_unknown:
+            said.append("the lead's own model is not in the table: %s (its window is only assumed, so there is no percentage and no compact advice)" % clean(lead_model, 80))
+        return check(name, "warn", table + "; " + "; ".join(said),
                      ["fix: set the answer lead.context_window, or add an entry for the id to the window table of the runtime's definition"])
-    return check(name, "ok", table + "; %d model id%s checked" % (len(ids), "" if len(ids) == 1 else "s"))
+    if not ids and not ans and not lead_model:
+        return check(name, "unknown", table + "; no role names a model id and the lead's own model cannot be determined (%s)" % lead_found)
+    lead = "" if ans else ("; the lead's own model %s is in the table" % clean(lead_model, 80) if lead_model else "; the lead's own model cannot be determined (%s)" % lead_found)
+    if not ids:
+        return check(name, "ok", table + "; no role names a model id (the tiers resolve at dispatch)" + lead)
+    return check(name, "ok", table + "; %d model id%s checked" % (len(ids), "" if len(ids) == 1 else "s") + lead)
 
 
 def check_project_env(project):
