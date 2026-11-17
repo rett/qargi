@@ -227,11 +227,15 @@ class Render(unittest.TestCase):
         for word in ("migrat", "moved into install.d"):
             self.assertNotIn(word, doctor)
         handoff = " ".join(C.COMMANDS["marshal"]["verbs"]["handoff"]["desc"].split())
-        self.assertIn("The note starts with its where section, then an index of its features (3072 bytes of lines, then one line that counts the features without one), lists live work first, "
-                      "lists a feature's own worktrees under it, and when it reaches its bound it ends with a line naming the features left out or cut short and saying how many have no index line;", handoff)
-        self.assertIn("--json at the bound empties worktrees_unattributed and agent_unattributed first, then, one feature at a time from the last, trims its detail and drops it", handoff)
-        self.assertIn("Output is capped at 16 KiB, the note and --json alike", handoff)
-        for key in ("truncated", "features_omitted", "features_left_out", "features_left_out_more", "worktrees_unattributed", "agent_unattributed"):   # the keys of a cut note in --json (lib/marshal_handoff.py)
+        self.assertIn("The note starts with its where section, then an index of its features, lists live work first and lists a feature's own worktrees under it. "
+                      "A note that fits the bound is printed whole, with every index line and no truncation line; "
+                      "only a note over the bound has its index cut (3072 bytes of lines, then one line that counts the features without one) and ends with a line naming the features left out or cut short and saying how many have no index line.", handoff)
+        self.assertIn("The features that have a branch and no marshal record are one note: how many, their first names, then the count of the rest.", handoff)
+        self.assertIn("--json over the bound empties worktrees_unattributed and agent_unattributed as needed (each only while the output is still over the bound), then, one feature at a time from the last, trims its detail and drops it, and sets truncated; "
+                      "when features are dropped it adds features_omitted (the count dropped) and features_left_out (their names, up to 3000 bytes), and features_left_out_more (the count of names not listed) when not all of them are.", handoff)
+        self.assertIn("it cuts the lists from the end, the notes first, then deviations.accepted, gates, read_first.memory, read_first.repo_docs and read_first.successor, and lists_left_out says how many items each list lost.", handoff)
+        self.assertIn("Output is capped at 16 KiB, the note and --json alike (the final newline counted); the one part not bounded is what a successor needs whole and --json never cuts: do_not_assume, where, packs, environment and the fields of a record", handoff)
+        for key in ("truncated", "features_omitted", "features_left_out", "features_left_out_more", "lists_left_out", "worktrees_unattributed", "agent_unattributed"):   # the keys of a cut note in --json (lib/marshal_handoff.py)
             self.assertIn(key, handoff)
         advise = [o for o in C.COMMANDS["lead"]["verbs"]["compact-check"]["opts"] if o["flag"] == "--advise"]
         self.assertIn("no advice on an assumed window (unknown model window and no lead.context_window)", str(advise))
