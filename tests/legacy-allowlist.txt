@@ -1,4 +1,3 @@
 # Phrases that lib/ may hold although qargi keeps no code for earlier versions (tests/test_legacy_lint.py).
 # One line per file and phrase: `FILE: PHRASE  # why`. PHRASE is one of: older record, migrat, earlier version (any case).
 # The list only shrinks: delete a line when the code it names is gone (the test fails on a line that matches nothing).
-lib/guard.py: migrat  # one-time migration of the 0.3.1 install.manifest; removed in 0.3.3
