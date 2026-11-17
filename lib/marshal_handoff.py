@@ -25,16 +25,23 @@ A feature that this identity leads gets a "next lead" line: the claim --as-succe
 
 The goal, plan, note and purpose of a record are DATA written by a lead: they are printed under a line that says so, indented,
 with control characters removed (marshal_store.clean) and cut at marshal_store.CAP characters. Every other free-text field is
-cleaned the same way. The output is capped at CAP_BYTES. The features come in the order of the index near the top (one line each: name, status, lead, whether
+cleaned the same way. The output is capped at CAP_BYTES, the note and --json alike (the newline that ends the output counted). The features come in
+the order of the index near the top (one line each: name, status, lead, whether
 the branch is live, open runs): live work first (a branch on this host or an open run), then active, planned, blocked, and within a group the most
-recently renewed lease; the work trees of a feature are listed under it, the ones of no feature once. The index is bounded too (INDEX_MAX bytes
-of lines, then one line that counts the features without one and names the first of them), so that the entries of the first, live,
-features still have room. When the bound is reached the entries that do not fit are left out (the first one that does not fit may be cut at a line), the
-fixed closing list is kept, and the last line of the note names every feature left out or cut short, says how many features have no index
-line (a note whose index was cut has that line even when every entry fits), and says so when the fixed parts alone are over the bound and the sections after the
-index were cut. --json drops the work trees and agent branches of no feature, then the detail of the last feature and the feature itself, one
-feature at a time from the last, until the output (the newline that ends it counted) fits; it then says "truncated", counts features_omitted,
-names the features left out in features_left_out (up to NAMES_MAX bytes) and counts the rest in features_left_out_more.
+recently renewed lease; the work trees of a feature are listed under it, the ones of no feature once. A note that fits whole is not cut: it has
+every index line, every entry and no truncation line. Only a note over the bound has its index bounded (INDEX_MAX bytes of lines, then one line
+that counts the features without one and names the first of them), so that the entries of the first, live, features still have room. Then the
+entries that do not fit are left out (the first one that does not fit may be cut at a line), the fixed closing list is kept, and the last line
+of the note names every feature left out or cut short, says how many features have no index line (a note that was over the bound only for its
+index lines has that line even when every entry fits), and says so when the fixed parts alone are over the bound and the sections after the
+index were cut. The features without a marshal record (a branch and no record) are one note, a count and their names up to NOTE_NAMES bytes,
+not one note each. --json, when the whole object is over the bound, drops the work trees and agent branches of no feature, then the detail of
+the last feature and the feature itself, one feature at a time from the last, until the output fits; it then says "truncated", counts
+features_omitted, names the features left out in features_left_out (up to NAMES_MAX bytes) and counts the rest in features_left_out_more.
+When it is still over the bound with no feature left, its last step cuts the lists (notes, the accepted deviations, gates, then the memory tiers,
+repository documents and successor lines of read_first) from the end, and lists_left_out counts what each lost. Not cut, because a successor must
+have them whole: do_not_assume, where, packs, environment and the fields of a record; they are a few KiB unless a path in them is very long, and
+only they are not bounded.
 
 Exit status: 0 ok, 1 refused or failed (message on stderr), 2 usage.
 Run through lib/marshal.sh; python3 -I, standard library only."""
@@ -49,6 +56,7 @@ PACK_TIMEOUT = 60
 NAMES_MAX = 3000         # bytes of feature names the truncation line (and --json features_left_out) may carry before the count of the rest
 INDEX_MAX = 3072         # bytes of index lines before the index says "and N more features"
 INDEX_NAMES = 400        # bytes of the names the "and N more features" line of the index may carry
+NOTE_NAMES = 400         # bytes of feature names the one note about features without a marshal record may carry before "and N more"
 STATUS_RANK = {"active": 0, "planned": 1, "blocked": 2, "verifying": 3, "released": 4}
 DO_NOT_ASSUME = (
     "Approvals and plan tokens do not carry over: every approval you were told about was given for one action in another session; ask the owner again.",
@@ -472,9 +480,16 @@ def collect(a, argv_name):
     unattributed = [{"branch": line(b), "base": line(base)} for b, base in M.unattributed_agents(ctx)] if repo else []
     if be.refs and not argv_name and not feats:
         notes.append("no open feature in the local cache of the shared records; the remote was not asked")
-    for f in feats:
-        if not f["record"]["has_record"]:
-            notes.append("feature %s has no marshal record (started before the marshal, or by hand): no lead, goal or plan is stored" % f["name"])
+    norec = [f["name"] for f in feats if not f["record"]["has_record"]]
+    if norec:           # one note for all of them, in the order of the entries: the names up to NOTE_NAMES bytes, then the count of the rest
+        shown, used = [], 0
+        for n in norec:
+            used += len(n.encode()) + 1
+            if used > NOTE_NAMES:
+                break
+            shown.append(n)
+        notes.append("%d feature(s) have no marshal record (started before the marshal, or by hand): no lead, goal or plan is stored: %s%s"
+                     % (len(norec), " ".join(shown), " (and %d more)" % (len(norec) - len(shown)) if len(shown) < len(norec) else ""))
 
     return {"schema": 1, "kind": "qargi-handoff", "project": clean(a.project), "generated_at": M.iso(ctx.t), "generated_by": clean(ctx.id),
             "where": where, "gates": gate_rows, "deviations": deviation_facts(answers, repo) if present else None, "features": feats, "worktrees_unattributed": wts_other, "agent_unattributed": unattributed, "backend": "refs" if ctx.be.refs else "local", "integrity": ctx.be.integrity,
@@ -530,12 +545,13 @@ def index_cut(F):
     return len(F["features"]) - index_shown(index_rows(F))
 
 
-def index_lines(F):
-    """One line per feature, in the order of the entries, while they fit INDEX_MAX bytes; then one line that counts the features without one
-    and names the first of them (INDEX_NAMES bytes). Written before the entries; the last line of the note says how many features have no line."""
+def index_lines(F, bounded=True):
+    """One line per feature, in the order of the entries. Bounded: only while they fit INDEX_MAX bytes, then one line that counts the features
+    without one and names the first of them (INDEX_NAMES bytes). Written before the entries; the last line of a note whose index was cut says
+    how many features have no line. Not bounded: every line (the note that fits whole is not cut)."""
     L = ["== index (one line per feature, live work first; the entries below follow this order)"]
     rows = index_rows(F)
-    n = index_shown(rows)
+    n = index_shown(rows) if bounded else len(rows)
     L += rows[:n]
     if n < len(rows):
         names, used = [], 0
@@ -545,13 +561,14 @@ def index_lines(F):
                 break
             names.append(f["name"])
         rest = len(rows) - n - len(names)
-        L.append("  and %d more feature(s) without an index line, in the order of the entries below: %s%s" % (len(rows) - n, " ".join(names), " (and %d more)" % rest if rest else ""))
+        L.append("  and %d more feature(s) without an index line (in the order of the entries; a feature with no entry is named on the last line): %s%s"
+                 % (len(rows) - n, " ".join(names), " (and %d more)" % rest if rest else ""))
     if not F["features"]:
         L.append("  no open feature")
     return L
 
 
-def head_lines(F):
+def head_lines(F, bounded=True):
     w, L = F["where"], []
     A = L.append
     A("HANDOFF NOTE for project %s" % F["project"])
@@ -570,7 +587,7 @@ def head_lines(F):
       else "qargi data NOT present on this host (no answers of %s at %s)" % (F["project"], w["answers_file"]))
     A("A new worktree starts from whatever commit it was cut from: compare its HEAD with the tips below before you trust any file.")
     A("")
-    L += index_lines(F)
+    L += index_lines(F, bounded)
     A("")
     A("== features")
     if not F["features"]:
@@ -809,21 +826,23 @@ def take(lines, room):
 
 def render_text(F):
     """The note within CAP_BYTES. The fixed parts (where, the index, the sections after the entries, the notes, the closing list) are always
-    written; the entries and records of the features come in the order of the index while they fit. The index itself is bounded (INDEX_MAX
-    bytes of lines, then one line that counts the rest), so that the entries of the first, live, features still have room. The first entry
+    written; the entries and records of the features come in the order of the index while they fit. The whole note is made first, with every
+    index line: a note that fits is returned as it is, not cut and with no truncation line. Only a note over the bound has its index bounded
+    (INDEX_MAX bytes of lines, then one line that counts the rest), so that the entries of the first, live, features still have room. The first entry
     that does not fit is cut at a line, the ones after it are left out, and the last line of the note names both (names only: the reader
-    asks for each with a per-feature handoff) and says how many features have no index line; a note whose index was cut has that line
-    even when every entry fits. The number of whole entries is the largest one for which the entries and the line that names the rest, made
+    asks for each with a per-feature handoff) and says how many features have no index line; a note that was over the bound only for its
+    index lines has that line even when every entry fits. The number of whole entries is the largest one for which the entries and the line that names the rest, made
     for exactly that rest, fit: the length of the line depends on which names are left (past NAMES_MAX bytes a shorter list of names can print
     more of them than a longer one), so it is measured and never estimated, and a feature that fits is never dropped for the sake of the line.
     Only when the fixed parts alone are over the bound are the sections after the index cut, and the line says so."""
-    head, mid, rest, tail, closing = head_lines(F), middle_lines(F), rest_lines(F), notes_lines(F), closing_lines(F)
+    mid, rest, tail, closing = middle_lines(F), rest_lines(F), notes_lines(F), closing_lines(F)
     feats = F["features"]
     names = [f["name"] for f in feats]
-    ni = index_cut(F)
     ents, recs = [entry_lines(f) for f in feats], [record_lines(f) for f in feats]
     flat = lambda ls: [x for l in ls for x in l]
-    tl = lambda left, cut, sections=False: truncation_line(left, cut, sections, ni)
+    cum = [0]
+    for e, r in zip(ents, recs):
+        cum.append(cum[-1] + size(e) + size(r))
 
     def build(E, R):
         return head + flat(E) + mid + flat(R) + rest + [""] + tail + closing
@@ -831,12 +850,14 @@ def render_text(F):
     def done(lines, line_):
         return "\n".join(lines + ["", line_]) + "\n"
 
-    fixed = size(build([], []))
-    cum = [0]
-    for e, r in zip(ents, recs):
-        cum.append(cum[-1] + size(e) + size(r))
-    if fixed + cum[-1] <= CAP_BYTES and not ni:
+    # the whole note, with every index line, is made first: a note that fits is not cut and has no truncation line
+    head = head_lines(F, bounded=False)
+    if size(build([], [])) + cum[-1] <= CAP_BYTES:
         return "\n".join(build(ents, recs)) + "\n"
+    # over the bound: the index is bounded too, so that the entries of the first, live, features still have room
+    head, ni = head_lines(F), index_cut(F)
+    tl = lambda left, cut, sections=False: truncation_line(left, cut, sections, ni)
+    fixed = size(build([], []))
     if ni and fixed + cum[-1] + size(["", tl([], [])]) <= CAP_BYTES:
         return done(build(ents, recs), tl([], []))      # every entry fits; only the index was cut
     # not everything fits: the most whole entries that fit with the line that names the rest
@@ -864,23 +885,76 @@ def render_text(F):
     return done(build(E, R), line_)
 
 
+# The lists of --json that are cut as the last step, most expendable first. A path is (key, subkey or None). The do_not_assume list, where,
+# packs, environment and the integrity fields are never cut: a successor must have them whole.
+CUT_LISTS = (("notes", None), ("deviations", "accepted"), ("gates", None), ("read_first", "memory"), ("read_first", "repo_docs"), ("read_first", "successor"))
+
+
+def cut_lists(G, dump):
+    """G (the object with its features already dropped) with its CUT_LISTS cut from the end until the output, with its newline, is within
+    CAP_BYTES: the most expendable list loses its items first, the ones that are kept are the longest prefixes that fit. lists_left_out says
+    how many items of each list were left out. Returns the text; when even the emptied lists leave it over the bound it is returned as it is
+    (what stays is the whole fixed part: where, packs, environment, do_not_assume, the paths and text in them)."""
+    G = dict(G)
+    if isinstance(G.get("deviations"), dict):
+        G["deviations"] = dict(G["deviations"])
+    if isinstance(G.get("read_first"), dict):
+        G["read_first"] = dict(G["read_first"])
+    holders = {}
+    for key, sub in CUT_LISTS:
+        box = G.get(key)
+        cur = box if sub is None else (box.get(sub) if isinstance(box, dict) else None)
+        if isinstance(cur, list) and cur:
+            holders[(key, sub)] = cur
+
+    def put(path, items):
+        key, sub = path
+        if sub is None:
+            G[key] = items
+        else:
+            G[key][sub] = items
+
+    def render():
+        left = {(k if s is None else k + "." + s): len(full) - len(G[k] if s is None else G[k][s]) for (k, s), full in holders.items()}
+        left = {k: v for k, v in left.items() if v}
+        return dump(dict(G, **({"lists_left_out": left} if left else {}))) + "\n"
+    for path in holders:
+        put(path, [])
+    if len(render().encode()) > CAP_BYTES:
+        return render()
+    for path in reversed(list(holders)):            # the most important list gets its room first
+        full = holders[path]
+        lo, hi = 0, len(full)                        # lo always fits (it was rendered): the answer is the last length found that fits
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            put(path, full[:mid])
+            if len(render().encode()) <= CAP_BYTES:
+                lo = mid
+            else:
+                hi = mid - 1
+        put(path, full[:lo])
+    return render()
+
+
 def render_json(F):
     """The JSON within CAP_BYTES, the newline that ends it counted. What no feature owns goes first (the work trees and the agent branches of
     no feature), then the features from the last: the detail of the last feature (commits, tasks, work trees, overlap), then the feature
     itself, before any earlier feature is touched, so the first, live, features keep their own tasks and work trees as long as anything else
     can go. The features dropped are named in features_left_out up to NAMES_MAX bytes; features_left_out_more counts the rest and
-    features_omitted all of them. The size of each step is computed from the size of each feature, which is measured once; the text is made
-    once, for the first step that fits."""
+    features_omitted all of them. The size of each step is computed from the sizes of the features, which are added up (a whole feature is
+    serialized once; the stripped last feature again at its own step), not by printing the whole object for each step; the text is made once,
+    for the first step that fits. Only when even no feature is left and the object is still over the bound are the remaining lists cut
+    (cut_lists: the notes, the accepted deviations, the gates, then the memory tiers, repository documents and successor lines of read_first),
+    and lists_left_out counts what each lost. Not cut: do_not_assume, where, packs, environment and the fields of the record, which a successor
+    needs whole."""
     dump = lambda d: json.dumps(d, indent=1)
     if len(dump(F)) + 1 <= CAP_BYTES:
         return dump(F) + "\n"
-    F["truncated"] = True
+    F = dict(F, truncated=True)         # a copy: the caller's object (the handoff record is made from it) keeps every feature
     for k in ("worktrees_unattributed", "agent_unattributed"):
         if len(dump(F)) + 1 > CAP_BYTES:
             F[k] = []
     feats = F["features"]
-    if not feats:
-        return dump(F) + "\n"
     names = [f["name"] for f in feats]
     base = len(dump(dict(F, features=[]))) + 1
     # as an item of the list at depth 2 each line of a feature has two more spaces; the list itself adds "[", a newline, ",\n" between the
@@ -926,7 +1000,10 @@ def render_json(F):
                 out = make(m, stripped)
                 if len(out.encode()) <= CAP_BYTES:       # the computed size is exact; this is the check of what is printed
                     return out
-    return make(0, False)
+    G = dict(F, features=[])                            # no feature fits: the last step cuts the lists
+    if names:
+        G.update(left_out(0))
+    return cut_lists(G, dump)
 
 
 # ---- --write -------------------------------------------------------------------------------------------------------
