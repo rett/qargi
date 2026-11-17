@@ -119,7 +119,8 @@
       "window": 200000,
       "windows": [
         {"model": "*[1m]", "tokens": 1000000},
-        {"model": "*-1m", "tokens": 1000000}
+        {"model": "*-1m", "tokens": 1000000},
+        {"model": "claude-opus-5-5", "tokens": 1000000}
       ],
       "usage": {
         "select": {"/type": "assistant"},

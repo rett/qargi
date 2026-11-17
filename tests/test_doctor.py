@@ -261,7 +261,7 @@ class WindowSource(Base):
         rc, out, _ = self.doctor("app")
         st, text = self.lines(out)["window-source"]
         self.assertEqual(st, "ok", out)
-        self.assertIn("table of claude-code (shipped, lib/providers/claude-code.json): 2 entries, 200,000 assumed otherwise", text)
+        self.assertIn("table of claude-code (shipped, lib/providers/claude-code.json): 3 entries, 200,000 assumed otherwise", text)
         self.assertIn("2 model ids checked", text)
 
     def test_an_id_that_is_not_in_the_table_warns(self):

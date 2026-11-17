@@ -155,6 +155,15 @@ class Usage(Base):
         d = json.loads(self.run_cli("lead", "usage", "--json")[1])
         self.assertEqual((d["window"], d["window_source"]), (200000, "assumed"))
 
+    def test_a_plain_model_id_of_the_table_has_its_window_without_a_suffix(self):
+        self.transcript("s1", [turn(1, 197000, 0, model="claude-opus-5-5")])
+        d = json.loads(self.run_cli("lead", "usage", "--json")[1])
+        self.assertEqual((d["window"], d["window_source"], d["percent"], d["model"]), (1000000, "model", 19.7, "claude-opus-5-5"))
+        self.assertIs(d["window_exceeded"], False)
+        self.assertIn("context: 197,001 of 1,000,000 tokens in use (19.7%)\n", self.run_cli("lead", "usage")[1])
+        self.transcript("s1", [turn(1, 197000, 0, model="claude-opus-5-5-x")])                         # the entry is the whole id, not a prefix
+        self.assertEqual(json.loads(self.run_cli("lead", "usage", "--json")[1])["window_source"], "assumed")
+
     def test_an_unknown_model_gets_the_runtimes_window_marked_assumed(self):
         self.transcript("s1", [turn(1, 99999, 0, model="model-a")])
         d = json.loads(self.run_cli("lead", "usage", "--json")[1])
