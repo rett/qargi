@@ -21,6 +21,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Loading qargi's shell library no longer rewrites a setup that is already right: it makes only a missing directory or file and sets a directory to mode 700 only when group or others may use it, so an observational verb such as `qargi backlog list --json` changes nothing in the config, state and root directories and prints no `chmod` diagnostic on a read-only file system. A directory made read-only for its owner is left so, and a write that is needed and fails is still reported.
 ### Changed
 - The lead handoff note (`marshal handoff`) keeps active work when it reaches its 16 KiB bound. It starts with an index of one line per feature (name, status, lead, live branch, open runs) and lists the features with a live branch or an open run first (active, then planned, then blocked; the most recently renewed first), the ones with no branch on this host and no open run last. A feature entry lists only its own work trees (on `feature/NAME`, or on the `agent/` branch of a run based on it); the work trees of no feature are listed once, in one project-level section. When the note is cut, its last line says so and names every feature left out or cut short, so the reader can ask for each with a per-feature handoff; the note never exceeds the bound. `--json` keeps the live features first, trims the detail of the last ones first, and adds `worktrees_unattributed` and, when features are dropped, `features_left_out`.
+### Added
+- `qargi doctor`'s `window-source` check also looks at the model of the lead's own session (the last turn of its transcript, read only) and warns when that model is not in the runtime's table of windows and `lead.context_window` is unset, since its window is only assumed; a lead model that cannot be determined (no transcript) is not a warning, and a project with no role model ids and no lead model is `unknown`.
+
+### Changed
+- While the context window of the lead is only assumed (no `lead.context_window`, and the model has no entry in the runtime's table), `qargi lead usage`, `lead compact-check --advise` and the stage-verb line print the tokens in use and say `window unknown; set lead.context_window`, with no percentage and no advice to compact (`lead usage --json` has `percent: null` then; `window_source: "assumed"` and the tokens stay). A window from the answer or the model is unchanged.
+
+### Fixed
+- `claude-code`'s table of context windows names the plain id `claude-opus-5-5` (1,000,000 tokens), so `qargi lead usage` and the stage-verb line no longer measure a lead on that model against the assumed 200,000 window and advise a compact far too early; an id that ends in `[1m]` or `-1m` still means one million, and an id with no entry still gets the assumed window.
 
 ## [0.3.2] - 2026-11-16
 

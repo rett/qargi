@@ -3,7 +3,7 @@
 were asked; the run temporary parent is a directory of the test (QARGI_RUN_TMP), never the real one; the project is invented. Nothing waits for a
 fixed time. Offline. Run: python3 tests/test_doctor.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
-import json, os, shutil, stat, subprocess, sys, tempfile, unittest
+import json, os, re, shutil, stat, subprocess, sys, tempfile, unittest
 from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -252,6 +252,14 @@ class Shm(Base):
 
 
 class WindowSource(Base):
+    def lead_session(self, model, tokens=1000):
+        """A transcript of the lead's own session for the directory the doctor runs in: one assistant turn of that model."""
+        d = os.path.join(os.environ["HOME"], ".claude", "projects", re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(os.getcwd())))
+        os.makedirs(d, exist_ok=True)
+        self.addCleanup(shutil.rmtree, d, True)
+        with open(os.path.join(d, "lead-session.jsonl"), "w") as f:
+            f.write(json.dumps({"type": "assistant", "isSidechain": False, "message": {"model": model, "usage": {"input_tokens": tokens}}}) + "\n")
+
     def test_no_project_is_unknown(self):
         rc, out, _ = self.doctor()
         self.assertEqual(self.lines(out)["window-source"][0], "unknown", out)
@@ -261,7 +269,7 @@ class WindowSource(Base):
         rc, out, _ = self.doctor("app")
         st, text = self.lines(out)["window-source"]
         self.assertEqual(st, "ok", out)
-        self.assertIn("table of claude-code (shipped, lib/providers/claude-code.json): 2 entries, 200,000 assumed otherwise", text)
+        self.assertIn("table of claude-code (shipped, lib/providers/claude-code.json): 3 entries, 200,000 assumed otherwise", text)
         self.assertIn("2 model ids checked", text)
 
     def test_an_id_that_is_not_in_the_table_warns(self):
@@ -279,11 +287,55 @@ class WindowSource(Base):
         self.assertEqual(st, "ok", text)
         self.assertIn("answer lead.context_window = 300,000 overrides", text)
 
-    def test_no_model_id_is_ok(self):
+    def test_no_model_id_is_ok_when_the_leads_model_is_in_the_table(self):
         self.project(roles={"build": {"model": None}})
+        self.lead_session("claude-opus-5-5")
         st, text = self.lines(self.doctor("app")[1])["window-source"]
         self.assertEqual(st, "ok", text)
         self.assertIn("no role names a model id", text)
+        self.assertIn("the lead's own model claude-opus-5-5 is in the table", text)
+
+    def test_the_leads_model_that_is_not_in_the_table_warns(self):
+        self.project(roles={"build": {"model": "model-a-1m"}})
+        self.lead_session("claude-plain-9")
+        rc, out, _ = self.doctor("app")
+        st, text = self.lines(out)["window-source"]
+        self.assertEqual((rc, st), (0, "warn"), out)
+        self.assertIn("the lead's own model is not in the table: claude-plain-9", text)
+        self.assertNotIn("not in the table: model-a-1m", text)
+        self.assertIn("fix: set the answer lead.context_window", text)
+        self.assertEqual(self.doctor("app", "--strict")[0], 1)
+        self.project(roles={"write": {"model": "plain-model"}})                                          # the roles' ids and the lead's are both named
+        text = self.lines(self.doctor("app")[1])["window-source"][1]
+        self.assertIn("not in the table: plain-model", text)
+        self.assertIn("the lead's own model is not in the table: claude-plain-9", text)
+
+    def test_the_answer_settles_the_leads_model_too(self):
+        self.project(roles={"build": {"model": None}}, lead={"context_window": 300000})
+        self.lead_session("claude-plain-9")
+        st, text = self.lines(self.doctor("app")[1])["window-source"]
+        self.assertEqual(st, "ok", text)
+        self.assertNotIn("lead's own model", text)
+
+    def test_a_lead_model_that_cannot_be_determined_is_not_a_warning(self):
+        self.project(roles={"build": {"model": "model-a-1m"}})                                           # no transcript of the lead's session
+        st, text = self.lines(self.doctor("app")[1])["window-source"]
+        self.assertEqual(st, "ok", text)
+        self.assertIn("1 model id checked", text)
+        self.assertIn("the lead's own model cannot be determined", text)
+        self.project(roles={"build": {"model": None}})                                                   # nothing at all to check: unknown, not ok
+        rc, out, _ = self.doctor("app", "--strict")
+        st, text = self.lines(out)["window-source"]
+        self.assertEqual((rc, st), (0, "unknown"), out)
+        self.assertIn("the lead's own model cannot be determined", text)
+
+    def test_it_writes_nothing(self):
+        self.project(roles={"build": {"model": None}})
+        self.lead_session("claude-plain-9")
+        home = os.environ["HOME"]
+        before = snapshot(home, os.environ["QARGI_CONF"])
+        self.doctor("app")
+        self.assertEqual(snapshot(home, os.environ["QARGI_CONF"]), before)
 
     def test_a_project_without_a_runtime_is_unknown(self):
         self.project(models={"provider": ""})
