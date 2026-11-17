@@ -358,13 +358,13 @@ ROOT_SCRIPTS = ("install.sh",)                                       # of those,
 #     runs the string; +c is not read as -c);
 #   - a separator (; or a newline) inside a quoted word before the program (`X='a;b' qargi upgrade`, `env X='a;b' ...`, `sudo -p 'a;b' ...`,
 #     `timeout -s 'a;b' 5 git push`, `sudo -p $'a\nb' -h host qargi upgrade`): the plain split cuts the line there and loses the program;
-#   - a real redirection with a blank before its file, then a quoted value that reads as a redirection (`sudo -p 2> /dev/null '<x' qargi upgrade`,
-#     `env -u 2> /dev/null '<x' ...`, `exec -a 2> /dev/null '<x' git push`, `sudo -p < /dev/null '<x' ...`): one reading takes both for redirections
-#     and the program for the value, the other the redirection's file for the program; the same before a -p directory (`. -p 2>/dev/null '<x:ROOT'
-#     install.sh`: the directory read is install.sh), and `. -p '<x' -p ROOT install.sh` (the second -p is read as the first one's directory, and ROOT
-#     is never looked in);
+#   - a real redirection, then a quoted value that reads as a redirection, as the directory of source -p (`. -p 2>/dev/null '<x:ROOT' install.sh`: the
+#     directory read is install.sh), and `. -p '<x' -p ROOT install.sh` (the second -p is read as the first one's directory, and ROOT is never looked
+#     in); before a wrapper's program the same is read (wrapper_readings: `sudo -p 2> /dev/null '<x' qargi upgrade` is refused);
 #   - source -p with an operator glued to it and a blank before its file (`. -p> /dev/null ROOT install.sh`, `. -p< /dev/null ROOT install.sh`): the
 #     redirection's file is read as the directory, and ROOT is never looked in;
+#   - a -p directory built by a substitution inside a substitution (`echo $(. -p $(echo ROOT) install.sh)`): the line is read whole too, but the text
+#     of a substitution only cut at the substitution inside it, so `. -p` is read apart from install.sh and the directory it is looked up in;
 #   - a shell on a pipe whose option value reads as a here-string or a here-document (`echo '...' | bash --rcfile '<<<x'`, also '<<x', '<<<', '<<',
 #     and `bash --rcfile '<<<' <<< '...'`): the value is read as what feeds the shell its program, so the pipe or the real here-string is not read;
 #   - a brace or a glob as an option's value (`python3 -X {dev,FILE}`, `python3 -X * dev FILE`): read as one word, while the shell makes it several;
@@ -373,7 +373,9 @@ ROOT_SCRIPTS = ("install.sh",)                                       # of those,
 #     under the read-only class the second reading is judged for lead-only verbs and pushes only, not for a write outside OUT (`sudo -Z x touch foo`).
 # The reading errs the other way too: `bash -n .../install.sh` (a syntax check that runs nothing) is refused like a run of the script, and a command
 # with four wrapper options the guard does not know (`sudo -h a -h b -h c -h d ls`) is refused, since each is read both ways one reading deeper
-# and, as with shells, more than three readings deep are not followed. Like the rest
+# and, as with shells, more than three readings deep are not followed; so is a segment with more than MAX_READINGS other readings (nine words that read
+# as redirections after one option that takes a value: `sudo -p 1>/dev/null ... 9>/dev/null x ls`), which bounds the readings of one segment at
+# 8 + 8^2 + 8^3. Like the rest
 # of the shell reading it is a heuristic against a mistake, not a wall against a member that works to get round it; the local verify of the
 # patches is the backstop.
 MEMORY_VERBS = ("init", "move", "split", "merge", "copy")                          # qargi memory verbs that change a memory tier
@@ -595,8 +597,8 @@ def blocked(command, depth=0):
         why = program_blocked(toks, i, depth) if i < len(toks) else None
         if why:
             return why
-        for alt in wrapper_readings(seg) if depth < 3 else ():     # a wrapper's option the guard cannot read may take the next word: that reading too,
-            why = blocked(alt, depth + 1)                           # also when this one has no program (timeout -s '<' 5 git push: '<' read as a redirection takes 5)
+        for alt in wrapper_readings(seg)[:MAX_READINGS] if depth < 3 else ():   # a wrapper's option the guard cannot read may take the next word: that reading
+            why = blocked(alt, depth + 1)                           # too, also when this one has no program (timeout -s '<' 5 git push: '<' read as a redirection takes 5)
             if why:
                 return why
     for _, ps in passes(command) if depth < 3 else ():       # a shell fed its program on its standard input or in a file the line writes: the text the line shows is read again
@@ -754,8 +756,8 @@ def skip_wrappers(toks):
     word that is no redirection), timeout's duration, the keywords a command can follow (then, do, !) and redirections written before the program (> f,
     2>&1). An option of a wrapper that WRAP_OPTS does not name is read as taking no value and its index is returned, so that the other reading is judged
     too (wrapper_readings). An option that takes a value and is followed by a word that reads as a redirection (sudo -p '< ', env -u '<x': the words carry
-    no quotes, so a quoted value looks like one) is read with the value past it, and its index is returned, so that the reading where that word is the
-    value is judged too (wrapper_readings). Only a word that is no assignment names a wrapper, and a
+    no quotes, so a quoted value looks like one) is read with the value past it, and its index is returned, so that the readings where that word, or a
+    later one that reads as a redirection too, is the value are judged too (wrapper_readings). Only a word that is no assignment names a wrapper, and a
     `--` after timeout's options leaves its duration still to come. toks is changed in one way: env -S STRING (-iS, --split-string, --s, -S>FILE STRING) is
     replaced by the words of STRING, which env reads as more of its own words."""
     i, w, unread, valued, duration, opts = 0, None, [], [], False, True
@@ -821,13 +823,18 @@ def _parsed(seg):
     return toks, i, tuple(unread), tuple(valued)
 
 
+MAX_READINGS = 8                                             # other readings of one segment, at most (wrapper_readings); a segment with more is refused (bash_skill_refusal)
+
+
 def wrapper_readings(seg):
-    """The other command a segment may run when a wrapper's option the guard cannot read (skip_wrappers) takes the next word as its value: the words with
-    the first such option and the next word that is no redirection taken out, or nothing. An option word with a redirection glued to it (sudo -u>/dev/null
+    """The other commands a segment may run when a wrapper's option the guard cannot read (skip_wrappers) takes the next word as its value: the words with
+    the first such option and the next word that is no redirection taken out. An option word with a redirection glued to it (sudo -u>/dev/null
     root) is the option and the redirection, as the shell cuts it when the < or > is not quoted: the other reading is the word cut there. The words are
     joined as a shell reads them back (rejoin), so that a word with a blank (the text of a here-string) stays one word. An option that takes a value and is
-    followed by a word that reads as a redirection (sudo -p '< ', exec -a '>x') may have that word, quoted, as its value: the other reading is the words
-    with the option and that word taken out. That command is judged as a segment of its own, so each further such option is read both ways too."""
+    followed by words that read as redirections (sudo -p '< ', exec -a '>x', sudo -p 2> /dev/null '<x') may have any of them, quoted, as its value, and
+    the others are real redirections: for every such option, and for each of those words up to the first word that is no redirection (a bare operator is
+    passed with its file), one reading is the words with the option and that word taken out. Each reading is judged as a segment of its own, so each further
+    such option is read both ways too, one reading deeper. The list is cut at MAX_READINGS + 1: a segment with more is refused (bash_skill_refusal)."""
     toks, _, unread, valued = _parsed(seg)
     out = []
     if unread:
@@ -838,10 +845,14 @@ def wrapper_readings(seg):
         else:
             v = past_redirections(toks, u + 1)
             out.append(rejoin(toks[:u] + toks[u + 1:v] + toks[v + 1:]))
-    if valued:
-        u = valued[0]
-        out.append(rejoin(toks[:u] + toks[u + 2:]))
-    return out
+    for u in valued:
+        k = u + 1
+        while k < len(toks) and is_redirection(toks[k]) and len(out) <= MAX_READINGS:
+            reading = rejoin(toks[:u] + toks[u + 1:k] + toks[k + 1:])
+            if reading not in out:
+                out.append(reading)
+            k += 2 if BARE_REDIR.match(toks[k]) else 1
+    return out[:MAX_READINGS + 1]
 
 
 def rejoin(words):
@@ -2841,13 +2852,17 @@ def bash_skill_refusal(command, here, depth, outer=None):
                         why = bash_skill_refusal(as_program(text), [at], depth + 1, assigned)
                         if why:
                             return why
-            for alt in wrapper_readings(seg):                    # a wrapper's option the guard cannot read may take the next word: that reading is judged too
+            readings = wrapper_readings(seg)
+            if len(readings) > MAX_READINGS:                     # bounded: at most MAX_READINGS other readings of a segment, each at most three deep
+                return ("a command whose wrapper options can be read in more than %d ways (options the guard cannot read, values that read as redirections) "
+                        "is not available to an agent; write the command with fewer of them or in parts" % MAX_READINGS)
+            for alt in readings:                                 # a wrapper's option the guard cannot read may take the next word: that reading is judged too
                 if depth >= 3:                                   # each such option, like each nested shell, is one reading deeper
                     unread, valued = _parsed(seg)[2:]
                     return ("the wrapper option %s, %s, is not available to an agent after three such options or nested shells (each such option is read "
                             "both ways, one reading deeper); write the command with fewer of them or in parts"
                             % (toks[(unread or valued)[0]], "which the guard cannot read (it may take the next word as its value, which changes what the program is)"
-                               if unread else "whose value the guard cannot read (it reads as a redirection, so the value may be that word or the word after it, "
+                               if unread else "whose value the guard cannot read (it reads as a redirection, so the value may be that word or a later one, "
                                "which changes what the program is)"))
                 why = bash_skill_refusal(alt, [at], depth + 1, assigned)
                 if why:

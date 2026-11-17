@@ -439,7 +439,7 @@ COMMANDS = {
                                   "The environment section gives the last env check and env apply recorded for the project (verdict, time, and whether that was at HEAD now). "
                                   "For a feature this identity leads it names the claim --as-successor-of command a restarted session runs. --write also records when the note was written (what qargi lead compact-check compares with the last merge), and a line says whether a compact is safe now (see qargi help lead). "
                                   "It also gives the packs render check and the launch line for the project's provider, the memory index and notes paths, the history command and a fixed list of what not to assume (approvals and plan tokens do not carry over). "
-                                  "Output is capped at 16 KiB, the note and --json alike (the final newline counted); the one part not bounded is what a successor needs whole and --json never cuts: do_not_assume, where, packs, environment and the fields of a record (a few KiB, more only for a path of unusual length). --write refuses an existing file, a path inside a git work tree or the qargi directories, and a member run. The qargi-session skill says what to do with the note.")),
+                                  "Output is capped at 16 KiB, the note and --json alike (the final newline counted). The text note is always within the bound; in --json the one part not bounded is what a successor needs whole and --json never cuts: do_not_assume, where, packs and environment (a few KiB, more only for a path of unusual length). --write refuses an existing file, a path inside a git work tree or the qargi directories, and a member run. The qargi-session skill says what to do with the note.")),
             "disable": verb("Switch back to the local records; the refs already on the remote stay (audited as marshal:disable)", [], [PROJECT_OPT, opt("--plan", "the plan token printed by the first run", "TOKEN"), APPROVED],
                             desc="While integrity is advisory or strict it needs the plan token and your words (it drops the setting). Not available in a member run."),
         },
@@ -815,7 +815,8 @@ COMMANDS = {
                  "missing, stale or edited (the states of qargi agent list). "
                  "shm: the free space under /dev/shm (QARGI_RUN_TMP moves it) and the orphaned qargi-run.* directories there, the listing of qargi local clean --orphans; it warns on "
                  "an orphan or on less than 10% free (QARGI_DOCTOR_MIN_FREE moves the limit, in percent). "
-                 "window-source: where the context-window table of the project's local runtime comes from (its definition, or the answer lead.context_window, which overrides it) "
+                 "window-source: where the context-window table of the project's local runtime comes from (its definition, or the answer lead.context_window, which overrides the "
+                 "table: the table gives the API's window, which the product may cap lower on some plans) "
                  "and whether each model id its roles name is in the table, and the model of the lead's own session (the last turn of its transcript, read only) unless the answer is set; an id that is not there warns, since its window is only assumed, "
                  "while a lead model that cannot be determined (no transcript, no counted turn, no model id) is not a warning. "
                  "tools: flock (the locks of the finishing verbs and the ref journal) and timeout (the bound on a question put to a remote) are on PATH; a missing one warns and names what it is for and "
@@ -1643,8 +1644,12 @@ COMMANDS = {
                            opt("--transcript", "read this transcript file", "FILE", "file"), opt("--json", "machine-readable")],
                           desc=("The runtime of the project says where its session transcripts are and how to read them (resources.transcripts of its definition): "
                                 "the context in use is the input, cache-read and cache-creation tokens of the last assistant turn. The window is the project answer "
-                                "lead.context_window (tokens), else the one the runtime's definition gives for the model id of that turn (resources.transcripts.windows; the entries of the shipped definition match ids that end in [1m] or -1m, and claude-opus-5-5), else the "
-                                "definition's single window, which is only a guess. While the window is only assumed the line shows the tokens in use and says window unknown; set "
+                                "lead.context_window (tokens), else the one the runtime's definition gives for the model id of that turn (resources.transcripts.windows), else the "
+                                "definition's single window, which is only a guess. The table of the claude-code runtime knows the Claude families, per the Anthropic "
+                                "models overview of 2026-11-17: 1,000,000 tokens for Fable and Mythos 5, 5.1 and 5.2, Opus 4.6, 4.7, 4.8, 5 and 5.5, Sonnet 4.6, 5 and 5.5, "
+                                "Haiku 5.5 and ids that end in [1m] or -1m; 200,000 for Opus 4, 4.1 and 4.5, Sonnet 4 and 4.5 and Haiku 4.5. A dated id takes its family's "
+                                "window, and any other id is assumed at 200,000. The table gives the API's window, which the product may cap lower on some plans, so "
+                                "lead.context_window overrides it. While the window is only assumed the line shows the tokens in use and says window unknown; set "
                                 "lead.context_window, with no percentage and no advice to compact; when the tokens exceed the guess it adds that they do, since the real window is larger. "
                                 "--json says window_source answer, model or assumed; while it is assumed percent is null (window is the guess) and window_exceeded says whether the tokens "
                                 "are beyond it. Read only; a transcript that cannot be found or read prints unknown and exits 0."),

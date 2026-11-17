@@ -166,8 +166,8 @@ refusal changes nothing.
    and otherwise `user@host` (the marshal verbs also honour `--as`; `release` takes no `--as`), and every step under the cut,
    including a cut-off `finish` that resumes, is refused before anything moves when run by another lead, when the identity cannot
    be determined, or when the record names no lead (a cut approved before this binding). The refusal names the remedy that fits the
-   state. While the cut's start step has not run, the cut is approved again (`release plan VERSION --again`, then `--plan` and
-   `--approved`). Once it has run (the release branch or the tag exists, or the record shows start done), approving the cut again is not
+   state. While the release has not begun, the cut is approved again (`release plan VERSION --again`, then `--plan` and
+   `--approved`). Once it has begun (the release branch or the tag exists, or the record shows start done), approving the cut again is not
    offered: with the branch or the tag there, `--again` would discard the record and then refuse, and when only the record shows
    start done it would plan the cut anew. The step is run with its own plan and approval, which is not bound, and so is every later
    step: nothing writes a lead into an existing record, so each later step under the cut token is refused again. When the refusal is
