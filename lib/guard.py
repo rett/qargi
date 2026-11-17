@@ -356,8 +356,17 @@ ROOT_SCRIPTS = ("install.sh",)                                       # of those,
 #     the word is taken as the -c flag, so neither the standard input nor a file is read as the program;
 #   - `zsh -c -O 'qargi upgrade'` (in zsh -O is a flag, read here as bash's -O, which takes the string as its value) and `bash +c 'qargi upgrade'` (bash
 #     runs the string; +c is not read as -c);
-#   - a separator inside a quoted word before the program (`X='a;b' qargi upgrade`, `env X='a;b' ...`, `sudo -p 'a;b' ...`, `timeout -s 'a;b' 5 git
-#     push`): the plain split cuts the line there and loses the program;
+#   - a separator (; or a newline) inside a quoted word before the program (`X='a;b' qargi upgrade`, `env X='a;b' ...`, `sudo -p 'a;b' ...`,
+#     `timeout -s 'a;b' 5 git push`, `sudo -p $'a\nb' -h host qargi upgrade`): the plain split cuts the line there and loses the program;
+#   - a real redirection with a blank before its file, then a quoted value that reads as a redirection (`sudo -p 2> /dev/null '<x' qargi upgrade`,
+#     `env -u 2> /dev/null '<x' ...`, `exec -a 2> /dev/null '<x' git push`, `sudo -p < /dev/null '<x' ...`): one reading takes both for redirections
+#     and the program for the value, the other the redirection's file for the program; the same before a -p directory (`. -p 2>/dev/null '<x:ROOT'
+#     install.sh`: the directory read is install.sh), and `. -p '<x' -p ROOT install.sh` (the second -p is read as the first one's directory, and ROOT
+#     is never looked in);
+#   - source -p with an operator glued to it and a blank before its file (`. -p> /dev/null ROOT install.sh`, `. -p< /dev/null ROOT install.sh`): the
+#     redirection's file is read as the directory, and ROOT is never looked in;
+#   - a shell on a pipe whose option value reads as a here-string or a here-document (`echo '...' | bash --rcfile '<<<x'`, also '<<x', '<<<', '<<',
+#     and `bash --rcfile '<<<' <<< '...'`): the value is read as what feeds the shell its program, so the pipe or the real here-string is not read;
 #   - a brace or a glob as an option's value (`python3 -X {dev,FILE}`, `python3 -X * dev FILE`): read as one word, while the shell makes it several;
 #   - a variable inside an env -S string in the place of the program (`env -S '${P} upgrade'`): env expands ${P} itself, inside the outer quotes;
 #   - a wrapper option the guard does not know is read as taking no word or one (wrapper_readings), not more (`sudo -Z a b c qargi upgrade`); and
@@ -557,6 +566,24 @@ def config_refusal(args, via_xargs):
     return None
 
 
+def program_blocked(toks, i, depth):
+    """The reason the program toks[i] of a segment's words publishes or reaches out (gh, ssh, git push, rsync to a host, a shell string that does), or None."""
+    prog = os.path.basename(toks[i])
+    rest = toks[i + 1:]
+    if prog in ("gh", "ssh", "scp", "sftp"):
+        return "%s is not available to an agent" % prog
+    if prog in GIT_PUSH_PROGRAMS or prog in ("svn", "git-svn") and "dcommit" in rest:
+        return "%s is not available to an agent" % prog
+    if prog == "rsync" and any(remote_operand(t) for t in rest if not t.startswith("-")):
+        return "rsync to or from another host is not available to an agent"
+    if prog == "git":
+        why = git_refusal(toks[:i], rest)
+        if why:
+            return why
+    inner = shell_string(prog, rest) if depth < 3 else None
+    return blocked(inner, depth + 1) if inner is not None else None
+
+
 def blocked(command, depth=0):
     seen = set()
     for seg in segments(command):
@@ -565,26 +592,11 @@ def blocked(command, depth=0):
             continue
         seen.add(seg)
         toks, i = parsed(seg)
-        if i >= len(toks):
-            continue
-        prog = os.path.basename(toks[i])
-        rest = toks[i + 1:]
-        if prog in ("gh", "ssh", "scp", "sftp"):
-            return "%s is not available to an agent" % prog
-        if prog in GIT_PUSH_PROGRAMS or prog in ("svn", "git-svn") and "dcommit" in rest:
-            return "%s is not available to an agent" % prog
-        if prog == "rsync" and any(remote_operand(t) for t in rest if not t.startswith("-")):
-            return "rsync to or from another host is not available to an agent"
-        if prog == "git":
-            why = git_refusal(toks[:i], rest)
-            if why:
-                return why
-        inner = shell_string(prog, rest) if depth < 3 else None
-        why = blocked(inner, depth + 1) if inner is not None else None
+        why = program_blocked(toks, i, depth) if i < len(toks) else None
         if why:
             return why
-        for alt in wrapper_readings(seg) if depth < 3 else ():     # a wrapper's option the guard cannot read may take the next word: that reading too
-            why = blocked(alt, depth + 1)
+        for alt in wrapper_readings(seg) if depth < 3 else ():     # a wrapper's option the guard cannot read may take the next word: that reading too,
+            why = blocked(alt, depth + 1)                           # also when this one has no program (timeout -s '<' 5 git push: '<' read as a redirection takes 5)
             if why:
                 return why
     for _, ps in passes(command) if depth < 3 else ():       # a shell fed its program on its standard input or in a file the line writes: the text the line shows is read again
@@ -2831,9 +2843,12 @@ def bash_skill_refusal(command, here, depth, outer=None):
                             return why
             for alt in wrapper_readings(seg):                    # a wrapper's option the guard cannot read may take the next word: that reading is judged too
                 if depth >= 3:                                   # each such option, like each nested shell, is one reading deeper
-                    return ("the wrapper option %s, which the guard cannot read (it may take the next word as its value, which changes what the program is), "
-                            "is not available to an agent after three such options or nested shells, which are each read both ways; write the command with fewer "
-                            "of them or in parts" % toks[sum(_parsed(seg)[2:], ())[0]])
+                    unread, valued = _parsed(seg)[2:]
+                    return ("the wrapper option %s, %s, is not available to an agent after three such options or nested shells (each such option is read "
+                            "both ways, one reading deeper); write the command with fewer of them or in parts"
+                            % (toks[(unread or valued)[0]], "which the guard cannot read (it may take the next word as its value, which changes what the program is)"
+                               if unread else "whose value the guard cannot read (it reads as a redirection, so the value may be that word or the word after it, "
+                               "which changes what the program is)"))
                 why = bash_skill_refusal(alt, [at], depth + 1, assigned)
                 if why:
                     return why
@@ -3335,16 +3350,19 @@ def interpreted(prog, rest):
     return (None, False) if UNREAD_NAME.search(os.path.basename(rest[k])) else (k, True)
 
 
-def script_of(prog, rest):
-    """The index in rest of the lead-only script (SCRIPTS) an interpreter prog runs, or None: the file it runs (interpreted) when that is one; the first
-    word that names one when the guard cannot read the options or the file's name (fail closed); when it runs no file (-c, -m, -s), the first word that
-    is no option, as before (shell_string reads the string of sh -c again)."""
+def scripts_of(prog, rest):
+    """The indices in rest of the words that may be the lead-only script (SCRIPTS) an interpreter prog runs, in order: the file it runs (interpreted) when
+    that is one; every word that names one when the guard cannot read the options or the file's name (fail closed: the first such word may be a value of
+    the options, a source -p directory named like a script such as a tool root named qargi, and the script a later word); when it runs no file (-c, -m,
+    -s), the first word that is no option, as before (shell_string reads the string of sh -c again)."""
     if prog not in SHELLS and prog not in SOURCES and not re.match(r"^python[0-9.]*$", prog):
-        return None
+        return []
     k, readable = interpreted(prog, rest)
+    if k is None and not readable:
+        return [j for j, t in enumerate(rest) if os.path.basename(t) in SCRIPTS]
     if k is None:
-        k = next((j for j, t in enumerate(rest) if (os.path.basename(t) in SCRIPTS if not readable else not t.startswith("-"))), None)
-    return k if k is not None and os.path.basename(rest[k]) in SCRIPTS else None
+        k = next((j for j, t in enumerate(rest) if not t.startswith("-")), None)
+    return [k] if k is not None and os.path.basename(rest[k]) in SCRIPTS else []
 
 
 def own_named(prog, rest, script, here):
@@ -3358,19 +3376,25 @@ def own_named(prog, rest, script, here):
     return own_script(script, here)
 
 
-def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
+def skill_verb(prog, rest, via_xargs=False, here=".", exe=None, at=None):
     """The reason a qargi command (or the script behind it, run directly) is a verb that changes a skill, or None. via_xargs: xargs
     stands before the program, so its arguments come from standard input, where --write could be. here: the directory the command runs
-    in, and exe: the word that names the program, for the scripts that are only the tool's own (OWN_ONLY)."""
+    in, and exe: the word that names the program, for the scripts that are only the tool's own (OWN_ONLY). at: the index in rest of the
+    script an interpreter runs, one of scripts_of (each is judged)."""
     # a ) with no ( in a word closes a substitution or group whose start the plain split cut off (`printf -v x 'b[%s(true; qargi upgrade)]' $`
     # runs `qargi upgrade` in an arithmetic subscript): the command ends there, so the verb is read without it
     cut = [t.split(")")[0] if ")" in t and "(" not in t else t for t in rest]
     words = [t for t in cut if not t.startswith("-")]
     name, script = prog, exe or prog
-    if prog not in SCRIPTS:                              # also a script a shell runs, or sources into itself (`. install.sh` runs it as `sh install.sh` does)
-        k = script_of(prog, cut)                         # past the interpreter's options and their values (python3 -X dev, bash -o errexit)
-        if k is None:
-            return None
+    if prog not in SCRIPTS and at is None:               # also a script a shell runs, or sources into itself (`. install.sh` runs it as `sh install.sh` does)
+        for k in scripts_of(prog, cut):                  # past the interpreter's options and their values (python3 -X dev, bash -o errexit); each word that may be it
+            tick()
+            why = skill_verb(prog, rest, via_xargs, here, exe, at=k)
+            if why:
+                return why
+        return None
+    if prog not in SCRIPTS:
+        k = at
         name, script, words = os.path.basename(cut[k]), cut[k], [t for t in cut[k + 1:] if not t.startswith("-")]
     if name in OWN_ONLY and not own_named(prog, cut, script, here):
         return None
@@ -3577,9 +3601,7 @@ def protected_write(toks, i, here):
     xargs = any(os.path.basename(t) == "xargs" for t in toks[:i])
     args = operands(rest, xargs)
     cands = list(write_targets(toks, i))
-    k = None if prog in SCRIPTS else script_of(prog, rest)       # a script an interpreter runs, past its options (bash -o errexit lib/packs.sh packs render)
-    if prog in SCRIPTS or k is not None:
-        words = args if prog in SCRIPTS else operands(rest[k + 1:], xargs)
+    for words in [args] if prog in SCRIPTS else [operands(rest[k + 1:], xargs) for k in scripts_of(prog, rest)]:   # a script an interpreter runs, past its options (bash -o errexit lib/packs.sh packs render)
         if words[:2] == ["packs", "render"]:                 # render writes its output directory: judge every operand
             cands += [("qargi packs render", c) for t in words[2:] for c in {t, t.split("=", 1)[-1]}]
     if prog == "find" and any(t in FIND_ACTIONS for t in rest):

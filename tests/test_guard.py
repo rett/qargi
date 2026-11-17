@@ -1298,7 +1298,8 @@ class RenderTree(HookCase):
     def test_packs_render_into_the_render_through_an_interpreter_with_options_is_refused(self):
         r = self.render
         for c in ("bash -o errexit lib/packs.sh packs render p build %s" % r, "bash -euo pipefail lib/packs.sh packs render p build --out %s" % r,
-                  "sh -O extglob lib/packs.sh packs render p build %s" % r, ". -p lib lib/packs.sh packs render p build %s" % r):
+                  "sh -O extglob lib/packs.sh packs render p build %s" % r, ". -p lib lib/packs.sh packs render p build %s" % r,
+                  ". -p 2>/dev/null /x/qargi lib/packs.sh packs render p build %s" % r):     # a -p directory named like a script: every such word is read
             res = self.bash(c)
             self.assertEqual(res.returncode, 2, (c, res.stderr))
             self.assertIn("managed by qargi and changed only by the lead", res.stderr)
@@ -4666,6 +4667,37 @@ class InterpreterOptionValues(HookCase):
         self.allowed((". -p${D} ./install.sh", ". -p>/dev/null /x install.sh", ". -p/x>/dev/null install.sh --user", ". -p$(dirname x) lib/lib.sh",
                       ". -p>/dev/null %s install.sh" % self.clone))
 
+    def test_a_tool_root_named_qargi(self):
+        """A tool root whose directory is named qargi (/opt/qargi, a checkout of the repository): qargi is a script name, so when the options are not
+        readable the -p directory itself names a script. Every word that names one is judged, so the install.sh looked up in that directory is
+        still the tool's and refused, whatever the root is called; the clone's own install.sh and a project directory named qargi stay allowed."""
+        opt = os.path.join(self.t, "opt/qargi")                           # an installed copy reached through install.json
+        os.makedirs(os.path.join(opt, "lib"))
+        with open(os.path.join(opt, "install.sh"), "w") as f:
+            f.write("#!/bin/sh\n")
+        with open(os.path.join(self.conf, "install.json"), "w") as f:
+            json.dump({"tool_root": opt}, f)
+        forms = (". -p 2>/dev/null @ install.sh", ". -p 2> /dev/null @ install.sh", ". -p </dev/null @ install.sh", ". -p >/dev/null @ install.sh",
+                 ". -p '<x' @ install.sh", ". -p '< ' @ install.sh", ". -p>/dev/null @ install.sh", "source -p<x @ install.sh --user",
+                 ". -p '<x:@' install.sh --user", ". -p>/dev/null /x:@ install.sh", ". -p>/dev/null $(echo @) install.sh", "source -p @ install.sh --user")
+        for form in forms:
+            c = form.replace("@", opt)
+            for wrapped in (c, "sudo " + c, "env X=1 " + c, "timeout 5 " + c):
+                with self.subTest(c=wrapped):
+                    self.refused(wrapped, InstallScript.WHY)
+            # nested: '< ' loses its quotes in a shell's string and a substitution inside $(...) is not read, whatever the root is named (not this case)
+            for wrapped in ([] if "'< '" in c else ['bash -c "%s"' % c, 'eval "%s"' % c, 'bash <<< "%s"' % c]) + ([] if "$(" in c else ["echo $(%s)" % c]):
+                with self.subTest(c=wrapped):
+                    r = self.bash(wrapped)
+                    self.assertEqual(r.returncode, 2, (wrapped, r.stderr))
+        self.own_files()
+        proj = os.path.join(self.t, "proj/qargi")                          # a project's directory of that name, with an install.sh of its own
+        os.makedirs(proj)
+        with open(os.path.join(proj, "install.sh"), "w") as f:
+            f.write("")
+        self.allowed([form.replace("@", d) for d in (self.clone, proj) for form in forms if "$(" not in form])   # a directory the shell builds counts as the tool's
+        self.allowed(("bash install.sh --user", ". ./install.sh", ". -p 2>/dev/null %s ./install.sh" % opt))
+
 
 class WrapperOptions(HookCase):
     """The program after a wrapper and the string of sh -c are found past the options: the -c string is the first word past a shell's options, not the
@@ -4855,6 +4887,10 @@ class WrapperOptions(HookCase):
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("after three such options or nested shells", r.stderr)
         self.assertNotIn("inside shells nested more than three deep", r.stderr)
+        r = self.bash("sudo -h a -h b -h c -p '<x' ls")                   # a known option whose value reads as a redirection: its value is what is not read
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("the wrapper option -p, whose value the guard cannot read", r.stderr)
+        self.assertIn("after three such options or nested shells", r.stderr)
 
     def test_timeout_reads_its_duration_after_the_end_of_its_options(self):
         """timeout -- 5s PROGRAM: `--` ends the options, and the duration still comes before the program."""
@@ -4926,6 +4962,20 @@ class WrapperOptions(HookCase):
         self.allowed(("sudo -p '< ' ls", "env -u '<x' git status", "exec -a '>x' git status", "time -f '<%e' make", "xargs -I '<f' echo '<f'",
                       "timeout -s '>x' 5 git status", "sudo -p '> ' bash install.sh --user", "sudo -u 2>/dev/null root ls",
                       "timeout -k 2>/dev/null 1 5 git status"))
+
+    def test_a_quoted_value_that_reads_as_a_bare_redirection_before_a_push(self):
+        """timeout -s '<' 5 git push: the value reads as a bare redirection, which takes the next word as its file, so the first reading finds no program
+        at all (timeout's duration is the last word); the reading where that word is the value is judged even then, for git push, ssh and gh as for the
+        lead-only verbs."""
+        for v in ("'<'", "'<<<'", "'0<'", "'<<'"):
+            with self.subTest(v=v):
+                self.pushes([f % v for f in ("timeout -s %s 5 git push", "timeout -k %s 5 git push", "xargs -I %s git push", "sudo -p %s git push",
+                                             "env -u %s git push", "exec -a %s git push", "time -f %s git push")])
+                for c, prog in (("timeout -s %s 5 ssh host" % v, "ssh"), ("sudo -p %s ssh host" % v, "ssh"), ("timeout -s %s 5 gh pr create" % v, "gh")):
+                    r = self.bash(c)
+                    self.assertEqual(r.returncode, 2, (c, r.stderr))
+                    self.assertIn("%s is not available to an agent" % prog, r.stderr, c)
+                self.allowed(("sudo -p %s git status" % v, "timeout -s %s 5 git log" % v, "env -u %s git log" % v))
 
     def test_the_other_reading_of_a_wrapper_option_keeps_each_word(self):
         """The reading without an unknown option and its value keeps the words whole: the text of a here-string is still one word."""
