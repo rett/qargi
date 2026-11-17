@@ -15,7 +15,7 @@ The command does not fail on a finding: exit 0, or 1 with --strict when any chec
                  timeout bounds the questions put to a remote. A missing one warns, with what each is for and the package that has it.
   install        the install records of install.sh in the live configuration directory (install.d, install.json; read with
                  lib/install_record.py, the lock is not taken): the tool, its source and version, and every runtime installed for
-                 the user and in a project. It warns on a legacy install.manifest (or project-N.manifest) still there, a recorded
+                 the user and in a project. It warns on an install.manifest (or project-N.manifest) of qargi 0.3.1 or earlier still there (no longer read), a recorded
                  link (or copy) that is missing, dangling or now points elsewhere, a recorded version other than the VERSION of the
                  recorded tool, and a record that cannot be read; `unknown` when nothing is installed. --json adds the facts as fields.
   project-env    the last `qargi env check` recorded for the project (state/env/PROJECT.json): `last env check <verdict> at <time>`, a
@@ -244,8 +244,9 @@ def check_install():
     facts = {"conf": conf, "tool_root": None, "source": None, "version": None, "tool_version": None, "runtimes": [], "projects": [],
              "legacy": [], "missing": [], "moved": [], "unreadable": []}
     problems, fix = [], []
-    try:
-        legacy = IR.legacy_files(conf)
+    try:       # the records of qargi 0.3.1 or earlier: install.sh no longer reads them
+        legacy = [os.path.join(conf, n) for n in sorted(os.listdir(conf))
+                  if (n == "install.manifest" or re.match(r"^project-[0-9]+\.manifest$", n)) and os.path.isfile(os.path.join(conf, n))]
     except OSError:
         legacy = []
     facts["legacy"] = legacy
@@ -312,19 +313,15 @@ def check_install():
     if facts["unreadable"]:
         fix.append("fix: a record that cannot be read is not used by install.sh either: move it aside, then remove by hand what it lists and install again")
     if legacy:
-        if os.path.isdir(os.path.join(conf, "install.d")):
-            problems.append("the legacy %s is still there (the records are in install.d, so it is not read)" % some(legacy))
-            fix.append("fix: the next %s removes it unread" % install)
-        else:
-            problems.append("the legacy %s is not moved into install.d yet" % some(legacy))
-            fix.append("fix: %s moves it into install.d once (qargi upgrade runs it)" % install)
+        problems.append("%s from qargi 0.3.1 or earlier is no longer read" % some(legacy))
+        fix.append("fix: it can be removed by hand after checking that install.d holds the records of your installs (%s writes them)" % install)
     if rec is not None and not root and not facts["unreadable"]:
         problems.append("install.json records no tool_root")
         fix.append("fix: %s records it again" % install)
     if rec is None and facts["runtimes"]:
         problems.append("runtimes are recorded but install.json is not there")
         fix.append("fix: %s records the tool again" % install)
-    if rec is not None and root and not facts["runtimes"] and not legacy and not facts["unreadable"]:
+    if rec is not None and root and not facts["runtimes"] and not facts["unreadable"]:
         problems.append("install.json names the tool, but no user runtime is recorded in install.d")
         fix.append("fix: %s installs the lead skills (the default runtime; --runtime NAME for another)" % install)
     if facts["missing"]:
