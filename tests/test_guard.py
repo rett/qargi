@@ -1298,7 +1298,8 @@ class RenderTree(HookCase):
     def test_packs_render_into_the_render_through_an_interpreter_with_options_is_refused(self):
         r = self.render
         for c in ("bash -o errexit lib/packs.sh packs render p build %s" % r, "bash -euo pipefail lib/packs.sh packs render p build --out %s" % r,
-                  "sh -O extglob lib/packs.sh packs render p build %s" % r, ". -p lib lib/packs.sh packs render p build %s" % r):
+                  "sh -O extglob lib/packs.sh packs render p build %s" % r, ". -p lib lib/packs.sh packs render p build %s" % r,
+                  ". -p 2>/dev/null /x/qargi lib/packs.sh packs render p build %s" % r):     # a -p directory named like a script: every such word is read
             res = self.bash(c)
             self.assertEqual(res.returncode, 2, (c, res.stderr))
             self.assertIn("managed by qargi and changed only by the lead", res.stderr)
@@ -4665,6 +4666,37 @@ class InterpreterOptionValues(HookCase):
         self.own_files()
         self.allowed((". -p${D} ./install.sh", ". -p>/dev/null /x install.sh", ". -p/x>/dev/null install.sh --user", ". -p$(dirname x) lib/lib.sh",
                       ". -p>/dev/null %s install.sh" % self.clone))
+
+    def test_a_tool_root_named_qargi(self):
+        """A tool root whose directory is named qargi (/opt/qargi, a checkout of the repository): qargi is a script name, so when the options are not
+        readable the -p directory itself names a script. Every word that names one is judged, so the install.sh looked up in that directory is
+        still the tool's and refused, whatever the root is called; the clone's own install.sh and a project directory named qargi stay allowed."""
+        opt = os.path.join(self.t, "opt/qargi")                           # an installed copy reached through install.json
+        os.makedirs(os.path.join(opt, "lib"))
+        with open(os.path.join(opt, "install.sh"), "w") as f:
+            f.write("#!/bin/sh\n")
+        with open(os.path.join(self.conf, "install.json"), "w") as f:
+            json.dump({"tool_root": opt}, f)
+        forms = (". -p 2>/dev/null @ install.sh", ". -p 2> /dev/null @ install.sh", ". -p </dev/null @ install.sh", ". -p >/dev/null @ install.sh",
+                 ". -p '<x' @ install.sh", ". -p '< ' @ install.sh", ". -p>/dev/null @ install.sh", "source -p<x @ install.sh --user",
+                 ". -p '<x:@' install.sh --user", ". -p>/dev/null /x:@ install.sh", ". -p>/dev/null $(echo @) install.sh", "source -p @ install.sh --user")
+        for form in forms:
+            c = form.replace("@", opt)
+            for wrapped in (c, "sudo " + c, "env X=1 " + c, "timeout 5 " + c):
+                with self.subTest(c=wrapped):
+                    self.refused(wrapped, InstallScript.WHY)
+            # nested: '< ' loses its quotes in a shell's string and a substitution inside $(...) is not read, whatever the root is named (not this case)
+            for wrapped in ([] if "'< '" in c else ['bash -c "%s"' % c, 'eval "%s"' % c, 'bash <<< "%s"' % c]) + ([] if "$(" in c else ["echo $(%s)" % c]):
+                with self.subTest(c=wrapped):
+                    r = self.bash(wrapped)
+                    self.assertEqual(r.returncode, 2, (wrapped, r.stderr))
+        self.own_files()
+        proj = os.path.join(self.t, "proj/qargi")                          # a project's directory of that name, with an install.sh of its own
+        os.makedirs(proj)
+        with open(os.path.join(proj, "install.sh"), "w") as f:
+            f.write("")
+        self.allowed([form.replace("@", d) for d in (self.clone, proj) for form in forms if "$(" not in form])   # a directory the shell builds counts as the tool's
+        self.allowed(("bash install.sh --user", ". ./install.sh", ". -p 2>/dev/null %s ./install.sh" % opt))
 
 
 class WrapperOptions(HookCase):
