@@ -12,11 +12,11 @@
   "since": "2026-11-17T04:31:40Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-17T05:01:47Z",
+ "renewed_at": "2026-11-17T05:32:16Z",
  "finished_at": null,
  "updated_by": "arc-claude-qargi",
- "rev": 2,
- "updated_at": "2026-11-17T05:01:47Z",
+ "rev": 3,
+ "updated_at": "2026-11-17T05:32:16Z",
  "feature": "hardening-033",
  "project": "qargi"
 }
