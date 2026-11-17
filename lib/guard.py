@@ -356,8 +356,17 @@ ROOT_SCRIPTS = ("install.sh",)                                       # of those,
 #     the word is taken as the -c flag, so neither the standard input nor a file is read as the program;
 #   - `zsh -c -O 'qargi upgrade'` (in zsh -O is a flag, read here as bash's -O, which takes the string as its value) and `bash +c 'qargi upgrade'` (bash
 #     runs the string; +c is not read as -c);
-#   - a separator inside a quoted word before the program (`X='a;b' qargi upgrade`, `env X='a;b' ...`, `sudo -p 'a;b' ...`, `timeout -s 'a;b' 5 git
-#     push`): the plain split cuts the line there and loses the program;
+#   - a separator (; or a newline) inside a quoted word before the program (`X='a;b' qargi upgrade`, `env X='a;b' ...`, `sudo -p 'a;b' ...`,
+#     `timeout -s 'a;b' 5 git push`, `sudo -p $'a\nb' -h host qargi upgrade`): the plain split cuts the line there and loses the program;
+#   - a real redirection with a blank before its file, then a quoted value that reads as a redirection (`sudo -p 2> /dev/null '<x' qargi upgrade`,
+#     `env -u 2> /dev/null '<x' ...`, `exec -a 2> /dev/null '<x' git push`, `sudo -p < /dev/null '<x' ...`): one reading takes both for redirections
+#     and the program for the value, the other the redirection's file for the program; the same before a -p directory (`. -p 2>/dev/null '<x:ROOT'
+#     install.sh`: the directory read is install.sh), and `. -p '<x' -p ROOT install.sh` (the second -p is read as the first one's directory, and ROOT
+#     is never looked in);
+#   - source -p with an operator glued to it and a blank before its file (`. -p> /dev/null ROOT install.sh`, `. -p< /dev/null ROOT install.sh`): the
+#     redirection's file is read as the directory, and ROOT is never looked in;
+#   - a shell on a pipe whose option value reads as a here-string or a here-document (`echo '...' | bash --rcfile '<<<x'`, also '<<x', '<<<', '<<',
+#     and `bash --rcfile '<<<' <<< '...'`): the value is read as what feeds the shell its program, so the pipe or the real here-string is not read;
 #   - a brace or a glob as an option's value (`python3 -X {dev,FILE}`, `python3 -X * dev FILE`): read as one word, while the shell makes it several;
 #   - a variable inside an env -S string in the place of the program (`env -S '${P} upgrade'`): env expands ${P} itself, inside the outer quotes;
 #   - a wrapper option the guard does not know is read as taking no word or one (wrapper_readings), not more (`sudo -Z a b c qargi upgrade`); and
@@ -2834,9 +2843,12 @@ def bash_skill_refusal(command, here, depth, outer=None):
                             return why
             for alt in wrapper_readings(seg):                    # a wrapper's option the guard cannot read may take the next word: that reading is judged too
                 if depth >= 3:                                   # each such option, like each nested shell, is one reading deeper
-                    return ("the wrapper option %s, which the guard cannot read (it may take the next word as its value, which changes what the program is), "
-                            "is not available to an agent after three such options or nested shells, which are each read both ways; write the command with fewer "
-                            "of them or in parts" % toks[sum(_parsed(seg)[2:], ())[0]])
+                    unread, valued = _parsed(seg)[2:]
+                    return ("the wrapper option %s, %s, is not available to an agent after three such options or nested shells (each such option is read "
+                            "both ways, one reading deeper); write the command with fewer of them or in parts"
+                            % (toks[(unread or valued)[0]], "which the guard cannot read (it may take the next word as its value, which changes what the program is)"
+                               if unread else "whose value the guard cannot read (it reads as a redirection, so the value may be that word or the word after it, "
+                               "which changes what the program is)"))
                 why = bash_skill_refusal(alt, [at], depth + 1, assigned)
                 if why:
                     return why

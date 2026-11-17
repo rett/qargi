@@ -4887,6 +4887,10 @@ class WrapperOptions(HookCase):
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("after three such options or nested shells", r.stderr)
         self.assertNotIn("inside shells nested more than three deep", r.stderr)
+        r = self.bash("sudo -h a -h b -h c -p '<x' ls")                   # a known option whose value reads as a redirection: its value is what is not read
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("the wrapper option -p, whose value the guard cannot read", r.stderr)
+        self.assertIn("after three such options or nested shells", r.stderr)
 
     def test_timeout_reads_its_duration_after_the_end_of_its_options(self):
         """timeout -- 5s PROGRAM: `--` ends the options, and the duration still comes before the program."""
