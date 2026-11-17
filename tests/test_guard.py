@@ -1118,12 +1118,12 @@ class Skills(HookCase):
                     self.assertEqual(r.returncode, 2, (name, tool, target, r.stderr))
             for c in ("rm -rf %s/credentials" % base, "mv %s/credentials /tmp/x" % base, "mv %s/install.json %s/run/out/" % (base, self.t)):
                 self.assertEqual(self.bash(c, **env).returncode, 2, (name, c))
-            # the install records beside install.json: the manifests in install.d, its lock, and the legacy manifest the one-time migration reads
+            # the install records beside install.json: the manifests in install.d and its lock
             os.makedirs(os.path.join(base, "install.d"), exist_ok=True)
-            for f in ("install.d/shared", "install.lock", "install.manifest"):
+            for f in ("install.d/shared", "install.lock"):
                 with open(os.path.join(base, f), "w") as fh:
                     fh.write("")
-            for target in (os.path.join(base, f) for f in ("install.d/shared", "install.d/claude-code", "install.lock", "install.manifest")):
+            for target in (os.path.join(base, f) for f in ("install.d/shared", "install.d/claude-code", "install.lock")):
                 for c in ("echo x > %s" % target, "echo x >> %s" % target, "cp /dev/null %s" % target, "rm -f %s" % target, "touch %s" % target,
                           "sed -i s/a/b/ %s" % target, "ln -sf /x %s" % target):
                     r = self.bash(c, **env)
@@ -1133,7 +1133,7 @@ class Skills(HookCase):
                     self.assertEqual(self.call(tool, {"file_path": target}, **env).returncode, 2, (name, tool, target))
             for c in ("rm -rf %s/install.d" % base, "mv %s/install.d %s/run/out/" % (base, self.t), "mv %s/install.lock /tmp/x" % base, "rm -r %s/install.d" % base):
                 self.assertEqual(self.bash(c, **env).returncode, 2, (name, c))
-            for c in ("cat %s/install.d/shared" % base, "ls %s/install.d" % base, "cat %s/install.manifest" % base):
+            for c in ("cat %s/install.d/shared" % base, "ls %s/install.d" % base):
                 self.assertEqual(self.bash(c, **env).returncode, 0, (name, c))
             # a link in the clone that leads to a protected path is followed and refused
             link = os.path.join(self.clone, "to-%d" % len(os.listdir(self.clone)))
@@ -1142,8 +1142,8 @@ class Skills(HookCase):
             self.assertEqual(self.bash("echo x > %s/tok" % link, **env).returncode, 2, name)
             os.symlink(inst, link + "-i")
             self.assertEqual(self.call("Write", {"file_path": link + "-i"}, **env).returncode, 2, name)
-            # the rest of the configuration directory is not protected, and reading never is
-            for f in ("instances.json", "projects/x.json", "projects/new.json", "agents.json", "profiles/p.md"):
+            # the rest of the configuration directory is not protected (the legacy install.manifest of 0.3.1 neither, since 0.3.3), and reading never is
+            for f in ("instances.json", "projects/x.json", "projects/new.json", "agents.json", "profiles/p.md", "install.manifest"):
                 os.makedirs(os.path.join(base, "profiles"), exist_ok=True)
                 t = os.path.join(base, f)
                 for r in (self.bash("echo x > %s" % t, **env), self.call("Write", {"file_path": t}, **env), self.bash("cp /dev/null %s && rm %s" % (t, t), **env)):

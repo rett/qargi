@@ -61,7 +61,7 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
   - a write under a protected location: the pack library ($QARGI_CONF/packs, else $QARGI_HOME/config/packs, else
     ~/.qargi/config/packs), the credentials
     directory and the install records of the same configuration directories (install.json, the install.d directory of the manifests, the lock
-    install.lock and, while the one-time migration that reads it is there, until 0.3.3, the legacy install.manifest; not the rest of it: a member may run qargi verbs that
+    install.lock; not the rest of it: a member may run qargi verbs that
     change instances, agents or projects; the guard decides by the path a write construct names, never by the verb, and a
     read of a protected path stays allowed), the skills and agents directories the provider definitions name in their resources (user_dir, below
     the home: for Claude Code ~/.claude/skills and ~/.claude/agents; project_dir, found in any path outside the run's clone, a project's
@@ -2031,14 +2031,14 @@ def _protected_roots():
     home = os.path.expanduser("~")
     # the library where the data lives, the default and the QARGI_HOME one beside an override
     # Besides the library, only the credentials and the install records of each configuration directory (install.json, the manifests in
-    # install.d/, the lock install.lock beside it, and the legacy install.manifest the one-time migration still reads, until 0.3.3 removes it):
+    # install.d/ and the lock install.lock beside it):
     # not the rest of <conf> (instances, agents, projects, profiles), which qargi verbs a member runs legitimately change.
     # The user's skills and agents directories are the ones the definitions name. No resource names a plugins directory yet, so the one
     # of Claude Code is kept here.
     roots = set(resource_dirs()[1]) | {os.path.join(home, ".claude", "plugins")}
     # (the live configuration directory is one of these: QARGI_CONF, QARGI_HOME/config or ~/.qargi/config)
     for conf in conf_dirs(P, home):
-        roots.update(os.path.join(conf, name) for name in ("packs", "credentials", "install.json", "install.d", "install.lock", "install.manifest"))
+        roots.update(os.path.join(conf, name) for name in ("packs", "credentials", "install.json", "install.d", "install.lock"))
     roots.add(os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config"), "anthropic"))   # the ant profiles and logins
     # the installed copy of the tool: ~/.claude/skills/qargi-* are links into it, and a write through such a link resolves
     # here, so it must be a root itself (it holds the skills, the member definition and the roles a member is launched with)

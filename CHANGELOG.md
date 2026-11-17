@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Removed
+- The member guard no longer protects the legacy `install.manifest` of 0.3.1 beside `install.json`, as 0.3.2 announced; `install.json`, `install.d/` and `install.lock` stay protected.
+
 ## [0.3.2] - 2026-11-16
 
 ### Added
