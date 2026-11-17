@@ -226,7 +226,7 @@ mk cutold with-origin
 out=$(asa plan 0.2.0 --date 2026-03-04 2>&1); ct=$(tok <<<"$out"); asa plan 0.2.0 --date 2026-03-04 --plan "$ct" --approved "ship it" >/dev/null 2>&1
 jq 'del(.lead)' "$T/s/release/cutold-0.2.0.cut.json" > "$T/x.json" && mv "$T/x.json" "$T/s/release/cutold-0.2.0.cut.json"
 before=$(snap); out=$(asa start 0.2.0 --plan "$ct" 2>&1); rc=$?
-[ "$rc" = 1 ] && grep -q "the cut record of 0.2.0 names no lead (it was approved before a cut was bound to the lead that approved it): nothing was changed. The cut can be approved again, because its start step has not run (qargi release plan 0.2.0 --again, then --plan and --approved)" <<<"$out" \
+[ "$rc" = 1 ] && grep -q "the cut record of 0.2.0 names no lead (it was approved before a cut was bound to the lead that approved it): nothing was changed. The cut can be approved again, because the release has not begun (qargi release plan 0.2.0 --again, then --plan and --approved)" <<<"$out" \
   && [ "$before" = "$(snap)" ] && ! git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && ok "a cut record that names no lead is refused before start, nothing changed; the message says to approve the cut again" || no "start under a cut with no lead: rc=$rc $out"
 # once the cut has started, --again is no remedy (it discards the record and then refuses: the branch exists): the message names the step's own plan
 # and not "approve again", and the refused step leaves the record as it was
@@ -254,7 +254,7 @@ mk cutoldh with-origin
 out=$(asa plan 0.1.1 --hotfix --date 2026-03-04 2>&1); ct=$(tok <<<"$out"); asa plan 0.1.1 --hotfix --date 2026-03-04 --plan "$ct" --approved "ship it" >/dev/null 2>&1
 jq 'del(.lead)' "$T/s/release/cutoldh-0.1.1.cut.json" > "$T/x.json" && mv "$T/x.json" "$T/s/release/cutoldh-0.1.1.cut.json"
 out=$(asa start 0.1.1 --hotfix --plan "$ct" 2>&1); rc=$?
-[ "$rc" = 1 ] && grep -q "The cut can be approved again, because its start step has not run (qargi release plan 0.1.1 --hotfix --again, then --plan and --approved), or this step is run with its own plan (qargi release start 0.1.1 --hotfix, then --plan and --approved)" <<<"$out" \
+[ "$rc" = 1 ] && grep -q "The cut can be approved again, because the release has not begun (qargi release plan 0.1.1 --hotfix --again, then --plan and --approved), or this step is run with its own plan (qargi release start 0.1.1 --hotfix, then --plan and --approved)" <<<"$out" \
   && ok "a hotfix cut with no lead before start: the message names --hotfix in both routes" || no "hotfix cut with no lead: rc=$rc $out"
 # and after start: the hotfix branch is named and --hotfix is in the own-plan route
 mk cutoldh2 with-origin
