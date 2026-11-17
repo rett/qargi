@@ -162,12 +162,18 @@ refusal changes nothing.
    records that and goes on from the new state. `finish` is still the push and tag gate: the approval words are the owner's, and
    `--ignore-checks "<words>"` at the call is recorded as before. `release plan VERSION` again, and `release status`, show which
    steps ran; `--again` discards the record. The single verbs and their own tokens work as before.
-   The approval is bound to the lead that recorded it: the record keeps that lead's identity as the marshal resolves it
-   (`QARGI_LEAD`, else `user@host`), and every step under the cut, including a cut-off `finish` that resumes, is refused before
-   anything moves when run by another lead, when the identity cannot be determined, or when the record names no lead (a cut
-   approved before this binding: approve it again). That lead runs the step, or the other lead asks the owner to approve the step
-   with its own plan, which is not bound. This is defence in depth only: `QARGI_LEAD` is not authenticated, so it stops a confused
-   or handed-over lead, not a hostile one; a project with no seat keeps that gap until the seat work of 0.3.4 fences it.
+   The approval is bound to the lead that recorded it: the record keeps that lead's identity, which is `QARGI_LEAD` when it is set
+   and otherwise `user@host` (the marshal verbs also honour `--as`; `release` takes no `--as`), and every step under the cut,
+   including a cut-off `finish` that resumes, is refused before anything moves when run by another lead, when the identity cannot
+   be determined, or when the record names no lead (a cut approved before this binding). The refusal names the remedy that fits the
+   state. While the cut's start step has not run, the cut is approved again (`release plan VERSION --again`, then `--plan` and
+   `--approved`). Once it has run (the release branch or the tag exists, or the record shows start done), `--again` would discard the
+   record and then refuse, so it is not offered: the step is run with its own plan and approval, which is not bound, and the cut goes
+   on from there. Otherwise the lead that approved the cut runs the step, or the other lead asks the owner to approve the step with
+   its own plan. Leads without `QARGI_LEAD` are not told apart: every session of the same user on the same host without it, which
+   includes every Codex lead (that runtime has no identity hook), is one lead and passes the check. This is defence in depth only:
+   `QARGI_LEAD` is not authenticated, so it stops a confused or handed-over lead, not a hostile one; a project with no seat keeps
+   that gap until the seat work of 0.3.4 fences it.
 
 Merging into develop or master, starting a release, pushing and tagging each print a plan and a token first; apply it
 with `--plan TOKEN --approved "<your words>"`. A merge that conflicts changes nothing and exits 3,

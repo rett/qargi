@@ -686,7 +686,13 @@ cut_lead_check() {
   local rec own
   own="qargi release $verb $VER$([ "$verb" = site ] || echo "${HOTFIX:+ --hotfix}"), then --plan and --approved"
   rec=$(cut_get '.lead.id // empty')
-  [ -n "$rec" ] || die "the cut record of $VER names no lead (it was approved before a cut was bound to the lead that approved it): nothing was changed. The cut must be approved again (qargi release plan $VER${HOTFIX:+ --hotfix} --again, then --plan and --approved), or this step is run with its own plan ($own)"
+  if [ -z "$rec" ]; then
+    # the cut can be approved again only while its start step has not run: plan --again discards the record and then refuses, because the branch or the tag exists
+    if branch_exists "$BR" || g rev-parse -q --verify "refs/tags/$VER" >/dev/null 2>&1 || [ -n "$(cut_get '.done.start // empty')" ]; then
+      die "the cut record of $VER names no lead (it was approved before a cut was bound to the lead that approved it): nothing was changed. The cut cannot be approved again, because its start step has run ($BR or the tag $VER exists, and plan --again would discard the record and then refuse): this step is run with its own plan ($own)"
+    fi
+    die "the cut record of $VER names no lead (it was approved before a cut was bound to the lead that approved it): nothing was changed. The cut can be approved again, because its start step has not run (qargi release plan $VER${HOTFIX:+ --hotfix} --again, then --plan and --approved), or this step is run with its own plan ($own)"
+  fi
   cut_lead_id || die "the lead identity cannot be determined ($LEAD_WHY), so $verb of $VER cannot run under the cut: nothing was changed. The lead that approved the cut runs the step, or this lead asks the owner to approve the step with its own plan ($own)"
   [ "$LEAD_ID" = "$rec" ] || die "the cut of $VER was approved under another lead: nothing was changed. That lead runs $verb under the cut, or this lead asks the owner to approve the step with its own plan ($own)"
 }
