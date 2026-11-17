@@ -230,8 +230,11 @@ The run: a directory is a run when it holds ability and refs.before, or the clon
 below the clone directory of another (a repository may hold a docs/tmpdir). RUN_CONTROL files are not written, moved, removed, copied or linked, nothing is
 the run directory itself is no destination (a copy over it, an extraction, a link; run_dir_refusal), and the run directory is not removed or moved; under
 `--class read-only` the run is not asked whether the member is read-only: a run that cannot be found refuses every write (NO_RUN), but a path in the TMP the lead's registry names for a run finds that run (tmp_run; with the member mark in the environment, only the member's own run).
-Not seen: a script built by code (python -c ...), a program or a verb held in a variable, the output of a substitution handed to sh -c (`bash -c "$(echo qargi upgrade)"`),
-a wrapper's option that takes a value (sudo -u root qargi ...; the ones of xargs are read).
+Wrappers: the options of sudo, env, timeout, nice, exec, command, builtin, nohup, time, setsid, xargs and parallel are read from a table (WRAP_OPTS): an option that
+takes a value takes the next word that is no redirection (sudo -u root, timeout -s KILL 5, env -u X, exec -a x), timeout's duration is no program, and env -S STRING
+is read as the words of STRING. An option the table does not know may take the next word or not, so the command is judged both ways (wrapper_readings). The -c string
+of a shell is the first word past its options (bash -c -e STRING, -co errexit STRING); when the options cannot be read, every word after -c is read as a command.
+Not seen: a script built by code (python -c ...), a program or a verb held in a variable, the output of a substitution handed to sh -c (`bash -c "$(echo qargi upgrade)"`).
 
 Failure: the guard fails closed. Any unexpected exception ends in exit 2 with the reason on stderr. Input that is empty, is not
 valid UTF-8 or is not JSON is refused (exit 2): the call cannot be read. Known limits outside this file: a hook that cannot start, exits other than 0 or 2, times out or prints invalid
@@ -251,8 +254,45 @@ EXECUTED_ANSWERS = ("release", "test_command", "gates", "env", "upstream", "site
 ROLE_TOOLS_PATH = re.compile(r"roles|roles\.[^.]+|roles\.[^.]+\.tools(?:\..*)?")   # roles.<role>.tools: what env apply installs and local prepare checks out; a whole role, or all of them, holds it
 IDENTITY_ANSWERS = ("git", "review")   # git.author (the author review apply gives the applied commits) and review.keep_author (keep the member's instead): the lead's, a member may not set them (project set)
 PROJECT_VERBS = ("set", "unset", "init", "link", "unlink")  # the project verbs a member may not run (set, unset: the answers of the lead; init: the whole file; link, unlink: what a session loads)
-XARGS_VALUE_OPTS = {"-I", "-a", "-d", "-E", "-L", "-n", "-P", "-s", "--arg-file", "--delimiter", "--max-lines", "--max-args", "--max-procs", "--max-chars", "--process-slot-var"}   # take the next word
+XARGS_VALUE_OPTS = {"-I", "-a", "-d", "-E", "-L", "-n", "-P", "-s", "--arg-file", "--delimiter", "--max-args", "--max-procs", "--max-chars", "--process-slot-var"}   # take the next word
 WRAP = {"sudo", "env", "command", "builtin", "exec", "nohup", "time", "timeout", "setsid", "xargs", "nice", "parallel"}
+# The options of the wrappers (WRAP), per wrapper: (the options that take a value, in the next word or stuck to them: -u root, -uroot, --user=root;
+# the options that take none; the options whose value, when there is one, is only ever stuck to them: xargs -i{}, sudo --preserve-env=LIST). An option
+# in none of them is one the guard cannot read: whether it takes the next word is not known, so the command is judged both ways (wrapper_readings).
+# `--` ends the options of each; timeout takes its duration, the first word after its options, before the program; env -S STRING (--split-string) is
+# read as the words of STRING (skip_wrappers); nice -N is the old spelling of nice -n N.
+WRAP_OPTS = {
+    "sudo": ({"-u", "--user", "-g", "--group", "-C", "--close-from", "-D", "--chdir", "-p", "--prompt", "-R", "--chroot", "-r", "--role", "-t", "--type",
+              "-T", "--command-timeout", "-U", "--other-user"},
+             {"-A", "--askpass", "-B", "--bell", "-b", "--background", "-E", "-e", "--edit", "-H", "--set-home", "-i", "--login", "-K", "--remove-timestamp",
+              "-k", "--reset-timestamp", "-l", "--list", "-N", "--no-update", "-n", "--non-interactive", "-P", "--preserve-groups", "-S", "--stdin", "-s",
+              "--shell", "-V", "--version", "-v", "--validate", "--help"},
+             {"--preserve-env"}),                            # -h is --help alone and --host with a value: not readable
+    "env": ({"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},
+            {"-", "-i", "--ignore-environment", "-0", "--null", "-v", "--debug", "--list-signal-handling", "--help", "--version"},
+            {"--block-signal", "--default-signal", "--ignore-signal"}),
+    "timeout": ({"-s", "--signal", "-k", "--kill-after"}, {"-v", "--verbose", "--foreground", "--preserve-status", "--help", "--version"}, set()),
+    "nice": ({"-n", "--adjustment"}, {"--help", "--version"}, set()),
+    "exec": ({"-a"}, {"-c", "-l"}, set()),
+    "command": (set(), {"-p", "-v", "-V"}, set()),
+    "builtin": (set(), set(), set()),
+    "nohup": (set(), {"--help", "--version"}, set()),
+    "time": ({"-f", "--format", "-o", "--output"}, {"-p", "--portability", "-a", "--append", "-v", "--verbose", "-q", "--quiet", "--help", "-V", "--version"}, set()),
+    "setsid": (set(), {"-c", "--ctty", "-f", "--fork", "-w", "--wait", "-h", "--help", "-V", "--version"}, set()),
+    "xargs": (XARGS_VALUE_OPTS, {"-0", "--null", "-o", "--open-tty", "-p", "--interactive", "-r", "--no-run-if-empty", "-t", "--verbose", "-x", "--exit",
+                                 "--show-limits", "--help", "--version"},
+              {"-e", "--eof", "-i", "--replace", "-l", "--max-lines"}),
+    "parallel": ({"-j", "--jobs", "-P", "--max-procs", "-a", "--arg-file", "-I", "--colsep", "-C", "-d", "--delimiter", "-E", "-n", "--max-args", "-N",
+                  "-L", "--max-lines", "-S", "--sshlogin", "--sshloginfile", "--slf", "--env", "--joblog", "--results", "--res", "--tmpdir", "--workdir",
+                  "--wd", "--timeout", "--tagstring", "--tag-string", "--halt", "--retries", "--delay", "--memfree", "--load", "--nice", "--basefile", "--bf",
+                  "--return", "--transferfile", "--tf", "--block", "--block-size", "--recstart", "--recend", "--header"},
+                 {"-k", "--keep-order", "-q", "--quote", "-v", "--verbose", "--dry-run", "--dryrun", "--tag", "--pipe", "--pipepart", "--line-buffer", "--lb",
+                  "-u", "--ungroup", "--group", "-0", "--null", "-X", "--xargs", "-m", "--eta", "--progress", "--bar", "-r", "--no-run-if-empty",
+                  "--will-cite", "--plain", "--shuf", "--files", "--no-notice", "--help", "--version"},
+                 set()),
+}
+ENV_SPLIT = re.compile(r"^(?:-[iv0]*S(.*)|--split-string(=.*)?)$", re.S)   # env -S STRING, -iSSTRING, --split-string[=STRING]: STRING is read as more words of env
+NICE_NUMBER = re.compile(r"^-\d+$")                                          # nice -5: the old spelling of nice -n 5
 WRITERS = {"rm", "rmdir", "touch", "mkdir", "chmod", "chown", "truncate", "tee", "patch", "unlink", "shred",
            "ex", "vi", "vim", "nvim", "ed", "rename", "sqlite3", "setfacl", "mkfifo"}      # the editors and the like write the files they are given
 COPIERS = {"cp", "mv", "ln", "install", "rsync", "ditto"}   # the last argument is the destination
@@ -503,6 +543,10 @@ def blocked(command, depth=0):
         why = blocked(inner, depth + 1) if inner is not None else None
         if why:
             return why
+        for alt in wrapper_readings(seg) if depth < 3 else ():     # a wrapper's option the guard cannot read may take the next word: that reading too
+            why = blocked(alt, depth + 1)
+            if why:
+                return why
     for _, ps in passes(command) if depth < 3 else ():       # a shell fed its program on its standard input or in a file the line writes: the text the line shows is read again
         for n, p in enumerate(ps):
             toks, i = parsed(p.text)
@@ -603,40 +647,106 @@ LEADING_REDIR = re.compile(r"^(?:\d*|&)(?:<<<|<<-?|<>|>>|>\||>&?|<&?|&>>?)")
 BARE_REDIR = re.compile(r"^(?:\d*|&)(?:<<<|<<-?|<>|>>|>\||>&?|<&?|&>>?)$")           # the operator alone: its target is the next word
 
 
+def wrapper_option(w, t):
+    """How many next words the option word t of the wrapper w takes as its value (0 or 1), or None when the guard does not know the option (WRAP_OPTS)."""
+    values, flags, glued = WRAP_OPTS[w]
+    if t == "--" or t in flags or (w == "nice" and NICE_NUMBER.match(t)):
+        return 0
+    if t.startswith("--"):
+        name, eq, _ = t.partition("=")
+        if name in values:
+            return 0 if eq else 1
+        return 0 if name in glued else None
+    for j, c in enumerate(t[1:], 1):                         # a cluster of short options (-Eu root, -0r): a letter that takes a value ends it
+        o = "-" + c
+        if o in values:
+            return 0 if t[j + 1:] else 1
+        if o in glued:
+            return 0
+        if o not in flags:
+            return None
+    return 0
+
+
+def split_string(text):
+    """The words env -S makes of its string: \\_ is a blank, quotes are read as the shell reads them (an unbalanced one: the words with the quotes off)."""
+    text = text.replace("\\_", " ")
+    try:
+        return shlex.split(text)
+    except ValueError:
+        return re.sub(r"[\\'\"]", "", text).split()
+
+
 def skip_wrappers(toks):
-    """The index of the program: past assignments (VAR=x), wrappers (sudo, env, time ...), their options, the keywords a command can follow (then, do, !) and
-    redirections written before the program (> f, 2>&1)."""
-    i, env, xargs = 0, False, False
+    """(the index of the program, the indices of the wrapper options the guard cannot read): past assignments (VAR=x), wrappers (sudo, env, time ...),
+    their options and the values those take (WRAP_OPTS; a value is the next word that is no redirection), timeout's duration, the keywords a command can
+    follow (then, do, !) and redirections written before the program (> f, 2>&1). An option of a wrapper that WRAP_OPTS does not name is read as taking no
+    value and its index is returned, so that the other reading is judged too (wrapper_readings). toks is changed in one way: env -S STRING (-iS, --split-string)
+    is replaced by the words of STRING, which env reads as more of its own words."""
+    i, w, unread, duration = 0, None, [], False
     while i < len(toks):
         t = toks[i]
-        if t in ("-C", "--chdir") and env:
-            i += 2                                           # env -C DIR PROGRAM: DIR is where PROGRAM runs, not the program
-        elif xargs and t in XARGS_VALUE_OPTS:
-            i += 2                                           # xargs -I {} sh -c '{}': {} is the replace string, not the program
-        elif "=" in t.split("/")[0] and not t.startswith("-") or os.path.basename(t) in WRAP or t.isdigit() or (t.startswith("-") and i) or t in KEYWORDS:
-            env = env or os.path.basename(t) == "env"
-            xargs = xargs or os.path.basename(t) == "xargs"
-            i += 1
+        if w and t.startswith("-") and len(t) > 1:
+            m = ENV_SPLIT.match(t) if w == "env" else None
+            if m:
+                text = (m.group(1) or None) if m.group(2) is None else m.group(2)[1:]
+                keep, end = [], i + 1
+                if text is None:                                 # the string is the next word that is no redirection
+                    j = past_redirections(toks, i + 1)
+                    keep, text, end = toks[i + 1:j], (toks[j] if j < len(toks) else ""), j + 1
+                toks[i:end] = keep + split_string(text)
+                i += len(keep)
+                continue
+            n = wrapper_option(w, t)
+            if n is None:
+                unread.append(i)
+            if t == "--":
+                w = None                                         # the end of the wrapper's options
+            i = past_redirections(toks, i + 1) + 1 if n else i + 1
         elif LEADING_REDIR.match(t):
             i += 2 if BARE_REDIR.match(t) else 1
+        elif w == "timeout" and not duration:
+            duration, i = True, i + 1                            # timeout DURATION PROGRAM: the duration is no program (5, 5s, 0.5m)
+        elif "=" in t.split("/")[0] and not t.startswith("-") or os.path.basename(t) in WRAP or t.isdigit() or (t.startswith("-") and i) or t in KEYWORDS:
+            if os.path.basename(t) in WRAP:
+                w, duration = os.path.basename(t), False
+            i += 1
         else:
             break
-    return i
+    return i, unread
 
 
 GLUED_SHELL = re.compile(r"^([^<>]+)([<>].*)$", re.S)     # a program word with a redirection glued to it
 
 
-@functools.cache
 def parsed(seg):
     """(the words of a segment without what the grammar puts around a command, the index of its program): _cmd_tokens and skip_wrappers, once per text (every check
     asks). The list is shared: not to be changed."""
+    toks, i, _ = _parsed(seg)
+    return toks, i
+
+
+@functools.cache
+def _parsed(seg):
+    """parsed() with the indices of the wrapper options the guard cannot read (skip_wrappers), once per text."""
     toks = list(_cmd_tokens(seg))
-    i = skip_wrappers(toks)
+    i, unread = skip_wrappers(toks)
     m = GLUED_SHELL.match(toks[i]) if i < len(toks) else None
     if m and (os.path.basename(m.group(1)) in SHELLS or m.group(1) in SOURCES):
         toks[i:i + 1] = [m.group(1), m.group(2)]               # bash<<<TEXT, sh<FILE: the redirection glued to the program is a word of its own for the shell
-    return toks, i
+    return toks, i, tuple(unread)
+
+
+def wrapper_readings(seg):
+    """The other command a segment may run when a wrapper's option the guard cannot read (skip_wrappers) takes the next word as its value: the words with
+    the first such option and the next word that is no redirection taken out, joined with blanks (the quotes off, as a shell string is read), or nothing.
+    That command is judged as a segment of its own, so each further such option is read both ways too."""
+    toks, _, unread = _parsed(seg)
+    if not unread:
+        return []
+    u = unread[0]
+    v = past_redirections(toks, u + 1)
+    return [" ".join(toks[:u] + toks[u + 1:v] + toks[v + 1:])]
 
 
 @functools.cache
@@ -2624,6 +2734,13 @@ def bash_skill_refusal(command, here, depth, outer=None):
                         why = bash_skill_refusal(as_program(text), [at], depth + 1, assigned)
                         if why:
                             return why
+            for alt in wrapper_readings(seg):                    # a wrapper's option the guard cannot read may take the next word: that reading is judged too
+                if depth >= 3:
+                    return ("the wrapper option %s, which the guard cannot read (it may take the next word as its value, which changes what the program is), "
+                            "inside shells nested more than three deep is not available to an agent; write the command in parts" % toks[_parsed(seg)[2][0]])
+                why = bash_skill_refusal(alt, [at], depth + 1, assigned)
+                if why:
+                    return why
             why = protected_write(toks, i, at) or key_read(toks, i, at, assigned)       # redirections alone, or in front of a program, write and read too
             if why:
                 return why
@@ -2714,7 +2831,16 @@ def shell_string(prog, rest):
     if prog == "eval":
         text = " ".join(rest)
     elif prog in SHELLS:
-        text = next((" ".join(rest[k + 1:]) for k, t in enumerate(rest) if SHELL_C.match(t)), None)
+        c = next((k for k, t in enumerate(rest) if SHELL_C.match(t)), None)
+        if c is None:
+            return None
+        k, ends, readable, _ = read_options(prog, rest)
+        if readable and "c" in ends:                         # the string is the first word past the options, not the word after -c (bash -c -e STRING, -co errexit STRING)
+            text = " ".join(rest[k:]) if k < len(rest) else None
+        elif readable:
+            text = " ".join(rest[c + 1:])
+        else:                                                # options the guard cannot read: any word after -c may be the string, so each is read as a command
+            text = " ; ".join(t for t in rest[c + 1:] if not is_redirection(t))
     else:
         return None
     return None if text is None else as_program(text)

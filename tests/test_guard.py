@@ -4628,6 +4628,125 @@ class InterpreterOptionValues(HookCase):
         self.allowed((". -p %s install.sh --user" % self.clone, "source -p . install.sh", ". -p /x: install.sh", ". -p %s/proj install.sh" % self.t))
 
 
+class WrapperOptions(HookCase):
+    """The program after a wrapper and the string of sh -c are found past the options: the -c string is the first word past a shell's options, not the
+    word after -c (bash -c -e STRING, -co errexit STRING, -c -- STRING); a wrapper option that takes a value takes it (timeout -s KILL 5, sudo -u root,
+    env -u X, exec -a x, time -f FMT; timeout's duration, 5s, is no program), env -S STRING is read as the words of STRING, and an option the guard does
+    not know may take the next word or not, so the command is judged both ways. Every lead-only verb is refused in each form; ordinary member commands
+    and the clone's own install.sh stay allowed."""
+    setUp, tearDown, bash, call = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
+    refused = LibraryScripts.refused
+    ROOT = InstallScript.ROOT
+    UPGRADE, LINK = InterpreterOptions.UPGRADE, InterpreterOptions.LINK
+
+    def verbs(self, form):
+        """The form (@@ for the command) with each of the lead-only verbs in it, all refused."""
+        for cmd, why in (("qargi upgrade", self.UPGRADE), ("qargi packs link p", self.LINK), ("qargi skill new x", "qargi skill new changes a skill"),
+                         ("bash %s/install.sh --user --uninstall" % self.ROOT, InstallScript.WHY), (". %s/install.sh" % self.ROOT, InstallScript.WHY),
+                         ("bash lib/upgrade.sh --tag v1", self.UPGRADE)):
+            with self.subTest(form=form, cmd=cmd):
+                self.refused(form.replace("@@", cmd), why)
+
+    def allowed(self, commands, **kw):
+        for c in commands:
+            r = self.bash(c, **kw)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def own_install(self):
+        with open(os.path.join(self.clone, "install.sh"), "w") as f:
+            f.write("")
+
+    def test_shell_c_with_an_option_after_it(self):
+        self.verbs("bash -c -e '@@'")
+        self.verbs("sh -c -x -u '@@'")
+        self.allowed(("bash -c -e 'echo hi'", "bash -c -e 'git status'"))
+
+    def test_shell_c_with_an_option_that_takes_a_value_after_it(self):
+        self.verbs("bash -c -o errexit '@@'")
+        self.verbs("bash -c -O extglob +o nounset '@@'")
+        self.own_install()
+        self.allowed(("bash -c -o errexit 'bash install.sh --user'", "bash -c -o errexit 'git status'"))
+
+    def test_shell_c_clustered_with_an_option_that_takes_a_value(self):
+        self.verbs("bash -co errexit '@@'")
+        self.verbs("bash -eco pipefail '@@'")
+        self.own_install()
+        self.allowed(("bash -co errexit '. ./install.sh'", "bash -co pipefail 'git log | head'"))
+
+    def test_shell_c_with_the_end_of_options(self):
+        self.verbs("bash -c -- '@@'")
+        self.verbs("sh -c - '@@'")
+        self.allowed(("bash -c -- 'echo hi'",))
+
+    def test_shell_c_with_options_the_guard_cannot_read(self):
+        """Any word after -c may be the string: each is read as a command."""
+        self.verbs("bash -c --frobnicate '@@'")
+        self.verbs("bash -c -Q x '@@'")
+        self.allowed(("bash -c --frobnicate 'echo hi'",))
+
+    def test_timeout_with_a_duration_that_is_no_number(self):
+        self.verbs("timeout 5s @@")
+        self.verbs("timeout 0.5m @@")
+        self.verbs("timeout --foreground 1h @@")
+        self.allowed(("timeout 5s git status", "timeout 10m python3 tests/test_guard.py", "timeout 5s sh -c 'git status'"))
+
+    def test_timeout_with_an_option_that_takes_a_value(self):
+        self.verbs("timeout -s KILL 5 @@")
+        self.verbs("timeout --signal=KILL -k 1s 5 @@")
+        self.verbs("timeout -k 2>/dev/null 1 5 @@")
+        self.allowed(("timeout -s KILL 5 git status", "timeout -k 1 --preserve-status 5 make test"))
+
+    def test_sudo_with_an_option_that_takes_a_value(self):
+        self.verbs("sudo -u root @@")
+        self.verbs("sudo -Eu root @@")
+        self.verbs("sudo --user=root -g wheel @@")
+        self.verbs("sudo -uroot -- @@")
+        self.own_install()
+        self.allowed(("sudo -u root ls", "sudo -u root bash install.sh --user"))
+
+    def test_env_with_an_option_that_takes_a_value(self):
+        self.verbs("env -u X @@")
+        self.verbs("env -u X -u Y @@")
+        self.verbs("env -i -C /tmp @@")
+        self.verbs("env --unset X @@")
+        self.allowed(("env -u X python3 tests/test_env.py", "env -u X -u Y git status", "env -i PATH=/usr/bin bash tests/run.sh"))
+
+    def test_exec_with_its_name_option(self):
+        self.verbs("exec -a x @@")
+        self.verbs("exec -c -a x @@")
+        self.allowed(("exec -a x git status", "exec -l -a x python3 tests/test_env.py"))
+
+    def test_env_split_string(self):
+        self.verbs("env -S '@@'")
+        self.verbs("env -iS '@@'")
+        self.verbs("env --split-string='@@'")
+        self.verbs("env -S 'X=1 @@'")
+        self.verbs("env -S 'sh -c \"@@\"'")
+        self.allowed(("env -S 'python3 tests/test_env.py'", "env -S 'X=1 git status'"))
+
+    def test_other_wrappers_with_an_option_that_takes_a_value(self):
+        self.verbs("nice -n 5 @@")
+        self.verbs("nice -5 @@")
+        self.verbs("time -f %e @@")
+        self.verbs("xargs -n1 @@")
+        self.allowed(("nice -n 5 make test", "nice -5 make", "time -p make", "time -f %e git status", "xargs -n1 echo", "parallel -j4 echo ::: a"))
+
+    def test_an_option_the_guard_does_not_know_fails_closed(self):
+        """sudo -h is --help alone and --host with a value; an abbreviation (timeout --sig) and an option of no table are not known either: the program is
+        the word after the option or the one after that, and both are judged."""
+        self.verbs("sudo -h x @@")
+        self.verbs("sudo --frobnicate x @@")
+        self.verbs("timeout --sig KILL 5 @@")
+        self.verbs("env -Z x @@")
+        self.verbs("sudo -h x bash -c '@@'")
+        r = self.bash("sudo --frobnicate x git push")
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("Agents never push", r.stderr)
+        self.own_install()
+        self.allowed(("sudo -h x ls", "sudo --frobnicate x git status", "sudo -Z a b c qargi upgrade", "timeout --sig KILL 5 git status",
+                      "sudo -h x bash install.sh --user"))
+
+
 class ThirdReview(HookCase):
     """The third security review of the Bash reader. Every case here was allowed by the guard it reviewed and is refused now. The base is a run directory
     (what `qargi local prepare` makes: clone, out, the record) with every protected location a member could aim at."""
