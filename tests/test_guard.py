@@ -4882,16 +4882,19 @@ class WrapperOptions(HookCase):
 
     def test_many_unknown_wrapper_options_are_refused_with_the_reason(self):
         """Each unknown wrapper option is read both ways one reading deeper; more than three readings deep are refused (a false refusal, a known limit),
-        and the message names the number of such options, not shells."""
+        and the message names the number of such options, not shells. It is no skill refusal: the advice about skills is not added."""
         self.allowed(("sudo -h a -h b -h c ls",))
         r = self.bash("sudo -h a -h b -h c -h d ls")
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("after three such options or nested shells", r.stderr)
         self.assertNotIn("inside shells nested more than three deep", r.stderr)
+        self.assertTrue(r.stderr.rstrip().endswith("write the command with fewer of them or in parts."), r.stderr)
+        self.assertNotIn("changes a skill", r.stderr)
         r = self.bash("sudo -h a -h b -h c -p '<x' ls")                   # a known option whose value reads as a redirection: its value is what is not read
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("the wrapper option -p, whose value the guard cannot read", r.stderr)
         self.assertIn("after three such options or nested shells", r.stderr)
+        self.assertNotIn("changes a skill", r.stderr)
 
     def test_timeout_reads_its_duration_after_the_end_of_its_options(self):
         """timeout -- 5s PROGRAM: `--` ends the options, and the duration still comes before the program."""
@@ -5014,7 +5017,8 @@ class WrapperOptions(HookCase):
 
     def test_the_readings_of_a_segment_are_bounded(self):
         """Each word that reads as a redirection after an option that takes a value is one more reading of the segment: up to MAX_READINGS are judged, and a
-        segment with more is refused with the reason (a false refusal of a command no one writes by hand)."""
+        segment with more is refused with the reason (a false refusal of a command no one writes by hand), by blocked() for a push, ssh or gh it could hide
+        and by bash_skill_refusal for a lead-only verb, neither with the advice about skills."""
         m = self.J.m
         n = m.MAX_READINGS
         many = "sudo -p " + " ".join("%d>/dev/null" % (k + 1) for k in range(n)) + " x ls"   # a distinct word each: equal readings are judged once
@@ -5024,6 +5028,32 @@ class WrapperOptions(HookCase):
         self.assertEqual(len(m.wrapper_readings(more)), n + 1)
         r = self.bash(more)
         self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("can be read in more than %d ways" % n, r.stderr)
+        self.assertIn("could run git push, ssh or gh", r.stderr)
+        self.assertNotIn("changes a skill", r.stderr)
+        why = m.bash_skill_refusal(more, self.clone, 0)
+        self.assertIsInstance(why, m.OwnReason)
+        self.assertIn("can be read in more than %d ways" % n, why)
+        self.assertTrue(why.endswith("write the command with fewer of them or in parts"), why)
+
+    def test_a_push_only_a_reading_past_the_bound_finds_is_refused_by_blocked(self):
+        """sudo -p 1>/dev/null ... 8>/dev/null '<' git push: '<' reads as a bare redirection that takes git as its file in every reading but the ninth, where
+        it is -p's value; blocked() does not follow a reading past MAX_READINGS, so it refuses the segment itself, whatever else the line holds."""
+        m = self.J.m
+        n = m.MAX_READINGS
+        push = "git " + "push"
+        words = lambda k: "sudo -p " + " ".join("%d>/dev/null" % (j + 1) for j in range(k)) + " '<' " + push
+        self.assertEqual(len(m.wrapper_readings(words(n - 1))), n)
+        self.assertEqual(m.blocked(words(n - 1)), "git push is not available to an agent")      # the push in the last reading followed
+        self.assertEqual(len(m.wrapper_readings(words(n))), n + 1)
+        self.assertEqual([m.blocked(r) for r in m.wrapper_readings(words(n))[:n]], [None] * n)    # only the ninth reading finds the push
+        why = m.blocked(words(n))
+        self.assertIn("can be read in more than %d ways" % n, why or "")
+        self.assertIn("could run git push, ssh or gh", why)
+        self.assertEqual(m.blocked("echo hi; " + words(n)), why)
+        r = self.bash(words(n))
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("Agents never push", r.stderr)
         self.assertIn("can be read in more than %d ways" % n, r.stderr)
 
     def test_the_other_reading_of_a_wrapper_option_keeps_each_word(self):
@@ -5050,6 +5080,101 @@ class WrapperOptions(HookCase):
         self.pushes(("sudo -p 'pw\\' -h host git push", "env -u 'a\\' -Z v git push"))
         self.own_install()
         self.allowed(("sudo -p 'pw\\' -h host ls", "env -u 'a\\' -Z v git status", "sudo -u 'ro\\' --frobnicate v bash install.sh --user"))
+
+
+class ShellStringRedirection(HookCase):
+    """bash -c "2>/dev/null PROGRAM": the words carry no quotes, so a -c string that starts with a redirection reads as one, and the reading that takes
+    redirections out of a shell's options took the whole string out and read none (0.3.2 read it). A word after -c, also after further options (-e,
+    -o errexit, --, one the guard does not know), that reads as a redirection and holds a blank was one quoted word: it is read as the string too, beside
+    the reading where it is a redirection, for the lead-only verbs and the tool's scripts as for git push, ssh and gh. A real redirection before the string
+    (bash -c 2>/dev/null 'PROGRAM') is still taken out, and an ordinary command after such a prefix stays allowed."""
+    setUp, tearDown, bash, call = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
+    refused = LibraryScripts.refused
+    verbs, allowed, own_install, pushes = WrapperOptions.verbs, WrapperOptions.allowed, WrapperOptions.own_install, WrapperOptions.pushes
+    ROOT, LIB = InstallScript.ROOT, LibraryScripts.LIB
+    UPGRADE, LINK = InterpreterOptions.UPGRADE, InterpreterOptions.LINK
+    PREFIXES = ("2>/dev/null", "2> /dev/null", ">/dev/null", "</dev/null", "2>&1", "&>/dev/null", ">/dev/null 2>&1", "<<<x")
+    SHELLS = ("bash -c", "sh -c", "zsh -c", "dash -c", "bash -lc", "bash -ec", "sudo bash -c", "eval", "bash -c -e", "bash -c -o errexit", "bash -c --",
+              "bash -c --frobnicate")
+    PUSH, SSH, GH = "git " + "push origin x", "ss" + "h host ls", "g" + "h pr create"       # built from pieces: the text of a command that runs no push
+
+    def forms(self, shells=SHELLS, prefixes=PREFIXES):
+        """Each shell with each prefix at the start of its string, in double and in single quotes (@@ for the program)."""
+        for shell in shells:
+            for prefix in prefixes:
+                for quote in ('"', "'"):
+                    yield "%s %s%s @@%s" % (shell, quote, prefix, quote)
+
+    def test_a_string_that_starts_with_a_redirection_is_read(self):
+        for form in self.forms():
+            self.verbs(form)
+            with self.subTest(form=form):
+                self.refused(form.replace("@@", "python3 %s/install_record.py uninstall" % self.LIB), InstallRecordScript.WHY)
+
+    def test_the_forms_0_3_2_refused(self):
+        """The forms the guard of 0.3.2 refused and the one it let through (bash -c -e), each with the reason."""
+        for c, why in (('bash -c "2>/dev/null qargi upgrade"', self.UPGRADE), ('bash -c ">/dev/null 2>&1 qargi upgrade"', self.UPGRADE),
+                       ('sh -c "</dev/null qargi upgrade"', self.UPGRADE), ('bash -lc "2>&1 qargi upgrade"', self.UPGRADE),
+                       ('sudo bash -c "&>/dev/null . %s/install.sh"' % self.ROOT, InstallScript.WHY), ('bash -c -e "2>/dev/null qargi upgrade"', self.UPGRADE)):
+            with self.subTest(c=c):
+                self.refused(c, why)
+
+    def test_a_nested_wrapper_inside_the_string(self):
+        self.verbs('bash -c "2> /dev/null sudo -p 2> /dev/null \'<x\' @@"')
+        self.verbs('bash -c -e "2>/dev/null sudo -p 2> /dev/null \'<x\' @@"')
+
+    def test_a_real_redirection_before_the_string_is_still_taken_out(self):
+        self.verbs("bash -c 2>/dev/null '@@'")
+        self.verbs("bash -c >/dev/null 2>&1 '@@'")
+        self.assertEqual(self.J.m.shell_string("bash", ["-c", "2>/dev/null", "qargi upgrade"]), "qargi upgrade")
+
+    def test_a_tool_root_named_qargi(self):
+        """A tool root whose directory is named qargi (as InterpreterOptionValues.test_a_tool_root_named_qargi builds it): its install.sh and install engine
+        in such a string are refused, a project directory of that name with an install.sh of its own is not."""
+        opt = os.path.join(self.t, "opt/qargi")
+        os.makedirs(os.path.join(opt, "lib"))
+        with open(os.path.join(opt, "install.sh"), "w") as f:
+            f.write("#!/bin/sh\n")
+        with open(os.path.join(self.conf, "install.json"), "w") as f:
+            json.dump({"tool_root": opt}, f)
+        programs = (("bash %s/install.sh --user" % opt, InstallScript.WHY), (". %s/install.sh" % opt, InstallScript.WHY),
+                    ("source -p %s install.sh --user" % opt, InstallScript.WHY), ("python3 %s/lib/install_record.py uninstall" % opt, InstallRecordScript.WHY))
+        for form in self.forms(shells=("bash -c", "sh -c", "sudo bash -c", "bash -c -e", "eval")):
+            for program, why in programs:
+                with self.subTest(form=form, program=program):
+                    self.refused(form.replace("@@", program), why)
+        proj = os.path.join(self.t, "proj/qargi")
+        os.makedirs(proj)
+        with open(os.path.join(proj, "install.sh"), "w") as f:
+            f.write("")
+        self.allowed(('bash -c "2>/dev/null bash %s/install.sh --user"' % proj, "sh -c '>/dev/null 2>&1 . %s/install.sh'" % proj,
+                      'bash -c -e "2>&1 source -p %s install.sh"' % proj))
+
+    def test_the_string_is_read_for_a_push_ssh_and_gh(self):
+        """shell_string reads such a word as the string, and program_blocked and blocked, which refuse a push, ssh and gh, read the same text."""
+        m = self.J.m
+        for prefix in self.PREFIXES:
+            for cmd, why in ((self.PUSH, "git push is not available to an agent"), (self.SSH, "ssh is not available to an agent"),
+                             (self.GH, "gh is not available to an agent")):
+                s = "%s %s" % (prefix, cmd)
+                with self.subTest(s=s):
+                    for prog, opts in (("bash", ["-c"]), ("sh", ["-lc"]), ("zsh", ["-c", "-e"]), ("dash", ["-c", "-o", "errexit"]), ("bash", ["-c", "--"]),
+                                       ("bash", ["-c", "--frobnicate"])):
+                        self.assertIn(cmd, m.shell_string(prog, opts + [s]), (prog, opts))
+                        self.assertEqual(m.program_blocked([prog] + opts + [s], 0, 0), why, (prog, opts))
+                    for c in ('bash -c "%s"' % s, "sudo sh -c '%s'" % s, 'bash -c -e "%s"' % s, 'bash -c "2> /dev/null sudo -p 2> /dev/null \'<x\' %s"' % cmd):
+                        self.assertEqual(m.blocked(c), why, c)
+                        r = self.bash(c)
+                        self.assertEqual(r.returncode, 2, (c, r.stderr))
+                        self.assertIn(why, r.stderr, c)
+        self.assertEqual(m.program_blocked(["bash", "-c", "2>/dev/null", self.PUSH], 0, 0), "git push is not available to an agent")
+        self.assertIsNone(m.program_blocked(["bash", "-c", "2>/dev/null git status"], 0, 0))
+
+    def test_ordinary_commands_after_such_a_prefix_stay_allowed(self):
+        self.own_install()
+        self.allowed(('bash -c "2>/dev/null git status"', 'bash -c ">/dev/null 2>&1 python3 tests/test_env.py"', 'sh -c "</dev/null ls"',
+                      'bash -c "2>/dev/null bash install.sh --user"', "bash -c '2>&1 make test'", 'bash -c -e "2> /dev/null git log"',
+                      "sudo bash -c '&>/dev/null ls'", 'eval "<<<x cat"'))
 
 
 class ThirdReview(HookCase):

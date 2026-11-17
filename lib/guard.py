@@ -331,7 +331,8 @@ ROOT_SCRIPTS = ("install.sh",)                                       # of those,
 # up in DIR, and an option it does not know, a value the shell builds ($(..), ${..}, a backtick: unquoted it may be cut into more words or none), a
 # value that reads as a redirection (a redirection between the option and its value, or a quoted value such as '<x': the words carry no quotes) or an
 # option with a redirection stuck to it (-X>/dev/null) makes any word naming a script the script; an option of another shell that takes a value
-# where bash has a flag of that letter is still read as the flag. The options of the wrappers in front (sudo, env, timeout ...) are read from WRAP_OPTS.
+# where bash has a flag of that letter is still read as the flag. A word after -c that reads as a redirection and holds a blank was one quoted word
+# (bash -c "2>/dev/null qargi upgrade"): it is read as the -c string too, beside the reading as a redirection (shell_string, quoted_string). The options of the wrappers in front (sudo, env, timeout ...) are read from WRAP_OPTS.
 # Still not seen, after those readings:
 #   - a name the shell builds: a variable that holds the path (`P=.../install.sh; bash $P`), a for-loop over it, a glob (`bash .../inst*.sh`), a brace
 #     (`bash .../{install,x}.sh`), a redirection glued to the name (`bash .../install.sh>/dev/null`), and a `{fd}>` redirection written before the file;
@@ -370,7 +371,10 @@ ROOT_SCRIPTS = ("install.sh",)                                       # of those,
 #   - a brace or a glob as an option's value (`python3 -X {dev,FILE}`, `python3 -X * dev FILE`): read as one word, while the shell makes it several;
 #   - a variable inside an env -S string in the place of the program (`env -S '${P} upgrade'`): env expands ${P} itself, inside the outer quotes;
 #   - a wrapper option the guard does not know is read as taking no word or one (wrapper_readings), not more (`sudo -Z a b c qargi upgrade`); and
-#     under the read-only class the second reading is judged for lead-only verbs and pushes only, not for a write outside OUT (`sudo -Z x touch foo`).
+#     under the read-only class the second reading is judged for lead-only verbs and pushes only, not for a write outside OUT (`sudo -Z x touch foo`);
+#   - such an option whose value is a quoted bare operator (`sudo -h '<' qargi upgrade`, `sudo -h 2> /dev/null '<' qargi upgrade`): in both readings
+#     the operator is read as a redirection that takes the program as its file, so the program is never read (an interpreter's script is still
+#     found by its name).
 # The reading errs the other way too: `bash -n .../install.sh` (a syntax check that runs nothing) is refused like a run of the script, and a command
 # with four wrapper options the guard does not know (`sudo -h a -h b -h c -h d ls`) is refused, since each is read both ways one reading deeper
 # and, as with shells, more than three readings deep are not followed; so is a segment with more than MAX_READINGS other readings (nine words that read
@@ -597,7 +601,12 @@ def blocked(command, depth=0):
         why = program_blocked(toks, i, depth) if i < len(toks) else None
         if why:
             return why
-        for alt in wrapper_readings(seg)[:MAX_READINGS] if depth < 3 else ():   # a wrapper's option the guard cannot read may take the next word: that reading
+        readings = wrapper_readings(seg) if depth < 3 else []
+        if len(readings) > MAX_READINGS:                        # bounded as bash_skill_refusal bounds them: a reading past the bound could hold the push
+            return ("a command whose wrapper options can be read in more than %d ways (options the guard cannot read, values that read as redirections) "
+                    "could run git push, ssh or gh in a reading the guard does not follow and is not available to an agent; write the command with fewer "
+                    "of them or in parts" % MAX_READINGS)
+        for alt in readings:                                    # a wrapper's option the guard cannot read may take the next word: that reading
             why = blocked(alt, depth + 1)                           # too, also when this one has no program (timeout -s '<' 5 git push: '<' read as a redirection takes 5)
             if why:
                 return why
@@ -2854,16 +2863,16 @@ def bash_skill_refusal(command, here, depth, outer=None):
                             return why
             readings = wrapper_readings(seg)
             if len(readings) > MAX_READINGS:                     # bounded: at most MAX_READINGS other readings of a segment, each at most three deep
-                return ("a command whose wrapper options can be read in more than %d ways (options the guard cannot read, values that read as redirections) "
-                        "is not available to an agent; write the command with fewer of them or in parts" % MAX_READINGS)
+                return OwnReason("a command whose wrapper options can be read in more than %d ways (options the guard cannot read, values that read as redirections) "
+                                 "is not available to an agent; write the command with fewer of them or in parts" % MAX_READINGS)
             for alt in readings:                                 # a wrapper's option the guard cannot read may take the next word: that reading is judged too
                 if depth >= 3:                                   # each such option, like each nested shell, is one reading deeper
                     unread, valued = _parsed(seg)[2:]
-                    return ("the wrapper option %s, %s, is not available to an agent after three such options or nested shells (each such option is read "
-                            "both ways, one reading deeper); write the command with fewer of them or in parts"
-                            % (toks[(unread or valued)[0]], "which the guard cannot read (it may take the next word as its value, which changes what the program is)"
-                               if unread else "whose value the guard cannot read (it reads as a redirection, so the value may be that word or a later one, "
-                               "which changes what the program is)"))
+                    return OwnReason("the wrapper option %s, %s, is not available to an agent after three such options or nested shells (each such option is read "
+                                     "both ways, one reading deeper); write the command with fewer of them or in parts"
+                                     % (toks[(unread or valued)[0]], "which the guard cannot read (it may take the next word as its value, which changes what the program is)"
+                                        if unread else "whose value the guard cannot read (it reads as a redirection, so the value may be that word or a later one, "
+                                        "which changes what the program is)"))
                 why = bash_skill_refusal(alt, [at], depth + 1, assigned)
                 if why:
                     return why
@@ -2950,10 +2959,18 @@ def unreadable_project_verb(command):
     return None
 
 
+def quoted_string(t):
+    """True when the word t reads as a redirection and holds a blank: the words carry no quotes, and the shell cuts an unquoted word at a blank, so t was
+    one quoted word (bash -c "2>/dev/null qargi upgrade"): no redirection, a string that starts with one."""
+    return is_redirection(t) and bool(re.search(r"\s", t))
+
+
 def shell_string(prog, rest):
     """The command text a shell is given to run (sh -c STRING, eval STRING), or None. The quotes left in the string are dropped, which
     is conservative: the text is then read as plain words, and a quote inside a word (pro''ject) joins it as the shell would. A `\\$` or
-    `\\`` is read as the expansion it would be for the inner shell (shlex keeps the backslash a double-quoted outer string had before it)."""
+    `\\`` is read as the expansion it would be for the inner shell (shlex keeps the backslash a double-quoted outer string had before it).
+    A word after -c that reads as a redirection and holds a blank (quoted_string) was one quoted word: it is read as the string too, beside the
+    reading where it is a redirection the shell takes out (each reading is a command of the text)."""
     if prog == "eval":
         text = " ".join(rest)
     elif prog in SHELLS:
@@ -2962,11 +2979,11 @@ def shell_string(prog, rest):
             return None
         k, ends, readable, _ = read_options(prog, rest)
         if readable and "c" in ends:                         # the string is the first word past the options, not the word after -c (bash -c -e STRING, -co errexit STRING)
-            text = " ".join(rest[k:])                         # empty when no word follows: the string is in the pieces that follow (bash -c$(true) STRING)
+            text = " ; ".join([t for t in rest[c + 1:k] if quoted_string(t)] + [" ".join(rest[k:])])   # the last part is empty when no word follows: the string is in the pieces that follow (bash -c$(true) STRING)
         elif readable:
             text = " ".join(rest[c + 1:])
         else:                                                # options the guard cannot read: any word after -c may be the string, so each is read as a command
-            text = " ; ".join(t for t in rest[c + 1:] if not is_redirection(t))
+            text = " ; ".join(t for t in rest[c + 1:] if not is_redirection(t) or quoted_string(t))
     else:
         return None
     return as_program(text)
