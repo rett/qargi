@@ -227,10 +227,14 @@ class Render(unittest.TestCase):
         for word in ("migrat", "moved into install.d"):
             self.assertNotIn(word, doctor)
         handoff = " ".join(C.COMMANDS["marshal"]["verbs"]["handoff"]["desc"].split())
-        self.assertIn("The note starts with its where section, then an index of its features, lists live work first, lists a feature's own worktrees under it, and when it reaches its bound it ends "
-                      "with a line naming the features left out or cut short;", handoff)
-        for key in ("truncated", "features_left_out", "worktrees_unattributed"):                          # the keys of a cut note in --json (lib/marshal_handoff.py)
+        self.assertIn("The note starts with its where section, then an index of its features (3072 bytes of lines, then one line that counts the features without one), lists live work first, "
+                      "lists a feature's own worktrees under it, and when it reaches its bound it ends with a line naming the features left out or cut short and saying how many have no index line;", handoff)
+        self.assertIn("--json at the bound empties worktrees_unattributed and agent_unattributed first, then, one feature at a time from the last, trims its detail and drops it", handoff)
+        self.assertIn("Output is capped at 16 KiB, the note and --json alike", handoff)
+        for key in ("truncated", "features_omitted", "features_left_out", "features_left_out_more", "worktrees_unattributed", "agent_unattributed"):   # the keys of a cut note in --json (lib/marshal_handoff.py)
             self.assertIn(key, handoff)
+        advise = [o for o in C.COMMANDS["lead"]["verbs"]["compact-check"]["opts"] if o["flag"] == "--advise"]
+        self.assertIn("no advice on an assumed window (unknown model window and no lead.context_window)", str(advise))
 
     def test_the_guard_topic_and_the_review_role_say_what_a_read_only_member_runs_where_tmpdir_points_and_what_a_piece_after_a_cut_may_not_start_with(self):
         """What the guard refuses a read-only member, as the member needs to read it: an assignment (not the command), the TMP that TMPDIR is, and the words the

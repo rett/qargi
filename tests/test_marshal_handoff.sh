@@ -400,11 +400,66 @@ HH --json; sz=$(wc -c < "$T/o")
 jq -e '.truncated == true and .features[0].name == "zlive" and ((.features_left_out | length) == .features_omitted) and .features_omitted > 0' "$T/o" >/dev/null && [ "$sz" -le 16384 ] && ok "cut: --json says truncated, keeps the live feature first and names the features left out ($sz bytes)" || no "SPEC json cut: size=$sz $(jq -c '[.truncated, .features_omitted, .features_left_out]' "$T/o")"
 jq -e '(.features[0].tasks | length) == 1 and (.features[0].worktrees | length) == 2 and (.worktrees_unattributed | length) == 0' "$T/o" >/dev/null && ok "cut: --json trims from the last feature, the work trees of no feature first: the live feature keeps its task and work trees" || no "SPEC json live detail (tasks, worktrees, unattributed): $(jq -c '[.features[0].tasks, .features[0].worktrees, .worktrees_unattributed] | map(length)' "$T/o")"
 
+# --- very many features: the index and --json are bounded too, and the live feature stays whole in both
+# project "wide": one live feature (a branch, a run, two work trees) and many branchless old ones. The records are written straight into
+# the state directory as copies of the live one's (a claim each would take minutes), with one renewal time.
+R3=$T/wide; git init -q -b master "$R3"; echo 0.1.0 > "$R3/VERSION"; git -C "$R3" add -A && git -C "$R3" commit -q -m one && git -C "$R3" branch develop
+jq --arg p "$R3" '.project = "wide" | .repo.path = $p | .repo.url = "https://github.com/acme/wide"' "$T/c/projects/app.json" > "$T/c/projects/wide.json"
+HW() { H --project wide "$@"; }
+git -C "$R3" branch feature/zlive develop; git -C "$R3" branch agent/wliverun feature/zlive
+git -C "$R3" worktree add -q "$T/ww-live" feature/zlive; git -C "$R3" worktree add -q "$T/ww-run" agent/wliverun
+printf '%s\n' "{\"run\":\"/nowhere/qargi.wliverun\",\"slug\":\"wliverun\",\"base\":\"feature/zlive\",\"ability\":\"build\",\"started\":\"2026-01-01T00:00:00Z\",\"repo\":\"$R3\"}" >> "$S/local-runs.jsonl"
+"$DA" marshal claim zlive --project wide --as dana --goal "the live goal" >/dev/null 2>&1 || no "setup: claim zlive (wide)"
+wide() { # COUNT LENGTH: COUNT old features with names LENGTH characters long; the names, in the order of the note, go to $T/wide.names
+  rm -f "$S"/features/wide-w*.json
+  python3 -I - "$S/features" "$1" "$2" "$T/wide.names" <<'PY'
+import json, sys
+d, count, length, out = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
+rec = json.load(open(d + "/wide-zlive.json"))
+rec["renewed_at"] = "2026-01-01T00:00:00Z"
+names = [("w%04d" % i).ljust(length, "x") for i in range(count)]
+for n in names:
+    json.dump(rec, open("%s/wide-%s.json" % (d, n), "w"))
+open(out, "w").write("\n".join(names) + "\n")
+PY
+}
+widecase() { # COUNT LENGTH: the note and --json of COUNT old features with LENGTH-character names, and the live one
+  local cnt=$1 len=$2 total=$(($1 + 1)) lbl="$1 features of $2-character names" shown more last sz kept left lm
+  wide "$cnt" "$len"
+  HW; rc=$?; sz=$(wc -c < "$T/o"); last=$(tail -n 1 "$T/o")
+  [ $rc = 0 ] && [ "$sz" -le 16384 ] && case $last in "[truncated: the note is capped at 16 KiB"*) true;; *) false;; esac \
+    && ok "wide: $lbl: the note is within the bound and ends with the truncation line ($sz bytes)" || no "SPEC wide text: rc=$rc size=$sz last=${last:0:200}"
+  shown=$(sed -n '/^== index/,/^== features/p' "$T/o" | grep -c '^  [a-z0-9-]*  status ')
+  more=$(sed -n '/^== index/,/^== features/p' "$T/o" | sed -n 's/^  and \([0-9]*\) more feature(s) without an index line.*/\1/p')
+  { [ "$shown" -ge 2 ] && [ "$shown" -lt "$total" ] && [ "$more" = $((total - shown)) ] && [ "$(sed -n '/^== index/,/^== features/p' "$T/o" | wc -c)" -le 4096 ]; } \
+    && ok "wide: $lbl: the index is bounded ($shown of $total features have a line, one line counts the other $more)" || no "SPEC wide index: shown=$shown more=$more: $(sed -n '/^== index/,/^== features/p' "$T/o" | cut -c1-100 | head -8)"
+  case $last in *"; the index has no line for $((total - shown)) feature(s)"*) ok "wide: $lbl: the last line says how many features have no index line ($((total - shown)))";; *) no "SPEC wide last line: ${last:0:300}";; esac
+  { [ "$(sed -n '/^== index/,/^== features/p' "$T/o" | sed -n '2p')" = "  zlive  status active  lead dana  branch yes  open runs 1" ] && grep -q "^feature zlive\$" "$T/o" \
+    && grep -q "task run: wliverun (build, 2026-01-01T00:00:00Z)" "$T/o" && grep -q "^  worktree: $T/ww-live on feature/zlive" "$T/o" && grep -q "^  worktree: $T/ww-run on agent/wliverun" "$T/o" \
+    && grep -q "the live goal" "$T/o"; } && ok "wide: $lbl: the live feature is first in the index, its entry has its task and work trees" || no "SPEC wide live text: $(grep -n 'zlive\|wliverun' "$T/o" | head)"
+  { [ "$(grep -c '^feature w[0-9]' "$T/o")" -ge 1 ] && [ "$(grep -c '^feature ' "$T/o")" -lt "$total" ] && tail -n 12 "$T/o" | grep -q "^== do not assume"; } \
+    && ok "wide: $lbl: entries follow the live one, the rest are left out, the closing list is kept" || no "SPEC wide entries: $(grep -c '^feature ' "$T/o") entries"
+  HW --json; rc=$?; sz=$(wc -c < "$T/o")
+  { [ $rc = 0 ] && [ "$sz" -le 16384 ] && jq -e . "$T/o" >/dev/null 2>&1; } && ok "wide: $lbl: --json is valid and within the bound ($sz bytes)" || no "SPEC wide json: rc=$rc size=$sz"
+  kept=$(jq '.features | length' "$T/o" 2>/dev/null); left=$(jq '.features_left_out | length' "$T/o" 2>/dev/null); lm=$(jq '.features_left_out_more // 0' "$T/o" 2>/dev/null)
+  jq -e --argjson total "$total" '.truncated == true and .features[0].name == "zlive" and (.features[0].tasks | length) == 1 and (.features[0].worktrees | length) == 2
+      and .features_omitted == ($total - (.features | length)) and ((.features_left_out | length) + (.features_left_out_more // 0)) == .features_omitted' "$T/o" >/dev/null \
+    && ok "wide: $lbl: --json keeps the live feature first with its task and work trees ($kept kept, $left named, $lm counted)" || no "SPEC wide json shape: $(jq -c '[.truncated, .features_omitted, (.features|length), .features_left_out_more]' "$T/o")"
+  jq -e '(.features_left_out | map((tojson | length) + 4) | add) <= 3000 and ((.features_left_out_more // 0) > 0)' "$T/o" >/dev/null \
+    && ok "wide: $lbl: features_left_out is bounded and features_left_out_more counts the rest" || no "SPEC wide left out: $left names named, $lm counted"
+  { echo zlive; cat "$T/wide.names"; } | head -n "$((kept + left))" > "$T/wide.expect"
+  jq -r '.features[].name, .features_left_out[]' "$T/o" | cmp -s - "$T/wide.expect" && ok "wide: $lbl: the names left out are the ones that follow the kept features, in order" || no "SPEC wide order"
+}
+widecase 250 60
+widecase 400 30
+rm -f "$S"/features/wide-w*.json
+
 # --- the bound of the cut note and of --json, with the line builders replaced by sized text (constructed sizes: no clock, no randomness)
 while IFS= read -r l; do case $l in "ok "*) ok "${l#ok }";; *) no "SPEC ${l#FAIL }";; esac; done < <(python3 -I - "$TOOL/lib/marshal_handoff.py" <<'PY' 2>&1
 import importlib.util, json, sys
 spec = importlib.util.spec_from_file_location("mh", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 CAP, NM = m.CAP_BYTES, m.NAMES_MAX
+orig_index_cut, orig_index_lines = getattr(m, "index_cut", lambda F: 0), m.index_lines
 def say(good, text, detail=""):
     print(("ok " if good else "FAIL ") + text + ("" if good else ": " + str(detail)).replace("\n", " ")[:400])
 def setup(head, entry, closing=("== do not assume", "- x")):
@@ -412,6 +467,7 @@ def setup(head, entry, closing=("== do not assume", "- x")):
     m.middle_lines = lambda F: []; m.rest_lines = lambda F: []; m.notes_lines = lambda F: []
     m.closing_lines = lambda F: list(closing)
     m.record_lines = lambda f: []
+    m.index_cut = lambda F: 0
     m.entry_lines = entry
 def note(names):
     return m.render_text({"features": [{"name": n} for n in names]})
@@ -448,7 +504,7 @@ setup(["h" * 600], lambda f: ["z" * 900])
 out = note(mb); last = out.splitlines()[-1]
 say(len(out.encode()) <= CAP and last.startswith(MARK) and len(last.encode()) <= NM + 400, "names: a note of multi-byte names stays within the bound, with a last line of bounded bytes (%d bytes, last line %d)" % (len(out.encode()), len(last.encode())), last[:80])
 
-# 5. the fixed parts alone over the bound: the sections after the index are cut and the line says so; a cut of the entries alone does not say it
+# 3. the fixed parts alone over the bound: the sections after the index are cut and the line says so; a cut of the entries alone does not say it
 setup(["h" * 99] * 200, lambda f: ["e" * 50])
 out = note(["f1", "f2"]); last = out.splitlines()[-1]
 say(len(out.encode()) <= CAP and last.startswith(MARK) and "sections after the index were cut" in last and "f1" in last and "f2" in last and "== do not assume" in out, "cut: when the fixed parts alone are over the bound the line says the sections were cut too and the closing list is kept", last[:200])
@@ -456,7 +512,7 @@ setup(["h" * 99] * 20, lambda f: ["e" * 5000])
 out = note(["f1", "f2", "f3", "f4"]); last = out.splitlines()[-1]
 say(len(out.encode()) <= CAP and last.startswith(MARK) and "sections" not in last, "cut: a cut of the entries alone does not claim the sections were cut", last[:200])
 
-# 3. --json: what no feature owns goes first, then the features from the last; the first, live, features keep their detail
+# 4. --json: what no feature owns goes first, then the features from the last; the first, live, features keep their detail
 def feat(i, tasks):
     return {"name": "f%d" % i, "commits": ["c" * 100] * 3, "tasks": [{"run": "r" * 200}] * tasks, "worktrees": [{"path": "/w", "branch": "b"}] * 2, "overlap": {"o": ["x"]}}
 F = {"features": [feat(i, 3) for i in range(4)], "worktrees_unattributed": [{"path": "/w" + "p" * 200, "branch": "b"}] * 100, "agent_unattributed": [{"branch": "a", "base": "b"}] * 3}
@@ -467,6 +523,44 @@ F = {"features": [feat(i, 40) for i in range(8)], "worktrees_unattributed": [], 
 j = json.loads(m.render_json(F)); n = len(j["features"])
 say(j["truncated"] and 0 < n < 8 and j["features_omitted"] == 8 - n and j["features_left_out"] == ["f%d" % i for i in range(n, 8)] and all(len(f["tasks"]) == 40 for f in j["features"][:n - 1]) and len(j["features"][0]["worktrees"]) == 2,
     "--json: the last feature is trimmed, then dropped, before an earlier one is touched (%d of 8 kept)" % n, [len(f["tasks"]) for f in j["features"]])
+
+# 5. the index is bounded (INDEX_MAX bytes of lines, then one line that counts the rest) and the last line of the note says how many features have
+#    no line, also when every entry fits; real index lines, entries of one line each
+def idxfeat(name):
+    return {"name": name, "branch_exists": False, "tasks": [], "record": {"status": "active", "ghost": False, "lead": None}}
+m.index_cut, m.index_lines, m.head_lines = orig_index_cut, orig_index_lines, lambda F: ["h"] + orig_index_lines(F)
+m.entry_lines = lambda f: ["E " + f["name"]]
+names = ["g%03d" % i for i in range(120)]
+out = m.render_text({"features": [idxfeat(n) for n in names]}); lines = out.splitlines()
+ix = [l for l in lines if l.startswith("  g") and "  status " in l]
+cut = len(names) - len(ix)
+say(0 < len(ix) < 120 and sum(len(l.encode()) + 1 for l in ix) <= m.INDEX_MAX and lines[-1].startswith(MARK) and ("the index has no line for %d feature(s)" % cut) in lines[-1]
+    and "left out" not in lines[-1] and all(("E " + n) in lines for n in names) and len(out.encode()) <= CAP and ("  and %d more feature(s) without an index line" % cut) in out,
+    "index: a bounded index is said on the last line even when every entry fits (%d of 120 have a line)" % len(ix), lines[-1][:200])
+m.entry_lines = lambda f: ["E " + f["name"]] + ["e" * 100] * 20
+names = ["g%03d" % i for i in range(300)]
+out = m.render_text({"features": [idxfeat(n) for n in names]}); lines = out.splitlines()
+ix = [l for l in lines if l.startswith("  g") and "  status " in l]
+say(0 < len(ix) < 300 and lines[-1].startswith(MARK) and "; left out: g" in lines[-1] and ("the index has no line for %d feature(s)" % (300 - len(ix))) in lines[-1]
+    and "E g000" in lines and "E g001" in lines and len(out.encode()) <= CAP, "index: with the entries cut too, the first entries are kept and the line names both cuts", lines[-1][:200])
+
+# 6. --json counts what is printed: the newline that ends it is part of the bound, at the exact size where the object is CAP bytes
+def sized(pad):
+    return {"features": [feat(i, 3) for i in range(6)], "worktrees_unattributed": [], "agent_unattributed": [], "notes": ["n" * pad]}
+k0 = CAP - len(json.dumps(sized(0), indent=1))
+sweep = [(k, m.render_json(sized(k))) for k in range(k0 - 3, k0 + 4)]
+say(all(len(o.encode()) <= CAP and json.loads(o) for k, o in sweep) and any(len(json.dumps(sized(k), indent=1)) == CAP for k, o in sweep)
+    and json.loads(dict(sweep)[k0]).get("truncated") is True, "--json: the newline that ends the output is counted (the object of exactly %d bytes is cut)" % CAP, [len(o.encode()) for k, o in sweep])
+
+# 7. --json: the names of the features left out are bounded and the count of the rest is right
+def small(i):
+    return {"name": "n%03d" % i + "x" * 26, "commits": ["c" * 60] * 2, "tasks": [], "worktrees": [], "overlap": {}}
+F = {"features": [small(i) for i in range(400)], "worktrees_unattributed": [], "agent_unattributed": []}
+j = json.loads(m.render_json(F)); o = m.render_json({"features": [small(i) for i in range(400)], "worktrees_unattributed": [], "agent_unattributed": []})
+n, left, more = len(j["features"]), j["features_left_out"], j.get("features_left_out_more", 0)
+say(len(o.encode()) <= CAP and 0 < n < 400 and j["truncated"] and j["features_omitted"] == 400 - n and len(left) + more == 400 - n and more > 0
+    and sum(len(json.dumps(x)) + 4 for x in left) <= NM and [f["name"] for f in j["features"]] + left == [small(i)["name"] for i in range(n + len(left))],
+    "--json: features_left_out stops at %d bytes of names, features_left_out_more counts the rest (%d kept, %d named, %d counted)" % (NM, n, len(left), more), [n, len(left), more])
 PY
 )
 
