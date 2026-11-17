@@ -6,11 +6,11 @@ argument-hint: "[NAME]"
 
 # /qargi-session (the lead hands its work to a fresh session)
 
-A new session knows only what is stored. `qargi marshal handoff` prints that state as one note: the repository and HEAD, each open feature's tip and whole-suite result, the merged `agent/*` branches, the marshal record, the packs and launch line, what to read first, what not to assume. It is read only (no lease, no record, ref or audit change, no fetch). What only you know is lost unless you add it.
+A new session knows only what is stored. `qargi marshal handoff` prints that state as one note: the repository and HEAD, each open feature's tip and whole-suite result, the merged `agent/*` branches, the marshal record, the packs and launch line, what to read first, what not to assume. It is read only (no lease, no record, ref or audit change, no fetch).
 
 ## When to hand off
 
-Run `qargi lead compact-check --advise`: exit 0 means a compact is safe now, 1 lists what to clear first; it also prints what to re-read afterwards. The stage lines of `feature finish`, the last `feature merge`, `release finish` and `marshal handoff` say the same from 40%. `/compact` and a restart are the owner's commands: ask, never run them. Hand off to a fresh session after a skill, agent or settings change a running session cannot reload, or when the owner asks. Open runs need no clean before the next `qargi feature finish`: verify and clean accept qargi's own moves. A reboot loses runs on a tmpfs: apply the verified ones first, or later `qargi review apply --from-saved ID`.
+Run `qargi lead compact-check --advise`: exit 0 means a compact is safe now, 1 lists what to clear first; it also prints what to re-read after. The stage lines of `feature finish`, the last `feature merge`, `release finish` and `marshal handoff` say the same from 40% of a known window (on an assumed one: the tokens, "window unknown", no advice). `/compact` and a restart are the owner's commands: ask, never run them. Hand off after a skill, agent or settings change a running session cannot reload, or when the owner asks. Open runs need no clean before the next `qargi feature finish`: verify and clean accept qargi's own moves. A reboot loses runs on a tmpfs: apply the verified ones first, or later `qargi review apply --from-saved ID`.
 
 ## The procedure
 

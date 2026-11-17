@@ -3,7 +3,7 @@
 were asked; the run temporary parent is a directory of the test (QARGI_RUN_TMP), never the real one; the project is invented. Nothing waits for a
 fixed time. Offline. Run: python3 tests/test_doctor.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
-import json, os, shutil, stat, subprocess, sys, tempfile, unittest
+import json, os, re, shutil, stat, subprocess, sys, tempfile, unittest
 from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -252,6 +252,18 @@ class Shm(Base):
 
 
 class WindowSource(Base):
+    def lead_session(self, model, tokens=1000):
+        """A transcript of the lead's own session for the directory the doctor runs in: one assistant turn of that model (model None: a turn
+        with no model id; tokens None: no turn that counts, only a user line)."""
+        d = os.path.join(os.environ["HOME"], ".claude", "projects", re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(os.getcwd())))
+        os.makedirs(d, exist_ok=True)
+        self.addCleanup(shutil.rmtree, d, True)
+        msg = {} if model is None else {"model": model}
+        if tokens is not None:
+            msg["usage"] = {"input_tokens": tokens}
+        with open(os.path.join(d, "lead-session.jsonl"), "w") as f:
+            f.write(json.dumps({"type": "assistant" if tokens is not None else "user", "isSidechain": False, "message": msg}) + "\n")
+
     def test_no_project_is_unknown(self):
         rc, out, _ = self.doctor()
         self.assertEqual(self.lines(out)["window-source"][0], "unknown", out)
@@ -261,7 +273,10 @@ class WindowSource(Base):
         rc, out, _ = self.doctor("app")
         st, text = self.lines(out)["window-source"]
         self.assertEqual(st, "ok", out)
-        self.assertIn("table of claude-code (shipped, lib/providers/claude-code.json): 2 entries, 200,000 assumed otherwise", text)
+        with open(os.path.join(ROOT, "lib", "providers", "claude-code.json")) as f:
+            n = len(json.load(f)["resources"]["transcripts"]["windows"])                                 # the shipped table, not a copy of it
+        self.assertIn("table of claude-code (shipped, lib/providers/claude-code.json): %d entries, 200,000 assumed otherwise" % n, text)
+        self.assertIn("the runtime may cap it lower on some plans; the answer lead.context_window overrides it", text)
         self.assertIn("2 model ids checked", text)
 
     def test_an_id_that_is_not_in_the_table_warns(self):
@@ -270,6 +285,7 @@ class WindowSource(Base):
         st, text = self.lines(out)["window-source"]
         self.assertEqual((rc, st), (0, "warn"), out)
         self.assertIn("not in the table: plain-model", text)
+        self.assertIn("the runtime may cap it lower on some plans; the answer lead.context_window overrides it", text)
         self.assertNotIn("model-a-1m (", text)
         self.assertEqual(self.doctor("app", "--strict")[0], 1)
 
@@ -279,11 +295,71 @@ class WindowSource(Base):
         self.assertEqual(st, "ok", text)
         self.assertIn("answer lead.context_window = 300,000 overrides", text)
 
-    def test_no_model_id_is_ok(self):
+    def test_no_model_id_is_ok_when_the_leads_model_is_in_the_table(self):
         self.project(roles={"build": {"model": None}})
+        self.lead_session("claude-opus-5-5")
         st, text = self.lines(self.doctor("app")[1])["window-source"]
         self.assertEqual(st, "ok", text)
         self.assertIn("no role names a model id", text)
+        self.assertIn("the lead's own model claude-opus-5-5 is in the table", text)
+        self.lead_session("claude-opus-4-5-20251101")                                                  # a known 200,000 window is in the table too
+        text = self.lines(self.doctor("app")[1])["window-source"][1]
+        self.assertIn("the lead's own model claude-opus-4-5-20251101 is in the table", text)
+
+    def test_the_leads_model_that_is_not_in_the_table_warns(self):
+        self.project(roles={"build": {"model": "model-a-1m"}})
+        self.lead_session("claude-plain-9")
+        rc, out, _ = self.doctor("app")
+        st, text = self.lines(out)["window-source"]
+        self.assertEqual((rc, st), (0, "warn"), out)
+        self.assertIn("the lead's own model is not in the table: claude-plain-9", text)
+        self.assertNotIn("not in the table: model-a-1m", text)
+        self.assertIn("fix: set the answer lead.context_window", text)
+        self.assertEqual(self.doctor("app", "--strict")[0], 1)
+        self.project(roles={"write": {"model": "plain-model"}})                                          # the roles' ids and the lead's are both named
+        text = self.lines(self.doctor("app")[1])["window-source"][1]
+        self.assertIn("not in the table: plain-model", text)
+        self.assertIn("the lead's own model is not in the table: claude-plain-9", text)
+
+    def test_the_answer_settles_the_leads_model_too(self):
+        self.project(roles={"build": {"model": None}}, lead={"context_window": 300000})
+        self.lead_session("claude-plain-9")
+        st, text = self.lines(self.doctor("app")[1])["window-source"]
+        self.assertEqual(st, "ok", text)
+        self.assertNotIn("lead's own model", text)
+
+    def test_a_lead_model_that_cannot_be_determined_is_not_a_warning(self):
+        self.project(roles={"build": {"model": "model-a-1m"}})                                           # no transcript of the lead's session
+        st, text = self.lines(self.doctor("app")[1])["window-source"]
+        self.assertEqual(st, "ok", text)
+        self.assertIn("1 model id checked", text)
+        self.assertIn("the lead's own model cannot be determined", text)
+        self.project(roles={"build": {"model": None}})                                                   # nothing at all to check: unknown, not ok
+        rc, out, _ = self.doctor("app", "--strict")
+        st, text = self.lines(out)["window-source"]
+        self.assertEqual((rc, st), (0, "unknown"), out)
+        self.assertIn("the lead's own model cannot be determined (no transcript of its session)", text)
+
+    def test_what_was_found_of_the_leads_session_is_said(self):
+        for roles in ({"build": {"model": "model-a-1m"}}, {"build": {"model": None}}):                   # ok, and unknown: both carry the words
+            self.project(roles=roles)
+            self.lead_session("claude-plain-9", tokens=None)                                             # a transcript with no counted turn
+            st, text = self.lines(self.doctor("app")[1])["window-source"]
+            self.assertIn("the lead's own model cannot be determined (its transcript has no counted turn)", text)
+            self.assertNotIn("no transcript of its session", text)
+            self.lead_session(None)                                                                      # a counted turn that names no model id
+            st, text = self.lines(self.doctor("app")[1])["window-source"]
+            self.assertIn("the lead's own model cannot be determined (the last turn of its transcript names no model id)", text)
+            self.assertNotIn("no transcript of its session", text)
+            self.assertNotEqual(st, "warn", text)
+
+    def test_it_writes_nothing(self):
+        self.project(roles={"build": {"model": None}})
+        self.lead_session("claude-plain-9")
+        home = os.environ["HOME"]
+        before = snapshot(home, os.environ["QARGI_CONF"])
+        self.doctor("app")
+        self.assertEqual(snapshot(home, os.environ["QARGI_CONF"]), before)
 
     def test_a_project_without_a_runtime_is_unknown(self):
         self.project(models={"provider": ""})
@@ -515,18 +591,19 @@ class Install(Base):
         with open(legacy, "w") as f:
             f.write("L\t%s/qargi-task\n" % self.skdir("claude-code"))
         self.IR.record(self.conf, self.tool, "0.3.2", "link")
+        for _ in range(2):                    # with no install.d, and then with the records beside it: the same warning, nothing read or removed
+            c = self.check()
+            self.assertEqual(c["status"], "warn", c)
+            self.assertIn("%s from qargi 0.3.1 or earlier is no longer read" % legacy, c["detail"])
+            self.assertEqual(c["legacy"], [legacy])
+            self.assertTrue(any("can be removed by hand after checking that install.d holds the records" in f for f in c["fix"]), c["fix"])
+            self.assertTrue(os.path.isfile(legacy))
+            self.install("claude-code")
+        planted = os.path.join(self.conf, "project-123.manifest")
+        with open(planted, "w") as f:
+            f.write("f\t/etc/passwd\n")
         c = self.check()
-        self.assertEqual(c["status"], "warn", c)
-        self.assertIn("the legacy %s is not moved into install.d yet" % legacy, c["detail"])
-        self.assertEqual(c["legacy"], [legacy])
-        self.assertTrue(any("moves it into install.d once" in f for f in c["fix"]), c["fix"])
-        os.unlink(legacy)
-        self.install("claude-code")
-        with open(legacy, "w") as f:
-            f.write("L\t/elsewhere/qargi-task\n")
-        c = self.check()
-        self.assertEqual(c["status"], "warn", c)
-        self.assertIn("is still there (the records are in install.d, so it is not read)", c["detail"])
+        self.assertEqual(c["legacy"], sorted([legacy, planted]))
 
     def test_a_record_that_cannot_be_read_warns(self):
         self.install("claude-code")

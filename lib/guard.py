@@ -61,7 +61,7 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
   - a write under a protected location: the pack library ($QARGI_CONF/packs, else $QARGI_HOME/config/packs, else
     ~/.qargi/config/packs), the credentials
     directory and the install records of the same configuration directories (install.json, the install.d directory of the manifests, the lock
-    install.lock and, while the one-time migration that reads it is there, until 0.3.3, the legacy install.manifest; not the rest of it: a member may run qargi verbs that
+    install.lock; not the rest of it: a member may run qargi verbs that
     change instances, agents or projects; the guard decides by the path a write construct names, never by the verb, and a
     read of a protected path stays allowed), the skills and agents directories the provider definitions name in their resources (user_dir, below
     the home: for Claude Code ~/.claude/skills and ~/.claude/agents; project_dir, found in any path outside the run's clone, a project's
@@ -230,8 +230,11 @@ The run: a directory is a run when it holds ability and refs.before, or the clon
 below the clone directory of another (a repository may hold a docs/tmpdir). RUN_CONTROL files are not written, moved, removed, copied or linked, nothing is
 the run directory itself is no destination (a copy over it, an extraction, a link; run_dir_refusal), and the run directory is not removed or moved; under
 `--class read-only` the run is not asked whether the member is read-only: a run that cannot be found refuses every write (NO_RUN), but a path in the TMP the lead's registry names for a run finds that run (tmp_run; with the member mark in the environment, only the member's own run).
-Not seen: a script built by code (python -c ...), a program or a verb held in a variable, the output of a substitution handed to sh -c (`bash -c "$(echo qargi upgrade)"`),
-a wrapper's option that takes a value (sudo -u root qargi ...; the ones of xargs are read).
+Wrappers: the options of sudo, env, timeout, nice, exec, command, builtin, nohup, time, setsid, xargs and parallel are read from a table (WRAP_OPTS): an option that
+takes a value takes the next word that is no redirection (sudo -u root, timeout -s KILL 5, env -u X, exec -a x), timeout's duration is no program, and env -S STRING
+is read as the words of STRING. An option the table does not know may take the next word or not, so the command is judged both ways (wrapper_readings). The -c string
+of a shell is the first word past its options (bash -c -e STRING, -co errexit STRING); when the options cannot be read, every word after -c is read as a command.
+Not seen: a script built by code (python -c ...), a program or a verb held in a variable, the output of a substitution handed to sh -c (`bash -c "$(echo qargi upgrade)"`).
 
 Failure: the guard fails closed. Any unexpected exception ends in exit 2 with the reason on stderr. Input that is empty, is not
 valid UTF-8 or is not JSON is refused (exit 2): the call cannot be read. Known limits outside this file: a hook that cannot start, exits other than 0 or 2, times out or prints invalid
@@ -251,8 +254,49 @@ EXECUTED_ANSWERS = ("release", "test_command", "gates", "env", "upstream", "site
 ROLE_TOOLS_PATH = re.compile(r"roles|roles\.[^.]+|roles\.[^.]+\.tools(?:\..*)?")   # roles.<role>.tools: what env apply installs and local prepare checks out; a whole role, or all of them, holds it
 IDENTITY_ANSWERS = ("git", "review")   # git.author (the author review apply gives the applied commits) and review.keep_author (keep the member's instead): the lead's, a member may not set them (project set)
 PROJECT_VERBS = ("set", "unset", "init", "link", "unlink")  # the project verbs a member may not run (set, unset: the answers of the lead; init: the whole file; link, unlink: what a session loads)
-XARGS_VALUE_OPTS = {"-I", "-a", "-d", "-E", "-L", "-n", "-P", "-s", "--arg-file", "--delimiter", "--max-lines", "--max-args", "--max-procs", "--max-chars", "--process-slot-var"}   # take the next word
+XARGS_VALUE_OPTS = {"-I", "-a", "-d", "-E", "-L", "-n", "-P", "-s", "--arg-file", "--delimiter", "--max-args", "--max-procs", "--max-chars", "--process-slot-var"}   # take the next word
 WRAP = {"sudo", "env", "command", "builtin", "exec", "nohup", "time", "timeout", "setsid", "xargs", "nice", "parallel"}
+# The options of the wrappers (WRAP), per wrapper: (the options that take a value, in the next word or stuck to them: -u root, -uroot, --user=root;
+# the options that take none; the options whose value, when there is one, is only ever stuck to them: xargs -i{}, sudo --preserve-env=LIST). An option
+# in none of them is one the guard cannot read: whether it takes the next word is not known, so the command is judged both ways (wrapper_readings).
+# `--` ends the options of each; timeout takes its duration, the first word after its options (after a `--` too), before the program; env -S STRING
+# (--split-string and its abbreviations) is read as the words of STRING up to a \c (skip_wrappers); an option word with a redirection stuck to it
+# (-u>/dev/null) is read as it is and as the shell cuts it (wrapper_readings); nice -N is the old spelling of nice -n N. An option whose value is
+# optional and may be the next word is in none of them on purpose, so that both readings are judged: parallel's --max-lines and -l take the next word
+# only when it is a number, and -i, --replace, -e and --eof take it when it is no option (xargs's options of those names take a value only stuck to
+# them: the third column).
+WRAP_OPTS = {
+    "sudo": ({"-u", "--user", "-g", "--group", "-C", "--close-from", "-D", "--chdir", "-p", "--prompt", "-R", "--chroot", "-r", "--role", "-t", "--type",
+              "-T", "--command-timeout", "-U", "--other-user"},
+             {"-A", "--askpass", "-B", "--bell", "-b", "--background", "-E", "-e", "--edit", "-H", "--set-home", "-i", "--login", "-K", "--remove-timestamp",
+              "-k", "--reset-timestamp", "-l", "--list", "-N", "--no-update", "-n", "--non-interactive", "-P", "--preserve-groups", "-S", "--stdin", "-s",
+              "--shell", "-V", "--version", "-v", "--validate", "--help"},
+             {"--preserve-env"}),                            # -h is --help alone and --host with a value: not readable
+    "env": ({"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},
+            {"-", "-i", "--ignore-environment", "-0", "--null", "-v", "--debug", "--list-signal-handling", "--help", "--version"},
+            {"--block-signal", "--default-signal", "--ignore-signal"}),
+    "timeout": ({"-s", "--signal", "-k", "--kill-after"}, {"-f", "--foreground", "-p", "--preserve-status", "-v", "--verbose", "--help", "--version"}, set()),
+    "nice": ({"-n", "--adjustment"}, {"--help", "--version"}, set()),
+    "exec": ({"-a"}, {"-c", "-l"}, set()),
+    "command": (set(), {"-p", "-v", "-V"}, set()),
+    "builtin": (set(), set(), set()),
+    "nohup": (set(), {"--help", "--version"}, set()),
+    "time": ({"-f", "--format", "-o", "--output"}, {"-p", "--portability", "-a", "--append", "-v", "--verbose", "-q", "--quiet", "--help", "-V", "--version"}, set()),
+    "setsid": (set(), {"-c", "--ctty", "-f", "--fork", "-w", "--wait", "-h", "--help", "-V", "--version"}, set()),
+    "xargs": (XARGS_VALUE_OPTS, {"-0", "--null", "-o", "--open-tty", "-p", "--interactive", "-r", "--no-run-if-empty", "-t", "--verbose", "-x", "--exit",
+                                 "--show-limits", "--help", "--version"},
+              {"-e", "--eof", "-i", "--replace", "-l", "--max-lines"}),
+    "parallel": ({"-j", "--jobs", "-P", "--max-procs", "-a", "--arg-file", "-I", "--colsep", "-C", "-d", "--delimiter", "-E", "-n", "--max-args", "-N",
+                  "-L", "-S", "--sshlogin", "--sshloginfile", "--slf", "--env", "--joblog", "--results", "--res", "--tmpdir", "--workdir",
+                  "--wd", "--timeout", "--tagstring", "--tag-string", "--halt", "--retries", "--delay", "--memfree", "--load", "--nice", "--basefile", "--bf",
+                  "--return", "--transferfile", "--tf", "--block", "--block-size", "--recstart", "--recend", "--header"},
+                 {"-k", "--keep-order", "-q", "--quote", "-v", "--verbose", "--dry-run", "--dryrun", "--tag", "--pipe", "--pipepart", "--line-buffer", "--lb",
+                  "-u", "--ungroup", "--group", "-0", "--null", "-X", "--xargs", "-m", "--eta", "--progress", "--bar", "-r", "--no-run-if-empty",
+                  "--will-cite", "--plain", "--shuf", "--files", "--no-notice", "--help", "--version"},
+                 set()),
+}
+ENV_SPLIT = re.compile(r"^(?:-[iv0]*S(.*)|(--s[a-z-]*)(=.*)?)$", re.S)   # env -S STRING, -iSSTRING, --split-string[=STRING] and its abbreviations (--s, --split): STRING is read as more words of env
+NICE_NUMBER = re.compile(r"^-\d+$")                                          # nice -5: the old spelling of nice -n 5
 WRITERS = {"rm", "rmdir", "touch", "mkdir", "chmod", "chown", "truncate", "tee", "patch", "unlink", "shred",
            "ex", "vi", "vim", "nvim", "ed", "rename", "sqlite3", "setfacl", "mkfifo"}      # the editors and the like write the files they are given
 COPIERS = {"cp", "mv", "ln", "install", "rsync", "ditto"}   # the last argument is the destination
@@ -281,9 +325,62 @@ ROOT_SCRIPTS = ("install.sh",)                                       # of those,
 # resolved path would catch only a link that already exists when the call is judged, not one made earlier in the same command line
 # (`ln -s .../linker.py x && python3 x`), and an import can be spelled in too many ways (importlib, __import__, string joins) to read from
 # the command text; a half check would suggest a guarantee the guard does not give. An interpreter's options are read as bash's and python's
-# (interpreted): the value of -X, -W, -o, -O, --rcfile and source -p is skipped, and an option it does not know makes any word naming a script
-# the script; an option of another shell that takes a value where bash has a flag of that letter is still read as the flag. Like the rest of
-# the shell reading it is a heuristic against a mistake, not a wall against a member that works to get round it; the local verify of the
+# (read_options, for a file, a -c string and a program on the standard input alike): the value of -X, -W, -o, -O, --rcfile and source -p (-pDIR too)
+# is skipped, bash's long names are read with one dash too while no short option came
+# before them (-rcfile F, -norc; under sh, which may be another shell, such a word is not readable), a slash-less name after source -p DIR is looked
+# up in DIR, and an option it does not know, a value the shell builds ($(..), ${..}, a backtick: unquoted it may be cut into more words or none), a
+# value that reads as a redirection (a redirection between the option and its value, or a quoted value such as '<x': the words carry no quotes) or an
+# option with a redirection stuck to it (-X>/dev/null) makes any word naming a script the script; an option of another shell that takes a value
+# where bash has a flag of that letter is still read as the flag. A word after -c that reads as a redirection and holds a blank was one quoted word
+# (bash -c "2>/dev/null qargi upgrade"): it is read as the -c string too, beside the reading as a redirection (shell_string, quoted_string). The options of the wrappers in front (sudo, env, timeout ...) are read from WRAP_OPTS.
+# Still not seen, after those readings:
+#   - a name the shell builds: a variable that holds the path (`P=.../install.sh; bash $P`), a for-loop over it, a glob (`bash .../inst*.sh`), a brace
+#     (`bash .../{install,x}.sh`), a redirection glued to the name (`bash .../install.sh>/dev/null`), and a `{fd}>` redirection written before the file;
+#   - a plain variable as an option's value (`python3 -X $V dev FILE`): read as one word, while word splitting may make it none or several;
+#   - a program on python's standard input (`python3 < .../install_record.py`, `python3 - < FILE`), and names that xargs brings from a file it reads
+#     itself (`xargs -a LIST bash`);
+#   - a name looked up in PATH (`PATH=TOOL:$PATH . install.sh`: only the directory the shell is in is asked);
+#   - interpreters the guard does not know: ash, rbash, busybox sh, pypy3, python3.13t, and a shell named by a variable ($SHELL);
+#   - the bodies of a function defined in an earlier call, of an alias and of a trap;
+#   - a script that make, script -c, su -c or flock runs (ssh is refused as a whole);
+#   - programs that are no wrappers to the guard (WRAP), in front of a lead-only verb or of git push: stdbuf, ionice, doas, taskset, chrt, watch,
+#     strace, unshare, systemd-run, runuser and busybox (`doas qargi upgrade`, `stdbuf -oL git push`, `busybox env qargi upgrade`); each would need
+#     its own row in WRAP_OPTS (taskset MASK, chrt PRIORITY, runuser -u USER --);
+#   - the command string of sudo -s and sudo -i (`sudo -s 'qargi upgrade'`: sudo hands it to a shell), and the commands parallel builds from its
+#     arguments when it is given none (`parallel ::: 'qargi upgrade'`);
+#   - a -c flag or its string that the shell builds (`bash -c $V 'qargi upgrade'`, `bash -$(echo c) 'qargi upgrade'`): the next word is not read as
+#     the string;
+#   - the string after a -c word with a substitution or a variable stuck to it: `bash -c$(true) 'qargi upgrade'` is refused only because the pieces of
+#     the line are read for lead-only verbs; `bash -c$(true) -e '...'`, `bash -c$(true) -- '...'` and `bash -c${X} '...'` are not refused for them, and
+#     none of these forms is refused for git push (`bash -c$(true) 'git push'`);
+#   - a shell on a pipe under sh with a one-dash long name that holds a c (`echo 'qargi upgrade' | sh -norc`, also -rcfile, -restricted, -protected):
+#     the word is taken as the -c flag, so neither the standard input nor a file is read as the program;
+#   - `zsh -c -O 'qargi upgrade'` (in zsh -O is a flag, read here as bash's -O, which takes the string as its value) and `bash +c 'qargi upgrade'` (bash
+#     runs the string; +c is not read as -c);
+#   - a separator (; or a newline) inside a quoted word before the program (`X='a;b' qargi upgrade`, `env X='a;b' ...`, `sudo -p 'a;b' ...`,
+#     `timeout -s 'a;b' 5 git push`, `sudo -p $'a\nb' -h host qargi upgrade`): the plain split cuts the line there and loses the program;
+#   - a real redirection, then a quoted value that reads as a redirection, as the directory of source -p (`. -p 2>/dev/null '<x:ROOT' install.sh`: the
+#     directory read is install.sh), and `. -p '<x' -p ROOT install.sh` (the second -p is read as the first one's directory, and ROOT is never looked
+#     in); before a wrapper's program the same is read (wrapper_readings: `sudo -p 2> /dev/null '<x' qargi upgrade` is refused);
+#   - source -p with an operator glued to it and a blank before its file (`. -p> /dev/null ROOT install.sh`, `. -p< /dev/null ROOT install.sh`): the
+#     redirection's file is read as the directory, and ROOT is never looked in;
+#   - a -p directory built by a substitution inside a substitution (`echo $(. -p $(echo ROOT) install.sh)`): the line is read whole too, but the text
+#     of a substitution only cut at the substitution inside it, so `. -p` is read apart from install.sh and the directory it is looked up in;
+#   - a shell on a pipe whose option value reads as a here-string or a here-document (`echo '...' | bash --rcfile '<<<x'`, also '<<x', '<<<', '<<',
+#     and `bash --rcfile '<<<' <<< '...'`): the value is read as what feeds the shell its program, so the pipe or the real here-string is not read;
+#   - a brace or a glob as an option's value (`python3 -X {dev,FILE}`, `python3 -X * dev FILE`): read as one word, while the shell makes it several;
+#   - a variable inside an env -S string in the place of the program (`env -S '${P} upgrade'`): env expands ${P} itself, inside the outer quotes;
+#   - a wrapper option the guard does not know is read as taking no word or one (wrapper_readings), not more (`sudo -Z a b c qargi upgrade`); and
+#     under the read-only class the second reading is judged for lead-only verbs and pushes only, not for a write outside OUT (`sudo -Z x touch foo`);
+#   - such an option whose value is a quoted bare operator (`sudo -h '<' qargi upgrade`, `sudo -h 2> /dev/null '<' qargi upgrade`): in both readings
+#     the operator is read as a redirection that takes the program as its file, so the program is never read (an interpreter's script is still
+#     found by its name).
+# The reading errs the other way too: `bash -n .../install.sh` (a syntax check that runs nothing) is refused like a run of the script, and a command
+# with four wrapper options the guard does not know (`sudo -h a -h b -h c -h d ls`) is refused, since each is read both ways one reading deeper
+# and, as with shells, more than three readings deep are not followed; so is a segment with more than MAX_READINGS other readings (nine words that read
+# as redirections after one option that takes a value: `sudo -p 1>/dev/null ... 9>/dev/null x ls`), which bounds the readings of one segment at
+# 8 + 8^2 + 8^3. Like the rest
+# of the shell reading it is a heuristic against a mistake, not a wall against a member that works to get round it; the local verify of the
 # patches is the backstop.
 MEMORY_VERBS = ("init", "move", "split", "merge", "copy")                          # qargi memory verbs that change a memory tier
 MEMORY_READ = ("tiers", "check", "get", "lint")
@@ -475,6 +572,24 @@ def config_refusal(args, via_xargs):
     return None
 
 
+def program_blocked(toks, i, depth):
+    """The reason the program toks[i] of a segment's words publishes or reaches out (gh, ssh, git push, rsync to a host, a shell string that does), or None."""
+    prog = os.path.basename(toks[i])
+    rest = toks[i + 1:]
+    if prog in ("gh", "ssh", "scp", "sftp"):
+        return "%s is not available to an agent" % prog
+    if prog in GIT_PUSH_PROGRAMS or prog in ("svn", "git-svn") and "dcommit" in rest:
+        return "%s is not available to an agent" % prog
+    if prog == "rsync" and any(remote_operand(t) for t in rest if not t.startswith("-")):
+        return "rsync to or from another host is not available to an agent"
+    if prog == "git":
+        why = git_refusal(toks[:i], rest)
+        if why:
+            return why
+    inner = shell_string(prog, rest) if depth < 3 else None
+    return blocked(inner, depth + 1) if inner is not None else None
+
+
 def blocked(command, depth=0):
     seen = set()
     for seg in segments(command):
@@ -483,24 +598,18 @@ def blocked(command, depth=0):
             continue
         seen.add(seg)
         toks, i = parsed(seg)
-        if i >= len(toks):
-            continue
-        prog = os.path.basename(toks[i])
-        rest = toks[i + 1:]
-        if prog in ("gh", "ssh", "scp", "sftp"):
-            return "%s is not available to an agent" % prog
-        if prog in GIT_PUSH_PROGRAMS or prog in ("svn", "git-svn") and "dcommit" in rest:
-            return "%s is not available to an agent" % prog
-        if prog == "rsync" and any(remote_operand(t) for t in rest if not t.startswith("-")):
-            return "rsync to or from another host is not available to an agent"
-        if prog == "git":
-            why = git_refusal(toks[:i], rest)
-            if why:
-                return why
-        inner = shell_string(prog, rest) if depth < 3 else None
-        why = blocked(inner, depth + 1) if inner is not None else None
+        why = program_blocked(toks, i, depth) if i < len(toks) else None
         if why:
             return why
+        readings = wrapper_readings(seg) if depth < 3 else []
+        if len(readings) > MAX_READINGS:                        # bounded as bash_skill_refusal bounds them: a reading past the bound could hold the push
+            return ("a command whose wrapper options can be read in more than %d ways (options the guard cannot read, values that read as redirections) "
+                    "could run git push, ssh or gh in a reading the guard does not follow and is not available to an agent; write the command with fewer "
+                    "of them or in parts" % MAX_READINGS)
+        for alt in readings:                                    # a wrapper's option the guard cannot read may take the next word: that reading
+            why = blocked(alt, depth + 1)                           # too, also when this one has no program (timeout -s '<' 5 git push: '<' read as a redirection takes 5)
+            if why:
+                return why
     for _, ps in passes(command) if depth < 3 else ():       # a shell fed its program on its standard input or in a file the line writes: the text the line shows is read again
         for n, p in enumerate(ps):
             toks, i = parsed(p.text)
@@ -601,40 +710,170 @@ LEADING_REDIR = re.compile(r"^(?:\d*|&)(?:<<<|<<-?|<>|>>|>\||>&?|<&?|&>>?)")
 BARE_REDIR = re.compile(r"^(?:\d*|&)(?:<<<|<<-?|<>|>>|>\||>&?|<&?|&>>?)$")           # the operator alone: its target is the next word
 
 
+def wrapper_option(w, t):
+    """How many next words the option word t of the wrapper w takes as its value (0 or 1), or None when the guard does not know the option (WRAP_OPTS)."""
+    values, flags, glued = WRAP_OPTS[w]
+    if "<" in t or ">" in t:                                 # -u>/dev/null: the shell takes the redirection off, a quote would keep it (wrapper_readings)
+        return None
+    if t == "--" or t in flags or (w == "nice" and NICE_NUMBER.match(t)):
+        return 0
+    if t.startswith("--"):
+        name, eq, _ = t.partition("=")
+        if name in values:
+            return 0 if eq else 1
+        return 0 if name in glued else None
+    for j, c in enumerate(t[1:], 1):                         # a cluster of short options (-Eu root, -0r): a letter that takes a value ends it
+        o = "-" + c
+        if o in values:
+            return 0 if t[j + 1:] else 1
+        if o in glued:
+            return 0
+        if o not in flags:
+            return None
+    return 0
+
+
+def split_string(text):
+    """The words env -S makes of its string: \\_ is a blank, \\c outside quotes ends the string, quotes are read as the shell reads them (an unbalanced one:
+    the words with the quotes off)."""
+    k, quote = 0, ""
+    while k < len(text):
+        c = text[k]
+        if c == "\\" and not quote and text[k + 1:k + 2] == "c":
+            text = text[:k]
+            break
+        if c == "\\" and (quote != "'" or text[k + 1:k + 2] in ("\\", "'")):
+            k += 1                                           # an escaped character (in single quotes only \\ and \' are escapes)
+        elif c in "'\"" and quote in ("", c):
+            quote = "" if quote else c
+        k += 1
+    text = text.replace("\\_", " ")
+    try:
+        return shlex.split(text)
+    except ValueError:
+        return re.sub(r"[\\'\"]", "", text).split()
+
+
+def assignment(t):
+    """True when the word t sets a variable (VAR=x, X=/usr/bin/timeout) and is not a program or an option: an = before any slash."""
+    return "=" in t.split("/")[0] and not t.startswith("-")
+
+
 def skip_wrappers(toks):
-    """The index of the program: past assignments (VAR=x), wrappers (sudo, env, time ...), their options, the keywords a command can follow (then, do, !) and
-    redirections written before the program (> f, 2>&1)."""
-    i, env, xargs = 0, False, False
+    """(the index of the program, the indices of the wrapper options the guard cannot read, the indices of the options whose value may be a word that reads
+    as a redirection): past assignments (VAR=x), wrappers (sudo, env, time ...), their options and the values those take (WRAP_OPTS; a value is the next
+    word that is no redirection), timeout's duration, the keywords a command can follow (then, do, !) and redirections written before the program (> f,
+    2>&1). An option of a wrapper that WRAP_OPTS does not name is read as taking no value and its index is returned, so that the other reading is judged
+    too (wrapper_readings). An option that takes a value and is followed by a word that reads as a redirection (sudo -p '< ', env -u '<x': the words carry
+    no quotes, so a quoted value looks like one) is read with the value past it, and its index is returned, so that the readings where that word, or a
+    later one that reads as a redirection too, is the value are judged too (wrapper_readings). Only a word that is no assignment names a wrapper, and a
+    `--` after timeout's options leaves its duration still to come. toks is changed in one way: env -S STRING (-iS, --split-string, --s, -S>FILE STRING) is
+    replaced by the words of STRING, which env reads as more of its own words."""
+    i, w, unread, valued, duration, opts = 0, None, [], [], False, True
     while i < len(toks):
         t = toks[i]
-        if t in ("-C", "--chdir") and env:
-            i += 2                                           # env -C DIR PROGRAM: DIR is where PROGRAM runs, not the program
-        elif xargs and t in XARGS_VALUE_OPTS:
-            i += 2                                           # xargs -I {} sh -c '{}': {} is the replace string, not the program
-        elif "=" in t.split("/")[0] and not t.startswith("-") or os.path.basename(t) in WRAP or t.isdigit() or (t.startswith("-") and i) or t in KEYWORDS:
-            env = env or os.path.basename(t) == "env"
-            xargs = xargs or os.path.basename(t) == "xargs"
-            i += 1
+        if w and opts and t.startswith("-") and len(t) > 1:
+            m = ENV_SPLIT.match(t) if w == "env" else None
+            if m and m.group(2) and not "--split-string".startswith(m.group(2)):
+                m = None                                         # another long option of env (--s is --split-string alone: no other starts with s)
+            if m:
+                text = (m.group(1) or None) if m.group(2) is None else (m.group(3)[1:] if m.group(3) else None)
+                keep, end = [], i + 1
+                if text and LEADING_REDIR.match(text):          # -S>/dev/null STRING: the redirection glued to -S is a word of its own, the string is the next
+                    keep, text = [text], None
+                if text is None:                                 # the string is the next word that is no redirection
+                    j = past_redirections(toks, i + 1)
+                    keep, text, end = keep + toks[i + 1:j], (toks[j] if j < len(toks) else ""), j + 1
+                toks[i:end] = keep + split_string(text)
+                i += len(keep)
+                continue
+            n = wrapper_option(w, t)
+            if n is None:
+                unread.append(i)
+            elif n and i + 1 < len(toks) and is_redirection(toks[i + 1]):
+                valued.append(i)                                 # -p '< ': a quoted value that reads as a redirection; the other reading is judged too
+            if t == "--" and w == "timeout" and not duration:
+                opts = False                                     # timeout -- 5s PROGRAM: the duration still comes first
+            elif t == "--":
+                w = None                                         # the end of the wrapper's options
+            i = past_redirections(toks, i + 1) + 1 if n else i + 1
         elif LEADING_REDIR.match(t):
             i += 2 if BARE_REDIR.match(t) else 1
+        elif w == "timeout" and not duration:
+            duration, i = True, i + 1                            # timeout DURATION PROGRAM: the duration is no program (5, 5s, 0.5m)
+        elif assignment(t) or os.path.basename(t) in WRAP or t.isdigit() or (t.startswith("-") and i) or t in KEYWORDS:
+            if os.path.basename(t) in WRAP and not assignment(t):    # X=/usr/bin/timeout is a variable whose value names a wrapper, not the wrapper
+                w, duration, opts = os.path.basename(t), False, True
+            i += 1
         else:
             break
-    return i
+    return i, unread, valued
 
 
 GLUED_SHELL = re.compile(r"^([^<>]+)([<>].*)$", re.S)     # a program word with a redirection glued to it
 
 
-@functools.cache
 def parsed(seg):
     """(the words of a segment without what the grammar puts around a command, the index of its program): _cmd_tokens and skip_wrappers, once per text (every check
     asks). The list is shared: not to be changed."""
+    toks, i, _, _ = _parsed(seg)
+    return toks, i
+
+
+@functools.cache
+def _parsed(seg):
+    """parsed() with the indices of the wrapper options the guard cannot read and of those whose value may be a word that reads as a redirection
+    (skip_wrappers), once per text."""
     toks = list(_cmd_tokens(seg))
-    i = skip_wrappers(toks)
+    i, unread, valued = skip_wrappers(toks)
     m = GLUED_SHELL.match(toks[i]) if i < len(toks) else None
     if m and (os.path.basename(m.group(1)) in SHELLS or m.group(1) in SOURCES):
         toks[i:i + 1] = [m.group(1), m.group(2)]               # bash<<<TEXT, sh<FILE: the redirection glued to the program is a word of its own for the shell
-    return toks, i
+    return toks, i, tuple(unread), tuple(valued)
+
+
+MAX_READINGS = 8                                             # other readings of one segment, at most (wrapper_readings); a segment with more is refused (bash_skill_refusal)
+
+
+def wrapper_readings(seg):
+    """The other commands a segment may run when a wrapper's option the guard cannot read (skip_wrappers) takes the next word as its value: the words with
+    the first such option and the next word that is no redirection taken out. An option word with a redirection glued to it (sudo -u>/dev/null
+    root) is the option and the redirection, as the shell cuts it when the < or > is not quoted: the other reading is the word cut there. The words are
+    joined as a shell reads them back (rejoin), so that a word with a blank (the text of a here-string) stays one word. An option that takes a value and is
+    followed by words that read as redirections (sudo -p '< ', exec -a '>x', sudo -p 2> /dev/null '<x') may have any of them, quoted, as its value, and
+    the others are real redirections: for every such option, and for each of those words up to the first word that is no redirection (a bare operator is
+    passed with its file), one reading is the words with the option and that word taken out. Each reading is judged as a segment of its own, so each further
+    such option is read both ways too, one reading deeper. The list is cut at MAX_READINGS + 1: a segment with more is refused (bash_skill_refusal)."""
+    toks, _, unread, valued = _parsed(seg)
+    out = []
+    if unread:
+        u = unread[0]
+        m = GLUED_SHELL.match(toks[u])
+        if m:
+            out.append(rejoin(toks[:u] + [m.group(1), m.group(2)] + toks[u + 1:]))
+        else:
+            v = past_redirections(toks, u + 1)
+            out.append(rejoin(toks[:u] + toks[u + 1:v] + toks[v + 1:]))
+    for u in valued:
+        k = u + 1
+        while k < len(toks) and is_redirection(toks[k]) and len(out) <= MAX_READINGS:
+            reading = rejoin(toks[:u] + toks[u + 1:k] + toks[k + 1:])
+            if reading not in out:
+                out.append(reading)
+            k += 2 if BARE_REDIR.match(toks[k]) else 1
+    return out[:MAX_READINGS + 1]
+
+
+def rejoin(words):
+    """Words joined into a command text the plain split cuts into the same words: a word with a blank, a quote, a backslash (pw\\ would escape the blank
+    after it) or no character at all is put in double quotes (a backslash and a double quote in it escaped; a $ or a backtick left as it is, so that what
+    would expand is still read as expanding), the rest as it is."""
+    out = []
+    for w in words:
+        if not w or re.search(r"[\s'\"\\]", w):
+            w = '"' + w.replace("\\", "\\\\").replace('"', '\\"') + '"'
+        out.append(w)
+    return " ".join(out)
 
 
 @functools.cache
@@ -2031,14 +2270,14 @@ def _protected_roots():
     home = os.path.expanduser("~")
     # the library where the data lives, the default and the QARGI_HOME one beside an override
     # Besides the library, only the credentials and the install records of each configuration directory (install.json, the manifests in
-    # install.d/, the lock install.lock beside it, and the legacy install.manifest the one-time migration still reads, until 0.3.3 removes it):
+    # install.d/ and the lock install.lock beside it):
     # not the rest of <conf> (instances, agents, projects, profiles), which qargi verbs a member runs legitimately change.
     # The user's skills and agents directories are the ones the definitions name. No resource names a plugins directory yet, so the one
     # of Claude Code is kept here.
     roots = set(resource_dirs()[1]) | {os.path.join(home, ".claude", "plugins")}
     # (the live configuration directory is one of these: QARGI_CONF, QARGI_HOME/config or ~/.qargi/config)
     for conf in conf_dirs(P, home):
-        roots.update(os.path.join(conf, name) for name in ("packs", "credentials", "install.json", "install.d", "install.lock", "install.manifest"))
+        roots.update(os.path.join(conf, name) for name in ("packs", "credentials", "install.json", "install.d", "install.lock"))
     roots.add(os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config"), "anthropic"))   # the ant profiles and logins
     # the installed copy of the tool: ~/.claude/skills/qargi-* are links into it, and a write through such a link resolves
     # here, so it must be a root itself (it holds the skills, the member definition and the roles a member is launched with)
@@ -2622,6 +2861,21 @@ def bash_skill_refusal(command, here, depth, outer=None):
                         why = bash_skill_refusal(as_program(text), [at], depth + 1, assigned)
                         if why:
                             return why
+            readings = wrapper_readings(seg)
+            if len(readings) > MAX_READINGS:                     # bounded: at most MAX_READINGS other readings of a segment, each at most three deep
+                return OwnReason("a command whose wrapper options can be read in more than %d ways (options the guard cannot read, values that read as redirections) "
+                                 "is not available to an agent; write the command with fewer of them or in parts" % MAX_READINGS)
+            for alt in readings:                                 # a wrapper's option the guard cannot read may take the next word: that reading is judged too
+                if depth >= 3:                                   # each such option, like each nested shell, is one reading deeper
+                    unread, valued = _parsed(seg)[2:]
+                    return OwnReason("the wrapper option %s, %s, is not available to an agent after three such options or nested shells (each such option is read "
+                                     "both ways, one reading deeper); write the command with fewer of them or in parts"
+                                     % (toks[(unread or valued)[0]], "which the guard cannot read (it may take the next word as its value, which changes what the program is)"
+                                        if unread else "whose value the guard cannot read (it reads as a redirection, so the value may be that word or a later one, "
+                                        "which changes what the program is)"))
+                why = bash_skill_refusal(alt, [at], depth + 1, assigned)
+                if why:
+                    return why
             why = protected_write(toks, i, at) or key_read(toks, i, at, assigned)       # redirections alone, or in front of a program, write and read too
             if why:
                 return why
@@ -2705,17 +2959,36 @@ def unreadable_project_verb(command):
     return None
 
 
+def quoted_string(t):
+    """True when the word t reads as a redirection and holds a blank, or a command separator (; | &) after the redirection's operator: the words carry no
+    quotes, and the shell cuts an unquoted word at a blank and at a separator, so t was one quoted word (bash -c "2>/dev/null qargi upgrade", or a separator
+    written in ANSI-C quoting, $'2>/dev/null\\x3bPROGRAM'): no redirection, a string that starts with one. A dup such as 2>&1 or >&2 has its & in the operator."""
+    m = LEADING_REDIR.match(t)
+    return is_redirection(t) and bool(re.search(r"\s", t) or (m and re.search(r"[;|&]", t[m.end():])))
+
+
 def shell_string(prog, rest):
     """The command text a shell is given to run (sh -c STRING, eval STRING), or None. The quotes left in the string are dropped, which
     is conservative: the text is then read as plain words, and a quote inside a word (pro''ject) joins it as the shell would. A `\\$` or
-    `\\`` is read as the expansion it would be for the inner shell (shlex keeps the backslash a double-quoted outer string had before it)."""
+    `\\`` is read as the expansion it would be for the inner shell (shlex keeps the backslash a double-quoted outer string had before it).
+    A word after -c that reads as a redirection and holds a blank (quoted_string) was one quoted word: it is read as the string too, beside the
+    reading where it is a redirection the shell takes out (each reading is a command of the text)."""
     if prog == "eval":
         text = " ".join(rest)
     elif prog in SHELLS:
-        text = next((" ".join(rest[k + 1:]) for k, t in enumerate(rest) if SHELL_C.match(t)), None)
+        c = next((k for k, t in enumerate(rest) if SHELL_C.match(re.split(r"[<>]", t)[0])), None)   # -c, or -c>/dev/null (read_options: not readable)
+        if c is None:
+            return None
+        k, ends, readable, _ = read_options(prog, rest)
+        if readable and "c" in ends:                         # the string is the first word past the options, not the word after -c (bash -c -e STRING, -co errexit STRING)
+            text = " ; ".join([t for t in rest[c + 1:k] if quoted_string(t)] + [" ".join(rest[k:])])   # the last part is empty when no word follows: the string is in the pieces that follow (bash -c$(true) STRING)
+        elif readable:
+            text = " ".join(rest[c + 1:])
+        else:                                                # options the guard cannot read: any word after -c may be the string, so each is read as a command
+            text = " ; ".join(t for t in rest[c + 1:] if not is_redirection(t) or quoted_string(t))
     else:
         return None
-    return None if text is None else as_program(text)
+    return as_program(text)
 
 
 def as_program(text):
@@ -2739,7 +3012,10 @@ FED_NOTE = ("write the script to a file with your file tool and run it with `bas
 
 def shell_source(prog, rest, pre):
     """Where a shell (or source and .) takes its program from: "string" (sh -c: shell_string reads it), ("file", NAME), "stdin" (sh -s, sh -, no file, a name of
-    the standard input, or the words xargs brings from its own), or None when prog is no shell. pre: the words before the program (xargs among them)."""
+    the standard input, or the words xargs brings from its own), ("either", NAMES, STDIN) when the options cannot be read (read_options: then every word
+    past them that is no option may be the file, and for a shell the standard input may be the program too), or None when prog is no shell. The options
+    are read as the file and -c paths read them (read_options: bash's one-dash long names, values past redirections). pre: the words before the program
+    (xargs among them)."""
     if prog not in SHELLS and prog not in SOURCES:
         return None
     x = next((k for k, t in enumerate(pre) if os.path.basename(t) == "xargs"), None)
@@ -2752,22 +3028,17 @@ def shell_source(prog, rest, pre):
         elif BARE_REDIR.match(t):
             k += 1
         k += 1
-    k = 0
-    if prog in SHELLS:
-        while k < len(words):
-            t = words[k]
-            if SHELL_C.match(t):
-                return "stdin" if x is not None and (k + 1 >= len(words) or replaces) else "string"
-            if SHELL_STDIN_OPT.match(t):
-                return "stdin"
-            if t in ("-", "--"):
-                k += 1
-                break
-            if not t.startswith(("-", "+")) or len(t) < 2:
-                break
-            k += 2 if SHELL_VALUE_OPTS.match(t) else 1
-    elif words[:1] == ["--"]:
-        k = 1
+    k, ends, readable, _ = read_options(prog, words)
+    if not readable:
+        c = next((j for j, t in enumerate(words) if SHELL_C.match(re.split(r"[<>]", t)[0])), None) if prog in SHELLS else None
+        if c is None:
+            names = [t for t in words[k:] if not t.startswith(("-", "+")) or t in STDIN_NAMES or len(t) < 2]
+            return ("either", [t for t in names if t not in STDIN_NAMES], prog in SHELLS or x is not None or any(t in STDIN_NAMES for t in names))
+        ends, k = "c", c + 1                                     # shell_string reads every word after -c
+    if "c" in ends:
+        return "stdin" if x is not None and (k >= len(words) or replaces) else "string"
+    if "s" in ends:
+        return "stdin"
     if k < len(words):
         return "stdin" if words[k] in STDIN_NAMES else ("file", words[k])
     return "stdin" if prog in SHELLS or x is not None else None   # no file: the standard input (xargs brings the name of one from it)
@@ -2917,7 +3188,17 @@ def program_fed(ps, n, here):
         return input_of(ps, n)
     if not isinstance(src, tuple):
         return [], None
-    name = src[1]
+    if src[0] == "file":
+        return file_fed(ps, src[1], here)
+    texts, why = input_of(ps, n) if src[2] else ([], None)   # options the guard cannot read: the standard input and every file that may be the program
+    for name in src[1]:
+        more, w = file_fed(ps, name, here)
+        texts, why = texts + more, why or w
+    return texts, why
+
+
+def file_fed(ps, name, here):
+    """What the line writes into the file name that a shell of the cut ps runs, as program_fed says it."""
     if name.startswith(("<(", ">(")):
         return [], "a process substitution"
     w = pass_writes(ps, here).get(resolve(here, name))
@@ -2985,89 +3266,171 @@ SHELL_FLAGS = frozenset("abefhkmnptuvxBCEHPTilrD")           # a shell's short o
 SHELL_LONG = {"--rcfile": 1, "--init-file": 1, "--debug": 0, "--debugger": 0, "--dump-po-strings": 0, "--dump-strings": 0, "--help": 0, "--login": 0,
               "--noediting": 0, "--noprofile": 0, "--norc": 0, "--posix": 0, "--pretty-print": 0, "--protected": 0, "--restricted": 0, "--verbose": 0, "--version": 0, "--wordexp": 0}
 UNREAD_NAME = re.compile(r"[$`*?\[{]")                      # a file name whose last part has one of these is built or expanded by the shell
+BUILT_VALUE = re.compile(r"\$\(|\$\{|`")                    # an option or a value the shell builds: unquoted, it may be cut into more words or none, so where the options end is not known
 
 
 def is_redirection(t):
     return not t.startswith(("<(", ">(")) and bool(LEADING_REDIR.match(t) or REDIR.match(t))
 
 
-def interpreted(prog, rest):
-    """Where an interpreter (a shell, . or source, python) finds the file it runs among its words rest: (k, True) when rest[k] is the file, (None, True)
-    when it runs no file (-c, -m, -s, a python `-`, no word left), (None, False) when the guard cannot read an option (one it does not know, one the
-    shell builds, a shell value stuck to its letter, which bash and zsh read apart) or the file's name. A redirection, with its file, is neither."""
+def past_redirections(rest, k):
+    """The index of the first word at or after k that is no redirection (a redirection with its file is skipped): the shell takes redirections out of the
+    words before the program sees them, so one written between a wrapper's option and its value (sudo -u 2>/dev/null root) does not take the value's place
+    (the reading where a quoted value that looks like a redirection is the value is judged too: skip_wrappers)."""
+    while k < len(rest) and is_redirection(rest[k]):
+        k += 2 if BARE_REDIR.match(rest[k]) else 1
+    return k
+
+
+def read_options(prog, rest):
+    """The options of an interpreter (a shell, . or source, python) at the start of its words rest: (k, ends, readable, dirs). k is the index of the first word
+    past them (the file, or the -c string of a shell), ends the letters that say the program is not a file (python's c or m, a shell's c or s), readable False
+    when the guard cannot read an option (one it does not know, one the shell builds, a shell value stuck to its letter, which bash and zsh read apart, a one-dash
+    long name sh may read either way) and dirs the values of source -p. A value is the next word; one that reads as a redirection is not readable, as the
+    words carry no quotes: it may be a redirection the shell takes out (bash -o 2>/dev/null errexit, the value is the word after it) or a quoted value
+    (python3 -X '<x'), and for source -p both words are kept in dirs; an attached -p value the shell builds (-p${D}) or with a redirection glued to it
+    (-p>/dev/null DIR) is kept too, as it is and cut where the shell cuts it (the part before the redirection, or else the next word). A value the shell builds ($(..), ${..}, a backtick: unquoted it may be cut into
+    several words) is not readable. Bash reads a long name with one dash too (-rcfile F, -norc) while no short option came before it."""
     py = bool(re.match(r"^python[0-9.]*$", prog))
-    k = 0
+    k, ends, dirs, shorts = 0, "", [], False
+
+    def value(k):                                            # (the index past the value of an option whose value starts at k, the value or None)
+        if k < len(rest) and is_redirection(rest[k]):          # a redirection (-o 2>/dev/null errexit) or a quoted value that reads as one (-X '<x'): not readable
+            return k, None
+        return (k + 1, rest[k]) if k < len(rest) else (k, None)
+
     while k < len(rest):
         tick()
         t = rest[k]
         if is_redirection(t):
-            k += 2 if BARE_REDIR.match(t) else 1                 # the operator alone: its target is the next word
+            k = past_redirections(rest, k)
             continue
-        if t == "--" or (t == "-" and not py):                   # the end of the options (a shell's `-` too); python's `-` is its standard input
+        if t == "--" or (t == "-" and prog in SHELLS):          # the end of the options (a shell's `-` too); python's `-` is the standard input, source's a file named -
             k += 1
             break
         if len(t) < 2 or not (t.startswith("-") or (t.startswith("+") and prog in SHELLS)):
             break
-        if prog in SOURCES:                                      # source [-p PATH] FILE
-            if t != "-p":
-                return None, False
-            k += 2
+        if BUILT_VALUE.search(t) or "<" in t or ">" in t:          # a redirection glued to an option (-X>/dev/null): the value is the next word, unless a quote kept it
+            if prog in SOURCES and t.startswith("-p"):           # -p${D}, -p$(..), -p>/dev/null DIR: every directory it may name, for own_named
+                v = t[2:]
+                cut = re.split(r"&?[<>]", v, maxsplit=1)[0]
+                dirs.append(v)                                   # built (a $ or a backtick in it counts as the tool's), or quoted whole
+                if cut != v:                                     # a redirection glued: the shell cuts the word there, the directory is the part before it or the next word
+                    j = past_redirections(rest, k + 1)
+                    dirs += [cut] if cut else rest[j:j + 1]
+            return k, ends, False, dirs
+        if prog in SOURCES:                                      # source [-p PATH] FILE, -pPATH
+            if not t.startswith("-p"):
+                return k, ends, False, dirs
+            if t == "-p" and k + 1 < len(rest) and is_redirection(rest[k + 1]):    # -p '<x:DIR' NAME or -p 2>/dev/null DIR NAME: both directories (own_named)
+                j = past_redirections(rest, k + 1)
+                dirs += [rest[k + 1]] + rest[j:j + 1]
+                return k + 1, ends, False, dirs
+            k, v = value(k + 1) if t == "-p" else (k + 1, t[2:])
+            dirs.append(v or "")
+            if v is None or BUILT_VALUE.search(v):
+                return k, ends, False, dirs
             continue
-        if t.startswith("--"):
-            n = (PY_LONG if py else SHELL_LONG).get(t)
+        name = t if t.startswith("--") else None
+        if not py and not name and t.startswith("-") and "-" + t in SHELL_LONG:     # -rcfile, -norc: bash's long name with one dash
+            if prog == "sh":                                     # sh may be bash (a long name) or another shell (letters): which is not known
+                return k, ends, False, dirs
+            if prog == "bash" and not shorts:
+                name = "-" + t
+        if name:
+            n = (PY_LONG if py else SHELL_LONG).get(name)
             if n is None:
-                return None, False
-            k += 1 + n
+                return k, ends, False, dirs
+            k += 1
+            for _ in range(n):
+                k, v = value(k)
+                if v is None or BUILT_VALUE.search(v):
+                    return k, ends, False, dirs
             continue
-        step = 1
+        shorts, need = True, 0
         for j, c in enumerate(t[1:], 1):
             if py and c in "XW":                                 # -X dev, -Xdev, -IX dev
-                step += 0 if t[j + 1:] else 1
+                need = 0 if t[j + 1:] else 1
                 break
-            if c in ("cm" if py else "cs"):
-                return None, True
+            if py and c in "cm":                                 # python -c CMD, -m MOD: the options end here
+                return k + 1, ends + c, True, dirs
+            if not py and c in "cs":
+                ends += c
+                continue
             if not py and c in "oO":                             # -euo pipefail, -oO errexit extglob: each takes the next word
                 if any(x not in "oO" for x in t[j + 1:]):         # -oerrexit: bash takes the next word, another shell may take "errexit"
-                    return None, False
-                step += 1
+                    return k, ends, False, dirs
+                need += 1
                 continue
             if c not in (PY_FLAGS if py else SHELL_FLAGS):
-                return None, False
-        k += step
-    while k < len(rest) and is_redirection(rest[k]):
-        k += 2 if BARE_REDIR.match(rest[k]) else 1
-    if k >= len(rest) or (py and rest[k] == "-"):
+                return k, ends, False, dirs
+        k += 1
+        for _ in range(need):
+            k, v = value(k)
+            if v is None or BUILT_VALUE.search(v):
+                return k, ends, False, dirs
+    return past_redirections(rest, k), ends, True, dirs
+
+
+def interpreted(prog, rest):
+    """Where an interpreter (a shell, . or source, python) finds the file it runs among its words rest: (k, True) when rest[k] is the file, (None, True)
+    when it runs no file (-c, -m, -s, a python `-`, no word left), (None, False) when the guard cannot read an option (read_options) or the file's name.
+    A redirection, with its file, is neither."""
+    k, ends, readable, _ = read_options(prog, rest)
+    if not readable:
+        return None, False
+    if ends or k >= len(rest) or (rest[k] == "-" and re.match(r"^python[0-9.]*$", prog)):
         return None, True
     return (None, False) if UNREAD_NAME.search(os.path.basename(rest[k])) else (k, True)
 
 
-def script_of(prog, rest):
-    """The index in rest of the lead-only script (SCRIPTS) an interpreter prog runs, or None: the file it runs (interpreted) when that is one; the first
-    word that names one when the guard cannot read the options or the file's name (fail closed); when it runs no file (-c, -m, -s), the first word that
-    is no option, as before (shell_string reads the string of sh -c again)."""
+def scripts_of(prog, rest):
+    """The indices in rest of the words that may be the lead-only script (SCRIPTS) an interpreter prog runs, in order: the file it runs (interpreted) when
+    that is one; every word that names one when the guard cannot read the options or the file's name (fail closed: the first such word may be a value of
+    the options, a source -p directory named like a script such as a tool root named qargi, and the script a later word); when it runs no file (-c, -m,
+    -s), the first word that is no option, as before (shell_string reads the string of sh -c again)."""
     if prog not in SHELLS and prog not in SOURCES and not re.match(r"^python[0-9.]*$", prog):
-        return None
+        return []
     k, readable = interpreted(prog, rest)
+    if k is None and not readable:
+        return [j for j, t in enumerate(rest) if os.path.basename(t) in SCRIPTS]
     if k is None:
-        k = next((j for j, t in enumerate(rest) if (os.path.basename(t) in SCRIPTS if not readable else not t.startswith("-"))), None)
-    return k if k is not None and os.path.basename(rest[k]) in SCRIPTS else None
+        k = next((j for j, t in enumerate(rest) if not t.startswith("-")), None)
+    return [k] if k is not None and os.path.basename(rest[k]) in SCRIPTS else []
 
 
-def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
+def own_named(prog, rest, script, here):
+    """True when the word script, which the interpreter prog runs with its words rest from the directory here, names the tool's own file (own_script).
+    source -p PATH NAME looks a name with no slash up in the directories of PATH (colon-separated; an empty one is the current directory) and not where the
+    shell is: each is asked, and a directory the shell builds (a variable, a substitution, a glob) could be the tool's, so it counts as one (fail closed)."""
+    if prog in SOURCES and "/" not in script:
+        dirs = read_options(prog, rest)[3]
+        if dirs:
+            return any(UNREAD_NAME.search(d) or own_script(os.path.join(d or ".", script), here) for v in dirs for d in v.split(":"))
+    return own_script(script, here)
+
+
+def skill_verb(prog, rest, via_xargs=False, here=".", exe=None, at=None):
     """The reason a qargi command (or the script behind it, run directly) is a verb that changes a skill, or None. via_xargs: xargs
     stands before the program, so its arguments come from standard input, where --write could be. here: the directory the command runs
-    in, and exe: the word that names the program, for the scripts that are only the tool's own (OWN_ONLY)."""
+    in, and exe: the word that names the program, for the scripts that are only the tool's own (OWN_ONLY). at: the index in rest of the
+    script an interpreter runs, one of scripts_of (each is judged)."""
     # a ) with no ( in a word closes a substitution or group whose start the plain split cut off (`printf -v x 'b[%s(true; qargi upgrade)]' $`
     # runs `qargi upgrade` in an arithmetic subscript): the command ends there, so the verb is read without it
     cut = [t.split(")")[0] if ")" in t and "(" not in t else t for t in rest]
     words = [t for t in cut if not t.startswith("-")]
     name, script = prog, exe or prog
-    if prog not in SCRIPTS:                              # also a script a shell runs, or sources into itself (`. install.sh` runs it as `sh install.sh` does)
-        k = script_of(prog, cut)                         # past the interpreter's options and their values (python3 -X dev, bash -o errexit)
-        if k is None:
-            return None
+    if prog not in SCRIPTS and at is None:               # also a script a shell runs, or sources into itself (`. install.sh` runs it as `sh install.sh` does)
+        for k in scripts_of(prog, cut):                  # past the interpreter's options and their values (python3 -X dev, bash -o errexit); each word that may be it
+            tick()
+            why = skill_verb(prog, rest, via_xargs, here, exe, at=k)
+            if why:
+                return why
+        return None
+    if prog not in SCRIPTS:
+        k = at
         name, script, words = os.path.basename(cut[k]), cut[k], [t for t in cut[k + 1:] if not t.startswith("-")]
-    if name in OWN_ONLY and not own_script(script, here):
+    if name in OWN_ONLY and not own_named(prog, cut, script, here):
         return None
     if name == "campaign.py" or (name in ("qargi", "jsonplan.py") and words[:1] == ["campaign"]):
         args = rest
@@ -3272,9 +3635,7 @@ def protected_write(toks, i, here):
     xargs = any(os.path.basename(t) == "xargs" for t in toks[:i])
     args = operands(rest, xargs)
     cands = list(write_targets(toks, i))
-    k = None if prog in SCRIPTS else script_of(prog, rest)       # a script an interpreter runs, past its options (bash -o errexit lib/packs.sh packs render)
-    if prog in SCRIPTS or k is not None:
-        words = args if prog in SCRIPTS else operands(rest[k + 1:], xargs)
+    for words in [args] if prog in SCRIPTS else [operands(rest[k + 1:], xargs) for k in scripts_of(prog, rest)]:   # a script an interpreter runs, past its options (bash -o errexit lib/packs.sh packs render)
         if words[:2] == ["packs", "render"]:                 # render writes its output directory: judge every operand
             cands += [("qargi packs render", c) for t in words[2:] for c in {t, t.split("=", 1)[-1]}]
     if prog == "find" and any(t in FIND_ACTIONS for t in rest):

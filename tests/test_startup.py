@@ -273,10 +273,20 @@ class Processes(unittest.TestCase):
         self.assertEqual(sum("preamble" in l for l in py), 1, py)
 
     def test_no_preamble_for_help_version_completion_guard_and_hooks(self):
-        for argv in (("version",), ("help",), ("role", "--help"), ("__complete", "role", ""), ("hook", "tool-use")):
+        for argv in (("version",), ("--version",), ("help",), ("role", "--help"), ("__complete", "role", ""), ("hook", "tool-use")):
             r, py = self.starts(*argv)
             self.assertEqual(r.returncode, 0, argv)
             self.assertEqual([l for l in py if "preamble" in l], [], argv)
+
+    def test_version_forms_print_the_version_and_the_source_and_create_nothing(self):
+        h = Home("none")
+        self.addCleanup(h.close)
+        before = sorted(os.listdir(h.t))
+        want = open(os.path.join(ROOT, "VERSION")).read() + "source: " + os.path.realpath(ROOT) + "\n"
+        for argv in (("version",), ("--version",)):
+            r = h.run(argv)
+            self.assertEqual((r.returncode, r.stdout, r.stderr), (0, want, ""), argv)
+        self.assertEqual(sorted(os.listdir(h.t)), before)            # no conf, state or cache directory was made
 
     def test_the_large_modules_are_imported_not_run(self):
         """provider, marshal_store, help, gates and lead_usage start through the one form (bin/qargi, and pymod in lib/lib.sh): python3 -I -c SRC LIB MODULE

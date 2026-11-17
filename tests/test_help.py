@@ -116,7 +116,7 @@ class Sync(unittest.TestCase):
         labels = set()
         for m in re.finditer(r"(?m)^  ([a-z_|-]+)\) ", body):
             labels |= set(m.group(1).split("|"))
-        labels -= {"-h", "--help", "__complete", "__guard"}
+        labels -= {"-h", "--help", "--version", "__complete", "__guard"}
         self.assertEqual(labels, set(C.COMMANDS), "bin/qargi and lib/commands.py disagree")
 
     def test_groups_cover_every_command_once(self):
@@ -205,14 +205,40 @@ class Render(unittest.TestCase):
         self.assertIn("guard", C.TOPICS)
         title, paras = C.TOPICS["guard"]
         text = " ".join(paras)
-        self.assertLessEqual(len(text.split()), 415)
-        for needle in ("QARGI_NESTED", "plan token", "OUT", "local verify", "report", "push", "quotes", "heredoc", "substitution"):
+        self.assertLessEqual(len(text.split()), 493)
+        for needle in ("QARGI_NESTED", "plan token", "OUT", "local verify", "report", "push", "quotes", "heredoc", "substitution",
+                       "Wrapper options", "except for the read-only class's writes, an unknown one is judged with and without the next word", "source -p DIR NAME",
+                       "($(, ${ or a backtick; not a plain $NAME)", "The install record is install.json, install.d and install.lock.", "best-effort"):
             self.assertIn(needle, text)
+        self.assertNotIn("install.manifest", text)
         self.assertIn("guard", H.show_overview())
         self.assertIn(title, H.show_topic("guard"))
         r = subprocess.run([BIN, "help", "guard"], capture_output=True, text=True, stdin=subprocess.DEVNULL, env=dict(os.environ, QARGI_HOME=tempfile.mkdtemp()))
         self.assertEqual(r.returncode, 0)
         self.assertIn("local verify", r.stdout)
+
+    def test_doctor_and_handoff_help_say_what_the_install_check_warns_of_and_how_the_note_is_laid_out(self):
+        doctor = " ".join(C.COMMANDS["doctor"]["desc"].split())
+        for needle in ("install: the install records", "install.manifest or project-N.manifest from 0.3.1 or earlier", "no longer read", "removed by hand after checking install.d",
+                       "on a record that lacks the tool (install.json without a tool_root, or runtimes recorded with no install.json) or its runtimes (install.json names the tool but no user runtime is in install.d)"):
+            self.assertIn(needle, doctor)
+        self.assertIn("the tools, the install records", C.COMMANDS["doctor"]["summary"])
+        self.assertIn("a lead model that cannot be determined (no transcript, no counted turn, no model id) is not a warning", doctor)
+        for word in ("migrat", "moved into install.d"):
+            self.assertNotIn(word, doctor)
+        handoff = " ".join(C.COMMANDS["marshal"]["verbs"]["handoff"]["desc"].split())
+        self.assertIn("The note starts with its where section, then an index of its features, lists live work first and lists a feature's own worktrees under it. "
+                      "A note that fits the bound is printed whole, with every index line and no truncation line; "
+                      "only a note over the bound has its index cut (3072 bytes of lines, then one line that counts the features without one) and ends with a line naming the features left out or cut short and saying how many have no index line.", handoff)
+        self.assertIn("The features that have a branch and no marshal record are one note: how many, their first names, then the count of the rest.", handoff)
+        self.assertIn("--json over the bound empties worktrees_unattributed and agent_unattributed as needed (each only while the output is still over the bound), then, one feature at a time from the last, trims its detail and drops it, and sets truncated; "
+                      "when features are dropped it adds features_omitted (the count dropped) and features_left_out (their names, up to 3000 bytes), and features_left_out_more (the count of names not listed) when not all of them are.", handoff)
+        self.assertIn("it cuts the lists from the end, the notes first, then deviations.accepted, gates, read_first.memory, read_first.repo_docs and read_first.successor, and lists_left_out says how many items each list lost.", handoff)
+        self.assertIn("Output is capped at 16 KiB, the note and --json alike (the final newline counted). The text note is always within the bound; in --json the one part not bounded is what a successor needs whole and --json never cuts: do_not_assume, where, packs and environment (", handoff)
+        for key in ("truncated", "features_omitted", "features_left_out", "features_left_out_more", "lists_left_out", "worktrees_unattributed", "agent_unattributed"):   # the keys of a cut note in --json (lib/marshal_handoff.py)
+            self.assertIn(key, handoff)
+        advise = [o for o in C.COMMANDS["lead"]["verbs"]["compact-check"]["opts"] if o["flag"] == "--advise"]
+        self.assertIn("no advice on an assumed window (unknown model window and no lead.context_window)", str(advise))
 
     def test_the_guard_topic_and_the_review_role_say_what_a_read_only_member_runs_where_tmpdir_points_and_what_a_piece_after_a_cut_may_not_start_with(self):
         """What the guard refuses a read-only member, as the member needs to read it: an assignment (not the command), the TMP that TMPDIR is, and the words the
@@ -358,7 +384,12 @@ class Render(unittest.TestCase):
         r = run("nosuch")
         self.assertEqual(r.returncode, 2)
         self.assertIn("unknown command", r.stderr)
-        self.assertEqual(run("version").returncode, 0)
+        want = slurp(os.path.join(ROOT, "VERSION")).strip() + "\nsource: " + os.path.realpath(ROOT) + "\n"
+        for form in ("version", "--version"):
+            r = run(form)
+            self.assertEqual((r.returncode, r.stdout, r.stderr), (0, want, ""), form)
+        self.assertIn("--version", C.COMMANDS["version"]["desc"])
+        self.assertIn("source:", C.COMMANDS["version"]["desc"])
 
     def test_the_declared_gates_in_the_output_of_the_verbs_are_described(self):
         # declared gates appear in the handoff note (== gates, and gates in --json), on standard error of project show and in project attach: the help says so

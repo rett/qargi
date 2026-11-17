@@ -385,158 +385,38 @@ class Remove(Base):
         self.assertFalse(os.path.lexists(self.sk()))
 
 
-class Migrate(Base):
-    """The one-time move of the single install.manifest of 0.3.1 into install.d (removed in 0.3.3). The legacy file is a literal fixture
-    in the two-field format 0.3.1 wrote, beside the links it lists."""
+class Leftovers(Base):
+    """What an interrupted run or an install of 0.3.1 left in the configuration directory: a temporary manifest is removed unread, and
+    the single install.manifest and a project-N.manifest of 0.3.1 are never read, changed or removed (the migration of them is gone)."""
 
-    def setUp(self):
-        super().setUp()
-        self.env = mock.patch.dict(os.environ, {"HOME": self.home})
-        self.env.start()
-        self.addCleanup(self.env.stop)
-        h = self.home
-        self.data = os.path.join(h, ".local/share/qargi")
-        self.slots = [os.path.join(h, ".local/bin/qargi"), os.path.join(h, ".local/share/man/man1/qargi.1"),
-                      os.path.join(h, ".local/share/bash-completion/completions/qargi"), os.path.join(h, ".local/share/zsh/site-functions/_qargi"),
-                      os.path.join(h, ".config/fish/completions/qargi.fish")]
-        rel = ["bin/qargi", "man/qargi.1", "completions/qargi.bash", "completions/_qargi", "completions/qargi.fish"]
-        sk = self.sk()
-        os.makedirs(sk)
-        for s in SKILLS:
-            os.symlink(os.path.join(self.tool, "skills", s), os.path.join(sk, s))
-        for p, r in zip(self.slots, rel):
-            os.makedirs(os.path.dirname(p), exist_ok=True)
-            os.symlink(os.path.join(self.tool, r), p)
-        spit(os.path.join(self.conf, "install.json"), json.dumps({"tool_root": self.tool, "installed_at": "2026-11-16T00:00:00Z", "version": "0.3.1"}))
-        self.legacy = os.path.join(self.conf, "install.manifest")
-        spit(self.legacy, "".join("L\t%s\n" % p for p in [os.path.join(sk, s) for s in SKILLS] + self.slots)
-             + "P\t%s\nP\t%s\nP\t%s\n" % (os.path.join(h, ".claude"), sk, os.path.join(h, ".local/bin")))
-        self.said = []
+    def legacy_files(self):
+        user, proj = os.path.join(self.conf, "install.manifest"), os.path.join(self.conf, "project-123.manifest")
+        spit(user, "f\t/etc/passwd\n")
+        spit(proj, "L\t%s/qargi-task\n" % self.sk())
+        return user, proj
 
-    def migrate(self, tool=None):
-        R.migrate(self.conf, self.data, self.slots, tool or self.tool, self.said.append)
+    def test_apply_and_uninstall_remove_a_temporary_manifest_unread(self):
+        self.apply(self.plan())
+        tmp = os.path.join(self.rdir, ".runtime-codex.manifest.x1.tmp")
+        spit(tmp, "planted\n")
+        self.apply(self.plan("codex"))
+        self.assertFalse(os.path.lexists(tmp))
+        spit(tmp, "planted\n")
+        R.uninstall(self.conf, [self.mf("codex")], False, lambda m: None)
+        self.assertFalse(os.path.lexists(tmp))
+        self.assertEqual(sorted(os.listdir(self.rdir)), ["runtime-claude-code.manifest"])
 
-    def test_the_legacy_manifest_splits_into_the_runtime_and_the_shared_record(self):
-        snap = self.snapshot(self.home)
-        self.migrate()
-        self.assertEqual(sorted(os.listdir(self.rdir)), ["runtime-claude-code.manifest", "shared.manifest"])
-        self.assertFalse(os.path.exists(self.legacy), "the legacy file goes once install.d is committed")
-        self.assertEqual(stat.S_IMODE(os.stat(self.rdir).st_mode), 0o700)
-        rt, sh = R.read(self.mf()), R.read(os.path.join(self.rdir, "shared.manifest"))
-        self.assertEqual({(k, p, t) for k, p, t in rt.lines if k == "L"},
-                         {("L", os.path.join(self.sk(), s), os.path.join(self.tool, "skills", s)) for s in SKILLS})
-        self.assertIn(("P", os.path.join(self.home, ".claude"), None), rt.lines)
-        self.assertEqual(len([x for x in sh.lines if x[0] == "L"]), 5)
-        self.assertIn(("P", os.path.join(self.home, ".local/bin"), None), sh.lines)
-        self.assertEqual(self.snapshot(self.home), snap, "the migration changes no link")
-        self.assertFalse(os.path.exists(os.path.join(self.conf, "install.d.new")))
-
-    def test_a_link_that_no_longer_points_into_the_tool_is_not_carried(self):
-        p = os.path.join(self.sk(), "qargi-flow")
-        os.unlink(p)
-        os.symlink("/mine", p)
-        os.unlink(self.slots[1])
-        self.migrate()
-        paths = R.read(self.mf()).paths() | R.read(os.path.join(self.rdir, "shared.manifest")).paths()
-        self.assertNotIn(p, paths)
-        self.assertNotIn(self.slots[1], paths)
-        self.assertIn("not carried over: %s (no longer the link the install made)" % p, self.said)
-
-    def test_a_line_outside_the_install_is_refused_and_nothing_changes(self):
-        for line in ("f\t%s/.bashrc\n" % self.home, "C\t/etc\n", "d\trelative/dir\n", "P\t%s/.cache\n" % self.home, "x\t%s\n" % self.sk()):
-            with self.subTest(line=line):
-                text = slurp(self.legacy)
-                spit(self.legacy, text + line)
-                msg = self.refused(self.migrate)
-                self.assertIn("nothing was changed", msg)
-                self.assertEqual(slurp(self.legacy), text + line)
-                self.assertFalse(os.path.lexists(self.rdir))
-                self.assertFalse(os.path.lexists(os.path.join(self.conf, "install.d.new")))
-                spit(self.legacy, text)
-
-    def test_skills_of_no_known_runtime_are_refused(self):
-        spit(self.legacy, "L\t%s/.other/skills/qargi-task\n" % self.home)
-        self.assertIn("cannot tell which runtime", self.refused(self.migrate))
-        self.assertTrue(os.path.isfile(self.legacy))
-        self.assertFalse(os.path.lexists(self.rdir))
-
-    def test_a_project_manifest_moves_to_its_runtime(self):
-        proj = os.path.join(self.t, "proj")
-        root = os.path.join(proj, ".agents", "skills")
-        os.makedirs(root)
-        os.symlink(os.path.join(self.tool, "skills", "qargi-task"), os.path.join(root, "qargi-task"))
-        spit(os.path.join(self.conf, "project-123.manifest"), "c\t%s\nP\t%s/.agents\nP\t%s\nL\t%s/qargi-task\n" % (self.conf, proj, root, root))
-        self.migrate()
-        m = R.read(os.path.join(self.rdir, "project-123-codex.manifest"))
-        self.assertEqual(m.header["project"], proj)
-        self.assertIn(("L", root + "/qargi-task", os.path.join(self.tool, "skills", "qargi-task")), m.lines)
-        self.assertFalse(os.path.exists(os.path.join(self.conf, "project-123.manifest")))
-
-    def test_a_project_manifest_alone_is_not_read(self):
-        proj = os.path.join(self.t, "proj")
-        root = os.path.join(proj, ".claude", "skills")
-        mine = os.path.join(root, "qargi-task", "SKILL.md")
-        spit(mine, "mine\n")                                        # a qargi-* skill of your own
-        planted = os.path.join(self.conf, "project-123.manifest")
-        os.unlink(self.legacy)
-        for keep_json in (False, True):
-            with self.subTest(install_json=keep_json):
-                if not keep_json:
-                    os.rename(os.path.join(self.conf, "install.json"), os.path.join(self.t, "install.json"))
-                else:
-                    os.rename(os.path.join(self.t, "install.json"), os.path.join(self.conf, "install.json"))
-                spit(planted, "C\t%s/qargi-task\nf\t%s\n" % (root, mine))
-                snap = self.snapshot(proj)
-                self.migrate()
-                self.assertFalse(os.path.exists(planted))
-                self.assertEqual(self.snapshot(proj), snap)
-                if not keep_json:                                   # after a full uninstall: no install.manifest, no install.json
-                    self.assertFalse(os.path.lexists(self.rdir), "a project manifest alone does not arm the migration")
-                    self.assertIn("removed %s: a project record of qargi 0.3.1 with no install.manifest and no install.json beside it, so it "
-                                  "was not read (install.sh --project DIR records that project again)" % planted, self.said)
-                    with self.assertRaises(R.Refused):          # so an install does not take your skill for its own
-                        self.apply("M\t%s\tkind=project\tname=claude-code\tproject=%s\troot=%s\nL\t%s/qargi-task\t%s/skills/qargi-task\n"
-                                   % (os.path.join(self.rdir, "project-123-claude-code.manifest"), proj, root, root, self.tool))
-                    self.assertEqual(self.snapshot(proj), snap)
-                else:                                               # beside the install.json of a 0.3.1 install it is migrated
-                    self.assertEqual(os.listdir(self.rdir), ["project-123-claude-code.manifest"])
-
-    def test_it_runs_once_and_an_interrupted_one_starts_again_from_the_legacy_files(self):
-        with mock.patch.object(R.os, "rename", side_effect=KeyboardInterrupt), self.assertRaises(KeyboardInterrupt):
-            self.migrate()
-        self.assertTrue(os.path.isfile(self.legacy))
-        self.assertFalse(os.path.lexists(self.rdir))
-        # a crash between the commit and the removal of the legacy file: install.d is there, so the file is removed unread
-        real = R.os.unlink
-        with mock.patch.object(R.os, "unlink", side_effect=lambda p: (_ for _ in ()).throw(KeyboardInterrupt) if p == self.legacy else real(p)), \
-                self.assertRaises(KeyboardInterrupt):
-            self.migrate()
-        self.assertTrue(os.path.isfile(self.legacy) and os.path.isdir(self.rdir))
-        before = slurp(self.mf())
-        spit(self.legacy, "f\t/etc/passwd\n")             # planted after the commit: never read
-        self.migrate()
-        self.assertFalse(os.path.exists(self.legacy))
-        self.assertEqual(slurp(self.mf()), before)
-        self.assertTrue(any("was not read" in s for s in self.said), self.said)
-
-    def test_a_leftover_install_d_new_is_removed_and_never_read(self):
-        new = os.path.join(self.conf, "install.d.new")
-        precious = os.path.join(self.home, "precious")
-        spit(precious, "keep\n")
-        spit(os.path.join(new, "runtime-codex.manifest"),
-             "#qargi-manifest\t2\tkind=runtime\tname=codex\troot=%s\nf\t%s/qargi-x/y\n" % (self.home, self.home))
-        spit(os.path.join(new, "shared.manifest"), "planted\n")
-        self.migrate()
-        self.assertEqual(sorted(os.listdir(self.rdir)), ["runtime-claude-code.manifest", "shared.manifest"], "built from the legacy file alone")
-        self.assertFalse(os.path.lexists(new))
-        self.assertTrue(os.path.isfile(precious))
-        # with no legacy file left, a planted install.d.new and a temporary manifest in install.d are removed all the same
-        spit(os.path.join(new, "runtime-codex.manifest"), "planted\n")
-        spit(os.path.join(self.rdir, ".runtime-codex.manifest.x1.tmp"), "planted\n")
-        self.migrate()
-        self.assertFalse(os.path.lexists(new))
-        self.assertEqual(sorted(os.listdir(self.rdir)), ["runtime-claude-code.manifest", "shared.manifest"])
-        self.assertIn("removed %s, left by an interrupted migration (not read)" % new, self.said)
+    def test_a_legacy_install_manifest_and_project_manifest_are_neither_read_nor_removed(self):
+        legacy = self.legacy_files()
+        before = {p: slurp(p) for p in legacy}
+        self.apply(self.plan())
+        self.apply(self.plan("codex"))
+        self.assertEqual(R.state(self.conf, os.path.join(self.t, "data"), "123"), ["runtime\tclaude-code\t" + self.mf(), "runtime\tcodex\t" + self.mf("codex")])
+        self.assertEqual(sorted(os.listdir(self.rdir)), ["runtime-claude-code.manifest", "runtime-codex.manifest"])
+        R.uninstall(self.conf, [self.mf("codex"), self.mf()], False, lambda m: None)
+        self.assertFalse(os.path.lexists(self.rdir), "install.d goes with the last record")
+        self.assertEqual({p: slurp(p) for p in legacy}, before, "the legacy files are left as they were")
+        self.assertFalse(os.path.lexists(self.sk()))
 
 
 class Verbs(Base):
