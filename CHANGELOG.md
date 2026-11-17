@@ -27,11 +27,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 - While the context window of the lead is only assumed (no `lead.context_window`, and the model has no entry in the runtime's table), `qargi lead usage`, `lead compact-check --advise` and the stage-verb line print the tokens in use and say `window unknown; set lead.context_window`, with no percentage and no advice to compact (`lead usage --json` has `percent: null` then; `window_source: "assumed"` and the tokens stay). A window from the answer or the model is unchanged.
 - Help, the manual page, the marshal and install documents and the `qargi-session` skill describe the assumed window as above (tokens and "window unknown", no percentage, no advice to compact; `--json` keeps `window_exceeded`; the shipped table matches ids that end in `[1m]` or `-1m`, and `claude-opus-5-5`) and `qargi doctor` as it is: its summary names the tools and install checks, `window-source` also checks the lead's own model, and `install` also warns on a record that lacks the tool or its runtimes. The `marshal handoff` help names the layout of the note (its where section, the index, live work first) and the `--json` fields of a note cut at its bound (`truncated`, `features_left_out`, `worktrees_unattributed`); the guard topic says the rule for an unknown wrapper option is not applied to the read-only class's writes, and is shorter.
+- `qargi version` (and `qargi --version`) prints a second line after the version, `source: DIR`, the tool's root directory.
 
 ### Fixed
 - `claude-code`'s table of context windows names the plain id `claude-opus-5-5` (1,000,000 tokens), so `qargi lead usage` and the stage-verb line no longer measure a lead on that model against the assumed 200,000 window and advise a compact far too early; an id that ends in `[1m]` or `-1m` still means one million, and an id with no entry still gets the assumed window.
 ### Added
-- `qargi --version` does what `qargi version` does, before any state is set up. Both print a second line, `source: DIR`, the tool's root directory.
+- `qargi --version` does what `qargi version` does, before any state is set up.
 
 ## [0.3.2] - 2026-11-16
 

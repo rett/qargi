@@ -1725,7 +1725,7 @@ COMMANDS = {
         "usage": [("COMMAND|TOPIC", "help", True)],
         "opts": [opt("--man", "print the manual page source (roff); view it with: qargi help --man | man -l -")],
     },
-    "version": {"summary": "Print the version and the directory it runs from",
+    "version": {"summary": "Print the version and the tool's root directory",
                 "desc": "qargi version, or qargi --version, prints the version on the first line and \"source: DIR\", the tool's root directory, on the second. It changes nothing.",
                 "scripts": [], "usage": []},
 }
