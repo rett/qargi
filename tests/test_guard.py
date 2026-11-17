@@ -4826,10 +4826,35 @@ class WrapperOptions(HookCase):
                       "xargs --max-lines echo", "xargs --max-lines=2 git status"))
 
     def test_shell_c_with_a_substitution_glued_to_it(self):
-        """bash -c$(true) STRING: the substitution is cut out, and the string that follows it is read as the -c string."""
+        """bash -c$(true) STRING: the substitution is cut out, and the string that follows it is read for the lead-only verbs (where the pieces of the
+        line are read), not for git push (known_limit_shell_c_with_a_substitution_and_git_push)."""
         self.verbs("bash -c$(true) '@@'")
         self.verbs("sh -c`true` '@@'")
         self.allowed(("bash -c$(true) 'git status'",))
+
+    def test_known_limit_shell_c_with_a_substitution_and_git_push(self):
+        """Known limit (guard.py, the known-limit comment), pinned so that a change to it is seen, not wanted: the string after a -c word with a
+        substitution or a variable stuck to it is not read for git push, nor, after a further option or `-c${X}`, for the lead-only verbs."""
+        for c in ("bash -c$(true) 'git push'", "bash -c$(true) -e 'git push'", "bash -c$(true) -- 'git push'", "bash -c${X} 'git push'",
+                  "bash -c$(true) -e 'qargi upgrade'", "bash -c${X} 'qargi upgrade'"):
+            with self.subTest(c=c):
+                self.assertEqual(self.bash(c).returncode, 0, "the known limit changed: %s is refused now; move it to the refused cases" % c)
+
+    def test_xargs_max_lines_takes_no_next_word(self):
+        """xargs --max-lines takes its value only stuck to it (--max-lines=2): the word after it is the program."""
+        self.verbs("xargs --max-lines @@")
+        self.verbs("xargs -l @@")
+        self.pushes(("xargs --max-lines git push",))
+        self.allowed(("xargs --max-lines echo", "xargs --max-lines=2 git status"))
+
+    def test_many_unknown_wrapper_options_are_refused_with_the_reason(self):
+        """Each unknown wrapper option is read both ways one reading deeper; more than three readings deep are refused (a false refusal, a known limit),
+        and the message names the number of such options, not shells."""
+        self.allowed(("sudo -h a -h b -h c ls",))
+        r = self.bash("sudo -h a -h b -h c -h d ls")
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("after three such options or nested shells", r.stderr)
+        self.assertNotIn("inside shells nested more than three deep", r.stderr)
 
     def test_timeout_reads_its_duration_after_the_end_of_its_options(self):
         """timeout -- 5s PROGRAM: `--` ends the options, and the duration still comes before the program."""

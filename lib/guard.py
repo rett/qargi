@@ -349,11 +349,22 @@ ROOT_SCRIPTS = ("install.sh",)                                       # of those,
 #     arguments when it is given none (`parallel ::: 'qargi upgrade'`);
 #   - a -c flag or its string that the shell builds (`bash -c $V 'qargi upgrade'`, `bash -$(echo c) 'qargi upgrade'`): the next word is not read as
 #     the string;
+#   - the string after a -c word with a substitution or a variable stuck to it: `bash -c$(true) 'qargi upgrade'` is refused only because the pieces of
+#     the line are read for lead-only verbs; `bash -c$(true) -e '...'`, `bash -c$(true) -- '...'` and `bash -c${X} '...'` are not refused for them, and
+#     none of these forms is refused for git push (`bash -c$(true) 'git push'`);
+#   - a shell on a pipe under sh with a one-dash long name that holds a c (`echo 'qargi upgrade' | sh -norc`, also -rcfile, -restricted, -protected):
+#     the word is taken as the -c flag, so neither the standard input nor a file is read as the program;
+#   - `zsh -c -O 'qargi upgrade'` (in zsh -O is a flag, read here as bash's -O, which takes the string as its value) and `bash +c 'qargi upgrade'` (bash
+#     runs the string; +c is not read as -c);
+#   - a separator inside a quoted word before the program (`X='a;b' qargi upgrade`, `env X='a;b' ...`, `sudo -p 'a;b' ...`, `timeout -s 'a;b' 5 git
+#     push`): the plain split cuts the line there and loses the program;
 #   - a brace or a glob as an option's value (`python3 -X {dev,FILE}`, `python3 -X * dev FILE`): read as one word, while the shell makes it several;
 #   - a variable inside an env -S string in the place of the program (`env -S '${P} upgrade'`): env expands ${P} itself, inside the outer quotes;
 #   - a wrapper option the guard does not know is read as taking no word or one (wrapper_readings), not more (`sudo -Z a b c qargi upgrade`); and
 #     under the read-only class the second reading is judged for lead-only verbs and pushes only, not for a write outside OUT (`sudo -Z x touch foo`).
-# The reading errs the other way too: `bash -n .../install.sh` (a syntax check that runs nothing) is refused like a run of the script. Like the rest
+# The reading errs the other way too: `bash -n .../install.sh` (a syntax check that runs nothing) is refused like a run of the script, and a command
+# with four wrapper options the guard does not know (`sudo -h a -h b -h c -h d ls`) is refused, since each is read both ways one reading deeper
+# and, as with shells, more than three readings deep are not followed. Like the rest
 # of the shell reading it is a heuristic against a mistake, not a wall against a member that works to get round it; the local verify of the
 # patches is the backstop.
 MEMORY_VERBS = ("init", "move", "split", "merge", "copy")                          # qargi memory verbs that change a memory tier
@@ -2819,9 +2830,10 @@ def bash_skill_refusal(command, here, depth, outer=None):
                         if why:
                             return why
             for alt in wrapper_readings(seg):                    # a wrapper's option the guard cannot read may take the next word: that reading is judged too
-                if depth >= 3:
+                if depth >= 3:                                   # each such option, like each nested shell, is one reading deeper
                     return ("the wrapper option %s, which the guard cannot read (it may take the next word as its value, which changes what the program is), "
-                            "inside shells nested more than three deep is not available to an agent; write the command in parts" % toks[sum(_parsed(seg)[2:], ())[0]])
+                            "is not available to an agent after three such options or nested shells, which are each read both ways; write the command with fewer "
+                            "of them or in parts" % toks[sum(_parsed(seg)[2:], ())[0]])
                 why = bash_skill_refusal(alt, [at], depth + 1, assigned)
                 if why:
                     return why
@@ -3244,7 +3256,7 @@ def read_options(prog, rest):
         if is_redirection(t):
             k = past_redirections(rest, k)
             continue
-        if t == "--" or (t == "-" and prog in SHELLS):          # the end of the options (a shell's `-` too); python's and source's `-` is the standard input
+        if t == "--" or (t == "-" and prog in SHELLS):          # the end of the options (a shell's `-` too); python's `-` is the standard input, source's a file named -
             k += 1
             break
         if len(t) < 2 or not (t.startswith("-") or (t.startswith("+") and prog in SHELLS)):
