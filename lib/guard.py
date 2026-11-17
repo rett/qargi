@@ -340,7 +340,18 @@ ROOT_SCRIPTS = ("install.sh",)                                       # of those,
 #   - a name looked up in PATH (`PATH=TOOL:$PATH . install.sh`: only the directory the shell is in is asked);
 #   - interpreters the guard does not know: ash, rbash, busybox sh, pypy3, python3.13t, and a shell named by a variable ($SHELL);
 #   - the bodies of a function defined in an earlier call, of an alias and of a trap;
-#   - a script that make, script -c, su -c or flock runs (ssh is refused as a whole).
+#   - a script that make, script -c, su -c or flock runs (ssh is refused as a whole);
+#   - programs that are no wrappers to the guard (WRAP), in front of a lead-only verb or of git push: stdbuf, ionice, doas, taskset, chrt, watch,
+#     strace, unshare, systemd-run, runuser and busybox (`doas qargi upgrade`, `stdbuf -oL git push`, `busybox env qargi upgrade`); each would need
+#     its own row in WRAP_OPTS (taskset MASK, chrt PRIORITY, runuser -u USER --);
+#   - the command string of sudo -s and sudo -i (`sudo -s 'qargi upgrade'`: sudo hands it to a shell), and the commands parallel builds from its
+#     arguments when it is given none (`parallel ::: 'qargi upgrade'`);
+#   - a -c flag or its string that the shell builds (`bash -c $V 'qargi upgrade'`, `bash -$(echo c) 'qargi upgrade'`): the next word is not read as
+#     the string;
+#   - a brace or a glob as an option's value (`python3 -X {dev,FILE}`, `python3 -X * dev FILE`): read as one word, while the shell makes it several;
+#   - a variable inside an env -S string in the place of the program (`env -S '${P} upgrade'`): env expands ${P} itself, inside the outer quotes;
+#   - a wrapper option the guard does not know is read as taking no word or one (wrapper_readings), not more (`sudo -Z a b c qargi upgrade`); and
+#     under the read-only class the second reading is judged for lead-only verbs and pushes only, not for a write outside OUT (`sudo -Z x touch foo`).
 # The reading errs the other way too: `bash -n .../install.sh` (a syntax check that runs nothing) is refused like a run of the script. Like the rest
 # of the shell reading it is a heuristic against a mistake, not a wall against a member that works to get round it; the local verify of the
 # patches is the backstop.
