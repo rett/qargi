@@ -4,19 +4,13 @@
  "goal": "",
  "plan": "",
  "note": "handoff note: memory handoff-2026-11-04.md",
- "status": "active",
- "lead": {
-  "id": "arc-claude-qargi",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-17T10:23:29Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-17T10:23:29Z",
- "finished_at": null,
+ "finished_at": "2026-11-17T10:23:33Z",
  "updated_by": "arc-claude-qargi",
- "rev": 15,
- "updated_at": "2026-11-17T10:23:29Z",
+ "rev": 16,
+ "updated_at": "2026-11-17T10:23:33Z",
  "feature": "rel-sign",
  "project": "qargi"
 }
