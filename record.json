@@ -6,16 +6,17 @@
  "note": "handoff note: memory handoff-2026-11-04.md",
  "status": "active",
  "lead": {
-  "id": "rett@arc",
+  "id": "arc-claude-qargi",
   "user": "rett",
   "host": "arc",
-  "since": "2026-11-05T03:35:03Z"
+  "since": "2026-11-17T10:23:47Z",
+  "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-05T03:35:03Z",
+ "renewed_at": "2026-11-17T10:23:47Z",
  "finished_at": null,
- "updated_by": "rett@arc",
- "rev": 3,
- "updated_at": "2026-11-05T03:35:03Z",
+ "updated_by": "arc-claude-qargi",
+ "rev": 4,
+ "updated_at": "2026-11-17T10:23:47Z",
  "feature": "site",
  "project": "qargi"
 }
