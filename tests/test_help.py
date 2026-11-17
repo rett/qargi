@@ -234,7 +234,7 @@ class Render(unittest.TestCase):
         self.assertIn("--json over the bound empties worktrees_unattributed and agent_unattributed as needed (each only while the output is still over the bound), then, one feature at a time from the last, trims its detail and drops it, and sets truncated; "
                       "when features are dropped it adds features_omitted (the count dropped) and features_left_out (their names, up to 3000 bytes), and features_left_out_more (the count of names not listed) when not all of them are.", handoff)
         self.assertIn("it cuts the lists from the end, the notes first, then deviations.accepted, gates, read_first.memory, read_first.repo_docs and read_first.successor, and lists_left_out says how many items each list lost.", handoff)
-        self.assertIn("Output is capped at 16 KiB, the note and --json alike (the final newline counted); the one part not bounded is what a successor needs whole and --json never cuts: do_not_assume, where, packs, environment and the fields of a record", handoff)
+        self.assertIn("Output is capped at 16 KiB, the note and --json alike (the final newline counted). The text note is always within the bound; in --json the one part not bounded is what a successor needs whole and --json never cuts: do_not_assume, where, packs and environment (", handoff)
         for key in ("truncated", "features_omitted", "features_left_out", "features_left_out_more", "lists_left_out", "worktrees_unattributed", "agent_unattributed"):   # the keys of a cut note in --json (lib/marshal_handoff.py)
             self.assertIn(key, handoff)
         advise = [o for o in C.COMMANDS["lead"]["verbs"]["compact-check"]["opts"] if o["flag"] == "--advise"]
