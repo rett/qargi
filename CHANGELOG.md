@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- The member guard reads more of an interpreter's options before the script it runs: a redirection between an option and its value (`bash -o 2>/dev/null errexit`, `python3 -X 2>/dev/null dev`), bash's long options written with one dash (`bash -rcfile F`, `-norc`), and `source -p DIR NAME`, which looks `NAME` up in `DIR`, no longer hide the tool's `install.sh`, `lib/install_record.py` or another lead-only script. A value the shell builds (`bash -o $(...)`, `python3 -X ${V:-a b}`) cannot be read, so any lead-only script the command names is refused. A project's or clone's own file of those names stays allowed.
+
 ### Removed
 - The member guard no longer protects the legacy `install.manifest` of 0.3.1 beside `install.json`, as 0.3.2 announced; `install.json`, `install.d/` and `install.lock` stay protected.
 

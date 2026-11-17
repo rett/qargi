@@ -281,8 +281,10 @@ ROOT_SCRIPTS = ("install.sh",)                                       # of those,
 # resolved path would catch only a link that already exists when the call is judged, not one made earlier in the same command line
 # (`ln -s .../linker.py x && python3 x`), and an import can be spelled in too many ways (importlib, __import__, string joins) to read from
 # the command text; a half check would suggest a guarantee the guard does not give. An interpreter's options are read as bash's and python's
-# (interpreted): the value of -X, -W, -o, -O, --rcfile and source -p is skipped, and an option it does not know makes any word naming a script
-# the script; an option of another shell that takes a value where bash has a flag of that letter is still read as the flag. Like the rest of
+# (read_options): the value of -X, -W, -o, -O, --rcfile and source -p is skipped (a redirection between an option and its value is no value), bash's
+# long names are read with one dash too while no short option came before them (-rcfile F, -norc; under sh, which may be another shell, such a word is
+# not readable), a slash-less name after source -p DIR is looked up in DIR, and an option it does not know or a value the shell builds ($(..), ${..}, a
+# backtick: unquoted it may be cut into more words or none) makes any word naming a script the script; an option of another shell that takes a value where bash has a flag of that letter is still read as the flag. Like the rest of
 # the shell reading it is a heuristic against a mistake, not a wall against a member that works to get round it; the local verify of the
 # patches is the backstop.
 MEMORY_VERBS = ("init", "move", "split", "merge", "copy")                          # qargi memory verbs that change a memory tier
@@ -2985,58 +2987,105 @@ SHELL_FLAGS = frozenset("abefhkmnptuvxBCEHPTilrD")           # a shell's short o
 SHELL_LONG = {"--rcfile": 1, "--init-file": 1, "--debug": 0, "--debugger": 0, "--dump-po-strings": 0, "--dump-strings": 0, "--help": 0, "--login": 0,
               "--noediting": 0, "--noprofile": 0, "--norc": 0, "--posix": 0, "--pretty-print": 0, "--protected": 0, "--restricted": 0, "--verbose": 0, "--version": 0, "--wordexp": 0}
 UNREAD_NAME = re.compile(r"[$`*?\[{]")                      # a file name whose last part has one of these is built or expanded by the shell
+BUILT_VALUE = re.compile(r"\$\(|\$\{|`")                    # an option or a value the shell builds: unquoted, it may be cut into more words or none, so where the options end is not known
 
 
 def is_redirection(t):
     return not t.startswith(("<(", ">(")) and bool(LEADING_REDIR.match(t) or REDIR.match(t))
 
 
-def interpreted(prog, rest):
-    """Where an interpreter (a shell, . or source, python) finds the file it runs among its words rest: (k, True) when rest[k] is the file, (None, True)
-    when it runs no file (-c, -m, -s, a python `-`, no word left), (None, False) when the guard cannot read an option (one it does not know, one the
-    shell builds, a shell value stuck to its letter, which bash and zsh read apart) or the file's name. A redirection, with its file, is neither."""
+def past_redirections(rest, k):
+    """The index of the first word at or after k that is no redirection (a redirection with its file is skipped): the shell takes redirections out of the
+    words before the program sees them, so one written between an option and its value (bash -o 2>/dev/null errexit) does not take the value's place."""
+    while k < len(rest) and is_redirection(rest[k]):
+        k += 2 if BARE_REDIR.match(rest[k]) else 1
+    return k
+
+
+def read_options(prog, rest):
+    """The options of an interpreter (a shell, . or source, python) at the start of its words rest: (k, ends, readable, dirs). k is the index of the first word
+    past them (the file, or the -c string of a shell), ends the letters that say the program is not a file (python's c or m, a shell's c or s), readable False
+    when the guard cannot read an option (one it does not know, one the shell builds, a shell value stuck to its letter, which bash and zsh read apart, a one-dash
+    long name sh may read either way) and dirs the values of source -p. A value is the next word that is no redirection (past_redirections); one the shell builds
+    ($(..), ${..}, a backtick: unquoted it may be cut into several words) is not readable. Bash reads a long name with one dash too (-rcfile F, -norc) while no
+    short option came before it."""
     py = bool(re.match(r"^python[0-9.]*$", prog))
-    k = 0
+    k, ends, dirs, shorts = 0, "", [], False
+
+    def value(k):                                            # (the index past the value of an option whose value starts at k, the value or None)
+        k = past_redirections(rest, k)
+        return (k + 1, rest[k]) if k < len(rest) else (k, None)
+
     while k < len(rest):
         tick()
         t = rest[k]
         if is_redirection(t):
-            k += 2 if BARE_REDIR.match(t) else 1                 # the operator alone: its target is the next word
+            k = past_redirections(rest, k)
             continue
         if t == "--" or (t == "-" and not py):                   # the end of the options (a shell's `-` too); python's `-` is its standard input
             k += 1
             break
         if len(t) < 2 or not (t.startswith("-") or (t.startswith("+") and prog in SHELLS)):
             break
+        if BUILT_VALUE.search(t):
+            return k, ends, False, dirs
         if prog in SOURCES:                                      # source [-p PATH] FILE
             if t != "-p":
-                return None, False
-            k += 2
+                return k, ends, False, dirs
+            k, v = value(k + 1)
+            dirs.append(v or "")
+            if v is None or BUILT_VALUE.search(v):
+                return k, ends, False, dirs
             continue
-        if t.startswith("--"):
-            n = (PY_LONG if py else SHELL_LONG).get(t)
+        name = t if t.startswith("--") else None
+        if not py and not name and t.startswith("-") and "-" + t in SHELL_LONG:     # -rcfile, -norc: bash's long name with one dash
+            if prog == "sh":                                     # sh may be bash (a long name) or another shell (letters): which is not known
+                return k, ends, False, dirs
+            if prog == "bash" and not shorts:
+                name = "-" + t
+        if name:
+            n = (PY_LONG if py else SHELL_LONG).get(name)
             if n is None:
-                return None, False
-            k += 1 + n
+                return k, ends, False, dirs
+            k += 1
+            for _ in range(n):
+                k, v = value(k)
+                if v is None or BUILT_VALUE.search(v):
+                    return k, ends, False, dirs
             continue
-        step = 1
+        shorts, need = True, 0
         for j, c in enumerate(t[1:], 1):
             if py and c in "XW":                                 # -X dev, -Xdev, -IX dev
-                step += 0 if t[j + 1:] else 1
+                need = 0 if t[j + 1:] else 1
                 break
-            if c in ("cm" if py else "cs"):
-                return None, True
+            if py and c in "cm":                                 # python -c CMD, -m MOD: the options end here
+                return k + 1, ends + c, True, dirs
+            if not py and c in "cs":
+                ends += c
+                continue
             if not py and c in "oO":                             # -euo pipefail, -oO errexit extglob: each takes the next word
                 if any(x not in "oO" for x in t[j + 1:]):         # -oerrexit: bash takes the next word, another shell may take "errexit"
-                    return None, False
-                step += 1
+                    return k, ends, False, dirs
+                need += 1
                 continue
             if c not in (PY_FLAGS if py else SHELL_FLAGS):
-                return None, False
-        k += step
-    while k < len(rest) and is_redirection(rest[k]):
-        k += 2 if BARE_REDIR.match(rest[k]) else 1
-    if k >= len(rest) or (py and rest[k] == "-"):
+                return k, ends, False, dirs
+        k += 1
+        for _ in range(need):
+            k, v = value(k)
+            if v is None or BUILT_VALUE.search(v):
+                return k, ends, False, dirs
+    return past_redirections(rest, k), ends, True, dirs
+
+
+def interpreted(prog, rest):
+    """Where an interpreter (a shell, . or source, python) finds the file it runs among its words rest: (k, True) when rest[k] is the file, (None, True)
+    when it runs no file (-c, -m, -s, a python `-`, no word left), (None, False) when the guard cannot read an option (read_options) or the file's name.
+    A redirection, with its file, is neither."""
+    k, ends, readable, _ = read_options(prog, rest)
+    if not readable:
+        return None, False
+    if ends or k >= len(rest) or (rest[k] == "-" and re.match(r"^python[0-9.]*$", prog)):
         return None, True
     return (None, False) if UNREAD_NAME.search(os.path.basename(rest[k])) else (k, True)
 
@@ -3053,6 +3102,17 @@ def script_of(prog, rest):
     return k if k is not None and os.path.basename(rest[k]) in SCRIPTS else None
 
 
+def own_named(prog, rest, script, here):
+    """True when the word script, which the interpreter prog runs with its words rest from the directory here, names the tool's own file (own_script).
+    source -p PATH NAME looks a name with no slash up in the directories of PATH (colon-separated; an empty one is the current directory) and not where the
+    shell is: each is asked, and a directory the shell builds (a variable, a substitution, a glob) could be the tool's, so it counts as one (fail closed)."""
+    if prog in SOURCES and "/" not in script:
+        dirs = read_options(prog, rest)[3]
+        if dirs:
+            return any(UNREAD_NAME.search(d) or own_script(os.path.join(d or ".", script), here) for v in dirs for d in v.split(":"))
+    return own_script(script, here)
+
+
 def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
     """The reason a qargi command (or the script behind it, run directly) is a verb that changes a skill, or None. via_xargs: xargs
     stands before the program, so its arguments come from standard input, where --write could be. here: the directory the command runs
@@ -3067,7 +3127,7 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         if k is None:
             return None
         name, script, words = os.path.basename(cut[k]), cut[k], [t for t in cut[k + 1:] if not t.startswith("-")]
-    if name in OWN_ONLY and not own_script(script, here):
+    if name in OWN_ONLY and not own_named(prog, cut, script, here):
         return None
     if name == "campaign.py" or (name in ("qargi", "jsonplan.py") and words[:1] == ["campaign"]):
         args = rest

@@ -4558,6 +4558,76 @@ class InterpreterOptions(HookCase):
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
 
+class InterpreterOptionValues(HookCase):
+    """Where an interpreter option's value is: a redirection between the option and its value is no value (the shell takes it out before the program
+    sees the words), a value the shell builds ($(..), ${..}, a backtick) may be cut into more words or none (so the options are not readable and any
+    lead-only script the command names is judged as the script), bash reads a long option with one dash too while no short option came before it,
+    and source -p DIR NAME looks a NAME with no slash up in DIR, not where the shell is. Each form that hid the tool's install.sh, lib/install_record.py,
+    upgrade.sh or render.py is refused; the same form with the clone's or a project's own file of that name stays allowed."""
+    setUp, tearDown, bash, call = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
+    refused = LibraryScripts.refused
+    LIB, ROOT = LibraryScripts.LIB, InstallScript.ROOT
+    RENDER, UPGRADE = InterpreterOptions.RENDER, InterpreterOptions.UPGRADE
+
+    def own_files(self):
+        """The clone's own install.sh, lib/install_record.py and lib/render.py (a project's files of those names)."""
+        os.makedirs(os.path.join(self.clone, "lib"), exist_ok=True)
+        for name in ("lib/install_record.py", "lib/render.py", "install.sh"):
+            with open(os.path.join(self.clone, name), "w") as f:
+                f.write("")
+
+    def allowed(self, commands, **kw):
+        for c in commands:
+            r = self.bash(c, **kw)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_a_redirection_between_an_option_and_its_value(self):
+        root, lib = self.ROOT, self.LIB
+        for c, why in (("bash -o 2>/dev/null errexit %s/install.sh --user --uninstall" % root, InstallScript.WHY),
+                       ("python3 -X 2>/dev/null dev %s/install_record.py uninstall" % lib, InstallRecordScript.WHY),
+                       ("python3 -W >/dev/null ignore %s/render.py render s d" % lib, self.RENDER),
+                       ("bash --rcfile </dev/null rc %s/install.sh --user" % root, InstallScript.WHY),
+                       (". -p 2>/dev/null /x %s/install.sh" % root, InstallScript.WHY),
+                       ("sh -O 2> /dev/null extglob lib/upgrade.sh --tag v1", self.UPGRADE),
+                       ("python3 --check-hash-based-pycs 2>/dev/null never %s/install_record.py uninstall" % lib, InstallRecordScript.WHY)):
+            self.refused(c, why)
+        self.own_files()
+        self.allowed(("bash -o 2>/dev/null errexit install.sh --user --uninstall", "python3 -X 2>/dev/null dev lib/install_record.py uninstall",
+                      "python3 -W >/dev/null ignore lib/render.py render s d", "bash --rcfile </dev/null rc install.sh --user", ". -p 2>/dev/null /x ./install.sh"))
+
+    def test_a_value_the_shell_builds_fails_closed(self):
+        root, lib = self.ROOT, self.LIB
+        for c, why in (("bash -o $(echo errexit) %s/install.sh --user" % root, InstallScript.WHY),
+                       ("python3 -X ${V:-a b} %s/install_record.py uninstall" % lib, InstallRecordScript.WHY),
+                       ("python3 -W `echo ignore` %s/render.py render s d" % lib, self.RENDER),
+                       ("bash -O ${O} lib/upgrade.sh --tag v1", self.UPGRADE),
+                       ("python3 -X$(echo dev) %s/install_record.py uninstall" % lib, InstallRecordScript.WHY),
+                       ("bash --rcfile ${RC:-a b} %s/install.sh --user" % root, InstallScript.WHY)):
+            self.refused(c, why)
+        self.own_files()
+        self.allowed(("bash -o $(echo errexit) install.sh --user", "python3 -X ${V:-a b} lib/install_record.py uninstall",
+                      "python3 -W `echo ignore` lib/render.py render s d", "bash --rcfile ${RC:-a b} install.sh --user"))
+
+    def test_bash_long_options_with_one_dash(self):
+        root, lib = self.ROOT, self.LIB
+        for c, why in (("bash -rcfile /dev/null %s/install.sh --user" % root, InstallScript.WHY),
+                       ("bash -init-file /dev/null %s/install_record.py uninstall" % lib, InstallRecordScript.WHY),
+                       ("bash -norc -rcfile rc lib/upgrade.sh --tag v1", self.UPGRADE),
+                       ("sh -rcfile /dev/null %s/install.sh --user" % root, InstallScript.WHY)):    # sh may be bash or another shell: not readable
+            self.refused(c, why)
+        self.own_files()
+        self.allowed(("bash -rcfile /dev/null install.sh --user", "bash -norc -rcfile rc install.sh", "sh -rcfile /dev/null install.sh --user",
+                      "bash -rcfile /dev/null tests/run.sh lib/upgrade.sh"))
+
+    def test_source_p_looks_a_bare_name_up_in_its_directories(self):
+        root = self.ROOT
+        for c in ("source -p %s install.sh --user" % root, ". -p %s install.sh --user --uninstall" % root, ". -p /x:%s install.sh" % root,
+                  ". -p 2>/dev/null %s install.sh" % root, ". -p $D install.sh", ". -p $(dirname x) install.sh", "source -p /x -p %s install.sh" % root):
+            self.refused(c, InstallScript.WHY)
+        self.own_files()
+        self.allowed((". -p %s install.sh --user" % self.clone, "source -p . install.sh", ". -p /x: install.sh", ". -p %s/proj install.sh" % self.t))
+
+
 class ThirdReview(HookCase):
     """The third security review of the Bash reader. Every case here was allowed by the guard it reviewed and is refused now. The base is a run directory
     (what `qargi local prepare` makes: clone, out, the record) with every protected location a member could aim at."""
