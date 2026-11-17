@@ -260,7 +260,9 @@ WRAP = {"sudo", "env", "command", "builtin", "exec", "nohup", "time", "timeout",
 # the options that take none; the options whose value, when there is one, is only ever stuck to them: xargs -i{}, sudo --preserve-env=LIST). An option
 # in none of them is one the guard cannot read: whether it takes the next word is not known, so the command is judged both ways (wrapper_readings).
 # `--` ends the options of each; timeout takes its duration, the first word after its options, before the program; env -S STRING (--split-string) is
-# read as the words of STRING (skip_wrappers); nice -N is the old spelling of nice -n N.
+# read as the words of STRING (skip_wrappers); nice -N is the old spelling of nice -n N. An option whose value is optional and may be the next word is
+# in none of them on purpose, so that both readings are judged: parallel's --max-lines and -l take the next word only when it is a number, and -i,
+# --replace, -e and --eof take it when it is no option (xargs's options of those names take a value only stuck to them: the third column).
 WRAP_OPTS = {
     "sudo": ({"-u", "--user", "-g", "--group", "-C", "--close-from", "-D", "--chdir", "-p", "--prompt", "-R", "--chroot", "-r", "--role", "-t", "--type",
               "-T", "--command-timeout", "-U", "--other-user"},
@@ -283,7 +285,7 @@ WRAP_OPTS = {
                                  "--show-limits", "--help", "--version"},
               {"-e", "--eof", "-i", "--replace", "-l", "--max-lines"}),
     "parallel": ({"-j", "--jobs", "-P", "--max-procs", "-a", "--arg-file", "-I", "--colsep", "-C", "-d", "--delimiter", "-E", "-n", "--max-args", "-N",
-                  "-L", "--max-lines", "-S", "--sshlogin", "--sshloginfile", "--slf", "--env", "--joblog", "--results", "--res", "--tmpdir", "--workdir",
+                  "-L", "-S", "--sshlogin", "--sshloginfile", "--slf", "--env", "--joblog", "--results", "--res", "--tmpdir", "--workdir",
                   "--wd", "--timeout", "--tagstring", "--tag-string", "--halt", "--retries", "--delay", "--memfree", "--load", "--nice", "--basefile", "--bf",
                   "--return", "--transferfile", "--tf", "--block", "--block-size", "--recstart", "--recend", "--header"},
                  {"-k", "--keep-order", "-q", "--quote", "-v", "--verbose", "--dry-run", "--dryrun", "--tag", "--pipe", "--pipepart", "--line-buffer", "--lb",
@@ -689,6 +691,11 @@ def split_string(text):
         return re.sub(r"[\\'\"]", "", text).split()
 
 
+def assignment(t):
+    """True when the word t sets a variable (VAR=x, X=/usr/bin/timeout) and is not a program or an option: an = before any slash."""
+    return "=" in t.split("/")[0] and not t.startswith("-")
+
+
 def skip_wrappers(toks):
     """(the index of the program, the indices of the wrapper options the guard cannot read): past assignments (VAR=x), wrappers (sudo, env, time ...),
     their options and the values those take (WRAP_OPTS; a value is the next word that is no redirection), timeout's duration, the keywords a command can
@@ -719,8 +726,8 @@ def skip_wrappers(toks):
             i += 2 if BARE_REDIR.match(t) else 1
         elif w == "timeout" and not duration:
             duration, i = True, i + 1                            # timeout DURATION PROGRAM: the duration is no program (5, 5s, 0.5m)
-        elif "=" in t.split("/")[0] and not t.startswith("-") or os.path.basename(t) in WRAP or t.isdigit() or (t.startswith("-") and i) or t in KEYWORDS:
-            if os.path.basename(t) in WRAP:
+        elif assignment(t) or os.path.basename(t) in WRAP or t.isdigit() or (t.startswith("-") and i) or t in KEYWORDS:
+            if os.path.basename(t) in WRAP and not assignment(t):    # X=/usr/bin/timeout is a variable whose value names a wrapper, not the wrapper
                 w, duration = os.path.basename(t), False
             i += 1
         else:
@@ -2848,14 +2855,14 @@ def shell_string(prog, rest):
             return None
         k, ends, readable, _ = read_options(prog, rest)
         if readable and "c" in ends:                         # the string is the first word past the options, not the word after -c (bash -c -e STRING, -co errexit STRING)
-            text = " ".join(rest[k:]) if k < len(rest) else None
+            text = " ".join(rest[k:])                         # empty when no word follows: the string is in the pieces that follow (bash -c$(true) STRING)
         elif readable:
             text = " ".join(rest[c + 1:])
         else:                                                # options the guard cannot read: any word after -c may be the string, so each is read as a command
             text = " ; ".join(t for t in rest[c + 1:] if not is_redirection(t))
     else:
         return None
-    return None if text is None else as_program(text)
+    return as_program(text)
 
 
 def as_program(text):

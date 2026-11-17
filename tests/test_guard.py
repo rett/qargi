@@ -4746,6 +4746,51 @@ class WrapperOptions(HookCase):
         self.allowed(("sudo -h x ls", "sudo --frobnicate x git status", "sudo -Z a b c qargi upgrade", "timeout --sig KILL 5 git status",
                       "sudo -h x bash install.sh --user"))
 
+    def pushes(self, commands):
+        for c in commands:
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, (c, r.stderr))
+            self.assertIn("Agents never push", r.stderr, c)
+
+    def read_only_refused(self, commands):
+        """Each command writes in the clone, which the read-only class refuses."""
+        for c in commands:
+            e = {k: v for k, v in os.environ.items() if k not in ("QARGI_CONF", "QARGI_STATE", "QARGI_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "HOME")}
+            e.update(HOME=self.home, QARGI_CONF=self.conf)
+            r = self.hook(["--class", "read-only"], {"tool_name": "Bash", "tool_input": {"command": c}, "cwd": self.clone}, e)
+            self.assertEqual(r.returncode, 2, (c, r.stderr))
+            self.assertIn("under the read-only class", r.stderr, c)
+
+    def test_an_assignment_whose_value_names_a_wrapper_is_no_wrapper(self):
+        """X=/usr/bin/timeout sets a variable: the word after it is the program, not timeout's duration (nor a value of any other wrapper's option)."""
+        for w in sorted(self.J.m.WRAP):                              # every wrapper the guard knows
+            self.verbs("X=/a/%s @@" % w)
+        for form in ("X=/usr/bin/timeout @@", "X=./timeout @@", "env X=/a/timeout @@", "env -i X=/a/timeout @@", "sudo X=/a/timeout @@",
+                     "timeout 5 X=/a/timeout @@", "X=/usr/bin/timeout bash -c '@@'", "X=/a/timeout bash <<< '@@'"):
+            self.verbs(form)
+        self.pushes(("X=/usr/bin/timeout git push", "env X=/a/timeout git push"))
+        self.read_only_refused(("X=/usr/bin/timeout touch foo", "env X=/a/timeout touch foo"))
+        self.own_install()
+        self.allowed(("X=/usr/bin/timeout git status", "env VAR=x python3 tests/test_env.py", "X=/a/timeout ls", "env X=/a/timeout bash install.sh --user",
+                      "X=/a/timeout timeout 5s git status"))
+
+    def test_parallel_max_lines_takes_the_next_word_only_when_it_is_a_number(self):
+        """parallel --max-lines and -l take an optional number: the word after them is the program unless it is one, so both readings are judged."""
+        self.verbs("parallel --max-lines @@ ::: 1")
+        self.verbs("parallel -l @@ ::: 1")
+        self.verbs("parallel --max-lines 2 @@ ::: 1")
+        self.verbs("parallel --replace @@ ::: 1")
+        self.pushes(("parallel --max-lines git push ::: 1",))
+        self.read_only_refused(("parallel --max-lines touch foo ::: 1",))
+        self.allowed(("parallel --max-lines 2 echo hi ::: 1", "parallel --max-lines echo hi ::: 1", "parallel -l 1.5 git status ::: 1",
+                      "xargs --max-lines echo", "xargs --max-lines=2 git status"))
+
+    def test_shell_c_with_a_substitution_glued_to_it(self):
+        """bash -c$(true) STRING: the substitution is cut out, and the string that follows it is read as the -c string."""
+        self.verbs("bash -c$(true) '@@'")
+        self.verbs("sh -c`true` '@@'")
+        self.allowed(("bash -c$(true) 'git status'",))
+
 
 class ThirdReview(HookCase):
     """The third security review of the Bash reader. Every case here was allowed by the guard it reviewed and is refused now. The base is a run directory
