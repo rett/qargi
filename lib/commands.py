@@ -1716,7 +1716,9 @@ COMMANDS = {
         "usage": [("COMMAND|TOPIC", "help", True)],
         "opts": [opt("--man", "print the manual page source (roff); view it with: qargi help --man | man -l -")],
     },
-    "version": {"summary": "Print the version", "scripts": [], "usage": []},
+    "version": {"summary": "Print the version and the directory it runs from",
+                "desc": "qargi version, or qargi --version, prints the version on the first line and \"source: DIR\", the tool's root directory, on the second. It changes nothing.",
+                "scripts": [], "usage": []},
 }
 
 # skill and tool share one set of verbs

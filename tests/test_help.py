@@ -116,7 +116,7 @@ class Sync(unittest.TestCase):
         labels = set()
         for m in re.finditer(r"(?m)^  ([a-z_|-]+)\) ", body):
             labels |= set(m.group(1).split("|"))
-        labels -= {"-h", "--help", "__complete", "__guard"}
+        labels -= {"-h", "--help", "--version", "__complete", "__guard"}
         self.assertEqual(labels, set(C.COMMANDS), "bin/qargi and lib/commands.py disagree")
 
     def test_groups_cover_every_command_once(self):
@@ -358,7 +358,12 @@ class Render(unittest.TestCase):
         r = run("nosuch")
         self.assertEqual(r.returncode, 2)
         self.assertIn("unknown command", r.stderr)
-        self.assertEqual(run("version").returncode, 0)
+        want = slurp(os.path.join(ROOT, "VERSION")).strip() + "\nsource: " + os.path.realpath(ROOT) + "\n"
+        for form in ("version", "--version"):
+            r = run(form)
+            self.assertEqual((r.returncode, r.stdout, r.stderr), (0, want, ""), form)
+        self.assertIn("--version", C.COMMANDS["version"]["desc"])
+        self.assertIn("source:", C.COMMANDS["version"]["desc"])
 
     def test_the_declared_gates_in_the_output_of_the_verbs_are_described(self):
         # declared gates appear in the handoff note (== gates, and gates in --json), on standard error of project show and in project attach: the help says so

@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `qargi --version` does what `qargi version` does, before any state is set up. Both print a second line, `source: DIR`, the tool's root directory.
+
 ## [0.3.2] - 2026-11-16
 
 ### Added
