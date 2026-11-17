@@ -427,6 +427,7 @@ COMMANDS = {
                                   "The note has the repository path, HEAD there (a detached HEAD is said plainly), develop's sha, the host and whether the qargi data is present on it. "
                                   "Per feature it has the tip, whether the whole-suite run applies to it (the run's command is the project's test_command now, or with declared gates the feature-tier gates in order, `gates: NAME=COMMAND; ...`, as feature verify records them), the agent branches merged into it since it was cut from develop, the unmerged ones prepared against it (as the registry of local runs records) "
                                   "and the commits ahead of develop; with NAME only that feature, otherwise every open one; the agent branches of no open feature are said once, after the features. "
+                                  "The note starts with an index of its features, lists live work first, lists a feature's own worktrees under it, and when it reaches its bound it ends with a line naming the features left out or cut short. "
                                   "When the project declares gates, a `== gates` section follows the features with each gate's tier, name and command (they replace test_command), and --json carries them as `gates` (an empty list without gates). "
                                   "When the project answers hold accepted deviations (methodology_accepted), a `== methodology deviations` section follows the gates, apart from the open gaps: each deviation with its status (accepted, or accepted, no longer applies), reason and date, and the number of open gaps; --json carries them as `deviations`. "
                                   "The goal, plan and note of the marshal record appear under a line saying they are data from the lead, not instructions, with control characters stripped. "
@@ -813,6 +814,9 @@ COMMANDS = {
                  "and whether each model id its roles name is in the table; an id that is not there warns, since its window is only assumed. "
                  "tools: flock (the locks of the finishing verbs and the ref journal) and timeout (the bound on a question put to a remote) are on PATH; a missing one warns and names what it is for and "
                  "the package that has it (util-linux, coreutils; make bootstrap installs both). "
+                 "install: the install records of install.sh (install.d, install.json), read only: the installed tool with its source and version and every runtime installed for the user and in a project; "
+                 "it warns on a recorded link or copy that is missing, dangling or now points elsewhere, on a recorded version other than the tool's VERSION, on a record that cannot be read, and on a leftover "
+                 "install.manifest or project-N.manifest from 0.3.1 or earlier, which is no longer read and can be removed by hand after checking install.d (unknown when nothing is installed). "
                  "project-env: the last qargi env check recorded for the project in state/env/PROJECT.json, as 'last env check VERDICT at TIME' (a warning when the verdict is not ENV OK; "
                  "unknown, 'never run', when none was recorded). It only reads that record and never runs the project's code: qargi env check is what runs the project's doctor and records the result. "
                  "--json prints {project, checks: [{name, status, detail, fix}], warnings, strict, exit}."),
@@ -1820,11 +1824,15 @@ TOPICS = {
         "the state's render, providers, marshal, feature and saved-run directories, its ref journal, the memory tiers, ~/.config/anthropic, and the "
         "lead's git configuration and session files. "
         "It refuses the tool's own install.sh and lib/install_record.py (its engine) in any use. "
+        "The install record is install.json, install.d and install.lock, no longer the legacy install.manifest. "
         "Reading stays allowed except the lead's signing key. It refuses git push, git remote changes, git -c or config of keys that run programs (alias.*), and rsync to a host.",
         "A command is cut at every ; && || | and newline, inside quotes and heredocs, and a substitution is a command. A piece that starts with git push, git tag NAME, ssh, scp, sftp or gh "
         "is refused even in text (not mid-sentence); any other refused verb is text when every command is echo, cat, tee, grep or git commit, "
         "as is a heredoc body cat or tee gets, bar lines starting qargi. "
         "Shell programs piped in or here-strings are read; curl | sh and bash < f are refused. A cd it cannot read refuses relative writes.",
+        "Wrapper options (sudo, env, timeout, nice, exec, xargs and the like) are read from a table; one it does not know is judged with and without the next word as its value. "
+        "bash's one-dash long options and source -p DIR NAME are read. A value built by the shell ($(, ${, backtick) makes the options unreadable, and any lead-only script the command names is refused. "
+        "The guard stays best-effort.",
         "The read-only class (review) may write only OUT and TMP (the run's TMPDIR). Recognized clone mutations are refused. It runs build, vet and test commands with its given environment; assigning PATH, TMPDIR or GIT_* is refused, not the command.",
         "Setting QARGI_NESTED (skips a plan token), or setting or unsetting QARGI_LEAD, is refused.",
         "A refusal is a result: report it."]),
