@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `install.sh --project DIR --uninstall` rewrites the repository's `.git/info/exclude` while it still holds `install.lock`, before the engine removes the lock with the last record; an install that took the lock at once could append to the file before the rewrite and lose its lines. A refused uninstall puts the lines back.
+
 ## [0.3.2] - 2026-11-16
 
 ### Added

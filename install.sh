@@ -179,10 +179,18 @@ if [ -n "$uninstall" ]; then
   if [ "$mode" = project ]; then
     for f in "${files[@]}"; do records excludes "$f" >> "$tmp/excl" || exit 1; done
   fi
-  records uninstall --conf "$liveconf" ${last:+--drop-record} "${files[@]}" || exit 1
+  # the exclude file is rewritten while the lock is held: the engine removes the lock file with the last record, and a run that took the
+  # lock at once could append to the file between the read and the mv here, and the mv would drop its lines. A refused uninstall puts the
+  # lines back.
   if [ -n "$exclude_file" ] && [ -f "$exclude_file" ]; then
     grep -v -x -F -f "$tmp/excl" "$exclude_file" > "$exclude_file.tmp" || true
     mv "$exclude_file.tmp" "$exclude_file"
+  fi
+  if ! records uninstall --conf "$liveconf" ${last:+--drop-record} "${files[@]}"; then
+    if [ -n "$exclude_file" ] && [ -f "$exclude_file" ]; then
+      while IFS= read -r l; do grep -q -x -F -e "$l" "$exclude_file" || printf '%s\n' "$l" >> "$exclude_file"; done < "$tmp/excl"
+    fi
+    exit 1
   fi
   # shellcheck disable=SC2086
   [ -z "$left" ] || echo "still installed$where: $(commas $left)"
