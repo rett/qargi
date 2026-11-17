@@ -165,9 +165,10 @@ out=$(inst --user --runtime claude-code --copy 2>&1); rc=$?
 
 # --- a copy rewrites the tool copy, so every runtime is copied again with it
 inst --user --runtime codex --copy >/dev/null 2>&1
-i0=$(stat -c %i "$CS/qargi-task/SKILL.md")
+# mark the old copy: the refresh must replace it (an inode number may be reused, so it proves nothing)
+touch -d @1 "$CS/qargi-task/SKILL.md"
 out=$(inst --user --runtime codex --copy 2>&1); rc=$?
-{ [ "$rc" = 0 ] && [ -f "$XS/qargi-task/SKILL.md" ] && [ ! -L "$XS/qargi-task" ] && [ "$(stat -c %i "$CS/qargi-task/SKILL.md")" != "$i0" ] && echo "$out" | grep -q "installed the skills of claude-code"; } \
+{ [ "$rc" = 0 ] && [ -f "$XS/qargi-task/SKILL.md" ] && [ ! -L "$XS/qargi-task" ] && [ "$(stat -c %Y "$CS/qargi-task/SKILL.md")" != 1 ] && echo "$out" | grep -q "installed the skills of claude-code"; } \
   && ok "a --copy run for codex copies claude-code again too" || no "copy refresh (rc=$rc): $out"
 [ "$(yours)" = "$y0" ] && ok "your Codex entries are untouched by the copies" || no "your entries changed by a copy install"
 
