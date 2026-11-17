@@ -692,7 +692,10 @@ def cmd_advice(a, conf, state):
                 return 0
         ns = argparse.Namespace(project=a.project, session=None, transcript=None, cwd=a.cwd, json=False, advise=False)
         u = measure(ns, conf)
-        if not u["known"] or u["tokens"] * 100.0 / u["window"] < pct:               # an assumed window only decides when to speak
+        if not u["known"]:
+            return 0
+        share = u["percent"] if u["percent"] is not None else u["tokens"] * 100.0 / u["window"]     # the rounded percent on a known window; an assumed one only decides when to speak, by the raw ratio
+        if share < pct:
             return 0
         if u["window_source"] == "assumed":
             print("lead: %s tokens of context, %s" % (short(u["tokens"]), unknown_note(u)))     # no percentage, no word of compacting

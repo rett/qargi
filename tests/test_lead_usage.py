@@ -795,6 +795,14 @@ class Advice(Base):
         self.pct(80000)                                                                                   # 40%
         self.assertEqual(self.advice(), "lead: 40%, 80k tokens of context; compact is safe now: run /compact\n")
 
+    def test_the_threshold_is_the_rounded_percent_on_a_known_window_and_the_raw_ratio_on_an_assumed_one(self):
+        self.pct(79990)                                                                                   # 39.995%: the percent rounds to 40.0, the raw ratio is below 40
+        self.assertEqual(self.advice(), "lead: 40%, 80k tokens of context; compact is safe now: run /compact\n")
+        self.assume()
+        self.assertEqual(self.advice(), "")                                                               # assumed window: the raw ratio decides, so it stays silent
+        self.pct(80000)
+        self.assertEqual(self.advice(), "lead: 80k tokens of context, " + UNKNOWN + "\n")
+
     def test_the_token_count_is_beside_the_percentage(self):
         self.transcript("s1", [turn(1, 179999, 0, model="model-b[1m]")])
         self.answers["lead"] = {"compact_advice_pct": 10}
