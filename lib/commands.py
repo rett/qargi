@@ -1645,7 +1645,7 @@ COMMANDS = {
                           desc=("The runtime of the project says where its session transcripts are and how to read them (resources.transcripts of its definition): "
                                 "the context in use is the input, cache-read and cache-creation tokens of the last assistant turn. The window is the project answer "
                                 "lead.context_window (tokens), else the one the runtime's definition gives for the model id of that turn (resources.transcripts.windows), else the "
-                                "definition's single window, which is only a guess. The table of the claude-code runtime knows the Claude families, per the Anthropic "
+                                "definition's single window, which is only a guess. The table in the runtime's definition lists the model families, per the vendor's "
                                 "models overview of 2026-11-17: 1,000,000 tokens for Fable and Mythos 5, 5.1 and 5.2, Opus 4.6, 4.7, 4.8, 5 and 5.5, Sonnet 4.6, 5 and 5.5, "
                                 "Haiku 5.5 and ids that end in [1m] or -1m; 200,000 for Opus 4, 4.1 and 4.5, Sonnet 4 and 4.5 and Haiku 4.5. A dated id takes its family's "
                                 "window, and any other id is assumed at 200,000. The table gives the API's window, which the product may cap lower on some plans, so "
