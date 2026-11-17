@@ -221,13 +221,65 @@ t=$(asb push 0.2.0 | tok); out=$(asb push 0.2.0 --plan "$t" --approved "b pushes
 [ "$rc" = 0 ] && [ -n "$(git -C "$R" ls-remote origin refs/heads/release/0.2.0)" ] && [ "$(jq -r '.done.push.via' "$T/s/release/cutown-0.2.0.cut.json")" = own ] && ok "another lead runs push by its own plan and approval" || no "own push by another lead: rc=$rc $out"
 t=$(asb finish 0.2.0 | tok); out=$(asb finish 0.2.0 --plan "$t" --approved "b finishes" 2>&1); rc=$?
 [ "$rc" = 0 ] && git -C "$R" rev-parse -q --verify refs/tags/0.2.0 >/dev/null && [ "$(jq -r '.done.finish.via' "$T/s/release/cutown-0.2.0.cut.json")" = own ] && ok "another lead runs finish by its own plan and approval" || no "own finish by another lead: rc=$rc $out"
-# a cut record that names no lead (written before the binding) is refused: the cut must be approved again
+# a cut record that names no lead (written before the binding) is refused; before start the message says the cut can be approved again
 mk cutold with-origin
 out=$(asa plan 0.2.0 --date 2026-03-04 2>&1); ct=$(tok <<<"$out"); asa plan 0.2.0 --date 2026-03-04 --plan "$ct" --approved "ship it" >/dev/null 2>&1
 jq 'del(.lead)' "$T/s/release/cutold-0.2.0.cut.json" > "$T/x.json" && mv "$T/x.json" "$T/s/release/cutold-0.2.0.cut.json"
 before=$(snap); out=$(asa start 0.2.0 --plan "$ct" 2>&1); rc=$?
-[ "$rc" = 1 ] && grep -q "the cut record of 0.2.0 names no lead (it was approved before a cut was bound to the lead that approved it): nothing was changed. The cut must be approved again (qargi release plan 0.2.0 --again, then --plan and --approved)" <<<"$out" \
-  && [ "$before" = "$(snap)" ] && ! git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && ok "a cut record that names no lead is refused, nothing changed" || no "start under a cut with no lead: rc=$rc $out"
+[ "$rc" = 1 ] && grep -q "the cut record of 0.2.0 names no lead (it was approved before a cut was bound to the lead that approved it): nothing was changed. The cut can be approved again, because its start step has not run (qargi release plan 0.2.0 --again, then --plan and --approved)" <<<"$out" \
+  && [ "$before" = "$(snap)" ] && ! git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && ok "a cut record that names no lead is refused before start, nothing changed; the message says to approve the cut again" || no "start under a cut with no lead: rc=$rc $out"
+# once the cut has started, --again is no remedy (it discards the record and then refuses: the branch exists): the message names the step's own plan
+# and not "approve again", and the refused step leaves the record as it was
+mk cutold2 with-origin
+out=$(asa plan 0.2.0 --date 2026-03-04 2>&1); ct=$(tok <<<"$out"); asa plan 0.2.0 --date 2026-03-04 --plan "$ct" --approved "ship it" >/dev/null 2>&1; asa start 0.2.0 --plan "$ct" >/dev/null 2>&1
+jq 'del(.lead)' "$T/s/release/cutold2-0.2.0.cut.json" > "$T/x.json" && mv "$T/x.json" "$T/s/release/cutold2-0.2.0.cut.json"
+before=$(snap); out=$(asa push 0.2.0 --plan "$ct" 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "the cut record of 0.2.0 names no lead (it was approved before a cut was bound to the lead that approved it): nothing was changed. The cut cannot be approved again, because its start step has run (release/0.2.0 or the tag 0.2.0 exists, and plan --again would discard the record and then refuse): this step is run with its own plan (qargi release push 0.2.0, then --plan and --approved)" <<<"$out" \
+  && ! grep -q "can be approved again" <<<"$out" && ! grep -q "release plan 0.2.0 --again" <<<"$out" && [ "$before" = "$(snap)" ] && [ -f "$T/s/release/cutold2-0.2.0.cut.json" ] && [ -z "$(git -C "$R" ls-remote origin refs/heads/release/0.2.0)" ] \
+  && ok "a record that names no lead after start is refused with the own-plan route and no 'approve again'; the record and the refs are as they were" || no "push under a cut with no lead after start: rc=$rc $out"
+# the state is read from the record too (start done by the cut, the branch gone): the same wording
+jq '.done.start.at = "2026-03-04T00:00:00Z"' "$T/s/release/cutold2-0.2.0.cut.json" > "$T/x.json" && mv "$T/x.json" "$T/s/release/cutold2-0.2.0.cut.json"; git -C "$R" branch -q -D release/0.2.0
+out=$(asa push 0.2.0 --plan "$ct" 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "The cut cannot be approved again, because its start step has run" <<<"$out" && ! grep -q "can be approved again" <<<"$out" && ok "the record's own start step also counts as started" || no "no lead, start done in the record: rc=$rc $out"
+# a hotfix cut names --hotfix in the route of the step; the cut is approved again only before start
+mk cutoldh with-origin
+out=$(asa plan 0.1.1 --hotfix --date 2026-03-04 2>&1); ct=$(tok <<<"$out"); asa plan 0.1.1 --hotfix --date 2026-03-04 --plan "$ct" --approved "ship it" >/dev/null 2>&1
+jq 'del(.lead)' "$T/s/release/cutoldh-0.1.1.cut.json" > "$T/x.json" && mv "$T/x.json" "$T/s/release/cutoldh-0.1.1.cut.json"
+out=$(asa start 0.1.1 --hotfix --plan "$ct" 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "The cut can be approved again, because its start step has not run (qargi release plan 0.1.1 --hotfix --again, then --plan and --approved), or this step is run with its own plan (qargi release start 0.1.1 --hotfix, then --plan and --approved)" <<<"$out" \
+  && ok "a hotfix cut with no lead before start: the message names --hotfix in both routes" || no "hotfix cut with no lead: rc=$rc $out"
+
+# the hotfix cut is bound to its lead too: a second lead is refused a step of it, nothing changed; the approving lead runs it
+mk cuthot with-origin
+out=$(asa plan 0.1.1 --hotfix --date 2026-03-04 2>&1); ct=$(tok <<<"$out"); asa plan 0.1.1 --hotfix --date 2026-03-04 --plan "$ct" --approved "ship it" >/dev/null 2>&1
+before=$(snap); out=$(asb start 0.1.1 --hotfix --plan "$ct" 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "the cut of 0.1.1 $other start under the cut, $remedy (qargi release start 0.1.1 --hotfix, then --plan and --approved)" <<<"$out" && ! grep -q "$ct" <<<"$out" && [ "$before" = "$(snap)" ] \
+  && ! git -C "$R" rev-parse -q --verify refs/heads/hotfix/0.1.1 >/dev/null && ok "the hotfix cut: a second lead is refused start, nothing created or recorded" || no "hotfix start by another lead: rc=$rc $out"
+out=$(asa start 0.1.1 --hotfix --plan "$ct" 2>&1); rc=$?
+[ "$rc" = 0 ] && git -C "$R" rev-parse -q --verify refs/heads/hotfix/0.1.1 >/dev/null && ok "the hotfix cut: the lead that approved it runs start" || no "hotfix start by the approving lead: rc=$rc $out"
+
+# an identity that cannot be determined at approval time: the approval is refused and no cut record is written
+mk cutnoid with-origin
+out=$(asa plan 0.2.0 --date 2026-03-04 2>&1); ct=$(tok <<<"$out")
+before=$(snap); out=$(QARGI_LEAD='not an id' $REL plan 0.2.0 --date 2026-03-04 --plan "$ct" --approved "ship it" 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "the lead identity cannot be determined (.*not valid.*), so the cut of 0.2.0 cannot be bound to the lead that approves it: nothing was recorded" <<<"$out" && [ ! -e "$T/s/release/cutnoid-0.2.0.cut.json" ] && [ "$before" = "$(snap)" ] \
+  && ok "an identity that cannot be determined at approval: the approval is refused, no cut record is written, no audit line" || no "approval with an invalid identity: rc=$rc $out"
+
+# a finish that was cut off after its push resumes under the cut token: the approving lead completes it, a second lead is refused with nothing changed
+mkdir -p "$T/shim"; RG=$(command -v git)
+printf '#!/usr/bin/env bash\ncase " $* " in *" push -q --atomic "*) [ -z "${PUSH_LIE:-}" ] || { "%s" "$@"; exit 1; };; esac\nexec "%s" "$@"\n' "$RG" "$RG" > "$T/shim/git"; chmod +x "$T/shim/git"
+mk cutres with-origin
+out=$(asa plan 0.2.0 --date 2026-03-04 2>&1); ct=$(tok <<<"$out"); asa plan 0.2.0 --date 2026-03-04 --plan "$ct" --approved "ship it" >/dev/null 2>&1
+asa start 0.2.0 --plan "$ct" >/dev/null 2>&1; asa push 0.2.0 --plan "$ct" >/dev/null 2>&1
+out=$(PATH=$T/shim:$PATH PUSH_LIE=1 asa finish 0.2.0 --plan "$ct" 2>&1); rc=$?
+[ "$rc" != 0 ] && [ -f "$T/s/finish-intent/cutres-release-0.2.0.json" ] && [ -n "$(git -C "$R" ls-remote origin refs/tags/0.2.0)" ] && ok "finish under the cut is cut off after its push: the intent record stays and origin holds the tag" || no "cut-off finish: rc=$rc $out"
+snapi() { { snap; cat "$T/s/finish-intent/"*.json 2>/dev/null; } | md5sum; }
+before=$(snapi); out=$(asb finish 0.2.0 --plan "$ct" 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "the cut of 0.2.0 $other finish under the cut, $remedy (qargi release finish 0.2.0, then --plan and --approved)" <<<"$out" && ! grep -q "$ct" <<<"$out" && [ "$before" = "$(snapi)" ] && [ -f "$T/s/finish-intent/cutres-release-0.2.0.json" ] \
+  && ok "the resumed finish is refused to a second lead: the intent record, the refs and the cut record are as they were" || no "resume by another lead: rc=$rc $out"
+out=$(asa finish 0.2.0 --plan "$ct" 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q "was cut off" <<<"$out" && [ ! -e "$T/s/finish-intent/cutres-release-0.2.0.json" ] && [ "$(git -C "$R" rev-parse master)" = "$(git -C "$R" ls-remote origin refs/heads/master | cut -f1)" ] && [ "$(jq -r '.done.finish.via' "$T/s/release/cutres-0.2.0.cut.json")" = cut ] \
+  && ok "the approving lead resumes the cut-off finish under the cut token: master is what origin has, the record is gone, the cut shows finish done" || no "resume by the approving lead: rc=$rc $out"
 
 # --- release.finish_check: run by finish in a copy of the branch once the plan is approved, before anything is merged, tagged or pushed; the plans list it
 printf '#!/usr/bin/env bash\necho "$PWD $1 ${QARGI_RELEASE_VERSION:-} $(cat VERSION)" >> "%s/fc.log"\nif [ -f "%s/fc.fail" ]; then echo "finish check boom"; exit 5; fi\n' "$T" "$T" > "$T/fc.sh"
