@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `qargi local verify`, `local clean` and `review apply` of a run prepared before `release finish` (a hotfix too), `feature finish` or `branch prune` no longer refuse the branch that verb deleted, as `branch deleted: refs/heads/NAME (was SHA) (not in the lead's ref journal)`, when the lead committed on the branch with git after the run was prepared (a fix in the worktree of `release fix`, the entries of a hotfix, a commit in a feature's worktree) or pushed it by hand. The deletion was journaled, but from the tip the branch had by then, and no verb had moved the branch from the tip in the run's snapshot, so the journal did not lead from one to the other. A verb that deletes a branch now first journals each commit on the branch's first-parent line that the journal has no line for (its own verb, with a `why` that says git made the step), from the oldest commit the journal has the branch at up to the tip it deletes, in the repository and for the branch it deletes on origin; verify then names the verb (`release/1.2.0 deleted by qargi release finish`). Unchanged: a branch deleted by hand, and a branch rewritten by hand and then deleted by a verb, are refused as before; no step is written for a branch the journal never had (made by hand and not noted with `qargi ref note`), nor for a branch that is kept (`--keep`).
+
 ## [0.3.3] - 2026-11-17
 
 ### Added

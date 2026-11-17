@@ -146,7 +146,9 @@ feature_finish_tail() {
     intent_mark "$key" refs
   fi
   if [ -z "$KEEP" ] && ! intent_marked "$key" branch; then
-    if [ "$(sha_of "$BR")" = "$h" ]; then wt_drop "$BR"; g update-ref -d "refs/heads/$BR" "$h"; journal_ref "$REPO" "refs/heads/$BR" "$h" "" feature:finish
+    # commits the lead made on the branch with git moved it without a journal line, so the journal is first brought up to the merged head (journal_reach):
+    # a run prepared before such a commit then finds the deletion too
+    if [ "$(sha_of "$BR")" = "$h" ]; then wt_drop "$BR"; g update-ref -d "refs/heads/$BR" "$h"; journal_reach local "refs/heads/$BR" "$h" feature:finish; journal_ref "$REPO" "refs/heads/$BR" "$h" "" feature:finish
     elif branch_exists "$BR"; then echo "note: $BR is at $(sha_of "$BR") now, not at the merged ${h:0:7}: it is not deleted" >&2; fi
     intent_mark "$key" branch
   fi
@@ -157,7 +159,7 @@ feature_finish_tail() {
   parking_follow
   if g remote get-url origin >/dev/null 2>&1; then
     if [ -n "$rdel" ]; then
-      if g push -q --force-with-lease="refs/heads/$BR:$rdel" origin ":refs/heads/$BR" 2>/dev/null; then journal_push "refs/heads/$BR" "$rdel" "" feature:finish; echo "deleted origin/$BR"
+      if g push -q --force-with-lease="refs/heads/$BR:$rdel" origin ":refs/heads/$BR" 2>/dev/null; then journal_reach remote "refs/heads/$BR" "$rdel" feature:finish; journal_push "refs/heads/$BR" "$rdel" "" feature:finish; echo "deleted origin/$BR"
       else echo "note: could not delete origin/$BR (it moved, or origin refused)" >&2; fi
     fi
   fi

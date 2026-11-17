@@ -316,6 +316,107 @@ out=$($DA local clean "$RN" 2>&1); rc=$?
 out=$($DA local close "$RN" --applied-by-am 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "merge that branch" <<<"$out" && ! grep -q "rewrite" <<<"$out" && ok "close of an applied run at its journaled tip: as before" || no "plain close refusal: rc=$rc $out"
 
+# --- a branch the lead committed on with git, then deleted by a verb: a run prepared before those commits still verifies.
+# The journal has no line for a commit made with git (the fix of a release in the worktree of release fix, the entries of a hotfix, a commit
+# in a feature's worktree, a push by hand), so the line of the deletion started at a tip the journal did not lead to from the run's snapshot.
+# The deleting verb now writes the steps up to the tip it deletes (journal_reach), in the repository and for origin.
+use() { export QARGI_PROJECT=$1; A=$T/$1; }
+# byhand BRANCH FILE [push]: a commit made with git on BRANCH in a worktree of it, as the lead commits a fix; with push it is pushed by hand too
+byhand() {
+  local w; w=$(mktemp -d "$T/w.XXXXXX"); git -C "$A" worktree add -q "$w" "$1"
+  echo "$2" > "$w/$2"; git -C "$w" add -A; git -C "$w" commit -q -m "by hand: $2"; git -C "$A" worktree remove --force "$w"
+  [ -z "${3:-}" ] || git -C "$A" push -q origin "$1"
+}
+# approve COMMAND...: the plan of an owner verb, then the same command with its token and an approval
+approve() { local p t; p=$("$@" 2>&1); t=$(tok <<<"$p"); [ -n "$t" ] || { printf '%s\n' "$p"; return 1; }; "$@" --plan "$t" --approved go 2>&1; }
+# reach REF-SUFFIX OLD NEW VERB [remote]: the journal holds the step OLD -> NEW of that branch, written by VERB with a reason that names git, on that side
+reach() {
+  jq -e --arg r "$1" --arg o "$2" --arg n "$3" --arg v "$4" --arg side "${5:-local}" \
+    'select((.ref | endswith($r)) and .old == $o and .new == $n and .verb == $v and ((.why // "") | test("with git")) and (if $side == "remote" then .remote == "origin" else (has("remote") | not) end))' "$J" >/dev/null 2>&1
+}
+# gone_flow VERSION SLUG LABEL [origin]: in the project of $A a release branch, a feature branch and an agent branch exist and the journal knows each
+# (with origin: also on origin, the release by release push, the other two pushed by hand and noted). A run is prepared. The lead then commits with git
+# on each branch, twice on the release (with origin: the first fix goes to origin through release push, the second and the other two branches by hand, and
+# nothing is noted), a task merge follows the commit on the feature, and release finish, feature finish and branch prune delete the three branches (with
+# origin: there too). The run must verify and name each verb.
+gone_flow() {
+  local v=$1 lbl=$3 org=${4:-} fr r0 r1 r2 f0 f1 z0 z1 out rc
+  $REL verify "$v" >/dev/null 2>&1; rstart "$v" --date 2026-02-02 --allow-empty-notes >/dev/null 2>&1 || no "(setup) $lbl: release start $v"
+  $F start gf >/dev/null 2>&1; task agent/gz gz.txt one; $DA ref note agent/gz >/dev/null 2>&1 || no "(setup) $lbl: note agent/gz"
+  if [ -n "$org" ]; then
+    approve $REL push "$v" >/dev/null || no "(setup) $lbl: release push $v"
+    git -C "$A" push -q origin feature/gf agent/gz && $DA ref note origin/feature/gf origin/agent/gz >/dev/null 2>&1 || no "(setup) $lbl: push and note the feature and agent branches"
+  fi
+  fr=$(mkrun "$2"); out=$(QARGI_VERIFY_REFS_ONLY=1 $DA local verify "$fr" 2>&1) || no "(setup) $lbl: the run does not pass the untouched refs check: $out"
+  r0=$(sha "release/$v"); f0=$(sha feature/gf); z0=$(sha agent/gz)
+  byhand "release/$v" fix.txt; r1=$(sha "release/$v")
+  [ -z "$org" ] || approve $REL push "$v" >/dev/null || no "(setup) $lbl: release push of the first fix"
+  byhand "release/$v" fix2.txt "$org"; byhand feature/gf lead.txt "$org"; byhand agent/gz two.txt "$org"
+  r2=$(sha "release/$v"); f1=$(sha feature/gf); z1=$(sha agent/gz)
+  [ -n "$org" ] || $REL verify "$v" >/dev/null 2>&1
+  $F merge gf agent/gz >/dev/null 2>&1 && $F verify gf >/dev/null 2>&1 || no "(setup) $lbl: merge and verify the feature"
+  out=$(approve $F finish gf) || no "(setup) $lbl: feature finish: $out"
+  out=$(approve $REL finish "$v") || no "(setup) $lbl: release finish: $out"
+  out=$(approve $DA branch prune ${org:+--remote}) || no "(setup) $lbl: branch prune: $out"
+  { [ "$(sha "release/$v")" = "$Z" ] && [ "$(sha feature/gf)" = "$Z" ] && [ "$(sha agent/gz)" = "$Z" ] && [ "$r1" != "$r0" ] && [ "$r2" != "$r1" ] && [ "$f1" != "$f0" ] && [ "$z1" != "$z0" ]; } \
+    || no "(setup) $lbl: the three branches are not deleted, or a commit by hand did not move one"
+  reach "release/$v" "$r0" "$r1" release:finish && reach "release/$v" "$r1" "$r2" release:finish && jhas "release/$v" "$r2" "$Z" \
+    && ok "$lbl: release finish journals each commit the lead made on the release branch with git, one step a commit, then the deletion at the released head" || no "$lbl: no steps $r0 -> $r1 -> $r2 before the deletion of release/$v: $(grep "release/$v" "$J" | tail -n 5)"
+  reach feature/gf "$f0" "$f1" feature:finish && ok "$lbl: feature finish journals the commit made with git on the feature branch (a journaled task merge followed it)" || no "$lbl: no step $f0 -> $f1 of feature/gf: $(grep 'feature/gf' "$J" | tail -n 5)"
+  reach agent/gz "$z0" "$z1" branch:prune && ok "$lbl: branch prune journals the commit made with git on the agent branch" || no "$lbl: no step $z0 -> $z1 of agent/gz: $(grep 'agent/gz' "$J" | tail -n 4)"
+  out=$(verify "$fr"); rc=$?
+  [ $rc = 0 ] && ok "$lbl: a run prepared before the lead committed on the release, feature and agent branches verifies after the verbs deleted them" || no "$lbl: verify after the deletions: rc=$rc $out"
+  grep -q "release/$v deleted by qargi release finish" <<<"$out" && ok "$lbl: verify names release finish for the deleted release branch" || no "$lbl: release/$v is not accepted as deleted by release finish: $(grep "release/$v" <<<"$out")"
+  grep -q "feature/gf deleted by qargi feature finish" <<<"$out" && ok "$lbl: and feature finish for the deleted feature branch" || no "$lbl: feature/gf is not accepted as deleted by feature finish: $(grep 'feature/gf' <<<"$out")"
+  grep -q "agent/gz deleted by qargi branch prune" <<<"$out" && ok "$lbl: and branch prune for the deleted agent branch" || no "$lbl: agent/gz is not accepted as deleted by branch prune: $(grep 'agent/gz' <<<"$out")"
+  [ -n "$org" ] || return 0
+  # origin: release push journaled its own pushes of the release, the second fix went there by hand; so did the feature and agent branches after the lead's notes of them
+  reach "release/$v" "$r1" "$r2" release:finish remote && reach feature/gf "$f0" "$f1" feature:finish remote && reach agent/gz "$z0" "$z1" branch:prune remote \
+    && ok "$lbl: release finish, feature finish and branch prune journal the push by hand of the branch they delete on origin" || no "$lbl: no step for origin: $(grep -E "release/$v|feature/gf|agent/gz" "$J" | grep origin | tail -n 8)"
+  grep -q "release/$v on origin deleted by qargi release push, qargi release finish" <<<"$out" && ok "$lbl: verify names release push and release finish for the release branch deleted on origin" || no "$lbl: release/$v on origin: $(grep "release/$v" <<<"$out")"
+  grep -q "feature/gf on origin deleted by qargi feature finish" <<<"$out" && grep -q "agent/gz on origin deleted by qargi branch prune" <<<"$out" \
+    && ok "$lbl: and feature finish and branch prune for the branches deleted on origin" || no "$lbl: the branches of origin: $(grep -E 'feature/gf|agent/gz' <<<"$out")"
+}
+jq '.branches.delete_merged = "local+remote"' "$T/c/projects/app.json" > "$T/app.json" && mv "$T/app.json" "$T/c/projects/app.json"   # feature finish deletes the branch on origin too
+gone_flow 0.3.0 gone-origin "with an origin" origin
+# a repository with no origin
+git init -q -b master "$T/solo"; echo 0.1.0 > "$T/solo/VERSION"; printf '# Changelog\n\n## [Unreleased]\n\n- a change\n' > "$T/solo/CHANGELOG.md"
+git -C "$T/solo" add -A && git -C "$T/solo" commit -q -m base && git -C "$T/solo" branch develop && git -C "$T/solo" checkout -q -b parked
+jq -n --arg p "$T/solo" '{schema:1, project:"solo", methodology:"gitflow", repo:{url:"https://github.com/acme/solo", path:$p, long_lived:["master","develop"]}, test_command:"true"}' > "$T/c/projects/solo.json"
+use solo
+# a hotfix: its content is always a commit the lead makes on the branch after start
+rstart 0.1.1 --hotfix --date 2026-02-01 --allow-empty-notes >/dev/null 2>&1 || no "(setup) hotfix start"
+RH=$(mkrun gone-hotfix); h0=$(sha hotfix/0.1.1)
+w=$(mktemp -d "$T/w.XXXXXX"); git -C "$A" worktree add -q "$w" hotfix/0.1.1
+sed -i 's/^## \[0\.1\.1\].*/&\n\n- the fix/' "$w/CHANGELOG.md"; echo fix > "$w/hot.txt"; git -C "$w" add -A; git -C "$w" commit -q -m "the hotfix"; git -C "$A" worktree remove --force "$w"
+h1=$(sha hotfix/0.1.1)
+$REL verify 0.1.1 --hotfix >/dev/null 2>&1; out=$(approve $REL finish 0.1.1 --hotfix) || no "(setup) hotfix finish: $out"
+[ "$(sha hotfix/0.1.1)" = "$Z" ] && [ "$h1" != "$h0" ] && reach hotfix/0.1.1 "$h0" "$h1" hotfix:finish && jhas hotfix/0.1.1 "$h1" "$Z" \
+  && ok "local only: hotfix finish journals the hotfix the lead committed with git, then the deletion of the branch" || no "hotfix finish: $(grep 'hotfix/0.1.1' "$J" | tail -n 4)"
+out=$(verify "$RH"); rc=$?
+[ $rc = 0 ] && grep -q "hotfix/0.1.1 deleted by qargi hotfix finish" <<<"$out" && ok "local only: a run prepared before the hotfix was committed verifies after hotfix finish, which verify names" || no "verify after hotfix finish: rc=$rc $out"
+gone_flow 0.2.0 gone-local "local only"
+# what no verb did stays refused: a branch deleted by hand, a branch rewritten by hand whose deletion a verb then journaled at the other tip, and a
+# branch whose tip is further from what the journal has than the steps a verb writes (JOURNAL_REACH_MAX, 500 commits of the first-parent line)
+$F start hd >/dev/null 2>&1; $F start ot >/dev/null 2>&1; task agent/ot ot.txt one; task agent/far far.txt one
+$DA ref note agent/ot agent/far >/dev/null 2>&1 || no "(setup) note agent/ot and agent/far"
+RN=$(mkrun gone-hand); hd0=$(sha feature/hd); ot0=$(sha agent/ot); far0=$(sha agent/far)
+git -C "$A" branch -D feature/hd >/dev/null
+ot1=$(git -C "$A" commit-tree -p develop -m "rewritten by hand" "agent/ot^{tree}"); git -C "$A" branch -f agent/ot "$ot1" >/dev/null
+far1=$far0; for _ in $(seq 1 501); do far1=$(git -C "$A" commit-tree -p "$far1" -m "one more by hand" "$far0^{tree}"); done; git -C "$A" branch -f agent/far "$far1" >/dev/null
+$F merge ot agent/ot >/dev/null 2>&1 && $F merge ot agent/far >/dev/null 2>&1 || no "(setup) merge the rewritten agent/ot and the long agent/far"
+n=$(jn); out=$(approve $DA branch prune) || no "(setup) prune agent/ot and agent/far: $out"
+[ "$(sha agent/ot)" = "$Z" ] && jhas agent/ot "$ot1" "$Z" && [ "$(sha agent/far)" = "$Z" ] && jhas agent/far "$far1" "$Z" && [ "$(jn)" = $((n + 2)) ] \
+  && ok "branch prune of a branch rewritten by hand, and of one 501 commits past what the journal has, journals each deletion at the tip it deleted and no step" || no "prune of the rewritten and the long branch: $(tail -n +"$((n + 1))" "$J" | head -n 6)"
+out=$(verify "$RN"); rc=$?
+[ $rc != 0 ] && grep -qF "branch deleted: refs/heads/feature/hd (was $hd0) (not in the lead's ref journal)" <<<"$out" \
+  && ok "a branch deleted by hand (git branch -D, no verb) is still refused, with the tip it was at" || no "hand deletion: rc=$rc $out"
+[ $rc != 0 ] && grep -qF "branch deleted: refs/heads/agent/ot (was $ot0) (not in the lead's ref journal)" <<<"$out" \
+  && ok "a deletion journaled for one tip does not accept the deletion of the branch at another tip" || no "deletion at another tip: rc=$rc $out"
+[ $rc != 0 ] && grep -qF "branch deleted: refs/heads/agent/far (was $far0) (not in the lead's ref journal)" <<<"$out" \
+  && ok "nor the deletion of a branch whose deleted tip is more than 500 commits past the tip the journal has" || no "deletion beyond the bound: rc=$rc $out"
+use app
+
 # --- the guard protects the journal from a member; reading stays allowed
 RG=$(mkrun guard-run); cd "$RG/clone" || exit 1
 g() { # tool, json input -> exit status of the guard run in the clone, as a member would
