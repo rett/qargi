@@ -1,0 +1,22 @@
+{
+ "purpose": "0.3.3 hardening and hygiene: guard option gaps, install race and legacy retirement, read-only initialization, handoff ordering, version flag, catalog fix",
+ "started": "2026-11-17T04:31:40Z",
+ "goal": "0.3.3 hardening and hygiene: guard option gaps, install race and legacy retirement, read-only initialization, handoff ordering, version flag, catalog fix",
+ "plan": "",
+ "note": "",
+ "status": "active",
+ "lead": {
+  "id": "arc-claude-qargi",
+  "user": "rett",
+  "host": "arc",
+  "since": "2026-11-17T04:31:40Z",
+  "worktree": "94b9af1305afafc4"
+ },
+ "renewed_at": "2026-11-17T04:31:40Z",
+ "finished_at": null,
+ "updated_by": "arc-claude-qargi",
+ "rev": 1,
+ "updated_at": "2026-11-17T04:31:40Z",
+ "feature": "hardening-033",
+ "project": "qargi"
+}
