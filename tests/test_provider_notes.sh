@@ -23,9 +23,10 @@ copy_tool "$SRC" "$TOOL"
 DA=$TOOL/bin/qargi
 # shellcheck source=fakeprov.sh
 . tests/fakeprov.sh
-# notey: a local runtime with two notes of its own; plain: one with none; every other note of the shipped runtime is dropped
-fake_runtime "$SRC" "$TOOL" notey local '.notes = {"alpha": "The alpha text.", "beta-2": "The beta text, with a comma."}'
-fake_runtime "$SRC" "$TOOL" plain local 'del(.notes)'
+# notey: a local runtime with two notes of its own; plain: one with none; every other note of the shipped runtime is dropped, and with
+# the notes the list that says which of them are about the lead (lead_notes names topics of notes only)
+fake_runtime "$SRC" "$TOOL" notey local '.notes = {"alpha": "The alpha text.", "beta-2": "The beta text, with a comma."} | del(.lead_notes)'
+fake_runtime "$SRC" "$TOOL" plain local 'del(.notes, .lead_notes)'
 
 mkproj() { # NAME PROVIDER-JSON: stored answers with a repository of their own
   local repo=$T/repo-$1
@@ -82,7 +83,7 @@ run alpha --project cloudonly
 
 # a runtime that cannot be used as it stands is a refusal (exit 2), not "no such topic" (exit 1)
 mkdir -p "$T/c/packs/providers/unsealed"
-jq '.provider = "unsealed" | .family = null | .notes = {"alpha": "x"} | del(.adapter, .adapter_verbs)' "$SRC/lib/providers/claude-code.json" > "$T/c/packs/providers/unsealed/definition.json"
+jq '.provider = "unsealed" | .family = null | .notes = {"alpha": "x"} | del(.adapter, .adapter_verbs, .lead_notes)' "$SRC/lib/providers/claude-code.json" > "$T/c/packs/providers/unsealed/definition.json"
 mkproj unsealedp '"unsealed"'
 run alpha --project unsealedp
 { [ $rc = 2 ] && [ -z "$out" ] && grep -q "never reviewed" <<<"$err"; } && ok "a library runtime that was never sealed is exit 2" || no "unsealed: rc=$rc out=$out err=$err"
@@ -150,6 +151,58 @@ run output-dir --project otherp --surface cloud
 [ "$rc $out" = "0 /srv/out" ] && ok "another cloud runtime names its own directory" || no "other platform: rc=$rc out=$out err=$err"
 run output-dir --project onclaude --surface sky
 [ $rc = 2 ] && ok "an unknown surface is a usage error" || no "bad surface: rc=$rc out=$out"
+
+# lead_notes: the topics of a definition's notes that are about the lead's own session on that runtime; the others are about its members.
+# marks NAME: the lead topics of the runtime NAME of the tool copy as the library reads them (one line, sorted), then every failure the
+# validation of its definition reports, one per line
+marks() {
+  python3 -I -c 'import sys
+sys.path.insert(0, sys.argv[1])
+import provider as P
+d = P.definition(sys.argv[2])
+try:
+    print("lead: " + " ".join(sorted(P.lead_topics(d))))
+except P.ProviderError as e:
+    print("unreadable: %s" % e)
+for level, m in P.validate2(d, sys.argv[2]):
+    if level == "fail":
+        print("fail: " + m)' "$TOOL/lib" "$1" 2>&1
+}
+[ "$(marks claude-code)" = "lead: commands exploration identity session-model skills-dir" ] \
+  && ok "the shipped claude-code marks the notes about the lead's session; spawn and member-out are about its members" || no "claude-code marks: $(marks claude-code)"
+[ "$(marks codex)" = "lead: commands exploration identity message session-model skills-dir" ] \
+  && ok "the shipped codex marks the notes about the lead's session; spawn is about its members" || no "codex marks: $(marks codex)"
+[ "$(marks claude-platform)" = "lead: " ] && ok "the shipped claude-platform marks none: its two notes are about the hosted members" || no "claude-platform marks: $(marks claude-platform)"
+[ "$(marks notey)" = "lead: " ] && ok "a definition with no lead_notes is valid and marks none" || no "notey marks: $(marks notey)"
+fake_runtime "$SRC" "$TOOL" marked local '.notes = {"alpha": "a", "beta-2": "b"} | .lead_notes = ["beta-2"]'
+[ "$(marks marked)" = "lead: beta-2" ] && ok "lead_notes lists topics of the definition's own notes" || no "marked: $(marks marked)"
+fake_runtime "$SRC" "$TOOL" marked local '.notes = {"alpha": "a"} | .lead_notes = []'
+[ "$(marks marked)" = "lead: " ] && ok "an empty list is valid" || no "empty marks: $(marks marked)"
+fake_runtime "$SRC" "$TOOL" marked local '.notes = {"alpha": "a", "beta-2": "b"} | .lead_notes = ["alpha", "gamma"]'
+m=$(marks marked)
+{ grep -q "^unreadable: .*lead_notes: 'gamma' is not a topic of notes" <<<"$m" && grep -q "^fail: lead_notes: 'gamma' is not a topic of notes (alpha, beta-2)$" <<<"$m" && [ "$(grep -c '^fail' <<<"$m")" = 1 ]; } \
+  && ok "a marked topic the notes do not have fails the validation and is never read as marking the rest" || no "dangling mark: $m"
+fake_runtime "$SRC" "$TOOL" marked local 'del(.notes) | .lead_notes = ["alpha"]'
+grep -q "^fail: lead_notes: 'alpha' is not a topic of notes (the definition has none)$" <<<"$(marks marked)" && ok "so does a mark in a definition with no notes" || no "mark without notes: $(marks marked)"
+fake_runtime "$SRC" "$TOOL" marked local '.notes = {"alpha": "a"} | .lead_notes = "alpha"'
+m=$(marks marked)
+{ grep -q "^unreadable: " <<<"$m" && grep -q "^fail: lead_notes: 'alpha' is not of type array$" <<<"$m"; } && ok "lead_notes that is not a list fails" || no "mark not a list: $m"
+fake_runtime "$SRC" "$TOOL" marked local '.notes = {"alpha": "a"} | .lead_notes = ["alpha", 7]'
+m=$(marks marked)
+{ grep -q "^unreadable: " <<<"$m" && grep -q "^fail: lead_notes\[1\]: 7 is not of type string$" <<<"$m"; } && ok "an item that is not a string fails" || no "mark not a string: $m"
+fake_runtime "$SRC" "$TOOL" marked local '.notes = {"alpha": "a"} | .lead_notes = ["alpha", "alpha"]'
+grep -q "^fail: lead_notes: has a duplicate item$" <<<"$(marks marked)" && ok "a topic listed twice fails" || no "mark twice: $(marks marked)"
+rm -f "$TOOL/lib/providers/marked.json"; rm -rf "$TOOL/lib/providers/marked"
+m=$(python3 -I -c 'import sys
+sys.path.insert(0, sys.argv[1])
+import provider as P
+ext = {"schema": 2, "kind": "extension", "extension": "addon", "extends": "notey", "provides": [], "adds": {"lead_notes": ["alpha"]}}
+print("\n".join(m for level, m in P.validate2(ext, "addon") if level == "fail"))' "$TOOL/lib" 2>&1)
+[ "$m" = "adds.lead_notes: additional property is not allowed" ] && ok "an extension cannot mark notes (it has none)" || no "extension marks: $m"
+# with no lead runtime named the marks change nothing: every topic is the project's runtime's (the lists of the shipped runtimes above)
+run identity --project onclaude
+{ [ $rc = 0 ] && [ "$out" = "$(jq -r '.notes.identity' "$SRC/lib/providers/claude-code.json")" ] && [ -z "$err" ]; } \
+  && ok "a marked topic is still the project's runtime's when no lead runtime is named" || no "marked topic, no lead runtime: rc=$rc out=$out err=$err"
 
 # usage
 run a b --project withnotes

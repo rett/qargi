@@ -50,6 +50,8 @@ As a library (import provider; stdlib only, found beside the descriptors, so it 
                                        it lists); the second runs it and removes the copy
   notes_of(project, surface=local)     (runtime, {topic: text}): the notes of the definition of the project's runtime on a surface, composed (notes: an
                                        optional object of topic name to one line of text, at most 16 topics of 2000 characters)
+  lead_topics(definition)              the topics of a definition's notes that are about the lead's own session on that runtime (lead_notes: a list
+                                       of topics of its notes), as a set; every other topic is about the members the runtime runs
   contract_addenda(name, surface)      the texts the runtime's definition adds to the member contract (resources.contract_addenda: files in its
                                        own directory, plain text); ProviderError for one that is missing, is not text or leaves the directory
   discard_exec_copy(directory)         remove what exec_copy made (its parent directory, qargi-exec.XXXX)
@@ -1271,6 +1273,31 @@ def _notes_problems(notes):
     return bad
 
 
+def _lead_notes_problems(marks, notes):
+    """The rule of a definition's lead_notes (the topics of its notes that are about the lead's own session) that a schema cannot state: each
+    one is a topic the definition's notes have. The schema reports a value that is not a list of strings, and a topic listed twice."""
+    if not isinstance(marks, list):
+        return []
+    have = notes if isinstance(notes, dict) else {}
+    return ["lead_notes: %s is not a topic of notes (%s)" % (_show(t), ", ".join(sorted(have)) or "the definition has none")
+            for t in marks if isinstance(t, str) and t not in have]
+
+
+def lead_topics(doc):
+    """The topics of a definition's notes that are about the lead's own session on that runtime (lead_notes), as a set; every other topic is
+    about the members the runtime runs. Empty when the definition marks none. ProviderError when lead_notes is not a list of topics of the
+    definition's notes: a mark that cannot be read is never taken for "about the members"."""
+    marks = doc.get("lead_notes")
+    if marks is None:
+        return set()
+    if not isinstance(marks, list) or not all(isinstance(t, str) for t in marks):
+        raise ProviderError("provider %s is invalid: lead_notes: %s is not a list of topic names" % (doc.get("provider"), _show(marks)))
+    bad = _lead_notes_problems(marks, doc.get("notes"))
+    if bad:
+        raise ProviderError("provider %s is invalid: %s" % (doc.get("provider"), bad[0]))
+    return set(marks)
+
+
 EXTENSION_KEYS = ("schema", "kind", "extension", "description", "extends", "surface", "provides", "requires", "adds")
 EXTENSION_ADDS = ("capabilities", "resources", "renderers", "dispatch", "barrier", "adapter_verbs")
 RESOURCES = ("skills", "agents", "instructions", "mcp", "settings", "memory", "transcripts")
@@ -1364,6 +1391,7 @@ def validate2(d, name=None):
     out += [("fail", m) for m in _models_problems(d.get("models"))]
     out += [("fail", m) for m in _resource_problems(d.get("resources"))]
     out += [("fail", m) for m in _notes_problems(d.get("notes"))]
+    out += [("fail", m) for m in _lead_notes_problems(d.get("lead_notes"), d.get("notes"))]
     disp = d.get("dispatch")
     if isinstance(disp, dict) and isinstance(disp.get("env_pass"), list):
         out += [("fail", "dispatch.env_pass: %s is never handed on: %s" % (n, env_pass_problem(n))) for n in disp["env_pass"] if isinstance(n, str) and env_pass_problem(n)]

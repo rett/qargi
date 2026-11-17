@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- A runtime's definition can say which of its notes are about the lead's own session on that runtime: `lead_notes`, a list of topics of its `notes` (`lib/providers/schema-2.json`); every topic it does not list is about the members the runtime runs. `claude-code` lists `commands`, `exploration`, `identity`, `session-model` and `skills-dir` (its `spawn` and `member-out` are about members), `codex` lists those five and `message` (its `spawn` is about members), and `claude-platform` lists none. A listed topic the notes do not have, a topic listed twice or a value that is not a list of names fails `qargi provider check`; an extension cannot add the list.
+
 ## [0.3.3] - 2026-11-17
 
 ### Added
