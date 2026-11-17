@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-11-17
+
 ### Added
 - `qargi doctor`'s `window-source` check also looks at the model of the lead's own session (the last turn of its transcript, read only) and warns when that model is not in the runtime's table of windows and `lead.context_window` is unset, since its window is only assumed; a lead model that cannot be determined is not a warning, and the line says what was found (no transcript of its session, a transcript with no counted turn, or a last turn with no model id); a project with no role model ids and no lead model is `unknown`.
 - `qargi --version` does what `qargi version` does, before any state is set up.
