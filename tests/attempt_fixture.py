@@ -3,18 +3,77 @@
 These unit cases assume unchanged refs; public Git comparison is exercised by
 test_attempt_integration. They still take the real lock and bind pending plans
 to the owning process, rather than bypassing lifecycle checks for tests.
+
+The outcome receipt fixtures below describe a run with every recorded fact,
+and plant the material a receipt must never copy: a token-like environment
+variable, a credential path, task text and report text.
 """
 import contextlib
 import ctypes
 import fcntl
 import json
 import os
+import re
 import select
 import signal
 import subprocess
 import sys
 import tempfile
 import time
+
+RECEIPT_KEYS = frozenset("version run slug role class base final_commit requested observed attempts attempt_count "
+                         "verification apply done skips deviations disposition".split())
+SECRET_ENV = {"EXAMPLE_SERVICE_TOKEN": "tok-fixture-9f3c1d7a5b2e4680"}
+SECRET_NAME = re.compile(r"token|secret|passw|cred|key|auth|cookie|env", re.I)
+TASK_TEXT = "TASK TEXT: rotate the example deployment"
+REPORT_TEXT = "REPORT TEXT: what the member found"
+
+
+def dispatch(outcome, started, ended):
+    """An ended dispatch with fixed process identities; nothing probes them once it has ended."""
+    return dict(started=started, runner=dict(pid=1, token="1"), member=dict(pid=2, token="2"),
+                ended=ended, outcome=outcome)
+
+
+def request(bindings):
+    """A prepared command request whose model alias differs from its model id."""
+    return dict(schema=1, project="demo", runtime="fake", mode="command", role="build", **{"class": "write"},
+                selector=None, profile="build", base="worker", model="fake-alias", model_id="fake-model-1",
+                effort="high", binding={key: "a" * 64 for key in bindings})
+
+
+def manifest(secret=""):
+    """A member's manifest: DONE with exit status 0, one gate not run, two deviations, and text around them."""
+    return dict(status="DONE", blocked_reason="", task=TASK_TEXT + " " + secret,
+                done=dict(command="check --token " + secret, exit_code=0, output_tail=REPORT_TEXT + " " + secret),
+                gates=[dict(name="lint", command="lint", result="pass", exit_code=0, verdict_line="0 problems " + secret),
+                       dict(name="scan", command="none", result="not run", exit_code=None, verdict_line="not run")],
+                commits=[], deviations=["first " + secret, "second"], noticed_not_acted_on=[REPORT_TEXT])
+
+
+def applied(run, secret=""):
+    """The lead's private record of a finished apply."""
+    return dict(schema=1, run=run, src=run, branch="agent/example-change", base="a" * 40, status="done", steps=[],
+                tip="b" * 40, auth_line="applied by " + secret, npatch=1)
+
+
+def strings(value):
+    """("key"|"value", text) for every key and every string value of a decoded document."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            yield "key", key
+            yield from strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from strings(item)
+    elif isinstance(value, str):
+        yield "value", value
+
+
+def looks_secret(text, planted=()):
+    """A value that names a secret, is a path or an address, or holds planted material."""
+    return bool(SECRET_NAME.search(text) or text.startswith("/") or "://" in text
+                or any(item in text for item in planted))
 
 
 class ForkAfterEnumeration:

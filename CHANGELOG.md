@@ -6,6 +6,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `qargi local clean RUN` keeps an outcome receipt of a lifecycle run: before anything is removed it writes `<state>/attempts/.receipts/ID.json`, one JSON object of at most 16384 bytes that no clean removes, with the run id, slug, role and class, the base branch and base commit, the applied tip, the requested model and effort, each attempt with its dispatch outcome and its start and end times (the most recent 64, with a count of all), the verification state and time, the apply state, the DONE status and exit status and the numbers of gates not run and of deviations from the manifest of the verified saved copy, and whether the run was cleaned or discarded. A fact that is not recorded is `null` (the observed model and effort always, for now); the receipt holds no path, credential, environment value, task text or report text. It is written once and never rewritten, and an interrupted clean finishes with the same receipt. No command reads receipts yet; `docs/members-and-providers/verification-lifecycle.md` describes the file. A legacy run gets none.
+
+### Changed
+- `qargi local clean RUN` of a lifecycle run refuses, with nothing removed and the run still usable, when its outcome receipt cannot be written (the receipt directory is not private or not writable, the file system is full, or a receipt with other content exists); the message names the receipt and the cause. `clean --discard` goes on, records the disposition `discarded, no receipt` in the receipt's place when it can, and prints a warning that says so.
+
 ## [0.3.3] - 2026-11-17
 
 ### Added
