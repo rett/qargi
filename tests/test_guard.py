@@ -4743,8 +4743,9 @@ class WrapperOptions(HookCase):
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("Agents never push", r.stderr)
         self.own_install()
-        self.allowed(("sudo -h x ls", "sudo --frobnicate x git status", "sudo -Z a b c qargi upgrade", "timeout --sig KILL 5 git status",
-                      "sudo -h x bash install.sh --user"))
+        self.allowed(("sudo -h x ls", "sudo --frobnicate x git status", "timeout --sig KILL 5 git status", "sudo -h x bash install.sh --user"))
+        # Known limit (guard.py, the known-limit comment): an unknown option is read as taking no word or one, so one that took three
+        # (`sudo -Z a b c qargi upgrade`) would hide the verb; it is not pinned here as allowed.
 
     def pushes(self, commands):
         for c in commands:
