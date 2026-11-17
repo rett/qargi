@@ -5111,6 +5111,20 @@ class ShellStringRedirection(HookCase):
             with self.subTest(form=form):
                 self.refused(form.replace("@@", "python3 %s/install_record.py uninstall" % self.LIB), InstallRecordScript.WHY)
 
+    def test_a_separator_written_in_ansi_c_quoting(self):
+        """A string with no blank whose separator the shell decodes ($'2>/dev/null\\x3bPROGRAM'): the words hold 2>/dev/null;PROGRAM, which is read as the
+        string too. The dup 2>&1 and >&2 (an & in the operator) are no string."""
+        m = self.J.m
+        for sep in (";", "&&", "|", "&"):
+            word = "2>/dev/null%s%s/install.sh" % (sep, self.ROOT)
+            with self.subTest(sep=sep):
+                self.assertTrue(m.quoted_string(word))
+                self.assertIn(word, m.shell_string("bash", ["-c", word]))
+        for ok in ("2>&1", ">&2", "&>/dev/null", ">|/dev/null", "2>/dev/null"):
+            with self.subTest(ok=ok):
+                self.assertFalse(m.quoted_string(ok))
+        self.refused("bash -c $'2>/dev/null\\x3b%s/install.sh'" % self.ROOT, InstallScript.WHY)
+
     def test_the_forms_0_3_2_refused(self):
         """The forms the guard of 0.3.2 refused and the one it let through (bash -c -e), each with the reason."""
         for c, why in (('bash -c "2>/dev/null qargi upgrade"', self.UPGRADE), ('bash -c ">/dev/null 2>&1 qargi upgrade"', self.UPGRADE),

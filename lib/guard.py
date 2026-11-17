@@ -2960,9 +2960,11 @@ def unreadable_project_verb(command):
 
 
 def quoted_string(t):
-    """True when the word t reads as a redirection and holds a blank: the words carry no quotes, and the shell cuts an unquoted word at a blank, so t was
-    one quoted word (bash -c "2>/dev/null qargi upgrade"): no redirection, a string that starts with one."""
-    return is_redirection(t) and bool(re.search(r"\s", t))
+    """True when the word t reads as a redirection and holds a blank, or a command separator (; | &) after the redirection's operator: the words carry no
+    quotes, and the shell cuts an unquoted word at a blank and at a separator, so t was one quoted word (bash -c "2>/dev/null qargi upgrade", or a separator
+    written in ANSI-C quoting, $'2>/dev/null\\x3bPROGRAM'): no redirection, a string that starts with one. A dup such as 2>&1 or >&2 has its & in the operator."""
+    m = LEADING_REDIR.match(t)
+    return is_redirection(t) and bool(re.search(r"\s", t) or (m and re.search(r"[;|&]", t[m.end():])))
 
 
 def shell_string(prog, rest):
