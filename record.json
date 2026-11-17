@@ -1,0 +1,22 @@
+{
+ "purpose": "Qargi 0.3.4: lead handoff seat phase 1 (same host and user), observation JSON verbs, lead-provider-resolution, codex-lead-skills-parity, outcome-retention-before-clean, QARGI_ACTOR narrowing, catalog fix for Fable 5-2, ref-journal branch-delete defect",
+ "started": "2026-11-17T22:41:34Z",
+ "goal": "Qargi 0.3.4: lead handoff seat phase 1 (same host and user), observation JSON verbs, lead-provider-resolution, codex-lead-skills-parity, outcome-retention-before-clean, QARGI_ACTOR narrowing, catalog fix for Fable 5-2, ref-journal branch-delete defect",
+ "plan": "",
+ "note": "",
+ "status": "active",
+ "lead": {
+  "id": "arc-claude-qargi",
+  "user": "rett",
+  "host": "arc",
+  "since": "2026-11-17T22:41:34Z",
+  "worktree": "94b9af1305afafc4"
+ },
+ "renewed_at": "2026-11-17T22:41:34Z",
+ "finished_at": null,
+ "updated_by": "arc-claude-qargi",
+ "rev": 1,
+ "updated_at": "2026-11-17T22:41:34Z",
+ "feature": "lead-handoff-034",
+ "project": "qargi"
+}
