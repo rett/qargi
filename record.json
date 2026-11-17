@@ -4,19 +4,13 @@
  "goal": "Docs: verify skill uses OUT, changelog numbering guidance, write-role line",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "arc-claude-qargi",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-17T10:22:24Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-17T10:22:24Z",
- "finished_at": null,
+ "finished_at": "2026-11-17T10:22:29Z",
  "updated_by": "arc-claude-qargi",
- "rev": 2,
- "updated_at": "2026-11-17T10:22:24Z",
+ "rev": 3,
+ "updated_at": "2026-11-17T10:22:29Z",
  "feature": "docs",
  "project": "qargi"
 }
