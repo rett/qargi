@@ -32,8 +32,9 @@ pymod() { python3 -I -c "$PYMOD_SRC" "$QARGI_TOOL/lib" "$@"; }
 
 # The first load makes the directories (mode 700) and the three files (mode 600). It writes only what is missing or wrong, so a load that finds
 # everything in place changes nothing and runs on a read-only file system without a diagnostic (a chmod is a write there even when it would
-# change nothing): a missing directory is made, a directory that group or others may use is set to 700 (one with fewer rights for its owner, made
-# read-only on purpose, is left so), a missing file is made, an existing file is left as it is. A write that is needed and fails says so.
+# change nothing): a missing directory is made, a directory that group or others may use, or whose mode cannot be read, is set to 700 (one with
+# fewer rights for its owner, made read-only on purpose, is left so; a link to a directory counts as the directory it points to), a missing file is
+# made, an existing file is left as it is. A write that is needed and fails says so.
 # DA_NOSETUP, set in the environment of a read-only caller (qargi doctor and the scripts it runs), skips all of it: nothing is created or changed,
 # and a file that is not there stays not there.
 if [ -z "${DA_NOSETUP:-}" ]; then
@@ -41,7 +42,7 @@ if [ -z "${DA_NOSETUP:-}" ]; then
   [ -n "${QARGI_CONF:-}${QARGI_STATE:-}" ] || _da_dirs+=("$DA_ROOT")
   for _d in "${_da_dirs[@]}"; do
     [ -d "$_d" ] || mkdir -p "$_d" || continue
-    _m=$(stat -c %a -- "$_d") || continue
+    _m=$(stat -L -c %a -- "$_d") || _m=777  # -L: the mode of what a link points to; an unknown mode gets the chmod (and a failing chmod says so)
     if (( 8#$_m & 8#077 )); then chmod 700 "$_d"; fi
   done
   for f in "$REG" "$TRK"; do

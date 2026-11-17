@@ -3,7 +3,9 @@
 # byte and mode under qargi's root, config and state as it was and calls no chmod; with those directories read-only (owner write removed, or a
 # read-only mount when the system lets an unprivileged user make one) the verbs print no chmod or mkdir diagnostic and keep their exit status. A fresh
 # home still gets its directories at mode 700 and its files at 600, a directory open to group or others is closed to 700, DA_NOSETUP creates nothing,
-# and a write that is really needed and fails still says so.
+# and a write that is really needed and fails still says so (with no chmod after it). A root, config or state that is a link to a directory counts as
+# the directory (a target made 500 on purpose is left alone), and a mode that cannot be read gets the chmod to 700. The directories made read-only
+# are made writable again by a trap, also when the step is killed.
 # The three runs of the verbs (as initialized, owner write removed, read-only mount) each work on their own copy of the initialized root and run side
 # by side, so the step stays within its budget.
 # Run: tests/test_readonly_init.sh
@@ -12,6 +14,10 @@ cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi; LIB=$PWD/lib/lib.sh
+# a timeout or a kill must not leave directories without write permission that the hermetic cleanup cannot remove: give the owner write back, then
+# clean up as the hermetic trap does
+trap 'kill_bg; chmod -R u+w "$T" 2>/dev/null; rm -rf "$HERMETIC"' EXIT
+trap 'exit 143' TERM INT HUP
 # shellcheck source=fixtures.sh
 . tests/fixtures.sh
 
@@ -91,7 +97,6 @@ for p in "${PHASES[@]}"; do
 done
 [ "$(cat "$T/plain.0.rc")" = 0 ] && [ "$(cat "$T/plain.1.rc")" = 0 ] && grep -q '"aa"' "$T/plain.1.out" && [ "$(cat "$T/plain.2.rc")" = 0 ] \
   && ok "version, backlog list --json and backlog graph check succeed" || no "a verb failed: $(cat "$T/plain.0.out" "$T/plain.1.out" "$T/plain.2.out")"
-[ ! -d "$T/q.ro" ] || "$CHMOD" -R u+w "$T/q.ro"
 
 # setup [ENV...]: loads lib/lib.sh once with the environment given (the shim first on PATH, its calls in $T/chmod.log), its output in
 # $T/setup.out, and sets rc
@@ -109,7 +114,8 @@ setup QARGI_HOME="$F"
   || no "fresh home rc=$rc: $(cat "$T/setup.out"); $(find "$F" -printf '%m %p\n')"
 setup QARGI_CONF="$T/fc/config" QARGI_STATE="$T/fc/state"
 [ $rc = 0 ] && [ "$(mode "$T/fc/config")" = 700 ] && [ "$(mode "$T/fc/state")" = 700 ] && [ "$(mode "$T/fc/config/agents.json")" = 600 ] \
-  && [ "$(mode "$T/fc")" != 700 ] && ok "QARGI_CONF and QARGI_STATE: the two directories 700, the parent left alone" || no "conf/state rc=$rc: $(find "$T/fc" -printf '%m %p\n')"
+  && [ "$(mode "$T/fc")" != 700 ] && [ ! -e "$HOME/.qargi" ] && ok "QARGI_CONF and QARGI_STATE: the two directories 700, the parent and the default root left alone" \
+  || no "conf/state rc=$rc: $(find "$T/fc" -printf '%m %p\n'); $(ls -ld "$HOME/.qargi" 2>&1)"
 
 # --- (d) a directory open to group or others is closed to 700; nothing else is touched
 "$CHMOD" 755 "$F/config"; "$CHMOD" 644 "$F/state/sessions.json"; echo '{"kept": 1}' > "$F/config/instances.json"
@@ -128,9 +134,26 @@ if [ "$(id -u)" = 0 ]; then
 else
   rm "$F/config/agents.json"; "$CHMOD" 500 "$F/config"
   setup QARGI_HOME="$F"
-  grep -q 'agents.json: Permission denied' "$T/setup.out" && [ ! -e "$F/config/agents.json" ] && ok "a missing file in a read-only directory: the failed write is reported" \
-    || no "needed write rc=$rc: $(cat "$T/setup.out")"
-  "$CHMOD" 700 "$F/config"
+  grep -q 'agents.json: Permission denied' "$T/setup.out" && [ ! -e "$F/config/agents.json" ] && ! grep -q 'chmod: ' "$T/setup.out" && ! chmods >/dev/null \
+    && ok "a missing file in a read-only directory: the failed write is reported, and no chmod follows it" \
+    || no "needed write rc=$rc: $(cat "$T/setup.out") chmod calls: $(chmods)"
 fi
+
+# --- (g) a link to a directory counts as the directory: with the root a link to an initialized root, and the config a link to a directory made 500
+# on purpose, an observational verb makes no chmod call, changes nothing under the targets and leaves the 500
+cp -a "$Q" "$T/q.real"; mv "$T/q.real/config" "$T/q.cfg"; ln -s "$T/q.cfg" "$T/q.real/config"; ln -s "$T/q.real" "$T/q.lnk"; "$CHMOD" 500 "$T/q.cfg"
+{ snap "$T/q.real"; snap "$T/q.cfg"; } > "$T/lnk.before"; : > "$T/lnk.out.chmod"
+run_verb 1 "$T/q.lnk" "$T/lnk.out"
+{ snap "$T/q.real"; snap "$T/q.cfg"; } | diff "$T/lnk.before" - > "$T/lnk.diff"
+[ $rc = 0 ] && [ ! -s "$T/lnk.diff" ] && [ ! -s "$T/lnk.out.chmod" ] && [ "$(mode "$T/q.cfg")" = 500 ] && ! grep -Eq 'chmod: |mkdir: ' "$T/lnk.out" \
+  && ok "root and config as links to directories: no chmod call, nothing changed, the 500 target kept" \
+  || no "links rc=$rc: $(cat "$T/lnk.out") changes: $(head -20 "$T/lnk.diff") chmod calls: $(cat "$T/lnk.out.chmod"); $(mode "$T/q.cfg")"
+
+# --- (h) a mode that cannot be read is not left to chance: root, config and state each get the chmod to 700
+mkdir -p "$T/shim2"; printf '#!/bin/sh\nexit 1\n' > "$T/shim2/stat"; "$CHMOD" 755 "$T/shim2/stat"
+cp -a "$Q" "$T/q.nostat"; : > "$T/chmod.log"
+setup QARGI_HOME="$T/q.nostat" PATH="$T/shim2:$SPATH"
+[ $rc = 0 ] && [ "$(chmods | LC_ALL=C sort)" = "$(printf '700 %s\n' "$T/q.nostat" "$T/q.nostat/config" "$T/q.nostat/state" | LC_ALL=C sort)" ] \
+  && ok "stat fails: root, config and state each get the chmod to 700" || no "stat failure rc=$rc: $(cat "$T/setup.out") chmod calls: $(chmods)"
 
 exit "$fail"
