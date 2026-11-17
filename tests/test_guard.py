@@ -4627,6 +4627,45 @@ class InterpreterOptionValues(HookCase):
         self.own_files()
         self.allowed((". -p %s install.sh --user" % self.clone, "source -p . install.sh", ". -p /x: install.sh", ". -p %s/proj install.sh" % self.t))
 
+    def test_a_quoted_value_that_reads_as_a_redirection_fails_closed(self):
+        """python3 -X '<x' FILE: the words carry no quotes, so a value that begins with < or > reads as a redirection, and the word after it, the script,
+        as the value. Such a value is not readable: any lead-only script the command names is judged as the script, and source -p looks a bare name up in
+        both words. The clone's own files stay allowed."""
+        root, lib = self.ROOT, self.LIB
+        for v in ("'<x'", "'< '", "'>x'", "'> '"):
+            for c, why in (("python3 -X %s %s/install_record.py uninstall" % (v, lib), InstallRecordScript.WHY),
+                           ("python3 -W %s %s/install_record.py uninstall" % (v, lib), InstallRecordScript.WHY),
+                           ("python -W %s %s/render.py render s d" % (v, lib), self.RENDER),
+                           ("bash -o %s %s/install.sh --user --uninstall" % (v, root), InstallScript.WHY),
+                           ("sh -O %s lib/upgrade.sh --tag v1" % v, self.UPGRADE),
+                           ("bash --rcfile %s lib/packs.sh packs link p" % v, InterpreterOptions.LINK),
+                           ("bash -c -o %s 'qargi upgrade'" % v, self.UPGRADE),
+                           (". -p %s %s/install.sh" % (v, root), InstallScript.WHY),
+                           ("source -p %s lib/upgrade.sh --tag v1" % v, self.UPGRADE),
+                           (". -p %s %s install.sh" % (v, root), InstallScript.WHY)):
+                with self.subTest(c=c):
+                    self.refused(c, why)
+        self.refused(". -p '<x:%s' install.sh --user" % root, InstallScript.WHY)
+        self.refused("source -p '>x' 2>/dev/null %s install.sh" % root, InstallScript.WHY)
+        self.own_files()
+        self.allowed(("python3 -X '<x' lib/install_record.py uninstall", "python3 -W '>x' tests/test_env.py", "bash -o '>x' install.sh --user",
+                      ". -p '<x' ./install.sh", "bash -c -o '<x' 'git status'", "python3 -X 2>/dev/null dev lib/install_record.py uninstall",
+                      ". -p 2>/dev/null /x ./install.sh"))
+
+    def test_source_p_attached_to_a_directory_the_guard_cannot_read(self):
+        """. -p${D} NAME, . -p$(..) NAME and . -p>/dev/null DIR NAME: the directory stuck to -p is built by the shell, or a redirection glued to it moves it
+        to the next word. It is kept as the shell may read it, so a bare name looked up in a built directory or in the tool's is refused, as with a blank."""
+        root = self.ROOT
+        for c, why in ((". -p${D} install.sh", InstallScript.WHY), (". -p$(dirname x) install.sh --user", InstallScript.WHY),
+                       ("source -p`echo x` install.sh", InstallScript.WHY), (". -p>/dev/null %s install.sh" % root, InstallScript.WHY),
+                       (". -p%s>/dev/null install.sh" % root, InstallScript.WHY), ("source -p<x %s install.sh --user" % root, InstallScript.WHY),
+                       (". -p${D}:/x install.sh", InstallScript.WHY), (". -p${D} lib/upgrade.sh --tag v1", self.UPGRADE),
+                       (". -p$(dirname x) %s/install.sh" % root, InstallScript.WHY)):
+            self.refused(c, why)
+        self.own_files()
+        self.allowed((". -p${D} ./install.sh", ". -p>/dev/null /x install.sh", ". -p/x>/dev/null install.sh --user", ". -p$(dirname x) lib/lib.sh",
+                      ". -p>/dev/null %s install.sh" % self.clone))
+
 
 class WrapperOptions(HookCase):
     """The program after a wrapper and the string of sh -c are found past the options: the -c string is the first word past a shell's options, not the
@@ -4787,10 +4826,35 @@ class WrapperOptions(HookCase):
                       "xargs --max-lines echo", "xargs --max-lines=2 git status"))
 
     def test_shell_c_with_a_substitution_glued_to_it(self):
-        """bash -c$(true) STRING: the substitution is cut out, and the string that follows it is read as the -c string."""
+        """bash -c$(true) STRING: the substitution is cut out, and the string that follows it is read for the lead-only verbs (where the pieces of the
+        line are read), not for git push (known_limit_shell_c_with_a_substitution_and_git_push)."""
         self.verbs("bash -c$(true) '@@'")
         self.verbs("sh -c`true` '@@'")
         self.allowed(("bash -c$(true) 'git status'",))
+
+    def test_known_limit_shell_c_with_a_substitution_and_git_push(self):
+        """Known limit (guard.py, the known-limit comment), pinned so that a change to it is seen, not wanted: the string after a -c word with a
+        substitution or a variable stuck to it is not read for git push, nor, after a further option or `-c${X}`, for the lead-only verbs."""
+        for c in ("bash -c$(true) 'git push'", "bash -c$(true) -e 'git push'", "bash -c$(true) -- 'git push'", "bash -c${X} 'git push'",
+                  "bash -c$(true) -e 'qargi upgrade'", "bash -c${X} 'qargi upgrade'"):
+            with self.subTest(c=c):
+                self.assertEqual(self.bash(c).returncode, 0, "the known limit changed: %s is refused now; move it to the refused cases" % c)
+
+    def test_xargs_max_lines_takes_no_next_word(self):
+        """xargs --max-lines takes its value only stuck to it (--max-lines=2): the word after it is the program."""
+        self.verbs("xargs --max-lines @@")
+        self.verbs("xargs -l @@")
+        self.pushes(("xargs --max-lines git push",))
+        self.allowed(("xargs --max-lines echo", "xargs --max-lines=2 git status"))
+
+    def test_many_unknown_wrapper_options_are_refused_with_the_reason(self):
+        """Each unknown wrapper option is read both ways one reading deeper; more than three readings deep are refused (a false refusal, a known limit),
+        and the message names the number of such options, not shells."""
+        self.allowed(("sudo -h a -h b -h c ls",))
+        r = self.bash("sudo -h a -h b -h c -h d ls")
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("after three such options or nested shells", r.stderr)
+        self.assertNotIn("inside shells nested more than three deep", r.stderr)
 
     def test_timeout_reads_its_duration_after_the_end_of_its_options(self):
         """timeout -- 5s PROGRAM: `--` ends the options, and the duration still comes before the program."""
@@ -4848,11 +4912,45 @@ class WrapperOptions(HookCase):
         self.allowed(("python3 -X>/dev/null dev tests/test_env.py", "sudo -u>/dev/null root ls", "env -u>/dev/null X git status", "bash -c>/dev/null 'git status'",
                       "sudo -u>/dev/null root bash install.sh --user"))
 
+    def test_a_quoted_value_that_reads_as_a_redirection(self):
+        """sudo -p '< ' PROGRAM: the words carry no quotes, so a value that begins with < or > reads as a redirection and the word after it, the program,
+        as the value; the reading where that word is the value is judged too."""
+        lib = LibraryScripts.LIB
+        for v in ("'< '", "'<x'", "'> '", "'>x'"):
+            for form in ("sudo -p %s @@", "env -u %s @@", "exec -a %s @@", "time -f %s @@", "xargs -I %s @@", "timeout -s %s 5 @@", "sudo -u %s -g %s @@"):
+                self.verbs(form.replace("%s", v))
+            self.refused("sudo -p %s python3 %s/install_record.py uninstall" % (v, lib), InstallRecordScript.WHY)
+            self.refused("env -u %s python3 %s/install_record.py uninstall" % (v, lib), InstallRecordScript.WHY)
+            self.pushes(("exec -a %s git push" % v, "sudo -p %s git push" % v, "timeout -s %s 5 git push" % v))
+        self.own_install()
+        self.allowed(("sudo -p '< ' ls", "env -u '<x' git status", "exec -a '>x' git status", "time -f '<%e' make", "xargs -I '<f' echo '<f'",
+                      "timeout -s '>x' 5 git status", "sudo -p '> ' bash install.sh --user", "sudo -u 2>/dev/null root ls",
+                      "timeout -k 2>/dev/null 1 5 git status"))
+
     def test_the_other_reading_of_a_wrapper_option_keeps_each_word(self):
         """The reading without an unknown option and its value keeps the words whole: the text of a here-string is still one word."""
         self.verbs("sudo -h x bash <<< '@@'")
         self.verbs("sudo --frobnicate x bash <<< \"@@\"")
         self.allowed(("sudo -h x bash <<< 'git status'", "sudo -h x echo 'qargi upgrade'"))
+
+    def test_rejoin_gives_the_plain_split_the_same_words(self):
+        """The other reading is joined back into a text (rejoin) and split again: a word with a backslash, a quote, a blank or an operator comes back whole."""
+        m = self.J.m
+        for words in (["sudo", "-p", "pw\\", "qargi", "upgrade"], ["a\\b", "\\", "\\\\", "x\\ y", "\\n", "end\\"], ["it's", 'say "hi"', "a b", "\t", ""],
+                      ["\\'", '\\"', "'\\'", "a\\\"b", "$x\\", "`y`\\"], ["<x", "> ", "2>&1", "a;b", "a|b", "&&", "a&", "$(x)", "${Z:-a b}", "(", ")"],
+                      ["pw\\", "-h", "host", "bash", "<<<", "git status\\"]):
+            with self.subTest(words=words):
+                self.assertEqual(list(m.split_words(m.rejoin(words))), words)
+
+    def test_the_other_reading_keeps_a_word_that_holds_a_backslash(self):
+        """sudo -p 'pw\\' -h host PROGRAM: the reading without the unknown -h and its value keeps 'pw\\' one word, so the program is still found."""
+        for form in ("sudo -p 'pw\\' -h host @@", "sudo -u 'ro\\' --frobnicate v @@", "env -u 'a\\' -Z v @@", "sudo -p 'a\\b\\' -h x @@"):
+            self.verbs(form)
+        lib = LibraryScripts.LIB
+        self.refused("sudo -p 'pw\\' -h host python3 %s/install_record.py uninstall" % lib, InstallRecordScript.WHY)
+        self.pushes(("sudo -p 'pw\\' -h host git push", "env -u 'a\\' -Z v git push"))
+        self.own_install()
+        self.allowed(("sudo -p 'pw\\' -h host ls", "env -u 'a\\' -Z v git status", "sudo -u 'ro\\' --frobnicate v bash install.sh --user"))
 
 
 class ThirdReview(HookCase):
