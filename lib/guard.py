@@ -324,8 +324,20 @@ ROOT_SCRIPTS = ("install.sh",)                                       # of those,
 # (read_options): the value of -X, -W, -o, -O, --rcfile and source -p is skipped (a redirection between an option and its value is no value), bash's
 # long names are read with one dash too while no short option came before them (-rcfile F, -norc; under sh, which may be another shell, such a word is
 # not readable), a slash-less name after source -p DIR is looked up in DIR, and an option it does not know or a value the shell builds ($(..), ${..}, a
-# backtick: unquoted it may be cut into more words or none) makes any word naming a script the script; an option of another shell that takes a value where bash has a flag of that letter is still read as the flag. Like the rest of
-# the shell reading it is a heuristic against a mistake, not a wall against a member that works to get round it; the local verify of the
+# backtick: unquoted it may be cut into more words or none) makes any word naming a script the script; an option of another shell that takes a value
+# where bash has a flag of that letter is still read as the flag. The options of the wrappers in front (sudo, env, timeout ...) are read from WRAP_OPTS.
+# Still not seen, after those readings:
+#   - a name the shell builds: a variable that holds the path (`P=.../install.sh; bash $P`), a for-loop over it, a glob (`bash .../inst*.sh`), a brace
+#     (`bash .../{install,x}.sh`), a redirection glued to the name (`bash .../install.sh>/dev/null`), and a `{fd}>` redirection written before the file;
+#   - a plain variable as an option's value (`python3 -X $V dev FILE`): read as one word, while word splitting may make it none or several;
+#   - a program on python's standard input (`python3 < .../install_record.py`, `python3 - < FILE`), and names that xargs brings from a file it reads
+#     itself (`xargs -a LIST bash`);
+#   - a name looked up in PATH (`PATH=TOOL:$PATH . install.sh`: only the directory the shell is in is asked);
+#   - interpreters the guard does not know: ash, rbash, busybox sh, pypy3, python3.13t, and a shell named by a variable ($SHELL);
+#   - the bodies of a function defined in an earlier call, of an alias and of a trap;
+#   - a script that make, script -c, su -c or flock runs (ssh is refused as a whole).
+# The reading errs the other way too: `bash -n .../install.sh` (a syntax check that runs nothing) is refused like a run of the script. Like the rest
+# of the shell reading it is a heuristic against a mistake, not a wall against a member that works to get round it; the local verify of the
 # patches is the backstop.
 MEMORY_VERBS = ("init", "move", "split", "merge", "copy")                          # qargi memory verbs that change a memory tier
 MEMORY_READ = ("tiers", "check", "get", "lint")
