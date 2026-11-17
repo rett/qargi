@@ -12,11 +12,11 @@
   "since": "2026-11-16T17:04:50Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-16T23:43:53Z",
+ "renewed_at": "2026-11-17T00:15:58Z",
  "finished_at": null,
  "updated_by": "arc-claude-qargi",
- "rev": 12,
- "updated_at": "2026-11-16T23:43:53Z",
+ "rev": 13,
+ "updated_at": "2026-11-17T00:15:58Z",
  "feature": "multi-runtime-install",
  "project": "qargi"
 }
