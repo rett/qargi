@@ -18,6 +18,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 - `install.sh --project DIR --uninstall` rewrites the repository's `.git/info/exclude` while it still holds `install.lock`, before the engine removes the lock with the last record; an install that took the lock at once could append to the file before the rewrite and lose its lines. A refused uninstall puts the lines back.
+- Loading qargi's shell library no longer rewrites a setup that is already right: it makes only a missing directory or file and sets a directory to mode 700 only when group or others may use it, so an observational verb such as `qargi backlog list --json` changes nothing in the config, state and root directories and prints no `chmod` diagnostic on a read-only file system. A directory made read-only for its owner is left so, and a write that is needed and fails is still reported.
 
 ## [0.3.2] - 2026-11-16
 
