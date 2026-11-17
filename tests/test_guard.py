@@ -4685,11 +4685,12 @@ class InterpreterOptionValues(HookCase):
             for wrapped in (c, "sudo " + c, "env X=1 " + c, "timeout 5 " + c):
                 with self.subTest(c=wrapped):
                     self.refused(wrapped, InstallScript.WHY)
-            # nested: '< ' loses its quotes in a shell's string and a substitution inside $(...) is not read, whatever the root is named (not this case)
-            for wrapped in ([] if "'< '" in c else ['bash -c "%s"' % c, 'eval "%s"' % c, 'bash <<< "%s"' % c]) + ([] if "$(" in c else ["echo $(%s)" % c]):
+            # nested: '< ' loses its quotes in a shell's string, and a substitution inside $(...) is not read, whatever the root is named (not this case);
+            # bash <<< "...$(...)..." is refused on every revision for another reason (the substitution in the here-string), so it proves nothing here
+            for wrapped in (([] if "'< '" in c else ['bash -c "%s"' % c, 'eval "%s"' % c]) + ([] if "'< '" in c or "$(" in c else ['bash <<< "%s"' % c])
+                            + ([] if "$(" in c else ["echo $(%s)" % c])):
                 with self.subTest(c=wrapped):
-                    r = self.bash(wrapped)
-                    self.assertEqual(r.returncode, 2, (wrapped, r.stderr))
+                    self.refused(wrapped, InstallScript.WHY)
         self.own_files()
         proj = os.path.join(self.t, "proj/qargi")                          # a project's directory of that name, with an install.sh of its own
         os.makedirs(proj)
@@ -4976,6 +4977,54 @@ class WrapperOptions(HookCase):
                     self.assertEqual(r.returncode, 2, (c, r.stderr))
                     self.assertIn("%s is not available to an agent" % prog, r.stderr, c)
                 self.allowed(("sudo -p %s git status" % v, "timeout -s %s 5 git log" % v, "env -u %s git log" % v))
+
+    REDIRECTION_BEFORE_VALUE = ("sudo -p 2> /dev/null '<x' @@", "env -u 2> /dev/null '<x' @@", "exec -a 2> /dev/null '<x' @@", "sudo -p < /dev/null '<x' @@",
+                                "time -f 2> /dev/null '<x' @@", "nice -n 2> /dev/null '<x' @@", "parallel -j 2> /dev/null '<x' @@",
+                                "env -u < /dev/null '<x' @@", "exec -a < /dev/null '<x' @@", "sudo -p > /dev/null '<x' @@", "sudo -n -p 2> /dev/null '<x' @@",
+                                "sudo -p 2> /dev/null '<x' env -u 2> /dev/null '<x' @@", "sudo -p 2> /dev/null '<' -n @@",
+                                "timeout -s 2>/dev/null '<' 5 @@", "timeout -k 2>/dev/null '<' 5 @@", "sudo -u 2>/dev/null root -p '<x' @@",
+                                "env -u 2>/dev/null A -u '<x' @@", "sudo -p 2>/dev/null '<' @@", "env -u 2>/dev/null '<' @@", "exec -a 2>/dev/null '<' @@")
+    NESTED = ('bash -c "%s"', 'eval "%s"', "echo x | %s", "true && %s", "( %s )", "echo $(%s)", 'bash <<< "%s"')
+
+    def test_a_real_redirection_before_a_value_that_reads_as_one(self):
+        """sudo -p 2> /dev/null '<x' PROGRAM: the words carry no quotes, so the real redirection and the quoted value both read as redirections, and the
+        program as the value. Any word that reads as a redirection after an option that takes a value may be the value (a bare operator is passed with its
+        file), and every such option is read so: each reading takes the option and one of those words out. The forms 0.3.2 refused (the first eleven, the
+        doubled one, '<' before a flag, the timeout pair) and the forms it let through too are refused, alone and inside the other readings of a line."""
+        for form in self.REDIRECTION_BEFORE_VALUE:
+            self.verbs(form)
+            with self.subTest(form=form):
+                self.pushes((form.replace("@@", "git push"),))
+        for form in self.REDIRECTION_BEFORE_VALUE[:4] + self.REDIRECTION_BEFORE_VALUE[11:13]:
+            for nest in self.NESTED:
+                self.verbs(nest % form)
+                with self.subTest(form=nest % form):
+                    self.pushes((nest % form.replace("@@", "git push"),))
+        lib = LibraryScripts.LIB
+        for c, why in (("sudo -p 2> /dev/null '<' bash %s/install.sh --user" % self.ROOT, InstallScript.WHY),
+                       ("sudo -p 2> /dev/null '<' . %s/install.sh" % self.ROOT, InstallScript.WHY),
+                       ("sudo -p 2> /dev/null '<' python3 %s/install_record.py uninstall" % lib, InstallRecordScript.WHY),
+                       ("env -u 2> /dev/null '<x' python3 %s/install_record.py uninstall" % lib, InstallRecordScript.WHY)):
+            with self.subTest(c=c):
+                self.refused(c, why)
+        self.own_install()
+        self.allowed(("sudo -p 2> /dev/null '<x' git status", "env -u 2> /dev/null X git log", "timeout -s 2>/dev/null KILL 60 python3 tests/test_guard.py",
+                      "sudo -u 2>/dev/null nobody ls", "time -f 2> /dev/null '%e' git status", "nice -n 2> /dev/null 5 make test",
+                      "sudo -p 2> /dev/null '<' bash install.sh --user", "sudo -p 2>/dev/null '<x' env -u 2>/dev/null '<x' git log"))
+
+    def test_the_readings_of_a_segment_are_bounded(self):
+        """Each word that reads as a redirection after an option that takes a value is one more reading of the segment: up to MAX_READINGS are judged, and a
+        segment with more is refused with the reason (a false refusal of a command no one writes by hand)."""
+        m = self.J.m
+        n = m.MAX_READINGS
+        many = "sudo -p " + " ".join("%d>/dev/null" % (k + 1) for k in range(n)) + " x ls"   # a distinct word each: equal readings are judged once
+        self.assertEqual(len(m.wrapper_readings(many)), n)
+        self.allowed((many,))
+        more = many.replace(" x ls", " %d>/dev/null x ls" % (n + 1))
+        self.assertEqual(len(m.wrapper_readings(more)), n + 1)
+        r = self.bash(more)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("can be read in more than %d ways" % n, r.stderr)
 
     def test_the_other_reading_of_a_wrapper_option_keeps_each_word(self):
         """The reading without an unknown option and its value keeps the words whole: the text of a here-string is still one word."""
