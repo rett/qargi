@@ -6,6 +6,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- `install.sh` no longer moves the `install.manifest` and `project-N.manifest` of qargi 0.3.1 into `install.d/`, and no longer removes them: nothing reads those files any more, and an install or uninstall with one beside `install.d/` behaves as without it (a lone `project-N.manifest` is no longer removed unread either). A host that still has only 0.3.1 records must run the 0.3.2 installer once before upgrading further, or install again with `--force`. The install engine (`lib/install_record.py`) has no `migrate` verb any more and removes an interrupted run's temporary manifests when it applies or uninstalls.
+- `qargi doctor`, check `install`: a legacy `install.manifest` (or `project-N.manifest`) is reported as from 0.3.1 or earlier and no longer read, and can be removed by hand after checking that `install.d/` holds the records; with `install.json` and no runtime in `install.d/` it now also warns that no user runtime is recorded.
+
 ### Fixed
 - `install.sh --project DIR --uninstall` rewrites the repository's `.git/info/exclude` while it still holds `install.lock`, before the engine removes the lock with the last record; an install that took the lock at once could append to the file before the rewrite and lose its lines. A refused uninstall puts the lines back.
 

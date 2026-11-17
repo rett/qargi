@@ -515,18 +515,19 @@ class Install(Base):
         with open(legacy, "w") as f:
             f.write("L\t%s/qargi-task\n" % self.skdir("claude-code"))
         self.IR.record(self.conf, self.tool, "0.3.2", "link")
+        for _ in range(2):                    # with no install.d, and then with the records beside it: the same warning, nothing read or removed
+            c = self.check()
+            self.assertEqual(c["status"], "warn", c)
+            self.assertIn("%s from qargi 0.3.1 or earlier is no longer read" % legacy, c["detail"])
+            self.assertEqual(c["legacy"], [legacy])
+            self.assertTrue(any("can be removed by hand after checking that install.d holds the records" in f for f in c["fix"]), c["fix"])
+            self.assertTrue(os.path.isfile(legacy))
+            self.install("claude-code")
+        planted = os.path.join(self.conf, "project-123.manifest")
+        with open(planted, "w") as f:
+            f.write("f\t/etc/passwd\n")
         c = self.check()
-        self.assertEqual(c["status"], "warn", c)
-        self.assertIn("the legacy %s is not moved into install.d yet" % legacy, c["detail"])
-        self.assertEqual(c["legacy"], [legacy])
-        self.assertTrue(any("moves it into install.d once" in f for f in c["fix"]), c["fix"])
-        os.unlink(legacy)
-        self.install("claude-code")
-        with open(legacy, "w") as f:
-            f.write("L\t/elsewhere/qargi-task\n")
-        c = self.check()
-        self.assertEqual(c["status"], "warn", c)
-        self.assertIn("is still there (the records are in install.d, so it is not read)", c["detail"])
+        self.assertEqual(c["legacy"], sorted([legacy, planted]))
 
     def test_a_record_that_cannot_be_read_warns(self):
         self.install("claude-code")

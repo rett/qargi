@@ -39,11 +39,8 @@ Verbs (install.sh runs them as python3 -I lib/install_record.py VERB; status 1 i
         the lines (/PATH, relative to the project) a project install added to the repository's exclude file
   record --conf CONF --tool-root DIR --version V --source link|copy
         write install.json
-  migrate --conf CONF --data DIR --slot PATH... --tool-root DIR
-        first remove what an interrupted run left (install.d.new, temporary manifests; never read). Then, once, while install.d does not
-        exist, turn the single CONF/install.manifest and CONF/project-N.manifest of qargi 0.3.1 into install.d (see migrate below); with
-        install.d there they are removed unread, and so is a project-N.manifest with neither install.manifest nor install.json beside it.
-        The migration goes in 0.3.3.
+apply and uninstall first remove the temporary manifests an interrupted run left in install.d (never read). A record of an older install
+(install.manifest, project-N.manifest in CONF) is not read and not removed.
 PLAN: one item per line, fields separated by tabs. "M FILE KEY=VALUE..." starts a part, recorded in FILE, with the header fields given;
 "D DIR" a directory the part needs (the parents it makes are recorded as P); "L PATH TARGET" a link; "C PATH SRC [NAME...]" a copy of SRC,
 or of the NAMEs inside SRC, at PATH; "c DIR" the configuration directory, or a parent, that this run made. The parts are applied in order.
@@ -525,6 +522,7 @@ def records_dir(conf):
 
 def apply(conf, text, force):
     records = records_dir(conf)
+    tidy(conf)
     parts = parse_plan(text, records)
     for part in parts:
         part.old = read(part.path) if os.path.lexists(part.path) else None
@@ -624,6 +622,7 @@ def state(conf, data, key):
 
 
 def uninstall(conf, files, drop_record, say):
+    tidy(conf)
     ms = [read(norm(os.path.abspath(f))) for f in files]      # every one is checked before anything is removed
     created = set()
     for m in ms:
@@ -664,211 +663,13 @@ def excludes(path):
     return ["/" + os.path.relpath(p, proj) for k, p, _ in m.lines if k in "LC" and os.path.dirname(p) in m.header["root"]]
 
 
-# ---- the one-time migration of the single install.manifest of qargi 0.3.1 and earlier (removed in 0.3.3)
-
-LEGACY_USER = "install.manifest"
-LEGACY_PROJECT = re.compile(r"^project-([0-9]+)\.manifest$")
-SLOT_SOURCES = {"qargi.1": "man/qargi.1", "_qargi": "completions/_qargi", "qargi.fish": "completions/qargi.fish",
-                "bin/qargi": "bin/qargi", "completions/qargi": "completions/qargi.bash"}   # what a slot links to, by its name (and its parent's)
-
-
-def tidy(conf, say):
-    """Remove what an interrupted run left: install.d.new (a migration that never committed) and temporary manifests in install.d. Neither
-    is ever read: a migration builds install.d.new afresh from the legacy files, and a temporary manifest is not a record."""
-    new = os.path.join(conf, "install.d.new")
-    if os.path.islink(new) or os.path.isfile(new):
-        os.unlink(new)
-    elif os.path.isdir(new):
-        shutil.rmtree(new)
-    else:
-        new = None
-    if new:
-        say("removed %s, left by an interrupted migration (not read)" % new)
+def tidy(conf):
+    """Remove the temporary manifests an interrupted run left in install.d (write_whole makes them). They are never read: a temporary
+    manifest is not a record."""
     records = records_dir(conf)
     for n in sorted(os.listdir(records)) if os.path.isdir(records) else []:
         if n.startswith(".") and n.endswith(".tmp"):
             os.unlink(os.path.join(records, n))
-
-
-def legacy_files(conf):
-    names = sorted(os.listdir(conf)) if os.path.isdir(conf) else []
-    return [os.path.join(conf, n) for n in names if (n == LEGACY_USER or LEGACY_PROJECT.match(n)) and os.path.isfile(os.path.join(conf, n))]
-
-
-def legacy_lines(path):
-    try:
-        with open(path, encoding="utf-8") as f:
-            rows = f.read().splitlines()
-    except (OSError, UnicodeDecodeError) as e:
-        raise Refused("%s cannot be read (%s)" % (path, e))
-    out = []
-    for n, row in enumerate(rows, 1):
-        if not row:
-            continue
-        k, sep, p = row.partition("\t")
-        if not sep or "\t" in p:
-            raise Refused("%s line %d: not KIND<TAB>PATH" % (path, n))
-        out.append((n, k, p))
-    return out
-
-
-def layouts():
-    """name -> layout of every runtime with a definition (shipped or in the library); one that cannot be read is left out."""
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    import provider
-    out = {}
-    for n in provider.names():
-        try:
-            out[n] = provider.layout(n)
-        except Exception:      # a definition that cannot be read identifies nothing
-            continue
-    return out
-
-
-def which(path, lines, candidates):
-    """The one runtime whose skills directory holds the qargi-task line of a legacy manifest, by candidates (name -> test of the directory)."""
-    tasks = [p for _, k, p in lines if k in "LC" and os.path.basename(p) == "qargi-task"]
-    if not tasks:
-        return None, None
-    d = os.path.dirname(tasks[0])
-    hits = [(n, r) for n, test in sorted(candidates.items()) for r in [test(d)] if r]
-    if len(hits) != 1 or not clean(d):
-        raise Refused("cannot tell which runtime %s belongs to (its skills are in %s; %s); nothing was changed: move it aside and install again"
-                      % (path, d, "several runtimes keep skills there" if len(hits) > 1 else "no runtime keeps skills there"))
-    return hits[0][0], hits[0][1]
-
-
-def migrate(conf, data, slots, tool_root, say):
-    """Turn the legacy manifests into install.d, once: only while install.d does not exist. install.d.new is built from the legacy files
-    alone, every line checked (a link is carried with its target only while it still points into the tool; any other line only inside the
-    skills directory, the data directory or a fixed slot, else the migration is refused with nothing changed), committed with one directory
-    rename, and then the legacy files are removed. With install.d already there a legacy file is removed and not read. A project-N.manifest
-    is read only beside an install.manifest or an install.json (a 0.3.1 install): alone (after a full uninstall, or on a host that never
-    installed) it is removed unread, so a file left or planted there cannot arm the migration."""
-    tidy(conf, say)
-    legacy = legacy_files(conf)
-    records = records_dir(conf)
-    if not legacy:
-        return
-    if os.path.lexists(records):
-        for f in legacy:
-            os.unlink(f)
-            say("removed %s: the records are in %s, so it was not read" % (f, records))
-        return
-    rec = os.path.join(conf, "install.json")
-    if os.path.join(conf, LEGACY_USER) not in legacy and not (os.path.isfile(rec) and not os.path.islink(rec)):
-        for f in legacy:
-            os.unlink(f)
-            say("removed %s: a project record of qargi 0.3.1 with no install.manifest and no install.json beside it, so it was not read "
-                "(install.sh --project DIR records that project again)" % f)
-        return
-    roots = {data, os.path.realpath(data), tool_root, os.path.realpath(tool_root)}
-    try:
-        with open(os.path.join(conf, "install.json")) as f:
-            t = json.load(f).get("tool_root")
-        if isinstance(t, str) and t:
-            roots |= {t, os.path.realpath(t)}
-    except (OSError, ValueError, AttributeError):
-        pass
-    roots = {norm(r) for r in roots if r}
-    slot_target = {}
-    for s in slots:
-        rel = SLOT_SOURCES.get(os.path.basename(s)) or SLOT_SOURCES.get("/".join(s.split("/")[-2:]))
-        if rel:
-            slot_target[s] = {os.path.join(r, rel) for r in roots}
-    lay = layouts()
-    parts, dropped = [], []
-
-    def link(p, wants):
-        if os.path.islink(p) and norm(os.readlink(p)) in wants:
-            return ("L", p, norm(os.readlink(p)))
-        dropped.append(p)
-        return None
-
-    def skill_target(p, root):
-        return {os.path.join(r, "skills", os.path.basename(p)) for r in roots} if os.path.dirname(p) == root and os.path.basename(p).startswith("qargi-") else set()
-
-    for f in legacy:
-        lines = legacy_lines(f)
-        bad = lambda n, k, p: Refused("%s line %d: %s %s is not in the skills directory, the tool copy or a fixed place of the install; nothing was changed: move %s aside and install again" % (f, n, k, p, f))
-        if os.path.basename(f) == LEGACY_USER:
-            name, root = which(f, lines, {n: (lambda d, l=l: d if l.get("user_skills_dir") and norm(l["user_skills_dir"]) == d else None) for n, l in lay.items()})
-            if name is None and lines:
-                raise Refused("cannot tell which runtime %s belongs to (it lists no qargi-task); nothing was changed: move it aside and install again" % f)
-            if name is None:
-                continue
-            rt = {"kind": "runtime", "name": name, "root": [root], "data": [], "slot": []}
-            sh = {"kind": "shared", "data": [data], "slot": list(slots), "root": []}
-            rl, sl = [], []
-            for n, k, p in lines:
-                if k == "L":
-                    if not clean(p):
-                        dropped.append(p)
-                        continue
-                    mine = os.path.dirname(p) == root
-                    x = link(p, skill_target(p, root) if mine else slot_target.get(p, set()))
-                    if x:
-                        (rl if mine else sl).append(x)
-                    continue
-                if not clean(p) or k not in KINDS:
-                    raise bad(n, k, p)
-                if k == "C" and os.path.dirname(p) == root and os.path.basename(p).startswith("qargi-") or k in "fd" and check_line(rt, conf, k, p, None) is None \
-                        or k == "P" and at_or_above(p, root):
-                    rl.append((k, p, None))
-                elif k in "CfdPc" and check_line(sh, conf, k, p, None) is None:
-                    sl.append((k, p, None))
-                else:
-                    raise bad(n, k, p)
-            parts += [("runtime-%s.manifest" % name, rt, rl), ("shared.manifest", sh, sl)]
-        else:
-            key = LEGACY_PROJECT.match(os.path.basename(f)).group(1)
-
-            def in_project(d, l):
-                psk = l.get("project_skills_dir")
-                return d if psk and d.endswith("/" + psk.strip("/")) and clean(d[:-len(psk.strip("/")) - 1]) else None
-            name, root = which(f, lines, {n: (lambda d, l=l: in_project(d, l)) for n, l in lay.items()})
-            if name is None and lines:
-                raise Refused("cannot tell which runtime %s belongs to (it lists no qargi-task); nothing was changed: move it aside and install again" % f)
-            if name is None:
-                continue
-            proj = root[:-len(lay[name]["project_skills_dir"].strip("/")) - 1]
-            ph = {"kind": "project", "name": name, "project": proj, "root": [root], "data": [], "slot": []}
-            pl = []
-            for n, k, p in lines:
-                if k == "L":
-                    x = link(p, skill_target(p, root)) if clean(p) else None
-                    if x:
-                        pl.append(x)
-                    elif not clean(p):
-                        dropped.append(p)
-                elif k in KINDS and k != "L" and check_line(ph, conf, k, p, None) is None:
-                    pl.append((k, p, None))
-                else:
-                    raise bad(n, k, p)
-            parts.append(("project-%s-%s.manifest" % (key, name), ph, pl))
-    new = os.path.join(conf, "install.d.new")
-    if not parts:
-        for f in legacy:
-            os.unlink(f)
-            say("removed %s: it recorded nothing" % f)
-        return
-    os.mkdir(new, 0o700)
-    try:
-        for fname, h, lines in parts:
-            write(os.path.join(new, fname), h, lines)
-        fsync_dir(new)
-        os.rename(new, records)
-    except BaseException:
-        shutil.rmtree(new, ignore_errors=True)
-        raise
-    fsync_dir(conf)
-    for f in legacy:
-        os.unlink(f)
-    fsync_dir(conf)
-    for p in dropped:
-        say("not carried over: %s (no longer the link the install made)" % p)
-    say("moved the install records of %s to %s (%s)" % (", ".join(os.path.basename(f) for f in legacy), records,
-                                                      ", ".join("%s: %d" % (n, len(l)) for n, _, l in parts) or "nothing recorded"))
 
 
 def record(conf, root, version, source):
@@ -898,11 +699,6 @@ def main(argv):
     r.add_argument("--tool-root", required=True)
     r.add_argument("--version", required=True)
     r.add_argument("--source", required=True, choices=("link", "copy"))
-    g = sub.add_parser("migrate")
-    g.add_argument("--conf", required=True)
-    g.add_argument("--data", required=True)
-    g.add_argument("--slot", action="append", default=[])
-    g.add_argument("--tool-root", required=True)
     o = ap.parse_args(argv)
     conf = norm(os.path.abspath(getattr(o, "conf", None) or "."))
     try:
@@ -918,8 +714,6 @@ def main(argv):
                 print(x)
         elif o.verb == "record":
             record(conf, o.tool_root, o.version, o.source)
-        elif o.verb == "migrate":
-            migrate(conf, norm(o.data), [norm(s) for s in o.slot], norm(o.tool_root), print)
     except Refused as e:
         print("qargi: %s" % e, file=sys.stderr)
         return 1

@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# install.sh with several runtimes. The first run over a 0.3.1 install moves its single install.manifest into install.d (links untouched,
-# a leftover install.d.new removed unread); then the lead skills of Claude Code and Codex installed side by side from one tool, each removable on its own,
+# install.sh with several runtimes: the lead skills of Claude Code and Codex installed side by side from one tool, each removable on its own,
 # the command, man page and completions shared and removed with the last runtime; an install of one runtime leaves the links of the other
 # as they are (same inodes); install --user without --runtime refreshes every runtime installed, and a runtime whose definition is gone is
 # skipped with a note and still removable; a record that fails its check stops the run with nothing changed; the lock keeps a second run out,
@@ -39,29 +38,11 @@ mine() {
 }
 yours() { inventory "$XS/.system" "$XS/synced" "$XS/other-skill"; }
 
-# --- the first install over a 0.3.1 install (what the 0.3.1 qargi upgrade runs: install.sh --user): its single install.manifest, a literal
-# fixture of two fields a line beside the links it lists, becomes install.d once; a leftover install.d.new is removed unread. (The migration
-# and this case go in 0.3.3.)
+# --- the first install: the lead skills of Claude Code, recorded in install.d
 fresh; mine; y0=$(yours)
-slots=("$H/.local/bin/qargi" "$H/.local/share/man/man1/qargi.1" "$H/.local/share/bash-completion/completions/qargi" "$H/.local/share/zsh/site-functions/_qargi" "$H/.config/fish/completions/qargi.fish")
-srcs=(bin/qargi man/qargi.1 completions/qargi.bash completions/_qargi completions/qargi.fish)
-legacy=$C/install.manifest; mkdir -p "$C" "$CS"; : > "$legacy"
-printf 'P\t%s\n' "$H/.claude" "$CS" >> "$legacy"
-for s in $(sed -n 's/^skills="\(.*\)"$/\1/p' "$INSTALL"); do ln -s "$ROOT/skills/$s" "$CS/$s"; printf 'L\t%s\n' "$CS/$s" >> "$legacy"; done
-for d in .local .local/bin .local/share .local/share/man .local/share/man/man1 .local/share/bash-completion .local/share/bash-completion/completions \
-         .local/share/zsh .local/share/zsh/site-functions .config .config/fish .config/fish/completions; do
-  mkdir "$H/$d"; printf 'P\t%s\n' "$H/$d" >> "$legacy"
-done
-for i in 0 1 2 3 4; do ln -s "$ROOT/${srcs[$i]}" "${slots[$i]}"; printf 'L\t%s\n' "${slots[$i]}" >> "$legacy"; done
-printf '{"tool_root": "%s", "installed_at": "2026-11-16T00:00:00Z", "version": "0.3.1"}\n' "$ROOT" > "$C/install.json"
-echo keep > "$H/precious"; mkdir -p "$C/install.d.new"
-printf '#qargi-manifest\t2\tkind=runtime\tname=codex\troot=%s\nC\t%s/qargi-x\nf\t%s/qargi-x/precious\n' "$H" "$H" "$H" > "$C/install.d.new/runtime-codex.manifest"
-c0=$(inventory "$CS" "$H/.local" "$H/.config")
 out=$(inst --user 2>&1); rc=$?
-{ [ "$rc" = 0 ] && [ ! -e "$legacy" ] && [ ! -e "$C/install.d.new" ] && [ "$(cd "$C/install.d" && ls | tr '\n' ' ')" = "runtime-claude-code.manifest shared.manifest " ] \
-  && echo "$out" | grep -q "moved the install records of install.manifest"; } && ok "install --user over a 0.3.1 install moves its manifest into install.d and removes it" || no "migration (rc=$rc): $out"
-[ "$(inventory "$CS" "$H/.local" "$H/.config")" = "$c0" ] && ok "the links it recorded are left as they are (same inodes)" || no "the migration changed links: $(diff <(echo "$c0") <(inventory "$CS" "$H/.local" "$H/.config"))"
-{ [ -f "$H/precious" ] && echo "$out" | grep -q "install.d.new, left by an interrupted migration (not read)"; } && ok "a planted install.d.new is removed and never read" || no "install.d.new: $out"
+{ [ "$rc" = 0 ] && [ "$(nlinks "$CS")" = "$NSKILLS" ] && [ "$(cd "$C/install.d" && ls | tr '\n' ' ')" = "runtime-claude-code.manifest shared.manifest " ] && [ ! -e "$C/install.manifest" ]; } \
+  && ok "install --user installs the lead skills of Claude Code and records them in install.d" || no "first install (rc=$rc): $out"
 
 # --- side by side
 out=$(inst --user --runtime codex 2>&1); rc=$?
@@ -179,18 +160,29 @@ out=$(inst --user --uninstall 2>&1); rc=$?
 left=$(find "$H" -mindepth 1 \( -path "$XS" -o -path "$H/.qargi" \) -prune -o -print | grep -v -x -e "$H/.codex" -e "$H/precious")
 [ "$(yours)" = "$y0" ] && [ -z "$left" ] && [ -z "$(find "$C" -maxdepth 1 -name 'install*')" ] && ok "only your entries (and qargi's data in ~/.qargi, no install record) are left in the home" || no "left: $left $(ls "$C")"
 
-# --- after the full uninstall a project-N.manifest of 0.3.1 planted in the config (no install.manifest, no install.json beside it) is removed
-# unread: an install of that project does not take your own qargi-task for its own, and an uninstall removes nothing
-PP=$T/pp; mkdir -p "$PP/.claude/skills/qargi-task"; echo mine > "$PP/.claude/skills/qargi-task/SKILL.md"
-key=$(cd "$PP" && pwd -P | cksum | cut -d' ' -f1)
-printf 'C\t%s\nf\t%s\n' "$PP/.claude/skills/qargi-task" "$PP/.claude/skills/qargi-task/SKILL.md" > "$C/project-$key.manifest"
-p0=$(inventory "$PP")
-out=$(inst --project "$PP" 2>&1); rc=$?
-{ [ "$rc" = 1 ] && echo "$out" | grep -q "removed $C/project-$key.manifest: a project record of qargi 0.3.1 with no install.manifest and no install.json beside it, so it was not read" \
-  && echo "$out" | grep -q "refusing to replace existing $PP/.claude/skills/qargi-task (use --force)" && [ ! -e "$C/project-$key.manifest" ] && [ ! -e "$C/install.d" ] \
-  && [ "$(inventory "$PP")" = "$p0" ]; } && ok "a planted project manifest of 0.3.1 alone is removed unread: the install refuses to replace your skill" || no "planted project manifest (rc=$rc): $out"
-out=$(inst --project "$PP" --uninstall 2>&1); rc=$?
-{ [ "$rc" = 1 ] && echo "$out" | grep -q "no install manifest" && [ "$(inventory "$PP")" = "$p0" ]; } && ok "and the uninstall of that project removes nothing" || no "uninstall after a planted project manifest (rc=$rc): $out"
+# --- an install.manifest and a project-N.manifest of 0.3.1 left in the config directory are never read, changed or removed: an install, a
+# refresh and an uninstall, a user one and a project one, say and do what they do on a host without them (the same runs on two homes, the
+# legacy files planted first in one; the output and what is left on disk are compared with the home path made the same)
+run_seq() {   # run_seq PLANT: the output of the runs, then the files they left; PLANT=1 plants the legacy files first
+  fresh; local PP=$H/pp key
+  mkdir -p "$PP/.claude/skills/qargi-task" "$C"; git init -q "$PP"; key=$(cd "$PP" && pwd -P | cksum | cut -d' ' -f1)
+  if [ "$1" = 1 ]; then
+    printf 'f\t/etc/passwd\nL\t%s\n' "$H/.claude/skills/qargi-task" > "$C/install.manifest"
+    printf 'C\t%s\nf\t%s\n' "$PP/.claude/skills/qargi-task" "$PP/.claude/skills/qargi-task/SKILL.md" > "$C/project-$key.manifest"
+  fi
+  echo mine > "$PP/.claude/skills/qargi-task/SKILL.md"
+  { inst --user 2>&1; echo "rc=$?"; inst --project "$PP" 2>&1; echo "rc=$?"; inst --project "$PP" --force 2>&1; echo "rc=$?"; inst --user 2>&1; echo "rc=$?"
+    inst --project "$PP" --uninstall 2>&1; echo "rc=$?"; inst --user --uninstall 2>&1; echo "rc=$?"; inst --user --uninstall 2>&1; echo "rc=$?"
+    (cd "$H" && find . -not -path './pp/.git' -not -path './pp/.git/*' | sort | sed "s#$key#KEY#g"); } | sed "s#$H#HOME#g"
+}
+without=$(run_seq 0); with=$(run_seq 1)
+diff_out=$(diff <(echo "$without") <(echo "$with"))
+{ [ "$(echo "$diff_out" | grep -c '^[<>]')" = 2 ] && [ "$(echo "$diff_out" | grep -c '^> ./.qargi/config/\(install\.manifest\|project-KEY\.manifest\)$')" = 2 ] \
+  && [ "$(printf '%s\n' "$with" | grep -c '^rc=')" = 7 ] && [ "$(printf '%s\n' "$with" | grep '^rc=' | tr '\n' ' ')" = "$(printf '%s\n' "$without" | grep '^rc=' | tr '\n' ' ')" ]; } \
+  && ok "with the legacy files beside install.d, every run says and does what it does without them; the two files are left, unread and unremoved" || no "legacy files changed a run: $diff_out"
+fresh; mkdir -p "$C"; printf 'f\t/etc/passwd\n' > "$C/install.manifest"; l0=$(cat "$C/install.manifest")
+out=$(inst --user --uninstall 2>&1); rc=$?
+{ [ "$rc" = 1 ] && echo "$out" | grep -q "no install manifest" && [ "$(cat "$C/install.manifest")" = "$l0" ]; } && ok "an uninstall with only the legacy file has no record to remove and leaves the file" || no "uninstall beside a legacy file only (rc=$rc): $out"
 
 # --- links nobody recorded; one skills directory per runtime; a link the user retargeted
 fresh; mkdir -p "$XS" "$H/.local/bin"
