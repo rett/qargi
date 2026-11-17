@@ -1241,6 +1241,7 @@ COMMANDS = {
                                "those are then answered by the lead runtime, and every other topic (how a member is started, what a member returns) by the project's runtime as before. "
                                "The list of topics is both. A topic the lead runtime lists needs the project but not the project's runtime. "
                                "NAME is a runtime of the local surface that can be used as it stands, by its own name (not a family's), whatever --surface says; any other name is unsupported, exit 3, whatever is asked. "
+                               "Both refusals say whether the option or the variable named the lead runtime. "
                                "A topic the project's runtime lists as about a lead's session and the lead runtime does not have is unsupported too, exit 3: it is never answered by the project's runtime. "
                                "The name selects which definition is read and nothing else: nothing is stored or changed, and no identity, approval or permission depends on it."),
             "model": verb("Print the model a runtime maps a tier to on a surface", [("NAME", "none"), ("SURFACE", "none"), ("TIER", "none")],

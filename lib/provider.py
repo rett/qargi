@@ -2715,15 +2715,20 @@ def lead_notes_of(name, root=None, library=None):
 LEAD_RUNTIME_ENV = "QARGI_LEAD_RUNTIME"
 
 
-def _notes_for_lead(topic, project, surface, lead):
+def _notes_for_lead(topic, project, surface, lead, source):
     """cmd_notes with a lead runtime named: the notes about the lead's own session are the lead runtime's and the notes about members the
     project's runtime's. A topic the lead runtime lists is answered from it alone, so the lead's own guidance does not depend on the
     project's runtime (it needs the project, not its runtime). Any other topic, and the list of topics, asks the project's runtime as
     without a lead runtime, with the same refusals; a topic that runtime lists as about a lead session is Unsupported (exit 3) and never
-    printed: it is for a lead on that runtime."""
+    printed: it is for a lead on that runtime. `source` is what named the lead runtime (the option or the variable): both refusals end with
+    it, since a name from the environment is not on the command line the person sees refused."""
     project = project or _project_in_effect()
     _stored_answers(project)                       # no project, or no such project: exit 2, as without a lead runtime
-    lname, lnotes = lead_notes_of(lead)
+    by = "; the lead runtime is named by %s" % source
+    try:
+        lname, lnotes = lead_notes_of(lead)
+    except Unsupported as e:
+        raise Unsupported(str(e) + by) from e
     if topic is not None and topic in lnotes:
         print(lnotes[topic])
         return 0
@@ -2746,7 +2751,7 @@ def _notes_for_lead(topic, project, surface, lead):
         return 0
     if topic in mlead:
         raise Unsupported("unsupported: the lead runtime %s has no note '%s' about the lead's session (%s); the '%s' note of the project's runtime %s "
-                          "is about a lead session on %s and is not used in its place" % (lname, topic, has_lead, topic, runtime, runtime))
+                          "is about a lead session on %s and is not used in its place%s" % (lname, topic, has_lead, topic, runtime, runtime, by))
     print("qargi: the runtime %s has no notes topic '%s' about its members (%s) and the lead runtime %s has none about the lead's session (%s)"
           % (runtime, topic, has_member, lname, has_lead), file=sys.stderr)
     return 1
@@ -2759,7 +2764,7 @@ def cmd_notes(args):
     it stands (a library pack not sealed or changed since it was sealed, an unreadable definition). With a lead runtime named (--lead-runtime
     NAME, else QARGI_LEAD_RUNTIME when it is set and not empty; the option wins) the notes about the lead's own session come from that runtime
     and the others from the project's (_notes_for_lead); exit 3 when the name is not a usable local runtime or it has no such note about the
-    lead's session. With neither, nothing below reads lead_notes and the answer is what it always was."""
+    lead's session, saying which of the two named it. With neither, nothing below reads lead_notes and the answer is what it always was."""
     topics, project, surface, lead, i = [], None, "local", None, 0
     while i < len(args):
         if args[i] == "--project" and i + 1 < len(args) and project is None:
@@ -2777,10 +2782,11 @@ def cmd_notes(args):
     if len(topics) > 1:
         print("usage: qargi provider notes [TOPIC] [--project P] [--surface local|cloud] [--lead-runtime NAME]", file=sys.stderr)
         return 2
+    source = "--lead-runtime"
     if lead is None:
-        lead = os.environ.get(LEAD_RUNTIME_ENV) or None
+        lead, source = os.environ.get(LEAD_RUNTIME_ENV) or None, LEAD_RUNTIME_ENV
     if lead is not None:
-        return _notes_for_lead(topics[0] if topics else None, project, surface, lead)
+        return _notes_for_lead(topics[0] if topics else None, project, surface, lead, source)
     try:
         runtime, notes = notes_of(project or _project_in_effect(), surface=surface)
     except (NoProvider, Refused, Unsupported):

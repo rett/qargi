@@ -297,10 +297,13 @@ run spawn --project on-one --lead-runtime nosuch
 refused "and so is a note about members: the name is refused, not ignored" "unsupported lead runtime 'nosuch'"
 run --project on-one --lead-runtime nosuch
 refused "and the list of topics" "unsupported lead runtime 'nosuch'"
+grep -q "; the lead runtime is named by --lead-runtime$" <<<"$err" && ok "the refusal ends with what named the lead runtime: the option" || no "named by the option: $err"
 out=$(QARGI_LEAD_RUNTIME=nosuch "$DA" provider notes identity --project on-one 2>"$T/err"); rc=$?; err=$(cat "$T/err")
 refused "an unknown runtime in QARGI_LEAD_RUNTIME is refused the same way" "unsupported lead runtime 'nosuch'"
+grep -q "; the lead runtime is named by QARGI_LEAD_RUNTIME$" <<<"$err" && ok "and then it ends with the variable, which is not on the command line that was refused" || no "named by the variable: $err"
 out=$(QARGI_LEAD_RUNTIME=lead-one "$DA" provider notes identity --project on-one --lead-runtime nosuch 2>"$T/err"); rc=$?; err=$(cat "$T/err")
 refused "an unknown runtime in the option is not replaced by the one in the variable" "unsupported lead runtime 'nosuch'"
+grep -q "; the lead runtime is named by --lead-runtime$" <<<"$err" && ok "with both, the refusal names the option: the variable was not read" || no "named by the option, both set: $err"
 run identity --project onclaude --lead-runtime claude
 refused "a family name does not name a lead runtime" "unsupported lead runtime 'claude': no runtime has that name (a family name does not name a lead runtime)"
 run identity --project onclaude --lead-runtime claude-platform
@@ -324,6 +327,9 @@ run message --project on-one --lead-runtime lead-two
 refused "a note about the lead that the lead runtime lacks is unsupported: the project's runtime's is not printed" "the lead runtime lead-two has no note 'message' about the lead's session (its topics: identity, session-model)"
 grep -qF "the 'message' note of the project's runtime member-one is about a lead session on member-one and is not used in its place" <<<"$err" \
   && ok "the refusal says whose note it did not use, and why" || no "missing lead note wording: $err"
+out=$(QARGI_LEAD_RUNTIME=lead-two "$DA" provider notes message --project on-one 2>"$T/err"); rc=$?; err=$(cat "$T/err")
+refused "the same refusal when the variable names the lead runtime" "the lead runtime lead-two has no note 'message' about the lead's session"
+grep -q "is not used in its place; the lead runtime is named by QARGI_LEAD_RUNTIME$" <<<"$err" && ok "and it ends with the variable that named it" || no "missing lead note, named by the variable: $err"
 run handoff --project on-two --lead-runtime lead-one
 refused "a topic the lead runtime has only as a note about its members does not answer for a note about the lead either" "the lead runtime lead-one has no note 'handoff' about the lead's session"
 run message --project on-two --lead-runtime lead-two
