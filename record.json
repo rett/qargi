@@ -4,19 +4,13 @@
  "goal": "Feature verify and finish: stale reason, failing tests and log path, push policy shown in the plan, warn on concurrent runs",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "arc-claude-qargi",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-17T10:22:42Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-17T10:22:42Z",
- "finished_at": null,
+ "finished_at": "2026-11-17T10:22:46Z",
  "updated_by": "arc-claude-qargi",
- "rev": 2,
- "updated_at": "2026-11-17T10:22:42Z",
+ "rev": 3,
+ "updated_at": "2026-11-17T10:22:46Z",
  "feature": "fverify",
  "project": "qargi"
 }
