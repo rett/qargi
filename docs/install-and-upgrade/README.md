@@ -21,7 +21,7 @@ For a Codex lead, install user skills in `~/.codex/skills`:
 ./install.sh --user --runtime codex
 ```
 
-Either user installation also installs the command in `~/.local/bin`. Alternatively, install skills for one repository only, choosing the lead's runtime (`claude-code` is the default):
+Either user installation also installs the command in `~/.local/bin`. The two install side by side, from one tool: installing one runtime leaves the skills of the other as they are, and the command, the manual page and the completions are shared. `./install.sh --user` without `--runtime` refreshes every runtime already installed (and installs `claude-code` when none is), so it is the line to run after `git pull`; `--runtime NAME` narrows a run to that runtime. Alternatively, install skills for one repository only, choosing the lead's runtime (`claude-code` is the default):
 
 ```sh
 ./install.sh --project /path/to/repo
@@ -41,16 +41,28 @@ For a Codex lead, install with `./install.sh --user --runtime codex`: the skills
 Both link to this checkout, so `git pull` updates them; add `--copy` for real
 files (the whole tool is copied to `~/.local/share/qargi` for `--user`),
 `--uninstall` to remove. The install records every path it wrote (links, copied
-files, the directories it had to create) in `install.manifest` beside
-`install.json`, and `--uninstall` removes exactly those, copies included, and
+files, the directories it had to create) before it writes it, in manifests under
+`install.d/` beside `install.json` in `~/.qargi/config`: `runtime-NAME.manifest` for the skills of a runtime,
+`shared.manifest` for the command, the manual page, the completions and the `--copy` tool, and `project-N-NAME.manifest` for the skills of a
+runtime in one project. `--uninstall` removes exactly what they list, copies included, and
 nothing else: a file of yours inside a copied skill is kept, and so is `~/.qargi`,
 unless the install made its `config` directory and nothing else is left in it.
-Without the manifest `--uninstall` removes nothing and says so (exit status 1),
-with or without `--force`. An existing real directory is never replaced without `--force`. The
+Every line of a manifest is checked when it is read, and one bad line stops the run with nothing changed. A run holds `install.lock`
+(beside `install.d/`) while it reads or changes the records, so a second run waits briefly and then refuses.
+Without a manifest `--uninstall` removes nothing and says so (exit status 1),
+with or without `--force`. An existing real file or directory, or a link no install recorded, is never replaced without `--force`; a link
+that already points where the install would point it is left as it is. The
 skills directories come from the definition of the runtime whose session loads the
 skills (`--runtime NAME`, default `claude-code`: `~/.claude/skills`); a runtime
-with none is refused. Install at one level only. The command is
-always user-level. The instance
+with none is refused, and one skills directory belongs to one runtime. The command is
+always user-level.
+
+`./install.sh --user --uninstall --runtime NAME` removes the skills of one runtime; the command, the manual page, the completions, `install.json` and
+`install.d/` go with the last runtime. `./install.sh --user --uninstall` alone removes every installed runtime and lists them first. A runtime whose definition has gone is skipped with a note when refreshing, and can still be uninstalled.
+The runtimes come from one tool, all linked or all copied: `--runtime NAME` from another tool or in the other mode is refused while another runtime is installed
+(`./install.sh --user [--copy]` without `--runtime` moves them all), and a `--user --copy` run copies every installed runtime again, since it rewrites the tool copy they come from.
+A project takes both runtimes too (`--project DIR --runtime NAME`), each hidden through the repository's local exclude file and removed on its own.
+Installs made by qargi 0.3.1 kept one `install.manifest`; the first run of a newer `install.sh` moves it into `install.d/` once, while that directory does not exist, and keeps a link only while it still points into the tool. That migration goes in 0.3.3. A `project-N.manifest` of 0.3.1 with no `install.manifest` and no `install.json` beside it (after a full uninstall, or on a host that never installed) is removed unread, with a note; so is a legacy file left beside an `install.d/` that already exists. A link the install recorded that you replaced with a file or a directory is refused with nothing changed: move it aside and install again, or use `--force` to replace it. `install.sh` also refuses an `install.lock` that is a link or not a regular file, without opening it and with nothing changed: move it aside and run again. A member cannot run the tool's own `install.sh` or `lib/install_record.py` (the engine `install.sh` runs), in any use, and the guard protects the records; the copies in a clone or a project stay the member's. The instance
 registry, session tracker and profiles are per user, under `~/.qargi/config` and
 `~/.qargi/state` (`QARGI_HOME` replaces `~/.qargi`), whichever level installs the skills. Repository rules for
 agents go in a profile under `~/.qargi/config/profiles/`, also
@@ -66,7 +78,7 @@ Installing also adds the baseline packs that ship with qargi (`packs/`) to your 
 
 ### Where the data lives
 
-Everything qargi keeps about you is under `~/.qargi`: `config/` (projects, instances, profiles, the pack library of skills, tools and provider packs, credentials, `install.json`) and `state/` (the session tracker, the audit log, runs, backups, the renders under `render/`, the provider verification records). `QARGI_HOME` replaces the root; `QARGI_CONF` and `QARGI_STATE` name either directory and win over it. `XDG_CONFIG_HOME` and `XDG_STATE_HOME` are not used (the `ant` CLI keeps its login there).
+Everything qargi keeps about you is under `~/.qargi`: `config/` (projects, instances, profiles, the pack library of skills, tools and provider packs, credentials, `install.json`, the `install.d/` records) and `state/` (the session tracker, the audit log, runs, backups, the renders under `render/`, the provider verification records). `QARGI_HOME` replaces the root; `QARGI_CONF` and `QARGI_STATE` name either directory and win over it. `XDG_CONFIG_HOME` and `XDG_STATE_HOME` are not used (the `ant` CLI keeps its login there).
 
 ### Running a branch checkout
 
@@ -74,16 +86,17 @@ Everything qargi keeps about you is under `~/.qargi`: `config/` (projects, insta
 
 ## Checking the host
 
-`qargi doctor [PROJECT]` checks the host for what makes qargi fail quietly and changes nothing (a member may run it). It prints one line per check, `ok|warn|unknown  name: detail`, and under a warning the lines that say what you can do; it never runs a fix. The exit status is 0 whatever it finds, or 1 with `--strict` when a check warns; `--json` prints the checks as one object. Four checks make the first slice:
+`qargi doctor [PROJECT]` checks the host for what makes qargi fail quietly and changes nothing (a member may run it). It prints one line per check, `ok|warn|unknown  name: detail`, and under a warning the lines that say what you can do; it never runs a fix. The exit status is 0 whatever it finds, or 1 with `--strict` when a check warns; `--json` prints the checks as one object. Five checks make the first slice:
 
 - `remove-ipc`: logind removes a user's IPC objects, among them what lives in `/dev/shm`, when the user's last session ends, unless `RemoveIPC=no` is set or the user lingers. The check reads `RemoveIPC` with `busctl` and the linger with `loginctl` (`QARGI_BUSCTL` and `QARGI_LOGINCTL` name other programs); with `RemoveIPC` on and no linger it warns and prints the drop-in `/etc/systemd/logind.conf.d/remove-ipc.conf` (`[Login]`, `RemoveIPC=no`, then `sudo systemctl reload systemd-logind`) or `loginctl enable-linger USER`. Without systemd, logind or those tools it says `unknown`.
 - `guard`: `qargi` is on `PATH` and `qargi __guard`, the hook command of a member, answers as the guard does; with a project, no member is missing, stale or edited.
 - `shm`: the free space under `/dev/shm` (`QARGI_RUN_TMP` moves it) and the orphaned `qargi-run.XXXXXX` directories there, the listing that `qargi local clean --orphans` prints; it warns on an orphan or on less than 10% free (`QARGI_DOCTOR_MIN_FREE` moves the limit, in percent).
 - `window-source`: where the context-window table of the project's runtime comes from (its definition, or the answer `lead.context_window`) and whether each model id the project's roles name is in it; an id that is not warns, since its window is only assumed.
+- `install`: the install records agree with the disk: it says `ok` when they do, and warns of a legacy `install.manifest` still present, of a recorded link that is missing or points elsewhere, and of a recorded version that differs from the tool's.
 
 ## Upgrading the installed tool
 
-`qargi upgrade --branch develop` fetches that branch of the installed checkout's origin (for example `/opt/qargi`), shows the commits and files that would change and prints a plan token; `qargi upgrade --branch develop --plan TOKEN --approved "..."` applies exactly that (fast-forward only on the current branch, `--tag T` for a tag), re-runs `install.sh --user` and lists the members to refresh. When `~/.qargi/config/agents.json` is in an earlier shape, which every `qargi agent` verb refuses, the plan and the end of the upgrade warn about it and say to move it aside and add the members again with `qargi agent add NAME --project P`; the upgrade itself does not touch it. The git commands that write into the root-owned checkout run through `sudo`.
+`qargi upgrade --branch develop` fetches that branch of the installed checkout's origin (for example `/opt/qargi`), shows the commits and files that would change and prints a plan token; `qargi upgrade --branch develop --plan TOKEN --approved "..."` applies exactly that (fast-forward only on the current branch, `--tag T` for a tag), re-runs `install.sh --user`, which refreshes every runtime installed (the plan prints which), and lists the members to refresh. When `~/.qargi/config/agents.json` is in an earlier shape, which every `qargi agent` verb refuses, the plan and the end of the upgrade warn about it and say to move it aside and add the members again with `qargi agent add NAME --project P`; the upgrade itself does not touch it. The git commands that write into the root-owned checkout run through `sudo`.
 
 ## Cloud (ant) profiles per project
 

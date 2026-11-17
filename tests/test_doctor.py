@@ -403,6 +403,172 @@ class Tools(Base):
         self.assertIn("timeout is not on PATH", c["detail"])
 
 
+SKILLS = ("qargi-task", "qargi-verify")
+
+
+class Install(Base):
+    """The install check reads the records install.sh keeps in the live configuration directory (install.d, install.json). The records here are made
+    by lib/install_record.py itself (its apply, as install.sh runs it) from a small tool of the test, in a home of the test."""
+
+    def setUp(self):
+        super().setUp()
+        self.home, self.conf = os.path.join(self.t, "home"), os.path.join(self.t, "live", "config")
+        self.tool = os.path.join(self.t, "tool")
+        for d in [os.path.join(self.tool, "skills", s) for s in SKILLS] + [os.path.join(self.tool, "bin"), self.home]:
+            os.makedirs(d)
+        open(os.path.join(self.tool, "bin", "qargi"), "w").close()
+        for s in SKILLS:
+            open(os.path.join(self.tool, "skills", s, "SKILL.md"), "w").close()
+        self.version("0.3.2")
+        self.env.update(HOME=self.home, QARGI_CONF=self.conf)
+        import install_record
+        self.IR = install_record
+
+    def version(self, v):
+        with open(os.path.join(self.tool, "VERSION"), "w") as f:
+            f.write(v + "\n")
+
+    def skdir(self, runtime):
+        return os.path.join(self.home, "." + runtime, "skills")
+
+    def install(self, *runtimes, project=None, record=True):
+        """Install the skills of the runtimes (for the user, or in the project directory) as install.sh does: one plan, applied whole."""
+        rd = os.path.join(self.conf, "install.d")
+        os.makedirs(self.conf, exist_ok=True)
+        cmd = os.path.join(self.home, ".local", "bin", "qargi")
+        plan = []
+        if project is None:
+            plan += ["M\t%s/shared.manifest\tkind=shared\tdata=%s/.local/share/qargi\tslot=%s" % (rd, self.home, cmd),
+                     "D\t" + os.path.dirname(cmd), "L\t%s\t%s/bin/qargi" % (cmd, self.tool)]
+        for r in runtimes:
+            if project is None:
+                sk = self.skdir(r)
+                plan.append("M\t%s/runtime-%s.manifest\tkind=runtime\tname=%s\troot=%s" % (rd, r, r, sk))
+            else:
+                os.makedirs(project, exist_ok=True)                       # install.sh makes the project directory first
+                sk = os.path.join(project, "." + r, "skills")
+                plan.append("M\t%s/project-42-%s.manifest\tkind=project\tname=%s\tproject=%s\troot=%s" % (rd, r, r, project, sk))
+            plan.append("D\t" + sk)
+            plan += ["L\t%s/%s\t%s/skills/%s" % (sk, s, self.tool, s) for s in SKILLS]
+        self.IR.apply(self.conf, "\n".join(plan) + "\n", False)
+        if record and project is None:
+            self.IR.record(self.conf, self.tool, "0.3.2", "link")
+
+    def check(self):
+        with mock.patch.dict(os.environ, {"HOME": self.home, "QARGI_CONF": self.conf}):
+            return D.check_install()
+
+    def test_nothing_installed_is_unknown(self):
+        c = self.check()
+        self.assertEqual(c["status"], "unknown", c)
+        self.assertIn("no install record", c["detail"])
+        self.assertEqual((c["runtimes"], c["projects"], c["legacy"]), ([], [], []))
+
+    def test_every_runtime_is_listed_on_the_ok_line(self):
+        self.install("claude-code", "codex")
+        proj = os.path.join(self.t, "proj")
+        self.install("codex", project=proj)
+        c = self.check()
+        self.assertEqual(c["status"], "ok", c)
+        self.assertEqual(c["detail"], "%s (link, 0.3.2); runtimes claude-code (2 skills in ~/.claude-code/skills), codex (2 skills in ~/.codex/skills); "
+                                      "in projects codex (2 skills in %s)" % (self.tool, proj))
+        self.assertEqual([(r["name"], r["skills"], r["skills_dir"]) for r in c["runtimes"]],
+                         [("claude-code", 2, [self.skdir("claude-code")]), ("codex", 2, [self.skdir("codex")])])
+        self.assertEqual([(p["name"], p["project"]) for p in c["projects"]], [("codex", proj)])
+        self.assertEqual((c["tool_root"], c["source"], c["version"], c["tool_version"]), (self.tool, "link", "0.3.2", "0.3.2"))
+        self.assertEqual(c["fix"], [])
+
+    def test_a_missing_or_retargeted_link_warns(self):
+        self.install("claude-code", "codex")
+        gone = os.path.join(self.skdir("codex"), "qargi-task")
+        moved = os.path.join(self.skdir("claude-code"), "qargi-verify")
+        os.unlink(gone)
+        os.unlink(moved)
+        os.symlink(self.t, moved)
+        c = self.check()
+        self.assertEqual(c["status"], "warn", c)
+        self.assertIn("1 recorded path is missing: ~/.codex/skills/qargi-task", c["detail"])
+        self.assertIn("1 recorded link is no longer what the install made: ~/.claude-code/skills/qargi-verify", c["detail"])
+        self.assertIn("runtimes claude-code (2 skills", c["detail"])                  # the runtimes are still listed
+        self.assertEqual([x["path"] for x in c["missing"]], [gone])
+        self.assertEqual([(x["path"], x["now"], x["target"]) for x in c["moved"]], [(moved, self.t, os.path.join(self.tool, "skills", "qargi-verify"))])
+        self.assertTrue(any("%s/install.sh --user" % self.tool in f for f in c["fix"]), c["fix"])
+
+    def test_a_link_whose_target_is_gone_is_missing(self):
+        self.install("claude-code")
+        shutil.rmtree(os.path.join(self.tool, "skills", "qargi-task"))
+        c = self.check()
+        self.assertEqual(c["status"], "warn", c)
+        self.assertEqual([(x["path"], x["why"]) for x in c["missing"]], [(os.path.join(self.skdir("claude-code"), "qargi-task"), "its target is gone")])
+
+    def test_a_version_other_than_the_tools_warns(self):
+        self.install("claude-code")
+        self.version("0.3.3")
+        c = self.check()
+        self.assertEqual(c["status"], "warn", c)
+        self.assertIn("install.json records version 0.3.2, the tool at %s is 0.3.3" % self.tool, c["detail"])
+        self.assertTrue(any("records it as it is now" in f for f in c["fix"]), c["fix"])
+
+    def test_a_legacy_manifest_warns(self):
+        os.makedirs(self.conf)
+        legacy = os.path.join(self.conf, "install.manifest")
+        with open(legacy, "w") as f:
+            f.write("L\t%s/qargi-task\n" % self.skdir("claude-code"))
+        self.IR.record(self.conf, self.tool, "0.3.2", "link")
+        c = self.check()
+        self.assertEqual(c["status"], "warn", c)
+        self.assertIn("the legacy %s is not moved into install.d yet" % legacy, c["detail"])
+        self.assertEqual(c["legacy"], [legacy])
+        self.assertTrue(any("moves it into install.d once" in f for f in c["fix"]), c["fix"])
+        os.unlink(legacy)
+        self.install("claude-code")
+        with open(legacy, "w") as f:
+            f.write("L\t/elsewhere/qargi-task\n")
+        c = self.check()
+        self.assertEqual(c["status"], "warn", c)
+        self.assertIn("is still there (the records are in install.d, so it is not read)", c["detail"])
+
+    def test_a_record_that_cannot_be_read_warns(self):
+        self.install("claude-code")
+        path = os.path.join(self.conf, "install.d", "runtime-claude-code.manifest")
+        with open(path, "a") as f:
+            f.write("f\t/etc/passwd\n")
+        c = self.check()
+        self.assertEqual(c["status"], "warn", c)
+        self.assertEqual([u["path"] for u in c["unreadable"]], [path])
+        self.assertIn("cannot be read", c["detail"])
+
+    def test_a_tool_record_without_a_runtime_warns(self):
+        os.makedirs(self.conf)
+        self.IR.record(self.conf, self.tool, "0.3.2", "link")
+        c = self.check()
+        self.assertEqual(c["status"], "warn", c)
+        self.assertIn("no user runtime is recorded in install.d", c["detail"])
+
+    def test_a_project_install_alone_is_ok(self):
+        proj = os.path.join(self.t, "proj")
+        self.install("claude-code", project=proj)
+        c = self.check()
+        self.assertEqual(c["status"], "ok", c)
+        self.assertIn("no user runtime recorded; in projects claude-code (2 skills in %s)" % proj, c["detail"])
+
+    def test_the_command_reads_and_writes_nothing_and_json_has_the_facts(self):
+        self.install("claude-code", "codex")
+        os.unlink(os.path.join(self.skdir("codex"), "qargi-task"))
+        before = snapshot(self.conf, self.home, self.tool)
+        rc, out, err = self.doctor("--json")
+        self.assertEqual(rc, 0, err)
+        c = [x for x in json.loads(out)["checks"] if x["name"] == "install"][0]
+        self.assertEqual(c["status"], "warn", c)
+        self.assertEqual([r["name"] for r in c["runtimes"]], ["claude-code", "codex"])
+        self.assertEqual([x["path"] for x in c["missing"]], [os.path.join(self.skdir("codex"), "qargi-task")])
+        rc, out, err = self.doctor()
+        self.assertEqual(self.lines(out)["install"][0], "warn", out)
+        self.assertIn("fix: ", self.lines(out)["install"][1])
+        self.assertEqual(snapshot(self.conf, self.home, self.tool), before)
+        self.assertFalse(os.path.lexists(os.path.join(self.conf, "install.lock")), "the lock is not taken")
+
+
 class Checkout(unittest.TestCase):
     """The tools list of the checkout (Makefile TOOLS, the bootstrap lines, AGENTS.md) keeps in step with what the doctor checks."""
 
@@ -437,7 +603,7 @@ class Command(Base):
     def test_the_lines_are_status_name_detail_and_exit_is_zero(self):
         rc, out, err = self.doctor()
         self.assertEqual(rc, 0, err)
-        for name in ("remove-ipc", "guard", "shm", "tools", "window-source", "project-env"):
+        for name in ("remove-ipc", "guard", "shm", "tools", "install", "window-source", "project-env"):
             self.assertIn(name, self.lines(out))
         for line in out.splitlines():
             if not line.startswith("    "):
@@ -452,7 +618,7 @@ class Command(Base):
         rc, out, _ = self.doctor("--json", "--strict", FAKE_IPC="true")
         doc = json.loads(out)
         self.assertEqual((rc, doc["exit"], doc["warnings"], doc["strict"]), (1, 1, 1, True))
-        self.assertEqual([c["name"] for c in doc["checks"]], ["remove-ipc", "guard", "shm", "tools", "window-source", "project-env"])
+        self.assertEqual([c["name"] for c in doc["checks"]], ["remove-ipc", "guard", "shm", "tools", "install", "window-source", "project-env"])
         ipc = doc["checks"][0]
         self.assertEqual(ipc["status"], "warn")
         self.assertTrue(any("RemoveIPC=no" in line for line in ipc["fix"]))

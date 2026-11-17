@@ -85,6 +85,7 @@ class Sync(unittest.TestCase):
         guard = " ".join(C.TOPICS["guard"][1])
         self.assertIn("adapter installs", guard)
         self.assertIn("qargi provider show", guard)
+        self.assertIn("install.sh and lib/install_record.py (its engine) in any use", guard)
         dev = " ".join(C.TOPICS["dev"][1])
         self.assertIn("Hook-enabled runtimes", dev)
 
@@ -204,7 +205,7 @@ class Render(unittest.TestCase):
         self.assertIn("guard", C.TOPICS)
         title, paras = C.TOPICS["guard"]
         text = " ".join(paras)
-        self.assertLessEqual(len(text.split()), 400)
+        self.assertLessEqual(len(text.split()), 415)
         for needle in ("QARGI_NESTED", "plan token", "OUT", "local verify", "report", "push", "quotes", "heredoc", "substitution"):
             self.assertIn(needle, text)
         self.assertIn("guard", H.show_overview())
