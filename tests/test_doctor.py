@@ -276,6 +276,7 @@ class WindowSource(Base):
         with open(os.path.join(ROOT, "lib", "providers", "claude-code.json")) as f:
             n = len(json.load(f)["resources"]["transcripts"]["windows"])                                 # the shipped table, not a copy of it
         self.assertIn("table of claude-code (shipped, lib/providers/claude-code.json): %d entries, 200,000 assumed otherwise" % n, text)
+        self.assertIn("the runtime may cap it lower on some plans; the answer lead.context_window overrides it", text)
         self.assertIn("2 model ids checked", text)
 
     def test_an_id_that_is_not_in_the_table_warns(self):
@@ -284,6 +285,7 @@ class WindowSource(Base):
         st, text = self.lines(out)["window-source"]
         self.assertEqual((rc, st), (0, "warn"), out)
         self.assertIn("not in the table: plain-model", text)
+        self.assertIn("the runtime may cap it lower on some plans; the answer lead.context_window overrides it", text)
         self.assertNotIn("model-a-1m (", text)
         self.assertEqual(self.doctor("app", "--strict")[0], 1)
 

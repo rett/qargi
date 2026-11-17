@@ -435,6 +435,8 @@ def check_window_source(project):
     ans = ans if isinstance(ans, int) and not isinstance(ans, bool) and ans >= 1000 else None
     if ans:
         table = "answer lead.context_window = %s overrides the %s" % (format(ans, ","), table)
+    else:
+        table += " (the table gives the API's window, the runtime may cap it lower on some plans; the answer lead.context_window overrides it)"
     ids = []
     for role, spec in sorted((answers.get("roles") or {}).items()) if isinstance(answers.get("roles"), dict) else ():
         m = spec.get("model") if isinstance(spec, dict) else None
