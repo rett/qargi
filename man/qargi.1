@@ -1,4 +1,4 @@
-.TH QARGI 1 "2026-11-16" "qargi 0.3.1"
+.TH QARGI 1 "2026-11-16" "qargi 0.3.2"
 .SH NAME
 qargi \- A gathering place for agent work: dispatch, review, remember
 .SH SYNOPSIS
@@ -41,7 +41,7 @@ These best\-effort checks apply when the runtime adapter installs qargi __guard 
 .PP
 It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; discover install; import; packs apply, seed, link, unlink, member\-skills; project set (models, release, test_command, gates, env, site, backlog, packs, runs, upstream, git, review, roles), init, new, link and unlink; provider new, import, seal, remove, enable, disable, attest, accept, check and adapter\-run (the rest read); release publish, sign, site, assets and fix; marshal claim, set, renew, release, take, takeover, finish, enable, disable, key, signers and resign (handoff only with \-\-write); feature start, finish, verify and park; branch prune; changelog renumber without \-\-check; upstream status, sync; backlog done; ref record; memory init, move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; review apply; env plan and apply; team run and task.
 .PP
-It refuses writes in the pack library, credentials, the install record, the runtime's skills, agents and plugin directories, the installed copy, the state's render, providers, marshal, feature and saved\-run directories, its ref journal, the memory tiers, ~/.config/anthropic, and the lead's git configuration and session files. Reading stays allowed except the lead's signing key. It refuses git push, git remote changes, git \-c or config of keys that run programs (alias.*), and rsync to a host.
+It refuses writes in the pack library, credentials, the install record, the runtime's skills, agents and plugin directories, the installed copy, the state's render, providers, marshal, feature and saved\-run directories, its ref journal, the memory tiers, ~/.config/anthropic, and the lead's git configuration and session files. It refuses the tool's own install.sh and lib/install_record.py (its engine) in any use. Reading stays allowed except the lead's signing key. It refuses git push, git remote changes, git \-c or config of keys that run programs (alias.*), and rsync to a host.
 .PP
 A command is cut at every ; && || | and newline, inside quotes and heredocs, and a substitution is a command. A piece that starts with git push, git tag NAME, ssh, scp, sftp or gh is refused even in text (not mid\-sentence); any other refused verb is text when every command is echo, cat, tee, grep or git commit, as is a heredoc body cat or tee gets, bar lines starting qargi. Shell programs piped in or here\-strings are read; curl | sh and bash < f are refused. A cd it cannot read refuses relative writes.
 .PP
@@ -404,7 +404,7 @@ Log the project's profile in, bound to its workspace (your terminal only).
 .B qargi agent
 Name the members: the local agents that do the work.
 .PP
-A member is a local agent you name, rendered from the one member definition qargi ships, with the roles it serves: build, write, review, test (all four by default). The render is kept in the configuration directory (agents/PROJECT/NAME.EXT beside agents.json, outside every repository) and written from there to the runtime's agents location; a checkout cleaned or cloned afresh gets it back with agent refresh. The task block names the role and carries its role text (roles/<role>/ROLE.md); there is no skill to load. Review is read\-only as a rule: the guard refuses changes to the clone under that role. Under every role it refuses the verbs that change a skill (qargi skill|tool new, import, seal, remove, link, unlink, enable, disable; qargi discover install; qargi packs apply) and writes in the pack library, the credentials directory and install.json, ~/.claude/skills and any .claude/skills directory; it fails closed. Dispatch spawns the member qargi agent for ROLE prints.
+A member is a local agent you name, rendered from the one member definition qargi ships, with the roles it serves: build, write, review, test (all four by default). The render is kept in the configuration directory (agents/PROJECT/NAME.EXT beside agents.json, outside every repository) and written from there to the runtime's agents location; a checkout cleaned or cloned afresh gets it back with agent refresh. The task block names the role and carries its role text (roles/<role>/ROLE.md); there is no skill to load. Review is read\-only as a rule: the guard refuses changes to the clone under that role. Under every role it refuses the verbs that change a skill (qargi skill|tool new, import, seal, remove, link, unlink, enable, disable; qargi discover install; qargi packs apply) and writes in the pack library, the credentials directory, the install records (install.json, install.d/, install.lock), ~/.claude/skills and any .claude/skills directory, and running the tool's own install.sh or lib/install_record.py, the engine install.sh runs, in any use (those of the clone stay the member's); it fails closed. Dispatch spawns the member qargi agent for ROLE prints.
 .RS
 .TP
 .BI "add " "NAME"
@@ -4307,7 +4307,7 @@ print the plan and stop; changes nothing.
 .B qargi upgrade
 Move the installed tool to a newer branch or tag of its origin.
 .PP
-Works on the root\-owned checkout install.sh recorded (for example /opt/qargi). Without \-\-approved it fetches the target, shows the commits and files that would change and prints a plan token. With \-\-plan TOKEN \-\-approved "..." it applies exactly that: a branch on the current branch moves forward only (fast\-forward), another branch is checked out at its tip, a tag is checked out detached; install.sh \-\-user then runs as you and the members to refresh are listed. The git commands that write into the checkout run through sudo (QARGI_SUDO names another command). When the members file (~/.qargi/config/agents.json) is not in the current shape, which every agent verb refuses, the plan and the end of the upgrade say so and how to redo it; nothing is changed for that. A member or agent cannot use it.
+Works on the root\-owned checkout install.sh recorded (for example /opt/qargi). Without \-\-approved it fetches the target, shows the commits and files that would change and prints a plan token. With \-\-plan TOKEN \-\-approved "..." it applies exactly that: a branch on the current branch moves forward only (fast\-forward), another branch is checked out at its tip, a tag is checked out detached; install.sh \-\-user then runs as you (it refreshes every runtime installed, the default runtime when none is) and the members to refresh are listed. The git commands that write into the checkout run through sudo (QARGI_SUDO names another command). When the members file (~/.qargi/config/agents.json) is not in the current shape, which every agent verb refuses, the plan and the end of the upgrade say so and how to redo it; nothing is changed for that. A member or agent cannot use it.
 .RS
 .TP
 .BI "\-\-branch " "BRANCH"
@@ -4388,6 +4388,12 @@ token files, mode 600.
 .TP
 .I ~/.qargi/config/install.json
 the tool root install.sh recorded; a checkout run from elsewhere is a dev run.
+.TP
+.I ~/.qargi/config/install.d/
+the install records: one manifest per runtime, a shared one, one per project and runtime; \-\-uninstall removes exactly what they list.
+.TP
+.I ~/.qargi/config/install.lock
+held by install.sh while it reads or changes the install records.
 .TP
 .I ~/.qargi/state/sessions.json
 the tracker of cloud sessions.

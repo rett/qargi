@@ -38,12 +38,18 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     install, qargi packs apply|seed|link|unlink|member-skills, qargi project link|unlink (they link the project's skills, agents and memory into the
     checkout and the runtime's memory directory, which changes what a session loads) and qargi import (it restores the pack library).
     Read-only verbs (list, show, check, effective, search, render, export) stay allowed. The verb is found after wrappers, inside `sh|bash -c STRING` and
-    `eval STRING`, in the program a shell reads on its standard input (below), inside $(...) and backticks, and when the script is named directly (packs.sh, discover.py, and the scripts the shell
+    `eval STRING`, in the program a shell reads on its standard input (below), inside $(...) and backticks, and when the script is named directly or sourced (packs.sh, discover.py, and the scripts the shell
     verbs call: env_apply.py is env apply in any use (qargi env plan and apply run the project's dry-run and bootstrap commands: project code; env.py is env,
     found like linker.py, so env show stays open), jsonplan.py (the --json wrapper) is the verb it is given, packs_link.py is packs link|unlink and project_link.py is project link|unlink in any use, packs_audit.py store is skill accept|unaccept, marshal_handoff.py is marshal handoff,
-    linker.py (the link engine) is packs link in any use, and render.py (it can run the command a definition names) is refused in any use;
-    the last two have names a project may use for its own scripts, so only the files in the lib directory of the tool or of the installed
-    copy count, found from the directory the command runs in);
+    linker.py (the link engine) is packs link in any use, render.py (it can run the command a definition names) and install_record.py (the
+    install engine install.sh runs: its uninstall and apply remove and relink what the install records list) are refused in any use;
+    the last three have names a project may use for its own scripts, so only the files in the lib directory of the tool or of the installed
+    copy count, found from the directory the command runs in; install.sh, the installer, is refused in any use (it writes and removes the
+    links in the skills and agents directories and the install records, and the guard sees none of those writes in the command), and of it
+    only the file at the top of the tool or of the installed copy counts, so an install.sh of a project or of the clone stays the member's.
+    Known limit: the clone's own install.sh (and its lib/install_record.py) is the member's file, and in a clone of qargi it is a whole
+    installer: run with the live HOME, `bash install.sh --user` moves every recorded runtime of the lead's install to the clone (a bare
+    --user from another tool moves them all). The guard does not refuse it; the lead's verify of the patches is the backstop);
   - qargi project init (it stores a whole answers file, so it is a way to models.extensions and models.accept_no_barrier, which have gated verbs;
     found like the skill verbs), and qargi project set of any models answer, of release.*, of test_command, of gates, of env.*, of site.* (the commands, environment and site the lead later runs or builds), of packs.* (the opt-out of the render check), of git.* and review.* (the identity and the author rule qargi review apply gives the commits it applies, and the scrub command and trailer policy qargi review check runs), of ci.* and methodology_accepted (the CI jobs left out of the gate comparison, the deviations the lead accepts), of runs.* (the refs that verify and clean accept as a runtime's own) and of
     roles.<role>.tools, a whole role or roles (the tools env apply installs and local prepare checks out; the other answers stay open). A project verb the guard cannot read is
@@ -54,7 +60,8 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
   - setting QARGI_NESTED (it makes some verbs skip their plan-token check);
   - a write under a protected location: the pack library ($QARGI_CONF/packs, else $QARGI_HOME/config/packs, else
     ~/.qargi/config/packs), the credentials
-    directory and install.json of the same configuration directories (not the rest of it: a member may run qargi verbs that
+    directory and the install records of the same configuration directories (install.json, the install.d directory of the manifests, the lock
+    install.lock and, while the one-time migration that reads it is there, until 0.3.3, the legacy install.manifest; not the rest of it: a member may run qargi verbs that
     change instances, agents or projects; the guard decides by the path a write construct names, never by the verb, and a
     read of a protected path stays allowed), the skills and agents directories the provider definitions name in their resources (user_dir, below
     the home: for Claude Code ~/.claude/skills and ~/.claude/agents; project_dir, found in any path outside the run's clone, a project's
@@ -261,17 +268,23 @@ GIT_OUTPUT_DIRS = {"format-patch", "archive"}                    # git subcomman
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
 SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
            "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "project_link.py", "gated_answers.py", "project.sh", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py", "local_run.py", "local.sh", "release.sh", "release_sign.py",
-           "agent.sh", "team.sh", "env.py", "env_apply.py", "branch.sh", "changelog.sh", "changelog_numbers.py", "upstream.sh", "backlog.sh", "backlog.py", "campaign.py", "ref.sh", "jsonplan.py")
+           "agent.sh", "team.sh", "env.py", "env_apply.py", "branch.sh", "changelog.sh", "changelog_numbers.py", "upstream.sh", "backlog.sh", "backlog.py", "campaign.py", "ref.sh", "jsonplan.py",
+           "install.sh", "install_record.py")
 # the command and the scripts behind the refused verbs (packs_link.py is packs link|unlink, packs_audit.py store is skill accept|unaccept,
 # marshal_handoff.py is marshal handoff: the shell verbs call them, and a member could call them directly with a hand-made inputs file;
-# linker.py, the link engine packs_link.py calls, is packs link, and render.py renders member definitions and runs the command a definition names)
-OWN_ONLY = ("linker.py", "render.py", "env.py")                       # names too common to refuse by name alone: only the file of the tool is the script (own_script)
+# linker.py, the link engine packs_link.py calls, is packs link, render.py renders member definitions and runs the command a definition names,
+# and install_record.py is the install engine install.sh runs: its uninstall and apply remove and relink what the install records list)
+OWN_ONLY = ("linker.py", "render.py", "env.py", "install.sh", "install_record.py")   # names a project may use too: only the file of the tool is the script (own_script)
+ROOT_SCRIPTS = ("install.sh",)                                       # of those, the ones at the top of the tool, not in its lib directory
 # Known limit, by design: the scripts are recognized by the NAME the command gives. `python3 LINK` where LINK is a symlink to lib/linker.py or
 # lib/render.py, a copy of them under another name, and `python3 -c 'import linker'` (with lib on the path) are not recognized. A check on the
 # resolved path would catch only a link that already exists when the call is judged, not one made earlier in the same command line
 # (`ln -s .../linker.py x && python3 x`), and an import can be spelled in too many ways (importlib, __import__, string joins) to read from
-# the command text; a half check would suggest a guarantee the guard does not give. Like the rest of the shell reading it is a heuristic
-# against a mistake, not a wall against a member that works to get round it; the local verify of the patches is the backstop.
+# the command text; a half check would suggest a guarantee the guard does not give. An interpreter's options are read as bash's and python's
+# (interpreted): the value of -X, -W, -o, -O, --rcfile and source -p is skipped, and an option it does not know makes any word naming a script
+# the script; an option of another shell that takes a value where bash has a flag of that letter is still read as the flag. Like the rest of
+# the shell reading it is a heuristic against a mistake, not a wall against a member that works to get round it; the local verify of the
+# patches is the backstop.
 MEMORY_VERBS = ("init", "move", "split", "merge", "copy")                          # qargi memory verbs that change a memory tier
 MEMORY_READ = ("tiers", "check", "get", "lint")
 PROVIDER_READ = ("", "list", "show", "effective", "require-barrier", "skills-dirs", "of", "layout", "require-skills", "launch", "addenda", "notes", "model")   # the provider verbs that only read; the rest, and any verb added later, change the definitions or run code (check, adapter-run)
@@ -2017,14 +2030,15 @@ def _protected_roots():
     import paths as P                                     # here, not at the top: an import failure is then a refusal (see main)
     home = os.path.expanduser("~")
     # the library where the data lives, the default and the QARGI_HOME one beside an override
-    # Besides the library, only the credentials and the install record of each configuration directory: not the rest of
-    # <conf> (instances, agents, projects, profiles), which qargi verbs a member runs legitimately change.
+    # Besides the library, only the credentials and the install records of each configuration directory (install.json, the manifests in
+    # install.d/, the lock install.lock beside it, and the legacy install.manifest the one-time migration still reads, until 0.3.3 removes it):
+    # not the rest of <conf> (instances, agents, projects, profiles), which qargi verbs a member runs legitimately change.
     # The user's skills and agents directories are the ones the definitions name. No resource names a plugins directory yet, so the one
     # of Claude Code is kept here.
     roots = set(resource_dirs()[1]) | {os.path.join(home, ".claude", "plugins")}
     # (the live configuration directory is one of these: QARGI_CONF, QARGI_HOME/config or ~/.qargi/config)
     for conf in conf_dirs(P, home):
-        roots.update(os.path.join(conf, name) for name in ("packs", "credentials", "install.json"))
+        roots.update(os.path.join(conf, name) for name in ("packs", "credentials", "install.json", "install.d", "install.lock", "install.manifest"))
     roots.add(os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config"), "anthropic"))   # the ant profiles and logins
     # the installed copy of the tool: ~/.claude/skills/qargi-* are links into it, and a write through such a link resolves
     # here, so it must be a root itself (it holds the skills, the member definition and the roles a member is launched with)
@@ -2922,12 +2936,14 @@ def fed_refusal(prog, why):
 
 
 def own_script(path, here):
-    """True when path, named from the directory here, is a file in the lib directory of this tool or of the installed copy (real paths)."""
+    """True when path, named from the directory here, is a file in the lib directory of this tool or of the installed copy (real paths), or,
+    for a script of the top of the tool (ROOT_SCRIPTS: install.sh), a file in the root of this tool or of the installed copy."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import paths as P
     installed = P.installed_tool_root()
-    libs = {os.path.dirname(os.path.realpath(os.path.abspath(__file__)))} | ({os.path.join(installed, "lib")} if installed else set())
-    return os.path.dirname(resolve(here, path)) in libs
+    roots = {os.path.dirname(os.path.dirname(os.path.realpath(os.path.abspath(__file__))))} | ({os.path.realpath(installed)} if installed else set())
+    top = os.path.basename(path) in ROOT_SCRIPTS
+    return os.path.dirname(resolve(here, path)) in (roots if top else {os.path.join(r, "lib") for r in roots})
 
 
 def pure_campaign_args(args):
@@ -2963,25 +2979,100 @@ def pure_campaign_args(args):
     return "--spec" in seen
 
 
+PY_FLAGS = frozenset("bBdEhiIOPqRsSuvVx?")                  # python's short options with no value; X and W take one (the rest of the word or the next word), c and m end the options
+PY_LONG = {"--help": 0, "--version": 0, "--help-env": 0, "--help-xoptions": 0, "--help-all": 0, "--check-hash-based-pycs": 1}   # python's long options: how many words each takes
+SHELL_FLAGS = frozenset("abefhkmnptuvxBCEHPTilrD")           # a shell's short options with no value (bash's); o and O take the next word each, c and s say where the program is
+SHELL_LONG = {"--rcfile": 1, "--init-file": 1, "--debug": 0, "--debugger": 0, "--dump-po-strings": 0, "--dump-strings": 0, "--help": 0, "--login": 0,
+              "--noediting": 0, "--noprofile": 0, "--norc": 0, "--posix": 0, "--pretty-print": 0, "--protected": 0, "--restricted": 0, "--verbose": 0, "--version": 0, "--wordexp": 0}
+UNREAD_NAME = re.compile(r"[$`*?\[{]")                      # a file name whose last part has one of these is built or expanded by the shell
+
+
+def is_redirection(t):
+    return not t.startswith(("<(", ">(")) and bool(LEADING_REDIR.match(t) or REDIR.match(t))
+
+
+def interpreted(prog, rest):
+    """Where an interpreter (a shell, . or source, python) finds the file it runs among its words rest: (k, True) when rest[k] is the file, (None, True)
+    when it runs no file (-c, -m, -s, a python `-`, no word left), (None, False) when the guard cannot read an option (one it does not know, one the
+    shell builds, a shell value stuck to its letter, which bash and zsh read apart) or the file's name. A redirection, with its file, is neither."""
+    py = bool(re.match(r"^python[0-9.]*$", prog))
+    k = 0
+    while k < len(rest):
+        tick()
+        t = rest[k]
+        if is_redirection(t):
+            k += 2 if BARE_REDIR.match(t) else 1                 # the operator alone: its target is the next word
+            continue
+        if t == "--" or (t == "-" and not py):                   # the end of the options (a shell's `-` too); python's `-` is its standard input
+            k += 1
+            break
+        if len(t) < 2 or not (t.startswith("-") or (t.startswith("+") and prog in SHELLS)):
+            break
+        if prog in SOURCES:                                      # source [-p PATH] FILE
+            if t != "-p":
+                return None, False
+            k += 2
+            continue
+        if t.startswith("--"):
+            n = (PY_LONG if py else SHELL_LONG).get(t)
+            if n is None:
+                return None, False
+            k += 1 + n
+            continue
+        step = 1
+        for j, c in enumerate(t[1:], 1):
+            if py and c in "XW":                                 # -X dev, -Xdev, -IX dev
+                step += 0 if t[j + 1:] else 1
+                break
+            if c in ("cm" if py else "cs"):
+                return None, True
+            if not py and c in "oO":                             # -euo pipefail, -oO errexit extglob: each takes the next word
+                if any(x not in "oO" for x in t[j + 1:]):         # -oerrexit: bash takes the next word, another shell may take "errexit"
+                    return None, False
+                step += 1
+                continue
+            if c not in (PY_FLAGS if py else SHELL_FLAGS):
+                return None, False
+        k += step
+    while k < len(rest) and is_redirection(rest[k]):
+        k += 2 if BARE_REDIR.match(rest[k]) else 1
+    if k >= len(rest) or (py and rest[k] == "-"):
+        return None, True
+    return (None, False) if UNREAD_NAME.search(os.path.basename(rest[k])) else (k, True)
+
+
+def script_of(prog, rest):
+    """The index in rest of the lead-only script (SCRIPTS) an interpreter prog runs, or None: the file it runs (interpreted) when that is one; the first
+    word that names one when the guard cannot read the options or the file's name (fail closed); when it runs no file (-c, -m, -s), the first word that
+    is no option, as before (shell_string reads the string of sh -c again)."""
+    if prog not in SHELLS and prog not in SOURCES and not re.match(r"^python[0-9.]*$", prog):
+        return None
+    k, readable = interpreted(prog, rest)
+    if k is None:
+        k = next((j for j, t in enumerate(rest) if (os.path.basename(t) in SCRIPTS if not readable else not t.startswith("-"))), None)
+    return k if k is not None and os.path.basename(rest[k]) in SCRIPTS else None
+
+
 def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
     """The reason a qargi command (or the script behind it, run directly) is a verb that changes a skill, or None. via_xargs: xargs
     stands before the program, so its arguments come from standard input, where --write could be. here: the directory the command runs
     in, and exe: the word that names the program, for the scripts that are only the tool's own (OWN_ONLY)."""
     # a ) with no ( in a word closes a substitution or group whose start the plain split cut off (`printf -v x 'b[%s(true; qargi upgrade)]' $`
     # runs `qargi upgrade` in an arithmetic subscript): the command ends there, so the verb is read without it
-    words = [t.split(")")[0] if ")" in t and "(" not in t else t for t in rest if not t.startswith("-")]
+    cut = [t.split(")")[0] if ")" in t and "(" not in t else t for t in rest]
+    words = [t for t in cut if not t.startswith("-")]
     name, script = prog, exe or prog
-    if prog not in SCRIPTS:
-        if (prog in SHELLS or re.match(r"^python[0-9.]*$", prog)) and words and os.path.basename(words[0]) in SCRIPTS:
-            name, script, words = os.path.basename(words[0]), words[0], words[1:]
-        else:
+    if prog not in SCRIPTS:                              # also a script a shell runs, or sources into itself (`. install.sh` runs it as `sh install.sh` does)
+        k = script_of(prog, cut)                         # past the interpreter's options and their values (python3 -X dev, bash -o errexit)
+        if k is None:
             return None
+        name, script, words = os.path.basename(cut[k]), cut[k], [t for t in cut[k + 1:] if not t.startswith("-")]
     if name in OWN_ONLY and not own_script(script, here):
         return None
     if name == "campaign.py" or (name in ("qargi", "jsonplan.py") and words[:1] == ["campaign"]):
         args = rest
         if prog not in SCRIPTS:
-            args = rest[rest.index(script) + 1:]
+            args = rest[k + 1:]
         if name != "campaign.py":
             args = args[1:]
         if not via_xargs and pure_campaign_args(args):
@@ -2989,6 +3080,13 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         return OwnReason("campaign state requires a lead context; only literal campaign check --spec FILE [--json] is available to a member")
     if name == "linker.py":                              # the engine behind packs link and unlink: any use of it is the verb
         words = ["packs", "link"]
+    if name == "install.sh":                             # the tool's installer: it writes and removes the user's skills, agents and install records, outside every path the guard reads
+        return OwnReason("install.sh of the tool installs, refreshes and uninstalls qargi (the links in the skills and agents directories and the install records) and is the lead's "
+                         "to run; an install.sh of the clone you work in stays yours, and a change to the tool's install you report in your task output")
+    if name == "install_record.py":                      # the engine behind install.sh: uninstall and apply remove and relink outside every path the guard reads
+        return OwnReason("lib/install_record.py of the tool is the install engine install.sh runs: its uninstall and apply remove and relink the skills, agents and "
+                         "files the install records list, and it is the lead's to run; one of the clone you work in stays yours, and a change to the tool's "
+                         "install you report in your task output")
     if name == "render.py":
         return "lib/render.py is the renderer of member definitions and can run the command a definition names; it is not available to an agent"
     if name == "env.py":                                 # qargi env: show reads; plan and apply are refused below
@@ -3171,10 +3269,12 @@ def protected_write(toks, i, here):
     """The reason a segment writes under a protected location, or None (the heuristic the docstring describes). i is past the last word when the segment
     is redirections alone."""
     prog, rest = (os.path.basename(toks[i]), toks[i + 1:]) if i < len(toks) else ("", [])
-    args = operands(rest, any(os.path.basename(t) == "xargs" for t in toks[:i]))
+    xargs = any(os.path.basename(t) == "xargs" for t in toks[:i])
+    args = operands(rest, xargs)
     cands = list(write_targets(toks, i))
-    if prog in SCRIPTS or (prog in SHELLS or re.match(r"^python[0-9.]*$", prog)) and args and os.path.basename(args[0]) in SCRIPTS:
-        words = args if prog in SCRIPTS else args[1:]
+    k = None if prog in SCRIPTS else script_of(prog, rest)       # a script an interpreter runs, past its options (bash -o errexit lib/packs.sh packs render)
+    if prog in SCRIPTS or k is not None:
+        words = args if prog in SCRIPTS else operands(rest[k + 1:], xargs)
         if words[:2] == ["packs", "render"]:                 # render writes its output directory: judge every operand
             cands += [("qargi packs render", c) for t in words[2:] for c in {t, t.split("=", 1)[-1]}]
     if prog == "find" and any(t in FIND_ACTIONS for t in rest):
