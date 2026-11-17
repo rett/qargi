@@ -9,6 +9,7 @@ from unittest.mock import patch
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "lib"))
 import lead_usage  # noqa: E402
+import provider as P  # noqa: E402
 BIN = os.path.join(ROOT, "bin", "qargi")
 LEADPY = os.path.join(ROOT, "lib", "lead_usage.py")
 GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.net", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.net"}
@@ -169,8 +170,56 @@ class Usage(Base):
         self.assertEqual((d["window"], d["window_source"], d["percent"], d["model"]), (1000000, "model", 19.7, "claude-opus-5-5"))
         self.assertIs(d["window_exceeded"], False)
         self.assertIn("context: 197,001 of 1,000,000 tokens in use (19.7%)\n", self.run_cli("lead", "usage")[1])
-        self.transcript("s1", [turn(1, 197000, 0, model="claude-opus-5-5-x")])                         # the entry is the whole id, not a prefix
+        self.transcript("s1", [turn(1, 197000, 0, model="claude-opus-5-6")])                           # a sibling the table does not name: only assumed
         self.assertEqual(json.loads(self.run_cli("lead", "usage", "--json")[1])["window_source"], "assumed")
+
+    def shipped_window(self, model):
+        """(tokens, source) of a model id by the table the runtime ships (lib/providers/claude-code.json), read through the provider module."""
+        tr = P.transcripts("claude-code", self.repo, root=os.path.join(ROOT, "lib", "providers"), home=self.home, conf=self.conf)
+        return P.transcript_window(tr, model)
+
+    def test_the_shipped_table_knows_the_claude_models_by_family_and_generation(self):
+        one, two = (1000000, "model"), (200000, "model")
+        for model in ("claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8", "claude-opus-5", "claude-opus-5-5", "claude-sonnet-4-6", "claude-sonnet-5",
+                      "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5", "claude-fable-5-1", "claude-fable-5-2", "claude-mythos-5", "claude-mythos-5-1",
+                      "claude-mythos-5-2", "claude-opus-4-6-20260101", "claude-fable-5-2-20260101", "claude-opus-5-20260101", "claude-opus-4-6[1m]",
+                      "claude-opus-4-5[1m]", "claude-opus-4-5-1m"):
+            self.assertEqual(self.shipped_window(model), one, model)
+        for model in ("claude-opus-4-5", "claude-opus-4-1", "claude-opus-4", "claude-sonnet-4-5", "claude-sonnet-4", "claude-haiku-4-5",
+                      "claude-opus-4-5-20251101", "claude-haiku-4-5-20251001", "claude-opus-4-1-20250805", "claude-opus-4-20250514",
+                      "claude-sonnet-4-20250514", "claude-sonnet-4-5-20250929"):
+            self.assertEqual(self.shipped_window(model), two, model)
+        # a generation the data does not name, a family of no entry, and an id of another runtime: only the assumed window
+        for model in ("claude-opus-9", "claude-opus-6", "claude-sonnet-6", "claude-haiku-6", "claude-fable-6", "claude-opus-4-9", "claude-opus-5-6",
+                      "claude-opus-50", "claude-opus-4-10", "claude-opus-4-100", "claude-haiku-5", "claude-haiku-4", "claude-sonnet-4-9", "claude-mythos-6",
+                      "claude-opus", "claude-plain-9", "gpt-5", "model-a", "", "claude-opus-4-9[1m]x"):
+            self.assertEqual(self.shipped_window(model), (200000, "assumed"), model)
+
+    def test_no_entry_of_the_shipped_table_takes_an_id_of_another_generation(self):
+        tr = P.transcripts("claude-code", self.repo, root=os.path.join(ROOT, "lib", "providers"), home=self.home, conf=self.conf)
+        patterns = [pat for pat, _ in tr["windows"]]
+        self.assertEqual(patterns[:2], ["*[1m]", "*-1m"])                                              # the suffixes come first and win
+        self.assertLessEqual(len(patterns), P.WINDOWS_MAX)
+        self.assertEqual(len(patterns), len(set(patterns)))
+        # past the two suffix entries the entries do not overlap: an id is taken by one of them, so their order does not matter
+        for model in ("claude-opus-4", "claude-opus-4-1", "claude-opus-4-5", "claude-opus-4-6", "claude-opus-4-6-20260101", "claude-opus-4-20250514",
+                      "claude-opus-4-1-20250805", "claude-opus-4-5-20251101", "claude-sonnet-4", "claude-sonnet-4-5", "claude-sonnet-4-6", "claude-sonnet-4-20250514",
+                      "claude-opus-5", "claude-opus-5-5", "claude-fable-5", "claude-fable-5-1", "claude-fable-5-2", "claude-mythos-5-2", "claude-haiku-4-5", "claude-haiku-5-5"):
+            self.assertEqual(sum(1 for pat in patterns[2:] if P._glob(pat, model)), 1, model)
+        self.assertEqual(self.shipped_window("claude-opus-4"), (200000, "model"))                      # claude-opus-4 is no prefix of claude-opus-4-6, nor the reverse
+        self.assertEqual(self.shipped_window("claude-opus-4-6"), (1000000, "model"))
+        self.assertEqual(self.shipped_window("claude-sonnet-4"), (200000, "model"))
+        self.assertEqual(self.shipped_window("claude-sonnet-4-6"), (1000000, "model"))
+
+    def test_the_lead_usage_of_a_claude_model_uses_the_window_of_its_family(self):
+        self.assume()
+        for model, window in (("claude-opus-4-5", 200000), ("claude-opus-4-6", 1000000), ("claude-fable-5-2", 1000000), ("claude-sonnet-4-5-20250929", 200000)):
+            self.transcript("s1", [turn(1, 99999, 0, model=model)])
+            d = json.loads(self.run_cli("lead", "usage", "--json")[1])
+            self.assertEqual((d["window"], d["window_source"], d["percent"]), (window, "model", 100000 * 100 / window), model)
+        self.transcript("s1", [turn(1, 99999, 0, model="claude-opus-9")])
+        d = json.loads(self.run_cli("lead", "usage", "--json")[1])
+        self.assertEqual((d["window"], d["window_source"], d["percent"]), (200000, "assumed", None))
 
     def test_an_unknown_model_gets_the_runtimes_window_marked_assumed_and_no_percentage(self):
         self.assume()

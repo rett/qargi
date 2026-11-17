@@ -273,7 +273,10 @@ class WindowSource(Base):
         rc, out, _ = self.doctor("app")
         st, text = self.lines(out)["window-source"]
         self.assertEqual(st, "ok", out)
-        self.assertIn("table of claude-code (shipped, lib/providers/claude-code.json): 3 entries, 200,000 assumed otherwise", text)
+        with open(os.path.join(ROOT, "lib", "providers", "claude-code.json")) as f:
+            n = len(json.load(f)["resources"]["transcripts"]["windows"])                                 # the shipped table, not a copy of it
+        self.assertIn("table of claude-code (shipped, lib/providers/claude-code.json): %d entries, 200,000 assumed otherwise" % n, text)
+        self.assertIn("the runtime may cap it lower on some plans; the answer lead.context_window overrides it", text)
         self.assertIn("2 model ids checked", text)
 
     def test_an_id_that_is_not_in_the_table_warns(self):
@@ -282,6 +285,7 @@ class WindowSource(Base):
         st, text = self.lines(out)["window-source"]
         self.assertEqual((rc, st), (0, "warn"), out)
         self.assertIn("not in the table: plain-model", text)
+        self.assertIn("the runtime may cap it lower on some plans; the answer lead.context_window overrides it", text)
         self.assertNotIn("model-a-1m (", text)
         self.assertEqual(self.doctor("app", "--strict")[0], 1)
 
@@ -298,6 +302,9 @@ class WindowSource(Base):
         self.assertEqual(st, "ok", text)
         self.assertIn("no role names a model id", text)
         self.assertIn("the lead's own model claude-opus-5-5 is in the table", text)
+        self.lead_session("claude-opus-4-5-20251101")                                                  # a known 200,000 window is in the table too
+        text = self.lines(self.doctor("app")[1])["window-source"][1]
+        self.assertIn("the lead's own model claude-opus-4-5-20251101 is in the table", text)
 
     def test_the_leads_model_that_is_not_in_the_table_warns(self):
         self.project(roles={"build": {"model": "model-a-1m"}})
