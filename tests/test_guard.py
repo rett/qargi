@@ -4627,6 +4627,31 @@ class InterpreterOptionValues(HookCase):
         self.own_files()
         self.allowed((". -p %s install.sh --user" % self.clone, "source -p . install.sh", ". -p /x: install.sh", ". -p %s/proj install.sh" % self.t))
 
+    def test_a_quoted_value_that_reads_as_a_redirection_fails_closed(self):
+        """python3 -X '<x' FILE: the words carry no quotes, so a value that begins with < or > reads as a redirection, and the word after it, the script,
+        as the value. Such a value is not readable: any lead-only script the command names is judged as the script, and source -p looks a bare name up in
+        both words. The clone's own files stay allowed."""
+        root, lib = self.ROOT, self.LIB
+        for v in ("'<x'", "'< '", "'>x'", "'> '"):
+            for c, why in (("python3 -X %s %s/install_record.py uninstall" % (v, lib), InstallRecordScript.WHY),
+                           ("python3 -W %s %s/install_record.py uninstall" % (v, lib), InstallRecordScript.WHY),
+                           ("python -W %s %s/render.py render s d" % (v, lib), self.RENDER),
+                           ("bash -o %s %s/install.sh --user --uninstall" % (v, root), InstallScript.WHY),
+                           ("sh -O %s lib/upgrade.sh --tag v1" % v, self.UPGRADE),
+                           ("bash --rcfile %s lib/packs.sh packs link p" % v, InterpreterOptions.LINK),
+                           ("bash -c -o %s 'qargi upgrade'" % v, self.UPGRADE),
+                           (". -p %s %s/install.sh" % (v, root), InstallScript.WHY),
+                           ("source -p %s lib/upgrade.sh --tag v1" % v, self.UPGRADE),
+                           (". -p %s %s install.sh" % (v, root), InstallScript.WHY)):
+                with self.subTest(c=c):
+                    self.refused(c, why)
+        self.refused(". -p '<x:%s' install.sh --user" % root, InstallScript.WHY)
+        self.refused("source -p '>x' 2>/dev/null %s install.sh" % root, InstallScript.WHY)
+        self.own_files()
+        self.allowed(("python3 -X '<x' lib/install_record.py uninstall", "python3 -W '>x' tests/test_env.py", "bash -o '>x' install.sh --user",
+                      ". -p '<x' ./install.sh", "bash -c -o '<x' 'git status'", "python3 -X 2>/dev/null dev lib/install_record.py uninstall",
+                      ". -p 2>/dev/null /x ./install.sh"))
+
 
 class WrapperOptions(HookCase):
     """The program after a wrapper and the string of sh -c are found past the options: the -c string is the first word past a shell's options, not the
@@ -4847,6 +4872,21 @@ class WrapperOptions(HookCase):
         self.own_install()
         self.allowed(("python3 -X>/dev/null dev tests/test_env.py", "sudo -u>/dev/null root ls", "env -u>/dev/null X git status", "bash -c>/dev/null 'git status'",
                       "sudo -u>/dev/null root bash install.sh --user"))
+
+    def test_a_quoted_value_that_reads_as_a_redirection(self):
+        """sudo -p '< ' PROGRAM: the words carry no quotes, so a value that begins with < or > reads as a redirection and the word after it, the program,
+        as the value; the reading where that word is the value is judged too."""
+        lib = LibraryScripts.LIB
+        for v in ("'< '", "'<x'", "'> '", "'>x'"):
+            for form in ("sudo -p %s @@", "env -u %s @@", "exec -a %s @@", "time -f %s @@", "xargs -I %s @@", "timeout -s %s 5 @@", "sudo -u %s -g %s @@"):
+                self.verbs(form.replace("%s", v))
+            self.refused("sudo -p %s python3 %s/install_record.py uninstall" % (v, lib), InstallRecordScript.WHY)
+            self.refused("env -u %s python3 %s/install_record.py uninstall" % (v, lib), InstallRecordScript.WHY)
+            self.pushes(("exec -a %s git push" % v, "sudo -p %s git push" % v, "timeout -s %s 5 git push" % v))
+        self.own_install()
+        self.allowed(("sudo -p '< ' ls", "env -u '<x' git status", "exec -a '>x' git status", "time -f '<%e' make", "xargs -I '<f' echo '<f'",
+                      "timeout -s '>x' 5 git status", "sudo -p '> ' bash install.sh --user", "sudo -u 2>/dev/null root ls",
+                      "timeout -k 2>/dev/null 1 5 git status"))
 
     def test_the_other_reading_of_a_wrapper_option_keeps_each_word(self):
         """The reading without an unknown option and its value keeps the words whole: the text of a here-string is still one word."""

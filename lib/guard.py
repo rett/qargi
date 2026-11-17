@@ -326,9 +326,10 @@ ROOT_SCRIPTS = ("install.sh",)                                       # of those,
 # (`ln -s .../linker.py x && python3 x`), and an import can be spelled in too many ways (importlib, __import__, string joins) to read from
 # the command text; a half check would suggest a guarantee the guard does not give. An interpreter's options are read as bash's and python's
 # (read_options, for a file, a -c string and a program on the standard input alike): the value of -X, -W, -o, -O, --rcfile and source -p (-pDIR too)
-# is skipped (a redirection between an option and its value is no value), bash's long names are read with one dash too while no short option came
+# is skipped, bash's long names are read with one dash too while no short option came
 # before them (-rcfile F, -norc; under sh, which may be another shell, such a word is not readable), a slash-less name after source -p DIR is looked
-# up in DIR, and an option it does not know, a value the shell builds ($(..), ${..}, a backtick: unquoted it may be cut into more words or none) or an
+# up in DIR, and an option it does not know, a value the shell builds ($(..), ${..}, a backtick: unquoted it may be cut into more words or none), a
+# value that reads as a redirection (a redirection between the option and its value, or a quoted value such as '<x': the words carry no quotes) or an
 # option with a redirection stuck to it (-X>/dev/null) makes any word naming a script the script; an option of another shell that takes a value
 # where bash has a flag of that letter is still read as the flag. The options of the wrappers in front (sudo, env, timeout ...) are read from WRAP_OPTS.
 # Still not seen, after those readings:
@@ -725,13 +726,16 @@ def assignment(t):
 
 
 def skip_wrappers(toks):
-    """(the index of the program, the indices of the wrapper options the guard cannot read): past assignments (VAR=x), wrappers (sudo, env, time ...),
-    their options and the values those take (WRAP_OPTS; a value is the next word that is no redirection), timeout's duration, the keywords a command can
-    follow (then, do, !) and redirections written before the program (> f, 2>&1). An option of a wrapper that WRAP_OPTS does not name is read as taking no
-    value and its index is returned, so that the other reading is judged too (wrapper_readings). Only a word that is no assignment names a wrapper, and a
+    """(the index of the program, the indices of the wrapper options the guard cannot read, the indices of the options whose value may be a word that reads
+    as a redirection): past assignments (VAR=x), wrappers (sudo, env, time ...), their options and the values those take (WRAP_OPTS; a value is the next
+    word that is no redirection), timeout's duration, the keywords a command can follow (then, do, !) and redirections written before the program (> f,
+    2>&1). An option of a wrapper that WRAP_OPTS does not name is read as taking no value and its index is returned, so that the other reading is judged
+    too (wrapper_readings). An option that takes a value and is followed by a word that reads as a redirection (sudo -p '< ', env -u '<x': the words carry
+    no quotes, so a quoted value looks like one) is read with the value past it, and its index is returned, so that the reading where that word is the
+    value is judged too (wrapper_readings). Only a word that is no assignment names a wrapper, and a
     `--` after timeout's options leaves its duration still to come. toks is changed in one way: env -S STRING (-iS, --split-string, --s, -S>FILE STRING) is
     replaced by the words of STRING, which env reads as more of its own words."""
-    i, w, unread, duration, opts = 0, None, [], False, True
+    i, w, unread, valued, duration, opts = 0, None, [], [], False, True
     while i < len(toks):
         t = toks[i]
         if w and opts and t.startswith("-") and len(t) > 1:
@@ -752,6 +756,8 @@ def skip_wrappers(toks):
             n = wrapper_option(w, t)
             if n is None:
                 unread.append(i)
+            elif n and i + 1 < len(toks) and is_redirection(toks[i + 1]):
+                valued.append(i)                                 # -p '< ': a quoted value that reads as a redirection; the other reading is judged too
             if t == "--" and w == "timeout" and not duration:
                 opts = False                                     # timeout -- 5s PROGRAM: the duration still comes first
             elif t == "--":
@@ -767,7 +773,7 @@ def skip_wrappers(toks):
             i += 1
         else:
             break
-    return i, unread
+    return i, unread, valued
 
 
 GLUED_SHELL = re.compile(r"^([^<>]+)([<>].*)$", re.S)     # a program word with a redirection glued to it
@@ -776,36 +782,43 @@ GLUED_SHELL = re.compile(r"^([^<>]+)([<>].*)$", re.S)     # a program word with 
 def parsed(seg):
     """(the words of a segment without what the grammar puts around a command, the index of its program): _cmd_tokens and skip_wrappers, once per text (every check
     asks). The list is shared: not to be changed."""
-    toks, i, _ = _parsed(seg)
+    toks, i, _, _ = _parsed(seg)
     return toks, i
 
 
 @functools.cache
 def _parsed(seg):
-    """parsed() with the indices of the wrapper options the guard cannot read (skip_wrappers), once per text."""
+    """parsed() with the indices of the wrapper options the guard cannot read and of those whose value may be a word that reads as a redirection
+    (skip_wrappers), once per text."""
     toks = list(_cmd_tokens(seg))
-    i, unread = skip_wrappers(toks)
+    i, unread, valued = skip_wrappers(toks)
     m = GLUED_SHELL.match(toks[i]) if i < len(toks) else None
     if m and (os.path.basename(m.group(1)) in SHELLS or m.group(1) in SOURCES):
         toks[i:i + 1] = [m.group(1), m.group(2)]               # bash<<<TEXT, sh<FILE: the redirection glued to the program is a word of its own for the shell
-    return toks, i, tuple(unread)
+    return toks, i, tuple(unread), tuple(valued)
 
 
 def wrapper_readings(seg):
     """The other command a segment may run when a wrapper's option the guard cannot read (skip_wrappers) takes the next word as its value: the words with
     the first such option and the next word that is no redirection taken out, or nothing. An option word with a redirection glued to it (sudo -u>/dev/null
     root) is the option and the redirection, as the shell cuts it when the < or > is not quoted: the other reading is the word cut there. The words are
-    joined as a shell reads them back (rejoin), so that a word with a blank (the text of a here-string) stays one word. That command is judged as a segment
-    of its own, so each further such option is read both ways too."""
-    toks, _, unread = _parsed(seg)
-    if not unread:
-        return []
-    u = unread[0]
-    m = GLUED_SHELL.match(toks[u])
-    if m:
-        return [rejoin(toks[:u] + [m.group(1), m.group(2)] + toks[u + 1:])]
-    v = past_redirections(toks, u + 1)
-    return [rejoin(toks[:u] + toks[u + 1:v] + toks[v + 1:])]
+    joined as a shell reads them back (rejoin), so that a word with a blank (the text of a here-string) stays one word. An option that takes a value and is
+    followed by a word that reads as a redirection (sudo -p '< ', exec -a '>x') may have that word, quoted, as its value: the other reading is the words
+    with the option and that word taken out. That command is judged as a segment of its own, so each further such option is read both ways too."""
+    toks, _, unread, valued = _parsed(seg)
+    out = []
+    if unread:
+        u = unread[0]
+        m = GLUED_SHELL.match(toks[u])
+        if m:
+            out.append(rejoin(toks[:u] + [m.group(1), m.group(2)] + toks[u + 1:]))
+        else:
+            v = past_redirections(toks, u + 1)
+            out.append(rejoin(toks[:u] + toks[u + 1:v] + toks[v + 1:]))
+    if valued:
+        u = valued[0]
+        out.append(rejoin(toks[:u] + toks[u + 2:]))
+    return out
 
 
 def rejoin(words):
@@ -2807,7 +2820,7 @@ def bash_skill_refusal(command, here, depth, outer=None):
             for alt in wrapper_readings(seg):                    # a wrapper's option the guard cannot read may take the next word: that reading is judged too
                 if depth >= 3:
                     return ("the wrapper option %s, which the guard cannot read (it may take the next word as its value, which changes what the program is), "
-                            "inside shells nested more than three deep is not available to an agent; write the command in parts" % toks[_parsed(seg)[2][0]])
+                            "inside shells nested more than three deep is not available to an agent; write the command in parts" % toks[sum(_parsed(seg)[2:], ())[0]])
                 why = bash_skill_refusal(alt, [at], depth + 1, assigned)
                 if why:
                     return why
@@ -3200,7 +3213,8 @@ def is_redirection(t):
 
 def past_redirections(rest, k):
     """The index of the first word at or after k that is no redirection (a redirection with its file is skipped): the shell takes redirections out of the
-    words before the program sees them, so one written between an option and its value (bash -o 2>/dev/null errexit) does not take the value's place."""
+    words before the program sees them, so one written between a wrapper's option and its value (sudo -u 2>/dev/null root) does not take the value's place
+    (the reading where a quoted value that looks like a redirection is the value is judged too: skip_wrappers)."""
     while k < len(rest) and is_redirection(rest[k]):
         k += 2 if BARE_REDIR.match(rest[k]) else 1
     return k
@@ -3210,14 +3224,16 @@ def read_options(prog, rest):
     """The options of an interpreter (a shell, . or source, python) at the start of its words rest: (k, ends, readable, dirs). k is the index of the first word
     past them (the file, or the -c string of a shell), ends the letters that say the program is not a file (python's c or m, a shell's c or s), readable False
     when the guard cannot read an option (one it does not know, one the shell builds, a shell value stuck to its letter, which bash and zsh read apart, a one-dash
-    long name sh may read either way) and dirs the values of source -p. A value is the next word that is no redirection (past_redirections); one the shell builds
-    ($(..), ${..}, a backtick: unquoted it may be cut into several words) is not readable. Bash reads a long name with one dash too (-rcfile F, -norc) while no
-    short option came before it."""
+    long name sh may read either way) and dirs the values of source -p. A value is the next word; one that reads as a redirection is not readable, as the
+    words carry no quotes: it may be a redirection the shell takes out (bash -o 2>/dev/null errexit, the value is the word after it) or a quoted value
+    (python3 -X '<x'), and for source -p both words are kept in dirs. A value the shell builds ($(..), ${..}, a backtick: unquoted it may be cut into
+    several words) is not readable. Bash reads a long name with one dash too (-rcfile F, -norc) while no short option came before it."""
     py = bool(re.match(r"^python[0-9.]*$", prog))
     k, ends, dirs, shorts = 0, "", [], False
 
     def value(k):                                            # (the index past the value of an option whose value starts at k, the value or None)
-        k = past_redirections(rest, k)
+        if k < len(rest) and is_redirection(rest[k]):          # a redirection (-o 2>/dev/null errexit) or a quoted value that reads as one (-X '<x'): not readable
+            return k, None
         return (k + 1, rest[k]) if k < len(rest) else (k, None)
 
     while k < len(rest):
@@ -3236,6 +3252,10 @@ def read_options(prog, rest):
         if prog in SOURCES:                                      # source [-p PATH] FILE, -pPATH
             if not t.startswith("-p"):
                 return k, ends, False, dirs
+            if t == "-p" and k + 1 < len(rest) and is_redirection(rest[k + 1]):    # -p '<x:DIR' NAME or -p 2>/dev/null DIR NAME: both directories (own_named)
+                j = past_redirections(rest, k + 1)
+                dirs += [rest[k + 1]] + rest[j:j + 1]
+                return k + 1, ends, False, dirs
             k, v = value(k + 1) if t == "-p" else (k + 1, t[2:])
             dirs.append(v or "")
             if v is None or BUILT_VALUE.search(v):
