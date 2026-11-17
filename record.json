@@ -4,19 +4,13 @@
  "goal": "Optional lead-managed feature pull requests with exact evidence, governed integration and interrupted-operation reconciliation",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "arc-claude-qargi",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-17T10:24:05Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-17T10:24:05Z",
- "finished_at": null,
+ "finished_at": "2026-11-17T10:24:10Z",
  "updated_by": "arc-claude-qargi",
- "rev": 10,
- "updated_at": "2026-11-17T10:24:05Z",
+ "rev": 11,
+ "updated_at": "2026-11-17T10:24:10Z",
  "feature": "feature-pr-workflow",
  "project": "qargi"
 }
