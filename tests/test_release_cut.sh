@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The ceremony of a release cut: the lock of a finishing verb tells the truth about flock; the bookkeeping file of a merge a finish parked is
 # removed when the release is started again; a hotfix is not refused by a preflight that needs content only the hotfix brings; `release plan`
-# makes one plan and one approval for the whole cut. Offline: a bare repository is the origin, gh is a fake.
+# makes one plan and one approval for the whole cut, bound to the lead that approved it. Offline: a bare repository is the origin, gh is a fake.
 # Run: tests/test_release_cut.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -181,6 +181,54 @@ git -C "$R" update-ref refs/heads/master "$(git -C "$R" commit-tree -p master -m
 out=$($REL finish 0.2.0 --plan "$ct" 2>&1); rc=$?
 [ "$rc" != 0 ] && grep -q "does not cover finish" <<<"$out" && grep -q "master is at" <<<"$out" && ! git -C "$R" rev-parse -q --verify refs/tags/0.2.0 >/dev/null && ok "master moved since the plan: finish under the cut is refused, nothing is tagged" || no "finish after master moved: rc=$rc $out"
 
+# --- the approval of the cut is bound to the lead that recorded it (the marshal's identity: QARGI_LEAD, else user@host). Another lead is refused every
+# step under it, before anything moves, and is told the remedy; a step by its own plan and approval is not bound. Defence in depth only: QARGI_LEAD is
+# not authenticated.
+asa() { QARGI_LEAD=lead-a $REL "$@"; }
+asb() { QARGI_LEAD=lead-b $REL "$@"; }
+# snap: the local refs, the work trees, the refs of origin, the cut records and the audit log, as one hash
+snap() { { git -C "$R" for-each-ref; git -C "$R" worktree list --porcelain; git -C "$R" status --porcelain; [ -z "${O:-}" ] || git -C "$O" for-each-ref; cat "$T/s/release/"*.cut.json "$T/s/audit.log" 2>/dev/null; } | md5sum; }
+other="was approved under another lead: nothing was changed. That lead runs"
+remedy="or this lead asks the owner to approve the step with its own plan"
+mk cutlead with-origin
+out=$(asa plan 0.2.0 --date 2026-03-04 2>&1); ct=$(tok <<<"$out"); asa plan 0.2.0 --date 2026-03-04 --plan "$ct" --approved "ship it" >/dev/null 2>&1
+[ "$(jq -r '.lead.id' "$T/s/release/cutlead-0.2.0.cut.json")" = lead-a ] && ok "approving the cut records the lead that approved it" || no "no lead in the cut record: $(cat "$T/s/release/cutlead-0.2.0.cut.json" 2>&1)"
+before=$(snap); out=$(asb start 0.2.0 --plan "$ct" 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "the cut of 0.2.0 $other start under the cut, $remedy (qargi release start 0.2.0, then --plan and --approved)" <<<"$out" && ! grep -q "$ct" <<<"$out" && [ "$before" = "$(snap)" ] \
+  && ok "another lead (QARGI_LEAD) is refused start under the cut: the message names the remedy and not the token; no ref, record or audit line changed" || no "start by another lead: rc=$rc $out"
+before=$(snap); out=$($REL start 0.2.0 --plan "$ct" 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "the cut of 0.2.0 $other start" <<<"$out" && [ "$before" = "$(snap)" ] && ok "no QARGI_LEAD (the anonymous identity) is another lead too: refused, nothing changed" || no "start, anonymous: rc=$rc $out"
+before=$(snap); out=$(QARGI_LEAD='not an id' $REL start 0.2.0 --plan "$ct" 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "the lead identity cannot be determined (.*not valid.*), so start of 0.2.0 cannot run under the cut: nothing was changed" <<<"$out" && grep -q "$remedy" <<<"$out" && [ "$before" = "$(snap)" ] \
+  && ok "an identity that cannot be determined is refused, nothing changed" || no "start with an invalid identity: rc=$rc $out"
+out=$(asa start 0.2.0 --plan "$ct" 2>&1); rc=$?
+[ "$rc" = 0 ] && git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && ok "the lead that approved the cut runs start under it" || no "start by the approving lead: rc=$rc $out"
+before=$(snap); out=$(asb push 0.2.0 --plan "$ct" 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "the cut of 0.2.0 $other push under the cut, $remedy (qargi release push 0.2.0, then --plan and --approved)" <<<"$out" && ! grep -q "$ct" <<<"$out" && [ "$before" = "$(snap)" ] \
+  && [ -z "$(git -C "$R" ls-remote origin refs/heads/release/0.2.0)" ] && ok "another lead is refused push under the cut: nothing pushed, no ref, record or audit line changed" || no "push by another lead: rc=$rc $out"
+out=$(asa push 0.2.0 --plan "$ct" 2>&1); rc=$?
+[ "$rc" = 0 ] && [ -n "$(git -C "$R" ls-remote origin refs/heads/release/0.2.0)" ] && ok "the lead that approved the cut runs push under it" || no "push by the approving lead: rc=$rc $out"
+before=$(snap); out=$(asb finish 0.2.0 --plan "$ct" 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "the cut of 0.2.0 $other finish under the cut, $remedy (qargi release finish 0.2.0, then --plan and --approved)" <<<"$out" && ! grep -q "$ct" <<<"$out" && [ "$before" = "$(snap)" ] \
+  && ! git -C "$R" rev-parse -q --verify refs/tags/0.2.0 >/dev/null && ok "another lead is refused finish under the cut: nothing merged, tagged or pushed, no record or audit line changed" || no "finish by another lead: rc=$rc $out"
+out=$(asa finish 0.2.0 --plan "$ct" 2>&1); rc=$?
+[ "$rc" = 0 ] && git -C "$R" rev-parse -q --verify refs/tags/0.2.0 >/dev/null && [ -n "$(git -C "$R" ls-remote origin refs/tags/0.2.0)" ] && grep '"verb":"release:finish"' "$T/s/audit.log" | tail -1 | grep -q '"approved":"ship it"' \
+  && ok "the lead that approved the cut runs finish under it as before" || no "finish by the approving lead: rc=$rc $out"
+# a step by its own plan and approval is not bound to the lead of the cut
+mk cutown with-origin
+out=$(asa plan 0.2.0 --date 2026-03-04 2>&1); ct=$(tok <<<"$out"); asa plan 0.2.0 --date 2026-03-04 --plan "$ct" --approved "ship it" >/dev/null 2>&1; asa start 0.2.0 --plan "$ct" >/dev/null 2>&1
+t=$(asb push 0.2.0 | tok); out=$(asb push 0.2.0 --plan "$t" --approved "b pushes" 2>&1); rc=$?
+[ "$rc" = 0 ] && [ -n "$(git -C "$R" ls-remote origin refs/heads/release/0.2.0)" ] && [ "$(jq -r '.done.push.via' "$T/s/release/cutown-0.2.0.cut.json")" = own ] && ok "another lead runs push by its own plan and approval" || no "own push by another lead: rc=$rc $out"
+t=$(asb finish 0.2.0 | tok); out=$(asb finish 0.2.0 --plan "$t" --approved "b finishes" 2>&1); rc=$?
+[ "$rc" = 0 ] && git -C "$R" rev-parse -q --verify refs/tags/0.2.0 >/dev/null && [ "$(jq -r '.done.finish.via' "$T/s/release/cutown-0.2.0.cut.json")" = own ] && ok "another lead runs finish by its own plan and approval" || no "own finish by another lead: rc=$rc $out"
+# a cut record that names no lead (written before the binding) is refused: the cut must be approved again
+mk cutold with-origin
+out=$(asa plan 0.2.0 --date 2026-03-04 2>&1); ct=$(tok <<<"$out"); asa plan 0.2.0 --date 2026-03-04 --plan "$ct" --approved "ship it" >/dev/null 2>&1
+jq 'del(.lead)' "$T/s/release/cutold-0.2.0.cut.json" > "$T/x.json" && mv "$T/x.json" "$T/s/release/cutold-0.2.0.cut.json"
+before=$(snap); out=$(asa start 0.2.0 --plan "$ct" 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "the cut record of 0.2.0 names no lead (it was approved before a cut was bound to the lead that approved it): nothing was changed. The cut must be approved again (qargi release plan 0.2.0 --again, then --plan and --approved)" <<<"$out" \
+  && [ "$before" = "$(snap)" ] && ! git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && ok "a cut record that names no lead is refused, nothing changed" || no "start under a cut with no lead: rc=$rc $out"
+
 # --- release.finish_check: run by finish in a copy of the branch once the plan is approved, before anything is merged, tagged or pushed; the plans list it
 printf '#!/usr/bin/env bash\necho "$PWD $1 ${QARGI_RELEASE_VERSION:-} $(cat VERSION)" >> "%s/fc.log"\nif [ -f "%s/fc.fail" ]; then echo "finish check boom"; exit 5; fi\n' "$T" "$T" > "$T/fc.sh"
 mk fcheck with-origin
@@ -234,6 +282,9 @@ out=$($REL finish 0.6.0 --plan "$st" 2>&1); rc=$?
 S0=$(git -C "$R" rev-parse gh-pages)
 out=$($REL publish 0.6.0 --plan "$st" 2>&1); rc=$?
 [ "$rc" = 1 ] && grep -q "does not cover publish: run publish with its own plan" <<<"$out" && ok "publish with the token of a cut that has a site step is refused too" || no "site cut publish: rc=$rc $out"
+O=''; before=$(snap); out=$(asb site 0.6.0 --plan "$st" 2>&1); rc=$?   # the cut was approved by the anonymous identity: lead-b is another lead
+[ "$rc" = 1 ] && grep -q "the cut of 0.6.0 $other site under the cut, $remedy (qargi release site 0.6.0, then --plan and --approved)" <<<"$out" && ! grep -q "$st" <<<"$out" && [ "$before" = "$(snap)" ] \
+  && [ "$(git -C "$R" rev-parse gh-pages)" = "$S0" ] && ok "another lead is refused site under the cut: the site branch did not move, no record or audit line changed" || no "site by another lead: rc=$rc $out"
 out=$(cd "$T/memberrun" && $REL site 0.6.0 --plan "$st" 2>&1); rc=$?
 [ "$rc" = 2 ] && [ "$(git -C "$R" rev-parse gh-pages)" = "$S0" ] && ok "site under the cut is refused in a member run: the site branch did not move" || no "site under the cut in a member run: rc=$rc $out"
 out=$($REL site 0.6.0 --plan "$st" 2>&1); rc=$?

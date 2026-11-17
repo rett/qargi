@@ -162,6 +162,12 @@ refusal changes nothing.
    records that and goes on from the new state. `finish` is still the push and tag gate: the approval words are the owner's, and
    `--ignore-checks "<words>"` at the call is recorded as before. `release plan VERSION` again, and `release status`, show which
    steps ran; `--again` discards the record. The single verbs and their own tokens work as before.
+   The approval is bound to the lead that recorded it: the record keeps that lead's identity as the marshal resolves it
+   (`QARGI_LEAD`, else `user@host`), and every step under the cut, including a cut-off `finish` that resumes, is refused before
+   anything moves when run by another lead, when the identity cannot be determined, or when the record names no lead (a cut
+   approved before this binding: approve it again). That lead runs the step, or the other lead asks the owner to approve the step
+   with its own plan, which is not bound. This is defence in depth only: `QARGI_LEAD` is not authenticated, so it stops a confused
+   or handed-over lead, not a hostile one; a project with no seat keeps that gap until the seat work of 0.3.4 fences it.
 
 Merging into develop or master, starting a release, pushing and tagging each print a plan and a token first; apply it
 with `--plan TOKEN --approved "<your words>"`. A merge that conflicts changes nothing and exits 3,
