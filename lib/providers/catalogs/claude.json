@@ -3,7 +3,7 @@
   "kind": "catalog",
   "family": "claude",
   "description": "The Claude models: one table of tiers and effort levels, shared by every Claude runtime (claude-code, claude-platform)",
-  "version": "2026-11-02",
+  "version": "2026-11-17",
   "pattern": "^claude-[a-z0-9.-]+$",
   "tiers": {
     "fast": {
@@ -25,10 +25,10 @@
       "source": "carried from the earlier table; verify against the vendor model list"
     },
     "frontier": {
-      "model": "claude-fable-5-1",
+      "model": "claude-fable-5-2",
       "alias": "fable",
       "verified_on": null,
-      "source": "carried from the earlier table; verify against the vendor model list"
+      "source": "set on 2026-11-17 in place of claude-fable-5-1, which stays an accepted id; the context-window table of claude-code names this id; not verified: verify against the vendor model list"
     }
   },
   "effort": {

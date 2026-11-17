@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- The model catalog of the family `claude` (`lib/providers/catalogs/claude.json`) maps the `frontier` tier to `claude-fable-5-2` in place of `claude-fable-5-1`; the alias stays `fable`. A project that asks for the frontier tier (the `researcher` profile, a profile of its own with `tier: frontier`, the escalation `qargi agent models` offers) now gets `claude-fable-5-2`: `claude-platform` passes that id to a cloud session, `claude-code` passes the alias `fable` as before, and `qargi agent for --json`, `qargi agent models` and `qargi provider show` name the new id. A project that pinned `claude-fable-5-1` by id keeps it, since stored answers are not changed and the id still matches the catalog's pattern: a member's definition and a cloud session get it as written. That id is no longer the model of a tier (a catalog names one model per tier and none outside a tier), so `qargi agent models` no longer flags a member on it as on the frontier model, and a profile of an in-session runtime that names it has no alias any more: `qargi agent for` prints `-` for the model and warns that the member's definition applies, where it passed `fable` before; give such a profile `tier: frontier` to get the alias back. The window table of `claude-code` already names `claude-fable-5-2` (1,000,000 tokens), and a test now fails when a tier of the catalog names a model the table does not.
+
 ## [0.3.3] - 2026-11-17
 
 ### Added
