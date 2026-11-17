@@ -28,8 +28,8 @@ with control characters removed (marshal_store.clean) and cut at marshal_store.C
 cleaned the same way. The output is capped at CAP_BYTES. The features come in the order of the index near the top (one line each: name, status, lead, whether
 the branch is live, open runs): live work first (a branch on this host or an open run), then active, planned, blocked, and within a group the most
 recently renewed lease; the work trees of a feature are listed under it, the ones of no feature once. When the bound is reached the
-entries that do not fit are left out (the last one that fits may be cut at a line), the fixed closing list is kept, and the last line of
-the note names every feature left out or cut short; --json drops detail until it fits, says "truncated" and lists features_left_out.
+entries that do not fit are left out (the first one that does not fit may be cut at a line), the fixed closing list is kept, and the last line of
+the note names every feature left out or cut short (and says so when the fixed parts alone are over the bound and the sections after the index were cut); --json drops the work trees and agent branches of no feature, then the detail of the last feature and the feature itself, one feature at a time from the last, until it fits, says "truncated" and lists features_left_out.
 
 Exit status: 0 ok, 1 refused or failed (message on stderr), 2 usage.
 Run through lib/marshal.sh; python3 -I, standard library only."""
@@ -722,22 +722,32 @@ def closing_lines(F):
     return ["== do not assume"] + ["- " + s for s in F["do_not_assume"]]
 
 
-def truncation_line(left, cut):
-    """The last line of a cut note: the features left out and the ones cut short, by name (bounded: past NAMES_MAX bytes of names it counts the rest)."""
+TRUNC_HEAD = "[truncated: the note is capped at %d KiB" % (CAP_BYTES // 1024)
+TRUNC_LEFT, TRUNC_CUT, TRUNC_SECTIONS = "; left out: ", "; cut short: ", "; sections after the index were cut too (the fixed parts alone exceed the bound)"
+TRUNC_TAIL = "; ask for each with: qargi marshal handoff NAME]"
+
+
+def more_names(n):
+    return " (and %d more: qargi marshal status --all lists them)" % n
+
+
+def truncation_line(left, cut, sections=False):
+    """The last line of a cut note: the features left out and the ones cut short, by name (bounded: past NAMES_MAX bytes of names it counts
+    the rest), and, when the fixed parts alone are over the bound, that the sections after the index were cut too."""
     def names(ns):
         out, used = [], 0
         for i, n in enumerate(ns):
-            if used + len(n) + 1 > NAMES_MAX:
-                return " ".join(out) + " (and %d more: qargi marshal status --all lists them)" % (len(ns) - i)
+            if used + len(n.encode()) + 1 > NAMES_MAX:
+                return " ".join(out) + more_names(len(ns) - i)
             out.append(n)
-            used += len(n) + 1
+            used += len(n.encode()) + 1
         return " ".join(out)
-    s = "[truncated: the note is capped at %d KiB" % (CAP_BYTES // 1024)
+    s = TRUNC_HEAD
     if left:
-        s += "; left out: " + names(left)
+        s += TRUNC_LEFT + names(left)
     if cut:
-        s += "; cut short: " + names(cut)
-    return s + "; ask for each with: qargi marshal handoff NAME]"
+        s += TRUNC_CUT + names(cut)
+    return s + (TRUNC_SECTIONS if sections else "") + TRUNC_TAIL
 
 
 def size(lines):
@@ -759,56 +769,72 @@ def render_text(F):
     """The note within CAP_BYTES. The fixed parts (where, the index, the sections after the entries, the notes, the closing list) are always
     written; the entries and records of the features come in the order of the index while they fit. The first one that does not fit is cut
     at a line, the ones after it are left out, and the last line of the note names both (names only: the reader asks for each with a
-    per-feature handoff). That line is reserved before any entry is taken, so it always fits."""
+    per-feature handoff). The number of whole entries is the largest one for which the entries and the line that names the rest, made for
+    exactly that rest, fit: the length of the line depends on which names are left (past NAMES_MAX bytes a shorter list of names can print
+    more of them than a longer one), so it is measured and never estimated, and a feature that fits is never dropped for the sake of the line.
+    Only when the fixed parts alone are over the bound are the sections after the index cut, and the line says so."""
     head, mid, rest, tail, closing = head_lines(F), middle_lines(F), rest_lines(F), notes_lines(F), closing_lines(F)
     feats = F["features"]
     names = [f["name"] for f in feats]
     ents, recs = [entry_lines(f) for f in feats], [record_lines(f) for f in feats]
     flat = lambda ls: [x for l in ls for x in l]
 
-    def build(n):
-        return head + flat(ents[:n]) + mid + flat(recs[:n]) + rest + [""] + tail + closing
+    def build(E, R):
+        return head + flat(E) + mid + flat(R) + rest + [""] + tail + closing
 
-    fixed = size(build(0))
-    if fixed + sum(size(e) + size(r) for e, r in zip(ents, recs)) <= CAP_BYTES:
-        return "\n".join(build(len(feats))) + "\n"
-    # not everything fits: reserve the line that says so, then take features in order
-    room = CAP_BYTES - fixed - size(["", truncation_line(names, [max(names, key=len)] if names else [])])
-    got, cut = 0, []
-    for i in range(len(feats)):
-        if size(ents[i]) + size(recs[i]) <= room:
-            room -= size(ents[i]) + size(recs[i])
-            got = i + 1
-            continue
-        e = take(ents[i], max(room, 0))
-        if e:
-            r = take(recs[i], room - size(e)) if len(e) == len(ents[i]) else []
-            ents[i], recs[i], cut, got = e, r, [names[i]], i + 1
-        break
-    lines, line_ = build(got), truncation_line(names[got:], cut)
-    if size(lines) + size(["", line_]) > CAP_BYTES:
+    def done(lines, line_):
+        return "\n".join(lines + ["", line_]) + "\n"
+
+    fixed = size(build([], []))
+    cum = [0]
+    for e, r in zip(ents, recs):
+        cum.append(cum[-1] + size(e) + size(r))
+    if fixed + cum[-1] <= CAP_BYTES:
+        return "\n".join(build(ents, recs)) + "\n"
+    # not everything fits: the most whole entries that fit with the line that names the rest
+    top = max(i for i in range(len(feats)) if fixed + cum[i] <= CAP_BYTES) if fixed <= CAP_BYTES else -1
+    for n in range(top, -1, -1):
+        if fixed + cum[n] + size(["", truncation_line(names[n:], [])]) <= CAP_BYTES:
+            break
+    else:
         # the fixed parts alone are over the bound: cut them in front of the closing list, and say every feature was left out
-        line_ = truncation_line(names, [])
-        lines = take(head + mid + rest + [""] + tail, CAP_BYTES - size(closing) - size(["", line_])) + closing
-    return "\n".join(lines + ["", line_]) + "\n"
+        line_ = truncation_line(names, [], sections=True)
+        keep = head + mid + rest + [""] + tail
+        lines = take(keep, CAP_BYTES - size(closing) - size(["", line_]))
+        if len(lines) == len(keep):         # nothing was cut but the entries: the line need not say more
+            line_ = truncation_line(names, [])
+        return done(lines + closing, line_)
+    # the next entry is cut at a line when a part of it fits with the line that says it was cut
+    E, R, left, cut = ents[:n], recs[:n], names[n:], []
+    line_ = truncation_line(left, cut)
+    room = CAP_BYTES - fixed - cum[n] - size(["", truncation_line(names[n + 1:], [names[n]])])
+    e = take(ents[n], max(room, 0))
+    if e:
+        r = take(recs[n], room - size(e)) if len(e) == len(ents[n]) else []
+        E, R, left, cut = E + [e], R + [r], names[n + 1:], [names[n]]
+        line_ = truncation_line(left, cut)
+    return done(build(E, R), line_)
 
 
 def render_json(F):
+    """The JSON within CAP_BYTES. What no feature owns goes first (the work trees and the agent branches of no feature), then the features from
+    the last: the detail of the last feature (commits, tasks, work trees, overlap), then the feature itself, before any earlier feature is
+    touched, so the first, live, features keep their own tasks and work trees as long as anything else can go."""
     def size():
         return len(json.dumps(F, indent=1).encode())
     if size() > CAP_BYTES:
         F["truncated"] = True
-        for f in reversed(F["features"]):        # the detail of the last features goes first: live work keeps its own
+        for k in ("worktrees_unattributed", "agent_unattributed"):
+            if size() > CAP_BYTES:
+                F[k] = []
+        while size() > CAP_BYTES and F["features"]:
+            f = F["features"][-1]
+            f["commits"], f["tasks"], f["worktrees"], f["overlap"] = [], [], [], {}
             if size() <= CAP_BYTES:
                 break
-            f["commits"], f["tasks"], f["worktrees"], f["overlap"] = [], [], [], {}
-        if size() > CAP_BYTES:
-            F["agent_unattributed"], F["worktrees_unattributed"] = [], []
-    while size() > CAP_BYTES and F["features"]:
-        f = F["features"].pop()
-        F.setdefault("features_omitted", 0)
-        F["features_omitted"] += 1
-        F.setdefault("features_left_out", []).insert(0, f["name"])
+            F["features"].pop()
+            F["features_omitted"] = F.get("features_omitted", 0) + 1
+            F.setdefault("features_left_out", []).insert(0, f["name"])
     return json.dumps(F, indent=1) + "\n"
 
 
