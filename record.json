@@ -4,19 +4,13 @@
  "goal": "Install Claude and Codex lead skills side by side: per-runtime install manifests, a shared manifest, uninstall by runtime, doctor and upgrade coverage",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "arc-claude-qargi",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-16T17:04:50Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-17T03:31:19Z",
- "finished_at": null,
+ "finished_at": "2026-11-17T03:31:46Z",
  "updated_by": "arc-claude-qargi",
- "rev": 15,
- "updated_at": "2026-11-17T03:31:19Z",
+ "rev": 16,
+ "updated_at": "2026-11-17T03:31:46Z",
  "feature": "multi-runtime-install",
  "project": "qargi"
 }
