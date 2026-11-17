@@ -205,10 +205,12 @@ class Render(unittest.TestCase):
         self.assertIn("guard", C.TOPICS)
         title, paras = C.TOPICS["guard"]
         text = " ".join(paras)
-        self.assertLessEqual(len(text.split()), 500)
+        self.assertLessEqual(len(text.split()), 493)
         for needle in ("QARGI_NESTED", "plan token", "OUT", "local verify", "report", "push", "quotes", "heredoc", "substitution",
-                       "Wrapper options", "judged with and without the next word", "source -p DIR NAME", "install.json, install.d and install.lock", "best-effort"):
+                       "Wrapper options", "except for the read-only class's writes, an unknown one is judged with and without the next word", "source -p DIR NAME",
+                       "($(, ${ or a backtick; not a plain $NAME)", "The install record is install.json, install.d and install.lock.", "best-effort"):
             self.assertIn(needle, text)
+        self.assertNotIn("install.manifest", text)
         self.assertIn("guard", H.show_overview())
         self.assertIn(title, H.show_topic("guard"))
         r = subprocess.run([BIN, "help", "guard"], capture_output=True, text=True, stdin=subprocess.DEVNULL, env=dict(os.environ, QARGI_HOME=tempfile.mkdtemp()))
@@ -217,13 +219,18 @@ class Render(unittest.TestCase):
 
     def test_doctor_and_handoff_help_say_what_the_install_check_warns_of_and_how_the_note_is_laid_out(self):
         doctor = " ".join(C.COMMANDS["doctor"]["desc"].split())
-        for needle in ("install: the install records", "install.manifest or project-N.manifest from 0.3.1 or earlier", "no longer read", "removed by hand after checking install.d"):
+        for needle in ("install: the install records", "install.manifest or project-N.manifest from 0.3.1 or earlier", "no longer read", "removed by hand after checking install.d",
+                       "on a record that lacks the tool (install.json without a tool_root, or runtimes recorded with no install.json) or its runtimes (install.json names the tool but no user runtime is in install.d)"):
             self.assertIn(needle, doctor)
+        self.assertIn("the tools, the install records", C.COMMANDS["doctor"]["summary"])
+        self.assertIn("a lead model that cannot be determined (no transcript, no counted turn, no model id) is not a warning", doctor)
         for word in ("migrat", "moved into install.d"):
             self.assertNotIn(word, doctor)
         handoff = " ".join(C.COMMANDS["marshal"]["verbs"]["handoff"]["desc"].split())
-        self.assertIn("The note starts with an index of its features, lists live work first, lists a feature's own worktrees under it, and when it reaches its bound it ends "
-                      "with a line naming the features left out or cut short.", handoff)
+        self.assertIn("The note starts with its where section, then an index of its features, lists live work first, lists a feature's own worktrees under it, and when it reaches its bound it ends "
+                      "with a line naming the features left out or cut short;", handoff)
+        for key in ("truncated", "features_left_out", "worktrees_unattributed"):                          # the keys of a cut note in --json (lib/marshal_handoff.py)
+            self.assertIn(key, handoff)
 
     def test_the_guard_topic_and_the_review_role_say_what_a_read_only_member_runs_where_tmpdir_points_and_what_a_piece_after_a_cut_may_not_start_with(self):
         """What the guard refuses a read-only member, as the member needs to read it: an assignment (not the command), the TMP that TMPDIR is, and the words the

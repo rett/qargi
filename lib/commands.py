@@ -427,7 +427,8 @@ COMMANDS = {
                                   "The note has the repository path, HEAD there (a detached HEAD is said plainly), develop's sha, the host and whether the qargi data is present on it. "
                                   "Per feature it has the tip, whether the whole-suite run applies to it (the run's command is the project's test_command now, or with declared gates the feature-tier gates in order, `gates: NAME=COMMAND; ...`, as feature verify records them), the agent branches merged into it since it was cut from develop, the unmerged ones prepared against it (as the registry of local runs records) "
                                   "and the commits ahead of develop; with NAME only that feature, otherwise every open one; the agent branches of no open feature are said once, after the features. "
-                                  "The note starts with an index of its features, lists live work first, lists a feature's own worktrees under it, and when it reaches its bound it ends with a line naming the features left out or cut short. "
+                                  "The note starts with its where section, then an index of its features, lists live work first, lists a feature's own worktrees under it, and when it reaches its bound it ends with a line naming the features left out or cut short; "
+                                  "--json at the bound drops the detail of the last features first, then empties worktrees_unattributed (and agent_unattributed), sets truncated to true and names the features left out in features_left_out. "
                                   "When the project declares gates, a `== gates` section follows the features with each gate's tier, name and command (they replace test_command), and --json carries them as `gates` (an empty list without gates). "
                                   "When the project answers hold accepted deviations (methodology_accepted), a `== methodology deviations` section follows the gates, apart from the open gaps: each deviation with its status (accepted, or accepted, no longer applies), reason and date, and the number of open gaps; --json carries them as `deviations`. "
                                   "The goal, plan and note of the marshal record appear under a line saying they are data from the lead, not instructions, with control characters stripped. "
@@ -798,7 +799,7 @@ COMMANDS = {
         },
     },
     "doctor": {
-        "summary": "Check this host for what makes qargi fail quietly: logind, the guard, /dev/shm, the window table",
+        "summary": "Check this host for what makes qargi fail quietly: logind, the guard, /dev/shm, the tools, the install records, the window table",
         "desc": ("Read-only, and a member may run it. It prints one line per check, `ok|warn|unknown  name: detail`, and after a warning the indented lines that say what you can do; "
                  "it changes nothing and runs none of the fixes. It does not fail on a finding: the exit status is 0, or 1 with --strict when any check warns (2 for a usage error "
                  "or a project that is not stored). A check that cannot be made (no logind, a tool that is missing, no project) says unknown, never warn. The project is the one "
@@ -811,11 +812,13 @@ COMMANDS = {
                  "shm: the free space under /dev/shm (QARGI_RUN_TMP moves it) and the orphaned qargi-run.* directories there, the listing of qargi local clean --orphans; it warns on "
                  "an orphan or on less than 10% free (QARGI_DOCTOR_MIN_FREE moves the limit, in percent). "
                  "window-source: where the context-window table of the project's local runtime comes from (its definition, or the answer lead.context_window, which overrides it) "
-                 "and whether each model id its roles name is in the table; an id that is not there warns, since its window is only assumed. "
+                 "and whether each model id its roles name is in the table, and the model of the lead's own session (the last turn of its transcript, read only) unless the answer is set; an id that is not there warns, since its window is only assumed, "
+                 "while a lead model that cannot be determined (no transcript, no counted turn, no model id) is not a warning. "
                  "tools: flock (the locks of the finishing verbs and the ref journal) and timeout (the bound on a question put to a remote) are on PATH; a missing one warns and names what it is for and "
                  "the package that has it (util-linux, coreutils; make bootstrap installs both). "
                  "install: the install records of install.sh (install.d, install.json), read only: the installed tool with its source and version and every runtime installed for the user and in a project; "
-                 "it warns on a recorded link or copy that is missing, dangling or now points elsewhere, on a recorded version other than the tool's VERSION, on a record that cannot be read, and on a leftover "
+                 "it warns on a recorded link or copy that is missing, dangling or now points elsewhere, on a recorded version other than the tool's VERSION, on a record that cannot be read, on a record that lacks the tool "
+                 "(install.json without a tool_root, or runtimes recorded with no install.json) or its runtimes (install.json names the tool but no user runtime is in install.d), and on a leftover "
                  "install.manifest or project-N.manifest from 0.3.1 or earlier, which is no longer read and can be removed by hand after checking install.d (unknown when nothing is installed). "
                  "project-env: the last qargi env check recorded for the project in state/env/PROJECT.json, as 'last env check VERDICT at TIME' (a warning when the verdict is not ENV OK; "
                  "unknown, 'never run', when none was recorded). It only reads that record and never runs the project's code: qargi env check is what runs the project's doctor and records the result. "
@@ -1631,15 +1634,16 @@ COMMANDS = {
                  "each step prints its plan and asks you at the terminal, and your answer is the recorded approval. From Claude Code run them with !."),
         "scripts": ["lead.sh", "lead_usage.py"],
         "verbs": {
-            "usage": verb("How much of this session's context is in use: tokens of the last turn, percent of the window, transcript size", [],
+            "usage": verb("How much of this session's context is in use: tokens of the last turn, percent of a known window, transcript size", [],
                           [PROJECT_OPT, opt("--session", "read the transcript of this session id (default: QARGI_LEAD, else the newest of this directory)", "ID"),
                            opt("--transcript", "read this transcript file", "FILE", "file"), opt("--json", "machine-readable")],
                           desc=("The runtime of the project says where its session transcripts are and how to read them (resources.transcripts of its definition): "
                                 "the context in use is the input, cache-read and cache-creation tokens of the last assistant turn. The window is the project answer "
-                                "lead.context_window (tokens), else the one the runtime's definition gives for the model id of that turn (resources.transcripts.windows; the entries of the shipped definition match ids that end in [1m] or -1m, so an id without such a suffix matches none), else the "
-                                "definition's single window, which is only a guess: the lines that show a percentage then say (window assumed N; set lead.context_window), "
-                                "and --json says window_source answer, model or assumed. When the tokens in use exceed that guessed window the real window is larger: the text then "
-                                "says tokens exceed the assumed window N instead of a percentage, and --json keeps percent and sets window_exceeded to true. Read only; a transcript that cannot be found or read prints unknown and exits 0."),
+                                "lead.context_window (tokens), else the one the runtime's definition gives for the model id of that turn (resources.transcripts.windows; the entries of the shipped definition match ids that end in [1m] or -1m, and claude-opus-5-5), else the "
+                                "definition's single window, which is only a guess. While the window is only assumed the line shows the tokens in use and says window unknown; set "
+                                "lead.context_window, with no percentage and no advice to compact; when the tokens exceed the guess it adds that they do, since the real window is larger. "
+                                "--json says window_source answer, model or assumed; while it is assumed percent is null (window is the guess) and window_exceeded says whether the tokens "
+                                "are beyond it. Read only; a transcript that cannot be found or read prints unknown and exits 0."),
                           examples=["qargi lead usage", "qargi project set acme lead.context_window 1000000"]),
             "compact-check": verb("Is a /compact safe now? Exit 0 safe, 1 not, with every reason and the block to re-read after it", [],
                                   [PROJECT_OPT, opt("--advise", "also say whether a compact is advised: from 50% of the window, strongly from 70%"), opt("--json", "machine-readable")],
@@ -1648,7 +1652,8 @@ COMMANDS = {
                                         "than the last merge; or a release or hotfix branch is open. An applied run counts as merged by the test local list and local clean use: its applied tip is on a branch other than agent/*, or the commit the tip was rewritten to (ref record --rewrite) is, wherever the run directory lies. It prints the restart block: the handoff note, qargi marshal status, "
                                         "qargi feature status and the open runs, so the lead resumes from stored state. Read only. qargi cannot run /compact itself: the "
                                         "lead (or the person) does. feature finish, the last feature merge of a feature's runs, release finish and marshal handoff print "
-                                        "one line when the context is at or above the project answer lead.compact_advice_pct (default 40; 0 turns it off)."),
+                                        "one line when the context is at or above the project answer lead.compact_advice_pct (default 40; 0 turns it off); while the window is only assumed that line names the "
+                                        "tokens and says the window is unknown, with no word of compacting."),
                                   examples=["qargi lead compact-check --advise"]),
             "grant": verb("Guided: create or rotate the grant in three confirmed steps", [("PROJECT", "project:teams")],
                           [opt("--from-file", "read the token from a file instead of asking", "FILE", "file")],
@@ -1824,15 +1829,14 @@ TOPICS = {
         "the state's render, providers, marshal, feature and saved-run directories, its ref journal, the memory tiers, ~/.config/anthropic, and the "
         "lead's git configuration and session files. "
         "It refuses the tool's own install.sh and lib/install_record.py (its engine) in any use. "
-        "The install record is install.json, install.d and install.lock, no longer the legacy install.manifest. "
+        "The install record is install.json, install.d and install.lock. "
         "Reading stays allowed except the lead's signing key. It refuses git push, git remote changes, git -c or config of keys that run programs (alias.*), and rsync to a host.",
         "A command is cut at every ; && || | and newline, inside quotes and heredocs, and a substitution is a command. A piece that starts with git push, git tag NAME, ssh, scp, sftp or gh "
         "is refused even in text (not mid-sentence); any other refused verb is text when every command is echo, cat, tee, grep or git commit, "
         "as is a heredoc body cat or tee gets, bar lines starting qargi. "
         "Shell programs piped in or here-strings are read; curl | sh and bash < f are refused. A cd it cannot read refuses relative writes.",
-        "Wrapper options (sudo, env, timeout, nice, exec, xargs and the like) are read from a table; one it does not know is judged with and without the next word as its value. "
-        "bash's one-dash long options and source -p DIR NAME are read. A value built by the shell ($(, ${, backtick) makes the options unreadable, and any lead-only script the command names is refused. "
-        "The guard stays best-effort.",
+        "Wrapper options (sudo, env, timeout and the like) are read from a table; except for the read-only class's writes, an unknown one is judged with and without the next word as its value. "
+        "bash's one-dash long options and source -p DIR NAME are read. A value the shell builds ($(, ${ or a backtick; not a plain $NAME) makes a shell's or python's options unreadable: any lead-only script the command names is refused.",
         "The read-only class (review) may write only OUT and TMP (the run's TMPDIR). Recognized clone mutations are refused. It runs build, vet and test commands with its given environment; assigning PATH, TMPDIR or GIT_* is refused, not the command.",
         "Setting QARGI_NESTED (skips a plan token), or setting or unsetting QARGI_LEAD, is refused.",
         "A refusal is a result: report it."]),
