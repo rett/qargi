@@ -4,19 +4,13 @@
  "goal": "Release CI: release fix, updated-PR message, PR checks and post-release checklist in release status, CI gate on release finish",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "arc-claude-qargi",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-17T10:23:20Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-17T10:23:20Z",
- "finished_at": null,
+ "finished_at": "2026-11-17T10:23:24Z",
  "updated_by": "arc-claude-qargi",
- "rev": 2,
- "updated_at": "2026-11-17T10:23:20Z",
+ "rev": 3,
+ "updated_at": "2026-11-17T10:23:24Z",
  "feature": "relci",
  "project": "qargi"
 }
