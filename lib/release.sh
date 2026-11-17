@@ -687,9 +687,10 @@ cut_lead_check() {
   own="qargi release $verb $VER$([ "$verb" = site ] || echo "${HOTFIX:+ --hotfix}"), then --plan and --approved"
   rec=$(cut_get '.lead.id // empty')
   if [ -z "$rec" ]; then
-    # the cut can be approved again only while its start step has not run: plan --again discards the record and then refuses, because the branch or the tag exists
+    # the cut is approved again only while its start step has not run: with the branch or the tag there, plan --again discards the record and then refuses; with only the record saying start ran, it
+    # would plan the cut anew, but the steps after start need the branch, so the message offers the own plan of each step in every state (nothing writes a lead into an existing record)
     if branch_exists "$BR" || g rev-parse -q --verify "refs/tags/$VER" >/dev/null 2>&1 || [ -n "$(cut_get '.done.start // empty')" ]; then
-      die "the cut record of $VER names no lead (it was approved before a cut was bound to the lead that approved it): nothing was changed. The cut cannot be approved again, because its start step has run ($BR or the tag $VER exists, and plan --again would discard the record and then refuse): this step is run with its own plan ($own)"
+      die "the cut record of $VER names no lead (it was approved before a cut was bound to the lead that approved it): nothing was changed. Approving the cut again is not offered, because its start step has run (plan --again would discard the record, and refuses while $BR or the tag $VER exists): this step and every later one is run with its own plan ($own)"
     fi
     die "the cut record of $VER names no lead (it was approved before a cut was bound to the lead that approved it): nothing was changed. The cut can be approved again, because its start step has not run (qargi release plan $VER${HOTFIX:+ --hotfix} --again, then --plan and --approved), or this step is run with its own plan ($own)"
   fi

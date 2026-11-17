@@ -232,15 +232,23 @@ before=$(snap); out=$(asa start 0.2.0 --plan "$ct" 2>&1); rc=$?
 # and not "approve again", and the refused step leaves the record as it was
 mk cutold2 with-origin
 out=$(asa plan 0.2.0 --date 2026-03-04 2>&1); ct=$(tok <<<"$out"); asa plan 0.2.0 --date 2026-03-04 --plan "$ct" --approved "ship it" >/dev/null 2>&1; asa start 0.2.0 --plan "$ct" >/dev/null 2>&1
-jq 'del(.lead)' "$T/s/release/cutold2-0.2.0.cut.json" > "$T/x.json" && mv "$T/x.json" "$T/s/release/cutold2-0.2.0.cut.json"
+jq 'del(.lead) | del(.done.start)' "$T/s/release/cutold2-0.2.0.cut.json" > "$T/x.json" && mv "$T/x.json" "$T/s/release/cutold2-0.2.0.cut.json"
 before=$(snap); out=$(asa push 0.2.0 --plan "$ct" 2>&1); rc=$?
-[ "$rc" = 1 ] && grep -q "the cut record of 0.2.0 names no lead (it was approved before a cut was bound to the lead that approved it): nothing was changed. The cut cannot be approved again, because its start step has run (release/0.2.0 or the tag 0.2.0 exists, and plan --again would discard the record and then refuse): this step is run with its own plan (qargi release push 0.2.0, then --plan and --approved)" <<<"$out" \
+[ "$rc" = 1 ] && grep -q "the cut record of 0.2.0 names no lead (it was approved before a cut was bound to the lead that approved it): nothing was changed. Approving the cut again is not offered, because its start step has run (plan --again would discard the record, and refuses while release/0.2.0 or the tag 0.2.0 exists): this step and every later one is run with its own plan (qargi release push 0.2.0, then --plan and --approved)" <<<"$out" \
   && ! grep -q "can be approved again" <<<"$out" && ! grep -q "release plan 0.2.0 --again" <<<"$out" && [ "$before" = "$(snap)" ] && [ -f "$T/s/release/cutold2-0.2.0.cut.json" ] && [ -z "$(git -C "$R" ls-remote origin refs/heads/release/0.2.0)" ] \
   && ok "a record that names no lead after start is refused with the own-plan route and no 'approve again'; the record and the refs are as they were" || no "push under a cut with no lead after start: rc=$rc $out"
 # the state is read from the record too (start done by the cut, the branch gone): the same wording
 jq '.done.start.at = "2026-03-04T00:00:00Z"' "$T/s/release/cutold2-0.2.0.cut.json" > "$T/x.json" && mv "$T/x.json" "$T/s/release/cutold2-0.2.0.cut.json"; git -C "$R" branch -q -D release/0.2.0
 out=$(asa push 0.2.0 --plan "$ct" 2>&1); rc=$?
-[ "$rc" = 1 ] && grep -q "The cut cannot be approved again, because its start step has run" <<<"$out" && ! grep -q "can be approved again" <<<"$out" && ok "the record's own start step also counts as started" || no "no lead, start done in the record: rc=$rc $out"
+[ "$rc" = 1 ] && grep -q "nothing was changed. Approving the cut again is not offered, because its start step has run (plan --again would discard the record, and refuses while release/0.2.0 or the tag 0.2.0 exists): this step and every later one is run with its own plan (qargi release push 0.2.0, then --plan and --approved)" <<<"$out" && ! grep -q "can be approved again" <<<"$out" && ! git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && ! git -C "$R" rev-parse -q --verify refs/tags/0.2.0 >/dev/null \
+  && ok "the record's own start step also counts as started (no branch, no tag): the message is true there too" || no "no lead, start done in the record: rc=$rc $out"
+# the local tag alone also counts as started (no branch, no start in the record)
+mk cutold3 with-origin
+out=$(asa plan 0.2.0 --date 2026-03-04 2>&1); ct=$(tok <<<"$out"); asa plan 0.2.0 --date 2026-03-04 --plan "$ct" --approved "ship it" >/dev/null 2>&1
+jq 'del(.lead)' "$T/s/release/cutold3-0.2.0.cut.json" > "$T/x.json" && mv "$T/x.json" "$T/s/release/cutold3-0.2.0.cut.json"; git -C "$R" tag 0.2.0
+before=$(snap); out=$(asa push 0.2.0 --plan "$ct" 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "nothing was changed. Approving the cut again is not offered, because its start step has run (plan --again would discard the record, and refuses while release/0.2.0 or the tag 0.2.0 exists): this step and every later one is run with its own plan (qargi release push 0.2.0, then --plan and --approved)" <<<"$out" && ! grep -q "can be approved again" <<<"$out" && [ "$before" = "$(snap)" ] && ! git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null \
+  && ok "a local tag alone counts as started: the own-plan route, no 'approve again', nothing changed" || no "no lead, only the tag: rc=$rc $out"
 # a hotfix cut names --hotfix in the route of the step; the cut is approved again only before start
 mk cutoldh with-origin
 out=$(asa plan 0.1.1 --hotfix --date 2026-03-04 2>&1); ct=$(tok <<<"$out"); asa plan 0.1.1 --hotfix --date 2026-03-04 --plan "$ct" --approved "ship it" >/dev/null 2>&1
@@ -248,6 +256,13 @@ jq 'del(.lead)' "$T/s/release/cutoldh-0.1.1.cut.json" > "$T/x.json" && mv "$T/x.
 out=$(asa start 0.1.1 --hotfix --plan "$ct" 2>&1); rc=$?
 [ "$rc" = 1 ] && grep -q "The cut can be approved again, because its start step has not run (qargi release plan 0.1.1 --hotfix --again, then --plan and --approved), or this step is run with its own plan (qargi release start 0.1.1 --hotfix, then --plan and --approved)" <<<"$out" \
   && ok "a hotfix cut with no lead before start: the message names --hotfix in both routes" || no "hotfix cut with no lead: rc=$rc $out"
+# and after start: the hotfix branch is named and --hotfix is in the own-plan route
+mk cutoldh2 with-origin
+out=$(asa plan 0.1.1 --hotfix --date 2026-03-04 2>&1); ct=$(tok <<<"$out"); asa plan 0.1.1 --hotfix --date 2026-03-04 --plan "$ct" --approved "ship it" >/dev/null 2>&1; asa start 0.1.1 --hotfix --plan "$ct" >/dev/null 2>&1
+jq 'del(.lead)' "$T/s/release/cutoldh2-0.1.1.cut.json" > "$T/x.json" && mv "$T/x.json" "$T/s/release/cutoldh2-0.1.1.cut.json"
+before=$(snap); out=$(asa push 0.1.1 --hotfix --plan "$ct" 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "refuses while hotfix/0.1.1 or the tag 0.1.1 exists): this step and every later one is run with its own plan (qargi release push 0.1.1 --hotfix, then --plan and --approved)" <<<"$out" && ! grep -q "release/0.1.1" <<<"$out" && [ "$before" = "$(snap)" ] \
+  && ok "a hotfix cut with no lead after start: the message names the hotfix branch and --hotfix in the own-plan route" || no "hotfix cut with no lead after start: rc=$rc $out"
 
 # the hotfix cut is bound to its lead too: a second lead is refused a step of it, nothing changed; the approving lead runs it
 mk cuthot with-origin

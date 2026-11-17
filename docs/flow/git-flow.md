@@ -167,11 +167,15 @@ refusal changes nothing.
    including a cut-off `finish` that resumes, is refused before anything moves when run by another lead, when the identity cannot
    be determined, or when the record names no lead (a cut approved before this binding). The refusal names the remedy that fits the
    state. While the cut's start step has not run, the cut is approved again (`release plan VERSION --again`, then `--plan` and
-   `--approved`). Once it has run (the release branch or the tag exists, or the record shows start done), `--again` would discard the
-   record and then refuse, so it is not offered: the step is run with its own plan and approval, which is not bound, and the cut goes
-   on from there. Otherwise the lead that approved the cut runs the step, or the other lead asks the owner to approve the step with
-   its own plan. Leads without `QARGI_LEAD` are not told apart: every session of the same user on the same host without it, which
-   includes every Codex lead (that runtime has no identity hook), is one lead and passes the check. This is defence in depth only:
+   `--approved`). Once it has run (the release branch or the tag exists, or the record shows start done), approving the cut again is not
+   offered: with the branch or the tag there, `--again` would discard the record and then refuse, and when only the record shows
+   start done it would plan the cut anew. The step is run with its own plan and approval, which is not bound, and so is every later
+   step: nothing writes a lead into an existing record, so each later step under the cut token is refused again. When the refusal is
+   for another lead, or for an identity that cannot be determined, the lead that approved the cut runs the step, or the other lead
+   asks the owner to approve the step with its own plan. Leads without `QARGI_LEAD` are not told apart: every session of the same
+   user on the same host without it is one lead and passes the check, which includes a Codex lead unless its session was started
+   with `QARGI_LEAD` (see [Codex as the lead](../members-and-providers/codex.md#codex-as-the-lead)).
+   This is defence in depth only:
    `QARGI_LEAD` is not authenticated, so it stops a confused or handed-over lead, not a hostile one; a project with no seat keeps
    that gap until the seat work of 0.3.4 fences it.
 
