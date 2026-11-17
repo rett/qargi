@@ -5017,7 +5017,8 @@ class WrapperOptions(HookCase):
 
     def test_the_readings_of_a_segment_are_bounded(self):
         """Each word that reads as a redirection after an option that takes a value is one more reading of the segment: up to MAX_READINGS are judged, and a
-        segment with more is refused with the reason (a false refusal of a command no one writes by hand), which is no skill refusal."""
+        segment with more is refused with the reason (a false refusal of a command no one writes by hand), by blocked() for a push, ssh or gh it could hide
+        and by bash_skill_refusal for a lead-only verb, neither with the advice about skills."""
         m = self.J.m
         n = m.MAX_READINGS
         many = "sudo -p " + " ".join("%d>/dev/null" % (k + 1) for k in range(n)) + " x ls"   # a distinct word each: equal readings are judged once
@@ -5028,8 +5029,32 @@ class WrapperOptions(HookCase):
         r = self.bash(more)
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("can be read in more than %d ways" % n, r.stderr)
-        self.assertTrue(r.stderr.rstrip().endswith("write the command with fewer of them or in parts."), r.stderr)
+        self.assertIn("could run git push, ssh or gh", r.stderr)
         self.assertNotIn("changes a skill", r.stderr)
+        why = m.bash_skill_refusal(more, self.clone, 0)
+        self.assertIsInstance(why, m.OwnReason)
+        self.assertIn("can be read in more than %d ways" % n, why)
+        self.assertTrue(why.endswith("write the command with fewer of them or in parts"), why)
+
+    def test_a_push_only_a_reading_past_the_bound_finds_is_refused_by_blocked(self):
+        """sudo -p 1>/dev/null ... 8>/dev/null '<' git push: '<' reads as a bare redirection that takes git as its file in every reading but the ninth, where
+        it is -p's value; blocked() does not follow a reading past MAX_READINGS, so it refuses the segment itself, whatever else the line holds."""
+        m = self.J.m
+        n = m.MAX_READINGS
+        push = "git " + "push"
+        words = lambda k: "sudo -p " + " ".join("%d>/dev/null" % (j + 1) for j in range(k)) + " '<' " + push
+        self.assertEqual(len(m.wrapper_readings(words(n - 1))), n)
+        self.assertEqual(m.blocked(words(n - 1)), "git push is not available to an agent")      # the push in the last reading followed
+        self.assertEqual(len(m.wrapper_readings(words(n))), n + 1)
+        self.assertEqual([m.blocked(r) for r in m.wrapper_readings(words(n))[:n]], [None] * n)    # only the ninth reading finds the push
+        why = m.blocked(words(n))
+        self.assertIn("can be read in more than %d ways" % n, why or "")
+        self.assertIn("could run git push, ssh or gh", why)
+        self.assertEqual(m.blocked("echo hi; " + words(n)), why)
+        r = self.bash(words(n))
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("Agents never push", r.stderr)
+        self.assertIn("can be read in more than %d ways" % n, r.stderr)
 
     def test_the_other_reading_of_a_wrapper_option_keeps_each_word(self):
         """The reading without an unknown option and its value keeps the words whole: the text of a here-string is still one word."""

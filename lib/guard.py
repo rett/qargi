@@ -601,7 +601,12 @@ def blocked(command, depth=0):
         why = program_blocked(toks, i, depth) if i < len(toks) else None
         if why:
             return why
-        for alt in wrapper_readings(seg)[:MAX_READINGS] if depth < 3 else ():   # a wrapper's option the guard cannot read may take the next word: that reading
+        readings = wrapper_readings(seg) if depth < 3 else []
+        if len(readings) > MAX_READINGS:                        # bounded as bash_skill_refusal bounds them: a reading past the bound could hold the push
+            return ("a command whose wrapper options can be read in more than %d ways (options the guard cannot read, values that read as redirections) "
+                    "could run git push, ssh or gh in a reading the guard does not follow and is not available to an agent; write the command with fewer "
+                    "of them or in parts" % MAX_READINGS)
+        for alt in readings:                                    # a wrapper's option the guard cannot read may take the next word: that reading
             why = blocked(alt, depth + 1)                           # too, also when this one has no program (timeout -s '<' 5 git push: '<' read as a redirection takes 5)
             if why:
                 return why
