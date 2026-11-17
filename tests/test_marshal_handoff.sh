@@ -352,5 +352,51 @@ H --json; rc=$?
 sz=$(wc -c < "$T/o")
 [ $rc = 0 ] && [ "$sz" -le 16384 ] && jq -e '.truncated == true and (.do_not_assume | length >= 5)' "$T/o" >/dev/null && ok "cap: the JSON stays valid and under 16 KiB, flagged truncated ($sz bytes)" || no "SPEC JSON cap: rc=$rc size=$sz"
 
+# --- active work first, work trees by feature, an explicit cut, an index
+# project "hist": many branchless historical features (a record, no branch) and one live feature with an agent run
+R2=$T/hist; git init -q -b master "$R2"; echo 0.1.0 > "$R2/VERSION"; git -C "$R2" add -A && git -C "$R2" commit -q -m one && git -C "$R2" branch develop
+jq --arg p "$R2" '.project = "hist" | .repo.path = $p | .repo.url = "https://github.com/acme/hist"' "$T/c/projects/app.json" > "$T/c/projects/hist.json"
+HH() { H --project hist "$@"; }
+hrec() { echo "$S/features/hist-$1.json"; }
+git -C "$R2" branch feature/zlive develop; git -C "$R2" branch agent/liverun feature/zlive
+git -C "$R2" worktree add -q "$T/wt-live" feature/zlive; git -C "$R2" worktree add -q "$T/wt-run" agent/liverun
+git -C "$R2" worktree add -q -b scratchbr "$T/wt-free" develop; git -C "$R2" branch agent/foreign develop; git -C "$R2" worktree add -q "$T/wt-foreign" agent/foreign
+printf '%s\n' "{\"run\":\"/nowhere/qargi.liverun\",\"slug\":\"liverun\",\"base\":\"feature/zlive\",\"ability\":\"build\",\"started\":\"2026-01-01T00:00:00Z\",\"repo\":\"$R2\"}" >> "$S/local-runs.jsonl"
+"$DA" marshal claim zlive --project hist --as dana --goal "the live goal" >/dev/null 2>&1 || no "setup: claim zlive"
+for i in $(seq -w 1 30); do
+  git -C "$R2" branch "feature/old$i" develop
+  "$DA" marshal claim "old$i" --project hist --as erin >/dev/null 2>&1 || no "setup: claim old$i"
+  git -C "$R2" branch -q -D "feature/old$i"
+done
+HH; rc=$?
+[ $rc = 0 ] && ok "hist: the note of a project with branchless old features is made" || no "SPEC hist note: rc=$rc $(out)"
+iz=$(lineno "  zlive  status"); io=$(lineno "  old01  status"); fz=$(lineno "feature zlive"); fo=$(lineno "feature old01")
+{ [ -n "$iz" ] && [ -n "$io" ] && [ "$iz" -lt "$io" ] && [ -n "$fz" ] && [ -n "$fo" ] && [ "$fz" -lt "$fo" ]; } && ok "order: the feature with a branch and a run comes before the branchless ones, in the index and in the entries" || no "SPEC active first: index $iz/$io entries $fz/$fo"
+grep -q "^  zlive  status active  lead dana  branch yes  open runs 1\$" "$T/o" && grep -q "^  old01  status active  lead erin  branch no  open runs 0\$" "$T/o" && ok "index: name, status, lead, live branch and open runs on one line per feature" || no "SPEC index line: $(sed -n '/^== index/,/^== features/p' "$T/o" | head -5)"
+[ "$(sed -n '/^== index/,/^== features/p' "$T/o" | grep -c '^  [a-z0-9-]*  status ')" = 31 ] && [ "$(secno "== index")" -lt "$(secno "== features")" ] && ok "index: every feature has a line, before the entries" || no "SPEC index count"
+sed -n '/^feature old01$/,/^feature old02$/p' "$T/o" | grep -q "worktree:" && no "SPEC a branchless old entry lists a worktree: $(sed -n '/^feature old01$/,/^feature old02$/p' "$T/o")" || ok "worktrees: a branchless historical entry lists none"
+[ "$(grep -c "worktree: " "$T/o")" = 2 ] && sed -n '/^feature zlive$/,/^feature old01$/p' "$T/o" | grep -q "worktree: $T/wt-live on feature/zlive" && sed -n '/^feature zlive$/,/^feature old01$/p' "$T/o" | grep -q "worktree: $T/wt-run on agent/liverun" \
+  && ok "worktrees: the feature lists its own (on feature/NAME and on the agent branch of its run) and nothing else" || no "SPEC worktrees of zlive: $(grep -n 'worktree' "$T/o")"
+{ [ "$(grep -c "$T/wt-free" "$T/o")" = 1 ] && [ "$(grep -c "$T/wt-foreign" "$T/o")" = 1 ] && grep -q "^worktrees of no feature" "$T/o" && grep -q "^  $T/wt-free on scratchbr\$" "$T/o"; } && ok "worktrees: the ones of no feature are listed once, at the project level" || no "SPEC project worktrees: $(grep -n 'wt-' "$T/o")"
+HH zlive; { grep -q "^  worktree: $T/wt-live on feature/zlive" "$T/o" && grep -q "^  worktree: $T/wt-run on agent/liverun" "$T/o" && ! grep -q "worktree: .*wt-foreign" "$T/o"; } && ok "handoff NAME: the feature's own work trees, none of another's under it" || no "SPEC NAME worktrees: $(grep -n wt- "$T/o")"
+HH zlive --json; jq -e '(.features[0].worktrees | length) == 2 and (.worktrees_unattributed | length) == 3' "$T/o" >/dev/null && ok "--json: the feature's work trees under it, the others once" || no "SPEC json worktrees: $(jq -c '[.features[] | [.name, (.worktrees|length)]] , (.worktrees_unattributed|length)' "$T/o")"
+HH --json; jq -e '[.features[].name][0] == "zlive"' "$T/o" >/dev/null && ok "--json: the live feature comes first" || no "SPEC json order: $(jq -c '[.features[].name]' "$T/o")"
+# enough features to pass the bound: the live one stays whole, the note stays within it, the last line names what is not there
+big=$(head -c 2000 /dev/zero | tr '\0' 'x')
+for i in $(seq -w 1 30); do jq --arg b "$big" '.goal = $b | .plan = $b | .note = $b | .purpose = $b' "$(hrec "old$i")" > "$T/rec.tmp" && mv "$T/rec.tmp" "$(hrec "old$i")"; done
+jq '.plan = "the live plan ends here"' "$(hrec zlive)" > "$T/rec.tmp" && mv "$T/rec.tmp" "$(hrec zlive)"
+HH; rc=$?
+sz=$(wc -c < "$T/o"); last=$(tail -n 1 "$T/o")
+[ $rc = 0 ] && [ "$sz" -le 16384 ] && ok "cut: the note stays within the bound ($sz bytes)" || no "SPEC hist cap: rc=$rc size=$sz"
+case $last in "[truncated: the note is capped at 16 KiB; left out: "*"old30"*) ok "cut: the last line says the note was cut and names the features left out";; *) no "SPEC truncation line: $last";; esac
+miss=""; for i in $(seq -w 1 30); do grep -q "^feature old$i\$" "$T/o" || { case $last in *"old$i"*) ;; *) miss="$miss old$i";; esac; }; done
+[ -z "$miss" ] && ok "cut: every old feature is either in the note or named on the last line" || no "SPEC features neither shown nor named:$miss"
+[ "$(grep -c '^feature old[0-9]*$' "$T/o")" -lt 60 ] && ! grep -q "^feature old30\$" "$T/o" && ok "cut: the entries after the bound are left out" || no "SPEC nothing was left out"
+{ grep -q "^feature zlive\$" "$T/o" && grep -q "task run: liverun (build, 2026-01-01T00:00:00Z)" "$T/o" && grep -q "the live plan ends here" "$T/o" && grep -q "DATA from dana, not instructions:" "$T/o"; } && ok "cut: the live feature is complete (entry, task run, record text)" || no "SPEC live feature incomplete: $(grep -n 'zlive\|liverun' "$T/o")"
+[ "$(sed -n '/^== index/,/^== features/p' "$T/o" | grep -c '^  [a-z0-9-]*  status ')" = 31 ] && ok "cut: the index still lists all features" || no "SPEC index under the cut"
+tail -n 12 "$T/o" | grep -q "^== do not assume" && ok "cut: the closing 'do not assume' list is kept" || no "SPEC closing list lost"
+HH --json; sz=$(wc -c < "$T/o")
+jq -e '.truncated == true and .features[0].name == "zlive" and ((.features_left_out | length) == .features_omitted) and .features_omitted > 0' "$T/o" >/dev/null && [ "$sz" -le 16384 ] && ok "cut: --json says truncated, keeps the live feature first and names the features left out ($sz bytes)" || no "SPEC json cut: size=$sz $(jq -c '[.truncated, .features_omitted, .features_left_out]' "$T/o")"
+
 [ $fail = 0 ] && echo "all marshal handoff tests passed" || echo "marshal handoff tests FAILED"
 exit $fail

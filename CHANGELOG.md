@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- The lead handoff note (`marshal handoff`) keeps active work when it reaches its 16 KiB bound. It starts with an index of one line per feature (name, status, lead, live branch, open runs) and lists the features with a live branch or an open run first (active, then planned, then blocked; the most recently renewed first), the ones with no branch on this host and no open run last. A feature entry lists only its own work trees (on `feature/NAME`, or on the `agent/` branch of a run based on it); the work trees of no feature are listed once, in one project-level section. When the note is cut, its last line says so and names every feature left out or cut short, so the reader can ask for each with a per-feature handoff; the note never exceeds the bound. `--json` keeps the live features first, trims the detail of the last ones first, and adds `worktrees_unattributed` and, when features are dropped, `features_left_out`.
+
 ## [0.3.2] - 2026-11-16
 
 ### Added
