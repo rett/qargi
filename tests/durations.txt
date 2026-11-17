@@ -146,3 +146,4 @@
 113 python3 tests/test_campaign_store.py
 19 python3 tests/test_campaign.py
 3 bash tests/test_readonly_init.sh
+0 python3 tests/test_seat_contract.py

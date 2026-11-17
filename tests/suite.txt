@@ -176,3 +176,5 @@ fast | par | 300 | 1 | python3 tests/test_prose_lint.py | contract/*.md roles/*/
 fast | par | 300 | 14 | bash tests/test_audit_lock.sh | lib/lib.sh lib/procenv.py lib/transfer.py lib/conformance/library.py
 # Read-only first load: 20 cases measured 2.8s, 2.9s and 2.9s in a member run (not the reference machine); recorded 3s, budget ceil(3 * 1.10) = 4s.
 fast | par | 300 | 4 | bash tests/test_readonly_init.sh | lib/lib.sh
+# Seat contract: 8 checks of the contract text and 95 skipped rule tests measured 0.32s, 0.26s and 0.27s in a member run (not the reference machine); recorded 0s, budget 1s (the least a step has).
+fast | par | 300 | 1 | python3 tests/test_seat_contract.py | docs/reference/lead-seat.md tests/test_seat_contract.py

@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `docs/reference/lead-seat.md`: the contract of the lead seat (phase 1 of the lead handoff) as numbered rules, each with its refusal, and the list of points still open; `tests/test_seat_contract.py` holds one skipped test per rule and checks that the two stay in step. The seat itself is not built: no command changes.
+
 ## [0.3.3] - 2026-11-17
 
 ### Added
