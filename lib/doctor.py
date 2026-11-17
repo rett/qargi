@@ -10,7 +10,9 @@ The command does not fail on a finding: exit 0, or 1 with --strict when any chec
   shm            free space under the run temporary parent (/dev/shm, or QARGI_RUN_TMP) and the orphaned qargi-run.* directories
                  there (lib/orphans.sh, the listing `qargi local clean --orphans` prints).
   window-source  where the context-window table of the project's runtime comes from (its definition, or the answer
-                 lead.context_window) and whether each model id the project's roles name is in it.
+                 lead.context_window) and whether each model id the project's roles name is in it, and the model of the lead's own
+                 session (the last turn of its transcript, read only): a model that is in neither warns, since its window is only
+                 assumed and no percentage or compact advice is given for it. A lead model that cannot be determined is not a warning.
   tools          flock and timeout are on PATH: flock keeps two runs of a finishing verb, and the writers of the ref journal and the records, apart;
                  timeout bounds the questions put to a remote. A missing one warns, with what each is for and the package that has it.
   install        the install records of install.sh in the live configuration directory (install.d, install.json; read with
@@ -393,6 +395,18 @@ def where(path):
     return os.path.relpath(path, top) if path == top or path.startswith(top + os.sep) else path
 
 
+def lead_session_model(project, conf):
+    """The model id of the last turn of the lead's own session (lib/lead_usage.py, which only reads the transcript the project's runtime
+    keeps), or "" when it cannot be determined: no transcript, no runtime, a turn that names no model."""
+    try:
+        import argparse
+        import lead_usage as LU
+        u = LU.measure(argparse.Namespace(project=project, session=None, transcript=None, cwd="", json=False, advise=False), conf)
+    except Exception:                                           # noqa: BLE001  (a check that cannot be made is unknown, never an error)
+        return ""
+    return u.get("model") or "" if u.get("known") else ""
+
+
 def check_window_source(project):
     name = "window-source"
     if not project:
@@ -422,13 +436,23 @@ def check_window_source(project):
         m = spec.get("model") if isinstance(spec, dict) else None
         if isinstance(m, str) and m.strip() and m.strip() not in ids:
             ids.append(m.strip())
-    if not ids:
-        return check(name, "ok", table + "; no role names a model id (the tiers resolve at dispatch)")
+    lead_model = "" if ans else lead_session_model(project, conf)       # the answer settles the window of every model: nothing to look up
     unknown = [] if ans else [m for m in ids if P.transcript_window(tr, m)[1] != "model"]
-    if unknown:
-        return check(name, "warn", table + "; not in the table: %s (their window is only assumed)" % ", ".join(clean(m, 80) for m in unknown),
+    lead_unknown = bool(lead_model) and P.transcript_window(tr, lead_model)[1] != "model"
+    if unknown or lead_unknown:
+        said = []
+        if unknown:
+            said.append("not in the table: %s (their window is only assumed)" % ", ".join(clean(m, 80) for m in unknown))
+        if lead_unknown:
+            said.append("the lead's own model is not in the table: %s (its window is only assumed, so there is no percentage and no compact advice)" % clean(lead_model, 80))
+        return check(name, "warn", table + "; " + "; ".join(said),
                      ["fix: set the answer lead.context_window, or add an entry for the id to the window table of the runtime's definition"])
-    return check(name, "ok", table + "; %d model id%s checked" % (len(ids), "" if len(ids) == 1 else "s"))
+    if not ids and not ans and not lead_model:
+        return check(name, "unknown", table + "; no role names a model id and the lead's own model cannot be determined (no transcript of its session)")
+    lead = "" if ans else ("; the lead's own model %s is in the table" % clean(lead_model, 80) if lead_model else "; the lead's own model cannot be determined (no transcript of its session)")
+    if not ids:
+        return check(name, "ok", table + "; no role names a model id (the tiers resolve at dispatch)" + lead)
+    return check(name, "ok", table + "; %d model id%s checked" % (len(ids), "" if len(ids) == 1 else "s") + lead)
 
 
 def check_project_env(project):

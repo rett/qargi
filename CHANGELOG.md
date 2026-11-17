@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `qargi doctor`'s `window-source` check also looks at the model of the lead's own session (the last turn of its transcript, read only) and warns when that model is not in the runtime's table of windows and `lead.context_window` is unset, since its window is only assumed; a lead model that cannot be determined (no transcript) is not a warning, and a project with no role model ids and no lead model is `unknown`.
+
 ### Changed
 - While the context window of the lead is only assumed (no `lead.context_window`, and the model has no entry in the runtime's table), `qargi lead usage`, `lead compact-check --advise` and the stage-verb line print the tokens in use and say `window unknown; set lead.context_window`, with no percentage and no advice to compact (`lead usage --json` has `percent: null` then; `window_source: "assumed"` and the tokens stay). A window from the answer or the model is unchanged.
 
