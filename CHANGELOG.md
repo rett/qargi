@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-16
+
 ### Added
 - Lead skills of several runtimes install side by side: `install.sh --user --runtime NAME` leaves the other runtimes as they are, `--uninstall --runtime NAME` removes one, and the command, man page and completions go with the last.
 - A bare `install.sh --user --uninstall` removes every installed runtime and lists them first.
