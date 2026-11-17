@@ -4652,6 +4652,20 @@ class InterpreterOptionValues(HookCase):
                       ". -p '<x' ./install.sh", "bash -c -o '<x' 'git status'", "python3 -X 2>/dev/null dev lib/install_record.py uninstall",
                       ". -p 2>/dev/null /x ./install.sh"))
 
+    def test_source_p_attached_to_a_directory_the_guard_cannot_read(self):
+        """. -p${D} NAME, . -p$(..) NAME and . -p>/dev/null DIR NAME: the directory stuck to -p is built by the shell, or a redirection glued to it moves it
+        to the next word. It is kept as the shell may read it, so a bare name looked up in a built directory or in the tool's is refused, as with a blank."""
+        root = self.ROOT
+        for c, why in ((". -p${D} install.sh", InstallScript.WHY), (". -p$(dirname x) install.sh --user", InstallScript.WHY),
+                       ("source -p`echo x` install.sh", InstallScript.WHY), (". -p>/dev/null %s install.sh" % root, InstallScript.WHY),
+                       (". -p%s>/dev/null install.sh" % root, InstallScript.WHY), ("source -p<x %s install.sh --user" % root, InstallScript.WHY),
+                       (". -p${D}:/x install.sh", InstallScript.WHY), (". -p${D} lib/upgrade.sh --tag v1", self.UPGRADE),
+                       (". -p$(dirname x) %s/install.sh" % root, InstallScript.WHY)):
+            self.refused(c, why)
+        self.own_files()
+        self.allowed((". -p${D} ./install.sh", ". -p>/dev/null /x install.sh", ". -p/x>/dev/null install.sh --user", ". -p$(dirname x) lib/lib.sh",
+                      ". -p>/dev/null %s install.sh" % self.clone))
+
 
 class WrapperOptions(HookCase):
     """The program after a wrapper and the string of sh -c are found past the options: the -c string is the first word past a shell's options, not the

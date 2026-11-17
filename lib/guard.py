@@ -3227,7 +3227,8 @@ def read_options(prog, rest):
     when the guard cannot read an option (one it does not know, one the shell builds, a shell value stuck to its letter, which bash and zsh read apart, a one-dash
     long name sh may read either way) and dirs the values of source -p. A value is the next word; one that reads as a redirection is not readable, as the
     words carry no quotes: it may be a redirection the shell takes out (bash -o 2>/dev/null errexit, the value is the word after it) or a quoted value
-    (python3 -X '<x'), and for source -p both words are kept in dirs. A value the shell builds ($(..), ${..}, a backtick: unquoted it may be cut into
+    (python3 -X '<x'), and for source -p both words are kept in dirs; an attached -p value the shell builds (-p${D}) or with a redirection glued to it
+    (-p>/dev/null DIR) is kept too, as it is and cut where the shell cuts it (the part before the redirection, or else the next word). A value the shell builds ($(..), ${..}, a backtick: unquoted it may be cut into
     several words) is not readable. Bash reads a long name with one dash too (-rcfile F, -norc) while no short option came before it."""
     py = bool(re.match(r"^python[0-9.]*$", prog))
     k, ends, dirs, shorts = 0, "", [], False
@@ -3249,6 +3250,13 @@ def read_options(prog, rest):
         if len(t) < 2 or not (t.startswith("-") or (t.startswith("+") and prog in SHELLS)):
             break
         if BUILT_VALUE.search(t) or "<" in t or ">" in t:          # a redirection glued to an option (-X>/dev/null): the value is the next word, unless a quote kept it
+            if prog in SOURCES and t.startswith("-p"):           # -p${D}, -p$(..), -p>/dev/null DIR: every directory it may name, for own_named
+                v = t[2:]
+                cut = re.split(r"&?[<>]", v, maxsplit=1)[0]
+                dirs.append(v)                                   # built (a $ or a backtick in it counts as the tool's), or quoted whole
+                if cut != v:                                     # a redirection glued: the shell cuts the word there, the directory is the part before it or the next word
+                    j = past_redirections(rest, k + 1)
+                    dirs += [cut] if cut else rest[j:j + 1]
             return k, ends, False, dirs
         if prog in SOURCES:                                      # source [-p PATH] FILE, -pPATH
             if not t.startswith("-p"):
