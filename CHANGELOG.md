@@ -29,6 +29,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 - `claude-code`'s table of context windows names the plain id `claude-opus-5-5` (1,000,000 tokens), so `qargi lead usage` and the stage-verb line no longer measure a lead on that model against the assumed 200,000 window and advise a compact far too early; an id that ends in `[1m]` or `-1m` still means one million, and an id with no entry still gets the assumed window.
+### Added
+- `qargi --version` does what `qargi version` does, before any state is set up. Both print a second line, `source: DIR`, the tool's root directory.
 
 ## [0.3.2] - 2026-11-16
 
