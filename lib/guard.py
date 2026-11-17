@@ -822,11 +822,12 @@ def wrapper_readings(seg):
 
 
 def rejoin(words):
-    """Words joined into a command text the plain split cuts into the same words: a word with a blank, a quote or no character at all is put in double quotes
-    (a backslash and a double quote in it escaped; a $ or a backtick left as it is, so that what would expand is still read as expanding), the rest as it is."""
+    """Words joined into a command text the plain split cuts into the same words: a word with a blank, a quote, a backslash (pw\\ would escape the blank
+    after it) or no character at all is put in double quotes (a backslash and a double quote in it escaped; a $ or a backtick left as it is, so that what
+    would expand is still read as expanding), the rest as it is."""
     out = []
     for w in words:
-        if not w or re.search(r"[\s'\"]", w):
+        if not w or re.search(r"[\s'\"\\]", w):
             w = '"' + w.replace("\\", "\\\\").replace('"', '\\"') + '"'
         out.append(w)
     return " ".join(out)

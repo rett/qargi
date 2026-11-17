@@ -4894,6 +4894,25 @@ class WrapperOptions(HookCase):
         self.verbs("sudo --frobnicate x bash <<< \"@@\"")
         self.allowed(("sudo -h x bash <<< 'git status'", "sudo -h x echo 'qargi upgrade'"))
 
+    def test_rejoin_gives_the_plain_split_the_same_words(self):
+        """The other reading is joined back into a text (rejoin) and split again: a word with a backslash, a quote, a blank or an operator comes back whole."""
+        m = self.J.m
+        for words in (["sudo", "-p", "pw\\", "qargi", "upgrade"], ["a\\b", "\\", "\\\\", "x\\ y", "\\n", "end\\"], ["it's", 'say "hi"', "a b", "\t", ""],
+                      ["\\'", '\\"', "'\\'", "a\\\"b", "$x\\", "`y`\\"], ["<x", "> ", "2>&1", "a;b", "a|b", "&&", "a&", "$(x)", "${Z:-a b}", "(", ")"],
+                      ["pw\\", "-h", "host", "bash", "<<<", "git status\\"]):
+            with self.subTest(words=words):
+                self.assertEqual(list(m.split_words(m.rejoin(words))), words)
+
+    def test_the_other_reading_keeps_a_word_that_holds_a_backslash(self):
+        """sudo -p 'pw\\' -h host PROGRAM: the reading without the unknown -h and its value keeps 'pw\\' one word, so the program is still found."""
+        for form in ("sudo -p 'pw\\' -h host @@", "sudo -u 'ro\\' --frobnicate v @@", "env -u 'a\\' -Z v @@", "sudo -p 'a\\b\\' -h x @@"):
+            self.verbs(form)
+        lib = LibraryScripts.LIB
+        self.refused("sudo -p 'pw\\' -h host python3 %s/install_record.py uninstall" % lib, InstallRecordScript.WHY)
+        self.pushes(("sudo -p 'pw\\' -h host git push", "env -u 'a\\' -Z v git push"))
+        self.own_install()
+        self.allowed(("sudo -p 'pw\\' -h host ls", "env -u 'a\\' -Z v git status", "sudo -u 'ro\\' --frobnicate v bash install.sh --user"))
+
 
 class ThirdReview(HookCase):
     """The third security review of the Bash reader. Every case here was allowed by the guard it reviewed and is refused now. The base is a run directory
