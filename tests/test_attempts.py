@@ -40,6 +40,7 @@ class Attempts(unittest.TestCase):
         self.addCleanup(self.env.stop)
         self.store = A.Store(self.run)
         self.record = Path(self.store.path) / "state.json"
+        self.receipts = self.state / "attempts" / ".receipts"
 
     @contextlib.contextmanager
     def locked(self, store=None):
@@ -74,6 +75,7 @@ class Attempts(unittest.TestCase):
 
     def prepare(self):
         record = self.store.init(b"lead refs\n", epoch=10, base="feature/example", base_sha="a" * 40)
+        self.identity = record["prepared"]["identity"]
         self.register()
         return record
 
@@ -96,9 +98,14 @@ class Attempts(unittest.TestCase):
                                "test", str(ROOT), *map(str, args)],
                               capture_output=True, text=True, timeout=15, pass_fds=pass_fds)
 
-    def receipt(self, store=None):
-        """The documented location, spelled out: the tests pin it."""
-        return self.state / "attempts" / ".receipts" / ((store or self.store).id + ".json")
+    def receipt(self, store=None, identity=None):
+        """The documented location, spelled out: the tests pin it.
+
+        ID.PREPARED.json, where PREPARED is the prepared identity that init
+        recorded (kept by prepare(): a finished clean removes the state).
+        """
+        self.assertRegex(identity or self.identity, r"\A[0-9a-f]{32}\Z")
+        return self.receipts / ("%s.%s.json" % ((store or self.store).id, identity or self.identity))
 
     def outcome_run(self, secret="", **registry):
         """A run with a failed and a successful attempt, verified and applied."""
@@ -1258,12 +1265,12 @@ if sys.argv[3] == 'member':
             self.assertEqual(self.store._claims(self.store.show()), unknown)
 
     def test_interrupted_clean_resumes_with_the_same_receipt(self):
-        receipt = self.receipt()
         def same(before):
             st = receipt.stat()
             self.assertEqual((receipt.read_bytes(), st.st_ino, st.st_mtime_ns), before)
         with self.locked():
             record = self.outcome_run()
+            receipt = self.receipt()
             # After the receipt, before the cleanup intent.
             with mock.patch.object(self.store, "_clean_commit", side_effect=OSError("interrupted")):
                 with self.assertRaisesRegex(OSError, "interrupted"):
@@ -1297,7 +1304,7 @@ if sys.argv[3] == 'member':
         self.assertEqual(os.listdir(receipt.parent), [receipt.name])
 
     def test_clean_refuses_when_the_receipt_cannot_be_written_and_keeps_the_run(self):
-        receipts = self.receipt().parent
+        receipts = self.receipts
         with self.locked():
             record = self.outcome_run()
             receipts.mkdir(mode=0o700)
@@ -1334,7 +1341,7 @@ if sys.argv[3] == 'member':
         self.assertEqual(json.loads(self.receipt().read_bytes()), self.outcome_expected(record, disposition="discarded"))
 
     def test_discard_goes_on_without_a_receipt_and_says_so(self):
-        receipts = self.receipt().parent
+        receipts = self.receipts
         with self.locked():
             self.outcome_run()
             receipts.mkdir(mode=0o700)
@@ -1431,45 +1438,104 @@ if sys.argv[3] == 'member':
             else:
                 self.assertFalse(F.looks_secret(item, planted), item)
 
-    def test_second_clean_finds_the_receipt_and_never_rewrites_it(self):
-        receipt = self.receipt()
+    def test_second_clean_replaces_a_receipt_no_intent_committed_and_none_after_it(self):
+        def interrupted():
+            return mock.patch.object(self.store, "_clean_commit", side_effect=OSError("interrupted"))
+        def seen():
+            st = receipt.stat()
+            return receipt.read_bytes(), st.st_ino, st.st_mtime_ns, st.st_nlink, stat.S_IMODE(st.st_mode)
         with self.locked():
             record = self.outcome_run()
-            with mock.patch.object(self.store, "_clean_commit", side_effect=OSError("interrupted")):
-                with self.assertRaises(OSError):
-                    self.store.clean_begin()
-            before = (receipt.read_bytes(), receipt.stat().st_ino, receipt.stat().st_mtime_ns)
+            receipt = self.receipt()
+            with interrupted(), self.assertRaises(OSError):
+                self.store.clean_begin()
+            before = seen()
+            self.assertEqual(before[3:], (1, 0o600))
             # A writer that died between publishing and removing its temporary name.
             os.link(receipt, receipt.with_name("." + receipt.name + ".new"))
-            with mock.patch.object(self.store, "_clean_commit", side_effect=OSError("interrupted")), \
-                    mock.patch.object(A.os, "link", side_effect=AssertionError("rewritten")):
+            # Equal bytes: nothing is written, neither by link nor by replacement.
+            with interrupted(), mock.patch.object(A.os, "link", side_effect=AssertionError("rewritten")), \
+                    mock.patch.object(A.os, "replace", side_effect=AssertionError("rewritten")):
                 with self.assertRaises(OSError):
                     self.store.clean_begin()
-            st = receipt.stat()
-            self.assertEqual((receipt.read_bytes(), st.st_ino, st.st_mtime_ns, st.st_nlink), before + (1,))
-            self.assertEqual(os.listdir(receipt.parent), [receipt.name])
-            # Other content under the receipt's name: refused, never overwritten.
+            self.assertEqual(seen(), before)
+            self.assertEqual(os.listdir(self.receipts), [receipt.name])
+            # The facts moved on and no intent was committed: that receipt was
+            # provisional, and the next clean replaces it whole and goes on.
             self.row["slug"] = "another-change"
             self.register(**self.row)
             record = self.store.show()
-            with self.assertRaisesRegex(A.Refuse, r"cannot be written \(a receipt with other content exists and is never "
-                                        r"rewritten\); nothing was removed"):
+            with interrupted(), self.assertRaises(OSError):
                 self.store.clean_begin()
             self.intact(record)
-            # Explicit discard goes on and leaves that receipt as it is.
+            replaced = seen()
+            self.assertEqual(json.loads(replaced[0]), self.outcome_expected(record, slug="another-change"))
+            self.assertNotEqual(replaced[1], before[1])                         # a new file under the name, not a write into the old one
+            self.assertEqual(replaced[3:], (1, 0o600))
+            self.assertEqual(os.listdir(self.receipts), [receipt.name])
+            # A replacement that fails leaves the earlier receipt whole, no temporary name and the run usable.
+            self.row["slug"] = "third-change"
+            self.register(**self.row)
+            record = self.store.show()
+            with mock.patch.object(A.os, "replace", side_effect=PermissionError(errno.EACCES, "Permission denied")):
+                with self.assertRaisesRegex(A.Refuse, r"outcome receipt %s cannot be written \(.*Permission denied.*\); "
+                                            "nothing was removed" % receipt):
+                    self.store.clean_begin()
+            self.intact(record)
+            self.assertEqual(seen(), replaced)
+            self.assertEqual(os.listdir(self.receipts), [receipt.name])
+            # Explicit discard replaces it as well: the receipt says what became of the run.
             stderr = io.StringIO()
             with contextlib.redirect_stderr(stderr):
                 self.store.clean_begin(discard=True)
-            self.assertRegex(stderr.getvalue(), r'was not written \(a receipt with other content exists and is never '
-                             r'rewritten\); discard goes on: disposition "discarded, no receipt" could not be recorded')
+            self.assertEqual(stderr.getvalue(), "")
+            committed = seen()
+            self.assertEqual(json.loads(committed[0]),
+                             self.outcome_expected(record, slug="third-change", disposition="discarded"))
+            # The intent is committed: from here on nothing rewrites the receipt.
+            self.assertEqual(self.store.clean_pending()["phase"], "intent")
+            self.row["slug"] = "fourth-change"
+            self.register(**self.row)
+            for discard in (False, True):
+                with self.subTest(discard=discard), self.assertRaisesRegex(A.Refuse, "cleanup already in progress"):
+                    self.store.clean_begin(discard=discard)
+                self.assertEqual(seen(), committed)
             self.finish_clean()
-            st = receipt.stat()
-            self.assertEqual((receipt.read_bytes(), st.st_ino, st.st_mtime_ns, st.st_nlink), before + (1,))
+            self.assertEqual(seen(), committed)
+        self.assertEqual(os.listdir(self.receipts), [receipt.name])
+
+    def test_run_id_used_again_keeps_the_receipt_of_its_earlier_use(self):
+        with self.locked():
+            self.outcome_run()
+            first = self.receipt()
+            self.store.clean_begin()
+            self.finish_clean()
+            st = first.stat()
+            before = (first.read_bytes(), st.st_ino, st.st_mtime_ns)
+            # The same run id is prepared again once the registry no longer names its earlier use.
+            (self.state / "local-runs.jsonl").unlink()
+            (self.state / "apply" / (self.store.id + ".json")).unlink()
+            self.run.mkdir(mode=0o700)
+            again = self.store.init(b"other refs\n", epoch=30, base="feature/another", base_sha="c" * 40)
+            self.assertNotEqual(again["prepared"]["identity"], self.identity)
+            second = self.receipt(identity=again["prepared"]["identity"])
+            self.row = {}
+            self.register()
+            self.store.clean_begin(discard=True)
+            self.finish_clean()
+            st = first.stat()
+            self.assertEqual((first.read_bytes(), st.st_ino, st.st_mtime_ns), before)
+            doc = json.loads(second.read_bytes())
+            self.assertEqual((doc["run"], doc["base"], doc["disposition"]),
+                             ("qargi.Abc123", {"branch": "feature/another", "commit": "c" * 40}, "discarded"))
+        # One run id, two prepared uses: its receipts are ID.*.json.
+        self.assertEqual(sorted(p.name for p in self.receipts.glob("qargi.Abc123.*.json")), sorted((first.name, second.name)))
+        self.assertEqual(len(os.listdir(self.receipts)), 2)
 
     def test_receipt_is_written_whole_over_a_dead_writers_temporary_name(self):
-        receipt = self.receipt()
         with self.locked():
             record = self.outcome_run()
+            receipt = self.receipt()
             self.write(receipt.with_name("." + receipt.name + ".new"), b'{"version": 1, "run": "qargi.Abc1')
             link = receipt.with_name("planted")
             link.write_text("unrelated")
@@ -1483,15 +1549,25 @@ if sys.argv[3] == 'member':
         target = self.root / "target.json"
         target.write_text("kept")
         with self.locked(other):
-            other.init(b"lead refs\n", epoch=10, base="feature/example", base_sha="a" * 40)
+            planted = self.receipt(other, other.init(b"lead refs\n", epoch=10, base="feature/example",
+                                                     base_sha="a" * 40)["prepared"]["identity"])
             with (self.state / "local-runs.jsonl").open("ab") as registry:
                 registry.write(A.encode(dict(run=other.run, lifecycle=1)))
-            self.receipt(other).symlink_to(target)
+            planted.symlink_to(target)
             with self.assertRaisesRegex(A.Refuse, r"outcome receipt .* cannot be written \(.*\); nothing was removed"):
                 other.clean_begin()
             self.assertIsNone(other.clean_pending())
-            self.assertTrue(self.receipt(other).is_symlink())
+            self.assertTrue(planted.is_symlink())
             self.assertEqual(target.read_text(), "kept")
+            # Neither is a file that is not private: only a plain private receipt is ever replaced.
+            planted.unlink()
+            planted.write_text("kept")
+            planted.chmod(0o644)
+            with self.assertRaisesRegex(A.Refuse, r"outcome receipt .* cannot be written \(.*private permissions.*\); "
+                                        "nothing was removed"):
+                other.clean_begin()
+            self.assertIsNone(other.clean_pending())
+            self.assertEqual((planted.read_text(), stat.S_IMODE(planted.stat().st_mode)), ("kept", 0o644))
 
     def test_legacy_run_gets_no_receipt(self):
         legacy = {"run": str(self.run)}
@@ -1499,7 +1575,7 @@ if sys.argv[3] == 'member':
         Path(other.run).mkdir(mode=0o700)
         registry = self.state / "local-runs.jsonl"
         with self.locked(other):
-            other.init(b"lead refs\n", epoch=10, base="feature/example", base_sha="a" * 40)
+            identity = other.init(b"lead refs\n", epoch=10, base="feature/example", base_sha="a" * 40)["prepared"]["identity"]
             self.write(registry, A.encode(legacy) + A.encode(dict(run=other.run, lifecycle=1)))
         with self.locked():
             # An unmarked run has no lifecycle state: every lifecycle clean step
@@ -1517,8 +1593,7 @@ if sys.argv[3] == 'member':
             self.write(registry, A.encode(legacy) + A.encode(dict(run=other.run, lifecycle=1, cleaned="2026-01-02T00:00:00Z")))
             other.clean_finish()
         # The lifecycle run beside it left a receipt; the legacy run left none.
-        self.assertEqual(os.listdir(self.receipt().parent), ["qargi.Def456.json"])
-        self.assertFalse(self.receipt().exists())
+        self.assertEqual(os.listdir(self.receipts), ["qargi.Def456.%s.json" % identity])
 
 
 if __name__ == "__main__":
