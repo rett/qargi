@@ -480,6 +480,24 @@ out=$(verify "$RSA"); rc=$?
 out=$(verify "$RSB"); rc=$?
 [ $rc != 0 ] && grep -qF "branch deleted: refs/heads/feature/rs (was $rsb) (not in the lead's ref journal)" <<<"$out" \
   && ok "while a run that had it at the tip the lead dropped is still refused: no line starts there" || no "verify of the run at the dropped tip: rc=$rc $out"
+# exactly at the bound: a branch deleted 500 commits past the commit the journal has it at gets all 500 steps, in order, and the run verifies (501 got none, above).
+# A branch the lead notes with the very reason those steps carry is a note all the same: its line is the lead's text and is not counted as a commit a verb took.
+task agent/at at.txt one; $DA ref note agent/at >/dev/null 2>&1 || no "(setup) note agent/at"
+RB=$(mkrun gone-bound); at0=$(sha agent/at)
+at1=$at0; for _ in $(seq 1 500); do at1=$(git -C "$A" commit-tree -p "$at1" -m "one more by hand" "$at0^{tree}"); done; git -C "$A" branch -f agent/at "$at1" >/dev/null
+git -C "$A" branch agent/nt develop; $DA ref note agent/nt --why "a commit made on the branch with git; the verb took the branch with it" >/dev/null 2>&1 || no "(setup) note agent/nt with the reason of a step"
+$F merge ot agent/at >/dev/null 2>&1 || no "(setup) merge the branch 500 commits past the journal"
+n=$(jn); out=$(approve $DA branch prune) || no "(setup) prune agent/at: $out"
+grep -qxF "$(takes 500 agent/at "$at0" "$at1" '    ')" <<<"$(planned)" && ok "the plan of the prune lists the 500 commits made with git and their range" || no "plan of the prune at the bound: $(planned | grep -v '^plan token')"
+steps=$(jq -sc --arg o "$at0" --arg n "$at1" '[.[] | select(.ref == "refs/heads/agent/at" and .verb == "branch:prune" and ((.why // "") | test("with git")))] as $l
+  | [($l | length), ($l[0].old == $o), ($l[-1].new == $n), ([range(1; $l | length) | select($l[.].old != $l[. - 1].new)] | length), ($l | map(.at) | unique | length)]' "$J")
+[ "$(sha agent/at)" = "$Z" ] && [ "$steps" = "[500,true,true,0,1]" ] && jhas agent/at "$at1" "$Z" && [ "$(jn)" = $((n + 501)) ] && ! grep -q "does not lead to" <<<"$out" \
+  && ok "branch prune of a branch exactly 500 commits past what the journal has journals the 500 steps, each from one commit to the next and all at one time, then the deletion, and prints no note" \
+  || no "prune at the bound: steps $steps, lines $n -> $(jn): $(grep 'does not lead' <<<"$out")"
+out=$(verify "$RB"); rc=$?
+[ $rc = 0 ] && grep -qF "agent/at deleted by qargi branch prune (500 commits made with git, taken by the verb)" <<<"$out" \
+  && ok "and a run prepared before those 500 commits verifies: verify counts them with branch prune" || no "verify at the bound: rc=$rc $(grep -v 'warning: --scratch' <<<"$out" | head -n 12)"
+grep -q "agent/nt created by qargi ref note\$" <<<"$out" && ok "a branch noted with the reason of a step is named as a note, with no count" || no "the noted branch: $(grep 'agent/nt' <<<"$out")"
 use app
 # on origin too: a branch pushed by hand and never noted, then deleted there by branch prune --remote, gets the note with origin's name of it
 $F start po >/dev/null 2>&1; task agent/po po.txt one; git -C "$A" push -q origin agent/po; byhand agent/po po2.txt push; po1=$(sha agent/po)
