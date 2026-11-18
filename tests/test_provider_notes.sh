@@ -173,8 +173,8 @@ for level, m in P.validate2(d, sys.argv[2]):
 }
 [ "$(marks claude-code)" = "lead: commands exploration identity session-model skills-dir" ] \
   && ok "the shipped claude-code marks the notes about the lead's session; spawn and member-out are about its members" || no "claude-code marks: $(marks claude-code)"
-[ "$(marks codex)" = "lead: commands exploration identity message session-model skills-dir" ] \
-  && ok "the shipped codex marks the notes about the lead's session; spawn is about its members" || no "codex marks: $(marks codex)"
+[ "$(marks codex)" = "lead: commands exploration identity session-model skills-dir" ] \
+  && ok "the shipped codex marks the notes about the lead's session; spawn is about its members and message about its sessions, whoever writes to one" || no "codex marks: $(marks codex)"
 [ "$(marks claude-platform)" = "lead: " ] && ok "the shipped claude-platform marks none: its two notes are about the hosted members" || no "claude-platform marks: $(marks claude-platform)"
 [ "$(marks notey)" = "lead: " ] && ok "a definition with no lead_notes is valid and marks none" || no "notey marks: $(marks notey)"
 fake_runtime "$SRC" "$TOOL" marked local '.notes = {"alpha": "a", "beta-2": "b"} | .lead_notes = ["beta-2"]'
@@ -422,12 +422,17 @@ rm -f "$TOOL/lib/providers/lead-out.json"; rm -rf "$TOOL/lib/providers/lead-out"
 # the shipped runtimes, crossed: a lead on one with members on the other
 jqn() { jq -r --arg t "$2" '.notes[$t]' "$SRC/lib/providers/$1.json"; }
 bad=
-for t in commands exploration identity message session-model skills-dir; do
+for t in commands exploration identity session-model skills-dir; do
   run "$t" --project onclaude --lead-runtime codex; [ "$rc|$out|$err" = "0|$(jqn codex "$t")|" ] || bad="$bad $t"
 done
 run --project onclaude --lead-runtime codex
-[ "$rc|$(tr '\n' ' ' <<<"$out")|$err" = "0|commands exploration identity message session-model skills-dir |" ] || bad="$bad list"
-[ -z "$bad" ] && ok "a codex lead of a project on claude-code: its own notes are codex's (message too), and the list is those" || no "codex lead, claude-code members:$bad"
+[ "$rc|$(tr '\n' ' ' <<<"$out")|$err" = "0|commands exploration identity session-model skills-dir |" ] || bad="$bad list"
+[ -z "$bad" ] && ok "a codex lead of a project on claude-code: its own notes are codex's, and the list is those" || no "codex lead, claude-code members:$bad"
+# codex's message note says how a message reaches a session on codex: it is about the sessions of that runtime, not about its lead, so
+# it is no answer in a project whose sessions run on claude-code, which has no such note
+run message --project onclaude --lead-runtime codex
+{ [ $rc = 1 ] && [ -z "$out" ] && grep -q "has no notes topic 'message'" <<<"$err" && ! grep -q 'codex queue' <<<"$err"; } \
+  && ok "codex's message is not a note about the lead: in a project on claude-code, which has none, the topic is unknown (exit 1) and not printed" || no "message, codex lead of claude-code: rc=$rc out=$out err=$err"
 # claude-code starts a member inside a claude-code session, which a codex lead is not in: its spawn and member-out would name a tool
 # that lead does not have, so they are unsupported and the lead is told it cannot start the project's members
 for t in spawn member-out; do
@@ -445,12 +450,12 @@ bad=
 for t in commands exploration identity session-model skills-dir; do
   run "$t" --project oncodex --lead-runtime claude-code; [ "$rc|$out|$err" = "0|$(jqn claude-code "$t")|" ] || bad="$bad $t"
 done
-run spawn --project oncodex --lead-runtime claude-code; [ "$rc|$out|$err" = "0|$(jqn codex spawn)|" ] || bad="$bad spawn"
+for t in spawn message; do
+  run "$t" --project oncodex --lead-runtime claude-code; [ "$rc|$out|$err" = "0|$(jqn codex "$t")|" ] || bad="$bad $t"
+done
 run --project oncodex --lead-runtime claude-code
-[ "$(tr '\n' ' ' <<<"$out")" = "commands exploration identity session-model skills-dir spawn " ] || bad="$bad list"
-[ -z "$bad" ] && ok "a claude-code lead of a project on codex: its own notes are claude-code's, spawn is codex's (qargi local run)" || no "claude-code lead, codex members:$bad"
-run message --project oncodex --lead-runtime claude-code
-refused "and codex's note on messaging a session is not that lead's: unsupported, not printed" "the lead runtime claude-code has no note 'message' about the lead's session"
+[ "$(tr '\n' ' ' <<<"$out")" = "commands exploration identity message session-model skills-dir spawn " ] || bad="$bad list"
+[ -z "$bad" ] && ok "a claude-code lead of a project on codex: its own notes are claude-code's; spawn (qargi local run) and message (how to write to a session there) are codex's" || no "claude-code lead, codex members:$bad"
 run member-out --project oncodex --lead-runtime claude-code
 { [ $rc = 1 ] && [ -z "$out" ]; } && ok "claude-code's note about its own members is not codex's members': exit 1" || no "member-out, codex members: rc=$rc out=$out err=$err"
 

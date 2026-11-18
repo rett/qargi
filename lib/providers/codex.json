@@ -187,5 +187,5 @@
     "identity": "Codex has no hook that qargi uses to record the lead identity for the later commands of a session, so pass `--as ID` to the commands that take it; without it the anonymous identity user@host works but only warns.",
     "commands": "A command the person must run themselves, such as one that asks for input or a credential, is printed for them to run in their own terminal; a Codex member runs commands only inside its sandbox."
   },
-  "lead_notes": ["commands", "exploration", "identity", "message", "session-model", "skills-dir"]
+  "lead_notes": ["commands", "exploration", "identity", "session-model", "skills-dir"]
 }
