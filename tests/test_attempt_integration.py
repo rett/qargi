@@ -509,6 +509,46 @@ print('fixture transcript')
         self.cmd("local", "clean", self.run)
         self.assertFalse(Path(self.store.path).exists())
 
+    def test_local_clean_writes_the_outcome_receipt_or_exits_3_with_the_run_kept(self):
+        self.prepare("review")
+        self.cmd("review", "save", self.run, input="# Findings\nNo findings.\nverdict: accept\n")
+        self.verify()
+        receipts = self.state / "attempts" / ".receipts"
+        receipt = receipts / ("%s.%s.json" % (self.run.name, self.state_json()["prepared"]["identity"]))
+        # The receipt cannot be written: its directory is not private to the lead.
+        receipts.mkdir()
+        receipts.chmod(0o755)
+        kept = lambda: [self.bytes_tree(p) for p in (Path(self.store.path), self.saved)]
+        before = kept()
+        p = subprocess.run([str(ROOT / "bin/qargi"), "local", "clean", str(self.run)], cwd=self.repo, env=self.env,
+                           text=True, capture_output=True, timeout=30)
+        self.assertEqual(p.returncode, 3, p.stdout + p.stderr)
+        self.assertIn("qargi: lifecycle: outcome receipt %s cannot be written (lifecycle state must be lead-owned with "
+                      "private permissions); nothing was removed: correct the cause and rerun local clean, or --discard "
+                      "drops the run without a receipt" % receipt, p.stderr)
+        self.assertNotIn("cleaned", p.stdout)
+        self.assertEqual(kept(), before)
+        self.assertEqual(os.listdir(receipts), [])
+        self.assertTrue((self.run / "out/report.md").is_file())
+        self.assertTrue(Path((self.run / "tmpdir").read_text().strip()).is_dir())
+        self.assertFalse((Path(self.store.area) / self.store.clean_name).exists())
+        self.assertFalse(self.registry_row().get("cleaned"))
+        # The cause corrected, the same clean goes through and leaves the receipt and nothing else of the run.
+        receipts.chmod(0o700)
+        self.assertIn("cleaned " + str(self.run), self.cmd("local", "clean", self.run))
+        self.assertEqual(os.listdir(receipts), [receipt.name])
+        st = receipt.stat()
+        self.assertEqual((st.st_mode & 0o7777, st.st_nlink), (0o600, 1))
+        doc = json.loads(receipt.read_text())
+        self.assertEqual({k: doc[k] for k in ("version", "run", "slug", "role", "class", "base", "apply", "disposition")},
+                         {"version": 1, "run": self.run.name, "slug": "example", "role": "review", "class": "read-only",
+                          "base": {"branch": "develop", "commit": self.sha}, "apply": "none", "disposition": "cleaned"})
+        self.assertEqual((doc["verification"]["state"], doc["attempt_count"]), ("verified", 1))
+        self.assertFalse(self.run.exists() or self.saved.exists() or Path(self.store.path).exists())
+        self.assertTrue(self.registry_row().get("cleaned"))
+        self.assertIn("cleaned already", self.cmd("local", "clean", self.run))
+        self.assertEqual(os.listdir(receipts), [receipt.name])
+
     def test_saved_generation_failure_recovery_and_identity(self):
         self.prepare()
         (self.run / "out/report.md").write_text("C1")
