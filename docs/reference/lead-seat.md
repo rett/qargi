@@ -12,7 +12,7 @@ This is revision 2 of the page. It takes in the changes that the review of revis
 
 How to read it:
 
-- A rule is a paragraph that starts with its number, **R1** to **R96**. The numbers are this page's
+- A rule is a paragraph that starts with its number, **R1** to **R97**. The numbers are this page's
   own and they are stable: a rule added in a later revision takes the next number and stands in the
   section of its subject, so the numbers are not in page order, and a rule that is dropped keeps
   its number in a paragraph that starts `**Rn** (withdrawn)`. Each rule ends with its refusal: the
@@ -111,10 +111,12 @@ fails the check.
 `$AUTH/<project>/fence/<n>.json` (the accepted door records, numbered by epoch), and per transfer
 `$AUTH/<project>/tx/<tx>/state.json`, `$AUTH/<project>/tx/<tx>/note.json`,
 `$AUTH/<project>/tx/<tx>/note.txt`, `$AUTH/<project>/tx/<tx>/note.sig`,
-`$AUTH/<project>/tx/<tx>/readback-<k>.json` and `$AUTH/<project>/tx/<tx>/result-<k>.json`. Beside
-the projects it holds `$AUTH/audit-host.log` (R15), `$AUTH/credentials/broker_ed25519` and
-`$AUTH/signers`. The names `$AUTH/<project>/delegations/` and `$AUTH/<project>/dormancy.json` are
-reserved and not created. `<tx>` has the form `tx-<UTC time>-<four hex digits>`. Refusal: none.
+`$AUTH/<project>/tx/<tx>/readback-<k>.json` and `$AUTH/<project>/tx/<tx>/result-<k>.json`, and
+where runs were archived `$AUTH/<project>/tx/<tx>/orphans/` with `manifest.json` and one archive
+file for each run (R91). Beside the projects it holds `$AUTH/audit-host.log` (R15),
+`$AUTH/credentials/broker_ed25519` and `$AUTH/signers`. The names `$AUTH/<project>/delegations/`
+and `$AUTH/<project>/dormancy.json` are reserved and not created. `<tx>` has the form
+`tx-<UTC time>-<four hex digits>`. Refusal: none.
 
 **R10** (who writes the store). Only the broker and `qargi host` write below `$AUTH`. Lead-side code
 never opens `$AUTH`: every lead-side verb gives the same result with `$AUTH` absent. Refusal: none.
@@ -146,8 +148,11 @@ therefore sees the old record or the new one, never a part. Refusal: `seat-chang
 `rev` moved; nothing is written.
 
 **R13** (order of writes). Every step writes, in this order: its own records (the door copy, the
-note, the read-back and result, and `$AUTH/<project>/tx/<tx>/state.json`), then the seat record,
-then the projection. At init, step S3 writes the seat marker before the seat record. Refusal: none.
+archive of open runs, the note, the read-back and result, and
+`$AUTH/<project>/tx/<tx>/state.json`), then the seat record, then the projection. At init, step S3
+writes the seat marker before the seat record. S4 publishes the archive between its seat record and
+its projection (R92), and S5 removes the archived run folders before its seat record (R38).
+Refusal: none.
 
 **R14** (history). Every change of state appends one line to `$AUTH/<project>/history.jsonl`:
 `{at, epoch, tx, from_state, to_state, step, kind, by}`. A line is never changed or removed.
@@ -355,12 +360,14 @@ and the projection. S2 may be skipped: S3 is allowed from `accepted`. Refusal: t
 seat (`fenced`, `holder: null`) and the projection. No later step of the transfer runs without it.
 Refusal: `fence-required`, exit 1, when S3 or a later step is asked for and no fence was accepted.
 
-**R37** (S4 note). After S3 the broker builds the note (R46) from the store, the mirror's tips and
-the spool copies, signs it (R47) and writes the note files, the seat (`fenced`, the note's version)
+**R37** (S4 note). After S3, and after the archive of open runs where there are any (R91), the
+broker builds the note (R46) from the store, the mirror's tips and the spool copies, signs it (R47)
+and writes the note files, the seat (`fenced`, the note's version), the published archive (R92)
 and the projection. Refusal: none.
 
-**R38** (S5 commit). Needs the note. Writes the seat (`pending-readback`, B as holder, the new
-epoch, `readback: pending`) and the projection. B's `read` verbs pass; its `lead-write` verbs are
+**R38** (S5 commit). Needs the note. Where runs were archived, its first act is their removal
+(R92). Then it writes the seat (`pending-readback`, B as holder, the new epoch,
+`readback: pending`) and the projection. B's `read` verbs pass; its `lead-write` verbs are
 refused until S6 matches, all but `marshal seat readback --submit` (R61, R96). Refusal:
 `readback-pending`, exit 77, to B.
 
@@ -381,7 +388,7 @@ nothing and exits 0.
 | S3 | seat `accepted` or `collected`; A's unit is gone | seat `fenced`, projection one step behind; no session passes `lead-write` |
 | S3 at init | marker set, no seat: every gated verb is refused `seat-record-missing` | seat written, no projection: the same |
 | S4 | note files written, seat names no note | seat names the note, projection lacks it; `note show` has nothing |
-| S5 | (no record of its own) | seat `pending-readback`, projection `fenced` at epoch N; B is refused `projection-stale` |
+| S5 | no record of its own; run folders partly removed, and the removal is done again (R92) | seat `pending-readback`, projection `fenced` at epoch N; B is refused `projection-stale` |
 | S6 | result stored, seat `pending-readback`; B is refused `readback-pending` (R61) | seat `held`, projection `pending-readback`; the same |
 
 Refusal: none for the resume; a stop never lets a session pass that the completed step would refuse,
@@ -683,6 +690,7 @@ only when the path was recorded. This table says how for each path.
 | `$CONF/projects/<project>.json` | both sides | each component below `$CONF` is opened no-follow; the file must be regular with one link; the broker writes a new file created exclusively in the same directory descriptor and renames it there |
 | `<assignment_dir>/<project>.json` | lead side | the recorded directory is opened from the file system root with no-follow on every component, at every gate; the file is opened no-follow relative to it and must be regular |
 | `<projection_dir>/<project>/projection.json` | lead side reads, broker writes | as the assignment directory; the broker creates the new file exclusively and renames it inside the directory descriptor |
+| the files below `<projection_dir>/<project>/orphans/<tx>/` (R92) | lead side reads, broker writes | as the projection |
 | the spool below `$STATE` | lead side writes | created exclusively and no-follow below `$STATE`; the broker never opens it: it takes the content from standard input (R31) |
 | the location in `mirror` | broker | opened from the file system root with no-follow on every component before every use; git then runs on the opened directory |
 | `$AUTH/<project>/seat.json` and every other file of R9 | broker | `$AUTH` is checked by R8, then each component below it is opened no-follow; new files are created exclusively and renamed inside the directory descriptor |
@@ -699,28 +707,56 @@ directory, the projection directory, the mirror, `$AUTH` and `$CONF` when one of
 declared location: when it is equal to the `clone` or the `state_root`, lies below one of them or
 contains one of them. Who owns a path is not the test: a sandboxed lead runs as the owner's user,
 so the owner of a file does not say who could write it. The one thing below a declared location
-that authority-side code reads is the run folders of R91, and only while the seat is `fenced`
-(R31). Refusal: `assignment-invalid`, exit 1, for an assignment that declares or names such a
-path; `authority-store-unsafe`, exit 1, for a marker or a root that is such a path.
+that authority-side code reads is the run folders of R91, and only while no unit of the role
+exists (R31, R97). Refusal: `assignment-invalid`, exit 1, for an assignment that declares or names
+such a path; `authority-store-unsafe`, exit 1, for a marker or a root that is such a path.
 
 **R90** (archive before remove). Nothing a seat verb removes is removed before an archive of it
 exists and was read back and compared. This page has exactly two removals: the open run folders of
-a role after a fence (R91) and the marker at an unseat (R86). Every other record is kept (R83).
-Refusal: none; a removal whose archive is absent or does not compare does not happen, and the step
-stays open.
+a role after a fence (R91, R92) and the marker at an unseat (R86). Every other record is kept
+(R83). Refusal: none; a removal whose archive is absent or does not compare does not happen, and
+the step stays open.
 
-**R91** (the archive of open runs) `[OPEN O7]`. After S3 and before S4 the broker archives every
-open run folder of the role: one archive file per run and one manifest, below
-`$AUTH/<project>/tx/<tx>/orphans/`, owner only. The manifest lists per run its name, feature, the
-number and total size of its files, the digest of the archive file and whether a size limit cut it
-short. The archive is verified by reading it back against the manifest. Refusal: none; a run over
-the size limit is archived up to the limit and marked, never skipped, and a run that cannot be read
-keeps the step open.
+**R91** (the archive of open runs) `[OPEN O7]`. After S3 and before the note of S4 the broker
+archives every open run folder of the role whose epoch the fence ended: one archive file for each
+run, named after the run, and `manifest.json`, below `$AUTH/<project>/tx/<tx>/orphans/`, owner
+only. It walks only below the `state_root` of that epoch's assignment, without following a link
+(R88): a run that the role's records place anywhere else is listed in the manifest as outside the
+state root, and its folder is neither read nor removed. An init ends no epoch and archives nothing.
+The size limit is 64 MiB of file content for each run: its files are stored whole, in the byte
+order of their paths, as long as their sizes together stay within the limit. The manifest lists
+for each run its name, its feature, the number and total size of its files, the number and total
+size of the files stored, the digest of the archive file and `cut`, which is true when the limit
+left files out. The archive is verified by reading it back against the manifest; after a stop,
+`qargi marshal broker run` verifies what is there and writes again what does not verify. Refusal:
+none; a run over the limit is archived up to the limit and marked, never skipped, and a run that
+cannot be read keeps the step open.
 
-**R92** (orphans are named, then removed). The note lists every archived run as a lead-stated
-orphan (R46). A run folder is removed only after its archive is verified and the note that names it
-is written. The successor reconciles its runs from the note and the archive: it adopts or discards
-each orphan, and no run is dropped without a line in the note. Refusal: none.
+**R92** (orphans are named, published, then removed) `[OPEN O7]`. The note lists every archived run
+as a lead-stated orphan, below `lead_stated` (R46), with the digest of its archive file. S4 then
+publishes the manifest and the archive files, read only, below
+`<projection_dir>/<project>/orphans/<tx>/`, before it writes its projection: each file is created
+exclusively and renamed there as the projection is (R88), and is compared with its digest. That is
+how the successor reads the archive. Its sandbox has the projection directory; it checks a
+published file against the digest in the signed note; and what the file holds is lead-stated data,
+which qargi neither runs nor trusts. The gate reads nothing below that directory, and no seat verb
+removes a published copy. A run folder is removed only when its archive holds it whole (`cut` is
+false), is verified and published, and the note that names it is written. The removal is the first
+act of S5, before its seat write (R38). A run that was cut stays where it is, and the note says so.
+The successor reconciles its runs from the note and the archive: it adopts or discards each orphan,
+and no run is dropped without a line in the note. Refusal: none.
+
+**R97** (no unit of the role between the fence and S5) `[OPEN O7]`. The supervising layer does not
+start B's unit before S5 is written. From the fence of S3 until then no unit of the role exists, so
+no sandbox can write below the role's state root, and that is the only time in which the broker
+reads there (R91) and removes there (R92): the exception that R89 leaves lasts no longer. Qargi
+cannot see a unit, so this binds the supervising layer. What qargi does is to finish the archive,
+the publication and the removal before the seat write of S5, to name the start of B's unit as the
+next action of `marshal seat status` only once S5 is written, and to answer a session that has B's
+assignment file before S5 from a projection of the earlier epoch. This rule stands while the
+broker makes the archive: if the supervising layer makes it, the broker reads nothing below a
+state root and the rule goes (O7). Refusal: `projection-stale`, exit 77 (R58), to a `lead-write`
+verb of a unit that was started in that time; none on the authority side.
 
 ## The coordinator's place
 
@@ -812,9 +848,9 @@ page.
 
 The twelve conditions the gate checks are R53 to R64, one rule each `[OPEN O2]`.
 
-The two inputs that follow the check of revision 5 map to R90 to R92 (archive before remove) and
-R88 and R89 (G1). The four conditions for "a seat only for managed projects" map to R85, R86, R87
-and the third limit above.
+The two inputs that follow the check of revision 5 map to R90 to R92 and R97 (archive before
+remove) and R88 and R89 (G1). The four conditions for "a seat only for managed projects" map to
+R85, R86, R87 and the third limit above.
 
 ## Trace to the review
 
@@ -826,6 +862,7 @@ rules and points it changed.
 | 1 | the proof that `qargi host` is outside every sandbox cannot be made inside one; a verb with no project is judged by whether a project is seated | R33, R64 and R76 rewritten; R8, R15, R21, R47 and R70 follow; O9 decided; O17 new |
 | 2 | a recorded path is refused by the clone and the state root that the assignment declares, not by who owns it | R89 rewritten; R19 gains `state_root`; R31, R70, R84 and R88 follow; O6 decided |
 | 3 | the verbs that write the spool are named, and each passes in the state that asks for its envelope | R96 new; R32, R34, R35, R38, R40, R48, R51, R60 and R61 follow; O10 narrowed |
+| 4 | the archive of open runs stays an open question, the owner's and the supervising layer's; meanwhile no unit of the role runs before S5, the size limit is fixed and the successor has a way to read the archive | R97 new; R91 and R92 rewritten; R9, R13, R37, R38, R40, R88, R89 and R90 follow; O7 kept |
 
 ## Decided points
 
@@ -871,14 +908,22 @@ or the supervising layer.
   (the two directories, the mirror), and below the root for `$CONF`, `$STATE` and `$AUTH`, whose
   own path is resolved once. Alternative: from the file system root for every path; it costs every
   host whose home directory is reached through a link.
-- **O7** (R91, R92). The archive: who makes it, where, how large, and how the successor reads it.
-  Proposed: the broker, below `$AUTH`, with a size limit per run that this page does not fix, and
-  the successor reads the manifest in the note only. Alternative A: the supervising layer archives
-  and hands qargi the manifest; it costs qargi the check that the archive exists. Alternative B: the
-  archive is published below the projection directory so the successor can read the files; it costs
-  lead-written files in a directory the lead side trusts. The inputs also conflict here: the walk
-  reads lead-written folders, which R89 forbids by path; the proposal allows it only between S3 and
-  S5, when no unit of the role exists.
+- **O7** (R91, R92, R97; for the owner and the supervising layer, jointly). The archive of open
+  runs: who makes it, where, how large, how the successor reads it and how long a published copy
+  stays. Proposed: the broker makes it below `$AUTH`, with a limit of 64 MiB for each run;
+  publishes it read only below the projection directory, where the successor reads it; removes a
+  run folder only when the archive holds it whole; and removes no published copy. R97 then keeps
+  every unit of the role away while the broker reads the role's state root, which R89 otherwise
+  forbids. Alternative A: the supervising layer archives and hands qargi the manifest; it costs
+  qargi the check that the archive exists, and it ends R97 and the exception to R89. Alternative B:
+  the successor reads the manifest in the note only, and the owner reads the archive; it costs
+  what the supervising layer's input asks for, a successor that reconciles from the archive.
+  Alternative C: the supervising layer binds the archive of the transfer read only into the
+  successor's sandbox; it costs a bind for each transfer and a path that the lead side has to be
+  told, and it saves the copy below the projection directory. Alternative D: a run that was cut is
+  removed like the others; it costs the files beyond the limit, against R90. A cost of the
+  proposal: lead-written files stand in a directory that the lead side trusts for the projection,
+  and they take space there until the owner removes them.
 - **O8** (R52, R60 to R63). The design's list of codes puts `not-assigned` after `seat-vacant`, but
   its matrix answers class `owner` with `not-assigned` in every state. Proposed: the matrix wins.
   Alternative: the list wins; it costs an owner verb in a vacant seat the answer `seat-vacant`. The

@@ -310,10 +310,12 @@ class Seat(unittest.TestCase):
 
     @unbuilt(9)
     def test_R9_store_layout(self):
-        """R9: the store of a project holds the seat, the history, the door copies by epoch and the files of each transfer; beside
-        the projects the host audit, the broker key and the signers; the reserved names are not created.
-        Observable: after a whole transfer the store holds exactly the named files, the tx name has its form, and no
-        delegations directory or dormancy file exists."""
+        """R9: the store of a project holds the seat, the history, the door copies by epoch and the files of each transfer, among
+        them the archive of open runs where there were any; beside the projects the host audit, the broker key and the signers;
+        the reserved names are not created.
+        Observable: after a whole transfer the store holds exactly the named files (an orphans directory with manifest.json
+        and one archive file for each run only when runs were archived), the tx name has its form, and no delegations
+        directory or dormancy file exists."""
 
     @unbuilt(10)
     def test_R10_only_the_broker_writes_the_store(self):
@@ -337,7 +339,8 @@ class Seat(unittest.TestCase):
     @unbuilt(13)
     def test_R13_order_of_writes(self):
         """R13: every step writes its own records, then the seat record, then the projection; at init S3 writes the marker before
-        the seat record.
+        the seat record; S4 publishes the archive between its seat record and its projection, and S5 removes the archived run
+        folders before its seat record.
         Observable: with a stop injected after each write of each step, the files written so far are those earlier in that
         order and none later."""
 
@@ -509,16 +512,17 @@ class Seat(unittest.TestCase):
 
     @unbuilt(37)
     def test_R37_S4_note(self):
-        """R37: after S3 the broker builds and signs the note and writes the note files, the seat and the projection.
+        """R37: after S3 and the archive of open runs the broker builds and signs the note and writes the note files, the seat,
+        the published archive and the projection.
         Observable: after S4 the three note files exist, the seat names the note's version and the projection carries the
         note with its digests."""
 
     @unbuilt(38)
     def test_R38_S5_commit(self):
-        """R38: S5 writes the seat (pending-readback, B, the new epoch) and the projection; B reads but may not write, its
-        marshal seat readback --submit excepted.
+        """R38: S5 first removes the run folders that were archived, then writes the seat (pending-readback, B, the new epoch)
+        and the projection; B reads but may not write, its marshal seat readback --submit excepted.
         Observable: after S5 B's read verb and its marshal seat readback --submit pass and its other lead-write verbs exit 77
-        with readback-pending; the seat's epoch is the new one."""
+        with readback-pending; the seat's epoch is the new one; the archived run folders were gone before the seat changed."""
 
     @unbuilt(39)
     def test_R39_S6_check(self):
@@ -878,17 +882,26 @@ class Seat(unittest.TestCase):
 
     @unbuilt(91)
     def test_R91_the_archive_of_open_runs(self):
-        """R91: after S3 and before S4 the broker archives every open run folder: one archive file per run and a manifest with
-        name, feature, file count, size, digest and the cut mark, owner only, verified by reading it back.
-        Observable: after S4 the manifest lists each open run with the digest of its archive file, the files are mode 600, a
-        run over the limit is marked cut, and a symbolic link in a run folder is stored as a link."""
+        """R91: after S3 and before the note of S4 the broker archives every open run folder of the role whose epoch ended,
+        walking only below the state_root of that epoch's assignment: one archive file for each run and manifest.json, owner
+        only, verified by reading it back; the limit is 64 MiB of file content for each run, files stored whole in the byte
+        order of their paths; an init archives nothing.
+        Observable: after S4 the manifest lists each open run with its name, its feature, the count and size of its files
+        and of the files stored, the digest of its archive file and cut; the files are mode 600; a run of 64 MiB and one
+        byte is marked cut and the files stored are the first of its paths in byte order; a symbolic link in a run folder is
+        stored as a link; a run that the role's records place outside the state root is listed as outside and its folder is
+        neither read nor changed."""
 
     @unbuilt(92)
-    def test_R92_orphans_are_named_then_removed(self):
-        """R92: the note lists every archived run as a lead-stated orphan, and a run folder is removed only after its archive
-        is verified and the note that names it is written.
-        Observable: with a stop between archive, note and removal the folder exists until both are written; the note's
-        orphans equal the manifest's runs; no run of the registry is absent from both the note and the role's state."""
+    def test_R92_orphans_are_named_published_then_removed(self):
+        """R92: the note lists every archived run as a lead-stated orphan with the digest of its archive file; S4 publishes the
+        manifest and the archive files read only below the projection directory, where the successor reads them; a run folder
+        is removed only when its archive holds it whole, is verified and published and the note that names it is written, as
+        the first act of S5; a run that was cut stays.
+        Observable: with a stop between archive, note, publication and removal the folder exists until all three are written;
+        the published files have the digests the note names and no write bit; the note's orphans equal the manifest's runs;
+        the folder of a cut run is still there after S5; no run of the registry is absent from both the note and the role's
+        state; no gate answer changes with a file below the published directory."""
 
     # ---- the coordinator's place
 
@@ -921,6 +934,15 @@ class Seat(unittest.TestCase):
         and in collected it exits 77 too; in pending-readback B's readback --submit passes while its other lead-write verbs
         exit 77 with readback-pending; after each passing call exactly one new file exists below the state root and no record
         of the project, no run and nothing in the repository changed."""
+
+    @unbuilt(97)
+    def test_R97_no_unit_of_the_role_between_the_fence_and_S5(self):
+        """R97: the supervising layer does not start B's unit before S5 is written; from the fence until then no unit of the
+        role exists, and only then does the broker read or remove below the role's state root.
+        Observable: the archive, the publication and the removal are complete before the seat write of S5; seat status
+        names the start of B's unit as the next action only after S5; a session with B's assignment file before S5 gets
+        exit 77 with projection-stale for a lead-write verb; after S5 no broker step opens a path below the role's state
+        root."""
 
 
 if __name__ == "__main__":
