@@ -240,6 +240,19 @@ class Render(unittest.TestCase):
         advise = [o for o in C.COMMANDS["lead"]["verbs"]["compact-check"]["opts"] if o["flag"] == "--advise"]
         self.assertIn("no advice on an assumed window (unknown model window and no lead.context_window)", str(advise))
 
+    def test_lead_usage_session_help_says_where_the_transcript_is_looked_for_and_the_team_help_names_no_runtime(self):
+        """lib/lead_usage.py: a named session id (--session, else the id in the lead's environment) is looked for among the transcripts of the
+        current directory, the top of its work tree and the repository; only with no id at all is the newest transcript taken, and a set id
+        with none reads as unknown. The help of `team` is for a lead of any runtime."""
+        opts = [o for o in C.COMMANDS["lead"]["verbs"]["usage"]["opts"] if o["flag"] == "--session"]
+        self.assertEqual(len(opts), 1)
+        text = " ".join(opts[0]["help"].split())
+        for needle in ("the current directory, the top of its work tree and the repository", "the session QARGI_LEAD names",
+                       "only when QARGI_LEAD is unset or empty, the newest transcript", "a set id with none gives context: unknown"):
+            self.assertIn(needle, text)
+        self.assertNotIn("this directory", text)
+        self.assertNotIn("Claude Code", C.COMMANDS["team"]["desc"])
+
     def test_the_guard_topic_and_the_review_role_say_what_a_read_only_member_runs_where_tmpdir_points_and_what_a_piece_after_a_cut_may_not_start_with(self):
         """What the guard refuses a read-only member, as the member needs to read it: an assignment (not the command), the TMP that TMPDIR is, and the words the
         guard reads after a separator. The behaviour itself is tested in test_guard.py."""

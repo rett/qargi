@@ -3705,7 +3705,7 @@ apply the copy local verify saved of a passed run whose directory is gone (ID: q
 .B qargi team
 Run a task with a lead and role agents (opt\-in).
 .PP
-For a change that affects usage: the build member changes the code, the write member updates the operational docs, the review member judges both. The lead is this Claude Code session, a cloud lead, or a session started in the console; all follow the lead contract. Each member returns its own series against its own base.
+For a change that affects usage: the build member changes the code, the write member updates the operational docs, the review member judges both. The lead is the session you work in, a cloud lead, or a session started in the console; all follow the lead contract. Each member returns its own series against its own base.
 .RS
 .TP
 .BI "brief " "[PROJECT] TEAM"
@@ -4068,7 +4068,7 @@ the project, instead of the one inferred from here.
 .RS
 .TP
 .BI "\-\-session " "ID"
-read the transcript of this session id (default: QARGI_LEAD, else the newest of this directory).
+read the transcript of this session id, looked for among the transcripts of the current directory, the top of its work tree and the repository, in that order (default: the session QARGI_LEAD names; only when QARGI_LEAD is unset or empty, the newest transcript of the first of those that has one; a set id with none gives context: unknown).
 .RE
 .RS
 .TP
