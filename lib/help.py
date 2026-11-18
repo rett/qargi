@@ -817,23 +817,29 @@ def _words_of(words):
 
 
 def _positionals(opts, body):
-    """The words of a verb's command line that are neither options nor their values, with the options' values: ([positional], {flag: [values]}).
-    An option that takes a value is known from the verb's description; a word of the form --flag=value is read as the flag and its value."""
+    """The words of a verb's command line that are neither options nor their values, with the options' values and the options the verb does not declare:
+    ([positional], {flag: [values]}, [undeclared option words]). An option that takes a value is known from the verb's description; a word of the form
+    --flag=value is read as the flag and its value. An option that is not declared is not read as taking a value, so the words after it may be read
+    differently here than by the verb: the caller refuses the command line when there is one."""
     flags = {o["flag"]: o for o in opts}
-    pos, vals, i = [], {}, 0
+    pos, vals, unknown, i = [], {}, [], 0
     while i < len(body):
         t = body[i]
         if t.startswith("--") and "=" in t:
             f, v = t.split("=", 1)
             vals.setdefault(f, []).append(v)
+            if f not in flags:
+                unknown.append(f)
         elif t.startswith("-") and t != "-":
-            if t in flags and flags[t]["arg"]:
+            if t not in flags:
+                unknown.append(t)
+            elif flags[t]["arg"]:
                 vals.setdefault(t, []).append(body[i + 1] if i + 1 < len(body) else "")
                 i += 1
         else:
             pos.append(t)
         i += 1
-    return pos, vals
+    return pos, vals, unknown
 
 
 def _registry():
@@ -909,7 +915,10 @@ def actor_gate(argv):
     if not names:
         return 0
     opts = (vs[verb]["opts"] if vs else C.COMMANDS[area].get("opts", []))
-    pos, vals = _positionals(opts, body)
+    pos, vals, unknown = _positionals(opts, body)
+    if unknown:     # fail closed: the verb may read the words after an undeclared option differently than this gate does (feature verify --purpose alpha beta)
+        print(actor_refusal(label, "run %s with %s: it is not an option the verb declares, so what it names cannot be told" % (where, unknown[0])), file=sys.stderr)
+        return 2
     want = "feature/" + feature
     if names == "base":
         for b in vals.get("--base", []):

@@ -3581,7 +3581,7 @@ the directory the runs were prepared in (default: the runs of the registry that 
 .RS
 .TP
 .BI "\-\-actor " "ID"
-only the runs recorded under this coordinator label: the whole label, or a prefix that ends at a colon (<lead\-id>:coord:<feature>: lists every coordinator of a feature); a run prepared without a label matches none.
+only the runs recorded under this coordinator label: the whole label, or a prefix that ends at a colon (<lead\-id>:coord:<feature>: lists every coordinator of a feature; a lead identity may hold colons, so a prefix can also match the labels of a lead whose identity begins with it, and the whole label is exact); a run prepared without a label matches none.
 .RE
 .RS
 .TP
