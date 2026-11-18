@@ -1944,6 +1944,7 @@ ENVIRONMENT = [
     ("QARGI_ENV_TIMEOUT", "seconds the dry run of qargi env plan and apply may take (default 120)"),
     ("QARGI_HOOK_MARSHAL_SECS", "seconds the session-start hook gives the read of the open features (qargi marshal status --all --brief --no-fetch) before it leaves the block out "
                                 "(default 5; a whole number from 1 to 9999, anything else is ignored); a test on a loaded machine raises it"),
+    ("QARGI_LEAD_RUNTIME", "the runtime of the lead's own session for qargi provider notes, when it is not the project's (the option --lead-runtime wins; an empty value is none)"),
     ("QARGI_BUSCTL", "the program qargi doctor asks logind with (default busctl)"),
     ("QARGI_DOCTOR_MIN_FREE", "the percent of free space under /dev/shm below which qargi doctor warns (default 10)"),
     ("QARGI_LOGINCTL", "the program qargi doctor reads the user's linger with (default loginctl)"),
