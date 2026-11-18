@@ -1109,7 +1109,7 @@ and points it changed.
 
 | # | Required change | Rules and points |
 | --- | --- | --- |
-| 1 | state what the proof of `qargi host` guarantees: that a store and projection the caller sees agree and the call reads a matching key, not that it runs outside a sandbox; R76 is a guard rail against a mistaken or stale lead; `qargi host` refuses the root variables and dev runs and signs with a private key file only; the nonce goes | R33 and R76 rewritten; R8, R15, R70 and R77 follow; the reading guide, Terms and Limits say what a guard rail is and why |
+| 1 | state what the proof of `qargi host` guarantees: that a store and projection the caller sees agree and the call reads a matching key, not that it runs outside a sandbox; R76 is a guard rail against a mistaken or stale lead; `qargi host` refuses the root variables and dev runs and signs with a private key file only; the nonce goes | R33 and R76 rewritten; R8, R15, R51, R70 and R77 follow; the reading guide, Terms and Limits say what a guard rail is and why |
 | 2 | R101: what a sandbox never holds; user namespaces and code that a lead runs itself in Limits, as the reason R76 is a guard rail; the "absent" of the Roots table promoted to the rule | R101 new; the Roots table and Limits; R10, R33, R76 and R77 cite it |
 | 3 | `role_name` in the holder of the projection, or R24 and R56 comparing display ids; the first, because a display id holds the epoch that R57 and R58 compare | R21; R24 and R56 follow |
 | 4 | the spool envelope names its transfer, so that S2 and S6 can match it; the fields of a state content stay open, with the epoch and the transfer mandatory | R32, R35, R39 and R96; R18 and R48 follow; O10 narrowed |
