@@ -39,6 +39,32 @@ yours (the work tree is stored as a digest, not a path). The record keeps its go
 log has a `marshal:succession` line. `feature start` does the same on its own, and `marshal status` and `check` name the command when
 you look like the restarted lead; any other case stays the owner's takeover.
 
+## The coordinator label
+
+Before seats exist, a lead may let a coordinator session run the dispatch work of one feature (`local prepare`, `run`, `verify`, `clean`,
+`list`) while the lead keeps every gated act. The session says what it is with the environment variable `QARGI_ACTOR`, a label of the form
+`<lead-id>:coord:<feature>:<n>`: a lead identity as the marshal accepts one (letters, digits and `. _ @ : + -`, never `/`), the word `coord`,
+a feature name and a positive integer. Unset or empty is no label and changes nothing. A value that is set and not of that form is a usage
+error (exit 2, the form shown) for every verb; it never counts as no label.
+
+A valid label narrows the session to a coordinator's verbs, and it grants nothing. Every verb that the table `ACTOR_VERBS` in
+`lib/commands.py` does not list is refused before it changes anything, with one message that names the label and the verb (`a coordinator
+does not run feature finish; the lead runs it`, exit 2): `feature finish`, every `release` verb that changes something, `branch prune`,
+every verb or option that pushes, any command line with `--approved`, `marshal takeover`, `forget`, `release`, `take`, `claim` and
+`handoff --write`, `upgrade` and the install verbs, and the verbs that change stored configuration (`project`, `provider`, `packs`,
+`memory`). The reads stay allowed, with `local prepare`, `run`, `verify` and `clean RUN` (not `--discard` and not the other forms of
+`clean`), `review check`, `feature status` and `feature verify`. The narrowing is by feature: a run or a feature of another feature than the
+label's is refused, and `local prepare` needs `--base feature/<the label's feature>`. A coordinator may clean any run of its own feature,
+one a stopped predecessor prepared too: the scope is the feature, not the label.
+
+`local prepare` under a label records the label and the feature with the run, in the lead's registry. `qargi local list --actor ID`
+(the whole label, or a prefix that ends at a colon: `<lead-id>:coord:<feature>:` lists every coordinator of a feature) and `--feature NAME`
+list the runs by them, and `qargi local verify --mine` verifies every open run recorded under the session's own label, one line per run.
+
+The label is attribution, not an identity and not an authority. It is unauthenticated and a session can unset the variable; no lease,
+approval or marshal record compares it, and `QARGI_LEAD` stays the lead identity. It stops a coordinator that follows its brief from doing
+a lead's act by mistake; it does not stop a hostile session. A member's guard is unchanged by it. See `qargi help coordinator`.
+
 ## The lead's context
 
 The lead's own context is the cost to keep low. `qargi lead usage` says how much of it is in use: the input, cache-read and

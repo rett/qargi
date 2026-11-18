@@ -261,5 +261,263 @@ class Cli(unittest.TestCase):
         self.assertIn("ci.not_gates", p.stderr)
 
 
+# ---- the coordinator label (QARGI_ACTOR): the form, and the narrowing of a session that carries one --------------------------------------------
+# What a coordinator may run, written out here on purpose and independently of lib/commands.py ACTOR_VERBS: the test compares the two, so a verb that is
+# added or moved in the table without this list changing fails. Every other verb of the table of commands is refused (the lead runs it).
+COORD_ALLOWED = {
+    "project": "template show list validate profile", "agent": "list models for", "role": "list show prompt check", "feature": "list status verify",
+    "marshal": "status check handoff", "upstream": "status review", "campaign": "show check log", "backlog": "graph list", "release": "plan status",
+    "doctor": "", "env": "show check", "instances": "list show", "skill": "list show effective check", "tool": "list show effective check",
+    "packs": "load check", "status": "", "report": "", "watch": "", "methodology": "list show check files deployment", "cloud": "list show check",
+    "provider": "list show check addenda notes model", "noticed": "list", "team": "brief check contract", "memory": "lint get tiers check",
+    "canon": "check plan audit", "credential": "check", "discover": "sources search recommend show", "lead": "usage compact-check status",
+    "supervise": "status hooks", "local": "list prepare run verify clean", "review": "check",
+}
+LABEL = "lead-1:coord:alpha:1"
+sys.path.insert(0, ROOT + "/lib")
+import commands as C  # noqa: E402
+import help as H  # noqa: E402
+
+
+def gate(argv, label=LABEL):
+    """(exit status, standard error) of the narrowing for one command line, with QARGI_ACTOR set to label (None: unset)."""
+    import contextlib, io
+    saved = os.environ.pop("QARGI_ACTOR", None)
+    if label is not None:
+        os.environ["QARGI_ACTOR"] = label
+    err = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err):
+            rc = H.actor_gate(argv)
+    finally:
+        os.environ.pop("QARGI_ACTOR", None)
+        if saved is not None:
+            os.environ["QARGI_ACTOR"] = saved
+    return rc, err.getvalue()
+
+
+class ActorLabelForm(unittest.TestCase):
+    def test_the_form(self):
+        for ok, want in (("lead-1:coord:alpha:1", ("lead-1", "alpha", "1")), ("a:coord:a-b-2:10", ("a", "a-b-2", "10")),
+                         ("user@host.example:coord:x:7", ("user@host.example", "x", "7")), ("a:b+c:coord:f:3", ("a:b+c", "f", "3")),
+                         ("x:coord:coord:coord:5", ("x:coord", "coord", "5"))):
+            self.assertEqual(H.actor_parse(ok), want, ok)
+
+    def test_each_malformed_form_is_none(self):
+        long_lead = "a" * 118
+        for bad in ("", " ", "x", "lead", "lead:coord:alpha", "lead:coord:alpha:", "lead:coord:alpha:0", "lead:coord:alpha:01", "lead:coord:alpha:-1", "lead:coord:alpha:1.5",
+                    "lead:coord:alpha:x", "lead:coordx:alpha:1", "lead:Coord:alpha:1", "lead:coord::1", ":coord:alpha:1", "lead:coord:Alpha:1", "lead:coord:al_pha:1",
+                    "lead:coord:alpha-:1", "lead:coord:-alpha:1", "lead:coord:a--b:1", "lead/x:coord:alpha:1", "le ad:coord:alpha:1", "lead:coord:alpha:1 ", " lead:coord:alpha:1",
+                    "lead:coord:alpha:1\n", "lead\n:coord:alpha:1", "lead:coord:alpha:1:2", "lead:coord:al:pha:1", "lead:coord:%s:1" % ("f" * 41),
+                    long_lead + ":coord:alpha:1", "lead:coord:alpha:١", "léad:coord:alpha:1"):
+            self.assertIsNone(H.actor_parse(bad), repr(bad))
+        self.assertEqual(len(long_lead + ":coord:alpha:1"), 132)
+        self.assertEqual(H.actor_parse("a" * 114 + ":coord:alpha:1"), ("a" * 114, "alpha", "1"))   # 128 characters: the longest
+        self.assertIsNone(H.actor_parse("a" * 115 + ":coord:alpha:1"))
+
+    def test_unset_and_empty_are_no_label(self):
+        for label in (None, ""):
+            self.assertEqual(gate(["feature", "finish", "alpha"], label), (0, ""))
+            self.assertEqual(gate(["release", "push", "1.0.0", "--approved", "w"], label), (0, ""))
+
+    def test_a_malformed_label_is_a_usage_error_for_every_verb_that_goes_through_the_gate(self):
+        for argv in (["feature", "list"], ["doctor"], ["local", "list"], ["marshal", "status", "alpha"], ["project", "show"], ["feature", "finish", "alpha"], ["campaign", "show"]):
+            rc, err = gate(argv, "lead/x:coord:alpha:1")
+            self.assertEqual(rc, 2, argv)
+            self.assertIn("<lead-id>:coord:<feature>:<n>", err)
+            self.assertIn("never /", err)
+            self.assertIn("is set and is not a coordinator label", err)
+
+    def test_help_hooks_and_a_bare_area_pass_the_gate(self):
+        for argv in (["feature", "--help"], ["feature", "finish", "--help"], ["hook", "tool-use"], ["feature"], ["nosuch", "x"], []):
+            self.assertEqual(gate(argv), (0, ""), argv)
+        self.assertEqual(gate(["hook", "tool-use"], "junk")[0], 0)      # a run-event hook never fails, whatever the label
+        self.assertEqual(gate(["feature", "finish", "--help"], "junk")[0], 0)       # nor does a request for help
+        self.assertEqual(gate(["feature", "list"], "junk")[0], 2)
+
+
+class ActorVerbTable(unittest.TestCase):
+    def verbs(self):
+        for area, spec in C.COMMANDS.items():
+            if area in ("help", "version", "hook"):
+                continue
+            vs = spec.get("verbs")
+            for v in (vs if isinstance(vs, dict) else [""]):
+                yield area, v
+
+    def test_every_name_of_the_table_is_a_verb_and_the_options_exist(self):
+        have = set(self.verbs())
+        for key, names in C.ACTOR_VERBS.items():
+            self.assertIn(key, have, key)
+            self.assertIn(names, ("", "run", "feature", "base"), key)
+        for (area, verb), opts in C.ACTOR_OPTS.items():
+            self.assertIn((area, verb), C.ACTOR_VERBS)
+            flags = {o["flag"] for o in C.COMMANDS[area]["verbs"][verb]["opts"]}
+            for o in opts:
+                self.assertIn(o, flags, (area, verb, o))
+
+    def test_exactly_the_listed_verbs_are_allowed_and_every_other_is_refused_by_name(self):
+        allowed = {(a, v) for a, words in COORD_ALLOWED.items() for v in (words.split() or [""])}
+        self.assertEqual(set(C.ACTOR_VERBS), allowed)
+        refused = 0
+        for area, verb in self.verbs():
+            argv = [x for x in (area, verb) if x]
+            rc, err = gate(argv)
+            if (area, verb) in allowed:
+                self.assertEqual((rc, err), (0, ""), argv)
+                continue
+            refused += 1
+            self.assertEqual(rc, 2, argv)
+            self.assertEqual(err.count("\n"), 1, err)
+            self.assertIn("refused under the coordinator label %s:" % LABEL, err)
+            self.assertIn("a coordinator does not run %s;" % " ".join(argv), err)
+            self.assertIn("the lead runs it", err)
+        self.assertEqual(refused, len(list(self.verbs())) - len(allowed))
+
+    def test_the_lead_only_acts_of_the_task_are_refused(self):
+        for argv in (["feature", "finish", "alpha"], ["release", "start", "1.0.0"], ["release", "push", "1.0.0"], ["release", "finish", "1.0.0"], ["release", "fix", "1.0.0"],
+                     ["release", "site", "1.0.0"], ["release", "publish", "1.0.0"], ["release", "step", "1.0.0", "x"], ["branch", "prune"], ["marshal", "takeover", "alpha"],
+                     ["marshal", "forget", "alpha"], ["marshal", "release", "alpha"], ["marshal", "take", "alpha"], ["marshal", "claim", "alpha"], ["upgrade"],
+                     ["project", "set", "p", "k", "v"], ["provider", "accept", "x"], ["packs", "apply", "p"], ["memory", "init", "p"], ["skill", "import", "d"], ["local", "close", "d"],
+                     ["review", "apply", "d"], ["feature", "merge", "alpha", "agent/x"], ["backlog", "done"], ["ref", "record", "x"], ["export"], ["import"], ["discover", "install", "x"]):
+            self.assertEqual(gate(argv)[0], 2, argv)
+
+    def test_an_option_that_is_the_leads_refuses_an_allowed_verb(self):
+        for argv, why in ((["release", "plan", "1.0.0", "--approved", "w"], "--approved"), (["release", "plan", "1.0.0", "--approved=w"], "--approved"),
+                          (["feature", "verify", "alpha", "--approved", "w"], "--approved"), (["local", "list", "--approved"], "--approved"),
+                          (["doctor", "--approved", "w"], "--approved"), (["release", "plan", "1.0.0", "--again"], "--again"),
+                          (["marshal", "handoff", "alpha", "--write", "/x"], "--write"), (["local", "clean", "/x", "--discard"], "--discard"),
+                          (["local", "clean", "--applied", "--scratch", "/x"], "--applied"), (["local", "clean", "--stale", "3", "--scratch", "/x", "--yes"], "--stale"),
+                          (["local", "clean", "--orphans"], "--orphans"), (["local", "clean", "/x", "--yes"], "--yes"),
+                          (["doctor", "--push"], "--push"), (["feature", "status", "alpha", "--push=origin"], "--push")):
+            rc, err = gate(argv)
+            self.assertEqual(rc, 2, argv)
+            self.assertIn(why, err)
+            self.assertIn("the lead runs it", err)
+
+    def test_the_label_is_not_an_identity_the_verbs_compare(self):
+        # nothing of the marshal, the leases or the approvals reads it: only help.py (the gate and its parser), lib.sh (actor_label) and local.sh (the run's record) name it
+        import glob
+        users = []
+        for f in glob.glob(os.path.join(ROOT, "lib", "*")):
+            if os.path.isfile(f):
+                with open(f, errors="replace") as h:
+                    if "QARGI_ACTOR" in h.read():
+                        users.append(os.path.basename(f))
+        users.sort()
+        self.assertEqual(users, ["commands.py", "help.py", "lib.sh", "local.sh"])
+
+
+class ActorFeatureNarrowing(unittest.TestCase):
+    """A local or review verb that names a run is refused when the run's base is not the label's feature; a feature verb that names a feature, for another feature."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.d = tempfile.mkdtemp(dir=os.environ["TMPDIR"])
+        os.makedirs(os.path.join(cls.d, "state"))
+        cls.runs = {}
+        rows = []
+        for name, base in (("qargi.aaaaaa", "feature/alpha"), ("qargi.bbbbbb", "feature/beta"), ("qargi.cccccc", "develop")):
+            run = os.path.join(cls.d, "runs", name)
+            os.makedirs(os.path.join(run, "out"))
+            cls.runs[name] = run
+            rows.append({"run": run, "base": base, "slug": name[-6:]})
+        with open(os.path.join(cls.d, "state", "local-runs.jsonl"), "w") as f:
+            f.write("not json\n" + "".join(json.dumps(r) + "\n" for r in rows))
+        os.makedirs(os.path.join(cls.d, "loose", "out"))
+        cls._state = os.environ.get("QARGI_STATE")
+        os.environ["QARGI_STATE"] = os.path.join(cls.d, "state")
+
+    @classmethod
+    def tearDownClass(cls):
+        if cls._state is None:
+            os.environ.pop("QARGI_STATE", None)
+        else:
+            os.environ["QARGI_STATE"] = cls._state
+        subprocess.run(["rm", "-rf", cls.d])
+
+    def test_a_feature_verb_for_the_labels_feature_and_not_for_another(self):
+        for verb in ("status", "verify"):
+            self.assertEqual(gate(["feature", verb, "alpha"]), (0, ""))
+            rc, err = gate(["feature", verb, "beta"])
+            self.assertEqual(rc, 2)
+            self.assertIn("feature beta", err)
+            self.assertIn("this coordinator's feature is alpha", err)
+            self.assertIn("the lead runs it", err)
+        self.assertEqual(gate(["feature", "list"]), (0, ""))                       # it names no feature
+        self.assertEqual(gate(["feature", "status", "beta"], "lead-1:coord:beta:3"), (0, ""))
+        self.assertEqual(gate(["feature", "status", "--project", "p", "alpha"]), (0, ""))   # an option's value is no feature name
+        self.assertEqual(gate(["feature", "status", "--project", "alpha", "beta"])[0], 2)
+
+    def test_prepare_needs_the_labels_feature_as_its_base(self):
+        base = ["local", "prepare", "--repo", "/r", "--slug", "s", "--scratch", "/x"]
+        self.assertEqual(gate(base + ["--base", "feature/alpha"]), (0, ""))
+        self.assertEqual(gate(base + ["--base=feature/alpha"]), (0, ""))
+        for bad in ("feature/beta", "develop", "alpha", "feature/alpha2", "feature/alpha/x", ""):
+            rc, err = gate(base + ["--base", bad])
+            self.assertEqual(rc, 2, bad)
+            self.assertIn("feature/alpha", err)
+            self.assertIn("the lead runs it", err)
+        self.assertEqual(gate(base + ["--base", "feature/alpha", "--base", "develop"])[0], 2)   # the last --base would win: every one is checked
+        self.assertEqual(gate(base), (0, ""))                                      # no base: the verb refuses it itself
+
+    def test_a_local_verb_that_names_a_run(self):
+        a, b, c = (self.runs[n] for n in ("qargi.aaaaaa", "qargi.bbbbbb", "qargi.cccccc"))
+        for verb in ("verify", "run", "clean"):
+            self.assertEqual(gate(["local", verb, a]), (0, ""), verb)
+            self.assertEqual(gate(["local", verb, a + "/"]), (0, ""), verb)
+            for other in (b, c, os.path.join(self.d, "runs", "qargi.zzzzzz")):
+                rc, err = gate(["local", verb, other])
+                self.assertEqual(rc, 2, (verb, other))
+                self.assertIn("a coordinator does not run local %s on" % verb, err)
+                self.assertIn("the lead runs it", err)
+        self.assertEqual(gate(["local", "verify", "--saved", "qargi.aaaaaa"]), (0, ""))
+        self.assertEqual(gate(["local", "verify", "--saved", "qargi.bbbbbb"])[0], 2)
+        self.assertEqual(gate(["local", "verify", "--saved=qargi.bbbbbb"])[0], 2)
+        self.assertEqual(gate(["local", "run", a, "--task", b, "--dry-run"]), (0, ""))   # --task's value is a file, not a run
+        self.assertEqual(gate(["local", "verify", "--mine"]), (0, ""))
+        self.assertEqual(gate(["local", "list"]), (0, ""))
+        self.assertEqual(gate(["local", "list", "--scratch", b]), (0, ""))
+        self.assertEqual(gate(["local", "verify", a], "lead-2:coord:beta:1")[0], 2)
+        self.assertEqual(gate(["local", "verify", b], "lead-2:coord:beta:1"), (0, ""))   # feature-scoped: any coordinator of the feature, a predecessor's run too
+
+    def test_review_check_reads_a_run_by_its_out_or_the_run(self):
+        a, b = self.runs["qargi.aaaaaa"], self.runs["qargi.bbbbbb"]
+        self.assertEqual(gate(["review", "check", a + "/out"]), (0, ""))
+        self.assertEqual(gate(["review", "check", a]), (0, ""))
+        self.assertEqual(gate(["review", "check", b + "/out"])[0], 2)
+        self.assertEqual(gate(["review", "check", b])[0], 2)
+        self.assertEqual(gate(["review", "check", os.path.join(self.d, "loose", "out")]), (0, ""))   # an output no run of the registry owns: it only reads it
+        self.assertEqual(gate(["review", "check", "--allow-empty", a + "/out"]), (0, ""))
+
+    def test_no_registry_means_no_known_run(self):
+        os.environ["QARGI_STATE"] = os.path.join(self.d, "nostate")
+        try:
+            self.assertEqual(gate(["local", "verify", self.runs["qargi.aaaaaa"]])[0], 2)
+            self.assertEqual(gate(["local", "list"]), (0, ""))
+        finally:
+            os.environ["QARGI_STATE"] = os.path.join(self.d, "state")
+
+
+class ActorLabelAndTheMemberGuard(unittest.TestCase):
+    """A member that sets QARGI_ACTOR gains nothing: the guard judges the command as it does without it."""
+
+    def test_the_verdict_is_the_same_with_and_without_the_label(self):
+        import guard
+        cmds = ["qargi local prepare --repo . --base feature/alpha --slug x --scratch /tmp/x", "qargi local verify --mine", "qargi local clean /x/qargi.abcdef",
+                "qargi feature finish alpha", "qargi marshal takeover alpha", "qargi release push 1.0.0", "qargi review apply /x/qargi.abcdef",
+                "qargi doctor", "qargi review check out", "qargi local list", "qargi marshal status alpha", "qargi local report /x/qargi.abcdef"]
+        saved = guard.CLASS
+        try:
+            for cls in ("write", "read-only"):
+                guard.CLASS = cls
+                for c in cmds:
+                    plain = guard.judge(guard.Call("shell", "Bash", c, "", os.getcwd()))
+                    for pre in ("QARGI_ACTOR=%s " % LABEL, "env QARGI_ACTOR=%s " % LABEL):
+                        self.assertEqual(guard.judge(guard.Call("shell", "Bash", pre + c, "", os.getcwd())), plain, (cls, pre + c))
+        finally:
+            guard.CLASS = saved
+
+
 if __name__ == "__main__":
     unittest.main()

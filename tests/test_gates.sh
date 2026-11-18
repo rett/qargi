@@ -223,4 +223,69 @@ setgates "[$(cgate lint "$(g lint)" feature ci),$(gate unit "$(g unit)" feature)
 out=$($F verify gt 2>&1); rc=$?
 [ $rc = 0 ] && [ "$(tr '\n' ' ' < "$LOG")" = "lint unit " ] && ! grep -q 'covered by' <<<"$out" && ok "feature verify runs the covered gate: only release verify skips it" || no "feature verify rc=$rc log=$(cat "$LOG"): $out"
 
+# --- 9. the coordinator label (QARGI_ACTOR): coordinator class, a narrowing and nothing else
+# The label is attribution. A session that carries a valid one may run only a coordinator's verbs on its own feature; every other verb is refused (exit 2, one message
+# that names the label and the verb) before it changes anything. Unset or empty changes nothing.
+$F start alpha >/dev/null 2>&1; $F start beta >/dev/null 2>&1
+setgates '[]'
+LBL=lead-one:coord:alpha:1
+# snap: one digest of everything a refused verb must leave alone: every ref of the repository and its work trees, every file of the state (the registry, the audit log, the records) and of the configuration
+snap() { { git -C "$R" for-each-ref; git -C "$R" worktree list; find "$T/s" "$T/c" -type f ! -name '*.lock' -print0 | sort -z | xargs -0 sha256sum; } 2>&1 | sha256sum; }
+before=$(snap)
+refused_ok() { # WORDS...: the verb is refused under the label with the stable message, exit 2, and nothing changed
+  local after rc out; out=$(QARGI_ACTOR=$LBL "$DA" "$@" 2>&1 </dev/null); rc=$?
+  after=$(snap)
+  [ $rc = 2 ] && grep -qF "refused under the coordinator label $LBL: a coordinator does not " <<<"$out" && grep -qF "the lead runs it" <<<"$out" && grep -qF "$1${2:+ $2}" <<<"$out" && [ "$before" = "$after" ] \
+    && ok "refused under a label, nothing changed: $*" || no "not refused under a label (rc=$rc, changed: $([ "$before" = "$after" ] && echo no || echo YES)): $* -> $out"
+}
+for w in "feature finish alpha" "feature start gamma" "feature sync alpha" "feature merge alpha agent/x" "feature park" "feature verify alpha --approved w" \
+         "release start 9.9.9" "release push 9.9.9" "release finish 9.9.9" "release fix 9.9.9 --push" "release site 9.9.9" "release publish 9.9.9" "release step 9.9.9 x" \
+         "release plan 9.9.9 --approved w" "release plan 9.9.9 --again" "branch prune" \
+         "marshal takeover alpha" "marshal forget alpha" "marshal release alpha" "marshal take alpha" "marshal claim gamma" "marshal handoff alpha --write $T/note" \
+         "upgrade" "discover install x" "project set app test_command true" "provider accept x" "packs apply app" "memory init app" "skill import $T/none" \
+         "local close $T/x --applied-by-am" "local clean $T/x --discard" "local clean --orphans" "review apply $T/x"; do
+  # shellcheck disable=SC2086  # the words are plain
+  refused_ok $w
+done
+out=$(QARGI_ACTOR=$LBL "$DA" feature finish alpha 2>&1); rc=$?
+[ "$rc" = 2 ] && [ "$out" = "qargi: refused under the coordinator label $LBL: a coordinator does not run feature finish; the lead runs it. Nothing was changed (qargi help coordinator)" ] \
+  && ok "the refusal is one stable line" || no "refusal text: $out"
+# what a coordinator may run is not refused: the reads, feature status and verify of its own feature, marshal check and status, the listings
+for w in "feature list" "feature status alpha" "marshal status alpha" "marshal check alpha" "marshal handoff alpha" "project show app" "project list" "role list" "local list" "backlog list" "lead usage" "provider notes" "release status 9.9.9" "release plan 9.9.9" "review check $T/none"; do
+  # shellcheck disable=SC2086
+  out=$(QARGI_ACTOR=$LBL "$DA" $w 2>&1 </dev/null); rc=$?
+  ! grep -q 'refused under the coordinator label' <<<"$out" && ok "allowed under a label (not refused): $w (exit $rc)" || no "refused under a label: $w -> $out"
+done
+for w in "feature status alpha" "marshal status alpha" "project show app" "local list"; do
+  # shellcheck disable=SC2086
+  QARGI_ACTOR=$LBL "$DA" $w >/dev/null 2>&1 && ok "and it succeeds: $w" || no "failed under a label: $w"
+done
+setgates "[$(gate quick "$(g quick)" feature)]"
+: > "$LOG"
+out=$(QARGI_ACTOR=$LBL "$DA" feature verify alpha 2>&1); rc=$?
+[ $rc = 0 ] && grep -q '^full suite: pass at ' <<<"$out" && [ "$(cat "$LOG")" = quick ] && ok "feature verify of its own feature runs the suite under a label" || no "feature verify under a label rc=$rc: $out"
+# the feature narrowing, both ways
+out=$(QARGI_ACTOR=$LBL "$DA" feature status beta 2>&1); rc=$?
+[ $rc = 2 ] && grep -qF "run feature status on feature beta: this coordinator's feature is alpha; the lead runs it" <<<"$out" && ok "a coordinator of alpha does not touch feature beta (status)" || no "beta status rc=$rc: $out"
+before=$(snap)
+: > "$LOG"
+out=$(QARGI_ACTOR=$LBL "$DA" feature verify beta 2>&1); rc=$?
+[ $rc = 2 ] && [ ! -s "$LOG" ] && [ "$before" = "$(snap)" ] && ok "and does not verify it: no gate ran, nothing changed" || no "beta verify rc=$rc: $out"
+QARGI_ACTOR=lead-one:coord:beta:7 "$DA" feature status beta >/dev/null 2>&1 && ! QARGI_ACTOR=lead-one:coord:beta:7 "$DA" feature status alpha >/dev/null 2>&1 \
+  && ok "the other way: a coordinator of beta works on beta and not on alpha" || no "beta coordinator"
+# unset and empty change nothing: the lead's verb answers as it did
+for v in unset empty; do
+  if [ $v = unset ]; then out=$(env -u QARGI_ACTOR "$DA" feature finish alpha 2>&1); else out=$(QARGI_ACTOR='' "$DA" feature finish alpha 2>&1); fi; rc=$?
+  [ $rc = 0 ] && grep -q '^plan token: ' <<<"$out" && ! grep -qi 'coordinator' <<<"$out" && ok "$v QARGI_ACTOR: feature finish plans as before" || no "$v label rc=$rc: $out"
+done
+# a malformed label is a usage error, never no label: the lead's verb is refused too, and nothing changed
+before=$(snap)
+for bad in 'x' 'lead-one:coord:alpha' 'lead-one:coord:alpha:0' 'lead-one/x:coord:alpha:1' 'lead-one:coord:Alpha:1'; do
+  out=$(QARGI_ACTOR=$bad "$DA" feature finish alpha 2>&1); rc=$?
+  [ $rc = 2 ] && grep -qF '<lead-id>:coord:<feature>:<n>' <<<"$out" && [ "$before" = "$(snap)" ] && ok "malformed label '$bad' is a usage error (exit 2) and nothing changed" || no "malformed label $bad rc=$rc: $out"
+done
+# the label is attribution: the marshal still knows the lead by QARGI_LEAD, and no record, lease, ref or audit line holds the label
+[ "$($DA marshal status alpha --json 2>/dev/null | jq -r '.lead.id')" = lead-one ] && ok "the lead identity is QARGI_LEAD, as before" || no "lead id: $($DA marshal status alpha --json 2>&1)"
+! grep -rqF "coord:" "$T/s" "$T/c" && ! git -C "$R" for-each-ref --format='%(refname)' | grep -q coord && ok "no record, ref or audit line of the state holds the label" || no "the label leaked into: $(grep -rlF 'coord:' "$T/s" "$T/c")"
+
 exit "$fail"

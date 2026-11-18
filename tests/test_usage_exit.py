@@ -147,5 +147,51 @@ class OptionValue(unittest.TestCase):
         self.assertUsage(["release", "plan", "9.9.9", "--date", "x", "--project", "demo"], "--date YYYY-MM-DD")
 
 
+class ActorLabelUsage(unittest.TestCase):
+    """QARGI_ACTOR set and not of the form <lead-id>:coord:<feature>:<n> is a usage error (exit 2, the form shown) for every verb: it never counts as no label.
+    Unset or empty is no label. (The narrowing itself is tested in tests/test_gates.py and tests/test_gates.sh.)"""
+    FORM = "<lead-id>:coord:<feature>:<n>"
+
+    def run_with(self, label, *argv):
+        env = dict(os.environ)
+        env.pop("QARGI_ACTOR", None)
+        if label is not None:
+            env["QARGI_ACTOR"] = label
+        return qargi(*argv, env=env)
+
+    def test_each_malformed_form_is_refused_by_every_kind_of_verb(self):
+        # the forms are tested one by one in tests/test_gates.py; here each kind of route of bin/qargi (a script, a python module, campaign) is asked
+        for bad in ("x", "lead:coord:alpha:0", "lead/x:coord:alpha:1", " "):
+            for argv in (["feature", "list"], ["campaign", "show"], ["provider", "notes"], ["release", "push", "1.0.0"], ["doctor"]):
+                rc, out = self.run_with(bad, *argv)
+                self.assertEqual(rc, 2, (bad, argv, out))
+                self.assertIn(self.FORM, out)
+                self.assertIn("QARGI_ACTOR", out)
+                self.assertIn("never /", out)
+
+    def test_unset_and_empty_are_no_label_and_help_still_answers(self):
+        for label in (None, ""):
+            rc, out = self.run_with(label, "feature", "finish")
+            self.assertEqual(rc, 2)                              # the usage error of the verb itself (no name), not the label's
+            self.assertNotIn("coordinator", out)
+            rc, out = self.run_with(label, "version")
+            self.assertEqual(rc, 0)
+        for argv in (["help"], ["version"], ["feature", "--help"], ["feature", "finish", "--help"]):
+            rc, out = self.run_with("not a label", *argv)
+            self.assertEqual(rc, 0, (argv, out))
+            self.assertNotIn("is not a coordinator label", out)
+
+    def test_a_valid_label_refuses_a_lead_verb_with_exit_2_and_the_stable_message(self):
+        label = "lead-1:coord:alpha:2"
+        rc, out = self.run_with(label, "feature", "finish", "alpha")
+        self.assertEqual(rc, 2, out)
+        self.assertEqual(out.strip(), "qargi: refused under the coordinator label %s: a coordinator does not run feature finish; the lead runs it. Nothing was changed (qargi help coordinator)" % label)
+        rc, out = self.run_with(label, "campaign", "commit")
+        self.assertEqual(rc, 2, out)
+        self.assertIn("a coordinator does not run campaign commit; the lead runs it", out)
+        rc, out = self.run_with(label, "version")
+        self.assertEqual(rc, 0, out)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -9,6 +9,8 @@
 #                                        copy of their objects, offline, and printed as SUBMODULES=path,...; lib/tools.py)
 #   local.sh verify RUN_DIR
 #   local.sh verify RUN_DIR | --saved ID     (--saved: the lead's copy of a passed run whose directory is gone, $QARGI_STATE/runs/ID)
+#   local.sh verify --mine               a coordinator's own runs: every open run the registry records under this session's QARGI_ACTOR, each as verify RUN does; one line
+#                                        per run, the worst exit status (usage error, exit 2, without a valid QARGI_ACTOR; takes no RUN)
 #   local.sh close RUN_DIR --applied-by-am   mark a verified run whose patches the lead applied by hand (git am) closed: not open any more, files kept
 #   local.sh clean RUN_DIR [--discard]   remove a collected, verified run and its temporary directory (--discard: whatever verify says)
 #   local.sh clean --applied --scratch DIR   remove every run under DIR whose work is applied and merged; keep and name the others
@@ -16,8 +18,11 @@
 #   local.sh clean --orphans [--days N] [--plan TOKEN --approved WORDS]   list the qargi-run.* directories of the run temporary parent (/dev/shm, or QARGI_RUN_TMP)
 #                                        that no run of the registry names, each with its age; a plan and token first, then only the ones older than N days (2) are removed
 #   local.sh report RUN [--findings] [--from FILE] [--force] < REPORT   a read-only member writes its own report: OUT/report.md (or findings.md) and a minimal manifest.json, inside OUT only
-#   local.sh list [--scratch DIR]        read-only: each run (under DIR, else the registry's) with role, slug, age, applied and merged; a run whose
+#   local.sh list [--scratch DIR] [--actor ID] [--feature NAME]   read-only: each run (under DIR, else the registry's) with role, slug, age, applied and merged; a run whose
 #                                        directory is gone (and that clean did not remove) says "directory gone", and names its saved copy
+#                                        --actor ID: the runs the registry records under that coordinator label (the whole label, or a prefix that ends at a colon);
+#                                        --feature NAME: the runs of that feature (recorded by a labeled prepare, else base feature/NAME); both: an AND. A labeled run, and
+#                                        every row when a filter is given, ends with actor=LABEL feature=NAME
 #   local.sh run RUN_DIR [--task FILE] [--model TIER|ID] [--effort LEVEL] [--timeout SECONDS] [--again] [--dry-run]
 #                                        start the member of a prepared run as a command line, for a runtime whose dispatch.mode is "command"
 #                                        (lib/local_run.py says how); a runtime that dispatches in the lead's session is refused
@@ -27,6 +32,8 @@
 # it cannot expose transient pushes, other destinations or a remote unavailable at both observations.
 # The run directory records the task's ability (RUN/ability, default build) and, under --profile, the profile (RUN/profile); under review the guard
 # (qargi __guard) checks supported tool requests in runtimes that install it. Read-only members are instructed to write reports only to OUT; runtime protection is separate.
+# Under a coordinator label (QARGI_ACTOR, lib/help.py actor_gate: bin/qargi refuses what is not a coordinator's before any verb) prepare also records the label (actor) and
+# the feature it names (feature) in the run's registry line; a run prepared without a label has neither. The record is the lead's, never read from the run directory.
 # A run based on feature/X of a stored project first asks the marshal (marshal_check): another live lead holds X -> refused, no run
 # is made; warnings go to stderr. The lead of X is recorded in the run line as "lead" (null when nobody leads it).
 # prepare also appends one JSON line per run to $QARGI_STATE/local-runs.jsonl (run directory, slug, ability, base,
@@ -727,6 +734,7 @@ case $verb in
       REPO=$(readlink -f -- "$REPO")   # recorded as a real path: the registry and RUN/repo.path say the same text
     fi
     [ "$ROLE" != lead ] && valid_role "$ROLE" || usage_die "--role: one of $DA_ROLES (qargi role list)"
+    actor_label || exit $?   # a coordinator label (QARGI_ACTOR): the registry line records it and its feature; bin/qargi has narrowed the base to that feature already
     CLASS=$(role_class "$ROLE")
     # a read-only role needs a read-only barrier on the local surface, or the project's recorded acceptance that there is none
     if [ "$CLASS" = read-only ]; then
@@ -876,8 +884,9 @@ WRAP
     lc_lock "$RUN" || die "cannot lock prepared run"
     jq -nc --rawfile refs "$RUN/refs.before" --argjson epoch "$(cat "$RUN/started")" --arg base "$BASE" --arg base_sha "$BSHA" --arg tmpdir "$TMPD" --argjson request "$REQUEST" \
       '{refs:$refs,epoch:$epoch,base:$base,base_sha:$base_sha,tmpdir:$tmpdir,request:$request}' | lc init "$RUN" >/dev/null || die "cannot initialize prepared authority"
-    jq -nc --arg r "$RUN" --arg s "$SLUG" --arg a "$ROLE" --arg b "$BASE" --arg t "$(now)" --arg l "$LEAD" --arg p "$PROFILE" --arg d "$TMPD" --arg rp "$REPO" --arg ru "$URL" --arg rc "$CRED" --arg pj "$CPJ" --argjson ans "$ANS" --arg cl "$CLASS" --argjson request "$REQUEST" \
+    jq -nc --arg r "$RUN" --arg s "$SLUG" --arg a "$ROLE" --arg b "$BASE" --arg t "$(now)" --arg l "$LEAD" --arg p "$PROFILE" --arg d "$TMPD" --arg rp "$REPO" --arg ru "$URL" --arg rc "$CRED" --arg pj "$CPJ" --argjson ans "$ANS" --arg cl "$CLASS" --argjson request "$REQUEST" --arg actor "$ACTOR" --arg afeat "$ACTOR_FEATURE" \
       '{lifecycle:1, run:$r, slug:$s, ability:$a, profile:$p, base:$b, started:$t, lead:(if $l == "" then null else $l end), tmpdir:$d, class:$cl, project:$pj, answers:$ans}
+       + (if $actor == "" then {} else {actor:$actor, feature:$afeat} end)
        + (if $request == null then {} else {command_request:1} end)
        + (if $ru == "" then {repo:$rp} else {url:$ru} + (if $rc == "" then {} else {cred:$rc} end) end)' | ( umask 077; flock 9 && cat >> "$DA_STATE/local-runs.jsonl" ) 9> "$DA_STATE/local-runs.jsonl.lock"
     chmod 600 "$DA_STATE/local-runs.jsonl" 2>/dev/null || true
@@ -923,6 +932,27 @@ WRAP
       fi
     fi;;
   verify)
+    MINE=''
+    for _a in "$@"; do [ "$_a" != --mine ] || MINE=1; done
+    if [ -n "$MINE" ]; then
+      # a coordinator's own runs: every open run the lead's registry records under exactly this session's label, each verified as `verify RUN` does
+      [ $# = 1 ] || usage_die "verify --mine takes no RUN and no other option: it verifies every open run recorded under this session's coordinator label"
+      actor_label || exit $?
+      [ -n "$ACTOR" ] || usage_die "verify --mine needs QARGI_ACTOR, the label of a coordinator session (<lead-id>:coord:<feature>:<n>); the lead uses \"qargi local list\" and \"qargi local verify RUN\""
+      reg_load; worst=0; nmine=0
+      for d in ${LRUNS_ORDER[@]+"${LRUNS_ORDER[@]}"}; do
+        [ "$(reg_get "$d" actor)" = "$ACTOR" ] && [ -d "$d" ] && [ -z "$(reg_get "$d" cleaned)" ] && [ -z "$(reg_get "$d" closed)" ] || continue   # open: there, not cleaned, not closed
+        nmine=$((nmine + 1)); vrc=0
+        vout=$("$0" verify "$d" 2>&1 </dev/null) || vrc=$?
+        # the reason: the first line verify said that starts with "qargi:" (its refusals do), else its first non-blank line
+        vfirst=$(printf '%s\n' "$vout" | { grep -m1 '^qargi:' || sed -n '/[^[:space:]]/{p;q}'; } | LC_ALL=C tr -d '\000-\037\177' | cut -c1-200)
+        if [ "$vrc" = 0 ]; then printf 'pass  %s  %s\n' "$(reg_get "$d" slug | LC_ALL=C tr -d '\000-\037\177')" "$d"
+        else printf 'fail (exit %s)  %s  %s: %s\n' "$vrc" "$(reg_get "$d" slug | LC_ALL=C tr -d '\000-\037\177')" "$d" "$vfirst"; fi
+        [ "$vrc" -le "$worst" ] || worst=$vrc
+      done
+      [ "$nmine" -gt 0 ] || echo "no open run is recorded under $ACTOR"
+      exit "$worst"
+    fi
     SAVED=''
     if [ "${1:-}" = --saved ]; then
       # the lead's saved copy of a passed run whose directory is gone: its snapshots are compared (against its last passing verify) as the run's own would be
@@ -1442,11 +1472,32 @@ $vout}"
   list)
     # read-only: the runs under --scratch DIR (the directories prepare made), else the runs of the registry that still exist; then the runs of the
     # registry (under DIR) whose directory is gone and that clean did not remove, each marked "directory gone" with its saved copy
-    SCR=''
+    SCR='' WANT_ACTOR='' WANT_FEATURE=''
     while [ $# -gt 0 ]; do
-      case $1 in --scratch) need_val "$1" $#; SCR=${2:-}; shift 2;; *) usage_die "list: unknown option $1";; esac
+      case $1 in
+        --scratch) need_val "$1" $#; SCR=${2:-}; shift 2;;
+        --actor) need_val "$1" $#; WANT_ACTOR=$2; [ -n "$WANT_ACTOR" ] || usage_die "list: --actor takes a coordinator label, or a prefix of one that ends at a colon"; shift 2;;
+        --feature) need_val "$1" $#; WANT_FEATURE=$2; [ -n "$WANT_FEATURE" ] || usage_die "list: --feature takes a feature name"; shift 2;;
+        *) usage_die "list: unknown option $1";;
+      esac
     done
     runs=(); reg_load; scr=''
+    # the run's coordinator label and feature, from the lead's registry (never from the run directory): the feature a labeled prepare recorded, else the one the
+    # base feature/NAME names; a run prepared without a label has no actor. --actor matches the whole label or a prefix that ends at a colon; both filters are an AND.
+    run_feature() { local f b; f=$(reg_get "$1" feature); if [ -z "$f" ]; then b=$(reg_get "$1" base); case $b in feature/?*) f=${b#feature/};; esac; fi; printf '%s' "$f"; }
+    list_match() { # RUN -> 0 when the run passes the filters
+      local a
+      if [ -n "$WANT_ACTOR" ]; then
+        a=$(reg_get "$1" actor); [ -n "$a" ] || return 1
+        [ "$a" = "$WANT_ACTOR" ] || { [ "${WANT_ACTOR%:}" != "$WANT_ACTOR" ] && [ "${a#"$WANT_ACTOR"}" != "$a" ]; } || return 1
+      fi
+      [ -z "$WANT_FEATURE" ] || [ "$(run_feature "$1")" = "$WANT_FEATURE" ]
+    }
+    list_fields() { # RUN -> "  actor=LABEL feature=NAME" for a labeled run, and for every run when a filter is given (- for none); nothing otherwise
+      local a f; a=$(reg_get "$1" actor)
+      { [ -n "$a" ] || [ -n "$WANT_ACTOR$WANT_FEATURE" ]; } || return 0
+      f=$(run_feature "$1"); printf '  actor=%s feature=%s' "${a:--}" "${f:--}"
+    }
     if [ -n "$SCR" ]; then
       scr=$(scratch_of "$SCR") || die "list: no such directory $SCR"
       for d in "$scr"/qargi.??????; do [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] && reg_has "$d" && runs+=("$d"); done
@@ -1458,6 +1509,7 @@ $vout}"
     nowe=$(date +%s)
     plain() { LC_ALL=C tr -d '\000-\037\177'; }   # the files of a run are a member's to write: no control or escape byte reaches the terminal
     for d in ${runs[@]+"${runs[@]}"}; do
+      [ -z "$WANT_ACTOR$WANT_FEATURE" ] || list_match "$d" || continue
       sl=$(reg_get "$d" slug)
       st=$(cat "$d/started" 2>/dev/null || true)
       if [[ $st =~ ^[0-9]{1,12}$ ]]; then   # the file is a member's: only digits ever reach the arithmetic
@@ -1471,7 +1523,7 @@ $vout}"
         else mrc=0; merged_tip "$rp" "${atip:-}" "${_ab:-}" "$d" || mrc=$?; case $mrc in 0) mg=yes;; 2) mg='?';; esac; fi
       elif [ -n "$(reg_get "$d" closed)" ]; then ap=closed; mg=-   # local close --applied-by-am: applied by hand, no tip to follow
       fi
-      printf '%-10s %-18s %-10s %-6s %-8s %s\n' "$( (cat "$d/ability" 2>/dev/null || echo '?') | plain)" "$(printf '%s' "${sl:--}" | plain)" "$ag" "$ap" "$mg" "$(printf '%s' "$d" | plain)"
+      printf '%-10s %-18s %-10s %-6s %-8s %s%s\n' "$( (cat "$d/ability" 2>/dev/null || echo '?') | plain)" "$(printf '%s' "${sl:--}" | plain)" "$ag" "$ap" "$mg" "$(printf '%s' "$d" | plain)" "$(list_fields "$d" | plain)"
       # what a start of local run left in the run home (a runner killed with SIGKILL): named under its run
       while IFS= read -r rl; do
         [ -z "$rl" ] || printf '  residue: %s; qargi local run RUN --again replaces a link left there, qargi local clean RUN removes the run with it\n' "$(printf '%s' "$rl" | plain)"
@@ -1479,6 +1531,7 @@ $vout}"
     done
     for d in ${gone[@]+"${gone[@]}"}; do
       [ -n "$d" ] || continue
+      [ -z "$WANT_ACTOR$WANT_FEATURE" ] || list_match "$d" || continue
       sl=$(reg_get "$d" slug); ste=$(date -d "$(reg_get "$d" started)" +%s 2>/dev/null) || ste=''
       if [[ $ste =~ ^[0-9]{1,12}$ ]]; then
         age=$((nowe - ste))
@@ -1491,8 +1544,8 @@ $vout}"
         else mrc=0; merged_tip "$rp" "${atip:-}" "${_ab:-}" "$d" || mrc=$?; case $mrc in 0) mg=yes;; 2) mg='?';; esac; fi
       elif [ -n "$(reg_get "$d" closed)" ]; then ap=closed; mg=-
       fi
-      printf '%-10s %-18s %-10s %-6s %-8s %s\n' "$(printf '%s' "$(reg_get "$d" ability)" | plain)" "$(printf '%s' "${sl:--}" | plain)" "$ag" "$ap" "$mg" \
-        "$(printf '%s  directory gone%s' "$d" "${sv:+, saved copy $sv (qargi review apply --from-saved ${d##*/})}" | plain)"
+      printf '%-10s %-18s %-10s %-6s %-8s %s%s\n' "$(printf '%s' "$(reg_get "$d" ability)" | plain)" "$(printf '%s' "${sl:--}" | plain)" "$ag" "$ap" "$mg" \
+        "$(printf '%s  directory gone%s' "$d" "${sv:+, saved copy $sv (qargi review apply --from-saved ${d##*/})}" | plain)" "$(list_fields "$d" | plain)"
     done;;
   run)
     # the project of the run is the stored one that has its repository; its local runtime says how to start the member (lib/local_run.py)
