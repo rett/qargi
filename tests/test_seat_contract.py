@@ -12,6 +12,8 @@ states its refusal, every reference to a rule or a point names one that exists, 
 what is proposed and an alternative, every point that was decided is listed with the rule that states the decision and is open
 nowhere, the contract names no path outside its roots (ROOTS, RECORDED, DECLARED and BELOW_DECLARED below say what a path may
 start with), and what the design's first wave has not produced is listed, each thing with a wave, until it exists (NOT_PRODUCED).
+It also holds the page to what it says it guarantees: the outside proof of `qargi host` states what it shows and against whom (a
+guard rail, with the limits that make it one), and what a sandbox never holds is a condition of the supervising layer.
 Offline. Run: python3 tests/test_seat_contract.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import os, re, unittest
@@ -91,6 +93,11 @@ def section(text, heading):
     """The text under a `## ` heading, up to the next one; empty when the page has no such heading."""
     _, found, tail = text.partition("\n" + heading + "\n")
     return tail.split("\n## ", 1)[0] if found else ""
+
+
+def squash(text):
+    """The text on one line with single spaces: a phrase of the page may run over a line break."""
+    return " ".join(text.split())
 
 
 def decided_items(text):
@@ -252,6 +259,44 @@ class Contract(unittest.TestCase):
         # what the section proposes is the lead's to decide: it is an open point
         self.assertRegex(planned, r"\[OPEN O\d+\]")
 
+    def test_the_outside_proof_says_what_it_shows_and_against_whom(self):
+        blocks = {n: squash(b) for n, b in rule_blocks(self.text).items()}
+        r33 = blocks[33]
+        for name in ("QARGI_AUTH", "QARGI_CONF", "QARGI_HOME", "QARGI_STATE"):      # the first step refuses what moves a root
+            self.assertIn(name, r33)
+        self.assertIn("dev run", r33)
+        # what it shows, and the cases in which it passes although the call is inside a sandbox
+        self.assertIn("does not show that the call runs outside a sandbox", r33)
+        for case in ("user namespace", "patched copy"):
+            self.assertIn(case, r33)
+        # signing: a private key file, never an agent
+        self.assertIn("private key file", r33)
+        self.assertIn("SSH_AUTH_SOCK", r33)
+        # the payload has no nonce: the signature is made and checked in one call
+        payload = re.search(r'\{"v":1,"ns":"qargi-host"[^}]*\}', r33)
+        self.assertIsNotNone(payload, "the payload of the proof is written out")
+        self.assertEqual(re.findall(r'"([\w-]+)"', payload.group(0)), ["v", "ns", "qargi-host", "project", "epoch", "tx", "rev"])
+        # the rules that rest on the proof say that they are guard rails, and Limits says why
+        for n in (33, 76, 77):
+            with self.subTest(rule=n):
+                self.assertIn("guard rail", blocks[n])
+        limits = squash(section(self.text, "## Limits of phase 1"))
+        for words in ("user namespaces", "code of its own", "guard rails"):
+            self.assertIn(words, limits)
+        self.assertNotIn("which is what R33 proves", self.text, "the proof of R33 is no proof that the caller is outside")
+
+    def test_what_a_sandbox_never_holds_is_a_condition_of_the_supervising_layer(self):
+        blocks = rule_blocks(self.text)
+        self.assertIn("**R101**", section(self.text, "## Conditions of the supervising layer"))
+        r101 = squash(blocks[101])
+        for words in ("`$AUTH`", "private key", "agent socket", "`--approved`", "credential"):
+            with self.subTest(words=words):
+                self.assertIn(words, r101)
+        # the Roots table promotes "absent" to the rule
+        row = [ln for ln in section(self.text, "## Roots").splitlines() if ln.startswith("| `$AUTH` |")]
+        self.assertEqual(len(row), 1)
+        self.assertIn("R101", row[0])
+
     def test_the_path_reader_finds_what_it_must(self):
         # the check above is only as good as its reader: it must see a path in a code span, over a line break, and in a fenced block
         sample = "a `$STATE/x.json` b `/srv/a/b`, `$OTHER/y` and `marshal broker\nrun ../z/q` c\n```json\n{\"clone\": \"/srv/c\", \"s\": \"qargi.seat/1\"}\n```\n"
@@ -344,7 +389,7 @@ class Seat(unittest.TestCase):
     def test_R8_authority_root_is_apart(self):
         """R8: the authority root is never at or below the state root, the config root or the data root, is mode 700 and the
         caller's, and qargi export never includes it; a store that passes may be opened, which does not show that the caller is
-        outside a sandbox (R33 proves that).
+        outside a sandbox (nor does the outside proof of R33).
         Observable: a broker verb exits 1 with authority-store-unsafe for a root below either root, for mode 755 and for a
         file of mode 644 inside; nothing is read or written; an export archive holds no file of it."""
 
@@ -393,7 +438,8 @@ class Seat(unittest.TestCase):
     @unbuilt(15)
     def test_R15_host_audit_line(self):
         """R15: every door call, every step and every qargi host call that passed the outside proof appends {ts, verb, project,
-        tx, epoch, detail, by} to the host audit, refused door calls too; a qargi host call whose proof fails records nothing.
+        tx, epoch, detail, by} to the host audit, refused door calls too; a qargi host call that R33 refuses, at its first step or
+        by its proof, records nothing.
         Observable: the audit grows by one line per call, a refused assignment included, and by none for a qargi host call
         that exits 1 with host-in-sandbox."""
 
@@ -519,15 +565,22 @@ class Seat(unittest.TestCase):
 
     @unbuilt(33)
     def test_R33_owner_verbs_go_through_host(self):
-        """R33: before anything else qargi host proves that it is outside every sandbox: the authority root passes R8, a payload
-        it signs with the broker's key verifies against the signers line of the projection, and the seat record agrees with the
-        projection in epoch, tx and rev; then it appends its audit line and runs the verb. No variable, option or file stands
-        for a proof that passed.
-        Observable: with the true store the audit line exists before the verb's first effect; with a store the caller made
-        (mode 700, named in QARGI_AUTH, its own key and a copied seat record) it exits 1 with host-in-sandbox, the verb did not
-        run and no file changed; the same with the true key and a seat record whose rev is behind the projection, with the
-        true store and an audit log that cannot be appended to, and for a verb that names an unseated project; a verb that
-        names no project runs when the proof passes for one seated project and is refused when there is none."""
+        """R33: before anything else qargi host refuses when QARGI_AUTH, QARGI_CONF, QARGI_HOME or QARGI_STATE is set or the run
+        is a dev run (a test of qargi host sets one switch that lifts this step and no other), then makes the outside proof: the
+        authority root passes R8, a payload (project, epoch, tx, rev: no nonce) that it signs with the broker's private key file,
+        with no agent in reach, verifies against the signers line of the projection, and the seat record agrees with the
+        projection in epoch, tx and rev; then it appends its audit line and runs the verb. The proof shows that the call reads a
+        store, a projection and a key that agree, not that it runs outside a sandbox: it is a guard rail against a mistaken or
+        stale lead. No variable, option or file stands for a proof that passed.
+        Observable: with the true store the audit line exists before the verb's first effect; with each of the four variables
+        set, and in a dev run, it exits 1 with host-in-sandbox before it reads a store; with the test switch set and a store the
+        caller made (mode 700, its own key and a copied seat record) it exits 1 with host-in-sandbox, the verb did not run and
+        no file changed; the same with the true store and its key file replaced by the public key while an agent that holds the
+        private key is reachable through SSH_AUTH_SOCK, with the true key and a seat record whose rev is behind the projection,
+        with the true store and an audit log that cannot be appended to, and for a verb that names an unseated project; a verb
+        that names no project runs when the proof passes for one seated project and is refused when there is none; and, as the
+        limit that Limits names, roots that the test made whole (marker, projection, signers line, key, seat record) pass the
+        proof, which a test keeps so that nobody claims more of it."""
 
     # ---- the handoff protocol
 
@@ -821,7 +874,8 @@ class Seat(unittest.TestCase):
     @unbuilt(76)
     def test_R76_no_approval_from_inside(self):
         """R76: on a seated project a verb given --approved is refused before it does anything, unless a qargi host call that
-        passed the outside proof runs it.
+        passed the outside proof runs it; a guard rail against a mistaken or stale lead, not a hostile one (a lead that runs code
+        of its own or presents roots of its own is not stopped by it, which R101 and R89 bound instead).
         Observable: typed without qargi host, each verb that takes --approved exits 1 with approval-refused and leaves no file
         changed, with the true store present and with every variable of a qargi host call set by hand too; under qargi host
         with the true store it is accepted; under qargi host with a store the caller made the call exits 1 with
@@ -829,7 +883,8 @@ class Seat(unittest.TestCase):
 
     @unbuilt(77)
     def test_R77_plan_tokens_do_not_cross(self):
-        """R77: qargi host computes a plan token over the plan preceded by a line only it adds, so a lead's token never matches.
+        """R77: qargi host computes a plan token over the plan preceded by a line only it adds, so a lead's token never matches;
+        the line is no secret, so this is a guard rail against a token that crosses by mistake and not against a forged one.
         Observable: the token a lead's plan prints is refused under qargi host for the same plan; the token qargi host
         prints is accepted."""
 
@@ -1021,6 +1076,19 @@ class Seat(unittest.TestCase):
         the note says for every listed path; no seat verb writes a listed path.
         Observable: hidden_tracked of the note equals the assignment's; the text form names each listed path as an intake
         item for the owner; after a whole transfer no listed path has changed in the clone or in the mirror."""
+
+    # ---- rules added in revision 3 of the contract (in the page each stands in the section of its subject)
+
+    @unbuilt(101)
+    def test_R101_what_a_sandbox_never_holds(self):
+        """R101: the supervising layer binds none of $AUTH, the broker's private key or a copy of it, an agent socket or other
+        service that holds or signs with the key, or a credential with which an approved verb makes a remote act into the
+        sandbox of a unit; qargi keeps every lead-side verb independent of all of it, reads the key on the authority side only
+        and refuses a qargi host call that cannot read it.
+        Observable: every lead-side verb gives the same output and exit status with $AUTH, the key, every agent socket and
+        every remote credential absent as with them present, and opens no path below $AUTH; qargi host, called where none of
+        them is readable, exits 1 with host-in-sandbox and the verb did not run. What the supervising layer binds is not
+        observable by qargi: its own qualification of a sandbox shows it."""
 
 
 if __name__ == "__main__":

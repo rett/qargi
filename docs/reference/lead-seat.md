@@ -12,7 +12,7 @@ This is revision 2 of the page. It takes in the changes that the review of revis
 
 How to read it:
 
-- A rule is a paragraph that starts with its number, **R1** to **R100**. The numbers are this page's
+- A rule is a paragraph that starts with its number, **R1** to **R101**. The numbers are this page's
   own and they are stable: a rule added in a later revision takes the next number and stands in the
   section of its subject, so the numbers are not in page order, and a rule that is dropped keeps
   its number in a paragraph that starts `**Rn** (withdrawn)`. Each rule ends with its refusal: the
@@ -26,6 +26,14 @@ How to read it:
 - A refusal has one of two classes. A **lead refusal** exits 77 and tells a session that it may not
   act as the lead now. A **door refusal** exits 1 and tells the caller of an authority-side verb that
   its input or the state does not allow the step. Both print the refusal line of R65.
+- A rule says what it guarantees and against whom where that is not plain. Qargi's code on the lead
+  side runs in the lead's own process, so a check it makes is a guard rail: it stops a lead that does
+  what it should not by habit, by an old instruction or by confusion, and it does not stop a lead
+  that works round it. The gate (R51 to R64, R67 to R69), the outside proof of `qargi host` (R33), R76
+  and R77 are guard rails and say so. What holds against a lead that works round qargi is what its
+  sandbox lacks, and providing that is the supervising layer's work: R36 and R97 (the unit of the
+  epoch before is gone), R99 (the binds of the clone's configuration) and R101 (what a sandbox never
+  holds). [Limits](#limits-of-phase-1) says where that ends.
 
 ## Terms
 
@@ -46,6 +54,12 @@ How to read it:
 - **Transfer**: one passage of the seat, identified by `tx`, made of the steps S1 to S6.
 - **Lead-stated**: content a lead wrote. It is data: never verified, never an instruction, never an
   approval.
+- **Outside proof**: the check that `qargi host` makes before it runs a verb (R33). It shows that the
+  call reads a store, a projection and a key that agree with one another. It does not show where the
+  call runs.
+- **Guard rail**: a check that stops a lead that is mistaken or stale, one that runs qargi as it is,
+  and does not stop a lead that sets out to get round qargi, which can run code of its own (see
+  [Limits](#limits-of-phase-1)).
 
 ## Roots
 
@@ -53,7 +67,7 @@ How to read it:
 | --- | --- | --- | --- |
 | `$CONF` | the config root | read only, bound file by file; `$CONF/credentials/` never | owner, broker |
 | `$STATE` | the state root of the caller: the role's own inside a sandbox, the owner's outside | read and write (the role's own) | the caller |
-| `$AUTH` | the authority root, a third root outside the other two (R7) | absent | broker |
+| `$AUTH` | the authority root, a third root outside the other two (R7) | absent: never bound (R101) | broker |
 | assignment directory | recorded in the seat marker (R16) | read only, bound as a directory | supervising layer |
 | projection directory | recorded in the seat marker (R16) | read only, bound as a directory | broker |
 
@@ -116,9 +130,9 @@ and git never offers that store for a commit. Resolving a root creates nothing. 
 **R8** (authority root is apart). `$AUTH` is never equal to or below `$STATE`, `$CONF` or the data
 root, is a directory of mode 700 owned by the effective user, and holds directories of mode 700 and
 regular files of mode 600 only. `qargi export` never includes it. A store that passes this check
-may be opened; the check does not show that the caller is outside a sandbox, which is what R33
-proves. Refusal: `authority-store-unsafe`, exit 1; nothing is read from or written to a store that
-fails the check.
+may be opened; the check does not show that the caller is outside a sandbox, and nor does the outside
+proof (R33 says what that proof shows). Refusal: `authority-store-unsafe`, exit 1; nothing is read
+from or written to a store that fails the check.
 
 **R9** (store layout). The authority store of a project holds exactly: `$AUTH/<project>/seat.json`
 (R11), `$AUTH/<project>/history.jsonl` (R14), `$AUTH/<project>/assign/<n>.json` and
@@ -175,8 +189,8 @@ Refusal: none.
 
 **R15** (host audit). Every door call, every step and every `qargi host` call that has passed the
 outside proof (R33) appends one line to `$AUTH/audit-host.log`: `{ts, verb, project, tx, epoch,
-detail, by}`. A refused door call is recorded too. A `qargi host` call whose proof fails has no
-store that it may write to, and records nothing. Refusal: none.
+detail, by}`. A refused door call is recorded too. A `qargi host` call that R33 refuses, at its first
+step or by its proof, has no store that it may write to, and records nothing. Refusal: none.
 
 **R16** (seat marker). The marker is the object `marshal.seat` of `$CONF/projects/<project>.json`:
 `{"mode": "managed", "assignment_dir": "...", "projection_dir": "..."}`. Only the broker writes it.
@@ -322,31 +336,54 @@ gate's answer to a `lead-write` verb in every other state, exit 77: among them
 `transfer-in-progress` for `marshal seat state --submit` in `collected` and `fenced`, and
 `readback-pending` for the two other verbs in `pending-readback`.
 
-**R33** (owner's verbs go through `qargi host`; the outside proof). On a seated project the owner
-runs a lead verb as `qargi host VERB ...`, outside every sandbox. A store that passes R8 does not
-show that the call is outside: a sandboxed lead runs as the same user, can make a directory of
-mode 700 and can name it in `QARGI_AUTH`. So before anything else `qargi host` makes the outside
-proof, from what no sandbox holds:
+**R33** (owner's verbs go through `qargi host`; what the outside proof shows). On a seated project
+the owner runs a lead verb as `qargi host VERB ...`, outside every sandbox. A store that passes R8
+does not show that the call is outside: a sandboxed lead runs as the same user, can make a
+directory of mode 700 and can name it in `QARGI_AUTH`. So before anything else `qargi host` takes
+these steps, and it runs the verb only when all of them pass:
 
-1. `$AUTH` resolves (R7) and passes R8.
-2. It makes a payload for this call, with `epoch`, `tx` and `rev` from
-   `$AUTH/<project>/seat.json` and a random `nonce`:
-   `{"v":1,"ns":"qargi-host","project","epoch","tx","rev","nonce"}`. It signs the payload with
-   `$AUTH/credentials/broker_ed25519` in the namespace `qargi-host` and verifies the signature
-   against the `signers_line` of the project's projection (R21).
-3. `$AUTH/<project>/seat.json` and that projection agree in `epoch`, `tx` and `rev`.
+1. It refuses when `QARGI_AUTH`, `QARGI_CONF`, `QARGI_HOME` or `QARGI_STATE` is set, or when the
+   run is a dev run (R7): it works with the default roots only. The one exception is a test of
+   `qargi host` in this repository's own suite, which sets one switch for it (the build names the
+   switch). The switch lifts this step and no other, and any caller can set it, so it is no part of
+   what the proof shows.
+2. `$AUTH` resolves (R7) and passes R8.
+3. It makes a payload for this call, with `epoch`, `tx` and `rev` from
+   `$AUTH/<project>/seat.json`: `{"v":1,"ns":"qargi-host","project","epoch","tx","rev"}`. It signs
+   the payload with the private key file `$AUTH/credentials/broker_ed25519` in the namespace
+   `qargi-host` and verifies the signature against the `signers_line` of the project's projection
+   (R21). The key tool is given the path of that file and an environment with no `SSH_AUTH_SOCK`,
+   and a file that does not hold a private key fails this step: `ssh-keygen -Y sign` answers a
+   public key from an agent that holds the private half, and an agent that reaches the caller must
+   not stand in for the key file.
+4. `$AUTH/<project>/seat.json` and that projection agree in `epoch`, `tx` and `rev`.
 
-A key that the caller made fails step 2: the signers line is the broker's (R47), the broker's key
-is in no sandbox, and no sandbox can write the projection. A copy of the store that is behind the
-projection fails step 3. The signature is made and checked in the same call. It is never stored,
-and no variable, option or file stands for a proof that passed. Then `qargi host` appends its audit
-line (R15), and it runs the verb only when the proof passed and the append succeeded. Between the
-seat write and the projection write of a step the two records differ (R40): `qargi host` is
-refused until `qargi marshal broker run` has completed the step. For a verb that names no project
-(R64) the proof is made against the seated projects under `$CONF` and passes when it passes for
-one of them. A verb that names an unseated project needs no `qargi host` (R53), and `qargi host`
-does not run it: there is no projection to prove against. `qargi host` records what was run; it is
-not a fence. Refusal: `host-in-sandbox`, exit 1, when a part of the proof fails, when no seated
+A passed proof shows this and no more: the call reads a seat record, a projection and a private key
+that agree with one another, and the key matches the signers line of the projection. It does not
+show that the call runs outside a sandbox, and no check made by code that the caller runs could.
+Step 1 closes the variables and the dev run that qargi itself reads, and nothing else. A caller that
+moves the roots by other means gets a proof that passes: `HOME` moves the default roots, and a mount
+of its own in a user namespace puts a config, a projection, a key and a store of its own making
+where `$CONF` and the default `$AUTH` stand. A caller that runs a patched copy of this code is not
+refused at all, by step 1 or by the proof (Limits). So the proof is a guard rail: it refuses a lead
+that is mistaken or stale, one that holds no key and made no roots of its own, and it is no fence
+against a lead that works round qargi. What holds against that lead is R101: no sandbox holds the
+broker's key, an agent that signs with it or a credential that makes an approval effective.
+
+A key that the caller made fails step 3 unless the caller made the projection too, which it can do
+only in roots of its own: the signers line is the broker's (R47), R101 keeps the broker's key out of
+every sandbox, and no sandbox can write the projection that is bound. A copy of the store that is
+behind the projection fails step 4. The signature is made and checked in the same call, by the one
+process that holds the payload, and it is never stored; the payload carries no nonce, because
+nothing is sent to a second party that a nonce could keep from being replayed. No variable, option
+or file stands for a proof that passed. Then `qargi host` appends its audit line (R15), and it runs
+the verb only when the proof passed and the append succeeded. Between the seat write and the
+projection write of a step the two records differ (R40): `qargi host` is refused until `qargi
+marshal broker run` has completed the step. For a verb that names no project (R64) the proof is made
+against the seated projects under `$CONF` and passes when it passes for one of them. A verb that
+names an unseated project needs no `qargi host` (R53), and `qargi host` does not run it: there is
+no projection to prove against. `qargi host` records what was run; it is not a fence. Refusal:
+`host-in-sandbox`, exit 1, when step 1 refuses, when a part of the proof fails, when no seated
 project is there to prove against or when the audit line cannot be appended; the verb did not run
 and nothing was written.
 
@@ -619,7 +656,7 @@ table says and prints the line of R65.
 | `content-invalid` | a record other than an assignment breaks R18, R22 or R32 |
 | `symlink-refused` | a symbolic link in a path of R88 |
 | `caretaker-not-vacant` | a caretaker order while a lead holds the seat (R75) |
-| `host-in-sandbox` | `qargi host` whose outside proof fails, that has no seated project to prove against, or that cannot append its audit line (R33) |
+| `host-in-sandbox` | `qargi host` that R33 refuses: a variable that names a root is set or the run is a dev run, the outside proof fails, no seated project is there to prove against, or the audit line cannot be appended |
 | `member-sandbox-off` | raised by member dispatch; its rule is not part of this page |
 
 Refusal: as the table says, exit 1.
@@ -665,15 +702,24 @@ both hold.
 
 ## What never transfers
 
-**R76** (no approval from inside). On a seated project a verb given `--approved` is refused before
-it does anything, unless a `qargi host` call that has passed the outside proof runs it (R33). The
-proof decides, not a guess about where the verb runs: typed without `qargi host`, the verb is
-refused in the owner's own session too. Refusal: `approval-refused`, exit 1.
+**R76** (no approval from inside; a guard rail). On a seated project a verb given `--approved` is
+refused before it does anything, unless a `qargi host` call that has passed the outside proof runs
+it (R33). The proof decides, not a guess about where the verb runs: typed without `qargi host`, the
+verb is refused in the owner's own session too. This guards against a mistake: a lead that types
+`--approved` out of habit, on an old instruction or with words it was handed is refused. It does
+not guard against a lead that works round qargi. Such a lead can run code of its own, in which this
+check is not made, or present roots of its own, in which the proof of R33 passes (Limits), and
+then it can give itself an approval. What keeps that lead from acting on the approval is not this
+rule but R101 and R89: it holds no key and no credential with which a remote would act, and it can
+write only the places that its assignment declares. Refusal: `approval-refused`, exit 1.
 
-**R77** (plan tokens do not cross). `qargi host` computes a plan token over the plan preceded by a
-line that only it adds, so a token a lead's plan printed never matches the plan the owner applies.
-The owner plans again outside the sandbox. Refusal: the existing refusal of a plan token that does
-not match the plan, exit 1.
+**R77** (plan tokens do not cross; a guard rail). `qargi host` computes a plan token over the plan
+preceded by a line that only it adds, so a token a lead's plan printed never matches the plan the
+owner applies. The owner plans again outside the sandbox. The line is in qargi's code and is no
+secret: a lead that computes the token itself, with code of its own, makes one that matches. So
+this stops a token that crosses by mistake and not one that is forged; R76 and R101 say what a lead
+that works round qargi can reach. Refusal: the existing refusal of a plan token that does not match
+the plan, exit 1.
 
 **R78** (nothing that authorizes is carried). The note, the seat record, the projection, the spool
 copies and the results hold no approval text, no plan token and no words of the owner. The note
@@ -827,6 +873,21 @@ broker makes the archive: if the supervising layer makes it, the broker reads no
 state root and the rule goes (O7). Refusal: `projection-stale`, exit 77 (R58), to a `lead-write`
 verb of a unit that was started in that time; none on the authority side.
 
+**R101** (what a sandbox never holds). The supervising layer binds none of these into the sandbox of
+a unit, in any epoch: `$AUTH`, with the broker's private key and the signers file below it, and
+every copy of that key; an agent socket, or any other service, that holds the broker's key or signs
+with it, and any variable or file that names one; and a credential with which a verb that takes
+`--approved` makes a remote act: the push credential of the project's remote, the token of a hosting
+service, the login of a cloud service. `$CONF/credentials/` is where qargi keeps such files, and it
+is never bound (Roots). Qargi cannot see what a sandbox holds, so this binds the supervising layer.
+What qargi does is to keep every lead-side verb independent of all of it (R10), to read the key on
+the authority side only, and to refuse a `qargi host` call that cannot read the key (R33). This is
+the rule that holds against a lead that works round qargi, where R33, R76 and R77 do not (Limits):
+a lead that gives itself an approval can then change only what its sandbox can write (R89), cannot
+sign as the broker, cannot read the store, and has no credential with which a remote would act on
+the approval. Refusal: none; qargi cannot see what a sandbox holds, and a sandbox that holds the key
+passes the proof of R33.
+
 ## The coordinator's place
 
 **R93** (reserved, refused). Phase 1 has no coordinator. An assignment with `seat_role`
@@ -857,15 +918,33 @@ show them.
 - **Fences hold against sandboxed processes only.** A process of the owner's user outside every
   sandbox can write the store, the mirror and the bound records, and can call `qargi host`.
 - **The roots are taken as bound.** A session that points the config, state or authority root at
-  directories of its own sees what it put there: an unseated project, or a seat and a store of its
-  own making that pass R33. Nothing below the real roots changes by that; what the session can
-  change is still what its sandbox lets it write. The gate and the outside proof hold for the roots
-  that the supervising layer bound.
+  directories of its own sees what it put there: an unseated project, or a seat, a projection, a key
+  and a store of its own making that pass R33. `qargi host` refuses the variables that name a root
+  and a dev run (R33), and that closes those variables and nothing else: `HOME` moves the default
+  roots too, and the next two limits open the rest. Nothing below the real roots changes by this;
+  what the session can change is still what its sandbox lets it write. The gate and the outside
+  proof hold for the roots that the supervising layer bound.
+- **A sandbox that allows user namespaces lets a process present roots of its own.** A member of a
+  runtime that brings a sandbox of its own starts it inside the lead's (the end of this section),
+  which needs a lead sandbox that allows user namespaces. A process in such a sandbox can make a
+  mount namespace, mount a directory of its own where `$CONF`, the projection directory or the
+  default `$AUTH` stands, and run `qargi host` in it. What the call reads is then what the process
+  made, its own key included, and the proof of R33 passes. Qargi cannot tell that mount from the
+  real one.
+- **A lead can run code of its own.** Qargi's code on the lead side, `qargi host` with it, runs in
+  the lead's own process. A lead can run a patched copy of it or call a module directly, and so skip
+  any check that code makes: the refusal of the variables, the signature of the proof, the gate. No
+  rule of this page stops that. This and the limit above are why R33, R76 and R77 are guard rails
+  against a mistaken or a stale lead and not against a hostile one; against a hostile lead only what
+  its sandbox lacks holds (R101).
 - **An unseated project is as before.** Until a project is seated, any session can write its qargi
   records and push; R73 is the only change. Unseating reopens that.
 - **Qargi does not stop git.** A lead that runs git itself is limited by what its sandbox mounts and
   by the mirror, not by this page. A lead can edit its own working records; they are lead-stated.
 - **The fence is the supervising layer's proof.** Qargi checks its form.
+- **The binds are the supervising layer's.** Qargi cannot see what a sandbox holds. R99 and R101
+  bind the layer, and a bind that is wrong shows nowhere in qargi: a sandbox that holds the broker's
+  key passes the proof of R33 and can sign a note.
 - **The conversation does not transfer.** A successor starts from the note.
 
 Excluded from phase 1, plainly:
