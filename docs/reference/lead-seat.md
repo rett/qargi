@@ -901,7 +901,7 @@ page.
 | 4 | gate matrix by class and condition; always-open verbs; `owner` verbs with no project in a sandbox | R51 to R64; R64 asks whether a project is seated, not whether the verb runs in a sandbox |
 | 5 | preamble protocol | R67, R68 |
 | 6 | no authority default with only the state or config root named; the dev store ignored by git | R7 |
-| 7 | build plan | none (not a rule) |
+| 7 | build plan | none (not a rule); what its wave 0 has not produced is in [the reconciliation](#reconciliation-with-the-designs-wave-0-task-f) |
 | 8 | per-feature verbs on a seated project; the renewer; `local prepare` | R27, R71, R72 |
 | 9 | owner hygiene on a role's state | replaced by R90 to R92 |
 | 10 | open runs as objects; the display id | R25, R82 |
@@ -941,6 +941,34 @@ rules and points it changed.
 | 5 | rules that the design has and revision 1 lacked: the placeholders and the file that records them, hidden tracked copies, the derived classes, the dev store in `.gitignore` and the order of the cases of R7; change 22 of the design is traced to O16 and Limits | R98, R99 and R100 new; R7, R19, R51, R63, R84 and R93 follow |
 | 6 | the authority store is a third root for good, and the fence comes before the note | R7 and R36 state the decisions; O1 and O3 decided |
 | 7 | three proposals amended: R56 is skipped for a vacant seat as for a fenced one; the path of a root, resolved once, passes an owner-only check; a small cap on read-backs | R56 (O8), R88 (O5), R39 (O14); R9 and R70 follow; O5, O8 and O14 kept, O11 names the new code |
+| 8 | what the design's wave 0 was to produce and has not, with the wave proposed for each | the section that follows; O18 new |
+
+## Reconciliation with the design's wave 0 (task F)
+
+The design's wave 0 is one task, F: it turns the draft contracts of the design's section 3 into
+files, and nothing of the seat is built before those files are merged. What exists of it is this
+page and its test. The rest is not yet produced. The table lists it, says what this page already
+fixes of it, and proposes the wave that produces it `[OPEN O18]`.
+
+| Not yet produced | Design | Fixed here by | Proposed wave | Why then |
+| --- | --- | --- | --- | --- |
+| `docs/reference/lead-seat-records.md` | 3.1, 3.2 | R9, R11, R14 to R16, R19, R20 | wave 0, a second task | it is where the transition table and the module interfaces go, and wave 1 builds against both |
+| `docs/reference/lead-seat-projection.md` | 3.8 | R21 | wave 5, with the documentation | a reference page of what the store then writes; until then R21 and the schema file are the contract |
+| `docs/reference/lead-refusals.md` | 3.3 to 3.5 | R51 to R70 | wave 5, with the documentation | as above: the lists are in `lib/refusals.json` and the rules are here |
+| `docs/reference/handoff-note.md` | 3.6 | R46, R47 | wave 5, with the documentation | as above |
+| `docs/reference/lead-readback.md` | 3.7 | R32, R48, R49 | wave 5, with the documentation | as above |
+| `docs/reference/lead-render-manifest.md` | 3.9 | nothing: the render is not part of this page | wave 1, with the render | the task that builds the render describes what it prints |
+| `lib/refusals.json` | 3.3 | R52, R65, R70 | wave 0, a second task | the reader and the store of wave 1 both take the codes, their exit and their order from it |
+| `lib/seat-records.json` | 3.11 | R11, R18 to R22, R32, R46, R48 to R50 | wave 0, a second task | the intake, the read-back check and the store of wave 1 validate records against it |
+| the render manifest (3.9) | 3.9 | nothing | wave 0 for its schema, in `lib/seat-records.json`; wave 1 for its page | the render prints it and the read-back check reads it, in two tasks of wave 1 that run side by side |
+| the module interfaces (3.11) | 3.11 | nothing: this page names no module | wave 0, a second task | the modules of wave 1 are built side by side against them |
+| the full transition table (3.2) | 3.2 | R34 to R45 and R75 state its rows as rules, not as one table | wave 0, a second task | the store of wave 1 implements it, and the review of that store reads it |
+
+The second task of wave 0 comes after the lead has decided the open points that change a list or
+a shape (O4, O7, O8, O10, O11, O12 and O14), so that the two files freeze what is settled. The
+four pages proposed for wave 5 would say again what rules of this page say. Written with the
+documentation, they describe what is built, and nobody has to keep them in step with this page
+through the revisions before that.
 
 ## Decided points
 
@@ -1045,3 +1073,11 @@ or the supervising layer.
   that the supervising layer sets inside a sandbox; it costs a check the lead can switch off.
   Alternative B: the gate makes the outside proof itself and passes such a verb when it holds; it
   costs lead-side code that opens `$AUTH`, against R10.
+- **O18** (the reconciliation with wave 0). Which wave produces what the design's wave 0 was to
+  produce and this page does not. Proposed: the table of that section. A second task of wave 0,
+  after the lead's decisions on the points that change a list or a shape, produces the two schema
+  files and the records page with the transition table and the module interfaces; the page of the
+  render manifest comes with the render in wave 1; the four pages that restate rules of this page
+  come with the documentation in wave 5. Alternative: the second task of wave 0 produces all eight
+  files, as the design planned for its one task; it costs four pages that say again what R21, R46
+  to R49 and R51 to R70 say, to be kept in step with this page through every later revision.

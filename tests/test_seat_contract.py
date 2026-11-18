@@ -10,8 +10,8 @@ later revision takes the next number and stands in the section of its subject, s
 is dropped keeps its number, marked withdrawn, and its test), each has exactly one test and every test names a rule, each rule
 states its refusal, every reference to a rule or a point names one that exists, every point marked OPEN is listed at the end with
 what is proposed and an alternative, every point that was decided is listed with the rule that states the decision and is open
-nowhere, and the contract names no path outside its roots (ROOTS, RECORDED, DECLARED and BELOW_DECLARED below say what a path
-may start with).
+nowhere, the contract names no path outside its roots (ROOTS, RECORDED, DECLARED and BELOW_DECLARED below say what a path may
+start with), and what the design's first wave has not produced is listed, each thing with a wave, until it exists (NOT_PRODUCED).
 Offline. Run: python3 tests/test_seat_contract.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import os, re, unittest
@@ -31,6 +31,14 @@ RECORDED = ("<assignment_dir>", "<projection_dir>")
 DECLARED = ("<clone>", "<state_root>", "<mirror>")
 # The one path the contract names below a declared location: the file in which the supervising layer records its placeholders (R99).
 BELOW_DECLARED = ("<clone>/.git/info/exclude",)
+# What the design's first wave was to produce and what does not exist yet. The contract names these files in one section only, the
+# one that lists them as not yet produced and proposes the wave for each; a file that is produced leaves this list and that table.
+RECONCILIATION = "## Reconciliation with the design's wave 0 (task F)"
+NOT_PRODUCED = ("docs/reference/lead-seat-records.md", "docs/reference/lead-seat-projection.md", "docs/reference/lead-refusals.md",
+                "docs/reference/handoff-note.md", "docs/reference/lead-readback.md", "docs/reference/lead-render-manifest.md",
+                "lib/refusals.json", "lib/seat-records.json")
+# The three things the design asks of that wave that are no file of their own.
+NOT_PRODUCED_PARTS = ("the render manifest (3.9)", "the module interfaces (3.11)", "the full transition table (3.2)")
 
 RULE = re.compile(r"^\*\*R(\d+)\*\*", re.M)
 SCHEMA_ID = re.compile(r"^qargi[.-][a-z-]+/\d+$")
@@ -104,12 +112,13 @@ def named_paths(text):
     return sorted({w.lstrip("\"'([{").rstrip("\"',;:)]}.") for w in words if "/" in w})
 
 
-def outside_the_roots(word):
-    """Why a named path is outside the roots, or None when it is inside (or is no path: a schema id, a file of this repository)."""
+def outside_the_roots(word, not_produced=()):
+    """Why a named path is outside the roots, or None when it is inside (or is no path: a schema id, a file of this repository).
+    NOT_PRODUCED names the files of this repository that the text may name although they do not exist."""
     if SCHEMA_ID.match(word):
         return None
     if REPO_FILE.match(word):
-        return None if os.path.exists(os.path.join(ROOT, word)) else "names a file this repository does not have"
+        return None if os.path.exists(os.path.join(ROOT, word)) or word in not_produced else "names a file this repository does not have"
     if word.startswith(tuple(r + "/" for r in ROOTS + RECORDED)) or word in BELOW_DECLARED:
         return None
     return "starts at no root of the contract"
@@ -204,7 +213,11 @@ class Contract(unittest.TestCase):
         self.assertEqual(len(re.findall(r"\bOPEN\b", body)), len(re.findall(r"\[OPEN O\d+\]", body)))
 
     def test_the_contract_names_no_path_outside_its_roots(self):
-        bad = {w: why for w in named_paths(self.text) for why in [outside_the_roots(w)] if why}
+        # a file of this repository exists, but for the files the reconciliation lists as not yet produced, and only in that section
+        planned = section(self.text, RECONCILIATION)
+        elsewhere = self.text.replace(planned, "") if planned else self.text
+        bad = {w: why for w in named_paths(elsewhere) for why in [outside_the_roots(w)] if why}
+        bad.update({w: why for w in named_paths(planned) for why in [outside_the_roots(w, NOT_PRODUCED)] if why})
         self.assertEqual(bad, {}, "paths named outside the roots")
         # a root is one of the three the contract has, and the point that asked whether the third may be one is decided, not open
         used = set(re.findall(r"\$[A-Z][A-Z_]*", self.text))
@@ -220,6 +233,25 @@ class Contract(unittest.TestCase):
         self.assertEqual(re.findall(r"(?<![\w$<>./-])/[A-Za-z0-9_.][^\s`\"]*", self.text), [], "absolute paths")
         self.assertNotIn("~", self.text, "home paths")
 
+    def test_what_the_first_wave_has_not_produced_is_listed_with_a_wave_until_it_exists(self):
+        self.assertEqual(self.text.count(RECONCILIATION), 1, "the contract has the reconciliation with the design's wave 0, once")
+        planned = section(self.text, RECONCILIATION)
+        named = set(named_paths(planned))
+        for path in NOT_PRODUCED:
+            with self.subTest(path=path):
+                self.assertIn(path, named, "the section lists %s as not yet produced" % path)
+                self.assertFalse(os.path.exists(os.path.join(ROOT, path)), "%s exists now: it leaves the section and NOT_PRODUCED" % path)
+        for part in NOT_PRODUCED_PARTS:
+            self.assertIn("| %s |" % part, planned, "the section lists %s as not yet produced" % part)
+        # one row for each, and every row proposes a wave
+        rows = [line for line in planned.splitlines() if line.startswith("| ") and not line.startswith(("| ---", "| Not yet produced"))]
+        self.assertEqual(len(rows), len(NOT_PRODUCED) + len(NOT_PRODUCED_PARTS), "one row for each thing that is not yet produced")
+        for row in rows:
+            with self.subTest(row=row.split("|")[1].strip()):
+                self.assertRegex(row.split("|")[4], r"\bwave \d\b", "a row proposes the wave that produces it")
+        # what the section proposes is the lead's to decide: it is an open point
+        self.assertRegex(planned, r"\[OPEN O\d+\]")
+
     def test_the_path_reader_finds_what_it_must(self):
         # the check above is only as good as its reader: it must see a path in a code span, over a line break, and in a fenced block
         sample = "a `$STATE/x.json` b `/srv/a/b`, `$OTHER/y` and `marshal broker\nrun ../z/q` c\n```json\n{\"clone\": \"/srv/c\", \"s\": \"qargi.seat/1\"}\n```\n"
@@ -228,6 +260,7 @@ class Contract(unittest.TestCase):
         self.assertIsNone(outside_the_roots("<projection_dir>/<project>/projection.json"))
         self.assertIsNone(outside_the_roots("tests/test_seat_contract.py"))
         self.assertIsNotNone(outside_the_roots("lib/no_such_module.py"))
+        self.assertIsNone(outside_the_roots("lib/no_such_module.py", ("lib/no_such_module.py",)))      # listed as not yet produced
         # below a location the assignment declares, the one listed path and no other
         self.assertIsNone(outside_the_roots("<clone>/.git/info/exclude"))
         self.assertIsNotNone(outside_the_roots("<clone>/.git/config"))
