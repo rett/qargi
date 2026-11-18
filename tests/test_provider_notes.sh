@@ -142,6 +142,12 @@ for v in feature local review release; do   # the claim, against the scripts: ea
 done
 grep -qE -- '--as\) as=' "$SRC/lib/marshal.sh" || bad="$bad marshal:no---as"
 [ -z "$bad" ] && ok "and that holds: feature, local, review and release ask the marshal and take no --as; the marshal verbs take it" || no "the identity note and the scripts disagree:$bad"
+# commands is about the lead's own session (a command the person must run); what a member's commands may do is about the members, so
+# it stands in spawn, which a lead on another runtime reads, and not in commands, which such a lead reads from its own runtime
+run commands --project oncodex
+{ [ $rc = 0 ] && grep -q 'in their own terminal' <<<"$out" && ! grep -qi 'member' <<<"$out"; } && ok "codex's commands note is about the lead's session only" || no "codex commands: rc=$rc out=$out err=$err"
+run spawn --project oncodex --lead-runtime claude-code
+{ [ $rc = 0 ] && grep -q 'A Codex member runs commands only inside its sandbox\.' <<<"$out"; } && ok "that a codex member runs commands only inside its sandbox is in spawn: a lead on another runtime reads it" || no "codex spawn, the member's commands: rc=$rc out=$out err=$err"
 run skills-dir --project oncodex
 { [ $rc = 0 ] && grep -q '\.agents/skills' <<<"$out"; } && ok "codex names its skills directory" || no "codex skills-dir: rc=$rc out=$out err=$err"
 run exploration --project oncodex
