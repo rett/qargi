@@ -280,6 +280,26 @@ for w in "feature verify --purpose alpha beta" "feature verify --plan alpha beta
 done
 QARGI_ACTOR=lead-one:coord:beta:7 "$DA" feature status beta >/dev/null 2>&1 && ! QARGI_ACTOR=lead-one:coord:beta:7 "$DA" feature status alpha >/dev/null 2>&1 \
   && ok "the other way: a coordinator of beta works on beta and not on alpha" || no "beta coordinator"
+# --json is the dispatcher's option (it runs the call again without it, so the gate runs twice): a narrowed verb takes it, for its own feature only
+out=$(QARGI_ACTOR=$LBL "$DA" feature status alpha --json 2>&1 </dev/null); rc=$?
+[ $rc = 0 ] && ! grep -q 'refused under the coordinator label' <<<"$out" && ok "feature status alpha --json passes under the label of alpha" || no "status --json rc=$rc: $out"
+out=$(QARGI_ACTOR=$LBL "$DA" feature status beta --json 2>&1 </dev/null); rc=$?
+[ $rc = 2 ] && grep -qF "this coordinator's feature is alpha" <<<"$out" && ok "and feature status beta --json is refused" || no "status beta --json rc=$rc: $out"
+# an empty word names nothing: a narrowed verb is refused, and local clean "" RUN does not reach a run of another feature from inside the label's own run
+before=$(snap)
+out=$(QARGI_ACTOR=$LBL "$DA" feature status "" alpha 2>&1 </dev/null); rc=$?
+[ $rc = 2 ] && grep -qF "with an empty word" <<<"$out" && [ "$before" = "$(snap)" ] && ok "an empty word is refused on a narrowed verb, nothing changed" || no "empty word rc=$rc: $out"
+# marshal.sh reads an option by its whole name: an abbreviation (marshal_store.py's argparse would take --appr for --approved) is refused before it reaches the store
+for w in "marshal status alpha --appr x" "marshal check alpha --appr x" "marshal status alpha --appr=x" "marshal check alpha --appro x" "marshal status alpha --app x"; do
+  before=$(snap)
+  # shellcheck disable=SC2086  # the words are plain
+  out=$(QARGI_ACTOR=$LBL "$DA" $w 2>&1 </dev/null); rc=$?
+  [ $rc = 2 ] && grep -q 'unknown option' <<<"$out" && [ "$before" = "$(snap)" ] && ok "an abbreviated option reaches nothing under a label, nothing changed: $w" || no "abbreviation rc=$rc: $w -> $out"
+done
+for w in "marshal status alpha --approved x" "marshal check alpha --approved=x"; do
+  # shellcheck disable=SC2086
+  refused_ok $w
+done
 # unset and empty change nothing: the lead's verb answers as it did
 for v in unset empty; do
   if [ $v = unset ]; then out=$(env -u QARGI_ACTOR "$DA" feature finish alpha 2>&1); else out=$(QARGI_ACTOR='' "$DA" feature finish alpha 2>&1); fi; rc=$?
