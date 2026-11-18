@@ -110,6 +110,7 @@ out=$(verify "$RS"); [ $? = 0 ] && ok "a run prepared before the sync verifies" 
 RP=$(mkrun prune-run); n=$(jn); b0=$(sha agent/b)
 pout=$($DA branch prune 2>&1); pt=$(tok <<<"$pout")
 [ -n "$pt" ] && [ -f "$J" ] && [ "$(jn)" = "$n" ] && ok "a branch prune plan (a listing) journals nothing" || no "prune plan journaled or has no token: $pout"
+grep -q "delete local agent/a " <<<"$pout" && ! grep -q "journal:" <<<"$pout" && ok "and it names no commit made with git: the branches it deletes have none the journal lacks" || no "prune plan names commits made with git: $pout"
 pout=$($DA branch prune --plan "$pt" --approved "prune them" 2>&1); dels=$(grep -c '^deleted ' <<<"$pout")
 jhas agent/a "$a0" "$Z" && jhas agent/b "$b0" "$Z" && [ "$(jn)" -ge $((n + 2)) ] && ok "branch prune journals each deletion (new is all zeros)" || no "prune left no journal lines: $pout"
 [ "$(jq -c 'select(.new == "0000000000000000000000000000000000000000")' "$J" | tail -n "$dels" | wc -l)" = "$dels" ] && ok "one deletion line per deleted branch" || no "deletion lines vs '$pout'"
@@ -171,7 +172,7 @@ out=$($DA local verify "$RF" 2>&1); rc=$?
   && grep -q "feature/fin deleted by qargi feature finish" <<<"$out" && grep -q "origin/develop moved to what origin has" <<<"$out"; } \
   && ok "a run prepared before the finish verifies, and verify names develop's move and push, the deletion and the fetch" || no "verify after finish (strict): rc=$rc $out"
 out=$($DA local verify "$RF2" 2>&1); rc=$?
-[ $rc = 0 ] && grep -q "feature/fin deleted by qargi feature finish" <<<"$out" && ok "after a passing verify too: the journaled deletion of the feature branch is accepted (fast-forwards alone were before)" || no "verify after finish (lenient): rc=$rc $out"
+[ $rc = 0 ] && grep -q "feature/fin deleted by qargi feature finish\$" <<<"$out" && ok "after a passing verify too: the journaled deletion of the feature branch is accepted (fast-forwards alone were before), with no count of commits made with git: there was none" || no "verify after finish (lenient): rc=$rc $out"
 echo '{}' > "$RF3/out/manifest.json"; out=$($DA local clean "$RF3" 2>&1); rc=$?
 [ $rc = 0 ] && [ ! -e "$RF3" ] && grep -q "accepted, the lead's own move: develop moved by qargi feature finish" <<<"$out" && ok "clean accepts those moves and names them" || no "clean after finish: rc=$rc $out"
 
@@ -327,8 +328,15 @@ byhand() {
   echo "$2" > "$w/$2"; git -C "$w" add -A; git -C "$w" commit -q -m "by hand: $2"; git -C "$A" worktree remove --force "$w"
   [ -z "${3:-}" ] || git -C "$A" push -q origin "$1"
 }
-# approve COMMAND...: the plan of an owner verb, then the same command with its token and an approval
-approve() { local p t; p=$("$@" 2>&1); t=$(tok <<<"$p"); [ -n "$t" ] || { printf '%s\n' "$p"; return 1; }; "$@" --plan "$t" --approved go 2>&1; }
+# approve COMMAND...: the plan of an owner verb, then the same command with its token and an approval. The plan's text is kept in $T/plan (planned prints it).
+approve() { local p t; p=$("$@" 2>&1); printf '%s\n' "$p" > "$T/plan"; t=$(tok <<<"$p"); [ -n "$t" ] || { printf '%s\n' "$p"; return 1; }; "$@" --plan "$t" --approved go 2>&1; }
+planned() { cat "$T/plan"; }
+# takes N NAME OLD NEW [INDENT]: the line of a plan that says the deletion of NAME takes N commits made with git, from OLD to NEW, into the journal
+takes() {
+  local n="$1 commits" them=them
+  [ "$1" != 1 ] || { n="1 commit"; them=it; }
+  printf '%sjournal: takes %s made with git on %s (%s..%s): journaled with the deletion, so a run prepared before %s still verifies\n' "${5:-  }" "$n" "$2" "${3:0:7}" "${4:0:7}" "$them"
+}
 # reach REF-SUFFIX OLD NEW VERB [remote]: the journal holds the step OLD -> NEW of that branch, written by VERB with a reason that names git, on that side
 reach() {
   jq -e --arg r "$1" --arg o "$2" --arg n "$3" --arg v "$4" --arg side "${5:-local}" \
@@ -338,9 +346,10 @@ reach() {
 # (with origin: also on origin, the release by release push, the other two pushed by hand and noted). A run is prepared. The lead then commits with git
 # on each branch, twice on the release (with origin: the first fix goes to origin through release push, the second and the other two branches by hand, and
 # nothing is noted), a task merge follows the commit on the feature, and release finish, feature finish and branch prune delete the three branches (with
-# origin: there too). The run must verify and name each verb.
+# origin: there too). The run must verify and name each verb, with the number of commits made with git that the verb took. A second run, prepared after
+# the first of the two commits on the release branch (with origin: after release push took it there), must verify as well and count the one commit left.
 gone_flow() {
-  local v=$1 lbl=$3 org=${4:-} fr r0 r1 r2 f0 f1 z0 z1 out rc
+  local v=$1 lbl=$3 org=${4:-} fr fm r0 r1 r2 f0 f1 z0 z1 out outm rc said pf pr pp bad gw=" made with git, taken by the verb)"
   $REL verify "$v" >/dev/null 2>&1; rstart "$v" --date 2026-02-02 --allow-empty-notes >/dev/null 2>&1 || no "(setup) $lbl: release start $v"
   $F start gf >/dev/null 2>&1; task agent/gz gz.txt one; $DA ref note agent/gz >/dev/null 2>&1 || no "(setup) $lbl: note agent/gz"
   if [ -n "$org" ]; then
@@ -351,31 +360,54 @@ gone_flow() {
   r0=$(sha "release/$v"); f0=$(sha feature/gf); z0=$(sha agent/gz)
   byhand "release/$v" fix.txt; r1=$(sha "release/$v")
   [ -z "$org" ] || approve $REL push "$v" >/dev/null || no "(setup) $lbl: release push of the first fix"
+  fm=$(mkrun "$2-mid"); out=$(QARGI_VERIFY_REFS_ONLY=1 $DA local verify "$fm" 2>&1) || no "(setup) $lbl: the run prepared at the first fix does not pass the untouched refs check: $out"
   byhand "release/$v" fix2.txt "$org"; byhand feature/gf lead.txt "$org"; byhand agent/gz two.txt "$org"
   r2=$(sha "release/$v"); f1=$(sha feature/gf); z1=$(sha agent/gz)
   [ -n "$org" ] || $REL verify "$v" >/dev/null 2>&1
   $F merge gf agent/gz >/dev/null 2>&1 && $F verify gf >/dev/null 2>&1 || no "(setup) $lbl: merge and verify the feature"
-  out=$(approve $F finish gf) || no "(setup) $lbl: feature finish: $out"
-  out=$(approve $REL finish "$v") || no "(setup) $lbl: release finish: $out"
-  out=$(approve $DA branch prune ${org:+--remote}) || no "(setup) $lbl: branch prune: $out"
+  out=$(approve $F finish gf) || no "(setup) $lbl: feature finish: $out"; said=$out; pf=$(planned)
+  out=$(approve $REL finish "$v") || no "(setup) $lbl: release finish: $out"; said+=$'\n'$out; pr=$(planned)
+  out=$(approve $DA branch prune ${org:+--remote}) || no "(setup) $lbl: branch prune: $out"; said+=$'\n'$out; pp=$(planned)
+  # each plan says how many commits made with git the deletion takes into the journal, and from which commit to which
+  grep -qxF "$(takes 1 feature/gf "$f0" "$f1")" <<<"$pf" && grep -qxF "$(takes 2 "release/$v" "$r0" "$r2")" <<<"$pr" && grep -qxF "$(takes 1 agent/gz "$z0" "$z1" '    ')" <<<"$pp" \
+    && ok "$lbl: the plans of feature finish, release finish and branch prune each list the commits made with git that the deletion takes: their number and range" || no "$lbl: plan lines: $(grep -h 'journal:' <<<"$pf"$'\n'"$pr"$'\n'"$pp")"
+  if [ -n "$org" ]; then
+    grep -qxF "$(takes 1 origin/feature/gf "$f0" "$f1")" <<<"$pf" && grep -qxF "$(takes 1 "origin/release/$v" "$r1" "$r2")" <<<"$pr" && grep -qxF "$(takes 1 origin/agent/gz "$z0" "$z1" '    ')" <<<"$pp" \
+      && ok "$lbl: and the ones pushed by hand to the branch they delete on origin (the push release push made is not among them)" || no "$lbl: plan lines for origin: $(grep -h 'journal:' <<<"$pf"$'\n'"$pr"$'\n'"$pp")"
+  else
+    ! grep -q "journal: takes .* on origin/" <<<"$pf"$'\n'"$pr"$'\n'"$pp" && ok "$lbl: no plan names a branch of origin" || no "$lbl: a plan names a branch of origin: $(grep -h 'journal:' <<<"$pf"$'\n'"$pr"$'\n'"$pp")"
+  fi
+  # a verb that journaled the steps of a branch prints no note that the journal does not lead to the tip it deleted (another branch of the prune may get one)
+  ! grep -E "does not lead to .*, where (origin/)?(release/$v|feature/gf|agent/gz) was deleted" <<<"$said" || no "$lbl: a note for a branch whose steps were journaled"
   { [ "$(sha "release/$v")" = "$Z" ] && [ "$(sha feature/gf)" = "$Z" ] && [ "$(sha agent/gz)" = "$Z" ] && [ "$r1" != "$r0" ] && [ "$r2" != "$r1" ] && [ "$f1" != "$f0" ] && [ "$z1" != "$z0" ]; } \
     || no "(setup) $lbl: the three branches are not deleted, or a commit by hand did not move one"
   reach "release/$v" "$r0" "$r1" release:finish && reach "release/$v" "$r1" "$r2" release:finish && jhas "release/$v" "$r2" "$Z" \
     && ok "$lbl: release finish journals each commit the lead made on the release branch with git, one step a commit, then the deletion at the released head" || no "$lbl: no steps $r0 -> $r1 -> $r2 before the deletion of release/$v: $(grep "release/$v" "$J" | tail -n 5)"
   reach feature/gf "$f0" "$f1" feature:finish && ok "$lbl: feature finish journals the commit made with git on the feature branch (a journaled task merge followed it)" || no "$lbl: no step $f0 -> $f1 of feature/gf: $(grep 'feature/gf' "$J" | tail -n 5)"
   reach agent/gz "$z0" "$z1" branch:prune && ok "$lbl: branch prune journals the commit made with git on the agent branch" || no "$lbl: no step $z0 -> $z1 of agent/gz: $(grep 'agent/gz' "$J" | tail -n 4)"
+  # the steps are written together, and each is a whole journal line: every field, the reason, and for a branch of origin the remote and its URL
+  bad=$(jq -c 'select((.why // "") | test("with git"))
+    | select((keys - ["remote", "url"]) != ["at","by","epoch","new","old","project","ref","repo","verb","why"] or (.old | test("^[0-9a-f]{40}$") | not) or (.new | test("^[0-9a-f]{40}$") | not)
+        or .old == .new or (.epoch | type) != "number" or (.by | length) == 0 or (.project | length) == 0 or has("remote") != has("url") or (has("remote") and (.remote != "origin" or (.url | length) == 0)))' "$J" 2>&1 | head -n 3)
+  [ -z "$bad" ] && [ "$(jq -c 'select((.why // "") | test("with git"))' "$J" | wc -l)" -ge 4 ] \
+    && ok "$lbl: each step a deleting verb wrote is a whole journal line: at, epoch, verb, project, repo, ref, old, new, by and the reason (and remote and url for origin)" || no "$lbl: step lines: $bad"
   out=$(verify "$fr"); rc=$?
   [ $rc = 0 ] && ok "$lbl: a run prepared before the lead committed on the release, feature and agent branches verifies after the verbs deleted them" || no "$lbl: verify after the deletions: rc=$rc $out"
-  grep -q "release/$v deleted by qargi release finish" <<<"$out" && ok "$lbl: verify names release finish for the deleted release branch" || no "$lbl: release/$v is not accepted as deleted by release finish: $(grep "release/$v" <<<"$out")"
-  grep -q "feature/gf deleted by qargi feature finish" <<<"$out" && ok "$lbl: and feature finish for the deleted feature branch" || no "$lbl: feature/gf is not accepted as deleted by feature finish: $(grep 'feature/gf' <<<"$out")"
-  grep -q "agent/gz deleted by qargi branch prune" <<<"$out" && ok "$lbl: and branch prune for the deleted agent branch" || no "$lbl: agent/gz is not accepted as deleted by branch prune: $(grep 'agent/gz' <<<"$out")"
+  grep -qF "release/$v deleted by qargi release finish (2 commits$gw" <<<"$out" && ok "$lbl: verify names release finish for the deleted release branch, and the two commits made with git that it took" || no "$lbl: release/$v is not accepted as deleted by release finish with its 2 commits: $(grep "release/$v" <<<"$out")"
+  grep -qF "feature/gf deleted by qargi feature finish (1 commit$gw, qargi feature merge" <<<"$out" && ok "$lbl: and feature finish for the deleted feature branch, with the one commit made with git; the task merge is named without a count" || no "$lbl: feature/gf is not accepted as deleted by feature finish with its 1 commit: $(grep 'feature/gf' <<<"$out")"
+  grep -qF "agent/gz deleted by qargi branch prune (1 commit$gw" <<<"$out" && ok "$lbl: and branch prune for the deleted agent branch, with the one commit made with git" || no "$lbl: agent/gz is not accepted as deleted by branch prune with its 1 commit: $(grep 'agent/gz' <<<"$out")"
+  # the run prepared at the first of the two commits made with git on the release branch: the journal leads on from that commit
+  outm=$(verify "$fm"); rc=$?
+  [ $rc = 0 ] && ok "$lbl: a run prepared at a commit the lead made with git on the release branch, before the next one, verifies after release finish deleted the branch" || no "$lbl: verify of the run prepared at the first fix: rc=$rc $outm"
+  grep -qF "release/$v deleted by qargi release finish (1 commit$gw" <<<"$outm" && ok "$lbl: and verify counts the one commit made with git after that run was prepared" || no "$lbl: release/$v for the run prepared at the first fix: $(grep "release/$v" <<<"$outm")"
   [ -n "$org" ] || return 0
   # origin: release push journaled its own pushes of the release, the second fix went there by hand; so did the feature and agent branches after the lead's notes of them
   reach "release/$v" "$r1" "$r2" release:finish remote && reach feature/gf "$f0" "$f1" feature:finish remote && reach agent/gz "$z0" "$z1" branch:prune remote \
     && ok "$lbl: release finish, feature finish and branch prune journal the push by hand of the branch they delete on origin" || no "$lbl: no step for origin: $(grep -E "release/$v|feature/gf|agent/gz" "$J" | grep origin | tail -n 8)"
-  grep -q "release/$v on origin deleted by qargi release push, qargi release finish" <<<"$out" && ok "$lbl: verify names release push and release finish for the release branch deleted on origin" || no "$lbl: release/$v on origin: $(grep "release/$v" <<<"$out")"
-  grep -q "feature/gf on origin deleted by qargi feature finish" <<<"$out" && grep -q "agent/gz on origin deleted by qargi branch prune" <<<"$out" \
-    && ok "$lbl: and feature finish and branch prune for the branches deleted on origin" || no "$lbl: the branches of origin: $(grep -E 'feature/gf|agent/gz' <<<"$out")"
+  grep -qF "release/$v on origin deleted by qargi release push, qargi release finish (1 commit$gw" <<<"$out" && ok "$lbl: verify names release push and release finish for the release branch deleted on origin: the push release push made has no count, the one by hand is counted with release finish" || no "$lbl: release/$v on origin: $(grep "release/$v" <<<"$out")"
+  grep -qF "feature/gf on origin deleted by qargi feature finish (1 commit$gw" <<<"$out" && grep -qF "agent/gz on origin deleted by qargi branch prune (1 commit$gw" <<<"$out" \
+    && ok "$lbl: and feature finish and branch prune for the branches deleted on origin, each with the one commit pushed by hand" || no "$lbl: the branches of origin: $(grep -E 'feature/gf|agent/gz' <<<"$out")"
+  grep -qF "release/$v on origin deleted by qargi release finish (1 commit$gw" <<<"$outm" && ok "$lbl: the run prepared after release push took the first fix to origin: the push by hand of the second is the one commit counted there" || no "$lbl: release/$v on origin for the run prepared at the first fix: $(grep "release/$v" <<<"$outm")"
 }
 jq '.branches.delete_merged = "local+remote"' "$T/c/projects/app.json" > "$T/app.json" && mv "$T/app.json" "$T/c/projects/app.json"   # feature finish deletes the branch on origin too
 gone_flow 0.3.0 gone-origin "with an origin" origin
@@ -394,20 +426,30 @@ $REL verify 0.1.1 --hotfix >/dev/null 2>&1; out=$(approve $REL finish 0.1.1 --ho
 [ "$(sha hotfix/0.1.1)" = "$Z" ] && [ "$h1" != "$h0" ] && reach hotfix/0.1.1 "$h0" "$h1" hotfix:finish && jhas hotfix/0.1.1 "$h1" "$Z" \
   && ok "local only: hotfix finish journals the hotfix the lead committed with git, then the deletion of the branch" || no "hotfix finish: $(grep 'hotfix/0.1.1' "$J" | tail -n 4)"
 out=$(verify "$RH"); rc=$?
-[ $rc = 0 ] && grep -q "hotfix/0.1.1 deleted by qargi hotfix finish" <<<"$out" && ok "local only: a run prepared before the hotfix was committed verifies after hotfix finish, which verify names" || no "verify after hotfix finish: rc=$rc $out"
+[ $rc = 0 ] && grep -qF "hotfix/0.1.1 deleted by qargi hotfix finish (1 commit made with git, taken by the verb)" <<<"$out" && ok "local only: a run prepared before the hotfix was committed verifies after hotfix finish, which verify names with the one commit made with git" || no "verify after hotfix finish: rc=$rc $out"
 gone_flow 0.2.0 gone-local "local only"
 # what no verb did stays refused: a branch deleted by hand, a branch rewritten by hand whose deletion a verb then journaled at the other tip, and a
 # branch whose tip is further from what the journal has than the steps a verb writes (JOURNAL_REACH_MAX, 500 commits of the first-parent line)
-$F start hd >/dev/null 2>&1; $F start ot >/dev/null 2>&1; task agent/ot ot.txt one; task agent/far far.txt one
-$DA ref note agent/ot agent/far >/dev/null 2>&1 || no "(setup) note agent/ot and agent/far"
-RN=$(mkrun gone-hand); hd0=$(sha feature/hd); ot0=$(sha agent/ot); far0=$(sha agent/far)
+$F start hd >/dev/null 2>&1; $F start ot >/dev/null 2>&1; task agent/ot ot.txt one; task agent/far far.txt one; task agent/un un.txt one
+$DA ref note agent/ot agent/far >/dev/null 2>&1 || no "(setup) note agent/ot and agent/far"   # agent/un is made by hand and never noted
+RN=$(mkrun gone-hand); hd0=$(sha feature/hd); ot0=$(sha agent/ot); far0=$(sha agent/far); un0=$(sha agent/un)
 git -C "$A" branch -D feature/hd >/dev/null
 ot1=$(git -C "$A" commit-tree -p develop -m "rewritten by hand" "agent/ot^{tree}"); git -C "$A" branch -f agent/ot "$ot1" >/dev/null
 far1=$far0; for _ in $(seq 1 501); do far1=$(git -C "$A" commit-tree -p "$far1" -m "one more by hand" "$far0^{tree}"); done; git -C "$A" branch -f agent/far "$far1" >/dev/null
-$F merge ot agent/ot >/dev/null 2>&1 && $F merge ot agent/far >/dev/null 2>&1 || no "(setup) merge the rewritten agent/ot and the long agent/far"
-n=$(jn); out=$(approve $DA branch prune) || no "(setup) prune agent/ot and agent/far: $out"
-[ "$(sha agent/ot)" = "$Z" ] && jhas agent/ot "$ot1" "$Z" && [ "$(sha agent/far)" = "$Z" ] && jhas agent/far "$far1" "$Z" && [ "$(jn)" = $((n + 2)) ] \
-  && ok "branch prune of a branch rewritten by hand, and of one 501 commits past what the journal has, journals each deletion at the tip it deleted and no step" || no "prune of the rewritten and the long branch: $(tail -n +"$((n + 1))" "$J" | head -n 6)"
+byhand agent/un un2.txt; un1=$(sha agent/un)
+$F merge ot agent/ot >/dev/null 2>&1 && $F merge ot agent/far >/dev/null 2>&1 && $F merge ot agent/un >/dev/null 2>&1 || no "(setup) merge the rewritten agent/ot, the long agent/far and the unnoted agent/un"
+n=$(jn); out=$(approve $DA branch prune) || no "(setup) prune agent/ot, agent/far and agent/un: $out"
+[ "$(sha agent/ot)" = "$Z" ] && jhas agent/ot "$ot1" "$Z" && [ "$(sha agent/far)" = "$Z" ] && jhas agent/far "$far1" "$Z" && [ "$(sha agent/un)" = "$Z" ] && jhas agent/un "$un1" "$Z" && [ "$un1" != "$un0" ] && [ "$(jn)" = $((n + 3)) ] \
+  && ok "branch prune of a branch rewritten by hand, of one 501 commits past what the journal has and of one the journal never had journals each deletion at the tip it deleted and no step" || no "prune of the rewritten, the long and the unnoted branch: $(tail -n +"$((n + 1))" "$J" | head -n 6)"
+# it says so, one line a branch on stderr, with the reason: a run prepared while the branch was at another commit will be refused
+will="qargi local verify will refuse a run prepared earlier"
+[ "$(grep -c "^note: the journal does not lead to " <<<"$out")" = 3 ] \
+  && grep -q "^note: the journal does not lead to ${ot1:0:7}, where agent/ot was deleted (no commit the journal has it at is on its first-parent line: it was rewritten by hand.*): $will, while agent/ot was at another commit\$" <<<"$out" \
+  && ok "pruning the branch rewritten by hand prints one note: the journal does not lead to the deleted tip, the branch was rewritten, verify will refuse an earlier run" || no "note for the rewritten branch: $(grep 'agent/ot' <<<"$out")"
+grep -q "^note: the journal does not lead to ${far1:0:7}, where agent/far was deleted (no commit the journal has it at is within 500 commits of its tip on its first-parent line): $will" <<<"$out" \
+  && ok "the branch 501 commits past what the journal has: the note names the bound of 500 commits" || no "note for the long branch: $(grep 'agent/far' <<<"$out")"
+grep -q "^note: the journal does not lead to ${un1:0:7}, where agent/un was deleted (the journal has no line of it: it was made by hand and not noted with qargi ref note): $will" <<<"$out" \
+  && ok "the branch the journal never had: the note says it was made by hand and not noted" || no "note for the unnoted branch: $(grep 'agent/un' <<<"$out")"
 out=$(verify "$RN"); rc=$?
 [ $rc != 0 ] && grep -qF "branch deleted: refs/heads/feature/hd (was $hd0) (not in the lead's ref journal)" <<<"$out" \
   && ok "a branch deleted by hand (git branch -D, no verb) is still refused, with the tip it was at" || no "hand deletion: rc=$rc $out"
@@ -415,7 +457,55 @@ out=$(verify "$RN"); rc=$?
   && ok "a deletion journaled for one tip does not accept the deletion of the branch at another tip" || no "deletion at another tip: rc=$rc $out"
 [ $rc != 0 ] && grep -qF "branch deleted: refs/heads/agent/far (was $far0) (not in the lead's ref journal)" <<<"$out" \
   && ok "nor the deletion of a branch whose deleted tip is more than 500 commits past the tip the journal has" || no "deletion beyond the bound: rc=$rc $out"
+[ $rc != 0 ] && grep -qF "branch deleted: refs/heads/agent/un (was $un0) (not in the lead's ref journal)" <<<"$out" \
+  && ok "nor the deletion of a branch the journal never had, at a later tip than the run saw: what each note said" || no "deletion of the unnoted branch: rc=$rc $out"
+# a verb journaled a move of the branch (A -> B, a task merge), the lead put the branch back at A with git and committed C there, and the finish
+# deletes it at C: a journal line starts at A already, but it goes to B, so the step A -> C is written all the same. A run that had the branch at A
+# then finds the deletion; one that had it at B does not, since B is no longer on the branch and no line starts there.
+task agent/rs1 rs1.txt one; $DA ref note agent/rs1 >/dev/null 2>&1 || no "(setup) note agent/rs1"
+$F start rs >/dev/null 2>&1; rsa=$(sha feature/rs); RSA=$(mkrun gone-reset-a)
+$F merge rs agent/rs1 >/dev/null 2>&1 || no "(setup) merge agent/rs1 into feature/rs"
+rsb=$(sha feature/rs); RSB=$(mkrun gone-reset-b)
+git -C "$A" branch -f feature/rs "$rsa" >/dev/null; byhand feature/rs reset.txt; rsc=$(sha feature/rs)
+$F verify rs >/dev/null 2>&1; n=$(jn); out=$($F finish rs 2>&1)
+grep -qxF "$(takes 1 feature/rs "$rsa" "$rsc")" <<<"$out" && [ "$(jn)" = "$n" ] && [ "$(sha feature/rs)" = "$rsc" ] \
+  && ok "the plan of the finish lists that step as one commit made with git, from the commit the journal has to the new one, and writes nothing" || no "plan of the finish after the reset: lines $n -> $(jn): $out"
+out=$(approve $F finish rs) || no "(setup) finish of the feature put back and committed on: $out"
+{ [ "$rsb" != "$rsa" ] && [ "$rsc" != "$rsb" ] && [ "$(git -C "$A" rev-parse "$rsc~1")" = "$rsa" ] && jhas feature/rs "$rsa" "$rsb" && [ "$(sha feature/rs)" = "$Z" ]; } \
+  || no "(setup) feature/rs was not merged into (A -> B, journaled), put back at A, committed on (C) and finished"
+reach feature/rs "$rsa" "$rsc" feature:finish && jhas feature/rs "$rsc" "$Z" \
+  && ok "a branch put back with git to a commit a journal line starts at, and committed on there: the finish journals the step from that commit to the new one" || no "no step $rsa -> $rsc of feature/rs: $(grep 'feature/rs' "$J" | tail -n 5)"
+out=$(verify "$RSA"); rc=$?
+[ $rc = 0 ] && grep -qF "feature/rs deleted by qargi feature finish (1 commit made with git, taken by the verb)" <<<"$out" && ok "and a run that had the branch at that commit verifies after the finish, which verify names with the one commit made with git" || no "verify of the run at A after the reset: rc=$rc $out"
+out=$(verify "$RSB"); rc=$?
+[ $rc != 0 ] && grep -qF "branch deleted: refs/heads/feature/rs (was $rsb) (not in the lead's ref journal)" <<<"$out" \
+  && ok "while a run that had it at the tip the lead dropped is still refused: no line starts there" || no "verify of the run at the dropped tip: rc=$rc $out"
+# exactly at the bound: a branch deleted 500 commits past the commit the journal has it at gets all 500 steps, in order, and the run verifies (501 got none, above).
+# A branch the lead notes with the very reason those steps carry is a note all the same: its line is the lead's text and is not counted as a commit a verb took.
+task agent/at at.txt one; $DA ref note agent/at >/dev/null 2>&1 || no "(setup) note agent/at"
+RB=$(mkrun gone-bound); at0=$(sha agent/at)
+at1=$at0; for _ in $(seq 1 500); do at1=$(git -C "$A" commit-tree -p "$at1" -m "one more by hand" "$at0^{tree}"); done; git -C "$A" branch -f agent/at "$at1" >/dev/null
+git -C "$A" branch agent/nt develop; $DA ref note agent/nt --why "a commit made on the branch with git; the verb took the branch with it" >/dev/null 2>&1 || no "(setup) note agent/nt with the reason of a step"
+$F merge ot agent/at >/dev/null 2>&1 || no "(setup) merge the branch 500 commits past the journal"
+n=$(jn); out=$(approve $DA branch prune) || no "(setup) prune agent/at: $out"
+grep -qxF "$(takes 500 agent/at "$at0" "$at1" '    ')" <<<"$(planned)" && ok "the plan of the prune lists the 500 commits made with git and their range" || no "plan of the prune at the bound: $(planned | grep -v '^plan token')"
+steps=$(jq -sc --arg o "$at0" --arg n "$at1" '[.[] | select(.ref == "refs/heads/agent/at" and .verb == "branch:prune" and ((.why // "") | test("with git")))] as $l
+  | [($l | length), ($l[0].old == $o), ($l[-1].new == $n), ([range(1; $l | length) | select($l[.].old != $l[. - 1].new)] | length), ($l | map(.at) | unique | length)]' "$J")
+[ "$(sha agent/at)" = "$Z" ] && [ "$steps" = "[500,true,true,0,1]" ] && jhas agent/at "$at1" "$Z" && [ "$(jn)" = $((n + 501)) ] && ! grep -q "does not lead to" <<<"$out" \
+  && ok "branch prune of a branch exactly 500 commits past what the journal has journals the 500 steps, each from one commit to the next and all at one time, then the deletion, and prints no note" \
+  || no "prune at the bound: steps $steps, lines $n -> $(jn): $(grep 'does not lead' <<<"$out")"
+out=$(verify "$RB"); rc=$?
+[ $rc = 0 ] && grep -qF "agent/at deleted by qargi branch prune (500 commits made with git, taken by the verb)" <<<"$out" \
+  && ok "and a run prepared before those 500 commits verifies: verify counts them with branch prune" || no "verify at the bound: rc=$rc $(grep -v 'warning: --scratch' <<<"$out" | head -n 12)"
+grep -q "agent/nt created by qargi ref note\$" <<<"$out" && ok "a branch noted with the reason of a step is named as a note, with no count" || no "the noted branch: $(grep 'agent/nt' <<<"$out")"
 use app
+# on origin too: a branch pushed by hand and never noted, then deleted there by branch prune --remote, gets the note with origin's name of it
+$F start po >/dev/null 2>&1; task agent/po po.txt one; git -C "$A" push -q origin agent/po; byhand agent/po po2.txt push; po1=$(sha agent/po)
+$F merge po agent/po >/dev/null 2>&1 || no "(setup) merge agent/po"
+out=$(approve $DA branch prune --remote) || no "(setup) prune agent/po here and on origin: $out"
+[ "$(sha agent/po)" = "$Z" ] && [ -z "$(git -C "$A" ls-remote origin refs/heads/agent/po)" ] \
+  && grep -q "^note: the journal does not lead to ${po1:0:7}, where origin/agent/po was deleted (the journal has no line of it: it was pushed by hand, or by an agent, and not noted with qargi ref note): $will, while origin/agent/po was at another commit\$" <<<"$out" \
+  && ok "a branch of origin the journal never had, deleted by branch prune --remote: the note names origin/NAME and says it was pushed and not noted" || no "note for the branch of origin: $(grep 'agent/po' <<<"$out")"
 
 # --- the guard protects the journal from a member; reading stays allowed
 RG=$(mkrun guard-run); cd "$RG/clone" || exit 1

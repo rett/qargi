@@ -101,10 +101,12 @@ echo "prune the merged branches of $PROJ: ${#LOCAL[@]} local, ${#REM[@]} on orig
 for e in "${LOCAL[@]}"; do
   IFS=$TAB read -r b sha into w <<<"$e"
   echo "  delete local $b (${sha:0:7}, merged into $into)${w:+; remove its worktree $w}"
+  journal_reach_plan local "refs/heads/$b" "$sha" '    '   # the commits made with git on it that the deletion takes into the journal: how many, from where to where
 done
 for e in "${REM[@]}"; do
   IFS=$TAB read -r b sha into <<<"$e"
   echo "  delete origin/$b (${sha:0:7}, merged into $into)"
+  journal_reach_plan remote "refs/heads/$b" "$sha" '    '
 done
 for k in "${KEPT[@]}"; do echo "  kept $k"; done
 if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi branch prune${REMOTE:+ --remote} --plan $tok --approved \"...\")"; exit 0; fi

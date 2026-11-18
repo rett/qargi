@@ -178,6 +178,9 @@ feature_finish_resume() {
   echo "finish feature $NAME_ARG of $PROJ was cut off$([ -n "$pushd" ] && echo ": origin holds the merge into develop (asked just now)" || echo " (develop was not to be pushed)"); finishing it:"
   echo "  develop ${d0:0:7} -> ${MERGED:0:7}${KEEP:+; $BR is kept}$([ -n "$KEEP" ] || echo "; $BR is deleted")${rdel:+; origin/$BR is deleted (${rdel:0:7})}"
   echo "  steps already done: $(jq -r '.done | if length == 0 then "none" else join(", ") end' "$f")"
+  # as in the plan of the finish: the commits made with git that the deletions still to come take into the journal
+  [ -n "$KEEP" ] || intent_marked "$key" branch || [ "$(sha_of "$BR")" != "$h" ] || journal_reach_plan local "refs/heads/$BR" "$h"
+  [ -z "$rdel" ] || journal_reach_plan remote "refs/heads/$BR" "$rdel"
   if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi feature finish $NAME_ARG --plan $tok --approved \"...\")"; exit 0; fi
   need_plan "$tok"
   g cat-file -e "$MERGED^{commit}" 2>/dev/null || die "the merge commit of the interrupted finish is not in $REPO: nothing was changed"
@@ -376,6 +379,9 @@ case $verb in
     if [ -n "$pushd" ]; then echo "will push develop to origin"; else echo "local only, will not push ($pushwhy)"; fi
     echo "finish feature $NAME_ARG of $PROJ: merge $BR into develop with --no-ff${KEEP:+, keep the branch}$([ -n "$KEEP" ] || echo ", delete the branch")${rdel:+, delete origin/$BR (${rdel:0:7})}${pushd:+, push develop}"
     [ -z "$rnote" ] || echo "  note: $rnote"
+    # the commits the lead made with git on the branch, which the deletion takes into the journal (journal_reach): how many, and from where to where
+    [ -n "$KEEP" ] || journal_reach_plan local "refs/heads/$BR" "$h"
+    [ -z "$rdel" ] || journal_reach_plan remote "refs/heads/$BR" "$rdel"
     remote_report develop; remote_report "$BR"
     show_incoming develop "$BR"; backlog_note develop "$BR"
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi feature finish $NAME_ARG${KEEP:+ --keep} --plan $tok --approved \"...\")"; exit 0; fi

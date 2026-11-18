@@ -137,13 +137,18 @@ rewrite_hint() {
 # from OLD by following lines of this repository, side and ref with epoch >= JSTART, each from its old value to its new one. Lines that
 # start elsewhere (an earlier creation made in the same second as the run) are not on the path, and an unjournaled hand anywhere breaks it,
 # because no line starts where the hand left the ref. A rewrite (qargi ref record --rewrite) is named with the reason the lead gave.
+# A verb is named once, where it first comes on the path. The steps on the path that a deleting verb wrote for commits made with git on the
+# branch it took (journal_reach in lib/gitflow.sh: the lines of a flow verb whose why is the sentence below, the same text as there) are
+# counted and said with their verb: "qargi feature finish (2 commits made with git, taken by the verb)". Those moves were the lead's own
+# git, not the verb's, and the reader of verify is told which is which.
 # Trusted only as far as the state directory is (the guard keeps an agent from writing it; same-user code could).
 journal_steps() {
   local f=$DA_STATE/ref-journal.jsonl rp='' out
+  local git_why='a commit made on the branch with git; the verb took the branch with it'
   [ -f "$f" ] && [ -n "${JSTART:-}" ] || return 1
   [ -z "${CREPO:-}" ] || { rp=$(readlink -f "$CREPO" 2>/dev/null) || rp=$CREPO; }
   [ -n "$rp" ] || [ -n "${CURLK:-}" ] || return 1
-  out=$(jq -sre --arg r "$rp" --arg u "${CURLK:-}" --arg side "$1" --arg n "$2" --arg o "$3" --arg w "$4" --argjson s "$JSTART" '
+  out=$(jq -sre --arg r "$rp" --arg u "${CURLK:-}" --arg side "$1" --arg n "$2" --arg o "$3" --arg w "$4" --arg g "$git_why" --argjson s "$JSTART" '
     def mine: if $side == "remote" then .remote == "origin" and (($r != "" and .repo == $r) or ($u != "" and .url == $u))
               else (has("remote") | not) and $r != "" and .repo == $r end;
     [ .[] | select(type == "object" and .ref == $n and ((.epoch // 0) >= $s) and mine and (.old | type) == "string" and (.new | type) == "string") ] as $e
@@ -151,8 +156,11 @@ journal_steps() {
         reduce range(0; $e | length) as $j (.; if has($e[$j].old) and (has($e[$j].new) | not) then .[$e[$j].new] = $j else . end))
     | select($w != $o and has($w)) | . as $p
     | [ $w | recurse(if . != $o then $e[$p[.]].old else empty end) | select(. != $o) | $e[$p[.]] ] | reverse
-    | map(if .verb == "ref:rewrite" then "a rewrite (qargi ref record --rewrite: " + ((.why // "") | tostring) + ")" else "qargi " + ((.verb // "?") | tostring | sub(":"; " ")) end)
-    | reduce .[] as $v ([]; if index([$v]) then . else . + [$v] end) | join(", ")' "$f" 2>/dev/null) && [ -n "$out" ] || return 1
+    | map({l: (if .verb == "ref:rewrite" then "a rewrite (qargi ref record --rewrite: " + ((.why // "") | tostring) + ")" else "qargi " + ((.verb // "?") | tostring | sub(":"; " ")) end),
+           g: (if .why == $g and (((.verb // "") | tostring | startswith("ref:")) | not) then 1 else 0 end)})
+    | reduce .[] as $v ([]; (map(.l) | index($v.l)) as $k | if $k == null then . + [$v] else .[$k].g += $v.g end)
+    | map(.l + (if .g > 0 then " (\(.g) commit" + (if .g == 1 then "" else "s" end) + " made with git, taken by the verb)" else "" end))
+    | join(", ")' "$f" 2>/dev/null) && [ -n "$out" ] || return 1
   printf '%s\n' "$out" | LC_ALL=C tr -d '\000-\011\013-\037\177'   # the reason is the lead's text: no control or escape byte reaches the terminal
 }
 
@@ -349,7 +357,9 @@ owned_bases() {
 # the file ACCEPTED, one line each. Refs under refs/qargi/ are not compared (see drop_qargi_refs). A change is accepted, in either phase, when
 #   - the lead's ref journal explains it (journal_steps): a branch or a tag of the repository, or a branch or tag of its origin, moved,
 #     created or deleted by qargi's own verbs (feature finish and park, release and hotfix finish, branch prune, review apply, the
-#     parking branch following develop, a rewrite the lead recorded ...); a peeled tag line of origin (TAG^{}) goes with its tag;
+#     parking branch following develop, a rewrite the lead recorded ...); a peeled tag line of origin (TAG^{}) goes with its tag. A branch
+#     that a verb deleted after the lead committed on it with git is named with the number of those commits, which the verb journaled when
+#     it took the branch ("feature/x deleted by qargi feature finish (2 commits made with git, taken by the verb)");
 #   - a remote-tracking ref refs/remotes/origin/X now says what origin has (a fetch or a push did that; origin's own ref is compared
 #     on its own line), or a tag of the repository is now origin's tag of the same name (fetched);
 #   - the parking branch (answers repo.parking_branch, default scratch) was fast-forwarded to develop's tip, by hand or by qargi;
