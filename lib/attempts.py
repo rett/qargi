@@ -68,10 +68,13 @@ lock-match checks fd identity; lock-check proves the inherited exclusive lock.
 Errors exit 1 with qargi: diagnostics; successful JSON goes to stdout.
 
 Outcome receipt: clean_begin, after every check and before it commits the
-cleanup intent, writes <state>/attempts/.receipts/ID.json (mode 600 in a mode
-700 directory), which no clean removes. It is one canonical JSON object of at
-most MAX_RECEIPT (16384) bytes with exactly these keys; a fact that is not
-recorded, or not of its expected form, is null, never guessed:
+cleanup intent, writes <state>/attempts/.receipts/ID.PREPARED.json (mode 600
+in a mode 700 directory), which no clean removes. PREPARED is prepared.identity
+(32 hex digits), so a run id that prepare hands out again never meets the
+receipt of its earlier use; the receipts of one run id are ID.*.json. It is
+one canonical JSON object of at most MAX_RECEIPT (16384) bytes with exactly
+these keys; a fact that is not recorded, or not of its expected form, is null,
+never guessed:
   version       1
   run           the run id (never its path)
   slug, role, class  from the lead registry row (slug, ability, class)
@@ -94,19 +97,27 @@ recorded, or not of its expected form, is null, never guessed:
   disposition   cleaned (ordinary clean) | discarded (explicit discard)
 No path, credential, environment value, task text or report text is copied.
 A document over the byte limit refuses; the attempt cap keeps it under it.
-It is written whole and once: a temporary name, fsync, then a hard link under
-the final name, which never replaces, and removal of the temporary name. Its
+It is written whole: a temporary name, fsync, then a hard link under the
+final name, which never replaces, and removal of the temporary name. Its
 bytes are a function of recorded state alone (no clock), so a repeated
-clean_begin finds equal bytes and writes nothing; other content under that
-name is a refusal, never an overwrite. An ordinary clean that cannot write
-the receipt refuses before the intent, with nothing removed. Explicit discard
-goes on: it tries to record {version, run, disposition "discarded, no
-receipt"} in the receipt's place and says on stderr what it did. Resumption of
-an interrupted clean starts after the intent and never touches the receipt. A
-clean interrupted between receipt and intent leaves the receipt; if recorded
-facts change before the next clean, that clean refuses as above. Legacy runs
-have no lifecycle state: their clean keeps its documented behaviour and gets
-no receipt. No command reads receipts yet and nothing removes them.
+clean_begin finds equal bytes and writes nothing.
+The receipt is PROVISIONAL until the cleanup intent is committed and final
+from then on. clean_begin runs only under the run lock and after clean_check
+proved that no intent is pending, so a receipt it finds under this prepared
+identity was left by a clean interrupted between receipt and intent: when its
+bytes differ (the run was dispatched, verified or applied again, or the clean
+became a discard) it is replaced whole with atomic() (fsync, os.replace).
+Once the intent is committed nothing rewrites it: resumption of an
+interrupted clean starts after the intent and never calls clean_begin, and
+the state that carries this prepared identity is removed by that clean.
+What stands under the receipt's name and is not a bounded plain private file
+(a link, another mode or owner) is never replaced: that is a refusal.
+An ordinary clean that cannot write the receipt refuses before the intent,
+with nothing removed. Explicit discard goes on: it tries to record {version,
+run, disposition "discarded, no receipt"} in the receipt's place and says on
+stderr what it did. Legacy runs have no lifecycle state: their clean keeps
+its documented behaviour and gets no receipt. No command reads receipts yet
+and nothing removes them.
 """
 import contextlib
 import fcntl
@@ -262,8 +273,10 @@ def read_at(fd, name, limit, mode=None):
         os.close(f)
 
 
-def atomic(fd, name, data):
-    tmp = ".write." + uuid.uuid4().hex
+def atomic(fd, name, data, tmp=None):
+    """Replace name whole. tmp names the temporary file when its owner can
+    recognise and remove what a dead writer left under that name."""
+    tmp = tmp or ".write." + uuid.uuid4().hex
     f = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW, 0o600, dir_fd=fd)
     try:
         with os.fdopen(f, "wb") as stream:
@@ -367,7 +380,6 @@ class Store:
         self.lock_path = self.area + "/.locks/" + self.id + ".lock"
         self.clean_name = self.id + ".clean.json"
         self.receipts = self.area + "/.receipts"
-        self.receipt_name = self.id + ".json"
 
     def open_lock(self):
         """Create only private directories and a permanent, nontruncated lock."""
@@ -1099,8 +1111,16 @@ class Store:
             claims["deviations"] = len(doc["deviations"])
         return claims
 
-    def _receipt_put(self, data):
-        """Whole and once. True when written, False when equal bytes exist."""
+    def receipt_name(self, record):
+        """ID.PREPARED.json: a run id used again has another prepared identity."""
+        return "%s.%s.json" % (self.id, record["prepared"]["identity"])
+
+    def _receipt_put(self, name, data):
+        """Whole, before the intent. True when written, False when equal bytes exist.
+
+        Only clean_begin calls this: the run lock is held and clean_check found
+        no pending intent, so a receipt under this name is provisional.
+        """
         need(len(data) <= MAX_RECEIPT, "it exceeds the limit of %d bytes" % MAX_RECEIPT)
         made = not os.path.lexists(self.receipts)
         fd = directory(self.receipts, True)
@@ -1114,16 +1134,21 @@ class Store:
             # This run's lock is held, so a leftover temporary name belongs to
             # a dead writer; removing it also returns a published receipt to
             # one link after a crash between link and unlink.
-            tmp = "." + self.receipt_name + ".new"
+            tmp = "." + name + ".new"
             with contextlib.suppress(FileNotFoundError):
                 os.unlink(tmp, dir_fd=fd)
             try:
-                existing = read_at(fd, self.receipt_name, MAX_RECEIPT, 0o600)
+                # Anything but a bounded plain private file refuses here.
+                existing = read_at(fd, name, MAX_RECEIPT, 0o600)
             except FileNotFoundError:
                 existing = None
-            if existing is not None:
-                need(existing == data, "a receipt with other content exists and is never rewritten")
+            if existing == data:
                 return False
+            if existing is not None:
+                # No intent was committed for this prepared identity: the
+                # facts moved on since an interrupted clean wrote this.
+                atomic(fd, name, data, tmp)
+                return True
             f = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW, 0o600, dir_fd=fd)
             try:
                 with os.fdopen(f, "wb") as stream:
@@ -1131,7 +1156,7 @@ class Store:
                     stream.flush()
                     os.fsync(stream.fileno())
                 # link(2) fails when the name exists: a rename that cannot replace.
-                os.link(tmp, self.receipt_name, src_dir_fd=fd, dst_dir_fd=fd, follow_symlinks=False)
+                os.link(tmp, name, src_dir_fd=fd, dst_dir_fd=fd, follow_symlinks=False)
             finally:
                 with contextlib.suppress(FileNotFoundError):
                     os.unlink(tmp, dir_fd=fd)
@@ -1142,11 +1167,12 @@ class Store:
 
     def _receipt(self, record, discard):
         """Write the outcome receipt, or refuse; explicit discard goes on."""
-        where = self.receipts + "/" + self.receipt_name
+        name = self.receipt_name(record)
+        where = self.receipts + "/" + name
         failures = (Refuse, OSError, ValueError, TypeError, LookupError, RecursionError)
         try:
-            self._receipt_put(encode(outcome(self.id, record, self.authority(), applied_record(self),
-                                             self._claims(record), "discarded" if discard else "cleaned")))
+            self._receipt_put(name, encode(outcome(self.id, record, self.authority(), applied_record(self),
+                                                   self._claims(record), "discarded" if discard else "cleaned")))
             return
         except failures as e:
             if not discard:
@@ -1154,7 +1180,7 @@ class Store:
                              "and rerun local clean, or --discard drops the run without a receipt" % (where, e)) from e
             cause = str(e)
         try:
-            self._receipt_put(encode(dict(version=RECEIPT_VERSION, run=self.id, disposition=NO_RECEIPT)))
+            self._receipt_put(name, encode(dict(version=RECEIPT_VERSION, run=self.id, disposition=NO_RECEIPT)))
             noted = 'disposition "%s" is recorded there' % NO_RECEIPT
         except failures as e:
             noted = 'disposition "%s" could not be recorded (%s)' % (NO_RECEIPT, e)
