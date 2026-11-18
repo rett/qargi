@@ -4441,6 +4441,9 @@ seconds the dry run of qargi env plan and apply may take (default 120).
 .B QARGI_HOOK_MARSHAL_SECS
 seconds the session\-start hook gives the read of the open features (qargi marshal status \-\-all \-\-brief \-\-no\-fetch) before it leaves the block out (default 5; a whole number from 1 to 9999, anything else is ignored); a test on a loaded machine raises it.
 .TP
+.B QARGI_ACTOR
+the label of a coordinator session, <lead\-id>:coord:<feature>:<n> (qargi help coordinator): a session that carries it may run only a coordinator's verbs, on its own feature (everything else is refused, exit 2), A value that is set and not of that form is refused by every verb with exit 2; unset or empty is no label. It is attribution only: unauthenticated, no identity and no authority (QARGI_LEAD stays the lead identity), and a session can unset it.
+.TP
 .B QARGI_LEAD_RUNTIME
 the runtime of the lead's own session for qargi provider notes, when it is not the project's (the option \-\-lead\-runtime wins; an empty value is none).
 .TP

@@ -1815,7 +1815,57 @@ TOOL_VERBS["seal"] = dict(PACK_VERBS["seal"], opts=PACK_VERBS["seal"]["opts"] + 
           "keeps of it; without the option the record's stands, and a tool added since then counts as not listed."))
 COMMANDS["tool"]["verbs"] = TOOL_VERBS
 
+# The coordinator label (QARGI_ACTOR): a session that carries a valid one is of coordinator class. It may run the verbs listed here and no other: a
+# verb that is not listed is the lead's, and so is every verb added later until it is listed (tests/test_help.py checks that each name here is a
+# verb, and lists what is allowed). The label is attribution, not an identity: it grants nothing, it only narrows (lib/help.py actor_gate decides, once, in
+# the dispatcher's preamble, before any verb changes anything).
+#   ACTOR_VERBS     (area, verb) -> what the verb names that the label narrows: "" nothing, "run" a run directory (its registry base must be
+#                   feature/<the label's feature>), "feature" a feature name (it must be the label's feature), "base" the --base option
+#                   (it must be feature/<the label's feature>). An area with no verbs (doctor, status) has the verb "".
+#   ACTOR_OPTS      (area, verb) -> options that make an allowed verb the lead's (a verb that acts beyond one run, or removes without a check)
+#   ACTOR_ANY_OPTS  options no coordinator's command line may carry, on any verb: --approved (a go-ahead is the lead's), --push (a push is the lead's)
+ACTOR_VERBS = {}
+for _area, _names, _words in (
+    # only read
+    ("project", "", "template show list validate profile"), ("agent", "", "list models for"), ("role", "", "list show prompt check"),
+    ("feature", "", "list"), ("marshal", "", "status check handoff"), ("upstream", "", "status review"), ("campaign", "", "show check log"),
+    ("backlog", "", "graph list"), ("release", "", "plan status"), ("doctor", "", ""), ("env", "", "show check"),
+    ("instances", "", "list show"), ("skill", "", "list show effective check"), ("tool", "", "list show effective check"), ("packs", "", "load check"),
+    ("status", "", ""), ("report", "", ""), ("watch", "", ""), ("methodology", "", "list show check files deployment"),
+    ("cloud", "", "list show check"), ("provider", "", "list show check addenda notes model"), ("noticed", "", "list"),
+    ("team", "", "brief check contract"), ("memory", "", "lint get tiers check"), ("canon", "", "check plan audit"),
+    ("credential", "", "check"), ("discover", "", "sources search recommend show"), ("lead", "", "usage compact-check status"),
+    ("supervise", "", "status hooks"), ("local", "", "list"),
+    # a coordinator's own work, narrowed to its feature
+    ("local", "base", "prepare"), ("local", "run", "run verify clean"), ("review", "run", "check"), ("feature", "feature", "status verify"),
+):
+    for _verb in (_words.split() or [""]):
+        ACTOR_VERBS[(_area, _verb)] = _names
+ACTOR_OPTS = {
+    ("local", "clean"): ("--discard", "--applied", "--stale", "--orphans", "--yes"),   # only clean RUN: the other forms reach runs of other features
+    ("marshal", "handoff"): ("--write",),                                                # a coordinator does not change who leads
+    ("release", "plan"): ("--again",),                                                   # it discards a recorded cut
+}
+ACTOR_ANY_OPTS = ("--approved", "--push")
+
 TOPICS = {
+    "coordinator": ("The coordinator label", [
+        "A lead may let a coordinator session run the dispatch work of one feature (prepare, run, verify, clean) while the lead keeps every gated act. The session says so with the "
+        "environment variable QARGI_ACTOR, a label of the form <lead-id>:coord:<feature>:<n>: a lead identity of the form the marshal accepts (letters, digits and . _ @ : + -, never /), "
+        "the word coord, a feature name, and a positive integer, at most 128 characters in all. A value that is set and not of that form is refused by every verb (exit 2, the form shown): "
+        "it never counts as no label (help, version, completion, the guard and the run-event hooks are let through: they change nothing and must not fail). Unset or empty is no label, and nothing changes.",
+        "The label narrows and grants nothing. A session that carries it runs as coordinator class: it may read, and it may run the verbs listed below, and every other verb is refused "
+        "before it changes anything (exit 2, \"a coordinator does not ...; the lead runs it\"): feature start, sync, merge, park and finish; every release verb but plan and status; "
+        "branch prune; every verb or option that pushes; any command line with --approved; marshal claim, set, renew, release, take, takeover, finish, enable, disable, key, signers, "
+        "resign and forget, and handoff --write; upgrade, install, export and import; the verbs of project, provider, packs, skill, tool, memory, canon, agent, instances, "
+        "cloud and env that change stored configuration; local close, report, clean --discard, --applied, --stale and --orphans; review save and apply.",
+        "Allowed: the verbs that only read, local prepare, run, verify and clean RUN, local list, review check, feature status and verify, marshal check and status, backlog list and graph, "
+        "lead usage, provider notes and doctor. It is narrowed by feature: local prepare needs --base feature/<the label's feature>; a local or review verb that names a run is "
+        "refused when the run's base is another feature; a feature verb that names a feature is refused for another one. A coordinator may clean any run of its own feature, "
+        "also one a stopped predecessor prepared (the narrowing is by feature, not by label).",
+        "The label is attribution, not an identity and not an authority: it is unauthenticated, a session can unset the variable, and it is never compared as an identity for a lease, an "
+        "approval or a marshal record (QARGI_LEAD stays the lead identity). It stops a coordinator that follows its brief from doing a lead's act by mistake; it does not stop a hostile session. "
+        "A member's guard is unchanged by it: a member that sets the variable can only narrow itself."]),
     "concepts": ("The model in one page", [
         "Task: you describe one task and an executable check that decides it is done. An agent works on it in its own clone and hands back "
         "numbered patches, one per commit, with a manifest. Members are instructed to return patches without pushing; lead grants are described in qargi help push.",
@@ -1946,6 +1996,9 @@ ENVIRONMENT = [
     ("QARGI_ENV_TIMEOUT", "seconds the dry run of qargi env plan and apply may take (default 120)"),
     ("QARGI_HOOK_MARSHAL_SECS", "seconds the session-start hook gives the read of the open features (qargi marshal status --all --brief --no-fetch) before it leaves the block out "
                                 "(default 5; a whole number from 1 to 9999, anything else is ignored); a test on a loaded machine raises it"),
+    ("QARGI_ACTOR", "the label of a coordinator session, <lead-id>:coord:<feature>:<n> (qargi help coordinator): a session that carries it may run only a coordinator's verbs, on its own feature (everything else is refused, exit 2), "
+                    "A value that is set and not of that form is refused by every verb with exit 2; unset or empty is no label. "
+                    "It is attribution only: unauthenticated, no identity and no authority (QARGI_LEAD stays the lead identity), and a session can unset it"),
     ("QARGI_LEAD_RUNTIME", "the runtime of the lead's own session for qargi provider notes, when it is not the project's (the option --lead-runtime wins; an empty value is none)"),
     ("QARGI_BUSCTL", "the program qargi doctor asks logind with (default busctl)"),
     ("QARGI_DOCTOR_MIN_FREE", "the percent of free space under /dev/shm below which qargi doctor warns (default 10)"),
