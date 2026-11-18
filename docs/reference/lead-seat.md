@@ -7,9 +7,9 @@ seat can be built against the rules one at a time. What exists today (the per-fe
 release and take, the owner's takeover, the handoff note and `marshal claim --as-successor-of`) is
 described in [Feature marshal](../flow/marshal.md) and stays as it is for a project without a seat.
 
-This is revision 3 of the page. It takes in the changes that the review of revision 1 required and
-those that the review of revision 2 required; [Trace to the review](#trace-to-the-review) maps each
-of them to its rules.
+This is revision 4 of the page. It takes in the changes that the review of revision 1 required,
+those that the review of revision 2 required and those that the review of revision 3 required;
+[Trace to the review](#trace-to-the-review) maps each of them to its rules.
 
 How to read it:
 
@@ -35,7 +35,8 @@ How to read it:
   themselves. What holds against a lead that works round qargi is what its sandbox lacks, and
   providing that is the supervising layer's work: R36 and R97 (the unit of the epoch before is
   gone), R99 (the binds of the clone's configuration), R101 (what a sandbox never holds) and R102
-  (what it can write). [Limits](#limits-of-phase-1) says where that ends.
+  (what it can write), the last two with the checks that the layer's qualification of a sandbox
+  makes. [Limits](#limits-of-phase-1) says where that ends.
 
 ## Terms
 
@@ -1187,6 +1188,17 @@ and points it changed.
 | 5 | the archive reads regular files only, with no-follow and non-blocking opens, records the rest by type, keeps a run with an unreadable file, cut, and is limited for a transfer | R91 rewritten; R9, R38, R88, R90 and R92 follow; O7 extended |
 | 6 | what a sandbox can write is a condition of the supervising layer | R102 new; R19 and R89 follow; O6 |
 | 7 | R7 notes that `.gitignore` carries the line of the dev store | R7 |
+
+### The review of revision 3
+
+| # | Required change | Rules and points |
+| --- | --- | --- |
+| 1 | name the test switch of `qargi host` and constrain it: honoured only when `HOME` differs from the user's home in the password database and every overridden root lies below `HOME` | R103 new; R33, R70 and Limits follow |
+| 2 | R101 and R102 list the checks that the supervising layer's qualification makes from inside a sandbox | R101 and R102; Terms, the reading guide and Limits follow |
+| 3 | the broker may read the role's registry of open runs while no unit of the role exists; its content is lead-stated and only directs a no-follow walk below the declared state root | R31 and R89 widened; R9, R88, R91, R92, R97 and R102 follow; the text of O7 follows |
+| 4 | the store has a file for the caretaker request or says that intake keeps no copy of it, and the request has a size limit | R9 (no copy) and R18; R32 and R75 follow |
+| 5 | R78 claims only what qargi writes; lead-stated parts may hold any text and are never read as an approval | R78 |
+| 6 | the title of R89 says what its body says | R89 |
 
 ## Reconciliation with the design's wave 0 (task F)
 

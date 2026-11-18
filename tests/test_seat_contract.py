@@ -567,7 +567,6 @@ class Contract(unittest.TestCase):
         self.assertIn("declares", rule_tests()[89][0], "the test of R89 is named after what its title says")
 
     def test_the_trace_has_a_row_for_each_change_that_the_review_of_revision_2_required(self):
-        self.assertIn("This is revision 3 of the page", self.text)
         for heading in ("### The review of revision 1", "### The review of revision 2"):
             self.assertEqual(self.text.count("\n" + heading + "\n"), 1, "the trace has a part for each review: " + heading)
         rows = [ln for ln in subsection(self.text, "### The review of revision 2").splitlines() if re.match(r"\| \d+ \|", ln)]
@@ -579,6 +578,24 @@ class Contract(unittest.TestCase):
         traced = "".join(rows)
         for new_rule in ("R101", "R102"):
             self.assertIn(new_rule, traced)
+
+    def test_the_trace_has_a_row_for_each_change_that_the_review_of_revision_3_required(self):
+        head = squash(self.text.split("\n## Terms", 1)[0])
+        self.assertIn("This is revision 4 of the page", head)
+        self.assertIn("those that the review of revision 3 required", head)
+        # the reading guide says that R101 and R102 come with the checks of the layer's qualification
+        self.assertIn("the checks that the layer's qualification of a sandbox makes", head)
+        self.assertEqual(self.text.count("\n### The review of revision 3\n"), 1, "the trace has a part for the review of revision 3")
+        rows = [ln for ln in subsection(self.text, "### The review of revision 3").splitlines() if re.match(r"\| \d+ \|", ln)]
+        self.assertEqual([int(re.match(r"\| (\d+) \|", ln).group(1)) for ln in rows], list(range(1, 7)), "six required changes")
+        for row in rows:
+            with self.subTest(row=row.split("|")[1].strip()):
+                self.assertRegex(row, r"\bR\d+\b", "each row names the rules it changed")
+        # the rule that revision 4 added is in the trace, and so is every rule the six changes name
+        traced = "".join(rows)
+        for rule in ("R103", "R101", "R102", "R31", "R89", "R9", "R18", "R78"):
+            with self.subTest(rule=rule):
+                self.assertRegex(traced, r"\b%s\b" % rule)
 
     def test_the_path_reader_finds_what_it_must(self):
         # the check above is only as good as its reader: it must see a path in a code span, over a line break, and in a fenced block
