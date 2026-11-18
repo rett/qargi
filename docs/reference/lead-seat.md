@@ -130,7 +130,8 @@ where runs were archived `$AUTH/<project>/tx/<tx>/orphans/` with `manifest.json`
 file for each run (R91). Beside the projects it holds `$AUTH/audit-host.log` (R15),
 `$AUTH/credentials/broker_ed25519` and `$AUTH/signers`. The names `$AUTH/<project>/delegations/`
 and `$AUTH/<project>/dormancy.json` are reserved and not created. `<tx>` has the form
-`tx-<UTC time>-<four hex digits>`. Refusal: none.
+`tx-<UTC time>-<four hex digits>`, and `<k>` is the number of a compared read-back, 1 to 3 (R39).
+Refusal: none.
 
 **R10** (who writes the store). Only the broker and `qargi host` write below `$AUTH`. Lead-side code
 never opens `$AUTH`: every lead-side verb gives the same result with `$AUTH` absent. Refusal: none.
@@ -388,10 +389,16 @@ and the projection. Refusal: none.
 refused until S6 matches, all but `marshal seat readback --submit` (R61, R96). Refusal:
 `readback-pending`, exit 77, to B.
 
-**R39** (S6 check). Takes B's read-back from the spool (R48), checks it (R49) and writes the copy
-and the result. On a match it writes the seat (`held`, `readback: matched`) and the projection, and
-B is the lead. Without a match the seat stays `pending-readback` and B may read back again.
-Refusal: `readback-mismatch`, exit 1, to the broker's caller; B sees the result of R49.
+**R39** (S6 check) `[OPEN O14]`. Takes B's read-back from the spool (R48), checks it (R49) and
+writes the copy and the result. On a match it writes the seat (`held`, `readback: matched`) and
+the projection, and B is the lead. Without a match the seat stays `pending-readback` and B may read
+back again, up to three compared read-backs for a transfer: `attempt` of the result counts them,
+and a read-back that is refused before the comparison (for its form, its size or another note
+version) is not counted. After the third failed comparison the broker takes no further read-back
+for the transfer: the seat stays `pending-readback`, and the only way on is a new assignment, as
+R42 says for an abort after S5. Refusal: `readback-mismatch`, exit 1, to the broker's caller for a
+failed comparison; `readback-exhausted`, exit 1, for a read-back after the third; B sees the
+result of R49.
 
 **R40** (interruption and resume). A transfer may stop between any two writes. Each stop leaves the
 state of this table, `marshal seat status` names the step that is open, and `qargi marshal broker
@@ -503,10 +510,13 @@ is missing: `always-open` passes. This is what a session left over from before t
 seated, or any session the supervising layer did not assign, is refused with. Refusal:
 `seat-record-missing`, exit 77, for `read`, `lead-write` and `owner`.
 
-**R56** (condition 4: the records disagree). The assignment file and the projection differ in
-`project`, `role_name`, `unit`, `runtime` or `clone`: `always-open` passes. This is what a
-competing session with another unit's file is refused with. Refusal: `records-disagree`, exit 77,
-for `read`, `lead-write` and `owner`.
+**R56** (condition 4: the records disagree) `[OPEN O8]`. The projection carries a holder, and the
+assignment file and the projection differ in `project`, `role_name`, `unit`, `runtime` or `clone`:
+`always-open` passes. This is what a competing session with another unit's file is refused with.
+Where the projection's `holder` is null, in `fenced` and in `vacant`, there is no holder to compare
+with: this condition is skipped and a later one answers, R60 in `fenced` and R62 in `vacant`
+unless R57 or R58 holds first. Refusal: `records-disagree`, exit 77, for `read`, `lead-write` and
+`owner`.
 
 **R57** (condition 5: previous epoch). The assignment file's epoch is below the projection's:
 `always-open` passes. This is what a stale lead is refused with after the cutover. Refusal:
@@ -596,12 +606,13 @@ table says and prints the line of R65.
 | `fence-required` | S3 or a later step without an accepted fence (R36) |
 | `fence-unproven` | a fence that does not prove the end of this epoch: another unit or `epoch_ended`, a method the transition does not allow, `process-tree` without `owner_confirmed`, a non-empty `pids` (R20, R29) |
 | `readback-mismatch` | S6 with a failed check (R49) |
+| `readback-exhausted` | a read-back after the third failed comparison of a transfer (R39) |
 | `note-digest-mismatch` | a digest of the note differs from the recorded one, or a read-back names another note version (R41, R47) |
 | `note-invalid` | the note's signature does not verify, or its `transfer_id` or `version` is not the projection's (R47) |
 | `seat-changed` | `rev` moved under a write (R12) |
 | `refs-backend-active` | `marshal enable` on a seated project; `init` on a project whose shared backend is on (R74) |
 | `approval-refused` | `--approved` on a seated project in a verb that no `qargi host` call with a passed proof runs (R76) |
-| `authority-store-unsafe` | `$AUTH` has no default or fails R8; a marker or a root is a path that R89 refuses |
+| `authority-store-unsafe` | `$AUTH` has no default or fails R8; a marker or a root is a path that R89 refuses; a root fails the owner-only check of R88 |
 | `content-too-large` | a record over its limit (R18) |
 | `content-invalid` | a record other than an assignment breaks R18, R22 or R32 |
 | `symlink-refused` | a symbolic link in a path of R88 |
@@ -735,7 +746,10 @@ the per-feature rules. Refusal: `seat-record-missing` or `seat-record-invalid`, 
 **R88** (G1: no path is followed through a link) `[OPEN O5]`. No path that a seat verb reads or
 writes is followed through a symbolic link. Every open resolves the path one component at a time
 relative to a directory descriptor, with no-follow on each component, at the time of use and not
-only when the path was recorded. This table says how for each path.
+only when the path was recorded. The path of `$CONF`, `$STATE` and `$AUTH` itself is resolved
+once, and before anything below it is opened, what it resolves to must pass an owner-only check
+as in R8: a directory that the effective user owns and that gives group and others no access. This
+table says how for each path.
 
 | Path | Opened by | How no-follow is enforced |
 | --- | --- | --- |
@@ -749,8 +763,9 @@ only when the path was recorded. This table says how for each path.
 | `$AUTH/audit-host.log` | broker, `qargi host` | opened for append with no-follow below `$AUTH` |
 | the run folders that R91 archives | broker | the location in `state_root` is opened from the file system root with no-follow on every component, and the folders are walked no-follow below it; a link is stored as a link and never read through |
 
-Refusal: `symlink-refused`, exit 1, on the authority side; `seat-record-invalid`, exit 77, at the
-gate.
+Refusal: `symlink-refused`, exit 1, on the authority side for a link; `authority-store-unsafe`,
+exit 1, on the authority side for a root that fails the owner-only check; `seat-record-invalid`,
+exit 77, at the gate for either.
 
 **R89** (G1: nothing a sandbox can write is trusted by path). Authority-side code never reads or
 writes a path that has a component a sandbox can write. What a sandbox can write is what the
@@ -925,6 +940,7 @@ rules and points it changed.
 | 4 | the archive of open runs stays an open question, the owner's and the supervising layer's; meanwhile no unit of the role runs before S5, the size limit is fixed and the successor has a way to read the archive | R97 new; R91 and R92 rewritten; R9, R13, R37, R38, R40, R88, R89 and R90 follow; O7 kept |
 | 5 | rules that the design has and revision 1 lacked: the placeholders and the file that records them, hidden tracked copies, the derived classes, the dev store in `.gitignore` and the order of the cases of R7; change 22 of the design is traced to O16 and Limits | R98, R99 and R100 new; R7, R19, R51, R63, R84 and R93 follow |
 | 6 | the authority store is a third root for good, and the fence comes before the note | R7 and R36 state the decisions; O1 and O3 decided |
+| 7 | three proposals amended: R56 is skipped for a vacant seat as for a fenced one; the path of a root, resolved once, passes an owner-only check; a small cap on read-backs | R56 (O8), R88 (O5), R39 (O14); R9 and R70 follow; O5, O8 and O14 kept, O11 names the new code |
 
 ## Decided points
 
@@ -962,9 +978,10 @@ or the supervising layer.
   not recorded anywhere. The same question holds for `clone`, `state_root` and `mirror` of the
   assignment, which R89 compares as the broker reaches them; the proposal covers them.
 - **O5** (R88). Where no-follow starts. Proposed: at the file system root for a path a record names
-  (the two directories, the mirror), and below the root for `$CONF`, `$STATE` and `$AUTH`, whose
-  own path is resolved once. Alternative: from the file system root for every path; it costs every
-  host whose home directory is reached through a link.
+  (the two directories, the mirror, the state root), and below the root for `$CONF`, `$STATE` and
+  `$AUTH`, whose own path is resolved once and must then pass an owner-only check as in R8.
+  Alternative: from the file system root for every path; it costs every host whose home directory
+  is reached through a link.
 - **O7** (R91, R92, R97; for the owner and the supervising layer, jointly). The archive of open
   runs: who makes it, where, how large, how the successor reads it and how long a published copy
   stays. Proposed: the broker makes it below `$AUTH`, with a limit of 64 MiB for each run;
@@ -981,11 +998,11 @@ or the supervising layer.
   removed like the others; it costs the files beyond the limit, against R90. A cost of the
   proposal: lead-written files stand in a directory that the lead side trusts for the projection,
   and they take space there until the owner removes them.
-- **O8** (R52, R60 to R63). The design's list of codes puts `not-assigned` after `seat-vacant`, but
-  its matrix answers class `owner` with `not-assigned` in every state. Proposed: the matrix wins.
-  Alternative: the list wins; it costs an owner verb in a vacant seat the answer `seat-vacant`. The
-  matrix also names no answer for a `fenced` seat, which has no holder to compare; proposed: R60
-  applies and R56 is skipped.
+- **O8** (R52, R56, R60 to R63). The design's list of codes puts `not-assigned` after
+  `seat-vacant`, but its matrix answers class `owner` with `not-assigned` in every state. Proposed:
+  the matrix wins. Alternative: the list wins; it costs an owner verb in a vacant seat the answer
+  `seat-vacant`. The matrix also names no answer for a seat without a holder, where R56 has nothing
+  to compare; proposed: R56 is skipped in `fenced` and in `vacant` alike, and R60 or R62 answers.
 - **O10** (R32, R35, R39). The spool's file names, what triggers collection, and the fields of the
   content of a `state` envelope, which the design does not give. Proposed: left to the joint list
   with the supervising layer; this page fixes the envelope, the verbs that write it and where they
@@ -996,6 +1013,7 @@ or the supervising layer.
   `note-digest-mismatch` and `seat-changed` without saying when each is raised. Proposed: the table
   of R70. Alternative: fewer codes (`fence-unproven` for both fence cases, `note-invalid` for both
   note cases); it costs the caller the difference between "send a fence" and "send a better one".
+  The table also has one code that the design lacks, `readback-exhausted` (R39).
 - **O12** (R5, R44). Which epoch `vacate` and `unseat` name, whether a number is reused after an
   abort before S3, and what S1 writes at init. Proposed: every accepted assignment takes the next
   number, none is reused, and S1 at init writes the copy only. Alternative: `vacate` and `unseat`
@@ -1004,11 +1022,13 @@ or the supervising layer.
 - **O13** (R74). Whether the door refuses to seat a project on the shared backend. Proposed: yes,
   with `refs-backend-active`. Alternative: a documented step only (`marshal disable` first); it
   costs a seated project with two sources for who leads.
-- **O14** (R12, R19). Details the design does not state: the lock and the flush of R12, mode 600,
-  what `managed` and `sandboxed` of the assignment mean, how many read-backs B may send, and how
-  the store is made read only after an unseat. Proposed: as R12 says, no rule on the two booleans,
-  no bound on attempts, and modes without the write bit. Alternative: leave each to the build; it
-  costs a contract that the first reviewer has to complete.
+- **O14** (R12, R19, R39). Details the design does not state: the lock and the flush of R12, mode
+  600, what `managed` and `sandboxed` of the assignment mean, how many read-backs B may send, and
+  how the store is made read only after an unseat. Proposed: as R12 says, no rule on the two
+  booleans, at most three compared read-backs for a transfer (R39), and modes without the write
+  bit. Alternative: leave each to the build; it costs a contract that the first reviewer has to
+  complete. For the cap alone: a larger number costs B more tries at values it is never shown
+  (R49), and no cap costs a transfer that never ends by itself.
 - **O15** (R94). The label's name and carrier come from a review, and the label is built outside
   the seat's waves. Proposed: this page fixes what the label is not and leaves its name to that
   task. Alternative: fix `QARGI_ACTOR` and `--actor` here, with the narrowing checks; it costs the

@@ -321,8 +321,8 @@ class Seat(unittest.TestCase):
         them the archive of open runs where there were any; beside the projects the host audit, the broker key and the signers;
         the reserved names are not created.
         Observable: after a whole transfer the store holds exactly the named files (an orphans directory with manifest.json
-        and one archive file for each run only when runs were archived), the tx name has its form, and no delegations
-        directory or dormancy file exists."""
+        and one archive file for each run only when runs were archived), the tx name has its form, the read-back and result
+        files are numbered from 1 and never beyond 3, and no delegations directory or dormancy file exists."""
 
     @unbuilt(10)
     def test_R10_only_the_broker_writes_the_store(self):
@@ -534,9 +534,12 @@ class Seat(unittest.TestCase):
     @unbuilt(39)
     def test_R39_S6_check(self):
         """R39: S6 checks B's read-back; on a match the seat is held and B is the lead; without one the seat stays
-        pending-readback and B may read back again.
+        pending-readback and B may read back again, up to three compared read-backs for a transfer; one that is refused
+        before the comparison is not counted.
         Observable: a matching read-back gives held with readback matched and B's lead-write verb passes; a failing one exits
-        1 with readback-mismatch, stores the result and leaves pending-readback; a second, matching one then succeeds."""
+        1 with readback-mismatch, stores the result with its attempt and leaves pending-readback; a second, matching one then
+        succeeds; after three failed comparisons a fourth read-back exits 1 with readback-exhausted, stores nothing and
+        leaves the seat as it was; a read-back refused for its form or for another note version leaves the count as it was."""
 
     @unbuilt(40)
     def test_R40_interruption_and_resume(self):
@@ -648,9 +651,12 @@ class Seat(unittest.TestCase):
 
     @unbuilt(56)
     def test_R56_condition_records_disagree(self):
-        """R56: when the assignment file and the projection differ in project, role_name, unit, runtime or clone, always-open
-        passes and the other classes are refused.
-        Observable: for each of the five fields, read, lead-write and owner verbs exit 77 with records-disagree."""
+        """R56: when the projection carries a holder and the assignment file and the projection differ in project, role_name,
+        unit, runtime or clone, always-open passes and the other classes are refused; where the holder is null, in fenced and
+        in vacant, the condition is skipped.
+        Observable: for each of the five fields, read, lead-write and owner verbs exit 77 with records-disagree; in fenced
+        and in vacant a session with an assignment file of the seat's epoch gets the answer of R60 or R62
+        (transfer-in-progress, seat-vacant) and never records-disagree."""
 
     @unbuilt(57)
     def test_R57_condition_previous_epoch(self):
@@ -869,10 +875,13 @@ class Seat(unittest.TestCase):
     @unbuilt(88)
     def test_R88_no_path_is_followed_through_a_link(self):
         """R88: every path a seat verb reads or writes is resolved one component at a time without following a symbolic link,
-        at the time of use.
+        at the time of use; the path of a root is resolved once and what it resolves to must pass an owner-only check as in
+        R8 before anything below it is opened.
         Observable: for each row of the table, a symbolic link put in place of the file and of each directory component
         after it was recorded makes the authority side exit 1 with symlink-refused and the gate exit 77 with
-        seat-record-invalid, and the link's target is neither read nor written."""
+        seat-record-invalid, and the link's target is neither read nor written; a root that resolves to a directory of
+        another owner, or one that group or others can enter, makes the authority side exit 1 with authority-store-unsafe
+        and the gate exit 77 with seat-record-invalid, and nothing below it is opened."""
 
     @unbuilt(89)
     def test_R89_nothing_a_sandbox_can_write_is_trusted_by_path(self):
