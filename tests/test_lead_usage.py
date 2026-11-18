@@ -844,11 +844,11 @@ class Advice(Base):
         self.pct(78000)                                                                                   # 39%
         self.assertEqual(self.advice(), "")
         self.pct(80000)                                                                                   # 40%
-        self.assertEqual(self.advice(), "lead: 40%, 80k tokens of context; compact is safe now: run /compact\n")
+        self.assertEqual(self.advice(), "lead: 40%, 80k tokens of context; compact is safe now: compact the session\n")
 
     def test_the_threshold_is_the_rounded_percent_on_a_known_window_and_the_raw_ratio_on_an_assumed_one(self):
         self.pct(79990)                                                                                   # 39.995%: the percent rounds to 40.0, the raw ratio is below 40
-        self.assertEqual(self.advice(), "lead: 40%, 80k tokens of context; compact is safe now: run /compact\n")
+        self.assertEqual(self.advice(), "lead: 40%, 80k tokens of context; compact is safe now: compact the session\n")
         self.assume()
         self.assertEqual(self.advice(), "")                                                               # assumed window: the raw ratio decides, so it stays silent
         self.pct(80000)
@@ -858,16 +858,16 @@ class Advice(Base):
         self.transcript("s1", [turn(1, 179999, 0, model="model-b[1m]")])
         self.answers["lead"] = {"compact_advice_pct": 10}
         self.write_answers()
-        self.assertEqual(self.advice(), "lead: 18%, 180k tokens of context; compact is safe now: run /compact\n")
+        self.assertEqual(self.advice(), "lead: 18%, 180k tokens of context; compact is safe now: compact the session\n")
         self.answers["lead"] = {"compact_advice_pct": 10, "context_window": 4000000}
         self.write_answers()
         self.transcript("s1", [turn(1, 1199999, 0)])
-        self.assertEqual(self.advice(), "lead: 30%, 1.2M tokens of context; compact is safe now: run /compact\n")
+        self.assertEqual(self.advice(), "lead: 30%, 1.2M tokens of context; compact is safe now: compact the session\n")
 
     def test_a_known_window_has_no_label_in_the_line(self):
         self.assume()
         self.transcript("s1", [turn(1, 499999, 0, model="model-b[1m]")])                                    # 50% of 1,000,000
-        self.assertEqual(self.advice(), "lead: 50%, 500k tokens of context; compact is safe now: run /compact\n")
+        self.assertEqual(self.advice(), "lead: 50%, 500k tokens of context; compact is safe now: compact the session\n")
 
     def test_the_stage_line_on_an_assumed_window_names_the_tokens_and_no_percentage_or_compact(self):
         self.assume()

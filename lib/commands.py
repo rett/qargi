@@ -80,7 +80,7 @@ GLOBAL_OPTS = [opt("--json", "print the result as one JSON object with the verb,
 
 PROJECT_OPT = opt("--project", "the project, instead of the one inferred from here", "PROJECT", "project")
 MEMBER_PROJECT_OPT = opt("--project", "the project the member belongs to (default: the one in effect when it has the member, else the only project that has it)", "PROJECT", "project")
-AS_OPT = opt("--as", "act as this lead identity (default: the session id in QARGI_LEAD, else user@host)", "ID")
+AS_OPT = opt("--as", "act as this lead identity (default: the identity in QARGI_LEAD, else the anonymous user@host)", "ID")
 FLOW_UNREACHABLE_OPT = opt("--assume-unreachable-ok", "go on although the shared marshal cannot be asked because its remote cannot be reached (without it that is a refusal, exit 3, nothing changed); recorded as marshal:unreachable-ok in the audit log")
 FLOW_UNREACHABLE_NOTE = ("It asks the marshal first. With the shared refs backend a remote that cannot be reached is a refusal (exit 3, nothing changed; the message says what could not be reached and why) "
                          "unless --assume-unreachable-ok is given: then it goes on and the audit log gets a marshal:unreachable-ok line. A project whose marshal is local is not affected.")
@@ -282,6 +282,7 @@ COMMANDS = {
                          opt("--opt-in", "cloud only: confirm an opt-in profile such as researcher"),
                          opt("--json", "machine-readable: role, class, profile, base, member, tier, model alias, model id, effort (cloud: instance, base, model, effort, profile, class)")],
                         desc="For an in-session runtime, the base member is the one the profile names (worker for build, write and test, reviewer for review) when the project has registered it; no other member serves, and without it the verb says which base to add. A read-only role never resolves to a member that can write. Plain output is one line: MEMBER MODEL EFFORT PROFILE; pass MODEL and EFFORT to the Agent tool with the member as subagent_type. "
+                             "How the project's runtime starts a member with them is in its notes: qargi provider notes spawn. "
                              "For command runtimes, MEMBER is the logical base, requiring no registration or member file. MODEL is the selected ID or alias (an alias only for use: alias with a nonempty tier alias); EFFORT is the requested level even without native control. JSON marks mode: command. Legacy roles/lead answers do not select command profiles; profiles: null is absent, while malformed non-null containers and selected entries refuse."),
         },
     },
@@ -354,6 +355,8 @@ COMMANDS = {
         "desc": ("The marshal keeps one record per open feature: its lead (identity and lease), status, goal, plan and a note, and derives the "
                  "tasks, branches, worktrees and overlap from git and the local runs. Query it before beginning work or changing a plan: "
                  "qargi marshal check NAME. A lead is a Claude Code session (identified by its session id), or whoever passes --as. "
+                 "--as is an option of the marshal verbs only: the other verbs that act for a lead (feature, local, review and the release cut) take no --as, "
+                 "and their identity is the one in QARGI_LEAD, else the anonymous user@host. "
                  "A lead holds a lease that its actions and long verbs renew, and so does every command of the lead on the feature: feature merge, sync, status, verify and finish, "
                  "local prepare, verify and clean and review check and apply on a run based on feature/NAME renew it (once a third of the lease has passed, and also after it "
                  "lapsed during a long worker run, as long as nobody else took the feature over: a different identity is still refused while the lease is live). "
@@ -593,7 +596,12 @@ COMMANDS = {
     "ref": {
         "summary": "Record in the lead's ref journal a branch move or a branch that no flow verb made",
         "desc": ("The ref journal ($QARGI_STATE/ref-journal.jsonl) is the lead's record of the branch and tag moves qargi's verbs make (feature, release, branch prune, "
-                 "review apply, with their pushes); qargi local verify and local clean accept and name what it records. qargi ref record adds the one move a lead makes by hand "
+                 "review apply, with their pushes); qargi local verify and local clean accept and name what it records. "
+                 "A verb that deletes a branch (release finish, a hotfix too, feature finish, branch prune) first records the commits made with git on that branch that the journal has no line for, "
+                 "in the repository and for the branch it deletes on origin: one line per commit, with the verb's own name and a why that says git made the step, "
+                 "so a run prepared before those commits accepts the deletion, and verify names the verb. No such line is written for a branch that is kept, "
+                 "that the journal never had, or whose tip is not within 500 first-parent commits of a commit the journal has it at (a branch rewritten by hand, for one). "
+                 "qargi ref record adds the one move a lead makes by hand "
                  "that verify must still accept: the rewrite of an agent branch that keeps its content. qargi ref note adds the branches the lead made by hand or pushed "
                  "(git branch, git push), so that verify does not blame the run for them."),
         "scripts": ["ref.sh"],
@@ -1335,7 +1343,9 @@ COMMANDS = {
                                  "from it (the repository and the credential come from the registry; a member can write the run directory). "
                                  "It accepts the lead's own moves and names each one (\"develop moved by qargi feature finish\"): what the lead's ref journal records (the branches and tags "
                                  "that qargi's flow verbs move, push to origin or delete: feature finish and park, release and hotfix finish and push, branch prune, review apply, "
-                                 "the parking branch following develop, a rewrite recorded with qargi ref record --rewrite), a remote-tracking ref of origin that says what origin has "
+                                 "the parking branch following develop, a rewrite recorded with qargi ref record --rewrite, and the commits you made with git on a branch that "
+                                 "release finish, hotfix finish, feature finish or branch prune then deleted, named as that verb's deletion; a branch that still exists, "
+                                 "or that you deleted or rewrote by hand, is not covered), a remote-tracking ref of origin that says what origin has "
                                  "(a fetch), the parking branch (repo.parking_branch, default scratch) fast-forwarded to develop's tip, by hand too, and the branches and branches of origin you noted "
                                  "(qargi ref note: a ref that did not exist when the run was prepared; one the run's agent could have made or moved and you did not note still fails). "
                                  "It also leaves out the harness's own bridge branches: a branch worktree-bridge-NAME while the locked worktree bridge-NAME of the harness (in its worktrees directory under the main checkout) holds it and its moves are fast-forwards (or once the worktree and the branch are gone). "
@@ -1372,6 +1382,9 @@ COMMANDS = {
                            opt("--approved", "with --orphans and --plan: your go-ahead for exactly that plan, in your words; recorded in the audit log", "WORDS"),
                            opt("--scratch", "with --applied or --stale: the directory the runs were prepared in; only the run directories directly under it are looked at", "DIR", "dir")],
                           desc=("Lifecycle clean records ownership and atomically renames saved output and attempt state before recording cleaned in the registry and deleting them. Rerun clean after interruption; recorded deletion is idempotent even after partial marker or state removal. Unknown or replaced tombstones refuse cleanup. Cleaned registry rows remain as recovery evidence. "
+                                "Clean of a lifecycle run writes an outcome receipt below <state>/attempts/.receipts/ before it removes anything, and the receipt stays when the run is gone "
+                                "(docs/members-and-providers/verification-lifecycle.md describes it). When the receipt cannot be written, clean refuses (exit 3) with nothing removed and the run still usable, "
+                                "and the message names the receipt and the cause; --discard goes on and warns that no receipt was written. A legacy run gets no receipt. "
                                 "Prepare makes a private temporary directory for the run (TMP, on /dev/shm when it exists) that the agent puts its test "
                                 "sandboxes in; lifecycle clean removes it with the clone, the bare copy and the output only after private evidence and ownership authorization. Prepare records RUN and TMP directory identities (TMP must be a qargi-run.XXXXXX directory under /dev/shm or QARGI_RUN_TMP, or inside the run). Refused authorization preserves TMP, RUN and retained evidence. Interrupted cleanup uses owned tombstones and the lead registry, never RUN/tmpdir. A source replacement before staging, or missing prepare-time ownership evidence for a marked run, refuses. Once the original is proven staged or deleted, a replacement at its old pathname is preserved and reported while cleanup finishes the owned tombstone and exact registry row. An owned tombstone proves staging even before the phase commit. Internal TMP completion is recorded before RUN staging; recovery never traverses a replacement RUN to inspect TMP or tombstones beneath it. "
                                 "Genuinely unmarked registered legacy runs without private lifecycle remnants retain warned ordinary clean and explicit --discard recovery. This weaker recovery proves no process quiescence or directory identity and creates no lifecycle authority: preserve wanted work and establish process safety first. Legacy TMP comes only from the registry and is removed on one file system only as a non-symlink qargi-run.XXXXXX directly under the real /dev/shm or configured QARGI_RUN_TMP parent, or RUN/tmp. Other TMP paths are left and named. Stripped markers with retained state, cleanup tombstones or saved lifecycle markers still refuse. "
@@ -1644,7 +1657,7 @@ COMMANDS = {
     "lead": {
         "summary": "The lead session: its context, and the cloud lead's right to push",
         "desc": ("usage and compact-check keep the lead's own context small: usage says how much of it is in use, compact-check says whether a "
-                 "/compact is safe now and what to re-read after it. Only the lead ever pushes, never a member. With a grant it creates agent/* "
+                 "compact of the session is safe now and what to re-read after it. Only the lead ever pushes, never a member. With a grant it creates agent/* "
                  "branches and opens pull requests; every merge is asked of you, and it cannot publish releases. grant and revoke are interactive: "
                  "each step prints its plan and asks you at the terminal, and your answer is the recorded approval. From Claude Code run them with !."),
         "scripts": ["lead.sh", "lead_usage.py"],
@@ -1664,14 +1677,15 @@ COMMANDS = {
                                 "--json says window_source answer, model or assumed; while it is assumed percent is null (window is the guess) and window_exceeded says whether the tokens "
                                 "are beyond it. Read only; a transcript that cannot be found or read prints unknown and exits 0."),
                           examples=["qargi lead usage", "qargi project set acme lead.context_window 1000000"]),
-            "compact-check": verb("Is a /compact safe now? Exit 0 safe, 1 not, with every reason and the block to re-read after it", [],
+            "compact-check": verb("Is a compact of the session safe now? Exit 0 safe, 1 not, with every reason and the block to re-read after it", [],
                                   [PROJECT_OPT, opt("--advise", "also say whether a compact is advised: from 50% of the window, strongly from 70%; no advice on an assumed window (unknown model window and no lead.context_window)"), opt("--json", "machine-readable")],
                                   desc=("Not safe while a local run is prepared and not verified, verified and not applied, or applied and not merged; a merge waits for its "
                                         "resolution; a whole-suite run (feature verify, release verify) is running; the handoff note written by marshal handoff --write is older "
                                         "than the last merge; or a release or hotfix branch is open. An applied run counts as merged by the test local list and local clean use: its applied tip is on a branch other than agent/*, or the commit the tip was rewritten to (ref record --rewrite) is, wherever the run directory lies. It prints the restart block: the handoff note, qargi marshal status, "
-                                        "qargi feature status and the open runs, so the lead resumes from stored state. Read only. qargi cannot run /compact itself: the "
-                                        "lead (or the person) does. feature finish, the last feature merge of a feature's runs, release finish and marshal handoff print "
-                                        "one line when the context is at or above the project answer lead.compact_advice_pct (default 40; 0 turns it off); while the window is only assumed that line names the "
+                                        "qargi feature status and the open runs, so the lead resumes from stored state. Read only. qargi cannot compact the session itself: the "
+                                        "lead (or the person) does, by the runtime's own means. feature finish, the last feature merge of a feature's runs, release finish and marshal handoff print "
+                                        "one line when the context is at or above the project answer lead.compact_advice_pct (default 40; 0 turns it off): "
+                                        "\"lead: 50%, 100k tokens of context; compact is safe now: compact the session\", or that a compact is not safe yet, with the first reason; while the window is only assumed that line names the "
                                         "tokens and says the window is unknown, with no word of compacting."),
                                   examples=["qargi lead compact-check --advise"]),
             "grant": verb("Guided: create or rotate the grant in three confirmed steps", [("PROJECT", "project:teams")],
@@ -1686,7 +1700,8 @@ COMMANDS = {
     "hook": {
         "summary": "Claude Code hooks",
         "desc": ("session-start loads the lead role's READMEs and indexes from both stores (about 4 KB) for the project whose repository the "
-                 "session is in, and the push grant. Register it as a SessionStart hook; it prints nothing outside a registered project."),
+                 "session is in, and the push grant. Register it as a SessionStart hook; it prints nothing outside a registered project. "
+                 "Whether the project's runtime has such a hook, and how a session gets its lead identity from it, is in the runtime's notes: qargi provider notes identity."),
         "scripts": ["hook.sh"],
         "verbs": {
             "session-start": verb("Print the SessionStart hook output for the current project",
@@ -1929,6 +1944,7 @@ ENVIRONMENT = [
     ("QARGI_ENV_TIMEOUT", "seconds the dry run of qargi env plan and apply may take (default 120)"),
     ("QARGI_HOOK_MARSHAL_SECS", "seconds the session-start hook gives the read of the open features (qargi marshal status --all --brief --no-fetch) before it leaves the block out "
                                 "(default 5; a whole number from 1 to 9999, anything else is ignored); a test on a loaded machine raises it"),
+    ("QARGI_LEAD_RUNTIME", "the runtime of the lead's own session for qargi provider notes, when it is not the project's (the option --lead-runtime wins; an empty value is none)"),
     ("QARGI_BUSCTL", "the program qargi doctor asks logind with (default busctl)"),
     ("QARGI_DOCTOR_MIN_FREE", "the percent of free space under /dev/shm below which qargi doctor warns (default 10)"),
     ("QARGI_LOGINCTL", "the program qargi doctor reads the user's linger with (default loginctl)"),

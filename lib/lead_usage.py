@@ -703,7 +703,7 @@ def cmd_advice(a, conf, state):
         c = check(ns, conf, state)
         p = "%.0f%%, %s tokens of context" % (u["percent"], short(u["tokens"]))
         if c["safe"]:
-            print("lead: %s; compact is safe now: run /compact" % p)
+            print("lead: %s; compact is safe now: compact the session" % p)
         else:
             print("lead: %s; compact is not safe yet: %s (qargi lead compact-check)" % (p, c["reasons"][0].split(":")[0]))
     except Exception:                                # noqa: BLE001  (an advice line never blocks a verb)

@@ -121,7 +121,7 @@ out=$($DA agent models 2>&1)
 { [ "$(mline keep51 model claude-fable-5-1)" = 1 ] && jq -e '.projects.pbase.keep51.model == "claude-fable-5-1"' "$T/c/agents.json" >/dev/null && grep -E '^ *keep51 ' <<<"$out" | grep -q 'claude-fable-5-1/high' && ! grep -E '^ *keep51 ' <<<"$out" | grep -q frontier; } \
   && ok "a member pinned to claude-fable-5-1 by id keeps it, and is not flagged as on the frontier model" || no "pinned member: $out"
 out=$($DA agent for review --profile elder 2>"$T/elder.err"); rc=$?
-{ [ $rc = 0 ] && [ "$out" = "reviewer - high elder" ] && grep -q 'model claude-fable-5-1 has no alias; the definition of member reviewer applies' "$T/elder.err" \
+{ [ $rc = 0 ] && [ "$out" = "reviewer - high elder" ] && grep -q 'model claude-fable-5-1 has no alias; the definition of member reviewer applies. To pass an alias, give the profile a tier that has one in place of the model, such as tier: frontier' "$T/elder.err" \
   && $DA agent for review --profile elder --json 2>/dev/null | jq -e '.tier == null and .model == null and .model_id == "claude-fable-5-1"' >/dev/null; } \
   && ok "agent for: a profile pinned to claude-fable-5-1 keeps the id, with no tier and no alias (the member's definition applies in session)" || no "pinned profile: rc=$rc $out $(cat "$T/elder.err")"
 
