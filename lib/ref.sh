@@ -43,6 +43,7 @@ if [ "$verb" = note ]; then
   project_load
   jf=$DA_STATE/ref-journal.jsonl
   rp=$(readlink -f "$REPO" 2>/dev/null) || rp=$REPO
+  journal_warn_bad "$jf"   # a line that is not JSON is skipped by the read below; this says so once
   uk=''; if g remote get-url origin >/dev/null 2>&1; then uk=$(url_key "$(g remote get-url origin)"); fi
   bad=0
   for a in "${ARGS[@]}"; do
@@ -71,8 +72,8 @@ if [ "$verb" = note ]; then
     # from absent, or from where the lead's last note of this ref left it
     old=''
     if [ -f "$jf" ]; then
-      old=$(jq -sr --arg r "$rp" --arg ref "refs/heads/$br" --arg side "$side" --arg u "$uk" \
-        '[ .[] | select(type == "object" and .verb == "ref:note" and .repo == $r and .ref == $ref and (if $side == "remote" then .remote == "origin" and .url == $u else (has("remote") | not) end)) ] | last | .new // empty' "$jf" 2>/dev/null) || old=''
+      old=$(jq -nRr --arg r "$rp" --arg ref "refs/heads/$br" --arg side "$side" --arg u "$uk" \
+        '[ inputs | fromjson? | select(type == "object" and .verb == "ref:note" and .repo == $r and .ref == $ref and (if $side == "remote" then .remote == "origin" and .url == $u else (has("remote") | not) end)) ] | last | .new // empty' "$jf" 2>/dev/null) || old=''
     fi
     [ "$old" != "$cur" ] || { echo "$a is at ${cur:0:12} as your last note left it: nothing to note"; continue; }
     if [ -n "$old" ]; then   # a second note continues the line only along a fast-forward: a rewrite between the notes is not the lead's to accept unseen

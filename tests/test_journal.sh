@@ -30,8 +30,9 @@ F="$DA feature"; REL="$DA release"
 rstart() { local p t; p=$($REL start "$@" 2>&1); t=$(tok <<<"$p"); [ -n "$t" ] || { printf '%s\n' "$p"; return 1; }; $REL start "$@" --plan "$t" --approved go; }
 sha() { git -C "$A" rev-parse -q --verify "$1" 2>/dev/null || echo "$Z"; }
 jn() { if [ -f "$J" ]; then wc -l < "$J"; else echo 0; fi; }
-# jhas REF-SUFFIX OLD NEW: the journal holds a line for that ref (a branch name ending as given) going from OLD to NEW
-jhas() { [ -f "$J" ] && jq -c --arg r "$1" --arg o "$2" --arg n "$3" 'select((.ref | endswith($r)) and .old == $o and .new == $n)' "$J" | grep -q .; }
+# jhas REF-SUFFIX OLD NEW: the journal holds a line for that ref (a branch name ending as given) going from OLD to NEW (a line that is not JSON is
+# skipped, as the readers of qargi skip it: a test puts one in the journal)
+jhas() { [ -f "$J" ] && jq -Rc --arg r "$1" --arg o "$2" --arg n "$3" 'fromjson? | select((.ref | endswith($r)) and .old == $o and .new == $n)' "$J" | grep -q .; }
 mkrun() { $DA local prepare --repo "$A" --base "${2:-develop}" --slug "$1" --scratch "$T/scr" | sed -n 's/^RUN=//p'; }
 verify() { $DA local verify "$1" 2>&1; }
 # a hand-made commit on top of a branch (nothing moves)
@@ -110,7 +111,8 @@ out=$(verify "$RS"); [ $? = 0 ] && ok "a run prepared before the sync verifies" 
 RP=$(mkrun prune-run); n=$(jn); b0=$(sha agent/b)
 pout=$($DA branch prune 2>&1); pt=$(tok <<<"$pout")
 [ -n "$pt" ] && [ -f "$J" ] && [ "$(jn)" = "$n" ] && ok "a branch prune plan (a listing) journals nothing" || no "prune plan journaled or has no token: $pout"
-grep -q "delete local agent/a " <<<"$pout" && ! grep -q "journal:" <<<"$pout" && ok "and it names no commit made with git: the branches it deletes have none the journal lacks" || no "prune plan names commits made with git: $pout"
+grep -q "delete local agent/a " <<<"$pout" && ! grep -q "journal: takes" <<<"$pout" && ! grep -q "journal: .* agent/[ab]:" <<<"$pout" && grep -q "journal: no step will be journaled for agent/x1:" <<<"$pout" \
+  && ok "and it names no commit made with git: the branches it deletes have none the journal lacks (agent/a and agent/b have their lines; agent/x1, made by hand and never noted, has the line that says no step will be journaled for it)" || no "prune plan names commits made with git: $pout"
 pout=$($DA branch prune --plan "$pt" --approved "prune them" 2>&1); dels=$(grep -c '^deleted ' <<<"$pout")
 jhas agent/a "$a0" "$Z" && jhas agent/b "$b0" "$Z" && [ "$(jn)" -ge $((n + 2)) ] && ok "branch prune journals each deletion (new is all zeros)" || no "prune left no journal lines: $pout"
 [ "$(jq -c 'select(.new == "0000000000000000000000000000000000000000")' "$J" | tail -n "$dels" | wc -l)" = "$dels" ] && ok "one deletion line per deleted branch" || no "deletion lines vs '$pout'"
@@ -338,9 +340,10 @@ takes() {
   printf '%sjournal: takes %s made with git on %s (%s..%s): journaled with the deletion, so a run prepared before %s still verifies\n' "${5:-  }" "$n" "$2" "${3:0:7}" "${4:0:7}" "$them"
 }
 # reach REF-SUFFIX OLD NEW VERB [remote]: the journal holds the step OLD -> NEW of that branch, written by VERB with a reason that names git, on that side
+# (a line that is not JSON is skipped, as the readers of qargi skip it: a test puts one in the journal)
 reach() {
-  jq -e --arg r "$1" --arg o "$2" --arg n "$3" --arg v "$4" --arg side "${5:-local}" \
-    'select((.ref | endswith($r)) and .old == $o and .new == $n and .verb == $v and ((.why // "") | test("with git")) and (if $side == "remote" then .remote == "origin" else (has("remote") | not) end))' "$J" >/dev/null 2>&1
+  jq -Re --arg r "$1" --arg o "$2" --arg n "$3" --arg v "$4" --arg side "${5:-local}" \
+    'fromjson? | select((.ref | endswith($r)) and .old == $o and .new == $n and .verb == $v and ((.why // "") | test("with git")) and (if $side == "remote" then .remote == "origin" else (has("remote") | not) end))' "$J" >/dev/null 2>&1
 }
 # gone_flow VERSION SLUG LABEL [origin]: in the project of $A a release branch, a feature branch and an agent branch exist and the journal knows each
 # (with origin: also on origin, the release by release push, the other two pushed by hand and noted). A run is prepared. The lead then commits with git
@@ -446,6 +449,13 @@ will="qargi local verify will refuse a run prepared earlier"
 [ "$(grep -c "^note: the journal does not lead to " <<<"$out")" = 3 ] \
   && grep -q "^note: the journal does not lead to ${ot1:0:7}, where agent/ot was deleted (no commit the journal has it at is on its first-parent line: it was rewritten by hand.*): $will, while agent/ot was at another commit\$" <<<"$out" \
   && ok "pruning the branch rewritten by hand prints one note: the journal does not lead to the deleted tip, the branch was rewritten, verify will refuse an earlier run" || no "note for the rewritten branch: $(grep 'agent/ot' <<<"$out")"
+# and the plan said so before the approval, with the same reason: nothing will be journaled for these branches, a run prepared earlier will be refused
+pl=$(planned); pw="qargi local verify will refuse a run prepared earlier"
+grep -qxF "    journal: no step will be journaled for agent/ot: the journal does not lead to ${ot1:0:7} (no commit the journal has it at is on its first-parent line: it was rewritten by hand, or a merge made by hand left that commit behind a second parent): $pw, while agent/ot was at another commit" <<<"$pl" \
+  && grep -qxF "    journal: no step will be journaled for agent/far: the journal does not lead to ${far1:0:7} (no commit the journal has it at is within 500 commits of its tip on its first-parent line): $pw, while agent/far was at another commit" <<<"$pl" \
+  && grep -qxF "    journal: no step will be journaled for agent/un: the journal does not lead to ${un1:0:7} (the journal has no line of it: it was made by hand and not noted with qargi ref note): $pw, while agent/un was at another commit" <<<"$pl" \
+  && ok "the plan of that prune says it for each of the three branches before the approval: no step will be journaled, why, and that verify will refuse a run prepared earlier" || no "plan lines for the branches no step leads to: $(grep 'journal:' <<<"$pl")"
+[ "$(grep -c 'journal: ' <<<"$pl")" = 3 ] && ok "and for no other branch of the plan" || no "journal lines of that plan: $(grep 'journal: ' <<<"$pl")"
 grep -q "^note: the journal does not lead to ${far1:0:7}, where agent/far was deleted (no commit the journal has it at is within 500 commits of its tip on its first-parent line): $will" <<<"$out" \
   && ok "the branch 501 commits past what the journal has: the note names the bound of 500 commits" || no "note for the long branch: $(grep 'agent/far' <<<"$out")"
 grep -q "^note: the journal does not lead to ${un1:0:7}, where agent/un was deleted (the journal has no line of it: it was made by hand and not noted with qargi ref note): $will" <<<"$out" \
@@ -506,6 +516,141 @@ out=$(approve $DA branch prune --remote) || no "(setup) prune agent/po here and 
 [ "$(sha agent/po)" = "$Z" ] && [ -z "$(git -C "$A" ls-remote origin refs/heads/agent/po)" ] \
   && grep -q "^note: the journal does not lead to ${po1:0:7}, where origin/agent/po was deleted (the journal has no line of it: it was pushed by hand, or by an agent, and not noted with qargi ref note): $will, while origin/agent/po was at another commit\$" <<<"$out" \
   && ok "a branch of origin the journal never had, deleted by branch prune --remote: the note names origin/NAME and says it was pushed and not noted" || no "note for the branch of origin: $(grep 'agent/po' <<<"$out")"
+grep -qxF "    journal: no step will be journaled for origin/agent/po: the journal does not lead to ${po1:0:7} (the journal has no line of it: it was pushed by hand, or by an agent, and not noted with qargi ref note): $will, while origin/agent/po was at another commit" <<<"$(planned)" \
+  && ok "the plan said it too, with origin's name of the branch" || no "plan line for the branch of origin: $(planned | grep 'journal:')"
+
+# --- the journal survives a cut-off write and a damaged line.
+# A batch of steps (journal_reach) and a single line are appended with one write, after a newline when the journal does not end in one: a line is
+# never joined to the end of another. A line that is not JSON is skipped by every reader, which says so once on stderr, and the others still count.
+ROOT=${DA%/bin/qargi}
+# jl ARGS: journal_line as a verb of the lead calls it (the steps of a batch on standard input)
+jl() { bash -c '. "$1/lib/lib.sh"; . "$1/lib/gitflow.sh"; shift; journal_line "$@"' jl "$ROOT" "$@"; }
+h1=$(printf '1%.0s' $(seq 1 40)); h2=$(printf '2%.0s' $(seq 1 40)); h3=$(printf '3%.0s' $(seq 1 40)); h4=$(printf '4%.0s' $(seq 1 40)); h5=$(printf '5%.0s' $(seq 1 40))
+# nonl: the journal without the newline that ends its last line, as a write that was cut off leaves it
+nonl() { printf '%s' "$(cat "$J")" > "$J.new" && mv "$J.new" "$J"; [ -n "$(tail -c 1 "$J")" ]; }
+n=$(jn); nonl || no "(setup) the journal still ends in a newline"
+printf '%s\n' "$h1 $h2" "$h2 $h3" "$h3 $h4" | jl "$A" refs/heads/agent/atom - '' test:batch '' 2>"$T/err"
+[ "$(jq -s length "$J" 2>&1)" = $((n + 3)) ] && [ "$(wc -l < "$J")" = $((n + 3)) ] && [ -z "$(tail -c 1 "$J")" ] && [ ! -s "$T/err" ] \
+  && ok "a batch of steps appended to a journal that does not end in a newline starts a line of its own: every line is JSON, three new ones, nothing said" || no "batch after a missing newline: $(jq -s length "$J" 2>&1), lines $(wc -l < "$J") (expected $((n + 3))): $(cat "$T/err")"
+jq -c 'select(.ref == "refs/heads/agent/atom") | [.old[0:1], .new[0:1], .verb]' "$J" | tr -d '\n' | grep -qxF '["1","2","test:batch"]["2","3","test:batch"]["3","4","test:batch"]' \
+  && ok "the three steps are there in order, each its own line" || no "the steps of the batch: $(tail -n 3 "$J")"
+nonl || no "(setup) the journal still ends in a newline"
+jl "$A" refs/heads/agent/atom "$h4" "$h5" test:single '' 2>"$T/err"
+[ "$(jq -s length "$J" 2>&1)" = $((n + 4)) ] && [ -z "$(tail -c 1 "$J")" ] && [ ! -s "$T/err" ] \
+  && ok "and so is a single line" || no "single line after a missing newline: $(jq -s length "$J" 2>&1): $(cat "$T/err")"
+# a batch whose lines cannot all be built writes none of them (jq fails after its first line: the shim stands for any failure part way)
+mkdir -p "$T/jqx"; printf '#!/bin/sh\n%s "$@" | head -n 1\nexit 5\n' "$(command -v jq)" > "$T/jqx/jq"; chmod +x "$T/jqx/jq"
+sz=$(wc -c < "$J")
+printf '%s\n' "$h1 $h2" "$h2 $h3" "$h3 $h4" | PATH=$T/jqx:$PATH jl "$A" refs/heads/agent/atom - '' test:batch '' 2>"$T/err"
+[ "$(wc -c < "$J")" = "$sz" ] && grep -q "warning: the ref journal could not be written for refs/heads/agent/atom (test:batch)" "$T/err" \
+  && ok "a batch that fails part way adds no line to the journal: a warning, the journal as it was" || no "failed batch: size $sz -> $(wc -c < "$J"): $(cat "$T/err")"
+# the batch reaches the journal by one write: python3 is run through a shim that counts the calls of os.write (strace is not on every host; the shim
+# sees the same calls, each one write(2)) and logs "WRITTEN/ASKED" for each. bash's printf would hand a batch this size over in blocks of 4 KB.
+mkdir -p "$T/pyx"; realpy=$(command -v python3)
+printf '#!/bin/sh\nexec %s "%s/pyx/count.py" "$@"\n' "$realpy" "$T" > "$T/pyx/python3"; chmod +x "$T/pyx/python3"
+cat > "$T/pyx/count.py" <<'PY'
+import os, sys
+real, calls = os.write, []
+def counting(fd, data):
+    # QARGI_TEST_SHORT: the first write takes only that many bytes, as a write cut short by a signal does
+    cut = int(os.environ.get("QARGI_TEST_SHORT", "0"))
+    n = real(fd, data[:cut] if cut and not calls else data)
+    calls.append("%d/%d" % (n, len(data)))
+    return n
+os.write = counting
+code, sys.argv = sys.argv[3], ["-c"] + sys.argv[4:]   # run as: python3 -I -c CODE ARGS
+try:
+    exec(compile(code, "-c", "exec"), {"__name__": "__main__"})
+finally:
+    with open(os.environ["QARGI_TEST_WRITES"], "a") as f:
+        f.write(" ".join(calls) + "\n")
+PY
+export QARGI_TEST_WRITES=$T/writes
+seq 1 500 | awk -v a="$h1" -v b="$h2" '{print a " " b}' > "$T/steps500"
+n=$(jn); sz=$(wc -c < "$J"); : > "$T/writes"
+PATH=$T/pyx:$PATH jl "$A" refs/heads/agent/atom - '' test:big '' < "$T/steps500" 2>"$T/err"
+grown=$(($(wc -c < "$J") - sz))
+[ "$(jn)" = $((n + 500)) ] && [ "$(jq -s length "$J" 2>&1)" = $((n + 500)) ] && [ "$grown" -gt 65536 ] && [ ! -s "$T/err" ] \
+  && ok "a batch of 500 lines ($grown bytes, over sixteen blocks of 4 KB) is added whole, every line JSON" || no "batch of 500: lines $(jn) of $((n + 500)), $grown bytes: $(cat "$T/err")"
+[ "$(cat "$T/writes")" = "$grown/$grown" ] \
+  && ok "and by one write of all of it: os.write was called once, asked for $grown bytes and took them (a bash printf makes one write for each 4 KB)" || no "writes of the batch: $(cat "$T/writes") (expected $grown/$grown)"
+: > "$T/writes"; sz=$(wc -c < "$J")
+PATH=$T/pyx:$PATH jl "$A" refs/heads/agent/atom "$h4" "$h5" test:one '' 2>"$T/err"
+[ "$(cat "$T/writes")" = "$(($(wc -c < "$J") - sz))/$(($(wc -c < "$J") - sz))" ] && ok "a single line is one write too" || no "writes of a single line: $(cat "$T/writes")"
+# a write that takes part of the buffer is continued with the rest: nothing is lost or doubled
+n=$(jn); : > "$T/writes"
+QARGI_TEST_SHORT=100 PATH=$T/pyx:$PATH jl "$A" refs/heads/agent/atom - '' test:short '' < "$T/steps500" 2>"$T/err"
+[ "$(jn)" = $((n + 500)) ] && [ "$(jq -s length "$J" 2>&1)" = $((n + 500)) ] && [ "$(awk '{print NF}' "$T/writes")" = 2 ] && [ "$(cut -d' ' -f1 "$T/writes" | cut -d/ -f1)" = 100 ] \
+  && ok "a short write (the first took 100 bytes) is followed by a second for the rest: all 500 lines, each once" || no "short write: lines $(jn) of $((n + 500)), writes $(cat "$T/writes"): $(cat "$T/err")"
+unset QARGI_TEST_WRITES
+cmp -s <(sed -n '/^journal_warn_bad()/,/^}/p' "$ROOT/lib/gitflow.sh") <(sed -n '/^journal_warn_bad()/,/^}/p' "$ROOT/lib/local.sh") && [ -n "$(sed -n '/^journal_warn_bad()/,/^}/p' "$ROOT/lib/local.sh")" ] \
+  && ok "journal_warn_bad is the same text in lib/gitflow.sh and lib/local.sh" || no "journal_warn_bad differs between lib/gitflow.sh and lib/local.sh"
+
+# a line that is not JSON in the middle of the journal: verify, ref note and merged.py read the others; the plan and the steps of a deleting verb
+# (journal_reach_scan) write nothing from a journal with such a line, since the line may be the one that bounds the branch's life
+RC=$(mkrun corrupt-run); $F start cj >/dev/null 2>&1; task agent/cj cj.txt one; $DA ref note agent/cj >/dev/null 2>&1 || no "(setup) note agent/cj"
+x0=$(sha agent/cj); RD=$(mkrun corrupt-run-d)   # RD has agent/cj at the commit the lead noted
+$F merge cj agent/cj >/dev/null 2>&1 || no "(setup) merge agent/cj into feature/cj"
+last=$(tail -n 1 "$J"); head -n -1 "$J" > "$J.new"; printf '%s\n' '{"at":"2026-11-17T10:00:00Z","epoch":17' >> "$J.new"; printf '%s\n' "$last" >> "$J.new"; mv "$J.new" "$J"   # a line cut off in the middle
+n=$(jn)
+out=$(verify "$RC"); rc=$?
+[ $rc = 0 ] && grep -q "feature/cj created by qargi feature start" <<<"$out" && ok "verify reads the journal past a line that is not JSON: the run passes and the change is named" || no "verify with a damaged line: rc=$rc $out"
+[ "$(grep -c "1 line of the ref journal .* is not JSON" <<<"$out")" = 1 ] && ok "and it says so once on stderr: one line, which line is meant is for the lead to find (the journal named)" || no "the warning of verify: $(grep -c 'of the ref journal' <<<"$out") times: $(grep 'ref journal' <<<"$out")"
+byhand agent/cj y.txt; y0=$(sha agent/cj)
+out=$($DA ref note agent/cj 2>&1)
+[ "$(sha agent/cj)" = "$y0" ] && grep -q "^noted agent/cj: ${x0:0:12} to ${y0:0:12} (after your earlier note)" <<<"$out" && [ "$(grep -c "of the ref journal .* is not JSON" <<<"$out")" = 1 ] \
+  && ok "ref note finds its own earlier note past the damaged line (it continues from it) and says so once" || no "ref note with a damaged line: $out"
+byhand agent/cj z.txt; z0=$(sha agent/cj)
+$F merge cj agent/cj >/dev/null 2>&1 || no "(setup) merge agent/cj again"
+jc=$(jn); out=$(approve $DA branch prune) || no "(setup) prune agent/cj: $out"
+# the steps of a deleting verb fail closed: the skipped line may be the creation or the deletion that bounds the branch's life, so with a line
+# that cannot be read no step is written (the deletion itself goes on, from the tip, as it does for a branch the journal never had)
+cwhy="the ref journal has a line that is not JSON, which may be the creation or the deletion of a branch of this name, so the lines that can be read are not enough to say where it was; remove or repair that line"
+cwill="qargi local verify will refuse a run prepared earlier"
+[ "$(sha agent/cj)" = "$Z" ] && ! reach agent/cj "$y0" "$z0" branch:prune && [ "$(jn)" = $((jc + 1)) ] && jhas agent/cj "$z0" "$Z" \
+  && ok "branch prune with a damaged line in the journal deletes the branch and journals only the deletion: no step from the commit made with git is written" || no "prune with a damaged line: $(grep 'agent/cj' "$J" | tail -n 3)"
+grep -qxF "    journal: no step will be journaled for agent/cj: the journal does not lead to ${z0:0:7} ($cwhy): $cwill, while agent/cj was at another commit" <<<"$(planned)" && ! grep -q "journal: takes" <<<"$(planned)" \
+  && ok "the plan said so before the approval: no step will be journaled, because of the line that is not JSON" || no "plan with a damaged line: $(planned | grep 'journal:')"
+[ "$(grep -c "^note: the journal does not lead to ${z0:0:7}, where agent/cj was deleted ($cwhy): $cwill, while agent/cj was at another commit\$" <<<"$out")" = 1 ] \
+  && ok "and the prune printed the note once, with the same reason" || no "note of the prune with a damaged line: $(grep 'agent/cj' <<<"$out")"
+[ "$(grep -c "of the ref journal .* is not JSON" <<<"$(planned)")" = 1 ] && [ "$(grep -c "of the ref journal .* is not JSON" <<<"$out")" = 1 ] \
+  && ok "each of the plan and the prune says once that a line is skipped" || no "the warnings of the plan and of the prune: $(grep 'ref journal' <<<"$(planned)$out")"
+out=$(verify "$RD"); rc=$?
+[ $rc != 0 ] && grep -qF "not in the lead's ref journal" <<<"$out" \
+  && ok "a run prepared at the noted commit is refused after the prune, as the note said: the journal does not lead from it to the deleted tip" || no "verify of the run at the noted commit: rc=$rc $out"
+# merged.py: a run's applied tip is merged when a commit the lead rewrote it to is; a damaged line neither hides the rewrite nor goes unsaid
+mkdir -p "$T/ms"; hc=$(hand develop); dv=$(sha develop)
+{ printf '%s\n' 'not json at all'; jq -nc --arg r "$(readlink -f "$A")" --arg o "$hc" --arg n "$dv" '{verb:"ref:rewrite", repo:$r, ref:"refs/heads/agent/m", old:$o, new:$n}'; printf '%s' '{"verb":"review:apply","re'; } > "$T/ms/ref-journal.jsonl"
+out=$(python3 -I "$ROOT/lib/merged.py" "$A" "$hc" --state "$T/ms" 2>&1); rc=$?
+[ $rc = 0 ] && [ "$(grep -c "^qargi: warning: 2 lines of the ref journal $T/ms/ref-journal.jsonl are not JSON" <<<"$out")" = 1 ] && [ "$(wc -l <<<"$out")" = 1 ] \
+  && ok "merged.py follows a recorded rewrite past damaged lines (one cut off at the end) and warns once, naming how many" || no "merged.py with damaged lines: rc=$rc $out"
+mkdir -p "$T/ms2"; jq -nc --arg r "$(readlink -f "$A")" --arg o "$hc" --arg n "$dv" '{verb:"ref:rewrite", repo:$r, ref:"refs/heads/agent/m", old:$o, new:$n}' > "$T/ms2/ref-journal.jsonl"
+out=$(python3 -I "$ROOT/lib/merged.py" "$A" "$hc" --state "$T/ms2" 2>&1); rc=$?
+[ $rc = 0 ] && [ -z "$out" ] && ok "and says nothing about a journal whose every line is JSON" || no "merged.py with a clean journal: rc=$rc $out"
+
+# A batch cut off in the middle of its write: the journal ends in the first part of the last line of a batch of two steps (a crash that left half of
+# the buffer, which one write makes unlikely and cannot make impossible). The step before it is whole and the cut one is a line that is not JSON:
+# the readers skip it, say so once, and verify stays closed: a run whose branch moved over both steps is refused, naming the move, until the
+# journal has the line again.
+grep -vxF '{"at":"2026-11-17T10:00:00Z","epoch":17' "$J" > "$J.new"; mv "$J.new" "$J"   # the line the test above cut off is not this test's
+git -C "$A" branch agent/pt develop; $DA ref note agent/pt >/dev/null 2>&1 || no "(setup) note agent/pt"
+p0=$(sha agent/pt); p1=$(hand "$p0"); p2=$(hand "$p1"); RT=$(mkrun cut-run)   # RT has agent/pt at p0, as the lead noted it
+git -C "$A" update-ref refs/heads/agent/pt "$p2" "$p0" || no "(setup) move agent/pt"
+printf '%s\n' "$p0 $p1" "$p1 $p2" | jl "$A" refs/heads/agent/pt - '' test:cut '' 2>"$T/err"
+[ ! -s "$T/err" ] && [ "$(jq -s 'map(select(.verb == "test:cut")) | length' "$J")" = 2 ] || no "(setup) the batch of two steps is not in the journal: $(cat "$T/err")"
+cp "$J" "$T/journal.whole"; head -c $(($(wc -c < "$J") - 40)) "$T/journal.whole" > "$J"   # the write stopped 40 bytes before its end
+[ -n "$(tail -c 1 "$J")" ] && [ "$(jq -Rc 'fromjson? | select(.verb == "test:cut")' "$J" | wc -l)" = 1 ] \
+  && [ "$(jq -nR '[inputs | select(length > 0) | try (fromjson | empty) catch 1] | length' "$J")" = 1 ] \
+  && ok "(setup) the journal ends in a cut-off line: the first step of the batch is whole, the second has no newline and is not JSON" || no "(setup) the cut journal: last byte '$(tail -c 1 "$J")', whole batch lines $(jq -Rc 'fromjson? | select(.verb == "test:cut")' "$J" | wc -l), lines not JSON $(jq -nR '[inputs | select(length > 0) | try (fromjson | empty) catch 1] | length' "$J")"
+out=$(verify "$RT"); rc=$?
+[ $rc != 0 ] && grep -qF "branch moved: refs/heads/agent/pt $p0 -> $p2 (not in the lead's ref journal)" <<<"$out" \
+  && ok "verify stays closed with a cut-off batch: the move over both steps is refused, the cut step is not guessed, and the whole first step does not make up for it" || no "verify with a cut-off batch: rc=$rc $out"
+[ "$(grep -c "1 line of the ref journal .* is not JSON" <<<"$out")" = 1 ] \
+  && ok "and the cut line is skipped with one warning, naming the journal" || no "the warning of verify with a cut-off batch: $(grep 'ref journal' <<<"$out")"
+cp "$T/journal.whole" "$J"
+out=$(verify "$RT"); rc=$?
+[ $rc = 0 ] && grep -qF "agent/pt moved by qargi test cut" <<<"$out" && ! grep -q "is not JSON" <<<"$out" \
+  && ok "with the whole batch in the journal the same run verifies, and nothing is said about a line" || no "verify with the whole batch: rc=$rc $out"
 
 # --- the guard protects the journal from a member; reading stays allowed
 RG=$(mkrun guard-run); cd "$RG/clone" || exit 1

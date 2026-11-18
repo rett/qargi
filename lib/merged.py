@@ -23,22 +23,43 @@ def valid_tip(tip):
     return isinstance(tip, str) and HEX.fullmatch(tip) is not None
 
 
+_warned = False
+
+
+def journal_records(state):
+    """The lines of the lead's ref journal that are JSON, parsed, in order. A line that is not (a write that was cut off, an edit by hand)
+    is skipped and the others are read; one warning on stderr, once in a process, says how many. An unreadable journal yields nothing."""
+    global _warned
+    bad = 0
+    try:
+        with open(os.path.join(state, "ref-journal.jsonl"), errors="replace") as f:
+            for ln in f:
+                if not ln.strip():
+                    continue
+                try:
+                    r = json.loads(ln)
+                except (ValueError, RecursionError):
+                    bad += 1
+                    continue
+                yield r
+    except OSError:
+        pass
+    if bad and not _warned:
+        _warned = True
+        print("qargi: warning: %d line%s of the ref journal %s %s not JSON (a write that was cut off, or an edit by hand) and %s skipped: "
+              "a change that line explained is not found, and qargi local verify may refuse a run for it"
+              % (bad, "" if bad == 1 else "s", os.path.join(state, "ref-journal.jsonl"), "is" if bad == 1 else "are", "is" if bad == 1 else "are"),
+              file=sys.stderr)
+
+
 def rewrites(state, repo):
     """{old: new} of the rewrites the lead recorded for this repository (the last line wins)."""
     out = {}
-    try:
-        rp = os.path.realpath(repo)
-        with open(os.path.join(state, "ref-journal.jsonl"), errors="replace") as f:
-            for ln in f:
-                try:
-                    r = json.loads(ln)
-                except ValueError:
-                    continue
-                if (isinstance(r, dict) and r.get("verb") == "ref:rewrite" and r.get("repo") == rp
-                        and valid_tip(r.get("old")) and valid_tip(r.get("new"))):
-                    out[r["old"]] = r["new"]
-    except OSError:
-        pass
+    rp = os.path.realpath(repo)
+    for r in journal_records(state):
+        if (isinstance(r, dict) and r.get("verb") == "ref:rewrite" and r.get("repo") == rp
+                and valid_tip(r.get("old")) and valid_tip(r.get("new"))):
+            out[r["old"]] = r["new"]
     return out
 
 
@@ -71,19 +92,11 @@ def journal_tip(state, repo, branch):
     best = ""
     if not branch:
         return best
-    try:
-        rp = os.path.realpath(repo)
-        with open(os.path.join(state, "ref-journal.jsonl"), errors="replace") as f:
-            for ln in f:
-                try:
-                    r = json.loads(ln)
-                except ValueError:
-                    continue
-                if (isinstance(r, dict) and r.get("verb") == "review:apply" and r.get("repo") == rp and r.get("ref") == "refs/heads/" + branch
-                        and "remote" not in r and valid_tip(r.get("new"))):
-                    best = r["new"]
-    except OSError:
-        pass
+    rp = os.path.realpath(repo)
+    for r in journal_records(state):
+        if (isinstance(r, dict) and r.get("verb") == "review:apply" and r.get("repo") == rp and r.get("ref") == "refs/heads/" + branch
+                and "remote" not in r and valid_tip(r.get("new"))):
+            best = r["new"]
     return best
 
 
