@@ -54,8 +54,9 @@ How to read it:
 | assignment directory | recorded in the seat marker (R16) | read only, bound as a directory | supervising layer |
 | projection directory | recorded in the seat marker (R16) | read only, bound as a directory | broker |
 
-The clone and the mirror are locations that the assignment record names in its fields `clone` and
-`mirror` (R19). This page names no path below them.
+The clone, the mirror and the state root of the role are locations that the assignment record
+names in its fields `clone`, `mirror` and `state_root` (R19). Inside the role's sandbox `$STATE` is
+the location that `state_root` names. This page names no path below them.
 
 ## The seat and its states
 
@@ -179,15 +180,16 @@ same record through the door:
 {"schema": "qargi.assignment/1", "project": "example", "role_name": "example-lead",
  "seat_role": "lead", "kind": "transfer", "epoch": 7,
  "to": {"runtime": "runtime-b", "unit": "lead-example.service"},
- "clone": "<clone>", "mirror": "<mirror>", "hidden_tracked": [],
+ "clone": "<clone>", "state_root": "<state_root>", "mirror": "<mirror>", "hidden_tracked": [],
  "managed": true, "sandboxed": true,
  "ordered_by": "owner", "order_ref": "...", "at": "2026-11-20T10:00:00Z"}
 ```
 
 `seat_role` is `lead` or `caretaker`. `kind` is `init`, `transfer`, `vacate` or `unseat`. `init` and
-`transfer` need every field; `vacate` and `unseat` carry no `to`, `clone` or `hidden_tracked`.
-`role_name` is kebab-case, at most 64 characters, without `:`. Refusal: `assignment-invalid`,
-exit 1.
+`transfer` need every field; `vacate` and `unseat` carry no `to`, `clone`, `state_root` or
+`hidden_tracked`. `clone` and `state_root` declare what the holder's sandbox can write: its clone
+and the state root of its role (R89). `role_name` is kebab-case, at most 64 characters, without
+`:`. Refusal: `assignment-invalid`, exit 1.
 
 **R20** (fence). A fence is the supervising layer's statement that the unit of an epoch is gone:
 
@@ -264,10 +266,10 @@ was, apart from its audit line. Refusal: the code of the rule that is broken, ex
 names in `mirror`, with the environment qargi uses for a tree it does not trust, and never runs git
 in a clone. Configuration planted in the clone or the mirror runs nothing. Refusal: none.
 
-**R31** (the role's state is the lead's). The broker never writes below a role's `$STATE` and reads
-nothing there by path; the one exception is the archive and removal of run folders while the seat
-is `fenced` (R91, R92). Lead-written content reaches it only as a spool envelope through
-`broker intake`. Refusal: none.
+**R31** (the role's state is the lead's). The broker never writes below a role's state root, the
+location that `state_root` of its assignment names, and reads nothing there by path; the one
+exception is the archive and removal of run folders while the seat is `fenced` (R91, R92).
+Lead-written content reaches it only as a spool envelope through `broker intake`. Refusal: none.
 
 **R32** (spool envelope) `[OPEN O10]`. A lead hands content to the authority side by writing it to a
 spool below its `$STATE`. The content is preceded by one line `{"schema": "qargi.spool/1",
@@ -518,7 +520,7 @@ table says and prints the line of R65.
 | Code | Raised when |
 | --- | --- |
 | `seated-project` | `marshal claim`, `take` or `release` on a seated project (R27) |
-| `assignment-invalid` | an assignment breaks R4, R5, R18, R19 or R28, or names a reserved value (R93) |
+| `assignment-invalid` | an assignment breaks R4, R5, R18, R19 or R28, names a reserved value (R93), or declares or names a path that R89 refuses |
 | `transfer-open` | a new assignment while S1 or S2 is open (R43) |
 | `abort-after-fence` | `broker abort` from S3 on (R42) |
 | `fence-required` | S3 or a later step without an accepted fence (R36) |
@@ -529,7 +531,7 @@ table says and prints the line of R65.
 | `seat-changed` | `rev` moved under a write (R12) |
 | `refs-backend-active` | `marshal enable` on a seated project; `init` on a project whose shared backend is on (R74) |
 | `approval-refused` | `--approved` on a seated project in a verb that no `qargi host` call with a passed proof runs (R76) |
-| `authority-store-unsafe` | `$AUTH` has no default or fails R8 |
+| `authority-store-unsafe` | `$AUTH` has no default or fails R8; a marker or a root is a path that R89 refuses |
 | `content-too-large` | a record over its limit (R18) |
 | `content-invalid` | a record other than an assignment breaks R18, R22 or R32 |
 | `symlink-refused` | a symbolic link in a path of R88 |
@@ -619,7 +621,7 @@ fence, a note version, a read-back or a result. After an unseat the project's st
 only. Refusal: none.
 
 **R84** (the clone is handed over in place). The assignment's `clone` stays the role's across
-epochs. The note lists uncommitted work and the tracked files a read-only bind hides
+epochs, and so does its `state_root`. The note lists uncommitted work and the tracked files a read-only bind hides
 (`hidden_tracked`, from the assignment) as unverified, lead-stated data. A verb that writes below
 `$CONF` or writes the clone's runtime configuration is class `owner`. Refusal: `not-assigned`,
 exit 77, for such a verb in a sandbox.
@@ -655,17 +657,21 @@ only when the path was recorded. This table says how for each path.
 | the location in `mirror` | broker | opened from the file system root with no-follow on every component before every use; git then runs on the opened directory |
 | `$AUTH/<project>/seat.json` and every other file of R9 | broker | `$AUTH` is checked by R8, then each component below it is opened no-follow; new files are created exclusively and renamed inside the directory descriptor |
 | `$AUTH/audit-host.log` | broker, `qargi host` | opened for append with no-follow below `$AUTH` |
-| the run folders that R91 archives | broker | walked no-follow; a link is stored as a link and never read through |
+| the run folders that R91 archives | broker | the location in `state_root` is opened from the file system root with no-follow on every component, and the folders are walked no-follow below it; a link is stored as a link and never read through |
 
 Refusal: `symlink-refused`, exit 1, on the authority side; `seat-record-invalid`, exit 77, at the
 gate.
 
-**R89** (G1: nothing a sandbox can write is trusted by path) `[OPEN O6]`. Authority-side code never
-reads or writes a path that has a component a sandbox can write. The assignment directory, the
-projection directory and the mirror are refused when they are equal to or below the assignment's
-`clone`, or when a component is not owned by the effective user or root. Refusal:
-`assignment-invalid`, exit 1, for such an assignment; `authority-store-unsafe`, exit 1, for such a
-marker.
+**R89** (G1: nothing a sandbox can write is trusted by path). Authority-side code never reads or
+writes a path that has a component a sandbox can write. What a sandbox can write is what the
+assignment declares: its `clone` and its `state_root` (R19). The broker refuses the assignment
+directory, the projection directory, the mirror, `$AUTH` and `$CONF` when one of them overlaps a
+declared location: when it is equal to the `clone` or the `state_root`, lies below one of them or
+contains one of them. Who owns a path is not the test: a sandboxed lead runs as the owner's user,
+so the owner of a file does not say who could write it. The one thing below a declared location
+that authority-side code reads is the run folders of R91, and only while the seat is `fenced`
+(R31). Refusal: `assignment-invalid`, exit 1, for an assignment that declares or names such a
+path; `authority-store-unsafe`, exit 1, for a marker or a root that is such a path.
 
 **R90** (archive before remove). Nothing a seat verb removes is removed before an archive of it
 exists and was read back and compared. This page has exactly two removals: the open run folders of
@@ -788,12 +794,17 @@ rules and points it changed.
 | # | Required change | Rules and points |
 | --- | --- | --- |
 | 1 | the proof that `qargi host` is outside every sandbox cannot be made inside one; a verb with no project is judged by whether a project is seated | R33, R64 and R76 rewritten; R8, R15, R21, R47 and R70 follow; O9 decided; O17 new |
+| 2 | a recorded path is refused by the clone and the state root that the assignment declares, not by who owns it | R89 rewritten; R19 gains `state_root`; R31, R70, R84 and R88 follow; O6 decided |
 
 ## Decided points
 
 These points were open in an earlier revision and are decided. Each names the rule that states the
 decision, and none is marked in a rule any more.
 
+- **O6** (R19, R89). Decided as the alternative: the assignment names the state root of the role
+  (`state_root`), and the broker refuses every recorded path that overlaps the clone or the state
+  root that the assignment declares. Who owns a path is not used: it cannot tell a sandbox of the
+  same user from the owner. It costs one field in a record that the supervising layer writes.
 - **O9** (R33, R64). Decided: a verb that names no project is judged by whether some project under
   `$CONF` is seated, not by a test for a sandbox. Class `owner` is then refused wherever the verb
   runs, and the owner's way is `qargi host`, whose outside proof is the signature of R33. The cost
@@ -823,15 +834,12 @@ or the supervising layer.
   the projection outside the sandbox. Proposed: both sides use the same path. Alternative A: the
   marker records an inside and an outside path for each; it costs two more fields the lead can
   read. Alternative B: the broker is told the outside path on each call; it costs a value that is
-  not recorded anywhere.
+  not recorded anywhere. The same question holds for `clone`, `state_root` and `mirror` of the
+  assignment, which R89 compares as the broker reaches them; the proposal covers them.
 - **O5** (R88). Where no-follow starts. Proposed: at the file system root for a path a record names
   (the two directories, the mirror), and below the root for `$CONF`, `$STATE` and `$AUTH`, whose
   own path is resolved once. Alternative: from the file system root for every path; it costs every
   host whose home directory is reached through a link.
-- **O6** (R89). How the broker knows what a sandbox can write. Proposed: it knows the `clone` and
-  checks ownership; the rest is the supervising layer's. Alternative: the assignment also names the
-  role's state root, so the broker can refuse a recorded path below it; it costs a field in a
-  record the supervising layer writes.
 - **O7** (R91, R92). The archive: who makes it, where, how large, and how the successor reads it.
   Proposed: the broker, below `$AUTH`, with a size limit per run that this page does not fix, and
   the successor reads the manifest in the note only. Alternative A: the supervising layer archives

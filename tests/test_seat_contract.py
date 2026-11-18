@@ -25,6 +25,9 @@ ROOTS = ("$STATE", "$CONF")
 OPEN_ROOTS = {"$AUTH": "O1"}
 # The two directories whose location the seat marker (below the config root) records: named by their field, not by a path.
 RECORDED = ("<assignment_dir>", "<projection_dir>")
+# The locations the assignment declares, named by their field too. A sandbox can write the first two, and the contract refuses every
+# recorded path that overlaps them (R89): so the assignment has to name the state root of the role beside its clone.
+DECLARED = ("<clone>", "<state_root>", "<mirror>")
 
 RULE = re.compile(r"^\*\*R(\d+)\*\*", re.M)
 SCHEMA_ID = re.compile(r"^qargi[.-][a-z-]+/\d+$")
@@ -197,6 +200,8 @@ class Contract(unittest.TestCase):
                 self.assertIn(point, listed, "%s is outside the state and config roots: allowed only while %s is open" % (root, point))
         for field in RECORDED:
             self.assertIn('"%s"' % field.strip("<>"), self.text, "the seat marker records %s" % field)
+        for field in DECLARED:
+            self.assertIn('"%s": "%s"' % (field.strip("<>"), field), self.text, "the assignment declares %s" % field)
         # no literal location: no absolute path, no home path
         self.assertEqual(re.findall(r"(?<![\w$<>./-])/[A-Za-z0-9_.][^\s`\"]*", self.text), [], "absolute paths")
         self.assertNotIn("~", self.text, "home paths")
@@ -344,10 +349,11 @@ class Seat(unittest.TestCase):
 
     @unbuilt(19)
     def test_R19_assignment_record(self):
-        """R19: an assignment has the fields of qargi.assignment/1; init and transfer need all, vacate and unseat carry no to,
-        clone or hidden_tracked; role_name is kebab-case, at most 64, without a colon.
-        Observable: the valid example is accepted; each missing field, each field a kind may not carry and each bad role_name
-        exits 1 with assignment-invalid."""
+        """R19: an assignment has the fields of qargi.assignment/1, among them the clone and the state root that the holder's
+        sandbox can write; init and transfer need all, vacate and unseat carry no to, clone, state_root or hidden_tracked;
+        role_name is kebab-case, at most 64, without a colon.
+        Observable: the valid example is accepted; each missing field (state_root among them), each field a kind may not carry
+        and each bad role_name exits 1 with assignment-invalid."""
 
     @unbuilt(20)
     def test_R20_fence_record(self):
@@ -428,8 +434,8 @@ class Seat(unittest.TestCase):
 
     @unbuilt(31)
     def test_R31_the_broker_leaves_the_role_state(self):
-        """R31: the broker never writes below a role's state root and reads nothing there by path, except the archive and
-        removal of run folders while the seat is fenced.
+        """R31: the broker never writes below a role's state root, the location state_root of its assignment names, and reads
+        nothing there by path, except the archive and removal of run folders while the seat is fenced.
         Observable: the role's state root is byte for byte the same before and after S1 to S6 with no open run; the broker
         works with that root unreadable."""
 
@@ -823,10 +829,12 @@ class Seat(unittest.TestCase):
 
     @unbuilt(89)
     def test_R89_nothing_a_sandbox_can_write_is_trusted_by_path(self):
-        """R89: the assignment directory, the projection directory and the mirror are refused when at or below the clone or
-        when a component is not the caller's or root's.
-        Observable: an assignment whose mirror lies below its clone exits 1 with assignment-invalid; a marker whose
-        directories lie below the clone makes authority-side verbs exit 1 with authority-store-unsafe."""
+        """R89: authority-side code uses no path with a component a sandbox can write; what a sandbox can write is the clone and
+        the state root that the assignment declares; the assignment directory, the projection directory, the mirror and the
+        authority and config roots are refused when equal to, below or containing either; who owns a path is not the test.
+        Observable: an assignment whose mirror lies below its clone, equals its state root or contains its clone exits 1 with
+        assignment-invalid; a marker whose directory lies below the declared state root makes authority-side verbs exit 1
+        with authority-store-unsafe; a path outside both declared locations is accepted whoever owns its components."""
 
     @unbuilt(90)
     def test_R90_archive_before_remove(self):
