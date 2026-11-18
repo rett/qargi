@@ -21,7 +21,7 @@ Offline. Run: python3 tests/test_seat_contract.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import json, os, re, unittest
 
-ROOT =os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONTRACT = os.path.join(ROOT, "docs", "reference", "lead-seat.md")
 NOT_BUILT = "seat not built: R%d"
 WITHDRAWN = "withdrawn: R%d"
