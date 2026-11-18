@@ -44,6 +44,7 @@ if [ "$verb" = list ] || [ "$verb" = park ]; then NAME_ARG=-; fi
 [ -n "$NAME_ARG" ] || usage_die "usage: qargi feature start|list|park|sync|merge|status|verify|finish NAME [BRANCH] [--project P]"
 { [ "$verb" = list ] || [ "$verb" = park ]; } || printf '%s' "$NAME_ARG" | grep -Eq '^[a-z0-9]+(-[a-z0-9]+)*$' && [ "${#NAME_ARG}" -le 40 ] || die "'$NAME_ARG' is not a feature name: kebab-case, lower-case letters, digits and single '-' (at most 40)"
 case $NAME_ARG in master|develop) die "'$NAME_ARG' is a long-lived branch";; esac
+case $verb in status|verify) actor_check feature "feature $verb" "$NAME_ARG" || exit $?;; esac   # a coordinator label: the feature this verb acts on is its own, checked where the name is resolved
 export RESOLVED
 [ -z "$WORKTREE" ] || [ "$verb" = start ] || die "--worktree belongs to feature start"
 case $verb in start|sync|merge|verify|finish) ;; *) [ -z "$ASSUME_UNREACHABLE" ] || die "--assume-unreachable-ok belongs to the verbs that ask the marshal first: feature start, sync, merge, verify and finish";; esac

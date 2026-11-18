@@ -587,6 +587,57 @@ class ActorFeatureNarrowing(unittest.TestCase):
             os.environ["QARGI_STATE"] = os.path.join(self.d, "state")
 
 
+def check(argv, label=LABEL):
+    """(exit status, standard error) of the narrowing at the point of use (help.py actor-check) with QARGI_ACTOR set to label (None: unset)."""
+    import contextlib, io
+    saved = os.environ.pop("QARGI_ACTOR", None)
+    if label is not None:
+        os.environ["QARGI_ACTOR"] = label
+    err = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err):
+            rc = H.main(["actor-check"] + argv)
+    finally:
+        os.environ.pop("QARGI_ACTOR", None)
+        if saved is not None:
+            os.environ["QARGI_ACTOR"] = saved
+    return rc, err.getvalue()
+
+
+class ActorCheckAtThePointOfUse(unittest.TestCase):
+    """What the scripts ask once they have resolved their target (lib.sh actor_check): one parse, the label's feature, the same message family as the gate."""
+
+    def test_unset_and_empty_go_on_whatever_the_value(self):
+        for label in (None, ""):
+            for kind, v in (("feature", "beta"), ("prepare-base", "main"), ("run-base", "feature/beta"), ("run-unknown", "x"), ("run-word", "--again")):
+                self.assertEqual(check([kind, "w", v], label), (0, ""), (kind, label))
+
+    def test_the_label_s_feature_goes_on_and_any_other_is_refused(self):
+        self.assertEqual(check(["feature", "feature status", "alpha"]), (0, ""))
+        self.assertEqual(check(["prepare-base", "local prepare", "feature/alpha"]), (0, ""))
+        self.assertEqual(check(["run-base", "local run", "feature/alpha"]), (0, ""))
+        for kind, v, text in (("feature", "beta", "run feature status on feature beta: this coordinator's feature is alpha"),
+                              ("prepare-base", "feature/beta", "prepare a run on feature/beta: this coordinator's runs are based on feature/alpha"),
+                              ("prepare-base", "", "prepare a run on an empty base"),
+                              ("run-base", "feature/beta", "run feature status on a run based on feature/beta: this coordinator's runs are based on feature/alpha"),
+                              ("run-base", "", "on a run based on no branch"),
+                              ("run-base", "feature/alpha2", "based on feature/alpha2"),
+                              ("run-unknown", "/x/qargi.abcdef", "the lead's registry does not name it"),
+                              ("run-word", "--again", "starts with a dash")):
+            rc, err = check([kind, "feature status", v])
+            self.assertEqual(rc, 2, (kind, v))
+            self.assertIn(text, err)
+            self.assertIn("refused under the coordinator label %s: a coordinator does not " % LABEL, err)
+            self.assertIn("Nothing was changed", err)
+
+    def test_a_malformed_label_and_a_malformed_call_are_usage_errors(self):
+        rc, err = check(["feature", "w", "alpha"], "lead/x:coord:alpha:1")
+        self.assertEqual(rc, 2)
+        self.assertIn("<lead-id>:coord:<feature>:<n>", err)
+        for argv in ([], ["feature"], ["feature", "w"], ["nosuch", "w", "v"], ["feature", "w", "v", "extra"]):
+            self.assertEqual(check(argv)[0], 2, argv)
+
+
 class ActorLabelAndTheMemberGuard(unittest.TestCase):
     """A member that sets QARGI_ACTOR gains nothing: the guard judges the command as it does without it."""
 

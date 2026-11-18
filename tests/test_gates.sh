@@ -315,4 +315,49 @@ done
 [ "$($DA marshal status alpha --json 2>/dev/null | jq -r '.lead.id')" = lead-one ] && ok "the lead identity is QARGI_LEAD, as before" || no "lead id: $($DA marshal status alpha --json 2>&1)"
 ! grep -rqF "coord:" "$T/s" "$T/c" && ! git -C "$R" for-each-ref --format='%(refname)' | grep -q coord && ok "no record, ref or audit line of the state holds the label" || no "the label leaked into: $(grep -rlF 'coord:' "$T/s" "$T/c")"
 
+# the narrowing is enforced where the target is resolved: the scripts check the run, the feature or the base they act on, after their own parse, so a command line that the gate
+# reads one way and the script another (a run word that is a link named after an option, a path with a link before a "..", a collected output that is a run inside another run's
+# directory) is refused all the same, with nothing changed. The gate stays the first line.
+mkdir -p "$T/scr1" "$T/scr2" "$T/cwd"
+prep() { # LABEL BASE SLUG SCRATCH -> the run directory
+  QARGI_ACTOR=$1 "$DA" local prepare --repo "$R" --base "$2" --slug "$3" --scratch "$4" </dev/null | sed -n '1,/^$/s/^RUN=//p'
+}
+RB=$(prep lead-one:coord:beta:1 feature/beta bb "$T/scr1")      # a run of beta, in scr1
+RA0=$(prep "$LBL" feature/alpha aa "$T/scr2")                   # a run of alpha, in scr2
+RC=$(prep "$LBL" feature/alpha cc "$RB")                        # a run of alpha prepared with its scratch inside the run of beta
+[ -d "$RB" ] && [ -d "$RA0" ] && [ -d "$RC" ] && ok "the runs of the narrowing tests are prepared (beta's, alpha's, and alpha's inside beta's)" || no "prepare: $RB $RA0 $RC"
+RA=$RA0
+runsnap() { { snap; find "$RB" "$RA" -printf '%p %s %T@\n' | sort; } | sha256sum; }
+vec_refused() { # NAME WANT-TEXT CWD WORDS...: refused under the label of alpha, exit 2, with WANT-TEXT, and nothing changed (state, refs, the runs)
+  local name=$1 want=$2 cwd=$3 b a out rc; shift 3
+  b=$(runsnap); out=$(cd "$cwd" && QARGI_ACTOR=$LBL "$DA" "$@" 2>&1 </dev/null); rc=$?; a=$(runsnap)
+  [ $rc = 2 ] && grep -qF "refused under the coordinator label $LBL: a coordinator does not " <<<"$out" && grep -qF "$want" <<<"$out" && grep -qF "Nothing was changed" <<<"$out" && [ "$b" = "$a" ] \
+    && ok "$name: refused, nothing changed" || no "$name (rc=$rc, changed: $([ "$b" = "$a" ] && echo no || echo YES)): $out"
+}
+LIBD=$PWD/lib
+gate_alone() { # WORDS...: the early gate of lib/help.py, run alone under the label of alpha, from the directory of the link: 0 when it lets the command line through
+  (cd "$T/cwd" && QARGI_ACTOR=$LBL python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import help; sys.exit(help.main(["actor-gate"] + sys.argv[2:]))' "$LIBD" "$@" >/dev/null 2>&1)
+}
+# 3 (before alpha's run is renamed below, which makes two runs of one name). review check on a collected output that is a run inside another run's directory: the argument is read as OUT of beta's run
+echo '{}' > "$RC/manifest.json"
+vec_refused "review check RUN-B/qargi.NAME renews no lease of beta" "on a run based on feature/beta" "$T" review check "$RC"
+# alpha's run gets the name of beta's, in the other scratch directory: the registry names it so, and the gate reads the physical path of a word with a link before a ".."
+RA=$T/scr2/${RB##*/}; mv "$RA0" "$RA"
+jq -c --arg o "$RA0" --arg n "$RA" 'if .run == $o then .run = $n else . end' "$T/s/local-runs.jsonl" > "$T/s/local-runs.new" && mv "$T/s/local-runs.new" "$T/s/local-runs.jsonl"
+mkdir -p "$T/scr2/x"; ln -s "$T/scr2/x" "$T/scr1/sym"
+# 1. local run --again: a link named --again in the working directory is the run, and the gate sees no positional
+ln -s "$RB" "$T/cwd/--again"
+gate_alone local run --again && ok "the gate alone lets local run --again through (it names no run): the check in the script is what refuses" || no "the gate refused local run --again by itself"
+vec_refused "local run --again with a link named --again to another feature's run" "run word --again: it starts with a dash" "$T/cwd" local run --again
+# 2. local clean through a link before a "..": physically alpha's run, logically beta's
+vec_refused "local clean SCR1/sym/../NAME reaches beta's run by the logical path" "on a run based on feature/beta" "$T" local clean "$T/scr1/sym/../${RB##*/}"
+[ -d "$RB" ] && [ -d "$RA" ] && ok "both runs are still there" || no "a run was removed: $RB $RA"
+# the label's own runs still pass the checks, and without the variable nothing asks
+out=$(QARGI_ACTOR=$LBL "$DA" local verify "$RC" 2>&1 </dev/null); ! grep -q 'refused under the coordinator label' <<<"$out" && ok "a run of alpha is not refused by verify under the label of alpha" || no "own run refused: $out"
+out=$(QARGI_ACTOR=$LBL "$DA" local run "$RC" --dry-run 2>&1 </dev/null); ! grep -q 'refused under the coordinator label' <<<"$out" && ok "nor by run" || no "own run refused by run: $out"
+out=$(env -u QARGI_ACTOR "$DA" local verify "$RB" 2>&1 </dev/null); ! grep -qi 'coordinator' <<<"$out" && ok "without the variable a verify of beta's run says nothing of a coordinator" || no "unset: $out"
+# the base of prepare is checked where --base is parsed
+b=$(snap); out=$(QARGI_ACTOR=$LBL "$DA" local prepare --repo "$R" --base feature/beta --slug zz --scratch "$T/scr1" 2>&1 </dev/null); rc=$?
+[ $rc = 2 ] && grep -qF "prepare a run on feature/beta" <<<"$out" && [ "$b" = "$(snap)" ] && ok "prepare on another feature's base is refused, no run made" || no "prepare on beta rc=$rc: $out"
+
 exit "$fail"
