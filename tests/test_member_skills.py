@@ -913,7 +913,7 @@ class MemberSkills(unittest.TestCase):
         self.configure('codex')
         self.pack('fixture')
         user_home = self.root / 'user-home'
-        auth = user_home / '.codex/auth.json'
+        auth = user_home / '.codex-members/auth.json'          # the members' sign-in the shipped definition links, never ~/.codex
         auth.parent.mkdir(parents=True)
         auth.write_text('harmless offline sign-in fixture\n')
         auth.chmod(0o600)

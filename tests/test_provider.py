@@ -3114,7 +3114,7 @@ class RunHome(LibraryBase):
         return fake_runtime(dispatch=dict(self.CMD, home=home, **disp))
 
     def test_the_codex_runtime_links_only_its_sign_in(self):
-        self.assertEqual(shipped("codex.json")["dispatch"]["home"], {"env": "CODEX_HOME", "dir": ".codex", "skills_dir": "skills", "link": [{"from": "~/.codex/auth.json", "to": "auth.json"}]})
+        self.assertEqual(shipped("codex.json")["dispatch"]["home"], {"env": "CODEX_HOME", "dir": ".codex", "skills_dir": "skills", "link": [{"from": "~/.codex-members/auth.json", "to": "auth.json"}]})
         self.assertEqual(P.home_problems(shipped("codex.json")["dispatch"]["home"]), [])
         self.assertEqual(fails(self.with_home({"env": "FAKECLI_HOME", "dir": ".fakecli"}), "fakecli"), [])                 # link is optional
 
@@ -3312,8 +3312,16 @@ class HiddenPaths(unittest.TestCase):
         self.assertNotIn("QARGI_RUN_TMP", only_run)
 
     def test_codex_refuses_a_run_under_dev_shm_except_a_write_run_whose_tmp_alone_is_there(self):
+        home = tempfile.mkdtemp(prefix="home.")          # the members' sign-in the shipped codex links: without it hidden-paths refuses (the case below this one)
+        self.addCleanup(shutil.rmtree, home, True)
+        os.makedirs(os.path.join(home, ".codex-members"))
+        with open(os.path.join(home, ".codex-members", "auth.json"), "w") as f:
+            f.write("x\n")
+        env = {k: v for k, v in os.environ.items() if k != "CODEX_HOME"}
+        env["HOME"] = home
+
         def cli(*a):
-            r = subprocess.run([sys.executable, "-I", os.path.join(LIB, "provider.py"), "hidden-paths", "codex", "local"] + list(a), capture_output=True, text=True)
+            r = subprocess.run([sys.executable, "-I", os.path.join(LIB, "provider.py"), "hidden-paths", "codex", "local"] + list(a), capture_output=True, text=True, env=env)
             return r.returncode, r.stderr
         rc, err = cli("read-only", "/dev/shm/s/qargi.XXXXXX", "/dev/shm/qargi-run.XXXXXX")
         self.assertEqual(rc, 2, err)
@@ -3330,6 +3338,18 @@ class HiddenPaths(unittest.TestCase):
         r = subprocess.run([sys.executable, "-I", os.path.join(LIB, "provider.py"), "hidden-paths", "claude-code", "local", "read-only",
                             "/dev/shm/s/qargi.XXXXXX", "/dev/shm/t"], capture_output=True, text=True)
         self.assertEqual((r.returncode, r.stderr), (0, ""))                                       # a runtime that declares nothing hides nothing
+
+    def test_codex_hidden_paths_refuses_a_missing_members_sign_in_with_exit_2(self):
+        home = tempfile.mkdtemp(prefix="home.")
+        self.addCleanup(shutil.rmtree, home, True)
+        env = {k: v for k, v in os.environ.items() if k != "CODEX_HOME"}
+        env["HOME"] = home
+        r = subprocess.run([sys.executable, "-I", os.path.join(LIB, "provider.py"), "hidden-paths", "codex", "local", "write", "/srv/scratch/qargi.XXXXXX", "/srv/t"],
+                           capture_output=True, text=True, env=env)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("the sign-in ~/.codex-members/auth.json for codex member runs does not exist", r.stderr)
+        self.assertIn("CODEX_HOME=~/.codex-members codex login", r.stderr)
+        self.assertNotIn(home, r.stderr)                                                          # the declared path only
 
 
 class Attest(LibraryBase):
@@ -4399,8 +4419,8 @@ class Review(unittest.TestCase):
 
     def test_the_review_names_the_run_home_and_each_file_it_links_in(self):
         rv, got = self.home_lines(shipped("codex.json"))
-        self.assertEqual(rv["home"], {"env": "CODEX_HOME", "dir": ".codex", "links": ["~/.codex/auth.json as auth.json"]})
-        self.assertEqual(got, ["run home (dispatch.home): CODEX_HOME is RUN/home/.codex; files of your home linked into it for each run: ~/.codex/auth.json as auth.json"])
+        self.assertEqual(rv["home"], {"env": "CODEX_HOME", "dir": ".codex", "links": ["~/.codex-members/auth.json as auth.json"]})
+        self.assertEqual(got, ["run home (dispatch.home): CODEX_HOME is RUN/home/.codex; files of your home linked into it for each run: ~/.codex-members/auth.json as auth.json"])
         two = {"dispatch": {"home": {"env": "FAKE_HOME", "dir": ".f", "link": [{"from": "~/.f/a.json", "to": "a.json"}, {"from": "~/.f/b", "to": "b"}]}}}
         self.assertEqual(self.home_lines(two)[1], ["run home (dispatch.home): FAKE_HOME is RUN/home/.f; files of your home linked into it for each run: "
                                                    "~/.f/a.json as a.json, ~/.f/b as b"])
@@ -4417,15 +4437,15 @@ class Review(unittest.TestCase):
     def test_the_run_home_line_names_the_files_and_never_reads_them(self):
         """The line is made from the definition's names only: a linked file's content, or where it resolves, is never in the review."""
         home = tempfile.mkdtemp(prefix="home.", dir=self.tmp)
-        os.makedirs(os.path.join(home, ".codex"))
-        with open(os.path.join(home, ".codex", "auth.json"), "w") as f:
+        os.makedirs(os.path.join(home, ".codex-members"))
+        with open(os.path.join(home, ".codex-members", "auth.json"), "w") as f:
             f.write("SENTINEL-sign-in-content")
         with mock.patch.dict(os.environ, {"HOME": home}):
             rv, got = self.home_lines(shipped("codex.json"))
         text = "\n".join(self.R.lines(rv, "t"))
         self.assertNotIn("SENTINEL-sign-in-content", text)
         self.assertNotIn(home, text)
-        self.assertIn("~/.codex/auth.json as auth.json", got[0])
+        self.assertIn("~/.codex-members/auth.json as auth.json", got[0])
 
     def eval_flags(self, files, definition=None):
         return [f for f in self.R.scan(self.tree(files), definition)["flags"] if ": eval or exec: " in f]

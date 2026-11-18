@@ -33,8 +33,16 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
   dispatch.home        {env, dir, link: [{from, to}]}: the member's own home directory RUN/home/DIR, named by the variable env (a runtime that
                        reads its configuration and sign-in from a directory of its own). Each file `from` (~/PATH, under the user's home) is
                        linked into it as `to` when the run starts and the link is removed when it ends: the file is never copied and the
-                       link's target is never printed (--dry-run names the links, HOME_LINKS=). A source that does not exist is left out with
-                       a note. The directory is made and the links are removed without following a link a member may have put in the run
+                       link's target is never printed by a run (--dry-run names each link and the real path it points at, HOME_LINKS=NAME<-PATH). A
+                       source a member run may not use refuses the run (exit 2, qargi local prepare too), naming the declared path and the login
+                       that makes it (VAR=DIR COMMAND login): one that does not exist (a link to a missing file too), that is not a regular
+                       file, or whose real path lies inside the directory where the runtime keeps the user's own sessions (the directory of
+                       resources.instructions.user_file, resources.skills.exclusion.file or resources.skills.user_dir: ~/.codex for codex), for
+                       a member signs in on its own and never touches the user's own sign-in (provider.home_source_problem). The runs that share
+                       a source run one at a time: an exclusive flock on NAME .qargi-run.lock in the directory of the source's real file is held
+                       from before the links are made until they are removed; a run that finds it held says so on standard error and waits (a
+                       signal ends the wait); a directory that cannot be written refuses the run, which is never started without the lock.
+                       The directory is made and the links are removed without following a link a member may have put in the run
                        directory. What a runtime does to a link during the run (a sign-in refreshed): written through the link, it lands in the
                        source, which qargi cannot prevent (a note says the source changed); the link deleted, the source is untouched (a note); the
                        link replaced by a file of its own (an atomic replace), qargi never writes that file to the source (another run, a session of
@@ -106,6 +114,7 @@ restored, so the lead knows not to run git in that clone (worktree_changes uses 
 run this way, 4 transport, 128+N interrupted by signal N.
 """
 import errno
+import fcntl
 import json
 import os
 import re
@@ -333,16 +342,21 @@ def child_env(run, tmp, passed, home=None):
 
 # ---- the run home (dispatch.home) -----------------------------------------------------------------------------------------------------
 
-def plan_home(disp, run, runtime):
+def plan_home(disp, run, runtime, doc=None):
     """None, or what the run home of dispatch.home is: {env, dir, path, links: [(to, source)], missing: [to]}. The rules are provider.home_problems;
-    a source is taken when it is a regular file whose real path is still under the user's home, outside qargi's directories and the credential
-    stores home_link_problem refuses (a ~/.codex that is a link to elsewhere is followed, then checked). Nothing is made here."""
+    a source is taken when it is a regular file whose real path is still under the user's home, outside qargi's directories, the credential
+    stores home_link_problem refuses and the directory of the user's own sessions (provider.home_source_problem: a source that does not exist,
+    is not a regular file or lies there refuses the run, exit 2, with the way to make one), a link to elsewhere being followed, then checked.
+    Nothing is made here."""
     h = disp.get("home")
     if h is None:
         return None
     bad = P.home_problems(h, disp.get("env_pass") if isinstance(disp.get("env_pass"), list) else ())
     if bad:
         fail("%s of %s" % (bad[0], runtime))
+    why = P.home_source_problem(doc if doc is not None else {"dispatch": disp}, runtime)
+    if why:
+        fail(why)
     home = os.path.realpath(os.path.expanduser("~"))
     links, missing, notes = [], [], []
     for ln in h.get("link", []):
@@ -363,7 +377,7 @@ def plan_home(disp, run, runtime):
                      "and a sign-in kept in the directory %s names is not used" % (h["env"], ", ".join(sorted({os.path.dirname(ln["from"]) for ln in h.get("link", [])})),
                                                                                    ", ".join(ln["from"] for ln in h.get("link", [])), h["env"]))
     return {"env": h["env"], "dir": h["dir"], "path": os.path.join(run, "home", h["dir"]), "links": links, "missing": missing, "notes": notes, "start": {},
-            "residue": []}
+            "residue": [], "declared": [ln["from"] for ln in h.get("link", [])]}
 
 
 def source_problem(src):
@@ -434,6 +448,74 @@ def home_dir_fd(run, home, create):
         return os.dup(fd)
     finally:
         os.close(fd)
+
+
+LOCK_NAME = ".qargi-run.lock"   # beside the real file of a link's source: one run at a time holds it
+LOCK_POLL = 0.25               # seconds between two tries while another run holds it
+
+
+def lock_files(home):
+    """The lock files of the run home: one beside the real file of each link's source (the directory the runtime refreshes the sign-in in), once
+    each, in a fixed order so two runs never wait for each other."""
+    return sorted({os.path.join(os.path.dirname(os.path.realpath(src)), LOCK_NAME) for _, src in home["links"]})
+
+
+def lock_name(path, home, runtime):
+    """The lock file as the definition declares its directory (~/PATH): a printed notice names no real path."""
+    for ln in home.get("declared", []):
+        if os.path.realpath(os.path.join(os.path.realpath(os.path.expanduser("~")), os.path.dirname(ln)[2:])) == os.path.dirname(path):
+            return os.path.join(os.path.dirname(ln), LOCK_NAME)
+    return LOCK_NAME
+
+
+def take_lock(home, runtime, sig):
+    """Hold an exclusive flock on each lock file of the run home (lock_files) until release_lock: the runs that share a sign-in run one at a time,
+    for a runtime refreshes the sign-in it was given, and two runs refreshing one file race on its token. A run that finds the lock held says so
+    (a note on standard error) and waits for it, a signal ending the wait (Interrupted). The file is made when it is missing (mode 600) and never
+    followed when it is a link; a directory that cannot be written is a refusal (exit 2), never a run without the lock. Returns the open files."""
+    held = []
+    try:
+        for path in lock_files(home):
+            shown = lock_name(path, home, runtime)
+            try:
+                fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+            except OSError as e:
+                fail("%s member runs that share the sign-in run one at a time and an unlocked run is never started: the lock file %s cannot be made or opened (%s); "
+                     "make its directory writable for you" % (runtime, shown, e.strerror or e))
+            held.append(fd)
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                fail("the lock file %s is not a regular file; remove it" % shown)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                continue
+            except BlockingIOError:
+                pass
+            print("qargi: note: another %s member run holds the lock %s (one run at a time per sign-in); waiting for it to end" % (runtime, shown),
+                  file=sys.stderr, flush=True)
+            sig.armed = True
+            try:
+                while True:
+                    try:
+                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError:
+                        time.sleep(LOCK_POLL)
+            finally:
+                sig.armed = False
+            sig.check()
+            print("qargi: note: the lock %s is free; the run starts" % shown, file=sys.stderr, flush=True)
+    except BaseException:
+        release_lock(held)
+        raise
+    return held
+
+
+def release_lock(held):
+    for fd in held:
+        try:
+            os.close(fd)                                 # the flock goes with the descriptor
+        except OSError:
+            pass
 
 
 def make_home(run, home):
@@ -911,7 +993,7 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     bad = P.output_usage_problems(disp.get("output"), shape=True)
     if bad:
         fail("%s of %s" % (bad[0], runtime))
-    home = plan_home(disp, run, runtime)
+    home = plan_home(disp, run, runtime, doc)
     rcfg = plan_run_config(disp, doc, run, home, project, cls, runtime)
     if cls == "read-only":
         state, text = P.require_barrier(runtime, "local", project)
@@ -1026,7 +1108,7 @@ def dry(plan, run):
     if plan["home"]:
         print("HOME_ENV=" + plan["home"]["env"])
         print("HOME_DIR=" + plan["home"]["path"])
-        print("HOME_LINKS=" + ",".join(to for to, _ in plan["home"]["links"]))
+        print("HOME_LINKS=" + ",".join("%s<-%s" % (to, os.path.realpath(src)) for to, src in plan["home"]["links"]))   # the file each link points at
     rc = plan["run_config"]
     if rc:                                                 # the path and the tool names only: the file holds the servers' addresses
         if rc["data"] is None:
@@ -2043,7 +2125,7 @@ def run_started(plan, run, store, dispatch_state, sig):
     if home:
         begun["home"] = {"env": home["env"], "dir": home["dir"], "links": [to for to, _ in home["links"]]}
     write_private(dispatch, json.dumps(begun, indent=2, sort_keys=True) + "\n")
-    made, home_left, staged = [], [], False
+    made, home_left, staged, locks = [], [], False, []
     git0 = git_state(os.path.join(run, "clone")) if plan["git_watch"] else None   # before the member starts: what git in the clone would run
     proc = code = error = outcome = left = None
     timed_out, stop_code = False, 2
@@ -2052,6 +2134,7 @@ def run_started(plan, run, store, dispatch_state, sig):
     try:
         try:
             if home:
+                locks = take_lock(home, plan["runtime"], sig)   # the runs that share a sign-in run one at a time: held until the links are gone
                 made = make_home(run, home)              # the links exist for the length of the run only
             if plan.get('skills') is not None:
                 MS.current(store, plan['prepared'], plan['prepared']['request']['project'], plan['runtime'])
@@ -2150,6 +2233,7 @@ def run_started(plan, run, store, dispatch_state, sig):
                 unexpected = e
         if home and home.get("cleanup_failed"):
             home_left.append("cleanup during run home setup failed; inspect the planned link names for residue")
+        release_lock(locks)                              # after the links are gone: the next run finds the sign-in as this one left it
     if unexpected is not None:
         try:
             rec = dict(begun, outcome="refused", exit=code, seconds=round(time.time() - started, 1), timed_out=timed_out,

@@ -501,6 +501,56 @@ def home_problems(home, env_pass=(), shape=True):
     return bad
 
 
+def user_dirs(doc):
+    """{declared: real path}: the directories under the user's home where the runtime keeps the user-level files of its own sessions (the
+    directory of resources.instructions.user_file, of resources.skills.exclusion.file and the one that holds resources.skills.user_dir; for
+    codex ~/.codex): the place of the user's own sign-in, which a member run never links, writes through or locks."""
+    res = (doc or {}).get("resources") if isinstance((doc or {}).get("resources"), dict) else {}
+    sk = res.get("skills") if isinstance(res.get("skills"), dict) else {}
+    ins = res.get("instructions") if isinstance(res.get("instructions"), dict) else {}
+    ex = sk.get("exclusion") if isinstance(sk.get("exclusion"), dict) else {}
+    home = os.path.realpath(os.path.expanduser("~"))
+    found = {}
+    for v in (ins.get("user_file"), ex.get("file"), sk.get("user_dir")):
+        if isinstance(v, str) and v.startswith("~/") and _plain_relative(v[2:]) and "/" in v[2:]:
+            d = os.path.dirname(v)
+            found[d] = os.path.realpath(os.path.join(home, d[2:]))
+    return found
+
+
+def home_source_problem(doc, runtime):
+    """None, or the refusal (a message that names the path and the way to make it) of the first link of dispatch.home whose source a member
+    run may not use: a runtime's member signs in on its own (the directory of the link's source, kept for members, made by one login of
+    its own), never with the user's own sign-in, so a source that does not exist (a dangling link included), that is not a regular file, or
+    whose real path lies inside the directory of the user's own sessions (user_dirs) is refused. The paths in the message are the declared
+    ones (~/PATH); no real path is printed. A definition without a run home, or without links, has none."""
+    disp = doc.get("dispatch") if isinstance(doc, dict) else None
+    h = disp.get("home") if isinstance(disp, dict) else None
+    if not isinstance(h, dict) or not isinstance(h.get("link"), list):
+        return None
+    home = os.path.realpath(os.path.expanduser("~"))
+    own = user_dirs(doc)
+    argv = disp.get("argv")
+    cmd = argv[0] if isinstance(argv, list) and argv and isinstance(argv[0], str) else runtime
+    for ln in h["link"]:
+        frm = ln.get("from") if isinstance(ln, dict) else None
+        if home_link_problem(frm):
+            continue                                     # a path the rules of home_problems refuse: they say so
+        src = os.path.join(home, frm[2:])
+        login = "  %s=%s %s login" % (h.get("env"), os.path.dirname(frm), cmd)
+        how = ("A member run signs in on its own and never uses your own sign-in. Sign in once for members, with its own directory:\n%s" % login)
+        real = os.path.realpath(src)
+        if not os.path.lexists(src) or not os.path.exists(real):
+            return "the sign-in %s for %s member runs does not exist (a link to a missing file is the same).\n%s" % (frm, runtime, how)
+        for d, dreal in sorted(own.items()):
+            if real == dreal or real.startswith(dreal + os.sep):
+                return ("the sign-in %s for %s member runs resolves inside %s, the directory of your own sign-in, which a member run never links, "
+                        "writes through or locks.\n%s" % (frm, runtime, d, how))
+        if not os.path.isfile(real):
+            return "the sign-in %s for %s member runs is not a regular file.\n%s" % (frm, runtime, how)
+    return None
+
+
 def pack_env(home, tmp):
     """The environment pack code runs in when qargi runs it itself (the conformance harness of `provider check`): nothing of the caller's, only
     a search path of absolute entries, a home and temporary directory of the run, a locale and a clock zone. Same shape as the environment a
@@ -2530,7 +2580,8 @@ def cmd_addenda(args):
 def cmd_hidden_paths(args):
     """hidden-paths NAME SURFACE CLASS RUN TMP [--project P]: exit 2 with the refusal on standard error when the sandbox of the runtime (as the
     project composes it) would hide from a member of CLASS a path it works with in the run RUN (its clone, contract, git wrapper and OUT, which
-    need not exist yet) with the temporary directory TMP; else exit 0, silent. local prepare asks it before it makes anything."""
+    need not exist yet) with the temporary directory TMP, or, on the local surface, when a link of its run home has no sign-in a member run may
+    use (home_source_problem); else exit 0, silent. local prepare asks it before it makes anything."""
     project = None
     if len(args) == 7 and args[5] == "--project":
         project, args = args[6], args[:5]
@@ -2538,11 +2589,16 @@ def cmd_hidden_paths(args):
         print("usage: qargi provider hidden-paths NAME local|cloud read-only|write RUN TMP [--project P]", file=sys.stderr)
         return 2
     name, surface, cls, run, tmp = args
-    disp = compose(name, surface, project)["definition"].get("dispatch")
+    doc = compose(name, surface, project)["definition"]
+    disp = doc.get("dispatch")
     hits = hidden_run_paths(disp, cls, {"clone": os.path.join(run, "clone"), "contract": os.path.join(run, "contract"), "git": os.path.join(run, "git"),
                                         "out": os.path.join(run, "out"), "tmp": tmp})
     if hits:
         print("qargi: " + hidden_message(name, cls, hits, disp), file=sys.stderr)
+        return 2
+    why = home_source_problem(doc, name) if surface == "local" and not home_problems((disp or {}).get("home") if isinstance(disp, dict) else None) else None
+    if why:                                              # the sign-in of the run home's links: refused here too, before anything is made
+        print("qargi: " + why, file=sys.stderr)
         return 2
     return 0
 
