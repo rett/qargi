@@ -360,6 +360,22 @@ run output-dir --project onclaude --surface cloud --lead-runtime lead-one
 run identity --project onclaude --surface cloud --lead-runtime lead-one
 [ "$rc|$out|$err" = "0|identity of lead-one|" ] && ok "and a note about the lead is the lead runtime's" || no "cloud, lead note: rc=$rc out=$out err=$err"
 
+# qargi's own questions about a hosted directory (cloud_note of lib/lib.sh, which the team brief and collect ask) do not depend on the
+# lead's variable: the question is put with it cleared, so a name in it neither refuses the question nor answers it from the lead's
+# runtime, and the caller's own variable is what it was. lead-out lists output-dir as a note about the lead, so it would answer.
+fake_runtime "$SRC" "$TOOL" lead-out local "$four | .notes[\"output-dir\"] = \"output-dir of lead-out\" | .lead_notes += [\"output-dir\"]"
+out=$(QARGI_LEAD_RUNTIME=lead-out "$DA" provider notes output-dir --project onclaude --surface cloud 2>&1); rc=$?
+[ "$rc $out" = "0 output-dir of lead-out" ] && ok "the verb itself reads the variable for a cloud topic too: a lead runtime that lists output-dir answers it" || no "the variable, cloud topic: rc=$rc $out"
+# note LEAD-RUNTIME PROJECT TOPIC: the status and output of cloud_note with the variable set, then the variable as the caller has it afterwards
+note() { QARGI_LEAD_RUNTIME=$1 bash -c '. "$1/lib/lib.sh"; out=$(cloud_note "$2" "$3" 2>&1); echo "$? $out|$QARGI_LEAD_RUNTIME"' _ "$TOOL" "$2" "$3"; }
+got=$(note lead-out onclaude output-dir)
+[ "$got" = "0 /mnt/session/outputs|lead-out" ] && ok "cloud_note is answered by the cloud runtime when the variable names a lead runtime that lists the topic, and the caller keeps its variable" || no "cloud_note, a lead runtime with the topic: $got"
+got=$(note nosuch onclaude clone-dir)
+[ "$got" = "0 /workspace|nosuch" ] && ok "and when the variable names no runtime: the question is not refused" || no "cloud_note, an unusable lead runtime: $got"
+got=$(note nosuch withnotes output-dir)
+[[ $got == "2 "*"|nosuch" ]] && ok "its own refusal keeps its status: a project with no cloud runtime is exit 2" || no "cloud_note, no cloud runtime: $got"
+rm -f "$TOOL/lib/providers/lead-out.json"; rm -rf "$TOOL/lib/providers/lead-out"
+
 # the shipped runtimes, crossed: a lead on one with members on the other
 jqn() { jq -r --arg t "$2" '.notes[$t]' "$SRC/lib/providers/$1.json"; }
 bad=
@@ -386,9 +402,12 @@ run member-out --project oncodex --lead-runtime claude-code
 { [ $rc = 1 ] && [ -z "$out" ]; } && ok "claude-code's note about its own members is not codex's members': exit 1" || no "member-out, codex members: rc=$rc out=$out err=$err"
 
 # the name selects which definition is read and nothing else: no other code of qargi reads it (the schema and the texts only describe it),
-# so no approval, identity or authority can depend on it
+# so no approval, identity or authority can depend on it. lib/lib.sh names the variable once, to unset it for cloud_note's question.
 readers=$(grep -rlE --exclude='*.pyc' --exclude='*.json' --exclude='*.md' 'QARGI_LEAD_RUNTIME|LEAD_RUNTIME_ENV|lead-runtime|lead_notes_of' lib bin install.sh | LC_ALL=C sort | tr '\n' ' ')
-[ "$readers" = "lib/commands.py lib/provider.py " ] && ok "only the notes verb (lib/provider.py) and its help (lib/commands.py) know the lead runtime" || no "the lead runtime is read by: $readers"
+[ "$readers" = "lib/commands.py lib/lib.sh lib/provider.py " ] && ok "only the notes verb (lib/provider.py), its help (lib/commands.py) and cloud_note (lib/lib.sh) know the lead runtime" || no "the lead runtime is known to: $readers"
+uses=$(grep -nE 'QARGI_LEAD_RUNTIME|LEAD_RUNTIME_ENV|lead-runtime|lead_notes_of' lib/lib.sh | grep -vE '^[0-9]+:[[:space:]]*#')
+{ [ "$(grep -c . <<<"$uses")" = 1 ] && grep -qE '^[0-9]+:  \( unset QARGI_LEAD_RUNTIME; pymod provider notes ' <<<"$uses"; } \
+  && ok "and lib/lib.sh only unsets it, in the one line that asks cloud_note's question: nothing there reads it" || no "lib/lib.sh uses the lead runtime: $uses"
 
 # usage
 run a b --project withnotes

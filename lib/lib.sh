@@ -358,8 +358,11 @@ project_provider_if_set() { # project-or-empty surface
 # cloud_note PROJECT TOPIC: the notes topic TOPIC of the definition of the runtime the project uses on the cloud surface (output-dir and
 # clone-dir: where a hosted session keeps its outputs and its clones). The core names no hosted directory; the runtime's definition does.
 # Prints the text; on failure (no cloud runtime for the project, or it has no such topic) prints the reason on stderr and returns its status.
+# The answer is the cloud runtime's whatever runtime the lead's own session is on: the question is put with QARGI_LEAD_RUNTIME unset (in a
+# subshell, so the caller keeps its own), since that variable is for the notes a lead reads and would here refuse the question when it names
+# no usable runtime, or answer it from the lead's runtime when that one lists the topic as its own.
 cloud_note() { # project topic
-  pymod provider notes "$2" --project "$1" --surface cloud </dev/null
+  ( unset QARGI_LEAD_RUNTIME; pymod provider notes "$2" --project "$1" --surface cloud </dev/null )
 }
 # barrier_guard SURFACE PROJECT-or-empty: a read-only role is about to run on SURFACE. Exits 2 with the reason and the
 # `qargi provider accept` command when the project's provider has no read-only barrier there and the project did not accept
