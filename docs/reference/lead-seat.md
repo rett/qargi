@@ -995,8 +995,8 @@ decision, and none is marked in a rule any more.
 
 ## Open points
 
-Every `[OPEN On]` above is listed here. The lead decides a point unless its item names the owner
-or the supervising layer.
+Every `[OPEN On]` above is listed here. The lead decides a point alone unless the heading of its
+item says who else does.
 
 - **O2** (trace). The task names "the 12 check changes of revision 5". Proposed: the inputs hold no
   list of twelve changes, so this page maps all 24 changes of revision 5 and the two later inputs,
@@ -1034,12 +1034,12 @@ or the supervising layer.
   the matrix wins. Alternative: the list wins; it costs an owner verb in a vacant seat the answer
   `seat-vacant`. The matrix also names no answer for a seat without a holder, where R56 has nothing
   to compare; proposed: R56 is skipped in `fenced` and in `vacant` alike, and R60 or R62 answers.
-- **O10** (R32, R35, R39). The spool's file names, what triggers collection, and the fields of the
-  content of a `state` envelope, which the design does not give. Proposed: left to the joint list
-  with the supervising layer; this page fixes the envelope, the verbs that write it and where they
-  pass (R96). Alternative: this page fixes one file name for each kind and says that the
-  supervising layer collects when the file appears; it costs rules about the supervising layer's
-  side that no test of qargi can show.
+- **O10** (R32, R35, R39, R96; for the lead and the supervising layer). The spool's file names,
+  what triggers collection, and the fields of the content of a `state` envelope, which the design
+  does not give. Proposed: left to the joint list with the supervising layer; this page fixes the
+  envelope, the verbs that write it and where they pass (R96). Alternative: this page fixes one
+  file name for each kind and says that the supervising layer collects when the file appears; it
+  costs rules about the supervising layer's side that no test of qargi can show.
 - **O11** (R70). The design names `fence-required`, `fence-unproven`, `note-invalid`,
   `note-digest-mismatch` and `seat-changed` without saying when each is raised. Proposed: the table
   of R70. Alternative: fewer codes (`fence-unproven` for both fence cases, `note-invalid` for both
@@ -1064,9 +1064,9 @@ or the supervising layer.
   the seat's waves. Proposed: this page fixes what the label is not and leaves its name to that
   task. Alternative: fix `QARGI_ACTOR` and `--actor` here, with the narrowing checks; it costs the
   seat a dependency on work the plan keeps apart.
-- **O16** (R65). The supervising layer's requirements say the refusal line is the first line of
-  standard error. Proposed: any line, as the design says. Alternative: the first line; it costs
-  every verb that prints a warning before it is refused.
+- **O16** (R65; for the lead and the supervising layer). The supervising layer's requirements say
+  the refusal line is the first line of standard error. Proposed: any line, as the design says.
+  Alternative: the first line; it costs every verb that prints a warning before it is refused.
 - **O17** (R64; for the owner). What it costs to judge a verb with no project by whether a project
   is seated. On a host with one seated project every `owner` verb that names no project is refused
   when it is typed plainly, in the owner's own session too and also when the work is for an
