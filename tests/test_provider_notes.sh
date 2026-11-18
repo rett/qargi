@@ -129,6 +129,19 @@ run message --project oncodex
 run spawn --project oncodex
 { [ $rc = 0 ] && grep -q 'qargi local run RUN' <<<"$out" && grep -q 'qargi local prepare' <<<"$out" && ! grep -q 'subagent_type' <<<"$out"; } \
   && ok "codex says a member is started with qargi local run" || no "codex spawn: rc=$rc out=$out err=$err"
+# the lead identity on codex: no hook records it, and the verbs outside the marshal take no --as, so the note says to start the session
+# with QARGI_LEAD set and never sends a lead to an --as those verbs do not have
+run identity --project oncodex
+{ [ $rc = 0 ] && grep -qF 'start the session with `QARGI_LEAD=ID` set' <<<"$out" && grep -qF '`feature`, `local`, `review` and `release` read it' <<<"$out" \
+  && grep -qF 'only marshal verbs take `--as ID`' <<<"$out" && ! grep -q 'commands that take it' <<<"$out"; } \
+  && ok "codex says the lead identity is QARGI_LEAD, set when the session starts, and that only the marshal verbs take --as" || no "codex identity: rc=$rc out=$out err=$err"
+bad=
+for v in feature local review release; do   # the claim, against the scripts: each of the four reads the identity through the marshal and has no --as of its own
+  grep -q 'marshal' "$SRC/lib/$v.sh" || bad="$bad $v:no-marshal"
+  grep -qE -- '(^|[^-[:alnum:]])--as([^-[:alnum:]]|$)' "$SRC/lib/$v.sh" && bad="$bad $v:--as"
+done
+grep -qE -- '--as\) as=' "$SRC/lib/marshal.sh" || bad="$bad marshal:no---as"
+[ -z "$bad" ] && ok "and that holds: feature, local, review and release ask the marshal and take no --as; the marshal verbs take it" || no "the identity note and the scripts disagree:$bad"
 run skills-dir --project oncodex
 { [ $rc = 0 ] && grep -q '\.agents/skills' <<<"$out"; } && ok "codex names its skills directory" || no "codex skills-dir: rc=$rc out=$out err=$err"
 run exploration --project oncodex
