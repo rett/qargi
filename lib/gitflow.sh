@@ -41,17 +41,43 @@ journal_push() {
 # With OLD "-" the steps are read from standard input, one "OLD NEW" a line, and one journal line is written for each, all of REF and with
 # the same VERB, URL, WHY and time, appended together under one lock: the steps journal_reach writes (up to JOURNAL_REACH_MAX) cost one
 # append, not one each, and no other writer's line comes between them. One line is the same with one step.
+# What the append guarantees: under the lock every line is built first (a jq that fails part way writes none), and the journal then gets all of
+# them, with the newline that ends the last one, by one write(2) of one buffer (python3's os.write, on a descriptor opened with O_APPEND). Not
+# bash's printf: it hands its output to the file in blocks of 4 KB, one write each, so a batch of 500 lines was some 57 writes, and a reader or a
+# crash between two of them saw part of the batch. A regular file takes the whole buffer in one write unless the disk is full or a signal
+# interrupts it; the helper then writes the rest (a short write is the one case it loops), and a failure of a write is reported and not retried. So
+# the batch is one write in every ordinary case, not an atomic one in every case: a crash or a full disk can still leave a cut-off last line, and
+# the readers (journal_warn_bad, below, and lib/merged.py) skip such a line and say so. A journal that does not end in a newline (such a line) gets
+# one first, in that same write, so the new lines never join the end of an old one into a line that is not JSON; the check is made under the lock.
+# The batch is a mode of this function and not a function of its own on purpose, and the helper is a script in it and not a file beside this one:
+# tests/test_release_cut.sh cuts journal_line out of this file with sed (from its name to the first line that is a lone closing brace) and runs it
+# alone for the lock cases, from another directory, so neither a second function that journal_line called nor a path to a file of lib/ would be there.
 journal_line() {
   local repo ref=$2 verb=$5 zero=0000000000000000000000000000000000000000 f=${DA_STATE:-}/ref-journal.jsonl
   if [ "${3:-}" != - ]; then journal_line "$1" "$2" - '' "$5" "$6" "${7:-}" <<<"${3:-$zero} ${4:-$zero}"; return 0; fi
   repo=$(readlink -f "$1" 2>/dev/null) || repo=$1
   [ -n "${DA_STATE:-}" ] && case $ref in refs/heads/?*|refs/tags/?*) ;; *) false;; esac \
-    && ( umask 077; flock 9 || exit 4; jq -Rc --arg at "$(now)" --argjson ep "$(date +%s)" --arg v "$verb" --arg p "${PROJ:-}" --arg r "$repo" \
+    && ( umask 077; flock 9 || exit 4
+         lines=$(jq -Rc --arg at "$(now)" --argjson ep "$(date +%s)" --arg v "$verb" --arg p "${PROJ:-}" --arg r "$repo" \
            --arg ref "$ref" --arg by "$(id -un 2>/dev/null || echo unknown)@$(hostname 2>/dev/null || echo unknown)" \
            --arg u "$6" --arg w "${7:-}" \
            'select(length > 0) | (. / " ") as [$o, $n]
             | {at:$at, epoch:$ep, verb:$v, project:$p, repo:$r, ref:$ref, old:$o, new:$n, by:$by}
-            + (if $u == "" then {} else {remote:"origin", url:$u} end) + (if $w == "" then {} else {why:$w} end)' >> "$f" ) 9> "$f.lock" \
+            + (if $u == "" then {} else {remote:"origin", url:$u} end) + (if $w == "" then {} else {why:$w} end)') || exit 1
+         [ -n "$lines" ] || exit 0
+         if [ -s "$f" ] && [ -n "$(tail -c 1 "$f")" ]; then lines=$'\n'$lines; fi
+         printf '%s\n' "$lines" | python3 -I -c 'import os, sys
+view = memoryview(sys.stdin.buffer.read())
+try:
+    fd = os.open(sys.argv[1], os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    while view:
+        n = os.write(fd, view)
+        if n <= 0:
+            raise OSError("write made no progress")
+        view = view[n:]
+    os.close(fd)
+except OSError as e:
+    sys.exit("qargi: " + str(e))' "$f" ) 9> "$f.lock" \
     || echo "qargi: warning: the ref journal could not be written for $ref ($verb)$([ $? != 4 ] || { command -v flock >/dev/null 2>&1 && echo ": flock on $f.lock failed" || echo ": the flock command (util-linux) is not installed"; }); a later 'qargi local verify' of a run prepared before this may not accept the change" >&2
   return 0
 }

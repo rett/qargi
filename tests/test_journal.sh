@@ -507,6 +507,71 @@ out=$(approve $DA branch prune --remote) || no "(setup) prune agent/po here and 
   && grep -q "^note: the journal does not lead to ${po1:0:7}, where origin/agent/po was deleted (the journal has no line of it: it was pushed by hand, or by an agent, and not noted with qargi ref note): $will, while origin/agent/po was at another commit\$" <<<"$out" \
   && ok "a branch of origin the journal never had, deleted by branch prune --remote: the note names origin/NAME and says it was pushed and not noted" || no "note for the branch of origin: $(grep 'agent/po' <<<"$out")"
 
+# --- the journal survives a cut-off write.
+# A batch of steps (journal_reach) and a single line are appended with one write, after a newline when the journal does not end in one: a line is
+# never joined to the end of another.
+ROOT=${DA%/bin/qargi}
+# jl ARGS: journal_line as a verb of the lead calls it (the steps of a batch on standard input)
+jl() { bash -c '. "$1/lib/lib.sh"; . "$1/lib/gitflow.sh"; shift; journal_line "$@"' jl "$ROOT" "$@"; }
+h1=$(printf '1%.0s' $(seq 1 40)); h2=$(printf '2%.0s' $(seq 1 40)); h3=$(printf '3%.0s' $(seq 1 40)); h4=$(printf '4%.0s' $(seq 1 40)); h5=$(printf '5%.0s' $(seq 1 40))
+# nonl: the journal without the newline that ends its last line, as a write that was cut off leaves it
+nonl() { printf '%s' "$(cat "$J")" > "$J.new" && mv "$J.new" "$J"; [ -n "$(tail -c 1 "$J")" ]; }
+n=$(jn); nonl || no "(setup) the journal still ends in a newline"
+printf '%s\n' "$h1 $h2" "$h2 $h3" "$h3 $h4" | jl "$A" refs/heads/agent/atom - '' test:batch '' 2>"$T/err"
+[ "$(jq -s length "$J" 2>&1)" = $((n + 3)) ] && [ "$(wc -l < "$J")" = $((n + 3)) ] && [ -z "$(tail -c 1 "$J")" ] && [ ! -s "$T/err" ] \
+  && ok "a batch of steps appended to a journal that does not end in a newline starts a line of its own: every line is JSON, three new ones, nothing said" || no "batch after a missing newline: $(jq -s length "$J" 2>&1), lines $(wc -l < "$J") (expected $((n + 3))): $(cat "$T/err")"
+jq -c 'select(.ref == "refs/heads/agent/atom") | [.old[0:1], .new[0:1], .verb]' "$J" | tr -d '\n' | grep -qxF '["1","2","test:batch"]["2","3","test:batch"]["3","4","test:batch"]' \
+  && ok "the three steps are there in order, each its own line" || no "the steps of the batch: $(tail -n 3 "$J")"
+nonl || no "(setup) the journal still ends in a newline"
+jl "$A" refs/heads/agent/atom "$h4" "$h5" test:single '' 2>"$T/err"
+[ "$(jq -s length "$J" 2>&1)" = $((n + 4)) ] && [ -z "$(tail -c 1 "$J")" ] && [ ! -s "$T/err" ] \
+  && ok "and so is a single line" || no "single line after a missing newline: $(jq -s length "$J" 2>&1): $(cat "$T/err")"
+# a batch whose lines cannot all be built writes none of them (jq fails after its first line: the shim stands for any failure part way)
+mkdir -p "$T/jqx"; printf '#!/bin/sh\n%s "$@" | head -n 1\nexit 5\n' "$(command -v jq)" > "$T/jqx/jq"; chmod +x "$T/jqx/jq"
+sz=$(wc -c < "$J")
+printf '%s\n' "$h1 $h2" "$h2 $h3" "$h3 $h4" | PATH=$T/jqx:$PATH jl "$A" refs/heads/agent/atom - '' test:batch '' 2>"$T/err"
+[ "$(wc -c < "$J")" = "$sz" ] && grep -q "warning: the ref journal could not be written for refs/heads/agent/atom (test:batch)" "$T/err" \
+  && ok "a batch that fails part way adds no line to the journal: a warning, the journal as it was" || no "failed batch: size $sz -> $(wc -c < "$J"): $(cat "$T/err")"
+# the batch reaches the journal by one write: python3 is run through a shim that counts the calls of os.write (strace is not on every host; the shim
+# sees the same calls, each one write(2)) and logs "WRITTEN/ASKED" for each. bash's printf would hand a batch this size over in blocks of 4 KB.
+mkdir -p "$T/pyx"; realpy=$(command -v python3)
+printf '#!/bin/sh\nexec %s "%s/pyx/count.py" "$@"\n' "$realpy" "$T" > "$T/pyx/python3"; chmod +x "$T/pyx/python3"
+cat > "$T/pyx/count.py" <<'PY'
+import os, sys
+real, calls = os.write, []
+def counting(fd, data):
+    # QARGI_TEST_SHORT: the first write takes only that many bytes, as a write cut short by a signal does
+    cut = int(os.environ.get("QARGI_TEST_SHORT", "0"))
+    n = real(fd, data[:cut] if cut and not calls else data)
+    calls.append("%d/%d" % (n, len(data)))
+    return n
+os.write = counting
+code, sys.argv = sys.argv[3], ["-c"] + sys.argv[4:]   # run as: python3 -I -c CODE ARGS
+try:
+    exec(compile(code, "-c", "exec"), {"__name__": "__main__"})
+finally:
+    with open(os.environ["QARGI_TEST_WRITES"], "a") as f:
+        f.write(" ".join(calls) + "\n")
+PY
+export QARGI_TEST_WRITES=$T/writes
+seq 1 500 | awk -v a="$h1" -v b="$h2" '{print a " " b}' > "$T/steps500"
+n=$(jn); sz=$(wc -c < "$J"); : > "$T/writes"
+PATH=$T/pyx:$PATH jl "$A" refs/heads/agent/atom - '' test:big '' < "$T/steps500" 2>"$T/err"
+grown=$(($(wc -c < "$J") - sz))
+[ "$(jn)" = $((n + 500)) ] && [ "$(jq -s length "$J" 2>&1)" = $((n + 500)) ] && [ "$grown" -gt 65536 ] && [ ! -s "$T/err" ] \
+  && ok "a batch of 500 lines ($grown bytes, over sixteen blocks of 4 KB) is added whole, every line JSON" || no "batch of 500: lines $(jn) of $((n + 500)), $grown bytes: $(cat "$T/err")"
+[ "$(cat "$T/writes")" = "$grown/$grown" ] \
+  && ok "and by one write of all of it: os.write was called once, asked for $grown bytes and took them (a bash printf makes one write for each 4 KB)" || no "writes of the batch: $(cat "$T/writes") (expected $grown/$grown)"
+: > "$T/writes"; sz=$(wc -c < "$J")
+PATH=$T/pyx:$PATH jl "$A" refs/heads/agent/atom "$h4" "$h5" test:one '' 2>"$T/err"
+[ "$(cat "$T/writes")" = "$(($(wc -c < "$J") - sz))/$(($(wc -c < "$J") - sz))" ] && ok "a single line is one write too" || no "writes of a single line: $(cat "$T/writes")"
+# a write that takes part of the buffer is continued with the rest: nothing is lost or doubled
+n=$(jn); : > "$T/writes"
+QARGI_TEST_SHORT=100 PATH=$T/pyx:$PATH jl "$A" refs/heads/agent/atom - '' test:short '' < "$T/steps500" 2>"$T/err"
+[ "$(jn)" = $((n + 500)) ] && [ "$(jq -s length "$J" 2>&1)" = $((n + 500)) ] && [ "$(awk '{print NF}' "$T/writes")" = 2 ] && [ "$(cut -d' ' -f1 "$T/writes" | cut -d/ -f1)" = 100 ] \
+  && ok "a short write (the first took 100 bytes) is followed by a second for the rest: all 500 lines, each once" || no "short write: lines $(jn) of $((n + 500)), writes $(cat "$T/writes"): $(cat "$T/err")"
+unset QARGI_TEST_WRITES
+
 # --- the guard protects the journal from a member; reading stays allowed
 RG=$(mkrun guard-run); cd "$RG/clone" || exit 1
 g() { # tool, json input -> exit status of the guard run in the clone, as a member would
