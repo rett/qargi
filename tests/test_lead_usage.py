@@ -128,6 +128,24 @@ class Usage(Base):
         self.assertEqual(rc, 0)
         self.assertIn("unknown (../x is not a session id)", out)
 
+    def test_a_lead_id_that_names_no_transcript_reads_no_figure_and_never_the_newest(self):
+        """A lead of another runtime has an id of its own: the newest transcript of the work tree is another session's."""
+        self.transcript("outgoing", [turn(1, 90000, 0)], mtime=3000)
+        for ident in ("codex-lead", "user@host", "a b"):
+            rc, out, _ = self.run_cli("lead", "usage", QARGI_LEAD=ident)
+            self.assertEqual(rc, 0, ident)
+            self.assertIn("context: unknown (", out)
+            self.assertNotIn("90,001", out)
+            d = json.loads(self.run_cli("lead", "usage", "--json", QARGI_LEAD=ident)[1])
+            self.assertEqual((d["known"], d["tokens"], d["percent"], d["transcript"]), (False, None, None, ""), ident)
+        rc, out, _ = self.run_cli("lead", "usage", QARGI_LEAD="codex-lead")
+        self.assertIn("no transcript of session codex-lead in ", out)
+        for unset in (None, ""):                                                                      # no id (unset or empty): the newest of the work tree
+            self.assertIn("90,001", self.run_cli("lead", "usage", QARGI_LEAD=unset)[1])
+        rc, out, _ = self.run_cli("lead", "compact-check", "--advise", QARGI_LEAD="codex-lead")
+        self.assertIn("context: unknown", out)
+        self.assertNotIn("45%", out)
+
     def test_a_transcript_file_can_be_named(self):
         p = self.transcript("elsewhere", [turn(1, 30000, 0)])
         os.rename(p, os.path.join(self.t, "t.jsonl"))
