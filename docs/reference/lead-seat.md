@@ -216,7 +216,8 @@ Refusal: none.
 
 **R18** (record form). Every record of this page is a UTF-8 JSON object with no float, no control
 character in a string and no field this page does not name, but for the reserved fields (R22) and
-the fields of the content of a `state` envelope, which O10 leaves open. A closed list accepts only
+the fields of the content of a `state` envelope, which O10 leaves open; the content of a
+`caretaker-request` envelope is a record of the two fields that R75 names. A closed list accepts only
 its values. Size limits: assignment, fence and caretaker request 8 KiB, spool state 16 KiB,
 read-back 64 KiB, note text 16 KiB. Refusal: `content-too-large` for a record over its limit,
 `assignment-invalid` for an assignment and `content-invalid` for any other record that breaks the
@@ -350,7 +351,8 @@ appends its audit line (R15), nothing else changes, and the supervising layer, w
 envelope, holds the content. A `readback` content names the same transfer as its envelope: its
 `transfer_id` is the envelope's `tx` (R48). The content of a `state` envelope may be empty (`bytes`
 is 0) or is one JSON object; it is lead-stated and its fields are open (O10), so until that is
-decided it is held to the form of R18 and to no field list. Refusal: `content-too-large` over the
+decided it is held to the form of R18 and to no field list. The content of a `caretaker-request` is
+the record of R75, with its two fields. Refusal: `content-too-large` over the
 limit of its kind (R18), `content-invalid` for a malformed envelope (a `readback` whose
 `transfer_id` is not the envelope's `tx` among them), a digest or length that does not match, or a
 `project`, `epoch` or `tx` other than the seat record's; exit 1.
@@ -754,7 +756,12 @@ seated: its `init` is refused until `marshal disable` ran. Refusal: `refs-backen
 **R75** (caretaker transitions). A caretaker holds a vacant seat so that the project is looked after
 while it has no lead. It asks for the next assignment with `marshal caretaker request --runtime R
 [--note FILE]`, which writes a spool envelope of kind `caretaker-request`, at most 8 KiB (R18), and
-changes no seat; `broker intake` checks the envelope and keeps no copy of it (R9, R32). These rows
+changes no seat; `broker intake` checks the envelope and keeps no copy of it (R9, R32). The content
+is one JSON object with these fields and no other: `runtime`, mandatory, the name of the runtime
+that the caretaker asks the next assignment for, as `to.runtime` of R19 is written; and `note`, a
+string, the text of the file that `--note` names, absent without the option. A content with
+another field, with no `runtime`, or with a `note` that is not a string is refused
+`content-invalid`, exit 1 (R18), and one over 8 KiB `content-too-large`. These rows
 are the only ones; the fence method is the one the supervising layer must supply.
 
 | Row | From | To | Fence | Steps | Read-back |
@@ -1290,7 +1297,15 @@ item says who else does.
   that a lead cares to leave open, 64 MiB each without end; higher limits cost the same in
   proportion. A cost of the proposal: lead-written files stand in a directory that the lead side
   trusts for the projection, and they take up to 256 MiB there for each transfer until the owner
-  removes them.
+  removes them. A second cost of the proposal: a run folder lives wherever `local prepare
+  --scratch` puts it, usually outside the `state_root` (a temporary directory, for example), and
+  R91 does not walk outside it, so under the proposal most open runs would be listed in the
+  manifest as outside the state root and not archived. Proposed: that stands by design, a run
+  outside the state root is manifest only, and the successor reconciles it from the registry's
+  line and the folder, which stays in place. Alternative F: `local prepare` requires `--scratch`
+  below the `state_root` for a seated role, so that the archive covers the runs; it costs a
+  refusal in a verb that R31 and R89 do not otherwise touch, and it puts every run folder below
+  the state root, a place the authority side does not trust (R89), which the archive then reads.
 - **O8** (R52, R56, R60 to R63). The design's list of codes puts `not-assigned` after
   `seat-vacant`, but its matrix answers class `owner` with `not-assigned` in every state. Proposed:
   the matrix wins. Alternative: the list wins; it costs an owner verb in a vacant seat the answer

@@ -529,6 +529,20 @@ class Contract(unittest.TestCase):
                 with self.subTest(observable=n, words=w):
                     self.assertIn(w, seat_doc(n))
 
+    def test_a_caretaker_request_content_names_its_fields_and_O7_says_where_run_folders_live(self):
+        blocks = {n: squash(b) for n, b in rule_blocks(self.text).items()}
+        # R75 names the two fields of the content, R18 and R32 point to them, so that R18's "no field this page does not name" holds
+        self.assertRegex(blocks[75], r"fields and no other: `runtime`, mandatory, .*`note`, a string")
+        self.assertIn("`content-invalid`", blocks[75])
+        self.assertIn("`caretaker-request` envelope is a record of the two fields that R75 names", blocks[18])
+        self.assertIn("The content of a `caretaker-request` is the record of R75", blocks[32])
+        # O7 says that a run folder is usually outside the state root, what the proposal does with it and the alternative
+        o7 = squash(open_items(self.text)["O7"])
+        self.assertIn("`local prepare --scratch`", o7)
+        self.assertIn("outside the `state_root`", o7)
+        self.assertIn("manifest only", o7)
+        self.assertIn("Alternative F: `local prepare` requires `--scratch` below the `state_root`", o7)
+
     def test_the_claim_of_R78_is_about_what_qargi_writes_and_lead_stated_text_is_never_an_approval(self):
         r78 = squash(rule_blocks(self.text)[78])
         # the claim covers what qargi writes: the old one covered the spool copies, which are a lead's text copied by S2 and S6
@@ -764,11 +778,13 @@ class Seat(unittest.TestCase):
     @unbuilt(18)
     def test_R18_record_form_and_size_limits(self):
         """R18: a record is a UTF-8 JSON object without floats, control characters or unknown fields (the reserved fields and
-        the content of a state envelope, whose fields O10 leaves open, excepted); closed lists accept only their values; limits
+        the content of a state envelope, whose fields O10 leaves open, excepted; a caretaker-request content has exactly the fields
+        runtime and note that R75 names); closed lists accept only their values; limits
         8 KiB (assignment, fence and caretaker request), 16 KiB (spool state), 64 KiB (read-back) and 16 KiB (note text).
         Observable: each violation at the door exits 1 with content-too-large, assignment-invalid or content-invalid as the
         rule says, and the store is unchanged; a state content with a field of its own is accepted; a caretaker-request
-        envelope whose content is over 8 KiB exits 1 with content-too-large, one of 8 KiB is accepted."""
+        envelope whose content is over 8 KiB exits 1 with content-too-large, one of 8 KiB is accepted, and one whose content
+        has a field other than runtime and note, no runtime or a note that is not a string exits 1 with content-invalid."""
 
     @unbuilt(19)
     def test_R19_assignment_record(self):
@@ -1188,10 +1204,12 @@ class Seat(unittest.TestCase):
     def test_R75_caretaker_transitions(self):
         """R75: the rows C1 to C7 are the only caretaker transitions, each with its fence method, steps and read-back; marshal
         caretaker request writes a spool envelope of at most 8 KiB and changes no seat, and broker intake checks it and keeps
-        no copy.
+        no copy; its content is one JSON object with the fields runtime (mandatory) and note (a string, absent without --note)
+        and no other.
         Observable: each of C1 to C4 and C7 completes with its fence and is refused with another method; C4 ends in held
         with readback waived; C5 exits 1 with caretaker-not-vacant, C6 with transfer-open; after marshal caretaker request
-        and broker intake the seat record, the projection and the store are unchanged, but for the host audit."""
+        and broker intake the seat record, the projection and the store are unchanged, but for the host audit; a content with
+        another field, without runtime or with a note that is not a string exits 1 with content-invalid."""
 
     # ---- what never transfers
 
