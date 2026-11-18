@@ -743,6 +743,7 @@ wait_until '[ -e "$T/hold-ready" ]' 30
   && ok "a codex run holds an exclusive lock on .qargi-run.lock beside the members' sign-in (mode 600) for as long as it runs, and none in ~/.codex" || no "lock held: $(ls -lA "$MEM") $(cat "$T/lk1.out")"
 ( $DA local run "$LK2" > "$T/lk2.out" 2>&1; echo $? > "$T/lk2.rc" ) &
 wait_until 'grep -q "waiting for it to end" "$T/lk2.out"' 30
+# hermetic: allow sleep (a negative check: what follows asserts that nothing has started, so there is no event to poll for, only a moment to let a wrongly started member show)
 sleep 1
 { grep -qxF 'qargi: note: another codex member run holds the lock ~/.codex-members/.qargi-run.lock (one run at a time per sign-in); waiting for it to end' "$T/lk2.out" \
   && [ ! -s "$T/lk2.rc" ] && [ ! -e "$LK2/out/transcript" ] && [ ! -e "$LK2/home/.codex/auth.json" ] && [ "$(jq -r .outcome "$LK2/dispatch.json")" = running ] && ! grep -qF "$HOME" "$T/lk2.out"; } \
