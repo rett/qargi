@@ -80,7 +80,7 @@ GLOBAL_OPTS = [opt("--json", "print the result as one JSON object with the verb,
 
 PROJECT_OPT = opt("--project", "the project, instead of the one inferred from here", "PROJECT", "project")
 MEMBER_PROJECT_OPT = opt("--project", "the project the member belongs to (default: the one in effect when it has the member, else the only project that has it)", "PROJECT", "project")
-AS_OPT = opt("--as", "act as this lead identity (default: the session id in QARGI_LEAD, else user@host)", "ID")
+AS_OPT = opt("--as", "act as this lead identity (default: the identity in QARGI_LEAD, else the anonymous user@host)", "ID")
 FLOW_UNREACHABLE_OPT = opt("--assume-unreachable-ok", "go on although the shared marshal cannot be asked because its remote cannot be reached (without it that is a refusal, exit 3, nothing changed); recorded as marshal:unreachable-ok in the audit log")
 FLOW_UNREACHABLE_NOTE = ("It asks the marshal first. With the shared refs backend a remote that cannot be reached is a refusal (exit 3, nothing changed; the message says what could not be reached and why) "
                          "unless --assume-unreachable-ok is given: then it goes on and the audit log gets a marshal:unreachable-ok line. A project whose marshal is local is not affected.")
@@ -354,6 +354,8 @@ COMMANDS = {
         "desc": ("The marshal keeps one record per open feature: its lead (identity and lease), status, goal, plan and a note, and derives the "
                  "tasks, branches, worktrees and overlap from git and the local runs. Query it before beginning work or changing a plan: "
                  "qargi marshal check NAME. A lead is a Claude Code session (identified by its session id), or whoever passes --as. "
+                 "--as is an option of the marshal verbs only: the other verbs that act for a lead (feature, local, review and the release cut) take no --as, "
+                 "and their identity is the one in QARGI_LEAD, else the anonymous user@host. "
                  "A lead holds a lease that its actions and long verbs renew, and so does every command of the lead on the feature: feature merge, sync, status, verify and finish, "
                  "local prepare, verify and clean and review check and apply on a run based on feature/NAME renew it (once a third of the lease has passed, and also after it "
                  "lapsed during a long worker run, as long as nobody else took the feature over: a different identity is still refused while the lease is live). "
