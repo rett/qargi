@@ -24,9 +24,51 @@ import lead_usage
 from attempt_fixture import wire, ForkAfterEnumeration
 
 
+# The project of these tests runs members on the shipped codex definition, which says that its sandbox hides some places from a
+# member (dispatch.hidden_paths: /dev, so /dev/shm too), and prepare refuses a run whose scratch or TMP lies there. The caller's
+# temporary directory may be such a place (a TMPDIR under /dev/shm), and every test then failed in prepare.
+HIDDEN = tuple(json.loads((ROOT / "lib/providers/codex.json").read_text())["dispatch"]["hidden_paths"]["prefixes"])
+FALLBACK = ("/tmp", "/var/tmp")
+
+
+def hidden(path):
+    """The prefix of HIDDEN that path is or lies under (as given or with every link resolved), else None."""
+    forms = (os.path.abspath(path), os.path.realpath(path))
+    return next((p for f in forms for p in HIDDEN if f == p or f.startswith(p + "/")), None)
+
+
+def scratch_parent():
+    """(directory, note): where the tests make their repositories, state and runs.
+
+    The temporary directory of the test when a member's sandbox would show it. Otherwise the first of FALLBACK that is a
+    writable directory outside HIDDEN, with a note that says so (setUpModule prints it): the test leaves the temporary root
+    its caller gave it only then, only for these directories, and removes them itself. (None, reason) when there is none.
+    """
+    own = tempfile.gettempdir()
+    prefix = hidden(own)
+    if prefix is None:
+        return own, ""
+    why = "the temporary directory %s lies under %s, which the sandbox of the codex runtime hides from a member" % (own, prefix)
+    for candidate in FALLBACK:
+        if os.path.isdir(candidate) and os.access(candidate, os.W_OK | os.X_OK) and hidden(candidate) is None:
+            return candidate, "%s; the tests make their runs under %s instead" % (why, candidate)
+    return None, "%s, and none of %s is a writable directory outside it: set TMPDIR to a directory outside %s" % (
+        why, ", ".join(FALLBACK), prefix)
+
+
+SCRATCH, SCRATCH_NOTE = scratch_parent()
+
+
+def setUpModule():
+    if SCRATCH is not None and SCRATCH_NOTE:
+        print("test_attempt_integration: note: " + SCRATCH_NOTE, file=sys.stderr)
+
+
 class Integration(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        if SCRATCH is None:
+            self.skipTest(SCRATCH_NOTE)
+        self.tmp = tempfile.TemporaryDirectory(dir=SCRATCH)
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.repo = self.root / "repo"
@@ -114,6 +156,27 @@ print('fixture transcript')
     def registry_row(self):
         rows = [json.loads(line) for line in (self.state / 'local-runs.jsonl').read_text().splitlines()]
         return next(r for r in rows if r['run'] == str(self.run))
+
+    def test_runs_are_made_where_a_member_of_the_runtime_sees_them(self):
+        self.prepare()
+        for path in (self.root, self.run, Path((self.run / "tmpdir").read_text().strip())):
+            self.assertIsNone(hidden(str(path)), path)
+        # A temporary directory the runtime shows is used as it is.
+        with mock.patch.object(tempfile, "gettempdir", return_value=str(self.root)):
+            self.assertEqual(scratch_parent(), (str(self.root), ""))
+        # One it hides is left for the first usable directory outside, and the note says so.
+        there = HIDDEN[0] + "/example-tmp"
+        with mock.patch.object(tempfile, "gettempdir", return_value=there):
+            with mock.patch(__name__ + ".FALLBACK", (HIDDEN[0], str(self.root / "missing"), str(self.root))):
+                parent, note = scratch_parent()
+            self.assertEqual(parent, str(self.root))
+            self.assertIn("%s lies under %s" % (there, HIDDEN[0]), note)
+            self.assertIn("make their runs under %s instead" % self.root, note)
+            # With no such directory there is a reason to skip with, never a run that prepare refuses.
+            with mock.patch(__name__ + ".FALLBACK", (HIDDEN[0], str(self.root / "missing"))):
+                parent, note = scratch_parent()
+            self.assertIsNone(parent)
+            self.assertIn("set TMPDIR to a directory outside " + HIDDEN[0], note)
 
     def test_legacy_discard_recovers_without_adoption_and_ignores_member_tmp(self):
         self.prepare()
