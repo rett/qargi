@@ -1656,7 +1656,7 @@ COMMANDS = {
     "lead": {
         "summary": "The lead session: its context, and the cloud lead's right to push",
         "desc": ("usage and compact-check keep the lead's own context small: usage says how much of it is in use, compact-check says whether a "
-                 "/compact is safe now and what to re-read after it. Only the lead ever pushes, never a member. With a grant it creates agent/* "
+                 "compact of the session is safe now and what to re-read after it. Only the lead ever pushes, never a member. With a grant it creates agent/* "
                  "branches and opens pull requests; every merge is asked of you, and it cannot publish releases. grant and revoke are interactive: "
                  "each step prints its plan and asks you at the terminal, and your answer is the recorded approval. From Claude Code run them with !."),
         "scripts": ["lead.sh", "lead_usage.py"],
@@ -1676,14 +1676,15 @@ COMMANDS = {
                                 "--json says window_source answer, model or assumed; while it is assumed percent is null (window is the guess) and window_exceeded says whether the tokens "
                                 "are beyond it. Read only; a transcript that cannot be found or read prints unknown and exits 0."),
                           examples=["qargi lead usage", "qargi project set acme lead.context_window 1000000"]),
-            "compact-check": verb("Is a /compact safe now? Exit 0 safe, 1 not, with every reason and the block to re-read after it", [],
+            "compact-check": verb("Is a compact of the session safe now? Exit 0 safe, 1 not, with every reason and the block to re-read after it", [],
                                   [PROJECT_OPT, opt("--advise", "also say whether a compact is advised: from 50% of the window, strongly from 70%; no advice on an assumed window (unknown model window and no lead.context_window)"), opt("--json", "machine-readable")],
                                   desc=("Not safe while a local run is prepared and not verified, verified and not applied, or applied and not merged; a merge waits for its "
                                         "resolution; a whole-suite run (feature verify, release verify) is running; the handoff note written by marshal handoff --write is older "
                                         "than the last merge; or a release or hotfix branch is open. An applied run counts as merged by the test local list and local clean use: its applied tip is on a branch other than agent/*, or the commit the tip was rewritten to (ref record --rewrite) is, wherever the run directory lies. It prints the restart block: the handoff note, qargi marshal status, "
-                                        "qargi feature status and the open runs, so the lead resumes from stored state. Read only. qargi cannot run /compact itself: the "
-                                        "lead (or the person) does. feature finish, the last feature merge of a feature's runs, release finish and marshal handoff print "
-                                        "one line when the context is at or above the project answer lead.compact_advice_pct (default 40; 0 turns it off); while the window is only assumed that line names the "
+                                        "qargi feature status and the open runs, so the lead resumes from stored state. Read only. qargi cannot compact the session itself: the "
+                                        "lead (or the person) does, by the runtime's own means. feature finish, the last feature merge of a feature's runs, release finish and marshal handoff print "
+                                        "one line when the context is at or above the project answer lead.compact_advice_pct (default 40; 0 turns it off): "
+                                        "\"lead: 50%, 100k tokens of context; compact is safe now: compact the session\", or that a compact is not safe yet, with the first reason; while the window is only assumed that line names the "
                                         "tokens and says the window is unknown, with no word of compacting."),
                                   examples=["qargi lead compact-check --advise"]),
             "grant": verb("Guided: create or rotate the grant in three confirmed steps", [("PROJECT", "project:teams")],
