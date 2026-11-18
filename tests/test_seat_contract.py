@@ -525,7 +525,8 @@ class Seat(unittest.TestCase):
         for a proof that passed.
         Observable: with the true store the audit line exists before the verb's first effect; with a store the caller made
         (mode 700, named in QARGI_AUTH, its own key and a copied seat record) it exits 1 with host-in-sandbox, the verb did not
-        run and no file changed; the same with the true key and a seat record whose rev is behind the projection; a verb that
+        run and no file changed; the same with the true key and a seat record whose rev is behind the projection, with the
+        true store and an audit log that cannot be appended to, and for a verb that names an unseated project; a verb that
         names no project runs when the proof passes for one seated project and is refused when there is none."""
 
     # ---- the handoff protocol

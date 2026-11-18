@@ -344,9 +344,11 @@ line (R15), and it runs the verb only when the proof passed and the append succe
 seat write and the projection write of a step the two records differ (R40): `qargi host` is
 refused until `qargi marshal broker run` has completed the step. For a verb that names no project
 (R64) the proof is made against the seated projects under `$CONF` and passes when it passes for
-one of them. `qargi host` records what was run; it is not a fence. Refusal: `host-in-sandbox`,
-exit 1, when a part of the proof fails or no seated project is there to prove against; the verb
-did not run and nothing was written.
+one of them. A verb that names an unseated project needs no `qargi host` (R53), and `qargi host`
+does not run it: there is no projection to prove against. `qargi host` records what was run; it is
+not a fence. Refusal: `host-in-sandbox`, exit 1, when a part of the proof fails, when no seated
+project is there to prove against or when the audit line cannot be appended; the verb did not run
+and nothing was written.
 
 ## The handoff protocol
 
@@ -617,7 +619,7 @@ table says and prints the line of R65.
 | `content-invalid` | a record other than an assignment breaks R18, R22 or R32 |
 | `symlink-refused` | a symbolic link in a path of R88 |
 | `caretaker-not-vacant` | a caretaker order while a lead holds the seat (R75) |
-| `host-in-sandbox` | `qargi host` whose outside proof fails, or that has no seated project to prove against (R33) |
+| `host-in-sandbox` | `qargi host` whose outside proof fails, that has no seated project to prove against, or that cannot append its audit line (R33) |
 | `member-sandbox-off` | raised by member dispatch; its rule is not part of this page |
 
 Refusal: as the table says, exit 1.
