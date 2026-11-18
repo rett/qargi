@@ -151,7 +151,8 @@ where runs were archived or the registry of open runs was unreadable,
 `$AUTH/<project>/tx/<tx>/orphans/` with `manifest.json` and one archive file for each run that lies
 inside the state root (R91). Beside the projects it holds `$AUTH/audit-host.log` (R15),
 `$AUTH/credentials/broker_ed25519` and `$AUTH/signers`. The names `$AUTH/<project>/delegations/` and
-`$AUTH/<project>/dormancy.json` are reserved and not created. `<tx>` has the form
+`$AUTH/<project>/dormancy.json` are reserved and not created. The store has no file for a
+`caretaker-request` envelope: `broker intake` keeps no copy of it (R32). `<tx>` has the form
 `tx-<UTC time>-<four hex digits>`, and `<k>` is the number of a compared read-back, 1 to 3 (R39).
 Refusal: none.
 
@@ -215,10 +216,10 @@ Refusal: none.
 **R18** (record form). Every record of this page is a UTF-8 JSON object with no float, no control
 character in a string and no field this page does not name, but for the reserved fields (R22) and
 the fields of the content of a `state` envelope, which O10 leaves open. A closed list accepts only
-its values. Size limits: assignment and fence 8 KiB, spool state 16 KiB, read-back 64 KiB, note
-text 16 KiB. Refusal: `content-too-large` for a record over its limit, `assignment-invalid` for an
-assignment and `content-invalid` for any other record that breaks the form; all exit 1, and the
-store is unchanged.
+its values. Size limits: assignment, fence and caretaker request 8 KiB, spool state 16 KiB,
+read-back 64 KiB, note text 16 KiB. Refusal: `content-too-large` for a record over its limit,
+`assignment-invalid` for an assignment and `content-invalid` for any other record that breaks the
+form; all exit 1, and the store is unchanged.
 
 **R19** (assignment). The supervising layer writes `<assignment_dir>/<project>.json` and passes the
 same record through the door:
@@ -337,18 +338,21 @@ spool below its `$STATE`, with one of the verbs of R96. The content is preceded 
 `{"schema": "qargi.spool/1", "project", "epoch", "tx", "kind", "sha256", "bytes"}`, with `kind` one
 of `state`, `readback`, `caretaker-request`. Every field is mandatory: none is missing, null or
 empty. The verb that writes the envelope takes `project`, `epoch` and `tx` from the projection that
-is bound into the sandbox (R21), never from an option or a variable; `tx` is the open transfer's
-or, for a `caretaker-request`, which is written while no transfer is open, the last completed one
-(R11). The supervising layer collects the envelope and passes it to `broker intake`, which takes it
-only when its `project`, `epoch` and `tx` are those of the seat record (R11). That is how S2 and S6
-take the envelope of the open transfer only, and no envelope that an earlier transfer left in the
-spool, an aborted one for example, is taken (R35, R39, R96). A `readback` content names the same
-transfer as its envelope: its `transfer_id` is the envelope's `tx` (R48). The content of a `state`
-envelope may be empty (`bytes` is 0) or is one JSON object; it is lead-stated and its fields are
-open (O10), so until that is decided it is held to the form of R18 and to no field list. Refusal:
-`content-too-large` over the limit of its kind (R18), `content-invalid` for a malformed envelope (a
-`readback` whose `transfer_id` is not the envelope's `tx` among them), a digest or length that does
-not match, or a `project`, `epoch` or `tx` other than the seat record's; exit 1.
+is bound into the sandbox (R21), never from an option or a variable; `tx` is the open transfer's or,
+for a `caretaker-request`, which is written while no transfer is open, the last completed one (R11).
+The supervising layer collects the envelope and passes it to `broker intake`, which takes it only
+when its `project`, `epoch` and `tx` are those of the seat record (R11). That is how S2 and S6 take
+the envelope of the open transfer only, and no envelope that an earlier transfer left in the spool,
+an aborted one for example, is taken (R35, R39, R96). Intake stores the content of a `state` and of
+a `readback` envelope (R9) and keeps no copy of a `caretaker-request`: it checks the envelope and
+appends its audit line (R15), nothing else changes, and the supervising layer, which collected the
+envelope, holds the content. A `readback` content names the same transfer as its envelope: its
+`transfer_id` is the envelope's `tx` (R48). The content of a `state` envelope may be empty (`bytes`
+is 0) or is one JSON object; it is lead-stated and its fields are open (O10), so until that is
+decided it is held to the form of R18 and to no field list. Refusal: `content-too-large` over the
+limit of its kind (R18), `content-invalid` for a malformed envelope (a `readback` whose
+`transfer_id` is not the envelope's `tx` among them), a digest or length that does not match, or a
+`project`, `epoch` or `tx` other than the seat record's; exit 1.
 
 **R96** (the spool-writing verbs). Three lead-side verbs write a spool envelope (R32), each of one
 kind, and change nothing else: no record of the project, no run, nothing in the repository.
@@ -746,11 +750,11 @@ nothing and exits with a status other than 0.
 `marshal enable` is refused. A project whose marshal records are on the shared refs backend is not
 seated: its `init` is refused until `marshal disable` ran. Refusal: `refs-backend-active`, exit 1.
 
-**R75** (caretaker transitions). A caretaker holds a vacant seat so that the project is looked
-after while it has no lead. It asks for the next assignment with `marshal caretaker request
---runtime R [--note FILE]`, which writes a spool envelope of kind `caretaker-request` and changes
-no seat. These rows are the only ones; the fence method is the one the supervising layer must
-supply.
+**R75** (caretaker transitions). A caretaker holds a vacant seat so that the project is looked after
+while it has no lead. It asks for the next assignment with `marshal caretaker request --runtime R
+[--note FILE]`, which writes a spool envelope of kind `caretaker-request`, at most 8 KiB (R18), and
+changes no seat; `broker intake` checks the envelope and keeps no copy of it (R9, R32). These rows
+are the only ones; the fence method is the one the supervising layer must supply.
 
 | Row | From | To | Fence | Steps | Read-back |
 | --- | --- | --- | --- | --- | --- |

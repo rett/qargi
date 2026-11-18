@@ -16,9 +16,10 @@ It also holds the page to what it says it guarantees: the outside proof of `qarg
 guard rail, with the limits that make it one) and its one test switch is named and honoured only under a home of its own, and
 what a sandbox never holds, and what it can write, are conditions of the supervising layer, each with the checks that the
 layer's qualification of a sandbox makes from inside. The page's other statements that can be read from its text are held too:
-the projection has every field the gate compares, a spool envelope names its transfer and S2 and S6 match it, the archive of
-open runs opens regular files only and has a limit for a transfer, and what the broker may read below a role's state root is
-the registry of its open runs and the run folders, only while no unit of the role exists.
+the projection has every field the gate compares, a spool envelope names its transfer and S2 and S6 match it, every kind of
+envelope has a size limit and the store a file for it or the statement that intake keeps no copy, the archive of open runs
+opens regular files only and has a limit for a transfer, and what the broker may read below a role's state root is the
+registry of its open runs and the run folders, only while no unit of the role exists.
 Offline. Run: python3 tests/test_seat_contract.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import json, os, re, unittest
@@ -497,6 +498,36 @@ class Contract(unittest.TestCase):
                 with self.subTest(observable=n, words=w):
                     self.assertIn(w, seat_doc(n))
 
+    def test_a_caretaker_request_has_a_size_limit_and_intake_keeps_no_copy_of_it(self):
+        blocks = {n: squash(b) for n, b in rule_blocks(self.text).items()}
+        # every kind of spool envelope that R32 lists has a size limit in R18: the review found none for the caretaker request
+        kinds = re.search(r"with `kind` one of ((?:`[\w-]+`(?:, )?)+)\.", blocks[32])
+        self.assertIsNotNone(kinds, "R32 lists the kinds of spool envelope")
+        self.assertEqual(re.findall(r"`([\w-]+)`", kinds.group(1)), ["state", "readback", "caretaker-request"])
+        limits = re.search(r"Size limits: (.*?)\. Refusal:", blocks[18])
+        self.assertIsNotNone(limits, "R18 lists the size limits")
+        for kind, words in (("state", "spool state 16 KiB"), ("readback", "read-back 64 KiB"),
+                            ("caretaker-request", "caretaker request 8 KiB")):
+            with self.subTest(kind=kind):
+                self.assertIn(words, limits.group(1))
+        # the store has a file for the content of the two kinds that intake keeps, and R9 says outright that it has none for the
+        # third; no file for it hides elsewhere on the page
+        self.assertIn("/state.json", blocks[9])
+        self.assertIn("readback-<k>.json", blocks[9])
+        self.assertIn("The store has no file for a `caretaker-request` envelope: `broker intake` keeps no copy of it (R32)", blocks[9])
+        self.assertNotIn("requests/", self.text)
+        for n, words in ((32, ("keeps no copy of a `caretaker-request`", "appends its audit line (R15)")),
+                         (75, ("at most 8 KiB (R18)", "keeps no copy of it (R9, R32)"))):
+            for w in words:
+                with self.subTest(rule=n, words=w):
+                    self.assertIn(w, blocks[n])
+        # the observables of the tests say the same
+        for n, words in ((9, ("caretaker-request envelope", "no file")), (18, ("caretaker request", "8 KiB", "content-too-large")),
+                         (32, ("keeps no copy of a caretaker-request", "accepted (exit 0)")), (75, ("8 KiB", "keeps no copy", "host audit"))):
+            for w in words:
+                with self.subTest(observable=n, words=w):
+                    self.assertIn(w, seat_doc(n))
+
     def test_the_trace_has_a_row_for_each_change_that_the_review_of_revision_2_required(self):
         self.assertIn("This is revision 3 of the page", self.text)
         for heading in ("### The review of revision 1", "### The review of revision 2"):
@@ -612,11 +643,13 @@ class Seat(unittest.TestCase):
     def test_R9_store_layout(self):
         """R9: the store of a project holds the seat, the history, the door copies by epoch and the files of each transfer, among
         them the archive of open runs where there were any or the registry was unreadable; beside the projects the host audit,
-        the broker key and the signers; the reserved names are not created.
+        the broker key and the signers; the reserved names are not created; no file holds a caretaker request, which intake
+        keeps no copy of.
         Observable: after a whole transfer the store holds exactly the named files (an orphans directory with manifest.json
         and one archive file for each run inside the state root only when runs were archived or the registry was unreadable),
         the tx name has its form, the read-back and result files are numbered from 1 and never beyond 3, and no delegations
-        directory or dormancy file exists."""
+        directory or dormancy file exists; after broker intake accepted a caretaker-request envelope the store holds no file
+        that it did not hold before, but one line more of the host audit."""
 
     @unbuilt(10)
     def test_R10_only_the_broker_writes_the_store(self):
@@ -677,9 +710,10 @@ class Seat(unittest.TestCase):
     def test_R18_record_form_and_size_limits(self):
         """R18: a record is a UTF-8 JSON object without floats, control characters or unknown fields (the reserved fields and
         the content of a state envelope, whose fields O10 leaves open, excepted); closed lists accept only their values; limits
-        8 KiB, 16 KiB, 64 KiB and 16 KiB.
+        8 KiB (assignment, fence and caretaker request), 16 KiB (spool state), 64 KiB (read-back) and 16 KiB (note text).
         Observable: each violation at the door exits 1 with content-too-large, assignment-invalid or content-invalid as the
-        rule says, and the store is unchanged; a state content with a field of its own is accepted."""
+        rule says, and the store is unchanged; a state content with a field of its own is accepted; a caretaker-request
+        envelope whose content is over 8 KiB exits 1 with content-too-large, one of 8 KiB is accepted."""
 
     @unbuilt(19)
     def test_R19_assignment_record(self):
@@ -783,8 +817,10 @@ class Seat(unittest.TestCase):
     def test_R32_spool_envelope(self):
         """R32: lead content reaches the authority side as a spool envelope {schema, project, epoch, tx, kind, sha256, bytes},
         every field mandatory, followed by the content, written by one of the verbs of R96 (which take project, epoch and tx from
-        the projection) and passed through broker intake, which takes it only when project, epoch and tx are the seat record's.
-        Observable: a valid envelope of each kind is stored; one over its limit exits 1 with content-too-large; a malformed
+        the projection) and passed through broker intake, which takes it only when project, epoch and tx are the seat record's,
+        stores the content of a state and of a readback envelope and keeps no copy of a caretaker-request.
+        Observable: a valid state or readback envelope is stored; a valid caretaker-request envelope is accepted (exit 0) and
+        stores nothing but its audit line; one over the limit of its kind exits 1 with content-too-large; a malformed
         one, a missing or null field, a wrong digest or length, another project, another epoch and another tx (the envelope of
         an aborted transfer, for one) exit 1 with content-invalid; the store is unchanged."""
 
@@ -1096,9 +1132,11 @@ class Seat(unittest.TestCase):
     @unbuilt(75)
     def test_R75_caretaker_transitions(self):
         """R75: the rows C1 to C7 are the only caretaker transitions, each with its fence method, steps and read-back; marshal
-        caretaker request writes a spool envelope and changes no seat.
+        caretaker request writes a spool envelope of at most 8 KiB and changes no seat, and broker intake checks it and keeps
+        no copy.
         Observable: each of C1 to C4 and C7 completes with its fence and is refused with another method; C4 ends in held
-        with readback waived; C5 exits 1 with caretaker-not-vacant, C6 with transfer-open."""
+        with readback waived; C5 exits 1 with caretaker-not-vacant, C6 with transfer-open; after marshal caretaker request
+        and broker intake the seat record, the projection and the store are unchanged, but for the host audit."""
 
     # ---- what never transfers
 
