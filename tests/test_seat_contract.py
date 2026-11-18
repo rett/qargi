@@ -13,7 +13,10 @@ what is proposed and an alternative, every point that was decided is listed with
 nowhere, the contract names no path outside its roots (ROOTS, RECORDED, DECLARED and BELOW_DECLARED below say what a path may
 start with), and what the design's first wave has not produced is listed, each thing with a wave, until it exists (NOT_PRODUCED).
 It also holds the page to what it says it guarantees: the outside proof of `qargi host` states what it shows and against whom (a
-guard rail, with the limits that make it one), and what a sandbox never holds is a condition of the supervising layer.
+guard rail, with the limits that make it one), and what a sandbox never holds, and what it can write, are conditions of the
+supervising layer. The page's other statements that can be read from its text are held too: the projection has every field
+the gate compares, a spool envelope names its transfer and S2 and S6 match it, and the archive of open runs opens regular
+files only and has a limit for a transfer.
 Offline. Run: python3 tests/test_seat_contract.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import json, os, re, unittest
@@ -300,6 +303,21 @@ class Contract(unittest.TestCase):
         self.assertIn("content of a `state` envelope", blocks[18])
         self.assertIn("`tx`", squash(open_items(self.text)["O10"]))
 
+    def test_what_a_sandbox_can_write_is_a_condition_of_the_supervising_layer(self):
+        blocks = rule_blocks(self.text)
+        self.assertIn(102, blocks, "R102 states the condition that R89 rests on")
+        self.assertIn("**R102**", section(self.text, "## Conditions of the supervising layer"))
+        r102 = squash(blocks[102])
+        for words in ("`clone`", "`state_root`", "temporary directory", "`TMPDIR`"):
+            with self.subTest(words=words):
+                self.assertIn(words, r102)
+        # the rules that name the two declared places say that "no other" is the layer's condition, not a fact
+        for n in (19, 89):
+            with self.subTest(rule=n):
+                self.assertIn("R102", blocks[n])
+        self.assertNotIn("What a sandbox can write is what the assignment declares", squash(blocks[89]))
+        self.assertIn("R102", squash(section(self.text, "## Limits of phase 1")))
+
     def test_the_archive_reads_regular_files_only_and_is_limited_for_a_transfer(self):
         blocks = {n: squash(b) for n, b in rule_blocks(self.text).items()}
         r91 = blocks[91]
@@ -528,9 +546,10 @@ class Seat(unittest.TestCase):
 
     @unbuilt(19)
     def test_R19_assignment_record(self):
-        """R19: an assignment has the fields of qargi.assignment/1, among them the clone and the state root that the holder's
-        sandbox can write and the tracked paths that a read-only bind hides; init and transfer need all, vacate and unseat
-        carry no to, clone, state_root or hidden_tracked; role_name is kebab-case, at most 64, without a colon.
+        """R19: an assignment has the fields of qargi.assignment/1, among them the clone and the state root, the two places that
+        the holder's sandbox can write and the authority side must not trust (R102 asks that there be no other), and the
+        tracked paths that a read-only bind hides; init and transfer need all, vacate and unseat carry no to, clone,
+        state_root or hidden_tracked; role_name is kebab-case, at most 64, without a colon.
         Observable: the valid example is accepted; each missing field (state_root among them), each field a kind may not carry
         and each bad role_name exits 1 with assignment-invalid."""
 
@@ -945,7 +964,7 @@ class Seat(unittest.TestCase):
     def test_R76_no_approval_from_inside(self):
         """R76: on a seated project a verb given --approved is refused before it does anything, unless a qargi host call that
         passed the outside proof runs it; a guard rail against a mistaken or stale lead, not a hostile one (a lead that runs code
-        of its own or presents roots of its own is not stopped by it, which R101 and R89 bound instead).
+        of its own or presents roots of its own is not stopped by it, which R101, R102 and R89 bound instead).
         Observable: typed without qargi host, each verb that takes --approved exits 1 with approval-refused and leaves no file
         changed, with the true store present and with every variable of a qargi host call set by hand too; under qargi host
         with the true store it is accepted; under qargi host with a store the caller made the call exits 1 with
@@ -1045,12 +1064,15 @@ class Seat(unittest.TestCase):
 
     @unbuilt(89)
     def test_R89_nothing_a_sandbox_can_write_is_trusted_by_path(self):
-        """R89: authority-side code uses no path with a component a sandbox can write; what a sandbox can write is the clone and
-        the state root that the assignment declares; the assignment directory, the projection directory, the mirror and the
-        authority and config roots are refused when equal to, below or containing either; who owns a path is not the test.
+        """R89: authority-side code uses no path with a component a sandbox can write; qargi knows what a sandbox can write from
+        the clone and the state root that the assignment declares, and that there is no other such place that the authority
+        side reads is the supervising layer's condition (R102); the assignment directory, the projection directory, the mirror
+        and the authority and config roots are refused when equal to, below or containing either; who owns a path is not the
+        test.
         Observable: an assignment whose mirror lies below its clone, equals its state root or contains its clone exits 1 with
         assignment-invalid; a marker whose directory lies below the declared state root makes authority-side verbs exit 1
-        with authority-store-unsafe; a path outside both declared locations is accepted whoever owns its components."""
+        with authority-store-unsafe; a path outside both declared locations is accepted whoever owns its components, which is
+        the limit that R102 names: qargi does not see a place the assignment does not declare."""
 
     @unbuilt(90)
     def test_R90_archive_before_remove(self):
@@ -1169,6 +1191,18 @@ class Seat(unittest.TestCase):
         every remote credential absent as with them present, and opens no path below $AUTH; qargi host, called where none of
         them is readable, exits 1 with host-in-sandbox and the verb did not run. What the supervising layer binds is not
         observable by qargi: its own qualification of a sandbox shows it."""
+
+    @unbuilt(102)
+    def test_R102_a_sandbox_writes_the_two_declared_places_and_no_other(self):
+        """R102: the places a unit's sandbox can write are the clone and the state root that its assignment declares, and the
+        supervising layer sees to it that there is no other that the authority side reads or writes (every root and directory
+        of the page, the qargi code and its tools, the temporary directory of authority-side code), the run folders of R91
+        excepted while no unit of the role exists; authority-side code puts its scratch files below the directory that TMPDIR
+        names.
+        Observable: with TMPDIR set to a directory the test made, every scratch file of a broker step and of a qargi host call
+        appears there and nowhere else (none below a clone, a state root, the projection directory or the shared temporary
+        directory of the system); the door refuses every overlap with the declared places (R89). What a sandbox can write
+        beyond them is not observable by qargi: the supervising layer's own qualification of a sandbox shows it."""
 
 
 if __name__ == "__main__":

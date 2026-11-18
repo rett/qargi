@@ -12,7 +12,7 @@ This is revision 2 of the page. It takes in the changes that the review of revis
 
 How to read it:
 
-- A rule is a paragraph that starts with its number, **R1** to **R101**. The numbers are this page's
+- A rule is a paragraph that starts with its number, **R1** to **R102**. The numbers are this page's
   own and they are stable: a rule added in a later revision takes the next number and stands in the
   section of its subject, so the numbers are not in page order, and a rule that is dropped keeps
   its number in a paragraph that starts `**Rn** (withdrawn)`. Each rule ends with its refusal: the
@@ -32,8 +32,8 @@ How to read it:
   that works round it. The gate (R51 to R64, R67 to R69), the outside proof of `qargi host` (R33), R76
   and R77 are guard rails and say so. What holds against a lead that works round qargi is what its
   sandbox lacks, and providing that is the supervising layer's work: R36 and R97 (the unit of the
-  epoch before is gone), R99 (the binds of the clone's configuration) and R101 (what a sandbox never
-  holds). [Limits](#limits-of-phase-1) says where that ends.
+  epoch before is gone), R99 (the binds of the clone's configuration), R101 (what a sandbox never
+  holds) and R102 (what it can write). [Limits](#limits-of-phase-1) says where that ends.
 
 ## Terms
 
@@ -226,10 +226,12 @@ same record through the door:
 
 `seat_role` is `lead` or `caretaker`. `kind` is `init`, `transfer`, `vacate` or `unseat`. `init` and
 `transfer` need every field; `vacate` and `unseat` carry no `to`, `clone`, `state_root` or
-`hidden_tracked`. `clone` and `state_root` declare what the holder's sandbox can write: its clone
-and the state root of its role (R89). `hidden_tracked` lists the tracked paths that a read-only
-bind of the supervising layer hides in the clone (R100). `role_name` is kebab-case, at most 64
-characters, without `:`. Refusal: `assignment-invalid`, exit 1.
+`hidden_tracked`. `clone` and `state_root` declare the two places that the holder's sandbox can write
+and that the authority side must therefore not trust: its clone and the state root of its role
+(R89); R102 asks that there be no other such place that the authority side reads. `hidden_tracked`
+lists the tracked paths that a read-only bind of the supervising layer hides in the clone (R100).
+`role_name` is kebab-case, at most 64 characters, without `:`. Refusal: `assignment-invalid`,
+exit 1.
 
 **R20** (fence). A fence is the supervising layer's statement that the unit of an epoch is gone:
 
@@ -734,8 +736,8 @@ verb is refused in the owner's own session too. This guards against a mistake: a
 not guard against a lead that works round qargi. Such a lead can run code of its own, in which this
 check is not made, or present roots of its own, in which the proof of R33 passes (Limits), and
 then it can give itself an approval. What keeps that lead from acting on the approval is not this
-rule but R101 and R89: it holds no key and no credential with which a remote would act, and it can
-write only the places that its assignment declares. Refusal: `approval-refused`, exit 1.
+rule but R101 and R102: it holds no key and no credential with which a remote would act, and it can
+write only the places that its assignment declares (R89). Refusal: `approval-refused`, exit 1.
 
 **R77** (plan tokens do not cross; a guard rail). `qargi host` computes a plan token over the plan
 preceded by a line that only it adds, so a token a lead's plan printed never matches the plan the
@@ -840,8 +842,10 @@ exit 1, on the authority side for a root that fails the owner-only check; `seat-
 exit 77, at the gate for either.
 
 **R89** (G1: nothing a sandbox can write is trusted by path). Authority-side code never reads or
-writes a path that has a component a sandbox can write. What a sandbox can write is what the
-assignment declares: its `clone` and its `state_root` (R19). The broker refuses the assignment
+writes a path that has a component a sandbox can write. Qargi knows what a sandbox can write from
+the assignment alone: its `clone` and its `state_root` (R19). That these are the only such places
+that the authority side reads is the supervising layer's condition (R102): qargi checks what the
+assignment declares and cannot check that it is complete. The broker refuses the assignment
 directory, the projection directory, the mirror, `$AUTH` and `$CONF` when one of them overlaps a
 declared location: when it is equal to the `clone` or the `state_root`, lies below one of them or
 contains one of them. Who owns a path is not the test: a sandboxed lead runs as the owner's user,
@@ -928,10 +932,31 @@ is never bound (Roots). Qargi cannot see what a sandbox holds, so this binds the
 What qargi does is to keep every lead-side verb independent of all of it (R10), to read the key on
 the authority side only, and to refuse a `qargi host` call that cannot read the key (R33). This is
 the rule that holds against a lead that works round qargi, where R33, R76 and R77 do not (Limits):
-a lead that gives itself an approval can then change only what its sandbox can write (R89), cannot
-sign as the broker, cannot read the store, and has no credential with which a remote would act on
-the approval. Refusal: none; qargi cannot see what a sandbox holds, and a sandbox that holds the key
-passes the proof of R33.
+a lead that gives itself an approval can then change only what its sandbox can write (R89, R102),
+cannot sign as the broker, cannot read the store, and has no credential with which a remote would
+act on the approval. Refusal: none; qargi cannot see what a sandbox holds, and a sandbox that holds
+the key passes the proof of R33.
+
+**R102** (a sandbox writes the two declared places and no other that the authority side reads). The
+places that a unit's sandbox can write are the two that its assignment declares, the `clone` and
+the `state_root` (R19), and the supervising layer sees to it that there is no other that the
+authority side reads or writes. That covers every root and directory this page names (`$AUTH`,
+`$CONF`, the assignment directory, the projection directory, the mirror), the files of the qargi
+code and of the tools that authority-side code starts, and the temporary directory in which it
+puts its scratch files: a sandbox has a temporary directory of its own, and the authority side
+uses another. It covers a place that a link or a bind of the layer leads into one of those too.
+This is the condition that R89 rests on. R89 refuses a path that overlaps a place the assignment
+declares and cannot see a place that it does not declare, so a mirror below a temporary directory
+that a sandbox shares passes the check and is writable by a lead. A list of writable places in the
+assignment would not close that: qargi could check its form and never its completeness, and a list
+that left out the temporary directory would look complete. The one exception is the run folders
+below the declared `state_root`, which the broker reads and removes only while no unit of the role
+exists (R97). Qargi cannot see what a sandbox can write, so this binds the supervising layer, and
+against a lead that works round qargi it holds exactly as far as the layer's binds do (Limits).
+What qargi does is to put the scratch files of authority-side code below the directory that
+`TMPDIR` names, which the layer keeps out of every sandbox, and never below a clone or a state
+root. Refusal: none; qargi cannot see what a sandbox can write, and a place that the assignment
+does not declare shows nowhere.
 
 ## The coordinator's place
 
@@ -987,9 +1012,10 @@ show them.
 - **Qargi does not stop git.** A lead that runs git itself is limited by what its sandbox mounts and
   by the mirror, not by this page. A lead can edit its own working records; they are lead-stated.
 - **The fence is the supervising layer's proof.** Qargi checks its form.
-- **The binds are the supervising layer's.** Qargi cannot see what a sandbox holds. R99 and R101
-  bind the layer, and a bind that is wrong shows nowhere in qargi: a sandbox that holds the broker's
-  key passes the proof of R33 and can sign a note.
+- **The binds are the supervising layer's.** Qargi cannot see what a sandbox holds or can write.
+  R99, R101 and R102 bind the layer, and a bind that is wrong shows nowhere in qargi: a sandbox that
+  holds the broker's key passes the proof of R33 and can sign a note, and a place that the
+  assignment does not declare passes R89 whoever can write it.
 - **The conversation does not transfer.** A successor starts from the note.
 
 Excluded from phase 1, plainly:
@@ -1108,10 +1134,12 @@ decision, and none is marked in a rule any more.
 - **O3** (R36). Decided as proposed: the fence comes before the note, and S3 before S4, S5 and S6.
   It costs this: while a read-back fails the project has no lead that may write, until B matches or
   a new assignment is made. It never has two live units.
-- **O6** (R19, R89). Decided as the alternative: the assignment names the state root of the role
-  (`state_root`), and the broker refuses every recorded path that overlaps the clone or the state
-  root that the assignment declares. Who owns a path is not used: it cannot tell a sandbox of the
-  same user from the owner. It costs one field in a record that the supervising layer writes.
+- **O6** (R19, R89, R102). Decided as the alternative: the assignment names the state root of the
+  role (`state_root`), and the broker refuses every recorded path that overlaps the clone or the
+  state root that the assignment declares. Who owns a path is not used: it cannot tell a sandbox of
+  the same user from the owner. It costs one field in a record that the supervising layer writes,
+  and the condition of R102, that no other place the authority side reads is writable by a
+  sandbox, which qargi cannot check.
 - **O9** (R33, R64). Decided: a verb that names no project is judged by whether some project under
   `$CONF` is seated, not by a test for a sandbox. Class `owner` is then refused wherever the verb
   runs, and the owner's way is `qargi host`, whose outside proof is the signature of R33. The cost
