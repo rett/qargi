@@ -37,15 +37,20 @@ journal_push() {
   local u; u=$(g remote get-url origin 2>/dev/null) || u=''
   journal_line "$REPO" "$1" "${2:-}" "${3:-}" "$4" "$(url_key "$u")"
 }
-journal_line() { # REPO REF OLD NEW VERB URL [WHY]: one line; with URL a ref of origin, with WHY the reason the lead gave (qargi ref record)
-  local repo ref old new verb zero=0000000000000000000000000000000000000000 f=${DA_STATE:-}/ref-journal.jsonl
-  ref=$2 old=${3:-$zero} new=${4:-$zero} verb=$5
+# journal_line REPO REF OLD NEW VERB URL [WHY]: one line; with URL a ref of origin, with WHY the reason the lead gave (qargi ref record).
+# With OLD "-" the steps are read from standard input, one "OLD NEW" a line, and one journal line is written for each, all of REF and with
+# the same VERB, URL, WHY and time, appended together under one lock: the steps journal_reach writes (up to JOURNAL_REACH_MAX) cost one
+# append, not one each, and no other writer's line comes between them. One line is the same with one step.
+journal_line() {
+  local repo ref=$2 verb=$5 zero=0000000000000000000000000000000000000000 f=${DA_STATE:-}/ref-journal.jsonl
+  if [ "${3:-}" != - ]; then journal_line "$1" "$2" - '' "$5" "$6" "${7:-}" <<<"${3:-$zero} ${4:-$zero}"; return 0; fi
   repo=$(readlink -f "$1" 2>/dev/null) || repo=$1
   [ -n "${DA_STATE:-}" ] && case $ref in refs/heads/?*|refs/tags/?*) ;; *) false;; esac \
-    && ( umask 077; flock 9 || exit 4; jq -nc --arg at "$(now)" --argjson ep "$(date +%s)" --arg v "$verb" --arg p "${PROJ:-}" --arg r "$repo" \
-           --arg ref "$ref" --arg o "$old" --arg n "$new" --arg by "$(id -un 2>/dev/null || echo unknown)@$(hostname 2>/dev/null || echo unknown)" \
+    && ( umask 077; flock 9 || exit 4; jq -Rc --arg at "$(now)" --argjson ep "$(date +%s)" --arg v "$verb" --arg p "${PROJ:-}" --arg r "$repo" \
+           --arg ref "$ref" --arg by "$(id -un 2>/dev/null || echo unknown)@$(hostname 2>/dev/null || echo unknown)" \
            --arg u "$6" --arg w "${7:-}" \
-           '{at:$at, epoch:$ep, verb:$v, project:$p, repo:$r, ref:$ref, old:$o, new:$n, by:$by}
+           'select(length > 0) | (. / " ") as [$o, $n]
+            | {at:$at, epoch:$ep, verb:$v, project:$p, repo:$r, ref:$ref, old:$o, new:$n, by:$by}
             + (if $u == "" then {} else {remote:"origin", url:$u} end) + (if $w == "" then {} else {why:$w} end)' >> "$f" ) 9> "$f.lock" \
     || echo "qargi: warning: the ref journal could not be written for $ref ($verb)$([ $? != 4 ] || { command -v flock >/dev/null 2>&1 && echo ": flock on $f.lock failed" || echo ": the flock command (util-linux) is not installed"; }); a later 'qargi local verify' of a run prepared before this may not accept the change" >&2
   return 0
@@ -74,7 +79,7 @@ journal_line() { # REPO REF OLD NEW VERB URL [WHY]: one line; with URL a ref of 
 # to explain. Fail-soft, as journal_line is.
 JOURNAL_REACH_MAX=500
 journal_reach() {
-  local side=$1 ref=$2 tip=$3 verb=$4 s name=${2#refs/heads/}
+  local side=$1 ref=$2 tip=$3 verb=$4 name=${2#refs/heads/}
   local why='a commit made on the branch with git; the verb took the branch with it'   # journal_steps (lib/local.sh) knows these steps by this text: keep the two the same
   [ "$side" = local ] || name=origin/$name
   journal_reach_scan "$side" "$ref" "$tip"
@@ -82,7 +87,7 @@ journal_reach() {
     echo "note: the journal does not lead to ${tip:0:7}, where $name was deleted ($REACH_NONE): qargi local verify will refuse a run prepared earlier, while $name was at another commit" >&2
     return 0
   fi
-  for s in ${REACH_STEPS[@]+"${REACH_STEPS[@]}"}; do journal_line "$REPO" "$ref" "${s% *}" "${s#* }" "$verb" "$REACH_URL" "$why"; done
+  [ "${#REACH_STEPS[@]}" = 0 ] || printf '%s\n' "${REACH_STEPS[@]}" | journal_line "$REPO" "$ref" - '' "$verb" "$REACH_URL" "$why"
   return 0
 }
 # journal_reach_plan SIDE REF TIP [INDENT] -> for the plan of a verb that will delete the branch REF at TIP: one line with the number of commits

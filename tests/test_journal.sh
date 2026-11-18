@@ -349,7 +349,7 @@ reach() {
 # origin: there too). The run must verify and name each verb, with the number of commits made with git that the verb took. A second run, prepared after
 # the first of the two commits on the release branch (with origin: after release push took it there), must verify as well and count the one commit left.
 gone_flow() {
-  local v=$1 lbl=$3 org=${4:-} fr fm r0 r1 r2 f0 f1 z0 z1 out outm rc said pf pr pp gw=" made with git, taken by the verb)"
+  local v=$1 lbl=$3 org=${4:-} fr fm r0 r1 r2 f0 f1 z0 z1 out outm rc said pf pr pp bad gw=" made with git, taken by the verb)"
   $REL verify "$v" >/dev/null 2>&1; rstart "$v" --date 2026-02-02 --allow-empty-notes >/dev/null 2>&1 || no "(setup) $lbl: release start $v"
   $F start gf >/dev/null 2>&1; task agent/gz gz.txt one; $DA ref note agent/gz >/dev/null 2>&1 || no "(setup) $lbl: note agent/gz"
   if [ -n "$org" ]; then
@@ -385,6 +385,12 @@ gone_flow() {
     && ok "$lbl: release finish journals each commit the lead made on the release branch with git, one step a commit, then the deletion at the released head" || no "$lbl: no steps $r0 -> $r1 -> $r2 before the deletion of release/$v: $(grep "release/$v" "$J" | tail -n 5)"
   reach feature/gf "$f0" "$f1" feature:finish && ok "$lbl: feature finish journals the commit made with git on the feature branch (a journaled task merge followed it)" || no "$lbl: no step $f0 -> $f1 of feature/gf: $(grep 'feature/gf' "$J" | tail -n 5)"
   reach agent/gz "$z0" "$z1" branch:prune && ok "$lbl: branch prune journals the commit made with git on the agent branch" || no "$lbl: no step $z0 -> $z1 of agent/gz: $(grep 'agent/gz' "$J" | tail -n 4)"
+  # the steps are written together, and each is a whole journal line: every field, the reason, and for a branch of origin the remote and its URL
+  bad=$(jq -c 'select((.why // "") | test("with git"))
+    | select((keys - ["remote", "url"]) != ["at","by","epoch","new","old","project","ref","repo","verb","why"] or (.old | test("^[0-9a-f]{40}$") | not) or (.new | test("^[0-9a-f]{40}$") | not)
+        or .old == .new or (.epoch | type) != "number" or (.by | length) == 0 or (.project | length) == 0 or has("remote") != has("url") or (has("remote") and (.remote != "origin" or (.url | length) == 0)))' "$J" 2>&1 | head -n 3)
+  [ -z "$bad" ] && [ "$(jq -c 'select((.why // "") | test("with git"))' "$J" | wc -l)" -ge 4 ] \
+    && ok "$lbl: each step a deleting verb wrote is a whole journal line: at, epoch, verb, project, repo, ref, old, new, by and the reason (and remote and url for origin)" || no "$lbl: step lines: $bad"
   out=$(verify "$fr"); rc=$?
   [ $rc = 0 ] && ok "$lbl: a run prepared before the lead committed on the release, feature and agent branches verifies after the verbs deleted them" || no "$lbl: verify after the deletions: rc=$rc $out"
   grep -qF "release/$v deleted by qargi release finish (2 commits$gw" <<<"$out" && ok "$lbl: verify names release finish for the deleted release branch, and the two commits made with git that it took" || no "$lbl: release/$v is not accepted as deleted by release finish with its 2 commits: $(grep "release/$v" <<<"$out")"
