@@ -507,8 +507,11 @@ def user_dirs(doc, members=()):
     resources.instructions.user_file, of resources.skills.exclusion.file and the one that holds resources.skills.user_dir; for codex ~/.codex), ~/.codex
     whatever the runtime (a library pack of another runtime may link into it too), and the directory the lead's own environment names in the
     variable of the run home (dispatch.home.env) and in CODEX_HOME, where the lead's own Codex keeps its sign-in when the variable moves it from
-    ~/.codex. members: the real directories of the run home's own link sources (the sign-in made for members): one of them is never forbidden for
-    being the lead's CODEX_HOME, for a lead that signs in as a member there, with CODEX_HOME set, uses the members' directory itself."""
+    ~/.codex. members: the directories the run home's own link sources name (the sign-in made for members), as absolute paths in which no link
+    is followed: a value of CODEX_HOME that, made absolute the same way (no link followed), is one of them is not forbidden for being the lead's
+    CODEX_HOME, for a lead that signs in as a member there, with CODEX_HOME set, uses the members' directory itself. A value that only resolves
+    to the same place, or a declared directory that is a link into the lead's CODEX_HOME, is not that: the exemption is for the directory named, not
+    for wherever it leads."""
     res = (doc or {}).get("resources") if isinstance((doc or {}).get("resources"), dict) else {}
     sk = res.get("skills") if isinstance(res.get("skills"), dict) else {}
     ins = res.get("instructions") if isinstance(res.get("instructions"), dict) else {}
@@ -524,9 +527,8 @@ def user_dirs(doc, members=()):
     for var in sorted({"CODEX_HOME", h.get("env") if isinstance(h.get("env"), str) else "CODEX_HOME"}):
         val = os.environ.get(var)
         if val:
-            real = os.path.realpath(os.path.expanduser(val))
-            if real not in members:
-                found["$" + var] = real
+            if os.path.abspath(os.path.expanduser(val)) not in members:
+                found["$" + var] = os.path.realpath(os.path.expanduser(val))
     return found
 
 
@@ -549,7 +551,8 @@ def home_source_forbidden(doc, runtime):
         if home_link_problem(frm):
             continue                                     # a path the rules of home_problems refuse: they say so
         real = _source_real(frm)
-        members = {os.path.realpath(os.path.dirname(os.path.join(os.path.expanduser("~"), frm[2:])))}   # the directory the definition names, never where a link leads
+        decl = os.path.dirname(frm[2:])
+        members = {os.path.abspath(os.path.join(h0, decl)) for h0 in (os.path.expanduser("~"), os.path.realpath(os.path.expanduser("~")))}   # the directory the definition names, no link of it followed (the home itself may be spelled either way)
         for d, dreal in sorted(user_dirs(doc, members).items()):
             if real == dreal or real.startswith(dreal + os.sep):
                 where = ("the directory your environment's %s names" % " or ".join(sorted({"CODEX_HOME", str(h.get("env"))}))) if d.startswith("$") else d

@@ -3229,6 +3229,25 @@ class RunHome(LibraryBase):
         with mock.patch.dict(os.environ, {"CODEX_HOME": os.path.join(self.home, "lead-link")}):
             self.assertIn("resolves inside", P.home_source_forbidden(d, "fakecli") or "")
 
+    def test_a_declared_directory_that_is_a_link_to_the_leads_codex_home_is_refused(self):
+        lead = os.path.join(self.home, "leadcodex")
+        os.makedirs(lead)
+        with open(os.path.join(lead, "auth.json"), "w") as f:
+            f.write("x\n")
+        os.symlink(lead, os.path.join(self.home, ".codex-members"))                                       # the directory the definition names leads into the lead's
+        d = self.link_from("~/.codex-members/auth.json")
+        self.assertIsNone(P.home_source_forbidden(d, "fakecli"))                                          # not the lead's CODEX_HOME while it is not set
+        with mock.patch.dict(os.environ, {"CODEX_HOME": lead}):
+            why = P.home_source_forbidden(d, "fakecli")
+            self.assertIn("the sign-in ~/.codex-members/auth.json for fakecli member runs resolves inside the directory your environment's CODEX_HOME", why or "")
+            self.assertNotIn(lead, why)
+            self.assertIn("resolves inside", P.home_source_problem(d, "fakecli") or "")
+            self.assertTrue(any("dispatch.home.link: the sign-in ~/.codex-members/auth.json" in m for m in fails(d, "fakecli")), fails(d, "fakecli"))
+        with mock.patch.dict(os.environ, {"CODEX_HOME": os.path.join(self.home, ".codex-members")}):      # named by its own (declared) spelling: the members' directory itself
+            self.assertIsNone(P.home_source_forbidden(d, "fakecli"))
+        with mock.patch.dict(os.environ, {"CODEX_HOME": os.path.join(self.home, "x", "..", ".codex-members") + os.sep}):   # made absolute without a link followed
+            self.assertIsNone(P.home_source_forbidden(d, "fakecli"))
+
     def test_a_library_pack_with_such_a_source_is_refused_at_import_and_at_check(self):
         rc, out, err = self.q("import", self.source(doc=self.link_from("~/.codex/auth.json")))
         self.assertEqual(rc, 1, (out, err))
