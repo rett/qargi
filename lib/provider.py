@@ -501,51 +501,93 @@ def home_problems(home, env_pass=(), shape=True):
     return bad
 
 
-def user_dirs(doc):
-    """{declared: real path}: the directories under the user's home where the runtime keeps the user-level files of its own sessions (the
-    directory of resources.instructions.user_file, of resources.skills.exclusion.file and the one that holds resources.skills.user_dir; for
-    codex ~/.codex): the place of the user's own sign-in, which a member run never links, writes through or locks."""
+def user_dirs(doc, members=()):
+    """{label: real path}: the directories where a member run may never link, write through or lock a sign-in, for it is the place of the user's own:
+    the directory under the user's home where the runtime keeps the user-level files of its own sessions (the directory of
+    resources.instructions.user_file, of resources.skills.exclusion.file and the one that holds resources.skills.user_dir; for codex ~/.codex), ~/.codex
+    whatever the runtime (a library pack of another runtime may link into it too), and the directory the lead's own environment names in the
+    variable of the run home (dispatch.home.env) and in CODEX_HOME, where the lead's own Codex keeps its sign-in when the variable moves it from
+    ~/.codex. members: the real directories of the run home's own link sources (the sign-in made for members): one of them is never forbidden for
+    being the lead's CODEX_HOME, for a lead that signs in as a member there, with CODEX_HOME set, uses the members' directory itself."""
     res = (doc or {}).get("resources") if isinstance((doc or {}).get("resources"), dict) else {}
     sk = res.get("skills") if isinstance(res.get("skills"), dict) else {}
     ins = res.get("instructions") if isinstance(res.get("instructions"), dict) else {}
     ex = sk.get("exclusion") if isinstance(sk.get("exclusion"), dict) else {}
     home = os.path.realpath(os.path.expanduser("~"))
-    found = {}
+    found = {"~/.codex": os.path.realpath(os.path.join(home, ".codex"))}
     for v in (ins.get("user_file"), ex.get("file"), sk.get("user_dir")):
         if isinstance(v, str) and v.startswith("~/") and _plain_relative(v[2:]) and "/" in v[2:]:
             d = os.path.dirname(v)
             found[d] = os.path.realpath(os.path.join(home, d[2:]))
+    disp = (doc or {}).get("dispatch") if isinstance((doc or {}).get("dispatch"), dict) else {}
+    h = disp.get("home") if isinstance(disp.get("home"), dict) else {}
+    for var in sorted({"CODEX_HOME", h.get("env") if isinstance(h.get("env"), str) else "CODEX_HOME"}):
+        val = os.environ.get(var)
+        if val:
+            real = os.path.realpath(os.path.expanduser(val))
+            if real not in members:
+                found["$" + var] = real
     return found
 
 
-def home_source_problem(doc, runtime):
-    """None, or the refusal (a message that names the path and the way to make it) of the first link of dispatch.home whose source a member
-    run may not use: a runtime's member signs in on its own (the directory of the link's source, kept for members, made by one login of
-    its own), never with the user's own sign-in, so a source that does not exist (a dangling link included), that is not a regular file, or
-    whose real path lies inside the directory of the user's own sessions (user_dirs) is refused. The paths in the message are the declared
-    ones (~/PATH); no real path is printed. A definition without a run home, or without links, has none."""
+def _source_real(frm):
+    return os.path.realpath(os.path.join(os.path.realpath(os.path.expanduser("~")), frm[2:]))
+
+
+def home_source_forbidden(doc, runtime):
+    """None, or the refusal of the first link of dispatch.home whose source resolves (a link followed; the file need not exist) inside a directory
+    of the user's own sign-in (user_dirs): ~/.codex, the directory of the user's own sessions the definition names, the lead's own CODEX_HOME. It
+    needs no file: `provider check` and `seal` ask it of any definition, shipped or of the library, and a run asks it again when it holds the lock."""
     disp = doc.get("dispatch") if isinstance(doc, dict) else None
     h = disp.get("home") if isinstance(disp, dict) else None
     if not isinstance(h, dict) or not isinstance(h.get("link"), list):
         return None
-    home = os.path.realpath(os.path.expanduser("~"))
-    own = user_dirs(doc)
     argv = disp.get("argv")
     cmd = argv[0] if isinstance(argv, list) and argv and isinstance(argv[0], str) else runtime
     for ln in h["link"]:
         frm = ln.get("from") if isinstance(ln, dict) else None
         if home_link_problem(frm):
             continue                                     # a path the rules of home_problems refuse: they say so
+        real = _source_real(frm)
+        members = {os.path.realpath(os.path.dirname(os.path.join(os.path.expanduser("~"), frm[2:])))}   # the directory the definition names, never where a link leads
+        for d, dreal in sorted(user_dirs(doc, members).items()):
+            if real == dreal or real.startswith(dreal + os.sep):
+                where = ("the directory your environment's %s names" % " or ".join(sorted({"CODEX_HOME", str(h.get("env"))}))) if d.startswith("$") else d
+                return ("the sign-in %s for %s member runs resolves inside %s, the directory of your own sign-in, which a member run never links, "
+                        "writes through or locks.\n%s" % (frm, runtime, where, _login_how(h, frm, cmd)))
+    return None
+
+
+def _login_how(h, frm, cmd):
+    return ("A member run signs in on its own and never uses your own sign-in. Sign in once for members, with its own directory:\n  %s=%s %s login"
+            % (h.get("env"), os.path.dirname(frm), cmd))
+
+
+def home_source_problem(doc, runtime):
+    """None, or the refusal (a message that names the path and the way to make it) of the first link of dispatch.home whose source a member
+    run may not use: a runtime's member signs in on its own (the directory of the link's source, kept for members, made by one login of
+    its own), never with the user's own sign-in, so a source that resolves inside the directory of the user's own sign-in (home_source_forbidden),
+    that does not exist (a dangling link included) or that is not a regular file is refused. The paths in the message are the declared
+    ones (~/PATH); no real path is printed. A definition without a run home, or without links, has none."""
+    why = home_source_forbidden(doc, runtime)
+    if why:
+        return why
+    disp = doc.get("dispatch") if isinstance(doc, dict) else None
+    h = disp.get("home") if isinstance(disp, dict) else None
+    if not isinstance(h, dict) or not isinstance(h.get("link"), list):
+        return None
+    argv = disp.get("argv")
+    cmd = argv[0] if isinstance(argv, list) and argv and isinstance(argv[0], str) else runtime
+    home = os.path.realpath(os.path.expanduser("~"))
+    for ln in h["link"]:
+        frm = ln.get("from") if isinstance(ln, dict) else None
+        if home_link_problem(frm):
+            continue
         src = os.path.join(home, frm[2:])
-        login = "  %s=%s %s login" % (h.get("env"), os.path.dirname(frm), cmd)
-        how = ("A member run signs in on its own and never uses your own sign-in. Sign in once for members, with its own directory:\n%s" % login)
         real = os.path.realpath(src)
+        how = _login_how(h, frm, cmd)
         if not os.path.lexists(src) or not os.path.exists(real):
             return "the sign-in %s for %s member runs does not exist (a link to a missing file is the same).\n%s" % (frm, runtime, how)
-        for d, dreal in sorted(own.items()):
-            if real == dreal or real.startswith(dreal + os.sep):
-                return ("the sign-in %s for %s member runs resolves inside %s, the directory of your own sign-in, which a member run never links, "
-                        "writes through or locks.\n%s" % (frm, runtime, d, how))
         if not os.path.isfile(real):
             return "the sign-in %s for %s member runs is not a regular file.\n%s" % (frm, runtime, how)
     return None
@@ -1456,6 +1498,10 @@ def validate2(d, name=None):
         out += [("fail", "dispatch.env_pass: %s is never handed on: %s" % (n, env_pass_problem(n))) for n in disp["env_pass"] if isinstance(n, str) and env_pass_problem(n)]
     if isinstance(disp, dict) and disp.get("home") is not None:
         out += [("fail", m) for m in home_problems(disp["home"], disp.get("env_pass") if isinstance(disp.get("env_pass"), list) else (), shape=False)]
+        if not home_problems(disp["home"], disp.get("env_pass") if isinstance(disp.get("env_pass"), list) else (), shape=False):
+            why = home_source_forbidden(d, d.get("provider") if isinstance(d.get("provider"), str) else name or "the runtime")
+            if why:
+                out.append(("fail", "dispatch.home.link: " + why.split("\n")[0]))
         if disp.get("mode") != "command":
             out.append(("fail", "dispatch.home: only a runtime that qargi local run starts (dispatch.mode command) has a run home"))
     if isinstance(disp, dict):

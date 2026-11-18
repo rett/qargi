@@ -37,8 +37,9 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
                        source a member run may not use refuses the run (exit 2, qargi local prepare too), naming the declared path and the login
                        that makes it (VAR=DIR COMMAND login): one that does not exist (a link to a missing file too), that is not a regular
                        file, or whose real path lies inside the directory where the runtime keeps the user's own sessions (the directory of
-                       resources.instructions.user_file, resources.skills.exclusion.file or resources.skills.user_dir: ~/.codex for codex), for
-                       a member signs in on its own and never touches the user's own sign-in (provider.home_source_problem).
+                       resources.instructions.user_file, resources.skills.exclusion.file or resources.skills.user_dir: ~/.codex for codex; ~/.codex
+                       for any runtime, and the directory the lead's environment names in CODEX_HOME or the variable env, unless it is the directory
+                       of the source itself), for a member signs in on its own and never touches the user's own sign-in (provider.home_source_problem).
                        The runs that share a source run one at a time: an exclusive flock on NAME .qargi-run.lock in the directory of the source's
                        real file is held from before the links are made until they are removed; a run that finds it held says so on standard error
                        and waits, with no bound (a signal ends the wait); a directory that cannot be written refuses the run, which is never started
