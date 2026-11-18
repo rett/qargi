@@ -1495,7 +1495,7 @@ COMMANDS = {
     "team": {
         "summary": "Run a task with a lead and role agents (opt-in)",
         "desc": ("For a change that affects usage: the build member changes the code, the write member updates the operational docs, the "
-                 "review member judges both. The lead is this Claude Code session, a cloud lead, or a session started in the console; all follow "
+                 "review member judges both. The lead is the session you work in, a cloud lead, or a session started in the console; all follow "
                  "the lead contract. Each member returns its own series against its own base."),
         "scripts": ["team.sh"],
         "verbs": {
@@ -1665,7 +1665,7 @@ COMMANDS = {
         "scripts": ["lead.sh", "lead_usage.py"],
         "verbs": {
             "usage": verb("How much of this session's context is in use: tokens of the last turn, percent of a known window, transcript size", [],
-                          [PROJECT_OPT, opt("--session", "read the transcript of this session id (default: QARGI_LEAD, else the newest of this directory)", "ID"),
+                          [PROJECT_OPT, opt("--session", "read the transcript of this session id, looked for among the transcripts of the current directory, the top of its work tree and the repository, in that order (default: the session QARGI_LEAD names; only when QARGI_LEAD is unset or empty, the newest transcript of the first of those that has one; a set id with none gives context: unknown)", "ID"),
                            opt("--transcript", "read this transcript file", "FILE", "file"), opt("--json", "machine-readable")],
                           desc=("The runtime of the project says where its session transcripts are and how to read them (resources.transcripts of its definition): "
                                 "the context in use is the input, cache-read and cache-creation tokens of the last assistant turn. The window is the project answer "
