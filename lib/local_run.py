@@ -38,10 +38,13 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
                        that makes it (VAR=DIR COMMAND login): one that does not exist (a link to a missing file too), that is not a regular
                        file, or whose real path lies inside the directory where the runtime keeps the user's own sessions (the directory of
                        resources.instructions.user_file, resources.skills.exclusion.file or resources.skills.user_dir: ~/.codex for codex), for
-                       a member signs in on its own and never touches the user's own sign-in (provider.home_source_problem). The runs that share
-                       a source run one at a time: an exclusive flock on NAME .qargi-run.lock in the directory of the source's real file is held
-                       from before the links are made until they are removed; a run that finds it held says so on standard error and waits (a
-                       signal ends the wait); a directory that cannot be written refuses the run, which is never started without the lock.
+                       a member signs in on its own and never touches the user's own sign-in (provider.home_source_problem).
+                       The runs that share a source run one at a time: an exclusive flock on NAME .qargi-run.lock in the directory of the source's
+                       real file is held from before the links are made until they are removed; a run that finds it held says so on standard error
+                       and waits, with no bound (a signal ends the wait); a directory that cannot be written refuses the run, which is never started
+                       without the lock. The wait can be long and the file at the declared path can change in it, so each source is checked again
+                       once the lock is held (recheck_source: the same rules, and the same real path as when the run was planned, else exit 2) and
+                       the link is made to that checked real path, never to the declared one.
                        The directory is made and the links are removed without following a link a member may have put in the run
                        directory. What a runtime does to a link during the run (a sign-in refreshed): written through the link, it lands in the
                        source, which qargi cannot prevent (a note says the source changed); the link deleted, the source is untouched (a note); the
@@ -364,10 +367,10 @@ def plan_home(disp, run, runtime, doc=None):
         if not os.path.lexists(src):
             missing.append(ln["to"])
             continue
-        why = source_problem(src)[1]
+        real, why = source_problem(src)
         if why:                                          # the message names the link, never where its source resolves to
             fail("dispatch.home.link of %s: the source of '%s' is refused: %s" % (runtime, ln["to"], why))
-        links.append((ln["to"], src))
+        links.append((ln["to"], real))                   # the link will point at the real file checked here, never at a path that may be a link by then
     # the runtime's own variable set in the lead's environment to another directory: the run home's links come from the sources the definition names,
     # so a sign-in kept in that other directory is not linked (said, never the value)
     mine = os.environ.get(h["env"])
@@ -377,7 +380,8 @@ def plan_home(disp, run, runtime, doc=None):
                      "and a sign-in kept in the directory %s names is not used" % (h["env"], ", ".join(sorted({os.path.dirname(ln["from"]) for ln in h.get("link", [])})),
                                                                                    ", ".join(ln["from"] for ln in h.get("link", [])), h["env"]))
     return {"env": h["env"], "dir": h["dir"], "path": os.path.join(run, "home", h["dir"]), "links": links, "missing": missing, "notes": notes, "start": {},
-            "residue": [], "declared": [ln["from"] for ln in h.get("link", [])]}
+            "residue": [], "declared": [ln["from"] for ln in h.get("link", [])], "from": {ln["to"]: ln["from"] for ln in h.get("link", [])},
+            "doc": doc if doc is not None else {"dispatch": disp}, "runtime": runtime}
 
 
 def source_problem(src):
@@ -518,8 +522,29 @@ def release_lock(held):
             pass
 
 
+def recheck_source(home, to, real):
+    """The refusal (exit 2) unless the source of the link `to` is, now, what plan_home checked: it passes the same rules (provider.home_source_problem,
+    source_problem) and its real path is still `real`, the path the link is made to point at. A run waits for the lock without a bound, and the file
+    at the declared path can be replaced in that time (by a link to the user's own sign-in, say): a check made before the wait says nothing about
+    what a link made after it reaches. The message names the declared path, never a real one."""
+    why = P.home_source_problem(home["doc"], home["runtime"])
+    if why:
+        fail(why)
+    frm = home["from"][to]
+    now, bad = source_problem(os.path.join(os.path.realpath(os.path.expanduser("~")), frm[2:]))
+    if bad:
+        fail("dispatch.home.link of %s: the source of '%s' is refused: %s" % (home["runtime"], to, bad))
+    if now != real:
+        fail("the sign-in %s for %s member runs resolves elsewhere than when the run was planned (it changed while the run waited for the lock, or "
+             "after the plan); nothing is linked. Start the run again" % (frm, home["runtime"]))
+
+
 def make_home(run, home):
-    """Make RUN/home/DIR and its links; the names linked. A link that an earlier run left there is replaced; anything else in its place is a refusal."""
+    """Make RUN/home/DIR and its links; the names linked. A link that an earlier run left there is replaced; anything else in its place is a refusal.
+    Called with the lock held (take_lock), so each source is checked again here, after any wait, and linked by the real path planned, never by a
+    path that may have become a link since the first check."""
+    for to, src in home["links"]:
+        recheck_source(home, to, src)
     fd = home_dir_fd(run, home, True)
     made = []
     try:
@@ -533,7 +558,8 @@ def make_home(run, home):
                     fail("%s is in the run home and is not a link qargi made (a file a runtime wrote there in a run that did not end, or a member's); "
                          "remove it, or the run is refused" % os.path.join(home["path"], to))
                 os.unlink(to, dir_fd=fd)
-            home["start"][to] = (os.path.realpath(src), digest_of(src))   # what the source was when the run started: in memory only
+            recheck_source(home, to, src)                # again, the moment before the link is made
+            home["start"][to] = (src, digest_of(src))    # what the source was when the run started: in memory only
             os.symlink(src, to, dir_fd=fd)
             made.append(to)
     except BaseException:

@@ -769,6 +769,37 @@ if [ "$(id -u)" != 0 ]; then
     && [ ! -e "$OUT/transcript" ] && [ "$(jq -r .outcome "$RUN/dispatch.json")" = refused ] && [ ! -e "$LOCKF" ] && [ ! -e "$RUN/home/.codex/auth.json" ]; } \
     && ok "a members' directory that cannot be written: the run is refused (exit 2) with the reason, and no member is started without the lock" || no "lock not writable: rc=$rc $out"
 else ok "a members' directory that cannot be written: skipped (running as root, a mode does not refuse the write)"; fi
+# the sign-in is checked again when the lock is taken: a run waits for the lock without a bound, and the file at the declared path can be swapped in that
+# time for a link into the user's own ~/.codex. The run that waited is refused (exit 2), starts no member, links nothing and writes nothing there.
+rm -f "$T/hold-go" "$T/hold-ready" "$T/sw1.rc" "$T/sw2.rc"; echo hold > "$T/codex-mode"
+prep "$T/r" sw1; task; SW1=$RUN; prep "$T/r" sw2; task; SW2=$RUN
+( $DA local run "$SW1" > "$T/sw1.out" 2>&1; echo $? > "$T/sw1.rc" ) &
+wait_until '[ -e "$T/hold-ready" ]' 30
+( $DA local run "$SW2" > "$T/sw2.out" 2>&1; echo $? > "$T/sw2.rc" ) &
+wait_until 'grep -q "waiting for it to end" "$T/sw2.out"' 30
+mv "$MEM/auth.json" "$MEM/auth.orig"; ln -s "$HOME/.codex/auth.json" "$MEM/auth.json"
+: > "$T/hold-go"
+wait_until '[ -s "$T/sw1.rc" ] && [ -s "$T/sw2.rc" ]' 60; wait
+rm -f "$MEM/auth.json"; mv "$MEM/auth.orig" "$MEM/auth.json"; rm -f "$T/codex-mode" "$T/hold-go" "$T/hold-ready"
+{ [ "$(cat "$T/sw2.rc")" = 2 ] && grep -q 'resolves inside ~/.codex' "$T/sw2.out" && grep -qxF "$LOGIN" "$T/sw2.out" && [ ! -e "$SW2/out/transcript" ] \
+  && [ ! -e "$SW2/home/.codex/auth.json" ] && [ "$(jq -r .outcome "$SW2/dispatch.json")" = refused ] && ! grep -q "$OWNSECRET" "$T/sw2.out" \
+  && [ "$(sha256sum < "$HOME/.codex/auth.json" | cut -c1-64)" = "$OWNSUM" ] && [ "$(ls -A "$HOME/.codex")" = auth.json ]; } \
+  && ok "a sign-in swapped for a link into ~/.codex while the run waited for the lock: the run is refused (exit 2) when it holds it, nothing is linked or started, ~/.codex is as it was" \
+  || no "swap during the lock wait: rc=$(cat "$T/sw2.rc") $(cat "$T/sw2.out") $(ls -lA "$HOME/.codex" "$SW2/home" 2>&1)"
+# the same swap to a file of the members' directory that is another file: the run is refused, not linked to a file it did not check
+rm -f "$T/hold-go" "$T/hold-ready" "$T/sw1.rc" "$T/sw2.rc"; echo hold > "$T/codex-mode"
+prep "$T/r" sw3; task; SW3=$RUN; prep "$T/r" sw4; task; SW4=$RUN
+( $DA local run "$SW3" > "$T/sw3.out" 2>&1; echo $? > "$T/sw1.rc" ) &
+wait_until '[ -e "$T/hold-ready" ]' 30
+( $DA local run "$SW4" > "$T/sw4.out" 2>&1; echo $? > "$T/sw2.rc" ) &
+wait_until 'grep -q "waiting for it to end" "$T/sw4.out"' 30
+printf '{"token": "other"}\n' > "$MEM/other.json"; mv "$MEM/auth.json" "$MEM/auth.orig"; ln -s "$MEM/other.json" "$MEM/auth.json"
+: > "$T/hold-go"
+wait_until '[ -s "$T/sw1.rc" ] && [ -s "$T/sw2.rc" ]' 60; wait
+rm -f "$MEM/auth.json" "$MEM/other.json"; mv "$MEM/auth.orig" "$MEM/auth.json"; rm -f "$T/codex-mode" "$T/hold-go" "$T/hold-ready" "$T/sw1.rc" "$T/sw2.rc"
+{ [ "$(cat "$T/sw4.out" | grep -c 'resolves elsewhere than when the run was planned')" = 1 ] && [ ! -e "$SW4/out/transcript" ] && [ ! -e "$SW4/home/.codex/auth.json" ] \
+  && grep -qF "$DECL" "$T/sw4.out" && ! grep -qF "$MEM/other.json" "$T/sw4.out"; } \
+  && ok "a sign-in that came to resolve elsewhere while the run waited: refused (nothing linked), the message names the declared path only" || no "swap to another file: $(cat "$T/sw4.out")"
 
 # --- the configuration file of a codex run (dispatch.run_config): CODEX_HOME/config.toml in the run home, with the baseline of the definition in every
 # run and, for the run's role (the lead's registry) and class, the tools a member may call in each server's enabled_tools. The dry run names the file,
@@ -1532,6 +1563,7 @@ from attempt_fixture import wire, attempt
 wire(L)
 run = os.path.realpath(sys.argv[2])
 build, write, stop, clear_home, groups = L.build, L.write_private, L.kill_group, L.clear_home, L.group_left
+L.recheck_source = lambda home, to, real: None   # the home below is made by hand with sources outside any home: this case is about the cleanup, not the rules of a source
 source = os.path.join(run, "signin-fixture")
 secret = "fixture-credential-never-record"
 with open(source, "w") as f:
