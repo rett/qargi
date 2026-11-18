@@ -273,7 +273,7 @@ without the label stands.
 **R27** (only the door changes the holder). On a seated project `marshal claim`, `marshal take` and
 `marshal release` change nothing. `marshal takeover`, `forget`, `resign`, `key` and `signers` are
 class `owner` (R51). Refusal: `seated-project`, exit 1, for the first three; `not-assigned`,
-exit 77, for the others inside a sandbox.
+exit 77, from the gate for the others (R59 to R63).
 
 **R28** (the order is a label). An assignment needs `ordered_by`. The broker trusts its value as
 given and does not check who the caller is. Refusal: `assignment-invalid`, exit 1, without it.
@@ -903,7 +903,7 @@ page.
 | 6 | no authority default with only the state or config root named; the dev store ignored by git | R7 |
 | 7 | build plan | none (not a rule); what its wave 0 has not produced is in [the reconciliation](#reconciliation-with-the-designs-wave-0-task-f) |
 | 8 | per-feature verbs on a seated project; the renewer; `local prepare` | R27, R71, R72 |
-| 9 | owner hygiene on a role's state | replaced by R90 to R92 |
+| 9 | owner hygiene on a role's state | replaced by R90 to R92 and R97 |
 | 10 | open runs as objects; the display id | R25, R82 |
 | 11 | placeholders, hidden tracked copies, `owner` class for the verbs that write them | R84, R99, R100 |
 | 12 | the member sandbox rule | outside this page |
@@ -924,8 +924,9 @@ The twelve conditions the gate checks are R53 to R64, one rule each `[OPEN O2]`.
 
 The two inputs that follow the check of revision 5 map to R90 to R92 and R97 (archive before
 remove) and R88 and R89 (G1). The four conditions for "a seat only for managed projects" map to
-R85, R86, R87 and the third limit above. The three additions to the rule for the clone in place
-map to R99 (placeholders), R100 (hidden tracked copies) and R84 (uncommitted work is lead-stated).
+R85, R86, R87 and the limit that an unseated project is as before. The three additions to the rule
+for the clone in place map to R99 (placeholders), R100 (hidden tracked copies) and R84 (uncommitted
+work is lead-stated).
 
 ## Trace to the review
 
@@ -934,7 +935,7 @@ rules and points it changed.
 
 | # | Required change | Rules and points |
 | --- | --- | --- |
-| 1 | the proof that `qargi host` is outside every sandbox cannot be made inside one; a verb with no project is judged by whether a project is seated | R33, R64 and R76 rewritten; R8, R15, R21, R47 and R70 follow; O9 decided; O17 new |
+| 1 | the proof that `qargi host` is outside every sandbox cannot be made inside one; a verb with no project is judged by whether a project is seated | R33, R64 and R76 rewritten; R8, R15, R21, R27, R47 and R70 follow; O9 decided; O17 new |
 | 2 | a recorded path is refused by the clone and the state root that the assignment declares, not by who owns it | R89 rewritten; R19 gains `state_root`; R31, R70, R84 and R88 follow; O6 decided |
 | 3 | the verbs that write the spool are named, and each passes in the state that asks for its envelope | R96 new; R32, R34, R35, R38, R40, R48, R51, R60 and R61 follow; O10 narrowed |
 | 4 | the archive of open runs stays an open question, the owner's and the supervising layer's; meanwhile no unit of the role runs before S5, the size limit is fixed and the successor has a way to read the archive | R97 new; R91 and R92 rewritten; R9, R13, R37, R38, R40, R88, R89 and R90 follow; O7 kept |
@@ -946,9 +947,9 @@ rules and points it changed.
 ## Reconciliation with the design's wave 0 (task F)
 
 The design's wave 0 is one task, F: it turns the draft contracts of the design's section 3 into
-files, and nothing of the seat is built before those files are merged. What exists of it is this
-page and its test. The rest is not yet produced. The table lists it, says what this page already
-fixes of it, and proposes the wave that produces it `[OPEN O18]`.
+files, and the tasks that build the seat start only when those files are merged. What exists of it
+is this page and its test. The rest is not yet produced. The table lists it, says what this page
+already fixes of it, and proposes the wave that produces it `[OPEN O18]`.
 
 | Not yet produced | Design | Fixed here by | Proposed wave | Why then |
 | --- | --- | --- | --- | --- |

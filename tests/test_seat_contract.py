@@ -479,7 +479,7 @@ class Seat(unittest.TestCase):
         """R27: on a seated project marshal claim, take and release change nothing; takeover, forget, resign, key and signers
         are class owner.
         Observable: the first three exit 1 with seated-project and leave the per-feature record and the seat as they were; the
-        others exit 77 with not-assigned in a sandbox."""
+        others exit 77 with not-assigned for the holder and run only under qargi host."""
 
     @unbuilt(28)
     def test_R28_the_order_is_a_label(self):
