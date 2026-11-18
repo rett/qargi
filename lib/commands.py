@@ -281,7 +281,7 @@ COMMANDS = {
                          opt("--surface", "local (default) or cloud: with cloud, resolve the registered base instance (<project>-worker or -reviewer) instead of a member; needs --project", "SURFACE", ("local", "cloud")),
                          opt("--opt-in", "cloud only: confirm an opt-in profile such as researcher"),
                          opt("--json", "machine-readable: role, class, profile, base, member, tier, model alias, model id, effort (cloud: instance, base, model, effort, profile, class)")],
-                        desc="For an in-session runtime, the base member is the one the profile names (worker for build, write and test, reviewer for review) when the project has registered it; no other member serves, and without it the verb says which base to add. A read-only role never resolves to a member that can write. Plain output is one line: MEMBER MODEL EFFORT PROFILE; pass MODEL and EFFORT to the Agent tool with the member as subagent_type. "
+                        desc="For an in-session runtime, the base member is the one the profile names (worker for build, write and test, reviewer for review) when the project has registered it; no other member serves, and without it the verb says which base to add. A read-only role never resolves to a member that can write. Plain output is one line: MEMBER MODEL EFFORT PROFILE. "
                              "How the project's runtime starts a member with them is in its notes: qargi provider notes spawn. "
                              "For command runtimes, MEMBER is the logical base, requiring no registration or member file. MODEL is the selected ID or alias (an alias only for use: alias with a nonempty tier alias); EFFORT is the requested level even without native control. JSON marks mode: command. Legacy roles/lead answers do not select command profiles; profiles: null is absent, while malformed non-null containers and selected entries refuse."),
         },
@@ -354,7 +354,7 @@ COMMANDS = {
         "summary": "Who leads which open feature: lease, status, goal, plan, handoff",
         "desc": ("The marshal keeps one record per open feature: its lead (identity and lease), status, goal, plan and a note, and derives the "
                  "tasks, branches, worktrees and overlap from git and the local runs. Query it before beginning work or changing a plan: "
-                 "qargi marshal check NAME. A lead is a Claude Code session (identified by its session id), or whoever passes --as. "
+                 "qargi marshal check NAME. A lead is a session with an identity (how a session gets one from its runtime: qargi provider notes identity), or whoever passes --as. "
                  "--as is an option of the marshal verbs only: the other verbs that act for a lead (feature, local, review and the release cut) take no --as, "
                  "and their identity is the one in QARGI_LEAD, else the anonymous user@host. "
                  "A lead holds a lease that its actions and long verbs renew, and so does every command of the lead on the feature: feature merge, sync, status, verify and finish, "
@@ -1248,6 +1248,8 @@ COMMANDS = {
                                "A definition lists the topics that are about the lead's own session (lead_notes: its identity, its own model, how it searches, where it loads its skills from); "
                                "those are then answered by the lead runtime, and every other topic (how a member is started, what a member returns) by the project's runtime as before. "
                                "The list of topics is both. A topic the lead runtime lists needs the project but not the project's runtime. "
+                               "How a member is started and what it returns (spawn, member-out) are instructions for a lead on the project's runtime when that runtime starts a member inside the lead's own session (dispatch mode in-session): "
+                               "for a lead on another runtime they are unsupported, exit 3, saying that the members of this project cannot be started from this lead, and the list of topics leaves the two out. "
                                "NAME is a runtime of the local surface that can be used as it stands, by its own name (not a family's), whatever --surface says; any other name is unsupported, exit 3, whatever is asked. "
                                "Both refusals say whether the option or the variable named the lead runtime. "
                                "A topic the project's runtime lists as about a lead's session and the lead runtime does not have is unsupported too, exit 3: it is never answered by the project's runtime. "
@@ -1698,7 +1700,7 @@ COMMANDS = {
         },
     },
     "hook": {
-        "summary": "Claude Code hooks",
+        "summary": "Hooks that a runtime's session calls",
         "desc": ("session-start loads the lead role's READMEs and indexes from both stores (about 4 KB) for the project whose repository the "
                  "session is in, and the push grant. Register it as a SessionStart hook; it prints nothing outside a registered project. "
                  "Whether the project's runtime has such a hook, and how a session gets its lead identity from it, is in the runtime's notes: qargi provider notes identity."),

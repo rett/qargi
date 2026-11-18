@@ -142,6 +142,12 @@ for v in feature local review release; do   # the claim, against the scripts: ea
 done
 grep -qE -- '--as\) as=' "$SRC/lib/marshal.sh" || bad="$bad marshal:no---as"
 [ -z "$bad" ] && ok "and that holds: feature, local, review and release ask the marshal and take no --as; the marshal verbs take it" || no "the identity note and the scripts disagree:$bad"
+# the same on claude-code, whose hook records the identity when it runs: without it the note says the same as codex's, and never sends a lead to an --as the verbs outside the marshal do not have
+run identity --project onclaude
+{ [ $rc = 0 ] && grep -qF 'The SessionStart hook (`qargi hook session-start`) appends `export QARGI_LEAD='"'ID'"'`' <<<"$out" \
+  && grep -qF 'Without it start the session with `QARGI_LEAD=ID` set' <<<"$out" && grep -qF '`feature`, `local`, `review` and `release` read it' <<<"$out" \
+  && grep -qF 'only marshal verbs take `--as ID`' <<<"$out" && ! grep -qF 'pass `--as ID`' <<<"$out" && ! grep -q 'commands that take it' <<<"$out"; } \
+  && ok "claude-code says the hook records the lead identity and that without it the session starts with QARGI_LEAD set, and only the marshal verbs take --as" || no "claude-code identity: rc=$rc out=$out err=$err"
 # commands is about the lead's own session (a command the person must run); what a member's commands may do is about the members, so
 # it stands in spawn, which a lead on another runtime reads, and not in commands, which such a lead reads from its own runtime
 run commands --project oncodex

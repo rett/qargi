@@ -400,6 +400,21 @@ class Render(unittest.TestCase):
             for n in needles:
                 self.assertIn(n, text, "%s %s" % (cmd, verb))
 
+    def test_the_provider_notes_help_names_the_refusal_of_the_start_notes_and_the_help_of_a_lead_names_no_runtime(self):
+        # a lead on another runtime than an in-session project's is refused spawn and member-out with exit 3, and the list leaves them out
+        v = C.COMMANDS["provider"]["verbs"]["notes"]
+        text = " ".join(v["desc"].split())
+        for needle in ("spawn, member-out", "dispatch mode in-session", "unsupported, exit 3", "cannot be started from this lead", "the list of topics leaves the two out"):
+            self.assertIn(needle, text)
+        # the help of the lead and of the hooks says what a session's identity is without naming the runtime it was first built for
+        marshal = " ".join(C.COMMANDS["marshal"]["desc"].split())
+        self.assertIn("A lead is a session with an identity", marshal)
+        self.assertNotIn("session id", marshal)
+        self.assertNotIn("Claude Code", marshal)
+        self.assertNotIn("Claude Code", C.COMMANDS["hook"]["summary"])
+        self.assertNotIn("subagent_type", C.COMMANDS["agent"]["verbs"]["for"]["desc"])
+        self.assertNotIn("Agent tool", C.COMMANDS["agent"]["verbs"]["for"]["desc"])
+
     def test_man_page_is_current_and_lints(self):
         page = H.man()
         self.assertEqual(slurp(os.path.join(ROOT, "man", "qargi.1")), page, "regenerate: python3 lib/help.py man > man/qargi.1")
