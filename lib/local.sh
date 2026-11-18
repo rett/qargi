@@ -744,6 +744,7 @@ case $verb in
     fi
     valid_slug "$SLUG" || usage_die "--slug: lower-case letters, digits and '-'"
     [ -n "$BASE" ] && [ -d "$SCR" ] || usage_die "prepare needs --base BRANCH and --scratch DIR"
+    actor_check prepare-base "local prepare" "$BASE" || exit $?   # under a coordinator label the base is feature/<its feature>: checked here, where --base is parsed, whatever the gate read
     SCR=$(readlink -f -- "$SCR")   # an absolute run directory: the registry and every later verb name it from any working directory
     # the task block (RUN/task.md) is written when --task-file is given; every check of its inputs is made here, before anything is made
     if [ -n "$TASKF" ]; then
@@ -966,6 +967,8 @@ WRAP
       SRC=$RUN
     fi
     RUN=$(readlink -m -- "$RUN")
+    # a coordinator label: the run this verify acts on is of its feature (the run word as given when it is the first word, so that one with a dash is refused; the saved run's directory otherwise)
+    if [ -n "$SAVED" ]; then actor_run_check "local verify" "$RUN" || exit $?; else actor_run_check "local verify" "${1:-}" || exit $?; fi
     if [ -n "${QARGI_VERIFY_REFS_ONLY:-}" ]; then lc_ready "$RUN" ready-clean || exit 3
     else lc_ready "$RUN" || exit 3; fi
     if [ -n "$SAVED" ] && [ "$LC_SCHEMA" = true ]; then lc saved-copy "$RUN" >/dev/null || exit 3; fi
@@ -1188,6 +1191,7 @@ WRAP
     while [ "${RUN%/}" != "$RUN" ] && [ "$RUN" != / ]; do RUN=${RUN%/}; done   # a trailing slash makes rm -rf follow a link
     RUN=$(realpath -ms -- "$RUN")
     RUN=$(readlink -m -- "${RUN%/*}")/${RUN##*/}   # resolve the parent, never a replacement at RUN itself
+    actor_run_check "local clean" "$RUN" || exit $?   # a coordinator label: the run this clean removes (the path as resolved just above) is of its feature
     lc_ready "$RUN" ready-clean || exit 3
     if [ "$LC_SCHEMA" != true ]; then
       [ ! -L "$RUN" ] || die "clean: $RUN is a link, not a directory prepare made"
@@ -1551,6 +1555,7 @@ $vout}"
     # the project of the run is the stored one that has its repository; its local runtime says how to start the member (lib/local_run.py)
     RUN=${1:-}; shift || true
     [ -f "$RUN/refs.before" ] && [ -f "$RUN/ability" ] || usage_die "run needs a RUN dir made by prepare"
+    actor_run_check "local run" "$RUN" || exit $?   # a coordinator label: the run this dispatch acts on is of its feature (a run word with a dash, local run --again, is refused)
     for a in "$@"; do case $a in --project|--runtime|--class) die "run: $a is not an option (the project and its runtime come from the run)";; esac; done
     reg_load; run_record "$RUN" || exit 2   # the project is found by the repository the lead's registry records, not by files in the run directory
     RCLASS=$(run_class "$RUN") || exit 3

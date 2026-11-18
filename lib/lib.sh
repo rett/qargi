@@ -129,6 +129,20 @@ actor_label() {
   ACTOR_FEATURE=$(pymod help actor-parse "$QARGI_ACTOR") || { ACTOR_FEATURE=''; return 2; }
   ACTOR=$QARGI_ACTOR
 }
+# actor_check KIND WHERE VALUE -> the narrowing of a coordinator label at the point of use: a script asks it once it has resolved what it acts on (the run, the
+# feature, the base of a run to prepare), so what is checked is what the script acts on, with no second parse of the command line (the gate in bin/qargi, lib/help.py
+# actor_gate, is the first line and an early refusal of the same; this is the authoritative one). No label (QARGI_ACTOR unset or empty): returns 0 at once, with no
+# process. Under one it asks `help.py actor-check` (KIND: feature, prepare-base, run-base, run-unknown, run-word; WHERE is the verb as a refusal says it): 0 to go on,
+# 2 with the refusal ("refused under the coordinator label ...; nothing was changed"). The caller exits on a non-zero return: actor_check ... || exit $?
+actor_check() { [ -n "${QARGI_ACTOR:-}" ] || return 0; pymod help actor-check "$@"; }
+# actor_run_check WHERE RUN -> actor_check for a run the script has resolved: refused when the word starts with a dash, when the lead's registry does not name the run,
+# or when its registry base is not feature/<the label's feature> (the registry is the lead's: nothing in the run directory is believed)
+actor_run_check() {
+  [ -n "${QARGI_ACTOR:-}" ] || return 0
+  case $2 in -*) actor_check run-word "$1" "$2"; return;; esac
+  reg_load
+  if reg_has "$2"; then actor_check run-base "$1" "$(reg_get "$2" base)"; else actor_check run-unknown "$1" "$2"; fi
+}
 # out_has_report OUT -> 0 when OUT holds a report: a regular file (not a link) named report.md or *-report.md directly in it. The one test local.sh and
 # lib/lead_usage.py (has_report) share.
 out_has_report() {

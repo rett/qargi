@@ -1873,7 +1873,11 @@ TOPICS = {
         "lead usage, provider notes and doctor. It is narrowed by feature: local prepare needs --base feature/<the label's feature>; a local or review verb that names a run is "
         "refused when the run's base is another feature; a feature verb that names a feature is refused for another one. A coordinator may clean any run of its own feature, "
         "also one a stopped predecessor prepared (the narrowing is by feature, not by label). Where a verb that is narrowed by feature or run is given an option it does not declare, "
-        "it is refused (exit 2): the verb may read the words after such an option differently than the narrowing does, so what it names could not be told.",
+        "it is refused (exit 2): the verb may read the words after such an option differently than the narrowing does, so what it names could not be told. "
+        "The narrowing is checked where the target is resolved: the gate in front of the verb refuses early, and the script then checks the run, the feature or the base it is about "
+        "to act on, once it has read its own command line (local prepare, run, verify and clean, review check, feature status and verify), before it changes anything or renews a lease. "
+        "That check is the one that counts: a run word that starts with a dash (a link named --again in the working directory) is refused, and so is a path that reaches another "
+        "feature's run by a link before a .., or an output that is a run of another feature.",
         "Some of the allowed verbs write something small, and are allowed for that: qargi credential check appends a line to the audit log and asks the remote with a push "
         "--dry-run that sends nothing; qargi review check renews the lead's lease of the feature the run belongs to; the verbs that fetch (marshal status and check, unless --no-fetch) "
         "update what this machine holds of the remote. None of them changes a branch, a run or a record of who leads.",

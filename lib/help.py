@@ -10,6 +10,7 @@
   help.py actor-gate AREA ARGS  the narrowing of a coordinator label (QARGI_ACTOR): exit 0 to go on, 2 with the message when the label is not
                               valid or the command line is not a coordinator's; see actor_gate()
   help.py actor-parse LABEL   the feature of a coordinator label; exit 2 and the form when it is not one
+  help.py actor-check KIND WHERE VALUE  the narrowing of the label at the point of use, asked by the scripts once they have resolved their target; see actor_check()
 
 The modules a plain run does not need (text wrapping, subprocess, glob) are imported where they are used: every qargi
 command runs the preamble, and its cost is the import of this module.
@@ -965,6 +966,44 @@ def actor_gate(argv):
     return 0
 
 
+def actor_check(argv):
+    """The narrowing of a coordinator label at the point of use: `help.py actor-check KIND WHERE VALUE`, run by lib.sh (actor_check, actor_run_check) after a
+    script has resolved what it acts on, so what is checked is what the script acts on and there is one parse of the command line. The gate above is
+    the first line (the verb allow-list, the refused options, the empty words) and an early refusal of the same narrowing; this is the authoritative one.
+    No label (unset or empty): 0. KIND says what VALUE is: feature (a feature name), prepare-base (the base of the run to prepare), run-base (the registry's
+    base of the run the script acts on, empty for none), run-unknown (a run word the registry does not name), run-word (a run word that starts with -: the
+    scripts read a first word as the run, and which run such a word names cannot be told). WHERE is the verb, as the refusal says it. Exit 0 to go on, 2 with
+    the refusal (the same message family as actor_gate)."""
+    if len(argv) != 3 or argv[0] not in ("feature", "prepare-base", "run-base", "run-unknown", "run-word"):
+        print("usage: help.py actor-check feature|prepare-base|run-base|run-unknown|run-word WHERE VALUE", file=sys.stderr)
+        return 2
+    kind, where, value = argv
+    label = os.environ.get("QARGI_ACTOR", "")
+    if not label:
+        return 0
+    parsed = actor_parse(label)
+    if parsed is None:
+        print(actor_form_error(label), file=sys.stderr)
+        return 2
+    feature = parsed[1]
+    want = "feature/" + feature
+    what = None
+    if kind == "feature" and value != feature:
+        what = "run %s on feature %s: this coordinator's feature is %s" % (where, value, feature)
+    elif kind == "prepare-base" and value != want:
+        what = "prepare a run on %s: this coordinator's runs are based on %s" % (value or "an empty base", want)
+    elif kind == "run-base" and value != want:
+        what = "run %s on a run based on %s: this coordinator's runs are based on %s" % (where, value or "no branch", want)
+    elif kind == "run-unknown":
+        what = "run %s on %s: the lead's registry does not name it, so its feature is not known" % (where, value)
+    elif kind == "run-word":
+        what = "run %s with the run word %s: it starts with a dash, so which run it names cannot be told" % (where, value)
+    if what is None:
+        return 0
+    print(actor_refusal(label, what), file=sys.stderr)
+    return 2
+
+
 def preamble(argv):
     """What bin/qargi does before every command, in one process: the dev-run banner on stderr; the arguments resolved
     (resolve); the cloud binding of the project the command is about (none for qargi cloud itself, which manages the
@@ -990,6 +1029,8 @@ def main(argv):
         return 0
     if argv[0] == "actor-gate":      # the narrowing of a coordinator label; bin/qargi asks it before any verb when QARGI_ACTOR is not empty
         return actor_gate(argv[1:])
+    if argv[0] == "actor-check":     # the narrowing at the point of use (lib.sh actor_check): the scripts ask it once they have resolved their target
+        return actor_check(argv[1:])
     if argv[0] == "actor-parse" and len(argv) == 2:   # the feature of a label (lib.sh actor_label); exit 2 and the form when it is not one
         p = actor_parse(argv[1])
         if p is None:
