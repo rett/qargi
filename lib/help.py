@@ -820,8 +820,9 @@ def _positionals(opts, body):
     """The words of a verb's command line that are neither options nor their values, with the options' values and the options the verb does not declare:
     ([positional], {flag: [values]}, [undeclared option words]). An option that takes a value is known from the verb's description; a word of the form
     --flag=value is read as the flag and its value. An option that is not declared is not read as taking a value, so the words after it may be read
-    differently here than by the verb: the caller refuses the command line when there is one."""
-    flags = {o["flag"]: o for o in opts}
+    differently here than by the verb: the caller refuses the command line when there is one. --json is the dispatcher's own option (bin/qargi runs the
+    call again without it): it is known on every verb, a flag without a value, unless the verb documents it itself."""
+    flags = {o["flag"]: o for o in list(C.GLOBAL_OPTS) + list(opts)}
     pos, vals, unknown, i = [], {}, [], 0
     while i < len(body):
         t = body[i]
@@ -860,18 +861,23 @@ def _registry():
 
 
 def _run_record(reg, word, parent=False):
-    """The registry's line for the run a word names: a run directory (also with a trailing slash), a run id qargi.XXXXXX, and with parent=True the directory
-    around the word (review check is given OUT, the run's out directory). None when it names none."""
+    """The registry's line for the run a word names: a run directory (also with a trailing slash), and with parent=True the directory around the word
+    (review check is given OUT, the run's out directory). A path the registry does not hold is read by its basename, as lib/review.sh does (reg_id): a
+    directory named like a run id, qargi. and six characters, names the one registered run of that id, wherever it is (a copy of a run is not another run:
+    review check renews the lease of the feature of the run the id names). None when it names none."""
+    import re
     cands = [os.path.realpath(word)]
     if parent:
         cands.append(os.path.dirname(cands[0]))
     for c in cands:
         if c in reg:
             return reg[c]
-    if word.startswith("qargi.") and "/" not in word:
-        hit = [r for p, r in reg.items() if os.path.basename(p) == word]
-        if len(hit) == 1:
-            return hit[0]
+    for c in cands:
+        base = os.path.basename(c)
+        if re.fullmatch(r"qargi\..{6}", base, re.S):
+            hit = [r for p, r in reg.items() if os.path.basename(p) == base]
+            if len(hit) == 1:
+                return hit[0]
     return None
 
 
@@ -925,13 +931,25 @@ def actor_gate(argv):
             if b != want:
                 print(actor_refusal(label, "prepare a run on %s: this coordinator's runs are based on %s" % (b or "an empty base", want)), file=sys.stderr)
                 return 2
-    elif names == "feature":
-        if pos and pos[0] != feature:
-            print(actor_refusal(label, "run %s on feature %s: this coordinator's feature is %s" % (where, pos[0], feature)), file=sys.stderr)
-            return 2
+    if "" in body:     # the verb skips an empty word (local clean "" RUN reads RUN) where realpath("") is the current directory, which may be a run of this feature
+        print(actor_refusal(label, "run %s with an empty word: it names nothing, so what the verb acts on cannot be told" % where), file=sys.stderr)
+        return 2
+    if names == "feature":
+        for w in pos:
+            if w != feature:
+                print(actor_refusal(label, "run %s on feature %s: this coordinator's feature is %s" % (where, w, feature)), file=sys.stderr)
+                return 2
     elif names == "run":
-        named = pos[:1] + vals.get("--saved", [])
-        if area == "local" and not named and "--mine" in body:
+        saved = vals.get("--saved", [])
+        mine = area == "local" and "--mine" in body
+        if area == "local" and verb in ("run", "verify") and pos and not saved and not mine:
+            # the scripts read their first word as the run: a run named after an option (local run --timeout B A) is not the one the script acts on
+            first = [w for w in body if w != "--json" or any(o["flag"] == "--json" for o in opts)]    # bin/qargi takes --json out before the verb runs
+            if first[0] != pos[0]:
+                print(actor_refusal(label, "run %s with a run that is not its first word: the verb reads its first word as the run, so which run it acts on cannot be told" % where), file=sys.stderr)
+                return 2
+        named = pos + saved
+        if mine and not named:
             return 0
         reg = _registry()
         for w in named:

@@ -504,6 +504,80 @@ class ActorFeatureNarrowing(unittest.TestCase):
         self.assertEqual(gate(["review", "check", os.path.join(self.d, "loose", "out")]), (0, ""))   # an output no run of the registry owns: it only reads it
         self.assertEqual(gate(["review", "check", "--allow-empty", a + "/out"]), (0, ""))
 
+    def test_an_empty_word_names_nothing_and_is_refused(self):
+        # lib/local.sh clean skips an empty word and cleans the next one; the gate read "" as realpath(""), the current directory: inside run A, clean "" B passed
+        a, b = self.runs["qargi.aaaaaa"], self.runs["qargi.bbbbbb"]
+        cwd = os.getcwd()
+        os.chdir(a)
+        try:
+            for line in (["local", "clean", "", b], ["local", "clean", b, ""], ["local", "verify", "", b], ["local", "run", "", b], ["local", "verify", "--saved", "", "qargi.bbbbbb"],
+                         ["feature", "status", "", "alpha"], ["feature", "verify", "alpha", ""], ["review", "check", "", b + "/out"]):
+                rc, err = gate(line)
+                self.assertEqual(rc, 2, line)
+                self.assertIn("with an empty word", err)
+                self.assertIn("the lead runs it", err)
+            self.assertEqual(gate(["local", "clean", "."]), (0, ""))          # the current directory, named, is run A: its base is the label's feature
+            self.assertEqual(gate(["local", "clean", "", a])[0], 2)           # refused even when every other word is the label's own
+            self.assertEqual(gate(["local", "clean", b])[0], 2)
+        finally:
+            os.chdir(cwd)
+        self.assertEqual(gate(["local", "list", ""]), (0, ""))              # a verb that names nothing is not narrowed here: it reads its own words
+
+    def test_every_positional_is_checked(self):
+        a, b = self.runs["qargi.aaaaaa"], self.runs["qargi.bbbbbb"]
+        self.assertEqual(gate(["local", "clean", a, b])[0], 2)
+        self.assertEqual(gate(["local", "clean", b, a])[0], 2)
+        self.assertEqual(gate(["local", "verify", a, b])[0], 2)
+        self.assertEqual(gate(["review", "check", a + "/out", b + "/out"])[0], 2)
+        self.assertEqual(gate(["feature", "status", "alpha", "beta"])[0], 2)
+        self.assertEqual(gate(["feature", "status", "beta", "alpha"])[0], 2)
+        self.assertEqual(gate(["local", "verify", "--saved", "qargi.aaaaaa", b])[0], 2)
+
+    def test_the_run_of_local_run_and_verify_is_the_first_word(self):
+        a, b = self.runs["qargi.aaaaaa"], self.runs["qargi.bbbbbb"]
+        rc, err = gate(["local", "run", "--timeout", b, a])               # the script takes $1, --timeout, as the run: the gate read a, the word after the option's value
+        self.assertEqual(rc, 2)
+        self.assertIn("not its first word", err)
+        for verb in ("run", "verify"):
+            self.assertEqual(gate(["local", verb, "--bogus", a])[0], 2, verb)
+            self.assertEqual(gate(["local", verb, a]), (0, ""), verb)
+        self.assertEqual(gate(["local", "run", a, "--timeout", "5"]), (0, ""))
+        self.assertEqual(gate(["local", "run", "--timeout", "5", a])[0], 2)   # fail closed: the script reads --timeout as the run, whatever follows
+        self.assertEqual(gate(["local", "verify", "--saved", "qargi.aaaaaa"]), (0, ""))
+        self.assertEqual(gate(["local", "verify", "--mine"]), (0, ""))
+        self.assertEqual(gate(["local", "run", "--json", a]), (0, ""))        # bin/qargi takes --json out before the script runs, so a is its first word
+        self.assertEqual(gate(["local", "run", "--json", "--timeout", b, a])[0], 2)
+
+    def test_json_is_the_dispatchers_option_and_passes_on_a_narrowed_verb(self):
+        # bin/qargi runs the call again without --json (lib/jsonplan.py), so the gate runs twice: with it and without
+        a, b = self.runs["qargi.aaaaaa"], self.runs["qargi.bbbbbb"]
+        for line in (["feature", "status", "alpha", "--json"], ["feature", "status", "--json", "alpha"], ["feature", "verify", "alpha", "--json"], ["local", "verify", a, "--json"],
+                     ["review", "check", a + "/out", "--json"], ["local", "clean", a, "--json"]):
+            self.assertEqual(gate(line), (0, ""), line)
+        for line in (["feature", "status", "beta", "--json"], ["local", "verify", b, "--json"], ["feature", "status", "alpha", "--json", "--bogus"]):
+            self.assertEqual(gate(line)[0], 2, line)
+        self.assertEqual(gate(["marshal", "status", "alpha", "--json"]), (0, ""))   # a verb that declares --json keeps its own
+
+    def test_a_copy_of_a_run_is_read_by_its_id_as_review_sh_does(self):
+        # review check resolves a directory it does not find in the registry by its basename (reg_id) and renews the lease of that run's feature: a copy of run B, elsewhere,
+        # holds B's id
+        b = self.runs["qargi.bbbbbb"]
+        for sub in ("copy1", "copy2"):
+            os.makedirs(os.path.join(self.d, sub, "qargi.bbbbbb", "out"))
+            os.makedirs(os.path.join(self.d, sub, "qargi.aaaaaa", "out"))
+        for sub in ("copy1", "copy2"):
+            c = os.path.join(self.d, sub, "qargi.bbbbbb")
+            for word in (c, c + "/", c + "/out"):
+                rc, err = gate(["review", "check", word])
+                self.assertEqual(rc, 2, word)
+                self.assertIn("based on feature/beta", err)
+            self.assertEqual(gate(["review", "check", os.path.join(self.d, sub, "qargi.aaaaaa", "out")]), (0, ""))
+            self.assertEqual(gate(["local", "verify", c])[0], 2)
+        self.assertEqual(gate(["review", "check", os.path.join(self.d, "loose", "out")]), (0, ""))   # a name that is no run id stays a plain output
+        os.makedirs(os.path.join(self.d, "copy3", "qargi.zzzzzz", "out"))
+        self.assertEqual(gate(["review", "check", os.path.join(self.d, "copy3", "qargi.zzzzzz", "out")]), (0, ""))   # an id the registry does not hold: no run of this lead
+        self.assertIn(b, self.runs.values())
+
     def test_no_registry_means_no_known_run(self):
         os.environ["QARGI_STATE"] = os.path.join(self.d, "nostate")
         try:
