@@ -7,11 +7,11 @@ removes the skip of the rules the slice satisfies and writes the body.
 
 `Contract` runs today and keeps the two in step: the rules are numbered from 1 without a gap and each once (a rule added in a
 later revision takes the next number and stands in the section of its subject, so the numbers are not in page order; a rule that
-is dropped keeps its number, marked withdrawn, and its test), each has exactly one test and every
-test names a rule, each rule states its refusal, every reference to a rule or a point names one that exists, every point
-marked OPEN is listed at the end with what is proposed and an alternative, every point that was decided is listed with the rule
-that states the decision and is open nowhere, and the contract names no path outside the state and config roots (see ROOTS below
-for the two exceptions that the contract itself declares).
+is dropped keeps its number, marked withdrawn, and its test), each has exactly one test and every test names a rule, each rule
+states its refusal, every reference to a rule or a point names one that exists, every point marked OPEN is listed at the end with
+what is proposed and an alternative, every point that was decided is listed with the rule that states the decision and is open
+nowhere, and the contract names no path outside its roots (ROOTS, RECORDED, DECLARED and BELOW_DECLARED below say what a path
+may start with).
 Offline. Run: python3 tests/test_seat_contract.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import os, re, unittest
@@ -21,11 +21,9 @@ CONTRACT = os.path.join(ROOT, "docs", "reference", "lead-seat.md")
 NOT_BUILT = "seat not built: R%d"
 WITHDRAWN = "withdrawn: R%d"
 
-# A path the contract names starts at the state root or the config root.
-ROOTS = ("$STATE", "$CONF")
-# The design puts the authority store outside both roots on purpose. The contract may name it only while the open point that asks the
-# lead where it lives is still listed; when that point is decided this entry moves into ROOTS or goes.
-OPEN_ROOTS = {"$AUTH": "O1"}
+# A path the contract names starts at one of its three roots: the state root, the config root and the authority root. The authority
+# store is a third root, outside the other two, for good: the lead decided the point that asked where it lives (O1 of the contract).
+ROOTS = ("$STATE", "$CONF", "$AUTH")
 # The two directories whose location the seat marker (below the config root) records: named by their field, not by a path.
 RECORDED = ("<assignment_dir>", "<projection_dir>")
 # The locations the assignment declares, named by their field too. A sandbox can write the first two, and the contract refuses every
@@ -112,7 +110,7 @@ def outside_the_roots(word):
         return None
     if REPO_FILE.match(word):
         return None if os.path.exists(os.path.join(ROOT, word)) else "names a file this repository does not have"
-    if word.startswith(tuple(r + "/" for r in ROOTS + tuple(OPEN_ROOTS) + RECORDED)) or word in BELOW_DECLARED:
+    if word.startswith(tuple(r + "/" for r in ROOTS + RECORDED)) or word in BELOW_DECLARED:
         return None
     return "starts at no root of the contract"
 
@@ -205,16 +203,13 @@ class Contract(unittest.TestCase):
         body = self.text.partition(OPEN_HEADING)[0]
         self.assertEqual(len(re.findall(r"\bOPEN\b", body)), len(re.findall(r"\[OPEN O\d+\]", body)))
 
-    def test_the_contract_names_no_path_outside_the_state_and_config_roots(self):
+    def test_the_contract_names_no_path_outside_its_roots(self):
         bad = {w: why for w in named_paths(self.text) for why in [outside_the_roots(w)] if why}
         self.assertEqual(bad, {}, "paths named outside the roots")
-        # a root is one the contract may use: the two roots, and one more only while its open point is listed
+        # a root is one of the three the contract has, and the point that asked whether the third may be one is decided, not open
         used = set(re.findall(r"\$[A-Z][A-Z_]*", self.text))
-        self.assertEqual(sorted(used - set(ROOTS) - set(OPEN_ROOTS)), [], "roots the contract may not name")
-        listed = open_items(self.text)
-        for root, point in OPEN_ROOTS.items():
-            if root in used:
-                self.assertIn(point, listed, "%s is outside the state and config roots: allowed only while %s is open" % (root, point))
+        self.assertEqual(sorted(used - set(ROOTS)), [], "roots the contract may not name")
+        self.assertIn("O1", decided_items(self.text), "the authority root is a root since the point about it was decided")
         for field in RECORDED:
             self.assertIn('"%s"' % field.strip("<>"), self.text, "the seat marker records %s" % field)
         for field in DECLARED:
@@ -303,10 +298,10 @@ class Seat(unittest.TestCase):
 
     @unbuilt(7)
     def test_R7_authority_root_resolution(self):
-        """R7: the authority root is resolved by the first case that holds, in this order: QARGI_AUTH; a dev run (the dev data
-        root with -authority-dev); QARGI_HOME (with -authority); QARGI_STATE or QARGI_CONF set (no default); else the default
-        data root with -authority. The dev run is tried before the case of no default; the repository's .gitignore lists
-        .qargi-authority-dev; resolving creates nothing.
+        """R7: the authority store is a third root, outside the state root and the config root; its path is resolved by the
+        first case that holds, in this order: QARGI_AUTH; a dev run (the dev data root with -authority-dev); QARGI_HOME (with
+        -authority); QARGI_STATE or QARGI_CONF set (no default); else the default data root with -authority. The dev run is
+        tried before the case of no default; the repository's .gitignore lists .qargi-authority-dev; resolving creates nothing.
         Observable: the resolved path in each of the five cases, and the earlier case wins where two hold; with QARGI_STATE
         alone, in a run that is not a dev run, a broker verb exits 1 with authority-store-unsafe; git check-ignore accepts
         .qargi-authority-dev in a checkout and git status shows nothing after a broker call of a dev run; no directory exists
@@ -518,9 +513,9 @@ class Seat(unittest.TestCase):
     @unbuilt(36)
     def test_R36_S3_fence(self):
         """R36: S3 needs an accepted fence for the ending epoch and writes the fence copy, the seat (fenced, no holder) and the
-        projection; no later step runs without it.
+        projection; the fence comes before the note, S3 before S4, S5 and S6, and no later step runs without it.
         Observable: with the fence the seat is fenced with holder null; without one, asking for S3 or a later step exits 1
-        with fence-required and changes nothing."""
+        with fence-required and changes nothing; no note file exists before the fence copy does."""
 
     @unbuilt(37)
     def test_R37_S4_note(self):

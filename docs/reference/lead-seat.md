@@ -18,7 +18,7 @@ How to read it:
   its number in a paragraph that starts `**Rn** (withdrawn)`. Each rule ends with its refusal: the
   code a violation is refused with and its exit status, or `none` where the rule binds qargi's own
   output and a violation is a defect.
-- A rule marked as open (`[OPEN O1]`, for example) states what this page proposes where the design
+- A rule marked as open (`[OPEN O4]`, for example) states what this page proposes where the design
   leaves a choice or two inputs disagree. [Open points](#open-points) lists every one with its
   alternatives and their cost, and says who decides it when that is not the lead. An open rule is
   not settled until then. [Decided points](#decided-points) lists the points that were open in an
@@ -53,7 +53,7 @@ How to read it:
 | --- | --- | --- | --- |
 | `$CONF` | the config root | read only, bound file by file; `$CONF/credentials/` never | owner, broker |
 | `$STATE` | the state root of the caller: the role's own inside a sandbox, the owner's outside | read and write (the role's own) | the caller |
-| `$AUTH` | the authority root (R7) | absent | broker |
+| `$AUTH` | the authority root, a third root outside the other two (R7) | absent | broker |
 | assignment directory | recorded in the seat marker (R16) | read only, bound as a directory | supervising layer |
 | projection directory | recorded in the seat marker (R16) | read only, bound as a directory | broker |
 
@@ -93,8 +93,9 @@ none.
 
 ## Records and where they live
 
-**R7** (authority root) `[OPEN O1]`. `$AUTH` is resolved by the first of these cases that holds,
-tried in this order:
+**R7** (authority root). The authority store is a third root, outside the state root and the config
+root, and `$AUTH` is its path. `$AUTH` is resolved by the first of these cases that holds, tried in
+this order:
 
 1. `QARGI_AUTH` is set: its value.
 2. The run is a dev run: the dev data root's path with the suffix `-authority-dev`.
@@ -370,9 +371,11 @@ projection says `accepted`, A's `lead-write` verbs are refused, all but
 `marshal seat state --submit` (R96) and which may be empty. Writes the copy, the seat (`collected`)
 and the projection. S2 may be skipped: S3 is allowed from `accepted`. Refusal: the refusals of R32.
 
-**R36** (S3 fence) `[OPEN O3]`. Needs an accepted fence for epoch N. Writes the fence copy, the
-seat (`fenced`, `holder: null`) and the projection. No later step of the transfer runs without it.
-Refusal: `fence-required`, exit 1, when S3 or a later step is asked for and no fence was accepted.
+**R36** (S3 fence). Needs an accepted fence for epoch N. Writes the fence copy, the seat (`fenced`,
+`holder: null`) and the projection. The fence comes before the note: S3 runs before S4, S5 and S6,
+so A's unit is proven gone before the note is built and before B reads back, and the note cannot go
+stale under A. No later step of the transfer runs without it. Refusal: `fence-required`, exit 1,
+when S3 or a later step is asked for and no fence was accepted.
 
 **R37** (S4 note). After S3, and after the archive of open runs where there are any (R91), the
 broker builds the note (R46) from the store, the mirror's tips and the spool copies, signs it (R47)
@@ -921,12 +924,19 @@ rules and points it changed.
 | 3 | the verbs that write the spool are named, and each passes in the state that asks for its envelope | R96 new; R32, R34, R35, R38, R40, R48, R51, R60 and R61 follow; O10 narrowed |
 | 4 | the archive of open runs stays an open question, the owner's and the supervising layer's; meanwhile no unit of the role runs before S5, the size limit is fixed and the successor has a way to read the archive | R97 new; R91 and R92 rewritten; R9, R13, R37, R38, R40, R88, R89 and R90 follow; O7 kept |
 | 5 | rules that the design has and revision 1 lacked: the placeholders and the file that records them, hidden tracked copies, the derived classes, the dev store in `.gitignore` and the order of the cases of R7; change 22 of the design is traced to O16 and Limits | R98, R99 and R100 new; R7, R19, R51, R63, R84 and R93 follow |
+| 6 | the authority store is a third root for good, and the fence comes before the note | R7 and R36 state the decisions; O1 and O3 decided |
 
 ## Decided points
 
 These points were open in an earlier revision and are decided. Each names the rule that states the
 decision, and none is marked in a rule any more.
 
+- **O1** (R7, R8). Decided as alternative B: the authority store is a third root, outside the state
+  root and the config root, and a permanent one. This page and its test name `$AUTH` beside
+  `$STATE` and `$CONF` as a root. It costs one more root to resolve, to document and to check.
+- **O3** (R36). Decided as proposed: the fence comes before the note, and S3 before S4, S5 and S6.
+  It costs this: while a read-back fails the project has no lead that may write, until B matches or
+  a new assignment is made. It never has two live units.
 - **O6** (R19, R89). Decided as the alternative: the assignment names the state root of the role
   (`state_root`), and the broker refuses every recorded path that overlaps the clone or the state
   root that the assignment declares. Who owns a path is not used: it cannot tell a sandbox of the
@@ -941,21 +951,10 @@ decision, and none is marked in a rule any more.
 Every `[OPEN On]` above is listed here. The lead decides a point unless its item names the owner
 or the supervising layer.
 
-- **O1** (R7, R8). Where the authority store lives. Proposed: a third root outside the state and
-  config roots, as the design's decision says. Alternative A: a directory below `$CONF` that is
-  never bound into a sandbox; it costs the rule "never below the config root" and needs `export` and
-  every `$CONF` bind list to leave it out, but then this page names no path outside the two roots.
-  Alternative B: keep the third root and do not call it a deviation; it costs one more root to
-  resolve, document and check in `doctor`. The test of this page allows `$AUTH` only while O1 is
-  listed.
 - **O2** (trace). The task names "the 12 check changes of revision 5". Proposed: the inputs hold no
   list of twelve changes, so this page maps all 24 changes of revision 5 and the two later inputs,
   and states the twelve gate conditions as R53 to R64. Alternative: another list of twelve was
   meant; it costs a second trace table once the list is supplied.
-- **O3** (R36 to R39). Whether A is fenced before B reads back. Proposed: yes, as the design has it:
-  the note is built after the fence, so it cannot go stale under A. Alternative: B reads back while
-  A still holds; it costs a window with two live units and a note that A can outdate, and gains a
-  failed read-back that leaves the project with its old lead.
 - **O4** (R17). The marker records the two directories as the lead sees them, but the broker writes
   the projection outside the sandbox. Proposed: both sides use the same path. Alternative A: the
   marker records an inside and an outside path for each; it costs two more fields the lead can
