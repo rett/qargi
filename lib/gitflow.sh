@@ -118,12 +118,17 @@ journal_reach() {
 }
 # journal_reach_plan SIDE REF TIP [INDENT] -> for the plan of a verb that will delete the branch REF at TIP: one line with the number of commits
 # made with git that journal_reach will journal for it and their range (from the commit the first step starts at to the one the last step
-# ends at), nothing when there is none. Reads only. The plan token does not cover the line and need not: it covers TIP, and the steps
-# follow from TIP and the journal.
+# ends at); or, where journal_reach will note that the journal does not lead to TIP and write no step, one line that says so with the same reason, so a
+# lead who prepared a run earlier reads before the approval that verify will refuse it; nothing when the journal leads to TIP already. Reads only. The
+# plan token does not cover the line and need not: it covers TIP, and the steps follow from TIP and the journal.
 journal_reach_plan() {
   local name=${2#refs/heads/} n last
   [ "$1" = local ] || name=origin/$name
   journal_reach_scan "$1" "$2" "$3"
+  if [ -n "$REACH_NONE" ]; then
+    echo "${4:-  }journal: no step will be journaled for $name: the journal does not lead to ${3:0:7} ($REACH_NONE): qargi local verify will refuse a run prepared earlier, while $name was at another commit"
+    return 0
+  fi
   n=${#REACH_STEPS[@]}; [ "$n" -gt 0 ] || return 0
   last=${REACH_STEPS[n - 1]##* }
   echo "${4:-  }journal: takes $n commit$([ "$n" = 1 ] || echo s) made with git on $name (${REACH_STEPS[0]:0:7}..${last:0:7}): journaled with the deletion, so a run prepared before $([ "$n" = 1 ] && echo it || echo them) still verifies"

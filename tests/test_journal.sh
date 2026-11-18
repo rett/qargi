@@ -110,7 +110,8 @@ out=$(verify "$RS"); [ $? = 0 ] && ok "a run prepared before the sync verifies" 
 RP=$(mkrun prune-run); n=$(jn); b0=$(sha agent/b)
 pout=$($DA branch prune 2>&1); pt=$(tok <<<"$pout")
 [ -n "$pt" ] && [ -f "$J" ] && [ "$(jn)" = "$n" ] && ok "a branch prune plan (a listing) journals nothing" || no "prune plan journaled or has no token: $pout"
-grep -q "delete local agent/a " <<<"$pout" && ! grep -q "journal:" <<<"$pout" && ok "and it names no commit made with git: the branches it deletes have none the journal lacks" || no "prune plan names commits made with git: $pout"
+grep -q "delete local agent/a " <<<"$pout" && ! grep -q "journal: takes" <<<"$pout" && ! grep -q "journal: .* agent/[ab]:" <<<"$pout" && grep -q "journal: no step will be journaled for agent/x1:" <<<"$pout" \
+  && ok "and it names no commit made with git: the branches it deletes have none the journal lacks (agent/a and agent/b have their lines; agent/x1, made by hand and never noted, has the line that says no step will be journaled for it)" || no "prune plan names commits made with git: $pout"
 pout=$($DA branch prune --plan "$pt" --approved "prune them" 2>&1); dels=$(grep -c '^deleted ' <<<"$pout")
 jhas agent/a "$a0" "$Z" && jhas agent/b "$b0" "$Z" && [ "$(jn)" -ge $((n + 2)) ] && ok "branch prune journals each deletion (new is all zeros)" || no "prune left no journal lines: $pout"
 [ "$(jq -c 'select(.new == "0000000000000000000000000000000000000000")' "$J" | tail -n "$dels" | wc -l)" = "$dels" ] && ok "one deletion line per deleted branch" || no "deletion lines vs '$pout'"
@@ -446,6 +447,13 @@ will="qargi local verify will refuse a run prepared earlier"
 [ "$(grep -c "^note: the journal does not lead to " <<<"$out")" = 3 ] \
   && grep -q "^note: the journal does not lead to ${ot1:0:7}, where agent/ot was deleted (no commit the journal has it at is on its first-parent line: it was rewritten by hand.*): $will, while agent/ot was at another commit\$" <<<"$out" \
   && ok "pruning the branch rewritten by hand prints one note: the journal does not lead to the deleted tip, the branch was rewritten, verify will refuse an earlier run" || no "note for the rewritten branch: $(grep 'agent/ot' <<<"$out")"
+# and the plan said so before the approval, with the same reason: nothing will be journaled for these branches, a run prepared earlier will be refused
+pl=$(planned); pw="qargi local verify will refuse a run prepared earlier"
+grep -qxF "    journal: no step will be journaled for agent/ot: the journal does not lead to ${ot1:0:7} (no commit the journal has it at is on its first-parent line: it was rewritten by hand, or a merge made by hand left that commit behind a second parent): $pw, while agent/ot was at another commit" <<<"$pl" \
+  && grep -qxF "    journal: no step will be journaled for agent/far: the journal does not lead to ${far1:0:7} (no commit the journal has it at is within 500 commits of its tip on its first-parent line): $pw, while agent/far was at another commit" <<<"$pl" \
+  && grep -qxF "    journal: no step will be journaled for agent/un: the journal does not lead to ${un1:0:7} (the journal has no line of it: it was made by hand and not noted with qargi ref note): $pw, while agent/un was at another commit" <<<"$pl" \
+  && ok "the plan of that prune says it for each of the three branches before the approval: no step will be journaled, why, and that verify will refuse a run prepared earlier" || no "plan lines for the branches no step leads to: $(grep 'journal:' <<<"$pl")"
+[ "$(grep -c 'journal: ' <<<"$pl")" = 3 ] && ok "and for no other branch of the plan" || no "journal lines of that plan: $(grep 'journal: ' <<<"$pl")"
 grep -q "^note: the journal does not lead to ${far1:0:7}, where agent/far was deleted (no commit the journal has it at is within 500 commits of its tip on its first-parent line): $will" <<<"$out" \
   && ok "the branch 501 commits past what the journal has: the note names the bound of 500 commits" || no "note for the long branch: $(grep 'agent/far' <<<"$out")"
 grep -q "^note: the journal does not lead to ${un1:0:7}, where agent/un was deleted (the journal has no line of it: it was made by hand and not noted with qargi ref note): $will" <<<"$out" \
@@ -506,6 +514,8 @@ out=$(approve $DA branch prune --remote) || no "(setup) prune agent/po here and 
 [ "$(sha agent/po)" = "$Z" ] && [ -z "$(git -C "$A" ls-remote origin refs/heads/agent/po)" ] \
   && grep -q "^note: the journal does not lead to ${po1:0:7}, where origin/agent/po was deleted (the journal has no line of it: it was pushed by hand, or by an agent, and not noted with qargi ref note): $will, while origin/agent/po was at another commit\$" <<<"$out" \
   && ok "a branch of origin the journal never had, deleted by branch prune --remote: the note names origin/NAME and says it was pushed and not noted" || no "note for the branch of origin: $(grep 'agent/po' <<<"$out")"
+grep -qxF "    journal: no step will be journaled for origin/agent/po: the journal does not lead to ${po1:0:7} (the journal has no line of it: it was pushed by hand, or by an agent, and not noted with qargi ref note): $will, while origin/agent/po was at another commit" <<<"$(planned)" \
+  && ok "the plan said it too, with origin's name of the branch" || no "plan line for the branch of origin: $(planned | grep 'journal:')"
 
 # --- the journal survives a cut-off write.
 # A batch of steps (journal_reach) and a single line are appended with one write, after a newline when the journal does not end in one: a line is
