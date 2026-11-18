@@ -628,6 +628,30 @@ mkdir -p "$T/ms2"; jq -nc --arg r "$(readlink -f "$A")" --arg o "$hc" --arg n "$
 out=$(python3 -I "$ROOT/lib/merged.py" "$A" "$hc" --state "$T/ms2" 2>&1); rc=$?
 [ $rc = 0 ] && [ -z "$out" ] && ok "and says nothing about a journal whose every line is JSON" || no "merged.py with a clean journal: rc=$rc $out"
 
+# A batch cut off in the middle of its write: the journal ends in the first part of the last line of a batch of two steps (a crash that left half of
+# the buffer, which one write makes unlikely and cannot make impossible). The step before it is whole and the cut one is a line that is not JSON:
+# the readers skip it, say so once, and verify stays closed: a run whose branch moved over both steps is refused, naming the move, until the
+# journal has the line again.
+grep -vxF '{"at":"2026-11-17T10:00:00Z","epoch":17' "$J" > "$J.new"; mv "$J.new" "$J"   # the line the test above cut off is not this test's
+git -C "$A" branch agent/pt develop; $DA ref note agent/pt >/dev/null 2>&1 || no "(setup) note agent/pt"
+p0=$(sha agent/pt); p1=$(hand "$p0"); p2=$(hand "$p1"); RT=$(mkrun cut-run)   # RT has agent/pt at p0, as the lead noted it
+git -C "$A" update-ref refs/heads/agent/pt "$p2" "$p0" || no "(setup) move agent/pt"
+printf '%s\n' "$p0 $p1" "$p1 $p2" | jl "$A" refs/heads/agent/pt - '' test:cut '' 2>"$T/err"
+[ ! -s "$T/err" ] && [ "$(jq -s 'map(select(.verb == "test:cut")) | length' "$J")" = 2 ] || no "(setup) the batch of two steps is not in the journal: $(cat "$T/err")"
+cp "$J" "$T/journal.whole"; head -c $(($(wc -c < "$J") - 40)) "$T/journal.whole" > "$J"   # the write stopped 40 bytes before its end
+[ -n "$(tail -c 1 "$J")" ] && [ "$(jq -Rc 'fromjson? | select(.verb == "test:cut")' "$J" | wc -l)" = 1 ] \
+  && [ "$(jq -nR '[inputs | select(length > 0) | try (fromjson | empty) catch 1] | length' "$J")" = 1 ] \
+  && ok "(setup) the journal ends in a cut-off line: the first step of the batch is whole, the second has no newline and is not JSON" || no "(setup) the cut journal: last byte '$(tail -c 1 "$J")', whole batch lines $(jq -Rc 'fromjson? | select(.verb == "test:cut")' "$J" | wc -l), lines not JSON $(jq -nR '[inputs | select(length > 0) | try (fromjson | empty) catch 1] | length' "$J")"
+out=$(verify "$RT"); rc=$?
+[ $rc != 0 ] && grep -qF "branch moved: refs/heads/agent/pt $p0 -> $p2 (not in the lead's ref journal)" <<<"$out" \
+  && ok "verify stays closed with a cut-off batch: the move over both steps is refused, the cut step is not guessed, and the whole first step does not make up for it" || no "verify with a cut-off batch: rc=$rc $out"
+[ "$(grep -c "1 line of the ref journal .* is not JSON" <<<"$out")" = 1 ] \
+  && ok "and the cut line is skipped with one warning, naming the journal" || no "the warning of verify with a cut-off batch: $(grep 'ref journal' <<<"$out")"
+cp "$T/journal.whole" "$J"
+out=$(verify "$RT"); rc=$?
+[ $rc = 0 ] && grep -qF "agent/pt moved by qargi test cut" <<<"$out" && ! grep -q "is not JSON" <<<"$out" \
+  && ok "with the whole batch in the journal the same run verifies, and nothing is said about a line" || no "verify with the whole batch: rc=$rc $out"
+
 # --- the guard protects the journal from a member; reading stays allowed
 RG=$(mkrun guard-run); cd "$RG/clone" || exit 1
 g() { # tool, json input -> exit status of the guard run in the clone, as a member would
