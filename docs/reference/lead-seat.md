@@ -7,6 +7,9 @@ seat can be built against the rules one at a time. What exists today (the per-fe
 release and take, the owner's takeover, the handoff note and `marshal claim --as-successor-of`) is
 described in [Feature marshal](../flow/marshal.md) and stays as it is for a project without a seat.
 
+This is revision 2 of the page. It takes in the changes that the review of revision 1 required;
+[Trace to the review](#trace-to-the-review) maps each of them to its rules.
+
 How to read it:
 
 - A rule is a paragraph that starts with its number, **R1** to **R95**. The numbers are this page's
@@ -14,7 +17,9 @@ How to read it:
   `none` where the rule binds qargi's own output and a violation is a defect.
 - A rule marked as open (`[OPEN O1]`, for example) states what this page proposes where the design
   leaves a choice or two inputs disagree. [Open points](#open-points) lists every one with its
-  alternatives and their cost. An open rule is not settled until the lead decides it.
+  alternatives and their cost, and says who decides it when that is not the lead. An open rule is
+  not settled until then. [Decided points](#decided-points) lists the points that were open in an
+  earlier revision and are decided, each with the rule that states the decision.
 - A refusal has one of two classes. A **lead refusal** exits 77 and tells a session that it may not
   act as the lead now. A **door refusal** exits 1 and tells the caller of an authority-side verb that
   its input or the state does not allow the step. Both print the refusal line of R65.
@@ -92,8 +97,10 @@ exit 1, from every authority-side verb when there is no default.
 
 **R8** (authority root is apart). `$AUTH` is never equal to or below `$STATE`, `$CONF` or the data
 root, is a directory of mode 700 owned by the effective user, and holds directories of mode 700 and
-regular files of mode 600 only. `qargi export` never includes it. Refusal:
-`authority-store-unsafe`, exit 1; nothing is read from or written to a store that fails the check.
+regular files of mode 600 only. `qargi export` never includes it. A store that passes this check
+may be opened; the check does not show that the caller is outside a sandbox, which is what R33
+proves. Refusal: `authority-store-unsafe`, exit 1; nothing is read from or written to a store that
+fails the check.
 
 **R9** (store layout). The authority store of a project holds exactly: `$AUTH/<project>/seat.json`
 (R11), `$AUTH/<project>/history.jsonl` (R14), `$AUTH/<project>/assign/<n>.json` and
@@ -142,9 +149,10 @@ then the projection. At init, step S3 writes the seat marker before the seat rec
 `{at, epoch, tx, from_state, to_state, step, kind, by}`. A line is never changed or removed.
 Refusal: none.
 
-**R15** (host audit). Every door call, every step and every `qargi host` call appends one line to
-`$AUTH/audit-host.log`: `{ts, verb, project, tx, epoch, detail, by}`. A refused door call is
-recorded too. Refusal: none.
+**R15** (host audit). Every door call, every step and every `qargi host` call that has passed the
+outside proof (R33) appends one line to `$AUTH/audit-host.log`: `{ts, verb, project, tx, epoch,
+detail, by}`. A refused door call is recorded too. A `qargi host` call whose proof fails has no
+store that it may write to, and records nothing. Refusal: none.
 
 **R16** (seat marker). The marker is the object `marshal.seat` of `$CONF/projects/<project>.json`:
 `{"mode": "managed", "assignment_dir": "...", "projection_dir": "..."}`. Only the broker writes it.
@@ -197,8 +205,8 @@ exit 1.
 step:
 
 ```json
-{"schema": "qargi.projection/1", "project": "example", "epoch": 7, "state": "pending-readback",
- "tx": "tx-20261120T095800Z-4b1c",
+{"schema": "qargi.projection/1", "project": "example", "rev": 12, "epoch": 7,
+ "state": "pending-readback", "tx": "tx-20261120T095800Z-4b1c",
  "holder": {"kind": "lead", "display_id": "example-lead@e7", "runtime": "runtime-b",
             "unit": "lead-example.service", "clone": "<clone>"},
  "readback": "pending",
@@ -207,7 +215,10 @@ step:
  "written_at": "2026-11-20T10:00:05Z"}
 ```
 
-Refusal: `seat-record-invalid`, exit 77, for a projection that does not have this shape.
+`rev` is the `rev` of the seat record that the projection was written from (R11). Every write of
+the seat record is followed by a write of the projection (R13), so the two agree in `epoch`, `tx`
+and `rev` except while a step is open (R40). Refusal: `seat-record-invalid`, exit 77, for a
+projection that does not have this shape.
 
 **R22** (reserved fields). `delegations` of the projection and `child_units` of the fence are
 reserved: phase 1 writes and accepts only the empty list. `actor` of an open run (R82) is reserved:
@@ -265,10 +276,31 @@ spool below its `$STATE`. The content is preceded by one line `{"schema": "qargi
 `content-too-large` over the limit of its kind (R18), `content-invalid` for a malformed envelope, a
 digest or length that does not match, or another epoch than the transfer's; exit 1.
 
-**R33** (owner's verbs go through `qargi host`). On a seated project the owner runs a lead verb as
-`qargi host VERB ...`, outside every sandbox. It appends its audit line (R15) before anything else
-and runs the verb only when that append succeeded on a store that passes R8. It records what was
-run; it is not a fence. Refusal: `host-in-sandbox`, exit 1, when the store is absent or unsafe.
+**R33** (owner's verbs go through `qargi host`; the outside proof). On a seated project the owner
+runs a lead verb as `qargi host VERB ...`, outside every sandbox. A store that passes R8 does not
+show that the call is outside: a sandboxed lead runs as the same user, can make a directory of
+mode 700 and can name it in `QARGI_AUTH`. So before anything else `qargi host` makes the outside
+proof, from what no sandbox holds:
+
+1. `$AUTH` resolves (R7) and passes R8.
+2. It makes a payload for this call, with `epoch`, `tx` and `rev` from
+   `$AUTH/<project>/seat.json` and a random `nonce`:
+   `{"v":1,"ns":"qargi-host","project","epoch","tx","rev","nonce"}`. It signs the payload with
+   `$AUTH/credentials/broker_ed25519` in the namespace `qargi-host` and verifies the signature
+   against the `signers_line` of the project's projection (R21).
+3. `$AUTH/<project>/seat.json` and that projection agree in `epoch`, `tx` and `rev`.
+
+A key that the caller made fails step 2: the signers line is the broker's (R47), the broker's key
+is in no sandbox, and no sandbox can write the projection. A copy of the store that is behind the
+projection fails step 3. The signature is made and checked in the same call. It is never stored,
+and no variable, option or file stands for a proof that passed. Then `qargi host` appends its audit
+line (R15), and it runs the verb only when the proof passed and the append succeeded. Between the
+seat write and the projection write of a step the two records differ (R40): `qargi host` is
+refused until `qargi marshal broker run` has completed the step. For a verb that names no project
+(R64) the proof is made against the seated projects under `$CONF` and passes when it passes for
+one of them. `qargi host` records what was run; it is not a fence. Refusal: `host-in-sandbox`,
+exit 1, when a part of the proof fails or no seated project is there to prove against; the verb
+did not run and nothing was written.
 
 ## The handoff protocol
 
@@ -362,9 +394,11 @@ names the JSON's digest, and it is at most 16 KiB. Refusal: none.
 **R47** (the note is signed). The broker signs `{"v":1,"ns":"qargi-handoff","project",
 "transfer_id","version","json_sha256","text_sha256"}` with `$AUTH/credentials/broker_ed25519`. A
 signers line may list several namespaces; the broker's own are in `$AUTH/signers`, kept with
-`qargi marshal broker signers add|list`. `marshal note verify` checks the digest of both forms,
-the signature against the signers line of the projection, and that `transfer_id` and `version` are
-the projection's. Refusal: `note-digest-mismatch` or `note-invalid`, exit 1 (R70).
+`qargi marshal broker signers add|list`. The signers line that the broker writes into the
+projection names its key for the namespaces `qargi-handoff` and `qargi-host` (R33).
+`marshal note verify` checks the digest of both forms, the signature against the signers line of
+the projection, and that `transfer_id` and `version` are the projection's. Refusal:
+`note-digest-mismatch` or `note-invalid`, exit 1 (R70).
 
 **R48** (read-back). B states what it believes in a record of schema `qargi.readback/1`:
 `{project, transfer_id, note_sha256, epoch, believes}`, where `believes` holds `host`, `user`,
@@ -444,9 +478,15 @@ and `read` pass; of the `lead-write` verbs only `env check`, `doctor`, `packs ch
 `marshal caretaker request` pass. Refusal: `not-assigned`, exit 77, for `owner`, tried first;
 `caretaker-denied`, exit 77, for every other `lead-write` verb.
 
-**R64** (condition 12: no project, in a sandbox) `[OPEN O9]`. A verb that names no project, run
-where some project under `$CONF` is seated and `$AUTH` is not usable: `always-open`, `read` and
-`lead-write` pass. Refusal: `not-assigned`, exit 77, for `owner`.
+**R64** (condition 12: no project named) `[OPEN O17]`. R53 to R63 are about the project that a verb
+names; a verb that names none is answered by this condition alone. Where some project under `$CONF`
+is seated, `always-open`, `read` and `lead-write` pass and class `owner` is refused. The gate does
+not ask whether it runs in a sandbox: nothing that a sandboxed session can set or make shows where
+it runs, so whether a project is seated decides. The refusal therefore also meets the owner outside
+every sandbox, who runs such a verb as `qargi host VERB ...` (R33); `qargi host` is not gated
+(R51). An answers file under `$CONF` that cannot be read or holds an invalid marker counts as
+seated here (R1, R87). Where no project under `$CONF` is seated, every class passes, as on an
+unseated project (R53). Refusal: `not-assigned`, exit 77, for `owner`.
 
 **R65** (refusal line) `[OPEN O16]`. Every lead refusal and every door refusal prints, on standard error, one
 line that starts with `qargi-refusal/1 ` followed by one JSON object on the same line, at most
@@ -488,13 +528,13 @@ table says and prints the line of R65.
 | `note-invalid` | the note's signature does not verify, or its `transfer_id` or `version` is not the projection's (R47) |
 | `seat-changed` | `rev` moved under a write (R12) |
 | `refs-backend-active` | `marshal enable` on a seated project; `init` on a project whose shared backend is on (R74) |
-| `approval-refused` | `--approved` in a sandbox on a seated project (R76) |
+| `approval-refused` | `--approved` on a seated project in a verb that no `qargi host` call with a passed proof runs (R76) |
 | `authority-store-unsafe` | `$AUTH` has no default or fails R8 |
 | `content-too-large` | a record over its limit (R18) |
 | `content-invalid` | a record other than an assignment breaks R18, R22 or R32 |
 | `symlink-refused` | a symbolic link in a path of R88 |
 | `caretaker-not-vacant` | a caretaker order while a lead holds the seat (R75) |
-| `host-in-sandbox` | `qargi host` without a usable store (R33) |
+| `host-in-sandbox` | `qargi host` whose outside proof fails, or that has no seated project to prove against (R33) |
 | `member-sandbox-off` | raised by member dispatch; its rule is not part of this page |
 
 Refusal: as the table says, exit 1.
@@ -540,9 +580,10 @@ both hold.
 
 ## What never transfers
 
-**R76** (no approval from inside). On a seated project a verb given `--approved` in a sandbox is
-refused before it does anything. The owner runs the gated verb through `qargi host` (R33).
-Refusal: `approval-refused`, exit 1.
+**R76** (no approval from inside). On a seated project a verb given `--approved` is refused before
+it does anything, unless a `qargi host` call that has passed the outside proof runs it (R33). The
+proof decides, not a guess about where the verb runs: typed without `qargi host`, the verb is
+refused in the owner's own session too. Refusal: `approval-refused`, exit 1.
 
 **R77** (plan tokens do not cross). `qargi host` computes a plan token over the plan preceded by a
 line that only it adds, so a token a lead's plan printed never matches the plan the owner applies.
@@ -673,6 +714,11 @@ show them.
   labels.
 - **Fences hold against sandboxed processes only.** A process of the owner's user outside every
   sandbox can write the store, the mirror and the bound records, and can call `qargi host`.
+- **The roots are taken as bound.** A session that points the config, state or authority root at
+  directories of its own sees what it put there: an unseated project, or a seat and a store of its
+  own making that pass R33. Nothing below the real roots changes by that; what the session can
+  change is still what its sandbox lets it write. The gate and the outside proof hold for the roots
+  that the supervising layer bound.
 - **An unseated project is as before.** Until a project is seated, any session can write its qargi
   records and push; R73 is the only change. Unseating reopens that.
 - **Qargi does not stop git.** A lead that runs git itself is limited by what its sandbox mounts and
@@ -704,9 +750,9 @@ page.
 | # | Change | Rules |
 | --- | --- | --- |
 | 1 | one write order; the epoch is checked against the projection; marker before seat at init | R13, R57, R58, R44 |
-| 2 | the bound directories come from the marker; `qargi host` proves it is outside by its audit append | R16, R17, R33 |
+| 2 | the bound directories come from the marker; `qargi host` proves it is outside by its audit append | R16, R17, R33: the append stays, and the proof is a signature, since an append also succeeds in a store that the caller made |
 | 3 | record shapes written out | R11, R18 to R22, R46 to R50 |
-| 4 | gate matrix by class and condition; always-open verbs; `owner` verbs with no project in a sandbox | R51 to R64 |
+| 4 | gate matrix by class and condition; always-open verbs; `owner` verbs with no project in a sandbox | R51 to R64; R64 asks whether a project is seated, not whether the verb runs in a sandbox |
 | 5 | preamble protocol | R67, R68 |
 | 6 | no authority default with only the state or config root named | R7 |
 | 7 | build plan | none (not a rule) |
@@ -734,9 +780,29 @@ The two inputs that follow the check of revision 5 map to R90 to R92 (archive be
 R88 and R89 (G1). The four conditions for "a seat only for managed projects" map to R85, R86, R87
 and the third limit above.
 
+## Trace to the review
+
+The review of revision 1 required a numbered list of changes. Each row maps one of them to the
+rules and points it changed.
+
+| # | Required change | Rules and points |
+| --- | --- | --- |
+| 1 | the proof that `qargi host` is outside every sandbox cannot be made inside one; a verb with no project is judged by whether a project is seated | R33, R64 and R76 rewritten; R8, R15, R21, R47 and R70 follow; O9 decided; O17 new |
+
+## Decided points
+
+These points were open in an earlier revision and are decided. Each names the rule that states the
+decision, and none is marked in a rule any more.
+
+- **O9** (R33, R64). Decided: a verb that names no project is judged by whether some project under
+  `$CONF` is seated, not by a test for a sandbox. Class `owner` is then refused wherever the verb
+  runs, and the owner's way is `qargi host`, whose outside proof is the signature of R33. The cost
+  is the owner's question O17.
+
 ## Open points
 
-Every `[OPEN On]` above is listed here, for the lead to decide.
+Every `[OPEN On]` above is listed here. The lead decides a point unless its item names the owner
+or the supervising layer.
 
 - **O1** (R7, R8). Where the authority store lives. Proposed: a third root outside the state and
   config roots, as the design's decision says. Alternative A: a directory below `$CONF` that is
@@ -779,10 +845,6 @@ Every `[OPEN On]` above is listed here, for the lead to decide.
   Alternative: the list wins; it costs an owner verb in a vacant seat the answer `seat-vacant`. The
   matrix also names no answer for a `fenced` seat, which has no holder to compare; proposed: R60
   applies and R56 is skipped.
-- **O9** (R64). How a verb with no project knows it runs in a sandbox. The design's matrix says
-  "default assignment directory present", which its own change 2 removed. Proposed: some project is
-  seated and `$AUTH` is not usable. Alternative: a variable the supervising layer sets; it costs a
-  check the lead can switch off.
 - **O10** (R32, R35, R39). The spool's file names, what triggers collection, and which verbs write
   a lead's state and read-back into it. Proposed: left to the joint list; this page fixes the
   envelope only. A cost either way: those verbs must pass while `lead-write` is refused (R60, R61),
@@ -811,3 +873,12 @@ Every `[OPEN On]` above is listed here, for the lead to decide.
 - **O16** (R65). The supervising layer's requirements say the refusal line is the first line of
   standard error. Proposed: any line, as the design says. Alternative: the first line; it costs
   every verb that prints a warning before it is refused.
+- **O17** (R64; for the owner). What it costs to judge a verb with no project by whether a project
+  is seated. On a host with one seated project every `owner` verb that names no project is refused
+  when it is typed plainly, in the owner's own session too and also when the work is for an
+  unseated project. It has to be typed as `qargi host VERB`, which then needs the authority store
+  and the projection of a seated project. Proposed: the owner accepts that cost, because no test
+  that a sandboxed session cannot defeat tells the two callers apart. Alternative A: a variable
+  that the supervising layer sets inside a sandbox; it costs a check the lead can switch off.
+  Alternative B: the gate makes the outside proof itself and passes such a verb when it holds; it
+  costs lead-side code that opens `$AUTH`, against R10.

@@ -6,9 +6,10 @@ states the rule and the observable the test will check, and skipped with the rea
 removes the skip of the rules the slice satisfies and writes the body.
 
 `Contract` runs today and keeps the two in step: the rules are numbered from 1 without a gap, each has exactly one test and every
-test names a rule, each rule states its refusal, every reference to a rule or an open point names one that exists, every point
-marked OPEN is listed at the end with what is proposed and an alternative, and the contract names no path outside the state and
-config roots (see ROOTS below for the two exceptions that the contract itself declares).
+test names a rule, each rule states its refusal, every reference to a rule or a point names one that exists, every point
+marked OPEN is listed at the end with what is proposed and an alternative, every point that was decided is listed with the rule
+that states the decision and is open nowhere, and the contract names no path outside the state and config roots (see ROOTS below
+for the two exceptions that the contract itself declares).
 Offline. Run: python3 tests/test_seat_contract.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import os, re, unittest
@@ -30,6 +31,7 @@ SCHEMA_ID = re.compile(r"^qargi[.-][a-z-]+/\d+$")
 REPO_FILE = re.compile(r"^(lib|bin|tests|docs)/[\w./-]+$")
 FENCE = re.compile(r"^```.*?^```[ \t]*$", re.M | re.S)
 OPEN_HEADING = "## Open points"
+DECIDED_HEADING = "## Decided points"
 
 
 def contract():
@@ -62,6 +64,18 @@ def open_items(text):
     """{On: the text of its item} of the list under the heading at the end."""
     tail = text.partition(OPEN_HEADING)[2]
     parts = re.split(r"^- \*\*(O\d+)\*\*", tail, flags=re.M)
+    return {parts[i]: parts[i + 1] for i in range(1, len(parts), 2)}
+
+
+def section(text, heading):
+    """The text under a `## ` heading, up to the next one; empty when the page has no such heading."""
+    _, found, tail = text.partition("\n" + heading + "\n")
+    return tail.split("\n## ", 1)[0] if found else ""
+
+
+def decided_items(text):
+    """{On: the text of its item} of the list of the points that were open in an earlier revision and are decided."""
+    parts = re.split(r"^- \*\*(O\d+)\*\*", section(text, DECIDED_HEADING), flags=re.M)
     return {parts[i]: parts[i + 1] for i in range(1, len(parts), 2)}
 
 
@@ -135,13 +149,26 @@ class Contract(unittest.TestCase):
         missing = [n for n, block in sorted(rule_blocks(self.text).items()) if "Refusal:" not in block]
         self.assertEqual(missing, [], "rules that do not say what a violation is refused with")
 
-    def test_every_reference_names_a_rule_or_an_open_point_that_exists(self):
+    def test_every_reference_names_a_rule_or_a_point_that_exists(self):
         known = set(self.numbers)
         cited = {int(n) for n in re.findall(r"\bR(\d+)\b", self.text)}
         self.assertEqual(sorted(cited - known), [], "the contract cites rules it does not define")
-        points = set(open_items(self.text))
+        points = set(open_items(self.text)) | set(decided_items(self.text))      # a point is listed as open or as decided
         cited_points = set(re.findall(r"\bO(\d+)\b", self.text))
-        self.assertEqual(sorted(p for p in cited_points if "O" + p not in points), [], "the contract cites open points it does not list")
+        self.assertEqual(sorted(p for p in cited_points if "O" + p not in points), [], "the contract cites points it does not list")
+
+    def test_a_decided_point_names_the_rule_that_states_it_and_is_open_nowhere(self):
+        self.assertEqual(self.text.count(DECIDED_HEADING), 1, "the contract lists the points that were decided, once")
+        decided, still_open = decided_items(self.text), open_items(self.text)
+        self.assertGreater(len(decided), 0, "no decided point is listed")
+        self.assertEqual(sorted(set(decided) & set(still_open)), [], "a point is decided or open, not both")
+        for point, body in sorted(decided.items()):
+            with self.subTest(point=point):
+                self.assertRegex(body, r"\A \(R\d+(, R\d+)*\)\. Decided", "a decided point names the rules that state the decision")
+        # a decided point keeps its number: over both lists the points are numbered from one without a gap, each once
+        # (that none is still marked in a rule is the other test: a mark needs an item in the list at the end)
+        numbers = sorted(int(p[1:]) for p in list(decided) + list(still_open))
+        self.assertEqual(numbers, list(range(1, len(numbers) + 1)), "the points are numbered from one without a gap")
 
     def test_no_open_point_is_left_unlisted_at_the_end(self):
         self.assertEqual(self.text.count(OPEN_HEADING), 1)
@@ -243,7 +270,8 @@ class Seat(unittest.TestCase):
     @unbuilt(8)
     def test_R8_authority_root_is_apart(self):
         """R8: the authority root is never at or below the state root, the config root or the data root, is mode 700 and the
-        caller's, and qargi export never includes it.
+        caller's, and qargi export never includes it; a store that passes may be opened, which does not show that the caller is
+        outside a sandbox (R33 proves that).
         Observable: a broker verb exits 1 with authority-store-unsafe for a root below either root, for mode 755 and for a
         file of mode 644 inside; nothing is read or written; an export archive holds no file of it."""
 
@@ -288,9 +316,10 @@ class Seat(unittest.TestCase):
 
     @unbuilt(15)
     def test_R15_host_audit_line(self):
-        """R15: every door call, step and qargi host call appends {ts, verb, project, tx, epoch, detail, by} to the host audit,
-        refused door calls too.
-        Observable: the audit grows by one line per call, a refused assignment included."""
+        """R15: every door call, every step and every qargi host call that passed the outside proof appends {ts, verb, project,
+        tx, epoch, detail, by} to the host audit, refused door calls too; a qargi host call whose proof fails records nothing.
+        Observable: the audit grows by one line per call, a refused assignment included, and by none for a qargi host call
+        that exits 1 with host-in-sandbox."""
 
     @unbuilt(16)
     def test_R16_seat_marker(self):
@@ -329,10 +358,11 @@ class Seat(unittest.TestCase):
 
     @unbuilt(21)
     def test_R21_projection(self):
-        """R21: the projection is one file with the fields of qargi.projection/1, replaced by a rename inside its directory at
-        every step.
-        Observable: after each step the file has that shape and a new inode, no temporary file is left in the directory, and a
-        projection of another shape makes a gated verb exit 77 with seat-record-invalid."""
+        """R21: the projection is one file with the fields of qargi.projection/1, among them the rev of the seat record it was
+        written from, replaced by a rename inside its directory at every step.
+        Observable: after each step the file has that shape, a new inode and the epoch, tx and rev of the seat record, no
+        temporary file is left in the directory, and a projection of another shape makes a gated verb exit 77 with
+        seat-record-invalid."""
 
     @unbuilt(22)
     def test_R22_reserved_fields_stay_empty(self):
@@ -412,9 +442,14 @@ class Seat(unittest.TestCase):
 
     @unbuilt(33)
     def test_R33_owner_verbs_go_through_host(self):
-        """R33: qargi host appends its audit line before anything else and runs the verb only on a usable store.
-        Observable: with a usable store the audit line exists before the verb's first effect; with the store absent or unsafe
-        it exits 1 with host-in-sandbox and the verb did not run."""
+        """R33: before anything else qargi host proves that it is outside every sandbox: the authority root passes R8, a payload
+        it signs with the broker's key verifies against the signers line of the projection, and the seat record agrees with the
+        projection in epoch, tx and rev; then it appends its audit line and runs the verb. No variable, option or file stands
+        for a proof that passed.
+        Observable: with the true store the audit line exists before the verb's first effect; with a store the caller made
+        (mode 700, named in QARGI_AUTH, its own key and a copied seat record) it exits 1 with host-in-sandbox, the verb did not
+        run and no file changed; the same with the true key and a seat record whose rev is behind the projection; a verb that
+        names no project runs when the proof passes for one seated project and is refused when there is none."""
 
     # ---- the handoff protocol
 
@@ -504,10 +539,12 @@ class Seat(unittest.TestCase):
 
     @unbuilt(47)
     def test_R47_note_signature(self):
-        """R47: the broker signs the note's payload with its key; note verify checks both digests, the signature against the
+        """R47: the broker signs the note's payload with its key, and the signers line it writes into the projection names that
+        key for the namespaces qargi-handoff and qargi-host; note verify checks both digests, the signature against the
         projection's signers line, and the transfer id and version.
         Observable: note verify exits 0 on the note as written; a changed byte of either form exits 1 with
-        note-digest-mismatch; another key, transfer id or version exits 1 with note-invalid."""
+        note-digest-mismatch; another key, transfer id or version exits 1 with note-invalid; the signers line of every
+        projection lists both namespaces."""
 
     @unbuilt(48)
     def test_R48_read_back_record(self):
@@ -607,11 +644,13 @@ class Seat(unittest.TestCase):
         caretaker-denied; an owner verb exits 77 with not-assigned, not caretaker-denied."""
 
     @unbuilt(64)
-    def test_R64_condition_no_project_in_a_sandbox(self):
-        """R64: a verb that names no project, where some project is seated and the authority root is not usable, passes unless
-        its class is owner.
-        Observable: such an owner verb exits 77 with not-assigned; verbs of the other classes pass; with a usable authority
-        root the owner verb passes."""
+    def test_R64_condition_no_project_named(self):
+        """R64: a verb that names no project is answered by this condition alone: where some project under the config root is
+        seated (an answers file that cannot be read or holds an invalid marker counts as seated), it passes unless its class is
+        owner, inside a sandbox and outside; the owner runs it through qargi host.
+        Observable: with one seated project such an owner verb exits 77 with not-assigned whatever the authority root is
+        (absent, the true store, a store the caller made); verbs of the other classes pass; under qargi host with the true
+        store the owner verb runs; with no seated project every class passes."""
 
     @unbuilt(65)
     def test_R65_refusal_line(self):
@@ -690,8 +729,12 @@ class Seat(unittest.TestCase):
 
     @unbuilt(76)
     def test_R76_no_approval_from_inside(self):
-        """R76: on a seated project a verb given --approved in a sandbox is refused before it does anything.
-        Observable: each verb that takes --approved exits 1 with approval-refused and leaves no file changed."""
+        """R76: on a seated project a verb given --approved is refused before it does anything, unless a qargi host call that
+        passed the outside proof runs it.
+        Observable: typed without qargi host, each verb that takes --approved exits 1 with approval-refused and leaves no file
+        changed, with the true store present and with every variable of a qargi host call set by hand too; under qargi host
+        with the true store it is accepted; under qargi host with a store the caller made the call exits 1 with
+        host-in-sandbox."""
 
     @unbuilt(77)
     def test_R77_plan_tokens_do_not_cross(self):
