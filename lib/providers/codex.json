@@ -132,7 +132,7 @@
       "env": "CODEX_HOME",
       "dir": ".codex",
       "skills_dir": "skills",
-      "link": [{"from": "~/.codex/auth.json", "to": "auth.json"}]
+      "link": [{"from": "~/.codex-members/auth.json", "to": "auth.json"}]
     },
     "run_config": {
       "in": "home",

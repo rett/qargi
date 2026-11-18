@@ -501,6 +501,101 @@ def home_problems(home, env_pass=(), shape=True):
     return bad
 
 
+def user_dirs(doc, members=()):
+    """{label: real path}: the directories where a member run may never link, write through or lock a sign-in, for it is the place of the user's own:
+    the directory under the user's home where the runtime keeps the user-level files of its own sessions (the directory of
+    resources.instructions.user_file, of resources.skills.exclusion.file and the one that holds resources.skills.user_dir; for codex ~/.codex), ~/.codex
+    whatever the runtime (a library pack of another runtime may link into it too), and the directory the lead's own environment names in the
+    variable of the run home (dispatch.home.env) and in CODEX_HOME, where the lead's own Codex keeps its sign-in when the variable moves it from
+    ~/.codex. members: the directories the run home's own link sources name (the sign-in made for members), as absolute paths in which no link
+    is followed: a value of CODEX_HOME that, made absolute the same way (no link followed), is one of them is not forbidden for being the lead's
+    CODEX_HOME, for a lead that signs in as a member there, with CODEX_HOME set, uses the members' directory itself. A value that only resolves
+    to the same place, or a declared directory that is a link into the lead's CODEX_HOME, is not that: the exemption is for the directory named, not
+    for wherever it leads."""
+    res = (doc or {}).get("resources") if isinstance((doc or {}).get("resources"), dict) else {}
+    sk = res.get("skills") if isinstance(res.get("skills"), dict) else {}
+    ins = res.get("instructions") if isinstance(res.get("instructions"), dict) else {}
+    ex = sk.get("exclusion") if isinstance(sk.get("exclusion"), dict) else {}
+    home = os.path.realpath(os.path.expanduser("~"))
+    found = {"~/.codex": os.path.realpath(os.path.join(home, ".codex"))}
+    for v in (ins.get("user_file"), ex.get("file"), sk.get("user_dir")):
+        if isinstance(v, str) and v.startswith("~/") and _plain_relative(v[2:]) and "/" in v[2:]:
+            d = os.path.dirname(v)
+            found[d] = os.path.realpath(os.path.join(home, d[2:]))
+    disp = (doc or {}).get("dispatch") if isinstance((doc or {}).get("dispatch"), dict) else {}
+    h = disp.get("home") if isinstance(disp.get("home"), dict) else {}
+    for var in sorted({"CODEX_HOME", h.get("env") if isinstance(h.get("env"), str) else "CODEX_HOME"}):
+        val = os.environ.get(var)
+        if val:
+            if os.path.abspath(os.path.expanduser(val)) not in members:
+                found["$" + var] = os.path.realpath(os.path.expanduser(val))
+    return found
+
+
+def _source_real(frm):
+    return os.path.realpath(os.path.join(os.path.realpath(os.path.expanduser("~")), frm[2:]))
+
+
+def home_source_forbidden(doc, runtime):
+    """None, or the refusal of the first link of dispatch.home whose source resolves (a link followed; the file need not exist) inside a directory
+    of the user's own sign-in (user_dirs): ~/.codex, the directory of the user's own sessions the definition names, the lead's own CODEX_HOME. It
+    needs no file: `provider check` and `seal` ask it of any definition, shipped or of the library, and a run asks it again when it holds the lock."""
+    disp = doc.get("dispatch") if isinstance(doc, dict) else None
+    h = disp.get("home") if isinstance(disp, dict) else None
+    if not isinstance(h, dict) or not isinstance(h.get("link"), list):
+        return None
+    argv = disp.get("argv")
+    cmd = argv[0] if isinstance(argv, list) and argv and isinstance(argv[0], str) else runtime
+    for ln in h["link"]:
+        frm = ln.get("from") if isinstance(ln, dict) else None
+        if home_link_problem(frm):
+            continue                                     # a path the rules of home_problems refuse: they say so
+        real = _source_real(frm)
+        decl = os.path.dirname(frm[2:])
+        members = {os.path.abspath(os.path.join(h0, decl)) for h0 in (os.path.expanduser("~"), os.path.realpath(os.path.expanduser("~")))}   # the directory the definition names, no link of it followed (the home itself may be spelled either way)
+        for d, dreal in sorted(user_dirs(doc, members).items()):
+            if real == dreal or real.startswith(dreal + os.sep):
+                where = ("the directory your environment's %s names" % " or ".join(sorted({"CODEX_HOME", str(h.get("env"))}))) if d.startswith("$") else d
+                return ("the sign-in %s for %s member runs resolves inside %s, the directory of your own sign-in, which a member run never links, "
+                        "writes through or locks.\n%s" % (frm, runtime, where, _login_how(h, frm, cmd)))
+    return None
+
+
+def _login_how(h, frm, cmd):
+    return ("A member run signs in on its own and never uses your own sign-in. Sign in once for members, with its own directory:\n  %s=%s %s login"
+            % (h.get("env"), os.path.dirname(frm), cmd))
+
+
+def home_source_problem(doc, runtime):
+    """None, or the refusal (a message that names the path and the way to make it) of the first link of dispatch.home whose source a member
+    run may not use: a runtime's member signs in on its own (the directory of the link's source, kept for members, made by one login of
+    its own), never with the user's own sign-in, so a source that resolves inside the directory of the user's own sign-in (home_source_forbidden),
+    that does not exist (a dangling link included) or that is not a regular file is refused. The paths in the message are the declared
+    ones (~/PATH); no real path is printed. A definition without a run home, or without links, has none."""
+    why = home_source_forbidden(doc, runtime)
+    if why:
+        return why
+    disp = doc.get("dispatch") if isinstance(doc, dict) else None
+    h = disp.get("home") if isinstance(disp, dict) else None
+    if not isinstance(h, dict) or not isinstance(h.get("link"), list):
+        return None
+    argv = disp.get("argv")
+    cmd = argv[0] if isinstance(argv, list) and argv and isinstance(argv[0], str) else runtime
+    home = os.path.realpath(os.path.expanduser("~"))
+    for ln in h["link"]:
+        frm = ln.get("from") if isinstance(ln, dict) else None
+        if home_link_problem(frm):
+            continue
+        src = os.path.join(home, frm[2:])
+        real = os.path.realpath(src)
+        how = _login_how(h, frm, cmd)
+        if not os.path.lexists(src) or not os.path.exists(real):
+            return "the sign-in %s for %s member runs does not exist (a link to a missing file is the same).\n%s" % (frm, runtime, how)
+        if not os.path.isfile(real):
+            return "the sign-in %s for %s member runs is not a regular file.\n%s" % (frm, runtime, how)
+    return None
+
+
 def pack_env(home, tmp):
     """The environment pack code runs in when qargi runs it itself (the conformance harness of `provider check`): nothing of the caller's, only
     a search path of absolute entries, a home and temporary directory of the run, a locale and a clock zone. Same shape as the environment a
@@ -1406,6 +1501,10 @@ def validate2(d, name=None):
         out += [("fail", "dispatch.env_pass: %s is never handed on: %s" % (n, env_pass_problem(n))) for n in disp["env_pass"] if isinstance(n, str) and env_pass_problem(n)]
     if isinstance(disp, dict) and disp.get("home") is not None:
         out += [("fail", m) for m in home_problems(disp["home"], disp.get("env_pass") if isinstance(disp.get("env_pass"), list) else (), shape=False)]
+        if not home_problems(disp["home"], disp.get("env_pass") if isinstance(disp.get("env_pass"), list) else (), shape=False):
+            why = home_source_forbidden(d, d.get("provider") if isinstance(d.get("provider"), str) else name or "the runtime")
+            if why:
+                out.append(("fail", "dispatch.home.link: " + why.split("\n")[0]))
         if disp.get("mode") != "command":
             out.append(("fail", "dispatch.home: only a runtime that qargi local run starts (dispatch.mode command) has a run home"))
     if isinstance(disp, dict):
@@ -2530,7 +2629,8 @@ def cmd_addenda(args):
 def cmd_hidden_paths(args):
     """hidden-paths NAME SURFACE CLASS RUN TMP [--project P]: exit 2 with the refusal on standard error when the sandbox of the runtime (as the
     project composes it) would hide from a member of CLASS a path it works with in the run RUN (its clone, contract, git wrapper and OUT, which
-    need not exist yet) with the temporary directory TMP; else exit 0, silent. local prepare asks it before it makes anything."""
+    need not exist yet) with the temporary directory TMP, or, on the local surface, when a link of its run home has no sign-in a member run may
+    use (home_source_problem); else exit 0, silent. local prepare asks it before it makes anything."""
     project = None
     if len(args) == 7 and args[5] == "--project":
         project, args = args[6], args[:5]
@@ -2538,11 +2638,16 @@ def cmd_hidden_paths(args):
         print("usage: qargi provider hidden-paths NAME local|cloud read-only|write RUN TMP [--project P]", file=sys.stderr)
         return 2
     name, surface, cls, run, tmp = args
-    disp = compose(name, surface, project)["definition"].get("dispatch")
+    doc = compose(name, surface, project)["definition"]
+    disp = doc.get("dispatch")
     hits = hidden_run_paths(disp, cls, {"clone": os.path.join(run, "clone"), "contract": os.path.join(run, "contract"), "git": os.path.join(run, "git"),
                                         "out": os.path.join(run, "out"), "tmp": tmp})
     if hits:
         print("qargi: " + hidden_message(name, cls, hits, disp), file=sys.stderr)
+        return 2
+    why = home_source_problem(doc, name) if surface == "local" and not home_problems((disp or {}).get("home") if isinstance(disp, dict) else None) else None
+    if why:                                              # the sign-in of the run home's links: refused here too, before anything is made
+        print("qargi: " + why, file=sys.stderr)
         return 2
     return 0
 

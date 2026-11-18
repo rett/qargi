@@ -426,6 +426,12 @@ setprov fakecmd
 
 # --- the shipped codex runtime: the argv of each class comes from its data alone (a fake codex on PATH; nothing reaches the vendor) ----------
 cp "$T/bin/fakellm" "$T/bin/codex"
+# a member run of codex needs the members' sign-in (the file the shipped definition links, ~/.codex-members/auth.json: MEM here), and never uses the
+# user's own: ~/.codex/auth.json is a decoy with a sentinel that no run may link, write or lock
+SECRET=sk-test-$RANDOM$RANDOM-marker; OWNSECRET=owner-own-signin-$RANDOM$RANDOM; MEM=$HOME/.codex-members
+mkdir -p "$MEM" "$HOME/.codex"; printf '{"token": "%s"}\n' "$SECRET" > "$MEM/auth.json"
+printf '{"token": "%s"}\n' "$OWNSECRET" > "$HOME/.codex/auth.json"
+SUM=$(sha256sum < "$MEM/auth.json" | cut -c1-64); OWNSUM=$(sha256sum < "$HOME/.codex/auth.json" | cut -c1-64); MEMREAL=$(realpath "$MEM/auth.json")
 setprov codex; prep "$T/r" cx1; task
 out=$($DA local run "$RUN" --dry-run 2>"$T/err"); rc=$?
 want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["codex","exec","--json","--ephemeral","--ignore-rules","--strict-config","-C",$c,"-m","gpt-6.1-terra","-c","model_reasoning_effort=high","-o","FINAL","--sandbox","workspace-write","--add-dir",$o,"--add-dir",($c + "/.git")]')
@@ -502,14 +508,15 @@ prep "$T/r" cxw3; task
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -q '"workspace-write"' <<<"$out"; } && ok "and its write run is not affected" || no "codex without group, write: rc=$rc $out"
 
-# --- the run home of codex (dispatch.home): CODEX_HOME is RUN/home/.codex, the user's ~/.codex/auth.json is linked into it for the run only ---
+# --- the run home of codex (dispatch.home): CODEX_HOME is RUN/home/.codex, the members' sign-in (~/.codex-members/auth.json, MEM here) is linked into it
+# for the run only; the user's own ~/.codex is never linked, written or locked ---
 # The fake codex says where CODEX_HOME is, whether auth.json is a link and the sha256 of what it reads through it (never the content), and
 # does what $T/codex-mode says: replace the link by a file, or put a link to the user's ~/.codex in place of the run home.
 cat > "$T/bin/codex" <<SH
 #!/usr/bin/env bash
 echo "CODEX_HOME=\${CODEX_HOME-unset}"
 a=\${CODEX_HOME:-/nonexistent}/auth.json
-if [ -L "\$a" ]; then echo AUTHLINK=yes; else echo AUTHLINK=no; fi
+if [ -L "\$a" ]; then echo AUTHLINK=yes; echo "AUTHTARGET=\$(readlink -f "\$a")"; else echo AUTHLINK=no; fi
 [ ! -f "\$a" ] || echo "AUTHSUM=\$(sha256sum < "\$a" | cut -c1-64)"
 cat > /dev/null
 # the events of codex exec --json: two turns report their usage (the second without one count and with a count that is not a number);
@@ -523,6 +530,10 @@ else
   echo '{"type":"item.completed","usage":{"input_tokens":99999,"output_tokens":99999}}'
   echo '{"type":"turn.completed","usage":{"input_tokens":800,"cached_input_tokens":100,"cache_write_input_tokens":7,"output_tokens":150,"reasoning_output_tokens":true}}'
 fi
+if [ "\$(cat "$T/codex-mode" 2>/dev/null)" = hold ]; then   # a run that holds its sign-in until $T/hold-go exists
+  : > "$T/hold-ready"
+  while [ ! -e "$T/hold-go" ]; do sleep 0.1; done
+fi
 case \$(cat "$T/codex-mode" 2>/dev/null) in
   replace) rm -f "\$a"; echo 'sign-in-written-anew-v2' > "\$a";;
   through) echo 'sign-in-refreshed-in-place' > "\$a";;
@@ -534,18 +545,17 @@ esac
 exit 0
 SH
 chmod 755 "$T/bin/codex"
-SECRET=sk-test-$RANDOM$RANDOM-marker
-mkdir -p "$HOME/.codex"; printf '{"token": "%s"}\n' "$SECRET" > "$HOME/.codex/auth.json"
-SUM=$(sha256sum < "$HOME/.codex/auth.json" | cut -c1-64)
 setprov codex; prep "$T/r" hm1; task
+rm -f "$MEM/.qargi-run.lock"                                                    # an earlier run left it: a dry run makes none
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
-{ [ "$rc" = 0 ] && grep -q '^HOME_ENV=CODEX_HOME$' <<<"$out" && grep -q "^HOME_DIR=$RUN/home/.codex\$" <<<"$out" && grep -q '^HOME_LINKS=auth.json$' <<<"$out"; } \
-  && ok "codex dry run: the run home is named by CODEX_HOME, and HOME_LINKS names the link" || no "home dry run: rc=$rc $(grep '^HOME' <<<"$out")"
-{ ! grep -q "$SECRET" <<<"$out" && ! grep -qF "$HOME/.codex" <<<"$out" && [ ! -e "$RUN/home/.codex" ]; } \
-  && ok "the dry run prints no content and no source path of the link, and makes nothing" || no "home dry run printed or made: $(grep -nF -e "$SECRET" -e "$HOME/.codex" <<<"$out") $(ls -A "$RUN/home")"
+{ [ "$rc" = 0 ] && grep -q '^HOME_ENV=CODEX_HOME$' <<<"$out" && grep -q "^HOME_DIR=$RUN/home/.codex\$" <<<"$out" && grep -qxF "HOME_LINKS=auth.json<-$MEMREAL" <<<"$out"; } \
+  && ok "codex dry run: the run home is named by CODEX_HOME, and HOME_LINKS names the link and the real file it points at (the members' sign-in)" || no "home dry run: rc=$rc $(grep '^HOME' <<<"$out")"
+{ ! grep -q -e "$SECRET" -e "$OWNSECRET" <<<"$out" && ! grep -qF "$HOME/.codex/" <<<"$out" && [ ! -e "$RUN/home/.codex" ] && [ ! -e "$MEM/.qargi-run.lock" ]; } \
+  && ok "the dry run prints no content, names nothing of your own ~/.codex, and makes nothing (no home, no lock file)" || no "home dry run printed or made: $(grep -nF -e "$SECRET" -e "$HOME/.codex/" <<<"$out") $(ls -A "$RUN/home" "$MEM")"
 out=$($DA local run "$RUN" 2>&1); rc=$?; tr=$OUT/transcript
-{ [ "$rc" = 0 ] && grep -q "^CODEX_HOME=$RUN/home/.codex\$" "$tr" && grep -q '^AUTHLINK=yes$' "$tr" && grep -q "^AUTHSUM=$SUM\$" "$tr"; } \
-  && ok "a codex run sees CODEX_HOME=RUN/home/.codex with auth.json a link to the user's file" || no "home run: rc=$rc $out $(grep -E '^(CODEX_HOME|AUTH)' "$tr")"
+{ [ "$rc" = 0 ] && grep -q "^CODEX_HOME=$RUN/home/.codex\$" "$tr" && grep -q '^AUTHLINK=yes$' "$tr" && grep -q "^AUTHSUM=$SUM\$" "$tr" \
+  && grep -qxF "AUTHTARGET=$MEMREAL" "$tr" && ! grep -qF "$HOME/.codex/" "$tr"; } \
+  && ok "a codex run sees CODEX_HOME=RUN/home/.codex with auth.json a link to the members' sign-in, never to ~/.codex" || no "home run: rc=$rc $out $(grep -E '^(CODEX_HOME|AUTH)' "$tr")"
 # the usage of the run (dispatch.output.usage): the two turn.completed events are added up, field by field
 { [ "$(jq -cS .usage "$RUN/dispatch.json")" = '{"events":2,"tokens":{"cache_write_input_tokens":7,"cached_input_tokens":300,"input_tokens":2000,"output_tokens":450,"reasoning_output_tokens":50}}' ] \
   && grep -q '^USAGE=input_tokens=2000 cached_input_tokens=300 cache_write_input_tokens=7 output_tokens=450 reasoning_output_tokens=50 (2 events)$' <<<"$out"; } \
@@ -557,16 +567,16 @@ out=$($DA local run "$RUN" --again 2>&1); rc=$?
   && grep -q '^USAGE=input_tokens=10 output_tokens=2 (1 event; not reported, so not counted: cached_input_tokens,cache_write_input_tokens,reasoning_output_tokens)$' <<<"$out"; } \
   && ok "a usage count no event reports is left out and named, never recorded as 0" || no "usage unreported: rc=$rc $(jq -c .usage "$RUN/dispatch.json") $(grep '^USAGE' <<<"$out")"
 rm -f "$T/codex-mode"
-{ [ ! -e "$RUN/home/.codex/auth.json" ] && [ ! -L "$RUN/home/.codex/auth.json" ] && [ "$(sha256sum < "$HOME/.codex/auth.json" | cut -c1-64)" = "$SUM" ]; } \
+{ [ ! -e "$RUN/home/.codex/auth.json" ] && [ ! -L "$RUN/home/.codex/auth.json" ] && [ "$(sha256sum < "$MEM/auth.json" | cut -c1-64)" = "$SUM" ]; } \
   && ok "the link is removed when the run ends, and the user's file is as it was" || no "home link left: $(ls -lA "$RUN/home/.codex")"
 { [ "$(jq -c .home "$RUN/dispatch.json")" = '{"dir":".codex","env":"CODEX_HOME","left":[],"links":["auth.json"],"not_linked":[],"residue":[]}' ] \
-  && ! grep -q -e "$SECRET" -e "$HOME/.codex" "$RUN/dispatch.json" && ! grep -q "$SECRET" <<<"$out" && ! grep -qF "$HOME/.codex" <<<"$out"; } \
+  && ! grep -q -e "$SECRET" -e "$MEM" "$RUN/dispatch.json" && ! grep -q "$SECRET" <<<"$out" && ! grep -qF "$MEM" <<<"$out"; } \
   && ok "dispatch.json records the link by name; neither it nor the output holds the content or the source path" || no "home record: $(jq -c .home "$RUN/dispatch.json") $out"
 # what the runtime does to the link during the run (a sign-in refreshed) loses nothing: qargi never writes the user's file, and no value reaches an
 # output or a record
-src_is() { [ "$(cat "$HOME/.codex/auth.json")" = "$1" ] && [ "$(stat -c %a "$HOME/.codex/auth.json")" = 600 ]; }
+src_is() { [ "$(cat "$MEM/auth.json")" = "$1" ] && [ "$(stat -c %a "$MEM/auth.json")" = 600 ]; }
 noval() { ! grep -q -e "$SECRET" -e 'sign-in-' <<<"$out" && ! grep -q -e "$SECRET" -e 'sign-in-' "$RUN/dispatch.json"; }
-reset_src() { printf '{"token": "%s"}\n' "$SECRET" > "$HOME/.codex/auth.json"; chmod 600 "$HOME/.codex/auth.json"; }
+reset_src() { printf '{"token": "%s"}\n' "$SECRET" > "$MEM/auth.json"; chmod 600 "$MEM/auth.json"; }
 reset_src; HD=$RUN/home/.codex
 # an atomic replace (a file of its own renamed over the link), the source unchanged since the start: the source is not written; the runtime's file is
 # kept as auth.json.from-run (mode 600), named in HOME_RESIDUE= and home.residue, for the user to reconcile
@@ -576,8 +586,8 @@ out=$($DA local run "$RUN" --again 2>&1); rc=$?
   && [ "$(stat -c %a "$HD/auth.json.from-run")" = 600 ] \
   && grep -qF "auth.json in the run home was replaced during the run by a file of its own (a sign-in written anew, or the member's); qargi never writes it to your file. It is kept as $HD/auth.json.from-run (mode 600); your file is unchanged since the run started" <<<"$out" \
   && grep -qxF "HOME_RESIDUE=$HD/auth.json.from-run (the runtime replaced the link with a file of its own; qargi did not write it to your file: compare it with yours and reconcile it yourself)" <<<"$out" \
-  && [ "$(jq -c .home.residue "$RUN/dispatch.json")" = '["auth.json.from-run"]' ] && [ -z "$(find "$HOME/.codex" -name '.auth.json.qargi-*')" ] && noval; } \
-  && ok "atomic replace: the user's file is not written, the runtime's file is kept as auth.json.from-run (mode 600), named in the output and dispatch.json, no value" || no "home replaced: rc=$rc $out $(ls -lA "$HD" "$HOME/.codex")"
+  && [ "$(jq -c .home.residue "$RUN/dispatch.json")" = '["auth.json.from-run"]' ] && [ -z "$(find "$MEM" -name '.auth.json.qargi-*')" ] && noval; } \
+  && ok "atomic replace: the user's file is not written, the runtime's file is kept as auth.json.from-run (mode 600), named in the output and dispatch.json, no value" || no "home replaced: rc=$rc $out $(ls -lA "$HD" "$MEM")"
 # the same again: the kept file of the earlier run is replaced by this run's, and the note says so
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
 { [ "$rc" = 0 ] && [ "$(cat "$HD/auth.json.from-run")" = sign-in-written-anew-v2 ] && grep -qF "(mode 600), in place of the one an earlier run kept there; your file is unchanged" <<<"$out" \
@@ -586,7 +596,7 @@ rm -f "$HD/auth.json.from-run"
 # written through the link: the source keeps it, the link goes, a note says the source changed
 reset_src; echo through > "$T/codex-mode"
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
-{ [ "$rc" = 0 ] && [ "$(cat "$HOME/.codex/auth.json")" = sign-in-refreshed-in-place ] && [ ! -L "$HD/auth.json" ] && [ ! -e "$HD/auth.json" ] \
+{ [ "$rc" = 0 ] && [ "$(cat "$MEM/auth.json")" = sign-in-refreshed-in-place ] && [ ! -L "$HD/auth.json" ] && [ ! -e "$HD/auth.json" ] \
   && grep -q 'the source of auth.json changed during the run (written through the link' <<<"$out" && noval; } \
   && ok "write-through: the source keeps what the runtime wrote through the link, the link is removed, with a note" || no "home through: rc=$rc $out"
 # deleted: the source is untouched, a note says so
@@ -598,7 +608,7 @@ out=$($DA local run "$RUN" --again 2>&1); rc=$?
 # sign-in stays in your file and the runtime's is kept as auth.json.from-run (mode 600)
 reset_src; echo race > "$T/codex-mode"
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
-{ [ "$rc" = 0 ] && [ "$(cat "$HOME/.codex/auth.json")" = sign-in-of-the-lead-meanwhile ] && [ "$(cat "$HD/auth.json.from-run")" = sign-in-written-anew-v3 ] \
+{ [ "$rc" = 0 ] && [ "$(cat "$MEM/auth.json")" = sign-in-of-the-lead-meanwhile ] && [ "$(cat "$HD/auth.json.from-run")" = sign-in-written-anew-v3 ] \
   && [ "$(stat -c %a "$HD/auth.json.from-run")" = 600 ] && [ ! -e "$HD/auth.json" ] \
   && grep -qF "It is kept as $HD/auth.json.from-run (mode 600); your file changed since the run started (another sign-in, another run, or another program): keep yours" <<<"$out" && noval \
   && [ "$(jq -r '.home.left[0] | test("kept as")' "$RUN/dispatch.json")" = true ] && [ "$(jq -c .home.residue "$RUN/dispatch.json")" = '["auth.json.from-run"]' ]; } \
@@ -609,7 +619,7 @@ grep -qF "  residue: $HD/auth.json.from-run (a file the runtime wrote in place o
 # the window a write-back would have had: the source is written by another program while the run's end looks at the replaced file (the digest is
 # taken in the middle of it); the source keeps the newer sign-in, the replacement is kept, nothing of the source is written by qargi
 rm -f "$HD/auth.json.from-run"; reset_src; printf 'sign-in-written-anew-v4\n' > "$HD/auth.json"
-got=$(python3 -I - "$RUN" "$HOME/.codex/auth.json" <<'PY' 2>&1
+got=$(python3 -I - "$RUN" "$MEM/auth.json" <<'PY' 2>&1
 import os, sys
 sys.path.insert(0, "lib")
 import local_run as L
@@ -627,8 +637,8 @@ notes = L.clear_home(run, home, ["auth.json"])
 print(home["residue"], "kept as" in notes[0], "unchanged" in notes[0])
 PY
 )
-{ [ "$got" = "['auth.json.from-run'] True True" ] && [ "$(cat "$HOME/.codex/auth.json")" = sign-in-newer-elsewhere ] && [ "$(cat "$HD/auth.json.from-run")" = sign-in-written-anew-v4 ] \
-  && [ -z "$(find "$HOME/.codex" -name '.auth.json.qargi-*')" ]; } \
+{ [ "$got" = "['auth.json.from-run'] True True" ] && [ "$(cat "$MEM/auth.json")" = sign-in-newer-elsewhere ] && [ "$(cat "$HD/auth.json.from-run")" = sign-in-written-anew-v4 ] \
+  && [ -z "$(find "$MEM" -name '.auth.json.qargi-*')" ]; } \
   && ok "a source written after the end of the run compared it: the newer sign-in is not lost, the replacement is kept as residue" || no "home late race: $got $(ls -lA "$HD")"
 rm -f "$HD/auth.json.from-run"
 # a second name of another file in place of the link: the name is removed, the file and the source untouched
@@ -640,17 +650,20 @@ out=$($DA local run "$RUN" --again 2>&1); rc=$?
 rm -f "$T/victim-h"; reset_src
 # a CODEX_HOME of yours that is another directory: said, the value never printed
 out=$(CODEX_HOME=$T/my-codex-home $DA local run "$RUN" --dry-run 2>&1)
-{ grep -q '^NOTE=CODEX_HOME is set in your environment to another directory than the one the run home.s links come from (~/.codex): the run links ~/.codex/auth.json from there' <<<"$out" \
+{ grep -q '^NOTE=CODEX_HOME is set in your environment to another directory than the one the run home.s links come from (~/.codex-members): the run links ~/.codex-members/auth.json from there' <<<"$out" \
   && ! grep -q 'my-codex-home' <<<"$out"; } && ok "a CODEX_HOME of yours elsewhere is a note, without its value" || no "codex home note: $out"
+out=$(CODEX_HOME=$MEM $DA local run "$RUN" --dry-run 2>&1)
+! grep -q '^NOTE=CODEX_HOME is set' <<<"$out" && ok "a CODEX_HOME that is ~/.codex-members is no note" || no "codex home same: $out"
 out=$(CODEX_HOME=$HOME/.codex $DA local run "$RUN" --dry-run 2>&1)
-! grep -q '^NOTE=CODEX_HOME is set' <<<"$out" && ok "a CODEX_HOME that is ~/.codex is no note" || no "codex home same: $out"
-# a member puts a link to the user's ~/.codex in place of the run home and moves the run home: the end of the run removes nothing through the link,
-# and finds the link it made where the run home was moved, under RUN/home
+{ grep -q '^NOTE=CODEX_HOME is set in your environment to another directory' <<<"$out" && ! grep -qF "$OWNSECRET" <<<"$out"; } \
+  && ok "a CODEX_HOME that is your own ~/.codex is a note: the run still links the members' sign-in, never that one" || no "codex home own: $out"
+# a member puts a link to the directory of the sign-in in place of the run home and moves the run home: the end of the run removes nothing through the
+# link, and finds the link it made where the run home was moved, under RUN/home
 echo swap > "$T/codex-mode"
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
-{ [ "$rc" = 0 ] && [ "$(sha256sum < "$HOME/.codex/auth.json" | cut -c1-64)" = "$SUM" ] && grep -q 'not the directory the run made (a link the member put there, left in place and not followed)' <<<"$out" \
+{ [ "$rc" = 0 ] && [ "$(sha256sum < "$MEM/auth.json" | cut -c1-64)" = "$SUM" ] && grep -q 'not the directory the run made (a link the member put there, left in place and not followed)' <<<"$out" \
   && grep -qF "the link qargi made was found under $RUN/home and removed: $RUN/home/.codex.moved/auth.json" <<<"$out" && [ ! -L "$RUN/home/.codex.moved/auth.json" ]; } \
-  && ok "a run home replaced by a link to the user's directory: nothing is removed through it, the user's file stays, the moved link is found and removed" || no "home swap: rc=$rc $out; source $(ls -l "$HOME/.codex" 2>&1)"
+  && ok "a run home replaced by a link to the user's directory: nothing is removed through it, the user's file stays, the moved link is found and removed" || no "home swap: rc=$rc $out; source $(ls -l "$MEM" 2>&1)"
 rm -f "$RUN/home/.codex"; rm -rf "$RUN/home/.codex.moved"; rm -f "$T/codex-mode"
 # what a member left in the run directory before the run: a link in place of the run home is not followed, a file in place of the link is not replaced
 mkdir -p "$T/elsewhere"; ln -s "$T/elsewhere" "$RUN/home/.codex"
@@ -662,21 +675,131 @@ out=$($DA local run "$RUN" --again 2>&1); rc=$?
 { [ "$rc" = 2 ] && grep -q 'is not a link qargi made' <<<"$out" && [ "$(cat "$RUN/home/.codex/auth.json")" = planted ]; } \
   && ok "a file in place of the link is refused and left alone" || no "home planted file: rc=$rc $out"
 rm -f "$RUN/home/.codex/auth.json"
-# the source: absent (signed out: no link, a note), or a link into a credential store (refused, the message names no path)
-mv "$HOME/.codex/auth.json" "$HOME/.codex/auth.keep"
-out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
-{ [ "$rc" = 0 ] && grep -q '^HOME_LINKS=$' <<<"$out" && grep -q "^NOTE=the source of the run home's link 'auth.json' does not exist" <<<"$out"; } \
-  && ok "a source that does not exist is not linked, with a note (the runtime starts signed out)" || no "home missing source: rc=$rc $(grep -E '^(HOME|NOTE)' <<<"$out")"
-mkdir -p "$HOME/.ssh"; echo key > "$HOME/.ssh/id_test"; ln -s "$HOME/.ssh/id_test" "$HOME/.codex/auth.json"
+# the source of the members' sign-in: a link into a credential store is refused (the message names no path); the refusals of a source that is
+# missing, not a regular file or inside ~/.codex are tested below, with prepare
+mv "$MEM/auth.json" "$MEM/auth.keep"
+mkdir -p "$HOME/.ssh"; echo key > "$HOME/.ssh/id_test"; ln -s "$HOME/.ssh/id_test" "$MEM/auth.json"
 out=$($DA local run "$RUN" --again 2>&1); rc=$?
 { [ "$rc" = 2 ] && grep -q "the source of 'auth.json' is refused: it resolves into qargi's own directories or a credential store" <<<"$out" && ! grep -qF "$HOME" <<<"$out" && [ ! -e "$RUN/home/.codex/auth.json" ]; } \
   && ok "a source that is a link into the user's ssh keys is refused, without naming where it resolves" || no "home source into .ssh: rc=$rc $out"
-rm -f "$HOME/.codex/auth.json"; rm -rf "$HOME/.ssh"; mv "$HOME/.codex/auth.keep" "$HOME/.codex/auth.json"
+rm -f "$MEM/auth.json"; rm -rf "$HOME/.ssh"; mv "$MEM/auth.keep" "$MEM/auth.json"
 # a definition whose run home breaks a rule is refused before anything runs (the rules are provider.home_problems, tested in test_provider.py)
 mk codexbad "$(jq '.provider = "codexbad" | del(.resources.contract_addenda) | .dispatch.home.link[0].from = "~/.ssh/id_ed25519"' "$CX")"
 setprov codexbad; prep "$T/r" hm2; task
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
 { [ "$rc" = 2 ] && grep -q "never linked into a run: the user's ssh keys" <<<"$out" && ! grep -q '^ARGV=' <<<"$out"; } && ok "a run home that links an ssh key is refused" || no "home bad definition: rc=$rc $out"
+
+# --- the members' sign-in (the link source of dispatch.home): a member run never uses, writes through or locks the user's own ~/.codex. ---
+# The source is refused (exit 2) by local prepare, before it makes anything, and by local run, before it starts anything, when it does not exist,
+# is not a regular file, or resolves inside ~/.codex; each message names the path and the one-line login that makes it.
+LOGIN='  CODEX_HOME=~/.codex-members codex login'; DECL=\~/.codex-members/auth.json; SRN=0
+nmade() { ls -d "$T"/qargi* 2>/dev/null | wc -l; }
+setprov codex; prep "$T/r" sr0; task; SR=$RUN
+refused() { # LABEL EXPECTED-TEXT: prepare and run (a dry run and a real one) refuse, name the path and the login, and make or start nothing
+  local n0 out rc; n0=$(nmade); SRN=$((SRN + 1))
+  out=$($DA local prepare --repo "$T/r" --base main --slug "sr$SRN" --scratch "$T" 2>&1); rc=$?
+  { [ "$rc" = 2 ] && grep -qF "$2" <<<"$out" && grep -qF "$DECL" <<<"$out" && grep -qxF "$LOGIN" <<<"$out" && [ "$(nmade)" = "$n0" ] && ! grep -q Traceback <<<"$out"; } \
+    && ok "$1: local prepare refuses (exit 2), names ~/.codex-members/auth.json and the login, and makes nothing" || no "$1 prepare: rc=$rc $out"
+  out=$($DA local run "$SR" --dry-run 2>&1); rc=$?
+  { [ "$rc" = 2 ] && grep -qF "$2" <<<"$out" && grep -qxF "$LOGIN" <<<"$out" && ! grep -q '^ARGV=' <<<"$out"; } \
+    && ok "$1: a dry run refuses the same way" || no "$1 dry run: rc=$rc $out"
+  out=$($DA local run "$SR" 2>&1); rc=$?
+  { [ "$rc" = 2 ] && grep -qF "$2" <<<"$out" && grep -qxF "$LOGIN" <<<"$out" && [ ! -e "$SR/out/transcript" ] && [ ! -e "$SR/home/.codex" ] && [ ! -e "$HOME/.codex/.qargi-run.lock" ]; } \
+    && ok "$1: local run refuses (exit 2): no member started, no run home, no lock in ~/.codex" || no "$1 run: rc=$rc $out $(ls -A "$SR/out" "$SR/home")"
+}
+mv "$MEM/auth.json" "$MEM/auth.keep"
+refused "a missing sign-in" "does not exist"
+ln -s "$MEM/nowhere.json" "$MEM/auth.json"
+refused "a dangling link as the sign-in" "does not exist"
+rm -f "$MEM/auth.json"; mkdir "$MEM/auth.json"
+refused "a directory as the sign-in" "is not a regular file"
+rmdir "$MEM/auth.json"; ln -s "$HOME/.codex/auth.json" "$MEM/auth.json"
+refused "a sign-in that is a link into ~/.codex" "resolves inside ~/.codex"
+rm -f "$MEM/auth.json"; mv "$MEM" "$MEM.keep"; ln -s "$HOME/.codex" "$MEM"
+refused "a members' directory that is ~/.codex" "resolves inside ~/.codex"
+rm -f "$MEM"; mv "$MEM.keep" "$MEM"; mv "$MEM/auth.keep" "$MEM/auth.json"
+{ [ "$(sha256sum < "$HOME/.codex/auth.json" | cut -c1-64)" = "$OWNSUM" ] && [ "$(ls -A "$HOME/.codex")" = auth.json ]; } \
+  && ok "the user's own ~/.codex is as it was after the refusals: the file unchanged, nothing added (no lock file)" || no "own codex touched: $(ls -lA "$HOME/.codex")"
+out=$($DA local prepare --repo "$T/r" --base main --slug srok --scratch "$T" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q '^RUN=' <<<"$out"; } && ok "with the members' sign-in in place, prepare is as before" || no "prepare with the sign-in: rc=$rc $out"
+
+# the user's own sign-in is never linked, written or changed by a run, whatever the runtime does to its link: its sha256 before and after
+reset_src; echo through > "$T/codex-mode"
+out=$($DA local run "$SR" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(cat "$MEM/auth.json")" = sign-in-refreshed-in-place ] && [ "$(sha256sum < "$HOME/.codex/auth.json" | cut -c1-64)" = "$OWNSUM" ] \
+  && grep -qxF "AUTHTARGET=$MEMREAL" "$SR/out/transcript" && ! grep -q "$OWNSECRET" "$SR/out/transcript" "$SR/dispatch.json" && ! grep -q "$OWNSECRET" <<<"$out" && [ "$(ls -A "$HOME/.codex")" = auth.json ]; } \
+  && ok "a run that writes through the link changes the members' sign-in only: the sha256 of ~/.codex/auth.json is the same before and after, and it was never linked" \
+  || no "own sign-in after a write-through run: rc=$rc $out"
+rm -f "$T/codex-mode"; reset_src
+
+# the lock: the runs that share a sign-in run one at a time. One holds its member ($T/codex-mode hold, until $T/hold-go exists); the second says it
+# waits and starts no member until the first has ended.
+LOCKF=$MEM/.qargi-run.lock
+rm -f "$T/hold-go" "$T/hold-ready"; echo hold > "$T/codex-mode"
+prep "$T/r" lk1; task; LK1=$RUN; prep "$T/r" lk2; task; LK2=$RUN; prep "$T/r" lk3; task; LK3=$RUN
+( $DA local run "$LK1" > "$T/lk1.out" 2>&1; echo $? > "$T/lk1.rc" ) &
+wait_until '[ -e "$T/hold-ready" ]' 30
+{ [ -e "$T/hold-ready" ] && [ "$(stat -c %a "$LOCKF")" = 600 ] && ! flock -n "$LOCKF" true && [ ! -e "$HOME/.codex/.qargi-run.lock" ]; } \
+  && ok "a codex run holds an exclusive lock on .qargi-run.lock beside the members' sign-in (mode 600) for as long as it runs, and none in ~/.codex" || no "lock held: $(ls -lA "$MEM") $(cat "$T/lk1.out")"
+( $DA local run "$LK2" > "$T/lk2.out" 2>&1; echo $? > "$T/lk2.rc" ) &
+wait_until 'grep -q "waiting for it to end" "$T/lk2.out"' 30
+sleep 1
+{ grep -qxF 'qargi: note: another codex member run holds the lock ~/.codex-members/.qargi-run.lock (one run at a time per sign-in); waiting for it to end' "$T/lk2.out" \
+  && [ ! -s "$T/lk2.rc" ] && [ ! -e "$LK2/out/transcript" ] && [ ! -e "$LK2/home/.codex/auth.json" ] && [ "$(jq -r .outcome "$LK2/dispatch.json")" = running ] && ! grep -qF "$HOME" "$T/lk2.out"; } \
+  && ok "a second run waits with a printed notice: its member is not started and its run home holds no link while the first runs" || no "second run waits: $(cat "$T/lk2.out") $(ls -A "$LK2/out" "$LK2/home")"
+# a signal ends the wait: the run is interrupted, holds nothing, and the first run goes on
+( $DA local run "$LK3" > "$T/lk3.out" 2>&1; echo $? > "$T/lk3.rc" ) &
+wait_until 'grep -q "waiting for it to end" "$T/lk3.out"' 30
+kill -TERM "$(jq -r .runner "$LK3/dispatch.json")"; wait_until '[ -s "$T/lk3.rc" ]' 30
+{ [ "$(cat "$T/lk3.rc")" = 143 ] && grep -q '^OUTCOME=interrupted' "$T/lk3.out" && [ ! -e "$LK3/out/transcript" ] && [ ! -s "$T/lk1.rc" ] && ! flock -n "$LOCKF" true; } \
+  && ok "SIGTERM while waiting for the lock ends that run as interrupted (no member started); the run that holds the lock is not disturbed" || no "interrupt while waiting: rc=$(cat "$T/lk3.rc") $(cat "$T/lk3.out")"
+: > "$T/hold-go"
+wait_until '[ -s "$T/lk1.rc" ] && [ -s "$T/lk2.rc" ]' 60; wait
+{ [ "$(cat "$T/lk1.rc")" = 0 ] && [ "$(cat "$T/lk2.rc")" = 0 ] && [ -s "$LK2/out/transcript" ] && grep -q '^AUTHLINK=yes$' "$LK2/out/transcript" \
+  && grep -qxF 'qargi: note: the lock ~/.codex-members/.qargi-run.lock is free; the run starts' "$T/lk2.out" && grep -q '^OUTCOME=ok' "$T/lk2.out" && flock -n "$LOCKF" true \
+  && [ "$(sha256sum < "$HOME/.codex/auth.json" | cut -c1-64)" = "$OWNSUM" ]; } \
+  && ok "when the first run ends the second starts and ends ok, the lock is free again, and ~/.codex is untouched" || no "second run after the first: $(cat "$T/lk1.rc" "$T/lk2.rc") $(cat "$T/lk2.out")"
+rm -f "$T/codex-mode" "$T/hold-go" "$T/hold-ready" "$T/lk1.rc" "$T/lk2.rc" "$T/lk3.rc"
+# a directory that cannot be written: the lock cannot be made, so the run is refused with the reason, never started without it
+if [ "$(id -u)" != 0 ]; then
+  rm -f "$LOCKF"; chmod 500 "$MEM"; prep "$T/r" lk4; task
+  out=$($DA local run "$RUN" 2>&1); rc=$?
+  chmod 700 "$MEM"
+  { [ "$rc" = 2 ] && grep -qF 'codex member runs that share the sign-in run one at a time and an unlocked run is never started: the lock file ~/.codex-members/.qargi-run.lock cannot be made or opened (Permission denied)' <<<"$out" \
+    && [ ! -e "$OUT/transcript" ] && [ "$(jq -r .outcome "$RUN/dispatch.json")" = refused ] && [ ! -e "$LOCKF" ] && [ ! -e "$RUN/home/.codex/auth.json" ]; } \
+    && ok "a members' directory that cannot be written: the run is refused (exit 2) with the reason, and no member is started without the lock" || no "lock not writable: rc=$rc $out"
+else ok "a members' directory that cannot be written: skipped (running as root, a mode does not refuse the write)"; fi
+# the sign-in is checked again when the lock is taken: a run waits for the lock without a bound, and the file at the declared path can be swapped in that
+# time for a link into the user's own ~/.codex. The run that waited is refused (exit 2), starts no member, links nothing and writes nothing there.
+rm -f "$T/hold-go" "$T/hold-ready" "$T/sw1.rc" "$T/sw2.rc"; echo hold > "$T/codex-mode"
+prep "$T/r" sw1; task; SW1=$RUN; prep "$T/r" sw2; task; SW2=$RUN
+( $DA local run "$SW1" > "$T/sw1.out" 2>&1; echo $? > "$T/sw1.rc" ) &
+wait_until '[ -e "$T/hold-ready" ]' 30
+( $DA local run "$SW2" > "$T/sw2.out" 2>&1; echo $? > "$T/sw2.rc" ) &
+wait_until 'grep -q "waiting for it to end" "$T/sw2.out"' 30
+mv "$MEM/auth.json" "$MEM/auth.orig"; ln -s "$HOME/.codex/auth.json" "$MEM/auth.json"
+: > "$T/hold-go"
+wait_until '[ -s "$T/sw1.rc" ] && [ -s "$T/sw2.rc" ]' 60; wait
+rm -f "$MEM/auth.json"; mv "$MEM/auth.orig" "$MEM/auth.json"; rm -f "$T/codex-mode" "$T/hold-go" "$T/hold-ready"
+{ [ "$(cat "$T/sw2.rc")" = 2 ] && grep -q 'resolves inside ~/.codex' "$T/sw2.out" && grep -qxF "$LOGIN" "$T/sw2.out" && [ ! -e "$SW2/out/transcript" ] \
+  && [ ! -e "$SW2/home/.codex/auth.json" ] && [ "$(jq -r .outcome "$SW2/dispatch.json")" = refused ] && ! grep -q "$OWNSECRET" "$T/sw2.out" \
+  && [ "$(sha256sum < "$HOME/.codex/auth.json" | cut -c1-64)" = "$OWNSUM" ] && [ "$(ls -A "$HOME/.codex")" = auth.json ]; } \
+  && ok "a sign-in swapped for a link into ~/.codex while the run waited for the lock: the run is refused (exit 2) when it holds it, nothing is linked or started, ~/.codex is as it was" \
+  || no "swap during the lock wait: rc=$(cat "$T/sw2.rc") $(cat "$T/sw2.out") $(ls -lA "$HOME/.codex" "$SW2/home" 2>&1)"
+# the same swap to a file of the members' directory that is another file: the run is refused, not linked to a file it did not check
+rm -f "$T/hold-go" "$T/hold-ready" "$T/sw1.rc" "$T/sw2.rc"; echo hold > "$T/codex-mode"
+prep "$T/r" sw3; task; SW3=$RUN; prep "$T/r" sw4; task; SW4=$RUN
+( $DA local run "$SW3" > "$T/sw3.out" 2>&1; echo $? > "$T/sw1.rc" ) &
+wait_until '[ -e "$T/hold-ready" ]' 30
+( $DA local run "$SW4" > "$T/sw4.out" 2>&1; echo $? > "$T/sw2.rc" ) &
+wait_until 'grep -q "waiting for it to end" "$T/sw4.out"' 30
+printf '{"token": "other"}\n' > "$MEM/other.json"; mv "$MEM/auth.json" "$MEM/auth.orig"; ln -s "$MEM/other.json" "$MEM/auth.json"
+: > "$T/hold-go"
+wait_until '[ -s "$T/sw1.rc" ] && [ -s "$T/sw2.rc" ]' 60; wait
+rm -f "$MEM/auth.json" "$MEM/other.json"; mv "$MEM/auth.orig" "$MEM/auth.json"; rm -f "$T/codex-mode" "$T/hold-go" "$T/hold-ready" "$T/sw1.rc" "$T/sw2.rc"
+{ [ "$(cat "$T/sw4.out" | grep -c 'resolves elsewhere than when the run was planned')" = 1 ] && [ ! -e "$SW4/out/transcript" ] && [ ! -e "$SW4/home/.codex/auth.json" ] \
+  && grep -qF "$DECL" "$T/sw4.out" && ! grep -qF "$MEM/other.json" "$T/sw4.out"; } \
+  && ok "a sign-in that came to resolve elsewhere while the run waited: refused (nothing linked), the message names the declared path only" || no "swap to another file: $(cat "$T/sw4.out")"
 
 # --- the configuration file of a codex run (dispatch.run_config): CODEX_HOME/config.toml in the run home, with the baseline of the definition in every
 # run and, for the run's role (the lead's registry) and class, the tools a member may call in each server's enabled_tools. The dry run names the file,
@@ -786,7 +909,6 @@ out=$($DA local run "$RUN" --again 2>&1); rc=$?
 setprov fakecfg; prep "$T/r" mc6; task
 out=$($DA local run "$RUN" --dry-run 2>&1)
 { ! grep -q -- '--mcp-file' <<<"$(arg0 <<<"$out")" && grep -q '^RUN_CONFIG=none' <<<"$out" && ! grep -q '^RUN_CONFIG_BASELINE=' <<<"$out"; } && ok "and without a baseline or a tool for the role the flag is left out" || no "fakecfg none: $out"
-rm -rf "$HOME/.codex"
 rm -f "$T/bin/codex"
 # without the fake, the first codex on PATH is the stub of tests/hermetic.sh: a real codex installed on the machine never runs in a test
 out=$(codex exec 2>&1); rc=$?
@@ -1118,7 +1240,7 @@ rm -f "$T/gitdir-ran"
 # --- however a run ends, the member's processes are stopped, the run home's link is removed and dispatch.json says how it ended (synthetic sign-in) ---
 # The fake codex records its pid and starts a child in its process group, then waits ($T/ir-mode: wait, quick to end at once, or stubborn: its child
 # ignores TERM, while the fake codex itself ends on it). The signal goes to the runner, whose pid the start record in dispatch.json names.
-mkdir -p "$HOME/.codex"; printf '{"token": "sk-test-%s-interrupt"}\n' "$RANDOM" > "$HOME/.codex/auth.json"; ISUM=$(sha256sum < "$HOME/.codex/auth.json")
+mkdir -p "$MEM"; printf '{"token": "sk-test-%s-interrupt"}\n' "$RANDOM" > "$MEM/auth.json"; ISUM=$(sha256sum < "$MEM/auth.json")
 cat > "$T/bin/codex" <<SH
 #!/usr/bin/env bash
 cat > /dev/null
@@ -1152,7 +1274,7 @@ ir_after() { # SIGNAL CODE: the run ended interrupted by SIGNAL with exit CODE, 
   wait_until '[ -s "$T/ir.rc" ]' 30
   { [ "$(cat "$T/ir.rc")" = "$2" ] && grep -q "^OUTCOME=interrupted (SIG$1: the member's process group was stopped)\$" "$T/ir.out" \
     && [ "$(jq -c '[.outcome, .signal]' "$RUN/dispatch.json")" = "[\"interrupted\",\"SIG$1\"]" ] && gone "$(cat "$T/ir-member")" && gone "$(cat "$T/ir-child")" \
-    && [ ! -e "$LINK" ] && [ ! -L "$LINK" ] && [ "$(sha256sum < "$HOME/.codex/auth.json")" = "$ISUM" ] && ! grep -q 'interrupt"' "$T/ir.out" "$RUN/dispatch.json"; } \
+    && [ ! -e "$LINK" ] && [ ! -L "$LINK" ] && [ "$(sha256sum < "$MEM/auth.json")" = "$ISUM" ] && ! grep -q 'interrupt"' "$T/ir.out" "$RUN/dispatch.json"; } \
     && ok "SIG$1 to the runner: the member and its child are stopped, the run home's link is removed, dispatch.json says interrupted (exit $2)" \
     || no "SIG$1: rc=$(cat "$T/ir.rc" 2>/dev/null) $(cat "$T/ir.out") $(jq -c . "$RUN/dispatch.json") link=$(ls -lA "$RUN/home/.codex" 2>&1)"
   for p in "$T/ir-member" "$T/ir-child"; do [ ! -s "$p" ] || kill -KILL "$(cat "$p")" 2>/dev/null; done
@@ -1279,10 +1401,13 @@ if ir_start; then
   kill -KILL "$(jq -r .runner "$RUN/dispatch.json")"; wait_until '[ -s "$T/ir.rc" ]' 30
   kill -TERM -- -"$(cat "$T/ir-member")"; wait_until 'gone "$(cat "$T/ir-member")"' 10
   ir2=$RUN; out=$($DA local clean "$RUN" --discard 2>&1); rc=$?
-  { [ "$rc" = 0 ] && [ ! -e "$ir2" ] && grep -qF "removed with the run what its run home held: $LINK (a link a start" <<<"$out" && [ "$(sha256sum < "$HOME/.codex/auth.json")" = "$ISUM" ]; } \
+  { [ "$rc" = 0 ] && [ ! -e "$ir2" ] && grep -qF "removed with the run what its run home held: $LINK (a link a start" <<<"$out" && [ "$(sha256sum < "$MEM/auth.json")" = "$ISUM" ]; } \
     && ok "local clean --discard removes a SIGKILLed run with its link (the link only: the sign-in file is untouched)" || no "sigkill clean: rc=$rc $out"
 else no "SIGKILL 2: the member did not start: $(cat "$T/ir.out")"; fi
-rm -f "$T/ir-child" "$T/ir-member" "$T/ir.rc" "$T/ir.out" "$T/ir-mode" "$T/bin/codex"; rm -rf "$HOME/.codex"
+rm -f "$T/ir-child" "$T/ir-member" "$T/ir.rc" "$T/ir.out" "$T/ir-mode" "$T/bin/codex"; rm -rf "$MEM"
+{ [ "$(sha256sum < "$HOME/.codex/auth.json" | cut -c1-64)" = "$OWNSUM" ] && [ ! -e "$HOME/.codex/.qargi-run.lock" ]; } \
+  && ok "after every codex run of this file the user's own ~/.codex/auth.json is byte for byte as it was, and no lock file is in ~/.codex" || no "own codex sign-in changed: $(ls -lA "$HOME/.codex")"
+rm -rf "$HOME/.codex"
 
 # --- an in-session runtime is not started here ----------------------------------------------------------------------------------------
 prep "$T/r2" c1; task
@@ -1438,6 +1563,7 @@ from attempt_fixture import wire, attempt
 wire(L)
 run = os.path.realpath(sys.argv[2])
 build, write, stop, clear_home, groups = L.build, L.write_private, L.kill_group, L.clear_home, L.group_left
+L.recheck_source = lambda home, to, real: None   # the home below is made by hand with sources outside any home: this case is about the cleanup, not the rules of a source
 source = os.path.join(run, "signin-fixture")
 secret = "fixture-credential-never-record"
 with open(source, "w") as f:

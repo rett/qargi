@@ -80,6 +80,12 @@ class Integration(unittest.TestCase):
         self.env = dict(os.environ, QARGI_CONF=str(self.conf), QARGI_STATE=str(self.state),
                         QARGI_RUN_TMP=str(self.root), PATH=str(self.bin) + os.pathsep + os.environ["PATH"])
         self.env.pop("CODEX_HOME", None)
+        # A member run of the shipped codex definition links the members' sign-in (~/.codex-members/auth.json) and refuses a run without it:
+        # the tests' home is their own, with a sign-in of nothing in it.
+        self.home = self.root / "home"
+        (self.home / ".codex-members").mkdir(parents=True)
+        (self.home / ".codex-members/auth.json").write_text("fixture sign-in\n")
+        self.env["HOME"] = str(self.home)
         # Attribution assertions must use the fixture's configured identity.
         for key in list(self.env):
             if key.startswith(("GIT_AUTHOR_", "GIT_COMMITTER_")):

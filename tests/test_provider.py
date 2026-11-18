@@ -3114,7 +3114,7 @@ class RunHome(LibraryBase):
         return fake_runtime(dispatch=dict(self.CMD, home=home, **disp))
 
     def test_the_codex_runtime_links_only_its_sign_in(self):
-        self.assertEqual(shipped("codex.json")["dispatch"]["home"], {"env": "CODEX_HOME", "dir": ".codex", "skills_dir": "skills", "link": [{"from": "~/.codex/auth.json", "to": "auth.json"}]})
+        self.assertEqual(shipped("codex.json")["dispatch"]["home"], {"env": "CODEX_HOME", "dir": ".codex", "skills_dir": "skills", "link": [{"from": "~/.codex-members/auth.json", "to": "auth.json"}]})
         self.assertEqual(P.home_problems(shipped("codex.json")["dispatch"]["home"]), [])
         self.assertEqual(fails(self.with_home({"env": "FAKECLI_HOME", "dir": ".fakecli"}), "fakecli"), [])                 # link is optional
 
@@ -3177,6 +3177,105 @@ class RunHome(LibraryBase):
         self.assertEqual(rc, 1, (out, err))
         self.assertIn("FAIL: dispatch.home.link[0].from: '~/.ssh/id_ed25519' is never linked into a run", out)
         self.assertFalse(self.stored("fakecli"))
+
+
+    def link_from(self, frm, env="FAKECLI_HOME"):
+        return self.with_home({"env": env, "dir": ".f", "link": [{"from": frm, "to": "auth.json"}]})
+
+    def test_a_link_source_in_the_users_own_codex_directory_is_refused_for_any_runtime(self):
+        """A shipped definition or a library pack, whatever its runtime: a source that resolves into ~/.codex never reaches a member run. The definition
+        check (provider check, seal, import) and the run ask the same function; the file need not exist."""
+        for frm in ("~/.codex/auth.json", "~/.codex/sub/token.json"):
+            with self.subTest(frm):
+                f = fails(self.link_from(frm), "fakecli")
+                self.assertTrue(any("dispatch.home.link: the sign-in %s for fakecli member runs resolves inside ~/.codex" % frm in m for m in f), f)
+                self.assertIn("resolves inside ~/.codex", P.home_source_problem(self.link_from(frm), "fakecli"))
+                self.assertIn("resolves inside ~/.codex", P.home_source_forbidden(self.link_from(frm), "fakecli"))
+        self.assertEqual([m for m in fails(self.link_from("~/.codex-members/auth.json"), "fakecli") if "dispatch.home" in m], [])
+        self.assertEqual([m for m in fails(self.link_from("~/.fakecli/auth.json"), "fakecli") if "dispatch.home" in m], [])
+        self.assertIsNone(P.home_source_forbidden(self.link_from("~/.fakecli/auth.json"), "fakecli"))
+
+    def test_a_link_that_leads_into_the_users_own_codex_directory_is_refused(self):
+        os.makedirs(os.path.join(self.home, ".codex"))
+        os.makedirs(os.path.join(self.home, "elsewhere"))
+        os.symlink(os.path.join(self.home, ".codex", "auth.json"), os.path.join(self.home, "elsewhere", "auth.json"))
+        os.symlink(os.path.join(self.home, ".codex"), os.path.join(self.home, "dir-link"))
+        for frm in ("~/elsewhere/auth.json", "~/dir-link/auth.json"):
+            with self.subTest(frm):
+                self.assertIn("resolves inside ~/.codex", P.home_source_forbidden(self.link_from(frm), "fakecli") or "")
+                self.assertTrue(any("resolves inside ~/.codex" in m for m in fails(self.link_from(frm), "fakecli")))
+
+    def test_a_link_source_in_the_leads_own_codex_home_is_refused_unless_it_is_the_members_directory(self):
+        lead = os.path.join(self.home, "my-codex")
+        os.makedirs(os.path.join(lead, "sub"))
+        os.makedirs(os.path.join(self.home, "members"))
+        os.symlink(os.path.join(lead, "auth.json"), os.path.join(self.home, "members", "auth.json"))     # the file the definition names leads into the lead's directory
+        d = self.link_from("~/members/auth.json")
+        sub = self.link_from("~/my-codex/sub/auth.json")
+        self.assertIsNone(P.home_source_forbidden(d, "fakecli"))                                         # not the lead's CODEX_HOME while it is not set
+        self.assertIsNone(P.home_source_forbidden(sub, "fakecli"))
+        with mock.patch.dict(os.environ, {"CODEX_HOME": lead}):
+            for dd, frm in ((d, "~/members/auth.json"), (sub, "~/my-codex/sub/auth.json")):
+                why = P.home_source_forbidden(dd, "fakecli")
+                self.assertIn("the sign-in %s for fakecli member runs resolves inside the directory your environment's CODEX_HOME or FAKECLI_HOME names" % frm, why)
+                self.assertNotIn(lead, why)                                                               # the declared path, never the value
+                self.assertTrue(any("dispatch.home.link: the sign-in %s" % frm in m for m in fails(dd, "fakecli")), fails(dd, "fakecli"))
+                self.assertIn("resolves inside", P.home_source_problem(dd, "fakecli"))
+            self.assertIsNone(P.home_source_forbidden(self.link_from("~/.codex-members/auth.json"), "fakecli"))   # another directory: not forbidden
+            self.assertIsNone(P.home_source_forbidden(self.link_from("~/my-codex/auth.json"), "fakecli"))         # the lead's directory is the members' one
+        with mock.patch.dict(os.environ, {"FAKECLI_HOME": lead}):                                         # the variable of the run home counts as well
+            self.assertIn("resolves inside", P.home_source_forbidden(d, "fakecli") or "")
+        os.symlink(lead, os.path.join(self.home, "lead-link"))                                            # CODEX_HOME may be a link: its real path counts
+        with mock.patch.dict(os.environ, {"CODEX_HOME": os.path.join(self.home, "lead-link")}):
+            self.assertIn("resolves inside", P.home_source_forbidden(d, "fakecli") or "")
+
+    def test_a_declared_directory_that_is_a_link_to_the_leads_codex_home_is_refused(self):
+        lead = os.path.join(self.home, "leadcodex")
+        os.makedirs(lead)
+        with open(os.path.join(lead, "auth.json"), "w") as f:
+            f.write("x\n")
+        os.symlink(lead, os.path.join(self.home, ".codex-members"))                                       # the directory the definition names leads into the lead's
+        d = self.link_from("~/.codex-members/auth.json")
+        self.assertIsNone(P.home_source_forbidden(d, "fakecli"))                                          # not the lead's CODEX_HOME while it is not set
+        with mock.patch.dict(os.environ, {"CODEX_HOME": lead}):
+            why = P.home_source_forbidden(d, "fakecli")
+            self.assertIn("the sign-in ~/.codex-members/auth.json for fakecli member runs resolves inside the directory your environment's CODEX_HOME", why or "")
+            self.assertNotIn(lead, why)
+            self.assertIn("resolves inside", P.home_source_problem(d, "fakecli") or "")
+            self.assertTrue(any("dispatch.home.link: the sign-in ~/.codex-members/auth.json" in m for m in fails(d, "fakecli")), fails(d, "fakecli"))
+        with mock.patch.dict(os.environ, {"CODEX_HOME": os.path.join(self.home, ".codex-members")}):      # named by its own (declared) spelling: the members' directory itself
+            self.assertIsNone(P.home_source_forbidden(d, "fakecli"))
+        with mock.patch.dict(os.environ, {"CODEX_HOME": os.path.join(self.home, "x", "..", ".codex-members") + os.sep}):   # made absolute without a link followed
+            self.assertIsNone(P.home_source_forbidden(d, "fakecli"))
+
+    def test_a_library_pack_with_such_a_source_is_refused_at_import_and_at_check(self):
+        rc, out, err = self.q("import", self.source(doc=self.link_from("~/.codex/auth.json")))
+        self.assertEqual(rc, 1, (out, err))
+        self.assertIn("FAIL: dispatch.home.link: the sign-in ~/.codex/auth.json for fakecli member runs resolves inside ~/.codex", out)
+        self.assertFalse(self.stored("fakecli"))
+        lead = os.path.join(self.home, "my-codex")                                                       # a pack that is fine until the lead's environment says otherwise
+        os.makedirs(os.path.join(lead, "sub"))
+        self.import_pack(self.source(doc=self.link_from("~/my-codex/sub/auth.json")))
+        self.assertEqual(self.q("check", "fakecli")[0], 0)
+        self.env["CODEX_HOME"] = lead
+        rc, out, err = self.q("check", "fakecli")
+        self.assertEqual(rc, 1, (out, err))
+        self.assertIn("fail: dispatch.home.link: the sign-in ~/my-codex/sub/auth.json for fakecli member runs resolves inside the directory your environment's CODEX_HOME", out)
+        self.assertNotIn(lead, out)
+
+    def test_hidden_paths_refuses_a_library_runtime_whose_source_is_in_the_leads_codex_home(self):
+        lead = os.path.join(self.home, "my-codex")
+        os.makedirs(os.path.join(lead, "sub"))
+        with open(os.path.join(lead, "sub", "auth.json"), "w") as f:
+            f.write("x\n")
+        self.import_pack(self.source(doc=self.link_from("~/my-codex/sub/auth.json")))
+        args = ["hidden-paths", "fakecli", "local", "write", "/srv/scratch/qargi.XXXXXX", "/srv/t"]
+        self.assertEqual(self.q(*args)[0], 0)
+        self.env["CODEX_HOME"] = lead
+        rc, out, err = self.q(*args)
+        self.assertEqual(rc, 2, (out, err))
+        self.assertIn("resolves inside the directory your environment's CODEX_HOME", err)
+        self.assertNotIn(lead, err)
 
 
 class OutputUsage(unittest.TestCase):
@@ -3312,8 +3411,16 @@ class HiddenPaths(unittest.TestCase):
         self.assertNotIn("QARGI_RUN_TMP", only_run)
 
     def test_codex_refuses_a_run_under_dev_shm_except_a_write_run_whose_tmp_alone_is_there(self):
+        home = tempfile.mkdtemp(prefix="home.")          # the members' sign-in the shipped codex links: without it hidden-paths refuses (the case below this one)
+        self.addCleanup(shutil.rmtree, home, True)
+        os.makedirs(os.path.join(home, ".codex-members"))
+        with open(os.path.join(home, ".codex-members", "auth.json"), "w") as f:
+            f.write("x\n")
+        env = {k: v for k, v in os.environ.items() if k != "CODEX_HOME"}
+        env["HOME"] = home
+
         def cli(*a):
-            r = subprocess.run([sys.executable, "-I", os.path.join(LIB, "provider.py"), "hidden-paths", "codex", "local"] + list(a), capture_output=True, text=True)
+            r = subprocess.run([sys.executable, "-I", os.path.join(LIB, "provider.py"), "hidden-paths", "codex", "local"] + list(a), capture_output=True, text=True, env=env)
             return r.returncode, r.stderr
         rc, err = cli("read-only", "/dev/shm/s/qargi.XXXXXX", "/dev/shm/qargi-run.XXXXXX")
         self.assertEqual(rc, 2, err)
@@ -3330,6 +3437,18 @@ class HiddenPaths(unittest.TestCase):
         r = subprocess.run([sys.executable, "-I", os.path.join(LIB, "provider.py"), "hidden-paths", "claude-code", "local", "read-only",
                             "/dev/shm/s/qargi.XXXXXX", "/dev/shm/t"], capture_output=True, text=True)
         self.assertEqual((r.returncode, r.stderr), (0, ""))                                       # a runtime that declares nothing hides nothing
+
+    def test_codex_hidden_paths_refuses_a_missing_members_sign_in_with_exit_2(self):
+        home = tempfile.mkdtemp(prefix="home.")
+        self.addCleanup(shutil.rmtree, home, True)
+        env = {k: v for k, v in os.environ.items() if k != "CODEX_HOME"}
+        env["HOME"] = home
+        r = subprocess.run([sys.executable, "-I", os.path.join(LIB, "provider.py"), "hidden-paths", "codex", "local", "write", "/srv/scratch/qargi.XXXXXX", "/srv/t"],
+                           capture_output=True, text=True, env=env)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("the sign-in ~/.codex-members/auth.json for codex member runs does not exist", r.stderr)
+        self.assertIn("CODEX_HOME=~/.codex-members codex login", r.stderr)
+        self.assertNotIn(home, r.stderr)                                                          # the declared path only
 
 
 class Attest(LibraryBase):
@@ -4399,8 +4518,8 @@ class Review(unittest.TestCase):
 
     def test_the_review_names_the_run_home_and_each_file_it_links_in(self):
         rv, got = self.home_lines(shipped("codex.json"))
-        self.assertEqual(rv["home"], {"env": "CODEX_HOME", "dir": ".codex", "links": ["~/.codex/auth.json as auth.json"]})
-        self.assertEqual(got, ["run home (dispatch.home): CODEX_HOME is RUN/home/.codex; files of your home linked into it for each run: ~/.codex/auth.json as auth.json"])
+        self.assertEqual(rv["home"], {"env": "CODEX_HOME", "dir": ".codex", "links": ["~/.codex-members/auth.json as auth.json"]})
+        self.assertEqual(got, ["run home (dispatch.home): CODEX_HOME is RUN/home/.codex; files of your home linked into it for each run: ~/.codex-members/auth.json as auth.json"])
         two = {"dispatch": {"home": {"env": "FAKE_HOME", "dir": ".f", "link": [{"from": "~/.f/a.json", "to": "a.json"}, {"from": "~/.f/b", "to": "b"}]}}}
         self.assertEqual(self.home_lines(two)[1], ["run home (dispatch.home): FAKE_HOME is RUN/home/.f; files of your home linked into it for each run: "
                                                    "~/.f/a.json as a.json, ~/.f/b as b"])
@@ -4417,15 +4536,15 @@ class Review(unittest.TestCase):
     def test_the_run_home_line_names_the_files_and_never_reads_them(self):
         """The line is made from the definition's names only: a linked file's content, or where it resolves, is never in the review."""
         home = tempfile.mkdtemp(prefix="home.", dir=self.tmp)
-        os.makedirs(os.path.join(home, ".codex"))
-        with open(os.path.join(home, ".codex", "auth.json"), "w") as f:
+        os.makedirs(os.path.join(home, ".codex-members"))
+        with open(os.path.join(home, ".codex-members", "auth.json"), "w") as f:
             f.write("SENTINEL-sign-in-content")
         with mock.patch.dict(os.environ, {"HOME": home}):
             rv, got = self.home_lines(shipped("codex.json"))
         text = "\n".join(self.R.lines(rv, "t"))
         self.assertNotIn("SENTINEL-sign-in-content", text)
         self.assertNotIn(home, text)
-        self.assertIn("~/.codex/auth.json as auth.json", got[0])
+        self.assertIn("~/.codex-members/auth.json as auth.json", got[0])
 
     def eval_flags(self, files, definition=None):
         return [f for f in self.R.scan(self.tree(files), definition)["flags"] if ": eval or exec: " in f]
