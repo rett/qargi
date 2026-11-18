@@ -550,6 +550,22 @@ class Contract(unittest.TestCase):
             with self.subTest(observable=words):
                 self.assertIn(words, doc)
 
+    def test_the_title_of_R89_says_what_its_body_says(self):
+        m = re.search(r"^\*\*R89\*\* \(([^()]*)\)\.", self.text, re.M)
+        self.assertIsNotNone(m, "R89 has a title")
+        title = m.group(1)
+        # the old title claimed that nothing a sandbox can write is trusted by path: more than the body says, since qargi knows only
+        # the places that the assignment declares (R102 is the layer's condition for the rest), and it reads two things there (R31)
+        for old in ("trusted by path", "nothing a sandbox can write"):
+            self.assertNotIn(old, title)
+        # the title uses the words of the body, the places the assignment declares and the authority side, and so does the test
+        body = squash(rule_blocks(self.text)[89]).split(title, 1)[1]
+        for word in ("declares", "authority side", "sandbox can write"):
+            with self.subTest(word=word):
+                self.assertIn(word, title)
+                self.assertIn(word, body)
+        self.assertIn("declares", rule_tests()[89][0], "the test of R89 is named after what its title says")
+
     def test_the_trace_has_a_row_for_each_change_that_the_review_of_revision_2_required(self):
         self.assertIn("This is revision 3 of the page", self.text)
         for heading in ("### The review of revision 1", "### The review of revision 2"):
@@ -1270,7 +1286,7 @@ class Seat(unittest.TestCase):
         exit 1 with authority-store-unsafe and the gate exit 77 with seat-record-invalid, and nothing below it is opened."""
 
     @unbuilt(89)
-    def test_R89_nothing_a_sandbox_can_write_is_trusted_by_path(self):
+    def test_R89_the_authority_side_avoids_the_places_the_assignment_declares_writable(self):
         """R89: authority-side code uses no path with a component a sandbox can write, but for what it reads below the declared
         state root while no unit of the role exists (R31, R97): the registry of the role's open runs, which is lead-stated and
         only directs a no-follow walk below that root, and the run folders; qargi knows what a sandbox can write from the clone

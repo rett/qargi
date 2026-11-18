@@ -889,20 +889,20 @@ Refusal: `symlink-refused`, exit 1, on the authority side for a link; `authority
 exit 1, on the authority side for a root that fails the owner-only check; `seat-record-invalid`,
 exit 77, at the gate for either.
 
-**R89** (G1: nothing a sandbox can write is trusted by path). Authority-side code never reads or
-writes a path that has a component a sandbox can write. Qargi knows what a sandbox can write from
-the assignment alone: its `clone` and its `state_root` (R19). That these are the only such places
-that the authority side reads is the supervising layer's condition (R102): qargi checks what the
-assignment declares and cannot check that it is complete. The broker refuses the assignment
-directory, the projection directory, the mirror, `$AUTH` and `$CONF` when one of them overlaps a
-declared location: when it is equal to the `clone` or the `state_root`, lies below one of them or
-contains one of them. Who owns a path is not the test: a sandboxed lead runs as the owner's user,
-so the owner of a file does not say who could write it. The only things below a declared location
-that authority-side code reads are the registry of the role's open runs and the run folders of R91,
-and only while no unit of the role exists (R31, R97): the registry is lead-stated, and it only
-directs a walk that stays below the declared `state_root` and follows no link (R88). Refusal:
-`assignment-invalid`, exit 1, for an assignment that declares or names such a path;
-`authority-store-unsafe`, exit 1, for a marker or a root that is such a path.
+**R89** (G1: the authority side avoids the places that the assignment declares a sandbox can write).
+Authority-side code never reads or writes a path that has a component a sandbox can write. Qargi
+knows what a sandbox can write from the assignment alone: its `clone` and its `state_root` (R19).
+That these are the only such places that the authority side reads is the supervising layer's
+condition (R102): qargi checks what the assignment declares and cannot check that it is complete.
+The broker refuses the assignment directory, the projection directory, the mirror, `$AUTH` and
+`$CONF` when one of them overlaps a declared location: when it is equal to the `clone` or the
+`state_root`, lies below one of them or contains one of them. Who owns a path is not the test: a
+sandboxed lead runs as the owner's user, so the owner of a file does not say who could write it. The
+only things below a declared location that authority-side code reads are the registry of the role's
+open runs and the run folders of R91, and only while no unit of the role exists (R31, R97): the
+registry is lead-stated, and it only directs a walk that stays below the declared `state_root` and
+follows no link (R88). Refusal: `assignment-invalid`, exit 1, for an assignment that declares or
+names such a path; `authority-store-unsafe`, exit 1, for a marker or a root that is such a path.
 
 **R90** (archive before remove). Nothing a seat verb removes is removed before an archive of it
 exists and was read back and compared. This page has exactly two removals: the open run folders of
