@@ -5,10 +5,13 @@ The seat is not built. `Seat` holds one test per rule of the contract, named aft
 states the rule and the observable the test will check, and skipped with the reason "seat not built: R7": the builder of a slice
 removes the skip of the rules the slice satisfies and writes the body.
 
-`Contract` runs today and keeps the two in step: the rules are numbered from 1 without a gap, each has exactly one test and every
-test names a rule, each rule states its refusal, every reference to a rule or an open point names one that exists, every point
-marked OPEN is listed at the end with what is proposed and an alternative, and the contract names no path outside the state and
-config roots (see ROOTS below for the two exceptions that the contract itself declares).
+`Contract` runs today and keeps the two in step: the rules are numbered from 1 without a gap and each once (a rule added in a
+later revision takes the next number and stands in the section of its subject, so the numbers are not in page order; a rule that
+is dropped keeps its number, marked withdrawn, and its test), each has exactly one test and every test names a rule, each rule
+states its refusal, every reference to a rule or a point names one that exists, every point marked OPEN is listed at the end with
+what is proposed and an alternative, every point that was decided is listed with the rule that states the decision and is open
+nowhere, the contract names no path outside its roots (ROOTS, RECORDED, DECLARED and BELOW_DECLARED below say what a path may
+start with), and what the design's first wave has not produced is listed, each thing with a wave, until it exists (NOT_PRODUCED).
 Offline. Run: python3 tests/test_seat_contract.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import os, re, unittest
@@ -16,20 +19,33 @@ import os, re, unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONTRACT = os.path.join(ROOT, "docs", "reference", "lead-seat.md")
 NOT_BUILT = "seat not built: R%d"
+WITHDRAWN = "withdrawn: R%d"
 
-# A path the contract names starts at the state root or the config root.
-ROOTS = ("$STATE", "$CONF")
-# The design puts the authority store outside both roots on purpose. The contract may name it only while the open point that asks the
-# lead where it lives is still listed; when that point is decided this entry moves into ROOTS or goes.
-OPEN_ROOTS = {"$AUTH": "O1"}
+# A path the contract names starts at one of its three roots: the state root, the config root and the authority root. The authority
+# store is a third root, outside the other two, for good: the lead decided the point that asked where it lives (O1 of the contract).
+ROOTS = ("$STATE", "$CONF", "$AUTH")
 # The two directories whose location the seat marker (below the config root) records: named by their field, not by a path.
 RECORDED = ("<assignment_dir>", "<projection_dir>")
+# The locations the assignment declares, named by their field too. A sandbox can write the first two, and the contract refuses every
+# recorded path that overlaps them (R89): so the assignment has to name the state root of the role beside its clone.
+DECLARED = ("<clone>", "<state_root>", "<mirror>")
+# The one path the contract names below a declared location: the file in which the supervising layer records its placeholders (R99).
+BELOW_DECLARED = ("<clone>/.git/info/exclude",)
+# What the design's first wave was to produce and what does not exist yet. The contract names these files in one section only, the
+# one that lists them as not yet produced and proposes the wave for each; a file that is produced leaves this list and that table.
+RECONCILIATION = "## Reconciliation with the design's wave 0 (task F)"
+NOT_PRODUCED = ("docs/reference/lead-seat-records.md", "docs/reference/lead-seat-projection.md", "docs/reference/lead-refusals.md",
+                "docs/reference/handoff-note.md", "docs/reference/lead-readback.md", "docs/reference/lead-render-manifest.md",
+                "lib/refusals.json", "lib/seat-records.json")
+# The three things the design asks of that wave that are no file of their own.
+NOT_PRODUCED_PARTS = ("the render manifest (3.9)", "the module interfaces (3.11)", "the full transition table (3.2)")
 
 RULE = re.compile(r"^\*\*R(\d+)\*\*", re.M)
 SCHEMA_ID = re.compile(r"^qargi[.-][a-z-]+/\d+$")
 REPO_FILE = re.compile(r"^(lib|bin|tests|docs)/[\w./-]+$")
 FENCE = re.compile(r"^```.*?^```[ \t]*$", re.M | re.S)
 OPEN_HEADING = "## Open points"
+DECIDED_HEADING = "## Decided points"
 
 
 def contract():
@@ -40,6 +56,12 @@ def contract():
 def rule_numbers(text):
     """The numbers of the rules, in the order they are defined (a rule is a paragraph that starts with **Rn**)."""
     return [int(n) for n in RULE.findall(text)]
+
+
+def withdrawn_numbers(text):
+    """The numbers of the rules that a later revision dropped: such a rule keeps its number in a paragraph that starts
+    **Rn** (withdrawn), so no number is ever used for two rules."""
+    return {int(n) for n in re.findall(r"^\*\*R(\d+)\*\* \(withdrawn\)", text, re.M)}
 
 
 def rule_blocks(text):
@@ -65,6 +87,18 @@ def open_items(text):
     return {parts[i]: parts[i + 1] for i in range(1, len(parts), 2)}
 
 
+def section(text, heading):
+    """The text under a `## ` heading, up to the next one; empty when the page has no such heading."""
+    _, found, tail = text.partition("\n" + heading + "\n")
+    return tail.split("\n## ", 1)[0] if found else ""
+
+
+def decided_items(text):
+    """{On: the text of its item} of the list of the points that were open in an earlier revision and are decided."""
+    parts = re.split(r"^- \*\*(O\d+)\*\*", section(text, DECIDED_HEADING), flags=re.M)
+    return {parts[i]: parts[i + 1] for i in range(1, len(parts), 2)}
+
+
 def named_paths(text):
     """Every word with a slash that the contract writes as code: the words of its code spans (a span may run over a line break) and
     the quoted strings of its fenced blocks."""
@@ -78,13 +112,14 @@ def named_paths(text):
     return sorted({w.lstrip("\"'([{").rstrip("\"',;:)]}.") for w in words if "/" in w})
 
 
-def outside_the_roots(word):
-    """Why a named path is outside the roots, or None when it is inside (or is no path: a schema id, a file of this repository)."""
+def outside_the_roots(word, not_produced=()):
+    """Why a named path is outside the roots, or None when it is inside (or is no path: a schema id, a file of this repository).
+    NOT_PRODUCED names the files of this repository that the text may name although they do not exist."""
     if SCHEMA_ID.match(word):
         return None
     if REPO_FILE.match(word):
-        return None if os.path.exists(os.path.join(ROOT, word)) else "names a file this repository does not have"
-    if word.startswith(tuple(r + "/" for r in ROOTS + tuple(OPEN_ROOTS) + RECORDED)):
+        return None if os.path.exists(os.path.join(ROOT, word)) or word in not_produced else "names a file this repository does not have"
+    if word.startswith(tuple(r + "/" for r in ROOTS + RECORDED)) or word in BELOW_DECLARED:
         return None
     return "starts at no root of the contract"
 
@@ -109,9 +144,10 @@ class Contract(unittest.TestCase):
 
     def test_the_rules_are_numbered_from_one_without_a_gap_and_each_once(self):
         self.assertGreater(len(self.numbers), 0, "the contract defines no rule")
-        self.assertEqual(self.numbers, list(range(1, len(self.numbers) + 1)))
+        # not in page order: a rule added in a later revision stands in the section of its subject, with the next number
+        self.assertEqual(sorted(self.numbers), list(range(1, len(self.numbers) + 1)))
         said = re.search(r"\*\*R1\*\* to \*\*R(\d+)\*\*", self.text)      # the page says how far its rules go
-        self.assertEqual(int(said.group(1)), self.numbers[-1], "the first section names the last rule")
+        self.assertEqual(int(said.group(1)), max(self.numbers), "the first section names the last rule")
 
     def test_every_rule_has_exactly_one_test_and_every_test_names_a_rule(self):
         tests = rule_tests()
@@ -122,26 +158,44 @@ class Contract(unittest.TestCase):
         self.assertEqual(stray, [], "a test of Seat is named after its rule: test_R7_...")
 
     def test_every_rule_test_is_skipped_for_its_rule_and_states_the_rule_and_the_observable(self):
+        gone = withdrawn_numbers(self.text)
         for n, names in sorted(rule_tests().items()):
             fn = getattr(Seat, names[0])
             with self.subTest(rule=n):
                 doc = " ".join((fn.__doc__ or "").split())
                 self.assertTrue(doc.startswith("R%d: " % n), "the docstring starts with the rule: R%d: ..." % n)
                 self.assertIn(" Observable: ", doc)
-                if getattr(fn, "__unittest_skip__", False):      # a built rule has no skip; an unbuilt one names its rule
-                    self.assertEqual(fn.__unittest_skip_why__, NOT_BUILT % n)
+                why = getattr(fn, "__unittest_skip_why__", None) if getattr(fn, "__unittest_skip__", False) else None
+                if n in gone:                # a withdrawn rule keeps its test, skipped for good
+                    self.assertEqual(why, WITHDRAWN % n)
+                elif why is not None:        # a built rule has no skip; an unbuilt one names its rule
+                    self.assertEqual(why, NOT_BUILT % n)
 
     def test_every_rule_states_its_refusal(self):
-        missing = [n for n, block in sorted(rule_blocks(self.text).items()) if "Refusal:" not in block]
+        gone = withdrawn_numbers(self.text)      # a withdrawn rule refuses nothing: its paragraph says what replaced it
+        missing = [n for n, block in sorted(rule_blocks(self.text).items()) if n not in gone and "Refusal:" not in block]
         self.assertEqual(missing, [], "rules that do not say what a violation is refused with")
 
-    def test_every_reference_names_a_rule_or_an_open_point_that_exists(self):
+    def test_every_reference_names_a_rule_or_a_point_that_exists(self):
         known = set(self.numbers)
         cited = {int(n) for n in re.findall(r"\bR(\d+)\b", self.text)}
         self.assertEqual(sorted(cited - known), [], "the contract cites rules it does not define")
-        points = set(open_items(self.text))
+        points = set(open_items(self.text)) | set(decided_items(self.text))      # a point is listed as open or as decided
         cited_points = set(re.findall(r"\bO(\d+)\b", self.text))
-        self.assertEqual(sorted(p for p in cited_points if "O" + p not in points), [], "the contract cites open points it does not list")
+        self.assertEqual(sorted(p for p in cited_points if "O" + p not in points), [], "the contract cites points it does not list")
+
+    def test_a_decided_point_names_the_rule_that_states_it_and_is_open_nowhere(self):
+        self.assertEqual(self.text.count(DECIDED_HEADING), 1, "the contract lists the points that were decided, once")
+        decided, still_open = decided_items(self.text), open_items(self.text)
+        self.assertGreater(len(decided), 0, "no decided point is listed")
+        self.assertEqual(sorted(set(decided) & set(still_open)), [], "a point is decided or open, not both")
+        for point, body in sorted(decided.items()):
+            with self.subTest(point=point):
+                self.assertRegex(body, r"\A \(R\d+(, R\d+)*\)\. Decided", "a decided point names the rules that state the decision")
+        # a decided point keeps its number: over both lists the points are numbered from one without a gap, each once
+        # (that none is still marked in a rule is the other test: a mark needs an item in the list at the end)
+        numbers = sorted(int(p[1:]) for p in list(decided) + list(still_open))
+        self.assertEqual(numbers, list(range(1, len(numbers) + 1)), "the points are numbered from one without a gap")
 
     def test_no_open_point_is_left_unlisted_at_the_end(self):
         self.assertEqual(self.text.count(OPEN_HEADING), 1)
@@ -158,21 +212,45 @@ class Contract(unittest.TestCase):
         body = self.text.partition(OPEN_HEADING)[0]
         self.assertEqual(len(re.findall(r"\bOPEN\b", body)), len(re.findall(r"\[OPEN O\d+\]", body)))
 
-    def test_the_contract_names_no_path_outside_the_state_and_config_roots(self):
-        bad = {w: why for w in named_paths(self.text) for why in [outside_the_roots(w)] if why}
+    def test_the_contract_names_no_path_outside_its_roots(self):
+        # a file of this repository exists, but for the files the reconciliation lists as not yet produced, and only in that section
+        planned = section(self.text, RECONCILIATION)
+        elsewhere = self.text.replace(planned, "") if planned else self.text
+        bad = {w: why for w in named_paths(elsewhere) for why in [outside_the_roots(w)] if why}
+        bad.update({w: why for w in named_paths(planned) for why in [outside_the_roots(w, NOT_PRODUCED)] if why})
         self.assertEqual(bad, {}, "paths named outside the roots")
-        # a root is one the contract may use: the two roots, and one more only while its open point is listed
+        # a root is one of the three the contract has, and the point that asked whether the third may be one is decided, not open
         used = set(re.findall(r"\$[A-Z][A-Z_]*", self.text))
-        self.assertEqual(sorted(used - set(ROOTS) - set(OPEN_ROOTS)), [], "roots the contract may not name")
-        listed = open_items(self.text)
-        for root, point in OPEN_ROOTS.items():
-            if root in used:
-                self.assertIn(point, listed, "%s is outside the state and config roots: allowed only while %s is open" % (root, point))
+        self.assertEqual(sorted(used - set(ROOTS)), [], "roots the contract may not name")
+        self.assertIn("O1", decided_items(self.text), "the authority root is a root since the point about it was decided")
         for field in RECORDED:
             self.assertIn('"%s"' % field.strip("<>"), self.text, "the seat marker records %s" % field)
+        for field in DECLARED:
+            self.assertIn('"%s": "%s"' % (field.strip("<>"), field), self.text, "the assignment declares %s" % field)
+        for path in BELOW_DECLARED:      # an entry that the contract no longer names goes from the list
+            self.assertIn(path, named_paths(self.text), "the contract names %s" % path)
         # no literal location: no absolute path, no home path
         self.assertEqual(re.findall(r"(?<![\w$<>./-])/[A-Za-z0-9_.][^\s`\"]*", self.text), [], "absolute paths")
         self.assertNotIn("~", self.text, "home paths")
+
+    def test_what_the_first_wave_has_not_produced_is_listed_with_a_wave_until_it_exists(self):
+        self.assertEqual(self.text.count(RECONCILIATION), 1, "the contract has the reconciliation with the design's wave 0, once")
+        planned = section(self.text, RECONCILIATION)
+        named = set(named_paths(planned))
+        for path in NOT_PRODUCED:
+            with self.subTest(path=path):
+                self.assertIn(path, named, "the section lists %s as not yet produced" % path)
+                self.assertFalse(os.path.exists(os.path.join(ROOT, path)), "%s exists now: it leaves the section and NOT_PRODUCED" % path)
+        for part in NOT_PRODUCED_PARTS:
+            self.assertIn("| %s |" % part, planned, "the section lists %s as not yet produced" % part)
+        # one row for each, and every row proposes a wave
+        rows = [line for line in planned.splitlines() if line.startswith("| ") and not line.startswith(("| ---", "| Not yet produced"))]
+        self.assertEqual(len(rows), len(NOT_PRODUCED) + len(NOT_PRODUCED_PARTS), "one row for each thing that is not yet produced")
+        for row in rows:
+            with self.subTest(row=row.split("|")[1].strip()):
+                self.assertRegex(row.split("|")[4], r"\bwave \d\b", "a row proposes the wave that produces it")
+        # what the section proposes is the lead's to decide: it is an open point
+        self.assertRegex(planned, r"\[OPEN O\d+\]")
 
     def test_the_path_reader_finds_what_it_must(self):
         # the check above is only as good as its reader: it must see a path in a code span, over a line break, and in a fenced block
@@ -182,11 +260,29 @@ class Contract(unittest.TestCase):
         self.assertIsNone(outside_the_roots("<projection_dir>/<project>/projection.json"))
         self.assertIsNone(outside_the_roots("tests/test_seat_contract.py"))
         self.assertIsNotNone(outside_the_roots("lib/no_such_module.py"))
+        self.assertIsNone(outside_the_roots("lib/no_such_module.py", ("lib/no_such_module.py",)))      # listed as not yet produced
+        # below a location the assignment declares, the one listed path and no other
+        self.assertIsNone(outside_the_roots("<clone>/.git/info/exclude"))
+        self.assertIsNotNone(outside_the_roots("<clone>/.git/config"))
+        self.assertIsNotNone(outside_the_roots("<state_root>/runs"))
+
+    def test_the_rule_reader_finds_what_it_must(self):
+        # the same for the rules: a rule is a paragraph that starts with its number, wherever it stands; a withdrawn one says so
+        sample = "**R2** (b). Text. Refusal: none.\n\n**R3** (withdrawn). R9 replaces it.\n\nsee **R7** and `**Rn** (withdrawn)`\n\n**R1** (a). Refusal: none.\n"
+        self.assertEqual(rule_numbers(sample), [2, 3, 1])
+        self.assertEqual(withdrawn_numbers(sample), {3})
+        self.assertEqual(sorted(rule_blocks(sample)), [1, 2, 3])
+        self.assertNotIn("Refusal:", rule_blocks(sample)[3])
 
 
 def unbuilt(n):
     """The skip of a rule that is not built: the reason names the rule."""
     return unittest.skip(NOT_BUILT % n)
+
+
+def withdrawn(n):
+    """The skip of a rule that a later revision withdrew: its test stays, so the number is never used for another rule."""
+    return unittest.skip(WITHDRAWN % n)
 
 
 class Seat(unittest.TestCase):
@@ -235,24 +331,31 @@ class Seat(unittest.TestCase):
 
     @unbuilt(7)
     def test_R7_authority_root_resolution(self):
-        """R7: the authority root is QARGI_AUTH, else the dev data root with -authority-dev, else the data root with -authority;
-        with only QARGI_STATE or QARGI_CONF set there is no default; resolving creates nothing.
-        Observable: the resolved path in each of the four cases; with QARGI_STATE alone a broker verb exits 1 with
-        authority-store-unsafe; no directory exists after resolving."""
+        """R7: the authority store is a third root, outside the state root and the config root; its path is resolved by the
+        first case that holds, in this order: QARGI_AUTH; a dev run (the dev data root with -authority-dev); QARGI_HOME (with
+        -authority); QARGI_STATE or QARGI_CONF set (no default); else the default data root with -authority. The dev run is
+        tried before the case of no default; the repository's .gitignore lists .qargi-authority-dev; resolving creates nothing.
+        Observable: the resolved path in each of the five cases, and the earlier case wins where two hold; with QARGI_STATE
+        alone, in a run that is not a dev run, a broker verb exits 1 with authority-store-unsafe; git check-ignore accepts
+        .qargi-authority-dev in a checkout and git status shows nothing after a broker call of a dev run; no directory exists
+        after resolving."""
 
     @unbuilt(8)
     def test_R8_authority_root_is_apart(self):
         """R8: the authority root is never at or below the state root, the config root or the data root, is mode 700 and the
-        caller's, and qargi export never includes it.
+        caller's, and qargi export never includes it; a store that passes may be opened, which does not show that the caller is
+        outside a sandbox (R33 proves that).
         Observable: a broker verb exits 1 with authority-store-unsafe for a root below either root, for mode 755 and for a
         file of mode 644 inside; nothing is read or written; an export archive holds no file of it."""
 
     @unbuilt(9)
     def test_R9_store_layout(self):
-        """R9: the store of a project holds the seat, the history, the door copies by epoch and the files of each transfer; beside
-        the projects the host audit, the broker key and the signers; the reserved names are not created.
-        Observable: after a whole transfer the store holds exactly the named files, the tx name has its form, and no
-        delegations directory or dormancy file exists."""
+        """R9: the store of a project holds the seat, the history, the door copies by epoch and the files of each transfer, among
+        them the archive of open runs where there were any; beside the projects the host audit, the broker key and the signers;
+        the reserved names are not created.
+        Observable: after a whole transfer the store holds exactly the named files (an orphans directory with manifest.json
+        and one archive file for each run only when runs were archived), the tx name has its form, the read-back and result
+        files are numbered from 1 and never beyond 3, and no delegations directory or dormancy file exists."""
 
     @unbuilt(10)
     def test_R10_only_the_broker_writes_the_store(self):
@@ -276,7 +379,8 @@ class Seat(unittest.TestCase):
     @unbuilt(13)
     def test_R13_order_of_writes(self):
         """R13: every step writes its own records, then the seat record, then the projection; at init S3 writes the marker before
-        the seat record.
+        the seat record; S4 publishes the archive between its seat record and its projection, and S5 removes the archived run
+        folders before its seat record.
         Observable: with a stop injected after each write of each step, the files written so far are those earlier in that
         order and none later."""
 
@@ -288,9 +392,10 @@ class Seat(unittest.TestCase):
 
     @unbuilt(15)
     def test_R15_host_audit_line(self):
-        """R15: every door call, step and qargi host call appends {ts, verb, project, tx, epoch, detail, by} to the host audit,
-        refused door calls too.
-        Observable: the audit grows by one line per call, a refused assignment included."""
+        """R15: every door call, every step and every qargi host call that passed the outside proof appends {ts, verb, project,
+        tx, epoch, detail, by} to the host audit, refused door calls too; a qargi host call whose proof fails records nothing.
+        Observable: the audit grows by one line per call, a refused assignment included, and by none for a qargi host call
+        that exits 1 with host-in-sandbox."""
 
     @unbuilt(16)
     def test_R16_seat_marker(self):
@@ -315,10 +420,11 @@ class Seat(unittest.TestCase):
 
     @unbuilt(19)
     def test_R19_assignment_record(self):
-        """R19: an assignment has the fields of qargi.assignment/1; init and transfer need all, vacate and unseat carry no to,
-        clone or hidden_tracked; role_name is kebab-case, at most 64, without a colon.
-        Observable: the valid example is accepted; each missing field, each field a kind may not carry and each bad role_name
-        exits 1 with assignment-invalid."""
+        """R19: an assignment has the fields of qargi.assignment/1, among them the clone and the state root that the holder's
+        sandbox can write and the tracked paths that a read-only bind hides; init and transfer need all, vacate and unseat
+        carry no to, clone, state_root or hidden_tracked; role_name is kebab-case, at most 64, without a colon.
+        Observable: the valid example is accepted; each missing field (state_root among them), each field a kind may not carry
+        and each bad role_name exits 1 with assignment-invalid."""
 
     @unbuilt(20)
     def test_R20_fence_record(self):
@@ -329,10 +435,11 @@ class Seat(unittest.TestCase):
 
     @unbuilt(21)
     def test_R21_projection(self):
-        """R21: the projection is one file with the fields of qargi.projection/1, replaced by a rename inside its directory at
-        every step.
-        Observable: after each step the file has that shape and a new inode, no temporary file is left in the directory, and a
-        projection of another shape makes a gated verb exit 77 with seat-record-invalid."""
+        """R21: the projection is one file with the fields of qargi.projection/1, among them the rev of the seat record it was
+        written from, replaced by a rename inside its directory at every step.
+        Observable: after each step the file has that shape, a new inode and the epoch, tx and rev of the seat record, no
+        temporary file is left in the directory, and a projection of another shape makes a gated verb exit 77 with
+        seat-record-invalid."""
 
     @unbuilt(22)
     def test_R22_reserved_fields_stay_empty(self):
@@ -372,7 +479,7 @@ class Seat(unittest.TestCase):
         """R27: on a seated project marshal claim, take and release change nothing; takeover, forget, resign, key and signers
         are class owner.
         Observable: the first three exit 1 with seated-project and leave the per-feature record and the seat as they were; the
-        others exit 77 with not-assigned in a sandbox."""
+        others exit 77 with not-assigned for the holder and run only under qargi host."""
 
     @unbuilt(28)
     def test_R28_the_order_is_a_label(self):
@@ -398,64 +505,75 @@ class Seat(unittest.TestCase):
 
     @unbuilt(31)
     def test_R31_the_broker_leaves_the_role_state(self):
-        """R31: the broker never writes below a role's state root and reads nothing there by path, except the archive and
-        removal of run folders while the seat is fenced.
+        """R31: the broker never writes below a role's state root, the location state_root of its assignment names, and reads
+        nothing there by path, except the archive and removal of run folders while the seat is fenced.
         Observable: the role's state root is byte for byte the same before and after S1 to S6 with no open run; the broker
         works with that root unreadable."""
 
     @unbuilt(32)
     def test_R32_spool_envelope(self):
         """R32: lead content reaches the authority side as a spool envelope {schema, project, epoch, kind, sha256, bytes}
-        followed by the content, through broker intake.
+        followed by the content, written by one of the verbs of R96 and passed through broker intake.
         Observable: a valid envelope of each kind is stored; one over its limit exits 1 with content-too-large; a malformed
         one, a wrong digest or length and another epoch exit 1 with content-invalid; the store is unchanged."""
 
     @unbuilt(33)
     def test_R33_owner_verbs_go_through_host(self):
-        """R33: qargi host appends its audit line before anything else and runs the verb only on a usable store.
-        Observable: with a usable store the audit line exists before the verb's first effect; with the store absent or unsafe
-        it exits 1 with host-in-sandbox and the verb did not run."""
+        """R33: before anything else qargi host proves that it is outside every sandbox: the authority root passes R8, a payload
+        it signs with the broker's key verifies against the signers line of the projection, and the seat record agrees with the
+        projection in epoch, tx and rev; then it appends its audit line and runs the verb. No variable, option or file stands
+        for a proof that passed.
+        Observable: with the true store the audit line exists before the verb's first effect; with a store the caller made
+        (mode 700, named in QARGI_AUTH, its own key and a copied seat record) it exits 1 with host-in-sandbox, the verb did not
+        run and no file changed; the same with the true key and a seat record whose rev is behind the projection, with the
+        true store and an audit log that cannot be appended to, and for a verb that names an unseated project; a verb that
+        names no project runs when the proof passes for one seated project and is refused when there is none."""
 
     # ---- the handoff protocol
 
     @unbuilt(34)
     def test_R34_S1_accept(self):
         """R34: S1 needs a transfer assignment and a held seat, writes the copy, the seat (accepted, new tx) and the projection;
-        from then A's lead-write verbs are refused.
+        from then A's lead-write verbs are refused, all but marshal seat state --submit.
         Observable: after S1 the seat and projection say accepted and A's lead-write verb exits 77 with
-        transfer-in-progress while its read verb passes."""
+        transfer-in-progress while its read verb and its marshal seat state --submit pass."""
 
     @unbuilt(35)
     def test_R35_S2_collect(self):
-        """R35: S2 takes A's spool state, which may be empty, and writes the copy, the seat (collected) and the projection; it
-        may be skipped.
+        """R35: S2 takes A's spool state, which A wrote with marshal seat state --submit and which may be empty, and writes the
+        copy, the seat (collected) and the projection; it may be skipped.
         Observable: with and without a state the seat reaches collected; S3 from accepted is accepted too."""
 
     @unbuilt(36)
     def test_R36_S3_fence(self):
         """R36: S3 needs an accepted fence for the ending epoch and writes the fence copy, the seat (fenced, no holder) and the
-        projection; no later step runs without it.
+        projection; the fence comes before the note, S3 before S4, S5 and S6, and no later step runs without it.
         Observable: with the fence the seat is fenced with holder null; without one, asking for S3 or a later step exits 1
-        with fence-required and changes nothing."""
+        with fence-required and changes nothing; no note file exists before the fence copy does."""
 
     @unbuilt(37)
     def test_R37_S4_note(self):
-        """R37: after S3 the broker builds and signs the note and writes the note files, the seat and the projection.
+        """R37: after S3 and the archive of open runs the broker builds and signs the note and writes the note files, the seat,
+        the published archive and the projection.
         Observable: after S4 the three note files exist, the seat names the note's version and the projection carries the
         note with its digests."""
 
     @unbuilt(38)
     def test_R38_S5_commit(self):
-        """R38: S5 writes the seat (pending-readback, B, the new epoch) and the projection; B reads but may not write.
-        Observable: after S5 B's read verb passes and its lead-write verb exits 77 with readback-pending; the seat's epoch
-        is the new one."""
+        """R38: S5 first removes the run folders that were archived, then writes the seat (pending-readback, B, the new epoch)
+        and the projection; B reads but may not write, its marshal seat readback --submit excepted.
+        Observable: after S5 B's read verb and its marshal seat readback --submit pass and its other lead-write verbs exit 77
+        with readback-pending; the seat's epoch is the new one; the archived run folders were gone before the seat changed."""
 
     @unbuilt(39)
     def test_R39_S6_check(self):
         """R39: S6 checks B's read-back; on a match the seat is held and B is the lead; without one the seat stays
-        pending-readback and B may read back again.
+        pending-readback and B may read back again, up to three compared read-backs for a transfer; one that is refused
+        before the comparison is not counted.
         Observable: a matching read-back gives held with readback matched and B's lead-write verb passes; a failing one exits
-        1 with readback-mismatch, stores the result and leaves pending-readback; a second, matching one then succeeds."""
+        1 with readback-mismatch, stores the result with its attempt and leaves pending-readback; a second, matching one then
+        succeeds; after three failed comparisons a fourth read-back exits 1 with readback-exhausted, stores nothing and
+        leaves the seat as it was; a read-back refused for its form or for another note version leaves the count as it was."""
 
     @unbuilt(40)
     def test_R40_interruption_and_resume(self):
@@ -504,17 +622,19 @@ class Seat(unittest.TestCase):
 
     @unbuilt(47)
     def test_R47_note_signature(self):
-        """R47: the broker signs the note's payload with its key; note verify checks both digests, the signature against the
+        """R47: the broker signs the note's payload with its key, and the signers line it writes into the projection names that
+        key for the namespaces qargi-handoff and qargi-host; note verify checks both digests, the signature against the
         projection's signers line, and the transfer id and version.
         Observable: note verify exits 0 on the note as written; a changed byte of either form exits 1 with
-        note-digest-mismatch; another key, transfer id or version exits 1 with note-invalid."""
+        note-digest-mismatch; another key, transfer id or version exits 1 with note-invalid; the signers line of every
+        projection lists both namespaces."""
 
     @unbuilt(48)
     def test_R48_read_back_record(self):
-        """R48: a read-back is {project, transfer_id, note_sha256, epoch, believes} of schema qargi.readback/1, and seat
-        readback --template prints the empty one.
-        Observable: the template parses, has every field and is accepted when filled in; an unknown field exits 1 with
-        content-invalid and one over 64 KiB with content-too-large."""
+        """R48: a read-back is {project, transfer_id, note_sha256, epoch, believes} of schema qargi.readback/1; seat readback
+        --template prints the empty one and seat readback --submit FILE writes the filled one into the spool.
+        Observable: the template parses, has every field and is accepted when filled in and submitted; an unknown field exits
+        1 with content-invalid and one over 64 KiB with content-too-large."""
 
     @unbuilt(49)
     def test_R49_check_of_the_read_back(self):
@@ -534,7 +654,9 @@ class Seat(unittest.TestCase):
     @unbuilt(51)
     def test_R51_one_gate_four_classes(self):
         """R51: every verb has one of the classes always-open, read, lead-write, owner (the broker verbs and qargi host are
-        host), and one gate in the preamble decides before the verb runs; an unseated project costs no extra process.
+        host), the three verbs that write a spool envelope being lead-write and every verb that writes below the config root,
+        the clone's runtime configuration or the clone's .git/info/exclude being owner, and one gate in the preamble decides
+        before the verb runs; an unseated project costs no extra process.
         Observable: every verb the commands table describes has a class; a refused verb has no effect at all; for an
         unseated project a command starts the same number of processes as before."""
 
@@ -563,9 +685,12 @@ class Seat(unittest.TestCase):
 
     @unbuilt(56)
     def test_R56_condition_records_disagree(self):
-        """R56: when the assignment file and the projection differ in project, role_name, unit, runtime or clone, always-open
-        passes and the other classes are refused.
-        Observable: for each of the five fields, read, lead-write and owner verbs exit 77 with records-disagree."""
+        """R56: when the projection carries a holder and the assignment file and the projection differ in project, role_name,
+        unit, runtime or clone, always-open passes and the other classes are refused; where the holder is null, in fenced and
+        in vacant, the condition is skipped.
+        Observable: for each of the five fields, read, lead-write and owner verbs exit 77 with records-disagree; in fenced
+        and in vacant a session with an assignment file of the seat's epoch gets the answer of R60 or R62
+        (transfer-in-progress, seat-vacant) and never records-disagree."""
 
     @unbuilt(57)
     def test_R57_condition_previous_epoch(self):
@@ -585,14 +710,17 @@ class Seat(unittest.TestCase):
 
     @unbuilt(60)
     def test_R60_condition_transfer_open(self):
-        """R60: in accepted, collected and fenced, always-open and read pass.
+        """R60: in accepted, collected and fenced, always-open and read pass, and of the lead-write verbs only marshal seat
+        state --submit, in accepted only.
         Observable: in each of the three states a lead-write verb exits 77 with transfer-in-progress and an owner verb with
-        not-assigned."""
+        not-assigned; marshal seat state --submit passes in accepted and exits 77 with transfer-in-progress in collected
+        and in fenced."""
 
     @unbuilt(61)
     def test_R61_condition_read_back_pending(self):
-        """R61: in pending-readback, always-open and read pass.
-        Observable: B's lead-write verb exits 77 with readback-pending and its owner verb with not-assigned."""
+        """R61: in pending-readback, always-open and read pass, and of the lead-write verbs only marshal seat readback --submit.
+        Observable: B's lead-write verb exits 77 with readback-pending and its owner verb with not-assigned; B's marshal seat
+        readback --submit passes; marshal seat state --submit and marshal caretaker request exit 77 with readback-pending."""
 
     @unbuilt(62)
     def test_R62_condition_vacant(self):
@@ -602,16 +730,18 @@ class Seat(unittest.TestCase):
     @unbuilt(63)
     def test_R63_condition_held_by_a_caretaker(self):
         """R63: in held with a caretaker, always-open and read pass and of the lead-write verbs only env check, doctor, packs
-        check and marshal caretaker request.
+        check and marshal caretaker request, the exceptions of the caretaker's row among the derived classes (R98).
         Observable: the four exceptions pass; every other lead-write verb of the commands table exits 77 with
         caretaker-denied; an owner verb exits 77 with not-assigned, not caretaker-denied."""
 
     @unbuilt(64)
-    def test_R64_condition_no_project_in_a_sandbox(self):
-        """R64: a verb that names no project, where some project is seated and the authority root is not usable, passes unless
-        its class is owner.
-        Observable: such an owner verb exits 77 with not-assigned; verbs of the other classes pass; with a usable authority
-        root the owner verb passes."""
+    def test_R64_condition_no_project_named(self):
+        """R64: a verb that names no project is answered by this condition alone: where some project under the config root is
+        seated (an answers file that cannot be read or holds an invalid marker counts as seated), it passes unless its class is
+        owner, inside a sandbox and outside; the owner runs it through qargi host.
+        Observable: with one seated project such an owner verb exits 77 with not-assigned whatever the authority root is
+        (absent, the true store, a store the caller made); verbs of the other classes pass; under qargi host with the true
+        store the owner verb runs; with no seated project every class passes."""
 
     @unbuilt(65)
     def test_R65_refusal_line(self):
@@ -690,8 +820,12 @@ class Seat(unittest.TestCase):
 
     @unbuilt(76)
     def test_R76_no_approval_from_inside(self):
-        """R76: on a seated project a verb given --approved in a sandbox is refused before it does anything.
-        Observable: each verb that takes --approved exits 1 with approval-refused and leaves no file changed."""
+        """R76: on a seated project a verb given --approved is refused before it does anything, unless a qargi host call that
+        passed the outside proof runs it.
+        Observable: typed without qargi host, each verb that takes --approved exits 1 with approval-refused and leaves no file
+        changed, with the true store present and with every variable of a qargi host call set by hand too; under qargi host
+        with the true store it is accepted; under qargi host with a store the caller made the call exits 1 with
+        host-in-sandbox."""
 
     @unbuilt(77)
     def test_R77_plan_tokens_do_not_cross(self):
@@ -744,10 +878,12 @@ class Seat(unittest.TestCase):
 
     @unbuilt(84)
     def test_R84_the_clone_is_handed_over_in_place(self):
-        """R84: the note lists uncommitted work and the hidden tracked files of the assignment as unverified lead-stated data,
-        and a verb that writes below the config root or the clone's runtime configuration is class owner.
-        Observable: hidden_tracked of the note equals the assignment's; each such verb exits 77 with not-assigned in a
-        sandbox."""
+        """R84: the clone and the state root stay the role's across epochs; the note lists uncommitted work as lead-stated,
+        unverified data and the hidden tracked files as the supervising layer's data, copied from the assignment and not
+        lead-stated; a verb that writes below the config root, the clone's runtime configuration or the clone's
+        .git/info/exclude is class owner.
+        Observable: hidden_tracked of the note equals the assignment's and stands outside lead_stated; uncommitted work is
+        marked unverified; each such verb exits 77 with not-assigned for the holder and runs under qargi host."""
 
     # ---- conditions of the supervising layer
 
@@ -773,17 +909,22 @@ class Seat(unittest.TestCase):
     @unbuilt(88)
     def test_R88_no_path_is_followed_through_a_link(self):
         """R88: every path a seat verb reads or writes is resolved one component at a time without following a symbolic link,
-        at the time of use.
+        at the time of use; the path of a root is resolved once and what it resolves to must pass an owner-only check as in
+        R8 before anything below it is opened.
         Observable: for each row of the table, a symbolic link put in place of the file and of each directory component
         after it was recorded makes the authority side exit 1 with symlink-refused and the gate exit 77 with
-        seat-record-invalid, and the link's target is neither read nor written."""
+        seat-record-invalid, and the link's target is neither read nor written; a root that resolves to a directory of
+        another owner, or one that group or others can enter, makes the authority side exit 1 with authority-store-unsafe
+        and the gate exit 77 with seat-record-invalid, and nothing below it is opened."""
 
     @unbuilt(89)
     def test_R89_nothing_a_sandbox_can_write_is_trusted_by_path(self):
-        """R89: the assignment directory, the projection directory and the mirror are refused when at or below the clone or
-        when a component is not the caller's or root's.
-        Observable: an assignment whose mirror lies below its clone exits 1 with assignment-invalid; a marker whose
-        directories lie below the clone makes authority-side verbs exit 1 with authority-store-unsafe."""
+        """R89: authority-side code uses no path with a component a sandbox can write; what a sandbox can write is the clone and
+        the state root that the assignment declares; the assignment directory, the projection directory, the mirror and the
+        authority and config roots are refused when equal to, below or containing either; who owns a path is not the test.
+        Observable: an assignment whose mirror lies below its clone, equals its state root or contains its clone exits 1 with
+        assignment-invalid; a marker whose directory lies below the declared state root makes authority-side verbs exit 1
+        with authority-store-unsafe; a path outside both declared locations is accepted whoever owns its components."""
 
     @unbuilt(90)
     def test_R90_archive_before_remove(self):
@@ -794,24 +935,33 @@ class Seat(unittest.TestCase):
 
     @unbuilt(91)
     def test_R91_the_archive_of_open_runs(self):
-        """R91: after S3 and before S4 the broker archives every open run folder: one archive file per run and a manifest with
-        name, feature, file count, size, digest and the cut mark, owner only, verified by reading it back.
-        Observable: after S4 the manifest lists each open run with the digest of its archive file, the files are mode 600, a
-        run over the limit is marked cut, and a symbolic link in a run folder is stored as a link."""
+        """R91: after S3 and before the note of S4 the broker archives every open run folder of the role whose epoch ended,
+        walking only below the state_root of that epoch's assignment: one archive file for each run and manifest.json, owner
+        only, verified by reading it back; the limit is 64 MiB of file content for each run, files stored whole in the byte
+        order of their paths; an init archives nothing.
+        Observable: after S4 the manifest lists each open run with its name, its feature, the count and size of its files
+        and of the files stored, the digest of its archive file and cut; the files are mode 600; a run of 64 MiB and one
+        byte is marked cut and the files stored are the first of its paths in byte order; a symbolic link in a run folder is
+        stored as a link; a run that the role's records place outside the state root is listed as outside and its folder is
+        neither read nor changed."""
 
     @unbuilt(92)
-    def test_R92_orphans_are_named_then_removed(self):
-        """R92: the note lists every archived run as a lead-stated orphan, and a run folder is removed only after its archive
-        is verified and the note that names it is written.
-        Observable: with a stop between archive, note and removal the folder exists until both are written; the note's
-        orphans equal the manifest's runs; no run of the registry is absent from both the note and the role's state."""
+    def test_R92_orphans_are_named_published_then_removed(self):
+        """R92: the note lists every archived run as a lead-stated orphan with the digest of its archive file; S4 publishes the
+        manifest and the archive files read only below the projection directory, where the successor reads them; a run folder
+        is removed only when its archive holds it whole, is verified and published and the note that names it is written, as
+        the first act of S5; a run that was cut stays.
+        Observable: with a stop between archive, note, publication and removal the folder exists until all three are written;
+        the published files have the digests the note names and no write bit; the note's orphans equal the manifest's runs;
+        the folder of a cut run is still there after S5; no run of the registry is absent from both the note and the role's
+        state; no gate answer changes with a file below the published directory."""
 
     # ---- the coordinator's place
 
     @unbuilt(93)
     def test_R93_coordinator_values_are_reserved_and_refused(self):
-        """R93: an assignment with seat_role coordinator or kind delegate or undelegate is refused, and the gate raises no code
-        in its reserved place.
+        """R93: an assignment with seat_role coordinator or kind delegate or undelegate is refused, the gate raises no code in
+        its reserved place, and the coordinator's row among the derived classes is reserved too.
         Observable: each of the three exits 1 with assignment-invalid and the store is unchanged."""
 
     @unbuilt(94)
@@ -825,6 +975,52 @@ class Seat(unittest.TestCase):
         """R95: a helper inside the lead's session shares its assignment file and is answered as the holder.
         Observable: a verb run with the holder's records and a label gets the holder's answer, and the store holds no record
         of a delegation."""
+
+    # ---- rules added in revision 2 of the contract (in the page each stands in the section of its subject)
+
+    @unbuilt(96)
+    def test_R96_the_spool_writing_verbs(self):
+        """R96: marshal seat state --submit, marshal seat readback --submit and marshal caretaker request each write one spool
+        envelope (state, readback, caretaker-request) and nothing else; they are lead-write verbs, and each passes in the state
+        that asks for its envelope: accepted, pending-readback, held by a caretaker.
+        Observable: in accepted A's state --submit passes while its other lead-write verbs exit 77 with transfer-in-progress,
+        and in collected it exits 77 too; in pending-readback B's readback --submit passes while its other lead-write verbs
+        exit 77 with readback-pending; after each passing call exactly one new file exists below the state root and no record
+        of the project, no run and nothing in the repository changed."""
+
+    @unbuilt(97)
+    def test_R97_no_unit_of_the_role_between_the_fence_and_S5(self):
+        """R97: the supervising layer does not start B's unit before S5 is written; from the fence until then no unit of the
+        role exists, and only then does the broker read or remove below the role's state root.
+        Observable: the archive, the publication and the removal are complete before the seat write of S5; seat status
+        names the start of B's unit as the next action only after S5; a session with B's assignment file before S5 gets
+        exit 77 with projection-stale for a lead-write verb; after S5 no broker step opens a path below the role's state
+        root."""
+
+    @unbuilt(98)
+    def test_R98_derived_classes(self):
+        """R98: a derived class is answered as the lead is, less what its row takes away; the description of the commands
+        carries one row (class, base rule, exceptions) for each: caretaker, with the exceptions env check, doctor, packs check
+        and marshal caretaker request, and a reserved row for coordinator that nothing reads.
+        Observable: the table has exactly these two rows; the verbs that pass for a caretaker in held (R63) are the
+        exceptions of its row and no others; no assignment and no gate answer uses the coordinator's row."""
+
+    @unbuilt(99)
+    def test_R99_placeholders_are_the_supervising_layers(self):
+        """R99: the supervising layer makes the placeholders of its read-only binds and records them in the clone's
+        .git/info/exclude; qargi makes none, every qargi verb that writes that file is class owner, and the broker writes
+        nothing below a clone.
+        Observable: each verb of the commands description that writes the clone's .git/info/exclude exits 77 with
+        not-assigned for the holder and changes nothing; after a whole transfer no file below the clone has changed, that
+        file included."""
+
+    @unbuilt(100)
+    def test_R100_a_hidden_tracked_copy_is_an_intake_item(self):
+        """R100: a tracked path that a read-only bind hides is listed in hidden_tracked of the assignment and carried
+        unchanged by the note; a change to it is an intake item for the owner at the reviewed merge, which the text form of
+        the note says for every listed path; no seat verb writes a listed path.
+        Observable: hidden_tracked of the note equals the assignment's; the text form names each listed path as an intake
+        item for the owner; after a whole transfer no listed path has changed in the clone or in the mirror."""
 
 
 if __name__ == "__main__":
