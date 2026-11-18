@@ -1437,7 +1437,7 @@ COMMANDS = {
                                  "findings.md is not a report review check reads: it is for a member that writes its findings apart from the report.")),
             "list": verb("List the local runs: role, slug, age, whether applied and merged", [],
                          [opt("--scratch", "the directory the runs were prepared in (default: the runs of the registry that still exist)", "DIR", "dir"),
-                          opt("--actor", "only the runs recorded under this coordinator label: the whole label, or a prefix that ends at a colon (<lead-id>:coord:<feature>: lists every coordinator of a feature); a run prepared without a label matches none", "ID"),
+                          opt("--actor", "only the runs recorded under this coordinator label: the whole label, or a prefix that ends at a colon (<lead-id>:coord:<feature>: lists every coordinator of a feature; a lead identity may hold colons, so a prefix can also match the labels of a lead whose identity begins with it, and the whole label is exact); a run prepared without a label matches none", "ID"),
                           opt("--feature", "only the runs of this feature: the one a labeled prepare recorded, else the one the run's base feature/NAME names", "NAME")],
                          desc=("Read-only. One row per run: ROLE, SLUG, AGE, APPLIED (RUN/applied exists: review apply ran; closed for a run closed with close --applied-by-am), MERGED (the applied tip is on a branch other than agent/*; ? for a run of a repository URL) and RUN. "
                                "A run prepared under a coordinator label (qargi help coordinator) carries two more fields after RUN, actor=LABEL and feature=NAME, and so does every row when --actor or --feature is given (- for none). "
@@ -1671,7 +1671,7 @@ COMMANDS = {
         "desc": ("usage and compact-check keep the lead's own context small: usage says how much of it is in use, compact-check says whether a "
                  "compact of the session is safe now and what to re-read after it. Only the lead ever pushes, never a member. With a grant it creates agent/* "
                  "branches and opens pull requests; every merge is asked of you, and it cannot publish releases. grant and revoke are interactive: "
-                 "each step prints its plan and asks you at the terminal, and your answer is the recorded approval. From Claude Code run them with !."),
+                 "each step prints its plan and asks you at the terminal, and your answer is the recorded approval. Where the session cannot answer a prompt, the person runs them at their own terminal (qargi provider notes commands says how the lead's runtime does it)."),
         "scripts": ["lead.sh", "lead_usage.py"],
         "verbs": {
             "usage": verb("How much of this session's context is in use: tokens of the last turn, percent of a known window, transcript size", [],
@@ -1826,7 +1826,7 @@ TOOL_VERBS["seal"] = dict(PACK_VERBS["seal"], opts=PACK_VERBS["seal"]["opts"] + 
 COMMANDS["tool"]["verbs"] = TOOL_VERBS
 
 # The coordinator label (QARGI_ACTOR): a session that carries a valid one is of coordinator class. It may run the verbs listed here and no other: a
-# verb that is not listed is the lead's, and so is every verb added later until it is listed (tests/test_help.py checks that each name here is a
+# verb that is not listed is the lead's, and so is every verb added later until it is listed (tests/test_gates.py, ActorVerbTable, checks that each name here is a
 # verb, and lists what is allowed). The label is attribution, not an identity: it grants nothing, it only narrows (lib/help.py actor_gate decides, once, in
 # the dispatcher's preamble, before any verb changes anything).
 #   ACTOR_VERBS     (area, verb) -> what the verb names that the label narrows: "" nothing, "run" a run directory (its registry base must be
@@ -1872,9 +1872,14 @@ TOPICS = {
         "Allowed: the verbs that only read, local prepare, run, verify and clean RUN, local list, review check, feature status and verify, marshal check and status, backlog list and graph, "
         "lead usage, provider notes and doctor. It is narrowed by feature: local prepare needs --base feature/<the label's feature>; a local or review verb that names a run is "
         "refused when the run's base is another feature; a feature verb that names a feature is refused for another one. A coordinator may clean any run of its own feature, "
-        "also one a stopped predecessor prepared (the narrowing is by feature, not by label).",
+        "also one a stopped predecessor prepared (the narrowing is by feature, not by label). Where a verb that is narrowed by feature or run is given an option it does not declare, "
+        "it is refused (exit 2): the verb may read the words after such an option differently than the narrowing does, so what it names could not be told.",
+        "Some of the allowed verbs write something small, and are allowed for that: qargi credential check appends a line to the audit log and asks the remote with a push "
+        "--dry-run that sends nothing; qargi review check renews the lead's lease of the feature the run belongs to; the verbs that fetch (marshal status and check, unless --no-fetch) "
+        "update what this machine holds of the remote. None of them changes a branch, a run or a record of who leads.",
         "qargi local prepare under a label records the label and the feature with the run, in the lead's registry. qargi local list --actor ID (the whole label, or a prefix ending at "
-        "a colon) and --feature NAME list the runs by them; qargi local verify --mine verifies every open run recorded under this session's label.",
+        "a colon: a lead identity may hold colons, so a prefix such as lead-1: also matches the labels of a lead whose identity begins with it; give the whole label when that matters) "
+        "and --feature NAME list the runs by them; qargi local verify --mine verifies every open run recorded under this session's label.",
         "The label is attribution, not an identity and not an authority: it is unauthenticated, a session can unset the variable, and it is never compared as an identity for a lease, an "
         "approval or a marshal record (QARGI_LEAD stays the lead identity). It stops a coordinator that follows its brief from doing a lead's act by mistake; it does not stop a hostile session. "
         "A member's guard is unchanged by it: a member that sets the variable can only narrow itself."]),

@@ -449,6 +449,20 @@ class ActorFeatureNarrowing(unittest.TestCase):
         self.assertEqual(gate(["feature", "status", "--project", "p", "alpha"]), (0, ""))   # an option's value is no feature name
         self.assertEqual(gate(["feature", "status", "--project", "alpha", "beta"])[0], 2)
 
+    def test_an_undeclared_option_fails_closed(self):
+        # feature.sh reads --purpose and --plan with a value, the verbs' tables declare neither for verify and status: without this the gate read alpha, the verb ran beta
+        for line in (["feature", "verify", "--purpose", "alpha", "beta"], ["feature", "verify", "--plan", "alpha", "beta"], ["feature", "status", "--purpose", "alpha", "beta"],
+                     ["feature", "verify", "--purpose=x", "alpha"], ["feature", "verify", "alpha", "--bogus"], ["feature", "verify", "-x", "alpha"], ["feature", "verify", "--", "alpha"]):
+            rc, err = gate(line)
+            self.assertEqual(rc, 2, line)
+            self.assertIn("is not an option the verb declares", err)
+            self.assertIn("the lead runs it", err)
+        self.assertEqual(gate(["feature", "verify", "--project", "p", "alpha"]), (0, ""))
+        self.assertEqual(gate(["feature", "verify", "alpha", "--assume-unreachable-ok"]), (0, ""))
+        base = ["local", "prepare", "--repo", "/r", "--slug", "s", "--scratch", "/x", "--base", "feature/alpha"]
+        self.assertEqual(gate(base + ["--bogus", "feature/beta"])[0], 2)
+        self.assertEqual(gate(["local", "verify", self.runs["qargi.aaaaaa"], "--bogus"])[0], 2)
+
     def test_prepare_needs_the_labels_feature_as_its_base(self):
         base = ["local", "prepare", "--repo", "/r", "--slug", "s", "--scratch", "/x"]
         self.assertEqual(gate(base + ["--base", "feature/alpha"]), (0, ""))

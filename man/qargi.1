@@ -3581,7 +3581,7 @@ the directory the runs were prepared in (default: the runs of the registry that 
 .RS
 .TP
 .BI "\-\-actor " "ID"
-only the runs recorded under this coordinator label: the whole label, or a prefix that ends at a colon (<lead\-id>:coord:<feature>: lists every coordinator of a feature); a run prepared without a label matches none.
+only the runs recorded under this coordinator label: the whole label, or a prefix that ends at a colon (<lead\-id>:coord:<feature>: lists every coordinator of a feature; a lead identity may hold colons, so a prefix can also match the labels of a lead whose identity begins with it, and the whole label is exact); a run prepared without a label matches none.
 .RE
 .RS
 .TP
@@ -4069,7 +4069,7 @@ which store: memory or reference (default: both).
 .B qargi lead
 The lead session: its context, and the cloud lead's right to push.
 .PP
-usage and compact\-check keep the lead's own context small: usage says how much of it is in use, compact\-check says whether a compact of the session is safe now and what to re\-read after it. Only the lead ever pushes, never a member. With a grant it creates agent/* branches and opens pull requests; every merge is asked of you, and it cannot publish releases. grant and revoke are interactive: each step prints its plan and asks you at the terminal, and your answer is the recorded approval. From Claude Code run them with !.
+usage and compact\-check keep the lead's own context small: usage says how much of it is in use, compact\-check says whether a compact of the session is safe now and what to re\-read after it. Only the lead ever pushes, never a member. With a grant it creates agent/* branches and opens pull requests; every merge is asked of you, and it cannot publish releases. grant and revoke are interactive: each step prints its plan and asks you at the terminal, and your answer is the recorded approval. Where the session cannot answer a prompt, the person runs them at their own terminal (qargi provider notes commands says how the lead's runtime does it).
 .RS
 .TP
 .B usage

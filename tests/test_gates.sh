@@ -271,6 +271,13 @@ before=$(snap)
 : > "$LOG"
 out=$(QARGI_ACTOR=$LBL "$DA" feature verify beta 2>&1); rc=$?
 [ $rc = 2 ] && [ ! -s "$LOG" ] && [ "$before" = "$(snap)" ] && ok "and does not verify it: no gate ran, nothing changed" || no "beta verify rc=$rc: $out"
+# an option the verb does not declare may take a value in the script (--purpose, --plan): the gate would read alpha, the verb would run beta; it fails closed
+for w in "feature verify --purpose alpha beta" "feature verify --plan alpha beta" "feature status --purpose alpha beta"; do
+  before=$(snap)
+  # shellcheck disable=SC2086  # the words are plain
+  out=$(QARGI_ACTOR=$LBL "$DA" $w 2>&1 </dev/null); rc=$?
+  [ $rc = 2 ] && grep -qF "is not an option the verb declares" <<<"$out" && [ "$before" = "$(snap)" ] && ok "an undeclared option fails closed under a label, nothing changed: $w" || no "undeclared option rc=$rc: $w -> $out"
+done
 QARGI_ACTOR=lead-one:coord:beta:7 "$DA" feature status beta >/dev/null 2>&1 && ! QARGI_ACTOR=lead-one:coord:beta:7 "$DA" feature status alpha >/dev/null 2>&1 \
   && ok "the other way: a coordinator of beta works on beta and not on alpha" || no "beta coordinator"
 # unset and empty change nothing: the lead's verb answers as it did

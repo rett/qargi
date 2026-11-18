@@ -57,9 +57,17 @@ every verb or option that pushes, any command line with `--approved`, `marshal t
 label's is refused, and `local prepare` needs `--base feature/<the label's feature>`. A coordinator may clean any run of its own feature,
 one a stopped predecessor prepared too: the scope is the feature, not the label.
 
+A narrowed verb (`local prepare`, `run`, `verify` and `clean`, `review check`, `feature status` and `verify`) given an option it does not declare in
+`lib/commands.py` is refused too (exit 2), because the verb may read the words after such an option differently than the narrowing does:
+`feature verify --purpose alpha beta` would pass as feature `alpha` and run on `beta`. A few allowed verbs write something small, and are
+allowed for that: `credential check` appends a line to the audit log and asks the remote with a `push --dry-run` that sends nothing,
+`review check` renews the lead's lease of the feature the run belongs to, and the verbs that fetch (`marshal status` and `check`, unless
+`--no-fetch`) update what the machine holds of the remote. None of them changes a branch, a run or a record of who leads.
+
 `local prepare` under a label records the label and the feature with the run, in the lead's registry. `qargi local list --actor ID`
 (the whole label, or a prefix that ends at a colon: `<lead-id>:coord:<feature>:` lists every coordinator of a feature) and `--feature NAME`
-list the runs by them, and `qargi local verify --mine` verifies every open run recorded under the session's own label, one line per run.
+list the runs by them (a lead identity may hold colons, so a prefix such as `lead-1:` also matches the labels of a lead whose identity begins
+with it, and only the whole label is exact), and `qargi local verify --mine` verifies every open run recorded under the session's own label, one line per run.
 
 The label is attribution, not an identity and not an authority. It is unauthenticated and a session can unset the variable; no lease,
 approval or marshal record compares it, and `QARGI_LEAD` stays the lead identity. It stops a coordinator that follows its brief from doing
