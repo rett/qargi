@@ -75,7 +75,7 @@ journal_line() { # REPO REF OLD NEW VERB URL [WHY]: one line; with URL a ref of 
 JOURNAL_REACH_MAX=500
 journal_reach() {
   local side=$1 ref=$2 tip=$3 verb=$4 s name=${2#refs/heads/}
-  local why='a commit made on the branch with git; the verb took the branch with it'
+  local why='a commit made on the branch with git; the verb took the branch with it'   # journal_steps (lib/local.sh) knows these steps by this text: keep the two the same
   [ "$side" = local ] || name=origin/$name
   journal_reach_scan "$side" "$ref" "$tip"
   if [ -n "$REACH_NONE" ]; then
