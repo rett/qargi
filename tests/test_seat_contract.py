@@ -303,6 +303,11 @@ class Contract(unittest.TestCase):
         self.assertIn("content of a `state` envelope", blocks[18])
         self.assertIn("`tx`", squash(open_items(self.text)["O10"]))
 
+    def test_the_ignore_line_of_the_dev_store_is_named_with_the_change_that_adds_it(self):
+        r7 = squash(rule_blocks(self.text)[7])
+        self.assertIn("`.gitignore` carries `.qargi-authority-dev`", r7)
+        self.assertRegex(r7, r"This page adds no line to `\.gitignore`: the line comes with the change that makes `\$AUTH` resolve")
+
     def test_what_a_sandbox_can_write_is_a_condition_of_the_supervising_layer(self):
         blocks = rule_blocks(self.text)
         self.assertIn(102, blocks, "R102 states the condition that R89 rests on")
@@ -457,11 +462,12 @@ class Seat(unittest.TestCase):
         """R7: the authority store is a third root, outside the state root and the config root; its path is resolved by the
         first case that holds, in this order: QARGI_AUTH; a dev run (the dev data root with -authority-dev); QARGI_HOME (with
         -authority); QARGI_STATE or QARGI_CONF set (no default); else the default data root with -authority. The dev run is
-        tried before the case of no default; the repository's .gitignore lists .qargi-authority-dev; resolving creates nothing.
+        tried before the case of no default; the repository's .gitignore carries .qargi-authority-dev (the line comes with the
+        change that makes the authority root resolve, not with the contract); resolving creates nothing.
         Observable: the resolved path in each of the five cases, and the earlier case wins where two hold; with QARGI_STATE
-        alone, in a run that is not a dev run, a broker verb exits 1 with authority-store-unsafe; git check-ignore accepts
-        .qargi-authority-dev in a checkout and git status shows nothing after a broker call of a dev run; no directory exists
-        after resolving."""
+        alone, in a run that is not a dev run, a broker verb exits 1 with authority-store-unsafe; .gitignore holds the line
+        .qargi-authority-dev, git check-ignore accepts it in a checkout and git status shows nothing after a broker call of a
+        dev run; no directory exists after resolving."""
 
     @unbuilt(8)
     def test_R8_authority_root_is_apart(self):

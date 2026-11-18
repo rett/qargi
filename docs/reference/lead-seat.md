@@ -123,9 +123,11 @@ a dev run, and only a run that is not one is left without a default.
 dev run is today: a checkout other than the installed one, run with none of `QARGI_HOME`,
 `QARGI_CONF` and `QARGI_STATE` set. As long as that holds, case 2 and case 4 never hold together,
 and the order decides only where that definition changes. The store of a dev run lies in the
-checkout, beside the dev data root, so the repository's `.gitignore` lists `.qargi-authority-dev`
-and git never offers that store for a commit. Resolving a root creates nothing. Refusal:
-`authority-store-unsafe`, exit 1, from every authority-side verb when there is no default.
+checkout, beside the dev data root, so the repository's `.gitignore` carries `.qargi-authority-dev`
+and git never offers that store for a commit. This page adds no line to `.gitignore`: the line
+comes with the change that makes `$AUTH` resolve, and the test of this rule checks it. Resolving a
+root creates nothing. Refusal: `authority-store-unsafe`, exit 1, from every authority-side verb
+when there is no default.
 
 **R8** (authority root is apart). `$AUTH` is never equal to or below `$STATE`, `$CONF` or the data
 root, is a directory of mode 700 owned by the effective user, and holds directories of mode 700 and
