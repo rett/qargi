@@ -161,6 +161,12 @@
           "type": "object",
           "additionalProperties": {"type": "string"}
         },
+        "lead_notes": {
+          "description": "The topics of notes that are about the lead's own session on this runtime (its identity, its own model, how it searches a repository, where it loads its skills from, how a message reaches it). Every topic that is not listed is about the members the runtime runs (how one is started, what one returns). Each item is a topic of notes, listed once. A definition that lists none says that all its notes are about its members. It is read only when a lead runtime is named (the lead-runtime option of the notes verb of provider, or QARGI_LEAD_RUNTIME): the listed topics are then answered by the lead's runtime and the others by the project's runtime, so a lead on one runtime can work with members on another; with no lead runtime named it changes nothing that is printed. Not available to an extension.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string"}
+        },
         "adapter": {"type": ["string", "null"], "description": "an executable relative to the definition's directory (no .. and no absolute path); called as adapter VERB with a JSON request on stdin"},
         "adapter_verbs": {"type": "array", "items": {"type": "string"}, "description": "the verbs the adapter serves; absent means every verb of the adapter contract"}
       }

@@ -1230,10 +1230,20 @@ COMMANDS = {
                                  "A file that is missing, is not text or leaves the directory is refused."),
             "notes": verb("Print a note of the project's runtime (local unless --surface cloud), or list the topics it has", [("TOPIC", "none", True)],
                           [opt("--project", "the project whose runtime is asked (default: the one in effect)", "PROJECT", "project"),
-                           opt("--surface", "the surface whose runtime is asked (default local); the cloud runtime's notes say where a hosted session keeps its outputs and clones (output-dir, clone-dir)", "SURFACE", ("local", "cloud"))],
+                           opt("--surface", "the surface whose runtime is asked (default local); the cloud runtime's notes say where a hosted session keeps its outputs and clones (output-dir, clone-dir)", "SURFACE", ("local", "cloud")),
+                           opt("--lead-runtime", "the runtime of the lead's own session, when it is not the project's: the notes about the lead's session are read from it "
+                                                 "(default: QARGI_LEAD_RUNTIME when it is set and not empty; with neither, every note is the project's runtime's, as before)", "NAME")],
                           desc="The notes of a runtime's definition say how it does what a skill asks of it (how a lead starts a member, where it keeps its skills). "
                                "With a TOPIC the text is printed; without, the names of the topics, one per line. The definition is the runtime's composed with the project's "
-                               "enabled extensions. A topic the runtime does not have, or a runtime with no notes, is exit 1, naming both and listing the topics there are; a project with no runtime on the surface, or a runtime that cannot be used as it stands (a library pack not sealed or changed since it was sealed, an unreadable definition), is exit 2 (a refusal; there is no default). Read-only."),
+                               "enabled extensions. A topic the runtime does not have, or a runtime with no notes, is exit 1, naming both and listing the topics there are; a project with no runtime on the surface, or a runtime that cannot be used as it stands (a library pack not sealed or changed since it was sealed, an unreadable definition), is exit 2 (a refusal; there is no default). Read-only. "
+                               "A lead whose session runs on another runtime than the project's members names its own with --lead-runtime NAME or QARGI_LEAD_RUNTIME (the option wins). "
+                               "A definition lists the topics that are about the lead's own session (lead_notes: its identity, its own model, how it searches, where it loads its skills from); "
+                               "those are then answered by the lead runtime, and every other topic (how a member is started, what a member returns) by the project's runtime as before. "
+                               "The list of topics is both. A topic the lead runtime lists needs the project but not the project's runtime. "
+                               "NAME is a runtime of the local surface that can be used as it stands, by its own name (not a family's), whatever --surface says; any other name is unsupported, exit 3, whatever is asked. "
+                               "Both refusals say whether the option or the variable named the lead runtime. "
+                               "A topic the project's runtime lists as about a lead's session and the lead runtime does not have is unsupported too, exit 3: it is never answered by the project's runtime. "
+                               "The name selects which definition is read and nothing else: nothing is stored or changed, and no identity, approval or permission depends on it."),
             "model": verb("Print the model a runtime maps a tier to on a surface", [("NAME", "none"), ("SURFACE", "none"), ("TIER", "none")],
                           desc="NAME is a runtime name, not a family name."),
             "attest": verb("Record a capability you verified by hand or by a paid run (never runs or spends anything itself)", [("NAME", "none"), ("CAPABILITY", "none")],

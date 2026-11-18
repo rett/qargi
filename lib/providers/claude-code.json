@@ -262,6 +262,7 @@
     "member-out": "Observed, not verified: Claude Code refuses a subagent's Write of a report file, so a member's OUT files can be missing; the report then comes in its final message. A run with no report in OUT: suspect it first.",
     "commands": "In Claude Code a line that starts with `!` runs as a shell command in the session; use it for a command the person must run, such as one that needs their terminal."
   },
+  "lead_notes": ["commands", "exploration", "identity", "session-model", "skills-dir"],
   "adapter": "adapter",
   "adapter_verbs": ["resolve", "dispatch-local", "barrier-check"]
 }
