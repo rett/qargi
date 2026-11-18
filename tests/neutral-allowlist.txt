@@ -218,7 +218,6 @@ lib/commands.py:Needs --target claude-code
 lib/commands.py:by ~/\.claude/skills or by the
 lib/commands.py:checkout's \.claude/skills
 lib/commands.py:for Claude Code \.claude/skills
-lib/commands.py:From Claude Code run them with
 lib/commands.py:"subagent-start": verb
 # lib/commands.py: the guard topic names the ant profiles it protects
 lib/commands.py:the memory tiers, ~/\.config/anthropic

@@ -1671,7 +1671,7 @@ COMMANDS = {
         "desc": ("usage and compact-check keep the lead's own context small: usage says how much of it is in use, compact-check says whether a "
                  "compact of the session is safe now and what to re-read after it. Only the lead ever pushes, never a member. With a grant it creates agent/* "
                  "branches and opens pull requests; every merge is asked of you, and it cannot publish releases. grant and revoke are interactive: "
-                 "each step prints its plan and asks you at the terminal, and your answer is the recorded approval. From Claude Code run them with !."),
+                 "each step prints its plan and asks you at the terminal, and your answer is the recorded approval. Where the session cannot answer a prompt, the person runs them at their own terminal (qargi provider notes commands says how the lead's runtime does it)."),
         "scripts": ["lead.sh", "lead_usage.py"],
         "verbs": {
             "usage": verb("How much of this session's context is in use: tokens of the last turn, percent of a known window, transcript size", [],
