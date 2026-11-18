@@ -282,6 +282,7 @@ COMMANDS = {
                          opt("--opt-in", "cloud only: confirm an opt-in profile such as researcher"),
                          opt("--json", "machine-readable: role, class, profile, base, member, tier, model alias, model id, effort (cloud: instance, base, model, effort, profile, class)")],
                         desc="For an in-session runtime, the base member is the one the profile names (worker for build, write and test, reviewer for review) when the project has registered it; no other member serves, and without it the verb says which base to add. A read-only role never resolves to a member that can write. Plain output is one line: MEMBER MODEL EFFORT PROFILE; pass MODEL and EFFORT to the Agent tool with the member as subagent_type. "
+                             "How the project's runtime starts a member with them is in its notes: qargi provider notes spawn. "
                              "For command runtimes, MEMBER is the logical base, requiring no registration or member file. MODEL is the selected ID or alias (an alias only for use: alias with a nonempty tier alias); EFFORT is the requested level even without native control. JSON marks mode: command. Legacy roles/lead answers do not select command profiles; profiles: null is absent, while malformed non-null containers and selected entries refuse."),
         },
     },
@@ -1699,7 +1700,8 @@ COMMANDS = {
     "hook": {
         "summary": "Claude Code hooks",
         "desc": ("session-start loads the lead role's READMEs and indexes from both stores (about 4 KB) for the project whose repository the "
-                 "session is in, and the push grant. Register it as a SessionStart hook; it prints nothing outside a registered project."),
+                 "session is in, and the push grant. Register it as a SessionStart hook; it prints nothing outside a registered project. "
+                 "Whether the project's runtime has such a hook, and how a session gets its lead identity from it, is in the runtime's notes: qargi provider notes identity."),
         "scripts": ["hook.sh"],
         "verbs": {
             "session-start": verb("Print the SessionStart hook output for the current project",
