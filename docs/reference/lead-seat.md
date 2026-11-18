@@ -7,8 +7,9 @@ seat can be built against the rules one at a time. What exists today (the per-fe
 release and take, the owner's takeover, the handoff note and `marshal claim --as-successor-of`) is
 described in [Feature marshal](../flow/marshal.md) and stays as it is for a project without a seat.
 
-This is revision 2 of the page. It takes in the changes that the review of revision 1 required;
-[Trace to the review](#trace-to-the-review) maps each of them to its rules.
+This is revision 3 of the page. It takes in the changes that the review of revision 1 required and
+those that the review of revision 2 required; [Trace to the review](#trace-to-the-review) maps each
+of them to its rules.
 
 How to read it:
 
@@ -29,11 +30,12 @@ How to read it:
 - A rule says what it guarantees and against whom where that is not plain. Qargi's code on the lead
   side runs in the lead's own process, so a check it makes is a guard rail: it stops a lead that does
   what it should not by habit, by an old instruction or by confusion, and it does not stop a lead
-  that works round it. The gate (R51 to R64, R67 to R69), the outside proof of `qargi host` (R33), R76
-  and R77 are guard rails and say so. What holds against a lead that works round qargi is what its
-  sandbox lacks, and providing that is the supervising layer's work: R36 and R97 (the unit of the
-  epoch before is gone), R99 (the binds of the clone's configuration), R101 (what a sandbox never
-  holds) and R102 (what it can write). [Limits](#limits-of-phase-1) says where that ends.
+  that works round it. The gate (R51 to R64, R67 to R69) and the outside proof of `qargi host` (R33)
+  are guard rails, and so are R76 and R77, which rest on that proof; R33, R51, R76 and R77 say so
+  themselves. What holds against a lead that works round qargi is what its sandbox lacks, and
+  providing that is the supervising layer's work: R36 and R97 (the unit of the epoch before is
+  gone), R99 (the binds of the clone's configuration), R101 (what a sandbox never holds) and R102
+  (what it can write). [Limits](#limits-of-phase-1) says where that ends.
 
 ## Terms
 
@@ -144,14 +146,14 @@ from or written to a store that fails the check.
 `$AUTH/<project>/tx/<tx>/readback-<k>.json` and `$AUTH/<project>/tx/<tx>/result-<k>.json`, and
 where runs were archived `$AUTH/<project>/tx/<tx>/orphans/` with `manifest.json` and one archive
 file for each run that lies inside the state root (R91). Beside the projects it holds
-`$AUTH/audit-host.log` (R15),
-`$AUTH/credentials/broker_ed25519` and `$AUTH/signers`. The names `$AUTH/<project>/delegations/`
-and `$AUTH/<project>/dormancy.json` are reserved and not created. `<tx>` has the form
-`tx-<UTC time>-<four hex digits>`, and `<k>` is the number of a compared read-back, 1 to 3 (R39).
-Refusal: none.
+`$AUTH/audit-host.log` (R15), `$AUTH/credentials/broker_ed25519` and `$AUTH/signers`. The names
+`$AUTH/<project>/delegations/` and `$AUTH/<project>/dormancy.json` are reserved and not created.
+`<tx>` has the form `tx-<UTC time>-<four hex digits>`, and `<k>` is the number of a compared
+read-back, 1 to 3 (R39). Refusal: none.
 
 **R10** (who writes the store). Only the broker and `qargi host` write below `$AUTH`. Lead-side code
-never opens `$AUTH`: every lead-side verb gives the same result with `$AUTH` absent. Refusal: none.
+never opens `$AUTH`: every lead-side verb gives the same result with `$AUTH` absent, which is what
+R101 asks the supervising layer to make a sandbox. Refusal: none.
 
 **R11** (seat record). `$AUTH/<project>/seat.json` is one JSON object with exactly these fields.
 The broker is the only writer of every one of them. The file is a regular file of mode 600 in a
@@ -209,10 +211,10 @@ Refusal: none.
 **R18** (record form). Every record of this page is a UTF-8 JSON object with no float, no control
 character in a string and no field this page does not name, but for the reserved fields (R22) and
 the fields of the content of a `state` envelope, which O10 leaves open. A closed list accepts only
-its values. Size limits: assignment and fence 8 KiB, spool state 16 KiB,
-read-back 64 KiB, note text 16 KiB. Refusal: `content-too-large` for a record over its limit,
-`assignment-invalid` for an assignment and `content-invalid` for any other record that breaks the
-form; all exit 1, and the store is unchanged.
+its values. Size limits: assignment and fence 8 KiB, spool state 16 KiB, read-back 64 KiB, note
+text 16 KiB. Refusal: `content-too-large` for a record over its limit, `assignment-invalid` for an
+assignment and `content-invalid` for any other record that breaks the form; all exit 1, and the
+store is unchanged.
 
 **R19** (assignment). The supervising layer writes `<assignment_dir>/<project>.json` and passes the
 same record through the door:
@@ -377,22 +379,24 @@ these steps, and it runs the verb only when all of them pass:
    the payload with the private key file `$AUTH/credentials/broker_ed25519` in the namespace
    `qargi-host` and verifies the signature against the `signers_line` of the project's projection
    (R21). The key tool is given the path of that file and an environment with no `SSH_AUTH_SOCK`,
-   and a file that does not hold a private key fails this step: `ssh-keygen -Y sign` answers a
-   public key from an agent that holds the private half, and an agent that reaches the caller must
-   not stand in for the key file.
+   and a file that does not hold a private key fails this step: `ssh-keygen -Y sign` also takes a
+   public key and signs through an agent that holds the private half, and an agent that reaches
+   the caller must not stand in for the key file.
 4. `$AUTH/<project>/seat.json` and that projection agree in `epoch`, `tx` and `rev`.
 
 A passed proof shows this and no more: the call reads a seat record, a projection and a private key
 that agree with one another, and the key matches the signers line of the projection. It does not
 show that the call runs outside a sandbox, and no check made by code that the caller runs could.
-Step 1 closes the variables and the dev run that qargi itself reads, and nothing else. A caller that
-moves the roots by other means gets a proof that passes: `HOME` moves the default roots, and a mount
-of its own in a user namespace puts a config, a projection, a key and a store of its own making
-where `$CONF` and the default `$AUTH` stand. A caller that runs a patched copy of this code is not
-refused at all, by step 1 or by the proof (Limits). So the proof is a guard rail: it refuses a lead
-that is mistaken or stale, one that holds no key and made no roots of its own, and it is no fence
-against a lead that works round qargi. What holds against that lead is R101: no sandbox holds the
-broker's key, an agent that signs with it or a credential that makes an approval effective.
+Steps 2 to 4 pass for a caller that names a store and a config of its own in `QARGI_AUTH` and
+`QARGI_CONF`, or runs from a dev checkout of its own: step 1 refuses these, the other variables
+that name a root and the dev run, and nothing else. They pass as well when the roots are moved by
+other means: `HOME` moves the default roots, and a mount of its own in a user namespace puts a
+config, a projection, a key and a store of its own making where `$CONF` and the default `$AUTH`
+stand. A caller that runs a patched copy of this code is not refused at all, by step 1 or by the
+proof (Limits). So the proof is a guard rail: it refuses a lead that is mistaken or stale, one that
+holds no key and made no roots of its own, and it is no fence against a lead that works round
+qargi. What holds against that lead is R101: no sandbox holds the broker's key, an agent that signs
+with it or a credential that makes an approval effective.
 
 A key that the caller made fails step 3 unless the caller made the projection too, which it can do
 only in roots of its own: the signers line is the broker's (R47), R101 keeps the broker's key out of
@@ -459,11 +463,11 @@ and the result. On a match it writes the seat (`held`, `readback: matched`) and 
 B is the lead. Without a match the seat stays `pending-readback` and B may read back again, up to
 three compared read-backs for a transfer: `attempt` of the result counts them, and a read-back that
 is refused before the comparison (for its form, its size, another transfer or another note version)
-is not counted. After the third failed comparison the broker takes no further read-back
-for the transfer: the seat stays `pending-readback`, and the only way on is a new assignment, as
-R42 says for an abort after S5. Refusal: `readback-mismatch`, exit 1, to the broker's caller for a
-failed comparison; `readback-exhausted`, exit 1, for a read-back after the third; B sees the
-result of R49.
+is not counted. After the third failed comparison the broker takes no further read-back for the
+transfer: the seat stays `pending-readback`, and the only way on is a new assignment, as R42 says
+for an abort after S5. Refusal: `readback-mismatch`, exit 1, to the broker's caller for a failed
+comparison; `readback-exhausted`, exit 1, for a read-back after the third; B sees the result of
+R49.
 
 **R40** (interruption and resume). A transfer may stop between any two writes. Each stop leaves the
 state of this table, `marshal seat status` names the step that is open, and `qargi marshal broker
@@ -554,8 +558,9 @@ that write below `$CONF`, write the runtime configuration of the clone or write
 `<clone>/.git/info/exclude` (R99), and the marshal verbs R27 names. The broker verbs and
 `qargi host` are class `host` and are not gated: R8 and R33 decide them. One gate, in the preamble
 of every command (R67), applies R53 to R64 to the verb's class before the verb runs. For an
-unseated project it starts no process of its own. Refusal: the code of the condition that holds,
-exit 77.
+unseated project it starts no process of its own. The gate is a guard rail: it refuses a session
+that runs qargi as it is, and it does not stop a lead that runs code of its own (Limits).
+Refusal: the code of the condition that holds, exit 77.
 
 **R52** (order of the conditions) `[OPEN O8]`. The conditions R53 to R64 are tried in the order of
 their numbers and the first that holds decides. Within a condition the verb's class picks the
@@ -579,11 +584,10 @@ seated, or any session the supervising layer did not assign, is refused with. Re
 **R56** (condition 4: the records disagree) `[OPEN O8]`. The projection carries a holder, and the
 assignment file and the projection differ in `project`, `role_name`, `unit`, `runtime` or `clone`
 (the last four are fields of the projection's holder, R21): `always-open` passes. This is what a
-competing session with another unit's file is refused with.
-Where the projection's `holder` is null, in `fenced` and in `vacant`, there is no holder to compare
-with: this condition is skipped and a later one answers, R60 in `fenced` and R62 in `vacant`
-unless R57 or R58 holds first. Refusal: `records-disagree`, exit 77, for `read`, `lead-write` and
-`owner`.
+competing session with another unit's file is refused with. Where the projection's `holder` is
+null, in `fenced` and in `vacant`, there is no holder to compare with: this condition is skipped
+and a later one answers, R60 in `fenced` and R62 in `vacant` unless R57 or R58 holds first.
+Refusal: `records-disagree`, exit 77, for `read`, `lead-write` and `owner`.
 
 **R57** (condition 5: previous epoch). The assignment file's epoch is below the projection's:
 `always-open` passes. This is what a stale lead is refused with after the cutover. Refusal:
@@ -860,7 +864,8 @@ such a path; `authority-store-unsafe`, exit 1, for a marker or a root that is su
 exists and was read back and compared. This page has exactly two removals: the open run folders of
 a role after a fence (R91, R92) and the marker at an unseat (R86). Every other record is kept
 (R83). Refusal: none; a removal whose archive is absent or does not compare does not happen, and
-the step stays open.
+the step stays open. A run that is cut is kept and no removal of it is tried (R91, R92), so it does
+not hold the step open.
 
 **R91** (the archive of open runs) `[OPEN O7]`. After S3 and before the note of S4 the broker
 archives the open run folders of the role whose epoch the fence ended: one archive file for each
@@ -908,9 +913,9 @@ which qargi neither runs nor trusts. The gate reads nothing below that directory
 removes a published copy. A run folder is removed only when its archive holds it whole (`cut` is
 false), is verified and published, and the note that names it is written. The removal is the first
 act of S5, before its seat write (R38). A run that was cut stays where it is, and the note says so;
-so does a run that the transfer left out (R91), of which the note carries the number. The
-successor reconciles its runs from the note and the archive: it adopts or discards each orphan, and
-no run is dropped without a line in the note. Refusal: none.
+so does a run that the transfer left out (R91), of which the note carries the number, below
+`lead_stated` too. The successor reconciles its runs from the note and the archive: it adopts or
+discards each orphan, and no run is dropped without a line in the note. Refusal: none.
 
 **R97** (no unit of the role between the fence and S5) `[OPEN O7]`. The supervising layer does not
 start B's unit before S5 is written. From the fence of S3 until then no unit of the role exists, so
@@ -929,8 +934,8 @@ a unit, in any epoch: `$AUTH`, with the broker's private key and the signers fil
 every copy of that key; an agent socket, or any other service, that holds the broker's key or signs
 with it, and any variable or file that names one; and a credential with which a verb that takes
 `--approved` makes a remote act: the push credential of the project's remote, the token of a hosting
-service, the login of a cloud service. `$CONF/credentials/` is where qargi keeps such files, and it
-is never bound (Roots). Qargi cannot see what a sandbox holds, so this binds the supervising layer.
+service, the login of a cloud service. `$CONF/credentials/`, where qargi keeps token files, is
+never bound (Roots). Qargi cannot see what a sandbox holds, so this binds the supervising layer.
 What qargi does is to keep every lead-side verb independent of all of it (R10), to read the key on
 the authority side only, and to refuse a `qargi host` call that cannot read the key (R33). This is
 the rule that holds against a lead that works round qargi, where R33, R76 and R77 do not (Limits):
@@ -956,9 +961,9 @@ below the declared `state_root`, which the broker reads and removes only while n
 exists (R97). Qargi cannot see what a sandbox can write, so this binds the supervising layer, and
 against a lead that works round qargi it holds exactly as far as the layer's binds do (Limits).
 What qargi does is to put the scratch files of authority-side code below the directory that
-`TMPDIR` names, which the layer keeps out of every sandbox, and never below a clone or a state
-root. Refusal: none; qargi cannot see what a sandbox can write, and a place that the assignment
-does not declare shows nowhere.
+`TMPDIR` names, so that the layer can keep that directory out of every sandbox, and never below a
+clone or a state root. Refusal: none; qargi cannot see what a sandbox can write, and a place that
+the assignment does not declare shows nowhere.
 
 ## The coordinator's place
 
@@ -1050,7 +1055,7 @@ page.
 | # | Change | Rules |
 | --- | --- | --- |
 | 1 | one write order; the epoch is checked against the projection; marker before seat at init | R13, R57, R58, R44 |
-| 2 | the bound directories come from the marker; `qargi host` proves it is outside by its audit append | R16, R17, R33: the append stays, and the proof is a signature, since an append also succeeds in a store that the caller made |
+| 2 | the bound directories come from the marker; `qargi host` proves it is outside by its audit append | R16, R17, R33: the append stays, and the proof is a signature, since an append also succeeds in a store that the caller made; the signature shows less than "proves it is outside" says, and R33 states what it shows |
 | 3 | record shapes written out | R11, R18 to R22, R46 to R50 |
 | 4 | gate matrix by class and condition; always-open verbs; `owner` verbs with no project in a sandbox | R51 to R64; R64 asks whether a project is seated, not whether the verb runs in a sandbox |
 | 5 | preamble protocol | R67, R68 |
@@ -1069,7 +1074,7 @@ page.
 | 18 | one abort rule | R42 |
 | 19 | dormancy field added later | excluded |
 | 20 | status of the decisions | none |
-| 21 | the owner plans the cut again; a lead's token never matches | R77, R79 |
+| 21 | the owner plans the cut again; a lead's token never matches | R77, R79; R77 is a guard rail: a token that a lead computes itself matches |
 | 22 | three lines of the supervising layer in the joint list | O16 and [Limits](#limits-of-phase-1) |
 | 23 | the actor label is built outside the seat's waves | R94 |
 | 24 | tests added | `tests/test_seat_contract.py` |
@@ -1084,8 +1089,10 @@ work is lead-stated).
 
 ## Trace to the review
 
-The review of revision 1 required a numbered list of changes. Each row maps one of them to the
-rules and points it changed.
+Each review required a numbered list of changes. Each row of a table maps one of them to the rules
+and points it changed.
+
+### The review of revision 1
 
 | # | Required change | Rules and points |
 | --- | --- | --- |
@@ -1097,6 +1104,18 @@ rules and points it changed.
 | 6 | the authority store is a third root for good, and the fence comes before the note | R7 and R36 state the decisions; O1 and O3 decided |
 | 7 | three proposals amended: R56 is skipped for a vacant seat as for a fenced one; the path of a root, resolved once, passes an owner-only check; a small cap on read-backs | R56 (O8), R88 (O5), R39 (O14); R9 and R70 follow; O5, O8 and O14 kept, O11 names the new code |
 | 8 | what the design's wave 0 was to produce and has not, with the wave proposed for each | the section that follows; O18 new |
+
+### The review of revision 2
+
+| # | Required change | Rules and points |
+| --- | --- | --- |
+| 1 | state what the proof of `qargi host` guarantees: that a store and projection the caller sees agree and the call reads a matching key, not that it runs outside a sandbox; R76 is a guard rail against a mistaken or stale lead; `qargi host` refuses the root variables and dev runs and signs with a private key file only; the nonce goes | R33 and R76 rewritten; R8, R15, R70 and R77 follow; the reading guide, Terms and Limits say what a guard rail is and why |
+| 2 | R101: what a sandbox never holds; user namespaces and code that a lead runs itself in Limits, as the reason R76 is a guard rail; the "absent" of the Roots table promoted to the rule | R101 new; the Roots table and Limits; R10, R33, R76 and R77 cite it |
+| 3 | `role_name` in the holder of the projection, or R24 and R56 comparing display ids; the first, because a display id holds the epoch that R57 and R58 compare | R21; R24 and R56 follow |
+| 4 | the spool envelope names its transfer, so that S2 and S6 can match it; the fields of a state content stay open, with the epoch and the transfer mandatory | R32, R35, R39 and R96; R18 and R48 follow; O10 narrowed |
+| 5 | the archive reads regular files only, with no-follow and non-blocking opens, records the rest by type, keeps a run with an unreadable file, cut, and is limited for a transfer | R91 rewritten; R9, R38, R88, R90 and R92 follow; O7 extended |
+| 6 | what a sandbox can write is a condition of the supervising layer | R102 new; R19 and R89 follow; O6 |
+| 7 | R7 notes that `.gitignore` carries the line of the dev store | R7 |
 
 ## Reconciliation with the design's wave 0 (task F)
 

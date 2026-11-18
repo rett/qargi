@@ -98,6 +98,12 @@ def section(text, heading):
     return tail.split("\n## ", 1)[0] if found else ""
 
 
+def subsection(text, heading):
+    """The text under a `### ` heading, up to the next heading of any level; empty when the page has no such heading."""
+    _, found, tail = text.partition("\n" + heading + "\n")
+    return re.split(r"\n#{1,6} ", tail, maxsplit=1)[0] if found else ""
+
+
 def squash(text):
     """The text on one line with single spaces: a phrase of the page may run over a line break."""
     return " ".join(text.split())
@@ -359,8 +365,8 @@ class Contract(unittest.TestCase):
         payload = re.search(r'\{"v":1,"ns":"qargi-host"[^}]*\}', r33)
         self.assertIsNotNone(payload, "the payload of the proof is written out")
         self.assertEqual(re.findall(r'"([\w-]+)"', payload.group(0)), ["v", "ns", "qargi-host", "project", "epoch", "tx", "rev"])
-        # the rules that rest on the proof say that they are guard rails, and Limits says why
-        for n in (33, 76, 77):
+        # the rules that rest on the proof, and the gate, say that they are guard rails, and Limits says why
+        for n in (33, 51, 76, 77):
             with self.subTest(rule=n):
                 self.assertIn("guard rail", blocks[n])
         limits = squash(section(self.text, "## Limits of phase 1"))
@@ -379,6 +385,20 @@ class Contract(unittest.TestCase):
         row = [ln for ln in section(self.text, "## Roots").splitlines() if ln.startswith("| `$AUTH` |")]
         self.assertEqual(len(row), 1)
         self.assertIn("R101", row[0])
+
+    def test_the_trace_has_a_row_for_each_change_that_the_review_of_revision_2_required(self):
+        self.assertIn("This is revision 3 of the page", self.text)
+        for heading in ("### The review of revision 1", "### The review of revision 2"):
+            self.assertEqual(self.text.count("\n" + heading + "\n"), 1, "the trace has a part for each review: " + heading)
+        rows = [ln for ln in subsection(self.text, "### The review of revision 2").splitlines() if re.match(r"\| \d+ \|", ln)]
+        self.assertEqual([int(re.match(r"\| (\d+) \|", ln).group(1)) for ln in rows], list(range(1, 8)), "seven required changes")
+        for row in rows:
+            with self.subTest(row=row.split("|")[1].strip()):
+                self.assertRegex(row, r"\bR\d+\b", "each row names the rules it changed")
+        # the rules that revision 3 added are in the trace: each is named in a row
+        traced = "".join(rows)
+        for new_rule in ("R101", "R102"):
+            self.assertIn(new_rule, traced)
 
     def test_the_path_reader_finds_what_it_must(self):
         # the check above is only as good as its reader: it must see a path in a code span, over a line break, and in a fenced block
@@ -804,7 +824,8 @@ class Seat(unittest.TestCase):
         """R51: every verb has one of the classes always-open, read, lead-write, owner (the broker verbs and qargi host are
         host), the three verbs that write a spool envelope being lead-write and every verb that writes below the config root,
         the clone's runtime configuration or the clone's .git/info/exclude being owner, and one gate in the preamble decides
-        before the verb runs; an unseated project costs no extra process.
+        before the verb runs; an unseated project costs no extra process. The gate is a guard rail: it refuses a session that
+        runs qargi as it is and does not stop a lead that runs code of its own.
         Observable: every verb the commands table describes has a class; a refused verb has no effect at all; for an
         unseated project a command starts the same number of processes as before."""
 
