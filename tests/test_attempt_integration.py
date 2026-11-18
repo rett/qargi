@@ -28,6 +28,7 @@ from attempt_fixture import wire, ForkAfterEnumeration
 # member (dispatch.hidden_paths: /dev, so /dev/shm too), and prepare refuses a run whose scratch or TMP lies there. The caller's
 # temporary directory may be such a place (a TMPDIR under /dev/shm), and every test then failed in prepare.
 HIDDEN = tuple(json.loads((ROOT / "lib/providers/codex.json").read_text())["dispatch"]["hidden_paths"]["prefixes"])
+# hermetic: allow tmp (the disk directories a run moves to when the caller's TMPDIR is a place codex hides; the test makes its own directory there and removes it)
 FALLBACK = ("/tmp", "/var/tmp")
 
 

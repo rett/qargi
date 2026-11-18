@@ -643,6 +643,7 @@ class ActorLabelAndTheMemberGuard(unittest.TestCase):
 
     def test_the_verdict_is_the_same_with_and_without_the_label(self):
         import guard
+        # hermetic: allow tmp (a word of a command line that is judged by the guard, never run)
         cmds = ["qargi local prepare --repo . --base feature/alpha --slug x --scratch /tmp/x", "qargi local verify --mine", "qargi local clean /x/qargi.abcdef",
                 "qargi feature finish alpha", "qargi marshal takeover alpha", "qargi release push 1.0.0", "qargi review apply /x/qargi.abcdef",
                 "qargi doctor", "qargi review check out", "qargi local list", "qargi marshal status alpha", "qargi local report /x/qargi.abcdef"]

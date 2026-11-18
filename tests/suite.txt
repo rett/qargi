@@ -102,7 +102,10 @@ full | par | 1200 | 195 | python3 tests/test_attempt_integration.py | lib/attemp
 # Checkpoint1 e77c682: local_run exceeded 975s without assertion failures; the unchanged-tree
 # reduced-concurrency reproduction passed all cases in 748.49s. Serial scheduling mitigates contention
 # with a longer serial tail; it is neither a root-cause finding nor a universal performance guarantee.
-full | serial | 975 | 222 | bash tests/test_local_run.sh | lib/local*.sh lib/local*.py lib/prepared_request.py lib/procenv.py lib/review_check.py lib/lib.sh tests/inspection_cases.py tests/prepared_request_cases.py tests/attempt_fixture.py
+# Measured alone on the reference machine (this host, scratch HOME and TMPDIR under /var/tmp because codex refuses a scratch under /dev): 1173 s, all cases passing, since the codex sign-in lock and swap cases were added.
+# The whole run stopped it at 975 s, so the timeout is 2x the measure rounded up (2400 s). The budget stays at 222 s (the rule would give ceil(1173 * 1.10) = 1291 s): with it the CI jobs
+# would ask for 72 min of the 65-minute limit (tests/test_ci.py), so it follows when the limit is raised.
+full | serial | 2400 | 222 | bash tests/test_local_run.sh | lib/local*.sh lib/local*.py lib/prepared_request.py lib/procenv.py lib/review_check.py lib/lib.sh tests/inspection_cases.py tests/prepared_request_cases.py tests/attempt_fixture.py
 full | par | 300 | 37 | bash tests/test_taskblock.sh | lib/local.sh lib/review_check.py roles/*/ROLE.md tests/golden/taskblock-*.md
 fast | par | 300 | 2 | bash tests/test_cred.sh | lib/cred.sh
 full | par | 480 | 107 | bash tests/test_packs.sh | lib/packs.sh
