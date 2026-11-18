@@ -13,7 +13,7 @@ of them to its rules.
 
 How to read it:
 
-- A rule is a paragraph that starts with its number, **R1** to **R102**. The numbers are this page's
+- A rule is a paragraph that starts with its number, **R1** to **R103**. The numbers are this page's
   own and they are stable: a rule added in a later revision takes the next number and stands in the
   section of its subject, so the numbers are not in page order, and a rule that is dropped keeps
   its number in a paragraph that starts `**Rn** (withdrawn)`. Each rule ends with its refusal: the
@@ -370,9 +370,9 @@ these steps, and it runs the verb only when all of them pass:
 
 1. It refuses when `QARGI_AUTH`, `QARGI_CONF`, `QARGI_HOME` or `QARGI_STATE` is set, or when the
    run is a dev run (R7): it works with the default roots only. The one exception is a test of
-   `qargi host` in this repository's own suite, which sets one switch for it (the build names the
-   switch). The switch lifts this step and no other, and any caller can set it, so it is no part of
-   what the proof shows.
+   `qargi host` in this repository's own suite, which sets the switch that R103 names and limits.
+   The switch lifts the refusal of the four variables and nothing else, and any caller can set it,
+   so it is no part of what the proof shows.
 2. `$AUTH` resolves (R7) and passes R8.
 3. It makes a payload for this call, with `epoch`, `tx` and `rev` from
    `$AUTH/<project>/seat.json`: `{"v":1,"ns":"qargi-host","project","epoch","tx","rev"}`. It signs
@@ -414,6 +414,30 @@ no projection to prove against. `qargi host` records what was run; it is not a f
 `host-in-sandbox`, exit 1, when step 1 refuses, when a part of the proof fails, when no seated
 project is there to prove against or when the audit line cannot be appended; the verb did not run
 and nothing was written.
+
+**R103** (the test switch of `qargi host`). A test of `qargi host` has to name roots of its own, so
+step 1 of R33 has one exception: the variable `QARGI_TEST_HOST_ROOTS`, set to `1`. It lifts the
+refusal of the four variables that name a root and nothing else: a dev run is refused with the
+switch set as without it, steps 2 to 4 of R33 and the audit line are made in full, and no verb but
+`qargi host` reads the switch. The switch is honoured only when both of these hold, and otherwise
+it is no switch and step 1 refuses as if it were not set:
+
+1. `HOME` is set and is not the home directory that the password database gives the effective
+   user: the two differ when each is resolved through its links. A caller that runs with the
+   user's own home is refused with the switch set, and so is a caller for whom the password
+   database has no entry.
+2. Every one of `QARGI_AUTH`, `QARGI_CONF`, `QARGI_HOME` and `QARGI_STATE` that is set names a path
+   below `HOME`, with links resolved as far as the path exists. `HOME` itself, a path beside it and
+   a path that a link or `..` takes out of it are not below it.
+
+Under these two conditions the switch gives a caller no more than a `HOME` of its own already does
+(Limits): the roots it names lie below that home, as the default roots do. What the conditions add
+is that a session that keeps the user's own home and sets the switch by habit, by an old
+instruction or by confusion is still refused. Any caller can set the switch with a `HOME` of its
+own, and the proof then passes for the roots that caller made, so the switch is no part of what the
+proof shows. Refusal: `host-in-sandbox`, exit 1 (R33), when a variable that names a root is set and
+the switch is not honoured, because it is not set to `1` or a condition does not hold: the verb did
+not run and nothing was written.
 
 ## The handoff protocol
 
@@ -688,7 +712,7 @@ table says and prints the line of R65.
 | `content-invalid` | a record other than an assignment breaks R18, R22 or R32 |
 | `symlink-refused` | a symbolic link in a path of R88 |
 | `caretaker-not-vacant` | a caretaker order while a lead holds the seat (R75) |
-| `host-in-sandbox` | `qargi host` that R33 refuses: a variable that names a root is set or the run is a dev run, the outside proof fails, no seated project is there to prove against, or the audit line cannot be appended |
+| `host-in-sandbox` | `qargi host` that R33 refuses: a variable that names a root is set and the test switch of R103 does not lift that, or the run is a dev run, the outside proof fails, no seated project is there to prove against, or the audit line cannot be appended |
 | `member-sandbox-off` | raised by member dispatch; its rule is not part of this page |
 
 Refusal: as the table says, exit 1.
@@ -997,10 +1021,11 @@ show them.
 - **The roots are taken as bound.** A session that points the config, state or authority root at
   directories of its own sees what it put there: an unseated project, or a seat, a projection, a key
   and a store of its own making that pass R33. `qargi host` refuses the variables that name a root
-  and a dev run (R33), and that closes those variables and nothing else: `HOME` moves the default
-  roots too, and the next two limits open the rest. Nothing below the real roots changes by this;
-  what the session can change is still what its sandbox lets it write. The gate and the outside
-  proof hold for the roots that the supervising layer bound.
+  and a dev run (R33), except under the test switch of R103, which any caller can set with a `HOME`
+  of its own. That closes those variables and nothing else: `HOME` moves the default roots too, and
+  the next two limits open the rest. Nothing below the real roots changes by this; what the session
+  can change is still what its sandbox lets it write. The gate and the outside proof hold for the
+  roots that the supervising layer bound.
 - **A sandbox that allows user namespaces lets a process present roots of its own.** A member of a
   runtime that brings a sandbox of its own starts it inside the lead's (the end of this section),
   which needs a lead sandbox that allows user namespaces. A process in such a sandbox can make a

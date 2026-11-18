@@ -13,10 +13,10 @@ what is proposed and an alternative, every point that was decided is listed with
 nowhere, the contract names no path outside its roots (ROOTS, RECORDED, DECLARED and BELOW_DECLARED below say what a path may
 start with), and what the design's first wave has not produced is listed, each thing with a wave, until it exists (NOT_PRODUCED).
 It also holds the page to what it says it guarantees: the outside proof of `qargi host` states what it shows and against whom (a
-guard rail, with the limits that make it one), and what a sandbox never holds, and what it can write, are conditions of the
-supervising layer. The page's other statements that can be read from its text are held too: the projection has every field
-the gate compares, a spool envelope names its transfer and S2 and S6 match it, and the archive of open runs opens regular
-files only and has a limit for a transfer.
+guard rail, with the limits that make it one) and its one test switch is named and honoured only under a home of its own, and
+what a sandbox never holds, and what it can write, are conditions of the supervising layer. The page's other statements that
+can be read from its text are held too: the projection has every field the gate compares, a spool envelope names its transfer
+and S2 and S6 match it, and the archive of open runs opens regular files only and has a limit for a transfer.
 Offline. Run: python3 tests/test_seat_contract.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import json, os, re, unittest
@@ -154,6 +154,11 @@ def rule_tests():
         if m:
             out.setdefault(int(m.group(1)), []).append(name)
     return out
+
+
+def seat_doc(n):
+    """The docstring of the test of rule n in Seat on one line: what that test will check once the rule is built."""
+    return squash(getattr(Seat, rule_tests()[n][0]).__doc__ or "")
 
 
 class Contract(unittest.TestCase):
@@ -385,6 +390,41 @@ class Contract(unittest.TestCase):
         row = [ln for ln in section(self.text, "## Roots").splitlines() if ln.startswith("| `$AUTH` |")]
         self.assertEqual(len(row), 1)
         self.assertIn("R101", row[0])
+
+    def test_the_test_switch_of_qargi_host_is_named_and_honoured_only_under_a_home_of_its_own(self):
+        blocks = {n: squash(b) for n, b in rule_blocks(self.text).items()}
+        self.assertIn(103, blocks, "R103 names and limits the test switch of R33")
+        self.assertIn("**R103**", section(self.text, "## The door and the broker"), "R103 stands in the section of its subject")
+        r103, r33 = blocks[103], blocks[33]
+        # step 1 of R33 no longer leaves the name to the build: it points at the rule that names the switch and limits it
+        self.assertNotIn("the build names the switch", r33)
+        self.assertIn("R103", r33)
+        self.assertIn("`QARGI_TEST_HOST_ROOTS`", r103)
+        # honoured only when HOME is not the home that the password database gives and every root a variable names is below HOME
+        for words in ("`HOME` is set", "the password database", "the effective user", "resolved through its links", "below `HOME`",
+                      "links resolved as far as the path exists"):
+            with self.subTest(words=words):
+                self.assertIn(words, r103)
+        for name in ("QARGI_AUTH", "QARGI_CONF", "QARGI_HOME", "QARGI_STATE"):
+            with self.subTest(variable=name):
+                self.assertIn(name, r103)
+        # it lifts the refusal of the four variables and no other step, and it is no part of what the proof shows
+        for words in ("and nothing else", "a dev run is refused with the switch set as without it", "no part of what the proof shows"):
+            with self.subTest(words=words):
+                self.assertIn(words, r103)
+        self.assertRegex(r103, r"Refusal: `host-in-sandbox`, exit 1 \(R33\)")
+        # R70, Limits and the observables know the switch; the observables hold both cases of the review: the real HOME, and a
+        # root outside HOME
+        row = [ln for ln in self.text.splitlines() if ln.startswith("| `host-in-sandbox` |")]
+        self.assertEqual(len(row), 1)
+        self.assertIn("R103", row[0])
+        self.assertIn("R103", squash(section(self.text, "## Limits of phase 1")))
+        self.assertIn("R103", seat_doc(33))
+        doc = seat_doc(103)
+        for words in ("QARGI_TEST_HOST_ROOTS", "HOME the home that the password database gives", "a root outside HOME",
+                      "exits 1 with host-in-sandbox"):
+            with self.subTest(words=words):
+                self.assertIn(words, doc)
 
     def test_the_trace_has_a_row_for_each_change_that_the_review_of_revision_2_required(self):
         self.assertIn("This is revision 3 of the page", self.text)
@@ -676,21 +716,21 @@ class Seat(unittest.TestCase):
     @unbuilt(33)
     def test_R33_owner_verbs_go_through_host(self):
         """R33: before anything else qargi host refuses when QARGI_AUTH, QARGI_CONF, QARGI_HOME or QARGI_STATE is set or the run
-        is a dev run (a test of qargi host sets one switch that lifts this step and no other), then makes the outside proof: the
-        authority root passes R8, a payload (project, epoch, tx, rev: no nonce) that it signs with the broker's private key file,
-        with no agent in reach, verifies against the signers line of the projection, and the seat record agrees with the
+        is a dev run (the test switch of R103 lifts the refusal of the four variables and no other step), then makes the outside
+        proof: the authority root passes R8, a payload (project, epoch, tx, rev: no nonce) that it signs with the broker's private
+        key file, with no agent in reach, verifies against the signers line of the projection, and the seat record agrees with the
         projection in epoch, tx and rev; then it appends its audit line and runs the verb. The proof shows that the call reads a
         store, a projection and a key that agree, not that it runs outside a sandbox: it is a guard rail against a mistaken or
         stale lead. No variable, option or file stands for a proof that passed.
         Observable: with the true store the audit line exists before the verb's first effect; with each of the four variables
-        set, and in a dev run, it exits 1 with host-in-sandbox before it reads a store; with the test switch set and a store the
-        caller made (mode 700, its own key and a copied seat record) it exits 1 with host-in-sandbox, the verb did not run and
-        no file changed; the same with the true store and its key file replaced by the public key while an agent that holds the
-        private key is reachable through SSH_AUTH_SOCK, with the true key and a seat record whose rev is behind the projection,
-        with the true store and an audit log that cannot be appended to, and for a verb that names an unseated project; a verb
-        that names no project runs when the proof passes for one seated project and is refused when there is none; and, as the
-        limit that Limits names, roots that the test made whole (marker, projection, signers line, key, seat record) pass the
-        proof, which a test keeps so that nobody claims more of it."""
+        set, and in a dev run, it exits 1 with host-in-sandbox before it reads a store; with the test switch honoured (R103) and a
+        store the caller made (mode 700, its own key and a copied seat record) it exits 1 with host-in-sandbox, the verb did not
+        run and no file changed; the same with the true store and its key file replaced by the public key while an agent that
+        holds the private key is reachable through SSH_AUTH_SOCK, with the true key and a seat record whose rev is behind the
+        projection, with the true store and an audit log that cannot be appended to, and for a verb that names an unseated
+        project; a verb that names no project runs when the proof passes for one seated project and is refused when there is
+        none; and, as the limit that Limits names, roots that the test made whole (marker, projection, signers line, key, seat
+        record) pass the proof under the honoured switch, which a test keeps so that nobody claims more of it."""
 
     # ---- the handoff protocol
 
@@ -1230,6 +1270,22 @@ class Seat(unittest.TestCase):
         appears there and nowhere else (none below a clone, a state root, the projection directory or the shared temporary
         directory of the system); the door refuses every overlap with the declared places (R89). What a sandbox can write
         beyond them is not observable by qargi: the supervising layer's own qualification of a sandbox shows it."""
+
+    # ---- rules added in revision 4 of the contract (in the page each stands in the section of its subject)
+
+    @unbuilt(103)
+    def test_R103_the_test_switch_of_qargi_host(self):
+        """R103: the one exception to the refusal of the root variables in step 1 of R33 is QARGI_TEST_HOST_ROOTS set to 1, honoured
+        only when HOME is set and differs from the home that the password database gives the effective user (each resolved through
+        its links) and every one of QARGI_AUTH, QARGI_CONF, QARGI_HOME and QARGI_STATE that is set names a path below HOME (links
+        resolved as far as the path exists); it lifts that refusal and no other step, and no verb but qargi host reads it.
+        Observable: with the switch set to 1, HOME the home that the password database gives and each of the four variables naming
+        a path below it (nothing there need exist), qargi host exits 1 with host-in-sandbox before it reads a store and writes
+        nothing; with HOME a scratch directory and, in turn, each of the four variables naming a root outside HOME (HOME itself, a
+        sibling of HOME, and a path below HOME through a link that leads out of it among them), it exits 1 with host-in-sandbox the
+        same way; with HOME a scratch directory, every variable naming a path below it and a store that the test made whole, step 1
+        passes and the proof decides (R33); a switch set to 0, to the empty string or to true is no switch; in a dev run with the
+        switch set it exits 1 with host-in-sandbox; no verb but qargi host answers differently with the switch set."""
 
 
 if __name__ == "__main__":
