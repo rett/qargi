@@ -190,8 +190,8 @@ def find_transcript(a, answers, tr_for):
             p = os.path.join(d, want + ext)
             if os.path.isfile(p):
                 return p, want, ""
-        if a.session:
-            continue
+        if want:
+            continue                                        # a named session has no other transcript: the newest is another session's
         try:
             files = [os.path.join(d, n) for n in os.listdir(d) if n.endswith(ext) and os.path.isfile(os.path.join(d, n))]
         except OSError:
@@ -199,8 +199,8 @@ def find_transcript(a, answers, tr_for):
         if files:
             p = max(files, key=lambda x: (os.path.getmtime(x), x))
             return p, os.path.basename(p)[:-len(ext)], ""
-    if a.session:
-        return None, a.session, "no transcript of session %s in %s" % (clean(a.session), clean(seen[0]) if seen else "?")
+    if want:
+        return None, clean(want), "no transcript of session %s in %s" % (clean(want), clean(seen[0]) if seen else "?")
     return None, "", "no transcript under %s" % (clean(seen[0]) if seen else "?")
 
 
