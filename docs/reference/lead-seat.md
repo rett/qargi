@@ -12,7 +12,7 @@ This is revision 2 of the page. It takes in the changes that the review of revis
 
 How to read it:
 
-- A rule is a paragraph that starts with its number, **R1** to **R97**. The numbers are this page's
+- A rule is a paragraph that starts with its number, **R1** to **R100**. The numbers are this page's
   own and they are stable: a rule added in a later revision takes the next number and stands in the
   section of its subject, so the numbers are not in page order, and a rule that is dropped keeps
   its number in a paragraph that starts `**Rn** (withdrawn)`. Each rule ends with its refusal: the
@@ -59,7 +59,8 @@ How to read it:
 
 The clone, the mirror and the state root of the role are locations that the assignment record
 names in its fields `clone`, `mirror` and `state_root` (R19). Inside the role's sandbox `$STATE` is
-the location that `state_root` names. This page names no path below them.
+the location that `state_root` names. This page names one path below the clone,
+`<clone>/.git/info/exclude` (R99), and none below the mirror.
 
 ## The seat and its states
 
@@ -92,12 +93,24 @@ none.
 
 ## Records and where they live
 
-**R7** (authority root) `[OPEN O1]`. `$AUTH` is the value of `QARGI_AUTH` when it is set. Otherwise,
-in a dev run, it is the dev data root's path with the suffix `-authority-dev`. Otherwise it is the
-data root's path (the value of `QARGI_HOME`, else the default data root) with the suffix
-`-authority`. When `QARGI_STATE` or `QARGI_CONF` is set and neither `QARGI_AUTH` nor `QARGI_HOME`
-is, there is no default. Resolving a root creates nothing. Refusal: `authority-store-unsafe`,
-exit 1, from every authority-side verb when there is no default.
+**R7** (authority root) `[OPEN O1]`. `$AUTH` is resolved by the first of these cases that holds,
+tried in this order:
+
+1. `QARGI_AUTH` is set: its value.
+2. The run is a dev run: the dev data root's path with the suffix `-authority-dev`.
+3. `QARGI_HOME` is set: its value with the suffix `-authority`.
+4. `QARGI_STATE` or `QARGI_CONF` is set: there is no default.
+5. Otherwise: the default data root's path with the suffix `-authority`.
+
+The dev run is tried before case 4: when `QARGI_STATE` is set, the run is first asked whether it is
+a dev run, and only a run that is not one is left without a default.
+[Running a branch checkout](../install-and-upgrade/README.md#running-a-branch-checkout) says what a
+dev run is today: a checkout other than the installed one, run with none of `QARGI_HOME`,
+`QARGI_CONF` and `QARGI_STATE` set. As long as that holds, case 2 and case 4 never hold together,
+and the order decides only where that definition changes. The store of a dev run lies in the
+checkout, beside the dev data root, so the repository's `.gitignore` lists `.qargi-authority-dev`
+and git never offers that store for a commit. Resolving a root creates nothing. Refusal:
+`authority-store-unsafe`, exit 1, from every authority-side verb when there is no default.
 
 **R8** (authority root is apart). `$AUTH` is never equal to or below `$STATE`, `$CONF` or the data
 root, is a directory of mode 700 owned by the effective user, and holds directories of mode 700 and
@@ -196,8 +209,9 @@ same record through the door:
 `seat_role` is `lead` or `caretaker`. `kind` is `init`, `transfer`, `vacate` or `unseat`. `init` and
 `transfer` need every field; `vacate` and `unseat` carry no `to`, `clone`, `state_root` or
 `hidden_tracked`. `clone` and `state_root` declare what the holder's sandbox can write: its clone
-and the state root of its role (R89). `role_name` is kebab-case, at most 64 characters, without
-`:`. Refusal: `assignment-invalid`, exit 1.
+and the state root of its role (R89). `hidden_tracked` lists the tracked paths that a read-only
+bind of the supervising layer hides in the clone (R100). `role_name` is kebab-case, at most 64
+characters, without `:`. Refusal: `assignment-invalid`, exit 1.
 
 **R20** (fence). A fence is the supervising layer's statement that the unit of an epoch is gone:
 
@@ -460,11 +474,12 @@ state. Refusal: none.
 `marshal note show`, `marshal note verify`, `marshal seat readback --template`, help and
 completion. `read`: verbs that change nothing. `lead-write`: verbs that change the project's
 records, runs or repository, and the three verbs that write a spool envelope (R96). `owner`: verbs
-that write below `$CONF` or write the runtime configuration of the clone, and the marshal verbs
-R27 names. The broker verbs and `qargi host` are class `host` and are not gated: R8 and R33 decide
-them. One gate, in the preamble of every command (R67), applies R53 to R64 to the verb's class
-before the verb runs. For an unseated project it starts no process of its own. Refusal: the code
-of the condition that holds, exit 77.
+that write below `$CONF`, write the runtime configuration of the clone or write
+`<clone>/.git/info/exclude` (R99), and the marshal verbs R27 names. The broker verbs and
+`qargi host` are class `host` and are not gated: R8 and R33 decide them. One gate, in the preamble
+of every command (R67), applies R53 to R64 to the verb's class before the verb runs. For an
+unseated project it starts no process of its own. Refusal: the code of the condition that holds,
+exit 77.
 
 **R52** (order of the conditions) `[OPEN O8]`. The conditions R53 to R64 are tried in the order of
 their numbers and the first that holds decides. Within a condition the verb's class picks the
@@ -514,8 +529,9 @@ exit 77, for `read` and `lead-write`; `not-assigned` for `owner`.
 
 **R63** (condition 11: held by a caretaker). State `held`, holder kind `caretaker`: `always-open`
 and `read` pass; of the `lead-write` verbs only `env check`, `doctor`, `packs check` and
-`marshal caretaker request` pass. Refusal: `not-assigned`, exit 77, for `owner`, tried first;
-`caretaker-denied`, exit 77, for every other `lead-write` verb.
+`marshal caretaker request` pass, the exceptions of the caretaker's row in R98. Refusal:
+`not-assigned`, exit 77, for `owner`, tried first; `caretaker-denied`, exit 77, for every other
+`lead-write` verb.
 
 **R64** (condition 12: no project named) `[OPEN O17]`. R53 to R63 are about the project that a verb
 names; a verb that names none is answered by this condition alone. Where some project under `$CONF`
@@ -526,6 +542,20 @@ every sandbox, who runs such a verb as `qargi host VERB ...` (R33); `qargi host`
 (R51). An answers file under `$CONF` that cannot be read or holds an invalid marker counts as
 seated here (R1, R87). Where no project under `$CONF` is seated, every class passes, as on an
 unseated project (R53). Refusal: `not-assigned`, exit 77, for `owner`.
+
+**R98** (derived classes). A derived class is a kind of session that is answered as the lead is,
+less what its row takes away. The description of the commands (`lib/commands.py`) carries one row
+for each derived class, `(class, base rule, exceptions)`, and the gate takes what a derived class
+may run from that row and from nowhere else.
+
+| Derived class | Base rule | Exceptions |
+| --- | --- | --- |
+| `caretaker` | `always-open` and `read` as for a lead; every `lead-write` verb is refused `caretaker-denied` | `env check`, `doctor`, `packs check`, `marshal caretaker request` |
+| `coordinator` | reserved: phase 1 has no such session and reads no such row | none |
+
+R63 is the caretaker's row applied. The coordinator's row is reserved, as its codes and its
+assignment values are (R93): no assignment selects it and the gate raises nothing from it.
+Refusal: `caretaker-denied`, exit 77, as R63 says; none for the reserved row.
 
 **R65** (refusal line) `[OPEN O16]`. Every lead refusal and every door refusal prints, on standard error, one
 line that starts with `qargi-refusal/1 ` followed by one JSON object on the same line, at most
@@ -658,10 +688,29 @@ fence, a note version, a read-back or a result. After an unseat the project's st
 only. Refusal: none.
 
 **R84** (the clone is handed over in place). The assignment's `clone` stays the role's across
-epochs, and so does its `state_root`. The note lists uncommitted work and the tracked files a read-only bind hides
-(`hidden_tracked`, from the assignment) as unverified, lead-stated data. A verb that writes below
-`$CONF` or writes the clone's runtime configuration is class `owner`. Refusal: `not-assigned`,
-exit 77, for such a verb in a sandbox.
+epochs, and so does its `state_root`. The note lists uncommitted work as lead-stated data, never
+verified. It lists the tracked files that a read-only bind hides (`hidden_tracked`) as the
+supervising layer's data, copied from the assignment: that list is not lead-stated, and qargi
+checks its form, not its truth (R100). A verb that writes below `$CONF`, writes the clone's runtime
+configuration or writes `<clone>/.git/info/exclude` (R99) is class `owner`. Refusal:
+`not-assigned`, exit 77, from the gate for such a verb (R59 to R63); the owner runs it through
+`qargi host`.
+
+**R99** (placeholders are the supervising layer's). The supervising layer binds the clone's runtime
+configuration read only, for every epoch. Where the clone lacks a target of such a bind, it makes
+an empty placeholder when it creates the clone, outside every sandbox, and it records each
+placeholder in `<clone>/.git/info/exclude`, which is bound read only too. Qargi makes no
+placeholder and edits that file for no lead: every qargi verb that writes
+`<clone>/.git/info/exclude` is class `owner` (R51), and the broker writes nothing below a clone.
+Refusal: `not-assigned`, exit 77, from the gate for such a verb (R59 to R63).
+
+**R100** (a hidden tracked copy is an intake item). Where the repository tracks a path that such a
+bind covers, the lead sees the bound file and not the tracked copy. The supervising layer lists
+every such path in `hidden_tracked` of the assignment, and the note carries the list unchanged
+(R84). A change to a hidden tracked copy is neither the lead's to make nor qargi's: it is an intake
+item for the owner at the reviewed merge, the step outside this page in which the owner takes the
+lead's work in from the mirror. The text form of the note says so for every listed path, and no
+seat verb writes a listed path. Refusal: none.
 
 ## Conditions of the supervising layer
 
@@ -762,8 +811,9 @@ verb of a unit that was started in that time; none on the authority side.
 
 **R93** (reserved, refused). Phase 1 has no coordinator. An assignment with `seat_role`
 `coordinator` or `kind` `delegate` or `undelegate` is refused. The gate keeps one place for later
-codes between `caretaker-denied` and `gate-error` and raises none of them. Refusal:
-`assignment-invalid`, exit 1.
+codes between `caretaker-denied` and `gate-error` and raises none of them, and the coordinator's
+row among the derived classes is reserved in the same way (R98). Refusal: `assignment-invalid`,
+exit 1.
 
 **R94** (the actor label is attribution) `[OPEN O15]`. A lead may set an actor label, a string of
 the form a lead identity has, to say which of its helpers started a run. It is recorded as `actor`
@@ -812,7 +862,13 @@ Part of the same release but not of this page: the render of a lead's skills, ho
 and its manifest; the capability list of a lead runtime; the choice of the lead runtime from the
 seat; `schema` fields on other outputs; a configurable run and temporary root; the rule for a
 member's sandbox (`member-sandbox-off`); the split of `release` and `feature finish` around the
-mirror.
+mirror, with the owner's reviewed merge and its intake list (R100).
+
+Three lines that the supervising layer's side has in the joint list are not rules of this page.
+Where the refusal line stands on standard error is O16. The supervising layer's requirements still
+refuse a member of a runtime that brings a sandbox of its own; a later decision lets such a member
+start that sandbox inside the lead's, and the rule for it is `member-sandbox-off`, named above.
+The outside dispatch broker for members stays the target and is excluded, as the list above says.
 
 ## Trace to the design
 
@@ -826,23 +882,23 @@ page.
 | 3 | record shapes written out | R11, R18 to R22, R46 to R50 |
 | 4 | gate matrix by class and condition; always-open verbs; `owner` verbs with no project in a sandbox | R51 to R64; R64 asks whether a project is seated, not whether the verb runs in a sandbox |
 | 5 | preamble protocol | R67, R68 |
-| 6 | no authority default with only the state or config root named | R7 |
+| 6 | no authority default with only the state or config root named; the dev store ignored by git | R7 |
 | 7 | build plan | none (not a rule) |
 | 8 | per-feature verbs on a seated project; the renewer; `local prepare` | R27, R71, R72 |
 | 9 | owner hygiene on a role's state | replaced by R90 to R92 |
 | 10 | open runs as objects; the display id | R25, R82 |
-| 11 | placeholders, hidden tracked copies, `owner` class for the verbs that write them | R84 |
+| 11 | placeholders, hidden tracked copies, `owner` class for the verbs that write them | R84, R99, R100 |
 | 12 | the member sandbox rule | outside this page |
 | 13 | a lead runtime's capability line | outside this page |
 | 14 | citation of the requirements | none |
-| 15 | coordinator reservations | R22, R93 |
+| 15 | coordinator reservations, among them the table of derived classes | R22, R93, R98 |
 | 16 | `detail` never carries lead text; 4 KiB | R65 |
 | 17 | a caretaker restart's S5 goes to `held` | R75 |
 | 18 | one abort rule | R42 |
 | 19 | dormancy field added later | excluded |
 | 20 | status of the decisions | none |
 | 21 | the owner plans the cut again; a lead's token never matches | R77, R79 |
-| 22 | three lines of the supervising layer in the joint list | O10 |
+| 22 | three lines of the supervising layer in the joint list | O16 and [Limits](#limits-of-phase-1) |
 | 23 | the actor label is built outside the seat's waves | R94 |
 | 24 | tests added | `tests/test_seat_contract.py` |
 
@@ -850,7 +906,8 @@ The twelve conditions the gate checks are R53 to R64, one rule each `[OPEN O2]`.
 
 The two inputs that follow the check of revision 5 map to R90 to R92 and R97 (archive before
 remove) and R88 and R89 (G1). The four conditions for "a seat only for managed projects" map to
-R85, R86, R87 and the third limit above.
+R85, R86, R87 and the third limit above. The three additions to the rule for the clone in place
+map to R99 (placeholders), R100 (hidden tracked copies) and R84 (uncommitted work is lead-stated).
 
 ## Trace to the review
 
@@ -863,6 +920,7 @@ rules and points it changed.
 | 2 | a recorded path is refused by the clone and the state root that the assignment declares, not by who owns it | R89 rewritten; R19 gains `state_root`; R31, R70, R84 and R88 follow; O6 decided |
 | 3 | the verbs that write the spool are named, and each passes in the state that asks for its envelope | R96 new; R32, R34, R35, R38, R40, R48, R51, R60 and R61 follow; O10 narrowed |
 | 4 | the archive of open runs stays an open question, the owner's and the supervising layer's; meanwhile no unit of the role runs before S5, the size limit is fixed and the successor has a way to read the archive | R97 new; R91 and R92 rewritten; R9, R13, R37, R38, R40, R88, R89 and R90 follow; O7 kept |
+| 5 | rules that the design has and revision 1 lacked: the placeholders and the file that records them, hidden tracked copies, the derived classes, the dev store in `.gitignore` and the order of the cases of R7; change 22 of the design is traced to O16 and Limits | R98, R99 and R100 new; R7, R19, R51, R63, R84 and R93 follow |
 
 ## Decided points
 

@@ -31,6 +31,8 @@ RECORDED = ("<assignment_dir>", "<projection_dir>")
 # The locations the assignment declares, named by their field too. A sandbox can write the first two, and the contract refuses every
 # recorded path that overlaps them (R89): so the assignment has to name the state root of the role beside its clone.
 DECLARED = ("<clone>", "<state_root>", "<mirror>")
+# The one path the contract names below a declared location: the file in which the supervising layer records its placeholders (R99).
+BELOW_DECLARED = ("<clone>/.git/info/exclude",)
 
 RULE = re.compile(r"^\*\*R(\d+)\*\*", re.M)
 SCHEMA_ID = re.compile(r"^qargi[.-][a-z-]+/\d+$")
@@ -110,7 +112,7 @@ def outside_the_roots(word):
         return None
     if REPO_FILE.match(word):
         return None if os.path.exists(os.path.join(ROOT, word)) else "names a file this repository does not have"
-    if word.startswith(tuple(r + "/" for r in ROOTS + tuple(OPEN_ROOTS) + RECORDED)):
+    if word.startswith(tuple(r + "/" for r in ROOTS + tuple(OPEN_ROOTS) + RECORDED)) or word in BELOW_DECLARED:
         return None
     return "starts at no root of the contract"
 
@@ -217,6 +219,8 @@ class Contract(unittest.TestCase):
             self.assertIn('"%s"' % field.strip("<>"), self.text, "the seat marker records %s" % field)
         for field in DECLARED:
             self.assertIn('"%s": "%s"' % (field.strip("<>"), field), self.text, "the assignment declares %s" % field)
+        for path in BELOW_DECLARED:      # an entry that the contract no longer names goes from the list
+            self.assertIn(path, named_paths(self.text), "the contract names %s" % path)
         # no literal location: no absolute path, no home path
         self.assertEqual(re.findall(r"(?<![\w$<>./-])/[A-Za-z0-9_.][^\s`\"]*", self.text), [], "absolute paths")
         self.assertNotIn("~", self.text, "home paths")
@@ -229,6 +233,10 @@ class Contract(unittest.TestCase):
         self.assertIsNone(outside_the_roots("<projection_dir>/<project>/projection.json"))
         self.assertIsNone(outside_the_roots("tests/test_seat_contract.py"))
         self.assertIsNotNone(outside_the_roots("lib/no_such_module.py"))
+        # below a location the assignment declares, the one listed path and no other
+        self.assertIsNone(outside_the_roots("<clone>/.git/info/exclude"))
+        self.assertIsNotNone(outside_the_roots("<clone>/.git/config"))
+        self.assertIsNotNone(outside_the_roots("<state_root>/runs"))
 
     def test_the_rule_reader_finds_what_it_must(self):
         # the same for the rules: a rule is a paragraph that starts with its number, wherever it stands; a withdrawn one says so
@@ -295,10 +303,14 @@ class Seat(unittest.TestCase):
 
     @unbuilt(7)
     def test_R7_authority_root_resolution(self):
-        """R7: the authority root is QARGI_AUTH, else the dev data root with -authority-dev, else the data root with -authority;
-        with only QARGI_STATE or QARGI_CONF set there is no default; resolving creates nothing.
-        Observable: the resolved path in each of the four cases; with QARGI_STATE alone a broker verb exits 1 with
-        authority-store-unsafe; no directory exists after resolving."""
+        """R7: the authority root is resolved by the first case that holds, in this order: QARGI_AUTH; a dev run (the dev data
+        root with -authority-dev); QARGI_HOME (with -authority); QARGI_STATE or QARGI_CONF set (no default); else the default
+        data root with -authority. The dev run is tried before the case of no default; the repository's .gitignore lists
+        .qargi-authority-dev; resolving creates nothing.
+        Observable: the resolved path in each of the five cases, and the earlier case wins where two hold; with QARGI_STATE
+        alone, in a run that is not a dev run, a broker verb exits 1 with authority-store-unsafe; git check-ignore accepts
+        .qargi-authority-dev in a checkout and git status shows nothing after a broker call of a dev run; no directory exists
+        after resolving."""
 
     @unbuilt(8)
     def test_R8_authority_root_is_apart(self):
@@ -381,8 +393,8 @@ class Seat(unittest.TestCase):
     @unbuilt(19)
     def test_R19_assignment_record(self):
         """R19: an assignment has the fields of qargi.assignment/1, among them the clone and the state root that the holder's
-        sandbox can write; init and transfer need all, vacate and unseat carry no to, clone, state_root or hidden_tracked;
-        role_name is kebab-case, at most 64, without a colon.
+        sandbox can write and the tracked paths that a read-only bind hides; init and transfer need all, vacate and unseat
+        carry no to, clone, state_root or hidden_tracked; role_name is kebab-case, at most 64, without a colon.
         Observable: the valid example is accepted; each missing field (state_root among them), each field a kind may not carry
         and each bad role_name exits 1 with assignment-invalid."""
 
@@ -610,8 +622,9 @@ class Seat(unittest.TestCase):
     @unbuilt(51)
     def test_R51_one_gate_four_classes(self):
         """R51: every verb has one of the classes always-open, read, lead-write, owner (the broker verbs and qargi host are
-        host), the three verbs that write a spool envelope being lead-write, and one gate in the preamble decides before the
-        verb runs; an unseated project costs no extra process.
+        host), the three verbs that write a spool envelope being lead-write and every verb that writes below the config root,
+        the clone's runtime configuration or the clone's .git/info/exclude being owner, and one gate in the preamble decides
+        before the verb runs; an unseated project costs no extra process.
         Observable: every verb the commands table describes has a class; a refused verb has no effect at all; for an
         unseated project a command starts the same number of processes as before."""
 
@@ -682,7 +695,7 @@ class Seat(unittest.TestCase):
     @unbuilt(63)
     def test_R63_condition_held_by_a_caretaker(self):
         """R63: in held with a caretaker, always-open and read pass and of the lead-write verbs only env check, doctor, packs
-        check and marshal caretaker request.
+        check and marshal caretaker request, the exceptions of the caretaker's row among the derived classes (R98).
         Observable: the four exceptions pass; every other lead-write verb of the commands table exits 77 with
         caretaker-denied; an owner verb exits 77 with not-assigned, not caretaker-denied."""
 
@@ -830,10 +843,12 @@ class Seat(unittest.TestCase):
 
     @unbuilt(84)
     def test_R84_the_clone_is_handed_over_in_place(self):
-        """R84: the note lists uncommitted work and the hidden tracked files of the assignment as unverified lead-stated data,
-        and a verb that writes below the config root or the clone's runtime configuration is class owner.
-        Observable: hidden_tracked of the note equals the assignment's; each such verb exits 77 with not-assigned in a
-        sandbox."""
+        """R84: the clone and the state root stay the role's across epochs; the note lists uncommitted work as lead-stated,
+        unverified data and the hidden tracked files as the supervising layer's data, copied from the assignment and not
+        lead-stated; a verb that writes below the config root, the clone's runtime configuration or the clone's
+        .git/info/exclude is class owner.
+        Observable: hidden_tracked of the note equals the assignment's and stands outside lead_stated; uncommitted work is
+        marked unverified; each such verb exits 77 with not-assigned for the holder and runs under qargi host."""
 
     # ---- conditions of the supervising layer
 
@@ -907,8 +922,8 @@ class Seat(unittest.TestCase):
 
     @unbuilt(93)
     def test_R93_coordinator_values_are_reserved_and_refused(self):
-        """R93: an assignment with seat_role coordinator or kind delegate or undelegate is refused, and the gate raises no code
-        in its reserved place.
+        """R93: an assignment with seat_role coordinator or kind delegate or undelegate is refused, the gate raises no code in
+        its reserved place, and the coordinator's row among the derived classes is reserved too.
         Observable: each of the three exits 1 with assignment-invalid and the store is unchanged."""
 
     @unbuilt(94)
@@ -943,6 +958,31 @@ class Seat(unittest.TestCase):
         names the start of B's unit as the next action only after S5; a session with B's assignment file before S5 gets
         exit 77 with projection-stale for a lead-write verb; after S5 no broker step opens a path below the role's state
         root."""
+
+    @unbuilt(98)
+    def test_R98_derived_classes(self):
+        """R98: a derived class is answered as the lead is, less what its row takes away; the description of the commands
+        carries one row (class, base rule, exceptions) for each: caretaker, with the exceptions env check, doctor, packs check
+        and marshal caretaker request, and a reserved row for coordinator that nothing reads.
+        Observable: the table has exactly these two rows; the verbs that pass for a caretaker in held (R63) are the
+        exceptions of its row and no others; no assignment and no gate answer uses the coordinator's row."""
+
+    @unbuilt(99)
+    def test_R99_placeholders_are_the_supervising_layers(self):
+        """R99: the supervising layer makes the placeholders of its read-only binds and records them in the clone's
+        .git/info/exclude; qargi makes none, every qargi verb that writes that file is class owner, and the broker writes
+        nothing below a clone.
+        Observable: each verb of the commands description that writes the clone's .git/info/exclude exits 77 with
+        not-assigned for the holder and changes nothing; after a whole transfer no file below the clone has changed, that
+        file included."""
+
+    @unbuilt(100)
+    def test_R100_a_hidden_tracked_copy_is_an_intake_item(self):
+        """R100: a tracked path that a read-only bind hides is listed in hidden_tracked of the assignment and carried
+        unchanged by the note; a change to it is an intake item for the owner at the reviewed merge, which the text form of
+        the note says for every listed path; no seat verb writes a listed path.
+        Observable: hidden_tracked of the note equals the assignment's; the text form names each listed path as an intake
+        item for the owner; after a whole transfer no listed path has changed in the clone or in the mirror."""
 
 
 if __name__ == "__main__":
