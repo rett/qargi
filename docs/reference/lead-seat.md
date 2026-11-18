@@ -62,6 +62,9 @@ How to read it:
 - **Guard rail**: a check that stops a lead that is mistaken or stale, one that runs qargi as it is,
   and does not stop a lead that sets out to get round qargi, which can run code of its own (see
   [Limits](#limits-of-phase-1)).
+- **Qualification**: the supervising layer's own test of a sandbox, which it runs from inside the
+  sandbox of a unit. It shows what that sandbox holds and what it can write. Qargi neither runs it
+  nor sees its result; R101 and R102 list the checks it makes.
 
 ## Roots
 
@@ -960,8 +963,20 @@ with it, and any variable or file that names one; and a credential with which a 
 `--approved` makes a remote act: the push credential of the project's remote, the token of a hosting
 service, the login of a cloud service. `$CONF/credentials/`, where qargi keeps token files, is
 never bound (Roots). Qargi cannot see what a sandbox holds, so this binds the supervising layer.
-What qargi does is to keep every lead-side verb independent of all of it (R10), to read the key on
-the authority side only, and to refuse a `qargi host` call that cannot read the key (R33). This is
+Its qualification of a sandbox shows whether the layer keeps the rule. Run from inside the sandbox
+of a unit, the qualification checks that:
+
+1. a `stat` of `$AUTH`, at the path where the authority side resolves it (R7), and a `stat` of
+   `$CONF/credentials/` both fail;
+2. no agent socket that the sandbox can reach offers a key that is in the signers line of the
+   projection (R21, R47);
+3. no push credential, no token of a hosting service and no login of a cloud service can be read:
+   each file, variable, helper or socket that the layer knows to hold one is absent or refused.
+
+These checks show that what they name is out of reach, not that nothing else is: a copy of the key
+elsewhere, or a credential that the layer does not know of, is found by none of them. What qargi
+does is to keep every lead-side verb independent of all of it (R10), to read the key on the
+authority side only, and to refuse a `qargi host` call that cannot read the key (R33). This is
 the rule that holds against a lead that works round qargi, where R33, R76 and R77 do not (Limits):
 a lead that gives itself an approval can then change only what its sandbox can write (R89, R102),
 cannot sign as the broker, cannot read the store, and has no credential with which a remote would
@@ -984,10 +999,15 @@ that left out the temporary directory would look complete. The one exception is 
 below the declared `state_root`, which the broker reads and removes only while no unit of the role
 exists (R97). Qargi cannot see what a sandbox can write, so this binds the supervising layer, and
 against a lead that works round qargi it holds exactly as far as the layer's binds do (Limits).
-What qargi does is to put the scratch files of authority-side code below the directory that
-`TMPDIR` names, so that the layer can keep that directory out of every sandbox, and never below a
-clone or a state root. Refusal: none; qargi cannot see what a sandbox can write, and a place that
-the assignment does not declare shows nowhere.
+Its qualification of a sandbox checks this from inside. It writes a file into the temporary
+directory of the sandbox (its own `TMPDIR`) and into every other place outside the clone and the
+state root that the sandbox can write, and none of those files is visible at the authority side's
+paths, the places listed above. The check covers the places that the qualification tried: a
+writable place that it did not find is found by none. What qargi does is to put the scratch files
+of authority-side code below the directory that `TMPDIR` names, so that the layer can keep that
+directory out of every sandbox, and never below a clone or a state root. Refusal: none; qargi
+cannot see what a sandbox can write, and a place that the assignment does not declare shows
+nowhere.
 
 ## The coordinator's place
 
@@ -1047,7 +1067,8 @@ show them.
 - **The binds are the supervising layer's.** Qargi cannot see what a sandbox holds or can write.
   R99, R101 and R102 bind the layer, and a bind that is wrong shows nowhere in qargi: a sandbox that
   holds the broker's key passes the proof of R33 and can sign a note, and a place that the
-  assignment does not declare passes R89 whoever can write it.
+  assignment does not declare passes R89 whoever can write it. What R101 and R102 ask shows only in
+  the layer's own qualification of a sandbox, by the checks that the two rules list.
 - **The conversation does not transfer.** A successor starts from the note.
 
 Excluded from phase 1, plainly:

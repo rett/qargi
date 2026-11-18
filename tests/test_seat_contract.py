@@ -14,9 +14,10 @@ nowhere, the contract names no path outside its roots (ROOTS, RECORDED, DECLARED
 start with), and what the design's first wave has not produced is listed, each thing with a wave, until it exists (NOT_PRODUCED).
 It also holds the page to what it says it guarantees: the outside proof of `qargi host` states what it shows and against whom (a
 guard rail, with the limits that make it one) and its one test switch is named and honoured only under a home of its own, and
-what a sandbox never holds, and what it can write, are conditions of the supervising layer. The page's other statements that
-can be read from its text are held too: the projection has every field the gate compares, a spool envelope names its transfer
-and S2 and S6 match it, and the archive of open runs opens regular files only and has a limit for a transfer.
+what a sandbox never holds, and what it can write, are conditions of the supervising layer, each with the checks that the
+layer's qualification of a sandbox makes from inside. The page's other statements that can be read from its text are held too:
+the projection has every field the gate compares, a spool envelope names its transfer and S2 and S6 match it, and the archive
+of open runs opens regular files only and has a limit for a transfer.
 Offline. Run: python3 tests/test_seat_contract.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import json, os, re, unittest
@@ -425,6 +426,38 @@ class Contract(unittest.TestCase):
                       "exits 1 with host-in-sandbox"):
             with self.subTest(words=words):
                 self.assertIn(words, doc)
+
+    def test_the_qualification_of_a_sandbox_lists_the_checks_it_makes_from_inside(self):
+        self.assertIn("- **Qualification**:", section(self.text, "## Terms"), "Terms says what the qualification is")
+        blocks = {n: squash(b) for n, b in rule_blocks(self.text).items()}
+        r101, r102 = blocks[101], blocks[102]
+        for n, rule in ((101, r101), (102, r102)):
+            with self.subTest(rule=n):
+                self.assertIn("qualification", rule)
+                self.assertIn("from inside", rule)
+        # R101: three checks of what a sandbox never holds
+        for words in ("a `stat` of `$AUTH`", "a `stat` of `$CONF/credentials/` both fail",
+                      "no agent socket that the sandbox can reach offers a key that is in the signers line",
+                      "no push credential, no token of a hosting service and no login of a cloud service can be read"):
+            with self.subTest(rule=101, words=words):
+                self.assertIn(words, r101)
+        # R102: the check of what a sandbox can write
+        for words in ("writes a file into the temporary directory of the sandbox", "every other place outside the clone and the state root",
+                      "none of those files is visible at the authority side's paths"):
+            with self.subTest(rule=102, words=words):
+                self.assertIn(words, r102)
+        # each says what its checks do not show
+        self.assertIn("is found by none of them", r101)
+        self.assertIn("is found by none", r102)
+        # the observables of the two tests list the same checks, and Limits says where what the two rules ask shows
+        doc101, doc102 = seat_doc(101), seat_doc(102)
+        for words in ("a stat of $AUTH", "a stat of $CONF/credentials/", "no agent socket", "signers line", "no push credential"):
+            with self.subTest(observable=101, words=words):
+                self.assertIn(words, doc101)
+        for words in ("writes into the sandbox's TMPDIR", "not visible at the authority side's paths"):
+            with self.subTest(observable=102, words=words):
+                self.assertIn(words, doc102)
+        self.assertIn("qualification", squash(section(self.text, "## Limits of phase 1")))
 
     def test_the_trace_has_a_row_for_each_change_that_the_review_of_revision_2_required(self):
         self.assertIn("This is revision 3 of the page", self.text)
@@ -1257,7 +1290,10 @@ class Seat(unittest.TestCase):
         Observable: every lead-side verb gives the same output and exit status with $AUTH, the key, every agent socket and
         every remote credential absent as with them present, and opens no path below $AUTH; qargi host, called where none of
         them is readable, exits 1 with host-in-sandbox and the verb did not run. What the supervising layer binds is not
-        observable by qargi: its own qualification of a sandbox shows it."""
+        observable by qargi: its own qualification of a sandbox shows it, by these checks run from inside the sandbox of a
+        unit: a stat of $AUTH (at the path where the authority side resolves it) and a stat of $CONF/credentials/ both fail; no
+        agent socket that the sandbox can reach offers a key that is in the signers line of the projection; no push credential,
+        no token of a hosting service and no login of a cloud service that the layer knows of can be read."""
 
     @unbuilt(102)
     def test_R102_a_sandbox_writes_the_two_declared_places_and_no_other(self):
@@ -1269,7 +1305,9 @@ class Seat(unittest.TestCase):
         Observable: with TMPDIR set to a directory the test made, every scratch file of a broker step and of a qargi host call
         appears there and nowhere else (none below a clone, a state root, the projection directory or the shared temporary
         directory of the system); the door refuses every overlap with the declared places (R89). What a sandbox can write
-        beyond them is not observable by qargi: the supervising layer's own qualification of a sandbox shows it."""
+        beyond them is not observable by qargi: the supervising layer's own qualification of a sandbox shows it, by this check
+        run from inside: a file that it writes into the sandbox's TMPDIR and into every other place outside the clone and the
+        state root that the sandbox can write is not visible at the authority side's paths."""
 
     # ---- rules added in revision 4 of the contract (in the page each stands in the section of its subject)
 
