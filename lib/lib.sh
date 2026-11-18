@@ -118,6 +118,17 @@ run_class() {
   echo "qargi: the lead's registry has no valid class for $1 (expected write or read-only); nothing was done" >&2
   return 1
 }
+# actor_label -> sets ACTOR (this session's coordinator label, QARGI_ACTOR) and ACTOR_FEATURE (the feature the label names), both empty without a label.
+# Unset or empty is no label and starts nothing. A value that is set and not of the form <lead-id>:coord:<feature>:<n> is exit 2 with the form on stderr (lib/help.py
+# actor-parse decides, the one reader of the form); bin/qargi refuses such a value before any verb, so this only guards a script that runs on its own. The label is
+# attribution: nothing here compares it as an identity (QARGI_LEAD stays the lead's).
+# shellcheck disable=SC2034  # ACTOR and ACTOR_FEATURE are read by the scripts that source this file (local.sh)
+actor_label() {
+  ACTOR='' ACTOR_FEATURE=''
+  [ -n "${QARGI_ACTOR:-}" ] || return 0
+  ACTOR_FEATURE=$(pymod help actor-parse "$QARGI_ACTOR") || { ACTOR_FEATURE=''; return 2; }
+  ACTOR=$QARGI_ACTOR
+}
 # out_has_report OUT -> 0 when OUT holds a report: a regular file (not a link) named report.md or *-report.md directly in it. The one test local.sh and
 # lib/lead_usage.py (has_report) share.
 out_has_report() {

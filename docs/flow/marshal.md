@@ -57,6 +57,10 @@ every verb or option that pushes, any command line with `--approved`, `marshal t
 label's is refused, and `local prepare` needs `--base feature/<the label's feature>`. A coordinator may clean any run of its own feature,
 one a stopped predecessor prepared too: the scope is the feature, not the label.
 
+`local prepare` under a label records the label and the feature with the run, in the lead's registry. `qargi local list --actor ID`
+(the whole label, or a prefix that ends at a colon: `<lead-id>:coord:<feature>:` lists every coordinator of a feature) and `--feature NAME`
+list the runs by them, and `qargi local verify --mine` verifies every open run recorded under the session's own label, one line per run.
+
 The label is attribution, not an identity and not an authority. It is unauthenticated and a session can unset the variable; no lease,
 approval or marshal record compares it, and `QARGI_LEAD` stays the lead identity. It stops a coordinator that follows its brief from doing
 a lead's act by mistake; it does not stop a hostile session. A member's guard is unchanged by it. See `qargi help coordinator`.

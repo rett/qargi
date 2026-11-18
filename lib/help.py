@@ -9,6 +9,7 @@
                               arguments resolved (below) and the project's cloud binding; see preamble()
   help.py actor-gate AREA ARGS  the narrowing of a coordinator label (QARGI_ACTOR): exit 0 to go on, 2 with the message when the label is not
                               valid or the command line is not a coordinator's; see actor_gate()
+  help.py actor-parse LABEL   the feature of a coordinator label; exit 2 and the form when it is not one
 
 The modules a plain run does not need (text wrapping, subprocess, glob) are imported where they are used: every qargi
 command runs the preamble, and its cost is the import of this module.
@@ -962,6 +963,13 @@ def main(argv):
         return 0
     if argv[0] == "actor-gate":      # the narrowing of a coordinator label; bin/qargi asks it before any verb when QARGI_ACTOR is not empty
         return actor_gate(argv[1:])
+    if argv[0] == "actor-parse" and len(argv) == 2:   # the feature of a label (lib.sh actor_label); exit 2 and the form when it is not one
+        p = actor_parse(argv[1])
+        if p is None:
+            print(actor_form_error(argv[1]), file=sys.stderr)
+            return 2
+        print(p[1])
+        return 0
     if argv[0] == "infer":
         print(infer_project() or "")
         return 0
@@ -992,7 +1000,7 @@ def main(argv):
         else:
             print("\n".join(complete(words)))
         return 0
-    print("usage: help.py show|man|complete|resolve|preamble|actor-gate ...", file=sys.stderr)
+    print("usage: help.py show|man|complete|resolve|preamble|actor-gate|actor-parse ...", file=sys.stderr)
     return 2
 
 
