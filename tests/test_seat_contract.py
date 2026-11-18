@@ -16,9 +16,9 @@ It also holds the page to what it says it guarantees: the outside proof of `qarg
 guard rail, with the limits that make it one), and what a sandbox never holds is a condition of the supervising layer.
 Offline. Run: python3 tests/test_seat_contract.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
-import os, re, unittest
+import json, os, re, unittest
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT =os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONTRACT = os.path.join(ROOT, "docs", "reference", "lead-seat.md")
 NOT_BUILT = "seat not built: R%d"
 WITHDRAWN = "withdrawn: R%d"
@@ -98,6 +98,12 @@ def section(text, heading):
 def squash(text):
     """The text on one line with single spaces: a phrase of the page may run over a line break."""
     return " ".join(text.split())
+
+
+def fenced_json(block):
+    """The first fenced json example of a rule, parsed; None when the rule has none."""
+    m = re.search(r"^```json\n(.*?)\n```", block, re.M | re.S)
+    return json.loads(m.group(1)) if m else None
 
 
 def decided_items(text):
@@ -258,6 +264,27 @@ class Contract(unittest.TestCase):
                 self.assertRegex(row.split("|")[4], r"\bwave \d\b", "a row proposes the wave that produces it")
         # what the section proposes is the lead's to decide: it is an open point
         self.assertRegex(planned, r"\[OPEN O\d+\]")
+
+    def test_the_projection_holds_every_field_that_the_gate_compares(self):
+        blocks = rule_blocks(self.text)
+        projection = fenced_json(blocks[21])
+        self.assertIsNotNone(projection, "R21 writes the projection out")
+        holder = projection["holder"]
+        # R24 and R56 compare these with the assignment file; the projection has to have each of them to compare
+        for field in ("project", "role_name", "unit", "runtime", "clone"):
+            with self.subTest(field=field):
+                self.assertTrue(field in holder or field in projection, "the projection of R21 has no %s to compare" % field)
+                self.assertIn("`%s`" % field, blocks[24])
+                self.assertIn("`%s`" % field, blocks[56])
+        # the epoch is compared on its own (R57, R58), after R56: the holder does not repeat it, and no rule compares display ids
+        self.assertIn("epoch", projection)
+        self.assertIn("`epoch`", blocks[24])
+        self.assertNotIn("epoch", holder)
+        self.assertNotRegex(squash(blocks[56]) + squash(blocks[24]), r"compar\w* `?display_id")
+        # the holder of the projection is the seat record's holder (R11) but for the epoch
+        seat = re.search(r"\| `holder` \|[^|]*\| `\{([^}]*)\}`", blocks[11])
+        self.assertIsNotNone(seat, "R11 lists the fields of the holder")
+        self.assertEqual(set(holder), {f.strip() for f in seat.group(1).split(",")} - {"epoch"})
 
     def test_the_outside_proof_says_what_it_shows_and_against_whom(self):
         blocks = {n: squash(b) for n, b in rule_blocks(self.text).items()}
@@ -482,10 +509,11 @@ class Seat(unittest.TestCase):
     @unbuilt(21)
     def test_R21_projection(self):
         """R21: the projection is one file with the fields of qargi.projection/1, among them the rev of the seat record it was
-        written from, replaced by a rename inside its directory at every step.
-        Observable: after each step the file has that shape, a new inode and the epoch, tx and rev of the seat record, no
-        temporary file is left in the directory, and a projection of another shape makes a gated verb exit 77 with
-        seat-record-invalid."""
+        written from and, in its holder, the role_name that R24 and R56 compare (not the display id, which holds the epoch),
+        replaced by a rename inside its directory at every step.
+        Observable: after each step the file has that shape, a new inode and the epoch, tx and rev of the seat record, a holder
+        with the kind, role_name, display_id, runtime, unit and clone of the seat record's holder, no temporary file is left in
+        the directory, and a projection of another shape makes a gated verb exit 77 with seat-record-invalid."""
 
     @unbuilt(22)
     def test_R22_reserved_fields_stay_empty(self):

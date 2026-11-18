@@ -247,8 +247,8 @@ step:
 ```json
 {"schema": "qargi.projection/1", "project": "example", "rev": 12, "epoch": 7,
  "state": "pending-readback", "tx": "tx-20261120T095800Z-4b1c",
- "holder": {"kind": "lead", "display_id": "example-lead@e7", "runtime": "runtime-b",
-            "unit": "lead-example.service", "clone": "<clone>"},
+ "holder": {"kind": "lead", "role_name": "example-lead", "display_id": "example-lead@e7",
+            "runtime": "runtime-b", "unit": "lead-example.service", "clone": "<clone>"},
  "readback": "pending",
  "note": {"version": 1, "json": {}, "text": "...", "json_sha256": "...", "text_sha256": "..."},
  "signature": "...", "signers_line": "...", "last_result": null, "delegations": [],
@@ -257,8 +257,13 @@ step:
 
 `rev` is the `rev` of the seat record that the projection was written from (R11). Every write of
 the seat record is followed by a write of the projection (R13), so the two agree in `epoch`, `tx`
-and `rev` except while a step is open (R40). Refusal: `seat-record-invalid`, exit 77, for a
-projection that does not have this shape.
+and `rev` except while a step is open (R40). The holder has the fields of the seat record's holder
+(R11) but `epoch`, which the projection holds once, at its top. It carries `role_name` as well as
+`display_id`, because R24 and R56 compare `role_name` field by field. They do not compare
+`display_id`: it is `<role_name>@e<epoch>` (R25), so it holds the epoch, which R57 and R58 compare on
+their own and which R52 tries after R56. A comparison of display ids would answer `records-disagree`
+to a lead of an earlier or a later epoch, and never `previous-epoch` or `projection-stale`.
+Refusal: `seat-record-invalid`, exit 77, for a projection that does not have this shape.
 
 **R22** (reserved fields). `delegations` of the projection and `child_units` of the fence are
 reserved: phase 1 writes and accepts only the empty list. `actor` of an open run (R82) is reserved:
@@ -271,10 +276,11 @@ phase 1 accepts null or a label. Refusal: `content-invalid`, exit 1, for a non-e
 until the next fence. No verb run in a sandbox makes a unit the holder. Refusal: none.
 
 **R24** (binding). On the lead side a session is the holder when the assignment file bound into its
-sandbox and the projection agree on `project`, `role_name`, `unit`, `runtime`, `clone` and `epoch`.
-The supervising layer establishes the identity by deciding which unit gets that file; qargi does not
-authenticate it (see [Limits](#limits-of-phase-1)). Refusal: `records-disagree`, `previous-epoch` or
-`projection-stale`, exit 77 (R56 to R58).
+sandbox and the projection agree on `project`, `role_name`, `unit`, `runtime`, `clone` and `epoch`;
+the projection holds each of the six, `project` and `epoch` at its top and the other four in its
+holder (R21). The supervising layer establishes the identity by deciding which unit gets that file;
+qargi does not authenticate it (see [Limits](#limits-of-phase-1)). Refusal: `records-disagree`,
+`previous-epoch` or `projection-stale`, exit 77 (R56 to R58).
 
 **R25** (display id). The holder's display id is `<role_name>@e<epoch>`, derived from the assignment
 file and never passed in. It is the lead named in `marshal status`, `marshal handoff` and a run's
@@ -550,8 +556,9 @@ seated, or any session the supervising layer did not assign, is refused with. Re
 `seat-record-missing`, exit 77, for `read`, `lead-write` and `owner`.
 
 **R56** (condition 4: the records disagree) `[OPEN O8]`. The projection carries a holder, and the
-assignment file and the projection differ in `project`, `role_name`, `unit`, `runtime` or `clone`:
-`always-open` passes. This is what a competing session with another unit's file is refused with.
+assignment file and the projection differ in `project`, `role_name`, `unit`, `runtime` or `clone`
+(the last four are fields of the projection's holder, R21): `always-open` passes. This is what a
+competing session with another unit's file is refused with.
 Where the projection's `holder` is null, in `fenced` and in `vacant`, there is no holder to compare
 with: this condition is skipped and a later one answers, R60 in `fenced` and R62 in `vacant`
 unless R57 or R58 holds first. Refusal: `records-disagree`, exit 77, for `read`, `lead-write` and
