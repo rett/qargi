@@ -81,6 +81,17 @@ except OSError as e:
     || echo "qargi: warning: the ref journal could not be written for $ref ($verb)$([ $? != 4 ] || { command -v flock >/dev/null 2>&1 && echo ": flock on $f.lock failed" || echo ": the flock command (util-linux) is not installed"; }); a later 'qargi local verify' of a run prepared before this may not accept the change" >&2
   return 0
 }
+# journal_warn_bad FILE -> nothing, or one line on stderr (once in a process) when FILE, the ref journal, has a line that is not JSON: a write that was
+# cut off, or an edit by hand. The readers of the journal skip such a line and read the others, so the one line is no reason to refuse every run; this says
+# that a change it explained may be refused. lib/local.sh has the same function for its readers (it does not source this file); lib/merged.py says the same.
+journal_warn_bad() {
+  local n
+  [ -z "${JOURNAL_BAD_WARNED:-}" ] && [ -f "${1:-}" ] || return 0
+  n=$(jq -nR '[inputs | select(length > 0) | try (fromjson | empty) catch 1] | length' "$1" 2>/dev/null) || return 0
+  [ "${n:-0}" -gt 0 ] || return 0
+  JOURNAL_BAD_WARNED=1
+  echo "qargi: warning: $n line$([ "$n" = 1 ] || echo s) of the ref journal $1 $([ "$n" = 1 ] && echo is || echo are) not JSON (a write that was cut off, or an edit by hand) and $([ "$n" = 1 ] && echo is || echo are) skipped: a change that line explained is not found, and qargi local verify may refuse a run for it" >&2
+}
 # journal_reach SIDE REF TIP VERB -> for a verb that deletes the branch REF (refs/heads/NAME; SIDE local: of the repository, remote: of origin)
 # at TIP, called before it journals the deletion. The line of the deletion starts at TIP, and verify follows the journal from where a run's
 # snapshot has the branch: a run prepared before the lead committed on the branch with git (in the worktree of `release fix` or of
@@ -99,7 +110,9 @@ except OSError as e:
 # a walk through second parents would take every commit ever merged into the branch for a place the branch was at.
 # Nothing is written when the journal never had the branch (made by hand and not noted: qargi ref note) or when none of the commits it
 # has the branch at is within JOURNAL_REACH_MAX commits of TIP on its first-parent line (the branch was rewritten by hand, the
-# commit is behind a second parent, or TIP is further than that from what the journal has): the deletion then explains only a run that
+# commit is behind a second parent, or TIP is further than that from what the journal has) or when the journal has a line that is not JSON
+# (that line may be the creation or the deletion that bounds the branch's present life, so the steps could reach back into an earlier one; the
+# other readers of the journal skip such a line, this one refuses to write from it): the deletion then explains only a run that
 # had the branch at TIP, and one line on stderr says so, with the reason, because verify will refuse a run prepared while the branch was
 # at another commit. A branch that is kept gets no such line either: a commit made with git on a branch that stays is still the lead's
 # to explain. Fail-soft, as journal_line is.
@@ -135,7 +148,7 @@ journal_reach_plan() {
 }
 # journal_reach_scan SIDE REF TIP -> what journal_reach has to write, read from the journal and the repository; nothing is changed. REACH_STEPS:
 # the steps the journal lacks, "OLD NEW" each, oldest first (empty when the journal leads to TIP already). REACH_URL: for SIDE remote, origin's
-# URL as url_key writes it. REACH_NONE: empty, or why no step can lead to TIP (the cases above, and a TIP that is not in the repository).
+# URL as url_key writes it. REACH_NONE: empty, or why no step can lead to TIP (the cases above, a journal with a line that is not JSON, and a TIP that is not in the repository).
 # All three are empty when there is nothing to say: no state directory, a TIP that is no object name, SIDE remote without an origin.
 journal_reach_scan() {
   local side=$1 ref=$2 tip=$3 f=${DA_STATE:-}/ref-journal.jsonl zero=0000000000000000000000000000000000000000 rp o n i=-1 j
@@ -147,12 +160,21 @@ journal_reach_scan() {
   if [ "$side" = remote ]; then o=$(g remote get-url origin 2>/dev/null) || return 0; REACH_URL=$(url_key "$o"); [ -n "$REACH_URL" ] || return 0; fi
   # the lines of this branch on this side since it was last created (that line included) or deleted: OLD and NEW of each
   if [ -f "$f" ]; then
+    journal_warn_bad "$f"
+    # Fail closed: the other readers skip a line that is not JSON, because it explains no change and the run is refused for it. Here a skipped
+    # line is not safe: it may be the line that created or deleted this branch, and without it the lines of an earlier life of the branch
+    # (before that deletion) would be read as this one's, and the steps written from them would reach back to a commit the branch had then.
+    # So with a line that cannot be read no step is written, and the note says why (an unreadable journal counts as a bad line).
+    if [ "$(jq -nR '[inputs | select(length > 0) | try (fromjson | empty) catch 1] | length' "$f" 2>/dev/null)" != 0 ]; then
+      REACH_NONE="the ref journal has a line that is not JSON, which may be the creation or the deletion of a branch of this name, so the lines that can be read are not enough to say where it was; remove or repair that line"
+      return 0
+    fi
     while read -r o n; do
       [ "$o" = "$zero" ] || known[$o]=1
       [ "$n" = "$zero" ] || known[$n]=1
       step["$o $n"]=1
-    done < <(jq -sr --arg r "$rp" --arg u "$REACH_URL" --arg side "$side" --arg ref "$ref" --arg z "$zero" '
-      [ .[] | select(type == "object" and .ref == $ref and (.old | type) == "string" and (.new | type) == "string"
+    done < <(jq -nRr --arg r "$rp" --arg u "$REACH_URL" --arg side "$side" --arg ref "$ref" --arg z "$zero" '
+      [ inputs | fromjson? | select(type == "object" and .ref == $ref and (.old | type) == "string" and (.new | type) == "string"
           and (if $side == "remote" then .remote == "origin" and (.repo == $r or .url == $u) else (has("remote") | not) and .repo == $r end)) ] as $e
       | ([ range(0; $e | length) | select($e[.].old == $z or $e[.].new == $z) | if $e[.].old == $z then . else . + 1 end ] | last // 0) as $s
       | $e[$s:][] | select((.old + .new) | test("^[0-9a-f]+$")) | .old + " " + .new' "$f" 2>/dev/null)

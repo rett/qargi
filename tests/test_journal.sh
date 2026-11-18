@@ -30,8 +30,9 @@ F="$DA feature"; REL="$DA release"
 rstart() { local p t; p=$($REL start "$@" 2>&1); t=$(tok <<<"$p"); [ -n "$t" ] || { printf '%s\n' "$p"; return 1; }; $REL start "$@" --plan "$t" --approved go; }
 sha() { git -C "$A" rev-parse -q --verify "$1" 2>/dev/null || echo "$Z"; }
 jn() { if [ -f "$J" ]; then wc -l < "$J"; else echo 0; fi; }
-# jhas REF-SUFFIX OLD NEW: the journal holds a line for that ref (a branch name ending as given) going from OLD to NEW
-jhas() { [ -f "$J" ] && jq -c --arg r "$1" --arg o "$2" --arg n "$3" 'select((.ref | endswith($r)) and .old == $o and .new == $n)' "$J" | grep -q .; }
+# jhas REF-SUFFIX OLD NEW: the journal holds a line for that ref (a branch name ending as given) going from OLD to NEW (a line that is not JSON is
+# skipped, as the readers of qargi skip it: a test puts one in the journal)
+jhas() { [ -f "$J" ] && jq -Rc --arg r "$1" --arg o "$2" --arg n "$3" 'fromjson? | select((.ref | endswith($r)) and .old == $o and .new == $n)' "$J" | grep -q .; }
 mkrun() { $DA local prepare --repo "$A" --base "${2:-develop}" --slug "$1" --scratch "$T/scr" | sed -n 's/^RUN=//p'; }
 verify() { $DA local verify "$1" 2>&1; }
 # a hand-made commit on top of a branch (nothing moves)
@@ -339,9 +340,10 @@ takes() {
   printf '%sjournal: takes %s made with git on %s (%s..%s): journaled with the deletion, so a run prepared before %s still verifies\n' "${5:-  }" "$n" "$2" "${3:0:7}" "${4:0:7}" "$them"
 }
 # reach REF-SUFFIX OLD NEW VERB [remote]: the journal holds the step OLD -> NEW of that branch, written by VERB with a reason that names git, on that side
+# (a line that is not JSON is skipped, as the readers of qargi skip it: a test puts one in the journal)
 reach() {
-  jq -e --arg r "$1" --arg o "$2" --arg n "$3" --arg v "$4" --arg side "${5:-local}" \
-    'select((.ref | endswith($r)) and .old == $o and .new == $n and .verb == $v and ((.why // "") | test("with git")) and (if $side == "remote" then .remote == "origin" else (has("remote") | not) end))' "$J" >/dev/null 2>&1
+  jq -Re --arg r "$1" --arg o "$2" --arg n "$3" --arg v "$4" --arg side "${5:-local}" \
+    'fromjson? | select((.ref | endswith($r)) and .old == $o and .new == $n and .verb == $v and ((.why // "") | test("with git")) and (if $side == "remote" then .remote == "origin" else (has("remote") | not) end))' "$J" >/dev/null 2>&1
 }
 # gone_flow VERSION SLUG LABEL [origin]: in the project of $A a release branch, a feature branch and an agent branch exist and the journal knows each
 # (with origin: also on origin, the release by release push, the other two pushed by hand and noted). A run is prepared. The lead then commits with git
@@ -517,9 +519,9 @@ out=$(approve $DA branch prune --remote) || no "(setup) prune agent/po here and 
 grep -qxF "    journal: no step will be journaled for origin/agent/po: the journal does not lead to ${po1:0:7} (the journal has no line of it: it was pushed by hand, or by an agent, and not noted with qargi ref note): $will, while origin/agent/po was at another commit" <<<"$(planned)" \
   && ok "the plan said it too, with origin's name of the branch" || no "plan line for the branch of origin: $(planned | grep 'journal:')"
 
-# --- the journal survives a cut-off write.
+# --- the journal survives a cut-off write and a damaged line.
 # A batch of steps (journal_reach) and a single line are appended with one write, after a newline when the journal does not end in one: a line is
-# never joined to the end of another.
+# never joined to the end of another. A line that is not JSON is skipped by every reader, which says so once on stderr, and the others still count.
 ROOT=${DA%/bin/qargi}
 # jl ARGS: journal_line as a verb of the lead calls it (the steps of a batch on standard input)
 jl() { bash -c '. "$1/lib/lib.sh"; . "$1/lib/gitflow.sh"; shift; journal_line "$@"' jl "$ROOT" "$@"; }
@@ -581,6 +583,50 @@ QARGI_TEST_SHORT=100 PATH=$T/pyx:$PATH jl "$A" refs/heads/agent/atom - '' test:s
 [ "$(jn)" = $((n + 500)) ] && [ "$(jq -s length "$J" 2>&1)" = $((n + 500)) ] && [ "$(awk '{print NF}' "$T/writes")" = 2 ] && [ "$(cut -d' ' -f1 "$T/writes" | cut -d/ -f1)" = 100 ] \
   && ok "a short write (the first took 100 bytes) is followed by a second for the rest: all 500 lines, each once" || no "short write: lines $(jn) of $((n + 500)), writes $(cat "$T/writes"): $(cat "$T/err")"
 unset QARGI_TEST_WRITES
+cmp -s <(sed -n '/^journal_warn_bad()/,/^}/p' "$ROOT/lib/gitflow.sh") <(sed -n '/^journal_warn_bad()/,/^}/p' "$ROOT/lib/local.sh") && [ -n "$(sed -n '/^journal_warn_bad()/,/^}/p' "$ROOT/lib/local.sh")" ] \
+  && ok "journal_warn_bad is the same text in lib/gitflow.sh and lib/local.sh" || no "journal_warn_bad differs between lib/gitflow.sh and lib/local.sh"
+
+# a line that is not JSON in the middle of the journal: verify, ref note and merged.py read the others; the plan and the steps of a deleting verb
+# (journal_reach_scan) write nothing from a journal with such a line, since the line may be the one that bounds the branch's life
+RC=$(mkrun corrupt-run); $F start cj >/dev/null 2>&1; task agent/cj cj.txt one; $DA ref note agent/cj >/dev/null 2>&1 || no "(setup) note agent/cj"
+x0=$(sha agent/cj); RD=$(mkrun corrupt-run-d)   # RD has agent/cj at the commit the lead noted
+$F merge cj agent/cj >/dev/null 2>&1 || no "(setup) merge agent/cj into feature/cj"
+last=$(tail -n 1 "$J"); head -n -1 "$J" > "$J.new"; printf '%s\n' '{"at":"2026-11-17T10:00:00Z","epoch":17' >> "$J.new"; printf '%s\n' "$last" >> "$J.new"; mv "$J.new" "$J"   # a line cut off in the middle
+n=$(jn)
+out=$(verify "$RC"); rc=$?
+[ $rc = 0 ] && grep -q "feature/cj created by qargi feature start" <<<"$out" && ok "verify reads the journal past a line that is not JSON: the run passes and the change is named" || no "verify with a damaged line: rc=$rc $out"
+[ "$(grep -c "1 line of the ref journal .* is not JSON" <<<"$out")" = 1 ] && ok "and it says so once on stderr: one line, which line is meant is for the lead to find (the journal named)" || no "the warning of verify: $(grep -c 'of the ref journal' <<<"$out") times: $(grep 'ref journal' <<<"$out")"
+byhand agent/cj y.txt; y0=$(sha agent/cj)
+out=$($DA ref note agent/cj 2>&1)
+[ "$(sha agent/cj)" = "$y0" ] && grep -q "^noted agent/cj: ${x0:0:12} to ${y0:0:12} (after your earlier note)" <<<"$out" && [ "$(grep -c "of the ref journal .* is not JSON" <<<"$out")" = 1 ] \
+  && ok "ref note finds its own earlier note past the damaged line (it continues from it) and says so once" || no "ref note with a damaged line: $out"
+byhand agent/cj z.txt; z0=$(sha agent/cj)
+$F merge cj agent/cj >/dev/null 2>&1 || no "(setup) merge agent/cj again"
+jc=$(jn); out=$(approve $DA branch prune) || no "(setup) prune agent/cj: $out"
+# the steps of a deleting verb fail closed: the skipped line may be the creation or the deletion that bounds the branch's life, so with a line
+# that cannot be read no step is written (the deletion itself goes on, from the tip, as it does for a branch the journal never had)
+cwhy="the ref journal has a line that is not JSON, which may be the creation or the deletion of a branch of this name, so the lines that can be read are not enough to say where it was; remove or repair that line"
+cwill="qargi local verify will refuse a run prepared earlier"
+[ "$(sha agent/cj)" = "$Z" ] && ! reach agent/cj "$y0" "$z0" branch:prune && [ "$(jn)" = $((jc + 1)) ] && jhas agent/cj "$z0" "$Z" \
+  && ok "branch prune with a damaged line in the journal deletes the branch and journals only the deletion: no step from the commit made with git is written" || no "prune with a damaged line: $(grep 'agent/cj' "$J" | tail -n 3)"
+grep -qxF "    journal: no step will be journaled for agent/cj: the journal does not lead to ${z0:0:7} ($cwhy): $cwill, while agent/cj was at another commit" <<<"$(planned)" && ! grep -q "journal: takes" <<<"$(planned)" \
+  && ok "the plan said so before the approval: no step will be journaled, because of the line that is not JSON" || no "plan with a damaged line: $(planned | grep 'journal:')"
+[ "$(grep -c "^note: the journal does not lead to ${z0:0:7}, where agent/cj was deleted ($cwhy): $cwill, while agent/cj was at another commit\$" <<<"$out")" = 1 ] \
+  && ok "and the prune printed the note once, with the same reason" || no "note of the prune with a damaged line: $(grep 'agent/cj' <<<"$out")"
+[ "$(grep -c "of the ref journal .* is not JSON" <<<"$(planned)")" = 1 ] && [ "$(grep -c "of the ref journal .* is not JSON" <<<"$out")" = 1 ] \
+  && ok "each of the plan and the prune says once that a line is skipped" || no "the warnings of the plan and of the prune: $(grep 'ref journal' <<<"$(planned)$out")"
+out=$(verify "$RD"); rc=$?
+[ $rc != 0 ] && grep -qF "not in the lead's ref journal" <<<"$out" \
+  && ok "a run prepared at the noted commit is refused after the prune, as the note said: the journal does not lead from it to the deleted tip" || no "verify of the run at the noted commit: rc=$rc $out"
+# merged.py: a run's applied tip is merged when a commit the lead rewrote it to is; a damaged line neither hides the rewrite nor goes unsaid
+mkdir -p "$T/ms"; hc=$(hand develop); dv=$(sha develop)
+{ printf '%s\n' 'not json at all'; jq -nc --arg r "$(readlink -f "$A")" --arg o "$hc" --arg n "$dv" '{verb:"ref:rewrite", repo:$r, ref:"refs/heads/agent/m", old:$o, new:$n}'; printf '%s' '{"verb":"review:apply","re'; } > "$T/ms/ref-journal.jsonl"
+out=$(python3 -I "$ROOT/lib/merged.py" "$A" "$hc" --state "$T/ms" 2>&1); rc=$?
+[ $rc = 0 ] && [ "$(grep -c "^qargi: warning: 2 lines of the ref journal $T/ms/ref-journal.jsonl are not JSON" <<<"$out")" = 1 ] && [ "$(wc -l <<<"$out")" = 1 ] \
+  && ok "merged.py follows a recorded rewrite past damaged lines (one cut off at the end) and warns once, naming how many" || no "merged.py with damaged lines: rc=$rc $out"
+mkdir -p "$T/ms2"; jq -nc --arg r "$(readlink -f "$A")" --arg o "$hc" --arg n "$dv" '{verb:"ref:rewrite", repo:$r, ref:"refs/heads/agent/m", old:$o, new:$n}' > "$T/ms2/ref-journal.jsonl"
+out=$(python3 -I "$ROOT/lib/merged.py" "$A" "$hc" --state "$T/ms2" 2>&1); rc=$?
+[ $rc = 0 ] && [ -z "$out" ] && ok "and says nothing about a journal whose every line is JSON" || no "merged.py with a clean journal: rc=$rc $out"
 
 # --- the guard protects the journal from a member; reading stays allowed
 RG=$(mkrun guard-run); cd "$RG/clone" || exit 1

@@ -120,15 +120,28 @@ rewrite_hint() {
   git check-ref-format "refs/heads/$2" 2>/dev/null || return 0
   case $2 in agent/?*) ;; *) return 0;; esac   # the one kind of branch qargi ref record --rewrite moves
   rp=$(readlink -f -- "$1" 2>/dev/null) || rp=$1
-  jt=$(jq -r --arg r "$rp" --arg b "refs/heads/$2" 'select(type == "object" and .verb == "review:apply" and .repo == $r and .ref == $b and (has("remote") | not) and (.new | type) == "string") | .new' \
+  jt=$(jq -Rr --arg r "$rp" --arg b "refs/heads/$2" 'fromjson? | select(type == "object" and .verb == "review:apply" and .repo == $r and .ref == $b and (has("remote") | not) and (.new | type) == "string") | .new' \
     "$DA_STATE/ref-journal.jsonl" 2>/dev/null | tail -n 1)
   [[ $jt =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] || return 0
   cur=$(git -C "$1" rev-parse -q --verify "refs/heads/$2^{commit}" 2>/dev/null) || return 0
   [ "$cur" != "$jt" ] || return 0
-  jq -e --arg r "$rp" --arg o "$jt" 'select(type == "object" and .verb == "ref:rewrite" and .repo == $r and .old == $o)' "$DA_STATE/ref-journal.jsonl" >/dev/null 2>&1 && return 0   # recorded already
+  jq -Re --arg r "$rp" --arg o "$jt" 'fromjson? | select(type == "object" and .verb == "ref:rewrite" and .repo == $r and .old == $o)' "$DA_STATE/ref-journal.jsonl" >/dev/null 2>&1 && return 0   # recorded already
   [ "$(git -C "$1" rev-parse -q --verify "$jt^{tree}" 2>/dev/null)" = "$(git -C "$1" rev-parse -q --verify "$cur^{tree}" 2>/dev/null)" ] || return 0
   qb=$(printf '%q' "$2")   # the two commands are meant to be pasted: a name with a $ or a ; in it (git allows both) stays one word
   printf '%s' "$2 is at $cur, not at the tip $jt that review apply journaled: it was rewritten by hand (the same tree). Put it back and record the rewrite, so that clean follows it: git branch -f $qb $jt, then qargi ref record --rewrite $qb $jt $cur --why \"...\""
+}
+
+# journal_warn_bad FILE -> nothing, or one line on stderr (once in a process) when FILE, the ref journal, has a line that is not JSON: a write that was
+# cut off, or an edit by hand. The readers of the journal skip such a line and read the others, so the one line is no reason to refuse every run; this says
+# that a change it explained may be refused. The same function as in lib/gitflow.sh (this file does not source it; tests/test_journal.sh checks the two
+# are one text); lib/merged.py says the same for its readers.
+journal_warn_bad() {
+  local n
+  [ -z "${JOURNAL_BAD_WARNED:-}" ] && [ -f "${1:-}" ] || return 0
+  n=$(jq -nR '[inputs | select(length > 0) | try (fromjson | empty) catch 1] | length' "$1" 2>/dev/null) || return 0
+  [ "${n:-0}" -gt 0 ] || return 0
+  JOURNAL_BAD_WARNED=1
+  echo "qargi: warning: $n line$([ "$n" = 1 ] || echo s) of the ref journal $1 $([ "$n" = 1 ] && echo is || echo are) not JSON (a write that was cut off, or an edit by hand) and $([ "$n" = 1 ] && echo is || echo are) skipped: a change that line explained is not found, and qargi local verify may refuse a run for it" >&2
 }
 
 # journal_steps SIDE NAME OLD NEW -> 0 and the verbs, in order, of the lead's ref journal ($DA_STATE/ref-journal.jsonl) that explain the change
@@ -141,6 +154,8 @@ rewrite_hint() {
 # branch it took (journal_reach in lib/gitflow.sh: the lines of a flow verb whose why is the sentence below, the same text as there) are
 # counted and said with their verb: "qargi feature finish (2 commits made with git, taken by the verb)". Those moves were the lead's own
 # git, not the verb's, and the reader of verify is told which is which.
+# A line of the journal that is not JSON (a write that was cut off, an edit by hand) is skipped and the others are read: the one line explains nothing,
+# and compare (the caller) says once that there is one (journal_warn_bad).
 # Trusted only as far as the state directory is (the guard keeps an agent from writing it; same-user code could).
 journal_steps() {
   local f=$DA_STATE/ref-journal.jsonl rp='' out
@@ -148,10 +163,10 @@ journal_steps() {
   [ -f "$f" ] && [ -n "${JSTART:-}" ] || return 1
   [ -z "${CREPO:-}" ] || { rp=$(readlink -f "$CREPO" 2>/dev/null) || rp=$CREPO; }
   [ -n "$rp" ] || [ -n "${CURLK:-}" ] || return 1
-  out=$(jq -sre --arg r "$rp" --arg u "${CURLK:-}" --arg side "$1" --arg n "$2" --arg o "$3" --arg w "$4" --arg g "$git_why" --argjson s "$JSTART" '
+  out=$(jq -nRre --arg r "$rp" --arg u "${CURLK:-}" --arg side "$1" --arg n "$2" --arg o "$3" --arg w "$4" --arg g "$git_why" --argjson s "$JSTART" '
     def mine: if $side == "remote" then .remote == "origin" and (($r != "" and .repo == $r) or ($u != "" and .url == $u))
               else (has("remote") | not) and $r != "" and .repo == $r end;
-    [ .[] | select(type == "object" and .ref == $n and ((.epoch // 0) >= $s) and mine and (.old | type) == "string" and (.new | type) == "string") ] as $e
+    [ inputs | fromjson? | select(type == "object" and .ref == $n and ((.epoch // 0) >= $s) and mine and (.old | type) == "string" and (.new | type) == "string") ] as $e
     | reduce range(0; ($e | length) + 1) as $i ({($o): -1};
         reduce range(0; $e | length) as $j (.; if has($e[$j].old) and (has($e[$j].new) | not) then .[$e[$j].new] = $j else . end))
     | select($w != $o and has($w)) | . as $p
@@ -384,6 +399,7 @@ compare() {
   fi
   [ -z "$repo" ] || ! git -C "$repo" remote get-url origin >/dev/null 2>&1 || [ -n "$un" ] || hasr=1
   dev=${N["local refs/heads/develop"]:-}
+  journal_warn_bad "$DA_STATE/ref-journal.jsonl"   # once: journal_steps, called for each change, skips such a line without a word
   if owned_declared; then ownf=1; oans=$(run_answers); mapfile -t obase < <(owned_bases); fi
   allowed() { case $1 in refs/heads/develop|refs/heads/master|refs/heads/agent/*|refs/heads/feature/*|refs/heads/release/*|refs/heads/hotfix/*) return 0;; esac; return 1; }
   shortref() { case $1 in refs/heads/*) echo "${1#refs/heads/}";; refs/tags/*) echo "tag ${1#refs/tags/}";; *) echo "$1";; esac; }
