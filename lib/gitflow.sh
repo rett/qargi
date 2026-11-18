@@ -85,6 +85,18 @@ journal_reach() {
   for s in ${REACH_STEPS[@]+"${REACH_STEPS[@]}"}; do journal_line "$REPO" "$ref" "${s% *}" "${s#* }" "$verb" "$REACH_URL" "$why"; done
   return 0
 }
+# journal_reach_plan SIDE REF TIP [INDENT] -> for the plan of a verb that will delete the branch REF at TIP: one line with the number of commits
+# made with git that journal_reach will journal for it and their range (from the commit the first step starts at to the one the last step
+# ends at), nothing when there is none. Reads only. The plan token does not cover the line and need not: it covers TIP, and the steps
+# follow from TIP and the journal.
+journal_reach_plan() {
+  local name=${2#refs/heads/} n last
+  [ "$1" = local ] || name=origin/$name
+  journal_reach_scan "$1" "$2" "$3"
+  n=${#REACH_STEPS[@]}; [ "$n" -gt 0 ] || return 0
+  last=${REACH_STEPS[n - 1]##* }
+  echo "${4:-  }journal: takes $n commit$([ "$n" = 1 ] || echo s) made with git on $name (${REACH_STEPS[0]:0:7}..${last:0:7}): journaled with the deletion, so a run prepared before $([ "$n" = 1 ] && echo it || echo them) still verifies"
+}
 # journal_reach_scan SIDE REF TIP -> what journal_reach has to write, read from the journal and the repository; nothing is changed. REACH_STEPS:
 # the steps the journal lacks, "OLD NEW" each, oldest first (empty when the journal leads to TIP already). REACH_URL: for SIDE remote, origin's
 # URL as url_key writes it. REACH_NONE: empty, or why no step can lead to TIP (the cases above, and a TIP that is not in the repository).

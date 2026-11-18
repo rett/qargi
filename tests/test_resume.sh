@@ -43,15 +43,24 @@ commit_on() { # BRANCH FILE: one commit on BRANCH, made in a temporary worktree
   local w; w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R" worktree add -q "$w" "$1"; echo "$2" > "$w/$2"; git -C "$w" add -A; git -C "$w" commit -q -m "add $2"; git -C "$R" worktree remove --force "$w"
 }
 INTENT=$T/s/finish-intent
+# takes NAME OLD NEW: the line of a finish plan that says the deletion of NAME takes one commit made with git, from OLD to NEW, into the ref journal
+takes() { echo "  journal: takes 1 commit made with git on $1 (${2:0:7}..${3:0:7}): journaled with the deletion, so a run prepared before it still verifies"; }
+# stepped NAME OLD NEW VERB: how many lines of the ref journal say VERB took the commit OLD -> NEW that git made on the branch NAME of the repository
+stepped() {
+  jq -rs --arg r "refs/heads/$1" --arg o "$2" --arg n "$3" --arg v "$4" \
+    '[.[] | select(.ref == $r and .old == $o and .new == $n and .verb == $v and (has("remote") | not) and ((.why // "") | test("with git")))] | length' "$T/s/ref-journal.jsonl"
+}
 
 # --- feature finish, cut off after the push
 $F start search >/dev/null 2>&1; commit_on feature/search s1.txt; $F verify search >/dev/null 2>&1
-t=$($F finish search | tok); d0=$(rev "$R" develop)
+t=$($F finish search | tok); d0=$(rev "$R" develop); s1=$(rev "$R" feature/search)
 DIE_AFTER="push -q --atomic" DIE_FLAG=$T/die-f $F finish search --plan "$t" --approved go >/dev/null 2>&1; rc=$?
 [ $rc != 0 ] && [ -e "$T/die-f" ] && [ "$(rev "$O" develop)" != "$d0" ] && [ "$(rev "$R" develop)" = "$d0" ] && [ -f "$INTENT/app-feature-search.json" ] \
   && ok "(setup) the finish died after the push: origin has the merge, develop here does not, the intent record is there" || no "setup feature: rc=$rc origin=$(rev "$O" develop) local=$(rev "$R" develop) $(ls "$INTENT" 2>&1)"
 out=$($F finish search 2>&1); rc=$?; t2=$(tok <<<"$out")
 [ $rc = 0 ] && [ -n "$t2" ] && grep -q "was cut off" <<<"$out" && [ "$(rev "$R" develop)" = "$d0" ] && ok "a re-run says the finish was cut off, prints a plan token and changes nothing" || no "feature resume plan: rc=$rc $out"
+# the feature's commit was made with git (commit_on), so no journal line moved the branch from where feature start made it: the deletion still to come takes it
+grep -qxF "$(takes feature/search "$d0" "$s1")" <<<"$out" && ok "its plan lists the commit made with git on the feature branch, which the deletion still to come takes into the journal" || no "feature resume plan, journal line: $out"
 out=$($F finish search --plan 000000000000 --approved go 2>&1); rc=$?
 [ $rc != 0 ] && grep -q "the plan changed or --plan is missing" <<<"$out" && [ "$(rev "$R" develop)" = "$d0" ] && ok "a wrong token completes nothing" || no "feature resume wrong token: rc=$rc $out"
 out=$($F finish search --plan "$t2" --approved "go on" 2>&1); rc=$?
@@ -60,11 +69,13 @@ out=$($F finish search --plan "$t2" --approved "go on" 2>&1); rc=$?
 [ "$(jq -rs '[.[] | select(.verb == "feature:finish")] | length' "$T/s/audit.log")" = 1 ] && ok "and the audit line is written once" || no "audit: $(cat "$T/s/audit.log")"
 [ "$(jq -rs --arg r refs/heads/develop '[.[] | select(.ref == $r and .verb == "feature:finish" and .remote == "origin")] | length' "$T/s/ref-journal.jsonl")" = 1 ] \
   && [ "$(jq -rs --arg r refs/heads/develop '[.[] | select(.ref == $r and .verb == "feature:finish" and .remote == null)] | length' "$T/s/ref-journal.jsonl")" = 1 ] && ok "the ref journal has the push and the local move, once each" || no "journal"
+[ "$(stepped feature/search "$d0" "$s1" feature:finish)" = 1 ] && ok "and the commit made with git on the feature branch, taken by the finish, once" || no "journal step of feature/search: $(grep feature/search "$T/s/ref-journal.jsonl")"
 
 # --- release finish, cut off after the push
 commit_on develop late.txt
 $REL verify 0.2.0 >/dev/null 2>&1
 p=$($REL start 0.2.0 --date 2026-01-02 2>&1); t=$(tok <<<"$p"); $REL start 0.2.0 --date 2026-01-02 --plan "$t" --approved go >/dev/null 2>&1
+rb0=$(rev "$R" release/0.2.0); commit_on release/0.2.0 relfix.txt; rb1=$(rev "$R" release/0.2.0)   # a fix the lead commits with git; release push takes it to origin
 t=$($REL push 0.2.0 | tok); $REL push 0.2.0 --plan "$t" --approved go >/dev/null 2>&1
 t=$($REL finish 0.2.0 | tok); m0=$(rev "$R" master)
 DIE_AFTER="push -q --atomic" DIE_FLAG=$T/die-r $REL finish 0.2.0 --plan "$t" --approved go >/dev/null 2>&1; rc=$?
@@ -73,6 +84,8 @@ DIE_AFTER="push -q --atomic" DIE_FLAG=$T/die-r $REL finish 0.2.0 --plan "$t" --a
 out=$($REL finish 0.2.0 2>&1); rc=$?; t2=$(tok <<<"$out")
 grep -q "the tag 0.2.0 exists already" <<<"$out" && no "the re-run died at the tag that exists already" || ok "the re-run does not die at \"the tag exists already\""
 [ $rc = 0 ] && [ -n "$t2" ] && grep -q "was cut off" <<<"$out" && [ "$(rev "$R" master)" = "$m0" ] && ok "it says the finish was cut off, prints a plan token and changes nothing" || no "release resume plan: rc=$rc $out"
+grep -qxF "$(takes release/0.2.0 "$rb0" "$rb1")" <<<"$out" && ! grep -q "journal: takes .* on origin/" <<<"$out" \
+  && ok "its plan lists the fix committed with git on the release branch, and nothing for origin: release push took the fix there" || no "release resume plan, journal line: $out"
 out=$($REL finish 0.2.0 --plan "$t2" --approved "go on" 2>&1); rc=$?
 nm=$(rev "$O" refs/heads/master)
 [ $rc = 0 ] && [ "$(rev "$R" master)" = "$nm" ] && [ "$(rev "$R" develop)" = "$(rev "$O" refs/heads/develop)" ] && [ "$(rev "$R" release/0.2.0)" = none ] && [ ! -e "$INTENT/app-release-0.2.0.json" ] \
@@ -80,6 +93,7 @@ nm=$(rev "$O" refs/heads/master)
 [ "$(rev "$R" "refs/tags/0.2.0^{commit}")" = "$nm" ] && ok "the tag stays on the merge origin has" || no "tag"
 [ "$(jq -rs '[.[] | select(.verb == "release:finish")] | length' "$T/s/audit.log")" = 1 ] && ok "and the audit line is written once" || no "audit: $(cat "$T/s/audit.log")"
 [ "$(jq -rs '[.[] | select(.ref == "refs/tags/0.2.0")] | length' "$T/s/ref-journal.jsonl")" = 2 ] && ok "the ref journal has the tag's push and its local line, once each" || no "journal: $(grep -c . "$T/s/ref-journal.jsonl")"
+[ "$(stepped release/0.2.0 "$rb0" "$rb1" release:finish)" = 1 ] && ok "and the fix committed with git on the release branch, taken by the finish, once" || no "journal step of release/0.2.0: $(grep release/0.2.0 "$T/s/ref-journal.jsonl")"
 
 # --- origin holds something else than the record intended: refused, and what differs is named
 commit_on develop late2.txt   # the changelog has nothing under Unreleased now: the start is told so (--allow-empty-notes)

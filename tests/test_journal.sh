@@ -110,6 +110,7 @@ out=$(verify "$RS"); [ $? = 0 ] && ok "a run prepared before the sync verifies" 
 RP=$(mkrun prune-run); n=$(jn); b0=$(sha agent/b)
 pout=$($DA branch prune 2>&1); pt=$(tok <<<"$pout")
 [ -n "$pt" ] && [ -f "$J" ] && [ "$(jn)" = "$n" ] && ok "a branch prune plan (a listing) journals nothing" || no "prune plan journaled or has no token: $pout"
+grep -q "delete local agent/a " <<<"$pout" && ! grep -q "journal:" <<<"$pout" && ok "and it names no commit made with git: the branches it deletes have none the journal lacks" || no "prune plan names commits made with git: $pout"
 pout=$($DA branch prune --plan "$pt" --approved "prune them" 2>&1); dels=$(grep -c '^deleted ' <<<"$pout")
 jhas agent/a "$a0" "$Z" && jhas agent/b "$b0" "$Z" && [ "$(jn)" -ge $((n + 2)) ] && ok "branch prune journals each deletion (new is all zeros)" || no "prune left no journal lines: $pout"
 [ "$(jq -c 'select(.new == "0000000000000000000000000000000000000000")' "$J" | tail -n "$dels" | wc -l)" = "$dels" ] && ok "one deletion line per deleted branch" || no "deletion lines vs '$pout'"
@@ -327,8 +328,15 @@ byhand() {
   echo "$2" > "$w/$2"; git -C "$w" add -A; git -C "$w" commit -q -m "by hand: $2"; git -C "$A" worktree remove --force "$w"
   [ -z "${3:-}" ] || git -C "$A" push -q origin "$1"
 }
-# approve COMMAND...: the plan of an owner verb, then the same command with its token and an approval
-approve() { local p t; p=$("$@" 2>&1); t=$(tok <<<"$p"); [ -n "$t" ] || { printf '%s\n' "$p"; return 1; }; "$@" --plan "$t" --approved go 2>&1; }
+# approve COMMAND...: the plan of an owner verb, then the same command with its token and an approval. The plan's text is kept in $T/plan (planned prints it).
+approve() { local p t; p=$("$@" 2>&1); printf '%s\n' "$p" > "$T/plan"; t=$(tok <<<"$p"); [ -n "$t" ] || { printf '%s\n' "$p"; return 1; }; "$@" --plan "$t" --approved go 2>&1; }
+planned() { cat "$T/plan"; }
+# takes N NAME OLD NEW [INDENT]: the line of a plan that says the deletion of NAME takes N commits made with git, from OLD to NEW, into the journal
+takes() {
+  local n="$1 commits" them=them
+  [ "$1" != 1 ] || { n="1 commit"; them=it; }
+  printf '%sjournal: takes %s made with git on %s (%s..%s): journaled with the deletion, so a run prepared before %s still verifies\n' "${5:-  }" "$n" "$2" "${3:0:7}" "${4:0:7}" "$them"
+}
 # reach REF-SUFFIX OLD NEW VERB [remote]: the journal holds the step OLD -> NEW of that branch, written by VERB with a reason that names git, on that side
 reach() {
   jq -e --arg r "$1" --arg o "$2" --arg n "$3" --arg v "$4" --arg side "${5:-local}" \
@@ -341,7 +349,7 @@ reach() {
 # origin: there too). The run must verify and name each verb, with the number of commits made with git that the verb took. A second run, prepared after
 # the first of the two commits on the release branch (with origin: after release push took it there), must verify as well and count the one commit left.
 gone_flow() {
-  local v=$1 lbl=$3 org=${4:-} fr fm r0 r1 r2 f0 f1 z0 z1 out outm rc said gw=" made with git, taken by the verb)"
+  local v=$1 lbl=$3 org=${4:-} fr fm r0 r1 r2 f0 f1 z0 z1 out outm rc said pf pr pp gw=" made with git, taken by the verb)"
   $REL verify "$v" >/dev/null 2>&1; rstart "$v" --date 2026-02-02 --allow-empty-notes >/dev/null 2>&1 || no "(setup) $lbl: release start $v"
   $F start gf >/dev/null 2>&1; task agent/gz gz.txt one; $DA ref note agent/gz >/dev/null 2>&1 || no "(setup) $lbl: note agent/gz"
   if [ -n "$org" ]; then
@@ -357,9 +365,18 @@ gone_flow() {
   r2=$(sha "release/$v"); f1=$(sha feature/gf); z1=$(sha agent/gz)
   [ -n "$org" ] || $REL verify "$v" >/dev/null 2>&1
   $F merge gf agent/gz >/dev/null 2>&1 && $F verify gf >/dev/null 2>&1 || no "(setup) $lbl: merge and verify the feature"
-  out=$(approve $F finish gf) || no "(setup) $lbl: feature finish: $out"; said=$out
-  out=$(approve $REL finish "$v") || no "(setup) $lbl: release finish: $out"; said+=$'\n'$out
-  out=$(approve $DA branch prune ${org:+--remote}) || no "(setup) $lbl: branch prune: $out"; said+=$'\n'$out
+  out=$(approve $F finish gf) || no "(setup) $lbl: feature finish: $out"; said=$out; pf=$(planned)
+  out=$(approve $REL finish "$v") || no "(setup) $lbl: release finish: $out"; said+=$'\n'$out; pr=$(planned)
+  out=$(approve $DA branch prune ${org:+--remote}) || no "(setup) $lbl: branch prune: $out"; said+=$'\n'$out; pp=$(planned)
+  # each plan says how many commits made with git the deletion takes into the journal, and from which commit to which
+  grep -qxF "$(takes 1 feature/gf "$f0" "$f1")" <<<"$pf" && grep -qxF "$(takes 2 "release/$v" "$r0" "$r2")" <<<"$pr" && grep -qxF "$(takes 1 agent/gz "$z0" "$z1" '    ')" <<<"$pp" \
+    && ok "$lbl: the plans of feature finish, release finish and branch prune each list the commits made with git that the deletion takes: their number and range" || no "$lbl: plan lines: $(grep -h 'journal:' <<<"$pf"$'\n'"$pr"$'\n'"$pp")"
+  if [ -n "$org" ]; then
+    grep -qxF "$(takes 1 origin/feature/gf "$f0" "$f1")" <<<"$pf" && grep -qxF "$(takes 1 "origin/release/$v" "$r1" "$r2")" <<<"$pr" && grep -qxF "$(takes 1 origin/agent/gz "$z0" "$z1" '    ')" <<<"$pp" \
+      && ok "$lbl: and the ones pushed by hand to the branch they delete on origin (the push release push made is not among them)" || no "$lbl: plan lines for origin: $(grep -h 'journal:' <<<"$pf"$'\n'"$pr"$'\n'"$pp")"
+  else
+    ! grep -q "journal: takes .* on origin/" <<<"$pf"$'\n'"$pr"$'\n'"$pp" && ok "$lbl: no plan names a branch of origin" || no "$lbl: a plan names a branch of origin: $(grep -h 'journal:' <<<"$pf"$'\n'"$pr"$'\n'"$pp")"
+  fi
   # a verb that journaled the steps of a branch prints no note that the journal does not lead to the tip it deleted (another branch of the prune may get one)
   ! grep -E "does not lead to .*, where (origin/)?(release/$v|feature/gf|agent/gz) was deleted" <<<"$said" || no "$lbl: a note for a branch whose steps were journaled"
   { [ "$(sha "release/$v")" = "$Z" ] && [ "$(sha feature/gf)" = "$Z" ] && [ "$(sha agent/gz)" = "$Z" ] && [ "$r1" != "$r0" ] && [ "$r2" != "$r1" ] && [ "$f1" != "$f0" ] && [ "$z1" != "$z0" ]; } \
@@ -444,7 +461,10 @@ $F start rs >/dev/null 2>&1; rsa=$(sha feature/rs); RSA=$(mkrun gone-reset-a)
 $F merge rs agent/rs1 >/dev/null 2>&1 || no "(setup) merge agent/rs1 into feature/rs"
 rsb=$(sha feature/rs); RSB=$(mkrun gone-reset-b)
 git -C "$A" branch -f feature/rs "$rsa" >/dev/null; byhand feature/rs reset.txt; rsc=$(sha feature/rs)
-$F verify rs >/dev/null 2>&1; out=$(approve $F finish rs) || no "(setup) finish of the feature put back and committed on: $out"
+$F verify rs >/dev/null 2>&1; n=$(jn); out=$($F finish rs 2>&1)
+grep -qxF "$(takes 1 feature/rs "$rsa" "$rsc")" <<<"$out" && [ "$(jn)" = "$n" ] && [ "$(sha feature/rs)" = "$rsc" ] \
+  && ok "the plan of the finish lists that step as one commit made with git, from the commit the journal has to the new one, and writes nothing" || no "plan of the finish after the reset: lines $n -> $(jn): $out"
+out=$(approve $F finish rs) || no "(setup) finish of the feature put back and committed on: $out"
 { [ "$rsb" != "$rsa" ] && [ "$rsc" != "$rsb" ] && [ "$(git -C "$A" rev-parse "$rsc~1")" = "$rsa" ] && jhas feature/rs "$rsa" "$rsb" && [ "$(sha feature/rs)" = "$Z" ]; } \
   || no "(setup) feature/rs was not merged into (A -> B, journaled), put back at A, committed on (C) and finished"
 reach feature/rs "$rsa" "$rsc" feature:finish && jhas feature/rs "$rsc" "$Z" \
