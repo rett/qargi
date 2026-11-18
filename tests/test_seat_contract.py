@@ -18,8 +18,9 @@ what a sandbox never holds, and what it can write, are conditions of the supervi
 layer's qualification of a sandbox makes from inside. The page's other statements that can be read from its text are held too:
 the projection has every field the gate compares, a spool envelope names its transfer and S2 and S6 match it, every kind of
 envelope has a size limit and the store a file for it or the statement that intake keeps no copy, the archive of open runs
-opens regular files only and has a limit for a transfer, and what the broker may read below a role's state root is the
-registry of its open runs and the run folders, only while no unit of the role exists.
+opens regular files only and has a limit for a transfer, what the broker may read below a role's state root is the registry
+of its open runs and the run folders, only while no unit of the role exists, and the claim that nothing that authorizes is
+carried is about what qargi writes, lead-stated text never being read as an approval.
 Offline. Run: python3 tests/test_seat_contract.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import json, os, re, unittest
@@ -527,6 +528,27 @@ class Contract(unittest.TestCase):
             for w in words:
                 with self.subTest(observable=n, words=w):
                     self.assertIn(w, seat_doc(n))
+
+    def test_the_claim_of_R78_is_about_what_qargi_writes_and_lead_stated_text_is_never_an_approval(self):
+        r78 = squash(rule_blocks(self.text)[78])
+        # the claim covers what qargi writes: the old one covered the spool copies, which are a lead's text copied by S2 and S6
+        self.assertNotIn("the spool copies and the results hold no approval text", r78)
+        self.assertIn("Qargi writes no approval text, no plan token and no words of the owner into the note, the seat record, "
+                      "the projection or the results", r78)
+        self.assertIn("That is a claim about what qargi writes", r78)
+        self.assertIn('the note carries `"authority": "none"`', r78)
+        # what a lead wrote may hold any text and is never read as an approval; what is one, and what a lead that gives itself one
+        # can do
+        for words in ("What a lead wrote may hold any text", "the spool copies, and the lead-stated parts of the note (R46)",
+                      "No gate, door or verb reads it as an approval", "only `--approved` on the command line of a `qargi host` "
+                      "call that passed the proof is one (R76)", "no further than R101 lets it"):
+            with self.subTest(words=words):
+                self.assertIn(words, r78)
+        # the observable holds both halves: nothing of the owner's in what qargi writes, and lead-stated places for what a lead wrote
+        doc = seat_doc(78)
+        for words in ("lead_stated", "spool copies", "never in a field that qargi writes", "authority none", "is never read as an approval"):
+            with self.subTest(observable=words):
+                self.assertIn(words, doc)
 
     def test_the_trace_has_a_row_for_each_change_that_the_review_of_revision_2_required(self):
         self.assertIn("This is revision 3 of the page", self.text)
@@ -1159,10 +1181,15 @@ class Seat(unittest.TestCase):
 
     @unbuilt(78)
     def test_R78_nothing_that_authorizes_is_carried(self):
-        """R78: the note, the seat record, the projection, the spool copies and the results hold no approval text, plan token
-        or owner's words; the note says authority none and lists what not to assume.
-        Observable: with a marker string as the approval words and a known token in the outgoing lead's state, neither
-        occurs in any file of the store or the projection; the note has authority none and a non-empty do_not_assume."""
+        """R78: what qargi writes into the note, the seat record, the projection and the results holds no approval text, plan
+        token or owner's words, and the note says authority none and lists what not to assume; what a lead wrote (the spool
+        copies, the lead-stated parts of the note) may hold any text and is never read as an approval.
+        Observable: with a marker string as the approval words of an owner's verb run under qargi host and a known plan token
+        that the owner printed, neither occurs in any file of the store, the projection or the note; with the same two strings
+        written into the outgoing lead's state and read-back, they occur only in the spool copies and below lead_stated of the
+        note (and so in the projection's copy of the note), never in a field that qargi writes; the note has authority none and
+        a non-empty do_not_assume; no gate answer, door call or verb changes for their presence: a verb that takes --approved
+        and is given none is refused (R76)."""
 
     @unbuilt(79)
     def test_R79_the_owners_words_stay_with_the_owner(self):

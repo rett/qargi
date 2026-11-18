@@ -790,9 +790,14 @@ this stops a token that crosses by mistake and not one that is forged; R76 and R
 that works round qargi can reach. Refusal: the existing refusal of a plan token that does not match
 the plan, exit 1.
 
-**R78** (nothing that authorizes is carried). The note, the seat record, the projection, the spool
-copies and the results hold no approval text, no plan token and no words of the owner. The note
-carries `"authority": "none"` and the list of things a successor must not assume. Refusal: none.
+**R78** (nothing that authorizes is carried). Qargi writes no approval text, no plan token and no
+words of the owner into the note, the seat record, the projection or the results, and the note
+carries `"authority": "none"` and the list of things a successor must not assume. That is a claim
+about what qargi writes. What a lead wrote may hold any text, an approval or a token among it: the
+spool copies, and the lead-stated parts of the note (R46), which the projection carries as well
+(R21). No gate, door or verb reads it as an approval: only `--approved` on the command line of a
+`qargi host` call that passed the proof is one (R76), and a lead that writes itself words of
+approval can act on them no further than R101 lets it. Refusal: none.
 
 **R79** (the owner's words stay with the owner). The record of a release cut, which holds the
 owner's words, is written below the owner's `$STATE` by `qargi host`, never below a role's `$STATE`
