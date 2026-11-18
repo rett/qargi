@@ -729,7 +729,7 @@ resolve_for() { # role profile-or-empty project-or-empty -> prints the answer, o
   if [ -n "$JSON" ]; then jq '.out' <<<"$res"; return 0; fi
   jq -r '.out | "\(.member) \(.model // "-") \(.effort // "default") \(.profile)"' <<<"$res"
   if [ "$(jq -r '.out.model // ""' <<<"$res")" = "" ]; then
-    echo "qargi: warning: model $(jq -r '.out.model_id' <<<"$res") has no alias; the definition of member $(jq -r .out.member <<<"$res") applies" >&2
+    echo "qargi: warning: model $(jq -r '.out.model_id' <<<"$res") has no alias; the definition of member $(jq -r .out.member <<<"$res") applies. To pass an alias, give the profile a tier that has one in place of the model, such as tier: frontier" >&2
   fi
 }
 
