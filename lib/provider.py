@@ -54,7 +54,8 @@ As a library (import provider; stdlib only, found beside the descriptors, so it 
                                        of topics of its notes), as a set; every other topic is about the members the runtime runs
   lead_notes_of(name)                  (runtime, {topic: text}): the notes about the lead's own session of the lead runtime NAME (a usable runtime
                                        of the local surface), or Unsupported; member_notes_of(project, surface=local) is (runtime, the notes
-                                       about its members, the topics it lists as about a lead session) of the project's runtime
+                                       about its members, the topics it lists as about a lead session, whether it starts a member inside
+                                       the lead's session) of the project's runtime
   contract_addenda(name, surface)      the texts the runtime's definition adds to the member contract (resources.contract_addenda: files in its
                                        own directory, plain text); ProviderError for one that is missing, is not text or leaves the directory
   discard_exec_copy(directory)         remove what exec_copy made (its parent directory, qargi-exec.XXXX)
@@ -106,7 +107,9 @@ Usage: provider.py list
                                          project has no runtime on that surface or the runtime is refused (a library pack not sealed or changed since, an unreadable definition).
                                          With a lead runtime (NAME, else QARGI_LEAD_RUNTIME; a usable runtime of the local surface) the topics
                                          its definition lists in lead_notes are answered by it and the others by the project's runtime; exit 3
-                                         when NAME is no such runtime or has no such note about the lead's session (no other runtime answers)
+                                         when NAME is no such runtime or has no such note about the lead's session (no other runtime answers),
+                                         and for spawn and member-out when the project's runtime starts a member inside the lead's session
+                                         (dispatch.mode in-session) and the lead runtime is another one: that lead cannot start its members
        provider.py skills-dirs [NAME]    the project skills directory of NAME, or of every provider that has one and supports skills (one per line)
        provider.py of PROJECT [--conf DIR] [--surface local|cloud]
                                          prints the project's provider (models.provider); with a surface, the runtime for it (a family
@@ -2660,14 +2663,16 @@ def notes_of(project, conf=None, root=None, library=None, surface="local"):
 
 
 def member_notes_of(project, conf=None, root=None, library=None, surface="local"):
-    """(runtime, {topic: text}, [topic]) of a project, for a lead whose own runtime is named: of the notes notes_of() gives, the ones about the
-    members the project's runtime runs (the topics its definition does not list in lead_notes), and the sorted topics it does list. Those are
-    about a lead session on that runtime, so they are no answer for a lead on another one. The errors of notes_of(), and ProviderError
-    when the list cannot be read."""
+    """(runtime, {topic: text}, [topic], in_session) of a project, for a lead whose own runtime is named: of the notes notes_of() gives, the
+    ones about the members the project's runtime runs (the topics its definition does not list in lead_notes), and the sorted topics it does
+    list. Those are about a lead session on that runtime, so they are no answer for a lead on another one. in_session is whether the runtime,
+    as composed, starts a member inside the lead's own session (dispatch.mode in-session): only a lead on that runtime can start one then.
+    The errors of notes_of(), and ProviderError when the list cannot be read."""
     runtime, doc = _notes_doc(project, conf, root, library, surface)
     notes = doc.get("notes") if isinstance(doc.get("notes"), dict) else {}
     marked = lead_topics(doc)
-    return runtime, {t: x for t, x in notes.items() if t not in marked}, sorted(marked)
+    disp = doc.get("dispatch")
+    return runtime, {t: x for t, x in notes.items() if t not in marked}, sorted(marked), isinstance(disp, dict) and disp.get("mode") == "in-session"
 
 
 def _local_runtimes(root=None, library=None):
@@ -2713,6 +2718,10 @@ def lead_notes_of(name, root=None, library=None):
 
 
 LEAD_RUNTIME_ENV = "QARGI_LEAD_RUNTIME"
+# The notes about starting a member and about what a started member returns. A runtime that works in the session (dispatch.mode in-session)
+# starts a member with a tool of the lead's own session, so these two are instructions for a lead on that runtime and for no other lead.
+# A runtime's other notes about its members (how a message reaches one of its sessions, say) hold whoever leads.
+START_NOTES = ("spawn", "member-out")
 
 
 def _notes_for_lead(topic, project, surface, lead, source):
@@ -2720,8 +2729,10 @@ def _notes_for_lead(topic, project, surface, lead, source):
     project's runtime's. A topic the lead runtime lists is answered from it alone, so the lead's own guidance does not depend on the
     project's runtime (it needs the project, not its runtime). Any other topic, and the list of topics, asks the project's runtime as
     without a lead runtime, with the same refusals; a topic that runtime lists as about a lead session is Unsupported (exit 3) and never
-    printed: it is for a lead on that runtime. `source` is what named the lead runtime (the option or the variable): both refusals end with
-    it, since a name from the environment is not on the command line the person sees refused."""
+    printed: it is for a lead on that runtime. So are spawn and member-out (START_NOTES) when that runtime starts a member inside the lead's
+    session and the lead runtime is another one: the text would send this lead to a tool of a session it is not in, so it is told that it
+    cannot start the project's members, and the list of topics leaves the two out. `source` is what named the lead runtime (the option or
+    the variable): every refusal ends with it, since a name from the environment is not on the command line the person sees refused."""
     project = project or _project_in_effect()
     _stored_answers(project)                       # no project, or no such project: exit 2, as without a lead runtime
     by = "; the lead runtime is named by %s" % source
@@ -2733,16 +2744,24 @@ def _notes_for_lead(topic, project, surface, lead, source):
         print(lnotes[topic])
         return 0
     try:
-        runtime, mnotes, mlead = member_notes_of(project, surface=surface)
+        runtime, mnotes, mlead, in_session = member_notes_of(project, surface=surface)
     except (NoProvider, Refused, Unsupported):
         raise
     except ProviderError as e:                     # as without a lead runtime: a runtime that cannot be read as it stands is a refusal (exit 2)
         raise Refused(str(e)) from e
+    cannot_start = [t for t in START_NOTES if t in mnotes] if in_session and runtime != lname else []
+    if topic in cannot_start:
+        raise Unsupported("unsupported: members of this project cannot be started from this lead: the project's runtime %s starts a member inside "
+                          "a lead session on %s (dispatch.mode in-session) and the lead runtime is %s; its '%s' note is for a lead on %s and is not "
+                          "printed%s" % (runtime, runtime, lname, topic, runtime, by))
+    mnotes = {t: x for t, x in mnotes.items() if t not in cannot_start}
     has_lead = "its topics: " + ", ".join(sorted(lnotes)) if lnotes else "it has none"
     has_member = "its topics: " + ", ".join(sorted(mnotes)) if mnotes else "it has none"
     if topic is None:
         if not lnotes and not mnotes:
-            print("qargi: the lead runtime %s has no notes about the lead's session and the runtime %s has none about its members" % (lname, runtime), file=sys.stderr)
+            print("qargi: the lead runtime %s has no notes about the lead's session and the runtime %s has none about its members%s"
+                  % (lname, runtime, " that a lead on another runtime can use (it starts a member inside a lead session on %s)" % runtime if cannot_start else ""),
+                  file=sys.stderr)
             return 1
         print("\n".join(sorted(set(lnotes) | set(mnotes))))
         return 0
@@ -2763,8 +2782,10 @@ def cmd_notes(args):
     message names both and lists the topics there are); exit 2 when the project has no runtime on that surface or the runtime cannot be used as
     it stands (a library pack not sealed or changed since it was sealed, an unreadable definition). With a lead runtime named (--lead-runtime
     NAME, else QARGI_LEAD_RUNTIME when it is set and not empty; the option wins) the notes about the lead's own session come from that runtime
-    and the others from the project's (_notes_for_lead); exit 3 when the name is not a usable local runtime or it has no such note about the
-    lead's session, saying which of the two named it. With neither, nothing below reads lead_notes and the answer is what it always was."""
+    and the others from the project's (_notes_for_lead); exit 3 when the name is not a usable local runtime, when it has no such note about the
+    lead's session, or when the topic is how a member is started (spawn, member-out) and the project's runtime starts one inside a session of
+    its own that this lead is not in, saying which of the two named it. With neither, nothing below reads lead_notes and the answer is what
+    it always was."""
     topics, project, surface, lead, i = [], None, "local", None, 0
     while i < len(args):
         if args[i] == "--project" and i + 1 < len(args) and project is None:

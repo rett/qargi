@@ -211,13 +211,14 @@ run identity --project onclaude
 # members from the project's runtime, so a lead on one runtime gets its own guidance in a project whose members run on another.
 # Two lead runtimes and two member runtimes with the same four topics, the same two of them marked as about the lead; every text names
 # its runtime, so an answer shows which definition it came from. Besides: lead-one and member-one have a marked `message`, lead-two an
-# unmarked `extra`, member-two a marked `handoff` that lead-one has unmarked.
+# unmarked `extra`, member-two a marked `handoff` that lead-one has unmarked. The two member runtimes start a member with a command
+# (dispatch.mode command), which any lead can run; a runtime that starts one inside the lead's session comes further down (member-ins).
 four='.notes = {"identity": ("identity of " + $n), "session-model": ("session-model of " + $n), "spawn": ("spawn of " + $n), "member-out": ("member-out of " + $n)}
   | .lead_notes = ["identity", "session-model"]'
 fake_runtime "$SRC" "$TOOL" lead-one local "$four | .notes.message = \"message of lead-one\" | .lead_notes += [\"message\"] | .notes.handoff = \"handoff of lead-one\""
 fake_runtime "$SRC" "$TOOL" lead-two local "$four | .notes.extra = \"extra of lead-two\""
-fake_runtime "$SRC" "$TOOL" member-one local "$four | .notes.message = \"message of member-one\" | .lead_notes += [\"message\"]"
-fake_runtime "$SRC" "$TOOL" member-two local "$four | .notes.handoff = \"handoff of member-two\" | .lead_notes += [\"handoff\"]"
+fake_runtime "$SRC" "$TOOL" member-one local "$four | .dispatch.mode = \"command\" | .notes.message = \"message of member-one\" | .lead_notes += [\"message\"]"
+fake_runtime "$SRC" "$TOOL" member-two local "$four | .dispatch.mode = \"command\" | .notes.handoff = \"handoff of member-two\" | .lead_notes += [\"handoff\"]"
 mkproj on-one '{"local":"member-one"}'
 mkproj on-two '"member-two"'
 # all PROJECT [OPTION...]: the status, output and error of the four topics and of the list, one line each
@@ -338,6 +339,48 @@ run message --project on-two --lead-runtime lead-two
 run extra --project on-one --lead-runtime lead-two
 { [ $rc = 1 ] && [ -z "$out" ] && ! grep -q "extra of lead-two" <<<"$err"; } && ok "a note about the lead runtime's own members is not the project's: exit 1, not printed" || no "lead runtime's member note: rc=$rc out=$out err=$err"
 
+# a runtime that works in the session (dispatch.mode in-session) starts a member with a tool of the lead's own session, so only a lead on
+# that runtime can start one. For a lead on another runtime its spawn and member-out are unsupported (exit 3) and never printed: the text
+# would send that lead to a tool it does not have. The runtime's other notes about its members still answer, and the list leaves the two
+# out. member-ins has the four topics and an unmarked `message`, and works in the session as the shipped runtime it is built from does.
+fake_runtime "$SRC" "$TOOL" member-ins local "$four | .notes.message = \"message of member-ins\""
+mkproj on-ins '"member-ins"'
+[ "$(jq -r .dispatch.mode "$TOOL/lib/providers/member-ins.json") $(jq -r .dispatch.mode "$TOOL/lib/providers/member-one.json")" = "in-session command" ] \
+  && ok "the fixtures: member-ins works in the session, member-one is started by a command" || no "the dispatch modes of member-ins and member-one are not in-session and command"
+for t in spawn member-out; do
+  run "$t" --project on-ins --lead-runtime lead-two
+  refused "a lead on another runtime than a project's in-session runtime: $t is unsupported, and its text is not printed" "members of this project cannot be started from this lead"
+done
+[ "$err" = "qargi: unsupported: members of this project cannot be started from this lead: the project's runtime member-ins starts a member inside a lead session on member-ins (dispatch.mode in-session) and the lead runtime is lead-two; its 'member-out' note is for a lead on member-ins and is not printed; the lead runtime is named by --lead-runtime" ] \
+  && ok "the refusal names the two runtimes, the mode, the note and what named the lead runtime" || no "the in-session refusal is worded: $err"
+out=$(QARGI_LEAD_RUNTIME=lead-two "$DA" provider notes spawn --project on-ins 2>"$T/err"); rc=$?; err=$(cat "$T/err")
+refused "the same refusal when the variable names the lead runtime" "members of this project cannot be started from this lead"
+grep -q "is not printed; the lead runtime is named by QARGI_LEAD_RUNTIME$" <<<"$err" && ok "and it ends with the variable that named it" || no "in-session refusal, named by the variable: $err"
+run --project on-ins --lead-runtime lead-two
+[ "$rc|$(tr '\n' ' ' <<<"$out")|$err" = "0|identity message session-model |" ] && ok "the list leaves spawn and member-out out: it names what this lead can read" || no "in-session list: rc=$rc out=$out err=$err"
+run message --project on-ins --lead-runtime lead-two
+[ "$rc|$out|$err" = "0|message of member-ins|" ] && ok "a note of that runtime that is not about starting a member is still answered" || no "in-session, another member note: rc=$rc out=$out err=$err"
+run identity --project on-ins --lead-runtime lead-two
+[ "$rc|$out|$err" = "0|identity of lead-two|" ] && ok "and the lead's own notes are the lead runtime's" || no "in-session, lead note: rc=$rc out=$out err=$err"
+run gamma --project on-ins --lead-runtime lead-two
+[ "$rc|$out|$err" = "1||qargi: the runtime member-ins has no notes topic 'gamma' about its members (its topics: message) and the lead runtime lead-two has none about the lead's session (its topics: identity, session-model)" ] \
+  && ok "an unknown topic is exit 1 and lists the topics this lead can read" || no "in-session, unknown topic: rc=$rc out=$out err=$err"
+bad=
+for t in spawn member-out; do
+  run "$t" --project on-ins --lead-runtime member-ins; [ "$rc|$out|$err" = "0|$t of member-ins|" ] || bad="$bad lead-is-member-ins:$t"
+  run "$t" --project on-ins; [ "$rc|$out|$err" = "0|$t of member-ins|" ] || bad="$bad no-lead-runtime:$t"
+done
+run --project on-ins --lead-runtime member-ins
+[ "$(tr '\n' ' ' <<<"$out")" = "identity member-out message session-model spawn " ] || bad="$bad list"
+[ -z "$bad" ] && ok "a lead on the in-session runtime itself, and a lead that names no runtime, read spawn and member-out as before" || no "in-session, the same runtime or none:$bad"
+# a runtime whose only note is how to start a member, and a lead runtime with no note about the lead: there is nothing to list
+fake_runtime "$SRC" "$TOOL" member-bare local '.notes = {"spawn": "spawn of member-bare"} | del(.lead_notes)'
+mkproj on-bare '"member-bare"'
+run --project on-bare --lead-runtime notey
+[ "$rc|$out|$err" = "1||qargi: the lead runtime notey has no notes about the lead's session and the runtime member-bare has none about its members that a lead on another runtime can use (it starts a member inside a lead session on member-bare)" ] \
+  && ok "a list with nothing this lead can read is exit 1 and says why" || no "in-session, empty list: rc=$rc out=$out err=$err"
+rm -f "$TOOL/lib/providers/member-ins.json" "$TOOL/lib/providers/member-bare.json"; rm -rf "$TOOL/lib/providers/member-ins" "$TOOL/lib/providers/member-bare"
+
 # the lead's own guidance does not depend on the project's runtime: it needs a project, not a runtime that can be read
 run identity --project cloudonly --lead-runtime lead-one
 [ "$rc|$out|$err" = "0|identity of lead-one|" ] && ok "a project with no local runtime still gets the lead's notes from the lead runtime" || no "lead note, no member runtime: rc=$rc out=$out err=$err"
@@ -382,12 +425,22 @@ bad=
 for t in commands exploration identity message session-model skills-dir; do
   run "$t" --project onclaude --lead-runtime codex; [ "$rc|$out|$err" = "0|$(jqn codex "$t")|" ] || bad="$bad $t"
 done
-for t in spawn member-out; do
-  run "$t" --project onclaude --lead-runtime codex; [ "$rc|$out|$err" = "0|$(jqn claude-code "$t")|" ] || bad="$bad $t"
-done
 run --project onclaude --lead-runtime codex
-[ "$(tr '\n' ' ' <<<"$out")" = "commands exploration identity member-out message session-model skills-dir spawn " ] || bad="$bad list"
-[ -z "$bad" ] && ok "a codex lead of a project on claude-code: its own notes are codex's (message too), spawn and member-out are claude-code's" || no "codex lead, claude-code members:$bad"
+[ "$rc|$(tr '\n' ' ' <<<"$out")|$err" = "0|commands exploration identity message session-model skills-dir |" ] || bad="$bad list"
+[ -z "$bad" ] && ok "a codex lead of a project on claude-code: its own notes are codex's (message too), and the list is those" || no "codex lead, claude-code members:$bad"
+# claude-code starts a member inside a claude-code session, which a codex lead is not in: its spawn and member-out would name a tool
+# that lead does not have, so they are unsupported and the lead is told it cannot start the project's members
+for t in spawn member-out; do
+  run "$t" --project onclaude --lead-runtime codex
+  refused "a codex lead of a project on claude-code: $t is unsupported, claude-code's text is not printed" \
+    "members of this project cannot be started from this lead: the project's runtime claude-code starts a member inside a lead session on claude-code (dispatch.mode in-session) and the lead runtime is codex"
+  grep -q 'subagent_type\|final message' <<<"$out$err" && no "the refusal of $t carries the text of claude-code's note: $err"
+done
+bad=
+for t in spawn member-out; do
+  run "$t" --project onclaude --lead-runtime claude-code; [ "$rc|$out|$err" = "0|$(jqn claude-code "$t")|" ] || bad="$bad $t"
+done
+[ -z "$bad" ] && ok "a claude-code lead of that project reads spawn and member-out from claude-code" || no "claude-code lead, claude-code members:$bad"
 bad=
 for t in commands exploration identity session-model skills-dir; do
   run "$t" --project oncodex --lead-runtime claude-code; [ "$rc|$out|$err" = "0|$(jqn claude-code "$t")|" ] || bad="$bad $t"
