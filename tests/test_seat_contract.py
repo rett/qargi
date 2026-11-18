@@ -5,7 +5,9 @@ The seat is not built. `Seat` holds one test per rule of the contract, named aft
 states the rule and the observable the test will check, and skipped with the reason "seat not built: R7": the builder of a slice
 removes the skip of the rules the slice satisfies and writes the body.
 
-`Contract` runs today and keeps the two in step: the rules are numbered from 1 without a gap, each has exactly one test and every
+`Contract` runs today and keeps the two in step: the rules are numbered from 1 without a gap and each once (a rule added in a
+later revision takes the next number and stands in the section of its subject, so the numbers are not in page order; a rule that
+is dropped keeps its number, marked withdrawn, and its test), each has exactly one test and every
 test names a rule, each rule states its refusal, every reference to a rule or a point names one that exists, every point
 marked OPEN is listed at the end with what is proposed and an alternative, every point that was decided is listed with the rule
 that states the decision and is open nowhere, and the contract names no path outside the state and config roots (see ROOTS below
@@ -17,6 +19,7 @@ import os, re, unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONTRACT = os.path.join(ROOT, "docs", "reference", "lead-seat.md")
 NOT_BUILT = "seat not built: R%d"
+WITHDRAWN = "withdrawn: R%d"
 
 # A path the contract names starts at the state root or the config root.
 ROOTS = ("$STATE", "$CONF")
@@ -45,6 +48,12 @@ def contract():
 def rule_numbers(text):
     """The numbers of the rules, in the order they are defined (a rule is a paragraph that starts with **Rn**)."""
     return [int(n) for n in RULE.findall(text)]
+
+
+def withdrawn_numbers(text):
+    """The numbers of the rules that a later revision dropped: such a rule keeps its number in a paragraph that starts
+    **Rn** (withdrawn), so no number is ever used for two rules."""
+    return {int(n) for n in re.findall(r"^\*\*R(\d+)\*\* \(withdrawn\)", text, re.M)}
 
 
 def rule_blocks(text):
@@ -126,9 +135,10 @@ class Contract(unittest.TestCase):
 
     def test_the_rules_are_numbered_from_one_without_a_gap_and_each_once(self):
         self.assertGreater(len(self.numbers), 0, "the contract defines no rule")
-        self.assertEqual(self.numbers, list(range(1, len(self.numbers) + 1)))
+        # not in page order: a rule added in a later revision stands in the section of its subject, with the next number
+        self.assertEqual(sorted(self.numbers), list(range(1, len(self.numbers) + 1)))
         said = re.search(r"\*\*R1\*\* to \*\*R(\d+)\*\*", self.text)      # the page says how far its rules go
-        self.assertEqual(int(said.group(1)), self.numbers[-1], "the first section names the last rule")
+        self.assertEqual(int(said.group(1)), max(self.numbers), "the first section names the last rule")
 
     def test_every_rule_has_exactly_one_test_and_every_test_names_a_rule(self):
         tests = rule_tests()
@@ -139,17 +149,22 @@ class Contract(unittest.TestCase):
         self.assertEqual(stray, [], "a test of Seat is named after its rule: test_R7_...")
 
     def test_every_rule_test_is_skipped_for_its_rule_and_states_the_rule_and_the_observable(self):
+        gone = withdrawn_numbers(self.text)
         for n, names in sorted(rule_tests().items()):
             fn = getattr(Seat, names[0])
             with self.subTest(rule=n):
                 doc = " ".join((fn.__doc__ or "").split())
                 self.assertTrue(doc.startswith("R%d: " % n), "the docstring starts with the rule: R%d: ..." % n)
                 self.assertIn(" Observable: ", doc)
-                if getattr(fn, "__unittest_skip__", False):      # a built rule has no skip; an unbuilt one names its rule
-                    self.assertEqual(fn.__unittest_skip_why__, NOT_BUILT % n)
+                why = getattr(fn, "__unittest_skip_why__", None) if getattr(fn, "__unittest_skip__", False) else None
+                if n in gone:                # a withdrawn rule keeps its test, skipped for good
+                    self.assertEqual(why, WITHDRAWN % n)
+                elif why is not None:        # a built rule has no skip; an unbuilt one names its rule
+                    self.assertEqual(why, NOT_BUILT % n)
 
     def test_every_rule_states_its_refusal(self):
-        missing = [n for n, block in sorted(rule_blocks(self.text).items()) if "Refusal:" not in block]
+        gone = withdrawn_numbers(self.text)      # a withdrawn rule refuses nothing: its paragraph says what replaced it
+        missing = [n for n, block in sorted(rule_blocks(self.text).items()) if n not in gone and "Refusal:" not in block]
         self.assertEqual(missing, [], "rules that do not say what a violation is refused with")
 
     def test_every_reference_names_a_rule_or_a_point_that_exists(self):
@@ -215,10 +230,23 @@ class Contract(unittest.TestCase):
         self.assertIsNone(outside_the_roots("tests/test_seat_contract.py"))
         self.assertIsNotNone(outside_the_roots("lib/no_such_module.py"))
 
+    def test_the_rule_reader_finds_what_it_must(self):
+        # the same for the rules: a rule is a paragraph that starts with its number, wherever it stands; a withdrawn one says so
+        sample = "**R2** (b). Text. Refusal: none.\n\n**R3** (withdrawn). R9 replaces it.\n\nsee **R7** and `**Rn** (withdrawn)`\n\n**R1** (a). Refusal: none.\n"
+        self.assertEqual(rule_numbers(sample), [2, 3, 1])
+        self.assertEqual(withdrawn_numbers(sample), {3})
+        self.assertEqual(sorted(rule_blocks(sample)), [1, 2, 3])
+        self.assertNotIn("Refusal:", rule_blocks(sample)[3])
+
 
 def unbuilt(n):
     """The skip of a rule that is not built: the reason names the rule."""
     return unittest.skip(NOT_BUILT % n)
+
+
+def withdrawn(n):
+    """The skip of a rule that a later revision withdrew: its test stays, so the number is never used for another rule."""
+    return unittest.skip(WITHDRAWN % n)
 
 
 class Seat(unittest.TestCase):
@@ -442,7 +470,7 @@ class Seat(unittest.TestCase):
     @unbuilt(32)
     def test_R32_spool_envelope(self):
         """R32: lead content reaches the authority side as a spool envelope {schema, project, epoch, kind, sha256, bytes}
-        followed by the content, through broker intake.
+        followed by the content, written by one of the verbs of R96 and passed through broker intake.
         Observable: a valid envelope of each kind is stored; one over its limit exits 1 with content-too-large; a malformed
         one, a wrong digest or length and another epoch exit 1 with content-invalid; the store is unchanged."""
 
@@ -462,14 +490,14 @@ class Seat(unittest.TestCase):
     @unbuilt(34)
     def test_R34_S1_accept(self):
         """R34: S1 needs a transfer assignment and a held seat, writes the copy, the seat (accepted, new tx) and the projection;
-        from then A's lead-write verbs are refused.
+        from then A's lead-write verbs are refused, all but marshal seat state --submit.
         Observable: after S1 the seat and projection say accepted and A's lead-write verb exits 77 with
-        transfer-in-progress while its read verb passes."""
+        transfer-in-progress while its read verb and its marshal seat state --submit pass."""
 
     @unbuilt(35)
     def test_R35_S2_collect(self):
-        """R35: S2 takes A's spool state, which may be empty, and writes the copy, the seat (collected) and the projection; it
-        may be skipped.
+        """R35: S2 takes A's spool state, which A wrote with marshal seat state --submit and which may be empty, and writes the
+        copy, the seat (collected) and the projection; it may be skipped.
         Observable: with and without a state the seat reaches collected; S3 from accepted is accepted too."""
 
     @unbuilt(36)
@@ -487,9 +515,10 @@ class Seat(unittest.TestCase):
 
     @unbuilt(38)
     def test_R38_S5_commit(self):
-        """R38: S5 writes the seat (pending-readback, B, the new epoch) and the projection; B reads but may not write.
-        Observable: after S5 B's read verb passes and its lead-write verb exits 77 with readback-pending; the seat's epoch
-        is the new one."""
+        """R38: S5 writes the seat (pending-readback, B, the new epoch) and the projection; B reads but may not write, its
+        marshal seat readback --submit excepted.
+        Observable: after S5 B's read verb and its marshal seat readback --submit pass and its other lead-write verbs exit 77
+        with readback-pending; the seat's epoch is the new one."""
 
     @unbuilt(39)
     def test_R39_S6_check(self):
@@ -554,10 +583,10 @@ class Seat(unittest.TestCase):
 
     @unbuilt(48)
     def test_R48_read_back_record(self):
-        """R48: a read-back is {project, transfer_id, note_sha256, epoch, believes} of schema qargi.readback/1, and seat
-        readback --template prints the empty one.
-        Observable: the template parses, has every field and is accepted when filled in; an unknown field exits 1 with
-        content-invalid and one over 64 KiB with content-too-large."""
+        """R48: a read-back is {project, transfer_id, note_sha256, epoch, believes} of schema qargi.readback/1; seat readback
+        --template prints the empty one and seat readback --submit FILE writes the filled one into the spool.
+        Observable: the template parses, has every field and is accepted when filled in and submitted; an unknown field exits
+        1 with content-invalid and one over 64 KiB with content-too-large."""
 
     @unbuilt(49)
     def test_R49_check_of_the_read_back(self):
@@ -577,7 +606,8 @@ class Seat(unittest.TestCase):
     @unbuilt(51)
     def test_R51_one_gate_four_classes(self):
         """R51: every verb has one of the classes always-open, read, lead-write, owner (the broker verbs and qargi host are
-        host), and one gate in the preamble decides before the verb runs; an unseated project costs no extra process.
+        host), the three verbs that write a spool envelope being lead-write, and one gate in the preamble decides before the
+        verb runs; an unseated project costs no extra process.
         Observable: every verb the commands table describes has a class; a refused verb has no effect at all; for an
         unseated project a command starts the same number of processes as before."""
 
@@ -628,14 +658,17 @@ class Seat(unittest.TestCase):
 
     @unbuilt(60)
     def test_R60_condition_transfer_open(self):
-        """R60: in accepted, collected and fenced, always-open and read pass.
+        """R60: in accepted, collected and fenced, always-open and read pass, and of the lead-write verbs only marshal seat
+        state --submit, in accepted only.
         Observable: in each of the three states a lead-write verb exits 77 with transfer-in-progress and an owner verb with
-        not-assigned."""
+        not-assigned; marshal seat state --submit passes in accepted and exits 77 with transfer-in-progress in collected
+        and in fenced."""
 
     @unbuilt(61)
     def test_R61_condition_read_back_pending(self):
-        """R61: in pending-readback, always-open and read pass.
-        Observable: B's lead-write verb exits 77 with readback-pending and its owner verb with not-assigned."""
+        """R61: in pending-readback, always-open and read pass, and of the lead-write verbs only marshal seat readback --submit.
+        Observable: B's lead-write verb exits 77 with readback-pending and its owner verb with not-assigned; B's marshal seat
+        readback --submit passes; marshal seat state --submit and marshal caretaker request exit 77 with readback-pending."""
 
     @unbuilt(62)
     def test_R62_condition_vacant(self):
@@ -876,6 +909,18 @@ class Seat(unittest.TestCase):
         """R95: a helper inside the lead's session shares its assignment file and is answered as the holder.
         Observable: a verb run with the holder's records and a label gets the holder's answer, and the store holds no record
         of a delegation."""
+
+    # ---- rules added in revision 2 of the contract (in the page each stands in the section of its subject)
+
+    @unbuilt(96)
+    def test_R96_the_spool_writing_verbs(self):
+        """R96: marshal seat state --submit, marshal seat readback --submit and marshal caretaker request each write one spool
+        envelope (state, readback, caretaker-request) and nothing else; they are lead-write verbs, and each passes in the state
+        that asks for its envelope: accepted, pending-readback, held by a caretaker.
+        Observable: in accepted A's state --submit passes while its other lead-write verbs exit 77 with transfer-in-progress,
+        and in collected it exits 77 too; in pending-readback B's readback --submit passes while its other lead-write verbs
+        exit 77 with readback-pending; after each passing call exactly one new file exists below the state root and no record
+        of the project, no run and nothing in the repository changed."""
 
 
 if __name__ == "__main__":

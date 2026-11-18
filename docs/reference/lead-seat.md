@@ -12,9 +12,12 @@ This is revision 2 of the page. It takes in the changes that the review of revis
 
 How to read it:
 
-- A rule is a paragraph that starts with its number, **R1** to **R95**. The numbers are this page's
-  own. Each rule ends with its refusal: the code a violation is refused with and its exit status, or
-  `none` where the rule binds qargi's own output and a violation is a defect.
+- A rule is a paragraph that starts with its number, **R1** to **R96**. The numbers are this page's
+  own and they are stable: a rule added in a later revision takes the next number and stands in the
+  section of its subject, so the numbers are not in page order, and a rule that is dropped keeps
+  its number in a paragraph that starts `**Rn** (withdrawn)`. Each rule ends with its refusal: the
+  code a violation is refused with and its exit status, or `none` where the rule binds qargi's own
+  output and a violation is a defect.
 - A rule marked as open (`[OPEN O1]`, for example) states what this page proposes where the design
   leaves a choice or two inputs disagree. [Open points](#open-points) lists every one with its
   alternatives and their cost, and says who decides it when that is not the lead. An open rule is
@@ -272,11 +275,31 @@ exception is the archive and removal of run folders while the seat is `fenced` (
 Lead-written content reaches it only as a spool envelope through `broker intake`. Refusal: none.
 
 **R32** (spool envelope) `[OPEN O10]`. A lead hands content to the authority side by writing it to a
-spool below its `$STATE`. The content is preceded by one line `{"schema": "qargi.spool/1",
-"project", "epoch", "kind", "sha256", "bytes"}`, with `kind` one of `state`, `readback`,
-`caretaker-request`. The supervising layer collects it and passes it to `broker intake`. Refusal:
-`content-too-large` over the limit of its kind (R18), `content-invalid` for a malformed envelope, a
-digest or length that does not match, or another epoch than the transfer's; exit 1.
+spool below its `$STATE`, with one of the verbs of R96. The content is preceded by one line
+`{"schema": "qargi.spool/1", "project", "epoch", "kind", "sha256", "bytes"}`, with `kind` one of
+`state`, `readback`, `caretaker-request`. The supervising layer collects it and passes it to
+`broker intake`. Refusal: `content-too-large` over the limit of its kind (R18), `content-invalid`
+for a malformed envelope, a digest or length that does not match, or another epoch than the
+transfer's; exit 1.
+
+**R96** (the spool-writing verbs). Three lead-side verbs write a spool envelope (R32), each of one
+kind, and change nothing else: no record of the project, no run, nothing in the repository.
+
+| Verb | Kind | Run by | Passes |
+| --- | --- | --- | --- |
+| `marshal seat state --submit FILE` | `state` | the outgoing holder A | where `lead-write` passes, and in `accepted` (R60) |
+| `marshal seat readback --submit FILE` | `readback` | the incoming holder B | where `lead-write` passes, and in `pending-readback` (R61) |
+| `marshal caretaker request` | `caretaker-request` | a caretaker | where `lead-write` passes, and under a caretaker in `held` (R63) |
+
+Their class is `lead-write`, and each is an exception that passes in the state that asks for its
+envelope. So no step waits for an envelope that its writer is refused: S2 takes A's state while
+A's other `lead-write` verbs are refused (R34), and S6 takes B's read-back while B's are (R38).
+`marshal seat readback --template` stays `always-open` (R51). A verb of this rule creates the
+envelope exclusively and without following a link (R88). An envelope written while no step asks
+for it is not taken: S2 and S6 take the envelope of the open transfer only (R35, R39). Refusal: the
+gate's answer to a `lead-write` verb in every other state, exit 77: among them
+`transfer-in-progress` for `marshal seat state --submit` in `collected` and `fenced`, and
+`readback-pending` for the two other verbs in `pending-readback`.
 
 **R33** (owner's verbs go through `qargi host`; the outside proof). On a seated project the owner
 runs a lead verb as `qargi host VERB ...`, outside every sandbox. A store that passes R8 does not
@@ -311,7 +334,7 @@ readers may know map to the steps as follows.
 
 | Plain name | Step | What happens |
 | --- | --- | --- |
-| offer | S1 accept | the order for B is accepted; A may read and may no longer write |
+| offer | S1 accept | the order for B is accepted; A may read and may no longer write, its last state for the spool excepted |
 | | S2 collect | A's last state is taken from its spool |
 | relinquish | S3 fence | A's unit is proven gone; the seat has no holder |
 | | S4 note | the note is built from stored facts and signed |
@@ -320,12 +343,13 @@ readers may know map to the steps as follows.
 
 **R34** (S1 accept). Needs an accepted assignment of kind `transfer` and a seat in `held`. Writes
 the assignment copy, the seat (`accepted`, a new `tx`) and the projection. From the moment the
-projection says `accepted`, A's `lead-write` verbs are refused. Refusal: `transfer-in-progress`,
-exit 77, to A; `assignment-invalid`, exit 1, to the door.
+projection says `accepted`, A's `lead-write` verbs are refused, all but
+`marshal seat state --submit` (R60, R96). Refusal: `transfer-in-progress`, exit 77, to A;
+`assignment-invalid`, exit 1, to the door.
 
-**R35** (S2 collect). Takes A's spool content of kind `state`, which may be empty. Writes the copy,
-the seat (`collected`) and the projection. S2 may be skipped: S3 is allowed from `accepted`.
-Refusal: the refusals of R32.
+**R35** (S2 collect). Takes A's spool content of kind `state`, which A wrote with
+`marshal seat state --submit` (R96) and which may be empty. Writes the copy, the seat (`collected`)
+and the projection. S2 may be skipped: S3 is allowed from `accepted`. Refusal: the refusals of R32.
 
 **R36** (S3 fence) `[OPEN O3]`. Needs an accepted fence for epoch N. Writes the fence copy, the
 seat (`fenced`, `holder: null`) and the projection. No later step of the transfer runs without it.
@@ -337,7 +361,8 @@ and the projection. Refusal: none.
 
 **R38** (S5 commit). Needs the note. Writes the seat (`pending-readback`, B as holder, the new
 epoch, `readback: pending`) and the projection. B's `read` verbs pass; its `lead-write` verbs are
-refused until S6 matches. Refusal: `readback-pending`, exit 77, to B.
+refused until S6 matches, all but `marshal seat readback --submit` (R61, R96). Refusal:
+`readback-pending`, exit 77, to B.
 
 **R39** (S6 check). Takes B's read-back from the spool (R48), checks it (R49) and writes the copy
 and the result. On a match it writes the seat (`held`, `readback: matched`) and the projection, and
@@ -352,12 +377,12 @@ nothing and exits 0.
 | Stopped in | After the step's records, before the seat | After the seat, before the projection |
 | --- | --- | --- |
 | S1 | seat `held`; A works on | seat `accepted`, projection `held`; A still passes until the projection is written |
-| S2 | seat `accepted`; A is refused `transfer-in-progress` | seat `collected`, projection `accepted`; the same |
+| S2 | seat `accepted`; A is refused `transfer-in-progress` (R60) | seat `collected`, projection `accepted`; the same |
 | S3 | seat `accepted` or `collected`; A's unit is gone | seat `fenced`, projection one step behind; no session passes `lead-write` |
 | S3 at init | marker set, no seat: every gated verb is refused `seat-record-missing` | seat written, no projection: the same |
 | S4 | note files written, seat names no note | seat names the note, projection lacks it; `note show` has nothing |
 | S5 | (no record of its own) | seat `pending-readback`, projection `fenced` at epoch N; B is refused `projection-stale` |
-| S6 | result stored, seat `pending-readback`; B is refused `readback-pending` | seat `held`, projection `pending-readback`; the same |
+| S6 | result stored, seat `pending-readback`; B is refused `readback-pending` (R61) | seat `held`, projection `pending-readback`; the same |
 
 Refusal: none for the resume; a stop never lets a session pass that the completed step would refuse,
 except in the first row.
@@ -406,7 +431,8 @@ the projection, and that `transfer_id` and `version` are the projection's. Refus
 `{project, transfer_id, note_sha256, epoch, believes}`, where `believes` holds `host`, `user`,
 `clone`, `head`, `develop`, `features` (name, tip, status, suite), `open_runs` (R82),
 `capabilities_acknowledged`, `skills_seen` and `unresolved`. `marshal seat readback --template`
-prints the empty record. Refusal: `content-invalid` or `content-too-large`, exit 1.
+prints the empty record, and `marshal seat readback --submit FILE` writes the filled one into the
+spool (R96). Refusal: `content-invalid` or `content-too-large`, exit 1.
 
 **R49** (check of the read-back). The broker compares the fields the note lists in
 `readback_fields` with the note, the mirror's tips and the assignment, and stores a result of
@@ -426,11 +452,12 @@ state. Refusal: none.
 **R51** (one gate, four classes). Every verb has one class. `always-open`: `marshal seat status`,
 `marshal note show`, `marshal note verify`, `marshal seat readback --template`, help and
 completion. `read`: verbs that change nothing. `lead-write`: verbs that change the project's
-records, runs or repository. `owner`: verbs that write below `$CONF` or write the runtime
-configuration of the clone, and the marshal verbs R27 names. The broker verbs and `qargi host` are
-class `host` and are not gated: R8 and R33 decide them. One gate, in the preamble of every command
-(R67), applies R53 to R64 to the verb's class before the verb runs. For an unseated project it
-starts no process of its own. Refusal: the code of the condition that holds, exit 77.
+records, runs or repository, and the three verbs that write a spool envelope (R96). `owner`: verbs
+that write below `$CONF` or write the runtime configuration of the clone, and the marshal verbs
+R27 names. The broker verbs and `qargi host` are class `host` and are not gated: R8 and R33 decide
+them. One gate, in the preamble of every command (R67), applies R53 to R64 to the verb's class
+before the verb runs. For an unseated project it starts no process of its own. Refusal: the code
+of the condition that holds, exit 77.
 
 **R52** (order of the conditions) `[OPEN O8]`. The conditions R53 to R64 are tried in the order of
 their numbers and the first that holds decides. Within a condition the verb's class picks the
@@ -467,10 +494,13 @@ for `read`, `lead-write` and `owner`.
 `read` and `lead-write` pass. Refusal: `not-assigned`, exit 77, for `owner`.
 
 **R60** (condition 8: transfer open). State `accepted`, `collected` or `fenced`: `always-open` and
-`read` pass. Refusal: `transfer-in-progress`, exit 77, for `lead-write`; `not-assigned` for `owner`.
+`read` pass; of the `lead-write` verbs only `marshal seat state --submit` passes, and only in
+`accepted` (R96). Refusal: `transfer-in-progress`, exit 77, for every other `lead-write` verb;
+`not-assigned` for `owner`.
 
-**R61** (condition 9: read-back pending). State `pending-readback`: `always-open` and `read` pass.
-Refusal: `readback-pending`, exit 77, for `lead-write`; `not-assigned` for `owner`.
+**R61** (condition 9: read-back pending). State `pending-readback`: `always-open` and `read` pass;
+of the `lead-write` verbs only `marshal seat readback --submit` passes (R96). Refusal:
+`readback-pending`, exit 77, for every other `lead-write` verb; `not-assigned` for `owner`.
 
 **R62** (condition 10: vacant). State `vacant`: `always-open` passes. Refusal: `seat-vacant`,
 exit 77, for `read` and `lead-write`; `not-assigned` for `owner`.
@@ -795,6 +825,7 @@ rules and points it changed.
 | --- | --- | --- |
 | 1 | the proof that `qargi host` is outside every sandbox cannot be made inside one; a verb with no project is judged by whether a project is seated | R33, R64 and R76 rewritten; R8, R15, R21, R47 and R70 follow; O9 decided; O17 new |
 | 2 | a recorded path is refused by the clone and the state root that the assignment declares, not by who owns it | R89 rewritten; R19 gains `state_root`; R31, R70, R84 and R88 follow; O6 decided |
+| 3 | the verbs that write the spool are named, and each passes in the state that asks for its envelope | R96 new; R32, R34, R35, R38, R40, R48, R51, R60 and R61 follow; O10 narrowed |
 
 ## Decided points
 
@@ -853,10 +884,12 @@ or the supervising layer.
   Alternative: the list wins; it costs an owner verb in a vacant seat the answer `seat-vacant`. The
   matrix also names no answer for a `fenced` seat, which has no holder to compare; proposed: R60
   applies and R56 is skipped.
-- **O10** (R32, R35, R39). The spool's file names, what triggers collection, and which verbs write
-  a lead's state and read-back into it. Proposed: left to the joint list; this page fixes the
-  envelope only. A cost either way: those verbs must pass while `lead-write` is refused (R60, R61),
-  so they need the class `always-open` or an exception.
+- **O10** (R32, R35, R39). The spool's file names, what triggers collection, and the fields of the
+  content of a `state` envelope, which the design does not give. Proposed: left to the joint list
+  with the supervising layer; this page fixes the envelope, the verbs that write it and where they
+  pass (R96). Alternative: this page fixes one file name for each kind and says that the
+  supervising layer collects when the file appears; it costs rules about the supervising layer's
+  side that no test of qargi can show.
 - **O11** (R70). The design names `fence-required`, `fence-unproven`, `note-invalid`,
   `note-digest-mismatch` and `seat-changed` without saying when each is raised. Proposed: the table
   of R70. Alternative: fewer codes (`fence-unproven` for both fence cases, `note-invalid` for both
