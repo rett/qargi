@@ -204,8 +204,9 @@ same path inside and outside the sandbox, so the marker's value is also where th
 Refusal: none.
 
 **R18** (record form). Every record of this page is a UTF-8 JSON object with no float, no control
-character in a string and no field this page does not name, reserved fields excepted (R22). A
-closed list accepts only its values. Size limits: assignment and fence 8 KiB, spool state 16 KiB,
+character in a string and no field this page does not name, but for the reserved fields (R22) and
+the fields of the content of a `state` envelope, which O10 leaves open. A closed list accepts only
+its values. Size limits: assignment and fence 8 KiB, spool state 16 KiB,
 read-back 64 KiB, note text 16 KiB. Refusal: `content-too-large` for a record over its limit,
 `assignment-invalid` for an assignment and `content-invalid` for any other record that breaks the
 form; all exit 1, and the store is unchanged.
@@ -317,11 +318,21 @@ Lead-written content reaches it only as a spool envelope through `broker intake`
 
 **R32** (spool envelope) `[OPEN O10]`. A lead hands content to the authority side by writing it to a
 spool below its `$STATE`, with one of the verbs of R96. The content is preceded by one line
-`{"schema": "qargi.spool/1", "project", "epoch", "kind", "sha256", "bytes"}`, with `kind` one of
-`state`, `readback`, `caretaker-request`. The supervising layer collects it and passes it to
-`broker intake`. Refusal: `content-too-large` over the limit of its kind (R18), `content-invalid`
-for a malformed envelope, a digest or length that does not match, or another epoch than the
-transfer's; exit 1.
+`{"schema": "qargi.spool/1", "project", "epoch", "tx", "kind", "sha256", "bytes"}`, with `kind` one
+of `state`, `readback`, `caretaker-request`. Every field is mandatory: none is missing, null or
+empty. The verb that writes the envelope takes `project`, `epoch` and `tx` from the projection that
+is bound into the sandbox (R21), never from an option or a variable; `tx` is the open transfer's
+or, for a `caretaker-request`, which is written while no transfer is open, the last completed one
+(R11). The supervising layer collects the envelope and passes it to `broker intake`, which takes it
+only when its `project`, `epoch` and `tx` are those of the seat record (R11). That is how S2 and S6
+take the envelope of the open transfer only, and no envelope that an earlier transfer left in the
+spool, an aborted one for example, is taken (R35, R39, R96). A `readback` content names the same
+transfer as its envelope: its `transfer_id` is the envelope's `tx` (R48). The content of a `state`
+envelope may be empty (`bytes` is 0) or is one JSON object; it is lead-stated and its fields are
+open (O10), so until that is decided it is held to the form of R18 and to no field list. Refusal:
+`content-too-large` over the limit of its kind (R18), `content-invalid` for a malformed envelope (a
+`readback` whose `transfer_id` is not the envelope's `tx` among them), a digest or length that does
+not match, or a `project`, `epoch` or `tx` other than the seat record's; exit 1.
 
 **R96** (the spool-writing verbs). Three lead-side verbs write a spool envelope (R32), each of one
 kind, and change nothing else: no record of the project, no run, nothing in the repository.
@@ -336,8 +347,10 @@ Their class is `lead-write`, and each is an exception that passes in the state t
 envelope. So no step waits for an envelope that its writer is refused: S2 takes A's state while
 A's other `lead-write` verbs are refused (R34), and S6 takes B's read-back while B's are (R38).
 `marshal seat readback --template` stays `always-open` (R51). A verb of this rule creates the
-envelope exclusively and without following a link (R88). An envelope written while no step asks
-for it is not taken: S2 and S6 take the envelope of the open transfer only (R35, R39). Refusal: the
+envelope exclusively and without following a link (R88), and stamps it with `project`, `epoch` and
+`tx` from the projection (R32). An envelope written while no step asks for it, or for another
+transfer, is not taken: S2 and S6 take an envelope only when its `project`, `epoch` and `tx` are
+the seat record's, so the envelope of the open transfer only (R32, R35, R39). Refusal: the
 gate's answer to a `lead-write` verb in every other state, exit 77: among them
 `transfer-in-progress` for `marshal seat state --submit` in `collected` and `fenced`, and
 `readback-pending` for the two other verbs in `pending-readback`.
@@ -414,8 +427,9 @@ projection says `accepted`, A's `lead-write` verbs are refused, all but
 `assignment-invalid`, exit 1, to the door.
 
 **R35** (S2 collect). Takes A's spool content of kind `state`, which A wrote with
-`marshal seat state --submit` (R96) and which may be empty. Writes the copy, the seat (`collected`)
-and the projection. S2 may be skipped: S3 is allowed from `accepted`. Refusal: the refusals of R32.
+`marshal seat state --submit` (R96) and which may be empty, when its envelope's `project`, `epoch`
+and `tx` are those of the seat record (R32). Writes the copy, the seat (`collected`) and the
+projection. S2 may be skipped: S3 is allowed from `accepted`. Refusal: the refusals of R32.
 
 **R36** (S3 fence). Needs an accepted fence for epoch N. Writes the fence copy, the seat (`fenced`,
 `holder: null`) and the projection. The fence comes before the note: S3 runs before S4, S5 and S6,
@@ -434,12 +448,13 @@ and the projection. Refusal: none.
 refused until S6 matches, all but `marshal seat readback --submit` (R61, R96). Refusal:
 `readback-pending`, exit 77, to B.
 
-**R39** (S6 check) `[OPEN O14]`. Takes B's read-back from the spool (R48), checks it (R49) and
-writes the copy and the result. On a match it writes the seat (`held`, `readback: matched`) and
-the projection, and B is the lead. Without a match the seat stays `pending-readback` and B may read
-back again, up to three compared read-backs for a transfer: `attempt` of the result counts them,
-and a read-back that is refused before the comparison (for its form, its size or another note
-version) is not counted. After the third failed comparison the broker takes no further read-back
+**R39** (S6 check) `[OPEN O14]`. Takes B's read-back from the spool (R48), when its envelope's
+`project`, `epoch` and `tx` are those of the seat record (R32), checks it (R49) and writes the copy
+and the result. On a match it writes the seat (`held`, `readback: matched`) and the projection, and
+B is the lead. Without a match the seat stays `pending-readback` and B may read back again, up to
+three compared read-backs for a transfer: `attempt` of the result counts them, and a read-back that
+is refused before the comparison (for its form, its size, another transfer or another note version)
+is not counted. After the third failed comparison the broker takes no further read-back
 for the transfer: the seat stays `pending-readback`, and the only way on is a new assignment, as
 R42 says for an abort after S5. Refusal: `readback-mismatch`, exit 1, to the broker's caller for a
 failed comparison; `readback-exhausted`, exit 1, for a read-back after the third; B sees the
@@ -504,11 +519,12 @@ the projection, and that `transfer_id` and `version` are the projection's. Refus
 `note-digest-mismatch` or `note-invalid`, exit 1 (R70).
 
 **R48** (read-back). B states what it believes in a record of schema `qargi.readback/1`:
-`{project, transfer_id, note_sha256, epoch, believes}`, where `believes` holds `host`, `user`,
-`clone`, `head`, `develop`, `features` (name, tip, status, suite), `open_runs` (R82),
-`capabilities_acknowledged`, `skills_seen` and `unresolved`. `marshal seat readback --template`
-prints the empty record, and `marshal seat readback --submit FILE` writes the filled one into the
-spool (R96). Refusal: `content-invalid` or `content-too-large`, exit 1.
+`{project, transfer_id, note_sha256, epoch, believes}` (`transfer_id` is the `tx` of the envelope
+that carries it, R32), where `believes` holds `host`, `user`, `clone`, `head`, `develop`,
+`features` (name, tip, status, suite), `open_runs` (R82), `capabilities_acknowledged`,
+`skills_seen` and `unresolved`. `marshal seat readback --template` prints the empty record, and
+`marshal seat readback --submit FILE` writes the filled one into the spool (R96). Refusal:
+`content-invalid` or `content-too-large`, exit 1.
 
 **R49** (check of the read-back). The broker compares the fields the note lists in
 `readback_fields` with the note, the mirror's tips and the assignment, and stores a result of
@@ -1123,9 +1139,15 @@ item says who else does.
 - **O10** (R32, R35, R39, R96; for the lead and the supervising layer). The spool's file names,
   what triggers collection, and the fields of the content of a `state` envelope, which the design
   does not give. Proposed: left to the joint list with the supervising layer; this page fixes the
-  envelope, the verbs that write it and where they pass (R96). Alternative: this page fixes one
-  file name for each kind and says that the supervising layer collects when the file appears; it
-  costs rules about the supervising layer's side that no test of qargi can show.
+  envelope, with `project`, `epoch` and `tx` mandatory so that S2 and S6 can match it to the open
+  transfer (R32, R35, R39), the verbs that write it and where they pass (R96). Until the fields of
+  a `state` content are decided it is held to the form of R18 and to no field list. Alternative A:
+  this page fixes one file name for each kind and says that the supervising layer collects when the
+  file appears; it costs rules about the supervising layer's side that no test of qargi can show.
+  Alternative B: this page gives a `state` content a minimal record of its own, for what the note
+  takes from it (the lead's uncommitted work, R46, and what the lead says of each feature); it
+  costs a record shape that the design does not give and that the joint list would otherwise
+  settle.
 - **O11** (R70). The design names `fence-required`, `fence-unproven`, `note-invalid`,
   `note-digest-mismatch` and `seat-changed` without saying when each is raised. Proposed: the table
   of R70. Alternative: fewer codes (`fence-unproven` for both fence cases, `note-invalid` for both

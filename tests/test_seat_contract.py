@@ -286,6 +286,20 @@ class Contract(unittest.TestCase):
         self.assertIsNotNone(seat, "R11 lists the fields of the holder")
         self.assertEqual(set(holder), {f.strip() for f in seat.group(1).split(",")} - {"epoch"})
 
+    def test_a_spool_envelope_names_its_transfer_and_the_steps_match_it(self):
+        blocks = {n: squash(b) for n, b in rule_blocks(self.text).items()}
+        envelope = re.search(r'\{"schema": "qargi\.spool/1"[^}]*\}', blocks[32])
+        self.assertIsNotNone(envelope, "R32 writes the envelope out")
+        self.assertEqual(re.findall(r'"(\w+)"', envelope.group(0)), ["schema", "project", "epoch", "tx", "kind", "sha256", "bytes"])
+        self.assertIn("Every field is mandatory", blocks[32])
+        # S2 and S6 take an envelope only when it names the open transfer: "the envelope of the open transfer only" is checkable
+        for n in (35, 39, 96):
+            with self.subTest(rule=n):
+                self.assertRegex(blocks[n], r"`project`, `epoch` and `tx` are (those of|the seat record's)")
+        # the one thing whose fields stay open is the content of a state envelope, and the form rule says so
+        self.assertIn("content of a `state` envelope", blocks[18])
+        self.assertIn("`tx`", squash(open_items(self.text)["O10"]))
+
     def test_the_outside_proof_says_what_it_shows_and_against_whom(self):
         blocks = {n: squash(b) for n, b in rule_blocks(self.text).items()}
         r33 = blocks[33]
@@ -486,10 +500,11 @@ class Seat(unittest.TestCase):
 
     @unbuilt(18)
     def test_R18_record_form_and_size_limits(self):
-        """R18: a record is a UTF-8 JSON object without floats, control characters or unknown fields; closed lists accept only
-        their values; limits 8 KiB, 16 KiB, 64 KiB and 16 KiB.
+        """R18: a record is a UTF-8 JSON object without floats, control characters or unknown fields (the reserved fields and
+        the content of a state envelope, whose fields O10 leaves open, excepted); closed lists accept only their values; limits
+        8 KiB, 16 KiB, 64 KiB and 16 KiB.
         Observable: each violation at the door exits 1 with content-too-large, assignment-invalid or content-invalid as the
-        rule says, and the store is unchanged."""
+        rule says, and the store is unchanged; a state content with a field of its own is accepted."""
 
     @unbuilt(19)
     def test_R19_assignment_record(self):
@@ -586,10 +601,12 @@ class Seat(unittest.TestCase):
 
     @unbuilt(32)
     def test_R32_spool_envelope(self):
-        """R32: lead content reaches the authority side as a spool envelope {schema, project, epoch, kind, sha256, bytes}
-        followed by the content, written by one of the verbs of R96 and passed through broker intake.
+        """R32: lead content reaches the authority side as a spool envelope {schema, project, epoch, tx, kind, sha256, bytes},
+        every field mandatory, followed by the content, written by one of the verbs of R96 (which take project, epoch and tx from
+        the projection) and passed through broker intake, which takes it only when project, epoch and tx are the seat record's.
         Observable: a valid envelope of each kind is stored; one over its limit exits 1 with content-too-large; a malformed
-        one, a wrong digest or length and another epoch exit 1 with content-invalid; the store is unchanged."""
+        one, a missing or null field, a wrong digest or length, another project, another epoch and another tx (the envelope of
+        an aborted transfer, for one) exit 1 with content-invalid; the store is unchanged."""
 
     @unbuilt(33)
     def test_R33_owner_verbs_go_through_host(self):
@@ -621,9 +638,11 @@ class Seat(unittest.TestCase):
 
     @unbuilt(35)
     def test_R35_S2_collect(self):
-        """R35: S2 takes A's spool state, which A wrote with marshal seat state --submit and which may be empty, and writes the
-        copy, the seat (collected) and the projection; it may be skipped.
-        Observable: with and without a state the seat reaches collected; S3 from accepted is accepted too."""
+        """R35: S2 takes A's spool state, which A wrote with marshal seat state --submit and which may be empty, when its
+        envelope's project, epoch and tx are the seat record's, and writes the copy, the seat (collected) and the projection;
+        it may be skipped.
+        Observable: with and without a state the seat reaches collected; a state envelope of another transfer is not taken
+        (exit 1, content-invalid); S3 from accepted is accepted too."""
 
     @unbuilt(36)
     def test_R36_S3_fence(self):
@@ -648,13 +667,14 @@ class Seat(unittest.TestCase):
 
     @unbuilt(39)
     def test_R39_S6_check(self):
-        """R39: S6 checks B's read-back; on a match the seat is held and B is the lead; without one the seat stays
-        pending-readback and B may read back again, up to three compared read-backs for a transfer; one that is refused
-        before the comparison is not counted.
+        """R39: S6 checks B's read-back, taken when its envelope's project, epoch and tx are the seat record's; on a match the
+        seat is held and B is the lead; without one the seat stays pending-readback and B may read back again, up to three
+        compared read-backs for a transfer; one that is refused before the comparison is not counted.
         Observable: a matching read-back gives held with readback matched and B's lead-write verb passes; a failing one exits
         1 with readback-mismatch, stores the result with its attempt and leaves pending-readback; a second, matching one then
         succeeds; after three failed comparisons a fourth read-back exits 1 with readback-exhausted, stores nothing and
-        leaves the seat as it was; a read-back refused for its form or for another note version leaves the count as it was."""
+        leaves the seat as it was; a read-back refused for its form, for another transfer or for another note version leaves
+        the count as it was."""
 
     @unbuilt(40)
     def test_R40_interruption_and_resume(self):
@@ -712,10 +732,11 @@ class Seat(unittest.TestCase):
 
     @unbuilt(48)
     def test_R48_read_back_record(self):
-        """R48: a read-back is {project, transfer_id, note_sha256, epoch, believes} of schema qargi.readback/1; seat readback
-        --template prints the empty one and seat readback --submit FILE writes the filled one into the spool.
-        Observable: the template parses, has every field and is accepted when filled in and submitted; an unknown field exits
-        1 with content-invalid and one over 64 KiB with content-too-large."""
+        """R48: a read-back is {project, transfer_id, note_sha256, epoch, believes} of schema qargi.readback/1, its transfer_id
+        the tx of the envelope that carries it; seat readback --template prints the empty one and seat readback --submit FILE
+        writes the filled one into the spool.
+        Observable: the template parses, has every field and is accepted when filled in and submitted; an unknown field, or a
+        transfer_id that is not the envelope's tx, exits 1 with content-invalid and one over 64 KiB with content-too-large."""
 
     @unbuilt(49)
     def test_R49_check_of_the_read_back(self):
@@ -1065,11 +1086,13 @@ class Seat(unittest.TestCase):
     def test_R96_the_spool_writing_verbs(self):
         """R96: marshal seat state --submit, marshal seat readback --submit and marshal caretaker request each write one spool
         envelope (state, readback, caretaker-request) and nothing else; they are lead-write verbs, and each passes in the state
-        that asks for its envelope: accepted, pending-readback, held by a caretaker.
+        that asks for its envelope: accepted, pending-readback, held by a caretaker; each stamps its envelope with the project,
+        epoch and tx of the projection, and S2 and S6 take an envelope of the open transfer only.
         Observable: in accepted A's state --submit passes while its other lead-write verbs exit 77 with transfer-in-progress,
         and in collected it exits 77 too; in pending-readback B's readback --submit passes while its other lead-write verbs
-        exit 77 with readback-pending; after each passing call exactly one new file exists below the state root and no record
-        of the project, no run and nothing in the repository changed."""
+        exit 77 with readback-pending; after each passing call exactly one new file exists below the state root, its envelope
+        has the projection's project, epoch and tx, and no record of the project, no run and nothing in the repository
+        changed; an envelope left over from an earlier transfer is not taken by S2 or S6."""
 
     @unbuilt(97)
     def test_R97_no_unit_of_the_role_between_the_fence_and_S5(self):
