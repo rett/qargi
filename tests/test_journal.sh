@@ -415,6 +415,24 @@ out=$(verify "$RN"); rc=$?
   && ok "a deletion journaled for one tip does not accept the deletion of the branch at another tip" || no "deletion at another tip: rc=$rc $out"
 [ $rc != 0 ] && grep -qF "branch deleted: refs/heads/agent/far (was $far0) (not in the lead's ref journal)" <<<"$out" \
   && ok "nor the deletion of a branch whose deleted tip is more than 500 commits past the tip the journal has" || no "deletion beyond the bound: rc=$rc $out"
+# a verb journaled a move of the branch (A -> B, a task merge), the lead put the branch back at A with git and committed C there, and the finish
+# deletes it at C: a journal line starts at A already, but it goes to B, so the step A -> C is written all the same. A run that had the branch at A
+# then finds the deletion; one that had it at B does not, since B is no longer on the branch and no line starts there.
+task agent/rs1 rs1.txt one; $DA ref note agent/rs1 >/dev/null 2>&1 || no "(setup) note agent/rs1"
+$F start rs >/dev/null 2>&1; rsa=$(sha feature/rs); RSA=$(mkrun gone-reset-a)
+$F merge rs agent/rs1 >/dev/null 2>&1 || no "(setup) merge agent/rs1 into feature/rs"
+rsb=$(sha feature/rs); RSB=$(mkrun gone-reset-b)
+git -C "$A" branch -f feature/rs "$rsa" >/dev/null; byhand feature/rs reset.txt; rsc=$(sha feature/rs)
+$F verify rs >/dev/null 2>&1; out=$(approve $F finish rs) || no "(setup) finish of the feature put back and committed on: $out"
+{ [ "$rsb" != "$rsa" ] && [ "$rsc" != "$rsb" ] && [ "$(git -C "$A" rev-parse "$rsc~1")" = "$rsa" ] && jhas feature/rs "$rsa" "$rsb" && [ "$(sha feature/rs)" = "$Z" ]; } \
+  || no "(setup) feature/rs was not merged into (A -> B, journaled), put back at A, committed on (C) and finished"
+reach feature/rs "$rsa" "$rsc" feature:finish && jhas feature/rs "$rsc" "$Z" \
+  && ok "a branch put back with git to a commit a journal line starts at, and committed on there: the finish journals the step from that commit to the new one" || no "no step $rsa -> $rsc of feature/rs: $(grep 'feature/rs' "$J" | tail -n 5)"
+out=$(verify "$RSA"); rc=$?
+[ $rc = 0 ] && grep -q "feature/rs deleted by qargi feature finish" <<<"$out" && ok "and a run that had the branch at that commit verifies after the finish" || no "verify of the run at A after the reset: rc=$rc $out"
+out=$(verify "$RSB"); rc=$?
+[ $rc != 0 ] && grep -qF "branch deleted: refs/heads/feature/rs (was $rsb) (not in the lead's ref journal)" <<<"$out" \
+  && ok "while a run that had it at the tip the lead dropped is still refused: no line starts there" || no "verify of the run at the dropped tip: rc=$rc $out"
 use app
 
 # --- the guard protects the journal from a member; reading stays allowed

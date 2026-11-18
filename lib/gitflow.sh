@@ -57,8 +57,11 @@ journal_line() { # REPO REF OLD NEW VERB URL [WHY]: one line; with URL a ref of 
 # commit, and no verb moved the branch from there, so no line did. The verb takes the branch as it is at TIP on the lead's approval (it
 # merged TIP, or found it merged), so it writes the steps the journal lacks: along the first-parent line of TIP, from the oldest commit
 # the journal has the branch at (in its lines since the branch was last created or deleted) up to TIP, one line from a commit to the next
-# wherever no line starts at that commit yet, each with VERB and a why that says git made the step. The journal then leads from every
-# commit the branch was at since then to TIP, and on to the deletion.
+# wherever the journal has no line of that very step yet, each with VERB and a why that says git made the step. The journal then leads from
+# every commit of that line the branch was at since then to TIP, and on to the deletion. A line that starts at the commit and goes elsewhere
+# does not stand for the step: a verb journaled A -> B, the lead put the branch back at A with git and committed C there, and the branch is
+# deleted at C. The step A -> C is written, so a run that had the branch at A finds the deletion; one that had it at B does not (B is not on
+# the line any more, and nothing starts there).
 # Nothing is written when the journal never had the branch (made by hand and not noted: qargi ref note) or when none of the commits it
 # has the branch at is among the last JOURNAL_REACH_MAX commits of the first-parent line of TIP (the branch was rewritten by hand, or
 # TIP is further than that from what the journal has): the deletion then explains only a run that had the branch at TIP. A branch
@@ -68,15 +71,16 @@ JOURNAL_REACH_MAX=500
 journal_reach() {
   local side=$1 ref=$2 tip=$3 verb=$4 f=${DA_STATE:-}/ref-journal.jsonl zero=0000000000000000000000000000000000000000 rp uk='' o n i=0 j
   local why='a commit made on the branch with git; the verb took the branch with it'
-  local -A from=() known=()
+  local -A step=() known=()
   local chain=()
   [ -n "${DA_STATE:-}" ] && [ -f "$f" ] && [[ $tip =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] || return 0
   rp=$(readlink -f "$REPO" 2>/dev/null) || rp=$REPO
   if [ "$side" = remote ]; then uk=$(g remote get-url origin 2>/dev/null) || return 0; uk=$(url_key "$uk"); [ -n "$uk" ] || return 0; fi
   # the lines of this branch on this side since it was last created (that line included) or deleted: OLD and NEW of each
   while read -r o n; do
-    [ "$o" = "$zero" ] || { from[$o]=1; known[$o]=1; }
+    [ "$o" = "$zero" ] || known[$o]=1
     [ "$n" = "$zero" ] || known[$n]=1
+    step["$o $n"]=1
   done < <(jq -sr --arg r "$rp" --arg u "$uk" --arg side "$side" --arg ref "$ref" --arg z "$zero" '
     [ .[] | select(type == "object" and .ref == $ref and (.old | type) == "string" and (.new | type) == "string"
         and (if $side == "remote" then .remote == "origin" and (.repo == $r or .url == $u) else (has("remote") | not) and .repo == $r end)) ] as $e
@@ -86,7 +90,7 @@ journal_reach() {
   mapfile -t chain < <(g rev-list --first-parent --max-count="$((JOURNAL_REACH_MAX + 1))" "$tip" 2>/dev/null)
   for j in "${!chain[@]}"; do [ -z "${known[${chain[$j]}]:-}" ] || i=$j; done
   for ((j = i; j >= 1; j--)); do
-    [ -n "${from[${chain[$j]}]:-}" ] || journal_line "$REPO" "$ref" "${chain[$j]}" "${chain[$((j - 1))]}" "$verb" "$uk" "$why"
+    [ -n "${step["${chain[$j]} ${chain[$((j - 1))]}"]:-}" ] || journal_line "$REPO" "$ref" "${chain[$j]}" "${chain[$((j - 1))]}" "$verb" "$uk" "$why"
   done
   return 0
 }
