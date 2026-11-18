@@ -48,7 +48,7 @@ The receipt is one JSON object with exactly these keys. A fact that is not recor
 | `base` | `{branch, commit}`: the feature or base branch name and the base commit | the prepared record |
 | `final_commit` | the tip that `qargi review apply` built | the private apply record (`built` or `done`), else `null` |
 | `requested` | `{model, effort}`: the model id and effort that prepare resolved | the private prepared request; a `--model` or `--effort` given to `local run` is not in private state and is not shown |
-| `observed` | `{model, effort}` | always `null` for now: the runtime's observed identity is not recorded in private state |
+| `observed` | `{model, effort}` | reserved: both are `null` today, because the runtime's observed identity is not recorded in private state. The key and its shape belong to version 1, so a later release can fill it without a new version; read `null` as not recorded |
 | `attempts` | one `{n, outcome, started, ended}` per attempt; the last three are `null` for an attempt with no dispatch | the private attempt record |
 | `attempt_count` | the number of attempts made | the private attempt record |
 | `verification` | `{state, at}`: `verified` or `unverified`, and the time of the verification in force | the current attempt |
@@ -57,6 +57,8 @@ The receipt is one JSON object with exactly these keys. A fact that is not recor
 | `skips` | the number of gates the manifest records as `not run` | the same manifest |
 | `deviations` | the number of entries of the manifest's `deviations` | the same manifest |
 | `disposition` | `cleaned` (an ordinary clean) or `discarded` (`clean --discard`) | |
+
+A reader decides by `disposition` what a receipt holds, not by its keys or by `version` alone. `cleaned` and `discarded` carry every key of the table. Any other value carries only what its writer could record: today that is `discarded, no receipt`, described below, which has `version` and `run` beside it and nothing else.
 
 The list `attempts` is truncated, not refused: it holds the most recent 64 attempts, and `attempt_count` still counts all of them. A receipt that would exceed the byte limit all the same is refused. The manifest values are the member's claims, read only from the saved copy that verification accepted: an unverified run, a run whose saved copy is not the current verified one, and an unreadable or oversized manifest give `null`. The run directory is never read. The receipt holds no path, credential, token, environment value, task text or report text: registry values are copied only when they have the form of a slug, a role or a class, and the manifest contributes two enumerated values and two counts.
 

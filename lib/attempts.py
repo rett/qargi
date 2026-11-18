@@ -82,9 +82,11 @@ never guessed:
   final_commit  tip of a built or done private apply record, else null
   requested     {model, effort}: model_id and effort of prepared.request; a
                 per-dispatch override is not in private state and not shown
-  observed      {model, effort}: null; no caller passes the runtime's
-                observed identity to this module yet
-  attempts      [{n, outcome, started, ended}] from each dispatch (null
+  observed      {model, effort}: RESERVED, both null today (no caller passes
+                the runtime's observed identity to this module yet). The key
+                and its shape belong to version 1: filling it later needs no
+                version bump, and a reader takes null as "not recorded"
+  attempts     [{n, outcome, started, ended}] from each dispatch (null
                 without one); TRUNCATED to the most recent
                 MAX_RECEIPT_ATTEMPTS (64), oldest dropped, never refused
   attempt_count the number of attempts made, including dropped ones
@@ -95,6 +97,10 @@ never guessed:
                 claims of out/manifest.json in the current verified saved
                 generation only; RUN is never read
   disposition   cleaned (ordinary clean) | discarded (explicit discard)
+Readers branch on disposition, never on the key set or on version alone:
+"cleaned" and "discarded" carry every key above; any other value (today
+"discarded, no receipt", written in the receipt's place with version and run
+only) carries just what its writer could record.
 No path, credential, environment value, task text or report text is copied.
 A document over the byte limit refuses; the attempt cap keeps it under it.
 It is written whole: a temporary name, fsync, then a hard link under the
