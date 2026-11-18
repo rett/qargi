@@ -13,10 +13,14 @@ what is proposed and an alternative, every point that was decided is listed with
 nowhere, the contract names no path outside its roots (ROOTS, RECORDED, DECLARED and BELOW_DECLARED below say what a path may
 start with), and what the design's first wave has not produced is listed, each thing with a wave, until it exists (NOT_PRODUCED).
 It also holds the page to what it says it guarantees: the outside proof of `qargi host` states what it shows and against whom (a
-guard rail, with the limits that make it one), and what a sandbox never holds, and what it can write, are conditions of the
-supervising layer. The page's other statements that can be read from its text are held too: the projection has every field
-the gate compares, a spool envelope names its transfer and S2 and S6 match it, and the archive of open runs opens regular
-files only and has a limit for a transfer.
+guard rail, with the limits that make it one) and its one test switch is named and honoured only under a home of its own, and
+what a sandbox never holds, and what it can write, are conditions of the supervising layer, each with the checks that the
+layer's qualification of a sandbox makes from inside. The page's other statements that can be read from its text are held too:
+the projection has every field the gate compares, a spool envelope names its transfer and S2 and S6 match it, every kind of
+envelope has a size limit and the store a file for it or the statement that intake keeps no copy, the archive of open runs
+opens regular files only and has a limit for a transfer, what the broker may read below a role's state root is the registry
+of its open runs and the run folders, only while no unit of the role exists, and the claim that nothing that authorizes is
+carried is about what qargi writes, lead-stated text never being read as an approval.
 Offline. Run: python3 tests/test_seat_contract.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import json, os, re, unittest
@@ -154,6 +158,11 @@ def rule_tests():
         if m:
             out.setdefault(int(m.group(1)), []).append(name)
     return out
+
+
+def seat_doc(n):
+    """The docstring of the test of rule n in Seat on one line: what that test will check once the rule is built."""
+    return squash(getattr(Seat, rule_tests()[n][0]).__doc__ or "")
 
 
 class Contract(unittest.TestCase):
@@ -386,8 +395,178 @@ class Contract(unittest.TestCase):
         self.assertEqual(len(row), 1)
         self.assertIn("R101", row[0])
 
+    def test_the_test_switch_of_qargi_host_is_named_and_honoured_only_under_a_home_of_its_own(self):
+        blocks = {n: squash(b) for n, b in rule_blocks(self.text).items()}
+        self.assertIn(103, blocks, "R103 names and limits the test switch of R33")
+        self.assertIn("**R103**", section(self.text, "## The door and the broker"), "R103 stands in the section of its subject")
+        r103, r33 = blocks[103], blocks[33]
+        # step 1 of R33 no longer leaves the name to the build: it points at the rule that names the switch and limits it
+        self.assertNotIn("the build names the switch", r33)
+        self.assertIn("R103", r33)
+        self.assertIn("`QARGI_TEST_HOST_ROOTS`", r103)
+        # honoured only when HOME is not the home that the password database gives and every root a variable names is below HOME
+        for words in ("`HOME` is set", "the password database", "the effective user", "resolved through its links", "below `HOME`",
+                      "links resolved as far as the path exists"):
+            with self.subTest(words=words):
+                self.assertIn(words, r103)
+        for name in ("QARGI_AUTH", "QARGI_CONF", "QARGI_HOME", "QARGI_STATE"):
+            with self.subTest(variable=name):
+                self.assertIn(name, r103)
+        # it lifts the refusal of the four variables and no other step, and it is no part of what the proof shows
+        for words in ("and nothing else", "a dev run is refused with the switch set as without it", "no part of what the proof shows"):
+            with self.subTest(words=words):
+                self.assertIn(words, r103)
+        self.assertRegex(r103, r"Refusal: `host-in-sandbox`, exit 1 \(R33\)")
+        # R70, Limits and the observables know the switch; the observables hold both cases of the review: the real HOME, and a
+        # root outside HOME
+        row = [ln for ln in self.text.splitlines() if ln.startswith("| `host-in-sandbox` |")]
+        self.assertEqual(len(row), 1)
+        self.assertIn("R103", row[0])
+        self.assertIn("R103", squash(section(self.text, "## Limits of phase 1")))
+        self.assertIn("R103", seat_doc(33))
+        doc = seat_doc(103)
+        for words in ("QARGI_TEST_HOST_ROOTS", "HOME the home that the password database gives", "a root outside HOME",
+                      "exits 1 with host-in-sandbox"):
+            with self.subTest(words=words):
+                self.assertIn(words, doc)
+
+    def test_the_qualification_of_a_sandbox_lists_the_checks_it_makes_from_inside(self):
+        self.assertIn("- **Qualification**:", section(self.text, "## Terms"), "Terms says what the qualification is")
+        blocks = {n: squash(b) for n, b in rule_blocks(self.text).items()}
+        r101, r102 = blocks[101], blocks[102]
+        for n, rule in ((101, r101), (102, r102)):
+            with self.subTest(rule=n):
+                self.assertIn("qualification", rule)
+                self.assertIn("from inside", rule)
+        # R101: three checks of what a sandbox never holds
+        for words in ("a `stat` of `$AUTH`", "a `stat` of `$CONF/credentials/` both fail",
+                      "no agent socket that the sandbox can reach offers a key that is in the signers line",
+                      "no push credential, no token of a hosting service and no login of a cloud service can be read"):
+            with self.subTest(rule=101, words=words):
+                self.assertIn(words, r101)
+        # R102: the check of what a sandbox can write
+        for words in ("writes a file into the temporary directory of the sandbox", "every other place outside the clone and the state root",
+                      "none of those files is visible at the authority side's paths"):
+            with self.subTest(rule=102, words=words):
+                self.assertIn(words, r102)
+        # each says what its checks do not show
+        self.assertIn("is found by none of them", r101)
+        self.assertIn("is found by none", r102)
+        # the observables of the two tests list the same checks, and Limits says where what the two rules ask shows
+        doc101, doc102 = seat_doc(101), seat_doc(102)
+        for words in ("a stat of $AUTH", "a stat of $CONF/credentials/", "no agent socket", "signers line", "no push credential"):
+            with self.subTest(observable=101, words=words):
+                self.assertIn(words, doc101)
+        for words in ("writes into the sandbox's TMPDIR", "not visible at the authority side's paths"):
+            with self.subTest(observable=102, words=words):
+                self.assertIn(words, doc102)
+        self.assertIn("qualification", squash(section(self.text, "## Limits of phase 1")))
+
+    def test_the_broker_reads_the_registry_of_open_runs_only_while_no_unit_of_the_role_exists(self):
+        blocks = {n: squash(b) for n, b in rule_blocks(self.text).items()}
+        # R31 and R89 widen their one exception, the run folders, by the registry of the role's open runs: the same window, and
+        # what the registry holds is lead-stated and only directs a walk that stays below the declared state root
+        for n in (31, 89):
+            with self.subTest(rule=n):
+                for words in ("the registry of the role's open runs", "lead-stated", "follows no link", "R97", "declared `state_root`"):
+                    self.assertIn(words, blocks[n])
+        r31 = blocks[31]
+        self.assertIn("It has two exceptions, both only while no unit of the role exists (R97), which is while the seat is `fenced`", r31)
+        self.assertIn("`local-runs.jsonl`", r31)
+        self.assertIn("at most 8 MiB", r31)
+        self.assertIn("only to direct the walk of R91", r31)
+        self.assertIn("Apart from these two exceptions, lead-written content reaches the broker only as a spool envelope", r31)
+        self.assertIn("only directs a walk", blocks[89])
+        # the rules that follow know the registry: the table of R88, the archive, the note, the window and R102
+        rows = [ln for ln in self.text.splitlines() if ln.startswith("| the registry of the role's open runs and the run folders")]
+        self.assertEqual(len(rows), 1, "the table of R88 has one row for the registry and the run folders")
+        for words in ("no-follow", "non-blocking", "regular file"):
+            self.assertIn(words, rows[0])
+        self.assertIn("reads the registry of the role's open runs (R31)", blocks[91])
+        self.assertIn("`registry`: `read` or `unreadable`", blocks[91])
+        self.assertIn("leaves no trace", blocks[91])
+        self.assertIn("has a line that does not name a run and its folder", blocks[91])   # a lead's garbage cannot hold the step open
+        self.assertIn("it reads no registry", blocks[91])
+        self.assertIn("the registry of open runs was unreadable", blocks[9])
+        self.assertIn("Where the registry was `unreadable` (R91) the note says so", blocks[92])
+        self.assertIn("(the registry and the run folders, R31, R91)", blocks[97])
+        self.assertIn("the registry of the role's open runs and the run folders", blocks[102])
+        # the observables of the tests say the same
+        for n, words in ((31, ("local-runs.jsonl", "lead-stated", "registry")), (89, ("registry", "lead-stated")),
+                         (91, ("registry: read or unreadable",)), (92, ("the registry was unreadable the note says so",)),
+                         (97, ("the registry included",)), (102, ("registry",))):
+            for w in words:
+                with self.subTest(observable=n, words=w):
+                    self.assertIn(w, seat_doc(n))
+
+    def test_a_caretaker_request_has_a_size_limit_and_intake_keeps_no_copy_of_it(self):
+        blocks = {n: squash(b) for n, b in rule_blocks(self.text).items()}
+        # every kind of spool envelope that R32 lists has a size limit in R18: the review found none for the caretaker request
+        kinds = re.search(r"with `kind` one of ((?:`[\w-]+`(?:, )?)+)\.", blocks[32])
+        self.assertIsNotNone(kinds, "R32 lists the kinds of spool envelope")
+        self.assertEqual(re.findall(r"`([\w-]+)`", kinds.group(1)), ["state", "readback", "caretaker-request"])
+        limits = re.search(r"Size limits: (.*?)\. Refusal:", blocks[18])
+        self.assertIsNotNone(limits, "R18 lists the size limits")
+        for kind, words in (("state", "spool state 16 KiB"), ("readback", "read-back 64 KiB"),
+                            ("caretaker-request", "caretaker request 8 KiB")):
+            with self.subTest(kind=kind):
+                self.assertIn(words, limits.group(1))
+        # the store has a file for the content of the two kinds that intake keeps, and R9 says outright that it has none for the
+        # third; no file for it hides elsewhere on the page
+        self.assertIn("/state.json", blocks[9])
+        self.assertIn("readback-<k>.json", blocks[9])
+        self.assertIn("The store has no file for a `caretaker-request` envelope: `broker intake` keeps no copy of it (R32)", blocks[9])
+        self.assertNotIn("requests/", self.text)
+        for n, words in ((32, ("keeps no copy of a `caretaker-request`", "appends its audit line (R15)")),
+                         (75, ("at most 8 KiB (R18)", "keeps no copy of it (R9, R32)"))):
+            for w in words:
+                with self.subTest(rule=n, words=w):
+                    self.assertIn(w, blocks[n])
+        # the observables of the tests say the same
+        for n, words in ((9, ("caretaker-request envelope", "no file")), (18, ("caretaker request", "8 KiB", "content-too-large")),
+                         (32, ("keeps no copy of a caretaker-request", "accepted (exit 0)")), (75, ("8 KiB", "keeps no copy", "host audit"))):
+            for w in words:
+                with self.subTest(observable=n, words=w):
+                    self.assertIn(w, seat_doc(n))
+
+    def test_the_claim_of_R78_is_about_what_qargi_writes_and_lead_stated_text_is_never_an_approval(self):
+        r78 = squash(rule_blocks(self.text)[78])
+        # the claim covers what qargi writes: the old one covered the spool copies, which are a lead's text copied by S2 and S6
+        self.assertNotIn("the spool copies and the results hold no approval text", r78)
+        self.assertIn("Qargi writes no approval text, no plan token and no words of the owner into the note, the seat record, "
+                      "the projection or the results", r78)
+        self.assertIn("That is a claim about what qargi writes", r78)
+        self.assertIn('the note carries `"authority": "none"`', r78)
+        # what a lead wrote may hold any text and is never read as an approval; what is one, and what a lead that gives itself one
+        # can do
+        for words in ("What a lead wrote may hold any text", "the spool copies, and the lead-stated parts of the note (R46)",
+                      "No gate, door or verb reads it as an approval", "only `--approved` on the command line of a `qargi host` "
+                      "call that passed the proof is one (R76)", "no further than R101 lets it"):
+            with self.subTest(words=words):
+                self.assertIn(words, r78)
+        # the observable holds both halves: nothing of the owner's in what qargi writes, and lead-stated places for what a lead wrote
+        doc = seat_doc(78)
+        for words in ("lead_stated", "spool copies", "never in a field that qargi writes", "authority none", "is never read as an approval"):
+            with self.subTest(observable=words):
+                self.assertIn(words, doc)
+
+    def test_the_title_of_R89_says_what_its_body_says(self):
+        m = re.search(r"^\*\*R89\*\* \(([^()]*)\)\.", self.text, re.M)
+        self.assertIsNotNone(m, "R89 has a title")
+        title = m.group(1)
+        # the old title claimed that nothing a sandbox can write is trusted by path: more than the body says, since qargi knows only
+        # the places that the assignment declares (R102 is the layer's condition for the rest), and it reads two things there (R31)
+        for old in ("trusted by path", "nothing a sandbox can write"):
+            self.assertNotIn(old, title)
+        # the title uses the words of the body, the places the assignment declares and the authority side, and so does the test
+        body = squash(rule_blocks(self.text)[89]).split(title, 1)[1]
+        for word in ("declares", "authority side", "sandbox can write"):
+            with self.subTest(word=word):
+                self.assertIn(word, title)
+                self.assertIn(word, body)
+        self.assertIn("declares", rule_tests()[89][0], "the test of R89 is named after what its title says")
+
     def test_the_trace_has_a_row_for_each_change_that_the_review_of_revision_2_required(self):
-        self.assertIn("This is revision 3 of the page", self.text)
         for heading in ("### The review of revision 1", "### The review of revision 2"):
             self.assertEqual(self.text.count("\n" + heading + "\n"), 1, "the trace has a part for each review: " + heading)
         rows = [ln for ln in subsection(self.text, "### The review of revision 2").splitlines() if re.match(r"\| \d+ \|", ln)]
@@ -399,6 +578,24 @@ class Contract(unittest.TestCase):
         traced = "".join(rows)
         for new_rule in ("R101", "R102"):
             self.assertIn(new_rule, traced)
+
+    def test_the_trace_has_a_row_for_each_change_that_the_review_of_revision_3_required(self):
+        head = squash(self.text.split("\n## Terms", 1)[0])
+        self.assertIn("This is revision 4 of the page", head)
+        self.assertIn("those that the review of revision 3 required", head)
+        # the reading guide says that R101 and R102 come with the checks of the layer's qualification
+        self.assertIn("the checks that the layer's qualification of a sandbox makes", head)
+        self.assertEqual(self.text.count("\n### The review of revision 3\n"), 1, "the trace has a part for the review of revision 3")
+        rows = [ln for ln in subsection(self.text, "### The review of revision 3").splitlines() if re.match(r"\| \d+ \|", ln)]
+        self.assertEqual([int(re.match(r"\| (\d+) \|", ln).group(1)) for ln in rows], list(range(1, 7)), "six required changes")
+        for row in rows:
+            with self.subTest(row=row.split("|")[1].strip()):
+                self.assertRegex(row, r"\bR\d+\b", "each row names the rules it changed")
+        # the rule that revision 4 added is in the trace, and so is every rule the six changes name
+        traced = "".join(rows)
+        for rule in ("R103", "R101", "R102", "R31", "R89", "R9", "R18", "R78"):
+            with self.subTest(rule=rule):
+                self.assertRegex(traced, r"\b%s\b" % rule)
 
     def test_the_path_reader_finds_what_it_must(self):
         # the check above is only as good as its reader: it must see a path in a code span, over a line break, and in a fenced block
@@ -500,12 +697,14 @@ class Seat(unittest.TestCase):
     @unbuilt(9)
     def test_R9_store_layout(self):
         """R9: the store of a project holds the seat, the history, the door copies by epoch and the files of each transfer, among
-        them the archive of open runs where there were any; beside the projects the host audit, the broker key and the signers;
-        the reserved names are not created.
+        them the archive of open runs where there were any or the registry was unreadable; beside the projects the host audit,
+        the broker key and the signers; the reserved names are not created; no file holds a caretaker request, which intake
+        keeps no copy of.
         Observable: after a whole transfer the store holds exactly the named files (an orphans directory with manifest.json
-        and one archive file for each run inside the state root only when runs were archived), the tx name has its form, the
-        read-back and result files are numbered from 1 and never beyond 3, and no delegations directory or dormancy file
-        exists."""
+        and one archive file for each run inside the state root only when runs were archived or the registry was unreadable),
+        the tx name has its form, the read-back and result files are numbered from 1 and never beyond 3, and no delegations
+        directory or dormancy file exists; after broker intake accepted a caretaker-request envelope the store holds no file
+        that it did not hold before, but one line more of the host audit."""
 
     @unbuilt(10)
     def test_R10_only_the_broker_writes_the_store(self):
@@ -566,9 +765,10 @@ class Seat(unittest.TestCase):
     def test_R18_record_form_and_size_limits(self):
         """R18: a record is a UTF-8 JSON object without floats, control characters or unknown fields (the reserved fields and
         the content of a state envelope, whose fields O10 leaves open, excepted); closed lists accept only their values; limits
-        8 KiB, 16 KiB, 64 KiB and 16 KiB.
+        8 KiB (assignment, fence and caretaker request), 16 KiB (spool state), 64 KiB (read-back) and 16 KiB (note text).
         Observable: each violation at the door exits 1 with content-too-large, assignment-invalid or content-invalid as the
-        rule says, and the store is unchanged; a state content with a field of its own is accepted."""
+        rule says, and the store is unchanged; a state content with a field of its own is accepted; a caretaker-request
+        envelope whose content is over 8 KiB exits 1 with content-too-large, one of 8 KiB is accepted."""
 
     @unbuilt(19)
     def test_R19_assignment_record(self):
@@ -660,37 +860,43 @@ class Seat(unittest.TestCase):
     @unbuilt(31)
     def test_R31_the_broker_leaves_the_role_state(self):
         """R31: the broker never writes below a role's state root, the location state_root of its assignment names, and reads
-        nothing there by path, except the archive and removal of run folders while the seat is fenced.
-        Observable: the role's state root is byte for byte the same before and after S1 to S6 with no open run; the broker
-        works with that root unreadable."""
+        nothing there by path, except, while no unit of the role exists (the seat is fenced), the registry of the role's open
+        runs (the file local-runs.jsonl, at most 8 MiB, lead-stated: it only directs the walk of R91) and the archive and
+        removal of run folders.
+        Observable: the role's state root is byte for byte the same before and after S1 to S6 with no open run; a record of
+        every path that the broker opens below it shows the registry and the run folders only, and only between the fence and
+        S5; a transfer completes with that root unreadable, the manifest saying that the registry was unreadable; a registry
+        that names a folder outside the state root, or a link, makes the broker read nothing outside it."""
 
     @unbuilt(32)
     def test_R32_spool_envelope(self):
         """R32: lead content reaches the authority side as a spool envelope {schema, project, epoch, tx, kind, sha256, bytes},
         every field mandatory, followed by the content, written by one of the verbs of R96 (which take project, epoch and tx from
-        the projection) and passed through broker intake, which takes it only when project, epoch and tx are the seat record's.
-        Observable: a valid envelope of each kind is stored; one over its limit exits 1 with content-too-large; a malformed
+        the projection) and passed through broker intake, which takes it only when project, epoch and tx are the seat record's,
+        stores the content of a state and of a readback envelope and keeps no copy of a caretaker-request.
+        Observable: a valid state or readback envelope is stored; a valid caretaker-request envelope is accepted (exit 0) and
+        stores nothing but its audit line; one over the limit of its kind exits 1 with content-too-large; a malformed
         one, a missing or null field, a wrong digest or length, another project, another epoch and another tx (the envelope of
         an aborted transfer, for one) exit 1 with content-invalid; the store is unchanged."""
 
     @unbuilt(33)
     def test_R33_owner_verbs_go_through_host(self):
         """R33: before anything else qargi host refuses when QARGI_AUTH, QARGI_CONF, QARGI_HOME or QARGI_STATE is set or the run
-        is a dev run (a test of qargi host sets one switch that lifts this step and no other), then makes the outside proof: the
-        authority root passes R8, a payload (project, epoch, tx, rev: no nonce) that it signs with the broker's private key file,
-        with no agent in reach, verifies against the signers line of the projection, and the seat record agrees with the
+        is a dev run (the test switch of R103 lifts the refusal of the four variables and no other step), then makes the outside
+        proof: the authority root passes R8, a payload (project, epoch, tx, rev: no nonce) that it signs with the broker's private
+        key file, with no agent in reach, verifies against the signers line of the projection, and the seat record agrees with the
         projection in epoch, tx and rev; then it appends its audit line and runs the verb. The proof shows that the call reads a
         store, a projection and a key that agree, not that it runs outside a sandbox: it is a guard rail against a mistaken or
         stale lead. No variable, option or file stands for a proof that passed.
         Observable: with the true store the audit line exists before the verb's first effect; with each of the four variables
-        set, and in a dev run, it exits 1 with host-in-sandbox before it reads a store; with the test switch set and a store the
-        caller made (mode 700, its own key and a copied seat record) it exits 1 with host-in-sandbox, the verb did not run and
-        no file changed; the same with the true store and its key file replaced by the public key while an agent that holds the
-        private key is reachable through SSH_AUTH_SOCK, with the true key and a seat record whose rev is behind the projection,
-        with the true store and an audit log that cannot be appended to, and for a verb that names an unseated project; a verb
-        that names no project runs when the proof passes for one seated project and is refused when there is none; and, as the
-        limit that Limits names, roots that the test made whole (marker, projection, signers line, key, seat record) pass the
-        proof, which a test keeps so that nobody claims more of it."""
+        set, and in a dev run, it exits 1 with host-in-sandbox before it reads a store; with the test switch honoured (R103) and a
+        store the caller made (mode 700, its own key and a copied seat record) it exits 1 with host-in-sandbox, the verb did not
+        run and no file changed; the same with the true store and its key file replaced by the public key while an agent that
+        holds the private key is reachable through SSH_AUTH_SOCK, with the true key and a seat record whose rev is behind the
+        projection, with the true store and an audit log that cannot be appended to, and for a verb that names an unseated
+        project; a verb that names no project runs when the proof passes for one seated project and is refused when there is
+        none; and, as the limit that Limits names, roots that the test made whole (marker, projection, signers line, key, seat
+        record) pass the proof under the honoured switch, which a test keeps so that nobody claims more of it."""
 
     # ---- the handoff protocol
 
@@ -981,9 +1187,11 @@ class Seat(unittest.TestCase):
     @unbuilt(75)
     def test_R75_caretaker_transitions(self):
         """R75: the rows C1 to C7 are the only caretaker transitions, each with its fence method, steps and read-back; marshal
-        caretaker request writes a spool envelope and changes no seat.
+        caretaker request writes a spool envelope of at most 8 KiB and changes no seat, and broker intake checks it and keeps
+        no copy.
         Observable: each of C1 to C4 and C7 completes with its fence and is refused with another method; C4 ends in held
-        with readback waived; C5 exits 1 with caretaker-not-vacant, C6 with transfer-open."""
+        with readback waived; C5 exits 1 with caretaker-not-vacant, C6 with transfer-open; after marshal caretaker request
+        and broker intake the seat record, the projection and the store are unchanged, but for the host audit."""
 
     # ---- what never transfers
 
@@ -1006,10 +1214,15 @@ class Seat(unittest.TestCase):
 
     @unbuilt(78)
     def test_R78_nothing_that_authorizes_is_carried(self):
-        """R78: the note, the seat record, the projection, the spool copies and the results hold no approval text, plan token
-        or owner's words; the note says authority none and lists what not to assume.
-        Observable: with a marker string as the approval words and a known token in the outgoing lead's state, neither
-        occurs in any file of the store or the projection; the note has authority none and a non-empty do_not_assume."""
+        """R78: what qargi writes into the note, the seat record, the projection and the results holds no approval text, plan
+        token or owner's words, and the note says authority none and lists what not to assume; what a lead wrote (the spool
+        copies, the lead-stated parts of the note) may hold any text and is never read as an approval.
+        Observable: with a marker string as the approval words of an owner's verb run under qargi host and a known plan token
+        that the owner printed, neither occurs in any file of the store, the projection or the note; with the same two strings
+        written into the outgoing lead's state and read-back, they occur only in the spool copies and below lead_stated of the
+        note (and so in the projection's copy of the note), never in a field that qargi writes; the note has authority none and
+        a non-empty do_not_assume; no gate answer, door call or verb changes for their presence: a verb that takes --approved
+        and is given none is refused (R76)."""
 
     @unbuilt(79)
     def test_R79_the_owners_words_stay_with_the_owner(self):
@@ -1085,21 +1298,23 @@ class Seat(unittest.TestCase):
         Observable: for each row of the table, a symbolic link put in place of the file and of each directory component
         after it was recorded makes the authority side exit 1 with symlink-refused and the gate exit 77 with
         seat-record-invalid, and the link's target is neither read nor written (a link inside a run folder is no path
-        component: R91 records it by type); a root that resolves to a directory of
-        another owner, or one that group or others can enter, makes the authority side exit 1 with authority-store-unsafe
-        and the gate exit 77 with seat-record-invalid, and nothing below it is opened."""
+        component: R91 records it by type, and a link in place of the registry of open runs makes the registry unreadable, R91);
+        a root that resolves to a directory of another owner, or one that group or others can enter, makes the authority side
+        exit 1 with authority-store-unsafe and the gate exit 77 with seat-record-invalid, and nothing below it is opened."""
 
     @unbuilt(89)
-    def test_R89_nothing_a_sandbox_can_write_is_trusted_by_path(self):
-        """R89: authority-side code uses no path with a component a sandbox can write; qargi knows what a sandbox can write from
-        the clone and the state root that the assignment declares, and that there is no other such place that the authority
-        side reads is the supervising layer's condition (R102); the assignment directory, the projection directory, the mirror
-        and the authority and config roots are refused when equal to, below or containing either; who owns a path is not the
-        test.
+    def test_R89_the_authority_side_avoids_the_places_the_assignment_declares_writable(self):
+        """R89: authority-side code uses no path with a component a sandbox can write, but for what it reads below the declared
+        state root while no unit of the role exists (R31, R97): the registry of the role's open runs, which is lead-stated and
+        only directs a no-follow walk below that root, and the run folders; qargi knows what a sandbox can write from the clone
+        and the state root that the assignment declares, and that there is no other such place that the authority side reads
+        is the supervising layer's condition (R102); the assignment directory, the projection directory, the mirror and the
+        authority and config roots are refused when equal to, below or containing either; who owns a path is not the test.
         Observable: an assignment whose mirror lies below its clone, equals its state root or contains its clone exits 1 with
         assignment-invalid; a marker whose directory lies below the declared state root makes authority-side verbs exit 1
         with authority-store-unsafe; a path outside both declared locations is accepted whoever owns its components, which is
-        the limit that R102 names: qargi does not see a place the assignment does not declare."""
+        the limit that R102 names: qargi does not see a place the assignment does not declare; below the declared state root
+        the broker opens the registry and the run folders only, and only between the fence and S5."""
 
     @unbuilt(90)
     def test_R90_archive_before_remove(self):
@@ -1110,21 +1325,27 @@ class Seat(unittest.TestCase):
 
     @unbuilt(91)
     def test_R91_the_archive_of_open_runs(self):
-        """R91: after S3 and before the note of S4 the broker archives the open run folders of the role whose epoch ended,
-        walking only below the state_root of that epoch's assignment: one archive file for each run and manifest.json, owner
-        only, verified by reading it back; it opens only regular files, with no-follow and non-blocking flags, and records
-        every other entry by its path and type; a file it cannot read marks its run cut and kept, and the step goes on; the
-        limits are 64 MiB of file content for each run and, for a transfer, 32 runs and 256 MiB, files stored whole in the
-        byte order of their paths; an init archives nothing.
+        """R91: after S3 and before the note of S4 the broker reads the role's registry of open runs (R31) and archives the open
+        run folders that it names, of the role whose epoch ended, walking only below the state_root of that epoch's assignment:
+        one archive file for each run and manifest.json, owner only, verified by reading it back; it opens only regular files,
+        with no-follow and non-blocking flags, and records every other entry by its path and type; a file it cannot read marks
+        its run cut and kept, and the step goes on; the limits are 64 MiB of file content for each run and, for a transfer, 32
+        runs and 256 MiB, files stored whole in the byte order of their paths; a registry that is absent lists no run and
+        leaves no trace, and one that is not a regular file, is over its limit, cannot be read or has a line that does not name
+        a run and its folder is unreadable and lists none: the manifest says so, no folder is read or removed for it and the
+        step goes on; an init reads no registry and archives nothing.
         Observable: after S4 the manifest names each of the first 32 open runs with its feature, whether it lies outside the
         state root, the count and size of its regular files and of those stored, the entries recorded by type only, the files
-        it could not read, the digest of its archive file and cut, and counts the runs beyond the 32nd (left_out); the files
-        are mode 600; a run of 64 MiB and one byte is marked cut and the files stored are the first of its paths in byte
-        order; a transfer whose runs hold more than 256 MiB marks the run that finds no room cut with nothing stored; a
-        named pipe in a run folder is recorded by type and the walk does not block on it, a symbolic link or a device node is
-        recorded by type and never followed or opened; a file made unreadable marks its run cut, the folder stays and S4 and
-        S5 complete; a run that the role's records place outside the state root is listed as outside and its folder is neither
-        read nor changed."""
+        it could not read, the digest of its archive file and cut, and counts the runs beyond the 32nd (left_out), and says
+        what the registry was (registry: read or unreadable); the files are mode 600; a run of 64 MiB and one byte is
+        marked cut and the files stored are the first of its paths in byte order; a transfer whose runs hold more than 256 MiB
+        marks the run that finds no room cut with nothing stored; a named pipe in a run folder is recorded by type and the walk
+        does not block on it, a symbolic link or a device node is recorded by type and never followed or opened; a file made
+        unreadable marks its run cut, the folder stays and S4 and S5 complete; a run that the registry places outside the state
+        root is listed as outside and its folder is neither read nor changed; with the registry replaced by a link or by a
+        named pipe, over 8 MiB, unreadable or holding a line that names no run, S4 and S5 complete, no folder of the role is
+        read or removed, and the manifest and the note say that the registry was unreadable; with no registry nothing is
+        written for it."""
 
     @unbuilt(92)
     def test_R92_orphans_are_named_published_then_removed(self):
@@ -1132,11 +1353,12 @@ class Seat(unittest.TestCase):
         manifest and the archive files read only below the projection directory, where the successor reads them; a run folder
         is removed only when its archive holds it whole, is verified and published and the note that names it is written, as
         the first act of S5; a run that was cut stays, and so does a run that the transfer left out, of which the note carries
-        the number.
+        the number; where the registry was unreadable the note says so.
         Observable: with a stop between archive, note, publication and removal the folder exists until all three are written;
         the published files have the digests the note names and no write bit; the note's orphans equal the manifest's runs;
         the folder of a cut run and of a left-out run is still there after S5; no run of the registry is absent from both the
-        note and the role's state; no gate answer changes with a file below the published directory."""
+        note and the role's state; with an unreadable registry the note says so, below lead_stated; no gate answer changes with
+        a file below the published directory."""
 
     # ---- the coordinator's place
 
@@ -1175,11 +1397,12 @@ class Seat(unittest.TestCase):
     @unbuilt(97)
     def test_R97_no_unit_of_the_role_between_the_fence_and_S5(self):
         """R97: the supervising layer does not start B's unit before S5 is written; from the fence until then no unit of the
-        role exists, and only then does the broker read or remove below the role's state root.
+        role exists, and only then does the broker read (the registry and the run folders) or remove below the role's state
+        root.
         Observable: the archive, the publication and the removal are complete before the seat write of S5; seat status
         names the start of B's unit as the next action only after S5; a session with B's assignment file before S5 gets
         exit 77 with projection-stale for a lead-write verb; after S5 no broker step opens a path below the role's state
-        root."""
+        root, the registry included."""
 
     @unbuilt(98)
     def test_R98_derived_classes(self):
@@ -1217,19 +1440,40 @@ class Seat(unittest.TestCase):
         Observable: every lead-side verb gives the same output and exit status with $AUTH, the key, every agent socket and
         every remote credential absent as with them present, and opens no path below $AUTH; qargi host, called where none of
         them is readable, exits 1 with host-in-sandbox and the verb did not run. What the supervising layer binds is not
-        observable by qargi: its own qualification of a sandbox shows it."""
+        observable by qargi: its own qualification of a sandbox shows it, by these checks run from inside the sandbox of a
+        unit: a stat of $AUTH (at the path where the authority side resolves it) and a stat of $CONF/credentials/ both fail; no
+        agent socket that the sandbox can reach offers a key that is in the signers line of the projection; no push credential,
+        no token of a hosting service and no login of a cloud service that the layer knows of can be read."""
 
     @unbuilt(102)
     def test_R102_a_sandbox_writes_the_two_declared_places_and_no_other(self):
         """R102: the places a unit's sandbox can write are the clone and the state root that its assignment declares, and the
         supervising layer sees to it that there is no other that the authority side reads or writes (every root and directory
-        of the page, the qargi code and its tools, the temporary directory of authority-side code), the run folders of R91
-        excepted while no unit of the role exists; authority-side code puts its scratch files below the directory that TMPDIR
-        names.
+        of the page, the qargi code and its tools, the temporary directory of authority-side code), the registry of the role's
+        open runs and the run folders of R91 excepted while no unit of the role exists; authority-side code puts its scratch
+        files below the directory that TMPDIR names.
         Observable: with TMPDIR set to a directory the test made, every scratch file of a broker step and of a qargi host call
         appears there and nowhere else (none below a clone, a state root, the projection directory or the shared temporary
         directory of the system); the door refuses every overlap with the declared places (R89). What a sandbox can write
-        beyond them is not observable by qargi: the supervising layer's own qualification of a sandbox shows it."""
+        beyond them is not observable by qargi: the supervising layer's own qualification of a sandbox shows it, by this check
+        run from inside: a file that it writes into the sandbox's TMPDIR and into every other place outside the clone and the
+        state root that the sandbox can write is not visible at the authority side's paths."""
+
+    # ---- rules added in revision 4 of the contract (in the page each stands in the section of its subject)
+
+    @unbuilt(103)
+    def test_R103_the_test_switch_of_qargi_host(self):
+        """R103: the one exception to the refusal of the root variables in step 1 of R33 is QARGI_TEST_HOST_ROOTS set to 1, honoured
+        only when HOME is set and differs from the home that the password database gives the effective user (each resolved through
+        its links) and every one of QARGI_AUTH, QARGI_CONF, QARGI_HOME and QARGI_STATE that is set names a path below HOME (links
+        resolved as far as the path exists); it lifts that refusal and no other step, and no verb but qargi host reads it.
+        Observable: with the switch set to 1, HOME the home that the password database gives and each of the four variables naming
+        a path below it (nothing there need exist), qargi host exits 1 with host-in-sandbox before it reads a store and writes
+        nothing; with HOME a scratch directory and, in turn, each of the four variables naming a root outside HOME (HOME itself, a
+        sibling of HOME, and a path below HOME through a link that leads out of it among them), it exits 1 with host-in-sandbox the
+        same way; with HOME a scratch directory, every variable naming a path below it and a store that the test made whole, step 1
+        passes and the proof decides (R33); a switch set to 0, to the empty string or to true is no switch; in a dev run with the
+        switch set it exits 1 with host-in-sandbox; no verb but qargi host answers differently with the switch set."""
 
 
 if __name__ == "__main__":
