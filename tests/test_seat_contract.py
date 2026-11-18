@@ -300,6 +300,25 @@ class Contract(unittest.TestCase):
         self.assertIn("content of a `state` envelope", blocks[18])
         self.assertIn("`tx`", squash(open_items(self.text)["O10"]))
 
+    def test_the_archive_reads_regular_files_only_and_is_limited_for_a_transfer(self):
+        blocks = {n: squash(b) for n, b in rule_blocks(self.text).items()}
+        r91 = blocks[91]
+        # what the broker opens and what it only records, in R91 and in the row of the walk in R88
+        for words in ("no-follow and non-blocking flags", "regular file", "recorded by its path and its type"):
+            with self.subTest(words=words):
+                self.assertIn(words, r91)
+        self.assertIn("non-blocking", blocks[88])
+        # an unreadable file marks its run cut and kept: it no longer holds the step open
+        self.assertIn("marks its run `cut`", r91)
+        self.assertNotRegex(r91, r"cannot be read keeps the step open")
+        # a limit for a transfer beside the one for a run: how many runs and how many bytes
+        self.assertRegex(r91, r"\b\d+ runs\b")
+        self.assertEqual(set(re.findall(r"(\d+) MiB", r91)), {"64", "256"})
+        self.assertIn("`left_out`", r91)
+        # the rules that follow the archive know what is left in place
+        self.assertIn("left out", blocks[92])
+        self.assertIn("cut", blocks[38])
+
     def test_the_outside_proof_says_what_it_shows_and_against_whom(self):
         blocks = {n: squash(b) for n, b in rule_blocks(self.text).items()}
         r33 = blocks[33]
@@ -440,8 +459,9 @@ class Seat(unittest.TestCase):
         them the archive of open runs where there were any; beside the projects the host audit, the broker key and the signers;
         the reserved names are not created.
         Observable: after a whole transfer the store holds exactly the named files (an orphans directory with manifest.json
-        and one archive file for each run only when runs were archived), the tx name has its form, the read-back and result
-        files are numbered from 1 and never beyond 3, and no delegations directory or dormancy file exists."""
+        and one archive file for each run inside the state root only when runs were archived), the tx name has its form, the
+        read-back and result files are numbered from 1 and never beyond 3, and no delegations directory or dormancy file
+        exists."""
 
     @unbuilt(10)
     def test_R10_only_the_broker_writes_the_store(self):
@@ -660,10 +680,11 @@ class Seat(unittest.TestCase):
 
     @unbuilt(38)
     def test_R38_S5_commit(self):
-        """R38: S5 first removes the run folders that were archived, then writes the seat (pending-readback, B, the new epoch)
-        and the projection; B reads but may not write, its marshal seat readback --submit excepted.
+        """R38: S5 first removes the run folders that were archived whole, then writes the seat (pending-readback, B, the new
+        epoch) and the projection; B reads but may not write, its marshal seat readback --submit excepted.
         Observable: after S5 B's read verb and its marshal seat readback --submit pass and its other lead-write verbs exit 77
-        with readback-pending; the seat's epoch is the new one; the archived run folders were gone before the seat changed."""
+        with readback-pending; the seat's epoch is the new one; the run folders archived whole were gone before the seat
+        changed and the folder of a cut run is still there."""
 
     @unbuilt(39)
     def test_R39_S6_check(self):
@@ -1017,7 +1038,8 @@ class Seat(unittest.TestCase):
         R8 before anything below it is opened.
         Observable: for each row of the table, a symbolic link put in place of the file and of each directory component
         after it was recorded makes the authority side exit 1 with symlink-refused and the gate exit 77 with
-        seat-record-invalid, and the link's target is neither read nor written; a root that resolves to a directory of
+        seat-record-invalid, and the link's target is neither read nor written (a link inside a run folder is no path
+        component: R91 records it by type); a root that resolves to a directory of
         another owner, or one that group or others can enter, makes the authority side exit 1 with authority-store-unsafe
         and the gate exit 77 with seat-record-invalid, and nothing below it is opened."""
 
@@ -1039,26 +1061,33 @@ class Seat(unittest.TestCase):
 
     @unbuilt(91)
     def test_R91_the_archive_of_open_runs(self):
-        """R91: after S3 and before the note of S4 the broker archives every open run folder of the role whose epoch ended,
+        """R91: after S3 and before the note of S4 the broker archives the open run folders of the role whose epoch ended,
         walking only below the state_root of that epoch's assignment: one archive file for each run and manifest.json, owner
-        only, verified by reading it back; the limit is 64 MiB of file content for each run, files stored whole in the byte
-        order of their paths; an init archives nothing.
-        Observable: after S4 the manifest lists each open run with its name, its feature, the count and size of its files
-        and of the files stored, the digest of its archive file and cut; the files are mode 600; a run of 64 MiB and one
-        byte is marked cut and the files stored are the first of its paths in byte order; a symbolic link in a run folder is
-        stored as a link; a run that the role's records place outside the state root is listed as outside and its folder is
-        neither read nor changed."""
+        only, verified by reading it back; it opens only regular files, with no-follow and non-blocking flags, and records
+        every other entry by its path and type; a file it cannot read marks its run cut and kept, and the step goes on; the
+        limits are 64 MiB of file content for each run and, for a transfer, 32 runs and 256 MiB, files stored whole in the
+        byte order of their paths; an init archives nothing.
+        Observable: after S4 the manifest names each of the first 32 open runs with its feature, whether it lies outside the
+        state root, the count and size of its regular files and of those stored, the entries recorded by type only, the files
+        it could not read, the digest of its archive file and cut, and counts the runs beyond the 32nd (left_out); the files
+        are mode 600; a run of 64 MiB and one byte is marked cut and the files stored are the first of its paths in byte
+        order; a transfer whose runs hold more than 256 MiB marks the run that finds no room cut with nothing stored; a
+        named pipe in a run folder is recorded by type and the walk does not block on it, a symbolic link or a device node is
+        recorded by type and never followed or opened; a file made unreadable marks its run cut, the folder stays and S4 and
+        S5 complete; a run that the role's records place outside the state root is listed as outside and its folder is neither
+        read nor changed."""
 
     @unbuilt(92)
     def test_R92_orphans_are_named_published_then_removed(self):
         """R92: the note lists every archived run as a lead-stated orphan with the digest of its archive file; S4 publishes the
         manifest and the archive files read only below the projection directory, where the successor reads them; a run folder
         is removed only when its archive holds it whole, is verified and published and the note that names it is written, as
-        the first act of S5; a run that was cut stays.
+        the first act of S5; a run that was cut stays, and so does a run that the transfer left out, of which the note carries
+        the number.
         Observable: with a stop between archive, note, publication and removal the folder exists until all three are written;
         the published files have the digests the note names and no write bit; the note's orphans equal the manifest's runs;
-        the folder of a cut run is still there after S5; no run of the registry is absent from both the note and the role's
-        state; no gate answer changes with a file below the published directory."""
+        the folder of a cut run and of a left-out run is still there after S5; no run of the registry is absent from both the
+        note and the role's state; no gate answer changes with a file below the published directory."""
 
     # ---- the coordinator's place
 
