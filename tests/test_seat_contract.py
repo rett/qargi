@@ -16,8 +16,9 @@ It also holds the page to what it says it guarantees: the outside proof of `qarg
 guard rail, with the limits that make it one) and its one test switch is named and honoured only under a home of its own, and
 what a sandbox never holds, and what it can write, are conditions of the supervising layer, each with the checks that the
 layer's qualification of a sandbox makes from inside. The page's other statements that can be read from its text are held too:
-the projection has every field the gate compares, a spool envelope names its transfer and S2 and S6 match it, and the archive
-of open runs opens regular files only and has a limit for a transfer.
+the projection has every field the gate compares, a spool envelope names its transfer and S2 and S6 match it, the archive of
+open runs opens regular files only and has a limit for a transfer, and what the broker may read below a role's state root is
+the registry of its open runs and the run folders, only while no unit of the role exists.
 Offline. Run: python3 tests/test_seat_contract.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import json, os, re, unittest
@@ -459,6 +460,43 @@ class Contract(unittest.TestCase):
                 self.assertIn(words, doc102)
         self.assertIn("qualification", squash(section(self.text, "## Limits of phase 1")))
 
+    def test_the_broker_reads_the_registry_of_open_runs_only_while_no_unit_of_the_role_exists(self):
+        blocks = {n: squash(b) for n, b in rule_blocks(self.text).items()}
+        # R31 and R89 widen their one exception, the run folders, by the registry of the role's open runs: the same window, and
+        # what the registry holds is lead-stated and only directs a walk that stays below the declared state root
+        for n in (31, 89):
+            with self.subTest(rule=n):
+                for words in ("the registry of the role's open runs", "lead-stated", "follows no link", "R97", "declared `state_root`"):
+                    self.assertIn(words, blocks[n])
+        r31 = blocks[31]
+        self.assertIn("It has two exceptions, both only while no unit of the role exists (R97), which is while the seat is `fenced`", r31)
+        self.assertIn("`local-runs.jsonl`", r31)
+        self.assertIn("at most 8 MiB", r31)
+        self.assertIn("only to direct the walk of R91", r31)
+        self.assertIn("Apart from these two exceptions, lead-written content reaches the broker only as a spool envelope", r31)
+        self.assertIn("only directs a walk", blocks[89])
+        # the rules that follow know the registry: the table of R88, the archive, the note, the window and R102
+        rows = [ln for ln in self.text.splitlines() if ln.startswith("| the registry of the role's open runs and the run folders")]
+        self.assertEqual(len(rows), 1, "the table of R88 has one row for the registry and the run folders")
+        for words in ("no-follow", "non-blocking", "regular file"):
+            self.assertIn(words, rows[0])
+        self.assertIn("reads the registry of the role's open runs (R31)", blocks[91])
+        self.assertIn("`registry`: `read` or `unreadable`", blocks[91])
+        self.assertIn("leaves no trace", blocks[91])
+        self.assertIn("has a line that does not name a run and its folder", blocks[91])   # a lead's garbage cannot hold the step open
+        self.assertIn("it reads no registry", blocks[91])
+        self.assertIn("the registry of open runs was unreadable", blocks[9])
+        self.assertIn("Where the registry was `unreadable` (R91) the note says so", blocks[92])
+        self.assertIn("(the registry and the run folders, R31, R91)", blocks[97])
+        self.assertIn("the registry of the role's open runs and the run folders", blocks[102])
+        # the observables of the tests say the same
+        for n, words in ((31, ("local-runs.jsonl", "lead-stated", "registry")), (89, ("registry", "lead-stated")),
+                         (91, ("registry: read or unreadable",)), (92, ("the registry was unreadable the note says so",)),
+                         (97, ("the registry included",)), (102, ("registry",))):
+            for w in words:
+                with self.subTest(observable=n, words=w):
+                    self.assertIn(w, seat_doc(n))
+
     def test_the_trace_has_a_row_for_each_change_that_the_review_of_revision_2_required(self):
         self.assertIn("This is revision 3 of the page", self.text)
         for heading in ("### The review of revision 1", "### The review of revision 2"):
@@ -573,12 +611,12 @@ class Seat(unittest.TestCase):
     @unbuilt(9)
     def test_R9_store_layout(self):
         """R9: the store of a project holds the seat, the history, the door copies by epoch and the files of each transfer, among
-        them the archive of open runs where there were any; beside the projects the host audit, the broker key and the signers;
-        the reserved names are not created.
+        them the archive of open runs where there were any or the registry was unreadable; beside the projects the host audit,
+        the broker key and the signers; the reserved names are not created.
         Observable: after a whole transfer the store holds exactly the named files (an orphans directory with manifest.json
-        and one archive file for each run inside the state root only when runs were archived), the tx name has its form, the
-        read-back and result files are numbered from 1 and never beyond 3, and no delegations directory or dormancy file
-        exists."""
+        and one archive file for each run inside the state root only when runs were archived or the registry was unreadable),
+        the tx name has its form, the read-back and result files are numbered from 1 and never beyond 3, and no delegations
+        directory or dormancy file exists."""
 
     @unbuilt(10)
     def test_R10_only_the_broker_writes_the_store(self):
@@ -733,9 +771,13 @@ class Seat(unittest.TestCase):
     @unbuilt(31)
     def test_R31_the_broker_leaves_the_role_state(self):
         """R31: the broker never writes below a role's state root, the location state_root of its assignment names, and reads
-        nothing there by path, except the archive and removal of run folders while the seat is fenced.
-        Observable: the role's state root is byte for byte the same before and after S1 to S6 with no open run; the broker
-        works with that root unreadable."""
+        nothing there by path, except, while no unit of the role exists (the seat is fenced), the registry of the role's open
+        runs (the file local-runs.jsonl, at most 8 MiB, lead-stated: it only directs the walk of R91) and the archive and
+        removal of run folders.
+        Observable: the role's state root is byte for byte the same before and after S1 to S6 with no open run; a record of
+        every path that the broker opens below it shows the registry and the run folders only, and only between the fence and
+        S5; a transfer completes with that root unreadable, the manifest saying that the registry was unreadable; a registry
+        that names a folder outside the state root, or a link, makes the broker read nothing outside it."""
 
     @unbuilt(32)
     def test_R32_spool_envelope(self):
@@ -1158,21 +1200,23 @@ class Seat(unittest.TestCase):
         Observable: for each row of the table, a symbolic link put in place of the file and of each directory component
         after it was recorded makes the authority side exit 1 with symlink-refused and the gate exit 77 with
         seat-record-invalid, and the link's target is neither read nor written (a link inside a run folder is no path
-        component: R91 records it by type); a root that resolves to a directory of
-        another owner, or one that group or others can enter, makes the authority side exit 1 with authority-store-unsafe
-        and the gate exit 77 with seat-record-invalid, and nothing below it is opened."""
+        component: R91 records it by type, and a link in place of the registry of open runs makes the registry unreadable, R91);
+        a root that resolves to a directory of another owner, or one that group or others can enter, makes the authority side
+        exit 1 with authority-store-unsafe and the gate exit 77 with seat-record-invalid, and nothing below it is opened."""
 
     @unbuilt(89)
     def test_R89_nothing_a_sandbox_can_write_is_trusted_by_path(self):
-        """R89: authority-side code uses no path with a component a sandbox can write; qargi knows what a sandbox can write from
-        the clone and the state root that the assignment declares, and that there is no other such place that the authority
-        side reads is the supervising layer's condition (R102); the assignment directory, the projection directory, the mirror
-        and the authority and config roots are refused when equal to, below or containing either; who owns a path is not the
-        test.
+        """R89: authority-side code uses no path with a component a sandbox can write, but for what it reads below the declared
+        state root while no unit of the role exists (R31, R97): the registry of the role's open runs, which is lead-stated and
+        only directs a no-follow walk below that root, and the run folders; qargi knows what a sandbox can write from the clone
+        and the state root that the assignment declares, and that there is no other such place that the authority side reads
+        is the supervising layer's condition (R102); the assignment directory, the projection directory, the mirror and the
+        authority and config roots are refused when equal to, below or containing either; who owns a path is not the test.
         Observable: an assignment whose mirror lies below its clone, equals its state root or contains its clone exits 1 with
         assignment-invalid; a marker whose directory lies below the declared state root makes authority-side verbs exit 1
         with authority-store-unsafe; a path outside both declared locations is accepted whoever owns its components, which is
-        the limit that R102 names: qargi does not see a place the assignment does not declare."""
+        the limit that R102 names: qargi does not see a place the assignment does not declare; below the declared state root
+        the broker opens the registry and the run folders only, and only between the fence and S5."""
 
     @unbuilt(90)
     def test_R90_archive_before_remove(self):
@@ -1183,21 +1227,27 @@ class Seat(unittest.TestCase):
 
     @unbuilt(91)
     def test_R91_the_archive_of_open_runs(self):
-        """R91: after S3 and before the note of S4 the broker archives the open run folders of the role whose epoch ended,
-        walking only below the state_root of that epoch's assignment: one archive file for each run and manifest.json, owner
-        only, verified by reading it back; it opens only regular files, with no-follow and non-blocking flags, and records
-        every other entry by its path and type; a file it cannot read marks its run cut and kept, and the step goes on; the
-        limits are 64 MiB of file content for each run and, for a transfer, 32 runs and 256 MiB, files stored whole in the
-        byte order of their paths; an init archives nothing.
+        """R91: after S3 and before the note of S4 the broker reads the role's registry of open runs (R31) and archives the open
+        run folders that it names, of the role whose epoch ended, walking only below the state_root of that epoch's assignment:
+        one archive file for each run and manifest.json, owner only, verified by reading it back; it opens only regular files,
+        with no-follow and non-blocking flags, and records every other entry by its path and type; a file it cannot read marks
+        its run cut and kept, and the step goes on; the limits are 64 MiB of file content for each run and, for a transfer, 32
+        runs and 256 MiB, files stored whole in the byte order of their paths; a registry that is absent lists no run and
+        leaves no trace, and one that is not a regular file, is over its limit, cannot be read or has a line that does not name
+        a run and its folder is unreadable and lists none: the manifest says so, no folder is read or removed for it and the
+        step goes on; an init reads no registry and archives nothing.
         Observable: after S4 the manifest names each of the first 32 open runs with its feature, whether it lies outside the
         state root, the count and size of its regular files and of those stored, the entries recorded by type only, the files
-        it could not read, the digest of its archive file and cut, and counts the runs beyond the 32nd (left_out); the files
-        are mode 600; a run of 64 MiB and one byte is marked cut and the files stored are the first of its paths in byte
-        order; a transfer whose runs hold more than 256 MiB marks the run that finds no room cut with nothing stored; a
-        named pipe in a run folder is recorded by type and the walk does not block on it, a symbolic link or a device node is
-        recorded by type and never followed or opened; a file made unreadable marks its run cut, the folder stays and S4 and
-        S5 complete; a run that the role's records place outside the state root is listed as outside and its folder is neither
-        read nor changed."""
+        it could not read, the digest of its archive file and cut, and counts the runs beyond the 32nd (left_out), and says
+        what the registry was (registry: read or unreadable); the files are mode 600; a run of 64 MiB and one byte is
+        marked cut and the files stored are the first of its paths in byte order; a transfer whose runs hold more than 256 MiB
+        marks the run that finds no room cut with nothing stored; a named pipe in a run folder is recorded by type and the walk
+        does not block on it, a symbolic link or a device node is recorded by type and never followed or opened; a file made
+        unreadable marks its run cut, the folder stays and S4 and S5 complete; a run that the registry places outside the state
+        root is listed as outside and its folder is neither read nor changed; with the registry replaced by a link or by a
+        named pipe, over 8 MiB, unreadable or holding a line that names no run, S4 and S5 complete, no folder of the role is
+        read or removed, and the manifest and the note say that the registry was unreadable; with no registry nothing is
+        written for it."""
 
     @unbuilt(92)
     def test_R92_orphans_are_named_published_then_removed(self):
@@ -1205,11 +1255,12 @@ class Seat(unittest.TestCase):
         manifest and the archive files read only below the projection directory, where the successor reads them; a run folder
         is removed only when its archive holds it whole, is verified and published and the note that names it is written, as
         the first act of S5; a run that was cut stays, and so does a run that the transfer left out, of which the note carries
-        the number.
+        the number; where the registry was unreadable the note says so.
         Observable: with a stop between archive, note, publication and removal the folder exists until all three are written;
         the published files have the digests the note names and no write bit; the note's orphans equal the manifest's runs;
         the folder of a cut run and of a left-out run is still there after S5; no run of the registry is absent from both the
-        note and the role's state; no gate answer changes with a file below the published directory."""
+        note and the role's state; with an unreadable registry the note says so, below lead_stated; no gate answer changes with
+        a file below the published directory."""
 
     # ---- the coordinator's place
 
@@ -1248,11 +1299,12 @@ class Seat(unittest.TestCase):
     @unbuilt(97)
     def test_R97_no_unit_of_the_role_between_the_fence_and_S5(self):
         """R97: the supervising layer does not start B's unit before S5 is written; from the fence until then no unit of the
-        role exists, and only then does the broker read or remove below the role's state root.
+        role exists, and only then does the broker read (the registry and the run folders) or remove below the role's state
+        root.
         Observable: the archive, the publication and the removal are complete before the seat write of S5; seat status
         names the start of B's unit as the next action only after S5; a session with B's assignment file before S5 gets
         exit 77 with projection-stale for a lead-write verb; after S5 no broker step opens a path below the role's state
-        root."""
+        root, the registry included."""
 
     @unbuilt(98)
     def test_R98_derived_classes(self):
@@ -1299,9 +1351,9 @@ class Seat(unittest.TestCase):
     def test_R102_a_sandbox_writes_the_two_declared_places_and_no_other(self):
         """R102: the places a unit's sandbox can write are the clone and the state root that its assignment declares, and the
         supervising layer sees to it that there is no other that the authority side reads or writes (every root and directory
-        of the page, the qargi code and its tools, the temporary directory of authority-side code), the run folders of R91
-        excepted while no unit of the role exists; authority-side code puts its scratch files below the directory that TMPDIR
-        names.
+        of the page, the qargi code and its tools, the temporary directory of authority-side code), the registry of the role's
+        open runs and the run folders of R91 excepted while no unit of the role exists; authority-side code puts its scratch
+        files below the directory that TMPDIR names.
         Observable: with TMPDIR set to a directory the test made, every scratch file of a broker step and of a qargi host call
         appears there and nowhere else (none below a clone, a state root, the projection directory or the shared temporary
         directory of the system); the door refuses every overlap with the declared places (R89). What a sandbox can write

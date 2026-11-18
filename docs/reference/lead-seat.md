@@ -146,13 +146,14 @@ from or written to a store that fails the check.
 `$AUTH/<project>/fence/<n>.json` (the accepted door records, numbered by epoch), and per transfer
 `$AUTH/<project>/tx/<tx>/state.json`, `$AUTH/<project>/tx/<tx>/note.json`,
 `$AUTH/<project>/tx/<tx>/note.txt`, `$AUTH/<project>/tx/<tx>/note.sig`,
-`$AUTH/<project>/tx/<tx>/readback-<k>.json` and `$AUTH/<project>/tx/<tx>/result-<k>.json`, and
-where runs were archived `$AUTH/<project>/tx/<tx>/orphans/` with `manifest.json` and one archive
-file for each run that lies inside the state root (R91). Beside the projects it holds
-`$AUTH/audit-host.log` (R15), `$AUTH/credentials/broker_ed25519` and `$AUTH/signers`. The names
-`$AUTH/<project>/delegations/` and `$AUTH/<project>/dormancy.json` are reserved and not created.
-`<tx>` has the form `tx-<UTC time>-<four hex digits>`, and `<k>` is the number of a compared
-read-back, 1 to 3 (R39). Refusal: none.
+`$AUTH/<project>/tx/<tx>/readback-<k>.json` and `$AUTH/<project>/tx/<tx>/result-<k>.json`, and,
+where runs were archived or the registry of open runs was unreadable,
+`$AUTH/<project>/tx/<tx>/orphans/` with `manifest.json` and one archive file for each run that lies
+inside the state root (R91). Beside the projects it holds `$AUTH/audit-host.log` (R15),
+`$AUTH/credentials/broker_ed25519` and `$AUTH/signers`. The names `$AUTH/<project>/delegations/` and
+`$AUTH/<project>/dormancy.json` are reserved and not created. `<tx>` has the form
+`tx-<UTC time>-<four hex digits>`, and `<k>` is the number of a compared read-back, 1 to 3 (R39).
+Refusal: none.
 
 **R10** (who writes the store). Only the broker and `qargi host` write below `$AUTH`. Lead-side code
 never opens `$AUTH`: every lead-side verb gives the same result with `$AUTH` absent, which is what
@@ -322,9 +323,14 @@ names in `mirror`, with the environment qargi uses for a tree it does not trust,
 in a clone. Configuration planted in the clone or the mirror runs nothing. Refusal: none.
 
 **R31** (the role's state is the lead's). The broker never writes below a role's state root, the
-location that `state_root` of its assignment names, and reads nothing there by path; the one
-exception is the archive and removal of run folders while the seat is `fenced` (R91, R92).
-Lead-written content reaches it only as a spool envelope through `broker intake`. Refusal: none.
+location that `state_root` of its assignment names, and reads nothing there by path. It has two
+exceptions, both only while no unit of the role exists (R97), which is while the seat is `fenced`:
+it reads the registry of the role's open runs (the file `local-runs.jsonl`, at most 8 MiB of it),
+and it archives and removes run folders (R91, R92). What the registry holds is lead-stated: it names
+runs and says where their folders are, and the broker uses it only to direct the walk of R91, which
+stays below the declared `state_root` and follows no link (R88). Apart from these two exceptions,
+lead-written content reaches the broker only as a spool envelope through `broker intake`. Refusal:
+none.
 
 **R32** (spool envelope) `[OPEN O10]`. A lead hands content to the authority side by writing it to a
 spool below its `$STATE`, with one of the verbs of R96. The content is preceded by one line
@@ -868,7 +874,7 @@ table says how for each path.
 | the location in `mirror` | broker | opened from the file system root with no-follow on every component before every use; git then runs on the opened directory |
 | `$AUTH/<project>/seat.json` and every other file of R9 | broker | `$AUTH` is checked by R8, then each component below it is opened no-follow; new files are created exclusively and renamed inside the directory descriptor |
 | `$AUTH/audit-host.log` | broker, `qargi host` | opened for append with no-follow below `$AUTH` |
-| the run folders that R91 archives | broker | the location in `state_root` is opened from the file system root with no-follow on every component, and the folders are walked no-follow below it; a file is opened with no-follow and non-blocking flags and read only when it is a regular file, and a link, a pipe, a socket and a device are recorded by type and never opened or followed (R91) |
+| the registry of the role's open runs and the run folders that R91 archives | broker | the location in `state_root` is opened from the file system root with no-follow on every component; the registry is opened below it, and the folders are walked no-follow below it; a file is opened with no-follow and non-blocking flags and read only when it is a regular file, and a link, a pipe, a socket and a device are recorded by type and never opened or followed (R91) |
 
 Refusal: `symlink-refused`, exit 1, on the authority side for a link; `authority-store-unsafe`,
 exit 1, on the authority side for a root that fails the owner-only check; `seat-record-invalid`,
@@ -882,10 +888,12 @@ assignment declares and cannot check that it is complete. The broker refuses the
 directory, the projection directory, the mirror, `$AUTH` and `$CONF` when one of them overlaps a
 declared location: when it is equal to the `clone` or the `state_root`, lies below one of them or
 contains one of them. Who owns a path is not the test: a sandboxed lead runs as the owner's user,
-so the owner of a file does not say who could write it. The one thing below a declared location
-that authority-side code reads is the run folders of R91, and only while no unit of the role
-exists (R31, R97). Refusal: `assignment-invalid`, exit 1, for an assignment that declares or names
-such a path; `authority-store-unsafe`, exit 1, for a marker or a root that is such a path.
+so the owner of a file does not say who could write it. The only things below a declared location
+that authority-side code reads are the registry of the role's open runs and the run folders of R91,
+and only while no unit of the role exists (R31, R97): the registry is lead-stated, and it only
+directs a walk that stays below the declared `state_root` and follows no link (R88). Refusal:
+`assignment-invalid`, exit 1, for an assignment that declares or names such a path;
+`authority-store-unsafe`, exit 1, for a marker or a root that is such a path.
 
 **R90** (archive before remove). Nothing a seat verb removes is removed before an archive of it
 exists and was read back and compared. This page has exactly two removals: the open run folders of
@@ -894,13 +902,18 @@ a role after a fence (R91, R92) and the marker at an unseat (R86). Every other r
 the step stays open. A run that is cut is kept and no removal of it is tried (R91, R92), so it does
 not hold the step open.
 
-**R91** (the archive of open runs) `[OPEN O7]`. After S3 and before the note of S4 the broker
-archives the open run folders of the role whose epoch the fence ended: one archive file for each
-run, named after the run, and `manifest.json`, below `$AUTH/<project>/tx/<tx>/orphans/`, owner
-only. It walks only below the `state_root` of that epoch's assignment, without following a link
-(R88): a run that the role's records place anywhere else is listed in the manifest as outside the
-state root, has no archive file, and its folder is neither read nor removed. An init ends no epoch
-and archives nothing.
+**R91** (the archive of open runs) `[OPEN O7]`. After S3 and before the note of S4 the broker reads
+the registry of the role's open runs (R31) and archives the open run folders that it names, of the
+role whose epoch the fence ended: one archive file for each run, named after the run, and
+`manifest.json`, below `$AUTH/<project>/tx/<tx>/orphans/`, owner only. It walks only below the
+`state_root` of that epoch's assignment, without following a link (R88): a run that the registry
+places anywhere else is listed in the manifest as outside the state root, has no archive file, and
+its folder is neither read nor removed. The registry is opened and read as a file of a run folder is
+(below). One that is absent lists no run and leaves no trace. One that is unreadable lists none
+either: it is not a regular file, is over its limit (R31), cannot be read or has a line that does
+not name a run and its folder. The manifest, written for it all the same, says so (`registry`:
+`read` or `unreadable`); no folder is read or removed for it, and the step goes on. An init ends no
+epoch: it reads no registry and archives nothing.
 
 A run folder is what a lead left in it, so the broker trusts no entry by its name or its type. It
 looks at an entry without following it, opens only a regular file, and then with no-follow and
@@ -941,20 +954,23 @@ removes a published copy. A run folder is removed only when its archive holds it
 false), is verified and published, and the note that names it is written. The removal is the first
 act of S5, before its seat write (R38). A run that was cut stays where it is, and the note says so;
 so does a run that the transfer left out (R91), of which the note carries the number, below
-`lead_stated` too. The successor reconciles its runs from the note and the archive: it adopts or
-discards each orphan, and no run is dropped without a line in the note. Refusal: none.
+`lead_stated` too. Where the registry was `unreadable` (R91) the note says so there as well, since
+the transfer then knows none of the role's open runs. The successor reconciles its runs from the
+note and the archive: it adopts or discards each orphan, and no run is dropped without a line in
+the note. Refusal: none.
 
 **R97** (no unit of the role between the fence and S5) `[OPEN O7]`. The supervising layer does not
 start B's unit before S5 is written. From the fence of S3 until then no unit of the role exists, so
 no sandbox can write below the role's state root, and that is the only time in which the broker
-reads there (R91) and removes there (R92): the exception that R89 leaves lasts no longer. Qargi
-cannot see a unit, so this binds the supervising layer. What qargi does is to finish the archive,
-the publication and the removal before the seat write of S5, to name the start of B's unit as the
-next action of `marshal seat status` only once S5 is written, and to answer a session that has B's
-assignment file before S5 from a projection of the earlier epoch. This rule stands while the
-broker makes the archive: if the supervising layer makes it, the broker reads nothing below a
-state root and the rule goes (O7). Refusal: `projection-stale`, exit 77 (R58), to a `lead-write`
-verb of a unit that was started in that time; none on the authority side.
+reads there (the registry and the run folders, R31, R91) and removes there (R92): the exceptions
+that R31 and R89 leave last no longer. Qargi cannot see a unit, so this binds the supervising layer.
+What qargi does is to finish the archive, the publication and the removal before the seat write of
+S5, to name the start of B's unit as the next action of `marshal seat status` only once S5 is
+written, and to answer a session that has B's assignment file before S5 from a projection of the
+earlier epoch. This rule stands while the broker makes the archive: if the supervising layer makes
+it, the broker reads nothing below a state root and the rule goes (O7). Refusal: `projection-stale`,
+exit 77 (R58), to a `lead-write` verb of a unit that was started in that time; none on the authority
+side.
 
 **R101** (what a sandbox never holds). The supervising layer binds none of these into the sandbox of
 a unit, in any epoch: `$AUTH`, with the broker's private key and the signers file below it, and
@@ -995,19 +1011,19 @@ This is the condition that R89 rests on. R89 refuses a path that overlaps a plac
 declares and cannot see a place that it does not declare, so a mirror below a temporary directory
 that a sandbox shares passes the check and is writable by a lead. A list of writable places in the
 assignment would not close that: qargi could check its form and never its completeness, and a list
-that left out the temporary directory would look complete. The one exception is the run folders
-below the declared `state_root`, which the broker reads and removes only while no unit of the role
-exists (R97). Qargi cannot see what a sandbox can write, so this binds the supervising layer, and
-against a lead that works round qargi it holds exactly as far as the layer's binds do (Limits).
-Its qualification of a sandbox checks this from inside. It writes a file into the temporary
-directory of the sandbox (its own `TMPDIR`) and into every other place outside the clone and the
-state root that the sandbox can write, and none of those files is visible at the authority side's
-paths, the places listed above. The check covers the places that the qualification tried: a
-writable place that it did not find is found by none. What qargi does is to put the scratch files
-of authority-side code below the directory that `TMPDIR` names, so that the layer can keep that
-directory out of every sandbox, and never below a clone or a state root. Refusal: none; qargi
-cannot see what a sandbox can write, and a place that the assignment does not declare shows
-nowhere.
+that left out the temporary directory would look complete. The one exception is what the broker
+reads below the declared `state_root`, the registry of the role's open runs and the run folders, and
+what it removes there, the run folders, and only while no unit of the role exists (R31, R97). Qargi
+cannot see what a sandbox can write, so this binds the supervising layer, and against a lead that
+works round qargi it holds exactly as far as the layer's binds do (Limits). Its qualification of a
+sandbox checks this from inside. It writes a file into the temporary directory of the sandbox (its
+own `TMPDIR`) and into every other place outside the clone and the state root that the sandbox can
+write, and none of those files is visible at the authority side's paths, the places listed above.
+The check covers the places that the qualification tried: a writable place that it did not find is
+found by none. What qargi does is to put the scratch files of authority-side code below the
+directory that `TMPDIR` names, so that the layer can keep that directory out of every sandbox, and
+never below a clone or a state root. Refusal: none; qargi cannot see what a sandbox can write, and a
+place that the assignment does not declare shows nowhere.
 
 ## The coordinator's place
 
@@ -1234,25 +1250,26 @@ item says who else does.
   is reached through a link.
 - **O7** (R91, R92, R97; for the owner and the supervising layer, jointly). The archive of open
   runs: who makes it, where, how large, how the successor reads it and how long a published copy
-  stays. Proposed: the broker makes it below `$AUTH`, with a limit of 64 MiB for each run and, for
-  a transfer, 32 runs and 256 MiB; it reads regular files only, with no-follow and non-blocking
-  opens, records every other entry by its type, and keeps a run whose file it cannot read, marked
-  cut, in place; it publishes the archive read only below the projection directory, where the
-  successor reads it; removes a run folder only when the archive holds it whole; and removes no
-  published copy. R97 then keeps every unit of the role away while the broker reads the role's
-  state root, which R89 otherwise forbids. Alternative A: the supervising layer archives and hands
-  qargi the manifest; it costs qargi the check that the archive exists, and it ends R97 and the
-  exception to R89. Alternative B: the successor reads the manifest in the note only, and the
-  owner reads the archive; it costs what the supervising layer's input asks for, a successor that
-  reconciles from the archive. Alternative C: the supervising layer binds the archive of the
-  transfer read only into the successor's sandbox; it costs a bind for each transfer and a path
-  that the lead side has to be told, and it saves the copy below the projection directory.
-  Alternative D: a run that was cut is removed like the others; it costs the files beyond a limit
-  and the files that could not be read, against R90. Alternative E: no limit for a transfer; it
-  costs `$AUTH` and the projection directory the space of every run that a lead cares to leave
-  open, 64 MiB each without end; higher limits cost the same in proportion. A cost of the
-  proposal: lead-written files stand in a directory that the lead side trusts for the projection,
-  and they take up to 256 MiB there for each transfer until the owner removes them.
+  stays. Proposed: the broker makes it below `$AUTH`, with a limit of 64 MiB for each run and, for a
+  transfer, 32 runs and 256 MiB; it finds the runs in the role's registry of open runs (R31), and
+  reads regular files only, with no-follow and non-blocking opens, records every other entry by its
+  type, and keeps a run whose file it cannot read, marked cut, in place; it publishes the archive
+  read only below the projection directory, where the successor reads it; removes a run folder only
+  when the archive holds it whole; and removes no published copy. R97 then keeps every unit of the
+  role away while the broker reads the role's state root, which R31 and R89 otherwise forbid.
+  Alternative A: the supervising layer archives and hands qargi the manifest; it costs qargi the
+  check that the archive exists, and it ends R97 and the exceptions to R31 and R89. Alternative B:
+  the successor reads the manifest in the note only, and the owner reads the archive; it costs what
+  the supervising layer's input asks for, a successor that reconciles from the archive. Alternative
+  C: the supervising layer binds the archive of the transfer read only into the successor's sandbox;
+  it costs a bind for each transfer and a path that the lead side has to be told, and it saves the
+  copy below the projection directory. Alternative D: a run that was cut is removed like the others;
+  it costs the files beyond a limit and the files that could not be read, against R90. Alternative
+  E: no limit for a transfer; it costs `$AUTH` and the projection directory the space of every run
+  that a lead cares to leave open, 64 MiB each without end; higher limits cost the same in
+  proportion. A cost of the proposal: lead-written files stand in a directory that the lead side
+  trusts for the projection, and they take up to 256 MiB there for each transfer until the owner
+  removes them.
 - **O8** (R52, R56, R60 to R63). The design's list of codes puts `not-assigned` after
   `seat-vacant`, but its matrix answers class `owner` with `not-assigned` in every state. Proposed:
   the matrix wins. Alternative: the list wins; it costs an owner verb in a vacant seat the answer
