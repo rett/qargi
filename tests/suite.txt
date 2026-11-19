@@ -94,7 +94,8 @@ full | par | 300 | 59 | bash tests/test_install_runtimes.sh | install.sh lib/ins
 fast | par | 300 | 2 | python3 tests/test_install_record.py | lib/install_record.py
 full | par | 408 | 188 | bash tests/test_project.sh | lib/project.sh lib/owned_refs.py
 fast | par | 300 | 4 | bash tests/test_project_profile.sh | lib/project_profile.py
-full | par | 564 | 277 | bash tests/test_local.sh | lib/local.sh lib/local_run.py lib/procenv.py lib/lib.sh
+# The whole-suite verify at 77eac930 stopped it at 564 s under load: it measured 564 s while three steps ran in parallel on a slow host. The timeout is 1500 s; the budget stays at 277 s.
+full | par | 1500 | 277 | bash tests/test_local.sh | lib/local.sh lib/local_run.py lib/procenv.py lib/lib.sh
 full | par | 300 | 24 | bash tests/test_local_concurrency.sh | lib/local.sh lib/lib.sh
 fast | par | 60 | 4 | python3 tests/test_attempts.py | lib/attempts.py lib/local_run.py lib/prepared_request.py lib/lib.sh lib/paths.py lib/procenv.py bin/qargi tests/attempt_fixture.py
 # Measured by a member on this host (not the reference machine): 590 s alone, with TMPDIR on disk. A whole run beside other steps took 790 s (as the lead saw it), too near the old timeout of 900 s, so the timeout is raised to 1200 s. The budget stays at 195 s: the time limit of the CI jobs (.github/workflows/test.yml, checked by tests/test_ci.py) has no room for a larger one until the workflow follows.
