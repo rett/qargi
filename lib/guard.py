@@ -306,7 +306,7 @@ GIT_WRITES = {"add", "commit", "apply", "am", "checkout", "switch", "reset", "rm
               "cherry-pick", "revert", "restore", "clean", "tag", "branch", "pull", "fetch", "init", "clone", "worktree",
               "notes", "update-ref", "config", "submodule", "update-index", "gc", "prune", "repack", "pack-refs", "replace", "filter-branch", "commit-tree",
               "write-tree", "mktag", "mktree", "fast-import", "read-tree", "checkout-index", "sparse-checkout", "maintenance"}
-FD_NAME = r"\{[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?\}"            # {fd} or {arr[i]} before a redirection operator: bash opens a descriptor and stores its number in the variable (or the array element)
+FD_NAME = r"\{[A-Za-z_][A-Za-z0-9_]*(?:\[\S*?\])?\}"            # {fd} or {arr[i]} (the subscript may hold brackets: {a[b[1]]}, up to the first ]}) before a redirection operator: bash opens a descriptor and stores its number in the variable (or the array element)
 REDIR = re.compile(r"^(?:\d*|&|" + FD_NAME + r")(?:>>|>\||<>|>)(.*)$")           # > >> >| <> &> &>> and N> N>> N>| N<> and {fd}>, the target stuck to it or in the next word
 GIT_OUTPUT_DIRS = {"format-patch", "archive"}                    # git subcommands whose -o names where they write
 
@@ -482,12 +482,16 @@ def remote_operand(w):
     return w.startswith("rsync://") or bool(colon and head and "/" not in head and not head.isspace() and not re.search(r"\s", head))
 
 
-def git_global(rest):
+def git_global(rest, redirs=False):
     """([(option, value)], k): the global options of a git command line (-C DIR, -c K=V, --work-tree=D, --no-pager ...) and the index in rest of the subcommand
-    (len(rest) when there is none). value is None for an option with none."""
+    (len(rest) when there is none). value is None for an option with none. redirs: skip a redirection where an option or the subcommand goes (never an
+    option's value); a word shaped like one is then never the name of a subcommand."""
     opts, k = [], 0
-    while k < len(rest) and rest[k].startswith("-"):
+    while k < len(rest) and (rest[k].startswith("-") or (redirs and is_redirection(rest[k]))):
         t = rest[k]
+        if not t.startswith("-"):                  # a redirection where an option or the subcommand goes
+            k += 2 if BARE_REDIR.match(t) else 1
+            continue
         if t in GIT_VALUE_OPTS and k + 1 < len(rest):
             opts.append((t, rest[k + 1]))
             k += 2
@@ -506,9 +510,18 @@ def builds_word(w):
 def git_refusal(pre, rest):
     """The reason a git command line (pre: the words before git, with the assignments in front of it; rest: the words after) publishes, reaches out under another
     name or runs a program a member names, or None. Only the subcommand counts: the first word after the global options (`git commit -m push` is no push).
-    A redirection between git and its subcommand is no word of the command (`git 2>/dev/null push` is a push): the words are read without them."""
-    rest = without_redirections(rest)
-    opts, k = git_global(rest)
+    A redirection between git and its subcommand is no word of the command (`git 2>/dev/null push` is a push): the words are read without them, and as
+    written too, where a quoted word that looks like a redirection is the value of an option (`git -C '>x' push`): both readings are judged."""
+    for words, redirs in ((without_redirections(rest), False), (rest, True)):
+        why = git_words_refusal(pre, words, redirs)
+        if why:
+            return why
+    return None
+
+
+def git_words_refusal(pre, rest, redirs):
+    """git_refusal on one reading of the words after git (redirs: see git_global)."""
+    opts, k = git_global(rest, redirs)
     sub, args = (rest[k], rest[k + 1:]) if k < len(rest) else ("", [])
     if sub in GIT_PUSHERS:
         return "git %s is not available to an agent" % sub
@@ -1817,32 +1830,32 @@ def write_targets(toks, i):
         elif prog == "uniq" and len(args) > 1:
             targets.append((prog, args[1]))                               # uniq INPUT OUTPUT
         elif prog == "git":
-            rest = without_redirections(rest)                             # the shell takes a redirection between git and its subcommand out of the words
-            opts, k = git_global(rest)
-            gitdir = next((v for n, v in reversed(opts) if n == "-C" and v), None)
-            trees = [v for n, v in opts if n == "--work-tree" and v] + [t.split("=", 1)[1] for t in toks[:i] if t.startswith("GIT_WORK_TREE=")]
-            sub = rest[k] if k < len(rest) else ""
-            if sub in GIT_WRITES and not (sub == "tag" and lists_tags(rest[k + 1:])):
-                targets.append(("git " + sub, gitdir or "."))
-                targets += [("git " + sub, tree) for tree in trees]                # --work-tree DIR and GIT_WORK_TREE=DIR name where the tree is changed, as -C does
-            if sub not in GIT_WRITES and git_mutates(sub, rest[k + 1:]):
-                targets.append(("git " + sub, gitdir or "."))
-                targets += [("git " + sub, tree) for tree in trees]
-            if sub == "config":
-                targets += git_config_targets(rest[k + 1:])
-                if config_written(rest[k + 1:]) != []:                         # a write: GIT_CONFIG=FILE in front of it names the file, as --file does
-                    targets += [("git config --file", t.split("=", 1)[1]) for t in toks[:i] if t.startswith("GIT_CONFIG=")]
-            places = [t for t in rest[k + 1:] if not t.startswith("-")]
-            if sub == "clone" and len(places) > 1:                        # git clone URL DIR, git init DIR, git worktree add DIR
-                targets.append(("git clone", places[-1]))
-            elif sub in ("init", "worktree") and places[sub == "worktree":][:1]:
-                targets.append(("git " + sub, places[sub == "worktree":][0]))
-            for n in range(k + 1, len(rest)):                             # git log|diff|show --output=FILE, format-patch -o DIR, archive -o FILE, apply --directory=DIR
-                v = option_value(rest, n, ("--output", "--output-directory") + (("-o",) if sub in GIT_OUTPUT_DIRS else ()) + (("--directory",) if sub == "apply" else ()))
-                if v is not None:
-                    targets.append(("git " + sub + " --output", v))
-            if sub == "bundle" and rest[k + 1:k + 2] == ["create"] and len(rest) > k + 2:
-                targets.append(("git bundle create", rest[k + 2]))
+            for rest, redirs in ((without_redirections(rest), False), (rest, True)):   # both readings, as git_refusal: without the redirections the shell takes out, and as written (a quoted '>x' is a word)
+                opts, k = git_global(rest, redirs)
+                gitdir = next((v for n, v in reversed(opts) if n == "-C" and v), None)
+                trees = [v for n, v in opts if n == "--work-tree" and v] + [t.split("=", 1)[1] for t in toks[:i] if t.startswith("GIT_WORK_TREE=")]
+                sub = rest[k] if k < len(rest) else ""
+                if sub in GIT_WRITES and not (sub == "tag" and lists_tags(rest[k + 1:])):
+                    targets.append(("git " + sub, gitdir or "."))
+                    targets += [("git " + sub, tree) for tree in trees]                # --work-tree DIR and GIT_WORK_TREE=DIR name where the tree is changed, as -C does
+                if sub not in GIT_WRITES and git_mutates(sub, rest[k + 1:]):
+                    targets.append(("git " + sub, gitdir or "."))
+                    targets += [("git " + sub, tree) for tree in trees]
+                if sub == "config":
+                    targets += git_config_targets(rest[k + 1:])
+                    if config_written(rest[k + 1:]) != []:                         # a write: GIT_CONFIG=FILE in front of it names the file, as --file does
+                        targets += [("git config --file", t.split("=", 1)[1]) for t in toks[:i] if t.startswith("GIT_CONFIG=")]
+                places = [t for t in rest[k + 1:] if not t.startswith("-")]
+                if sub == "clone" and len(places) > 1:                        # git clone URL DIR, git init DIR, git worktree add DIR
+                    targets.append(("git clone", places[-1]))
+                elif sub in ("init", "worktree") and places[sub == "worktree":][:1]:
+                    targets.append(("git " + sub, places[sub == "worktree":][0]))
+                for n in range(k + 1, len(rest)):                             # git log|diff|show --output=FILE, format-patch -o DIR, archive -o FILE, apply --directory=DIR
+                    v = option_value(rest, n, ("--output", "--output-directory") + (("-o",) if sub in GIT_OUTPUT_DIRS else ()) + (("--directory",) if sub == "apply" else ()))
+                    if v is not None:
+                        targets.append(("git " + sub + " --output", v))
+                if sub == "bundle" and rest[k + 1:k + 2] == ["create"] and len(rest) > k + 2:
+                    targets.append(("git bundle create", rest[k + 2]))
     return targets
 
 

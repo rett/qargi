@@ -199,7 +199,12 @@ class Guard(HookCase):
                   "echo hi | gh pr list", "gh api repos/x", "ssh host ls", "sudo scp a b:", "sftp host", "git remote add o u", "git remote set-url origin u",
                   # the shell takes a redirection out of the words: git, with one between it and its subcommand, runs the same subcommand
                   "git 2>/dev/null push", "git >/dev/null push", "git 2>/dev/null push origin master", "git -C . 2>/dev/null push", "timeout 5 git 2>/dev/null push",
-                  "git {fd}>f push", "git 2>/dev/null remote add o u", "git > /dev/null push", "git -C . {fd}> f push", "git 2>&1 remote set-url origin u"):
+                  "git {fd}>f push", "git 2>/dev/null remote add o u", "git > /dev/null push", "git -C . {fd}> f push", "git 2>&1 remote set-url origin u",
+                  # a quoted value that reads as a redirection is the value of the option (git -C '>x' push is a push in the directory named >x)
+                  "git --namespace '>x' push", "git -C '>x' push", "git --git-dir '>x' push", "git -C '>x' remote add o u", "git --namespace '>' push origin master",
+                  "git -C \">x\" push", "git -C \\>x push", "git -C '2>x' push", "git --work-tree '>x' push", "git -C '>x' -c alias.p=push p",
+                  "git -C \">x\" config alias.p push", "timeout 5 git -C '>x' push", "sudo git -C '>x' push", "bash -c \"git -C '>x' push\"",
+                  "git --git-dir '>r'$LIB/.git push"):
             r = self.guard(c)
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("Agents never push", r.stderr)
@@ -207,7 +212,8 @@ class Guard(HookCase):
     def test_lets_ordinary_work_through(self):
         for c in ("ls -la", "git status", "git commit -m 'a push of work'", "/tmp/x/git log --oneline", "git remote -v", "git diff c2e9439..HEAD",
                   "go test ./... && go vet ./...", "grep -n 'git push' file", "make gate-go", "gitleaks git --log-opts A..B",
-                  "git {fd}>f status", "git status 2>&1", "git 2>/dev/null status", "git -C . 2>/dev/null log --oneline", "git 2>/dev/null remote -v"):
+                  "git {fd}>f status", "git status 2>&1", "git 2>/dev/null status", "git -C . 2>/dev/null log --oneline", "git 2>/dev/null remote -v",
+                  "git 2>$TMPDIR/e log", "git -C '>x' log", "git -C '>x' status 2>&1"):
             self.assertEqual(self.guard(c).returncode, 0, c)
 
     def test_input_that_is_empty_or_no_json_is_refused_and_names_the_cause(self):
@@ -501,6 +507,8 @@ class Skills(HookCase):
             os.makedirs(os.path.join(self.t, d))
         self.lib, self.lskill = os.path.join(self.conf, "packs"), os.path.join(self.home, ".claude/skills")
         os.symlink(self.lib, os.path.join(self.clone, "link-to-library"))
+        os.symlink(self.lib, os.path.join(self.clone, ">lib"))              # links whose names read as a redirection: a quoted word of git -C
+        os.symlink("/", os.path.join(self.clone, ">r"))
         self.run_dir = os.path.join(self.t, "run")                       # what `qargi local prepare` leaves: ability and refs.before
         for name, text in (("ability", "build\n"), ("refs.before", "")):
             with open(os.path.join(self.run_dir, name), "w") as f:
@@ -907,7 +915,9 @@ class Skills(HookCase):
                   "{fd}>f qargi skill new x", "{fd}>f qargi upgrade", "qargi {fd}> f skill new x", "qargi {_a1}>>f upgrade",
                   # the name may be a subscripted array element (bash 5: {a[1]}>f)
                   "{a[1]}>f qargi skill new x", "qargi {a[1]}>f skill new x", "qargi skill {a[1]}>f new x", "sudo {a[1]}>f qargi upgrade", "{a[$i]}>f qargi upgrade",
-                  "{a[0]}<&0 qargi upgrade", "qargi {a[0]}<&0 upgrade", "{A_1[k]}>>f qargi skill new x"):
+                  "{a[0]}<&0 qargi upgrade", "qargi {a[0]}<&0 upgrade", "{A_1[k]}>>f qargi skill new x",
+                  # a subscript may hold brackets itself (bash accepts a[b[1]])
+                  "{a[b[1]]}>f qargi upgrade", "qargi {a[b[1]]}>f upgrade", "qargi skill {a[b[1]]}>f new x", "{a[b[c[1]]]}>f qargi upgrade"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("qargi guard:", r.stderr)
@@ -916,7 +926,8 @@ class Skills(HookCase):
                   "qargi 2>/dev/null feature status", "qargi skill list > $TMPDIR/k.log", "qargi 2>/dev/null skill list", "qargi project show 2>/dev/null",
                   "qargi release status > /dev/null 2>&1 0.2.0", "bash lib/feature.sh status > $TMPDIR/f.log", "qargi 2>/dev/null project set p name x",
                   "qargi skill list {fd}>$TMPDIR/k.log", "{fd}>$TMPDIR/k.log qargi list", "qargi {fd}> $TMPDIR/k.log list", "qargi {fd}>f skill list", "{ qargi list; }", "{ qargi skill list; }",
-                  "{a[1]}>f ls", "qargi {a[1]}> $TMPDIR/k.log list"):
+                  "{a[1]}>f ls", "qargi {a[1]}> $TMPDIR/k.log list", "echo '{a[1]}>b'", "echo ${a[1]} > out.txt", "ls {a[1]}", "qargi {a[1]}>f list",
+                  "{a[1]}>f qargi feature status", "{a[b[1]]}>f ls"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
@@ -1138,6 +1149,8 @@ class Skills(HookCase):
                   "echo x {fd}> $HOME/.claude/skills/x/SKILL.md", "{fd}> $HOME/.claude/skills/x/SKILL.md echo x", "exec {fd}> $HOME/.claude/skills/x/SKILL.md",
                   "echo x {fd}>$HOME/.claude/skills/x/SKILL.md", "echo x {a[1]}> $HOME/.claude/skills/x/SKILL.md",
                   "git 2>/dev/null -C %s checkout ." % lib, "git -C %s 2>/dev/null checkout ." % lib, "git {fd}>f -C %s checkout ." % lib,
+                  # a quoted value that reads as a redirection is the value of -C or --work-tree: the links >lib and >r lead to the library
+                  "git -C '>lib' checkout .", "git -C \">lib\" rm -rf .", "git --work-tree '>lib' checkout .", "git -C '>lib' clean -fdx", "git -C '>r'%s checkout ." % lib,
                   "bash -c 'echo y > %s/links.json'" % lib, "sh -c \"cd %s/x; touch y\"" % ls, "eval 'rm %s/x/SKILL.md'" % ls,
                   "echo $(echo y > %s/links.json)" % lib):
             r = self.bash(c)
