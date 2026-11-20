@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- The CI time limit of the pull request job is 80 minutes (the budgets of the heaviest steps no longer fit 65); the job that runs the whole suite has the same limit.
+
 ## [0.3.4] - 2026-11-19
 
 ### Added
