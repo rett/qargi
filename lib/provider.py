@@ -562,7 +562,7 @@ def home_source_forbidden(doc, runtime):
 
 
 def _login_how(h, frm, cmd):
-    return ("A member run signs in on its own and never uses your own sign-in. Sign in once for members, with its own directory (make it first):\n  mkdir -m 700 %s && %s=%s %s login"
+    return ("A member run signs in on its own and never uses your own sign-in. Sign in once for members, with its own directory (make it first):\n  mkdir -p -m 700 %s && %s=%s %s login"
             % (os.path.dirname(frm), h.get("env"), os.path.dirname(frm), cmd))
 
 
