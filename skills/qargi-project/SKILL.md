@@ -12,7 +12,7 @@ Run this before the first `qargi-provision` for a project. The answers live in `
 
 Ask the user these, in batches, with the stated defaults recommended; do not assume answers:
 
-1. **Repository.** URL; local checkout path (optional); the long-lived branches no agent may ever touch (default `master`, `develop`). **Private repository?** If checking it out needs a credential, ask for a token file: a fine-grained, read-only token (contents: read), in a file only the user can read (chmod 600), outside every repository. Record its path as `repo.credential_file`, then run `qargi credential check NAME`: it proves the token can read and warns if it can also push. Public repositories need none. The token is never typed into a command, a log, the tracker or a repository.
+1. **Repository.** URL; local checkout path (optional); the long-lived branches no agent may ever touch (default `master`, `develop`). **Private repository?** If checking it out needs a credential, ask for a token file: a fine-grained, read-only token (contents: read), in a file only the user can read (chmod 600), outside every repository. Record its path as `repo.credential_file`, then run `qargi credential check NAME`: it proves the token can read and warns if it can also push. The token is never typed into a command, a log, the tracker or a repository.
 2. **Roles.** Which of the roles `build`, `write`, `review`, `test` this project uses.
 3. **Per role, base branch.** `@dispatcher` (the dispatching session's branch) for build; the documentation branch (for example `gh-pages`) for write.
 4. **Per role, push policy** (the question that matters most):
@@ -38,8 +38,10 @@ qargi project init NAME --answers answers.json
 
 `validate` explains every problem (a push pattern that matches a long-lived branch, a push by the agent without a credential, an unknown role or skill). `qargi project show NAME` prints what was stored. Change one answer with `qargi project set NAME PATH VALUE` (for example `budget_cents 2500` or `roles.write.effort high`); it is validated first and applies to the next provision. A live deployment's ceiling changes with `qargi instances budget NAME CENTS --asked "..."` (add `--session SID` for a running session that already has a budget). `qargi-provision` reads these answers; flags override them.
 
-Teams (optional): `lead` (model, effort; it cannot be a role) and `teams.<name>` define the teams `qargi-team` runs (its definition section lists the fields). Set them with `qargi project set`.
+Teams (optional): `lead` (model, effort; it cannot be a role) and `teams.<name>` define the teams `qargi-team` runs.
 
-Lead context window (`lead.context_window`, default `null`: from the session's model): `project set` it (path `lead.context_window`, tokens) only when known.
+Lead context window (`lead.context_window`, default `null`: from the session's model): `project set` it (tokens) only when known.
+
+Verify environment (`verify.environment`, default off): set it only when asked, since loosening it takes the user's words (docs/reference/verify-environment.md).
 
 Push grant for the lead (`lead.push`, default none): `local` (this session may push `agent/*` and open pull requests), `cloud: branches` (a cloud or console lead may, with a token file and a vault, set up by `qargi credential setup lead-push PROJECT`), `branch_pattern` (`agent/...`), `merge` and `release` (`ask` or `never`; never automatic). Only the lead ever pushes.

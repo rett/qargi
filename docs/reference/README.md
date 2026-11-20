@@ -2,6 +2,7 @@
 
 - [Backlog graph v1](backlog-graph.md) documents the native read-only schema, reports, source revision evidence and planning limits.
 - [Campaign records v1](campaign-records.md) documents bounded local declarations, the closed schema, publication outcomes and bounded history.
+- [verify.environment](verify-environment.md) documents the optional project answer that starts the whole-suite runs of `qargi feature verify` and `qargi release verify` under a declared environment (signals, descriptors, terminal, cpu scope, variables): the schema, the refusal codes, the waiver, the record, and a table of each setting against the hosted Linux runner it was measured on.
 - [Lead seat v1](lead-seat.md) is the contract of the lead handoff seat, written before the code: numbered rules with their refusals, the records, the handoff steps and the open points. The seat is not built.
 
 ## Planning reports and declarations
