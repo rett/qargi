@@ -271,8 +271,8 @@ before=$(snap)
 : > "$LOG"
 out=$(QARGI_ACTOR=$LBL "$DA" feature verify beta 2>&1); rc=$?
 [ $rc = 2 ] && [ ! -s "$LOG" ] && [ "$before" = "$(snap)" ] && ok "and does not verify it: no gate ran, nothing changed" || no "beta verify rc=$rc: $out"
-# an option the verb does not declare may take a value in the script (--purpose, --plan): the gate would read alpha, the verb would run beta; it fails closed
-for w in "feature verify --purpose alpha beta" "feature verify --plan alpha beta" "feature status --purpose alpha beta"; do
+# an option the verb does not declare may take a value in the script (--purpose, --goal): the gate would read alpha, the verb would run beta; it fails closed
+for w in "feature verify --purpose alpha beta" "feature verify --goal alpha beta" "feature status --purpose alpha beta"; do
   before=$(snap)
   # shellcheck disable=SC2086  # the words are plain
   out=$(QARGI_ACTOR=$LBL "$DA" $w 2>&1 </dev/null); rc=$?

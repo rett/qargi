@@ -6036,18 +6036,31 @@ class FifthReview(HookCase):
 
     def test_the_named_descriptor_patterns_stay_fast_on_a_long_word(self):
         """FD_NAME starts every pattern that reads a redirection ({fd}>f, {a[i]}>f): its subscript is a lazy run, so a word of 200000 characters that holds no
-        closing bracket, or only closings that no brace follows, must cost a pass over it and no more (each pattern is tried at the start of the word only)."""
+        closing bracket, or only closings that no brace follows, must cost a pass over it and no more (each pattern is tried at the start of the word only).
+        No wall-clock constant: each word is built at a size n and at 4n, and the run on 4n must cost under eight times the run on n (a pass over it costs
+        four times, a quadratic one sixteen) plus a floor that timer noise cannot pass."""
         m = _Judge(LIBDIR, "guard_fd_name", self.clone).m
-        n = 200000
-        words = {"no closing": "{a[" + "x" * n, "no brace": "{a[" + "x" * n + "]", "closings": "{a[" + "]" * n, "brackets": "{a[" + "[" * n + "]}>f", "brackets and closings": "{a" + "[]" * (n // 2),
-                 "blanks": "{a[" + "x y" * (n // 3) + "]}>f", "quoted blank": '{a["x y"]}>f' + "g" * n, "braces": "{a[" + "]}" * (n // 2), "long name": "{" + "a" * n + "}>f"}
-        for name, word in words.items():
-            t0 = time.perf_counter()
-            for rx in (m.REDIR, m.LEADING_REDIR, m.BARE_REDIR, m.FD_REDIR_WORD):
-                rx.match(word)
-            m.is_redirection(word)
-            m.quoted_string(word)
-            self.assertLess(time.perf_counter() - t0, 5.0, name)
+
+        def words(n):
+            return {"no closing": "{a[" + "x" * n, "no brace": "{a[" + "x" * n + "]", "closings": "{a[" + "]" * n, "brackets": "{a[" + "[" * n + "]}>f", "brackets and closings": "{a" + "[]" * (n // 2),
+                    "blanks": "{a[" + "x y" * (n // 3) + "]}>f", "quoted blank": '{a["x y"]}>f' + "g" * n, "braces": "{a[" + "]}" * (n // 2), "long name": "{" + "a" * n + "}>f"}
+
+        def cost(word):
+            best = None
+            for _ in range(3):
+                t0 = time.perf_counter()
+                for rx in (m.REDIR, m.LEADING_REDIR, m.BARE_REDIR, m.FD_REDIR_WORD):
+                    rx.match(word)
+                m.is_redirection(word)
+                m.quoted_string(word)
+                spent = time.perf_counter() - t0
+                best = spent if best is None else min(best, spent)
+            return best
+
+        n = 50000
+        small, large = words(n), words(4 * n)
+        for name in small:
+            self.assertLess(cost(large[name]), 8 * cost(small[name]) + 0.05, name)
 
 
 def case_pool(t):
