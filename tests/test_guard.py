@@ -868,12 +868,15 @@ class Skills(HookCase):
                      "sudo qargi release publish 0.2.0", "bash -c 'qargi release publish 0.2.0'", "env FOO=1 qargi release publish 0.2.0", "cd src && qargi release publish 0.2.0",
                      "echo $(qargi release publish 0.2.0)", "qargi release publish 0.2.0 --project p", "qargi 'release' 'publish' 0.2.0", "eval 'qargi release publish 0.2.0'",
                      "bash lib/release.sh publish 0.2.0", "./lib/release.sh publish 0.2.0 --plan 0123456789ab --approved go", "v=publish; qargi release $v 0.2.0",
-                     "qargi release ${V:-publish} 0.2.0", "qargi release --project p publish 0.2.0"):
+                     "qargi release ${V:-publish} 0.2.0", "qargi release --project p publish 0.2.0",
+                     # a quoted '>' reads as a redirection and must not take the verb after it with it
+                     "qargi release '>' publish 0.2.0", "qargi release '2>' publish 0.2.0 --plan 0123456789ab --approved go", "qargi release '>>' publish 0.2.0"):
             r = self.bash(form)
             self.assertEqual(r.returncode, 2, form)
             self.assertIn("qargi guard:", r.stderr)
             self.assertIn("qargi release publish creates a GitHub release and is not available to an agent", r.stderr)
         for c in ("qargi release status 0.2.0", "qargi release verify 0.2.0 --project p", "qargi release push 0.2.0", "bash lib/release.sh status 0.2.0",
+                  "qargi release status 0.2.0 > $TMPDIR/s.log", "qargi release status > \"$TMPDIR/s.log\" 0.2.0",
                   "echo qargi release publish", "grep -n 'release publish' lib/commands.py", "qargi help release publish"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))

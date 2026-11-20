@@ -3622,7 +3622,9 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None, at=None):
     if area == "env" and (verb in ENV_LEAD or builds_word(verb)):
         return ("qargi env %s runs the project's dry-run or bootstrap command, which is project code, with the lead's rights, and is not available to an agent "
                 "(qargi env show only reads); report what you need in your task output" % (verb if verb in ENV_LEAD else "plan|apply"))
-    if area == "release" and any(w == "publish" or "$" in w or "`" in w for w in without_redirections(words)[1:4]):   # a verb held in a variable could be publish (a redirection's target is no verb)
+    # the verb publish is looked for in the raw words (a quoted '>' reads as a redirection and would take the word after it, publish, with it); a verb held in a variable could be
+    # publish too, and there a redirection's target is no verb, so the variable test reads the words without the redirections
+    if area == "release" and (any(w == "publish" for w in words[1:4]) or any("$" in w or "`" in w for w in without_redirections(words)[1:4])):
         return "qargi release publish creates a GitHub release and is not available to an agent; report that the tag needs publishing"
     if area == "feature" and verb == "park":
         return OwnReason("qargi feature park resets the parking branch to develop and checks it out in the main checkout (and journals the move), which is the lead's to do; "
