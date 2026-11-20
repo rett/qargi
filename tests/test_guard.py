@@ -880,7 +880,7 @@ class Skills(HookCase):
 
     def test_refuses_the_waiver_of_the_verify_environment_to_a_member(self):
         """release verify --waive-environment PARTS --plan T --approved W is the owner's waiver of a part of verify.environment. The shell refuses it in a member run
-        by the member mark and the run directory, which a member started as a subagent has neither of, so the guard refuses the option with --approved (feature verify
+        by the member mark and the run directory, which a member that another session started has neither of, so the guard refuses the option with --approved (feature verify
         is refused as a whole). The attempt without --approved only prints the token and stays open; a flag a variable, a substitution or xargs builds is read as either."""
         for v in ("release verify 0.2.0 --waive-environment cpu --plan 0123456789ab --approved go", "feature verify f --waive-environment cpu --plan 0123456789ab --approved go",
                   "release verify 0.2.0 --hotfix --project p --approved go --plan 0123456789ab --waive-environment fds,tty",

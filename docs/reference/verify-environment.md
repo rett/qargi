@@ -69,20 +69,22 @@ Every refusal names its code, the part, what was found and, for a part that can 
 | `verify-env-signals` | signals | the read-back of the signal state failed |
 | `verify-env-fds` | fds | the read-back of the descriptors failed |
 | `verify-env-tty` | tty | the session or terminal read-back failed |
-| `verify-env-no-log` | tty | a suite log, or the directory for the launcher's reports or waivers, cannot be created: with the setting on the output goes to a log, never to a terminal |
+| `verify-env-no-log` | tty | a suite log, or the directory for the launcher's reports, cannot be created: with the setting on the output goes to a log, never to a terminal |
 | `verify-env-waive-unapproved` | none | a waiver without the token and the owner's words, or with a token for other parts or another head (a token holds the branch, the head and the declaration); a `--waive-environment` that does not name every refused part; a waiver when nothing was refused, so no token matches |
 | `verify-env-waive-used` | none | the token of a waiver was already used for a run at this head |
 | `verify-env-waive-unknown` | none | `--waive-environment` names something that is not `signals`, `fds`, `tty` or `cpu` (so not `env`), a part that is off, or the setting is off |
+| `verify-env-waiver-dir` | none | the directory for the waivers (`<state>/verify-env-waivers`), the claim file of a waiver or the count of the tokens used at the head cannot be made, kept or read (a count that is not a number); nothing was run |
 
 The verb makes the launcher's attempt before it makes the worktree, so a refusal costs no worktree. The attempt runs the launcher on a no-op command in a throwaway scope.
 
 ## The waiver
 
-A waiver is per run and is never stored: `qargi feature verify NAME --waive-environment cpu --plan TOKEN --approved "<the owner's words>"` (the same on `release verify`).
+A waiver is per run: it is not kept as a setting, and the next run starts without it. Only a count of the tokens used at a head is kept in the state (`<state>/verify-env-waivers/KEY.count`, one file per branch, head and declaration, with one claim file for each use), so that a used token is never good again; the audit log holds the words. The command is `qargi feature verify NAME --waive-environment cpu --plan TOKEN --approved "<the owner's words>"` (the same on `release verify`).
 
 - Only a refusal yields a token. The token covers the project, the branch, its head, the declaration and exactly the refused parts, and `--waive-environment` must name exactly those parts. With the setting off, with `cpu_quota` `null` (the cpu part is off), or for `env` (which cannot fail) the waiver is `verify-env-waive-unknown`. A token is good for one run at its head; the next refusal prints the next token.
 - A waiver skips nothing. A waived part is still attempted, and when it fails it is a warning, printed before the run and again with the verdict, and recorded as `waived-failed` with its code. A waived `cpu` whose attempt failed runs without a scope and with the weaker cleanup; when the attempt passed, the scope is used and the part is recorded `applied`. A waived part that succeeds is recorded `applied`.
 - A part that fails outside the waiver refuses again with a new token.
+- The token is spent when the run is about to start: after the attempt and after the verb's own checks (a `--strict` refusal of `release verify` comes first and spends nothing, writes no claim and no audit line), and before the suite log is made. Of two verifies that hold the same token the later one is refused with `verify-env-waive-used` and nothing run.
 - The run is audited as `verify:environment-waived` with the words. In a member run `--waive-environment` with `--approved` is refused (exit 2): the words are the owner's.
 - A waived run counts for `feature finish` and `release start`. The verdict line ends with `(verify.environment: cpu waived-failed)`, and `feature status`, `release status` and the plan of `feature finish` show the waiver again.
 

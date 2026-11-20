@@ -182,13 +182,12 @@
       ]
     },
     "verify-env-no-log": {
-      "rule": "With verify.environment on, the suite's output goes to a log and never to a terminal, and the launcher's reports and the waivers have a directory",
-      "why": "the output cannot go to a terminal (the tty part), and a run that cannot keep its reports or its waiver cannot be recorded",
+      "rule": "With verify.environment on, the suite's output goes to a log and never to a terminal, and the launcher's reports have a directory",
+      "why": "the output cannot go to a terminal (the tty part), and a run that cannot keep its reports cannot be recorded",
       "class": "verify-environment",
       "exit": 1,
       "status": "live",
       "sites": [
-        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-no-log: the directory for the waivers of verify.environment cannot be made; nothing was run"},
         {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-no-log: the directory DIR for the reports of the launcher cannot be made; nothing was run"},
         {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-no-log: the suite log LOG cannot be created; with verify.environment the suite's output goes to a log and never to a terminal (the tty part); nothing was run"}
       ]
@@ -230,6 +229,19 @@
         {"verbs": ["feature verify", "release verify"], "text": "plan token: TOKEN   (to run once without PARTS: AGAIN --waive-environment PARTS --plan TOKEN --approved \"<the owner's words>\")"},
         {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-waive-used: that token has been used for a run at this head: a waiver is good for one run; a refusal of PARTS at this head prints the next token; nothing was run or recorded"},
         {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-waive-used: another verify at this head used the waiver at the same moment; nothing was run or recorded"}
+      ]
+    },
+    "verify-env-waiver-dir": {
+      "rule": "A waiver is claimed in a directory of the state, with a count of the tokens used at the head, before the run starts",
+      "why": "a waiver that cannot be claimed or counted could not be told from a new one, so a spent token could be used again",
+      "class": "verify-environment",
+      "exit": 1,
+      "status": "live",
+      "sites": [
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-waiver-dir: FILE does not hold a number: the number of waivers made at this head cannot be read, so a spent token could not be told from a new one; nothing was run or recorded"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-waiver-dir: the directory DIR for the waivers of verify.environment cannot be made; nothing was run or recorded"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-waiver-dir: the claim FILE of the waiver cannot be made; nothing was run or recorded"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-waiver-dir: the count of the waivers made at this head could not be kept in DIR (status STATUS: the lock or the write failed); nothing was run or recorded"}
       ]
     }
   }

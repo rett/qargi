@@ -275,15 +275,16 @@ class Declaration(Scratch):
         with self.assertRaises(SE.Invalid):
             SE.loosens({"bad": 1}, {})
 
-    def test_the_error_codes_are_thirteen_constants(self):
-        self.assertEqual(len(SE.CODES), 13)
-        self.assertEqual(len({c for c in SE.CODES}), 13)
+    def test_the_error_codes_are_fourteen_constants(self):
+        self.assertEqual(len(SE.CODES), 14)
+        self.assertEqual(len({c for c in SE.CODES}), 14)
         for code, part in SE.CODES.items():
             self.assertRegex(code, r"^verify-env-[a-z-]+$")
             self.assertIn(part, (None,) + SE.PARTS)
         self.assertEqual(SE.CODE_CPU_READBACK, "verify-env-cpu-readback")
         self.assertEqual(SE.CODES[SE.CODE_NO_LOG], "tty")
         self.assertEqual(SE.CODES[SE.CODE_WAIVE_USED], None)
+        self.assertEqual(SE.CODES[SE.CODE_WAIVER_DIR], None)
 
     def test_the_catalogue_of_refusals_lists_the_codes_of_the_table_and_no_other(self):
         """lib/refusals.json (schema 1, a map of codes, each once) holds every code of CODES and no other, with the exit and the class of each; no code

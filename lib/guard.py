@@ -3579,8 +3579,8 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None, at=None):
     if area == "provider" and verb not in PROVIDER_READ:
         return "qargi provider %s changes the provider definitions and is not available to an agent" % verb
     if area in ("feature", "release") and "verify" in words[1:4]:
-        # a waiver of a part of verify.environment is the owner's words: the shell refuses it in a member run (in_member_run), but a member started as a
-        # subagent has no member mark and works outside its run directory, so the guard refuses the option with --approved (the attempt without --approved
+        # a waiver of a part of verify.environment is the owner's words: the shell refuses it in a member run (in_member_run), but a member
+        # that another session started has no member mark and works outside its run directory, so the guard refuses the option with --approved (the attempt without --approved
         # only prints a token and stays open). A word the guard cannot read (a variable, an array expansion, a substitution, or xargs) can split into several
         # words and carry both options, so any such word is refused, as a path of the answers command is
         argv = cut if prog in SCRIPTS else cut[k + 1:]
