@@ -917,7 +917,10 @@ class Skills(HookCase):
                   "{a[1]}>f qargi skill new x", "qargi {a[1]}>f skill new x", "qargi skill {a[1]}>f new x", "sudo {a[1]}>f qargi upgrade", "{a[$i]}>f qargi upgrade",
                   "{a[0]}<&0 qargi upgrade", "qargi {a[0]}<&0 upgrade", "{A_1[k]}>>f qargi skill new x",
                   # a subscript may hold brackets itself (bash accepts a[b[1]])
-                  "{a[b[1]]}>f qargi upgrade", "qargi {a[b[1]]}>f upgrade", "qargi skill {a[b[1]]}>f new x", "{a[b[c[1]]]}>f qargi upgrade"):
+                  "{a[b[1]]}>f qargi upgrade", "qargi {a[b[1]]}>f upgrade", "qargi skill {a[b[1]]}>f new x", "{a[b[c[1]]]}>f qargi upgrade",
+                  # the subscript may hold a blank, quoted or escaped: the words carry no quotes, so the guard reads {a[x y]}>f, and a blank inside the name is bash's own
+                  '{a["x y"]}>f qargi upgrade', "{a[x\\ y]}>f qargi upgrade", 'sudo {a["x y"]}>f qargi upgrade', "{a['p q']}>f qargi upgrade",
+                  'qargi {a["x y"]}>f upgrade', "qargi skill {a['x y']}>f new x", "qargi {a[x\\ y]}>f upgrade", 'git {a["x y"]}>f push', "git {a['x y']}>f push origin master"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("qargi guard:", r.stderr)
@@ -927,7 +930,9 @@ class Skills(HookCase):
                   "qargi release status > /dev/null 2>&1 0.2.0", "bash lib/feature.sh status > $TMPDIR/f.log", "qargi 2>/dev/null project set p name x",
                   "qargi skill list {fd}>$TMPDIR/k.log", "{fd}>$TMPDIR/k.log qargi list", "qargi {fd}> $TMPDIR/k.log list", "qargi {fd}>f skill list", "{ qargi list; }", "{ qargi skill list; }",
                   "{a[1]}>f ls", "qargi {a[1]}> $TMPDIR/k.log list", "echo '{a[1]}>b'", "echo ${a[1]} > out.txt", "ls {a[1]}", "qargi {a[1]}>f list",
-                  "{a[1]}>f qargi feature status", "{a[b[1]]}>f ls"):
+                  "{a[1]}>f qargi feature status", "{a[b[1]]}>f ls",
+                  # a quoted string that holds a blank is text, with or without a redirection-like start
+                  "echo '{a[x y]}>b'", "echo '2>x y'", 'qargi feature status "{a[x y]}>f"', '{a["x y"]}>f ls', 'qargi {a["x y"]}>f list'):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
@@ -1148,6 +1153,7 @@ class Skills(HookCase):
                   # a write through a bare named descriptor ({fd}> FILE opens the file for writing: refused here, allowed before 0.3.5)
                   "echo x {fd}> $HOME/.claude/skills/x/SKILL.md", "{fd}> $HOME/.claude/skills/x/SKILL.md echo x", "exec {fd}> $HOME/.claude/skills/x/SKILL.md",
                   "echo x {fd}>$HOME/.claude/skills/x/SKILL.md", "echo x {a[1]}> $HOME/.claude/skills/x/SKILL.md",
+                  'echo x {a["x y"]}> $HOME/.claude/skills/x/SKILL.md', "echo x {a[x\\ y]}> $HOME/.claude/skills/x/SKILL.md",
                   "git 2>/dev/null -C %s checkout ." % lib, "git -C %s 2>/dev/null checkout ." % lib, "git {fd}>f -C %s checkout ." % lib,
                   # a quoted value that reads as a redirection is the value of -C or --work-tree: the links >lib and >r lead to the library
                   "git -C '>lib' checkout .", "git -C \">lib\" rm -rf .", "git --work-tree '>lib' checkout .", "git -C '>lib' clean -fdx", "git -C '>r'%s checkout ." % lib,
@@ -5246,6 +5252,13 @@ class ShellStringRedirection(HookCase):
         for ok in ("2>&1", ">&2", "&>/dev/null", ">|/dev/null", "2>/dev/null"):
             with self.subTest(ok=ok):
                 self.assertFalse(m.quoted_string(ok))
+        # a blank inside the name of a named descriptor is bash's own ({a["x y"]}>f reaches the guard as {a[x y]}>f): a redirection, no string; one after the operator is a string
+        for ok in ("{a[x y]}>f", "{a[x y]}>", "{a[b[x y]]}>f", "{a[x y]}>>f"):
+            with self.subTest(ok=ok):
+                self.assertFalse(m.quoted_string(ok))
+        for word in ("2>x y", "{a[x y]}>f g", "{a[x y]}>f;ls", "{fd}>f g", ">x y"):
+            with self.subTest(word=word):
+                self.assertTrue(m.quoted_string(word))
         self.refused("bash -c $'2>/dev/null\\x3b%s/install.sh'" % self.ROOT, InstallScript.WHY)
 
     def test_the_forms_0_3_2_refused(self):
@@ -6020,6 +6033,21 @@ class FifthReview(HookCase):
             verdicts = dict(zip(cases, in_parallel(J.judge, cases.values())))
         for name, why in verdicts.items():
             self.assertNotIn(BUDGET_REFUSAL, why or "", name)
+
+    def test_the_named_descriptor_patterns_stay_fast_on_a_long_word(self):
+        """FD_NAME starts every pattern that reads a redirection ({fd}>f, {a[i]}>f): its subscript is a lazy run, so a word of 200000 characters that holds no
+        closing bracket, or only closings that no brace follows, must cost a pass over it and no more (each pattern is tried at the start of the word only)."""
+        m = _Judge(LIBDIR, "guard_fd_name", self.clone).m
+        n = 200000
+        words = {"no closing": "{a[" + "x" * n, "no brace": "{a[" + "x" * n + "]", "closings": "{a[" + "]" * n, "brackets": "{a[" + "[" * n + "]}>f", "brackets and closings": "{a" + "[]" * (n // 2),
+                 "blanks": "{a[" + "x y" * (n // 3) + "]}>f", "quoted blank": '{a["x y"]}>f' + "g" * n, "braces": "{a[" + "]}" * (n // 2), "long name": "{" + "a" * n + "}>f"}
+        for name, word in words.items():
+            t0 = time.perf_counter()
+            for rx in (m.REDIR, m.LEADING_REDIR, m.BARE_REDIR, m.FD_REDIR_WORD):
+                rx.match(word)
+            m.is_redirection(word)
+            m.quoted_string(word)
+            self.assertLess(time.perf_counter() - t0, 5.0, name)
 
 
 def case_pool(t):
