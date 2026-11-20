@@ -494,6 +494,212 @@ out=$($FX project attach "$HR" --name hintp 2>&1)
 grep -qx "repo has its own .agent/skills (1 skill): qargi packs link hintp offers to use the library's instead and shows which are new" <<<"$out" && ! grep -q "repo has its own .claude/skills" <<<"$out" \
   && echo "ok   a project with a provider: the hint names that provider's skills directory only" || { echo "FAIL hint for the provider: $out"; fail=1; }
 
+# --- verify.environment: validation, the gated change and the approved declaration (lib/project.sh; the declaration and the state entry are lib/suite_env.py's)
+# The answer is a declaration a whole-suite run is started under; `project set|unset` changes it (a loosening takes a plan token and the owner's words),
+# the declaration last accepted is kept in the state (STATE/verify-env.json) and every route that stores a whole answers file must leave it as it is.
+vok() { echo "ok   $1"; }
+vno() { echo "FAIL $1${2:+: $2}"; fail=1; }
+VST=$T/s/verify-env.json; VAL=$T/s/audit.log
+vsnap() { sha256sum "$T/c/projects/$1.json" "$VST" 2>/dev/null | cut -d' ' -f1 | paste -sd' '; }
+vans() { jq -cS 'if (.verify | type) == "object" then .verify.environment else "no verify" end' "$T/c/projects/$1.json"; }       # the answers' declaration
+vent() { jq -c --arg n "$1" '.projects[$n] | if . == null then "no entry" else .declared end' "$VST" 2>/dev/null || echo "no state"; }                                  # the approved declaration
+vtok() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
+vcase() { # NAME EXPECTED-EXIT 'jq filter on the template answers' [GREP]: validate
+  local f=$T/v.json; jq "$3" <<<"$base" > "$f"; local out rc=0; out=$($DA project validate "$f" 2>&1) || rc=$?
+  if [ "$rc" = "$2" ] && { [ -z "${4:-}" ] || grep -q -- "$4" <<<"$out"; }; then vok "$1"; else vno "$1" "exit $rc, wanted $2: $out"; fi
+}
+# validation: the launcher's problems() decides; every line names verify-env-invalid
+vcase "verify.environment: an empty object is valid (the defaults)"   0 '.verify={environment:{}}'
+vcase "verify.environment: null is valid (off)"                       0 '.verify={environment:null}'
+vcase "verify: no environment key is valid (off)"                     0 '.verify={}'
+vcase "verify.environment: the example of the design is valid"        0 '.verify={environment:{fds:"ci-like",ci_fds:[142,145],cpu_quota:"200%",env_pass:["LANG"],env_set:{EXAMPLE_OFFLINE:"1"}}}'
+vcase "verify.environment: cpu_quota max and null are valid"          0 '.verify={environment:{cpu_quota:"max"}} | .verify.environment.cpu_quota=null'
+vcase "verify: not an object"                                         1 '.verify="x"' 'verify-env-invalid: verify: an object'
+vcase "verify: an unknown key"                                        1 '.verify={environment:{},other:1}' 'verify-env-invalid: verify.other: unknown key'
+vcase "verify.environment: not an object"                             1 '.verify={environment:true}' 'verify-env-invalid: verify.environment: '
+vcase "verify.environment: an unknown key (signals)"                  1 '.verify={environment:{signals:"default"}}' "verify-env-invalid: verify.environment: unknown key 'signals'"
+vcase "verify.environment: an unknown key (tty)"                      1 '.verify={environment:{tty:"none"}}' "unknown key 'tty'"
+vcase "verify.environment: fds is neither close nor ci-like"          1 '.verify={environment:{fds:"open"}}' 'fds:'
+vcase "verify.environment: ci_fds without ci-like"                    1 '.verify={environment:{ci_fds:[142,145]}}' 'ci_fds is accepted only with fds ci-like'
+vcase "verify.environment: ci_fds of one number"                      1 '.verify={environment:{fds:"ci-like",ci_fds:[3]}}' 'ci_fds:'
+vcase "verify.environment: ci_fds of three numbers"                   1 '.verify={environment:{fds:"ci-like",ci_fds:[3,4,5]}}' 'ci_fds:'
+vcase "verify.environment: ci_fds of two equal numbers"               1 '.verify={environment:{fds:"ci-like",ci_fds:[4,4]}}' 'ci_fds:'
+vcase "verify.environment: ci_fds out of range"                       1 '.verify={environment:{fds:"ci-like",ci_fds:[2,1024]}}' 'ci_fds:'
+vcase "verify.environment: cpu_quota below the minimum"               1 '.verify={environment:{cpu_quota:"9%"}}' 'cpu_quota:'
+vcase "verify.environment: cpu_quota above the maximum"               1 '.verify={environment:{cpu_quota:"12801%"}}' 'cpu_quota:'
+vcase "verify.environment: cpu_quota as a number"                     1 '.verify={environment:{cpu_quota:200}}' 'cpu_quota:'
+vcase "verify.environment: env_pass is not a list"                    1 '.verify={environment:{env_pass:"LANG"}}' 'env_pass:'
+vcase "verify.environment: a name that is not a name"                 1 '.verify={environment:{env_pass:["1BAD"]}}' 'env_pass:'
+vcase "verify.environment: PATH is always passed"                     1 '.verify={environment:{env_pass:["PATH"]}}' 'PATH always passes'
+vcase "verify.environment: HOME is always passed"                     1 '.verify={environment:{env_set:{HOME:"/x"}}}' 'HOME always passes'
+vcase "verify.environment: a QARGI_ name"                             1 '.verify={environment:{env_set:{QARGI_X:"1"}}}' 'no QARGI_\* name'
+vcase "verify.environment: a cloud-binding name run_clean removes"    1 '.verify={environment:{env_pass:["ANTHROPIC_PROFILE"]}}' 'ANTHROPIC_PROFILE'
+vcase "verify.environment: a name in both lists"                      1 '.verify={environment:{env_pass:["LANG"],env_set:{LANG:"C"}}}' 'LANG is in both env_pass and env_set'
+vcase "verify.environment: a name twice in env_pass"                  1 '.verify={environment:{env_pass:["LANG","LANG"]}}' 'listed twice'
+vcase "verify.environment: env_set is not an object"                  1 '.verify={environment:{env_set:["A"]}}' 'env_set:'
+vcase "verify.environment: an env_set value with a line break"        1 '.verify={environment:{env_set:{A:"x\ny"}}}' 'env_set:'
+vcase "verify.environment: an env_set value that is not a string"     1 '.verify={environment:{env_set:{A:1}}}' 'env_set:'
+
+# off changes nothing: no verify answer, no state file; an unrelated set and unset read no state and leave it absent
+echo "$base" | jq '.project="vdemo"' > $T/vd.json
+$DA project init vdemo --answers $T/vd.json >/dev/null 2>&1 || vno "init vdemo"
+$DA project set vdemo budget_cents 600 >/dev/null 2>&1; $DA project set vdemo review.scrub scripts/x >/dev/null 2>&1; project_unset vdemo review.scrub >/dev/null 2>&1
+[ ! -e "$VST" ] && vok "off in both places: init, set and unset of other answers leave no state file" || vno "a state file was made for a project without the setting"
+
+# a first declaration is plain: no token, the entry follows the answers and says which verb wrote it; the state file is mode 600
+rm -f "$VAL"
+msg=$($DA project set vdemo verify.environment '{"fds":"ci-like","cpu_quota":"200%"}' 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(vans vdemo)" = '{"cpu_quota":"200%","fds":"ci-like"}' ] && [ "$(vent vdemo)" = '{"ci_fds":[142,145],"cpu_quota":"200%","env_pass":[],"env_set":{},"fds":"ci-like"}' ] \
+  && [ "$(jq -r .projects.vdemo.by "$VST")" = set ] && [ "$(stat -c %a "$VST")" = 600 ] && ! grep -q verify-environment-loosened "$VAL" 2>/dev/null; } \
+  && vok "set: a first declaration is plain; the entry holds the normalised declaration, the verb, mode 600; nothing is audited as a loosening" || vno "first declaration (rc=$rc)" "$msg; entry $(vent vdemo)"
+grep -q '"verb":"project:set"' "$VAL" && vok "set: a change of verify.environment still writes the project:set audit line" || vno "no project:set audit line"
+# the other answers do not read it: set of an unrelated key leaves the entry alone
+before=$(cat "$VST"); $DA project set vdemo budget_cents 601 >/dev/null 2>&1; [ "$(cat "$VST")" = "$before" ] && vok "set: an unrelated answer leaves the state untouched" || vno "state changed by an unrelated set"
+
+# tightening is plain: the quota goes down, the key below the object works (set one key, the comparison is of the whole declaration)
+msg=$($DA project set vdemo verify.environment.cpu_quota '"100%"' 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(vans vdemo)" = '{"cpu_quota":"100%","fds":"ci-like"}' ] && [ "$(jq -c .projects.vdemo.declared.cpu_quota "$VST")" = '"100%"' ]; } && vok "set: a lower cpu_quota is plain, by the object or by the key below it" || vno "lower quota (rc=$rc)" "$msg"
+
+# a loosening is refused with a token, in the answers and in the state nothing changes; the message names the code, the reason and the token
+for c in 'verify.environment.cpu_quota|"300%"|a higher quota' 'verify.environment.cpu_quota|"max"|max is weaker than a quota' 'verify.environment.cpu_quota|null|no quota is weaker' \
+         'verify.environment.fds|"close"|fds changes' 'verify.environment.env_pass|["LANG"]|env_pass changes' 'verify.environment.env_set|{"A":"1"}|env_set changes' \
+         'verify.environment|null|removal' 'verify.environment|{}|a smaller declaration' 'verify|{}|verify as an object without the setting'; do
+  IFS='|' read -r p v w <<<"$c"; before=$(vsnap vdemo)
+  msg=$($DA project set vdemo "$p" "$v" 2>&1); rc=$?
+  { [ $rc = 1 ] && grep -q 'verify-env-change-unapproved' <<<"$msg" && [ -n "$(vtok <<<"$msg")" ] && [ "$before" = "$(vsnap vdemo)" ]; } && vok "set $p $v ($w): refused with the code and a token, nothing changed" || vno "set $p $v (rc=$rc)" "$msg"
+done
+msg=$(project_unset vdemo verify.environment 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q 'verify-env-change-unapproved' <<<"$msg" && [ "$before" = "$(vsnap vdemo)" ]; } && vok "unset verify.environment: refused as a removal, nothing changed" || vno "unset removal (rc=$rc)" "$msg"
+msg=$(project_unset vdemo verify.environment.fds 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q 'verify-env-change-unapproved' <<<"$msg" && [ "$before" = "$(vsnap vdemo)" ]; } && vok "unset of a key below it: refused when that loosens (fds goes back to close)" || vno "unset fds (rc=$rc)" "$msg"
+# an invalid declaration is refused by validate before any of that, with the code
+msg=$($DA project set vdemo verify.environment '{"ci_fds":[1,2]}' 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q 'verify-env-invalid: verify.environment: ' <<<"$msg" && [ "$before" = "$(vsnap vdemo)" ]; } && vok "set: an invalid declaration is refused with verify-env-invalid, nothing changed" || vno "invalid declaration (rc=$rc)" "$msg"
+
+# the token covers project, old id and new id: it is the same for the same change, other for another; a wrong or missing half is refused again
+t1=$($DA project set vdemo verify.environment '{"fds":"close"}' 2>&1 | vtok); t1b=$($DA project set vdemo verify.environment '{"fds":"close"}' 2>&1 | vtok)
+t2=$($DA project set vdemo verify.environment '{"env_pass":["LANG"]}' 2>&1 | vtok)
+{ [ -n "$t1" ] && [ "$t1" = "$t1b" ] && [ "$t1" != "$t2" ]; } && vok "the token is stable for one change and differs for another" || vno "tokens: $t1 $t1b $t2"
+for args in "--plan $t2 --approved words" "--plan 000000000000 --approved words" "--plan $t1" "--approved words" "--plan $t1 --approved"; do
+  before=$(vsnap vdemo)
+  # shellcheck disable=SC2086
+  msg=$($DA project set vdemo verify.environment '{"fds":"close"}' $args 2>&1); rc=$?
+  case $args in "--plan $t1 --approved") want=2;; *) want=1;; esac
+  { [ $rc = $want ] && [ "$before" = "$(vsnap vdemo)" ]; } && vok "set with '${args//$t1/T1}': refused, nothing changed" || vno "set with '$args' (rc=$rc, wanted $want)" "$msg"
+done
+grep -q 'does not cover this change' <<<"$($DA project set vdemo verify.environment '{"fds":"close"}' --plan "$t2" --approved words 2>&1)" && vok "a token for another change is said not to cover this one" || vno "no message for a token of another change"
+
+# with the token and the owner's words the loosening is applied: answers, state, an audit line with the words
+rm -f "$VAL"
+msg=$($DA project set vdemo verify.environment '{"fds":"close"}' --plan "$t1" --approved "the owner agreed to close" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(vans vdemo)" = '{"fds":"close"}' ] && [ "$(vent vdemo)" = '{"cpu_quota":"max","env_pass":[],"env_set":{},"fds":"close"}' ]; } && vok "set --plan T --approved W applies a loosening to the answers and the state" || vno "approved loosening (rc=$rc)" "$msg"
+line=$(grep '"verb":"project:verify-environment-loosened"' "$VAL" | tail -1)
+{ [ -n "$line" ] && [ "$(jq -r .approved <<<"$line")" = "the owner agreed to close" ] && grep -q 'vdemo verify.environment (' <<<"$(jq -r .detail <<<"$line")" && grep -q 'fds changes' <<<"$(jq -r .detail <<<"$line")"; } \
+  && vok "and writes audit_log project:verify-environment-loosened with the old and new id, the reasons and the words" || vno "audit line: $line"
+# going from a declared quota to the default is a loosening; from max to a quota is plain again
+msg=$($DA project set vdemo verify.environment '{"fds":"close","cpu_quota":"400%"}' 2>&1); [ $? = 0 ] && [ "$(vent vdemo | jq -c .cpu_quota)" = '"400%"' ] && vok "set: from max to a quota is plain" || vno "max to quota: $msg"
+
+# removal: set null and unset with the token; the entry stores null (not no entry), so the removal is remembered
+t=$($DA project set vdemo verify.environment null 2>&1 | vtok)
+msg=$($DA project set vdemo verify.environment null --plan "$t" --approved "turn it off" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(vans vdemo)" = null ] && [ "$(vent vdemo)" = null ] && [ "$(jq -c .projects.vdemo.declared "$VST")" = null ]; } && vok "set null with the token removes the declaration; the entry stores declared null" || vno "removal (rc=$rc)" "$msg"
+# from off, a declaration is a plain tightening again (nothing is declared)
+msg=$($DA project set vdemo verify.environment '{"fds":"ci-like","env_pass":["LANG"]}' 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(jq -c .projects.vdemo.declared.env_pass "$VST")" = '["LANG"]' ]; } && vok "set: a declaration where the approved one is off is plain" || vno "declaration after off (rc=$rc)" "$msg"
+t=$(project_unset vdemo verify.environment 2>&1 | vtok)
+msg=$(project_unset vdemo verify.environment --plan "$t" --approved "remove it" 2>&1); rc=$?
+{ [ $rc = 0 ] && { [ "$(vans vdemo)" = '"no verify"' ] || [ "$(vans vdemo)" = null ]; } && [ "$(jq -c .projects.vdemo.declared "$VST")" = null ] && grep -q 'remove it' "$VAL"; } && vok "unset --plan T --approved W removes the key and records off" || vno "unset with the token (rc=$rc)" "$msg"
+$DA project validate vdemo >/dev/null 2>&1 && vok "the project is valid after the removal" || vno "validate after removal"
+
+# --plan and --approved belong to this answer: elsewhere they are a usage error, and an unknown option is too
+for a in 'set vdemo budget_cents 5 --plan x' 'set vdemo budget_cents 5 --approved x' 'set vdemo budget_cents 5 --bogus' 'set vdemo verify.environment {} --bogus' 'set vdemo verify.environment {} --plan'; do
+  # shellcheck disable=SC2086
+  msg=$($DA project $a 2>&1); rc=$?; [ $rc = 2 ] && vok "project $a: usage error (exit 2)" || vno "project $a (rc=$rc)" "$msg"
+done
+msg=$(project_unset vdemo budget_cents --plan x 2>&1); rc=$?; [ $rc = 2 ] && grep -q 'apply only to verify.environment' <<<"$msg" && vok "unset of another answer with --plan: usage error" || vno "unset --plan elsewhere (rc=$rc)" "$msg"
+
+# the approved declaration is the old side, never the answers file: a hand edit to off, then a plain set, does not count as a first declaration
+$DA project set vdemo verify.environment '{"fds":"ci-like","cpu_quota":"200%"}' >/dev/null 2>&1; apx=$(vent vdemo)
+jq 'del(.verify)' "$T/c/projects/vdemo.json" > $T/hand.json && cp $T/hand.json "$T/c/projects/vdemo.json"
+before=$(vsnap vdemo)
+msg=$($DA project set vdemo verify.environment '{"fds":"close"}' 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q 'verify-env-change-unapproved' <<<"$msg" && [ "$before" = "$(vsnap vdemo)" ] && [ "$(vent vdemo)" = "$apx" ]; } && vok "after a hand edit to off, a plain set is compared with the approved declaration, not with the file: it asks for the token" || vno "hand edit then set (rc=$rc)" "$msg"
+# the same file, set back to the approved declaration, is plain (it restores what was approved)
+msg=$($DA project set vdemo verify.environment '{"fds":"ci-like","cpu_quota":"200%"}' 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(vans vdemo)" = '{"cpu_quota":"200%","fds":"ci-like"}' ] && [ "$(vent vdemo)" = "$apx" ]; } && vok "setting the approved declaration again restores the answers and leaves the entry as it is" || vno "restore (rc=$rc)" "$msg"
+
+# the routes that store a whole answers file leave the declaration as approved: init --force
+cp "$T/c/projects/vdemo.json" $T/before.json; cp "$VST" $T/state.before
+jq '.project = "vdemo"' $T/before.json > $T/g.json
+for f in 'del(.verify)' '.verify.environment = null' '.verify.environment.fds = "close"' '.verify.environment.cpu_quota = "300%"' '.verify.environment.env_pass = ["LANG"]'; do
+  jq "$f" $T/g.json > $T/g2.json
+  msg=$($DA project init vdemo --answers $T/g2.json --force 2>&1); rc=$?
+  { [ $rc = 1 ] && grep -q 'verify-env-change-unapproved' <<<"$msg" && grep -q 'qargi project set vdemo verify.environment JSON' <<<"$msg" && cmp -s $T/before.json "$T/c/projects/vdemo.json" && cmp -s $T/state.before "$VST"; } \
+    && vok "init --force refuses a file that does not carry the approved declaration ($f), stores nothing" || vno "init --force $f (rc=$rc)" "$msg"
+done
+jq '.budget_cents = 888' $T/g.json > $T/g2.json
+$DA project init vdemo --answers $T/g2.json --force >/dev/null 2>&1; rc=$?
+{ [ $rc = 0 ] && [ "$(jq .budget_cents "$T/c/projects/vdemo.json")" = 888 ] && cmp -s $T/state.before "$VST"; } && vok "init --force with the declaration as approved stores the file and leaves the entry alone" || vno "init --force unchanged (rc=$rc)"
+# the approved declaration spelled another way (defaults written out, keys in another order) is the same declaration
+jq '.verify.environment = {cpu_quota:"200%", fds:"ci-like", ci_fds:[142,145], env_set:{}, env_pass:[]}' $T/g.json > $T/g2.json
+$DA project init vdemo --answers $T/g2.json --force >/dev/null 2>&1 && vok "init --force: the same declaration with its defaults written out is accepted" || vno "init --force with defaults written out"
+# a state entry that outlives the answers file: init with no project stored is compared too (no file, an entry)
+rm -f "$T/c/projects/vdemo.json"
+jq 'del(.verify)' $T/g.json > $T/g2.json
+msg=$($DA project init vdemo --answers $T/g2.json 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q 'verify-env-change-unapproved' <<<"$msg" && [ ! -e "$T/c/projects/vdemo.json" ]; } && vok "init with no project stored, and an entry in the state: a file without the declaration is refused" || vno "init after the file was deleted (rc=$rc)" "$msg"
+$DA project init vdemo --answers $T/g.json >/dev/null 2>&1 && [ "$(vans vdemo)" = '{"cpu_quota":"200%","fds":"ci-like"}' ] && vok "and the file that carries it is stored" || vno "init with the approved declaration"
+# a first declaration through init: a project with no entry stores a file that declares one, and the entry follows
+echo "$base" | jq '.project = "vfresh" | .verify = {environment: {fds: "ci-like"}}' > $T/vf.json
+$DA project init vfresh --answers $T/vf.json >/dev/null 2>&1; rc=$?
+{ [ $rc = 0 ] && [ "$(jq -r .projects.vfresh.by "$VST")" = init ] && [ "$(vent vfresh | jq -c .fds)" = '"ci-like"' ]; } && vok "init: a file that declares one where there is no entry is a first declaration; the entry is written after it" || vno "init first declaration (rc=$rc)"
+# new: a drafted file has no declaration, so an entry that is not off refuses it (nothing stored; the project's directory was made, which new says before)
+python3 -I lib/suite_env.py approved set vnew '{"fds":"ci-like"}' --by test --state "$T/s" >/dev/null
+export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
+out=$($DA project new vnew --dir "$T/vnew" --url https://github.com/example/vnew 2>&1); tok=$(vtok <<<"$out")
+msg=$($DA project new vnew --dir "$T/vnew" --url https://github.com/example/vnew --plan "$tok" --approved go 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q 'verify-env-change-unapproved' <<<"$msg" && [ ! -e "$T/c/projects/vnew.json" ]; } && vok "new: the drafted answers carry no declaration, so an approved one in the state refuses them and nothing is stored" || vno "new with an entry (rc=$rc)" "$msg"
+unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
+# new with no entry stores as before and writes no state
+export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
+out=$($DA project new vnew2 --dir "$T/vnew2" --url https://github.com/example/vnew2 2>&1); tok=$(vtok <<<"$out")
+$DA project new vnew2 --dir "$T/vnew2" --url https://github.com/example/vnew2 --plan "$tok" --approved go >/dev/null 2>&1; rc=$?
+unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
+{ [ $rc = 0 ] && [ -f "$T/c/projects/vnew2.json" ] && [ "$(vent vnew2)" = '"no entry"' ]; } && vok "new: with nothing approved the project is stored and no entry is written" || vno "new without an entry (rc=$rc)"
+# attach --force keeps the declaration (the stored answers win the merge), and refuses when the stored answers no longer match the state
+echo "$base" | jq '.project = "vatt" | .repo.path = ""' > $T/va.json
+VR=$T/vattrepo; git init -q -b main "$VR"; echo x > "$VR/README"; git -C "$VR" add -A; git -C "$VR" commit -q -m one
+out=$($DA project attach "$VR" --name vatt --url https://github.com/example/vatt 2>&1); tok=$(vtok <<<"$out")
+$DA project attach "$VR" --name vatt --url https://github.com/example/vatt --plan "$tok" --approved go >/dev/null 2>&1 || vno "attach vatt"
+$DA project set vatt verify.environment '{"fds":"ci-like"}' >/dev/null 2>&1; cp "$T/c/projects/vatt.json" $T/before.json
+out=$($DA project attach "$VR" --name vatt --url https://github.com/example/vatt --force 2>&1); tok=$(vtok <<<"$out")
+msg=$($DA project attach "$VR" --name vatt --url https://github.com/example/vatt --force --plan "$tok" --approved go 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(vans vatt)" = '{"fds":"ci-like"}' ] && [ "$(vent vatt | jq -c .fds)" = '"ci-like"' ]; } && vok "attach --force keeps the declaration and the entry" || vno "attach --force (rc=$rc)" "$msg"
+jq 'del(.verify)' "$T/c/projects/vatt.json" > $T/hand.json && cp $T/hand.json "$T/c/projects/vatt.json"; cp "$T/c/projects/vatt.json" $T/before.json
+out=$($DA project attach "$VR" --name vatt --url https://github.com/example/vatt --force 2>&1); tok=$(vtok <<<"$out")
+msg=$($DA project attach "$VR" --name vatt --url https://github.com/example/vatt --force --plan "$tok" --approved go 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q 'verify-env-change-unapproved' <<<"$msg" && cmp -s $T/before.json "$T/c/projects/vatt.json"; } && vok "attach --force over answers edited by hand away from the approved declaration is refused, stores nothing" || vno "attach --force after a hand edit (rc=$rc)" "$msg"
+
+# a launcher upgrade is no change: the entry holds the hash of the declaration alone, so a raised LAUNCHER_VERSION refuses nothing
+rm -rf "$T/lib3"; cp -r lib "$T/lib3"; sed -i 's/^LAUNCHER_VERSION = 1 /LAUNCHER_VERSION = 7 /' "$T/lib3/suite_env.py"
+grep -q '^LAUNCHER_VERSION = 7 ' "$T/lib3/suite_env.py" || vno "could not raise LAUNCHER_VERSION in the copy"
+cp "$T/c/projects/vdemo.json" $T/before.json
+msg=$(cd "$T" && "$T/lib3/project.sh" init vdemo --answers $T/g.json --force 2>&1); rc=$?
+{ [ $rc = 0 ] && cmp -s <(jq -S . $T/g.json) <(jq -S . "$T/c/projects/vdemo.json"); } && vok "a raised LAUNCHER_VERSION does not refuse the stored declaration" || vno "init under another LAUNCHER_VERSION (rc=$rc)" "$msg"
+
+# a state file that cannot be read is never a first declaration: every route that compares refuses, and says so; unrelated answers still change
+cp "$T/c/projects/vdemo.json" $T/before.json; cp "$VST" $T/state.good
+for bad in 'not json' '{"version":1}' '[]'; do
+  printf '%s\n' "$bad" > "$VST"; before=$(vsnap vdemo)
+  msg=$($DA project set vdemo verify.environment '{"fds":"ci-like"}' 2>&1); rc=$?
+  m2=$($DA project init vdemo --answers $T/g.json --force 2>&1); rc2=$?
+  { [ $rc = 1 ] && [ $rc2 = 1 ] && grep -q 'cannot be read as the approved declarations' <<<"$msg" && grep -q 'cannot be read as the approved declarations' <<<"$m2" && [ "$before" = "$(vsnap vdemo)" ]; } \
+    && vok "a damaged state file ($bad): set and init refuse, naming the file, and change nothing" || vno "damaged state $bad (rc=$rc/$rc2)" "$msg / $m2"
+done
+$DA project set vdemo budget_cents 4242 >/dev/null 2>&1 && [ "$(jq .budget_cents "$T/c/projects/vdemo.json")" = 4242 ] && vok "a damaged state file does not stop a set of another answer" || vno "unrelated set with a damaged state"
+cp $T/state.good "$VST"; cp $T/before.json "$T/c/projects/vdemo.json"
+$DA project validate vdemo >/dev/null 2>&1 && vok "validate reads no state: it is unaffected" || vno "validate"
+
 # --- project link | unlink: skills, agents and memory, linked from ~/.qargi into the checkout and the runtime's memory directory
 # One plan and one token for the lot; a worktree gets its links by running the verb inside it; nothing records the worktrees. A member's run
 # never applies, so work from the temporary directory (this test may itself run in one).

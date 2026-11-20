@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- The project answer `verify.environment` (an object, or `null` for off; kept in the answers, never in the repository) is accepted, validated and guarded. `qargi project validate`, `set`, `unset`, `init`, `new` and `attach` refuse an invalid declaration with `verify-env-invalid` and the line that is wrong (an unknown key, `ci_fds` without `fds` `ci-like`, a variable name that `PATH`, `HOME`, `QARGI_*` or the cloud binding rules out, and so on; the checks are the launcher's, `lib/suite_env.py problems`). The declaration qargi last accepted is kept in `<state>/verify-env.json` (mode 600), apart from the answers. `qargi project set NAME verify.environment JSON` (also a key below it, `verify`, and `project unset`) compares the new declaration with that one: a first declaration, or a lower `cpu_quota` (from `null`, from `"max"`, or from a higher `N%`), is plain; every other change (removal, a higher quota, any change of `fds`, `ci_fds`, `env_pass` or `env_set`) is refused with `verify-env-change-unapproved` and a plan token, and is applied with `--plan TOKEN --approved "<the owner's words>"`, which writes the audit line `project:verify-environment-loosened`. Both options are new on `project set` and `project unset` and are accepted for this answer only. `project init`, `new` and `attach` refuse, and store nothing, an answers file whose declaration is not the approved one; a first declaration, with nothing approved yet, is stored and recorded. A state file that cannot be read refuses these routes, and is never taken for a first declaration. `project set` now refuses an option it does not know (exit 2); it ignored extra words after the value.
+
 ### Changed
 - The CI time limit of the pull request job is 80 minutes (the budgets of the heaviest steps no longer fit 65); the job that runs the whole suite has the same limit.
 
