@@ -692,7 +692,7 @@ out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
 # --- the members' sign-in (the link source of dispatch.home): a member run never uses, writes through or locks the user's own ~/.codex. ---
 # The source is refused (exit 2) by local prepare, before it makes anything, and by local run, before it starts anything, when it does not exist,
 # is not a regular file, or resolves inside ~/.codex; each message names the path and the one-line login that makes it.
-LOGIN='  CODEX_HOME=~/.codex-members codex login'; DECL=\~/.codex-members/auth.json; SRN=0
+LOGIN='  mkdir -m 700 ~/.codex-members && CODEX_HOME=~/.codex-members codex login'; DECL=\~/.codex-members/auth.json; SRN=0
 nmade() { ls -d "$T"/qargi* 2>/dev/null | wc -l; }
 setprov codex; prep "$T/r" sr0; task; SR=$RUN
 refused() { # LABEL EXPECTED-TEXT: prepare and run (a dry run and a real one) refuse, name the path and the login, and make or start nothing

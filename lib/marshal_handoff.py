@@ -45,7 +45,7 @@ only they are not bounded.
 
 Exit status: 0 ok, 1 refused or failed (message on stderr), 2 usage.
 Run through lib/marshal.sh; python3 -I, standard library only."""
-import argparse, importlib.util, json, os, re, socket, subprocess, sys
+import argparse, contextlib, importlib.util, io, json, os, re, socket, subprocess, sys
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 CAP_BYTES = 16 * 1024
@@ -71,6 +71,7 @@ _MS = None
 _PV = None
 _RN = None
 _GT = None
+_SE = None
 
 
 def gt():
@@ -81,6 +82,17 @@ def gt():
         _GT = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(_GT)
     return _GT
+
+
+def se():
+    """lib/suite_env.py (the verify.environment declaration and its id), loaded by path."""
+    global _SE
+    if _SE is None:
+        spec = importlib.util.spec_from_file_location("suite_env", os.path.join(HERE, "suite_env.py"))
+        _SE = importlib.util.module_from_spec(spec)
+        sys.modules["suite_env"] = _SE
+        spec.loader.exec_module(_SE)
+    return _SE
 
 
 def ms():
@@ -164,8 +176,26 @@ def read_only_backend(M, a):
     return be
 
 
-def suite_of(state, project, test_cmd, name, tip):
-    """What `feature verify` recorded for feature/NAME (the file lib/gitflow.sh rec() names), judged as `feature status` does."""
+def env_id_of(answers, state, project):
+    """The id of the project's verify.environment as lib/gitflow.sh suite_env_load gives it to verified() (SUITE_ENV_ID): "" when the setting is off, when the
+    declaration is invalid, or when the file of accepted declarations cannot be read (status goes on as if the setting were off); otherwise the id of the
+    normalised declaration, whether or not it is the accepted one."""
+    verify = answers.get("verify")
+    decl = verify.get("environment") if isinstance(verify, dict) else None
+    try:
+        norm = se().normalise(decl)
+        if norm is None:
+            return ""
+        with contextlib.redirect_stderr(io.StringIO()):
+            se().approved_check(project, decl, state)
+        return se().suite_env_id(norm)
+    except (se().Invalid, SystemExit):
+        return ""
+
+
+def suite_of(state, project, test_cmd, name, tip, env_id=""):
+    """What `feature verify` recorded for feature/NAME (the file lib/gitflow.sh rec() names), judged as `feature status` does: the run counts only when it ran
+    the project's current test command under the current verify.environment id (env_id, "" when off), as verified() selects."""
     p = os.path.join(state, "releases", "%s-feature_%s.json" % (project, name))
     try:
         with open(p) as f:
@@ -182,6 +212,9 @@ def suite_of(state, project, test_cmd, name, tip):
     base = {"sha": sha, "result": res, "at": at}
     if r.get("command") != test_cmd:
         return dict(base, state="other-command", text="the last run (%s) used another test command than the project's now: it does not count" % res)
+    env = r.get("environment")
+    if ((env.get("id") if isinstance(env, dict) else None) or "") != env_id:
+        return dict(base, state="other-environment", text="the last run (%s) was made under another verify.environment or launcher than the project's now: it does not count" % res)
     if sha == tip:
         return dict(base, state="at-tip", text="%s at this tip%s" % (res, (", run at " + at) if at else ""))
     return dict(base, state="older", text="%s at an older head (%s), NOT at this tip: it does not apply" % (res, sha[:7]))
@@ -244,7 +277,7 @@ def order_key(f):
             mins if isinstance(mins, (int, float)) and not isinstance(mins, bool) else float("inf"), f["name"])
 
 
-def feature_facts(M, ctx, name, test_cmd, state, project, repo, cache, bases):
+def feature_facts(M, ctx, name, test_cmd, state, project, repo, cache, bases, env_id=""):
     rec = M.unled(ctx, name, ctx.be.get(ctx, name))
     d = M.describe(ctx, name, rec, cache)
     f = {"name": name, "branch_exists": d["branch"], "tip": "", "ahead": None, "behind": None, "suite": {"state": "not-run", "text": "no branch"},
@@ -254,7 +287,7 @@ def feature_facts(M, ctx, name, test_cmd, state, project, repo, cache, bases):
     if d["branch"]:
         ref = "refs/heads/feature/" + name
         f["tip"] = sha_of(repo, ref)
-        f["suite"] = suite_of(state, project, test_cmd, name, f["tip"])
+        f["suite"] = suite_of(state, project, test_cmd, name, f["tip"], env_id)
         if sha_of(repo, "refs/heads/develop"):
             a = (git(repo, "rev-list", "--count", "refs/heads/develop..%s" % ref) or "").strip()
             b = (git(repo, "rev-list", "--count", "%s..refs/heads/develop" % ref) or "").strip()
@@ -420,6 +453,7 @@ def collect(a, argv_name):
     if gates and not gt().problems(gates):
         test_cmd = gt().identity(gates, ["feature"])    # with declared gates the record's command is their identity, as `feature verify` writes it (lib/gates.py)
         gate_rows = [{"tier": g["tier"], "name": line(g["name"], 80), "command": line(g["command"], 200)} for g in gt().select(gates, ["feature", "release"])]
+    env_id = env_id_of(answers, a.state, a.project)
     repo = a.repo if a.repo and os.path.isdir(a.repo) else ""
     if not present:
         notes.append("the answers of %s are not on this host: the repository, the packs and the memory tiers cannot be described from here" % a.project)
@@ -467,7 +501,7 @@ def collect(a, argv_name):
         ctx = M.Ctx(ns, M.LocalBackend())
         names = get_features(ctx)
     cache, bases = {}, M.agent_bases(ctx)
-    feats = sorted((feature_facts(M, ctx, n, test_cmd, a.state, a.project, repo, cache, bases) for n in names), key=order_key)
+    feats = sorted((feature_facts(M, ctx, n, test_cmd, a.state, a.project, repo, cache, bases, env_id) for n in names), key=order_key)
     # a work tree is listed under the feature it belongs to; the ones of no feature once, at the project level
     wts_other = []
     for w in (worktree_list(repo) if repo else []):

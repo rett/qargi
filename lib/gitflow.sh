@@ -256,6 +256,20 @@ cleanup() { [ -z "$WT" ] || { g worktree remove --force "$WT" >/dev/null 2>&1 ||
 BUSY=''
 busy_begin() { mkdir -p "$DA_STATE/busy" 2>/dev/null; BUSY=$DA_STATE/busy/$PROJ.$1.${2//\//_}.pid; echo "$$" > "$BUSY" 2>/dev/null || BUSY=''; }
 busy_end() { [ -z "$BUSY" ] || rm -f "$BUSY"; BUSY=''; }
+# busy_same_refuse KIND NAME: with verify.environment on, a second whole-suite run of the same KIND and NAME while the first is alive is refused, before anything is made
+# or claimed: the two would share one directory for the reports of the launcher (run_suite_logged), and the second would delete the first's reports, so the first could
+# end on a refusal code that is not its own. It reads the pid file busy_begin writes, and busy_begin runs only after the launcher's attempt, the worktree, the claim and
+# the warning of the other runs: a second verify started while the first is still preparing (seconds) is not refused, and this window is not closed. A mark whose pid is
+# alive but is no verify (a pid reused after a verify died without its EXIT trap) refuses too, so the message names the file to remove. With the setting off nothing changes (the two runs share the log, as they always did, and other_runs_warning says so).
+busy_same_refuse() {
+  local f=$DA_STATE/busy/$PROJ.$1.${2//\//_}.pid pid
+  [ -n "${SUITE_ENV:-}" ] && [ -f "$f" ] || return 0
+  pid=$(cat "$f" 2>/dev/null) || return 0
+  case $pid in ''|*[!0-9]*) return 0;; esac
+  [ "$pid" != "$$" ] || return 0
+  kill -0 "$pid" 2>/dev/null || return 0
+  die "another $1 of $2 is running (pid $pid, busy mark $f): with verify.environment the two runs would share one directory for the reports of the launcher, and the second would delete the first's. Wait for it to end (if pid $pid is no qargi verify, the mark is stale: remove $f). Nothing was run"
+}
 # lead_advice [--feature NAME]: the one line of the stage verbs (feature finish, the last merge of a feature, release finish, marshal handoff):
 # the lead's context in use and whether a compact is safe now (lib/lead_usage.py). Fail-soft: it never changes the status of the verb.
 lead_advice() {
@@ -530,6 +544,10 @@ suite_env_prepare() {
     mapfile -t want < <(printf '%s\n' "${want[@]}" | sort -u)
   fi
   [ -n "$SUITE_ENV" ] || return 0
+  case $again in   # the pid file the verb's busy_begin writes: a second verify of the same name is refused before the attempt, the waiver or the worktree
+    "qargi feature verify "*) busy_same_refuse verify "$NAME_ARG";;
+    "qargi release verify "*) busy_same_refuse release-verify "$VER";;
+  esac
   SE_KEY=$(printf '%s\n' "$PROJ" "$br" "$head" "$SUITE_ENV_ID" | plan_token)
   suite_env_gen
   out=$(python3 -I "$SE" probe --decl "$SUITE_ENV" </dev/null) || rc=$?

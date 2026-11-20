@@ -3429,22 +3429,34 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None, at=None):
     """The reason a qargi command (or the script behind it, run directly) is a verb that changes a skill, or None. via_xargs: xargs
     stands before the program, so its arguments come from standard input, where --write could be. here: the directory the command runs
     in, and exe: the word that names the program, for the scripts that are only the tool's own (OWN_ONLY). at: the index in rest of the
-    script an interpreter runs, one of scripts_of (each is judged)."""
+    script an interpreter runs, one of scripts_of (each is judged). The words are read twice: as they are (a quoted '>' that reads as a redirection
+    is an argument) and without the redirections (the shell takes them out, so a redirection written after the program or the area word hides no verb);
+    the command is refused when either reading is a refused one."""
+    why = skill_verb_reading(prog, rest, via_xargs, here, exe, at, False)
+    if why or at is not None:
+        return why
+    if any(is_redirection(t) and not quoted_string(t) for t in rest):
+        return skill_verb_reading(prog, rest, via_xargs, here, exe, at, True)
+    return None
+
+
+def skill_verb_reading(prog, rest, via_xargs, here, exe, at, strip):
+    """skill_verb for one reading of the words: strip True reads the words that name the area and the verb without the redirections and their targets."""
     # a ) with no ( in a word closes a substitution or group whose start the plain split cut off (`printf -v x 'b[%s(true; qargi upgrade)]' $`
     # runs `qargi upgrade` in an arithmetic subscript): the command ends there, so the verb is read without it
     cut = [t.split(")")[0] if ")" in t and "(" not in t else t for t in rest]
-    words = [t for t in cut if not t.startswith("-")]
+    words = [t for t in (without_redirections(cut) if strip else cut) if not t.startswith("-")]
     name, script = prog, exe or prog
     if prog not in SCRIPTS and at is None:               # also a script a shell runs, or sources into itself (`. install.sh` runs it as `sh install.sh` does)
         for k in scripts_of(prog, cut):                  # past the interpreter's options and their values (python3 -X dev, bash -o errexit); each word that may be it
             tick()
-            why = skill_verb(prog, rest, via_xargs, here, exe, at=k)
+            why = skill_verb_reading(prog, rest, via_xargs, here, exe, k, strip)
             if why:
                 return why
         return None
     if prog not in SCRIPTS:
         k = at
-        name, script, words = os.path.basename(cut[k]), cut[k], [t for t in cut[k + 1:] if not t.startswith("-")]
+        name, script, words = os.path.basename(cut[k]), cut[k], [t for t in (without_redirections(cut[k + 1:]) if strip else cut[k + 1:]) if not t.startswith("-")]
     if name in OWN_ONLY and not own_named(prog, cut, script, here):
         return None
     if name == "campaign.py" or (name in ("qargi", "jsonplan.py") and words[:1] == ["campaign"]):
@@ -3593,15 +3605,18 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None, at=None):
         return "qargi provider adapter-run runs the adapter of a runtime, and with --check makes a private copy of a library adapter, and is not available to an agent"
     if area == "provider" and verb not in PROVIDER_READ:
         return "qargi provider %s changes the provider definitions and is not available to an agent" % verb
-    if area in ("feature", "release") and "verify" in words[1:4]:
+    stripped = without_redirections(words)               # the reading where every redirection is one (the shell takes it out); words is the one where a quoted one is an argument
+    if area in ("feature", "release") and ("verify" in words[1:4] or "verify" in stripped[1:4]):
         # a waiver of a part of verify.environment is the owner's words: the shell refuses it in a member run (in_member_run), but a member
         # that another session started has no member mark and works outside its run directory, so the guard refuses the option with --approved (the attempt without --approved
         # only prints a token and stays open). A word the guard cannot read (a variable, an array expansion, a substitution, or xargs) can split into several
         # words and carry both options, so any such word is refused, as a path of the answers command is
         argv = cut if prog in SCRIPTS else cut[k + 1:]
-        argv = without_redirections(argv)      # the shell takes a redirection and its target out of the words: a redirect to a path built from a variable is no argument of the verb
+        raw = argv
+        argv = without_redirections(raw)       # the shell takes a redirection and its target out of the words: a redirect to a path built from a variable is no argument of the verb
         unreadable = via_xargs or any(any(c in t for c in UNREADABLE) for t in argv)
-        waive, approved = "--waive-environment" in argv, "--approved" in argv
+        # the words carry no quotes, so a quoted '>' reads as a redirection and would take the next word (--approved) with it: the two options are looked for in the raw words too
+        waive, approved = "--waive-environment" in raw, "--approved" in raw
         if (waive and approved) or unreadable:
             return OwnReason("qargi %s verify with --waive-environment and --approved waives a part of verify.environment with the owner's words (a flag the guard cannot read could be either) "
                              "and is not available to an agent; report the refusal and the plan token it printed instead" % area)
@@ -3620,7 +3635,10 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None, at=None):
     if area == "env" and (verb in ENV_LEAD or builds_word(verb)):
         return ("qargi env %s runs the project's dry-run or bootstrap command, which is project code, with the lead's rights, and is not available to an agent "
                 "(qargi env show only reads); report what you need in your task output" % (verb if verb in ENV_LEAD else "plan|apply"))
-    if area == "release" and any(w == "publish" or "$" in w or "`" in w for w in without_redirections(words)[1:4]):   # a verb held in a variable could be publish (a redirection's target is no verb)
+    # the verb publish is looked for in the raw words (a quoted '>' reads as a redirection and would take the word after it, publish, with it) and in the words without the
+    # redirections (two or more real ones before it push it out of the first three raw words); a verb held in a variable could be publish too, and there a redirection's
+    # target is no verb, so the variable test reads the words without the redirections
+    if area == "release" and ("publish" in words[1:4] or "publish" in stripped[1:4] or any("$" in w or "`" in w for w in stripped[1:4])):
         return "qargi release publish creates a GitHub release and is not available to an agent; report that the tag needs publishing"
     if area == "feature" and verb == "park":
         return OwnReason("qargi feature park resets the parking branch to develop and checks it out in the main checkout (and journals the move), which is the lead's to do; "
