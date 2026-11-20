@@ -1132,6 +1132,9 @@ class Skills(HookCase):
                   "echo y > ~/.claude/agents/m.md", "echo y > ~/.claude/plugins/p.json", "cd %s && echo y > .claude/skills/p/SKILL.md" % self.proj,
                   "rm -rf %s/.claude" % self.proj, "echo y > link-to-library/links.json", "cp a.md link-to-library/", "rm -rf link-to-library/skills", "tar xf a.tgz -C %s/x" % ls, "tar czf %s/x/b.tgz ." % ls, "tar --extract --file=a.tgz --directory=%s/x" % ls, "unzip -o a.zip -d %s/x" % ls, "curl -o %s/x/SKILL.md http://h/f" % ls,
                   "find %s -name '*.md' -delete" % ls, "find %s -exec rm {} +" % lib, "git -C %s checkout ." % lib, "patch %s/x/SKILL.md fix.diff" % ls,
+                  # a write through a bare named descriptor ({fd}> FILE opens the file for writing: refused here, allowed before 0.3.5)
+                  "echo x {fd}> $HOME/.claude/skills/x/SKILL.md", "{fd}> $HOME/.claude/skills/x/SKILL.md echo x", "exec {fd}> $HOME/.claude/skills/x/SKILL.md",
+                  "echo x {fd}>$HOME/.claude/skills/x/SKILL.md", "echo x {a[1]}> $HOME/.claude/skills/x/SKILL.md",
                   "git 2>/dev/null -C %s checkout ." % lib, "git -C %s 2>/dev/null checkout ." % lib, "git {fd}>f -C %s checkout ." % lib,
                   "bash -c 'echo y > %s/links.json'" % lib, "sh -c \"cd %s/x; touch y\"" % ls, "eval 'rm %s/x/SKILL.md'" % ls,
                   "echo $(echo y > %s/links.json)" % lib):
