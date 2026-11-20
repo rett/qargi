@@ -113,21 +113,23 @@ class Invalid(ValueError):
 _CLOUD_NAMES = None
 
 
+def _parse_cloud_names(text):
+    """The names that `env -u NAME` removes in the run_clean function of a lib.sh text; () when the function or the form is not found."""
+    m = re.search(r"^run_clean\(\)[^\n]*\n(.*?)^\}", text, re.M | re.S)
+    return tuple(re.findall(r"-u ([A-Za-z_][A-Za-z0-9_]*)", m.group(1))) if m else ()
+
+
 def cloud_binding_names():
     """The variables run_clean (lib/lib.sh) removes before a suite runs, read from there so the two lists cannot drift; QARGI_* is refused
-    as a prefix anyway. An unreadable lib.sh gives none."""
+    as a prefix anyway. () when lib.sh cannot be read or run_clean has another shape: _name_problems then refuses every name, since the
+    list that must not be passed on is not known."""
     global _CLOUD_NAMES
     if _CLOUD_NAMES is None:
-        names = []
         try:
             with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib.sh")) as f:
-                text = f.read()
-            m = re.search(r"^run_clean\(\)[^\n]*\n(.*?)^\}", text, re.M | re.S)
-            if m:
-                names = re.findall(r"-u ([A-Za-z_][A-Za-z0-9_]*)", m.group(1))
+                _CLOUD_NAMES = _parse_cloud_names(f.read())
         except OSError:
-            pass
-        _CLOUD_NAMES = tuple(names)
+            _CLOUD_NAMES = ()
     return _CLOUD_NAMES
 
 
@@ -143,6 +145,8 @@ def _name_problems(label, name, out):
         out.append("%s: %s always passes and cannot be declared" % (label, name))
     elif name.startswith("QARGI_"):
         out.append("%s: %s: no QARGI_* name is accepted" % (label, name))
+    elif not cloud_binding_names():
+        out.append("%s: %s cannot be accepted: the variables run_clean removes cannot be read from lib.sh" % (label, name))
     elif name in cloud_binding_names():
         out.append("%s: %s is removed from every suite run and cannot be declared" % (label, name))
 
@@ -527,8 +531,9 @@ def cmd_run(args, command):
     no_scope = norm["cpu_quota"] is None or args.cpu_route == "no-scope"
     if args.cpu_route == "no-scope" and norm["cpu_quota"] is not None and not args.cpu_code:
         _usage("run: --cpu-route no-scope needs --cpu-code CODE (the code of the failed attempt)")
-    if args.cpu_code and args.cpu_code not in CODES:
-        _usage("run: --cpu-code %s is not a refusal code" % args.cpu_code)
+    if args.cpu_code and CODES.get(args.cpu_code) != "cpu":
+        _usage("run: --cpu-code %s is not a refusal code of the cpu part (%s)" % (
+            args.cpu_code, ", ".join(c for c, p in CODES.items() if p == "cpu")))
     os.environ["PATH"] = procenv.clean_path()
     job = {"decl": norm, "argv": command, "waive": waive, "report": os.path.abspath(args.report),
            "cpu_code": args.cpu_code if (no_scope and norm["cpu_quota"] is not None) else None, "systemd": None}
@@ -1030,7 +1035,12 @@ def cmd_stage2(args):
 # probe
 
 def cmd_probe(args):
-    norm = normalise(_parse_json(args.decl, "DECL"))
+    try:
+        norm = normalise(_parse_json(args.decl, "DECL"))
+    except Invalid as e:
+        for line in e.problems:
+            print("qargi: %s: %s" % (CODE_INVALID, line), file=sys.stderr)
+        return 2
     if norm is None:
         _usage("probe: the declaration is null: nothing to probe")
     route = "no-scope" if norm["cpu_quota"] is None else "scope"

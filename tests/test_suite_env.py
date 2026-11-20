@@ -207,6 +207,17 @@ class Declaration(Scratch):
             self.assertTrue(any("cannot be declared" in p or "QARGI_" in p for p in SE.problems({"env_pass": [n]})), n)
             self.assertTrue(SE.problems({"env_set": {n: "x"}}), n)
 
+    def test_an_unparsable_run_clean_is_a_problem_not_an_empty_list(self):
+        good = "run_clean() { # x\n  local dir=$1; shift\n  (cd \"$dir\" && env -u AAA_ONE -u BBB_TWO \"$@\") 7>&-\n}\n"
+        self.assertEqual(SE._parse_cloud_names(good), ("AAA_ONE", "BBB_TWO"))
+        for text in ("", "other() { :; }\n", "run_clean() {\n  env --unset=AAA_ONE \"$@\"\n}\n"):
+            self.assertEqual(SE._parse_cloud_names(text), (), text)
+        with mock.patch.object(SE, "cloud_binding_names", return_value=()):
+            for d in ({"env_pass": ["FOO"]}, {"env_set": {"FOO": "1"}}):
+                found = SE.problems(d)
+                self.assertTrue(any("cannot be read from lib.sh" in p for p in found), found)
+            self.assertEqual(SE.problems({}), [])                       # nothing declared: nothing to compare
+
     def test_the_default_row(self):
         n = SE.normalise({})
         self.assertEqual(n, {"fds": "close", "cpu_quota": "max", "env_pass": [], "env_set": {}})
@@ -515,6 +526,26 @@ class Cli(Scratch):
         self.assertEqual(self.cli("approved", "get", "p", "--state", state).returncode, 1)
         self.assertEqual(self.cli("approved", "check", "p", "null", "--state", state).returncode, 0)
         self.assertEqual(self.cli("approved", "check", "p", "{}", "--state", state).returncode, 1)
+
+    def test_probe_of_an_invalid_declaration_is_a_usage_error(self):
+        r = self.cli("probe", "--decl", '{"signals": 1}')
+        self.assertEqual(r.returncode, 2)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertIn("verify-env-invalid", r.stderr)
+        self.assertEqual(r.stdout, "")
+        r = self.cli("probe", "--decl", "{nope")
+        self.assertEqual(r.returncode, 2)
+        self.assertNotIn("Traceback", r.stderr)
+
+    def test_cpu_code_is_a_code_of_the_cpu_part(self):
+        for code in ("verify-env-tty", "verify-env-fds", "verify-env-signals", "verify-env-invalid", "verify-env-no-log", "nonsense"):
+            r, rep = self.run_cmd({"cpu_quota": "200%"}, ["true"], waive="cpu", extra=["--cpu-route", "no-scope", "--cpu-code", code])
+            self.assertEqual(r.returncode, 2, code)
+            self.assertIn("cpu", r.stderr)
+        for code in ("verify-env-cpu-no-systemd-run", "verify-env-cpu-systemd-too-old", "verify-env-cpu-no-user-manager", "verify-env-cpu-readback"):
+            r, rep = self.run_cmd({"cpu_quota": "200%"}, ["true"], waive="cpu", extra=["--cpu-route", "no-scope", "--cpu-code", code])
+            self.assertEqual(r.returncode, 0, (code, r.stderr))
+            self.assertEqual(rep["codes"], [code])
 
     def test_run_refuses_a_bad_call(self):
         r, rep = self.run_cmd({"fds": "close", "cpu_quota": None}, [])
