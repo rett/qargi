@@ -683,10 +683,11 @@ class Skills(HookCase):
 
     def test_refuses_project_set_of_the_ci_and_deviation_answers_and_the_newer_lead_answers_to_a_member(self):
         """ci.not_gates takes a CI job out of the comparison with the gates and methodology_accepted takes a deviation out of the open ones: both are the lead's,
-        so project set refuses them (whole or by a dotted path) as it refuses the other lead-only answers; so are the newer release, review and backlog answers.
-        Look-alikes (cis, ci_jobs, methodology, methodology_accepted_x) stay open."""
+        so project set refuses them (whole or by a dotted path) as it refuses the other lead-only answers; so are the newer release, review and backlog answers, and verify.environment
+        (the environment a whole-suite run starts under: a loosening of it takes a plan token and the owner's words, which a member run must not give).
+        Look-alikes (cis, ci_jobs, methodology, methodology_accepted_x, verifier, verify_x) stay open."""
         for path in ("ci", "ci.not_gates", "ci.not_gates.0", "methodology_accepted", "methodology_accepted.0", "release.finish_check", "release.hotfix_preflight",
-                     "review.reject_trailers", "backlog.archive", "backlog.section"):
+                     "review.reject_trailers", "backlog.archive", "backlog.section", "verify", "verify.environment", "verify.environment.cpu_quota"):
             for form in ("qargi project set p %s v", "sudo qargi project set p %s v", "cd src && qargi project set p %s v", "bash -c 'qargi project set p %s v'",
                          "echo $(qargi project set p %s v)", "./lib/project.sh set p %s v"):
                 c = form % path
@@ -694,7 +695,7 @@ class Skills(HookCase):
                 self.assertEqual(r.returncode, 2, c)
                 self.assertIn("qargi project set of %s changes" % path, r.stderr, c)
         for c in ("qargi project set p cis v", "qargi project set p ci_jobs v", "qargi project set p methodology v", "qargi project set p methodology_accepted_x v",
-                  "echo qargi project set p ci.not_gates x", "qargi project show p"):
+                  "qargi project set p verifier x", "qargi project set p verify_x v", "echo qargi project set p verify.environment x", "qargi project show p"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
