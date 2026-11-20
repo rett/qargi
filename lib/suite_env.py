@@ -623,9 +623,16 @@ def _child_fds(ci, ci_fds, ends, errs):
     if not ci:
         return
     try:
-        hi = max(ci_fds) + 1
-        a_r = fcntl.fcntl(ends[0], fcntl.F_DUPFD_CLOEXEC, hi)
-        b_w = fcntl.fcntl(ends[1], fcntl.F_DUPFD_CLOEXEC, hi)
+        def off_target(fd):
+            """The lowest copy of fd from 3 up that is neither target: the soft limit on descriptors is often 1024, so no copy is made above them."""
+            n = fcntl.fcntl(fd, fcntl.F_DUPFD_CLOEXEC, 3)
+            while n in ci_fds:
+                m = fcntl.fcntl(fd, fcntl.F_DUPFD_CLOEXEC, n + 1)
+                os.close(n)
+                n = m
+            return n
+        a_r = off_target(ends[0])
+        b_w = off_target(ends[1])
         os.close(ends[0])
         os.close(ends[1])
         os.set_blocking(a_r, False)

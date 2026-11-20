@@ -595,6 +595,21 @@ class Stage2(Scratch):
             self.assertEqual(len(report_fd), 1, rb["fds"])
             self.assertEqual(report_fd[0], min(set(range(3, 10)) - set(numbers)))      # the report takes the lowest free number
 
+    def test_the_pipes_near_the_top_of_a_soft_limit_of_1024(self):
+        import resource
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+
+        def limit():
+            resource.setrlimit(resource.RLIMIT_NOFILE, (1024, hard))
+        for numbers in ([3, 1023], [1023, 3], [1022, 1023], [1023, 1022], [4, 1023]):
+            decl = {"cpu_quota": None, "fds": "ci-like", "ci_fds": numbers}
+            r, rep = self.run_cmd(decl, [sys.executable, "-I", "-c", FDS_TO_FILE, self.path("fds")], preexec_fn=limit)
+            self.assertEqual(r.returncode, 0, (numbers, r.stderr))
+            with open(self.path("fds")) as f:
+                self.assertEqual(json.load(f), sorted([0, 1, 2] + numbers), numbers)
+            self.assertEqual(rep["parts"]["fds"], "applied", numbers)
+            self.assertEqual(rep["readback"]["ci_fds"][0]["read"], "EAGAIN")
+
     def test_a_noisy_parent_with_plain_close(self):
         out, rep = self.inspect({"cpu_quota": None, "fds": "close"}, hostile_parent=True)
         self.assertEqual(out["fds"], [0, 1, 2])
