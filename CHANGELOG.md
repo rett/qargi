@@ -19,6 +19,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The CI time limit of the pull request job is 80 minutes (the budgets of the heaviest steps no longer fit 65); the job that runs the whole suite has the same limit.
 - `qargi project set` now refuses an option it does not know (exit 2); it ignored extra words after the value.
 
+### Fixed
+- `qargi marshal handoff` says a whole-suite run counts ("pass at this tip") only when `feature status` and `feature finish` count it too: a run made under another `verify.environment` declaration or launcher, or under none while the setting is on (or the reverse), reads as not counting (`other-environment` in `--json`).
+
 ### Upgrading from 0.3.4
 - `qargi project set` refuses an option it does not know (exit 2): a script that passes extra words after the value must drop them.
 - The CI time limit of the pull request job is 80 minutes, not 65.
