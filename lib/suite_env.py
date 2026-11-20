@@ -546,15 +546,21 @@ def cmd_run(args, command):
 # --------------------------------------------------------------------------------------------------------------------------------
 # stage 2
 
-def _scope_dir():
-    """The cgroup directory of this process when it is a scope below SLICE (the only kind whose members may be killed), else None."""
-    path = cgroup_path(_read("/proc/self/cgroup") or "")
+def _scope_dir(self_cgroup="/proc/self/cgroup", pid=None):
+    """The cgroup directory of this process when it is a scope below SLICE that holds this process alone: the scope `systemd-run --scope` has
+    just made for it, which moves only the process in and executes it, so every member is this run's. An enclosing run's scope (no scope was
+    made for this one, as with a stand-in for systemd-run) holds other processes, and is never ours to signal or clean: None. Called before
+    the fork."""
+    path = cgroup_path(_read(self_cgroup) or "")
     if not path:
         return None
     comps = path.strip("/").split("/")
-    if SLICE in comps[:-1] and comps[-1].endswith(".scope"):
-        return CGROUP_ROOT + path
-    return None
+    if not (SLICE in comps[:-1] and comps[-1].endswith(".scope")):
+        return None
+    d = CGROUP_ROOT + path
+    if (_read(d + "/cgroup.procs") or "").split() != [str(pid if pid is not None else os.getpid())]:
+        return None
+    return d
 
 
 def _proc_state(pid):
@@ -736,9 +742,11 @@ def _check_tty(readback, sid_error):
     return bad
 
 
-def _check_cpu(readback, quota, cpu_code):
+def _check_cpu(readback, quota, cpu_code, own_scope=True):
     if cpu_code:
         return cpu_code, "no scope: the attempt before the run failed with %s" % cpu_code
+    if not own_scope:
+        return CODE_CPU_READBACK, "this process is not alone in a new scope below %s: a cpu.max read from a cgroup that is not this run's would prove nothing" % SLICE
     path = cgroup_path(_read("/proc/self/cgroup") or "")
     readback["cgroup"] = path
     if not path:
@@ -804,7 +812,7 @@ def _child(job, ends, route, no_scope):
         fails["tty"] = (CODE_TTY, "; ".join(bad))
     quota = decl["cpu_quota"]
     if quota is not None:
-        res = _check_cpu(rb, quota, job.get("cpu_code") if no_scope else None)
+        res = _check_cpu(rb, quota, job.get("cpu_code") if no_scope else None, route == "cgroup")
         if res:
             fails["cpu"] = res
     rb["env_names"] = sorted(env)
@@ -956,7 +964,7 @@ def cmd_stage2(args):
     scope = None if args.no_scope else _scope_dir()
     route = "cgroup" if scope else "pgroup"
     if not args.no_scope and not scope:
-        _say("warning: this process is not in a scope below %s: cleanup is by process group" % SLICE)
+        _say("warning: this process is not alone in a new scope below %s: cleanup is by process group" % SLICE)
     a_r = a_w = b_r = b_w = None
     if ci:
         a_r, a_w = os.pipe2(os.O_CLOEXEC)

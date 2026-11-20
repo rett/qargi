@@ -1014,5 +1014,89 @@ class RealScope(Scratch):
         wait_until(lambda: not alive(self.pids[-1]), "the child to be gone")
 
 
+# the nested case: a launcher run (here with a stub systemd-run, so no scope of its own is made) inside a verify scope of an outer run. The
+# inner launcher must not take the outer run's scope for its own: a bystander of the outer scope is never signalled or killed.
+NESTED = r"""
+import os, subprocess, sys
+d, script = sys.argv[1], sys.argv[2]
+by = subprocess.Popen(["sleep", "120"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+open(os.path.join(d, "bypid"), "w").write(str(by.pid))
+for name, waive in (("waived", "cpu"), ("plain", "")):
+    r = subprocess.run([sys.executable, "-I", script, "run", "--decl", '{"cpu_quota": "max"}', "--waive", waive,
+                        "--report", os.path.join(d, "report-" + name), "--", "true"],
+                       stdin=subprocess.DEVNULL, capture_output=True, text=True)
+    open(os.path.join(d, "rc-" + name), "w").write(str(r.returncode))
+open(os.path.join(d, "after"), "w").write("alive")
+"""
+
+
+class Nested(Scratch):
+    def test_an_enclosing_scope_is_never_the_launchers_own(self):
+        ok, why = scope_works()
+        if not ok:
+            print("expected: the nested-scope case did not run: %s" % why, file=sys.stderr)
+            return
+        env, log = self.fake_systemd()
+        script = self.path("nested.py")
+        with open(script, "w") as f:
+            f.write(NESTED)
+        # the outer scope is the real one (the real systemd-run, by its path); inside it the inner launcher finds the stub first on PATH
+        outer = [shutil.which("systemd-run"), "--user", "--scope", "--quiet", "--collect", "--slice=" + SE.SLICE, "--",
+                 sys.executable, "-I", script, self.dir, SCRIPT]
+        r = subprocess.run(outer, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=WAIT * 2, env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        with open(self.path("bypid")) as f:
+            by = int(f.read())
+        self.pids.append(by)
+        self.assertTrue(os.path.exists(self.path("after")), "the outer run was killed by the inner launcher: %s" % r.stderr)
+        self.assertTrue(alive(by), "a bystander of the outer scope was killed")
+        waived = SE.read_report(self.path("report-waived"))
+        self.assertEqual(waived["cleanup"], "pgroup")
+        self.assertEqual(waived["parts"]["cpu"], "waived-failed")
+        self.assertEqual(waived["codes"], ["verify-env-cpu-readback"])
+        plain = SE.read_report(self.path("report-plain"))
+        self.assertEqual(plain["refused"], ["verify-env-cpu-readback"])
+        self.assertEqual(plain["cleanup"], "pgroup")
+
+
+class ScopeOwnership(Scratch):
+    """_scope_dir against a scratch cgroup tree: the scope is the launcher's own only when it holds this process alone."""
+
+    def tree(self, procs):
+        cg = "/user.slice/user.service/%s/run-u1.scope" % SE.SLICE
+        root = self.path("cgroup")
+        d = root + cg
+        os.makedirs(d)
+        with open(os.path.join(d, "cgroup.procs"), "w") as f:
+            f.write("".join("%d\n" % p for p in procs))
+        proc = self.path("self-cgroup")
+        with open(proc, "w") as f:
+            f.write("0::%s\n" % cg)
+        return root, proc, d
+
+    def test_alone_in_a_scope_below_the_slice(self):
+        root, proc, d = self.tree([4242])
+        with mock.patch.object(SE, "CGROUP_ROOT", root):
+            self.assertEqual(SE._scope_dir(proc, 4242), d)
+            for procs in ([4242, 4243], [4241], [4241, 4242], []):
+                with open(os.path.join(d, "cgroup.procs"), "w") as f:
+                    f.write("".join("%d\n" % p for p in procs))
+                self.assertIsNone(SE._scope_dir(proc, 4242), procs)
+
+    def test_other_cgroups_are_never_owned(self):
+        root, proc, d = self.tree([4242])
+        with mock.patch.object(SE, "CGROUP_ROOT", root):
+            for line in ("0::/user.slice/app.slice/run-u1.scope", "0::/user.slice/%s" % SE.SLICE, "0::/%s/x.service" % SE.SLICE, "12:cpu:/a"):
+                with open(proc, "w") as f:
+                    f.write(line + "\n")
+                self.assertIsNone(SE._scope_dir(proc, 4242), line)
+
+    def test_a_missing_procs_file_is_not_owned(self):
+        root, proc, d = self.tree([4242])
+        os.unlink(os.path.join(d, "cgroup.procs"))
+        with mock.patch.object(SE, "CGROUP_ROOT", root):
+            self.assertIsNone(SE._scope_dir(proc, 4242))
+
+
 if __name__ == "__main__":
     unittest.main()
