@@ -169,9 +169,11 @@ class HookCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.J = _Judge(LIBDIR, "guard_" + cls.__name__.lower(), None)
+        cls.cwd = os.path.realpath(tempfile.mkdtemp())          # where guard() says the call runs: the guard takes the run class from the working directory, so a test run from inside a read-only run's clone must not be judged as that run
 
     @classmethod
     def tearDownClass(cls):
+        shutil.rmtree(cls.cwd, ignore_errors=True)
         del cls.J
 
     def hook(self, args, payload, env=None):
@@ -181,7 +183,7 @@ class HookCase(unittest.TestCase):
         return self.J.budget(readings)
 
     def guard(self, command):
-        return self.hook([], {"tool_input": {"command": command}})
+        return self.hook([], {"tool_input": {"command": command}, "cwd": self.cwd})
 
 
 class Guard(HookCase):
