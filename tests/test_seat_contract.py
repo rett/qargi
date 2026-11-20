@@ -45,7 +45,9 @@ BELOW_DECLARED = ("<clone>/.git/info/exclude",)
 RECONCILIATION = "## Reconciliation with the design's wave 0 (task F)"
 NOT_PRODUCED = ("docs/reference/lead-seat-records.md", "docs/reference/lead-seat-projection.md", "docs/reference/lead-refusals.md",
                 "docs/reference/handoff-note.md", "docs/reference/lead-readback.md", "docs/reference/lead-render-manifest.md",
-                "lib/refusals.json", "lib/seat-records.json")
+                "lib/seat-records.json")
+# What the first wave has produced in part: the file exists, the section still names it, and says which of its codes are still to come.
+PRODUCED_IN_PART = ("lib/refusals.json",)
 # The three things the design asks of that wave that are no file of their own.
 NOT_PRODUCED_PARTS = ("the render manifest (3.9)", "the module interfaces (3.11)", "the full transition table (3.2)")
 
@@ -272,6 +274,11 @@ class Contract(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertIn(path, named, "the section lists %s as not yet produced" % path)
                 self.assertFalse(os.path.exists(os.path.join(ROOT, path)), "%s exists now: it leaves the section and NOT_PRODUCED" % path)
+        for path in PRODUCED_IN_PART:
+            with self.subTest(path=path):
+                self.assertIn(path, named, "the section says that %s is produced in part" % path)
+                self.assertTrue(os.path.exists(os.path.join(ROOT, path)), "%s is produced: it is no longer a plan" % path)
+                self.assertNotIn("| `%s` |" % path, planned, "a file that exists has no row among those not yet produced")
         for part in NOT_PRODUCED_PARTS:
             self.assertIn("| %s |" % part, planned, "the section lists %s as not yet produced" % part)
         # one row for each, and every row proposes a wave
