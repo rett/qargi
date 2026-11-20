@@ -306,7 +306,7 @@ GIT_WRITES = {"add", "commit", "apply", "am", "checkout", "switch", "reset", "rm
               "cherry-pick", "revert", "restore", "clean", "tag", "branch", "pull", "fetch", "init", "clone", "worktree",
               "notes", "update-ref", "config", "submodule", "update-index", "gc", "prune", "repack", "pack-refs", "replace", "filter-branch", "commit-tree",
               "write-tree", "mktag", "mktree", "fast-import", "read-tree", "checkout-index", "sparse-checkout", "maintenance"}
-FD_NAME = r"\{[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?\}"            # {fd} or {arr[i]} before a redirection operator: bash opens a descriptor and stores its number in the variable (or the array element)
+FD_NAME = r"\{[A-Za-z_][A-Za-z0-9_]*(?:\[\S*?\])?\}"            # {fd} or {arr[i]} (the subscript may hold brackets: {a[b[1]]}, up to the first ]}) before a redirection operator: bash opens a descriptor and stores its number in the variable (or the array element)
 REDIR = re.compile(r"^(?:\d*|&|" + FD_NAME + r")(?:>>|>\||<>|>)(.*)$")           # > >> >| <> &> &>> and N> N>> N>| N<> and {fd}>, the target stuck to it or in the next word
 GIT_OUTPUT_DIRS = {"format-patch", "archive"}                    # git subcommands whose -o names where they write
 

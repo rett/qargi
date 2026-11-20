@@ -915,7 +915,9 @@ class Skills(HookCase):
                   "{fd}>f qargi skill new x", "{fd}>f qargi upgrade", "qargi {fd}> f skill new x", "qargi {_a1}>>f upgrade",
                   # the name may be a subscripted array element (bash 5: {a[1]}>f)
                   "{a[1]}>f qargi skill new x", "qargi {a[1]}>f skill new x", "qargi skill {a[1]}>f new x", "sudo {a[1]}>f qargi upgrade", "{a[$i]}>f qargi upgrade",
-                  "{a[0]}<&0 qargi upgrade", "qargi {a[0]}<&0 upgrade", "{A_1[k]}>>f qargi skill new x"):
+                  "{a[0]}<&0 qargi upgrade", "qargi {a[0]}<&0 upgrade", "{A_1[k]}>>f qargi skill new x",
+                  # a subscript may hold brackets itself (bash accepts a[b[1]])
+                  "{a[b[1]]}>f qargi upgrade", "qargi {a[b[1]]}>f upgrade", "qargi skill {a[b[1]]}>f new x", "{a[b[c[1]]]}>f qargi upgrade"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("qargi guard:", r.stderr)
@@ -924,7 +926,8 @@ class Skills(HookCase):
                   "qargi 2>/dev/null feature status", "qargi skill list > $TMPDIR/k.log", "qargi 2>/dev/null skill list", "qargi project show 2>/dev/null",
                   "qargi release status > /dev/null 2>&1 0.2.0", "bash lib/feature.sh status > $TMPDIR/f.log", "qargi 2>/dev/null project set p name x",
                   "qargi skill list {fd}>$TMPDIR/k.log", "{fd}>$TMPDIR/k.log qargi list", "qargi {fd}> $TMPDIR/k.log list", "qargi {fd}>f skill list", "{ qargi list; }", "{ qargi skill list; }",
-                  "{a[1]}>f ls", "qargi {a[1]}> $TMPDIR/k.log list"):
+                  "{a[1]}>f ls", "qargi {a[1]}> $TMPDIR/k.log list", "echo '{a[1]}>b'", "echo ${a[1]} > out.txt", "ls {a[1]}", "qargi {a[1]}>f list",
+                  "{a[1]}>f qargi feature status", "{a[b[1]]}>f ls"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
