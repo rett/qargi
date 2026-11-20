@@ -1,0 +1,113 @@
+{
+  "schema": "qargi-refusals/1",
+  "note": "The refusals of the project answer verify.environment (lib/suite_env.py, lib/project.sh, lib/gitflow.sh): code, exit status, the part of the declaration it belongs to (null: none; a waiver covers a part), the verbs that print it, and the text as the code prints it. Words in capitals are filled in at the time. Every refusal stops before anything is run or stored.",
+  "refusals": [
+    {
+      "code": "verify-env-invalid",
+      "exit": 1,
+      "part": null,
+      "verbs": ["project validate", "project set", "project unset", "project init", "project new", "project attach", "feature verify", "release verify"],
+      "text": "verify-env-invalid: verify.environment: PROBLEM (the declaration is not valid; one line for each problem: an unknown key, ci_fds without fds ci-like, a variable name that PATH, HOME, QARGI_* or the cloud binding rules out, a cpu_quota outside 10% to 12800%)"
+    },
+    {
+      "code": "verify-env-change-unapproved",
+      "exit": 1,
+      "part": null,
+      "verbs": ["project set", "project unset", "project init", "project new", "project attach", "feature verify", "feature finish", "release start", "release verify", "release finish"],
+      "text": "verify-env-change-unapproved: PATH would loosen the approved verify.environment (REASON); it takes a plan token and the owner's words"
+    },
+    {
+      "code": "verify-env-change-unapproved",
+      "exit": 1,
+      "part": null,
+      "verbs": ["project init", "project new", "project attach"],
+      "text": "verify-env-change-unapproved: the answers would change verify.environment from the approved declaration (HASH) to another (HASH); the approved one is DECLARATION; leave verify.environment as stored, or change it with: qargi project set NAME verify.environment JSON (a loosening takes a plan token and the owner's words); nothing stored"
+    },
+    {
+      "code": "verify-env-change-unapproved",
+      "exit": 1,
+      "part": null,
+      "verbs": ["feature verify", "feature finish", "release start", "release verify", "release finish"],
+      "text": "verify-env-change-unapproved: verify.environment in the answers of PROJECT differs from the declaration qargi last accepted (answers HASH, accepted HASH). Restore the answers, or change it with qargi project set PROJECT verify.environment JSON (a loosening needs a plan token and the owner's words)"
+    },
+    {
+      "code": "verify-env-cpu-no-systemd-run",
+      "exit": 1,
+      "part": "cpu",
+      "verbs": ["feature verify", "release verify"],
+      "text": "verify-env-cpu-no-systemd-run: systemd-run is not on PATH (CLEAN_PATH)"
+    },
+    {
+      "code": "verify-env-cpu-systemd-too-old",
+      "exit": 1,
+      "part": "cpu",
+      "verbs": ["feature verify", "release verify"],
+      "text": "verify-env-cpu-systemd-too-old: systemd-run reports LINE; 254 or newer is needed"
+    },
+    {
+      "code": "verify-env-cpu-no-user-manager",
+      "exit": 1,
+      "part": "cpu",
+      "verbs": ["feature verify", "release verify"],
+      "text": "verify-env-cpu-no-user-manager: the scope could not be made and the launcher left no report (the suite did not run to a verdict); nothing is recorded. The last lines of the log: LINES"
+    },
+    {
+      "code": "verify-env-cpu-readback",
+      "exit": 1,
+      "part": "cpu",
+      "verbs": ["feature verify", "release verify"],
+      "text": "verify-env-cpu-readback: WHAT WAS FOUND (this process is not alone in a new scope below qargi-verify.slice; /proc/self/cgroup has no unified-hierarchy line; the process is in PATH, not below qargi-verify.slice; PATH has no cpu.max (the cpu controller is off there); or cpu.max is VALUE, declared QUOTA)"
+    },
+    {
+      "code": "verify-env-signals",
+      "exit": 1,
+      "part": "signals",
+      "verbs": ["feature verify", "release verify"],
+      "text": "verify-env-signals: SigIgn HEX and SigBlk HEX are not both zero (apart from signals 32 and 33, when set)"
+    },
+    {
+      "code": "verify-env-fds",
+      "exit": 1,
+      "part": "fds",
+      "verbs": ["feature verify", "release verify"],
+      "text": "verify-env-fds: WHAT WAS FOUND (for example: the open descriptors are LIST, expected LIST; descriptor N is close-on-exec: the command would not have it; descriptor N is not a pipe)"
+    },
+    {
+      "code": "verify-env-tty",
+      "exit": 1,
+      "part": "tty",
+      "verbs": ["feature verify", "release verify"],
+      "text": "verify-env-tty: WHAT WAS FOUND (for example: this process is not a session leader; descriptors LIST are terminals; /dev/tty opens: the session has a controlling terminal)"
+    },
+    {
+      "code": "verify-env-no-log",
+      "exit": 1,
+      "part": "tty",
+      "verbs": ["feature verify", "release verify"],
+      "text": "verify-env-no-log: the suite log LOG cannot be created; with verify.environment the suite's output goes to a log and never to a terminal (the tty part); nothing was run",
+      "also": "verify-env-no-log: the directory DIR for the reports of the launcher cannot be made; nothing was run (and, with a waiver: the directory for the waivers of verify.environment cannot be made; nothing was run)"
+    },
+    {
+      "code": "verify-env-waive-unapproved",
+      "exit": 1,
+      "part": null,
+      "verbs": ["feature verify", "release verify"],
+      "text": "verify-env-waive-unapproved: the waiver of PARTS needs the token of a refusal of exactly these parts at this head (--plan) and --approved with the owner's words; the token above covers the refused parts PARTS; nothing was run or recorded"
+    },
+    {
+      "code": "verify-env-waive-unknown",
+      "exit": 1,
+      "part": null,
+      "verbs": ["feature verify", "release verify"],
+      "text": "verify-env-waive-unknown: 'WORD' is not a part of verify.environment (the parts that can be waived are signals, fds, tty, cpu)"
+    },
+    {
+      "code": "verify-env-waive-used",
+      "exit": 1,
+      "part": null,
+      "verbs": ["feature verify", "release verify"],
+      "state": "verify-env-waivers",
+      "text": "verify-env-waive-used: that token has been used for a run at this head: a waiver is good for one run; a refusal of PARTS at this head prints the next token; nothing was run or recorded"
+    }
+  ]
+}
