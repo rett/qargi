@@ -614,14 +614,25 @@ venv_decl() { # ANSWERS_FILE -> the declaration it holds as JSON text; null when
   jq -c 'if (.verify | type) == "object" and (.verify | has("environment")) then .verify.environment else null end' "$1"
 }
 venv_load() { # NAME -> VENV_OLD, the approved declaration (JSON text; null for off or no entry).
-  # Fails (the launcher said why) when the state cannot be read: a damaged file is never taken for "no entry", so never for a first declaration
+  # Decided from what the launcher printed, never from the exit status alone: "no entry" is status 1 and prints nothing, so a traceback (also status 1)
+  # is not "no entry". Fails (the message is on stderr) when the state cannot be read: a damaged file is never taken for "no entry", so never for a first declaration
   local out rc=0
-  out=$(venv_py approved get "$1" --state "$DA_STATE") || rc=$?
+  out=$(venv_py approved get "$1" --state "$DA_STATE" 2>&1) || rc=$?
   case $rc in
-    0) VENV_OLD=$(jq -c '.declared' <<<"$out");;
-    1) VENV_OLD=null;;
-    *) return 1;;
+    0) VENV_OLD=$(jq -c 'if type == "object" and has("declared") then .declared else error("no declared") end' <<<"$out") \
+         || { echo "qargi: the approved entry of $1 cannot be read; nothing changed" >&2; return 1; };;
+    1) if [ -n "$out" ]; then printf '%s\n' "$out" >&2; return 1; fi; VENV_OLD=null;;
+    *) printf '%s\n' "$out" >&2; return 1;;
   esac
+}
+# verify_env_lock: one lock for the whole of a change of verify.environment (read the approved entry, compare, store the answers, write the entry), held until
+# the verb ends, so two changes cannot interleave and a loosening is never judged against an entry that another change replaces meanwhile. It is not the
+# launcher's lock (approved set takes that one inside the entry write, and a flock taken here on the same file would block it): a second file beside it
+verify_env_lock() {
+  command -v flock >/dev/null 2>&1 || die "could not take the lock for verify.environment: the flock command (util-linux) is not installed, so two changes could not be kept apart; nothing was changed"
+  local f=$DA_STATE/verify-env.gate.lock
+  { mkdir -p "$DA_STATE" && ( umask 077; : >> "$f" ) && exec {VENV_LK}>>"$f" && flock "$VENV_LK"; } \
+    || die "could not take the lock for verify.environment: flock on $f failed; nothing was changed"
 }
 # verify_env_refuse NEWFILE NAME: the check of the routes that store a whole answers file (init, new, attach, beside gated_refuse): the file's
 # declaration must be the approved one, or nothing is stored. With no entry in the state, a file that declares one is a first declaration (plain):
@@ -633,7 +644,12 @@ verify_env_refuse() {
   res=$(venv_py approved check "$2" "$nd" --state "$DA_STATE") || rc=$?
   case $rc in
     0) return 0;;
-    1) ;;
+    # a state file that cannot be read (the launcher said so on stderr) stops a file that declares verify.environment, which cannot be compared; a file
+    # that declares nothing proceeds: the setting is off there, and off changes nothing else
+    3) [ "$nd" != null ] || return 0
+       echo "qargi: verify.environment could not be compared with the approved declaration (the state file cannot be read); nothing stored" >&2; return 1;;
+    1) jq -e 'type == "object" and has("entry") and has("answers") and has("state")' <<<"$res" >/dev/null 2>&1 \
+         || { echo "qargi: verify.environment could not be compared with the approved declaration; nothing stored" >&2; return 1; };;
     *) echo "qargi: verify.environment could not be compared with the approved declaration; nothing stored" >&2; return 1;;
   esac
   if [ "$(jq -r .entry <<<"$res")" = false ]; then VENV_FIRST=$nd; return 0; fi
@@ -656,8 +672,10 @@ verify_env_gate() {
   local why rc=0 oid nid tok
   VENV_NEW=$(venv_decl "$3"); VENV_WRITE=0; VENV_LOOSE=''
   venv_load "$1" || { echo "qargi: verify.environment cannot be changed while the approved declarations cannot be read; nothing changed" >&2; return 1; }
-  venv_py approved check "$1" "$VENV_NEW" --state "$DA_STATE" >/dev/null || VENV_WRITE=1
+  venv_py approved check "$1" "$VENV_NEW" --state "$DA_STATE" 2>/dev/null | jq -e '.equal == true' >/dev/null 2>&1 || VENV_WRITE=1   # written unless the launcher said they are equal
   why=$(venv_py loosens "$VENV_OLD" "$VENV_NEW") || rc=$?
+  # the answer is what the launcher printed (its first line) with its status: a failure that also exits 1 prints no "plain", so it is no answer
+  case $rc:$(head -n1 <<<"$why") in 0:loosens|1:plain) ;; *) rc=2;; esac
   case $rc in
     1) return 0;;
     0) ;;
@@ -672,7 +690,7 @@ verify_env_gate() {
   fi
   echo "qargi: verify-env-change-unapproved: $2 would loosen the approved verify.environment ($why); it takes a plan token and the owner's words" >&2
   if [ -n "$PLAN_ARG$APPROVED" ]; then echo "qargi: the plan token or the approval given does not cover this change (both --plan and --approved are needed, and the token is for this declaration)" >&2; fi
-  echo "plan token: $tok   (apply with: qargi project $verb $1 $2 ... --plan $tok --approved \"<the owner's words>\"); nothing changed" >&2
+  echo "plan token: $tok   (apply with: qargi project $verb $1 $2$([ "$verb" = set ] && echo ' VALUE') --plan $tok --approved \"<the owner's words>\"); nothing changed" >&2
   return 1
 }
 verify_env_record() { # NAME PATH VERB: after the answers are stored, the approved declaration follows them, and a loosening is audited with the owner's words
@@ -983,6 +1001,17 @@ PY
       if [ -n "${QARGI_MEMBER_RUN:-}" ] || python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import marshal_refs; sys.exit(0 if marshal_refs.in_member_run() else 1)' "$(dirname "$(readlink -f "$0")")"; then
         echo "qargi: $path records a deviation from the methodology that the lead accepts, and is not set in a member run: propose the entry (gap, reason, date) in your report" >&2; exit 2
       fi;; esac
+    # verify.environment is how the lead's whole-suite runs are started, and a loosening of it takes the owner's words: a member run never changes it (the
+    # plan token is printed to whoever asks, so the words are the only barrier, and an agent's words are no one's approval). As unset: the check answers
+    # 0 (a member run) or 3 (not one); any other status is a failure to tell, and an unknown caller is refused (fail closed)
+    case $path in verify|verify.*)
+      mrc=0; python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import marshal_refs; sys.exit(0 if marshal_refs.in_member_run() else 3)' "$(dirname "$(readlink -f "$0")")" || mrc=$?
+      case $mrc in
+        3) ;;
+        0) echo "qargi: project set of $path is not available in a member run: it changes how the lead's whole-suite runs are started; propose the declaration in your report" >&2; exit 2;;
+        *) echo "qargi: project set of $path could not tell whether this is a member run (the check failed with status $mrc); refused: it changes how the lead's whole-suite runs are started" >&2; exit 2;;
+      esac
+      verify_env_lock;; esac
     # the answers that decide what an agent may run on (extensions) and which surface may go without a read-only barrier (accept_no_barrier) are
     # changed with a plan token and an approval, by their own verbs; this verb has neither, so it refuses them (also as keys of a whole models
     # object), for every caller and always. Those verbs store them through lib/gated_answers.py, which this verb never calls and nothing a
@@ -1050,6 +1079,7 @@ PY
     esac
     printf '%s' "$path" | grep -Eq '^[a-z_][a-z0-9_.]*$' || die "PATH: dotted keys such as roles.write.effort"
     case $path in marshal.lease_minutes) ;; marshal|marshal.*) die "$path is not a project answer: only marshal.lease_minutes is; to switch the shared backend use 'qargi marshal enable' or 'qargi marshal disable'";; esac
+    case $path in verify|verify.*) verify_env_lock;; esac     # before the answers are read: the lock spans the read, the comparison and both writes
     was=$(answer_was "$PROJ_DIR/$n.json" "$path")
     gated=$(gated_path "$path" "$was") || gated=''
     [ -z "$gated" ] || { echo "qargi: $path is not removed with project unset: it changes what an agent may run on or accepts a surface with no read-only barrier, so it takes a plan token and an approval: $gated" >&2; exit 2; }
