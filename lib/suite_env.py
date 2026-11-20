@@ -284,7 +284,7 @@ def _read_state(path):
             data = json.load(f)
     except FileNotFoundError:
         return {"version": 1, "projects": {}}
-    except (OSError, ValueError) as e:
+    except Exception as e:      # not only OSError and ValueError: a deeply nested file raises RecursionError, and any load failure is a damaged file, never "no entry"
         _say("%s cannot be read as the approved declarations (%s); restore it or remove it by hand" % (path, e))
         raise SystemExit(STATE_DAMAGED)
     if not isinstance(data, dict) or not isinstance(data.get("projects"), dict):
@@ -294,9 +294,15 @@ def _read_state(path):
 
 
 def approved_get(name, state=None):
-    """The entry of a project, or None when it has none."""
-    entry = _read_state(state_file(state))["projects"].get(name)
-    return entry if isinstance(entry, dict) else None
+    """The entry of a project, or None when it has none. An entry that is not an object (null included) is a damaged file, never "no entry"."""
+    projects = _read_state(state_file(state))["projects"]
+    if name not in projects:
+        return None
+    entry = projects[name]
+    if not isinstance(entry, dict):
+        _say("%s cannot be read as the approved declarations (the entry of %s is not an object); restore it or remove it by hand" % (state_file(state), name))
+        raise SystemExit(STATE_DAMAGED)
+    return entry
 
 
 def approved_set(name, decl, by, state=None, now=None):

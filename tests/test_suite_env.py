@@ -556,6 +556,34 @@ class Cli(Scratch):
         self.assertEqual(self.cli("approved", "check", "p", "null", "--state", state).returncode, 0)
         self.assertEqual(self.cli("approved", "check", "p", "{}", "--state", state).returncode, 1)
 
+    def test_any_failure_to_load_the_state_and_an_entry_that_is_no_object_are_exit_3_not_a_traceback(self):
+        """RecursionError (a deeply nested file) is not a ValueError, and an interpreter that dies of it exits 1, which a caller reads as "no entry": every load failure
+        is the damaged-file status instead, and so is an entry that is not an object (null, text, a list) for the project asked about."""
+        state = self.path("state")
+        os.makedirs(state)
+        path = os.path.join(state, "verify-env.json")
+        depth = 200000
+        for content in ("[" * depth + "]" * depth, '{"projects": {"p": ' + "[" * depth + "]" * depth + "}}", '{"projects": {"p": null}}', '{"projects": {"p": "x"}}',
+                        '{"projects": {"p": []}}', '{"projects": {"p": 3}}'):
+            with open(path, "w") as f:
+                f.write(content)
+            for args in (("get", "p"), ("check", "p", "null"), ("check", "p", '{"fds": "close"}')):
+                r = self.cli("approved", args[0], *args[1:], "--state", state)
+                self.assertEqual(r.returncode, 3, (content[:40], args, r.stderr[-200:]))
+                self.assertIn("cannot be read as the approved declarations", r.stderr)
+                self.assertNotIn("Traceback", r.stderr)
+                self.assertEqual(r.stdout, "")
+        with open(path, "w") as f:                      # a damaged entry of another project does not make this one's absence a damage
+            f.write('{"projects": {"p": null}}')
+        r = self.cli("approved", "get", "q", "--state", state)
+        self.assertEqual((r.returncode, r.stdout, r.stderr), (1, "", ""))
+        with open(path, "w") as f:
+            f.write("{}")
+        with mock.patch.object(SE.json, "load", side_effect=RuntimeError("boom")):
+            with self.assertRaises(SystemExit) as cm:
+                SE._read_state(path)
+            self.assertEqual(cm.exception.code, SE.STATE_DAMAGED)
+
     def test_probe_of_an_invalid_declaration_is_a_usage_error(self):
         r = self.cli("probe", "--decl", '{"signals": 1}')
         self.assertEqual(r.returncode, 2)
