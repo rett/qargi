@@ -223,6 +223,10 @@ class Render(unittest.TestCase):
                        "on a record that lacks the tool (install.json without a tool_root, or runtimes recorded with no install.json) or its runtimes (install.json names the tool but no user runtime is in install.d)"):
             self.assertIn(needle, doctor)
         self.assertIn("the tools, the install records", C.COMMANDS["doctor"]["summary"])
+        for needle in ("verify-environment: whether the project declares verify.environment, as 'off' or as 'on' with the version of systemd-run",
+                       "a systemd-run that is missing or older than 254", "a declaration that differs from the one accepted for the project or is invalid",
+                       "the file of accepted declarations (verify-env.json in the state directory) when it cannot be read"):
+            self.assertIn(needle, doctor)
         self.assertIn("a lead model that cannot be determined (no transcript, no counted turn, no model id) is not a warning", doctor)
         for word in ("migrat", "moved into install.d"):
             self.assertNotIn(word, doctor)
