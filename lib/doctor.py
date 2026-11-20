@@ -20,13 +20,20 @@ The command does not fail on a finding: exit 0, or 1 with --strict when any chec
                  the user and in a project. It warns on an install.manifest (or project-N.manifest) of qargi 0.3.1 or earlier still there (no longer read), a recorded
                  link (or copy) that is missing, dangling or now points elsewhere, a recorded version other than the VERSION of the
                  recorded tool, and a record that cannot be read; `unknown` when nothing is installed. --json adds the facts as fields.
+  verify-environment
+                 the project answer verify.environment (the whole-suite runs of the two verify verbs start under a declared environment):
+                 off, or on with what it needs of the host. The cpu part runs the suite in a transient cgroup scope (systemd-run --user
+                 --scope, systemd 254 or newer, found on the clean PATH as the launcher finds it), so with the setting on and cpu_quota not
+                 null a missing or older systemd-run warns, with the refusal code the verify would give. The declaration is also compared with
+                 the one qargi last accepted (the state file verify-env.json): an answers file edited by hand, an invalid declaration or a
+                 state file that cannot be read warns. Reads only: no scope is made (the verify verb makes the attempt).
   project-env    the last `qargi env check` recorded for the project (state/env/PROJECT.json): `last env check <verdict> at <time>`, a
                  warning when that verdict is not ENV OK, `unknown  never run` when none was recorded. It only reads the record: the
                  project's doctor is never run here (qargi env check runs it).
 
 A check that cannot be made (no logind, no tool, no project) is `unknown`, never a warning. Only reads: no file is written, no
 directory is removed, nothing is changed on the host."""
-import json, os, pwd, re, shutil, subprocess, sys, tempfile  # noqa: E401
+import contextlib, io, json, os, pwd, re, shutil, subprocess, sys, tempfile  # noqa: E401
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -195,9 +202,73 @@ def check_tools():
     return check(name, "warn", detail, fix)
 
 
+# ---------------------------------------------------------------------------------------------------------------- verify-environment
+
+def systemd_run_version():
+    """-> (path, version, first line): systemd-run found on the clean PATH, as the launcher finds it, and its version number (None when its
+    first line gives none). path is None when it is not there."""
+    import procenv
+    path = shutil.which("systemd-run", path=procenv.clean_path())
+    if not path:
+        return None, None, "systemd-run is not on PATH"
+    rc, out, err = run([path, "--version"])
+    line = first_line(out) or first_line(err)
+    m = re.match(r"systemd (\d+)", line)
+    return path, (int(m.group(1)) if m else None), line or "no version line"
+
+
+def check_verify_environment(project):
+    """The answer verify.environment of the project: off, or on with what the cpu part needs of this host (systemd-run, MIN_SYSTEMD or newer),
+    and whether the answers still hold the declaration qargi last accepted. Reads the answers, the state entry and systemd-run --version."""
+    name = "verify-environment"
+    if not project:
+        return check(name, "unknown", "no project (name one, or run inside its repository): the setting belongs to the project")
+    import provider as P
+    import suite_env as SE
+    answers = P.project_answers(project, PA.conf())
+    if not answers:
+        return check(name, "unknown", "no stored answers for project %s" % clean(project, 80))
+    verify = answers.get("verify")
+    decl = verify.get("environment") if isinstance(verify, dict) else None
+    change = "qargi project set %s verify.environment JSON (a loosening takes a plan token and the owner's words)" % clean(project, 80)
+    try:
+        norm = SE.normalise(decl)
+    except SE.Invalid as e:
+        return check(name, "warn", "verify.environment of project %s is not valid (%s); verify refuses with %s" % (
+                     clean(project, 80), clean("; ".join(e.problems), 300), SE.CODE_INVALID), ["fix: " + change])
+    sink = io.StringIO()
+    state = SE.state_file(PA.state())
+    try:
+        with contextlib.redirect_stderr(sink):
+            same = SE.approved_check(project, decl, PA.state())
+    except SystemExit:
+        return check(name, "warn", "the declarations qargi accepted cannot be read (%s: %s); verify refuses with %s" % (
+                     clean(tilde(state), 160), first_line(sink.getvalue()) or "damaged", SE.CODE_CHANGE_UNAPPROVED),
+                     ["fix: restore %s, or remove it by hand and declare again with %s" % (clean(tilde(state), 160), change)])
+    if not same["equal"]:
+        return check(name, "warn", "verify.environment in the answers of project %s (%s) is not the declaration qargi last accepted (%s); verify refuses with %s" % (
+                     clean(project, 80), same["answers"][:12], same["state"][:12], SE.CODE_CHANGE_UNAPPROVED),
+                     ["fix: restore the answers, or change the setting with " + change])
+    if norm is None:
+        return check(name, "ok", "off for project %s: whole-suite runs start as they always did" % clean(project, 80))
+    quota = norm["cpu_quota"]
+    on = "on for project %s (id %s, fds %s, cpu_quota %s)" % (clean(project, 80), SE.suite_env_id(norm), norm["fds"], json.dumps(quota))
+    if quota is None:
+        return check(name, "ok", on + "; the cpu part is off, so no scope and no systemd-run is needed")
+    path, version, line = systemd_run_version()
+    if path is None:
+        return check(name, "warn", on + "; systemd-run is not on PATH, so verify refuses with %s" % SE.CODE_NO_SYSTEMD_RUN,
+                     ["fix: install systemd %d or newer with its user manager, or declare cpu_quota null (the cpu part off)" % SE.MIN_SYSTEMD,
+                      "  to run once without it: qargi feature verify NAME --waive-environment cpu --plan TOKEN --approved WORDS (the token comes from a refusal)"])
+    if version is None or version < SE.MIN_SYSTEMD:
+        return check(name, "warn", on + "; systemd-run reports %r, %d or newer is needed, so verify refuses with %s" % (clean(line, 80), SE.MIN_SYSTEMD, SE.CODE_SYSTEMD_TOO_OLD),
+                     ["fix: update systemd, or declare cpu_quota null (the cpu part off)"])
+    return check(name, "ok", on + "; systemd-run %d is on PATH (the user manager is not asked here: the verify verb makes the attempt)" % version)
+
+
 # ---------------------------------------------------------------------------------------------------------------- install
 
-LIST_MAX = 3               # paths named in the line of a finding; --json lists them all
+LIST_MAX = 3              # paths named in the line of a finding; --json lists them all
 
 
 def tilde(p):
@@ -533,7 +604,7 @@ def main(argv):
     if project is False:
         print("qargi doctor: no stored project '%s'" % names[0], file=sys.stderr)
         return 2
-    checks = [check_remove_ipc(), check_guard(project), check_shm(), check_tools(), check_install(), check_window_source(project), check_project_env(project)]
+    checks = [check_remove_ipc(), check_guard(project), check_shm(), check_tools(), check_install(), check_window_source(project), check_verify_environment(project), check_project_env(project)]
     warns = sum(1 for c in checks if c["status"] == "warn")
     code = 1 if strict and warns else 0
     if as_json:
