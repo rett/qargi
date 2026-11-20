@@ -635,7 +635,8 @@ msg=$(vset vdemo verify.environment '{"fds":"ci-like","cpu_quota":"200%"}' 2>&1)
 msg=$(vset vdemo verify.environment null 2>&1); tok=$(vtok <<<"$msg")
 grep -q "apply with: qargi project set vdemo verify.environment VALUE --plan $tok " <<<"$msg" && vok "set: the apply hint names a VALUE" || vno "set apply hint" "$msg"
 msg=$(project_unset vdemo verify.environment 2>&1); utok=$(vtok <<<"$msg")
-{ grep -q "apply with: qargi project unset vdemo verify.environment --plan $utok " <<<"$msg" && ! grep -q 'VALUE\|\.\.\.' <<<"$msg"; } && vok "unset: the apply hint takes no value" || vno "unset apply hint" "$msg"
+# (the whole line, anchored at its end: nothing, no VALUE and no ellipsis, stands between the key and --plan)
+grep -q "apply with: qargi project unset vdemo verify.environment --plan $utok --approved \"<the owner's words>\"); nothing changed\$" <<<"$msg" && vok "unset: the apply hint takes no value" || vno "unset apply hint" "$msg"
 
 # a member run never changes the declaration, with the token or without: the token is printed to whoever asks, so the owner's words are the only barrier
 # and an agent's words are no one's approval (as unset, and as the guard's refusal of project set of verify)
@@ -654,11 +655,14 @@ msg=$(cd "$T/mrun/clone" && "$ROOT/bin/qargi" project set vdemo budget_cents 602
 { [ $rc = 0 ] && [ "$(jq .budget_cents "$T/c/projects/vdemo.json")" = 602 ] && [ "$(vent vdemo | jq -c .cpu_quota)" = '"200%"' ]; } && vok "a member run still sets an answer that is not verify" || vno "member set of another answer (rc=$rc)" "$msg"
 
 # one lock spans the comparison and both writes: while another change holds it a set waits (and, cut short, changes nothing); then it goes through
-( flock 9; sleep 3 ) 9> "$T/s/verify-env.gate.lock" & hp=$!
-sleep 1; before=$(vsnap vdemo)
+# (the holder keeps it until the test releases it, or for 30 seconds at most; the test waits until it holds it, with a deadline)
+rm -f "$T/vheld" "$T/vrelease"
+( flock 9; : > "$T/vheld"; for _ in $(seq 1 300); do [ -e "$T/vrelease" ] && break; sleep 0.1; done ) 9> "$T/s/verify-env.gate.lock" & hp=$!
+for _ in $(seq 1 100); do [ -e "$T/vheld" ] && break; sleep 0.1; done
+before=$(vsnap vdemo)
 msg=$(cd "$T" && timeout 1 "$PROJECT_TOOL" project set vdemo verify.environment '{"fds":"ci-like","cpu_quota":"200%"}' 2>&1); rc=$?
 { [ $rc = 124 ] && [ "$before" = "$(vsnap vdemo)" ]; } && vok "set of verify.environment waits for the lock another change holds, and changes nothing when cut short" || vno "set while the lock is held (rc=$rc)" "$msg"
-wait "$hp"
+: > "$T/vrelease"; wait "$hp"
 msg=$(vset vdemo verify.environment '{"fds":"ci-like","cpu_quota":"200%"}' 2>&1); rc=$?
 [ $rc = 0 ] && vok "and goes through once the lock is free" || vno "set after the lock was free (rc=$rc)" "$msg"
 # two plain sets at once, from "max": whichever runs second is judged against what the first stored, so the result is never the looser of the two
