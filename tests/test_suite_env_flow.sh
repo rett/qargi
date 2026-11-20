@@ -450,11 +450,11 @@ echo first > "$T/s/suite-logs/app.feature-f.env/gate.json"; echo first > "$T/s/s
 sleep 300 & HOLDER=$!
 printf '%s\n' "$HOLDER" > "$T/s/busy/app.verify.f.pid"; printf '%s\n' "$HOLDER" > "$T/s/busy/app.release-verify.0.2.0.pid"
 reset; run $F verify f
-[ "$rc" = 1 ] && saw "another verify of f is running \(pid $HOLDER\)" && saw 'Nothing was run' && [ ! -f "$T/ran" ] && [ ! -f "$FREC" ] && [ "$(cat "$T/s/suite-logs/app.feature-f.env/gate.json")" = first ] \
+[ "$rc" = 1 ] && saw "another verify of f is running \(pid $HOLDER, busy mark $T/s/busy/app.verify.f.pid\)" && saw "remove $T/s/busy/app.verify.f.pid" && saw 'Nothing was run' && [ ! -f "$T/ran" ] && [ ! -f "$FREC" ] && [ "$(cat "$T/s/suite-logs/app.feature-f.env/gate.json")" = first ] \
   && [ "$(cat "$T/s/busy/app.verify.f.pid")" = "$HOLDER" ] && [ ! -s "$T/fakelog" ] \
   && ok "feature verify: a second verify of the name is refused while the first is alive; nothing runs and the first's reports and busy mark stay" || no "second feature verify: rc=$rc: $(out)"
 reset; run $REL verify 0.2.0
-[ "$rc" = 1 ] && saw "another release-verify of 0.2.0 is running \(pid $HOLDER\)" && [ ! -f "$T/ran" ] && [ "$(cat "$T/s/suite-logs/app.release-0.2.0.env/gate.json")" = first ] \
+[ "$rc" = 1 ] && saw "another release-verify of 0.2.0 is running \(pid $HOLDER, busy mark " && [ ! -f "$T/ran" ] && [ "$(cat "$T/s/suite-logs/app.release-0.2.0.env/gate.json")" = first ] \
   && ok "release verify: the same refusal" || no "second release verify: rc=$rc: $(out)"
 reset; run $REL verify 0.3.0
 [ "$rc" = 0 ] && [ -f "$T/ran" ] && ok "a verify of another name is not refused" || no "other name: rc=$rc: $(out)"
