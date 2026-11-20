@@ -182,6 +182,45 @@ run $F verify f --waive-environment cpu --plan x --approved y
 run $F status f --waive-environment cpu
 [ "$rc" = 2 ] && saw 'belongs to feature verify' && ok "--waive-environment is for verify only" || no "waive on status: rc=$rc $(out)"
 
+# --- 3b. the claim of a waiver comes first, and a deleted claim file does not make its token good again
+# a second verify that holds the same token and loses the claim (planted during the launcher's attempt, which comes after the token was read and before the claim)
+# runs nothing and touches nothing: not the log, not the reports of the winner, not the audit log
+setenv '{"cpu_quota":"max"}'; mode nouser
+WD=$T/s/verify-env-waivers
+reset; run $F verify f; tokr=$(tokof "$(out)")
+key=$(printf '%s\n' app feature/f "$(git -C "$R" rev-parse feature/f)" "$(python3 -I "$SE" id '{"cpu_quota":"max"}')" | sha256sum | cut -c1-12)
+mkdir -p "$WD" "$T/racebin"
+printf '#!/bin/sh\n[ ! -s "$RACE_PLANT" ] || { : > "$(cat "$RACE_PLANT")"; rm -f "$RACE_PLANT"; }\nexec "%s" "$@"\n' "$T/fakebin/systemd-run" > "$T/racebin/systemd-run"; chmod +x "$T/racebin/systemd-run"
+nclaims=$(find "$WD" -name "$key.[0-9]*" | wc -l)
+mkdir -p "$T/s/suite-logs/app.feature-f.env"; echo winner > "$T/s/suite-logs/app.feature-f.log"; echo winner > "$T/s/suite-logs/app.feature-f.env/gate.json"
+printf '%s\n' "$WD/$key.$nclaims" > "$T/plant"; na=$(grep -c 'verify:environment-waived' "$T/s/audit.log")
+PATH=$T/racebin:$T/fakebin:$PATH_PLAIN; export PATH
+reset; RACE_PLANT=$T/plant run $F verify f --waive-environment cpu --plan "$tokr" --approved "the owner said so"
+fake
+[ "$rc" = 1 ] && saw 'verify-env-waive-used' && [ ! -f "$T/ran" ] && [ ! -f "$FREC" ] && [ -e "$WD/$key.$nclaims" ] && [ "$(grep -c 'verify:environment-waived' "$T/s/audit.log")" = "$na" ] \
+  && [ "$(cat "$T/s/suite-logs/app.feature-f.log")" = winner ] && [ "$(cat "$T/s/suite-logs/app.feature-f.env/gate.json")" = winner ] \
+  && ok "a verify that loses the claim of the waiver runs nothing and leaves the log, the reports and the audit log of the winner as they were" || no "lost claim: rc=$rc: $(out)"
+reset; run $F verify f; tokr2=$(tokof "$(out)")
+reset; run $F verify f --waive-environment cpu --plan "$tokr2" --approved "the owner said so"
+[ "$rc" = 0 ] && [ -f "$T/ran" ] && [ "$(cat "$WD/$key.count")" = $((nclaims + 2)) ] && ok "the claim keeps the number of the waivers made at the head" || no "count: rc=$rc: $(cat "$WD/$key.count" 2>&1): $(out)"
+rm -f "$WD/$key".[0-9]*
+for t in "$tokr" "$tokr2"; do
+  reset; run $F verify f --waive-environment cpu --plan "$t" --approved "the owner said so"
+  [ "$rc" = 1 ] && saw 'verify-env-waive-used' && [ ! -f "$T/ran" ] && [ ! -f "$FREC" ] && ok "a deleted claim file does not make a spent token good again ($t)" || no "reopened $t: rc=$rc: $(out)"
+done
+tokr3=$(tokof "$(out)"); [ -n "$tokr3" ] && [ "$tokr3" != "$tokr" ] && [ "$tokr3" != "$tokr2" ] && ok "and the refusal prints the next token" || no "next token: $(out)"
+# a count that is no number cannot tell a spent token from a new one: refused, with the code of its own
+cp "$WD/$key.count" "$T/count.keep"; echo abc > "$WD/$key.count"
+reset; run $F verify f --waive-environment cpu --plan "$tokr3" --approved "the owner said so"
+[ "$rc" = 1 ] && saw 'verify-env-waiver-dir' && saw 'does not hold a number' && [ ! -f "$T/ran" ] && [ ! -f "$FREC" ] && ok "a count that is not a number is refused as verify-env-waiver-dir" || no "bad count: rc=$rc: $(out)"
+cp "$T/count.keep" "$WD/$key.count"
+# a directory for the waivers that cannot be made is a refusal with its own code, not the code of the log
+mv "$WD" "$WD.keep"; : > "$WD"
+reset; run $F verify f; tokr4=$(tokof "$(out)")
+reset; run $F verify f --waive-environment cpu --plan "$tokr4" --approved "the owner said so"
+[ "$rc" = 1 ] && saw 'verify-env-waiver-dir' && ! saw 'verify-env-no-log' && saw 'cannot be made' && [ ! -f "$T/ran" ] && [ ! -f "$FREC" ] && ok "a waivers directory that cannot be made is verify-env-waiver-dir, and nothing ran" || no "waiver dir: rc=$rc: $(out)"
+rm -f "$WD"; mv "$WD.keep" "$WD"; unsetenv
+
 # --- 4. a passing run through the launcher (no scope: cpu_quota null), the environment the suite sees, the record, and staleness
 setcmd "echo \"PARENT=\$(cat /proc/\$PPID/comm)\" > $T/seen; echo \"LEAK=\${LEAK-unset} VERIFY_X=\${VERIFY_X-unset} LANG=\${LANG-unset} OTHER=\${OTHER-unset}\" >> $T/seen; FDS=; for f in /proc/\$\$/fd/*; do [ -e \"\$f\" ] && FDS=\"\$FDS \${f##*/}\"; done; echo \"FDS=\${FDS# }\" >> $T/seen; echo \"IN=\$(readlink /proc/\$\$/fd/0)\" >> $T/seen; echo suite-ran; touch $T/ran"
 setenv '{"cpu_quota":null,"env_pass":["LANG"],"env_set":{"VERIFY_X":"1"}}'
@@ -241,6 +280,7 @@ run $F finish f
 [ "$rc" = 1 ] && saw 'verify-env-invalid' && ok "an invalid declaration refuses feature finish" || no "invalid finish: $(out)"
 run $F status f
 [ "$rc" = 0 ] && saw 'verify-env-invalid' && saw 'fds' && saw '^full suite: ' && ok "status prints an invalid declaration as a finding and goes on (exit 0)" || no "invalid status: rc=$rc $(out)"
+! saw 'answers now give' && saw 'why: .*no usable declaration now' && ok "status with an invalid declaration does not say the answers give off" || no "invalid status why: $(out)"
 run $REL status 0.2.0
 [ "$rc" = 0 ] && saw 'verify-env-invalid' && saw '^no release/0.2.0 yet' && ok "release status prints it too and goes on" || no "invalid release status: rc=$rc $(out)"
 unsetenv
