@@ -900,6 +900,19 @@ class Skills(HookCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("verify with --waive-environment and --approved waives a part of verify.environment", r.stderr, c)
+        # a redirection and its target are taken out of the words by the shell: a target built from a variable is no argument of the verb
+        for c in ("qargi release verify 0.2.0 > \"$TMPDIR/v.log\"", "qargi release verify 0.2.0 >$TMPDIR/v.log 2>&1", "qargi release verify 0.2.0 2> $TMPDIR/v.err",
+                  "qargi release verify 0.2.0 >> \"${TMPDIR}/v.log\"", "qargi release verify 0.2.0 --project p &> \"$TMPDIR/all.log\"", "> $TMPDIR/v.log qargi release verify 0.2.0",
+                  "qargi release verify 0.2.0 --waive-environment cpu > $TMPDIR/v.log", "qargi release verify 0.2.0 --plan 0123456789ab --approved go 2>/dev/null"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+        # a redirection hides nothing else: the pair, or a word that can be either, still refuses
+        for c in ("qargi release verify 0.2.0 --waive-environment cpu --approved $W > $TMPDIR/v.log", "qargi release verify 0.2.0 > $TMPDIR/v.log --approved $X",
+                  "qargi release verify 0.2.0 --approved go >$TMPDIR/v.log $X", "qargi release verify 0.2.0 --waive-environment cpu --approved go > $TMPDIR/v.log",
+                  "qargi release verify 0.2.0 $X>$TMPDIR/v.log", "qargi release verify 0.2.0 --approved go --waive-environment $P 2> /dev/null"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("verify with --waive-environment and --approved waives a part of verify.environment", r.stderr, c)
         for c in ("qargi release verify 0.2.0", "qargi release verify 0.2.0 --project p", "qargi release verify 0.2.0 --hotfix", "qargi release verify 0.2.0 --waive-environment cpu",
                   "qargi release verify 0.2.0 --plan 0123456789ab --approved go", "qargi release status 0.2.0 --approved go",
                   "echo qargi release verify 0.2.0 --waive-environment cpu --approved go", "grep -n 'waive-environment' lib/release.sh",

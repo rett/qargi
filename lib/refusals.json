@@ -183,13 +183,13 @@
     },
     "verify-env-no-log": {
       "rule": "With verify.environment on, the suite's output goes to a log and never to a terminal, and the launcher's reports have a directory",
-      "why": "the output cannot go to a terminal (the tty part), and a run that cannot keep its reports cannot be recorded",
+      "why": "the output cannot go to a terminal (the tty part), and a run that cannot keep its reports cannot be recorded; under a waiver the claim of its token comes first, so the token is spent, an audit line is written, and the second sentence of the message (when a waiver is in use) says so",
       "class": "verify-environment",
       "exit": 1,
       "status": "live",
       "sites": [
-        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-no-log: the directory DIR for the reports of the launcher cannot be made; nothing was run"},
-        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-no-log: the suite log LOG cannot be created; with verify.environment the suite's output goes to a log and never to a terminal (the tty part); nothing was run"}
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-no-log: the directory DIR for the reports of the launcher cannot be made; nothing was run. The waiver token was spent"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-no-log: the suite log LOG cannot be created; with verify.environment the suite's output goes to a log and never to a terminal (the tty part); nothing was run. The waiver token was spent"}
       ]
     },
     "verify-env-waive-unapproved": {

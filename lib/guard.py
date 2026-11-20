@@ -3282,6 +3282,21 @@ def past_redirections(rest, k):
     return k
 
 
+def without_redirections(words):
+    """The words without the redirections and their targets (the shell takes them out before the program sees its arguments): the target of one that is a
+    word of its own is the next word, and one stuck to the operator is that word. A word that reads as a redirection and holds a blank or a separator after its
+    operator was one quoted word (quoted_string) and stays."""
+    out, k = [], 0
+    while k < len(words):
+        t = words[k]
+        if is_redirection(t) and not quoted_string(t):
+            k += 2 if BARE_REDIR.match(t) else 1
+        else:
+            out.append(t)
+            k += 1
+    return out
+
+
 def read_options(prog, rest):
     """The options of an interpreter (a shell, . or source, python) at the start of its words rest: (k, ends, readable, dirs). k is the index of the first word
     past them (the file, or the -c string of a shell), ends the letters that say the program is not a file (python's c or m, a shell's c or s), readable False
@@ -3584,6 +3599,7 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None, at=None):
         # only prints a token and stays open). A word the guard cannot read (a variable, an array expansion, a substitution, or xargs) can split into several
         # words and carry both options, so any such word is refused, as a path of the answers command is
         argv = cut if prog in SCRIPTS else cut[k + 1:]
+        argv = without_redirections(argv)      # the shell takes a redirection and its target out of the words: a redirect to a path built from a variable is no argument of the verb
         unreadable = via_xargs or any(any(c in t for c in UNREADABLE) for t in argv)
         waive, approved = "--waive-environment" in argv, "--approved" in argv
         if (waive and approved) or unreadable:
@@ -3604,7 +3620,7 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None, at=None):
     if area == "env" and (verb in ENV_LEAD or builds_word(verb)):
         return ("qargi env %s runs the project's dry-run or bootstrap command, which is project code, with the lead's rights, and is not available to an agent "
                 "(qargi env show only reads); report what you need in your task output" % (verb if verb in ENV_LEAD else "plan|apply"))
-    if area == "release" and any(w == "publish" or "$" in w or "`" in w for w in words[1:4]):   # a verb held in a variable could be publish
+    if area == "release" and any(w == "publish" or "$" in w or "`" in w for w in without_redirections(words)[1:4]):   # a verb held in a variable could be publish (a redirection's target is no verb)
         return "qargi release publish creates a GitHub release and is not available to an agent; report that the tag needs publishing"
     if area == "feature" and verb == "park":
         return OwnReason("qargi feature park resets the parking branch to develop and checks it out in the main checkout (and journals the move), which is the lead's to do; "
