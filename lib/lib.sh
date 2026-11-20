@@ -118,6 +118,31 @@ run_class() {
   echo "qargi: the lead's registry has no valid class for $1 (expected write or read-only); nothing was done" >&2
   return 1
 }
+# actor_label -> sets ACTOR (this session's coordinator label, QARGI_ACTOR) and ACTOR_FEATURE (the feature the label names), both empty without a label.
+# Unset or empty is no label and starts nothing. A value that is set and not of the form <lead-id>:coord:<feature>:<n> is exit 2 with the form on stderr (lib/help.py
+# actor-parse decides, the one reader of the form); bin/qargi refuses such a value before any verb, so this only guards a script that runs on its own. The label is
+# attribution: nothing here compares it as an identity (QARGI_LEAD stays the lead's).
+# shellcheck disable=SC2034  # ACTOR and ACTOR_FEATURE are read by the scripts that source this file (local.sh)
+actor_label() {
+  ACTOR='' ACTOR_FEATURE=''
+  [ -n "${QARGI_ACTOR:-}" ] || return 0
+  ACTOR_FEATURE=$(pymod help actor-parse "$QARGI_ACTOR") || { ACTOR_FEATURE=''; return 2; }
+  ACTOR=$QARGI_ACTOR
+}
+# actor_check KIND WHERE VALUE -> the narrowing of a coordinator label at the point of use: a script asks it once it has resolved what it acts on (the run, the
+# feature, the base of a run to prepare), so what is checked is what the script acts on, with no second parse of the command line (the gate in bin/qargi, lib/help.py
+# actor_gate, is the first line and an early refusal of the same; this is the authoritative one). No label (QARGI_ACTOR unset or empty): returns 0 at once, with no
+# process. Under one it asks `help.py actor-check` (KIND: feature, prepare-base, run-base, run-unknown, run-word; WHERE is the verb as a refusal says it): 0 to go on,
+# 2 with the refusal ("refused under the coordinator label ...; nothing was changed"). The caller exits on a non-zero return: actor_check ... || exit $?
+actor_check() { [ -n "${QARGI_ACTOR:-}" ] || return 0; pymod help actor-check "$@"; }
+# actor_run_check WHERE RUN -> actor_check for a run the script has resolved: refused when the word starts with a dash, when the lead's registry does not name the run,
+# or when its registry base is not feature/<the label's feature> (the registry is the lead's: nothing in the run directory is believed)
+actor_run_check() {
+  [ -n "${QARGI_ACTOR:-}" ] || return 0
+  case $2 in -*) actor_check run-word "$1" "$2"; return;; esac
+  reg_load
+  if reg_has "$2"; then actor_check run-base "$1" "$(reg_get "$2" base)"; else actor_check run-unknown "$1" "$2"; fi
+}
 # out_has_report OUT -> 0 when OUT holds a report: a regular file (not a link) named report.md or *-report.md directly in it. The one test local.sh and
 # lib/lead_usage.py (has_report) share.
 out_has_report() {
@@ -358,8 +383,11 @@ project_provider_if_set() { # project-or-empty surface
 # cloud_note PROJECT TOPIC: the notes topic TOPIC of the definition of the runtime the project uses on the cloud surface (output-dir and
 # clone-dir: where a hosted session keeps its outputs and its clones). The core names no hosted directory; the runtime's definition does.
 # Prints the text; on failure (no cloud runtime for the project, or it has no such topic) prints the reason on stderr and returns its status.
+# The answer is the cloud runtime's whatever runtime the lead's own session is on: the question is put with QARGI_LEAD_RUNTIME unset (in a
+# subshell, so the caller keeps its own), since that variable is for the notes a lead reads and would here refuse the question when it names
+# no usable runtime, or answer it from the lead's runtime when that one lists the topic as its own.
 cloud_note() { # project topic
-  pymod provider notes "$2" --project "$1" --surface cloud </dev/null
+  ( unset QARGI_LEAD_RUNTIME; pymod provider notes "$2" --project "$1" --surface cloud </dev/null )
 }
 # barrier_guard SURFACE PROJECT-or-empty: a read-only role is about to run on SURFACE. Exits 2 with the reason and the
 # `qargi provider accept` command when the project's provider has no read-only barrier there and the project did not accept

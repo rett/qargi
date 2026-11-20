@@ -767,4 +767,90 @@ done
 { [ "$DEFAULT0" = "$(default_runs)" ] && [ "$ADJ0" = "$(owned_snapshot "$ADJ/qargi-run.KEEPER")" ] && [ "$OUTSIDE0" = "$(owned_snapshot "$T/victim")" ]; } \
   && ok "override cleanup preserves default-parent entries and outside-parent sentinel contents and modes despite adjacent changes" || no "an owned outside-parent sentinel changed"
 ./bin/qargi local clean "$OL" --discard >/dev/null 2>&1; rm -rf "$OS"
+# --- the coordinator label (QARGI_ACTOR): prepare records it, list filters by it, verify --mine verifies the label's own runs
+# The record is the lead's registry line (actor, feature), never a file of the run directory. A run prepared without a label has neither key.
+git init -q -b main "$T/rc" && git -C "$T/rc" -c user.name=t -c user.email=t@example.net commit -q --allow-empty -m one
+git -C "$T/rc" branch feature/alpha; git -C "$T/rc" branch feature/beta
+jq --arg p "$T/rc" '.project="cproj" | .repo.path=$p | .repo.url="https://github.com/example/cproj"' "$T/c/projects/rproj.json" > "$T/c/projects/cproj.json"
+LA1=lead-x:coord:alpha:1 LA2=lead-x:coord:alpha:2 LB1=lead-x:coord:beta:1 LC1=lead-x:coord:gamma:1
+cprep() { # LABEL BASE SLUG -> the run directory (the label may be empty: a session with none)
+  QARGI_ACTOR=$1 ./bin/qargi local prepare --repo "$T/rc" --base "$2" --slug "$3" --scratch "$T" | sed -n '1,/^$/s/^RUN=//p'
+}
+rline() { jq -c --arg r "$1" 'select(.run == $r)' "$T/s/local-runs.jsonl"; }
+A1=$(cprep "$LA1" feature/alpha coa1); A2=$(cprep "$LA2" feature/alpha coa2); B1=$(cprep "$LB1" feature/beta cob1); N1=$(cprep '' feature/alpha con1); M1=$(cprep '' main com1)
+{ [ "$(rline "$A1" | jq -r '.actor')" = "$LA1" ] && [ "$(rline "$A1" | jq -r '.feature')" = alpha ] && [ "$(rline "$B1" | jq -r '.actor + " " + .feature')" = "$LB1 beta" ]; } \
+  && ok "prepare under a label records the label and the feature in the lead's registry line" || no "labeled registry lines: $(rline "$A1") $(rline "$B1")"
+{ [ -n "$N1" ] && [ -n "$M1" ] && ! rline "$N1" | jq -e 'has("actor") or has("feature")' >/dev/null && ! rline "$M1" | jq -e 'has("actor") or has("feature")' >/dev/null; } \
+  && ok "a run prepared with no label (empty QARGI_ACTOR) has neither field" || no "unlabeled registry lines: $(rline "$N1") $(rline "$M1")"
+n0=$(wc -l < "$T/s/local-runs.jsonl"); d0=$(find "$T" -maxdepth 1 -name 'qargi.*' | wc -l)
+for bad in main develop feature/beta feature/alpha2; do
+  out=$(QARGI_ACTOR=$LA1 ./bin/qargi local prepare --repo "$T/rc" --base "$bad" --slug nope --scratch "$T" 2>&1); rcp=$?
+  [ $rcp = 2 ] && grep -qF "refused under the coordinator label $LA1: a coordinator does not prepare a run on $bad" <<<"$out" && [ "$(wc -l < "$T/s/local-runs.jsonl")" = "$n0" ] && [ "$(find "$T" -maxdepth 1 -name 'qargi.*' | wc -l)" = "$d0" ] \
+    && ok "prepare under a label refuses the base $bad, and makes no run" || no "prepare on $bad under a label (rc=$rcp): $out"
+done
+echo "$LB1" > "$A1/actor"; echo "$LB1" > "$A1/out/actor"
+[ -z "$(grep -rlF "$LA1" "$A1" 2>/dev/null)" ] && ok "the run directory holds no copy of the label" || no "label in the run directory: $(grep -rlF "$LA1" "$A1")"
+rmatch() { awk -v s="$1" '$2 == s' <<<"$2" | wc -l; }   # SLUG OUTPUT -> how many rows name the slug
+lst() { ./bin/qargi local list "$@" 2>&1; }
+slugs() { lst "$@" | awk 'NR > 1 && $2 ~ /^co[a-z][0-9]$/ {print $2}' | sort | paste -sd' '; }
+out=$(lst); row=$(awk '$2 == "coa1"' <<<"$out"); rown=$(awk '$2 == "con1"' <<<"$out")
+{ [[ $row == *"$A1  actor=$LA1 feature=alpha" ]] && [[ $rown == *"$N1" ]] && ! grep -q 'actor=' <<<"$rown"; } \
+  && ok "list: a labeled run ends with actor= and feature=, an unlabeled run's row is as before" || no "list rows: $row | $rown"
+{ [ "$(slugs --actor "$LA1")" = coa1 ] && [ "$(slugs --actor lead-x:coord:alpha:)" = "coa1 coa2" ] && [ "$(slugs --actor lead-x:coord:)" = "coa1 coa2 cob1" ] && [ "$(slugs --actor lead-x:)" = "coa1 coa2 cob1" ] && [ "$(slugs --actor "$LB1")" = cob1 ]; } \
+  && ok "list --actor takes the whole label or a prefix that ends at a colon (a run with no label matches none)" || no "--actor: $(slugs --actor "$LA1") | $(slugs --actor lead-x:coord:alpha:) | $(slugs --actor lead-x:coord:) | $(slugs --actor lead-x:)"
+{ [ -z "$(slugs --actor lead-x:coord:alpha)" ] && [ -z "$(slugs --actor lead-x:coord:al:)" ] && [ -z "$(slugs --actor lead-x:coord:alpha:1:)" ] && [ -z "$(slugs --actor "$LC1")" ] && [ -z "$(slugs --actor con1)" ]; } \
+  && ok "a prefix that does not end at a colon, and a label nobody has, match nothing" || no "--actor misses: $(slugs --actor lead-x:coord:alpha) | $(slugs --actor lead-x:coord:al:)"
+{ [ "$(slugs --feature alpha)" = "coa1 coa2 con1" ] && [ "$(slugs --feature beta)" = cob1 ] && [ "$(slugs --feature main)" = "" ] && [ "$(slugs --feature nosuch)" = "" ]; } \
+  && ok "list --feature NAME: the feature a labeled prepare recorded, else the one the base feature/NAME names" || no "--feature: $(slugs --feature alpha) | $(slugs --feature beta)"
+{ [ "$(slugs --actor lead-x:coord:alpha: --feature alpha)" = "coa1 coa2" ] && [ -z "$(slugs --actor lead-x:coord:alpha: --feature beta)" ] && [ "$(slugs --actor lead-x:coord: --feature beta)" = cob1 ] && [ "$(slugs --feature alpha --actor "$LA2")" = coa2 ]; } \
+  && ok "both filters together are an AND" || no "AND: $(slugs --actor lead-x:coord:alpha: --feature alpha) | $(slugs --actor lead-x:coord:alpha: --feature beta)"
+out=$(lst --feature alpha); [[ $(awk '$2 == "con1"' <<<"$out") == *"$N1  actor=- feature=alpha" ]] && ok "under a filter every row shows both fields (- for no label)" || no "filter fields: $out"
+./bin/qargi local list --actor >/dev/null 2>&1; r1=$?; ./bin/qargi local list --feature '' >/dev/null 2>&1; r2=$?; ./bin/qargi local list --actor '' >/dev/null 2>&1; r3=$?
+{ [ $r1 = 2 ] && [ $r2 = 2 ] && [ $r3 = 2 ]; } && ok "--actor and --feature need a value (usage error)" || no "list option values: $r1 $r2 $r3"
+out=$(lst --scratch "$T" --actor "$LA1"); [ "$(awk 'NR > 1' <<<"$out" | wc -l)" = 1 ] && ok "the filters work with --scratch too" || no "scratch filter: $out"
+
+# the narrowing by feature, end to end: a coordinator of alpha does not touch the run of beta, and may clean a run of another coordinator of alpha
+before=$(cat "$T/s/local-runs.jsonl")
+for v in verify clean "run --dry-run"; do
+  # shellcheck disable=SC2086
+  out=$(QARGI_ACTOR=$LA1 ./bin/qargi local ${v%% *} "$B1" ${v#"${v%% *}"} 2>&1); rcv=$?
+  [ $rcv = 2 ] && grep -qF "a coordinator does not run local ${v%% *} on a run based on feature/beta" <<<"$out" && [ "$before" = "$(cat "$T/s/local-runs.jsonl")" ] && ok "a coordinator of alpha does not run local ${v%% *} on a run of beta" || no "narrowing ${v%% *} rc=$rcv: $out"
+done
+out=$(QARGI_ACTOR=$LA1 ./bin/qargi local verify "$M1" 2>&1); [ $? = 2 ] && grep -q 'based on main' <<<"$out" && ok "nor on a run based on another branch" || no "narrowing main: $out"
+out=$(QARGI_ACTOR=$LB1 ./bin/qargi local verify "$B1" 2>&1); [ $? = 0 ] && ok "the coordinator of beta verifies its own run" || no "beta verify: $out"
+echo '{}' > "$A2/out/manifest.json"
+QARGI_ACTOR=$LA1 ./bin/qargi local verify "$A2" >/dev/null 2>&1 && QARGI_ACTOR=$LA1 ./bin/qargi local clean "$A2" >/dev/null 2>&1 && [ ! -e "$A2" ] \
+  && ok "a coordinator of alpha verifies and cleans a run of another coordinator of alpha: the narrowing is by feature, not by label" || no "clean of a predecessor's run"
+out=$(QARGI_ACTOR=$LA1 ./bin/qargi local clean "$B1" --discard 2>&1); rcv=$?
+[ $rcv = 2 ] && [ -d "$B1" ] && grep -qF "run local clean with --discard" <<<"$out" && ok "clean --discard stays the lead's" || no "discard under a label rc=$rcv: $out"
+
+# verify --mine
+out=$(QARGI_ACTOR=$LC1 ./bin/qargi local verify --mine 2>&1); rcm=$?
+[ $rcm = 0 ] && [ "$out" = "no open run is recorded under $LC1" ] && ok "verify --mine with no run of the label says so and exits 0" || no "mine with no run (rc=$rcm): $out"
+out=$(QARGI_ACTOR=$LB1 ./bin/qargi local verify --mine 2>&1); rcm=$?
+{ [ $rcm = 0 ] && [ "$(wc -l <<<"$out")" = 1 ] && [[ $out == "pass  cob1  $B1" ]]; } && ok "verify --mine with one passing run: one line, exit 0" || no "mine passing (rc=$rcm): $out"
+echo z > "$A1/clone/f"; "$A1/git" -C "$A1/clone" add f && "$A1/git" -C "$A1/clone" commit -q -m work   # coa1 holds a commit its member never collected
+A3=$(cprep "$LA1" feature/alpha coa3)
+out=$(QARGI_ACTOR=$LA1 ./bin/qargi local verify --mine 2>&1); rcm=$?
+{ [ $rcm = 1 ] && [ "$(wc -l <<<"$out")" = 2 ] && grep -q "^fail (exit 1)  coa1  $A1: qargi: OUT is empty: the member did not collect" <<<"$out" && grep -qx "pass  coa3  $A3" <<<"$out"; } \
+  && ok "verify --mine with a failing and a passing run: one line each, the worst exit status" || no "mine failing (rc=$rcm): $out"
+out=$(QARGI_ACTOR=$LA1 ./bin/qargi local verify "$A1" 2>&1); rcv=$?
+[ $rcv = 1 ] && grep -q 'OUT is empty' <<<"$out" && ok "which is what local verify RUN says of that run" || no "verify of coa1 (rc=$rcv): $out"
+./bin/qargi local clean "$A3" --discard >/dev/null 2>&1
+out=$(QARGI_ACTOR=$LA1 ./bin/qargi local verify --mine 2>&1)
+[ "$(wc -l <<<"$out")" = 1 ] && grep -q '^fail (exit 1)  coa1 ' <<<"$out" && ok "a cleaned run is no longer open: --mine leaves it out" || no "mine after clean: $out"
+{ [ "$(slugs --actor "$LB1")" = cob1 ] && [ "$(rline "$B1" | jq -r '.verified // ""')" != "" ] && [ "$(rline "$A1" | jq -r '.actor')" = "$LA1" ]; } && ok "the runs of another label were not touched, and verify kept the record's label" || no "mine side effects: $(rline "$A1")"
+for w in "--mine $A1" "--mine --saved ${A1##*/}" "$A1 --mine"; do
+  # shellcheck disable=SC2086
+  out=$(QARGI_ACTOR=$LA1 ./bin/qargi local verify $w 2>&1); rcm=$?
+  [ $rcm = 2 ] && grep -q 'takes no RUN' <<<"$out" && ok "verify $w: --mine takes no RUN (usage error)" || no "mine with a run: $w (rc=$rcm): $out"
+done
+for v in unset empty; do
+  if [ $v = unset ]; then out=$(env -u QARGI_ACTOR ./bin/qargi local verify --mine 2>&1); else out=$(QARGI_ACTOR='' ./bin/qargi local verify --mine 2>&1); fi; rcm=$?
+  { [ $rcm = 2 ] && grep -q 'QARGI_ACTOR' <<<"$out" && grep -q 'qargi local list' <<<"$out" && grep -q 'qargi local verify RUN' <<<"$out"; } \
+    && ok "verify --mine without a label ($v QARGI_ACTOR) is a usage error that says the lead uses local list and local verify RUN" || no "mine without a label ($v) rc=$rcm: $out"
+done
+out=$(QARGI_ACTOR=lead-x:coord:alpha ./bin/qargi local verify --mine 2>&1); rcm=$?
+[ $rcm = 2 ] && grep -qF '<lead-id>:coord:<feature>:<n>' <<<"$out" && ok "verify --mine with a malformed label is a usage error that shows the form" || no "mine malformed rc=$rcm: $out"
+./bin/qargi local clean "$A1" --discard >/dev/null 2>&1; ./bin/qargi local clean "$B1" --discard >/dev/null 2>&1; ./bin/qargi local clean "$N1" --discard >/dev/null 2>&1; ./bin/qargi local clean "$M1" --discard >/dev/null 2>&1
 exit $fail

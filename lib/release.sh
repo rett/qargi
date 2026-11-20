@@ -450,7 +450,9 @@ release_finish_tail() {
     intent_mark "$key" refs
   fi
   if [ -z "$KEEP" ] && ! intent_marked "$key" branch; then
-    if [ "$(sha_of "$BR")" = "$h" ]; then wt_drop "$BR"; g update-ref -d "refs/heads/$BR" "$h"; journal_ref "$REPO" "refs/heads/$BR" "$h" "" "$KIND:finish"
+    # the lead's own commits on the branch (a fix, the entries of a hotfix) moved it with git, so the journal is first brought up to the released head
+    # (journal_reach): a run prepared before such a commit then finds the deletion too
+    if [ "$(sha_of "$BR")" = "$h" ]; then wt_drop "$BR"; g update-ref -d "refs/heads/$BR" "$h"; journal_reach local "refs/heads/$BR" "$h" "$KIND:finish"; journal_ref "$REPO" "refs/heads/$BR" "$h" "" "$KIND:finish"
     elif branch_exists "$BR"; then echo "note: $BR is at $(sha_of "$BR") now, not at the released ${h:0:7}: it is not deleted" >&2; fi
     intent_mark "$key" branch
   fi
@@ -460,7 +462,7 @@ release_finish_tail() {
   [ "$second" != develop ] || parking_follow
   if [ -n "$PUSHED" ]; then
     if [ -z "$KEEP" ] && [ -n "$rb0" ]; then
-      if g push -q origin --delete "$BR"; then journal_push "refs/heads/$BR" "$rb0" "" "$KIND:finish"; else echo "note: could not delete origin/$BR" >&2; fi
+      if g push -q origin --delete "$BR"; then journal_reach remote "refs/heads/$BR" "$rb0" "$KIND:finish"; journal_push "refs/heads/$BR" "$rb0" "" "$KIND:finish"; else echo "note: could not delete origin/$BR" >&2; fi
     fi
     echo "pushed master, $second and tag $VER"
   else
@@ -486,6 +488,11 @@ release_finish_resume() {
   echo "finish $KIND $VER of $PROJ was cut off$([ -n "$PUSHED" ] && echo ": origin holds the release (master, $second and the tag, asked just now)" || echo " (no origin)"); finishing it:"
   echo "  master ${m0:0:7} -> ${nm:0:7}; $second ${s0:0:7} -> ${ns:0:7}; tag $VER ${tagsha:0:7}${KEEP:+; $BR is kept}$([ -n "$KEEP" ] || echo "; $BR is deleted")"
   echo "  steps already done: $(jq -r '.done | if length == 0 then "none" else join(", ") end' "$f")"
+  # as in the plan of the finish: the commits made with git that the deletions still to come take into the journal
+  if [ -z "$KEEP" ]; then
+    intent_marked "$key" branch || [ "$(sha_of "$BR")" != "$h" ] || journal_reach_plan local "refs/heads/$BR" "$h"
+    [ -z "$PUSHED" ] || [ -z "$rb0" ] || journal_reach_plan remote "refs/heads/$BR" "$rb0"
+  fi
   if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release finish $VER${HOTFIX:+ --hotfix} --plan $tok --approved \"...\")"; exit 0; fi
   [ -n "$CUT" ] || need_plan "$tok"   # under the cut the finish was approved with it; the record of the cut-off run says what is left
   [ -n "$tagsha" ] || die "the record of the interrupted finish has no tag: $(intent_remove_advice "$key"), then start again"
@@ -1087,6 +1094,12 @@ case $verb in
     fi
     tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$second" "$(sha_of master)" "$(sha_of "$second")" "$KEEP" "$IGNORE_CHECKS" | plan_token)
     echo "finish $KIND $VER of $PROJ: merge $BR into master with --no-ff, tag $VER on it, merge tag $VER (the master merge commit) into $second with --no-ff${KEEP:+, keep $BR}$([ -n "$KEEP" ] || echo ", delete $BR"), push master, $second and the tag together (all or none)"
+    # the commits the lead made with git on the branch (a fix, the entries of a hotfix), which the deletion takes into the journal (journal_reach): how
+    # many, and from where to where. For origin's branch when it is at the head that is released, as the apply requires (a push by hand is counted there)
+    if [ -z "$KEEP" ]; then
+      journal_reach_plan local "refs/heads/$BR" "$h"
+      [ "$(remote_was "$BR")" != "$h" ] || journal_reach_plan remote "refs/heads/$BR" "$h"
+    fi
     remote_report "$BR"; remote_report master; remote_report "$second"
     show_incoming master "$BR"; backlog_note master "$BR"
     if [ "$KIND" = hotfix ] && g cat-file -e "$BR:CHANGELOG.md" 2>/dev/null; then echo "changelog check (built in): the CHANGELOG.md of $BR has entries under the heading of $VER (checked above; a refusal changes nothing)"; fi

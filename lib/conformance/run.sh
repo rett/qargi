@@ -50,7 +50,8 @@
 #      dispatch.output.usage, RUN/dispatch.json adds up a usage from it
 #  13  the command gets HOME=RUN/home, no variable of the caller that env_pass does not name, and with dispatch.home its variable at
 #      RUN/home/DIR with each link there while it runs (a file of the hermetic home holding a sentinel) and gone after; the sentinel
-#      and the source paths are in no output, record or transcript, and the caller's home is unchanged
+#      and the source paths are in no output, record or transcript, and the caller's home is unchanged (the empty lock file a run makes beside
+#      a link's source, .qargi-run.lock, apart)
 #  14  with dispatch.run_config.baseline, a write run and a read-only one (as in 12) each get the run's configuration file holding the
 #      baseline and nothing else (no tool pack reaches a role in the hermetic home), read back in the format of resources.mcp, found by
 #      the command in its run home while it runs (in: home), and recorded in RUN/dispatch.json; whether the runtime honours a key is live
@@ -704,7 +705,8 @@ case13() {
   stub_ready || { ran; problem "internal: could not put the stub in place of $CMD0"; finish 13 "$title"; return; }
   cmdprep write; ran
   if [ "$CRC" != 0 ]; then problem "qargi local prepare exited $CRC: $(tail -2 "$W/cmd.err" | paste -sd' ' - | cut -c1-200)"; finish 13 "$title"; return; fi
-  s0=$(find "$HOME" -type f -exec sha256sum {} + | sort)   # the run is compared with the home as the lead's prepare left it
+  # the run is compared with the home as the lead's prepare left it; the lock file (.qargi-run.lock) a run makes beside a link's source is qargi's own and empty
+  s0=$(find "$HOME" -type f ! -name .qargi-run.lock -exec sha256sum {} + | sort)
   cmdgo
   if [ "$CRC" != 0 ] || [ ! -s "$W/cmd.env" ]; then problem "qargi local run exited $CRC or the stub recorded no environment: $(tail -2 "$W/cmd.err" | paste -sd' ' - | cut -c1-200)"; finish 13 "$title"; return; fi
   if ! jq -e '.dispatch.env_pass // [] | index(["CONFORMANCE_CALLER_SECRET"])' "$DESC" >/dev/null 2>&1; then
@@ -731,7 +733,7 @@ case13() {
   else
     note "no run home"
   fi
-  s1=$(find "$HOME" -type f -exec sha256sum {} + | sort)
+  s1=$(find "$HOME" -type f ! -name .qargi-run.lock -exec sha256sum {} + | sort)
   [ "$s0" = "$s1" ] || problem "the run changed a file of the caller's home"
   finish 13 "$title"
 }

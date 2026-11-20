@@ -209,8 +209,6 @@ bin/qargi:hook:subagent-start
 # lib/commands.py: help text that names the local runtime
 lib/commands.py:claude-code renders for a local session
 lib/commands.py:~/\.claude/skills and any \.claude/skills
-lib/commands.py:member as subagent_type
-lib/commands.py:A lead is a Claude Code session
 lib/commands.py:a local subagent definition file
 lib/commands.py:With --target claude-code it takes
 lib/commands.py:\(claude-code for this target\)
@@ -220,9 +218,6 @@ lib/commands.py:Needs --target claude-code
 lib/commands.py:by ~/\.claude/skills or by the
 lib/commands.py:checkout's \.claude/skills
 lib/commands.py:for Claude Code \.claude/skills
-lib/commands.py:The lead is this Claude Code session
-lib/commands.py:From Claude Code run them with
-lib/commands.py:"summary": "Claude Code hooks"
 lib/commands.py:"subagent-start": verb
 # lib/commands.py: the guard topic names the ant profiles it protects
 lib/commands.py:the memory tiers, ~/\.config/anthropic

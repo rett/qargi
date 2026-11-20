@@ -5,6 +5,7 @@ claude-lock.json
 __pycache__/
 *.pyc
 .qargi/
+.qargi-authority-dev
 
 # Claude Code
 .claude/worktrees/

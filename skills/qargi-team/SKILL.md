@@ -4,9 +4,9 @@ description: "Run a team on one task, opt-in: a lead coordinating members for bu
 argument-hint: brief PROJECT TEAM --task T --done C [--base B] | check DIR | contract
 ---
 
-# /qargi-team
+# qargi-team
 
-A team is for a task whose change affects usage (a renamed command, a changed output), where the code, the documentation and an independent check should move together. Most tasks are one role: use `/qargi-task`. A team costs two to three times a single run and is chosen by the user; `qargi` may recommend one when the build member's `usage_impact` is not empty.
+A team is for a task whose change affects usage (a renamed command, a changed output), where the code, the documentation and an independent check should move together. Most tasks are one role: use `qargi-task`. A team costs two to three times a single run and is chosen by the user; `qargi` may recommend one when the build member's `usage_impact` is not empty.
 
 ## Definition (in the project's stored answers, outside every repository)
 
@@ -18,7 +18,7 @@ The build member owns everything that ships with the code: manual page, help tex
 
 ## Three ways to lead (one contract: `qargi team contract`)
 
-- **This session** (default): The session-start hook has loaded the lead's resources. You dispatch each member yourself with `/qargi-task` (locally the member that `qargi agent for <role>` prints as `MEMBER MODEL EFFORT PROFILE`, spawned as `qargi provider notes spawn` says; when the user's request names the cloud, the instance `qargi agent for ROLE --surface cloud --project P` picks: a base (`<project>-worker`, `<project>-reviewer`) or a role agent), in order: build; write with `USAGE_IMPACT` and the build series; review; revise rounds up to `max_rounds`. You verify every run and apply with the user's approval.
+- **This session** (default): The lead's resources come from the session-start hook (no hook: run `qargi hook session-start`). You dispatch each member yourself with `qargi-task` (locally the member `qargi agent for <role>` prints, started as `qargi provider notes spawn` says; when the user's request names the cloud, the instance `qargi agent for ROLE --surface cloud --project P` picks: a base (`<project>-worker`, `<project>-reviewer`) or a role agent), in order: build; write with `USAGE_IMPACT` and the build series; review; revise rounds up to `max_rounds`. You verify every run and apply with the user's approval.
 - **A cloud lead**: `qargi team brief PROJECT TEAM --task ... --done ... --base ...` prints the brief. `qargi start PROJECT-lead --asked "..."`, then `qargi send PROJECT-lead --label SLUG "<brief>" --asked "..."`. The lead starts the members as threads, runs the rounds and reports; `qargi watch`, `qargi collect SID DIR`, then `qargi team check DIR`.
 - **A lead started in the console**: Start a session from the lead deployment (`PROJECT-deployment-lead`) and give it a plain task: the team definitions are in its prompt. Afterwards `qargi track SID`, then collect and check as above.
 
@@ -26,14 +26,14 @@ Cloud verbs need `--asked` (`qargi help approvals`); use the cloud only when the
 
 ## Verify before anything is applied
 
-`qargi team check DIR` runs the patch or report check on every member and reads the lead's `team.json`. A team that did not reach `accept` is not applied: read `lead/summary.md`, report the open findings to the user and let them decide. Apply each series on its own base with `/qargi-verify`.
+`qargi team check DIR` runs the patch or report check on every member and reads the lead's `team.json`. A team that did not reach `accept` is not applied: read `lead/summary.md`, report the open findings to the user and let them decide. Apply each series on its own base with `qargi-verify`.
 
 ## Who pushes
 
 Only the lead, never a member, and only as the project's `lead.push` grant says (default: nothing).
 - **This session as lead:** with `lead.push.local`, it pushes `agent/*` branches and opens pull requests without asking each time; without the grant it asks before every push.
 - **A cloud or console lead:** with `lead.push.cloud: branches`, it has a GitHub tool with a fixed allowlist: read tools, branch, file and pull-request writes unattended, `merge_pull_request` asked of the person by the platform (a tool confirmation, answered in the console), nothing destructive. Set it up with `qargi lead grant PROJECT` in a terminal: it says how to create the fine-grained token (the one repository, Contents and Pull requests read and write, nothing else), checks it, and shows and asks about each of its three steps (token and vault; the GitHub tool; the Push rules), skipping what is in place. `qargi lead status PROJECT` shows what is in place and what is missing; `qargi lead revoke PROJECT` takes the grant away (run them: `qargi provider notes commands`). The steps are also available one by one (`credential setup lead-push`, `packs apply`, `instances refresh-prompt`) for an agent to run with your words in `--approved`.
-- **A series too large to carry.** The GitHub tool takes the full content of every changed file for each commit, so a series that touches large files can be too big for the lead. It then reports BLOCKED for delivery only, leaves the member's `run.bundle`, and says so in `team.json`; `qargi team check` reports the status and reason. The coordinator (this session, with the `lead.push.local` grant) carries it: apply the patches on the base, set the author to the person (the members' commits are authored by the agent), verify with `/qargi-verify`, push `agent/<slug>` and open the pull request.
+- **A series too large to carry.** The GitHub tool takes the full content of every changed file for each commit, so a series that touches large files can be too big for the lead. It then reports BLOCKED for delivery only, leaves the member's `run.bundle`, and says so in `team.json`; `qargi team check` reports the status and reason. The coordinator (this session, with the `lead.push.local` grant) carries it: apply the patches on the base, set the author to the person (the members' commits are authored by the agent), verify with `qargi-verify`, push `agent/<slug>` and open the pull request.
 - **Merges and releases** always need the person's explicit approval for that pull request or release. The GitHub tool cannot create releases; this session makes one after "release it".
 - Branch rulesets on the repository remain the backstop: protected branches and release tags refuse any token.
 

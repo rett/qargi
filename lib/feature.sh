@@ -44,6 +44,7 @@ if [ "$verb" = list ] || [ "$verb" = park ]; then NAME_ARG=-; fi
 [ -n "$NAME_ARG" ] || usage_die "usage: qargi feature start|list|park|sync|merge|status|verify|finish NAME [BRANCH] [--project P]"
 { [ "$verb" = list ] || [ "$verb" = park ]; } || printf '%s' "$NAME_ARG" | grep -Eq '^[a-z0-9]+(-[a-z0-9]+)*$' && [ "${#NAME_ARG}" -le 40 ] || die "'$NAME_ARG' is not a feature name: kebab-case, lower-case letters, digits and single '-' (at most 40)"
 case $NAME_ARG in master|develop) die "'$NAME_ARG' is a long-lived branch";; esac
+case $verb in status|verify) actor_check feature "feature $verb" "$NAME_ARG" || exit $?;; esac   # a coordinator label: the feature this verb acts on is its own, checked where the name is resolved
 export RESOLVED
 [ -z "$WORKTREE" ] || [ "$verb" = start ] || die "--worktree belongs to feature start"
 case $verb in start|sync|merge|verify|finish) ;; *) [ -z "$ASSUME_UNREACHABLE" ] || die "--assume-unreachable-ok belongs to the verbs that ask the marshal first: feature start, sync, merge, verify and finish";; esac
@@ -146,7 +147,9 @@ feature_finish_tail() {
     intent_mark "$key" refs
   fi
   if [ -z "$KEEP" ] && ! intent_marked "$key" branch; then
-    if [ "$(sha_of "$BR")" = "$h" ]; then wt_drop "$BR"; g update-ref -d "refs/heads/$BR" "$h"; journal_ref "$REPO" "refs/heads/$BR" "$h" "" feature:finish
+    # commits the lead made on the branch with git moved it without a journal line, so the journal is first brought up to the merged head (journal_reach):
+    # a run prepared before such a commit then finds the deletion too
+    if [ "$(sha_of "$BR")" = "$h" ]; then wt_drop "$BR"; g update-ref -d "refs/heads/$BR" "$h"; journal_reach local "refs/heads/$BR" "$h" feature:finish; journal_ref "$REPO" "refs/heads/$BR" "$h" "" feature:finish
     elif branch_exists "$BR"; then echo "note: $BR is at $(sha_of "$BR") now, not at the merged ${h:0:7}: it is not deleted" >&2; fi
     intent_mark "$key" branch
   fi
@@ -157,7 +160,7 @@ feature_finish_tail() {
   parking_follow
   if g remote get-url origin >/dev/null 2>&1; then
     if [ -n "$rdel" ]; then
-      if g push -q --force-with-lease="refs/heads/$BR:$rdel" origin ":refs/heads/$BR" 2>/dev/null; then journal_push "refs/heads/$BR" "$rdel" "" feature:finish; echo "deleted origin/$BR"
+      if g push -q --force-with-lease="refs/heads/$BR:$rdel" origin ":refs/heads/$BR" 2>/dev/null; then journal_reach remote "refs/heads/$BR" "$rdel" feature:finish; journal_push "refs/heads/$BR" "$rdel" "" feature:finish; echo "deleted origin/$BR"
       else echo "note: could not delete origin/$BR (it moved, or origin refused)" >&2; fi
     fi
   fi
@@ -176,6 +179,9 @@ feature_finish_resume() {
   echo "finish feature $NAME_ARG of $PROJ was cut off$([ -n "$pushd" ] && echo ": origin holds the merge into develop (asked just now)" || echo " (develop was not to be pushed)"); finishing it:"
   echo "  develop ${d0:0:7} -> ${MERGED:0:7}${KEEP:+; $BR is kept}$([ -n "$KEEP" ] || echo "; $BR is deleted")${rdel:+; origin/$BR is deleted (${rdel:0:7})}"
   echo "  steps already done: $(jq -r '.done | if length == 0 then "none" else join(", ") end' "$f")"
+  # as in the plan of the finish: the commits made with git that the deletions still to come take into the journal
+  [ -n "$KEEP" ] || intent_marked "$key" branch || [ "$(sha_of "$BR")" != "$h" ] || journal_reach_plan local "refs/heads/$BR" "$h"
+  [ -z "$rdel" ] || journal_reach_plan remote "refs/heads/$BR" "$rdel"
   if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi feature finish $NAME_ARG --plan $tok --approved \"...\")"; exit 0; fi
   need_plan "$tok"
   g cat-file -e "$MERGED^{commit}" 2>/dev/null || die "the merge commit of the interrupted finish is not in $REPO: nothing was changed"
@@ -374,6 +380,9 @@ case $verb in
     if [ -n "$pushd" ]; then echo "will push develop to origin"; else echo "local only, will not push ($pushwhy)"; fi
     echo "finish feature $NAME_ARG of $PROJ: merge $BR into develop with --no-ff${KEEP:+, keep the branch}$([ -n "$KEEP" ] || echo ", delete the branch")${rdel:+, delete origin/$BR (${rdel:0:7})}${pushd:+, push develop}"
     [ -z "$rnote" ] || echo "  note: $rnote"
+    # the commits the lead made with git on the branch, which the deletion takes into the journal (journal_reach): how many, and from where to where
+    [ -n "$KEEP" ] || journal_reach_plan local "refs/heads/$BR" "$h"
+    [ -z "$rdel" ] || journal_reach_plan remote "refs/heads/$BR" "$rdel"
     remote_report develop; remote_report "$BR"
     show_incoming develop "$BR"; backlog_note develop "$BR"
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi feature finish $NAME_ARG${KEEP:+ --keep} --plan $tok --approved \"...\")"; exit 0; fi

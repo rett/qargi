@@ -51,11 +51,13 @@ out=$($F finish lie 2>&1); rc=$?; t2=$(tok <<<"$out")
 out=$($F finish lie --plan "$t2" --approved go 2>&1); rc=$?
 [ $rc = 0 ] && [ "$(rev "$R" develop)" = "$(rev "$O" develop)" ] && [ ! -e "$INTENT/app-feature-lie.json" ] && ok "and the finish completes: develop here is what origin has, the record is gone" || no "feature lie apply: rc=$rc $out"
 $F start bad >/dev/null 2>&1; commit_on feature/bad b1.txt; $F verify bad >/dev/null 2>&1
-t=$($F finish bad | tok); d0=$(rev "$R" develop); od=$(rev "$O" develop)
+t=$($F finish bad | tok); d0=$(rev "$R" develop); od=$(rev "$O" develop); b1=$(rev "$R" feature/bad)
 out=$(PUSH_MODE=fail $F finish bad --plan "$t" --approved go 2>&1); rc=$?
 [ $rc != 0 ] && [ "$(rev "$O" develop)" = "$od" ] && [ -f "$INTENT/app-feature-bad.json" ] && ok "feature: a push that really failed also keeps the record" || no "feature bad: rc=$rc $out"
 out=$($F finish bad 2>&1); rc=$?; t2=$(tok <<<"$out")
 [ $rc = 0 ] && [ -n "$t2" ] && grep -q "stopped before anything reached origin" <<<"$out" && ! grep -q "was cut off" <<<"$out" && [ -f "$INTENT/app-feature-bad.json" ] && ok "the re-run finds origin unchanged and starts over with a fresh plan (the plan alone keeps the record)" || no "feature bad re-run: rc=$rc $out"
+grep -qxF "  journal: takes 1 commit made with git on feature/bad (${d0:0:7}..${b1:0:7}): journaled with the deletion, so a run prepared before it still verifies" <<<"$out" \
+  && ok "and the fresh plan lists the commit made with git on the feature branch, which the deletion takes into the ref journal" || no "feature bad re-run, journal line: $out"
 out=$($F finish bad --plan "$t2" --approved go 2>&1); rc=$?
 [ $rc = 0 ] && [ "$(rev "$R" develop)" = "$(rev "$O" develop)" ] && [ "$(rev "$O" develop)" != "$od" ] && [ ! -e "$INTENT/app-feature-bad.json" ] && ok "and that finish goes through" || no "feature bad apply: rc=$rc $out"
 rel_ready() { # VERSION: a release branch ready to finish

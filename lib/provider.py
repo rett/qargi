@@ -50,6 +50,12 @@ As a library (import provider; stdlib only, found beside the descriptors, so it 
                                        it lists); the second runs it and removes the copy
   notes_of(project, surface=local)     (runtime, {topic: text}): the notes of the definition of the project's runtime on a surface, composed (notes: an
                                        optional object of topic name to one line of text, at most 16 topics of 2000 characters)
+  lead_topics(definition)              the topics of a definition's notes that are about the lead's own session on that runtime (lead_notes: a list
+                                       of topics of its notes), as a set; every other topic is about the members the runtime runs
+  lead_notes_of(name)                  (runtime, {topic: text}): the notes about the lead's own session of the lead runtime NAME (a usable runtime
+                                       of the local surface), or Unsupported; member_notes_of(project, surface=local) is (runtime, the notes
+                                       about its members, the topics it lists as about a lead session, whether it starts a member inside
+                                       the lead's session) of the project's runtime
   contract_addenda(name, surface)      the texts the runtime's definition adds to the member contract (resources.contract_addenda: files in its
                                        own directory, plain text); ProviderError for one that is missing, is not text or leaves the directory
   discard_exec_copy(directory)         remove what exec_copy made (its parent directory, qargi-exec.XXXX)
@@ -94,11 +100,16 @@ Usage: provider.py list
        provider.py model NAME SURFACE TIER
                                          the model id of a tier of the runtime on a surface
        provider.py launch NAME RENDER [--project P]   the command that starts a session on the render directory RENDER (exit 3: none)
-       provider.py notes [TOPIC] [--project P] [--surface local|cloud]
+       provider.py notes [TOPIC] [--project P] [--surface local|cloud] [--lead-runtime NAME]
                                          the text of a notes topic of the definition of the project's runtime on a surface (local unless told
                                          otherwise; composed with its enabled extensions; the project is P, else the one in effect), or the
                                          topic names when none is given; exit 1 when the runtime has no such topic or no notes, 2 when the
-                                         project has no runtime on that surface or the runtime is refused (a library pack not sealed or changed since, an unreadable definition)
+                                         project has no runtime on that surface or the runtime is refused (a library pack not sealed or changed since, an unreadable definition).
+                                         With a lead runtime (NAME, else QARGI_LEAD_RUNTIME; a usable runtime of the local surface) the topics
+                                         its definition lists in lead_notes are answered by it and the others by the project's runtime; exit 3
+                                         when NAME is no such runtime or has no such note about the lead's session (no other runtime answers),
+                                         and for spawn and member-out when the project's runtime starts a member inside the lead's session
+                                         (dispatch.mode in-session) and the lead runtime is another one: that lead cannot start its members
        provider.py skills-dirs [NAME]    the project skills directory of NAME, or of every provider that has one and supports skills (one per line)
        provider.py of PROJECT [--conf DIR] [--surface local|cloud]
                                          prints the project's provider (models.provider); with a surface, the runtime for it (a family
@@ -488,6 +499,101 @@ def home_problems(home, env_pass=(), shape=True):
         elif skills.split('/')[0] in seen | {x + '.from-run' for x in seen}:
             bad.append('dispatch.home.skills_dir: overlaps a credential destination or its .from-run residue')
     return bad
+
+
+def user_dirs(doc, members=()):
+    """{label: real path}: the directories where a member run may never link, write through or lock a sign-in, for it is the place of the user's own:
+    the directory under the user's home where the runtime keeps the user-level files of its own sessions (the directory of
+    resources.instructions.user_file, of resources.skills.exclusion.file and the one that holds resources.skills.user_dir; for codex ~/.codex), ~/.codex
+    whatever the runtime (a library pack of another runtime may link into it too), and the directory the lead's own environment names in the
+    variable of the run home (dispatch.home.env) and in CODEX_HOME, where the lead's own Codex keeps its sign-in when the variable moves it from
+    ~/.codex. members: the directories the run home's own link sources name (the sign-in made for members), as absolute paths in which no link
+    is followed: a value of CODEX_HOME that, made absolute the same way (no link followed), is one of them is not forbidden for being the lead's
+    CODEX_HOME, for a lead that signs in as a member there, with CODEX_HOME set, uses the members' directory itself. A value that only resolves
+    to the same place, or a declared directory that is a link into the lead's CODEX_HOME, is not that: the exemption is for the directory named, not
+    for wherever it leads."""
+    res = (doc or {}).get("resources") if isinstance((doc or {}).get("resources"), dict) else {}
+    sk = res.get("skills") if isinstance(res.get("skills"), dict) else {}
+    ins = res.get("instructions") if isinstance(res.get("instructions"), dict) else {}
+    ex = sk.get("exclusion") if isinstance(sk.get("exclusion"), dict) else {}
+    home = os.path.realpath(os.path.expanduser("~"))
+    found = {"~/.codex": os.path.realpath(os.path.join(home, ".codex"))}
+    for v in (ins.get("user_file"), ex.get("file"), sk.get("user_dir")):
+        if isinstance(v, str) and v.startswith("~/") and _plain_relative(v[2:]) and "/" in v[2:]:
+            d = os.path.dirname(v)
+            found[d] = os.path.realpath(os.path.join(home, d[2:]))
+    disp = (doc or {}).get("dispatch") if isinstance((doc or {}).get("dispatch"), dict) else {}
+    h = disp.get("home") if isinstance(disp.get("home"), dict) else {}
+    for var in sorted({"CODEX_HOME", h.get("env") if isinstance(h.get("env"), str) else "CODEX_HOME"}):
+        val = os.environ.get(var)
+        if val:
+            if os.path.abspath(os.path.expanduser(val)) not in members:
+                found["$" + var] = os.path.realpath(os.path.expanduser(val))
+    return found
+
+
+def _source_real(frm):
+    return os.path.realpath(os.path.join(os.path.realpath(os.path.expanduser("~")), frm[2:]))
+
+
+def home_source_forbidden(doc, runtime):
+    """None, or the refusal of the first link of dispatch.home whose source resolves (a link followed; the file need not exist) inside a directory
+    of the user's own sign-in (user_dirs): ~/.codex, the directory of the user's own sessions the definition names, the lead's own CODEX_HOME. It
+    needs no file: `provider check` and `seal` ask it of any definition, shipped or of the library, and a run asks it again when it holds the lock."""
+    disp = doc.get("dispatch") if isinstance(doc, dict) else None
+    h = disp.get("home") if isinstance(disp, dict) else None
+    if not isinstance(h, dict) or not isinstance(h.get("link"), list):
+        return None
+    argv = disp.get("argv")
+    cmd = argv[0] if isinstance(argv, list) and argv and isinstance(argv[0], str) else runtime
+    for ln in h["link"]:
+        frm = ln.get("from") if isinstance(ln, dict) else None
+        if home_link_problem(frm):
+            continue                                     # a path the rules of home_problems refuse: they say so
+        real = _source_real(frm)
+        decl = os.path.dirname(frm[2:])
+        members = {os.path.abspath(os.path.join(h0, decl)) for h0 in (os.path.expanduser("~"), os.path.realpath(os.path.expanduser("~")))}   # the directory the definition names, no link of it followed (the home itself may be spelled either way)
+        for d, dreal in sorted(user_dirs(doc, members).items()):
+            if real == dreal or real.startswith(dreal + os.sep):
+                where = ("the directory your environment's %s names" % " or ".join(sorted({"CODEX_HOME", str(h.get("env"))}))) if d.startswith("$") else d
+                return ("the sign-in %s for %s member runs resolves inside %s, the directory of your own sign-in, which a member run never links, "
+                        "writes through or locks.\n%s" % (frm, runtime, where, _login_how(h, frm, cmd)))
+    return None
+
+
+def _login_how(h, frm, cmd):
+    return ("A member run signs in on its own and never uses your own sign-in. Sign in once for members, with its own directory:\n  %s=%s %s login"
+            % (h.get("env"), os.path.dirname(frm), cmd))
+
+
+def home_source_problem(doc, runtime):
+    """None, or the refusal (a message that names the path and the way to make it) of the first link of dispatch.home whose source a member
+    run may not use: a runtime's member signs in on its own (the directory of the link's source, kept for members, made by one login of
+    its own), never with the user's own sign-in, so a source that resolves inside the directory of the user's own sign-in (home_source_forbidden),
+    that does not exist (a dangling link included) or that is not a regular file is refused. The paths in the message are the declared
+    ones (~/PATH); no real path is printed. A definition without a run home, or without links, has none."""
+    why = home_source_forbidden(doc, runtime)
+    if why:
+        return why
+    disp = doc.get("dispatch") if isinstance(doc, dict) else None
+    h = disp.get("home") if isinstance(disp, dict) else None
+    if not isinstance(h, dict) or not isinstance(h.get("link"), list):
+        return None
+    argv = disp.get("argv")
+    cmd = argv[0] if isinstance(argv, list) and argv and isinstance(argv[0], str) else runtime
+    home = os.path.realpath(os.path.expanduser("~"))
+    for ln in h["link"]:
+        frm = ln.get("from") if isinstance(ln, dict) else None
+        if home_link_problem(frm):
+            continue
+        src = os.path.join(home, frm[2:])
+        real = os.path.realpath(src)
+        how = _login_how(h, frm, cmd)
+        if not os.path.lexists(src) or not os.path.exists(real):
+            return "the sign-in %s for %s member runs does not exist (a link to a missing file is the same).\n%s" % (frm, runtime, how)
+        if not os.path.isfile(real):
+            return "the sign-in %s for %s member runs is not a regular file.\n%s" % (frm, runtime, how)
+    return None
 
 
 def pack_env(home, tmp):
@@ -1271,6 +1377,31 @@ def _notes_problems(notes):
     return bad
 
 
+def _lead_notes_problems(marks, notes):
+    """The rule of a definition's lead_notes (the topics of its notes that are about the lead's own session) that a schema cannot state: each
+    one is a topic the definition's notes have. The schema reports a value that is not a list of strings, and a topic listed twice."""
+    if not isinstance(marks, list):
+        return []
+    have = notes if isinstance(notes, dict) else {}
+    return ["lead_notes: %s is not a topic of notes (%s)" % (_show(t), ", ".join(sorted(have)) or "the definition has none")
+            for t in marks if isinstance(t, str) and t not in have]
+
+
+def lead_topics(doc):
+    """The topics of a definition's notes that are about the lead's own session on that runtime (lead_notes), as a set; every other topic is
+    about the members the runtime runs. Empty when the definition marks none. ProviderError when lead_notes is not a list of topics of the
+    definition's notes: a mark that cannot be read is never taken for "about the members"."""
+    marks = doc.get("lead_notes")
+    if marks is None:
+        return set()
+    if not isinstance(marks, list) or not all(isinstance(t, str) for t in marks):
+        raise ProviderError("provider %s is invalid: lead_notes: %s is not a list of topic names" % (doc.get("provider"), _show(marks)))
+    bad = _lead_notes_problems(marks, doc.get("notes"))
+    if bad:
+        raise ProviderError("provider %s is invalid: %s" % (doc.get("provider"), bad[0]))
+    return set(marks)
+
+
 EXTENSION_KEYS = ("schema", "kind", "extension", "description", "extends", "surface", "provides", "requires", "adds")
 EXTENSION_ADDS = ("capabilities", "resources", "renderers", "dispatch", "barrier", "adapter_verbs")
 RESOURCES = ("skills", "agents", "instructions", "mcp", "settings", "memory", "transcripts")
@@ -1364,11 +1495,16 @@ def validate2(d, name=None):
     out += [("fail", m) for m in _models_problems(d.get("models"))]
     out += [("fail", m) for m in _resource_problems(d.get("resources"))]
     out += [("fail", m) for m in _notes_problems(d.get("notes"))]
+    out += [("fail", m) for m in _lead_notes_problems(d.get("lead_notes"), d.get("notes"))]
     disp = d.get("dispatch")
     if isinstance(disp, dict) and isinstance(disp.get("env_pass"), list):
         out += [("fail", "dispatch.env_pass: %s is never handed on: %s" % (n, env_pass_problem(n))) for n in disp["env_pass"] if isinstance(n, str) and env_pass_problem(n)]
     if isinstance(disp, dict) and disp.get("home") is not None:
         out += [("fail", m) for m in home_problems(disp["home"], disp.get("env_pass") if isinstance(disp.get("env_pass"), list) else (), shape=False)]
+        if not home_problems(disp["home"], disp.get("env_pass") if isinstance(disp.get("env_pass"), list) else (), shape=False):
+            why = home_source_forbidden(d, d.get("provider") if isinstance(d.get("provider"), str) else name or "the runtime")
+            if why:
+                out.append(("fail", "dispatch.home.link: " + why.split("\n")[0]))
         if disp.get("mode") != "command":
             out.append(("fail", "dispatch.home: only a runtime that qargi local run starts (dispatch.mode command) has a run home"))
     if isinstance(disp, dict):
@@ -2493,7 +2629,8 @@ def cmd_addenda(args):
 def cmd_hidden_paths(args):
     """hidden-paths NAME SURFACE CLASS RUN TMP [--project P]: exit 2 with the refusal on standard error when the sandbox of the runtime (as the
     project composes it) would hide from a member of CLASS a path it works with in the run RUN (its clone, contract, git wrapper and OUT, which
-    need not exist yet) with the temporary directory TMP; else exit 0, silent. local prepare asks it before it makes anything."""
+    need not exist yet) with the temporary directory TMP, or, on the local surface, when a link of its run home has no sign-in a member run may
+    use (home_source_problem); else exit 0, silent. local prepare asks it before it makes anything."""
     project = None
     if len(args) == 7 and args[5] == "--project":
         project, args = args[6], args[:5]
@@ -2501,11 +2638,16 @@ def cmd_hidden_paths(args):
         print("usage: qargi provider hidden-paths NAME local|cloud read-only|write RUN TMP [--project P]", file=sys.stderr)
         return 2
     name, surface, cls, run, tmp = args
-    disp = compose(name, surface, project)["definition"].get("dispatch")
+    doc = compose(name, surface, project)["definition"]
+    disp = doc.get("dispatch")
     hits = hidden_run_paths(disp, cls, {"clone": os.path.join(run, "clone"), "contract": os.path.join(run, "contract"), "git": os.path.join(run, "git"),
                                         "out": os.path.join(run, "out"), "tmp": tmp})
     if hits:
         print("qargi: " + hidden_message(name, cls, hits, disp), file=sys.stderr)
+        return 2
+    why = home_source_problem(doc, name) if surface == "local" and not home_problems((disp or {}).get("home") if isinstance(disp, dict) else None) else None
+    if why:                                              # the sign-in of the run home's links: refused here too, before anything is made
+        print("qargi: " + why, file=sys.stderr)
         return 2
     return 0
 
@@ -2610,27 +2752,153 @@ def _project_in_effect():
         return None
 
 
+def _notes_doc(project, conf=None, root=None, library=None, surface="local"):
+    """(runtime, definition) of a project's runtime on a surface, as composed with the extensions the project enabled: what its notes are read from."""
+    runtime, _ = resolve_project(_stored_answers(project, conf), surface, project, root, library)
+    return runtime, composed(runtime, surface, project, root, library, conf)
+
+
 def notes_of(project, conf=None, root=None, library=None, surface="local"):
     """(runtime, {topic: text}) of a project: the notes of the definition of its runtime on a surface (local unless told otherwise), as composed
     with the extensions the project enabled. NoProvider (exit 2) when the project does not exist or names no provider for that surface; there
     is no default."""
-    runtime, _ = resolve_project(_stored_answers(project, conf), surface, project, root, library)
-    doc = composed(runtime, surface, project, root, library, conf)
+    runtime, doc = _notes_doc(project, conf, root, library, surface)
     notes = doc.get("notes")
     return runtime, notes if isinstance(notes, dict) else {}
 
 
+def member_notes_of(project, conf=None, root=None, library=None, surface="local"):
+    """(runtime, {topic: text}, [topic], in_session) of a project, for a lead whose own runtime is named: of the notes notes_of() gives, the
+    ones about the members the project's runtime runs (the topics its definition does not list in lead_notes), and the sorted topics it does
+    list. Those are about a lead session on that runtime, so they are no answer for a lead on another one. in_session is whether the runtime,
+    as composed, starts a member inside the lead's own session (dispatch.mode in-session): only a lead on that runtime can start one then.
+    The errors of notes_of(), and ProviderError when the list cannot be read."""
+    runtime, doc = _notes_doc(project, conf, root, library, surface)
+    notes = doc.get("notes") if isinstance(doc.get("notes"), dict) else {}
+    marked = lead_topics(doc)
+    disp = doc.get("dispatch")
+    return runtime, {t: x for t, x in notes.items() if t not in marked}, sorted(marked), isinstance(disp, dict) and disp.get("mode") == "in-session"
+
+
+def _local_runtimes(root=None, library=None):
+    """The runtimes of the local surface that can be used as they stand (shipped, or a library pack that is sealed), sorted: what a lead
+    runtime can be."""
+    out = []
+    for n in names(root, library):
+        try:
+            e = _pick(n, "provider", root, library)
+            if e is not None and "local" in _docs(e):
+                out.append(n)
+        except ProviderError:
+            pass
+    return out
+
+
+def lead_notes_of(name, root=None, library=None):
+    """(runtime, {topic: text}): the notes of the lead runtime NAME that are about the lead's own session (the topics its definition lists in
+    lead_notes). NAME is a runtime of the local surface, where a lead session runs, whatever surface the members are asked about: one that
+    has a definition and can be used as it stands (shipped, or a library pack that is sealed), named by its own name and never by a
+    family's. Anything else is Unsupported (exit 3), saying why and which runtimes there are; nothing is taken from another runtime in
+    its place, and nothing is stored or changed: the name selects which definition is read, no more."""
+    def others():
+        return "; the local runtimes: %s" % (", ".join(_local_runtimes(root, library)) or "none")
+    if not isinstance(name, str) or not NAME_RE.match(name) or name in NON_PROVIDERS:
+        raise Unsupported("unsupported lead runtime %s: it is not a runtime name%s" % (_show(name), others()))
+    try:
+        e = _pick(name, "provider", root, library)
+        docs = _docs(e) if e is not None else None
+    except ProviderError as ex:
+        raise Unsupported("unsupported lead runtime '%s': it cannot be used as it stands: %s" % (name, ex)) from ex
+    if docs is None:
+        raise Unsupported("unsupported lead runtime '%s': no runtime has that name (a family name does not name a lead runtime)%s" % (name, others()))
+    if "local" not in docs:
+        raise Unsupported("unsupported lead runtime '%s': it serves the %s surface only, and a lead's session is a local one%s" % (name, ", ".join(docs), others()))
+    doc = docs["local"]
+    try:
+        marked = lead_topics(doc)
+    except ProviderError as ex:
+        raise Unsupported("unsupported lead runtime '%s': it cannot be used as it stands: %s" % (name, ex)) from ex
+    notes = doc.get("notes") if isinstance(doc.get("notes"), dict) else {}
+    return name, {t: notes[t] for t in marked}
+
+
+LEAD_RUNTIME_ENV = "QARGI_LEAD_RUNTIME"
+# The notes about starting a member and about what a started member returns. A runtime that works in the session (dispatch.mode in-session)
+# starts a member with a tool of the lead's own session, so these two are instructions for a lead on that runtime and for no other lead.
+# A runtime's other notes about its members (how a message reaches one of its sessions, say) hold whoever leads.
+START_NOTES = ("spawn", "member-out")
+
+
+def _notes_for_lead(topic, project, surface, lead, source):
+    """cmd_notes with a lead runtime named: the notes about the lead's own session are the lead runtime's and the notes about members the
+    project's runtime's. A topic the lead runtime lists is answered from it alone, so the lead's own guidance does not depend on the
+    project's runtime (it needs the project, not its runtime). Any other topic, and the list of topics, asks the project's runtime as
+    without a lead runtime, with the same refusals; a topic that runtime lists as about a lead session is Unsupported (exit 3) and never
+    printed: it is for a lead on that runtime. So are spawn and member-out (START_NOTES) when that runtime starts a member inside the lead's
+    session and the lead runtime is another one: the text would send this lead to a tool of a session it is not in, so it is told that it
+    cannot start the project's members, and the list of topics leaves the two out. `source` is what named the lead runtime (the option or
+    the variable): every refusal ends with it, since a name from the environment is not on the command line the person sees refused."""
+    project = project or _project_in_effect()
+    _stored_answers(project)                       # no project, or no such project: exit 2, as without a lead runtime
+    by = "; the lead runtime is named by %s" % source
+    try:
+        lname, lnotes = lead_notes_of(lead)
+    except Unsupported as e:
+        raise Unsupported(str(e) + by) from e
+    if topic is not None and topic in lnotes:
+        print(lnotes[topic])
+        return 0
+    try:
+        runtime, mnotes, mlead, in_session = member_notes_of(project, surface=surface)
+    except (NoProvider, Refused, Unsupported):
+        raise
+    except ProviderError as e:                     # as without a lead runtime: a runtime that cannot be read as it stands is a refusal (exit 2)
+        raise Refused(str(e)) from e
+    cannot_start = [t for t in START_NOTES if t in mnotes] if in_session and runtime != lname else []
+    if topic in cannot_start:
+        raise Unsupported("unsupported: members of this project cannot be started from this lead: the project's runtime %s starts a member inside "
+                          "a lead session on %s (dispatch.mode in-session) and the lead runtime is %s; its '%s' note is for a lead on %s and is not "
+                          "printed%s" % (runtime, runtime, lname, topic, runtime, by))
+    mnotes = {t: x for t, x in mnotes.items() if t not in cannot_start}
+    has_lead = "its topics: " + ", ".join(sorted(lnotes)) if lnotes else "it has none"
+    has_member = "its topics: " + ", ".join(sorted(mnotes)) if mnotes else "it has none"
+    if topic is None:
+        if not lnotes and not mnotes:
+            print("qargi: the lead runtime %s has no notes about the lead's session and the runtime %s has none about its members%s"
+                  % (lname, runtime, " that a lead on another runtime can use (it starts a member inside a lead session on %s)" % runtime if cannot_start else ""),
+                  file=sys.stderr)
+            return 1
+        print("\n".join(sorted(set(lnotes) | set(mnotes))))
+        return 0
+    if topic in mnotes:
+        print(mnotes[topic])
+        return 0
+    if topic in mlead:
+        raise Unsupported("unsupported: the lead runtime %s has no note '%s' about the lead's session (%s); the '%s' note of the project's runtime %s "
+                          "is about a lead session on %s and is not used in its place%s" % (lname, topic, has_lead, topic, runtime, runtime, by))
+    print("qargi: the runtime %s has no notes topic '%s' about its members (%s) and the lead runtime %s has none about the lead's session (%s)"
+          % (runtime, topic, has_member, lname, has_lead), file=sys.stderr)
+    return 1
+
+
 def cmd_notes(args):
-    """notes [TOPIC] [--project P] [--surface local|cloud]: the text of a notes topic of the project's runtime on a surface (local unless told
-    otherwise), or the topic names when none is given. Exit 1 when the runtime has no such topic or no notes (the message names both and lists
-    the topics there are); exit 2 when the project has no runtime on that surface or the runtime cannot be used as it stands (a library pack not
-    sealed or changed since it was sealed, an unreadable definition)."""
-    topics, project, surface, i = [], None, "local", 0
+    """notes [TOPIC] [--project P] [--surface local|cloud] [--lead-runtime NAME]: the text of a notes topic of the project's runtime on a
+    surface (local unless told otherwise), or the topic names when none is given. Exit 1 when the runtime has no such topic or no notes (the
+    message names both and lists the topics there are); exit 2 when the project has no runtime on that surface or the runtime cannot be used as
+    it stands (a library pack not sealed or changed since it was sealed, an unreadable definition). With a lead runtime named (--lead-runtime
+    NAME, else QARGI_LEAD_RUNTIME when it is set and not empty; the option wins) the notes about the lead's own session come from that runtime
+    and the others from the project's (_notes_for_lead); exit 3 when the name is not a usable local runtime, when it has no such note about the
+    lead's session, or when the topic is how a member is started (spawn, member-out) and the project's runtime starts one inside a session of
+    its own that this lead is not in, saying which of the two named it. With neither, nothing below reads lead_notes and the answer is what
+    it always was."""
+    topics, project, surface, lead, i = [], None, "local", None, 0
     while i < len(args):
         if args[i] == "--project" and i + 1 < len(args) and project is None:
             project, i = args[i + 1], i + 2
         elif args[i] == "--surface" and i + 1 < len(args) and args[i + 1] in SURFACES:
             surface, i = args[i + 1], i + 2
+        elif args[i] == "--lead-runtime" and i + 1 < len(args) and lead is None:
+            lead, i = args[i + 1], i + 2
         elif args[i].startswith("--"):
             topics = [None, None]
             break
@@ -2638,8 +2906,13 @@ def cmd_notes(args):
             topics.append(args[i])
             i += 1
     if len(topics) > 1:
-        print("usage: qargi provider notes [TOPIC] [--project P] [--surface local|cloud]", file=sys.stderr)
+        print("usage: qargi provider notes [TOPIC] [--project P] [--surface local|cloud] [--lead-runtime NAME]", file=sys.stderr)
         return 2
+    source = "--lead-runtime"
+    if lead is None:
+        lead, source = os.environ.get(LEAD_RUNTIME_ENV) or None, LEAD_RUNTIME_ENV
+    if lead is not None:
+        return _notes_for_lead(topics[0] if topics else None, project, surface, lead, source)
     try:
         runtime, notes = notes_of(project or _project_in_effect(), surface=surface)
     except (NoProvider, Refused, Unsupported):
