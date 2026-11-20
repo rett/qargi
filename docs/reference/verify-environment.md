@@ -52,7 +52,7 @@ A part that cannot be applied refuses the run with a code (below). Nothing is sk
 
 The same rule covers `project set` and `project unset` of `verify` and of `verify.environment.KEY`: the comparison is always of the whole declaration before and after. In a member run these commands are refused (exit 2): the owner's words are the only approval, and an agent's relay of them is not.
 
-A hand edit of the answers file cannot turn the setting off or change it. `qargi feature verify`, `feature finish`, `release start`, `release verify` and `release finish` compare the declaration in the answers with the accepted one and refuse with `verify-env-change-unapproved` when they differ, in either direction; `feature status` and `release status` print the same finding and go on. The two ways out are to restore the answers or to change the setting with `project set`. `project init`, `new` and `attach` refuse, and store nothing, an answers file whose declaration is not the accepted one. Limit: this guards an edit of the answers file; someone who also edits the state file is not stopped, but the audit log then lacks the line a real change writes.
+A hand edit of the answers file cannot turn the setting off or change it. `qargi feature verify`, `feature finish`, `release start`, `release verify` and `release finish` compare the declaration in the answers with the accepted one and refuse with `verify-env-change-unapproved` when they differ, in either direction; `feature status` and `release status` print the same finding and go on. The two ways out are to restore the answers or to change the setting with `project set`. `project init`, `new` and `attach` refuse, and store nothing, an answers file whose declaration is not the accepted one; when none was accepted before, a declaration in the file is a first declaration, and it is stored and recorded as accepted. Limit: this guards an edit of the answers file; someone who also edits the state file is not stopped, but the audit log then lacks the line a real change writes.
 
 ## Refusal codes
 
@@ -70,7 +70,7 @@ Every refusal names its code, the part, what was found and, for a part that can 
 | `verify-env-fds` | fds | the read-back of the descriptors failed |
 | `verify-env-tty` | tty | the session or terminal read-back failed |
 | `verify-env-no-log` | tty | a suite log, or the directory for the launcher's reports or waivers, cannot be created: with the setting on the output goes to a log, never to a terminal |
-| `verify-env-waive-unapproved` | none | a waiver without the token and the owner's words, or with a token for other parts |
+| `verify-env-waive-unapproved` | none | a waiver without the token and the owner's words, or with a token for other parts or another head (a token holds the branch, the head and the declaration); a `--waive-environment` that does not name every refused part; a waiver when nothing was refused, so no token matches |
 | `verify-env-waive-used` | none | the token of a waiver was already used for a run at this head |
 | `verify-env-waive-unknown` | none | `--waive-environment` names something that is not `signals`, `fds`, `tty` or `cpu` (so not `env`), a part that is off, or the setting is off |
 
@@ -81,7 +81,7 @@ The verb makes the launcher's attempt before it makes the worktree, so a refusal
 A waiver is per run and is never stored: `qargi feature verify NAME --waive-environment cpu --plan TOKEN --approved "<the owner's words>"` (the same on `release verify`).
 
 - Only a refusal yields a token. The token covers the project, the branch, its head, the declaration and exactly the refused parts, and `--waive-environment` must name exactly those parts. With the setting off, with `cpu_quota` `null` (the cpu part is off), or for `env` (which cannot fail) the waiver is `verify-env-waive-unknown`. A token is good for one run at its head; the next refusal prints the next token.
-- A waiver skips nothing. A waived part is still attempted, and when it fails it is a warning, printed before the run and again with the verdict, and recorded as `waived-failed` with its code. A waived `cpu` runs without a scope and with the weaker cleanup. A waived part that succeeds is recorded `applied`.
+- A waiver skips nothing. A waived part is still attempted, and when it fails it is a warning, printed before the run and again with the verdict, and recorded as `waived-failed` with its code. A waived `cpu` whose attempt failed runs without a scope and with the weaker cleanup; when the attempt passed, the scope is used and the part is recorded `applied`. A waived part that succeeds is recorded `applied`.
 - A part that fails outside the waiver refuses again with a new token.
 - The run is audited as `verify:environment-waived` with the words. In a member run `--waive-environment` with `--approved` is refused (exit 2): the words are the owner's.
 - A waived run counts for `feature finish` and `release start`. The verdict line ends with `(verify.environment: cpu waived-failed)`, and `feature status`, `release status` and the plan of `feature finish` show the waiver again.
@@ -91,21 +91,23 @@ A waiver is per run and is never stored: `qargi feature verify NAME --waive-envi
 With the setting on, the suite record of a run has an `environment` member:
 
 ```json
-"environment": {"id": "3fa1c2d4e5b6", "launcher": 1, "declared": {},
-  "parts": {"signals": "applied", "fds": "applied", "tty": "applied", "cpu": "waived-failed", "env": "applied"},
-  "codes": ["verify-env-cpu-no-user-manager"],
-  "readback": {"sig_ign": "0", "sig_blk": "0", "fds": [0, 1, 2, 142, 145], "sid": 4711, "dev_tty_errno": "ENXIO",
+"environment": {"id": "b3efcece7ae9", "launcher": 1,
+  "declared": {"ci_fds": [142, 145], "cpu_quota": "200%", "env_pass": ["LANG"], "env_set": {}, "fds": "ci-like"},
+  "parts": {"signals": "applied", "fds": "applied", "tty": "applied", "cpu": "applied", "env": "applied"},
+  "codes": [],
+  "readback": {"sig_ign": "0", "sig_blk": "0", "fds": [0, 1, 2, 3, 142, 145], "sid": 4711, "dev_tty_errno": "ENXIO",
                "ci_fds": [{"fd": 142, "kind": "pipe", "end": "read", "flags": "04000", "cloexec": false, "read": "EAGAIN"},
                           {"fd": 145, "kind": "pipe", "end": "write", "flags": "01", "cloexec": false}],
-               "cgroup": ".../qargi-verify.slice/run-u123.scope", "cpu_max": "200000 100000",
+               "cgroup": ".../qargi-verify.slice/run-u123.scope", "cpu_max": "200000 100000", "cpu_weight": "100",
                "systemd": 262, "env_names": ["HOME", "LANG", "PATH"], "env_pass_unset": []},
   "cleanup": "cgroup", "leftovers": [{"pid": 4790, "comm": "sleep"}]}
 ```
 
-- `declared` is the normalised declaration. `readback` holds the values found: environment names only, never values. `ci_fds` is there only with `ci-like` and says, per number, the kind, the end, the octal status flags as `/proc/self/fdinfo` prints them, and close-on-exec.
+- `declared` is the normalised declaration: every default is filled in, so it is never empty (a declaration of `{}` is recorded as `{"cpu_quota": "max", "env_pass": [], "env_set": {}, "fds": "close"}`). `readback` holds the values found: environment names only, never values. `ci_fds` is there only with `ci-like` and says, per number, the kind, the end, the octal status flags as `/proc/self/fdinfo` prints them, and close-on-exec.
+- `readback.fds` lists every descriptor the launcher had open when it read them back, including its own report descriptor (3, close-on-exec, so the command never has it). With a waived `cpu` whose attempt failed, `parts.cpu` is `waived-failed`, `codes` names the code, the readback has no `cgroup`, `cpu_max`, `cpu_weight` or `systemd`, and `cleanup` is `pgroup`.
 - `id` is the first 12 hex digits of the sha256 of the launcher version and the normalised declaration. The launcher version is an integer in `lib/suite_env.py`, raised whenever what the launcher applies changes.
 - A run counts for `feature finish`, `release start` and the status verbs only under the declaration and launcher version it was made with. A declaration that is set, changed or removed, or a new launcher, makes an earlier run stale, and `feature status` and `release status` say why. The accepted-declaration hash in the state is of the declaration alone, so an upgrade of qargi makes earlier runs stale without making the answers refuse.
-- A run is recorded only with the report of the launcher behind it. A scope that cannot be made, or a launcher that leaves no report, is `verify-env-cpu-no-user-manager` or a launcher fault, and never a test failure: the verdict is read from the report, not from the exit status.
+- A run is recorded only with the report of the launcher behind it, and only when every launcher report of the run has the same id and launcher version (a launcher replaced while the run was going leaves no record). A scope that cannot be made, or a launcher that leaves no report, is `verify-env-cpu-no-user-manager` or a launcher fault, and never a test failure: the verdict is read from the report, not from the exit status.
 
 ## What a suite sees
 
@@ -114,7 +116,7 @@ With the setting on, the suite record of a run has an `environment` member:
 - **Descriptors.** Only 0 to 2, plus the two pipes with `ci-like`.
 - **Terminal.** A new session and no controlling terminal. Standard input is `/dev/null`; standard output and error are the suite log.
 - **CPU.** The scope's controller state as declared. The host's CPU count is unchanged.
-- **Cleanup.** When the command ends, whatever is left in the scope (found through the scope's `cgroup.procs`, so `setsid` children are reached) is listed, killed and recorded, up to five rounds over two seconds. Leftovers do not change the verdict. With `cpu_quota` `null` or a waived cpu the process group is used instead and the record says `"cleanup": "pgroup"`. A forwarded interrupt, terminate, hangup or quit reaches every process in the scope; a signal that was ignored on entry (so `nohup qargi feature verify` keeps working) is not forwarded.
+- **Cleanup.** When the command ends, whatever is left in the scope (found through the scope's `cgroup.procs`, so `setsid` children are reached) is listed, killed and recorded, up to five rounds over two seconds. Leftovers do not change the verdict. With `cpu_quota` `null` or a waived cpu whose attempt failed the process group is used instead and the record says `"cleanup": "pgroup"`. A forwarded interrupt, terminate, hangup or quit reaches every process in the scope; a signal that was ignored on entry (so `nohup qargi feature verify` keeps working) is not forwarded.
 
 ## Settings against the hosted runner
 
@@ -137,4 +139,4 @@ Two rows are not reproduced on purpose: the core count, because nothing in a use
 
 ## Doctor
 
-`make doctor` reports `systemd-run` with its version, as `ok:`, or as `expected:` when it is absent or older than 254: it is optional, only the cpu part needs it, and the bootstrap does not install it. `qargi doctor` has a check `verify-environment`: off, or on with what the host needs, and a warning when the answers differ from the accepted declaration, when the declaration is invalid, or when the cpu part is on and `systemd-run` is missing or too old. It reads only and makes no scope; `qargi feature verify` makes the attempt.
+`make doctor` reports `systemd-run` with its version, as `ok:`, or as `expected:` when it is absent or older than 254: it is optional, only the cpu part needs it, and the bootstrap does not install it. `qargi doctor` has a check `verify-environment`: off, or on with what the host needs, and a warning when the answers differ from the accepted declaration, when the declaration is invalid, when the file of accepted declarations cannot be read, or when the cpu part is on and `systemd-run` is missing or too old. It reads only and makes no scope; `qargi feature verify` makes the attempt.
