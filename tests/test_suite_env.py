@@ -897,6 +897,20 @@ class StubSystemd(Scratch):
         self.assertFalse(os.path.exists(self.path("ran")))
         self.assertEqual(self.calls(log), [])
 
+    def test_a_failed_scope_run_after_a_passing_one_leaves_no_stale_report(self):
+        env, log = self.fake_systemd(mode="fail")
+        r, rep = self.run_cmd({"cpu_quota": None}, ["true"], env=env)         # a passing run writes a complete report at the path
+        self.assertEqual((r.returncode, rep["complete"]), (0, True))
+        r, rep = self.run_cmd({"cpu_quota": "200%"}, ["false"], env=env)      # the same path; the scope cannot be made
+        self.assertEqual(r.returncode, 1)
+        self.assertIsNone(rep, "the first run's report stands for the second")
+        self.assertFalse(os.path.exists(self.report))
+        # a refusal of stage 1 replaces it too
+        r, rep = self.run_cmd({"cpu_quota": None}, ["true"], env=env)
+        self.assertTrue(rep["complete"])
+        r, rep = self.run_cmd({"cpu_quota": "200%"}, ["true"], env=dict(os.environ, PATH=self.dir))
+        self.assertEqual(rep["refused"], ["verify-env-cpu-no-systemd-run"])
+
     def test_a_null_quota_is_the_no_scope_route(self):
         env, log = self.fake_systemd()
         r, rep = self.run_cmd({"cpu_quota": None}, ["true"], env=env)

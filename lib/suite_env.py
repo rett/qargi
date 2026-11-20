@@ -507,6 +507,10 @@ def _parse_json(text, what):
 def cmd_run(args, command):
     if not command:
         _usage("run: no command after --")
+    try:
+        os.unlink(args.report)          # a report that an earlier command left must never stand for this one
+    except FileNotFoundError:
+        pass
     waive = _split_parts(args.waive)
     decl = _parse_json(args.decl, "--decl")
     if decl is None:
