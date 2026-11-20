@@ -332,6 +332,16 @@ mv "$T/s/suite-logs" "$T/s/suite-logs.keep"; : > "$T/s/suite-logs"
 setenv '{"cpu_quota":null}'
 reset; run $F verify f
 [ "$rc" = 1 ] && saw 'verify-env-no-log' && [ ! -f "$T/ran" ] && [ ! -f "$FREC" ] && ok "verify-env-no-log: with the setting on a suite log that cannot be created refuses" || no "no log on: rc=$rc $(out)"
+# under a waiver the claim comes before the log is made, so a log that cannot be made stops a run whose token is spent and audited: the message says so
+setenv '{"cpu_quota":"max"}'
+mode nouser; reset; run $F verify f; tokl=$(tokof "$(out)")
+na=$(grep -c 'verify:environment-waived' "$T/s/audit.log")
+reset; run $F verify f --waive-environment cpu --plan "$tokl" --approved "the owner said so"
+[ "$rc" = 1 ] && saw 'verify-env-no-log' && saw 'nothing was run\. The waiver token was spent' && [ ! -f "$T/ran" ] && [ ! -f "$FREC" ] && [ "$(grep -c 'verify:environment-waived' "$T/s/audit.log")" = $((na + 1)) ] \
+  && ok "verify-env-no-log under a waiver: the token is spent, an audit line is written, and the message says the token was spent" || no "no log waived: rc=$rc $(out)"
+reset; run $F verify f --waive-environment cpu --plan "$tokl" --approved "the owner said so"
+[ "$rc" = 1 ] && saw 'verify-env-waive-used' && ok "the token that the refused log spent is spent" || no "no log token again: rc=$rc $(out)"
+mode ok
 unsetenv
 reset; run $F verify f
 [ "$rc" = 0 ] && [ -f "$T/ran" ] && ok "with the setting off a missing log directory changes nothing (the suite runs without a log)" || no "no log off: rc=$rc $(out)"

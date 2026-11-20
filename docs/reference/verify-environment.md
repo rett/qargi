@@ -69,7 +69,7 @@ Every refusal names its code, the part, what was found and, for a part that can 
 | `verify-env-signals` | signals | the read-back of the signal state failed |
 | `verify-env-fds` | fds | the read-back of the descriptors failed |
 | `verify-env-tty` | tty | the session or terminal read-back failed |
-| `verify-env-no-log` | tty | a suite log, or the directory for the launcher's reports, cannot be created: with the setting on the output goes to a log, never to a terminal |
+| `verify-env-no-log` | tty | a suite log, or the directory for the launcher's reports, cannot be created: with the setting on the output goes to a log, never to a terminal. The suite log is made after the waiver is claimed, so under a waiver this refusal has spent the token and written its audit line, and the message says so |
 | `verify-env-waive-unapproved` | none | a waiver without the token and the owner's words, or with a token for other parts or another head (a token holds the branch, the head and the declaration); a `--waive-environment` that does not name every refused part; a waiver when nothing was refused, so no token matches |
 | `verify-env-waive-used` | none | the token of a waiver was already used for a run at this head |
 | `verify-env-waive-unknown` | none | `--waive-environment` names something that is not `signals`, `fds`, `tty` or `cpu` (so not `env`), a part that is off, or the setting is off |

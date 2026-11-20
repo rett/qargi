@@ -694,6 +694,8 @@ run_suite() { # the project's test command in the worktree WT, or the declared g
 }
 # run_suite_logged NAME -> run_suite with its output (both streams, on stdout) shown as it comes and kept in
 # $DA_STATE/suite-logs/PROJECT.NAME.log (SUITE_LOG; mode 600; the last run of that name). The status is the suite's.
+# Under a waiver the token was claimed before the log is made (suite_env_claim_now: a losing verify must not clobber the winner's log), so a refusal here has spent it and
+# written its audit line, and its message says so.
 run_suite_logged() {
   local rc
   SUITE_LOG=$DA_STATE/suite-logs/$PROJ.${1//\//_}.log
@@ -703,12 +705,12 @@ run_suite_logged() {
     if [ -n "${SUITE_ENV:-}" ]; then   # the reports of the launcher, one per command of this run, beside the log
       ENV_DIR=$DA_STATE/suite-logs/$PROJ.${1//\//_}.env
       rm -rf "$ENV_DIR"
-      ( umask 077; mkdir -p "$ENV_DIR" ) 2>/dev/null || die "verify-env-no-log: the directory $ENV_DIR for the reports of the launcher cannot be made; nothing was run"
+      ( umask 077; mkdir -p "$ENV_DIR" ) 2>/dev/null || die "verify-env-no-log: the directory $ENV_DIR for the reports of the launcher cannot be made; nothing was run${ENV_WAIVE:+. The waiver token was spent}"
     fi
     run_suite 2>&1 | tee "$SUITE_LOG"
     rc=${PIPESTATUS[0]}
   else
-    [ -z "${SUITE_ENV:-}" ] || die "verify-env-no-log: the suite log $SUITE_LOG cannot be created; with verify.environment the suite's output goes to a log and never to a terminal (the tty part); nothing was run"
+    [ -z "${SUITE_ENV:-}" ] || die "verify-env-no-log: the suite log $SUITE_LOG cannot be created; with verify.environment the suite's output goes to a log and never to a terminal (the tty part); nothing was run${ENV_WAIVE:+. The waiver token was spent}"
     SUITE_LOG=''; run_suite; rc=$?
   fi
   return "$rc"
