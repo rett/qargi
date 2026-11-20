@@ -969,6 +969,7 @@ case $verb in
     # the CI jobs of the tree being verified against the gate names: a warning each, a refusal with --strict (before the gates run)
     ci_scan "$WT"
     [ -z "$STRICT" ] || [ "$CI_UNMATCHED" = 0 ] || die "--strict: $CI_UNMATCHED CI job(s) match no declared gate name ($([ -n "${GATES:-}" ] && echo 'named above' || echo 'no gate is declared')); nothing was run. Declare a gate of the job's name or id, or run it without --strict"
+    suite_env_claim_now   # the waiver is used here, once nothing can refuse the run any more (a --strict refusal above spends nothing)
     echo "running the whole suite on $on at $(g rev-parse --short "$on"): $TESTCMD"
     [ -z "$SUITE_ENV" ] || echo "verify.environment: on (id $SUITE_ENV_ID): the suite starts through the launcher$([ -z "$ENV_WAIVE" ] || echo ", waiving $ENV_WAIVE")"
     gates_note

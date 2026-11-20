@@ -93,10 +93,11 @@ CODE_NO_LOG = "verify-env-no-log"
 CODE_WAIVE_UNAPPROVED = "verify-env-waive-unapproved"
 CODE_WAIVE_UNKNOWN = "verify-env-waive-unknown"
 CODE_WAIVE_USED = "verify-env-waive-used"       # printed by lib/gitflow.sh: a waiver token is good for one run
+CODE_WAIVER_DIR = "verify-env-waiver-dir"       # printed by lib/gitflow.sh: the claim, the count or the directory of the waivers of a head cannot be had
 # code -> the part it belongs to (None: no part)
 CODES = {CODE_INVALID: None, CODE_CHANGE_UNAPPROVED: None, CODE_NO_SYSTEMD_RUN: "cpu", CODE_SYSTEMD_TOO_OLD: "cpu",
          CODE_NO_USER_MANAGER: "cpu", CODE_CPU_READBACK: "cpu", CODE_SIGNALS: "signals", CODE_FDS: "fds", CODE_TTY: "tty",
-         CODE_NO_LOG: "tty", CODE_WAIVE_UNAPPROVED: None, CODE_WAIVE_UNKNOWN: None, CODE_WAIVE_USED: None}
+         CODE_NO_LOG: "tty", CODE_WAIVE_UNAPPROVED: None, CODE_WAIVE_UNKNOWN: None, CODE_WAIVE_USED: None, CODE_WAIVER_DIR: None}
 RESERVED_NAMES = ("PATH", "HOME")
 
 

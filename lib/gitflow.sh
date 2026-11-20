@@ -478,7 +478,11 @@ suite_env_status() {  # AGAIN: the command line that verifies again
   f=$(rec "$1"); [ -f "$f" ] || return 0
   rid=$(jq -r '.environment.id // ""' "$f" 2>/dev/null) || return 0
   if [ "$rid" != "${SUITE_ENV_ID:-}" ]; then
-    echo "  why: the last run used verify.environment ${rid:-off}, the answers now give ${SUITE_ENV_ID:-off} (the declaration or the launcher changed): that run does not count; run $2"
+    if [ -n "${SUITE_ENV_FINDING:-}" ] && [ -z "${SUITE_ENV_ID:-}" ]; then   # an invalid declaration or an unreadable file is not "off": the answers give no declaration at all
+      echo "  why: the last run used verify.environment ${rid:-off}, and the answers give no usable declaration now (the finding above): that run does not count until it is fixed"
+    else
+      echo "  why: the last run used verify.environment ${rid:-off}, the answers now give ${SUITE_ENV_ID:-off} (the declaration or the launcher changed): that run does not count; run $2"
+    fi
   fi
   suite_env_waived_line "$1"
 }
@@ -497,7 +501,7 @@ suite_env_note() {
   [ -z "$l" ] || printf ' (verify.environment: %s)' "$l"
 }
 # suite_env_prepare AGAIN BRANCH HEAD -> before the worktree of a verify: the attempt the launcher makes for the run (suite_env.py probe) and the waiver
-# (--waive-environment PARTS --plan T --approved W, WAIVE_ENV; per run, never stored). AGAIN is the command line to repeat. Sets ENV_WAIVE (the waived parts,
+# (--waive-environment PARTS --plan T --approved W, WAIVE_ENV; per run: only the count of the tokens used is kept, in the state). AGAIN is the command line to repeat. Sets ENV_WAIVE (the waived parts,
 # comma-separated) and ENV_CPU_CODE (the code that sends the run to the no-scope route when cpu is waived and the attempt failed). Only a refusal of a part
 # yields a token: the attempt's refusal prints one for exactly the refused parts, and so does a refusal during the run (suite_env_settle); a waiver names
 # parts that are on, covers at least every part the attempt refused, and stands on the token of the refusal, which is good for one run at that head (the
@@ -507,7 +511,7 @@ suite_env_prepare() {
   local again=$1 br=$2 head=$3 out rc=0 p codes first g missing='' used=''
   local want_csv need_csv want_tok
   local -a want=() need=()
-  ENV_WAIVE='' ENV_CPU_CODE='' SE_AGAIN=$again SE_BR=$br SE_HEAD=$head SE_KEY='' SE_GEN=0
+  ENV_WAIVE='' ENV_CPU_CODE='' SE_AGAIN=$again SE_BR=$br SE_HEAD=$head SE_KEY='' SE_GEN=0 SE_CLAIM_ARGS=()
   if [ -n "${WAIVE_SET:-}" ]; then
     [ -z "${APPROVED:-}" ] || suite_env_not_member
     [ -n "$SUITE_ENV" ] || die "verify-env-waive-unknown: --waive-environment names parts of verify.environment, which is off for $PROJ: there is nothing to waive"
@@ -527,7 +531,7 @@ suite_env_prepare() {
   fi
   [ -n "$SUITE_ENV" ] || return 0
   SE_KEY=$(printf '%s\n' "$PROJ" "$br" "$head" "$SUITE_ENV_ID" | plan_token)
-  SE_GEN=$(suite_env_gen)
+  suite_env_gen
   out=$(python3 -I "$SE" probe --decl "$SUITE_ENV" </dev/null) || rc=$?
   case $rc in 0|1) ;; *) die "the launcher could not make its attempt for this run (exit $rc): ${out:-no output}; nothing was run or recorded";; esac
   jq -e 'type == "object"' >/dev/null 2>&1 <<<"$out" || die "the launcher's attempt printed no result: ${out:-no output}; nothing was run or recorded"
@@ -566,14 +570,24 @@ suite_env_prepare() {
   else
     echo "qargi: warning: verify.environment: $want_csv is waived for this run, and the attempt before it applied every part" >&2
   fi
-  audit_log "verify:environment-waived" "$PROJ $br ${head:0:12} parts: $want_csv${codes:+ codes: ${codes// /,}}"
+  SE_CLAIM_ARGS=("$want_csv" "${codes:+ codes: ${codes// /,}}")   # the token is spent by suite_env_claim_now, which each verb calls after its own checks
 }
-# suite_env_gen -> how many waivers were made so far at this branch, head and declaration (SE_KEY): the files $DA_STATE/verify-env-waivers/KEY.N, one for each run
-# that started under a waiver. The number is part of every waiver token, which is how a token is good for one run.
+# suite_env_claim_now -> the verb's call, after its own pre-run checks (the worktree, the CI scan and --strict) and before it makes or touches anything else
+# (the busy mark, the suite log, the reports): a run under a waiver claims its token here (suite_env_claim); a run without one has nothing to claim.
+suite_env_claim_now() { [ -z "${ENV_WAIVE:-}" ] || suite_env_claim "${SE_CLAIM_ARGS[@]}"; }
+# suite_env_gen -> SE_GEN, how many waivers were made so far at this branch, head and declaration (SE_KEY): the larger of the claim files
+# $DA_STATE/verify-env-waivers/KEY.N (one for each run that started under a waiver, counted from 0 while they are there) and the number in KEY.count, which
+# suite_env_claim keeps under a lock, so that a claim file that is deleted does not make its token good again. The number is part of every waiver token, which is
+# how a token is good for one run. Nothing is made here; a count that is not a number is a refusal (verify-env-waiver-dir).
 suite_env_gen() {
-  local n=0
-  while [ -e "$DA_STATE/verify-env-waivers/$SE_KEY.$n" ]; do n=$((n + 1)); done
-  echo "$n"
+  local d=$DA_STATE/verify-env-waivers c=0 n=0
+  while [ -e "$d/$SE_KEY.$n" ]; do n=$((n + 1)); done
+  if [ -e "$d/$SE_KEY.count" ]; then
+    c=$(cat "$d/$SE_KEY.count" 2>/dev/null) || c=x
+    case $c in ''|*[!0-9]*) die "verify-env-waiver-dir: $d/$SE_KEY.count does not hold a number: the number of waivers made at this head cannot be read, so a spent token could not be told from a new one; nothing was run or recorded";; esac
+  fi
+  [ "$c" -le "$n" ] || n=$c
+  SE_GEN=$n
 }
 # suite_env_token PARTS [GEN] -> the token of a waiver of exactly PARTS (sorted, comma-separated) at this branch, head and declaration, for waiver number GEN (default: the next)
 suite_env_token() {
@@ -583,15 +597,25 @@ suite_env_token() {
 suite_env_token_line() {
   echo "plan token: $(suite_env_token "$1")   (to run once without $1: $SE_AGAIN --waive-environment $1 --plan $(suite_env_token "$1") --approved \"<the owner's words>\")"
 }
-# suite_env_claim -> just before the suite starts under a waiver: the waiver is used (file number SE_GEN, made once: a second verify at the same head that
-# holds the same token loses). A verb that stops before this point leaves the token as it was.
+# suite_env_claim PARTS CODES -> called by suite_env_claim_now, when every check of suite_env_prepare and of the verb itself has passed and before the verb makes or
+# touches anything else (the busy mark, the suite log, the reports): the waiver is used. The claim file number SE_GEN is made once, so a second verify at the same head that holds the same token loses
+# here, with nothing run, nothing written and nothing audited; the winner raises KEY.count (under a lock: a deleted claim file does not reopen the token), and the
+# audit line is written at the claim. A verb that stops before this point leaves the token as it was.
 suite_env_claim() {
-  [ -n "${ENV_WAIVE:-}" ] || return 0
-  mkdir -p "$DA_STATE/verify-env-waivers" 2>/dev/null || die "verify-env-no-log: the directory for the waivers of verify.environment cannot be made; nothing was run"
-  if ! ( set -C; : > "$DA_STATE/verify-env-waivers/$SE_KEY.$SE_GEN" ) 2>/dev/null; then
+  local d=$DA_STATE/verify-env-waivers f rc=0
+  f=$d/$SE_KEY.$SE_GEN
+  mkdir -p "$d" 2>/dev/null || die "verify-env-waiver-dir: the directory $d for the waivers of verify.environment cannot be made; nothing was run or recorded"
+  if ! ( set -C; : > "$f" ) 2>/dev/null; then
+    [ -e "$f" ] || die "verify-env-waiver-dir: the claim $f of the waiver cannot be made; nothing was run or recorded"
     die "verify-env-waive-used: another verify at this head used the waiver at the same moment; nothing was run or recorded"
   fi
+  ( umask 077; flock 9 || exit 4
+    c=$(cat "$d/$SE_KEY.count" 2>/dev/null); case $c in ''|*[!0-9]*) c=0;; esac
+    [ "$c" -ge $((SE_GEN + 1)) ] || { printf '%s\n' $((SE_GEN + 1)) > "$d/$SE_KEY.count.tmp" && mv -f "$d/$SE_KEY.count.tmp" "$d/$SE_KEY.count"; }
+  ) 9>"$d/.lock" || rc=$?
+  [ "$rc" = 0 ] || die "verify-env-waiver-dir: the count of the waivers made at this head could not be kept in $d (status $rc: the lock or the write failed); nothing was run or recorded"
   SE_GEN=$((SE_GEN + 1))
+  audit_log "verify:environment-waived" "$PROJ $SE_BR ${SE_HEAD:0:12} parts: $1$2"
 }
 # suite_env_not_member -> exits 2 in a member run: the owner's words are not a member's to give (the check is the one of project unset: a failure to tell is a refusal)
 suite_env_not_member() {
@@ -681,7 +705,6 @@ run_suite_logged() {
       rm -rf "$ENV_DIR"
       ( umask 077; mkdir -p "$ENV_DIR" ) 2>/dev/null || die "verify-env-no-log: the directory $ENV_DIR for the reports of the launcher cannot be made; nothing was run"
     fi
-    suite_env_claim   # a waiver is used from here on
     run_suite 2>&1 | tee "$SUITE_LOG"
     rc=${PIPESTATUS[0]}
   else

@@ -695,7 +695,7 @@ class Skills(HookCase):
                 self.assertEqual(r.returncode, 2, c)
                 self.assertIn("qargi project set of %s changes" % path, r.stderr, c)
         for c in ("qargi project set p cis v", "qargi project set p ci_jobs v", "qargi project set p methodology v", "qargi project set p methodology_accepted_x v",
-                  "qargi project set p verifier x", "qargi project set p verify_x v", "echo qargi project set p verify.environment x", "qargi project show p"):
+                  "qargi project set p verifier x", "qargi project set p verify_x v", "echo qargi project set p verify.environment x", "echo qargi project set p ci.not_gates x", "qargi project show p"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
@@ -875,6 +875,37 @@ class Skills(HookCase):
             self.assertIn("qargi release publish creates a GitHub release and is not available to an agent", r.stderr)
         for c in ("qargi release status 0.2.0", "qargi release verify 0.2.0 --project p", "qargi release push 0.2.0", "bash lib/release.sh status 0.2.0",
                   "echo qargi release publish", "grep -n 'release publish' lib/commands.py", "qargi help release publish"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_refuses_the_waiver_of_the_verify_environment_to_a_member(self):
+        """release verify --waive-environment PARTS --plan T --approved W is the owner's waiver of a part of verify.environment. The shell refuses it in a member run
+        by the member mark and the run directory, which a member that another session started has neither of, so the guard refuses the option with --approved (feature verify
+        is refused as a whole). The attempt without --approved only prints the token and stays open; a flag a variable, a substitution or xargs builds is read as either."""
+        for v in ("release verify 0.2.0 --waive-environment cpu --plan 0123456789ab --approved go", "feature verify f --waive-environment cpu --plan 0123456789ab --approved go",
+                  "release verify 0.2.0 --hotfix --project p --approved go --plan 0123456789ab --waive-environment fds,tty",
+                  "release --project p verify 0.2.0 --waive-environment cpu --approved go"):
+            for form in ("qargi %s", "/opt/q/bin/qargi %s", "sudo qargi %s", "cd src && qargi %s", "bash -c 'qargi %s'", "env FOO=1 qargi %s", "echo $(qargi %s)",
+                         "bash lib/%s", "lib/%s"):
+                area = v.split()[0]
+                c = (form % v) if not form.startswith(("bash lib", "lib")) else (form % (area + ".sh" + v[len(area):]))
+                r = self.bash(c)
+                self.assertEqual(r.returncode, 2, c)
+                self.assertIn("verify with --waive-environment and --approved waives a part of verify.environment", r.stderr, c)
+        for c in ("qargi release verify 0.2.0 --approved go $F", "qargi release verify 0.2.0 --waive-environment $P", "qargi release verify 0.2.0 --waive-environment cpu \"$(cat t)\"",
+                  "echo 0.2.0 | xargs qargi release verify --approved go", "qargi release verify 0.2.0 $W $A",
+                  # one word that splits into several (a variable, an array expansion, a substitution) can carry both options, after --project too
+                  "qargi release verify 0.2.0 --project p $X", "qargi release --project p verify 0.2.0 $X", "qargi release verify 0.2.0 --project p \"${A[@]}\"",
+                  "qargi release verify 0.2.0 --project p $(cat args)", "bash lib/release.sh verify 0.2.0 --project p $X"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("verify with --waive-environment and --approved waives a part of verify.environment", r.stderr, c)
+        for c in ("qargi release verify 0.2.0", "qargi release verify 0.2.0 --project p", "qargi release verify 0.2.0 --hotfix", "qargi release verify 0.2.0 --waive-environment cpu",
+                  "qargi release verify 0.2.0 --plan 0123456789ab --approved go", "qargi release status 0.2.0 --approved go",
+                  "echo qargi release verify 0.2.0 --waive-environment cpu --approved go", "grep -n 'waive-environment' lib/release.sh",
+                  # what is not a verify, or has every word in the open without both options, is not over-blocked
+                  "qargi release status 0.2.0 --project p $X", "qargi release verify 0.2.0 --project p --waive-environment fds,tty",
+                  "qargi release verify 0.2.0 --hotfix --project p --plan 0123456789ab --approved go"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
