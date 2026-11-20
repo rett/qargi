@@ -441,5 +441,29 @@ else
   echo "expected: no real user scope here (systemd-run ${rv:-absent}, needs --user --scope to work on 254 or newer): the real-scope cases did not run"
 fi
 
+# two verifies of the same name share one directory for the reports of the launcher, and the second would delete the first's: with the setting on a second verify of
+# a name whose first is alive is refused before anything is made (no run, no waiver spent, the first's reports and busy mark untouched); a dead pid, another name
+# and the setting off are not refused
+fake; mode ok; setenv '{"cpu_quota":null}'; setcmd "echo suite-ran; touch $T/ran"
+mkdir -p "$T/s/busy" "$T/s/suite-logs/app.feature-f.env" "$T/s/suite-logs/app.release-0.2.0.env"
+echo first > "$T/s/suite-logs/app.feature-f.env/gate.json"; echo first > "$T/s/suite-logs/app.release-0.2.0.env/gate.json"
+sleep 300 & HOLDER=$!
+printf '%s\n' "$HOLDER" > "$T/s/busy/app.verify.f.pid"; printf '%s\n' "$HOLDER" > "$T/s/busy/app.release-verify.0.2.0.pid"
+reset; run $F verify f
+[ "$rc" = 1 ] && saw "another verify of f is running \(pid $HOLDER\)" && saw 'Nothing was run' && [ ! -f "$T/ran" ] && [ ! -f "$FREC" ] && [ "$(cat "$T/s/suite-logs/app.feature-f.env/gate.json")" = first ] \
+  && [ "$(cat "$T/s/busy/app.verify.f.pid")" = "$HOLDER" ] && [ ! -s "$T/fakelog" ] \
+  && ok "feature verify: a second verify of the name is refused while the first is alive; nothing runs and the first's reports and busy mark stay" || no "second feature verify: rc=$rc: $(out)"
+reset; run $REL verify 0.2.0
+[ "$rc" = 1 ] && saw "another release-verify of 0.2.0 is running \(pid $HOLDER\)" && [ ! -f "$T/ran" ] && [ "$(cat "$T/s/suite-logs/app.release-0.2.0.env/gate.json")" = first ] \
+  && ok "release verify: the same refusal" || no "second release verify: rc=$rc: $(out)"
+reset; run $REL verify 0.3.0
+[ "$rc" = 0 ] && [ -f "$T/ran" ] && ok "a verify of another name is not refused" || no "other name: rc=$rc: $(out)"
+unsetenv; reset; run $F verify f
+[ "$rc" = 0 ] && [ -f "$T/ran" ] && saw 'another whole-suite run of app is in progress' && ok "with the setting off a live first is only a warning, as it always was" || no "setting off: rc=$rc: $(out)"
+setenv '{"cpu_quota":null}'; kill "$HOLDER"; wait "$HOLDER" 2>/dev/null
+reset; run $F verify f
+[ "$rc" = 0 ] && [ -f "$T/ran" ] && ok "a busy mark whose pid is gone is ignored" || no "dead pid: rc=$rc: $(out)"
+unsetenv
+
 [ "$fail" = 0 ] && echo "all suite-env flow tests passed"
 exit "$fail"
