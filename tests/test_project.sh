@@ -778,7 +778,30 @@ cp $T/state.good "$VST"; vset vatt verify.environment '{"fds":"ci-like"}' >/dev/
 out=$($DA project attach "$VR" --name vatt --url https://github.com/example/vatt --force 2>&1); tok=$(vtok <<<"$out")
 msg=$($DA project attach "$VR" --name vatt --url https://github.com/example/vatt --force --plan "$tok" --approved go 2>&1); rc=$?
 { [ $rc = 1 ] && grep -q 'cannot be read' <<<"$msg" && [ "$(vans vatt)" = '{"fds":"ci-like"}' ] && cmp -s $T/before.json "$T/c/projects/vatt.json" && cmp -s $T/state.bad "$VST"; } && vok "attach --force over stored answers that declare verify.environment is refused with a damaged state file, nothing stored" || vno "attach --force with a declaration, damaged state (rc=$rc)" "$msg"
+# init --force of a file that declares nothing over stored answers that declare it: with the state damaged nothing vouches for the approved declaration, and
+# the file would drop it, so it is refused; over stored answers that declare nothing it proceeds
+cp "$T/c/projects/vatt.json" $T/before.json
+echo "$base" | jq '.project = "vatt"' > $T/vatt-nodecl.json
+msg=$($DA project init vatt --answers $T/vatt-nodecl.json --force 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q 'cannot be read' <<<"$msg" && grep -q 'declare it while this file declares none' <<<"$msg" && [ "$(vans vatt)" = '{"fds":"ci-like"}' ] && cmp -s $T/before.json "$T/c/projects/vatt.json" && cmp -s $T/state.bad "$VST"; } \
+  && vok "init --force of a file that declares nothing over stored answers that declare it is refused with a damaged state file, nothing stored" || vno "init --force dropping the declaration, damaged state (rc=$rc)" "$msg"
+msg=$($DA project init vnodecl --answers $T/vn.json --force 2>&1); rc=$?
+{ [ $rc = 0 ] && cmp -s $T/state.bad "$VST"; } && vok "init --force of a file that declares nothing over stored answers that declare nothing proceeds with a damaged state file" || vno "init --force over nothing, damaged state (rc=$rc)" "$msg"
 cp $T/state.good "$VST"
+# init, new and attach of a file that declares verify.environment hold the lock of project set from the comparison to the end of the verb: while another change holds it
+# init waits (and, cut short, stores nothing); a file that declares nothing takes no lock
+echo "$base" | jq '.project = "vlock" | .verify = {environment: {fds: "ci-like"}}' > $T/vlock.json
+rm -f "$T/lk.ready" "$T/lk.release"
+( flock 9; : > "$T/lk.ready"; until [ -e "$T/lk.release" ]; do sleep 0.1; done ) 9> "$T/s/verify-env.gate.lock" & hp=$!
+until [ -e "$T/lk.ready" ]; do sleep 0.1; done
+msg=$(timeout 1 $DA project init vlock --answers $T/vlock.json 2>&1); rc=$?
+{ [ $rc = 124 ] && [ ! -e "$T/c/projects/vlock.json" ] && [ "$(jq -c '.projects.vlock // "none"' "$VST")" = '"none"' ]; } && vok "init of a file that declares verify.environment waits for the lock another change holds, and stores nothing when cut short" || vno "init while the lock is held (rc=$rc)" "$msg"
+echo "$base" | jq '.project = "vlock2"' > $T/vlock2.json
+msg=$(timeout 2 $DA project init vlock2 --answers $T/vlock2.json 2>&1); rc=$?
+{ [ $rc = 0 ] && [ -f "$T/c/projects/vlock2.json" ]; } && vok "init of a file that declares nothing does not wait for that lock" || vno "init without a declaration while the lock is held (rc=$rc)" "$msg"
+: > "$T/lk.release"; wait "$hp"
+msg=$($DA project init vlock --answers $T/vlock.json 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(vent vlock | jq -r .fds)" = ci-like ]; } && vok "and it goes through once the lock is free" || vno "init after the lock was free (rc=$rc)" "$msg"
 
 # --- project link | unlink: skills, agents and memory, linked from ~/.qargi into the checkout and the runtime's memory directory
 # One plan and one token for the lot; a worktree gets its links by running the verb inside it; nothing records the worktrees. A member's run

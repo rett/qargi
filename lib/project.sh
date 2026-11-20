@@ -638,15 +638,22 @@ verify_env_lock() {
 # declaration must be the approved one, or nothing is stored. With no entry in the state, a file that declares one is a first declaration (plain):
 # VENV_FIRST holds it, and verify_env_commit writes the entry once the file is stored
 verify_env_refuse() {
-  local nd res rc=0 a s
+  local nd res rc=0 a s sd
   VENV_FIRST=''
   nd=$(venv_decl "$1") || { echo "qargi: cannot read $1; nothing stored" >&2; return 1; }
+  # a file that declares verify.environment is compared with the approved entry and then stored, and the entry written, under the lock of project set (held to the
+  # end of the verb), so a set and an init cannot interleave; a file that declares nothing takes no lock, as it changes no entry
+  [ "$nd" = null ] || verify_env_lock
   res=$(venv_py approved check "$2" "$nd" --state "$DA_STATE") || rc=$?
   case $rc in
     0) return 0;;
     # a state file that cannot be read (the launcher said so on stderr) stops a file that declares verify.environment, which cannot be compared; a file
-    # that declares nothing proceeds: the setting is off there, and off changes nothing else
-    3) [ "$nd" != null ] || return 0
+    # that declares nothing proceeds, unless the answers stored now declare it: the setting would go off with nothing to vouch for what was approved
+    3) if [ "$nd" = null ]; then
+         sd=null; [ ! -f "$PROJ_DIR/$2.json" ] || sd=$(venv_decl "$PROJ_DIR/$2.json" 2>/dev/null) || sd=null
+         [ "$sd" = null ] && return 0
+         echo "qargi: verify.environment could not be compared with the approved declaration (the state file cannot be read), and the answers stored for $2 declare it while this file declares none: that would turn it off; nothing stored" >&2; return 1
+       fi
        echo "qargi: verify.environment could not be compared with the approved declaration (the state file cannot be read); nothing stored" >&2; return 1;;
     1) jq -e 'type == "object" and has("entry") and has("answers") and has("state")' <<<"$res" >/dev/null 2>&1 \
          || { echo "qargi: verify.environment could not be compared with the approved declaration; nothing stored" >&2; return 1; };;
