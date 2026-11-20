@@ -907,6 +907,14 @@ class Skills(HookCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
         # a redirection hides nothing else: the pair, or a word that can be either, still refuses
+        # a quoted '>' is an argument, but the guard's words carry no quotes: it must not take the next word (an option) with it
+        for c in ("qargi release verify '>' --approved go 0.2.0 --waive-environment cpu", "qargi release verify '>>' --approved go 0.2.0 --waive-environment cpu",
+                  "qargi release verify '2>' --approved go 0.2.0 --waive-environment cpu", "qargi release verify 0.2.0 --waive-environment cpu '2>' --approved go",
+                  "qargi release verify 0.2.0 --approved go '>' --waive-environment cpu", "qargi release verify 0.2.0 --waive-environment cpu >/dev/null --approved go",
+                  "qargi release verify 0.2.0 '>' --waive-environment cpu --approved go", "qargi release verify \">\" --approved go 0.2.0 --waive-environment cpu"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("verify with --waive-environment and --approved waives a part of verify.environment", r.stderr, c)
         for c in ("qargi release verify 0.2.0 --waive-environment cpu --approved $W > $TMPDIR/v.log", "qargi release verify 0.2.0 > $TMPDIR/v.log --approved $X",
                   "qargi release verify 0.2.0 --approved go >$TMPDIR/v.log $X", "qargi release verify 0.2.0 --waive-environment cpu --approved go > $TMPDIR/v.log",
                   "qargi release verify 0.2.0 $X>$TMPDIR/v.log", "qargi release verify 0.2.0 --approved go --waive-environment $P 2> /dev/null"):

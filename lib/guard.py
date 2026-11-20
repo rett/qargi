@@ -3599,9 +3599,11 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None, at=None):
         # only prints a token and stays open). A word the guard cannot read (a variable, an array expansion, a substitution, or xargs) can split into several
         # words and carry both options, so any such word is refused, as a path of the answers command is
         argv = cut if prog in SCRIPTS else cut[k + 1:]
-        argv = without_redirections(argv)      # the shell takes a redirection and its target out of the words: a redirect to a path built from a variable is no argument of the verb
+        raw = argv
+        argv = without_redirections(raw)       # the shell takes a redirection and its target out of the words: a redirect to a path built from a variable is no argument of the verb
         unreadable = via_xargs or any(any(c in t for c in UNREADABLE) for t in argv)
-        waive, approved = "--waive-environment" in argv, "--approved" in argv
+        # the words carry no quotes, so a quoted '>' reads as a redirection and would take the next word (--approved) with it: the two options are looked for in the raw words too
+        waive, approved = "--waive-environment" in raw, "--approved" in raw
         if (waive and approved) or unreadable:
             return OwnReason("qargi %s verify with --waive-environment and --approved waives a part of verify.environment with the owner's words (a flag the guard cannot read could be either) "
                              "and is not available to an agent; report the refusal and the plan token it printed instead" % area)
