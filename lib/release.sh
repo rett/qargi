@@ -24,7 +24,10 @@
 #                                           With a branch: the pull request's checks (gh pr checks: name and pass/fail/pending). With a tag: the
 #                                           checklist after the release: tag on origin, GitHub release, the assets of release.assets, the signatures of
 #                                           release.sign.files, and the project's release.after_steps (steps recorded by `finish`; `step` marks one done).
-#   release.sh verify VERSION [--hotfix]    run the whole suite on the branch head (develop's head before a release starts); same warnings
+#   release.sh verify VERSION [--hotfix] [--waive-environment PARTS --plan T --approved W]
+#                                           run the whole suite on the branch head (develop's head before a release starts); same warnings.
+#                                           With the answer verify.environment the suite and each gate start through lib/suite_env.py; a part
+#                                           that cannot be applied refuses the run, and the waiver is as for feature verify (per run, audited)
 #                                           With the answer release.version_files (a list of paths) start, status and verify check that each file contains
 #                                           VERSION at the release branch and warn of the ones that do not: "bump these on the release branch". No answer, no check.
 #   release.sh fix VERSION [--hotfix] [--push [--plan T --approved W]]
@@ -99,9 +102,11 @@
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
-STRICT=''; VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY='' NOTES_OPT='' FIXPUSH='' IGNORE_CHECKS='' IGNORE_SET='' IGNORED='' RECREATE='' STEPNAME='' EVIDENCE='' EVIDENCE_SET='' AGAIN=''; ASSETS=() ASSET_DIRS=()
+STRICT=''; VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY='' NOTES_OPT='' FIXPUSH='' IGNORE_CHECKS='' IGNORE_SET='' IGNORED='' RECREATE='' STEPNAME='' EVIDENCE='' EVIDENCE_SET='' AGAIN='' WAIVE_ENV='' WAIVE_SET=''; ASSETS=() ASSET_DIRS=()
+# shellcheck disable=SC2034  # WAIVE_ENV and WAIVE_SET are read by suite_env_prepare (gitflow.sh)
 while [ $# -gt 0 ]; do
   case $1 in
+    --waive-environment) need_val "$1" $#; WAIVE_ENV=$2; WAIVE_SET=1; shift 2;;
     --project) need_val "$1" $#; PROJ=$2; shift 2;; --date) need_val "$1" $#; DATE=$2; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
     --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
     --asset) need_val "$1" $#; ASSETS+=("$2"); shift 2;; --asset-dir) need_val "$1" $#; ASSET_DIRS+=("$2"); shift 2;; --recreate) RECREATE=1; shift;; --notes-file) need_val "$1" $#; NOTES_OPT=$2; shift 2;;
@@ -118,6 +123,7 @@ done
 [ "$verb" = step ] || [ -z "$EVIDENCE_SET" ] || usage_die "--evidence and --again belong to release step (--again also to release plan)"
 [ "$verb" = step ] || [ "$verb" = plan ] || [ -z "$AGAIN" ] || usage_die "--evidence and --again belong to release step (--again also to release plan)"
 [ "$verb" = verify ] || [ -z "$STRICT" ] || usage_die "--strict belongs to release verify"
+[ "$verb" = verify ] || [ -z "$WAIVE_SET" ] || usage_die "--waive-environment belongs to release verify"
 [ "$verb" = fix ] || [ -z "$FIXPUSH" ] || usage_die "--push belongs to release fix"
 [ "$verb" = finish ] || [ -z "$IGNORE_SET" ] || usage_die "--ignore-checks belongs to release finish"
 [ -z "$IGNORE_SET" ] || printf '%s' "$IGNORE_CHECKS" | grep -q '[^[:space:]]' || usage_die "--ignore-checks needs the reason, in the words you gave: --ignore-checks \"...\""
@@ -142,6 +148,9 @@ VFILE=$(jq -r '(.release? // {}) | .version_file // "VERSION"' "$af"); VFILE_SET
 RTC=$(jq -r '(.release? // {}) | .test_command // empty | if type == "array" then map(@sh) | join(" ") else . end' "$af"); [ -z "$RTC" ] || TESTCMD=$RTC
 # the declared gates (the answer gates; lib/gates.py) replace test_command and release.test_command: a release runs the feature-tier gates, then the release-tier gates
 case $verb in start|status|verify|push|finish) gates_load feature release; [ -z "$GATES" ] || RTC='';; esac
+# verify.environment (lib/suite_env.py): the declaration, and the id that `verified` selects the suite record by; status only reports a finding. Refused where the
+# verb makes a suite run or reads the record (start and finish read it through verified; push does neither, so a declaration edited by hand does not stop a push)
+case $verb in status) suite_env_load report;; start|verify|finish) suite_env_load refuse;; esac
 # ci_scan DIR -> compares the jobs of DIR/.github/workflows with the declared gate names (lib/gates.py scan): a warning for each job that matches no gate
 # name, is not listed in a gate's ci_jobs and is not in ci.not_gates; a note for each job a gate covers (ci_jobs), for each job whose name cannot be read
 # (never a failure) and, with no gate declared, one note for all the jobs instead of a warning each; a warning for a listed name that no workflow has;
@@ -282,6 +291,8 @@ suite_verdict() {
   SV_TEXT='' SV_NOTE=''
   f=$(rec "$1"); [ -f "$f" ] || return 0
   cur=$(jq -r '.sha // empty' "$f" 2>/dev/null) || return 0; [ -n "$cur" ] || return 0
+  # a run made under another declaration or launcher (or none) does not count (verified): it is not reported as a verdict, and suite_env_status says why
+  [ "$(jq -r '.environment.id // ""' "$f" 2>/dev/null)" = "${SUITE_ENV_ID:-}" ] || return 0
   res=$(jq -r '.result // "?"' "$f"); at=$(jq -r '.at // "an unknown time"' "$f"); cmd=$(jq -r '.command // "an unknown command"' "$f")
   took=$(jq -r 'if (.seconds | type) == "number" then "took \(.seconds)s" else empty end' "$f"); mode=$(jq -r '.mode // empty' "$f")
   SV_TEXT="$res at $([ "$cur" = "$(sha_of "$1")" ] && echo 'this head' || echo 'an older head') (command: $cmd; ran $at${took:+; $took}${mode:+; $mode})"
@@ -920,6 +931,7 @@ case $verb in
       suite_verdict "$BASE"
       echo "no $BR yet. develop is at $(g rev-parse --short develop 2>/dev/null || echo '?'), full suite: ${SV_TEXT:-not run}"
       gates_line "$BASE"
+      suite_env_status "$BASE" "qargi release verify $VER${HOTFIX:+ --hotfix}"
       [ -z "$SV_NOTE" ] || echo "$SV_NOTE"
       remote_report "$BASE"
       tag_checks
@@ -936,6 +948,7 @@ case $verb in
     suite_verdict "$BR"
     echo "full suite: ${SV_TEXT:-not run on this branch}"
     gates_line "$BR"
+    suite_env_status "$BR" "qargi release verify $VER${HOTFIX:+ --hotfix}"
     [ -z "$SV_NOTE" ] || echo "$SV_NOTE"
     version_files_report "$BR"
     remote_report "$BR"; remote_report "$BASE"
@@ -951,19 +964,22 @@ case $verb in
     if [ -n "$GATES" ]; then gates_need "feature or release"; else [ -n "$TESTCMD" ] || die "no test_command (or release.test_command) in the answers for $PROJ: qargi project set $PROJ test_command '...'"; fi
     on=$BR; branch_exists "$BR" || on=$BASE
     h=$(sha_of "$on"); [ -n "$h" ] || die "no branch $on"
+    suite_env_prepare "qargi release verify $VER${HOTFIX:+ --hotfix}" "$on" "$h"   # the launcher's attempt and the waiver, before anything is made (verify.environment)
     worktree "$h"
     # the CI jobs of the tree being verified against the gate names: a warning each, a refusal with --strict (before the gates run)
     ci_scan "$WT"
     [ -z "$STRICT" ] || [ "$CI_UNMATCHED" = 0 ] || die "--strict: $CI_UNMATCHED CI job(s) match no declared gate name ($([ -n "${GATES:-}" ] && echo 'named above' || echo 'no gate is declared')); nothing was run. Declare a gate of the job's name or id, or run it without --strict"
     echo "running the whole suite on $on at $(g rev-parse --short "$on"): $TESTCMD"
+    [ -z "$SUITE_ENV" ] || echo "verify.environment: on (id $SUITE_ENV_ID): the suite starts through the launcher$([ -z "$ENV_WAIVE" ] || echo ", waiving $ENV_WAIVE")"
     gates_note
     other_runs_warning
     busy_begin release-verify "$VER"
     t0=$SECONDS
     if run_suite_logged "release-$VER"; then res=pass; else res=fail; fi
     busy_end
+    suite_env_settle
     record_suite "$on" "$h" "$res" "$((SECONDS - t0))"
-    echo "full suite: $res at $(g rev-parse --short "$on")"
+    echo "full suite: $res at $(g rev-parse --short "$on")$(suite_env_note "$on")"
     if [ "$on" = "$BR" ]; then version_files_report "$BR"; fi
     tag_checks
     [ "$res" = pass ] || suite_failure_report
