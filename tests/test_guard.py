@@ -870,14 +870,39 @@ class Skills(HookCase):
                      "bash lib/release.sh publish 0.2.0", "./lib/release.sh publish 0.2.0 --plan 0123456789ab --approved go", "v=publish; qargi release $v 0.2.0",
                      "qargi release ${V:-publish} 0.2.0", "qargi release --project p publish 0.2.0",
                      # a quoted '>' reads as a redirection and must not take the verb after it with it
-                     "qargi release '>' publish 0.2.0", "qargi release '2>' publish 0.2.0 --plan 0123456789ab --approved go", "qargi release '>>' publish 0.2.0"):
+                     "qargi release '>' publish 0.2.0", "qargi release '2>' publish 0.2.0 --plan 0123456789ab --approved go", "qargi release '>>' publish 0.2.0",
+                     # real redirections before the verb: the shell takes them out (two or more push the verb out of the first three words), so publish is the verb
+                     "qargi release > /dev/null 2>&1 publish 0.2.0", "qargi release >/dev/null 2>/dev/null 2>&1 publish 0.2.0",
+                     "qargi release 2>/dev/null 2>/dev/null 2>/dev/null publish 0.2.0", "qargi release > $TMPDIR/x 2>&1 publish 0.2.0",
+                     "bash lib/release.sh > /dev/null 2>&1 publish 0.2.0", "sudo qargi release > /dev/null 2>&1 publish 0.2.0",
+                     "qargi release 2>/dev/null publish 0.2.0"):
             r = self.bash(form)
             self.assertEqual(r.returncode, 2, form)
             self.assertIn("qargi guard:", r.stderr)
             self.assertIn("qargi release publish creates a GitHub release and is not available to an agent", r.stderr)
         for c in ("qargi release status 0.2.0", "qargi release verify 0.2.0 --project p", "qargi release push 0.2.0", "bash lib/release.sh status 0.2.0",
                   "qargi release status 0.2.0 > $TMPDIR/s.log", "qargi release status > \"$TMPDIR/s.log\" 0.2.0",
+                  "qargi release verify 0.2.0 > /dev/null 2>&1", "qargi release status > /dev/null 2>&1 0.2.0", "qargi release status 0.2.0 > publish",
                   "echo qargi release publish", "grep -n 'release publish' lib/commands.py", "qargi help release publish"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_a_redirection_after_the_program_or_the_area_hides_no_verb(self):
+        """The shell takes a redirection out of the words before qargi sees them: qargi, with one written after the program or after the area, runs the same verb. The
+        guard reads the words as they are and without the redirections, and refuses when either is a refused verb."""
+        for c in ("qargi 2>/dev/null skill new x", "qargi skill 2>/dev/null new x", "qargi > /dev/null release publish 0.2.0", "qargi 2>/dev/null project set p test_command x",
+                  "qargi 2>/dev/null upgrade", "qargi 2>/dev/null marshal claim f", "qargi 2>/dev/null packs link p", "qargi > /dev/null 2>&1 release verify 0.2.0 --waive-environment cpu --approved go",
+                  "qargi >/dev/null skill new x", "qargi 2>&1 tool new x", "qargi >> $TMPDIR/l 2>&1 upgrade", "sudo qargi 2>/dev/null skill new x", "env FOO=1 qargi 2>/dev/null upgrade",
+                  "bash lib/upgrade.sh 2>/dev/null", "bash lib/marshal.sh 2>/dev/null claim f",
+                  "bash -c 'qargi 2>/dev/null skill new x'", "echo $(qargi 2>/dev/null upgrade)", "qargi 2>/dev/null provider accept claude",
+                  "qargi 2>/dev/null project set p models.x y"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("qargi guard:", r.stderr)
+        # normal use with a redirect of the output stays allowed
+        for c in ("qargi list > $TMPDIR/l.log", "qargi status > $TMPDIR/s.log 2>&1", "qargi feature status > $TMPDIR/f.log", "qargi 2>/dev/null list", "qargi > $TMPDIR/s.log status",
+                  "qargi 2>/dev/null feature status", "qargi skill list > $TMPDIR/k.log", "qargi 2>/dev/null skill list", "qargi project show 2>/dev/null",
+                  "qargi release status > /dev/null 2>&1 0.2.0", "bash lib/feature.sh status > $TMPDIR/f.log", "qargi 2>/dev/null project set p name x"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
@@ -903,6 +928,17 @@ class Skills(HookCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("verify with --waive-environment and --approved waives a part of verify.environment", r.stderr, c)
+        # real redirections before the verb: two or more push it out of the first three raw words, and the shell removes them
+        for c in ("qargi release > /dev/null 2>&1 verify 0.2.0 --waive-environment cpu --approved go",
+                  "qargi release >/dev/null 2>/dev/null 2>&1 verify 0.2.0 --waive-environment cpu --approved go",
+                  "qargi release 2>/dev/null 2>/dev/null 2>/dev/null verify 0.2.0 --waive-environment cpu --approved go",
+                  "bash lib/release.sh > /dev/null 2>&1 verify 0.2.0 --waive-environment cpu --approved go",
+                  "sudo qargi release > /dev/null 2>&1 verify 0.2.0 --waive-environment cpu --approved go",
+                  "qargi release > $TMPDIR/x 2>&1 verify 0.2.0 --waive-environment cpu --approved go",
+                  "qargi feature 2>/dev/null verify f --waive-environment cpu --approved go"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("qargi guard:", r.stderr)
         # a redirection and its target are taken out of the words by the shell: a target built from a variable is no argument of the verb
         for c in ("qargi release verify 0.2.0 > \"$TMPDIR/v.log\"", "qargi release verify 0.2.0 >$TMPDIR/v.log 2>&1", "qargi release verify 0.2.0 2> $TMPDIR/v.err",
                   "qargi release verify 0.2.0 >> \"${TMPDIR}/v.log\"", "qargi release verify 0.2.0 --project p &> \"$TMPDIR/all.log\"", "> $TMPDIR/v.log qargi release verify 0.2.0",
