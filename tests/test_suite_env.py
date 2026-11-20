@@ -4,7 +4,7 @@ stage 1 against a stub systemd-run, stage 2 for real on the no-scope route under
 signal forwarding and cleanup, and (where systemd can make a user scope) the scope route. Offline; a scratch home; no project.
 Run: python3 tests/test_suite_env.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
-import errno, json, os, pty, select, shutil, signal, subprocess, sys, tempfile, time, unittest
+import errno, json, os, pty, re, select, shutil, signal, subprocess, sys, tempfile, time, unittest
 from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -275,14 +275,31 @@ class Declaration(Scratch):
         with self.assertRaises(SE.Invalid):
             SE.loosens({"bad": 1}, {})
 
-    def test_the_error_codes_are_twelve_constants(self):
-        self.assertEqual(len(SE.CODES), 12)
-        self.assertEqual(len({c for c in SE.CODES}), 12)
+    def test_the_error_codes_are_thirteen_constants(self):
+        self.assertEqual(len(SE.CODES), 13)
+        self.assertEqual(len({c for c in SE.CODES}), 13)
         for code, part in SE.CODES.items():
             self.assertRegex(code, r"^verify-env-[a-z-]+$")
             self.assertIn(part, (None,) + SE.PARTS)
         self.assertEqual(SE.CODE_CPU_READBACK, "verify-env-cpu-readback")
         self.assertEqual(SE.CODES[SE.CODE_NO_LOG], "tty")
+        self.assertEqual(SE.CODES[SE.CODE_WAIVE_USED], None)
+
+    def test_the_catalogue_of_refusals_lists_the_codes_of_the_table_and_no_other(self):
+        """lib/refusals.json lists each code of CODES at least once (a code may print with two texts), and no verify-env code of it is outside CODES; the part of an entry
+        is the part of the table, and every code that a shell file of lib/ prints is in the table."""
+        with open(os.path.join(LIB, "refusals.json")) as f:
+            entries = json.load(f)["refusals"]
+        self.assertEqual({e["code"] for e in entries}, set(SE.CODES))
+        for e in entries:
+            self.assertEqual(e["part"], SE.CODES[e["code"]], e["code"])
+        printed = set()
+        for name in ("gitflow.sh", "project.sh", "feature.sh", "release.sh"):
+            path = os.path.join(LIB, name)
+            if os.path.exists(path):
+                with open(path) as f:
+                    printed |= set(re.findall(r"(verify-env-[a-z]+(?:-[a-z]+)*)[:\"' ]", f.read()))
+        self.assertEqual(sorted(printed - set(SE.CODES) - {"verify-env-waivers"}), [])
 
 
 class Pure(unittest.TestCase):
