@@ -334,6 +334,9 @@ ROOT_SCRIPTS = ("install.sh",)                                       # of those,
 # option with a redirection stuck to it (-X>/dev/null) makes any word naming a script the script; an option of another shell that takes a value
 # where bash has a flag of that letter is still read as the flag. A word after -c that reads as a redirection and holds a blank was one quoted word
 # (bash -c "2>/dev/null qargi upgrade"): it is read as the -c string too, beside the reading as a redirection (shell_string, quoted_string). The options of the wrappers in front (sudo, env, timeout ...) are read from WRAP_OPTS.
+# The guard is a best-effort check of the command text, not a sandbox: a form that the shell removes or builds and the guard cannot read is a known limit,
+# listed below in 'Still not seen'. It is not the only barrier either: a member's git has no credentials (no home, no configuration, no ssh) and
+# the push URL of the clone is disabled, so a push the guard missed still has nowhere to go.
 # Still not seen, after those readings:
 #   - a name the shell builds: a variable that holds the path (`P=.../install.sh; bash $P`), a for-loop over it, a glob (`bash .../inst*.sh`), a brace
 #     (`bash .../{install,x}.sh`), a redirection glued to the name (`bash .../install.sh>/dev/null`), and a `{fd}>` redirection written before the file of a script that only its own file is (OWN_ONLY: `python3 {fd}>f .../install_record.py`); the named descriptor beside `qargi`, before or after it and the area, is read (FD_NAME);
