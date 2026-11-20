@@ -493,6 +493,11 @@ def _job_to_fd3(job):
         os.set_inheritable(3, True)
 
 
+def _py_argv():
+    """The interpreter that runs every stage: the one running this stage, by its path, with -B when this one has it (no bytecode is written)."""
+    return [sys.executable] + (["-B"] if sys.flags.dont_write_bytecode else [])
+
+
 def _usage(msg):
     print("qargi: suite_env.py: " + msg, file=sys.stderr)
     raise SystemExit(2)
@@ -540,8 +545,8 @@ def cmd_run(args, command):
     here = os.path.abspath(__file__)
     if no_scope:
         _job_to_fd3(job)
-        py = [sys.executable] + (["-B"] if sys.flags.dont_write_bytecode else [])
-        os.execv(sys.executable, py + ["-I", here, "stage2", "--job-fd", "3", "--no-scope"])
+        py = _py_argv()
+        os.execv(py[0], py + ["-I", here, "stage2", "--job-fd", "3", "--no-scope"])
     found = shutil.which("systemd-run", path=procenv.clean_path())
     if not found:
         _refuse(args.report, norm, waive, CODE_NO_SYSTEMD_RUN, "systemd-run is not on PATH (%s)" % procenv.clean_path())
@@ -554,7 +559,7 @@ def cmd_run(args, command):
     _job_to_fd3(job)
     # nothing here comes from the declaration's strings or from the command: the job went on descriptor 3
     os.execv(found, ["systemd-run", "--user", "--scope", "--quiet", "--collect", "--expand-environment=no", "--slice=" + SLICE,
-                     "-p", prop, "--", "python3", "-I", here, "stage2", "--job-fd", "3"])
+                     "-p", prop, "--"] + _py_argv() + ["-I", here, "stage2", "--job-fd", "3"])
 
 
 # --------------------------------------------------------------------------------------------------------------------------------
@@ -758,7 +763,7 @@ def _check_tty(readback, sid_error):
         bad.append("/dev/tty opens: the session has a controlling terminal")
     except OSError as e:
         readback["dev_tty_errno"] = _errname(e)
-        if e.errno not in (errno.ENXIO, errno.ENOENT):
+        if e.errno != errno.ENXIO:
             bad.append("/dev/tty failed with %s, expected ENXIO" % _errname(e))
     return bad
 
@@ -909,7 +914,10 @@ def _wait(pid, b_r):
             watch = ([b_r] if b_r is not None else []) + ([pfd] if pfd >= 0 else [])
             if not watch:
                 return os.waitpid(pid, 0)[1]
-            ready, _, _ = select.select(watch, [], [], None if pfd >= 0 else 0.05)
+            poller = select.poll()                  # not select(): the descriptors can be numbered above 1023 when the caller left many open
+            for fd in watch:
+                poller.register(fd, select.POLLIN)
+            ready = [fd for fd, _ in poller.poll(None if pfd >= 0 else 50)]
             if b_r is not None and b_r in ready and not _drain(b_r):
                 b_r = None
             got, status = os.waitpid(pid, os.WNOHANG)
@@ -1046,7 +1054,7 @@ def cmd_probe(args):
     route = "no-scope" if norm["cpu_quota"] is None else "scope"
     d = tempfile.mkdtemp(prefix="suite-env-probe.")
     report = os.path.join(d, "report.json")
-    py = [sys.executable] + (["-B"] if sys.flags.dont_write_bytecode else [])
+    py = _py_argv()
     try:
         try:
             r = subprocess.run(py + ["-I", os.path.abspath(__file__), "run", "--decl", args.decl, "--waive", "", "--report", report, "--",

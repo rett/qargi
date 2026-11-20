@@ -4,7 +4,7 @@ stage 1 against a stub systemd-run, stage 2 for real on the no-scope route under
 signal forwarding and cleanup, and (where systemd can make a user scope) the scope route. Offline; a scratch home; no project.
 Run: python3 tests/test_suite_env.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
-import json, os, pty, select, shutil, signal, subprocess, sys, tempfile, time, unittest
+import errno, json, os, pty, select, shutil, signal, subprocess, sys, tempfile, time, unittest
 from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -13,7 +13,7 @@ SCRIPT = os.path.join(LIB, "suite_env.py")
 sys.path.insert(0, LIB)
 import suite_env as SE  # noqa: E402
 
-PY = [sys.executable, "-I"]
+PY = [sys.executable, "-B", "-I"]
 WAIT = 30                       # the longest any wait in this file takes; a deadline, never a fixed pause
 
 # the shell stub of systemd-run: logs each call (a line CALL and then one argument per line), answers --version, and either runs what
@@ -444,6 +444,28 @@ class Postconditions(Scratch):
         self.assertNotEqual(first.split()[1:], ["0", "0"])
         self.assertEqual(second, "0 0 0")
 
+    def test_dev_tty_that_is_absent_is_not_the_expected_no_terminal(self):
+        real = os.open
+
+        def no_node(path, *a, **kw):
+            if path == "/dev/tty":
+                raise OSError(errno.ENOENT, "No such file or directory")
+            return real(path, *a, **kw)
+        with mock.patch.object(SE.os, "open", side_effect=no_node):
+            rb = {}
+            found = SE._check_tty(rb, None)
+        self.assertEqual(rb["dev_tty_errno"], "ENOENT")
+        self.assertTrue(any("expected ENXIO" in p for p in found), found)
+        def no_tty(path, *a, **kw):
+            if path == "/dev/tty":
+                raise OSError(errno.ENXIO, "No such device or address")
+            return real(path, *a, **kw)
+        with mock.patch.object(SE.os, "open", side_effect=no_tty):
+            rb = {}
+            found = SE._check_tty(rb, None)
+        self.assertEqual(rb["dev_tty_errno"], "ENXIO")
+        self.assertFalse(any("/dev/tty" in p for p in found), found)
+
     def test_check_cpu_names_what_it_found(self):
         found = SE._check_cpu({}, "200%", "verify-env-cpu-no-user-manager")
         self.assertEqual(found[0], "verify-env-cpu-no-user-manager")
@@ -657,6 +679,25 @@ class Stage2(Scratch):
                 self.assertEqual(json.load(f), sorted([0, 1, 2] + numbers), numbers)
             self.assertEqual(rep["parts"]["fds"], "applied", numbers)
             self.assertEqual(rep["readback"]["ci_fds"][0]["read"], "EAGAIN")
+
+    def test_a_caller_with_many_descriptors_open(self):
+        """The parent's own pipe and pidfd sit above 1023 when the caller leaves that many open: select() cannot watch them."""
+        import resource
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if hard < 1400:
+            print("expected: the many-descriptors case did not run: the hard limit on descriptors is %d" % hard, file=sys.stderr)
+            return
+        null = os.open(os.devnull, os.O_RDONLY)
+        self.addCleanup(os.close, null)
+
+        def crowd():
+            resource.setrlimit(resource.RLIMIT_NOFILE, (1400, hard))
+            for n in range(4, 1100):
+                os.dup2(null, n)
+        r, rep = self.run_cmd({"cpu_quota": None, "fds": "ci-like"}, ["sh", "-c", "echo ready"], preexec_fn=crowd, close_fds=False)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertEqual((rep["complete"], rep["parts"]["fds"]), (True, "applied"))
 
     def test_a_noisy_parent_with_plain_close(self):
         out, rep = self.inspect({"cpu_quota": None, "fds": "close"}, hostile_parent=True)
@@ -880,7 +921,7 @@ class StubSystemd(Scratch):
         self.assertEqual(calls[0], ["--version"])
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[1], ["--user", "--scope", "--quiet", "--collect", "--expand-environment=no", "--slice=qargi-verify.slice",
-                                    "-p", "CPUQuota=200%", "--", "python3", "-I", SCRIPT, "stage2", "--job-fd", "3"])
+                                    "-p", "CPUQuota=200%", "--", sys.executable, "-B", "-I", SCRIPT, "stage2", "--job-fd", "3"])
         self.assertEqual(r.stdout.strip(), marker)                  # the command went through as text
         self.assertFalse(os.path.exists(self.path("injected")))
         self.assertFalse(os.path.exists(self.path("injected2")))
