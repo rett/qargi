@@ -29,7 +29,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Upgrading from 0.3.4
 - `qargi project set` refuses an option it does not know (exit 2): a script that passes extra words after the value must drop them.
-- Codex member users: the sign-in directory must exist before the login, so make it first, and set its mode: `mkdir -p ~/.codex-members && chmod 700 ~/.codex-members && CODEX_HOME=~/.codex-members codex login`. The 0.3.4 list below named only the login, and the 0.3.4 Security entry named `mkdir -m 700`, which leaves the mode of an existing directory as it is: run `chmod 700 ~/.codex-members` if you made it that way.
+- Codex member users: the sign-in directory must exist before the login, so make it first, and set its mode: `mkdir -p ~/.codex-members && chmod 700 ~/.codex-members && CODEX_HOME=~/.codex-members codex login`. The 0.3.4 list below named only the login, and the 0.3.4 Security entry named `mkdir -m 700`, which fails on a directory that exists: if `~/.codex-members` was already there and you signed in into it anyway, run `chmod 700 ~/.codex-members`.
 - The new answer `verify.environment` is off by default and changes nothing for a project that does not set it, except that a `<state>/verify-env.json` that cannot be read stops `feature verify`, `feature finish` and the release verbs of every project until it is fixed or removed (`qargi doctor` names it).
 
 ## [0.3.4] - 2026-11-19
