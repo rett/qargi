@@ -3431,18 +3431,17 @@ def own_named(prog, rest, script, here):
     return own_script(script, here)
 
 
-def skill_verb(prog, rest, via_xargs=False, here=".", exe=None, at=None):
+def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
     """The reason a qargi command (or the script behind it, run directly) is a verb that changes a skill, or None. via_xargs: xargs
     stands before the program, so its arguments come from standard input, where --write could be. here: the directory the command runs
-    in, and exe: the word that names the program, for the scripts that are only the tool's own (OWN_ONLY). at: the index in rest of the
-    script an interpreter runs, one of scripts_of (each is judged). The words are read twice: as they are (a quoted '>' that reads as a redirection
-    is an argument) and without the redirections (the shell takes them out, so a redirection written after the program or the area word hides no verb);
-    the command is refused when either reading is a refused one."""
-    why = skill_verb_reading(prog, rest, via_xargs, here, exe, at, False)
-    if why or at is not None:
+    in, and exe: the word that names the program, for the scripts that are only the tool's own (OWN_ONLY). The words are read twice: as they are
+    (a quoted '>' that reads as a redirection is an argument) and without the redirections (the shell takes them out, so a redirection written after
+    the program or the area word hides no verb); the command is refused when either reading is a refused one."""
+    why = skill_verb_reading(prog, rest, via_xargs, here, exe, None, False)
+    if why:
         return why
     if any(is_redirection(t) and not quoted_string(t) for t in rest):
-        return skill_verb_reading(prog, rest, via_xargs, here, exe, at, True)
+        return skill_verb_reading(prog, rest, via_xargs, here, exe, None, True)
     return None
 
 
