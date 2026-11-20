@@ -3448,7 +3448,8 @@ class HiddenPaths(unittest.TestCase):
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("the sign-in ~/.codex-members/auth.json for codex member runs does not exist", r.stderr)
         self.assertIn("CODEX_HOME=~/.codex-members codex login", r.stderr)
-        self.assertIn("\n  mkdir -p -m 700 ~/.codex-members && CODEX_HOME=~/.codex-members codex login", r.stderr)   # -p: the advice also fits a directory that exists (a link removed, a dangling link)
+        self.assertIn("\n  mkdir -p ~/.codex-members && chmod 700 ~/.codex-members && CODEX_HOME=~/.codex-members codex login", r.stderr)   # -p: the advice also fits a directory that exists (a link removed, a dangling link); chmod: mkdir -p -m sets no mode on one that exists
+        self.assertNotIn("-m 700", r.stderr)
         self.assertNotIn(home, r.stderr)                                                          # the declared path only
 
 
