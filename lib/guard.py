@@ -306,7 +306,7 @@ GIT_WRITES = {"add", "commit", "apply", "am", "checkout", "switch", "reset", "rm
               "cherry-pick", "revert", "restore", "clean", "tag", "branch", "pull", "fetch", "init", "clone", "worktree",
               "notes", "update-ref", "config", "submodule", "update-index", "gc", "prune", "repack", "pack-refs", "replace", "filter-branch", "commit-tree",
               "write-tree", "mktag", "mktree", "fast-import", "read-tree", "checkout-index", "sparse-checkout", "maintenance"}
-FD_NAME = r"\{[A-Za-z_][A-Za-z0-9_]*\}"                        # {fd} before a redirection operator: bash opens a descriptor and stores its number in the variable
+FD_NAME = r"\{[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?\}"            # {fd} or {arr[i]} before a redirection operator: bash opens a descriptor and stores its number in the variable (or the array element)
 REDIR = re.compile(r"^(?:\d*|&|" + FD_NAME + r")(?:>>|>\||<>|>)(.*)$")           # > >> >| <> &> &>> and N> N>> N>| N<> and {fd}>, the target stuck to it or in the next word
 GIT_OUTPUT_DIRS = {"format-patch", "archive"}                    # git subcommands whose -o names where they write
 
@@ -334,6 +334,9 @@ ROOT_SCRIPTS = ("install.sh",)                                       # of those,
 # option with a redirection stuck to it (-X>/dev/null) makes any word naming a script the script; an option of another shell that takes a value
 # where bash has a flag of that letter is still read as the flag. A word after -c that reads as a redirection and holds a blank was one quoted word
 # (bash -c "2>/dev/null qargi upgrade"): it is read as the -c string too, beside the reading as a redirection (shell_string, quoted_string). The options of the wrappers in front (sudo, env, timeout ...) are read from WRAP_OPTS.
+# The guard is a best-effort check of the command text, not a sandbox: a form that the shell removes or builds and the guard cannot read is a known limit,
+# listed below in 'Still not seen'. It is not the only barrier either: a member's git has no credentials (no home, no configuration, no ssh) and
+# the push URL of the clone is disabled, so a push the guard missed still has nowhere to go.
 # Still not seen, after those readings:
 #   - a name the shell builds: a variable that holds the path (`P=.../install.sh; bash $P`), a for-loop over it, a glob (`bash .../inst*.sh`), a brace
 #     (`bash .../{install,x}.sh`), a redirection glued to the name (`bash .../install.sh>/dev/null`), and a `{fd}>` redirection written before the file of a script that only its own file is (OWN_ONLY: `python3 {fd}>f .../install_record.py`); the named descriptor beside `qargi`, before or after it and the area, is read (FD_NAME);
@@ -502,7 +505,9 @@ def builds_word(w):
 
 def git_refusal(pre, rest):
     """The reason a git command line (pre: the words before git, with the assignments in front of it; rest: the words after) publishes, reaches out under another
-    name or runs a program a member names, or None. Only the subcommand counts: the first word after the global options (`git commit -m push` is no push)."""
+    name or runs a program a member names, or None. Only the subcommand counts: the first word after the global options (`git commit -m push` is no push).
+    A redirection between git and its subcommand is no word of the command (`git 2>/dev/null push` is a push): the words are read without them."""
+    rest = without_redirections(rest)
     opts, k = git_global(rest)
     sub, args = (rest[k], rest[k + 1:]) if k < len(rest) else ("", [])
     if sub in GIT_PUSHERS:
@@ -1812,6 +1817,7 @@ def write_targets(toks, i):
         elif prog == "uniq" and len(args) > 1:
             targets.append((prog, args[1]))                               # uniq INPUT OUTPUT
         elif prog == "git":
+            rest = without_redirections(rest)                             # the shell takes a redirection between git and its subcommand out of the words
             opts, k = git_global(rest)
             gitdir = next((v for n, v in reversed(opts) if n == "-C" and v), None)
             trees = [v for n, v in opts if n == "--work-tree" and v] + [t.split("=", 1)[1] for t in toks[:i] if t.startswith("GIT_WORK_TREE=")]

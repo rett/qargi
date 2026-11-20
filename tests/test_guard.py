@@ -169,9 +169,11 @@ class HookCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.J = _Judge(LIBDIR, "guard_" + cls.__name__.lower(), None)
+        cls.cwd = os.path.realpath(tempfile.mkdtemp())          # where guard() says the call runs: the guard takes the run class from the working directory, so a test run from inside a read-only run's clone must not be judged as that run
 
     @classmethod
     def tearDownClass(cls):
+        shutil.rmtree(cls.cwd, ignore_errors=True)
         del cls.J
 
     def hook(self, args, payload, env=None):
@@ -181,7 +183,7 @@ class HookCase(unittest.TestCase):
         return self.J.budget(readings)
 
     def guard(self, command):
-        return self.hook([], {"tool_input": {"command": command}})
+        return self.hook([], {"tool_input": {"command": command}, "cwd": self.cwd})
 
 
 class Guard(HookCase):
@@ -194,14 +196,18 @@ class Guard(HookCase):
 
     def test_refuses_what_publishes_or_reaches_out(self):
         for c in ("git push", "git push origin main", "/tmp/x/git -C /r push -f", "cd a && git push", "make gate-go; git push", "timeout 5 git push",
-                  "echo hi | gh pr list", "gh api repos/x", "ssh host ls", "sudo scp a b:", "sftp host", "git remote add o u", "git remote set-url origin u"):
+                  "echo hi | gh pr list", "gh api repos/x", "ssh host ls", "sudo scp a b:", "sftp host", "git remote add o u", "git remote set-url origin u",
+                  # the shell takes a redirection out of the words: git, with one between it and its subcommand, runs the same subcommand
+                  "git 2>/dev/null push", "git >/dev/null push", "git 2>/dev/null push origin master", "git -C . 2>/dev/null push", "timeout 5 git 2>/dev/null push",
+                  "git {fd}>f push", "git 2>/dev/null remote add o u", "git > /dev/null push", "git -C . {fd}> f push", "git 2>&1 remote set-url origin u"):
             r = self.guard(c)
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("Agents never push", r.stderr)
 
     def test_lets_ordinary_work_through(self):
         for c in ("ls -la", "git status", "git commit -m 'a push of work'", "/tmp/x/git log --oneline", "git remote -v", "git diff c2e9439..HEAD",
-                  "go test ./... && go vet ./...", "grep -n 'git push' file", "make gate-go", "gitleaks git --log-opts A..B"):
+                  "go test ./... && go vet ./...", "grep -n 'git push' file", "make gate-go", "gitleaks git --log-opts A..B",
+                  "git {fd}>f status", "git status 2>&1", "git 2>/dev/null status", "git -C . 2>/dev/null log --oneline", "git 2>/dev/null remote -v"):
             self.assertEqual(self.guard(c).returncode, 0, c)
 
     def test_input_that_is_empty_or_no_json_is_refused_and_names_the_cause(self):
@@ -898,7 +904,10 @@ class Skills(HookCase):
                   "qargi 2>/dev/null project set p models.x y",
                   # a named descriptor ({fd}>f, {x}<&0) is taken out by the shell as well, after the program, after the area and before the program
                   "qargi {fd}>f skill new x", "qargi skill {fd}>f new x", "qargi {x}<&0 upgrade", "qargi {fd}>f release publish 0.2.0", "sudo {fd}>f qargi skill new x",
-                  "{fd}>f qargi skill new x", "{fd}>f qargi upgrade", "qargi {fd}> f skill new x", "qargi {_a1}>>f upgrade"):
+                  "{fd}>f qargi skill new x", "{fd}>f qargi upgrade", "qargi {fd}> f skill new x", "qargi {_a1}>>f upgrade",
+                  # the name may be a subscripted array element (bash 5: {a[1]}>f)
+                  "{a[1]}>f qargi skill new x", "qargi {a[1]}>f skill new x", "qargi skill {a[1]}>f new x", "sudo {a[1]}>f qargi upgrade", "{a[$i]}>f qargi upgrade",
+                  "{a[0]}<&0 qargi upgrade", "qargi {a[0]}<&0 upgrade", "{A_1[k]}>>f qargi skill new x"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("qargi guard:", r.stderr)
@@ -906,7 +915,8 @@ class Skills(HookCase):
         for c in ("qargi list > $TMPDIR/l.log", "qargi status > $TMPDIR/s.log 2>&1", "qargi feature status > $TMPDIR/f.log", "qargi 2>/dev/null list", "qargi > $TMPDIR/s.log status",
                   "qargi 2>/dev/null feature status", "qargi skill list > $TMPDIR/k.log", "qargi 2>/dev/null skill list", "qargi project show 2>/dev/null",
                   "qargi release status > /dev/null 2>&1 0.2.0", "bash lib/feature.sh status > $TMPDIR/f.log", "qargi 2>/dev/null project set p name x",
-                  "qargi skill list {fd}>$TMPDIR/k.log", "{fd}>$TMPDIR/k.log qargi list", "qargi {fd}> $TMPDIR/k.log list", "qargi {fd}>f skill list", "{ qargi list; }", "{ qargi skill list; }"):
+                  "qargi skill list {fd}>$TMPDIR/k.log", "{fd}>$TMPDIR/k.log qargi list", "qargi {fd}> $TMPDIR/k.log list", "qargi {fd}>f skill list", "{ qargi list; }", "{ qargi skill list; }",
+                  "{a[1]}>f ls", "qargi {a[1]}> $TMPDIR/k.log list"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
@@ -1124,6 +1134,10 @@ class Skills(HookCase):
                   "echo y > ~/.claude/agents/m.md", "echo y > ~/.claude/plugins/p.json", "cd %s && echo y > .claude/skills/p/SKILL.md" % self.proj,
                   "rm -rf %s/.claude" % self.proj, "echo y > link-to-library/links.json", "cp a.md link-to-library/", "rm -rf link-to-library/skills", "tar xf a.tgz -C %s/x" % ls, "tar czf %s/x/b.tgz ." % ls, "tar --extract --file=a.tgz --directory=%s/x" % ls, "unzip -o a.zip -d %s/x" % ls, "curl -o %s/x/SKILL.md http://h/f" % ls,
                   "find %s -name '*.md' -delete" % ls, "find %s -exec rm {} +" % lib, "git -C %s checkout ." % lib, "patch %s/x/SKILL.md fix.diff" % ls,
+                  # a write through a bare named descriptor ({fd}> FILE opens the file for writing: refused here, allowed before 0.3.5)
+                  "echo x {fd}> $HOME/.claude/skills/x/SKILL.md", "{fd}> $HOME/.claude/skills/x/SKILL.md echo x", "exec {fd}> $HOME/.claude/skills/x/SKILL.md",
+                  "echo x {fd}>$HOME/.claude/skills/x/SKILL.md", "echo x {a[1]}> $HOME/.claude/skills/x/SKILL.md",
+                  "git 2>/dev/null -C %s checkout ." % lib, "git -C %s 2>/dev/null checkout ." % lib, "git {fd}>f -C %s checkout ." % lib,
                   "bash -c 'echo y > %s/links.json'" % lib, "sh -c \"cd %s/x; touch y\"" % ls, "eval 'rm %s/x/SKILL.md'" % ls,
                   "echo $(echo y > %s/links.json)" % lib):
             r = self.bash(c)
