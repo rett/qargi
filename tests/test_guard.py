@@ -898,7 +898,10 @@ class Skills(HookCase):
                   "qargi 2>/dev/null project set p models.x y",
                   # a named descriptor ({fd}>f, {x}<&0) is taken out by the shell as well, after the program, after the area and before the program
                   "qargi {fd}>f skill new x", "qargi skill {fd}>f new x", "qargi {x}<&0 upgrade", "qargi {fd}>f release publish 0.2.0", "sudo {fd}>f qargi skill new x",
-                  "{fd}>f qargi skill new x", "{fd}>f qargi upgrade", "qargi {fd}> f skill new x", "qargi {_a1}>>f upgrade"):
+                  "{fd}>f qargi skill new x", "{fd}>f qargi upgrade", "qargi {fd}> f skill new x", "qargi {_a1}>>f upgrade",
+                  # the name may be a subscripted array element (bash 5: {a[1]}>f)
+                  "{a[1]}>f qargi skill new x", "qargi {a[1]}>f skill new x", "qargi skill {a[1]}>f new x", "sudo {a[1]}>f qargi upgrade", "{a[$i]}>f qargi upgrade",
+                  "{a[0]}<&0 qargi upgrade", "qargi {a[0]}<&0 upgrade", "{A_1[k]}>>f qargi skill new x"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("qargi guard:", r.stderr)
@@ -906,7 +909,8 @@ class Skills(HookCase):
         for c in ("qargi list > $TMPDIR/l.log", "qargi status > $TMPDIR/s.log 2>&1", "qargi feature status > $TMPDIR/f.log", "qargi 2>/dev/null list", "qargi > $TMPDIR/s.log status",
                   "qargi 2>/dev/null feature status", "qargi skill list > $TMPDIR/k.log", "qargi 2>/dev/null skill list", "qargi project show 2>/dev/null",
                   "qargi release status > /dev/null 2>&1 0.2.0", "bash lib/feature.sh status > $TMPDIR/f.log", "qargi 2>/dev/null project set p name x",
-                  "qargi skill list {fd}>$TMPDIR/k.log", "{fd}>$TMPDIR/k.log qargi list", "qargi {fd}> $TMPDIR/k.log list", "qargi {fd}>f skill list", "{ qargi list; }", "{ qargi skill list; }"):
+                  "qargi skill list {fd}>$TMPDIR/k.log", "{fd}>$TMPDIR/k.log qargi list", "qargi {fd}> $TMPDIR/k.log list", "qargi {fd}>f skill list", "{ qargi list; }", "{ qargi skill list; }",
+                  "{a[1]}>f ls", "qargi {a[1]}> $TMPDIR/k.log list"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
