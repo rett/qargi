@@ -19,8 +19,10 @@
 #   feature.sh verify NAME [--project P] [--waive-environment PARTS --plan T --approved W]
 #                                                  the whole suite on the feature's head (the checkpoint before finishing). With the answer
 #                                                  verify.environment the suite starts through lib/suite_env.py; a part of it that cannot be
-#                                                  applied refuses the run and prints a token, and PARTS (signals, fds, tty, cpu) waives
-#                                                  exactly the refused parts for this run only (recorded, audited, shown again by status)
+#                                                  applied refuses the run and prints a token (also when the run is refused after a passing
+#                                                  attempt), and PARTS (signals, fds, tty, cpu) waives the refused parts for this run only
+#                                                  (recorded, audited, shown again by status). Only a refusal yields a token, which is good for
+#                                                  one run at that head; nothing refused, nothing to waive; not in a member run
 #   feature.sh finish NAME [--project P] [--keep] [--plan T --approved W]
 #                                                  merge into develop with --no-ff and delete the branch; push develop if an
 #                                                  origin exists and the answer branches.push_develop is not false (the plan's first line says which).

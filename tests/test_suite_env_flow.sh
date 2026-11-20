@@ -22,10 +22,12 @@ git -C "$R" add -A && git -C "$R" commit -q -m one && git -C "$R" branch develop
 git -C "$R" checkout -q -b parked
 P=$T/c/projects/app.json
 $DA project template app | jq --arg p "$R" '.repo.url = "https://github.com/acme/app" | .repo.path = $p | .test_command = "true"' > "$P"
+# a verb run from below the directory of a member's run is a member run, where the waiver refuses: the verbs run from the scratch directory, outside any run
+cd "$T" || exit 1
 F="$DA feature"; REL="$DA release"
 FREC=$T/s/releases/app-feature_f.json; DREC=$T/s/releases/app-develop.json
 # the stand-in for systemd-run: first on PATH, steered by a mode file, logging each call
-mkdir -p "$T/fakebin"; cp tests/fixtures/fake-systemd-run "$T/fakebin/systemd-run"; chmod +x "$T/fakebin/systemd-run"
+mkdir -p "$T/fakebin"; cp "$ROOT/tests/fixtures/fake-systemd-run" "$T/fakebin/systemd-run"; chmod +x "$T/fakebin/systemd-run"
 export FAKE_SYSTEMD_MODE_FILE=$T/mode FAKE_SYSTEMD_LOG=$T/fakelog
 PATH_PLAIN=$PATH
 mode() { printf '%s\n' "$1" > "$T/mode"; }
@@ -46,6 +48,27 @@ calls() { grep -c "^argv-ok" "$T/fakelog" 2>/dev/null || true; }
 reset() { rm -f "$T/ran" "$T/fakelog" "$FREC" "$DREC"; }
 setcmd "echo suite-ran; touch $T/ran"
 $F start f >/dev/null 2>&1
+
+# offscen: the verbs with the setting off, run in order and printed normalised (a sha, the scratch directory, the times). tests/fixtures/suite-env-off.golden is
+# what the tree before verify.environment printed for it (the tree at 791595a1, before the flow verbs used the launcher); this tree must print the same, byte for byte.
+# OFF_GOLDEN_WRITE=FILE OFF_GOLDEN_ONLY=1 writes the file from the tree under test: only a deliberate change of what the verbs print with the setting off may do that.
+offscen() {
+  say() { echo "### $*"; "$DA" "$@" 2>&1; echo "rc=$?"; }
+  setcmd "echo suite-ran; touch $T/ran"; reset
+  say feature verify f; say feature status f; say release verify 0.2.0; say release status 0.2.0
+  echo "### records"; jq -S 'del(.at, .seconds)' "$FREC" "$DREC"
+  setcmd "echo before-fail; exit 3"
+  say feature verify f; say feature status f; say release verify 0.2.0; say release status 0.2.0
+  echo "### records"; jq -S 'del(.at, .seconds)' "$FREC" "$DREC"
+  echo "### state"; (cd "$T/s" && find . -mindepth 1 -maxdepth 2 | sort | grep -v -e '^./audit' -e '^./ref-journal' -e '^./marshal' -e '^./locks' -e '^./leases')
+}
+offnorm() { sed -e '/^  lead: /d' -e "s#$T#TMP#g" -e 's/[0-9a-f]\{7,40\}/SHA/g' -e 's/ran [0-9TZ:-]*/ran AT/g' -e 's/took [0-9][0-9]*s/took Ns/g' -e 's/([0-9][0-9]*s)/(Ns)/g'; }
+if [ -n "${OFF_GOLDEN_WRITE:-}" ]; then offscen 2>&1 | offnorm > "$OFF_GOLDEN_WRITE"; [ -z "${OFF_GOLDEN_ONLY:-}" ] || exit 0; fi
+if [ -z "${OFF_GOLDEN_ONLY:-}" ]; then
+  offscen 2>&1 | offnorm > "$T/off.now"
+  if diff -u "$ROOT/tests/fixtures/suite-env-off.golden" "$T/off.now" > "$T/off.diff" 2>&1; then ok "off: the output, the records and the state files of feature verify and status and release verify and status are what the tree before verify.environment made, byte for byte"
+  else no "off: differs from the tree before verify.environment: $(head -30 "$T/off.diff")"; fi
+fi
 
 # --- 1. off (unset, then null): the suite runs as it always did, and nothing of the launcher is seen
 setcmd "cat /proc/\$PPID/comm > $T/ppid; echo suite-ran; touch $T/ran"
@@ -95,7 +118,7 @@ run $F verify f --waive-environment cpu --plan "$tok"
 run $F verify f --waive-environment cpu --plan 000000000000 --approved "ok"
 [ "$rc" = 1 ] && saw 'verify-env-waive-unapproved' && [ ! -f "$FREC" ] && ok "a waiver with the wrong token is refused" || no "waive wrong token: $(out)"
 run $F verify f --waive-environment fds --plan "$tok" --approved "ok"
-[ "$rc" = 1 ] && saw 'verify-env-waive-unapproved' && saw 'exactly the refused parts' && [ ! -f "$FREC" ] && [ ! -f "$T/ran" ] && ok "a waiver for another part than the refused one is refused, with a token for the refused one" || no "waive other part: $(out)"
+[ "$rc" = 1 ] && saw 'verify-env-waive-unapproved' && saw 'does not name every refused part' && [ "$(tokof "$(out)")" = "$tok" ] && [ ! -f "$FREC" ] && [ ! -f "$T/ran" ] && ok "a waiver for another part than the refused one is refused, with a token for the refused one" || no "waive other part: $(out)"
 run $F verify f --waive-environment env --plan "$tok" --approved "ok"
 [ "$rc" = 1 ] && saw 'verify-env-waive-unknown' && saw 'env cannot fail' && [ ! -f "$FREC" ] && ok "env cannot be waived" || no "waive env: $(out)"
 run $F verify f --waive-environment bogus --plan "$tok" --approved "ok"
@@ -117,18 +140,41 @@ run $F status f
 [ "$rc" = 0 ] && saw 'full suite: pass at this head' && saw 'verify.environment: cpu waived-failed \(verify-env-cpu-no-user-manager\)' && ok "status shows the waiver again" || no "status waiver: $(out)"
 run $F finish f
 [ "$rc" = 0 ] && saw '^plan token: ' && saw 'verify.environment: cpu waived-failed' && ok "a waived run satisfies finish, and the finish plan shows the waiver again" || no "finish plan: rc=$rc: $(out)"
+# a token is good for one run: the same --plan and --approved at the same head are refused (nothing runs, nothing is audited), the refusal of the attempt prints the next
+# token, and the retry takes that one
+reset; na=$(grep -c 'verify:environment-waived' "$T/s/audit.log")
+run $F verify f --waive-environment cpu --plan "$tok" --approved "the owner said run it without the scope"
+tokb=$(tokof "$(out)")
+[ "$rc" = 1 ] && saw 'verify-env-waive-used' && [ -n "$tokb" ] && [ "$tokb" != "$tok" ] && [ ! -f "$T/ran" ] && [ ! -f "$FREC" ] && [ "$(grep -c 'verify:environment-waived' "$T/s/audit.log")" = "$na" ] \
+  && ok "a second use of the token at the same head is refused: nothing ran, nothing was audited, and the refusal prints the next token" || no "second use: rc=$rc: $(out)"
+run $F verify f --waive-environment cpu --plan "$tokb" --approved "the owner said so again"
+[ "$rc" = 0 ] && [ -f "$T/ran" ] && [ "$(jq -r '.environment.parts.cpu' "$FREC")" = waived-failed ] && ok "the retry takes the new token and runs under the waiver" || no "retry: rc=$rc: $(out)"
+reset; run $F verify f --waive-environment cpu --plan "$tokb" --approved "the owner said so again"
+[ "$rc" = 1 ] && saw 'verify-env-waive-used' && [ ! -f "$T/ran" ] && ok "and that token is spent too" || no "third use: rc=$rc: $(out)"
 # the token is of this head: a feature that moved needs a new refusal
 git -C "$R" branch -q agent/x develop; w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R" worktree add -q "$w" agent/x; echo x > "$w/x.txt"; git -C "$w" add -A; git -C "$w" commit -q -m x; git -C "$R" worktree remove --force "$w"
 $F merge f agent/x >/dev/null 2>&1
 run $F verify f --waive-environment cpu --plan "$tok" --approved "the owner said run it without the scope"
 [ "$rc" = 1 ] && saw 'verify-env-waive-unapproved' && ok "the token of an earlier head does not cover the new one" || no "old token: rc=$rc: $(out)"
-# a waiver when the attempt passes is recorded applied: `cpu_quota` null has no cpu part at all, so the waiver of fds is checked against a passing attempt
+# a waiver stands on a refusal: with cpu_quota null the attempt passes and refuses nothing, so no token is printed and no waiver is accepted; a part that is off is no part to waive
 setenv '{"cpu_quota":null}'
-run $F verify f --waive-environment fds
-tok2=$(tokof "$(out)")
-[ "$rc" = 1 ] && saw 'verify-env-waive-unapproved' && [ -n "$tok2" ] && ok "a waiver of a part the attempt did not refuse still needs the token and the words" || no "waive passing: $(out)"
-reset; run $F verify f --waive-environment fds --plan "$tok2" --approved "owner words"
-[ "$rc" = 0 ] && [ "$(jq -r '.environment.parts.fds' "$FREC")" = applied ] && ! saw 'waived-failed' && ok "a waived part that succeeds is recorded applied" || no "waive applied: rc=$rc: $(out); $(cat "$FREC")"
+reset; run $F verify f --waive-environment fds
+[ "$rc" = 1 ] && saw 'verify-env-waive-unapproved' && saw 'refused no part' && ! saw 'plan token' && [ ! -f "$FREC" ] && [ ! -f "$T/ran" ] && ok "a waiver when the attempt refused nothing is refused and prints no token" || no "waive nothing refused: rc=$rc: $(out)"
+run $F verify f --waive-environment fds --plan 000000000000 --approved "owner words"
+[ "$rc" = 1 ] && saw 'verify-env-waive-unapproved' && ! saw 'plan token' && [ ! -f "$FREC" ] && [ ! -f "$T/ran" ] && ok "with a token and words too: no refusal printed that token" || no "waive nothing refused 2: rc=$rc: $(out)"
+run $F verify f --waive-environment cpu --plan 000000000000 --approved "owner words"
+[ "$rc" = 1 ] && saw 'verify-env-waive-unknown' && saw 'cpu is off' && ! saw 'plan token' && [ ! -f "$FREC" ] && ok "a part that is off (cpu with cpu_quota null) cannot be waived" || no "waive off part: rc=$rc: $(out)"
+# a waiver is the owner's: in a member run (the marked environment, or a directory of a run) --waive-environment with --approved is refused before anything is made, and the same call outside it runs
+setenv '{"cpu_quota":"max"}'; mode nouser
+reset; run $F verify f
+tokm=$(tokof "$(out)"); na=$(grep -c 'verify:environment-waived' "$T/s/audit.log")
+reset; QARGI_MEMBER_RUN=1 run $F verify f --waive-environment cpu --plan "$tokm" --approved "a member made these words up"
+[ "$rc" = 2 ] && saw 'not available in a member run' && [ ! -f "$T/ran" ] && [ ! -f "$FREC" ] && [ "$(grep -c 'verify:environment-waived' "$T/s/audit.log")" = "$na" ] && ok "a member run (marked environment) cannot waive with --approved: refused, nothing ran, nothing audited" || no "member mark: rc=$rc: $(out)"
+mkdir -p "$T/mrun"; : > "$T/mrun/ability"; : > "$T/mrun/refs.before"
+cd "$T/mrun" || exit 1; run $F verify f --waive-environment cpu --plan "$tokm" --approved "a member made these words up"; cd "$T" || exit 1
+[ "$rc" = 2 ] && saw 'not available in a member run' && [ ! -f "$T/ran" ] && [ ! -f "$FREC" ] && ok "a member run (below a run directory) cannot waive with --approved either" || no "member dir: rc=$rc: $(out)"
+run $F verify f --waive-environment cpu --plan "$tokm" --approved "the owner said so"
+[ "$rc" = 0 ] && [ -f "$T/ran" ] && [ "$(jq -r '.environment.parts.cpu' "$FREC")" = waived-failed ] && ok "the same call outside a member run is accepted" || no "owner waiver: rc=$rc: $(out)"
 # the setting off: nothing to waive
 unsetenv
 run $F verify f --waive-environment cpu --plan x --approved y
@@ -191,11 +237,21 @@ unsetenv
 rawenv '{"fds":"bogus"}'
 run $F verify f
 [ "$rc" = 1 ] && saw 'verify-env-invalid' && saw 'fds' && ok "an invalid declaration is refused at load" || no "invalid: $(out)"
+run $F finish f
+[ "$rc" = 1 ] && saw 'verify-env-invalid' && ok "an invalid declaration refuses feature finish" || no "invalid finish: $(out)"
+run $F status f
+[ "$rc" = 0 ] && saw 'verify-env-invalid' && saw 'fds' && saw '^full suite: ' && ok "status prints an invalid declaration as a finding and goes on (exit 0)" || no "invalid status: rc=$rc $(out)"
+run $REL status 0.2.0
+[ "$rc" = 0 ] && saw 'verify-env-invalid' && saw '^no release/0.2.0 yet' && ok "release status prints it too and goes on" || no "invalid release status: rc=$rc $(out)"
 unsetenv
 # a state file that cannot be read is a refusal, never a first declaration
 echo 'not json' > "$T/s/verify-env.json"
 run $F verify f
 [ "$rc" = 1 ] && saw 'verify-env-change-unapproved' && saw 'cannot be read' && ok "a damaged state file refuses" || no "damaged state: rc=$rc $(out)"
+run $F status f
+[ "$rc" = 0 ] && saw 'verify-env-change-unapproved' && saw 'cannot be read' && saw '^full suite: ' && ok "status prints a damaged state file as a finding and goes on (exit 0)" || no "damaged status: rc=$rc $(out)"
+run $REL status 0.2.0
+[ "$rc" = 0 ] && saw 'cannot be read' && ok "release status goes on with a damaged state file too" || no "damaged release status: rc=$rc $(out)"
 rm -f "$T/s/verify-env.json"
 # a raised LAUNCHER_VERSION: no refusal, earlier runs are stale
 setenv '{"cpu_quota":null}'
@@ -219,6 +275,16 @@ jq --argjson g '[{"name":"one","tier":"feature","command":"exit 3"},{"name":"two
 rm -f "$T/g2" "$FREC"; run $F verify f
 [ "$rc" = 1 ] && [ ! -f "$T/g2" ] && [ "$(jq -r '.result' "$FREC")" = fail ] && saw 'failing gate: one' && ok "a failing gate is a fail of the suite, and the next gate is not run" || no "gate fail: rc=$rc $(out)"
 jq 'del(.gates)' "$P" > "$P.new" && mv "$P.new" "$P"; unsetenv
+# a record is written only on the reports of the launcher, and only when they agree on the declaration and the launcher: the second gate edits the first one's report
+ENVD=$T/s/suite-logs/app.feature-f.env; setenv '{"cpu_quota":null}'
+for edit in '.id = "deadbeefdead"' '.launcher = 99'; do
+  jq --arg c "jq '$edit' $ENVD/gate-000.json > $ENVD/t.new && mv $ENVD/t.new $ENVD/gate-000.json" --argjson g '[{"name":"one","tier":"feature","command":"true"}]' '.gates = ($g + [{"name":"two","tier":"feature","command":$c}])' "$P" > "$P.new" && mv "$P.new" "$P"
+  rm -f "$FREC"; run $F verify f
+  [ "$rc" = 1 ] && saw 'differ in their id or launcher' && saw 'nothing is recorded' && [ ! -f "$FREC" ] && ok "reports that differ ($edit) are no record: the verb stops and nothing counts" || no "report $edit: rc=$rc $(out)"
+done
+jq 'del(.gates)' "$P" > "$P.new" && mv "$P.new" "$P"; unsetenv
+( export SUITE_ENV='{}' SUITE_ENV_ID=abc; ENV_DIR=$T/noreports; mkdir -p "$ENV_DIR"; eval "$(sed -n '/^suite_env_record() {/,/^}/p' "$ROOT/lib/gitflow.sh")";suite_env_record > "$T/o" 2> "$T/e" ); rc=$?
+[ "$rc" != 0 ] && [ ! -s "$T/o" ] && grep -q 'no launcher report' "$T/e" && ok "with the setting on and no report of the launcher there is no environment member to record" || no "no report: rc=$rc $(out)"
 
 # --- 7. a log that cannot be made is a refusal with the setting on and nothing new with it off
 setcmd "echo suite-ran; touch $T/ran"
@@ -244,6 +310,9 @@ run $REL status 0.2.0
 run $REL status 0.2.0 --waive-environment cpu
 [ "$rc" = 2 ] && saw 'belongs to release verify' && ok "release: --waive-environment is for verify only" || no "release waive on status: rc=$rc $(out)"
 unsetenv
+run $REL status 0.2.0
+[ "$rc" = 0 ] && ! saw 'pass at' && saw 'full suite: not run' && saw 'why: the last run used verify.environment [0-9a-f]{12}, the answers now give off' && ! saw 'does not count.*pass' \
+  && ok "release status: a run made under another declaration is not reported as a pass; one line says it does not count" || no "release status stale: rc=$rc $(out)"
 reset; run $REL verify 0.2.0
 [ "$rc" = 0 ] && [ "$(jq -S -c 'del(.at, .seconds) | keys' "$DREC")" = '["command","mode","result","sha"]' ] && ok "release verify with the setting off writes the old record" || no "release off: rc=$rc $(out)"
 
@@ -254,8 +323,8 @@ if [ -n "$real" ] && [ "${rv:-0}" -ge 254 ] && "$real" --user --scope --quiet --
   nofake
   # M1: the cpu.max files under app.slice are the same before and during the run (the controller is switched on only for our own slice)
   cg=$(sed -n 's/^0:://p' /proc/self/cgroup); app=''; case $cg in *app.slice*) app=/sys/fs/cgroup${cg%%/app.slice*}/app.slice;; esac
-  lscpu() { [ -z "$app" ] || find "$app" -name cpu.max 2>/dev/null | sort; }
-  lscpu > "$T/cpumax.before"
+  cpumax_files() { [ -z "$app" ] || find "$app" -name cpu.max 2>/dev/null | sort; }
+  cpumax_files > "$T/cpumax.before"
   setcmd "echo '\${VERIFY_X}' pid=\$\$; { find '${app:-/nonexistent}' -name cpu.max 2>/dev/null | sort > $T/cpumax.during; } ; setsid sleep 300 &"
   for q in '"200%"' '"max"' ''; do
     case $q in '') d='{}'; want_max='max 100000';; '"max"') d='{"cpu_quota":"max"}'; want_max='max 100000';; *) d="{\"cpu_quota\":$q}"; want_max='200000 100000';; esac
@@ -277,7 +346,28 @@ if [ -n "$real" ] && [ "${rv:-0}" -ge 254 ] && "$real" --user --scope --quiet --
   chmod +x "$T/flaky/systemd-run"
   reset; PATH=$T/flaky:$PATH_PLAIN; export PATH; run $F verify f; nofake
   [ "$rc" = 1 ] && saw 'verify-env-cpu-no-user-manager' && saw 'left no report' && [ ! -f "$FREC" ] && ! saw '^full suite: fail' && ok "a scope that fails after a passing attempt is verify-env-cpu-no-user-manager, no record, never a fail" || no "flaky: rc=$rc $(out)"
-  unsetenv
+  # the attempt passes and the run is then refused (the second call of systemd-run asks for another quota than the declared one, so the read-back in the scope refuses):
+  # the refusal prints the token the message promises, for the refused part, and the retry takes it: the attempt passes, so the waiver is of a part nothing refused this time
+  setenv '{"cpu_quota":"200%"}'
+  mkdir -p "$T/tamper"; rm -f "$T/tamper/n"
+  cat > "$T/tamper/systemd-run" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = --version ]; then exec "$real" --version; fi
+n=\$(cat "$T/tamper/n" 2>/dev/null || echo 0); n=\$((n + 1)); echo "\$n" > "$T/tamper/n"
+args=("\$@")
+if [ "\$n" = 2 ]; then for i in "\${!args[@]}"; do case \${args[i]} in CPUQuota=*) args[i]=CPUQuota=300%;; esac; done; fi
+exec "$real" "\${args[@]}"
+EOF
+  chmod +x "$T/tamper/systemd-run"
+  reset; PATH=$T/tamper:$PATH_PLAIN; export PATH; run $F verify f; tokt=$(tokof "$(out)")
+  [ "$rc" = 1 ] && saw 'verify-env-cpu-readback' && saw 'the launcher refused this run' && [ -n "$tokt" ] && [ "$(grep -c '^plan token: ' "$T/o")" = 1 ] && saw -- '--waive-environment cpu --plan [0-9a-f]{12} --approved' \
+    && [ ! -f "$FREC" ] && ok "the attempt passed and the run was refused: the token the message promises is printed, for the refused part; nothing was recorded" || no "refused after a passing attempt: rc=$rc $(out)"
+  reset; run $F verify f --waive-environment cpu --plan "$tokt" --approved "the owner said so"
+  [ "$rc" = 0 ] && saw 'waived for this run, and the attempt before it applied every part' && [ "$(jq -r '.environment.parts.cpu' "$FREC")" = applied ] && ! saw 'waived-failed' && [ -f "$T/ran" ] \
+    && ok "the retry takes that token: the part the run refused once is applied this time, recorded applied" || no "retry after a refused run: rc=$rc $(out)"
+  reset; run $F verify f --waive-environment cpu --plan "$tokt" --approved "the owner said so"
+  [ "$rc" = 1 ] && saw 'verify-env-waive-used' && ! saw '^plan token: ' && [ ! -f "$T/ran" ] && ok "that token is spent: used again it is refused, and with nothing refused no new one is printed" || no "reuse after a refused run: rc=$rc $(out)"
+  nofake; unsetenv
 else
   echo "expected: no real user scope here (systemd-run ${rv:-absent}, needs --user --scope to work on 254 or newer): the real-scope cases did not run"
 fi

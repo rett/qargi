@@ -148,8 +148,9 @@ VFILE=$(jq -r '(.release? // {}) | .version_file // "VERSION"' "$af"); VFILE_SET
 RTC=$(jq -r '(.release? // {}) | .test_command // empty | if type == "array" then map(@sh) | join(" ") else . end' "$af"); [ -z "$RTC" ] || TESTCMD=$RTC
 # the declared gates (the answer gates; lib/gates.py) replace test_command and release.test_command: a release runs the feature-tier gates, then the release-tier gates
 case $verb in start|status|verify|push|finish) gates_load feature release; [ -z "$GATES" ] || RTC='';; esac
-# verify.environment (lib/suite_env.py): the declaration, and the id that `verified` selects the suite record by; status only reports a finding
-case $verb in status) suite_env_load report;; start|verify|push|finish) suite_env_load refuse;; esac
+# verify.environment (lib/suite_env.py): the declaration, and the id that `verified` selects the suite record by; status only reports a finding. Refused where the
+# verb makes a suite run or reads the record (start and finish read it through verified; push does neither, so a declaration edited by hand does not stop a push)
+case $verb in status) suite_env_load report;; start|verify|finish) suite_env_load refuse;; esac
 # ci_scan DIR -> compares the jobs of DIR/.github/workflows with the declared gate names (lib/gates.py scan): a warning for each job that matches no gate
 # name, is not listed in a gate's ci_jobs and is not in ci.not_gates; a note for each job a gate covers (ci_jobs), for each job whose name cannot be read
 # (never a failure) and, with no gate declared, one note for all the jobs instead of a warning each; a warning for a listed name that no workflow has;
@@ -290,6 +291,8 @@ suite_verdict() {
   SV_TEXT='' SV_NOTE=''
   f=$(rec "$1"); [ -f "$f" ] || return 0
   cur=$(jq -r '.sha // empty' "$f" 2>/dev/null) || return 0; [ -n "$cur" ] || return 0
+  # a run made under another declaration or launcher (or none) does not count (verified): it is not reported as a verdict, and suite_env_status says why
+  [ "$(jq -r '.environment.id // ""' "$f" 2>/dev/null)" = "${SUITE_ENV_ID:-}" ] || return 0
   res=$(jq -r '.result // "?"' "$f"); at=$(jq -r '.at // "an unknown time"' "$f"); cmd=$(jq -r '.command // "an unknown command"' "$f")
   took=$(jq -r 'if (.seconds | type) == "number" then "took \(.seconds)s" else empty end' "$f"); mode=$(jq -r '.mode // empty' "$f")
   SV_TEXT="$res at $([ "$cur" = "$(sha_of "$1")" ] && echo 'this head' || echo 'an older head') (command: $cmd; ran $at${took:+; $took}${mode:+; $mode})"

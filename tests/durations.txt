@@ -148,4 +148,4 @@
 3 bash tests/test_readonly_init.sh
 0 python3 tests/test_seat_contract.py
 20 python3 tests/test_suite_env.py
-70 bash tests/test_suite_env_flow.sh
+108 bash tests/test_suite_env_flow.sh
