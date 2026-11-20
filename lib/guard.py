@@ -306,7 +306,7 @@ GIT_WRITES = {"add", "commit", "apply", "am", "checkout", "switch", "reset", "rm
               "cherry-pick", "revert", "restore", "clean", "tag", "branch", "pull", "fetch", "init", "clone", "worktree",
               "notes", "update-ref", "config", "submodule", "update-index", "gc", "prune", "repack", "pack-refs", "replace", "filter-branch", "commit-tree",
               "write-tree", "mktag", "mktree", "fast-import", "read-tree", "checkout-index", "sparse-checkout", "maintenance"}
-FD_NAME = r"\{[A-Za-z_][A-Za-z0-9_]*(?:\[\S*?\])?\}"            # {fd} or {arr[i]} (the subscript may hold brackets: {a[b[1]]}, up to the first ]}) before a redirection operator: bash opens a descriptor and stores its number in the variable (or the array element)
+FD_NAME = r"\{[A-Za-z_][A-Za-z0-9_]*(?:\[.*?\])?\}"             # {fd} or {arr[i]} (the subscript may hold brackets and a blank, quoted in the command and bare in the words: {a[b[1]]}, {a["x y"]}, up to the first ]}) before a redirection operator: bash opens a descriptor and stores its number in the variable (or the array element)
 REDIR = re.compile(r"^(?:\d*|&|" + FD_NAME + r")(?:>>|>\||<>|>)(.*)$")           # > >> >| <> &> &>> and N> N>> N>| N<> and {fd}>, the target stuck to it or in the next word
 GIT_OUTPUT_DIRS = {"format-patch", "archive"}                    # git subcommands whose -o names where they write
 
@@ -2985,11 +2985,12 @@ def unreadable_project_verb(command):
 
 
 def quoted_string(t):
-    """True when the word t reads as a redirection and holds a blank, or a command separator (; | &) after the redirection's operator: the words carry no
-    quotes, and the shell cuts an unquoted word at a blank and at a separator, so t was one quoted word (bash -c "2>/dev/null qargi upgrade", or a separator
+    """True when the word t reads as a redirection and holds a blank, or a command separator (; | &), after the redirection's operator (a blank inside the name
+    of a named descriptor, {a["x y"]}>f, is bash's own and makes no string): the words carry no quotes, and the shell cuts an unquoted word at a blank and at a
+    separator, so t was one quoted word (bash -c "2>/dev/null qargi upgrade", or a separator
     written in ANSI-C quoting, $'2>/dev/null\\x3bPROGRAM'): no redirection, a string that starts with one. A dup such as 2>&1 or >&2 has its & in the operator."""
     m = LEADING_REDIR.match(t)
-    return is_redirection(t) and bool(re.search(r"\s", t) or (m and re.search(r"[;|&]", t[m.end():])))
+    return is_redirection(t) and bool(m and re.search(r"[\s;|&]", t[m.end():]))
 
 
 def shell_string(prog, rest):
