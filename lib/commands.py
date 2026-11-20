@@ -107,7 +107,7 @@ ENV_NOTE = ("With the project answer verify.environment set, the suite, or each 
             "a transient cgroup below qargi-verify.slice with the cpu controller on, and an environment built from an allowlist; each is read back. The verb makes the launcher's attempt before it makes the worktree. "
             "A part that cannot be applied refuses the run (exit 1, nothing run, nothing recorded) with a code (verify-env-signals, verify-env-fds, verify-env-tty, verify-env-cpu-no-systemd-run, verify-env-cpu-systemd-too-old, "
             "verify-env-cpu-no-user-manager, verify-env-cpu-readback), the part, what was found and a plan token; the same is printed for a part the launcher refuses during the run. "
-            "A suite log or a directory for the reports that cannot be made is verify-env-no-log (exit 1, nothing run, no part and no token). "
+            "A suite log or a directory for the reports that cannot be made is verify-env-no-log (exit 1, nothing run, no part and no token; under a waiver the log is made after the waiver is claimed, so the token is spent and the audit line is written). "
             "--waive-environment PARTS --plan TOKEN --approved WORDS runs the suite once without the parts a refusal named: only a refusal yields a token, which covers the project, the branch, its head, the declaration and exactly those parts, "
             "and is good for one run at that head (used again: verify-env-waive-used). A waived part is still attempted; when it fails it is recorded waived-failed with its code, the verdict line says so "
             "(full suite: pass at SHA (verify.environment: cpu waived-failed)) and status and finish show it again; the run is audited as verify:environment-waived. "
