@@ -306,7 +306,8 @@ GIT_WRITES = {"add", "commit", "apply", "am", "checkout", "switch", "reset", "rm
               "cherry-pick", "revert", "restore", "clean", "tag", "branch", "pull", "fetch", "init", "clone", "worktree",
               "notes", "update-ref", "config", "submodule", "update-index", "gc", "prune", "repack", "pack-refs", "replace", "filter-branch", "commit-tree",
               "write-tree", "mktag", "mktree", "fast-import", "read-tree", "checkout-index", "sparse-checkout", "maintenance"}
-REDIR = re.compile(r"^(?:\d*|&)(?:>>|>\||<>|>)(.*)$")           # > >> >| <> &> &>> and N> N>> N>| N<>, the target stuck to it or in the next word
+FD_NAME = r"\{[A-Za-z_][A-Za-z0-9_]*\}"                        # {fd} before a redirection operator: bash opens a descriptor and stores its number in the variable
+REDIR = re.compile(r"^(?:\d*|&|" + FD_NAME + r")(?:>>|>\||<>|>)(.*)$")           # > >> >| <> &> &>> and N> N>> N>| N<> and {fd}>, the target stuck to it or in the next word
 GIT_OUTPUT_DIRS = {"format-patch", "archive"}                    # git subcommands whose -o names where they write
 
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
@@ -335,7 +336,7 @@ ROOT_SCRIPTS = ("install.sh",)                                       # of those,
 # (bash -c "2>/dev/null qargi upgrade"): it is read as the -c string too, beside the reading as a redirection (shell_string, quoted_string). The options of the wrappers in front (sudo, env, timeout ...) are read from WRAP_OPTS.
 # Still not seen, after those readings:
 #   - a name the shell builds: a variable that holds the path (`P=.../install.sh; bash $P`), a for-loop over it, a glob (`bash .../inst*.sh`), a brace
-#     (`bash .../{install,x}.sh`), a redirection glued to the name (`bash .../install.sh>/dev/null`), and a `{fd}>` redirection written before the file;
+#     (`bash .../{install,x}.sh`), a redirection glued to the name (`bash .../install.sh>/dev/null`), and a `{fd}>` redirection written before the file of a script that only its own file is (OWN_ONLY: `python3 {fd}>f .../install_record.py`); the named descriptor beside `qargi`, before or after it and the area, is read (FD_NAME);
 #   - a plain variable as an option's value (`python3 -X $V dev FILE`): read as one word, while word splitting may make it none or several;
 #   - a program on python's standard input (`python3 < .../install_record.py`, `python3 - < FILE`), and names that xargs brings from a file it reads
 #     itself (`xargs -a LIST bash`);
@@ -706,8 +707,8 @@ def tokens(seg):
 
 
 KEYWORDS = {"if", "then", "elif", "else", "while", "until", "do", "!", "{", "(", "coproc"}   # a command follows them
-LEADING_REDIR = re.compile(r"^(?:\d*|&)(?:<<<|<<-?|<>|>>|>\||>&?|<&?|&>>?)")
-BARE_REDIR = re.compile(r"^(?:\d*|&)(?:<<<|<<-?|<>|>>|>\||>&?|<&?|&>>?)$")           # the operator alone: its target is the next word
+LEADING_REDIR = re.compile(r"^(?:\d*|&|" + FD_NAME + r")(?:<<<|<<-?|<>|>>|>\||>&?|<&?|&>>?)")
+BARE_REDIR = re.compile(r"^(?:\d*|&|" + FD_NAME + r")(?:<<<|<<-?|<>|>>|>\||>&?|<&?|&>>?)$")           # the operator alone: its target is the next word
 
 
 def wrapper_option(w, t):
@@ -876,6 +877,9 @@ def rejoin(words):
     return " ".join(out)
 
 
+FD_REDIR_WORD = re.compile("^" + FD_NAME + r"[<>]")
+
+
 @functools.cache
 def _cmd_tokens(seg):
     """The words of a segment, without what the grammar puts around a command: the ( stuck to the first word, a case pattern (x)), and the ) that closes
@@ -886,7 +890,9 @@ def _cmd_tokens(seg):
     elif toks[:1] and toks[0].endswith("()"):                # NAME() { ...
         toks = toks[1:]
     if toks:
-        toks[0] = toks[0].lstrip("({")
+        toks[0] = toks[0].lstrip("(")
+        if not FD_REDIR_WORD.match(toks[0]):                 # {fd}>f is a redirection: a { opens a group only as a word of its own
+            toks[0] = toks[0].lstrip("{")
         if not toks[0]:
             toks.pop(0)
     if toks[:1] == ["case"]:                                 # case WORD in PATTERN) command
