@@ -268,7 +268,7 @@ def check_verify_environment(project):
 
 # ---------------------------------------------------------------------------------------------------------------- install
 
-LIST_MAX = 3              # paths named in the line of a finding; --json lists them all
+LIST_MAX = 3               # paths named in the line of a finding; --json lists them all
 
 
 def tilde(p):
