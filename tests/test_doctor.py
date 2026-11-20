@@ -479,6 +479,182 @@ class Tools(Base):
         self.assertIn("timeout is not on PATH", c["detail"])
 
 
+SYSTEMD_RUN = """#!/bin/sh
+echo "systemd-run $*" >> "$FAKE_LOG"
+echo "systemd $FAKE_SYSTEMD ($FAKE_SYSTEMD.4-1)"
+echo "+PAM +AUDIT"
+"""
+
+
+class VerifyEnvironment(Base):
+    """The answer verify.environment: off, or on with what the cpu part needs of the host (systemd-run, 254 or newer), and whether the answers
+    still hold the declaration qargi last accepted. systemd-run is a fake that records its argv; nothing is ever run through it but --version."""
+
+    def setUp(self):
+        super().setUp()
+        self.sd = os.path.join(self.t, "sd")
+        os.makedirs(self.sd)
+        script(os.path.join(self.sd, "systemd-run"), SYSTEMD_RUN)
+        self.state = os.environ["QARGI_STATE"]
+        os.makedirs(self.state, exist_ok=True)
+        self.addCleanup(self.forget)
+        self.forget()
+
+    def forget(self):
+        for n in ("verify-env.json", "verify-env.json.lock"):
+            if os.path.exists(os.path.join(self.state, n)):
+                os.remove(os.path.join(self.state, n))
+
+    def declare(self, decl, accepted=True):
+        """The project's answers carry DECL; with accepted the state holds it as the declaration qargi last accepted."""
+        self.project(verify={"environment": decl})
+        if accepted:
+            import suite_env as SE
+            SE.approved_set("app", decl, "test", state=self.state)
+
+    def farm(self, leave_out):
+        d = os.path.join(self.t, "farm")
+        os.makedirs(d, exist_ok=True)
+        for bindir in ("/usr/bin", "/bin"):
+            if os.path.isdir(bindir):
+                for n in os.listdir(bindir):
+                    if n not in leave_out and not os.path.lexists(os.path.join(d, n)):
+                        os.symlink(os.path.join(bindir, n), os.path.join(d, n))
+        return d
+
+    def path(self, with_systemd=True):
+        if with_systemd:
+            return self.fakes + os.pathsep + self.sd + os.pathsep + os.environ["PATH"]
+        return self.fakes + os.pathsep + self.farm({"systemd-run"})
+
+    def check(self, version="255", with_systemd=True):
+        rc, out, err = self.doctor("app", FAKE_SYSTEMD=version, PATH=self.path(with_systemd))
+        self.assertEqual(rc, 0, out + err)
+        return self.lines(out)["verify-environment"]
+
+    def asked(self):
+        with open(self.log) as f:
+            return [line for line in f.read().splitlines() if line.startswith("systemd-run")]
+
+    def test_no_project_is_unknown(self):
+        status, text = self.lines(self.doctor()[1])["verify-environment"]
+        self.assertEqual(status, "unknown", text)
+
+    def test_a_project_that_does_not_declare_it_is_off_and_systemd_run_is_not_asked(self):
+        self.project()
+        status, text = self.check()
+        self.assertEqual(status, "ok", text)
+        self.assertIn("verify-environment: off for project app", text)
+        self.assertEqual(self.asked(), [])
+
+    def test_null_is_off_too(self):
+        self.declare(None)
+        self.assertIn("off for project app", self.check()[1])
+
+    def test_on_with_a_new_enough_systemd_run_is_ok_and_names_the_version_and_the_id(self):
+        import suite_env as SE
+        decl = {"cpu_quota": "200%"}
+        self.declare(decl)
+        status, text = self.check()
+        self.assertEqual(status, "ok", text)
+        self.assertIn("on for project app (id %s, fds close, cpu_quota \"200%%\")" % SE.suite_env_id(SE.normalise(decl)), text)
+        self.assertIn("systemd-run 255 is on PATH", text)
+        self.assertEqual(self.asked(), ["systemd-run --version"], "only the version is asked: no scope is made")
+
+    def test_the_default_declaration_needs_systemd_run_too(self):
+        self.declare({})
+        status, text = self.check(version="253")
+        self.assertEqual(status, "warn", text)
+        self.assertIn('cpu_quota "max"', text)
+
+    def test_the_minimum_is_254(self):
+        self.declare({})
+        self.assertEqual(self.check(version="254")[0], "ok")
+        status, text = self.check(version="253")
+        self.assertEqual(status, "warn", text)
+        self.assertIn("253 (253.4-1)", text)
+        self.assertIn("254 or newer is needed", text)
+        self.assertIn("verify-env-cpu-systemd-too-old", text)
+
+    def test_a_systemd_run_that_gives_no_version_is_too_old_not_ok(self):
+        self.declare({})
+        script(os.path.join(self.sd, "systemd-run"), "#!/bin/sh\necho 'something else'\n")
+        status, text = self.check()
+        self.assertEqual((status, "verify-env-cpu-systemd-too-old" in text), ("warn", True), text)
+
+    def test_no_systemd_run_warns_with_the_code_and_the_ways_out(self):
+        self.declare({})
+        status, text = self.check(with_systemd=False)
+        self.assertEqual(status, "warn", text)
+        self.assertIn("systemd-run is not on PATH, so verify refuses with verify-env-cpu-no-systemd-run", text)
+        self.assertIn("cpu_quota null", text)
+        self.assertIn("--waive-environment cpu", text)
+        rc = self.doctor("app", "--strict", PATH=self.path(False))[0]
+        self.assertEqual(rc, 1)
+
+    def test_a_declaration_without_the_cpu_part_needs_no_systemd_run(self):
+        self.declare({"cpu_quota": None})
+        status, text = self.check(with_systemd=False)
+        self.assertEqual(status, "ok", text)
+        self.assertIn("the cpu part is off", text)
+
+    def test_an_invalid_declaration_warns_with_the_code(self):
+        self.declare({"signals": "default"}, accepted=False)
+        status, text = self.check()
+        self.assertEqual(status, "warn", text)
+        self.assertIn("verify-env-invalid", text)
+        self.assertIn("unknown key 'signals'", text)
+
+    def test_answers_that_differ_from_the_accepted_declaration_warn_in_both_directions(self):
+        import suite_env as SE
+        self.project(verify={"environment": {"cpu_quota": "200%"}})      # a hand edit: nothing was ever accepted
+        status, text = self.check()
+        self.assertEqual(status, "warn", text)
+        self.assertIn("is not the declaration qargi last accepted", text)
+        self.assertIn("verify-env-change-unapproved", text)
+        self.assertIn("qargi project set app verify.environment JSON", text)
+        SE.approved_set("app", {"cpu_quota": "200%"}, "test", state=self.state)     # now accepted
+        self.assertEqual(self.check()[0], "ok")
+        self.project()                                                              # edited off by hand
+        status, text = self.check()
+        self.assertEqual(status, "warn", text)
+        self.assertIn("verify-env-change-unapproved", text)
+
+    def test_a_state_file_that_cannot_be_read_warns_and_is_not_changed(self):
+        self.declare({}, accepted=False)
+        path = os.path.join(self.state, "verify-env.json")
+        with open(path, "w") as f:
+            f.write("{not json")
+        before = snapshot(self.state)
+        status, text = self.check()
+        self.assertEqual(status, "warn", text)
+        self.assertIn("cannot be read", text)
+        self.assertIn("verify-env-change-unapproved", text)
+        self.assertEqual(snapshot(self.state), before)
+        with open(path) as f:
+            self.assertEqual(f.read(), "{not json")
+
+    def test_a_missing_state_file_with_the_setting_off_is_ok_and_makes_nothing(self):
+        self.project()
+        self.assertFalse(os.path.exists(os.path.join(self.state, "verify-env.json")))
+        before = snapshot(self.state)
+        self.assertEqual(self.check()[0], "ok")
+        self.assertEqual(snapshot(self.state), before)
+
+    def test_it_writes_nothing_when_on(self):
+        self.declare({"cpu_quota": "200%"})
+        before = snapshot(self.state, os.environ["QARGI_CONF"])
+        self.check()
+        self.assertEqual(snapshot(self.state, os.environ["QARGI_CONF"]), before)
+
+    def test_json_carries_the_check(self):
+        self.declare({})
+        e = dict(self.env, PATH=self.path(), FAKE_SYSTEMD="255")
+        r = subprocess.run([BIN, "doctor", "app", "--json"], capture_output=True, text=True, env=e, stdin=subprocess.DEVNULL)
+        c = [c for c in json.loads(r.stdout)["checks"] if c["name"] == "verify-environment"][0]
+        self.assertEqual(c["status"], "ok", c)
+
+
 SKILLS = ("qargi-task", "qargi-verify")
 
 
@@ -695,7 +871,7 @@ class Command(Base):
         rc, out, _ = self.doctor("--json", "--strict", FAKE_IPC="true")
         doc = json.loads(out)
         self.assertEqual((rc, doc["exit"], doc["warnings"], doc["strict"]), (1, 1, 1, True))
-        self.assertEqual([c["name"] for c in doc["checks"]], ["remove-ipc", "guard", "shm", "tools", "install", "window-source", "project-env"])
+        self.assertEqual([c["name"] for c in doc["checks"]], ["remove-ipc", "guard", "shm", "tools", "install", "window-source", "verify-environment", "project-env"])
         ipc = doc["checks"][0]
         self.assertEqual(ipc["status"], "warn")
         self.assertTrue(any("RemoveIPC=no" in line for line in ipc["fix"]))

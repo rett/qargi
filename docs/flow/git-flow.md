@@ -84,6 +84,11 @@ refusal changes nothing.
    `"covered_by": "NAME"`, NAME being a release-tier gate (`project set` and `project validate` refuse any other name). `feature verify` still
    runs the gate; `release verify` lists it as `covered by NAME` and does not run it, and its result in the record and the `gates:` line is
    `covered by NAME` when NAME passed, and `not run` when NAME failed or was not reached because an earlier gate failed.
+   A project may also declare **`verify.environment`**: every whole-suite command, the test command or each gate, then starts through
+   a launcher that gives it default signals, only the declared descriptors, a session with no terminal, a cgroup scope with the cpu
+   controller on, and an environment built from an allowlist. This is stricter than CI and than your shell, a part that cannot be
+   applied refuses the run with a code, and a refusal can be waived for one run on the owner's words. Absent, nothing changes. See
+   [verify.environment](../reference/verify-environment.md).
 4. `qargi release start VERSION` cuts `release/VERSION` from develop (only from a head that passed the
    suite) and bumps `VERSION` and the changelog date. Like the pushes and merges it prints a plan (the branch, the base, the files
    the bump commit changes) and a token first, and applies with `--plan TOKEN --approved "<your words>"`, which also writes the
