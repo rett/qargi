@@ -416,8 +416,15 @@ class Postconditions(Scratch):
         # a descriptor that is not a pipe, and the same pipe twice
         found = SE._check_fds({}, True, [report_fd, w], report_fd, [])
         self.assertTrue(any("is not a pipe" in p for p in found), found)
-        found = SE._check_fds({}, True, [r, r], report_fd, [])
-        self.assertTrue(any("same pipe" in p or "flags" in p for p in found), found)
+        r3, w3 = os.pipe()
+        self.addCleanup(os.close, r3)
+        self.addCleanup(os.close, w3)
+        os.set_inheritable(w3, True)
+        os.set_inheritable(r3, True)
+        os.set_blocking(r3, False)
+        # both numbers on the two ends of one pipe: each has the right flags for its end, only the inode rule is left to say it
+        found = SE._check_fds({}, True, [r3, w3], report_fd, [])
+        self.assertTrue(any("are the same pipe" in p for p in found), found)
         # an end that reads as end-of-file: its writer is gone
         r2, w2 = os.pipe()
         os.set_inheritable(r2, True)
@@ -1060,7 +1067,7 @@ def scope_works():
     v = subprocess.run([exe, "--version"], capture_output=True, text=True).stdout.split()
     if len(v) < 2 or not v[1].isdigit() or int(v[1]) < SE.MIN_SYSTEMD:
         return False, "systemd-run %s is older than %d" % (" ".join(v[:2]) or "unknown", SE.MIN_SYSTEMD)
-    r = subprocess.run([exe, "--user", "--scope", "--quiet", "--collect", "-p", "CPUQuota=200%", "--", "true"], capture_output=True, text=True,
+    r = subprocess.run([exe, "--user", "--scope", "--quiet", "--collect", "--slice=" + SE.SLICE, "-p", "CPUQuota=200%", "--", "true"], capture_output=True, text=True,
                        stdin=subprocess.DEVNULL, timeout=60)
     if r.returncode != 0:
         return False, "no user scope can be made (%s)" % ((r.stderr.strip().splitlines() or ["status %d" % r.returncode])[-1])
