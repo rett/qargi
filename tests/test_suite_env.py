@@ -286,20 +286,57 @@ class Declaration(Scratch):
         self.assertEqual(SE.CODES[SE.CODE_WAIVE_USED], None)
 
     def test_the_catalogue_of_refusals_lists_the_codes_of_the_table_and_no_other(self):
-        """lib/refusals.json lists each code of CODES at least once (a code may print with two texts), and no verify-env code of it is outside CODES; the part of an entry
-        is the part of the table, and every code that a shell file of lib/ prints is in the table."""
+        """lib/refusals.json (schema 1, a map of codes, each once) holds every code of CODES and no other, with the exit and the class of each; no code
+        of a shell file of lib/ is outside CODES (so the project and flow codes, invalid, change-unapproved and the waive codes, are all in CODES and
+        there is none outside it); a code with a part has a site that prints it with that part (no-log is the one code with a part that no site prints:
+        the launcher never reports it, a verb dies with it); and every line of every site is in the code: its literal text between the filled-in words
+        (words in capitals; the slice and the least systemd version are the code's constants) occurs in lib/gitflow.sh, lib/project.sh or lib/suite_env.py."""
         with open(os.path.join(LIB, "refusals.json")) as f:
-            entries = json.load(f)["refusals"]
-        self.assertEqual({e["code"] for e in entries}, set(SE.CODES))
-        for e in entries:
-            self.assertEqual(e["part"], SE.CODES[e["code"]], e["code"])
-        printed = set()
-        for name in ("gitflow.sh", "project.sh", "feature.sh", "release.sh"):
+            cat = json.load(f)
+        self.assertEqual(cat["schema"], 1)
+        self.assertEqual(set(cat), {"schema", "codes"})
+        codes = cat["codes"]
+        self.assertEqual(set(codes), set(SE.CODES))
+        printed, corpus = set(), ""
+        for name in ("gitflow.sh", "project.sh", "feature.sh", "release.sh", "suite_env.py"):
             path = os.path.join(LIB, name)
-            if os.path.exists(path):
-                with open(path) as f:
-                    printed |= set(re.findall(r"(verify-env-[a-z]+(?:-[a-z]+)*)[:\"' ]", f.read()))
+            with open(path) as f:
+                text = f.read()
+            if name != "suite_env.py":
+                printed |= set(re.findall(r"(verify-env-[a-z]+(?:-[a-z]+)*)[:\"' ]", text))
+            if name in ("gitflow.sh", "project.sh", "suite_env.py"):
+                corpus += text.replace('\\"', '"')
         self.assertEqual(sorted(printed - set(SE.CODES) - {"verify-env-waivers"}), [])
+        placeholder = re.compile(r"\b[A-Z][A-Z0-9_]*\b")
+        for code, e in codes.items():
+            self.assertEqual(set(e), {"rule", "why", "class", "exit", "status", "sites"}, code)
+            self.assertEqual((e["class"], e["exit"], e["status"]), ("verify-environment", 1, "live"), code)
+            self.assertTrue(e["rule"] and e["why"] and e["sites"], code)
+            part = SE.CODES[code]
+            if part and code != SE.CODE_NO_LOG:
+                self.assertTrue(any(s["text"].startswith("qargi: %s: %s: " % (code, part)) for s in e["sites"]), code)
+            for s in e["sites"]:
+                self.assertEqual(set(s), {"verbs", "text"}, code)
+                self.assertTrue(s["verbs"] and all(isinstance(v, str) and v for v in s["verbs"]), (code, s))
+                for line in s["text"].split("\n"):
+                    rest = line[len("qargi: "):] if line.startswith("qargi: ") else line
+                    if rest.startswith(code + ": "):
+                        rest = rest[len(code) + 2:]
+                        if part and rest.startswith(part + ": "):
+                            rest = rest[len(part) + 2:]
+                        elif rest.startswith("-: "):
+                            rest = rest[3:]
+                        elif rest.startswith("verify.environment: ") and not rest.startswith("verify.environment: the"):
+                            rest = rest[len("verify.environment: "):]     # project.sh puts the problem of suite_env.py after it
+                    rest = rest.replace(SE.SLICE, "SLICE").replace("%d or newer" % SE.MIN_SYSTEMD, "MINVER or newer")
+                    segments = [g.strip(" '\"(),:.") for part_ in placeholder.split(rest) for g in re.split(r"\. | \(", part_)]   # a sentence or a parenthesis is one piece of the code or several
+                    stem = segments[0]
+                    self.assertTrue(stem or len(segments) > 1, (code, line))
+                    # the one line the code builds from parts (the verb, and ' VALUE' for set only) is checked by its stem
+                    built = line.startswith("plan token: TOKEN   (apply with: qargi project ")
+                    for g in [stem] + ([] if built else [g for g in segments[1:] if len(g) >= 8]):
+                        self.assertTrue(g in corpus, "%s: '%s' of %r is not in the code" % (code, g, line))
+            self.assertEqual(len(e["sites"]), len({(tuple(s["verbs"]), s["text"]) for s in e["sites"]}), code)
 
 
 class Pure(unittest.TestCase):
