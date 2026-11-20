@@ -13,11 +13,11 @@
   "worktree": "94b9af1305afafc4",
   "succeeds": "arc-claude-qargi"
  },
- "renewed_at": "2026-11-19T18:19:47Z",
+ "renewed_at": "2026-11-20T00:43:04Z",
  "finished_at": null,
  "updated_by": "rett@arc",
- "rev": 20,
- "updated_at": "2026-11-19T18:19:47Z",
+ "rev": 21,
+ "updated_at": "2026-11-20T00:43:04Z",
  "feature": "lead-handoff-034",
  "project": "qargi"
 }
