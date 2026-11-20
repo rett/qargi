@@ -51,8 +51,8 @@ fast | par | 300 | 26 | python3 tests/test_doctor.py | lib/doctor.py lib/orphans
 full | par | 300 | 43 | python3 tests/test_env_apply.py | lib/env*.py lib/procenv.py
 fast | par | 300 | 3 | python3 tests/test_tools.py | lib/tools.py lib/procenv.py
 fast | par | 300 | 2 | python3 tests/test_procenv.py | lib/procenv.py lib/env_check.py lib/env_apply.py lib/local_run.py lib/tools.py lib/discover.py lib/supervise.py
-# The launcher of a whole-suite run (verify.environment): 56 cases measured 14.2s three times on the reference machine; budget ceil(14.2 * 1.1) = 16s, timeout 3x.
-fast | par | 48 | 16 | python3 tests/test_suite_env.py | lib/suite_env.py lib/procenv.py lib/paths.py lib/lib.sh
+# The launcher of a whole-suite run (verify.environment): 68 cases measured 19.2 to 19.5s on four runs on the reference machine; budget ceil(19.5 * 1.1) = 22s; the timeout is the 300s of its neighbours (the real-scope cases wait on systemd).
+fast | par | 300 | 22 | python3 tests/test_suite_env.py | lib/suite_env.py lib/procenv.py lib/paths.py lib/lib.sh
 fast | par | 300 | 6 | python3 tests/test_cloud.py | lib/cloud.py
 fast | par | 300 | 6 | python3 tests/test_upgrade.py | lib/upgrade.sh lib/install_record.py
 full | par | 300 | 36 | python3 tests/test_supervise.py | lib/supervise.sh lib/supervise.py lib/procenv.py
