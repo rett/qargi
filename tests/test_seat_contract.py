@@ -46,7 +46,7 @@ RECONCILIATION = "## Reconciliation with the design's wave 0 (task F)"
 NOT_PRODUCED = ("docs/reference/lead-seat-records.md", "docs/reference/lead-seat-projection.md", "docs/reference/lead-refusals.md",
                 "docs/reference/handoff-note.md", "docs/reference/lead-readback.md", "docs/reference/lead-render-manifest.md",
                 "lib/seat-records.json")
-# What the first wave has produced in part: the file exists, the section still names it, and says which of its codes are still to come.
+# What exists from other work: the file exists, the section still names it, says it is not task F's, and says which of its codes are still to come.
 PRODUCED_IN_PART = ("lib/refusals.json",)
 # The three things the design asks of that wave that are no file of their own.
 NOT_PRODUCED_PARTS = ("the render manifest (3.9)", "the module interfaces (3.11)", "the full transition table (3.2)")
@@ -279,6 +279,7 @@ class Contract(unittest.TestCase):
                 self.assertIn(path, named, "the section says that %s is produced in part" % path)
                 self.assertTrue(os.path.exists(os.path.join(ROOT, path)), "%s is produced: it is no longer a plan" % path)
                 self.assertNotIn("| `%s` |" % path, planned, "a file that exists has no row among those not yet produced")
+                self.assertIn("`%s` exists from other work, not from task F" % path, " ".join(planned.split()), "the section does not credit task F with %s" % path)
         for part in NOT_PRODUCED_PARTS:
             self.assertIn("| %s |" % part, planned, "the section lists %s as not yet produced" % part)
         # one row for each, and every row proposes a wave

@@ -1211,14 +1211,15 @@ and points it changed.
 
 The design's wave 0 is one task, F: it turns the draft contracts of the design's section 3 into
 files, and the tasks that build the seat start only when those files are merged. What exists of it
-is this page, its test and `lib/refusals.json`. The rest is not yet produced. The table lists it,
-says what this page already fixes of it, and proposes the wave that produces it `[OPEN O18]`.
+is this page and its test. The rest is not yet produced. The table lists it, says what this page
+already fixes of it, and proposes the wave that produces it `[OPEN O18]`.
 
-`lib/refusals.json` is produced, in part: it is the catalogue of refusals, and it holds the codes
-of the `verify.environment` refusals, with the text each prints. The seat's own codes (R52, R65
-and R70) are not in it yet: the second task of wave 0 adds them, after the lead has decided the
-open points that change a list, and the reader and the store of wave 1 take the codes, their exit
-and their order from the file as it stands then.
+`lib/refusals.json` exists from other work, not from task F: it is the catalogue of refusals, and
+it holds the codes of the `verify.environment` refusals, with the sites that print each. Its layout
+follows the rules-visible-early design: a map of codes, each once, with its rule, why, class, exit
+and status. The seat's own codes (R52, R65 and R70) are not in it yet: the second task of wave 0
+adds them, after the lead has decided the open points that change a list, and the reader and the
+store of wave 1 take the codes, their exit and their order from the file as it stands then.
 
 | Not yet produced | Design | Fixed here by | Proposed wave | Why then |
 | --- | --- | --- | --- | --- |
