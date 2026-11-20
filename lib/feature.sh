@@ -331,6 +331,7 @@ case $verb in
     if [ -n "$GATES" ]; then gates_need feature; else [ -n "$TESTCMD" ] || die "no test_command in the answers for $PROJ: qargi project set $PROJ test_command '...'"; fi
     suite_env_prepare "qargi feature verify $NAME_ARG" "$BR" "$h"   # the launcher's attempt and the waiver, before anything is made (verify.environment)
     worktree "$h"
+    suite_env_claim_now   # the waiver is used here, after the worktree and before the log (a refusal above spends nothing)
     echo "running the whole suite on $BR at $(g rev-parse --short "$BR"): $TESTCMD"
     [ -z "$SUITE_ENV" ] || echo "verify.environment: on (id $SUITE_ENV_ID): the suite starts through the launcher$([ -z "$ENV_WAIVE" ] || echo ", waiving $ENV_WAIVE")"
     gates_note

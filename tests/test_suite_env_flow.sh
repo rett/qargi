@@ -356,6 +356,25 @@ run $REL status 0.2.0
 reset; run $REL verify 0.2.0
 [ "$rc" = 0 ] && [ "$(jq -S -c 'del(.at, .seconds) | keys' "$DREC")" = '["command","mode","result","sha"]' ] && ok "release verify with the setting off writes the old record" || no "release off: rc=$rc $(out)"
 
+# a refusal of the verb's own pre-run checks (--strict with a CI job that matches no gate) comes before the claim of the waiver: the token is not spent, nothing is
+# written to the waiver directory and no audit line says a waiver was made for a run that never ran
+setenv '{"cpu_quota":"max"}'; mode nouser
+dev0=$(git -C "$R" rev-parse develop)
+ix=$T/ci-index; wf=$(printf 'name: CI\non: [push]\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n' | git -C "$R" hash-object -w --stdin)
+GIT_INDEX_FILE=$ix git -C "$R" read-tree develop && GIT_INDEX_FILE=$ix git -C "$R" update-index --add --cacheinfo "100644,$wf,.github/workflows/ci.yml"
+git -C "$R" update-ref refs/heads/develop "$(git -C "$R" commit-tree "$(GIT_INDEX_FILE=$ix git -C "$R" write-tree)" -p develop -m ci)"
+reset; run $REL verify 0.2.0
+tokc=$(tokof "$(out)"); [ -n "$tokc" ] && ok "(setup) a release verify at a head with a CI job and no gate is refused by the launcher and prints a token" || no "strict setup: rc=$rc $(out)"
+na=$(grep -c 'verify:environment-waived' "$T/s/audit.log"); nw=$(find "$WD" | wc -l); cnt=$(cat "$WD"/*.count 2>/dev/null | tr '\n' ' ')
+reset; run $REL verify 0.2.0 --strict --waive-environment cpu --plan "$tokc" --approved "the owner said so"
+[ "$rc" = 1 ] && saw -- '--strict: 1 CI job' && ! saw 'verify-env-waive' && [ ! -f "$T/ran" ] && [ ! -f "$DREC" ] && [ "$(grep -c 'verify:environment-waived' "$T/s/audit.log")" = "$na" ] \
+  && [ "$(find "$WD" | wc -l)" = "$nw" ] && [ "$(cat "$WD"/*.count 2>/dev/null | tr '\n' ' ')" = "$cnt" ] \
+  && ok "a --strict refusal spends nothing: no claim file, no count, no audit line, nothing ran" || no "strict refusal: rc=$rc $(out)"
+reset; run $REL verify 0.2.0 --waive-environment cpu --plan "$tokc" --approved "the owner said so"
+[ "$rc" = 0 ] && [ -f "$T/ran" ] && [ "$(jq -r '.environment.parts.cpu' "$DREC")" = waived-failed ] && [ "$(grep -c 'verify:environment-waived' "$T/s/audit.log")" = $((na + 1)) ] \
+  && ok "and the same token still runs once the refusal is out of the way, with one audit line" || no "token after the strict refusal: rc=$rc $(out)"
+git -C "$R" update-ref refs/heads/develop "$dev0"; unsetenv
+
 # --- 9. the real scope, where systemd-run makes one (systemd 254 or newer); otherwise an expected line
 real=$(PATH=$PATH_PLAIN command -v systemd-run || true)
 rv=0; [ -n "$real" ] && rv=$("$real" --version 2>/dev/null | sed -n '1s/^systemd \([0-9]*\).*/\1/p')

@@ -501,7 +501,7 @@ suite_env_note() {
   [ -z "$l" ] || printf ' (verify.environment: %s)' "$l"
 }
 # suite_env_prepare AGAIN BRANCH HEAD -> before the worktree of a verify: the attempt the launcher makes for the run (suite_env.py probe) and the waiver
-# (--waive-environment PARTS --plan T --approved W, WAIVE_ENV; per run, never stored). AGAIN is the command line to repeat. Sets ENV_WAIVE (the waived parts,
+# (--waive-environment PARTS --plan T --approved W, WAIVE_ENV; per run: only the count of the tokens used is kept, in the state). AGAIN is the command line to repeat. Sets ENV_WAIVE (the waived parts,
 # comma-separated) and ENV_CPU_CODE (the code that sends the run to the no-scope route when cpu is waived and the attempt failed). Only a refusal of a part
 # yields a token: the attempt's refusal prints one for exactly the refused parts, and so does a refusal during the run (suite_env_settle); a waiver names
 # parts that are on, covers at least every part the attempt refused, and stands on the token of the refusal, which is good for one run at that head (the
@@ -511,7 +511,7 @@ suite_env_prepare() {
   local again=$1 br=$2 head=$3 out rc=0 p codes first g missing='' used=''
   local want_csv need_csv want_tok
   local -a want=() need=()
-  ENV_WAIVE='' ENV_CPU_CODE='' SE_AGAIN=$again SE_BR=$br SE_HEAD=$head SE_KEY='' SE_GEN=0
+  ENV_WAIVE='' ENV_CPU_CODE='' SE_AGAIN=$again SE_BR=$br SE_HEAD=$head SE_KEY='' SE_GEN=0 SE_CLAIM_ARGS=()
   if [ -n "${WAIVE_SET:-}" ]; then
     [ -z "${APPROVED:-}" ] || suite_env_not_member
     [ -n "$SUITE_ENV" ] || die "verify-env-waive-unknown: --waive-environment names parts of verify.environment, which is off for $PROJ: there is nothing to waive"
@@ -570,8 +570,11 @@ suite_env_prepare() {
   else
     echo "qargi: warning: verify.environment: $want_csv is waived for this run, and the attempt before it applied every part" >&2
   fi
-  suite_env_claim "$want_csv" "${codes:+ codes: ${codes// /,}}"   # the token is spent here, before the worktree, the log or the reports are touched
+  SE_CLAIM_ARGS=("$want_csv" "${codes:+ codes: ${codes// /,}}")   # the token is spent by suite_env_claim_now, which each verb calls after its own checks
 }
+# suite_env_claim_now -> the verb's call, after its own pre-run checks (the worktree, the CI scan and --strict) and before it makes or touches anything else
+# (the busy mark, the suite log, the reports): a run under a waiver claims its token here (suite_env_claim); a run without one has nothing to claim.
+suite_env_claim_now() { [ -z "${ENV_WAIVE:-}" ] || suite_env_claim "${SE_CLAIM_ARGS[@]}"; }
 # suite_env_gen -> SE_GEN, how many waivers were made so far at this branch, head and declaration (SE_KEY): the larger of the claim files
 # $DA_STATE/verify-env-waivers/KEY.N (one for each run that started under a waiver, counted from 0 while they are there) and the number in KEY.count, which
 # suite_env_claim keeps under a lock, so that a claim file that is deleted does not make its token good again. The number is part of every waiver token, which is
@@ -594,8 +597,8 @@ suite_env_token() {
 suite_env_token_line() {
   echo "plan token: $(suite_env_token "$1")   (to run once without $1: $SE_AGAIN --waive-environment $1 --plan $(suite_env_token "$1") --approved \"<the owner's words>\")"
 }
-# suite_env_claim PARTS CODES -> at the end of suite_env_prepare, when every check has passed and before the verb makes or touches anything (the worktree, the
-# suite log, the reports): the waiver is used. The claim file number SE_GEN is made once, so a second verify at the same head that holds the same token loses
+# suite_env_claim PARTS CODES -> called by suite_env_claim_now, when every check of suite_env_prepare and of the verb itself has passed and before the verb makes or
+# touches anything else (the busy mark, the suite log, the reports): the waiver is used. The claim file number SE_GEN is made once, so a second verify at the same head that holds the same token loses
 # here, with nothing run, nothing written and nothing audited; the winner raises KEY.count (under a lock: a deleted claim file does not reopen the token), and the
 # audit line is written at the claim. A verb that stops before this point leaves the token as it was.
 suite_env_claim() {
