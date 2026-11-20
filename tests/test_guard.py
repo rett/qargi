@@ -194,14 +194,18 @@ class Guard(HookCase):
 
     def test_refuses_what_publishes_or_reaches_out(self):
         for c in ("git push", "git push origin main", "/tmp/x/git -C /r push -f", "cd a && git push", "make gate-go; git push", "timeout 5 git push",
-                  "echo hi | gh pr list", "gh api repos/x", "ssh host ls", "sudo scp a b:", "sftp host", "git remote add o u", "git remote set-url origin u"):
+                  "echo hi | gh pr list", "gh api repos/x", "ssh host ls", "sudo scp a b:", "sftp host", "git remote add o u", "git remote set-url origin u",
+                  # the shell takes a redirection out of the words: git, with one between it and its subcommand, runs the same subcommand
+                  "git 2>/dev/null push", "git >/dev/null push", "git 2>/dev/null push origin master", "git -C . 2>/dev/null push", "timeout 5 git 2>/dev/null push",
+                  "git {fd}>f push", "git 2>/dev/null remote add o u", "git > /dev/null push", "git -C . {fd}> f push", "git 2>&1 remote set-url origin u"):
             r = self.guard(c)
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("Agents never push", r.stderr)
 
     def test_lets_ordinary_work_through(self):
         for c in ("ls -la", "git status", "git commit -m 'a push of work'", "/tmp/x/git log --oneline", "git remote -v", "git diff c2e9439..HEAD",
-                  "go test ./... && go vet ./...", "grep -n 'git push' file", "make gate-go", "gitleaks git --log-opts A..B"):
+                  "go test ./... && go vet ./...", "grep -n 'git push' file", "make gate-go", "gitleaks git --log-opts A..B",
+                  "git {fd}>f status", "git status 2>&1", "git 2>/dev/null status", "git -C . 2>/dev/null log --oneline", "git 2>/dev/null remote -v"):
             self.assertEqual(self.guard(c).returncode, 0, c)
 
     def test_input_that_is_empty_or_no_json_is_refused_and_names_the_cause(self):
@@ -1128,6 +1132,7 @@ class Skills(HookCase):
                   "echo y > ~/.claude/agents/m.md", "echo y > ~/.claude/plugins/p.json", "cd %s && echo y > .claude/skills/p/SKILL.md" % self.proj,
                   "rm -rf %s/.claude" % self.proj, "echo y > link-to-library/links.json", "cp a.md link-to-library/", "rm -rf link-to-library/skills", "tar xf a.tgz -C %s/x" % ls, "tar czf %s/x/b.tgz ." % ls, "tar --extract --file=a.tgz --directory=%s/x" % ls, "unzip -o a.zip -d %s/x" % ls, "curl -o %s/x/SKILL.md http://h/f" % ls,
                   "find %s -name '*.md' -delete" % ls, "find %s -exec rm {} +" % lib, "git -C %s checkout ." % lib, "patch %s/x/SKILL.md fix.diff" % ls,
+                  "git 2>/dev/null -C %s checkout ." % lib, "git -C %s 2>/dev/null checkout ." % lib, "git {fd}>f -C %s checkout ." % lib,
                   "bash -c 'echo y > %s/links.json'" % lib, "sh -c \"cd %s/x; touch y\"" % ls, "eval 'rm %s/x/SKILL.md'" % ls,
                   "echo $(echo y > %s/links.json)" % lib):
             r = self.bash(c)

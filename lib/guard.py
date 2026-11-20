@@ -502,7 +502,9 @@ def builds_word(w):
 
 def git_refusal(pre, rest):
     """The reason a git command line (pre: the words before git, with the assignments in front of it; rest: the words after) publishes, reaches out under another
-    name or runs a program a member names, or None. Only the subcommand counts: the first word after the global options (`git commit -m push` is no push)."""
+    name or runs a program a member names, or None. Only the subcommand counts: the first word after the global options (`git commit -m push` is no push).
+    A redirection between git and its subcommand is no word of the command (`git 2>/dev/null push` is a push): the words are read without them."""
+    rest = without_redirections(rest)
     opts, k = git_global(rest)
     sub, args = (rest[k], rest[k + 1:]) if k < len(rest) else ("", [])
     if sub in GIT_PUSHERS:
@@ -1812,6 +1814,7 @@ def write_targets(toks, i):
         elif prog == "uniq" and len(args) > 1:
             targets.append((prog, args[1]))                               # uniq INPUT OUTPUT
         elif prog == "git":
+            rest = without_redirections(rest)                             # the shell takes a redirection between git and its subcommand out of the words
             opts, k = git_global(rest)
             gitdir = next((v for n, v in reversed(opts) if n == "-C" and v), None)
             trees = [v for n, v in opts if n == "--work-tree" and v] + [t.split("=", 1)[1] for t in toks[:i] if t.startswith("GIT_WORK_TREE=")]
