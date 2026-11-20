@@ -4,7 +4,7 @@ description: "Take in the patches a member or cloud agent returned: verify every
 argument-hint: <run directory with patches/ and manifest.json>
 ---
 
-# /qargi-verify (you are the coordinator)
+# qargi-verify (you are the coordinator)
 
 Gates come from the repository's profile (`~/.qargi/config/profiles/<repo>.md`), else its own documented checks. An **open** run is a local run made by `qargi local prepare` that `qargi local verify` has not passed; a cloud collect is never open.
 

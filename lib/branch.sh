@@ -101,10 +101,12 @@ echo "prune the merged branches of $PROJ: ${#LOCAL[@]} local, ${#REM[@]} on orig
 for e in "${LOCAL[@]}"; do
   IFS=$TAB read -r b sha into w <<<"$e"
   echo "  delete local $b (${sha:0:7}, merged into $into)${w:+; remove its worktree $w}"
+  journal_reach_plan local "refs/heads/$b" "$sha" '    '   # the commits made with git on it that the deletion takes into the journal: how many, from where to where
 done
 for e in "${REM[@]}"; do
   IFS=$TAB read -r b sha into <<<"$e"
   echo "  delete origin/$b (${sha:0:7}, merged into $into)"
+  journal_reach_plan remote "refs/heads/$b" "$sha" '    '
 done
 for k in "${KEPT[@]}"; do echo "  kept $k"; done
 if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi branch prune${REMOTE:+ --remote} --plan $tok --approved \"...\")"; exit 0; fi
@@ -113,12 +115,13 @@ n=0 m=0
 for e in "${LOCAL[@]}"; do
   IFS=$TAB read -r b sha _ w <<<"$e"
   [ -z "$w" ] || wt_drop "$b"
-  if g update-ref -d "refs/heads/$b" "$sha"; then journal_ref "$REPO" "refs/heads/$b" "$sha" "" branch:prune; n=$((n + 1)); echo "deleted $b"
+  # journal_reach first: a branch the lead committed on with git since the journal's last line of it is brought up to the pruned tip, so the deletion is found from there
+  if g update-ref -d "refs/heads/$b" "$sha"; then journal_reach local "refs/heads/$b" "$sha" branch:prune; journal_ref "$REPO" "refs/heads/$b" "$sha" "" branch:prune; n=$((n + 1)); echo "deleted $b"
   else echo "qargi: warning: could not delete $b (it moved meanwhile)" >&2; fi
 done
 for e in "${REM[@]}"; do
   IFS=$TAB read -r b sha _ <<<"$e"
-  if g push -q --force-with-lease="refs/heads/$b:$sha" origin ":refs/heads/$b" 2>/dev/null; then journal_push "refs/heads/$b" "$sha" "" branch:prune; m=$((m + 1)); echo "deleted origin/$b"
+  if g push -q --force-with-lease="refs/heads/$b:$sha" origin ":refs/heads/$b" 2>/dev/null; then journal_reach remote "refs/heads/$b" "$sha" branch:prune; journal_push "refs/heads/$b" "$sha" "" branch:prune; m=$((m + 1)); echo "deleted origin/$b"
   else echo "qargi: warning: could not delete origin/$b (it moved, or origin refused)" >&2; fi
 done
 audit_log "branch:prune" "$PROJ $n local $m remote"

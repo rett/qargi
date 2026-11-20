@@ -66,6 +66,64 @@ lock-open is a shell-only handshake: prints /proc/PID/fd/N of a safely opened
 regular lock, then waits for one input byte so bash can duplicate that inode.
 lock-match checks fd identity; lock-check proves the inherited exclusive lock.
 Errors exit 1 with qargi: diagnostics; successful JSON goes to stdout.
+
+Outcome receipt: clean_begin, after every check and before it commits the
+cleanup intent, writes <state>/attempts/.receipts/ID.PREPARED.json (mode 600
+in a mode 700 directory), which no clean removes. PREPARED is prepared.identity
+(32 hex digits), so a run id that prepare hands out again never meets the
+receipt of its earlier use; the receipts of one run id are ID.*.json. It is
+one canonical JSON object of at most MAX_RECEIPT (16384) bytes with exactly
+these keys; a fact that is not recorded, or not of its expected form, is null,
+never guessed:
+  version       1
+  run           the run id (never its path)
+  slug, role, class  from the lead registry row (slug, ability, class)
+  base          {branch, commit}: the prepared base name and base commit
+  final_commit  tip of a built or done private apply record, else null
+  requested     {model, effort}: model_id and effort of prepared.request; a
+                per-dispatch override is not in private state and not shown
+  observed      {model, effort}: RESERVED, both null today (no caller passes
+                the runtime's observed identity to this module yet). The key
+                and its shape belong to version 1: filling it later needs no
+                version bump, and a reader takes null as "not recorded"
+  attempts     [{n, outcome, started, ended}] from each dispatch (null
+                without one); TRUNCATED to the most recent
+                MAX_RECEIPT_ATTEMPTS (64), oldest dropped, never refused
+  attempt_count the number of attempts made, including dropped ones
+  verification  {state: verified|unverified, at}: the current attempt
+  apply         done|built (private apply record), closed (registry), none
+  done          {status: DONE|BLOCKED, exit_code}, and
+  skips, deviations  gates with result "not run" and length of deviations:
+                claims of out/manifest.json in the current verified saved
+                generation only; RUN is never read
+  disposition   cleaned (ordinary clean) | discarded (explicit discard)
+Readers branch on disposition, never on the key set or on version alone:
+"cleaned" and "discarded" carry every key above; any other value (today
+"discarded, no receipt", written in the receipt's place with version and run
+only) carries just what its writer could record.
+No path, credential, environment value, task text or report text is copied.
+A document over the byte limit refuses; the attempt cap keeps it under it.
+It is written whole: a temporary name, fsync, then a hard link under the
+final name, which never replaces, and removal of the temporary name. Its
+bytes are a function of recorded state alone (no clock), so a repeated
+clean_begin finds equal bytes and writes nothing.
+The receipt is PROVISIONAL until the cleanup intent is committed and final
+from then on. clean_begin runs only under the run lock and after clean_check
+proved that no intent is pending, so a receipt it finds under this prepared
+identity was left by a clean interrupted between receipt and intent: when its
+bytes differ (the run was dispatched, verified or applied again, or the clean
+became a discard) it is replaced whole with atomic() (fsync, os.replace).
+Once the intent is committed nothing rewrites it: resumption of an
+interrupted clean starts after the intent and never calls clean_begin, and
+the state that carries this prepared identity is removed by that clean.
+What stands under the receipt's name and is not a bounded plain private file
+(a link, another mode or owner) is never replaced: that is a refusal.
+An ordinary clean that cannot write the receipt refuses before the intent,
+with nothing removed. Explicit discard goes on: it tries to record {version,
+run, disposition "discarded, no receipt"} in the receipt's place and says on
+stderr what it did. Legacy runs have no lifecycle state: their clean keeps
+its documented behaviour and gets no receipt. No command reads receipts yet
+and nothing removes them.
 """
 import contextlib
 import fcntl
@@ -93,6 +151,11 @@ MAX_ATTEMPTS = 256
 MAX_SAVED = 32
 MAX_VERIFICATIONS = 32
 MAX_EPOCH = 253402300799
+MAX_RECEIPT = 16 * 1024
+MAX_RECEIPT_ATTEMPTS = 64
+MAX_MANIFEST = 1024 * 1024
+RECEIPT_VERSION = 1
+NO_RECEIPT = "discarded, no receipt"
 NOFOLLOW = os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
 
 
@@ -216,8 +279,10 @@ def read_at(fd, name, limit, mode=None):
         os.close(f)
 
 
-def atomic(fd, name, data):
-    tmp = ".write." + uuid.uuid4().hex
+def atomic(fd, name, data, tmp=None):
+    """Replace name whole. tmp names the temporary file when its owner can
+    recognise and remove what a dead writer left under that name."""
+    tmp = tmp or ".write." + uuid.uuid4().hex
     f = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW, 0o600, dir_fd=fd)
     try:
         with os.fdopen(f, "wb") as stream:
@@ -320,6 +385,7 @@ class Store:
         self.path = self.area + "/" + self.id
         self.lock_path = self.area + "/.locks/" + self.id + ".lock"
         self.clean_name = self.id + ".clean.json"
+        self.receipts = self.area + "/.receipts"
 
     def open_lock(self):
         """Create only private directories and a permanent, nontruncated lock."""
@@ -1013,8 +1079,122 @@ class Store:
              "unowned cleanup tombstone; preserve it for investigation")
         row = dict(run=self.run, identity=record["prepared"]["identity"],
                    state=self._dir_identity(self.path), saved=saved_id, phase="intent", work=work)
+        # Last step before the intent: a refusal here leaves the run untouched,
+        # and a resumed clean starts after the intent, so it never comes back.
+        self._receipt(record, discard)
         self._clean_commit(row)
         return row
+
+    def _claims(self, record):
+        """Member claims in the current verified saved generation, else unknown.
+
+        Only the lead's saved copy is read, never RUN. The manifest is the
+        member's: these are counts and enumerated values, never its text.
+        """
+        claims = dict(status=None, exit_code=None, skips=None, deviations=None)
+        a = record["attempts"][-1]
+        v = a["verified"]
+        try:
+            if v is None or self._saved_marker(record) != (a["n"], v["nonce"]):
+                return claims
+            fd = directory(self.root + "/runs/" + self.id + "/out", private_leaf=False)
+            try:
+                doc = decode(read_at(fd, "manifest.json", MAX_MANIFEST))
+            finally:
+                os.close(fd)
+        except (OSError, Refuse):
+            return claims
+        if type(doc) is not dict:
+            return claims
+        if doc.get("status") in ("DONE", "BLOCKED"):
+            claims["status"] = doc["status"]
+        done = doc.get("done")
+        if type(done) is dict and type(done.get("exit_code")) is int and 0 <= done["exit_code"] <= 255:
+            claims["exit_code"] = done["exit_code"]
+        if type(doc.get("gates")) is list:
+            claims["skips"] = sum(1 for g in doc["gates"] if type(g) is dict and g.get("result") == "not run")
+        if type(doc.get("deviations")) is list:
+            claims["deviations"] = len(doc["deviations"])
+        return claims
+
+    def receipt_name(self, record):
+        """ID.PREPARED.json: a run id used again has another prepared identity."""
+        return "%s.%s.json" % (self.id, record["prepared"]["identity"])
+
+    def _receipt_put(self, name, data):
+        """Whole, before the intent. True when written, False when equal bytes exist.
+
+        Only clean_begin calls this: the run lock is held and clean_check found
+        no pending intent, so a receipt under this name is provisional.
+        """
+        need(len(data) <= MAX_RECEIPT, "it exceeds the limit of %d bytes" % MAX_RECEIPT)
+        made = not os.path.lexists(self.receipts)
+        fd = directory(self.receipts, True)
+        try:
+            if made:
+                area = directory(self.area)
+                try:
+                    sync_dir(area, "outcome receipt directory")
+                finally:
+                    os.close(area)
+            # This run's lock is held, so a leftover temporary name belongs to
+            # a dead writer; removing it also returns a published receipt to
+            # one link after a crash between link and unlink.
+            tmp = "." + name + ".new"
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(tmp, dir_fd=fd)
+            try:
+                # Anything but a bounded plain private file refuses here.
+                existing = read_at(fd, name, MAX_RECEIPT, 0o600)
+            except FileNotFoundError:
+                existing = None
+            if existing == data:
+                return False
+            if existing is not None:
+                # No intent was committed for this prepared identity: the
+                # facts moved on since an interrupted clean wrote this.
+                atomic(fd, name, data, tmp)
+                return True
+            f = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW, 0o600, dir_fd=fd)
+            try:
+                with os.fdopen(f, "wb") as stream:
+                    stream.write(data)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                # link(2) fails when the name exists: a rename that cannot replace.
+                os.link(tmp, name, src_dir_fd=fd, dst_dir_fd=fd, follow_symlinks=False)
+            finally:
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(tmp, dir_fd=fd)
+            sync_dir(fd, "outcome receipt")
+            return True
+        finally:
+            os.close(fd)
+
+    def _receipt(self, record, discard):
+        """Write the outcome receipt, or refuse; explicit discard goes on."""
+        name = self.receipt_name(record)
+        where = self.receipts + "/" + name
+        failures = (Refuse, OSError, ValueError, TypeError, LookupError, RecursionError)
+        try:
+            self._receipt_put(name, encode(outcome(self.id, record, self.authority(), applied_record(self),
+                                                   self._claims(record), "discarded" if discard else "cleaned")))
+            return
+        except failures as e:
+            if not discard:
+                raise Refuse("outcome receipt %s cannot be written (%s); nothing was removed: correct the cause "
+                             "and rerun local clean, or --discard drops the run without a receipt" % (where, e)) from e
+            cause = str(e)
+        try:
+            self._receipt_put(name, encode(dict(version=RECEIPT_VERSION, run=self.id, disposition=NO_RECEIPT)))
+            noted = 'disposition "%s" is recorded there' % NO_RECEIPT
+        except failures as e:
+            noted = 'disposition "%s" could not be recorded (%s)' % (NO_RECEIPT, e)
+        try:
+            print("qargi: lifecycle: warning: outcome receipt %s was not written (%s); discard goes on: %s"
+                  % (where, cause, noted), file=sys.stderr)
+        except OSError:
+            pass  # The discard was asked for explicitly, even if stderr is broken.
 
     def _clean_paths(self, row):
         return [(self.root + "/runs", self.id, ".clean." + self.id, row["saved"]),
@@ -1270,6 +1450,46 @@ def ready(store, *, closed=False):
     else:
         store.reconcile()
     return True
+
+
+def outcome(run_id, record, row, applied, claims, disposition):
+    """The outcome receipt's facts from validated lead-owned records.
+
+    record is a validated lifecycle record, row the registry row, applied the
+    private apply record or None, claims the result of Store._claims. Registry
+    values are copied only in their expected form; anything else is null.
+    """
+    def text(value, pattern):
+        return value if isinstance(value, str) and re.fullmatch(pattern, value, flags=re.ASCII) else None
+    prepared = record["prepared"]
+    request = prepared.get("request")
+    verified = record["attempts"][-1]["verified"]
+    status = applied["status"] if applied is not None and applied["status"] in ("built", "done") else None
+    attempts = []
+    for a in record["attempts"][-MAX_RECEIPT_ATTEMPTS:]:
+        d = a["dispatch"] or {}
+        attempts.append(dict(n=a["n"], outcome=d.get("outcome"), started=d.get("started"), ended=d.get("ended")))
+    return {
+        "version": RECEIPT_VERSION,
+        "run": run_id,
+        "slug": text(row.get("slug"), r"[a-z0-9][a-z0-9-]{0,40}"),
+        "role": text(row.get("ability"), r"[a-z][a-z0-9-]{0,63}"),
+        "class": row.get("class") if row.get("class") in ("write", "read-only") else None,
+        "base": dict(branch=prepared["base"], commit=prepared["base_sha"]),
+        "final_commit": applied["tip"] if status else None,
+        "requested": dict(model=request["model_id"] if request else None,
+                          effort=request["effort"] if request else None),
+        "observed": dict(model=None, effort=None),
+        "attempts": attempts,
+        "attempt_count": len(record["attempts"]),
+        "verification": dict(state="verified" if verified else "unverified",
+                             at=verified["at"] if verified else None),
+        "apply": status or ("closed" if row.get("closed") else "none"),
+        "done": dict(status=claims["status"], exit_code=claims["exit_code"]),
+        "skips": claims["skips"],
+        "deviations": claims["deviations"],
+        "disposition": disposition,
+    }
 
 
 def applied_record(store):

@@ -7,6 +7,10 @@
   help.py complete WORDS...   completion candidates for the last word (qargi __complete, used by the bash completion)
   help.py preamble AREA ARGS  what bin/qargi does before every command, in one process: the dev-run banner on stderr, the
                               arguments resolved (below) and the project's cloud binding; see preamble()
+  help.py actor-gate AREA ARGS  the narrowing of a coordinator label (QARGI_ACTOR): exit 0 to go on, 2 with the message when the label is not
+                              valid or the command line is not a coordinator's; see actor_gate()
+  help.py actor-parse LABEL   the feature of a coordinator label; exit 2 and the form when it is not one
+  help.py actor-check KIND WHERE VALUE  the narrowing of the label at the point of use, asked by the scripts once they have resolved their target; see actor_check()
 
 The modules a plain run does not need (text wrapping, subprocess, glob) are imported where they are used: every qargi
 command runs the preamble, and its cost is the import of this module.
@@ -772,6 +776,234 @@ def cloud_binding(words):
         return ("", "", "")
 
 
+# ---- the coordinator label (QARGI_ACTOR; qargi help coordinator) ----------------------------------------------------------
+# The label is attribution: unauthenticated, no identity, no authority. It only narrows. The decision is made here, once, from the data
+# of lib/commands.py (ACTOR_VERBS, ACTOR_OPTS, ACTOR_ANY_OPTS), before any verb runs, so a refused verb has changed nothing.
+ACTOR_FORM = "<lead-id>:coord:<feature>:<n>"
+ACTOR_MAX = 128          # the marshal's cap on an identity (marshal_store.ID_RE)
+ACTOR_FEATURE_MAX = 40   # the longest feature name qargi accepts (lib/feature.sh)
+
+
+def actor_parse(label):
+    """(lead id, feature, n) of a label of the form <lead-id>:coord:<feature>:<n>, or None. The lead id is as the marshal accepts one (letters, digits
+    and . _ @ : + -, so no "/"), a feature is kebab-case (the marshal's name form) and n a positive integer without a leading zero; the whole label has
+    at most 128 characters. The feature and n hold no colon, so the label is read from the right and a colon in the lead id is no trouble."""
+    import re
+    if not isinstance(label, str) or not label or len(label) > ACTOR_MAX:
+        return None
+    parts = label.rsplit(":", 3)
+    if len(parts) != 4 or parts[1] != "coord":
+        return None
+    lead, _, feature, n = parts
+    if not (re.fullmatch(r"[A-Za-z0-9._@:+-]+", lead) and re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", feature) and len(feature) <= ACTOR_FEATURE_MAX
+            and re.fullmatch(r"[1-9][0-9]*", n)):
+        return None
+    return lead, feature, n
+
+
+def actor_form_error(value):
+    """The usage error for a value of QARGI_ACTOR that is not a label: it says what was given and the form."""
+    return ("qargi: QARGI_ACTOR is set and is not a coordinator label: %r. The form is %s: a lead identity of the form the marshal accepts (letters, digits and . _ @ : + -, never /), "
+            "the word coord, a feature name (kebab-case, at most %d) and a positive integer, at most %d characters in all. Unset it or give a label; an empty value is no label (qargi help coordinator)"
+            % (value, ACTOR_FORM, ACTOR_FEATURE_MAX, ACTOR_MAX))
+
+
+def actor_refusal(label, what):
+    """The one message of a refusal under a label: it names the label and the verb, and says who runs it. `what` is what a coordinator does not do."""
+    return "qargi: refused under the coordinator label %s: a coordinator does not %s; the lead runs it. Nothing was changed (qargi help coordinator)" % (label, what)
+
+
+def _words_of(words):
+    return " ".join(w for w in words if w)
+
+
+def _positionals(opts, body):
+    """The words of a verb's command line that are neither options nor their values, with the options' values and the options the verb does not declare:
+    ([positional], {flag: [values]}, [undeclared option words]). An option that takes a value is known from the verb's description; a word of the form
+    --flag=value is read as the flag and its value. An option that is not declared is not read as taking a value, so the words after it may be read
+    differently here than by the verb: the caller refuses the command line when there is one. --json is the dispatcher's own option (bin/qargi runs the
+    call again without it): it is known on every verb, a flag without a value, unless the verb documents it itself."""
+    flags = {o["flag"]: o for o in list(C.GLOBAL_OPTS) + list(opts)}
+    pos, vals, unknown, i = [], {}, [], 0
+    while i < len(body):
+        t = body[i]
+        if t.startswith("--") and "=" in t:
+            f, v = t.split("=", 1)
+            vals.setdefault(f, []).append(v)
+            if f not in flags:
+                unknown.append(f)
+        elif t.startswith("-") and t != "-":
+            if t not in flags:
+                unknown.append(t)
+            elif flags[t]["arg"]:
+                vals.setdefault(t, []).append(body[i + 1] if i + 1 < len(body) else "")
+                i += 1
+        else:
+            pos.append(t)
+        i += 1
+    return pos, vals, unknown
+
+
+def _registry():
+    """{real path of a run directory: its last line} from the lead's registry (STATE/local-runs.jsonl); empty when there is none."""
+    out = {}
+    try:
+        with open(os.path.join(state(), "local-runs.jsonl"), encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(rec, dict) and isinstance(rec.get("run"), str):
+                    out[os.path.realpath(rec["run"])] = rec
+    except OSError:
+        pass
+    return out
+
+
+def _run_record(reg, word, parent=False):
+    """The registry's line for the run a word names: a run directory (also with a trailing slash), and with parent=True the directory around the word
+    (review check is given OUT, the run's out directory). A path the registry does not hold is read by its basename, as lib/review.sh does (reg_id): a
+    directory named like a run id, qargi. and six characters, names the one registered run of that id, wherever it is (a copy of a run is not another run:
+    review check renews the lease of the feature of the run the id names). None when it names none."""
+    import re
+    cands = [os.path.realpath(word)]
+    if parent:
+        cands.append(os.path.dirname(cands[0]))
+    for c in cands:
+        if c in reg:
+            return reg[c]
+    for c in cands:
+        base = os.path.basename(c)
+        if re.fullmatch(r"qargi\..{6}", base, re.S):
+            hit = [r for p, r in reg.items() if os.path.basename(p) == base]
+            if len(hit) == 1:
+                return hit[0]
+    return None
+
+
+def actor_gate(argv):
+    """The narrowing of a session that carries a coordinator label. argv is the command line after `qargi` (area, verb, arguments). Returns 0 to go on,
+    2 with the message on standard error when the label is not valid or the command line is not a coordinator's. No label (unset or empty): 0, nothing
+    read. Help requests, the run-event hooks (which must never fail) and a command line with no verb (the script prints its usage) are let through."""
+    label = os.environ.get("QARGI_ACTOR", "")
+    if not label or argv[:1] == ["hook"]:     # a run-event hook never fails, whatever the label
+        return 0
+    if len(argv) > 1 and argv[1] in ("-h", "--help") or len(argv) > 2 and argv[2] in ("-h", "--help"):    # the two places bin/qargi reads a help request
+        return 0
+    parsed = actor_parse(label)
+    if parsed is None:
+        print(actor_form_error(label), file=sys.stderr)
+        return 2
+    feature = parsed[1]
+    if not argv or argv[0] not in C.COMMANDS:
+        return 0
+    area, vs = argv[0], verbs_of(argv[0])
+    if vs:
+        if len(argv) < 2:
+            return 0
+        verb, body = argv[1], argv[2:]
+    else:
+        verb, body = "", argv[1:]
+    where = _words_of([area, verb])
+    names = C.ACTOR_VERBS.get((area, verb))
+    if names is None:
+        print(actor_refusal(label, "run " + where), file=sys.stderr)
+        return 2
+    for w in body:
+        for o in C.ACTOR_ANY_OPTS:
+            if w == o or w.startswith(o + "="):
+                print(actor_refusal(label, "run a command line with %s (%s)" % (o, where)), file=sys.stderr)
+                return 2
+        for o in C.ACTOR_OPTS.get((area, verb), ()):
+            if w == o or w.startswith(o + "="):
+                print(actor_refusal(label, "run %s with %s" % (where, o)), file=sys.stderr)
+                return 2
+    if not names:
+        return 0
+    opts = (vs[verb]["opts"] if vs else C.COMMANDS[area].get("opts", []))
+    pos, vals, unknown = _positionals(opts, body)
+    if unknown:     # fail closed: the verb may read the words after an undeclared option differently than this gate does (feature verify --purpose alpha beta)
+        print(actor_refusal(label, "run %s with %s: it is not an option the verb declares, so what it names cannot be told" % (where, unknown[0])), file=sys.stderr)
+        return 2
+    want = "feature/" + feature
+    if names == "base":
+        for b in vals.get("--base", []):
+            if b != want:
+                print(actor_refusal(label, "prepare a run on %s: this coordinator's runs are based on %s" % (b or "an empty base", want)), file=sys.stderr)
+                return 2
+    if "" in body:     # the verb skips an empty word (local clean "" RUN reads RUN) where realpath("") is the current directory, which may be a run of this feature
+        print(actor_refusal(label, "run %s with an empty word: it names nothing, so what the verb acts on cannot be told" % where), file=sys.stderr)
+        return 2
+    if names == "feature":
+        for w in pos:
+            if w != feature:
+                print(actor_refusal(label, "run %s on feature %s: this coordinator's feature is %s" % (where, w, feature)), file=sys.stderr)
+                return 2
+    elif names == "run":
+        saved = vals.get("--saved", [])
+        mine = area == "local" and "--mine" in body
+        if area == "local" and verb in ("run", "verify") and pos and not saved and not mine:
+            # the scripts read their first word as the run: a run named after an option (local run --timeout B A) is not the one the script acts on
+            first = [w for w in body if w != "--json" or any(o["flag"] == "--json" for o in opts)]    # bin/qargi takes --json out before the verb runs
+            if first[0] != pos[0]:
+                print(actor_refusal(label, "run %s with a run that is not its first word: the verb reads its first word as the run, so which run it acts on cannot be told" % where), file=sys.stderr)
+                return 2
+        named = pos + saved
+        if mine and not named:
+            return 0
+        reg = _registry()
+        for w in named:
+            rec = _run_record(reg, w, parent=(area == "review"))
+            if rec is None:
+                if area == "review":
+                    continue          # a collected output the registry does not know names no run of this lead: check only reads it
+                print(actor_refusal(label, "run %s on %s: the lead's registry does not name it, so its feature is not known" % (where, w)), file=sys.stderr)
+                return 2
+            if rec.get("base") != want:
+                print(actor_refusal(label, "run %s on a run based on %s: this coordinator's runs are based on %s" % (where, rec.get("base") or "no branch", want)), file=sys.stderr)
+                return 2
+    return 0
+
+
+def actor_check(argv):
+    """The narrowing of a coordinator label at the point of use: `help.py actor-check KIND WHERE VALUE`, run by lib.sh (actor_check, actor_run_check) after a
+    script has resolved what it acts on, so what is checked is what the script acts on and there is one parse of the command line. The gate above is
+    the first line (the verb allow-list, the refused options, the empty words) and an early refusal of the same narrowing; this is the authoritative one.
+    No label (unset or empty): 0. KIND says what VALUE is: feature (a feature name), prepare-base (the base of the run to prepare), run-base (the registry's
+    base of the run the script acts on, empty for none), run-unknown (a run word the registry does not name), run-word (a run word that starts with -: the
+    scripts read a first word as the run, and which run such a word names cannot be told). WHERE is the verb, as the refusal says it. Exit 0 to go on, 2 with
+    the refusal (the same message family as actor_gate)."""
+    if len(argv) != 3 or argv[0] not in ("feature", "prepare-base", "run-base", "run-unknown", "run-word"):
+        print("usage: help.py actor-check feature|prepare-base|run-base|run-unknown|run-word WHERE VALUE", file=sys.stderr)
+        return 2
+    kind, where, value = argv
+    label = os.environ.get("QARGI_ACTOR", "")
+    if not label:
+        return 0
+    parsed = actor_parse(label)
+    if parsed is None:
+        print(actor_form_error(label), file=sys.stderr)
+        return 2
+    feature = parsed[1]
+    want = "feature/" + feature
+    what = None
+    if kind == "feature" and value != feature:
+        what = "run %s on feature %s: this coordinator's feature is %s" % (where, value, feature)
+    elif kind == "prepare-base" and value != want:
+        what = "prepare a run on %s: this coordinator's runs are based on %s" % (value or "an empty base", want)
+    elif kind == "run-base" and value != want:
+        what = "run %s on a run based on %s: this coordinator's runs are based on %s" % (where, value or "no branch", want)
+    elif kind == "run-unknown":
+        what = "run %s on %s: the lead's registry does not name it, so its feature is not known" % (where, value)
+    elif kind == "run-word":
+        what = "run %s with the run word %s: it starts with a dash, so which run it names cannot be told" % (where, value)
+    if what is None:
+        return 0
+    print(actor_refusal(label, what), file=sys.stderr)
+    return 2
+
+
 def preamble(argv):
     """What bin/qargi does before every command, in one process: the dev-run banner on stderr; the arguments resolved
     (resolve); the cloud binding of the project the command is about (none for qargi cloud itself, which manages the
@@ -794,6 +1026,17 @@ def main(argv):
         if r is None:
             return 2
         sys.stdout.write("".join(a + "\0" for a in r))
+        return 0
+    if argv[0] == "actor-gate":      # the narrowing of a coordinator label; bin/qargi asks it before any verb when QARGI_ACTOR is not empty
+        return actor_gate(argv[1:])
+    if argv[0] == "actor-check":     # the narrowing at the point of use (lib.sh actor_check): the scripts ask it once they have resolved their target
+        return actor_check(argv[1:])
+    if argv[0] == "actor-parse" and len(argv) == 2:   # the feature of a label (lib.sh actor_label); exit 2 and the form when it is not one
+        p = actor_parse(argv[1])
+        if p is None:
+            print(actor_form_error(argv[1]), file=sys.stderr)
+            return 2
+        print(p[1])
         return 0
     if argv[0] == "infer":
         print(infer_project() or "")
@@ -825,7 +1068,7 @@ def main(argv):
         else:
             print("\n".join(complete(words)))
         return 0
-    print("usage: help.py show|man|complete|resolve|preamble ...", file=sys.stderr)
+    print("usage: help.py show|man|complete|resolve|preamble|actor-gate|actor-parse ...", file=sys.stderr)
     return 2
 
 

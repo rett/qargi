@@ -4,9 +4,9 @@ description: Add, review, verify and enable the runtimes qargi dispatches to (ru
 argument-hint: provider list|show|check|new|import|seal|remove|enable|disable|attest|accept ... | project set P models.provider.local|cloud NAME
 ---
 
-# /qargi-providers
+# qargi-providers
 
-A **runtime** is one way of running agents on one surface: `local` (on this machine) or `cloud` (hosted). Two ship: `claude-code` (local) and `claude-platform` (cloud), sharing the model catalog of the family `claude`. A runtime is **data**, a JSON definition, not code. Three kinds of pack share the provider library (`~/.qargi/config/packs/providers/NAME/`, never in a repository):
+A **runtime** is one way of running agents on one surface: `local` (on this machine) or `cloud` (hosted). Three ship: `claude-code` and `codex` (local), `claude-platform` (cloud); the family `claude` shares its model catalog. A runtime is **data**, a JSON definition, not code. Three kinds of pack share the provider library (`~/.qargi/config/packs/providers/NAME/`, never in a repository):
 
 | Kind | What it is |
 |---|---|
@@ -25,7 +25,7 @@ There is no default. Ask for each surface, and leave one out if the project neve
 1. `qargi provider new fakecli [--from minimal|command|hook-cli|RUNTIME]` scaffolds an unsealed pack (unusable until sealed).
 2. Edit `~/.qargi/config/packs/providers/fakecli/definition.json`: `models`, `render`, `link`, `dispatch`, `barrier`, `session`. Load `definition.md` for the fields and a complete example.
 3. `qargi provider check fakecli` validates the schema, prints the review and runs the hermetic cases; fix every failure. Then `qargi provider seal fakecli` and `check` again: a library pack records what it verified only once sealed.
-4. `qargi project set P models.provider.local fakecli`. It refuses, naming each role, when a role's stored `model` does not match the runtime's `pattern`; change the roles' models in the answers first. Render its skills with `qargi packs apply --target fakecli P` (`/qargi-packs`).
+4. `qargi project set P models.provider.local fakecli`. It refuses, naming each role, when a role's stored `model` does not match the runtime's `pattern`; change the roles' models in the answers first. Render its skills with `qargi packs apply --target fakecli P` (`qargi-packs`).
 
 `qargi provider import SOURCE [--name N] [--ref REF] [--path SUB]` takes a runtime someone else wrote (a directory, a JSON file or an https git URL). It is stored sealed on approval and never enabled or linked by the import.
 
@@ -43,4 +43,4 @@ A capability counts only when the definition claims it AND it is verified; other
 
 ## Using a runtime
 
-Members are written by the local runtime (`/qargi-instances`), linked by `qargi project link P` (`/qargi-project`) and dispatched as `/qargi-task` says; a pack reaches a project only if its `compatible_providers` matches (`/qargi-packs`). Only you, with the person present, change a runtime (`qargi help guard`); the person decides every import, seal, enable, attest and spend.
+Members are written by the local runtime (`qargi-instances`), linked by `qargi project link P` (`qargi-project`) and dispatched as `qargi-task` says; a pack reaches a project only if its `compatible_providers` matches (`qargi-packs`). Only you, with the person present, change a runtime (`qargi help guard`); the person decides every import, seal, enable, attest and spend.

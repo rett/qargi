@@ -32,6 +32,7 @@ jq -e --argjson tiers "$TIERS" --slurpfile d "$TABLE" '.family == "claude" and (
   and ([$d[0].profiles[].tier] | unique | all(. as $t | $tiers | index($t)))' "$PROV/catalogs/claude.json" >/dev/null \
   && ok "the claude catalog maps every tier the table uses to an id and to an alias" || no "catalog file"
 jq -e --slurpfile d "$TABLE" '. as $c | [$d[0].profiles[].tier] | unique | all(. as $t | $c.tiers[$t].model != null and $c.tiers[$t].alias != null)' "$PROV/catalogs/claude.json" >/dev/null && ok "every profile's tier has both a model and an alias" || no "tier coverage"
+jq -e '.tiers.frontier | .model == "claude-fable-5-2" and .alias == "fable"' "$PROV/catalogs/claude.json" >/dev/null && ok "the frontier tier of the claude catalog is claude-fable-5-2, alias fable" || no "frontier tier: $(jq -c .tiers.frontier "$PROV/catalogs/claude.json")"
 [ "$(find "$PROV" -maxdepth 1 -name '*.json' -printf '%f\n' | LC_ALL=C sort)" = "$(printf 'adapter-schema.json\nclaude-code.json\nclaude-platform.json\ncodex.json\nschema-2.json')" ] && ok "claude-code, claude-platform and codex are the provider files (beside the schemas, which describe them)" || no "providers: $(ls "$PROV")"
 
 mline() { grep -c "^$2: $3\$" "$A/$1.md"; }
@@ -73,13 +74,13 @@ jq '.projects.pbase.old = {roles:["build"], file:($f), model:"sonnet", effort:nu
 $DA agent refresh old >/dev/null 2>&1; [ -f "$A/old.md" ] && grep -q '^model: sonnet$' "$A/old.md" && ! grep -q '^effort:' "$A/old.md" && ! grep -q '^$' <(sed -n '1,/^hooks:/p' "$A/old.md") && ok "a member without effort renders no effort line" || no "old member"
 
 # agent models
-$DA agent add rs --project pbase --roles review --model claude-fable-5-1 --effort high >/dev/null 2>&1
+$DA agent add rs --project pbase --roles review --model claude-fable-5-2 --effort high >/dev/null 2>&1
 out=$($DA agent models 2>&1)
 grep -E '^ *review ' <<<"$out" | grep -q 'deep -> opus -> claude-opus-5-5/high' && grep -E '^ *build ' <<<"$out" | grep -q 'balanced -> sonnet -> claude-sonnet-5-5/high' && ok "models: tier, alias, id and effort per profile" || no "tier text: $out"
 grep -q 'provider: claude-code' <<<"$out" && ok "models: the active provider" || no "provider line"
 grep -E '^ *(worker|reviewer) ' <<<"$out" | grep -q 'write' && grep -E '^ *reviewer ' <<<"$out" | grep -q 'read-only' && ok "models: the bases come first, with their class" || no "bases text: $out"
 [ "$(grep -n -E '^bases' <<<"$out" | cut -d: -f1)" -lt "$(grep -n -E '^profiles' <<<"$out" | cut -d: -f1)" ] && [ "$(grep -n -E '^profiles' <<<"$out" | cut -d: -f1)" -lt "$(grep -n -E '^members' <<<"$out" | cut -d: -f1)" ] && ok "models: bases, profiles, then members" || no "section order"
-grep -q 'offer frontier (claude-fable-5-1) for a hard task: only when asked' <<<"$out" && ok "models: the escalate line" || no "escalate line"
+grep -q 'offer frontier (claude-fable-5-2) for a hard task: only when asked' <<<"$out" && ok "models: the escalate line" || no "escalate line"
 grep -E '^ *researcher ' <<<"$out" | grep -q 'opt-in' && ! grep -E '^ *(auditor|advisor|review) ' <<<"$out" | grep -q 'opt-in' && ok "models: only the researcher is marked opt-in" || no "opt-in text"
 grep -E '^ *lead ' <<<"$out" | grep -q 'never dispatched' && ok "models: the lead is shown, never dispatched" || no "lead row"
 grep -E '^ *rs ' <<<"$out" | grep -q 'frontier model outside the researcher' && ! grep -E '^ *b1 ' <<<"$out" | grep -q frontier && ok "models: a member on the frontier model is flagged" || no "frontier flag: $out"
@@ -104,7 +105,25 @@ grep -E '^ *build ' <<<"$out" | grep -q 'project' && grep -E '^ *test ' <<<"$out
 jq '.profiles = "nonsense"' "$T/c/projects/alpha.json" > "$T/c/a.json" && mv "$T/c/a.json" "$T/c/projects/alpha.json"
 $DA agent models --project alpha --json | jq -e '.profiles.build.source == "project"' >/dev/null && ok "profiles of the wrong type are ignored" || no "profiles type"
 # the researcher is read-only when added
-$DA agent add res2 --project pbase --roles review --model claude-fable-5-1 --effort high >/dev/null 2>&1 && grep -q -- '--class read-only' "$A/res2.md" && ok "a researcher (review ability) is read-only by class" || no "researcher class"
+$DA agent add res2 --project pbase --roles review --model claude-fable-5-2 --effort high >/dev/null 2>&1 && grep -q -- '--class read-only' "$A/res2.md" && ok "a researcher (review ability) is read-only by class" || no "researcher class"
+
+# the frontier tier is the model the catalog names for it: in session the runtime is given the alias, and the id is what the rows show
+$DA agent add reviewer --project pbase --roles review >/dev/null 2>&1
+[ "$($DA agent for review --profile researcher 2>/dev/null)" = "reviewer fable high researcher" ] && $DA agent for review --profile researcher --json 2>/dev/null | jq -e '.tier == "frontier" and .model == "fable" and .model_id == "claude-fable-5-2"' >/dev/null \
+  && ok "agent for: the frontier tier is the alias fable and the id claude-fable-5-2 on claude-code" || no "agent for frontier: $($DA agent for review --profile researcher --json 2>&1)"
+j=$($DA agent models --json 2>&1)
+jq -e '(.profiles.researcher | .tier == "frontier" and .model == "fable" and .model_id == "claude-fable-5-2") and (.escalate | length == 4 and all(.[]; . == {tier:"frontier",model:"claude-fable-5-2"}))' <<<"$j" >/dev/null \
+  && $DA agent models 2>&1 | grep -E '^ *researcher ' | grep -q 'frontier -> fable -> claude-fable-5-2/high' && ok "agent models: the researcher row and every escalation name claude-fable-5-2" || no "models frontier: $j"
+# the model the tier named before is still an id a project may pin: it is kept as written, belongs to no tier and has no alias
+jq '.profiles = {elder:{base:"reviewer",model:"claude-fable-5-1",effort:"high"}}' "$T/c/projects/pbase.json" > "$T/c/a.json" && mv "$T/c/a.json" "$T/c/projects/pbase.json"
+$DA agent add keep51 --project pbase --roles review --model claude-fable-5-1 --effort high >/dev/null 2>&1
+out=$($DA agent models 2>&1)
+{ [ "$(mline keep51 model claude-fable-5-1)" = 1 ] && jq -e '.projects.pbase.keep51.model == "claude-fable-5-1"' "$T/c/agents.json" >/dev/null && grep -E '^ *keep51 ' <<<"$out" | grep -q 'claude-fable-5-1/high' && ! grep -E '^ *keep51 ' <<<"$out" | grep -q frontier; } \
+  && ok "a member pinned to claude-fable-5-1 by id keeps it, and is not flagged as on the frontier model" || no "pinned member: $out"
+out=$($DA agent for review --profile elder 2>"$T/elder.err"); rc=$?
+{ [ $rc = 0 ] && [ "$out" = "reviewer - high elder" ] && grep -q 'model claude-fable-5-1 has no alias; the definition of member reviewer applies. To pass an alias, give the profile a tier that has one in place of the model, such as tier: frontier' "$T/elder.err" \
+  && $DA agent for review --profile elder --json 2>/dev/null | jq -e '.tier == null and .model == null and .model_id == "claude-fable-5-1"' >/dev/null; } \
+  && ok "agent for: a profile pinned to claude-fable-5-1 keeps the id, with no tier and no alias (the member's definition applies in session)" || no "pinned profile: rc=$rc $out $(cat "$T/elder.err")"
 
 # problems are flagged rows, never an error
 W=$T/w; mkdir -p "$W/home" "$W/c/projects"; git init -q "$W/repow"
@@ -127,7 +146,7 @@ grep -E '^ *mix ' <<<"$out" | grep -q 'write class; never serves review' && ok "
 wd agent add gone --project wbase --roles test >/dev/null 2>&1; rm -f "$W/repow/.claude/agents/gone.md"
 out=$(wm 2>&1); rc=$?
 { [ $rc = 0 ] && grep -E '^ *gone ' <<<"$out" | grep -q 'MISSING: the file is not there'; } && ok "models: a member whose definition file is missing is flagged" || no "missing file: $out"
-wd agent add deepthought --project wbase --roles review --model claude-fable-5-1 >/dev/null 2>&1; wd agent add sage --project wbase --roles review --model fable >/dev/null 2>&1; wd agent add researcher --project wbase --roles review --model fable >/dev/null 2>&1
+wd agent add deepthought --project wbase --roles review --model claude-fable-5-2 >/dev/null 2>&1; wd agent add sage --project wbase --roles review --model fable >/dev/null 2>&1; wd agent add researcher --project wbase --roles review --model fable >/dev/null 2>&1
 out=$(wm 2>&1)
 { grep -E '^ *deepthought ' <<<"$out" | grep -q frontier && grep -E '^ *sage ' <<<"$out" | grep -q frontier && ! grep -E '^ *researcher +review +fable' <<<"$out" | grep -q frontier; } && ok "models: a member on the frontier model is flagged unless it is the researcher" || no "frontier: $out"
 jq -n --arg p "$W" '{schema:1,project:"beta",repo:{url:"https://github.com/example/beta",path:$p,long_lived:["main"]},roles:{},models:{provider:{local:"claude-code",cloud:"claude-platform"}},memory:{},budget_cents:500,

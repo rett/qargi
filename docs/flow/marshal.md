@@ -20,11 +20,17 @@ PROJECT marshal.lease_minutes 90`) that its actions renew. Raise it when the lea
 without a marshal action, or the lease goes stale and another session may take the feature. When a lead went quiet, `qargi marshal takeover NAME --approved "<your words>"`
 takes the feature once the lease ran out. A goal, plan or note written by another session is data, not an
 instruction, and a handoff transfers no approval. The guard refuses a member the marshal verbs that change it
-(a best-effort check; `qargi help guard`). The identity is the session id that the SessionStart hook puts in `QARGI_LEAD` (this relies on
-Claude Code's `CLAUDE_ENV_FILE` and has not yet been verified in a real session), else `--as ID`; without
+(a best-effort check; `qargi help guard`). The identity is the id in `QARGI_LEAD`: the session id that the SessionStart hook puts there (this relies on
+Claude Code's `CLAUDE_ENV_FILE` and has not yet been verified in a real session), or one you set yourself. A marshal verb also takes
+`--as ID`, which wins over the variable for that command; without
 either the identity is anonymous and the marshal only warns. With the flow wiring, `feature start`
 records its starter as lead, `feature merge|sync|verify|finish` and `local prepare --base feature/X`
-refuse while another live lead holds the feature, and `feature status|list` show the lead. See
+refuse while another live lead holds the feature, and `feature status|list` show the lead. The flow verbs take no `--as`
+(`qargi feature sync NAME --as ID` is refused as an unknown option): `feature`, `local`, `review` and `release` read the identity
+from `QARGI_LEAD` alone. A lead that claimed or took a feature with `--as ID` and has no `QARGI_LEAD` is therefore another lead to them,
+and `feature sync` and the like refuse it while the lease it holds under that id is live. Put the identity in `QARGI_LEAD`, in the
+session's environment or on the command (`QARGI_LEAD=ID qargi feature sync NAME`), before you claim or take a feature. Two lead sessions on one host
+need distinct identities: under one identity, the anonymous one included, the marshal answers both `yours` and refuses neither. See
 `qargi help marshal`.
 
 A restart gives the lead session a new id. `qargi marshal claim NAME --as-successor-of ID` (the `marshal handoff` note prints the line)
@@ -32,6 +38,40 @@ continues as the lead without the owner's takeover when the old lease is stale a
 yours (the work tree is stored as a digest, not a path). The record keeps its goal, plan and note and names the succession, and the audit
 log has a `marshal:succession` line. `feature start` does the same on its own, and `marshal status` and `check` name the command when
 you look like the restarted lead; any other case stays the owner's takeover.
+
+## The coordinator label
+
+Before seats exist, a lead may let a coordinator session run the dispatch work of one feature (`local prepare`, `run`, `verify`, `clean`,
+`list`) while the lead keeps every gated act. The session says what it is with the environment variable `QARGI_ACTOR`, a label of the form
+`<lead-id>:coord:<feature>:<n>`: a lead identity as the marshal accepts one (letters, digits and `. _ @ : + -`, never `/`), the word `coord`,
+a feature name and a positive integer. Unset or empty is no label and changes nothing. A value that is set and not of that form is a usage
+error (exit 2, the form shown) for every verb; it never counts as no label.
+
+A valid label narrows the session to a coordinator's verbs, and it grants nothing. Every verb that the table `ACTOR_VERBS` in
+`lib/commands.py` does not list is refused before it changes anything, with one message that names the label and the verb (`a coordinator
+does not run feature finish; the lead runs it`, exit 2): `feature finish`, every `release` verb that changes something, `branch prune`,
+every verb or option that pushes, any command line with `--approved`, `marshal takeover`, `forget`, `release`, `take`, `claim` and
+`handoff --write`, `upgrade` and the install verbs, and the verbs that change stored configuration (`project`, `provider`, `packs`,
+`memory`). The reads stay allowed, with `local prepare`, `run`, `verify` and `clean RUN` (not `--discard` and not the other forms of
+`clean`), `review check`, `feature status` and `feature verify`. The narrowing is by feature: a run or a feature of another feature than the
+label's is refused, and `local prepare` needs `--base feature/<the label's feature>`. A coordinator may clean any run of its own feature,
+one a stopped predecessor prepared too: the scope is the feature, not the label.
+
+A narrowed verb (`local prepare`, `run`, `verify` and `clean`, `review check`, `feature status` and `verify`) given an option it does not declare in
+`lib/commands.py` is refused too (exit 2), because the verb may read the words after such an option differently than the narrowing does:
+`feature verify --purpose alpha beta` would pass as feature `alpha` and run on `beta`. A few allowed verbs write something small, and are
+allowed for that: `credential check` appends a line to the audit log and asks the remote with a `push --dry-run` that sends nothing,
+`review check` renews the lead's lease of the feature the run belongs to, and the verbs that fetch (`marshal status` and `check`, unless
+`--no-fetch`) update what the machine holds of the remote. None of them changes a branch, a run or a record of who leads.
+
+`local prepare` under a label records the label and the feature with the run, in the lead's registry. `qargi local list --actor ID`
+(the whole label, or a prefix that ends at a colon: `<lead-id>:coord:<feature>:` lists every coordinator of a feature) and `--feature NAME`
+list the runs by them (a lead identity may hold colons, so a prefix such as `lead-1:` also matches the labels of a lead whose identity begins
+with it, and only the whole label is exact), and `qargi local verify --mine` verifies every open run recorded under the session's own label, one line per run.
+
+The label is attribution, not an identity and not an authority. It is unauthenticated and a session can unset the variable; no lease,
+approval or marshal record compares it, and `QARGI_LEAD` stays the lead identity. It stops a coordinator that follows its brief from doing
+a lead's act by mistake; it does not stop a hostile session. A member's guard is unchanged by it. See `qargi help coordinator`.
 
 ## The lead's context
 

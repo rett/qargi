@@ -128,6 +128,24 @@ class Usage(Base):
         self.assertEqual(rc, 0)
         self.assertIn("unknown (../x is not a session id)", out)
 
+    def test_a_lead_id_that_names_no_transcript_reads_no_figure_and_never_the_newest(self):
+        """A lead of another runtime has an id of its own: the newest transcript of the work tree is another session's."""
+        self.transcript("outgoing", [turn(1, 90000, 0)], mtime=3000)
+        for ident in ("codex-lead", "user@host", "a b"):
+            rc, out, _ = self.run_cli("lead", "usage", QARGI_LEAD=ident)
+            self.assertEqual(rc, 0, ident)
+            self.assertIn("context: unknown (", out)
+            self.assertNotIn("90,001", out)
+            d = json.loads(self.run_cli("lead", "usage", "--json", QARGI_LEAD=ident)[1])
+            self.assertEqual((d["known"], d["tokens"], d["percent"], d["transcript"]), (False, None, None, ""), ident)
+        rc, out, _ = self.run_cli("lead", "usage", QARGI_LEAD="codex-lead")
+        self.assertIn("no transcript of session codex-lead in ", out)
+        for unset in (None, ""):                                                                      # no id (unset or empty): the newest of the work tree
+            self.assertIn("90,001", self.run_cli("lead", "usage", QARGI_LEAD=unset)[1])
+        rc, out, _ = self.run_cli("lead", "compact-check", "--advise", QARGI_LEAD="codex-lead")
+        self.assertIn("context: unknown", out)
+        self.assertNotIn("45%", out)
+
     def test_a_transcript_file_can_be_named(self):
         p = self.transcript("elsewhere", [turn(1, 30000, 0)])
         os.rename(p, os.path.join(self.t, "t.jsonl"))
@@ -844,11 +862,11 @@ class Advice(Base):
         self.pct(78000)                                                                                   # 39%
         self.assertEqual(self.advice(), "")
         self.pct(80000)                                                                                   # 40%
-        self.assertEqual(self.advice(), "lead: 40%, 80k tokens of context; compact is safe now: run /compact\n")
+        self.assertEqual(self.advice(), "lead: 40%, 80k tokens of context; compact is safe now: compact the session\n")
 
     def test_the_threshold_is_the_rounded_percent_on_a_known_window_and_the_raw_ratio_on_an_assumed_one(self):
         self.pct(79990)                                                                                   # 39.995%: the percent rounds to 40.0, the raw ratio is below 40
-        self.assertEqual(self.advice(), "lead: 40%, 80k tokens of context; compact is safe now: run /compact\n")
+        self.assertEqual(self.advice(), "lead: 40%, 80k tokens of context; compact is safe now: compact the session\n")
         self.assume()
         self.assertEqual(self.advice(), "")                                                               # assumed window: the raw ratio decides, so it stays silent
         self.pct(80000)
@@ -858,16 +876,16 @@ class Advice(Base):
         self.transcript("s1", [turn(1, 179999, 0, model="model-b[1m]")])
         self.answers["lead"] = {"compact_advice_pct": 10}
         self.write_answers()
-        self.assertEqual(self.advice(), "lead: 18%, 180k tokens of context; compact is safe now: run /compact\n")
+        self.assertEqual(self.advice(), "lead: 18%, 180k tokens of context; compact is safe now: compact the session\n")
         self.answers["lead"] = {"compact_advice_pct": 10, "context_window": 4000000}
         self.write_answers()
         self.transcript("s1", [turn(1, 1199999, 0)])
-        self.assertEqual(self.advice(), "lead: 30%, 1.2M tokens of context; compact is safe now: run /compact\n")
+        self.assertEqual(self.advice(), "lead: 30%, 1.2M tokens of context; compact is safe now: compact the session\n")
 
     def test_a_known_window_has_no_label_in_the_line(self):
         self.assume()
         self.transcript("s1", [turn(1, 499999, 0, model="model-b[1m]")])                                    # 50% of 1,000,000
-        self.assertEqual(self.advice(), "lead: 50%, 500k tokens of context; compact is safe now: run /compact\n")
+        self.assertEqual(self.advice(), "lead: 50%, 500k tokens of context; compact is safe now: compact the session\n")
 
     def test_the_stage_line_on_an_assumed_window_names_the_tokens_and_no_percentage_or_compact(self):
         self.assume()

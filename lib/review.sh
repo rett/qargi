@@ -145,6 +145,7 @@ if [ "$verb" = check ]; then
     if ! reg_has "$CLASS_RUN"; then
       CLASS_RUN=$(reg_id "${SRUN##*/}") || { echo "qargi: the lead's registry names no run for $SRUN; its class is unknown" >&2; exit 3; }
     fi
+    actor_run_check "review check" "$CLASS_RUN" || exit $?   # a coordinator label: the run whose lease is renewed below is of its feature, whatever the argument looked like
     RCLASS=$(run_class "$CLASS_RUN") || exit 3
     lc_ready "$CLASS_RUN" || exit 3
     [ "$LC_SCHEMA" != true ] || lc product-matches "$CLASS_RUN" >/dev/null || exit 3

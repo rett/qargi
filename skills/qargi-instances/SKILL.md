@@ -4,7 +4,7 @@ description: The workers a project dispatches to. Local members - add, refresh, 
 argument-hint: agent add|list|models|refresh|for ... | instances init|list|show|remove ...
 ---
 
-# /qargi-instances
+# qargi-instances
 
 The registry (`~/.qargi/config/instances.json`) and the session tracker (`~/.qargi/state/sessions.json`) are per user and never in a repository. Plans, tokens and `--approved`: `qargi help approvals`.
 
@@ -17,14 +17,14 @@ There are two base members, one per guard class (`qargi help guard`): `worker` (
 - `agent list` and `agent models` flag a member `MISSING` (the file is gone: a cleaned checkout, a fresh clone), `STALE` (the copy in config is gone, or the definition, catalog, renderer or an extension changed since) or `DRIFT` (edited by hand), each with its fix: `qargi agent refresh NAME --project P` writes copy and file again, keeping name, roles and model; a `DRIFT` file is replaced, so look at the edit first.
 - **Dispatch**: `qargi agent for ROLE [--profile NAME] [--project P]` prints one line, `MEMBER MODEL EFFORT PROFILE` (MODEL is the alias, `-` when none). Spawn it as `qargi provider notes spawn` says. A profile whose base does not fit the role is refused. Per-task diff checks: `--profile auditor` on review (fast, low effort). Search is not a role: `qargi provider notes exploration`. Your own session model is set in the runtime (`qargi provider notes session-model`); the `lead` profile has no base, is never dispatched, and its tier is the recommendation. Frontier is opt-in: `--profile researcher` only when the owner or you name it for the task.
 - `qargi instances init --location local --agent FILE [--name N] [--model M] [--effort E]` records a local agent file's path, sha256, model and effort.
-- With the runtime's `dispatch.mode` `command` there is no member file: `qargi local run RUN` runs the CLI with the member's prompt composed in (`/qargi-task`).
+- With the runtime's `dispatch.mode` `command` there is no member file: `qargi local run RUN` runs the CLI with the member's prompt composed in (`qargi-task`).
 
 ## Cloud instances
 
 Cloud verbs need `--asked "<the user's request that names the cloud instance>"`; changes to existing resources also need `--approved` after you have shown the printed PLAN.
 
 - **init (existing)**: Command: `qargi instances init --location cloud --deployment ID [--name N] [--budget CENTS] [--model M] [--effort E] [--no-session] --asked "..." [--approved "..."]`; Notes: Records the deployment and its agent, starts a standby session and tracks it. A differing `--model` or `--effort` prints a PLAN; with `--approved` the agent gets a new version and the deployment is re-pointed.
-- **init (new)**: Command: `qargi instances init --location cloud --provision --name N [--model M] [--effort E] [--budget CENTS] [--apt "pkg ..."] [--networking unrestricted|limited] --asked "..." [--approved "..."]`; Notes: Plan without `--approved`; with it, creates the resources via `/qargi-provision`, seeds both memory stores, registers and starts a session.
+- **init (new)**: Command: `qargi instances init --location cloud --provision --name N [--model M] [--effort E] [--budget CENTS] [--apt "pkg ..."] [--networking unrestricted|limited] --asked "..." [--approved "..."]`; Notes: Plan without `--approved`; with it, creates the resources via `qargi-provision`, seeds both memory stores, registers and starts a session.
 - **list**: Command: `qargi instances list [--reconcile]`; Notes: Instances (`prompt STALE` when the prompt changed since it was pushed) and active sessions; `--reconcile` flags live sessions missing from the tracker (ORPHAN, never touched).
 - **show**: Command: `qargi instances show NAME [--reconcile]`; Notes: The record plus staleness: prompt hash, agent newer than pinned, changed agent file, archived or paused deployment; NAMING lines.
 - **budget**: Command: `qargi instances budget NAME CENTS --asked "..." [--session SID]`; Notes: The deployment's spend ceiling, inherited by new sessions; `--session` also changes a running session that has a budget.

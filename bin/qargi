@@ -23,6 +23,12 @@ case $area in
   __guard) exec python3 -I -c 'import sys; sys.path.insert(0, sys.argv.pop(1)); import guard; sys.exit(guard.main())' "$lib" "$@";;
   version|--version) printf '%s\nsource: %s\n' "$(cat "$root/VERSION")" "$root"; exit 0;;
 esac
+# The coordinator label (QARGI_ACTOR; qargi help coordinator): a session that carries one is narrowed to a coordinator's verbs, and a value that is not a label
+# is a usage error, whatever the verb. Decided here, once, from the verb table (lib/help.py actor_gate), before any route below, so a refused verb has changed
+# nothing. Unset or empty costs nothing: no process is started.
+if [ -n "${QARGI_ACTOR:-}" ]; then
+  python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import help; sys.exit(help.main(["actor-gate"] + sys.argv[2:]))' "$lib" "$area" "$@" || exit $?
+fi
 # Campaign documents have native reports and a pure supplied-file check. Route
 # before even the JSON wrapper imports metadata, and before project/cloud setup.
 case $area in

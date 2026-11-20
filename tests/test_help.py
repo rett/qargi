@@ -240,6 +240,19 @@ class Render(unittest.TestCase):
         advise = [o for o in C.COMMANDS["lead"]["verbs"]["compact-check"]["opts"] if o["flag"] == "--advise"]
         self.assertIn("no advice on an assumed window (unknown model window and no lead.context_window)", str(advise))
 
+    def test_lead_usage_session_help_says_where_the_transcript_is_looked_for_and_the_team_help_names_no_runtime(self):
+        """lib/lead_usage.py: a named session id (--session, else the id in the lead's environment) is looked for among the transcripts of the
+        current directory, the top of its work tree and the repository; only with no id at all is the newest transcript taken, and a set id
+        with none reads as unknown. The help of `team` is for a lead of any runtime."""
+        opts = [o for o in C.COMMANDS["lead"]["verbs"]["usage"]["opts"] if o["flag"] == "--session"]
+        self.assertEqual(len(opts), 1)
+        text = " ".join(opts[0]["help"].split())
+        for needle in ("the current directory, the top of its work tree and the repository", "the session QARGI_LEAD names",
+                       "only when QARGI_LEAD is unset or empty, the newest transcript", "a set id with none gives context: unknown"):
+            self.assertIn(needle, text)
+        self.assertNotIn("this directory", text)
+        self.assertNotIn("Claude Code", C.COMMANDS["team"]["desc"])
+
     def test_the_guard_topic_and_the_review_role_say_what_a_read_only_member_runs_where_tmpdir_points_and_what_a_piece_after_a_cut_may_not_start_with(self):
         """What the guard refuses a read-only member, as the member needs to read it: an assignment (not the command), the TMP that TMPDIR is, and the words the
         guard reads after a separator. The behaviour itself is tested in test_guard.py."""
@@ -399,6 +412,21 @@ class Render(unittest.TestCase):
             text = v["summary"] + " " + v["desc"] + " " + " ".join(o["help"] for o in v["opts"])
             for n in needles:
                 self.assertIn(n, text, "%s %s" % (cmd, verb))
+
+    def test_the_provider_notes_help_names_the_refusal_of_the_start_notes_and_the_help_of_a_lead_names_no_runtime(self):
+        # a lead on another runtime than an in-session project's is refused spawn and member-out with exit 3, and the list leaves them out
+        v = C.COMMANDS["provider"]["verbs"]["notes"]
+        text = " ".join(v["desc"].split())
+        for needle in ("spawn, member-out", "dispatch mode in-session", "unsupported, exit 3", "cannot be started from this lead", "the list of topics leaves the two out"):
+            self.assertIn(needle, text)
+        # the help of the lead and of the hooks says what a session's identity is without naming the runtime it was first built for
+        marshal = " ".join(C.COMMANDS["marshal"]["desc"].split())
+        self.assertIn("A lead is a session with an identity", marshal)
+        self.assertNotIn("session id", marshal)
+        self.assertNotIn("Claude Code", marshal)
+        self.assertNotIn("Claude Code", C.COMMANDS["hook"]["summary"])
+        self.assertNotIn("subagent_type", C.COMMANDS["agent"]["verbs"]["for"]["desc"])
+        self.assertNotIn("Agent tool", C.COMMANDS["agent"]["verbs"]["for"]["desc"])
 
     def test_man_page_is_current_and_lints(self):
         page = H.man()

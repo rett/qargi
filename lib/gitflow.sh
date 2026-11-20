@@ -26,7 +26,8 @@ verified() { local f; f=$(rec "$1"); [ -f "$f" ] && jq -r --arg c "$TESTCMD" 'se
 # `local clean` accept a change of a run's refs that this journal explains, and name the verb, so the changes the lead made while
 # a run was out are not blamed on the executor. Append only, under flock; the guard (lib/guard.py) keeps an agent from writing it.
 # A failure here is a warning, never a failure of the verb: the work is done, only a later `local verify` would then want the lead's
-# changes explained.
+# changes explained. The one kind of line that no verb's own move stands behind is journal_reach's, below: the commits the lead made
+# with git on a branch that a verb then deletes.
 journal_ref() { journal_line "$1" "$2" "${3:-}" "${4:-}" "$5" ''; }
 # journal_push REF OLD NEW VERB -> the same for a ref of origin that VERB just pushed (NEW empty: deleted there). The line also
 # carries remote "origin" and the origin URL as url_key writes it, so the run of a repository URL finds it. OLD is what origin had
@@ -36,17 +37,164 @@ journal_push() {
   local u; u=$(g remote get-url origin 2>/dev/null) || u=''
   journal_line "$REPO" "$1" "${2:-}" "${3:-}" "$4" "$(url_key "$u")"
 }
-journal_line() { # REPO REF OLD NEW VERB URL [WHY]: one line; with URL a ref of origin, with WHY the reason the lead gave (qargi ref record)
-  local repo ref old new verb zero=0000000000000000000000000000000000000000 f=${DA_STATE:-}/ref-journal.jsonl
-  ref=$2 old=${3:-$zero} new=${4:-$zero} verb=$5
+# journal_line REPO REF OLD NEW VERB URL [WHY]: one line; with URL a ref of origin, with WHY the reason the lead gave (qargi ref record).
+# With OLD "-" the steps are read from standard input, one "OLD NEW" a line, and one journal line is written for each, all of REF and with
+# the same VERB, URL, WHY and time, appended together under one lock: the steps journal_reach writes (up to JOURNAL_REACH_MAX) cost one
+# append, not one each, and no other writer's line comes between them. One line is the same with one step.
+# What the append guarantees: under the lock every line is built first (a jq that fails part way writes none), and the journal then gets all of
+# them, with the newline that ends the last one, by one write(2) of one buffer (python3's os.write, on a descriptor opened with O_APPEND). Not
+# bash's printf: it hands its output to the file in blocks of 4 KB, one write each, so a batch of 500 lines was some 57 writes, and a reader or a
+# crash between two of them saw part of the batch. A regular file takes the whole buffer in one write unless the disk is full or a signal
+# interrupts it; the helper then writes the rest (a short write is the one case it loops), and a failure of a write is reported and not retried. So
+# the batch is one write in every ordinary case, not an atomic one in every case: a crash or a full disk can still leave a cut-off last line, and
+# the readers (journal_warn_bad, below, and lib/merged.py) skip such a line and say so. A journal that does not end in a newline (such a line) gets
+# one first, in that same write, so the new lines never join the end of an old one into a line that is not JSON; the check is made under the lock.
+# The batch is a mode of this function and not a function of its own on purpose, and the helper is a script in it and not a file beside this one:
+# tests/test_release_cut.sh cuts journal_line out of this file with sed (from its name to the first line that is a lone closing brace) and runs it
+# alone for the lock cases, from another directory, so neither a second function that journal_line called nor a path to a file of lib/ would be there.
+journal_line() {
+  local repo ref=$2 verb=$5 zero=0000000000000000000000000000000000000000 f=${DA_STATE:-}/ref-journal.jsonl
+  if [ "${3:-}" != - ]; then journal_line "$1" "$2" - '' "$5" "$6" "${7:-}" <<<"${3:-$zero} ${4:-$zero}"; return 0; fi
   repo=$(readlink -f "$1" 2>/dev/null) || repo=$1
   [ -n "${DA_STATE:-}" ] && case $ref in refs/heads/?*|refs/tags/?*) ;; *) false;; esac \
-    && ( umask 077; flock 9 || exit 4; jq -nc --arg at "$(now)" --argjson ep "$(date +%s)" --arg v "$verb" --arg p "${PROJ:-}" --arg r "$repo" \
-           --arg ref "$ref" --arg o "$old" --arg n "$new" --arg by "$(id -un 2>/dev/null || echo unknown)@$(hostname 2>/dev/null || echo unknown)" \
+    && ( umask 077; flock 9 || exit 4
+         lines=$(jq -Rc --arg at "$(now)" --argjson ep "$(date +%s)" --arg v "$verb" --arg p "${PROJ:-}" --arg r "$repo" \
+           --arg ref "$ref" --arg by "$(id -un 2>/dev/null || echo unknown)@$(hostname 2>/dev/null || echo unknown)" \
            --arg u "$6" --arg w "${7:-}" \
-           '{at:$at, epoch:$ep, verb:$v, project:$p, repo:$r, ref:$ref, old:$o, new:$n, by:$by}
-            + (if $u == "" then {} else {remote:"origin", url:$u} end) + (if $w == "" then {} else {why:$w} end)' >> "$f" ) 9> "$f.lock" \
+           'select(length > 0) | (. / " ") as [$o, $n]
+            | {at:$at, epoch:$ep, verb:$v, project:$p, repo:$r, ref:$ref, old:$o, new:$n, by:$by}
+            + (if $u == "" then {} else {remote:"origin", url:$u} end) + (if $w == "" then {} else {why:$w} end)') || exit 1
+         [ -n "$lines" ] || exit 0
+         if [ -s "$f" ] && [ -n "$(tail -c 1 "$f")" ]; then lines=$'\n'$lines; fi
+         printf '%s\n' "$lines" | python3 -I -c 'import os, sys
+view = memoryview(sys.stdin.buffer.read())
+try:
+    fd = os.open(sys.argv[1], os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    while view:
+        n = os.write(fd, view)
+        if n <= 0:
+            raise OSError("write made no progress")
+        view = view[n:]
+    os.close(fd)
+except OSError as e:
+    sys.exit("qargi: " + str(e))' "$f" ) 9> "$f.lock" \
     || echo "qargi: warning: the ref journal could not be written for $ref ($verb)$([ $? != 4 ] || { command -v flock >/dev/null 2>&1 && echo ": flock on $f.lock failed" || echo ": the flock command (util-linux) is not installed"; }); a later 'qargi local verify' of a run prepared before this may not accept the change" >&2
+  return 0
+}
+# journal_warn_bad FILE -> nothing, or one line on stderr (once in a process) when FILE, the ref journal, has a line that is not JSON: a write that was
+# cut off, or an edit by hand. The readers of the journal skip such a line and read the others, so the one line is no reason to refuse every run; this says
+# that a change it explained may be refused. lib/local.sh has the same function for its readers (it does not source this file); lib/merged.py says the same.
+journal_warn_bad() {
+  local n
+  [ -z "${JOURNAL_BAD_WARNED:-}" ] && [ -f "${1:-}" ] || return 0
+  n=$(jq -nR '[inputs | select(length > 0) | try (fromjson | empty) catch 1] | length' "$1" 2>/dev/null) || return 0
+  [ "${n:-0}" -gt 0 ] || return 0
+  JOURNAL_BAD_WARNED=1
+  echo "qargi: warning: $n line$([ "$n" = 1 ] || echo s) of the ref journal $1 $([ "$n" = 1 ] && echo is || echo are) not JSON (a write that was cut off, or an edit by hand) and $([ "$n" = 1 ] && echo is || echo are) skipped: a change that line explained is not found, and qargi local verify may refuse a run for it" >&2
+}
+# journal_reach SIDE REF TIP VERB -> for a verb that deletes the branch REF (refs/heads/NAME; SIDE local: of the repository, remote: of origin)
+# at TIP, called before it journals the deletion. The line of the deletion starts at TIP, and verify follows the journal from where a run's
+# snapshot has the branch: a run prepared before the lead committed on the branch with git (in the worktree of `release fix` or of
+# `feature start --worktree`: the fix of a release, the entries of a hotfix, a version file) or pushed it by hand has it at an earlier
+# commit, and no verb moved the branch from there, so no line did. The verb takes the branch as it is at TIP on the lead's approval (it
+# merged TIP, or found it merged), so it writes the steps the journal lacks: along the first-parent line of TIP, from the oldest commit
+# the journal has the branch at (in its lines since the branch was last created or deleted) up to TIP, one line from a commit to the next
+# wherever the journal has no line of that very step yet, each with VERB and a why that says git made the step. The journal then leads from
+# every commit of that line the branch was at since then to TIP, and on to the deletion. A line that starts at the commit and goes elsewhere
+# does not stand for the step: a verb journaled A -> B, the lead put the branch back at A with git and committed C there, and the branch is
+# deleted at C. The step A -> C is written, so a run that had the branch at A finds the deletion; one that had it at B does not (B is not on
+# the line any more, and nothing starts there).
+# The walk is along first parents only: the commits the branch itself was at, one after the other. A commit that came in as the second parent of a
+# merge is not on that line. When the lead pulled the branch by hand (a merge of origin's tip into the local one) and pushed the merge, origin's
+# old tip is the merge's second parent: no step starts there, and a run that had origin's branch at it is refused. That fails closed, on purpose:
+# a walk through second parents would take every commit ever merged into the branch for a place the branch was at.
+# Nothing is written when the journal never had the branch (made by hand and not noted: qargi ref note) or when none of the commits it
+# has the branch at is within JOURNAL_REACH_MAX commits of TIP on its first-parent line (the branch was rewritten by hand, the
+# commit is behind a second parent, or TIP is further than that from what the journal has) or when the journal has a line that is not JSON
+# (that line may be the creation or the deletion that bounds the branch's present life, so the steps could reach back into an earlier one; the
+# other readers of the journal skip such a line, this one refuses to write from it): the deletion then explains only a run that
+# had the branch at TIP, and one line on stderr says so, with the reason, because verify will refuse a run prepared while the branch was
+# at another commit. A branch that is kept gets no such line either: a commit made with git on a branch that stays is still the lead's
+# to explain. Fail-soft, as journal_line is.
+JOURNAL_REACH_MAX=500
+journal_reach() {
+  local side=$1 ref=$2 tip=$3 verb=$4 name=${2#refs/heads/}
+  local why='a commit made on the branch with git; the verb took the branch with it'   # journal_steps (lib/local.sh) knows these steps by this text: keep the two the same
+  [ "$side" = local ] || name=origin/$name
+  journal_reach_scan "$side" "$ref" "$tip"
+  if [ -n "$REACH_NONE" ]; then
+    echo "note: the journal does not lead to ${tip:0:7}, where $name was deleted ($REACH_NONE): qargi local verify will refuse a run prepared earlier, while $name was at another commit" >&2
+    return 0
+  fi
+  [ "${#REACH_STEPS[@]}" = 0 ] || printf '%s\n' "${REACH_STEPS[@]}" | journal_line "$REPO" "$ref" - '' "$verb" "$REACH_URL" "$why"
+  return 0
+}
+# journal_reach_plan SIDE REF TIP [INDENT] -> for the plan of a verb that will delete the branch REF at TIP: one line with the number of commits
+# made with git that journal_reach will journal for it and their range (from the commit the first step starts at to the one the last step
+# ends at); or, where journal_reach will note that the journal does not lead to TIP and write no step, one line that says so with the same reason, so a
+# lead who prepared a run earlier reads before the approval that verify will refuse it; nothing when the journal leads to TIP already. Reads only. The
+# plan token does not cover the line and need not: it covers TIP, and the steps follow from TIP and the journal.
+journal_reach_plan() {
+  local name=${2#refs/heads/} n last
+  [ "$1" = local ] || name=origin/$name
+  journal_reach_scan "$1" "$2" "$3"
+  if [ -n "$REACH_NONE" ]; then
+    echo "${4:-  }journal: no step will be journaled for $name: the journal does not lead to ${3:0:7} ($REACH_NONE): qargi local verify will refuse a run prepared earlier, while $name was at another commit"
+    return 0
+  fi
+  n=${#REACH_STEPS[@]}; [ "$n" -gt 0 ] || return 0
+  last=${REACH_STEPS[n - 1]##* }
+  echo "${4:-  }journal: takes $n commit$([ "$n" = 1 ] || echo s) made with git on $name (${REACH_STEPS[0]:0:7}..${last:0:7}): journaled with the deletion, so a run prepared before $([ "$n" = 1 ] && echo it || echo them) still verifies"
+}
+# journal_reach_scan SIDE REF TIP -> what journal_reach has to write, read from the journal and the repository; nothing is changed. REACH_STEPS:
+# the steps the journal lacks, "OLD NEW" each, oldest first (empty when the journal leads to TIP already). REACH_URL: for SIDE remote, origin's
+# URL as url_key writes it. REACH_NONE: empty, or why no step can lead to TIP (the cases above, a journal with a line that is not JSON, and a TIP that is not in the repository).
+# All three are empty when there is nothing to say: no state directory, a TIP that is no object name, SIDE remote without an origin.
+journal_reach_scan() {
+  local side=$1 ref=$2 tip=$3 f=${DA_STATE:-}/ref-journal.jsonl zero=0000000000000000000000000000000000000000 rp o n i=-1 j
+  local -A step=() known=()
+  local chain=()
+  REACH_STEPS=() REACH_URL='' REACH_NONE=''
+  [ -n "${DA_STATE:-}" ] && [[ $tip =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] || return 0
+  rp=$(readlink -f "$REPO" 2>/dev/null) || rp=$REPO
+  if [ "$side" = remote ]; then o=$(g remote get-url origin 2>/dev/null) || return 0; REACH_URL=$(url_key "$o"); [ -n "$REACH_URL" ] || return 0; fi
+  # the lines of this branch on this side since it was last created (that line included) or deleted: OLD and NEW of each
+  if [ -f "$f" ]; then
+    journal_warn_bad "$f"
+    # Fail closed: the other readers skip a line that is not JSON, because it explains no change and the run is refused for it. Here a skipped
+    # line is not safe: it may be the line that created or deleted this branch, and without it the lines of an earlier life of the branch
+    # (before that deletion) would be read as this one's, and the steps written from them would reach back to a commit the branch had then.
+    # So with a line that cannot be read no step is written, and the note says why (an unreadable journal counts as a bad line).
+    if [ "$(jq -nR '[inputs | select(length > 0) | try (fromjson | empty) catch 1] | length' "$f" 2>/dev/null)" != 0 ]; then
+      REACH_NONE="the ref journal has a line that is not JSON, which may be the creation or the deletion of a branch of this name, so the lines that can be read are not enough to say where it was; remove or repair that line"
+      return 0
+    fi
+    while read -r o n; do
+      [ "$o" = "$zero" ] || known[$o]=1
+      [ "$n" = "$zero" ] || known[$n]=1
+      step["$o $n"]=1
+    done < <(jq -nRr --arg r "$rp" --arg u "$REACH_URL" --arg side "$side" --arg ref "$ref" --arg z "$zero" '
+      [ inputs | fromjson? | select(type == "object" and .ref == $ref and (.old | type) == "string" and (.new | type) == "string"
+          and (if $side == "remote" then .remote == "origin" and (.repo == $r or .url == $u) else (has("remote") | not) and .repo == $r end)) ] as $e
+      | ([ range(0; $e | length) | select($e[.].old == $z or $e[.].new == $z) | if $e[.].old == $z then . else . + 1 end ] | last // 0) as $s
+      | $e[$s:][] | select((.old + .new) | test("^[0-9a-f]+$")) | .old + " " + .new' "$f" 2>/dev/null)
+  fi
+  if [ "${#known[@]}" = 0 ]; then
+    if [ "$side" = local ]; then REACH_NONE="the journal has no line of it: it was made by hand and not noted with qargi ref note"
+    else REACH_NONE="the journal has no line of it: it was pushed by hand, or by an agent, and not noted with qargi ref note"; fi
+    return 0
+  fi
+  mapfile -t chain < <(g rev-list --first-parent --max-count="$((JOURNAL_REACH_MAX + 1))" "$tip" 2>/dev/null)
+  for j in "${!chain[@]}"; do [ -z "${known[${chain[$j]}]:-}" ] || i=$j; done
+  if [ "$i" -lt 0 ]; then
+    if [ "${#chain[@]}" = 0 ]; then REACH_NONE="its tip is not a commit of this repository"
+    elif [ "${#chain[@]}" -gt "$JOURNAL_REACH_MAX" ]; then REACH_NONE="no commit the journal has it at is within $JOURNAL_REACH_MAX commits of its tip on its first-parent line"
+    else REACH_NONE="no commit the journal has it at is on its first-parent line: it was rewritten by hand, or a merge made by hand left that commit behind a second parent"; fi
+    return 0
+  fi
+  for ((j = i; j >= 1; j--)); do
+    [ -n "${step["${chain[$j]} ${chain[$((j - 1))]}"]:-}" ] || REACH_STEPS+=("${chain[$j]} ${chain[$((j - 1))]}")
+  done
   return 0
 }
 # remote_was BRANCH -> what origin had for BRANCH as far as this repository knows: the remote-tracking ref (current after a fetch)
