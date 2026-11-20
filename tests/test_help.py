@@ -141,6 +141,9 @@ class Sync(unittest.TestCase):
             for s in spec.get("scripts", []):
                 by_script.setdefault(s, set()).update(doc_flags(cmd))
         ignore = {"--help"}
+        # (script, flag) pairs that a script hands to another program and does not parse itself: doctor.py asks systemd-run `--version`, which is
+        # an argument of systemd-run and no flag of `qargi doctor`
+        passed_on = {("doctor.py", "--version")}
         for s, documented in by_script.items():
             src = slurp(os.path.join(LIB, s))
             found = set()
@@ -148,7 +151,7 @@ class Sync(unittest.TestCase):
                 found |= set(m.group(1).split("|"))
             if s.endswith(".py"):
                 found |= set(quoted.findall(src))
-            missing = {f for f in found if f.startswith("--")} - documented - ignore
+            missing = {f for f in found if f.startswith("--") and (s, f) not in passed_on} - documented - ignore
             self.assertFalse(missing, "%s parses %s, which lib/commands.py does not describe" % (s, sorted(missing)))
 
     def test_argument_types_are_known(self):
