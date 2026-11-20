@@ -3581,11 +3581,12 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None, at=None):
     if area in ("feature", "release") and "verify" in words[1:4]:
         # a waiver of a part of verify.environment is the owner's words: the shell refuses it in a member run (in_member_run), but a member started as a
         # subagent has no member mark and works outside its run directory, so the guard refuses the option with --approved (the attempt without --approved
-        # only prints a token and stays open). A flag a variable, a substitution or xargs builds is read as both, as project set reads a path
+        # only prints a token and stays open). A word the guard cannot read (a variable, an array expansion, a substitution, or xargs) can split into several
+        # words and carry both options, so any such word is refused, as a path of the answers command is
         argv = cut if prog in SCRIPTS else cut[k + 1:]
-        unreadable = sum(any(c in t for c in UNREADABLE) for t in argv) + (2 if via_xargs else 0)
+        unreadable = via_xargs or any(any(c in t for c in UNREADABLE) for t in argv)
         waive, approved = "--waive-environment" in argv, "--approved" in argv
-        if (waive or unreadable) and (approved or unreadable) and (waive or approved or unreadable >= 2):
+        if (waive and approved) or unreadable:
             return OwnReason("qargi %s verify with --waive-environment and --approved waives a part of verify.environment with the owner's words (a flag the guard cannot read could be either) "
                              "and is not available to an agent; report the refusal and the plan token it printed instead" % area)
     if area == "release" and any(w == "site" for w in words[1:4]):

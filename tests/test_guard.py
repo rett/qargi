@@ -893,13 +893,19 @@ class Skills(HookCase):
                 self.assertEqual(r.returncode, 2, c)
                 self.assertIn("verify with --waive-environment and --approved waives a part of verify.environment", r.stderr, c)
         for c in ("qargi release verify 0.2.0 --approved go $F", "qargi release verify 0.2.0 --waive-environment $P", "qargi release verify 0.2.0 --waive-environment cpu \"$(cat t)\"",
-                  "echo 0.2.0 | xargs qargi release verify --approved go", "qargi release verify 0.2.0 $W $A"):
+                  "echo 0.2.0 | xargs qargi release verify --approved go", "qargi release verify 0.2.0 $W $A",
+                  # one word that splits into several (a variable, an array expansion, a substitution) can carry both options, after --project too
+                  "qargi release verify 0.2.0 --project p $X", "qargi release --project p verify 0.2.0 $X", "qargi release verify 0.2.0 --project p \"${A[@]}\"",
+                  "qargi release verify 0.2.0 --project p $(cat args)", "bash lib/release.sh verify 0.2.0 --project p $X"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("verify with --waive-environment and --approved waives a part of verify.environment", r.stderr, c)
         for c in ("qargi release verify 0.2.0", "qargi release verify 0.2.0 --project p", "qargi release verify 0.2.0 --hotfix", "qargi release verify 0.2.0 --waive-environment cpu",
                   "qargi release verify 0.2.0 --plan 0123456789ab --approved go", "qargi release status 0.2.0 --approved go",
-                  "echo qargi release verify 0.2.0 --waive-environment cpu --approved go", "grep -n 'waive-environment' lib/release.sh"):
+                  "echo qargi release verify 0.2.0 --waive-environment cpu --approved go", "grep -n 'waive-environment' lib/release.sh",
+                  # what is not a verify, or has every word in the open without both options, is not over-blocked
+                  "qargi release status 0.2.0 --project p $X", "qargi release verify 0.2.0 --project p --waive-environment fds,tty",
+                  "qargi release verify 0.2.0 --hotfix --project p --plan 0123456789ab --approved go"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
