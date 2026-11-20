@@ -4,20 +4,13 @@
  "goal": "0.3.4 lead handoff: whole-suite verify then finish",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "rett@arc",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-19T17:19:03Z",
-  "worktree": "94b9af1305afafc4",
-  "succeeds": "arc-claude-qargi"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-20T00:43:04Z",
- "finished_at": null,
+ "finished_at": "2026-11-20T00:43:40Z",
  "updated_by": "rett@arc",
- "rev": 21,
- "updated_at": "2026-11-20T00:43:04Z",
+ "rev": 22,
+ "updated_at": "2026-11-20T00:43:40Z",
  "feature": "lead-handoff-034",
  "project": "qargi"
 }
