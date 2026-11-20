@@ -32,6 +32,8 @@ Subcommands (every JSON argument is the text of a JSON value; `null` means the s
         {"declared": NORMALISED-or-null, "decl": HASH, "at": TIME, "by": VERB}. `get` prints the entry, exit 1 when there is none.
         `set` writes it (DECL `null` stores "declared": null). `check` prints {"equal", "answers", "state", "entry"} (the two hashes;
         no entry counts as off, `entry` says whether there is one), exit 0 when equal and 1 when not.
+        A state file that cannot be read (not JSON, no "projects" object) is exit 3 in all three verbs, with a message and nothing on standard
+        output: a caller that branches on 1 for "no entry" is never told that a damaged file is a first declaration.
 
 Library use: problems(decl), normalise(decl), loosens(old, new), decl_hash(n), suite_env_id(n), cpu_max_ok(text, quota), cgroup_path(text),
 sig_clean(ign, blk), and the refusal codes (CODES, and one constant for each).
@@ -74,6 +76,7 @@ CGROUP_ROOT = "/sys/fs/cgroup"
 NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 QUOTA_RE = re.compile(r"([1-9][0-9]*)%")
 STATE_NAME = "verify-env.json"
+STATE_DAMAGED = 3               # the exit status of an `approved` verb when the state file cannot be read: never "no entry" (1)
 REFUSED_STATUS = 125            # the launcher refused, or could not start the command
 CLEANUP_ROUNDS, CLEANUP_STEP = 5, 0.4          # at most 5 rounds over 2 seconds
 
@@ -278,9 +281,11 @@ def _read_state(path):
     except FileNotFoundError:
         return {"version": 1, "projects": {}}
     except (OSError, ValueError) as e:
-        raise SystemExit("qargi: %s cannot be read as the approved declarations (%s); restore it or remove it by hand" % (path, e))
+        _say("%s cannot be read as the approved declarations (%s); restore it or remove it by hand" % (path, e))
+        raise SystemExit(STATE_DAMAGED)
     if not isinstance(data, dict) or not isinstance(data.get("projects"), dict):
-        raise SystemExit("qargi: %s is not the approved declarations file (no \"projects\" object)" % path)
+        _say("%s cannot be read as the approved declarations (it has no \"projects\" object); restore it or remove it by hand" % path)
+        raise SystemExit(STATE_DAMAGED)
     return data
 
 

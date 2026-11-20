@@ -358,7 +358,7 @@ class Approved(Scratch):
         for fn in (lambda: SE.approved_get("p", state), lambda: SE.approved_set("p", None, "x", state)):
             with self.assertRaises(SystemExit) as cm:
                 fn()
-            self.assertIn("cannot be read", str(cm.exception))
+            self.assertEqual(cm.exception.code, 3)
         with open(os.path.join(state, "verify-env.json")) as f:
             self.assertEqual(f.read(), "{not json")
 
@@ -498,6 +498,23 @@ class Cli(Scratch):
         self.assertEqual(self.cli("approved", "get", "p", "--state", state).returncode, 0)
         self.assertEqual(self.cli("approved", "check", "p", "null", "--state", state).returncode, 0)
         self.assertEqual(self.cli("approved", "set", "p", '{"bad": 1}', "--by", "x", "--state", state).returncode, 2)
+
+    def test_a_damaged_state_file_is_exit_3_in_every_approved_verb(self):
+        state = self.path("state")
+        os.makedirs(state)
+        path = os.path.join(state, "verify-env.json")
+        for content in ("{not json", "[]", '{"projects": 5}', ""):
+            with open(path, "w") as f:
+                f.write(content)
+            for args in (("get", "p"), ("check", "p", "null"), ("check", "p", "{}"), ("set", "p", "null", "--by", "x")):
+                r = self.cli("approved", args[0], *args[1:], "--state", state)
+                self.assertEqual(r.returncode, 3, (content, args, r.stderr))
+                self.assertIn("cannot be read", r.stderr)
+                self.assertEqual(r.stdout, "")
+        os.unlink(path)                                  # no file is no entry (1) and equal-to-off (0), never 3
+        self.assertEqual(self.cli("approved", "get", "p", "--state", state).returncode, 1)
+        self.assertEqual(self.cli("approved", "check", "p", "null", "--state", state).returncode, 0)
+        self.assertEqual(self.cli("approved", "check", "p", "{}", "--state", state).returncode, 1)
 
     def test_run_refuses_a_bad_call(self):
         r, rep = self.run_cmd({"fds": "close", "cpu_quota": None}, [])
