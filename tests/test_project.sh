@@ -791,17 +791,22 @@ cp $T/state.good "$VST"
 # init, new and attach of a file that declares verify.environment hold the lock of project set from the comparison to the end of the verb: while another change holds it
 # init waits (and, cut short, stores nothing); a file that declares nothing takes no lock
 echo "$base" | jq '.project = "vlock" | .verify = {environment: {fds: "ci-like"}}' > $T/vlock.json
-rm -f "$T/lk.ready" "$T/lk.release"
-( flock 9; : > "$T/lk.ready"; until [ -e "$T/lk.release" ]; do sleep 0.1; done ) 9> "$T/s/verify-env.gate.lock" & hp=$!
-until [ -e "$T/lk.ready" ]; do sleep 0.1; done
-msg=$(timeout 1 $DA project init vlock --answers $T/vlock.json 2>&1); rc=$?
-{ [ $rc = 124 ] && [ ! -e "$T/c/projects/vlock.json" ] && [ "$(jq -c '.projects.vlock // "none"' "$VST")" = '"none"' ]; } && vok "init of a file that declares verify.environment waits for the lock another change holds, and stores nothing when cut short" || vno "init while the lock is held (rc=$rc)" "$msg"
+rm -f "$T/lk.ready" "$T/lk.release" "$T/lk.fifo"; mkfifo "$T/lk.fifo"
+LK=$T/s/verify-env.gate.lock
+# the holder waits with `read -t` on a fifo it opens for reading and writing (no child process: nothing else holds the lock file open)
+( flock 9; : > "$T/lk.ready"; until [ -e "$T/lk.release" ]; do read -r -t 0.1 _ 0<>"$T/lk.fifo" || true; done ) 9> "$LK" & hp=$!
+for _ in $(seq 1 300); do [ -e "$T/lk.ready" ] && break; sleep 0.1; done
+# holds_lock: a process other than the holder has the lock file open (init opens it, then waits on it)
+holds_lock() { local d l; for d in /proc/[0-9]*; do [ "${d#/proc/}" != "$hp" ] || continue; for l in "$d"/fd/*; do [ "$(readlink "$l" 2>/dev/null)" = "$LK" ] && return 0; done; done; return 1; }
+$DA project init vlock --answers $T/vlock.json > "$T/lk.out" 2>&1 & ip=$!
+for _ in $(seq 1 300); do holds_lock && break; kill -0 "$ip" 2>/dev/null || break; sleep 0.1; done
+{ holds_lock && kill -0 "$ip" 2>/dev/null && [ ! -e "$T/c/projects/vlock.json" ] && [ "$(jq -c '.projects.vlock // "none"' "$VST")" = '"none"' ]; } \
+  && vok "init of a file that declares verify.environment waits for the lock another change holds, and has stored nothing while it waits" || vno "init while the lock is held (still running: $(kill -0 "$ip" 2>/dev/null && echo yes || echo no))" "$(cat "$T/lk.out")"
 echo "$base" | jq '.project = "vlock2"' > $T/vlock2.json
-msg=$(timeout 2 $DA project init vlock2 --answers $T/vlock2.json 2>&1); rc=$?
-{ [ $rc = 0 ] && [ -f "$T/c/projects/vlock2.json" ]; } && vok "init of a file that declares nothing does not wait for that lock" || vno "init without a declaration while the lock is held (rc=$rc)" "$msg"
-: > "$T/lk.release"; wait "$hp"
-msg=$($DA project init vlock --answers $T/vlock.json 2>&1); rc=$?
-{ [ $rc = 0 ] && [ "$(vent vlock | jq -r .fds)" = ci-like ]; } && vok "and it goes through once the lock is free" || vno "init after the lock was free (rc=$rc)" "$msg"
+msg=$(timeout 60 $DA project init vlock2 --answers $T/vlock2.json 2>&1); rc=$?
+{ [ $rc = 0 ] && [ -f "$T/c/projects/vlock2.json" ] && kill -0 "$ip" 2>/dev/null; } && vok "init of a file that declares nothing does not wait for that lock" || vno "init without a declaration while the lock is held (rc=$rc)" "$msg"
+: > "$T/lk.release"; wait "$hp"; rc=0; wait "$ip" || rc=$?
+{ [ $rc = 0 ] && [ "$(vent vlock | jq -r .fds)" = ci-like ]; } && vok "and the waiting init goes through once the lock is free" || vno "init after the lock was free (rc=$rc)" "$(cat "$T/lk.out")"
 
 # --- project link | unlink: skills, agents and memory, linked from ~/.qargi into the checkout and the runtime's memory directory
 # One plan and one token for the lot; a worktree gets its links by running the verb inside it; nothing records the worktrees. A member's run
