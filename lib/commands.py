@@ -93,6 +93,27 @@ SUITE_FAIL_NOTE = ("The output of the suite is kept in STATE/suite-logs/PROJECT.
                    "Any gate or test command may print the lines that are named, at the start of a line: a failing step is a line matching ^FAILED: (the step follows); a failing test is a line "
                    "matching ^FAIL( |:) or ^--- FAIL: (the name follows; the second is a Go test run's); the logs of the failed steps are a line ^logs of the failed steps: (the directory follows). "
                    "A command that prints none shows its last lines instead.")
+WAIVE_ENV_OPT = opt("--waive-environment", "run once without these parts of verify.environment, which a refusal named (comma separated: signals, fds, tty, cpu; never env); needs --plan and --approved", "PARTS")
+VERIFY_ENV_ANSWER = ("verify.environment (an object, or null for off) is the environment the whole-suite runs of feature verify and release verify start under: "
+                     "fds (close or ci-like), ci_fds, cpu_quota (null, max or N%), env_pass (names taken from the caller) and env_set (names and values); an invalid declaration refuses with verify-env-invalid and the line that is wrong. "
+                     "qargi keeps the declaration it last accepted in the state, apart from the answers. A first declaration, and a lower cpu_quota (from null, from max, or from a higher N%), apply at once; "
+                     "every other change (removal, a higher quota, any change of fds, ci_fds, env_pass or env_set) loosens the environment and refuses with verify-env-change-unapproved and a plan token: "
+                     "the same command with --plan TOKEN --approved WORDS (the owner's words) applies it and writes the audit line project:verify-environment-loosened. "
+                     "A member's guard refuses it, and a member run refuses it with exit 2: the token is printed to whoever asks, so the owner's words are the only approval.")
+VERIFY_ENV_UNSET = ("Removing verify.environment (or verify) turns the environment off, which loosens it: it refuses with verify-env-change-unapproved and a plan token unless --plan TOKEN --approved WORDS is given "
+                    "(the owner's words), and then writes the audit line project:verify-environment-loosened; the two options apply to verify and the keys below it only.")
+ENV_NOTE = ("With the project answer verify.environment set, the suite, or each declared gate, starts through the launcher lib/suite_env.py, from a known state like a hosted runner's: "
+            "default signal dispositions and an empty mask, only the descriptors the declaration allows, a session of its own with no terminal (the output goes to the log), "
+            "a transient cgroup below qargi-verify.slice with the cpu controller on, and an environment built from an allowlist; each is read back. The verb makes the launcher's attempt before it makes the worktree. "
+            "A part that cannot be applied refuses the run (exit 1, nothing run, nothing recorded) with a code (verify-env-signals, verify-env-fds, verify-env-tty, verify-env-cpu-no-systemd-run, verify-env-cpu-systemd-too-old, "
+            "verify-env-cpu-no-user-manager, verify-env-cpu-readback), the part, what was found and a plan token; the same is printed for a part the launcher refuses during the run. "
+            "A suite log or a directory for the reports that cannot be made is verify-env-no-log (exit 1, nothing run, no part and no token). "
+            "--waive-environment PARTS --plan TOKEN --approved WORDS runs the suite once without the parts a refusal named: only a refusal yields a token, which covers the project, the branch, its head, the declaration and exactly those parts, "
+            "and is good for one run at that head (used again: verify-env-waive-used). A waived part is still attempted; when it fails it is recorded waived-failed with its code, the verdict line says so "
+            "(full suite: pass at SHA (verify.environment: cpu waived-failed)) and status and finish show it again; the run is audited as verify:environment-waived. "
+            "A setting that is off, a part that is off, env or another word is verify-env-waive-unknown; no token or words, or a token of other parts or another head, is verify-env-waive-unapproved. "
+            "The words are the owner's: in a member run --waive-environment with --approved is refused (exit 2). A declaration in the answers that is not the one last accepted refuses with verify-env-change-unapproved. "
+            "Without the answer nothing changes and there is nothing to waive.")
 GATES_NOTE = ("Declared gates: the project answer gates is an ordered list of {name, command, tier} (command: a command line or a list of words, as test_command; tier: feature or release; names unique). "
               "Absent, test_command (release.test_command for a release) is run, as before. Declared, the gates run instead and test_command is not also run (a gate whose command is the same runs it): "
               "feature verify runs the gates of tier feature in order and release verify the feature tier, then the release tier, each stopping at the first failure (the rest are listed as not run). "
@@ -179,13 +200,13 @@ COMMANDS = {
                                 "An accepted deviation (methodology_accepted: a gap named file: X or branch: X) is left out of the files and branches it would write, and printed apart from what is left for you; one whose gap is gone says 'accepted, no longer applies'. "
                                 "Refused (exit 2) with a dirty working tree, a detached HEAD, no commits, a project that is not attached, and in a member run."),
                           examples=["qargi project adopt acme", 'qargi project adopt acme --plan TOKEN --approved "go ahead"']),
-            "set": verb("Change one answer", [("NAME", "project"), ("PATH", "key"), ("VALUE", "value")],
+            "set": verb("Change one answer", [("NAME", "project"), ("PATH", "key"), ("VALUE", "value")], [PLAN, APPROVED],
                         desc=("PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string. packs.member_skills uses qargi packs member-skills PROJECT --enable|--disable and refuses direct set/unset or whole packs-object replacement. models.extensions and models.accept_no_barrier are refused here: they change only through qargi provider enable|disable and qargi provider accept. "
                               "methodology_accepted (a list of {gap, reason, date}: the deviations from the methodology the lead accepts) is the lead's: a member run is refused. "
                               "roles.ROLE.tools is the list of the tools a role needs beyond its apt packages, each {kind, name, ...}: kind go (name a package path, version a tag: go install NAME@VERSION), "
                               "kind binary (name the file name, version, url of the file itself, sha256 of it: downloaded to ~/.local/bin and kept only when the hash matches) and kind submodule "
                               "(name as in .gitmodules, path: checked out in each member clone by qargi local prepare). env plan lists them, env apply installs them and env check reports one that is "
-                              "missing or wrong; a member's guard refuses setting them (and a whole role), as it refuses release.*, test_command, gates, env.*, upstream.*, site.*, backlog.*, ci.*, methodology_accepted, git.* and review.*. "
+                              "missing or wrong; a member's guard refuses setting them (and a whole role), as it refuses release.*, test_command, gates, env.*, upstream.*, site.*, backlog.*, ci.*, methodology_accepted, verify.environment, git.* and review.*. "
                               "backlog.file is the markdown file of the project's backlog (qargi backlog); a path outside the repository is fine. "
                               "git.author ('Name <email>') is the author qargi review apply gives the commits it applies, and review.keep_author true keeps the member's author instead; "
                               "review.scrub (a command line or a list of words) is run by qargi review check (and by qargi review apply, unless a passing check recorded the same series) on the applied series with the range in QARGI_SCRUB_BASE and QARGI_SCRUB_TIP, and review.trailer_policy reject fails a commit with a "
@@ -195,15 +216,17 @@ COMMANDS = {
                               "runs.owned_refs is a list of glob patterns for the refs a runtime or harness creates in the repository, which local verify and clean accept and name (see local verify); "
                               "the guard refuses it to a member too. "
                               "It prints the new value and then 'was: OLD' (the JSON the answer held, or '(not set)' when the key was absent) and writes an audit line (project:set, with the old value). "
-                              "A null stored for an optional answer (git.author, gates, review.*, backlog.*) is the same as not set, and project validate accepts it; qargi project unset removes the key itself."),
+                              "A null stored for an optional answer (git.author, gates, review.*, backlog.*) is the same as not set, and project validate accepts it; qargi project unset removes the key itself. "
+                              + VERIFY_ENV_ANSWER + " --plan and --approved apply to this answer only (verify, verify.environment or a key below it); any other path refuses them (exit 2)."),
                         examples=["qargi project set acme roles.write.effort high", "qargi project set acme packs.none true", "qargi project set acme git.author 'Example Author <author@example.com>'",
                                   "qargi project set acme roles.test.tools '[{\"kind\":\"go\",\"name\":\"acme.test/ci\",\"version\":\"v1.2.0\"}]'"]),
-            "unset": verb("Remove one answer", [("NAME", "project"), ("PATH", "key")],
+            "unset": verb("Remove one answer", [("NAME", "project"), ("PATH", "key")], [PLAN, APPROVED],
                           desc=("PATH is dotted, as for set. Prints 'was: OLD' (the JSON the answer held) and writes an audit line (project:unset, with the old value). It refuses what set refuses: "
                                 "the marshal backend (marshal.backend: qargi marshal enable|disable) and models.extensions and models.accept_no_barrier, also as keys of a whole models object (exit 2: "
                                 "qargi provider enable|disable and qargi provider accept take a plan token and an approval). A key that is not set is an error and changes nothing, and so is the removal of an answer the "
                                 "project needs (repo.url, a role's base): validate refuses it and the file is not touched. A member never runs it: it is refused in a member's run directory "
-                                "or with the member mark in the environment (exit 2); propose the removal in the report."),
+                                "or with the member mark in the environment (exit 2); propose the removal in the report. "
+                                + VERIFY_ENV_UNSET),
                           examples=["qargi project unset acme backlog.file", "qargi project unset acme review.scrub"]),
             "show": verb("Print the stored answers and what they mean", [("NAME", "project")],
                          desc=("The answers go to standard output as JSON (so they can be piped). When the project declares gates, which replace the test command in feature verify and release verify, "
@@ -334,8 +357,9 @@ COMMANDS = {
                                 "local verify, a warning names the run; the merge goes on. " + FLOW_UNREACHABLE_NOTE)),
             "status": verb("Show the feature: commits ahead of develop and whether the whole suite passed at its head", [("NAME", "none")], [PROJECT_OPT],
                            desc=REMOTE_NOTE + " With declared gates a 'gates:' line lists each with its result at the last run. Flags worktrees outside the worktree root like list. When the whole-suite result is for an older head it says why (the commits on the branch since the run, a merge of a task branch or of develop named as such) and that the next step is qargi feature verify NAME."),
-            "verify": verb("Run the project's whole test suite on the feature's head and record the result", [("NAME", "none")], [PROJECT_OPT, FLOW_UNREACHABLE_OPT],
-                           desc=GATES_NOTE + " " + OTHER_RUNS_NOTE + " " + SUITE_FAIL_NOTE + " " + FLOW_UNREACHABLE_NOTE),
+            "verify": verb("Run the project's whole test suite on the feature's head and record the result", [("NAME", "none")], [PROJECT_OPT, FLOW_UNREACHABLE_OPT, WAIVE_ENV_OPT, PLAN, APPROVED],
+                           desc=GATES_NOTE + " " + ENV_NOTE + " " + OTHER_RUNS_NOTE + " " + SUITE_FAIL_NOTE + " " + FLOW_UNREACHABLE_NOTE,
+                           examples=["qargi feature verify login", 'qargi feature verify login --waive-environment cpu --plan TOKEN --approved "go ahead"']),
             "finish": verb("Merge the feature into develop with --no-ff and delete it", [("NAME", "none")],
                            [PROJECT_OPT, opt("--keep", "keep the branch"), PLAN, APPROVED, RESOLVED_OPT, FLOW_UNREACHABLE_OPT],
                            desc=("Needs a passing whole-suite run at the feature's head. A feature behind develop is refused (exit 1, nothing changed); when both sides "
@@ -708,8 +732,8 @@ COMMANDS = {
                                "as '[done] NAME (WHO, TIME, evidence: TEXT)' or '[pending] NAME (WHO): COMMAND', the done ones first and the pending ones last; a pending step of the owner reads "
                                "'waits for the owner: run COMMAND', and a step that needs evidence says so. qargi release step marks one done; the list is kept in a file under the state directory.")),
             "verify": verb("Run the project's whole test suite on the release branch (develop's head before it starts) and record the result", [("VERSION", "none")],
-                           [PROJECT_OPT, HOTFIX_OPT, opt("--strict", "refuse, before anything runs, when a CI job matches no declared gate name")],
-                           desc=TAG_NOTE + " The exit status stays the suite's result. The command is release.test_command when the project sets one, else test_command. " + GATES_NOTE + " "
+                           [PROJECT_OPT, HOTFIX_OPT, opt("--strict", "refuse, before anything runs, when a CI job matches no declared gate name"), WAIVE_ENV_OPT, PLAN, APPROVED],
+                           desc=TAG_NOTE + " The exit status stays the suite's result. The command is release.test_command when the project sets one, else test_command. " + GATES_NOTE + " " + ENV_NOTE + " "
                                  "Before it runs, it reads the workflow files of the tree it verifies (.github/workflows/*.yml and *.yaml; standard library only, no YAML library: the job ids under jobs: and the name: line of each job) "
                                  "and warns on standard error, naming each job whose name and id match no declared gate name, is not listed in a gate's ci_jobs and is not listed in the optional answer ci.not_gates (the jobs that are aggregate or publish jobs and not gates). "
                                  "A job a gate lists in ci_jobs is reported as a note, covered by that gate. With no gate declared it prints one note naming the jobs instead of a warning each. "
@@ -827,6 +851,9 @@ COMMANDS = {
                  "table: the table gives the API's window, which the product may cap lower on some plans) "
                  "and whether each model id its roles name is in the table, and the model of the lead's own session (the last turn of its transcript, read only) unless the answer is set; an id that is not there warns, since its window is only assumed, "
                  "while a lead model that cannot be determined (no transcript, no counted turn, no model id) is not a warning. "
+                 "verify-environment: whether the project declares verify.environment, as 'off' or as 'on' with the version of systemd-run (read with systemd-run --version; nothing is started); "
+                 "it warns on a systemd-run that is missing or older than 254 while the declaration is on with the cpu part on (cpu_quota not null), on a declaration that differs from the one accepted for the project or is invalid, "
+                 "and on the file of accepted declarations (verify-env.json in the state directory) when it cannot be read. "
                  "tools: flock (the locks of the finishing verbs and the ref journal) and timeout (the bound on a question put to a remote) are on PATH; a missing one warns and names what it is for and "
                  "the package that has it (util-linux, coreutils; make bootstrap installs both). "
                  "install: the install records of install.sh (install.d, install.json), read only: the installed tool with its source and version and every runtime installed for the user and in a project; "

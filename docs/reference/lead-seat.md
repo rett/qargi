@@ -1214,6 +1214,13 @@ files, and the tasks that build the seat start only when those files are merged.
 is this page and its test. The rest is not yet produced. The table lists it, says what this page
 already fixes of it, and proposes the wave that produces it `[OPEN O18]`.
 
+`lib/refusals.json` exists from other work, not from task F: it is the catalogue of refusals, and
+it holds the codes of the `verify.environment` refusals, with the sites that print each. Its layout
+follows the rules-visible-early design: a map of codes, each once, with its rule, why, class, exit
+and status. The seat's own codes (R52, R65 and R70) are not in it yet: the second task of wave 0
+adds them, after the lead has decided the open points that change a list, and the reader and the
+store of wave 1 take the codes, their exit and their order from the file as it stands then.
+
 | Not yet produced | Design | Fixed here by | Proposed wave | Why then |
 | --- | --- | --- | --- | --- |
 | `docs/reference/lead-seat-records.md` | 3.1, 3.2 | R9, R11, R14 to R16, R19, R20 | wave 0, a second task | it is where the transition table and the module interfaces go, and wave 1 builds against both |
@@ -1222,7 +1229,6 @@ already fixes of it, and proposes the wave that produces it `[OPEN O18]`.
 | `docs/reference/handoff-note.md` | 3.6 | R46, R47 | wave 5, with the documentation | as above |
 | `docs/reference/lead-readback.md` | 3.7 | R32, R48, R49 | wave 5, with the documentation | as above |
 | `docs/reference/lead-render-manifest.md` | 3.9 | nothing: the render is not part of this page | wave 1, with the render | the task that builds the render describes what it prints |
-| `lib/refusals.json` | 3.3 | R52, R65, R70 | wave 0, a second task | the reader and the store of wave 1 both take the codes, their exit and their order from it |
 | `lib/seat-records.json` | 3.11 | R11, R18 to R22, R32, R46, R48 to R50 | wave 0, a second task | the intake, the read-back check and the store of wave 1 validate records against it |
 | the render manifest (3.9) | 3.9 | nothing | wave 0 for its schema, in `lib/seat-records.json`; wave 1 for its page | the render prints it and the read-back check reads it, in two tasks of wave 1 that run side by side |
 | the module interfaces (3.11) | 3.11 | nothing: this page names no module | wave 0, a second task | the modules of wave 1 are built side by side against them |
