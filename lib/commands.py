@@ -284,7 +284,10 @@ COMMANDS = {
                          [opt("--project", "only the members of this project", "PROJECT", "project")],
                          desc="One row per member, with no header line: PROJECT, NAME, ROLES (comma separated), MODEL/EFFORT, FILE, then in brackets MISSING (the runtime's file is gone), "
                               "STALE (the copy in the configuration directory is gone or changed, or the definition, catalog, renderer or an extension changed since the render) or DRIFT (the file was edited by hand), "
-                              "each followed by the command that fixes it: qargi agent refresh NAME --project P. Members are kept per project, so two projects can each have a worker."),
+                              "each followed by the command that fixes it: qargi agent refresh NAME --project P. Members are kept per project, so two projects can each have a worker. "
+                              "It also keeps, for each project it lists, the time and each member's STALE or DRIFT in STATE/agent-states.json (mode 600; the reading of a project it did not list is kept, "
+                              "a listing of every project replaces the file's projects; a write that fails is ignored and the listing is printed as before): the lead card's line "
+                              "'members STALE or DRIFT as of TIME' (qargi role card lead) is read from it, and without a stored reading there is no line."),
             "rename": verb("Rename a member and its definition", [("OLD", "member"), ("NEW", "none")], [MEMBER_PROJECT_OPT],
                            desc="Within its project. The project is --project, else the one in effect, else the only project that has a member OLD; a name two or more projects hold, with none named or in effect, is refused (exit 2) and lists them."),
             "refresh": verb("Re-render a member from the member definition qargi ships now", [("NAME", "member")], [MEMBER_PROJECT_OPT],
@@ -322,13 +325,26 @@ COMMANDS = {
         "desc": ("A role is a directory with role.json (its class, write or read-only, and a description) and ROLE.md (its instructions). "
                  "Four ship with qargi: build, write, review and test (review is read-only). Add your own under ~/.qargi/config/roles/NAME/: "
                  "a name of one lower-case token, never lead. The class decides what the guard allows a member (read-only: nothing in the clone "
-                 "changes); the text of a role cannot change it. A task block carries the role's text; a cloud agent of the role has it in its system prompt."),
-        "scripts": ["role.py"],
+                 "changes); the text of a role cannot change it. A task block carries the role's text; a cloud agent of the role has it in its system prompt. "
+                 "The card of a role says, before a refusal does, what the role is held to: a member finds it at the end of its task block (CARD:), the lead's session loads it at its start."),
+        "scripts": ["role.py", "rolecard.py"],
         "verbs": {
             "list": verb("List the roles, their class and where they live"),
             "show": verb("Print a role: its class, description and instructions", [("NAME", "workrole")]),
             "prompt": verb("Print a role's instructions as a task block carries them", [("NAME", "workrole")]),
             "check": verb("Validate one role, or all of them", [("[NAME]", "workrole")]),
+            "card": verb("Print the card of a role: what it is held to, said before the guard or a verb refuses it", [("ROLE", "role")],
+                         [PROJECT_OPT, opt("--run", "fill in the real paths of this prepared run (RUN/clone, RUN/out, its temporary directory); without it the words CLONE, OUT and TMP stand for them", "RUN", "dir"),
+                          opt("--json", "one object: role, class, card, words, chars, project, run and members_stale")],
+                         desc=("Read only, and open to a member: nothing is written and no remote is asked. The card is generated from the role's class, the guard's tables, the command description and the catalogue "
+                               "of refusals, and names no runtime. A role of class write gets a short card (work in CLONE, patches and the report in OUT; refused: push, the lead's verbs and directories; a plan you compute "
+                               "goes in the report with its token, never applied; report a refusal's code; run the checks that cover your change, the whole suite is the lead's). A role of class read-only gets the paths "
+                               "it may write (OUT and TMP), how to write its report, how to test patches in a copy, and what is refused. The lead's card lists the gated verbs by area, the verbs only a terminal runs, "
+                               "that a token dies when what it hashed changes (qargi release fix VERSION --record and the dry run before asking), whose words --approved is, and the line 'members STALE or DRIFT as of TIME', "
+                               "read from STATE/agent-states.json, which qargi agent list writes (no stored reading, no line); a line that names a rule whose code is not live in the catalogue is left out. "
+                               "The task block carries the member card, and the lead's session-start hook loads the lead card; a runtime with no start hook runs qargi role card lead. "
+                               "--project is where the lead card reads the stored member states. Exit status: 0; 1 for a role or a run that is not there; 2 for a usage error."),
+                         examples=["qargi role card lead", "qargi role card review --run RUN", "qargi role card build --json"]),
         },
     },
     "feature": {

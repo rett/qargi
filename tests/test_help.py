@@ -142,8 +142,9 @@ class Sync(unittest.TestCase):
                 by_script.setdefault(s, set()).update(doc_flags(cmd))
         ignore = {"--help"}
         # (script, flag) pairs that a script hands to another program and does not parse itself: doctor.py asks systemd-run `--version`, which is
-        # an argument of systemd-run and no flag of `qargi doctor`
-        passed_on = {("doctor.py", "--version")}
+        # an argument of systemd-run and no flag of `qargi doctor`; rolecard.py looks for the flag --plan in the command description to list the verbs that
+        # take a plan on the lead's card, and parses none of it
+        passed_on = {("doctor.py", "--version"), ("rolecard.py", "--plan")}
         for s, documented in by_script.items():
             src = slurp(os.path.join(LIB, s))
             found = set()
@@ -781,6 +782,76 @@ class Infer(Env):
         r = subprocess.run([BIN, "project", "show"], capture_output=True, text=True, stdin=subprocess.DEVNULL)
         self.assertEqual(r.returncode, 2)
         self.assertIn("which project?", r.stderr)
+
+
+class Surface(Env):
+    """What the rules-visible-early change declares (flags, forms, the card, the catalogue help), against what the command line does."""
+
+    def cli(self, *args):
+        return subprocess.run([BIN, *args], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60)
+
+    def test_role_card_goes_to_the_card_generator_and_the_other_role_verbs_to_role_py(self):
+        r = self.cli("role", "card", "build", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        doc = json.loads(r.stdout)
+        self.assertEqual(sorted(doc), ["card", "chars", "class", "members_stale", "project", "role", "run", "words"])
+        self.assertEqual((doc["role"], doc["class"], doc["project"], doc["run"], doc["members_stale"]), ("build", "write", None, None, None))
+        self.assertEqual(doc["words"], len(doc["card"].split()))
+        self.assertEqual(doc["chars"], len(doc["card"]))
+        direct = subprocess.run([sys.executable, "-I", os.path.join(LIB, "rolecard.py"), "card", "build", "--json"], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        self.assertEqual(json.loads(direct.stdout), doc)                         # the same object, by the command and by the module
+        plain = self.cli("role", "card", "build")
+        self.assertEqual((plain.returncode, plain.stdout), (0, doc["card"] + "\n"))
+        listed = self.cli("role", "list")
+        self.assertEqual(listed.returncode, 0, listed.stderr)
+        self.assertIn("build", listed.stdout)
+        self.assertNotIn("Class write", listed.stdout)                           # role list is still role.py's, not the card's
+
+    def test_the_card_of_each_class_and_the_lead_card_with_the_stored_member_states(self):
+        self.assertEqual(json.loads(self.cli("role", "card", "review", "--json").stdout)["class"], "read-only")
+        lead = json.loads(self.cli("role", "card", "lead", "--json").stdout)
+        self.assertEqual(lead["class"], "lead")
+        self.assertIsNone(lead["members_stale"])
+        with open(os.path.join(self.t, "s", "agent-states.json"), "w") as f:
+            json.dump({"schema": 1, "projects": {"alpha": {"at": "2026-11-21T10:00:00Z", "members": {"forge": ["STALE"], "fine": []}}}}, f)
+        os.chmod(os.path.join(self.t, "s", "agent-states.json"), 0o600)
+        stale = json.loads(self.cli("role", "card", "lead", "--project", "alpha", "--json").stdout)
+        self.assertEqual(stale["project"], "alpha")
+        self.assertEqual(stale["members_stale"], {"as_of": "2026-11-21T10:00:00Z", "members": {"forge": ["STALE"]}})
+        self.assertIn("forge (STALE)", stale["card"])
+
+    def test_a_run_fills_in_its_paths(self):
+        run = os.path.join(self.t, "run")
+        for d in ("clone", "out", "tmp"):
+            os.makedirs(os.path.join(run, d))
+        with open(os.path.join(run, "tmpdir"), "w") as f:
+            f.write(os.path.join(run, "tmp") + "\n")
+        r = self.cli("role", "card", "review", "--run", run)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(os.path.join(run, "out"), r.stdout)
+        self.assertEqual(json.loads(self.cli("role", "card", "review", "--run", run, "--json").stdout)["run"], run)
+
+    def test_the_exit_statuses_of_the_card(self):
+        for args, code, words in ((["role", "card", "nobody"], 1, "no role named nobody"),
+                                  (["role", "card", "build", "--run", os.path.join(self.t, "none")], 1, "is not a run directory"),
+                                  (["role", "card"], 2, "usage:"), (["role", "card", "build", "--nope"], 2, "unknown option"),
+                                  (["role", "card", "build", "--project"], 2, "needs a value"), (["role", "card", "build", "extra"], 2, "unexpected argument")):
+            r = self.cli(*args)
+            self.assertEqual((r.returncode, r.stdout), (code, ""), args)
+            self.assertIn(words, r.stderr, args)
+
+    def test_the_card_is_declared_and_agent_list_says_where_it_stores_the_states(self):
+        card = verbs("role")["card"]
+        self.assertEqual({o["flag"] for o in card["opts"]}, {"--project", "--run", "--json"})
+        self.assertEqual([a[0] for a in card["args"]], ["ROLE"])
+        self.assertIn("rolecard.py", C.COMMANDS["role"]["scripts"])
+        self.assertIn("STATE/agent-states.json", verbs("agent")["list"]["desc"])
+        self.assertEqual(H.complete(["role", ""]), ["list", "show", "prompt", "check", "card"])
+        self.assertIn("lead", H.complete(["role", "card", ""]))
+        self.assertEqual(sorted(H.complete(["role", "card", "build", "--"])), ["--help", "--json", "--project", "--run"])
+        text = " ".join(self.cli("help", "role", "card").stdout.split())
+        self.assertIn("qargi role card lead", text)
+        self.assertIn("open to a member", text)
 
 
 class ProviderNameHelp(unittest.TestCase):
