@@ -430,6 +430,29 @@ class Review(HookCase):
         self.assertEqual(self.call("Bash", {"command": cmd}, c).returncode, 2, cmd)
         self.assertEqual(self.call("Bash", {"command": cmd}, tmp).returncode, 0, cmd)
 
+    def test_an_init_with_a_git_dir_or_an_abbreviated_separate_git_dir_is_judged_at_every_place_it_writes(self):
+        """git init uses --git-dir (or GIT_DIR) as its repository, so that directory is written whatever DIR says; git takes any unique prefix of a long option, so
+        --separate-git, --sep and --se=DIR name the --separate-git-dir directory too. Refused from a shell in the clone and from one in TMP, under both classes."""
+        self.ability("review")
+        c, tmp = self.clone, os.path.join(self.run, "tmp")
+        os.makedirs(tmp)
+        refused = ["git --git-dir=%s/.git init %s/y" % (c, tmp), "git --git-dir %s/.git init %s/y" % (c, tmp), "git --git-dir=%s/g init %s/y" % (c, tmp),
+                   "git --git-dir=../../clone/.git init %s/y" % tmp, "git -C %s --git-dir=../clone/.git init y" % tmp, "GIT_DIR=%s/.git git init %s/y" % (c, tmp),
+                   "GIT_DIR=../../clone/.git git init %s/y" % tmp,
+                   "git init --separate-git %s/g %s/z" % (c, tmp), "git init --sep %s/g %s/z" % (c, tmp), "git -C %s init --separate-git ../clone/g z" % tmp,
+                   "git init --se=%s/g %s/z" % (c, tmp), "git clone --separate-git %s/g %s %s/x" % (c, c, tmp), "git init --separate-git-dir=%s/g %s/z" % (c, tmp)]
+        passes = ["git --git-dir=%s/y/.git init %s/y" % (tmp, tmp), "git --git-dir=g init %s/y" % tmp, "git init --separate-git %s/g %s/z" % (tmp, tmp),
+                  "git init --se=%s/g %s/z" % (tmp, tmp), "git -C %s init --separate-git g z" % tmp, "git clone --separate-git %s/g %s %s/x" % (tmp, c, tmp)]
+        for cls in ((), ("--class", "read-only")):
+            for cwd in (c, tmp):
+                for cmd in refused:
+                    r = self.call("Bash", {"command": cmd}, cwd, *cls)
+                    self.assertEqual(r.returncode, 2, (cmd, cwd, cls, r.stderr))
+        for cls in ((), ("--class", "read-only")):                  # the same forms with only places of TMP are no change of the clone, from a shell in TMP
+            for cmd in passes:
+                r = self.call("Bash", {"command": cmd}, tmp, *cls)
+                self.assertEqual(r.returncode, 0, (cmd, tmp, cls, r.stderr))
+
     def test_a_clone_or_an_init_with_no_directory_is_judged_where_git_runs(self):
         """With no DIR the tree is made in the directory git runs in: the shell's, or the one the -C options give."""
         self.ability("review")
@@ -664,6 +687,21 @@ class RefusalCodes(HookCase):
             self.assertEqual((e["exit"], e["status"], e["fields"]), (2, "live", {}), code)
             self.assertEqual(e["next"], {"lead": self.J.m.GUARD_NEXT[code], "host": self.J.m.GUARD_NEXT[code]}, code)
             self.assertTrue(e["sites"], code)
+
+    def test_the_sites_of_a_code_start_with_it_and_list_every_family_of_sentence_that_is_coded_so(self):
+        """The sites of the catalogue are the sentences the guard prints under a code: each starts `[CODE] qargi guard: `, the four run-record refusals are four sites,
+        and the lead's verbs list what skill_verb codes besides the lead's own sentence (a change of a skill, qargi upgrade, a verb a variable builds)."""
+        with open(os.path.join(LIBDIR, "refusals.json"), encoding="utf-8") as f:
+            codes = json.load(f)["codes"]
+        for code, e in codes.items():
+            if e["class"] == "guard":
+                for site in e["sites"]:
+                    self.assertTrue(site["text"].startswith("[%s] qargi guard: " % code), (code, site))
+        self.assertEqual(len(codes["member-run-record"]["sites"]), len({s["text"] for s in codes["member-run-record"]["sites"]}))
+        self.assertGreaterEqual(len(codes["member-run-record"]["sites"]), 4)
+        texts = " ".join(s["text"] for s in codes["member-lead-verb"]["sites"])
+        for words in ("changes a skill", "qargi upgrade", "a verb that a variable or a substitution builds", "is the lead's (it prepares", "qargi marshal"):
+            self.assertIn(words, texts)
 
     def test_a_coded_refusal_keeps_the_kind_of_its_advice(self):
         m = self.J.m

@@ -624,6 +624,20 @@ class ThePage(Tree):
         for code in real()["codes"]:
             self.assertEqual(len(re.findall(r"^### %s$" % re.escape(code), text, re.M)), 1, code)
 
+    def test_the_print_sites_of_a_code_are_counted_and_pointed_at_by_its_class(self):
+        """One site is `1 site`; a verify.environment code points at that page and a guard code at the guard's own text, never at the other's."""
+        text = R.page_text(real())
+        self.assertIsNone(re.search(r"(?<!\d)1 sites", text))
+        for code, e in real()["codes"].items():
+            if not e.get("sites"):
+                continue
+            n = len(e["sites"])
+            body = text.split("### %s\n" % code, 1)[1].split("\n### ", 1)[0]
+            line = next(l for l in body.splitlines() if l.startswith("- Printed at "))
+            self.assertTrue(line.startswith("- Printed at %d site%s; " % (n, "" if n == 1 else "s")), (code, line))
+            self.assertEqual("(verify-environment.md)" in line, e["class"] == "verify-environment", (code, line))
+            self.assertEqual("qargi help guard" in line, e["class"] == "guard", (code, line))
+
     def test_a_stale_or_missing_page_is_a_problem(self):
         self.cat(real())
         self.assertTrue(any("missing" in p for p in R.check_page(real(), self.root)))

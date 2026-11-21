@@ -1547,7 +1547,7 @@ GUARD_NEXT = {                                       # the families of refusal l
     "ro-second-tree": "clone into TMP with git -C TMP clone CLONE x, then work in TMP/x",
     "ro-env-restricted": "pass the path as an argument instead of assigning the variable",
     "member-push": "return patches in OUT; the lead takes them in",
-    "member-lead-verb": "report what you needed in your report; the lead runs the verb",
+    "member-lead-verb": "report what you need in your task output; the lead, or the owner for a skill, runs the verb",
     "member-run-record": "write your outputs in OUT and report; the lead's registry records the run",
 }
 
@@ -1878,6 +1878,10 @@ def write_targets(toks, i):
                 sub = rest[k] if k < len(rest) else ""
                 if sub in GIT_WRITES and not (sub == "tag" and lists_tags(rest[k + 1:])):
                     new_dir, separate, sure = git_new_tree(sub, rest[k + 1:]) if sub in GIT_NEW_TREE else (None, [], True)
+                    gitdirs = [v for n, v in opts if n == "--git-dir" and v] + [t.split("=", 1)[1] for t in toks[:i] if t.startswith("GIT_DIR=")]
+                    if sub == "init" and gitdirs:                                     # git init uses that git directory as the repository (git clone ignores it): the place git runs is judged too
+                        sure = False
+                        targets += [("git init", g) for d in (chdir, git_under(chdir, new_dir) if new_dir is not None else chdir) for g in (git_under(d, v) for v in gitdirs)]    # a relative one from the -C options, and from DIR
                     if new_dir is None or not sure:                                   # judged where git runs: the tree is made in that directory, or the operands are not known
                         targets.append(("git " + sub, gitdir or "."))
                         if chdir != gitdir:
@@ -1942,6 +1946,8 @@ def git_new_tree(sub, args):
             places.append(a)
         elif a.startswith("--"):
             name, eq, value = a.partition("=")
+            if name not in values and len(name) > 2 and "--separate-git-dir".startswith(name) and "--separate-git-dir" in values:
+                name = "--separate-git-dir"                            # git takes any prefix of a long option (--separate-git, --se) when it is the only one
             if name in values:
                 if not eq:
                     value = args[k] if k < len(args) else None

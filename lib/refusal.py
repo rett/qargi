@@ -36,6 +36,8 @@ CATALOGUE = os.path.join("lib", "refusals.json")
 PAGE = os.path.join("docs", "reference", "refusals.md")
 SEAT_PAGE = os.path.join("docs", "reference", "lead-seat.md")
 RATCHET = os.path.join("tests", "refusal-sites.txt")
+SITES_SEE = {"verify-environment": "[verify.environment](verify-environment.md) describes them.",       # per class: where the sites of a code that no verb raises are described
+             "guard": "`qargi help guard` says what a member's guard refuses."}
 CONTRACT = "qargi-refusal/1"
 LINE_MAX = 4096
 PLAN_DAYS = 7                       # a stored plan is kept this long
@@ -494,7 +496,7 @@ def page_text(cat):
            "`plan-stale` says which labels differ between the plan that was shown and the plan now (`moved`), or `unrecorded` when either plan was",
            "planned without a basis. Nothing is kept in a dry run.", "",
            "## Statuses", "",
-           "- `live`: a verb of this build raises the code (or, for the `verify.environment` codes, prints it at the sites the catalogue lists).",
+           "- `live`: a verb of this build raises the code (or, for the `verify.environment` codes and the guard's, prints it at the sites the catalogue lists).",
            "- `planned`: written down so that it is reviewed early; no verb raises it yet.",
            "- `withdrawn`: no longer raised; the code is never reused.", "",
            "The codes of the classes `seat-gate` and `seat-door` are the lists of R52 and R70 of the [lead seat contract](lead-seat.md); the lint",
@@ -522,7 +524,8 @@ def page_text(cat):
             if e["next"]["host"] != e["next"]["lead"]:
                 out.append("- Next, in the owner's own session (`host`): %s" % e["next"]["host"])
             if e.get("sites"):
-                out.append("- Printed at %d sites; [verify.environment](verify-environment.md) describes them." % len(e["sites"]))
+                n = len(e["sites"])
+                out.append("- Printed at %d site%s; %s" % (n, "" if n == 1 else "s", SITES_SEE.get(e["class"], "the catalogue lists them.")))
             out.append("")
     while out[-1] == "":
         out.pop()
