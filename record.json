@@ -4,19 +4,13 @@
  "goal": "0.3.5: verify-environment, rules-visible-early slice, runtime-per-profile",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "rett@arc",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-20T02:41:17Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-21T04:38:12Z",
- "finished_at": null,
+ "finished_at": "2026-11-21T04:38:27Z",
  "updated_by": "rett@arc",
- "rev": 21,
- "updated_at": "2026-11-21T04:38:12Z",
+ "rev": 22,
+ "updated_at": "2026-11-21T04:38:27Z",
  "feature": "release-035",
  "project": "qargi"
 }
