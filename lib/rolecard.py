@@ -7,8 +7,8 @@ prints the card of ROLE, read-only (nothing is written, nothing is asked of a re
 class (lib/role.py), the verbs that take a plan (lib/commands.py), the status of the codes of the catalogue of refusals (lib/refusals.json) and,
 for a lead, the member states the last `qargi agent list` stored. Three cards exist:
 
-  write      a role of class write (build, write, test and the roles of the owner's own of that class): 110 words at most
-  read-only  a role of class read-only (review): 185 words at most, the run's real paths filled in
+  write      a role of class write (build, write, test and the roles of the owner's own of that class): 135 words at most
+  read-only  a role of class read-only (review): 215 words at most, the run's real paths filled in
   lead       the lead role: 220 words and 1600 characters at most, the card the session-start hook loads
 
 --run RUN fills in the paths of a prepared run (RUN/clone, RUN/out, the TMP that RUN/tmpdir names); without it the words CLONE, OUT and TMP stand
@@ -27,16 +27,18 @@ Library use: card(), probes(), words(). The hook calls this file for the lead ro
 import json
 import os
 import re
+import stat
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
-CEILING = {"write": 110, "read-only": 185, "lead": 220}      # words, the card's own text with each path counted as one word
+CEILING = {"write": 135, "read-only": 215, "lead": 220}      # words, the card's own text with each path counted as one word (both member cards carry the line on text the guard reads as a command)
 LEAD_CHARS = 1600                                            # the session-start hook's room for the lead card
 NAME_RE = re.compile(r"[a-z][a-z0-9-]{0,40}")
 STATES = ("STALE", "DRIFT")                                  # the member states the lead card tells of (MISSING is `agent list`'s own line)
+READ_MAX = 64 * 1024                                         # the most of agent-states.json that is read: the hook has two seconds, and the file is data
 SHOWN = 3                                                    # members named on the lead's line; the rest are +N
 USAGE = "usage: rolecard.py card ROLE [--project P] [--run RUN] [--json]"
 CLASSES = ("write", "read-only")
@@ -51,26 +53,33 @@ class Exit(Exception):
 # Each line is (text, allowed, refused): the commands the text calls lawful and the ones it calls refused, with {clone}, {out}, {tmp} and {run}
 # filled in. A command in backticks that starts with `git` or `cp` stands in the lists, so a card says nothing the guard has not been asked.
 
+TEXT_LINE = ("A line, even in a heredoc, a quoted string or a commit message, that starts with git push, ssh or gh is refused: write such text with your file tool.",
+             (), ("cat > {out}/report.md <<'EOF'\ngit push origin x\nEOF", "cat > {out}/report.md <<'EOF'\nssh host\nEOF", "echo 'a\ngh pr list' > {out}/report.md",
+                  "cat > {out}/report.md <<'EOF'\ngh pr view\nEOF"))
+
 READ_ONLY = (
     ("Class read-only (a barrier, not a sandbox):", (), ()),
-    ("Read anything but the lead's keys. Write only OUT and TMP; a build or test tool's caches are not judged.",
+    ("Read anything but the lead's keys; write only OUT and TMP (tool caches are not judged).",
      ("cat {clone}/README.md", "echo x > {tmp}/note", "echo x > {out}/report.md"), ("cat ~/.qargi/config/credentials/marshal_signing", "echo x > {clone}/note")),
-    ("Do not run the whole suite; run only the checks that cover what you review.", (), ()),
-    ("The report is OUT/report.md. If the file tool is refused: `qargi local report {run} < FILE`, or `--from NAME` for a file in OUT (it reads OUT only).",
+    ("Do not run the whole suite, only the checks that cover what you review.", (), ()),
+    ("The report is OUT/report.md; if the file tool is refused, `qargi local report {run} < FILE` or `--from NAME` (it reads OUT only).",
      ("qargi local report {run} < {tmp}/report.md", "qargi local report {run} --from report.md"), ()),
     ("To test patches, copy in TMP: `git -C {tmp} clone {clone} x` (a relative directory lands under -C: {tmp}/x), then `git -C {tmp}/x am {out}/NAME.patch`; "
-     "or `cp -a {clone} {tmp}/x`. In the copy git is yours, except push and remote changes.",
+     "or `cp -a {clone} {tmp}/x`. In the copy only push and remote changes are refused.",
      ("git -C {tmp} clone {clone} x", "git -C {tmp}/x am {out}/NAME.patch", "cp -a {clone} {tmp}/x", "git clone {clone} {tmp}/x", "git -C {tmp}/x commit -am x",
       "git -C {tmp}/x checkout -b y", "git -C {tmp}/x stash"),
      ("git -C {tmp}/x push", "git -C {tmp}/x remote add o u")),
-    ("Refused: changes in CLONE (checkout, stash, apply), `git worktree add` from CLONE, a clone or an init inside CLONE.",
+    ("Refused in CLONE: checkout, stash, apply, `git worktree add`, a clone or an init inside it.",
      (),
      ("git -C {clone} checkout main", "git -C {clone} stash", "git -C {clone} apply {out}/p.patch", "git -C {clone} worktree add {tmp}/w", "git clone {tmp} {clone}/x",
       "git init {clone}/y", "git -C {clone} init sub")),
     ("Read BASE with `git show BASE_SHA:PATH` and `git diff BASE_SHA`.", ("git show abc123:PATH", "git diff abc123"), ()),
-    ("Do not assign PATH, HOME, TMPDIR, GIT_*, LD_*, BASH_*; pass the TMP path as an argument. Other build variables (a target platform) and `systemd-run` in TMP are allowed.",
+    ("Assign no variable that picks a program or options (PATH, HOME, TMPDIR, GIT_*, LD_*, BASH_*, PYTHONPATH, NODE_OPTIONS, ...; see `qargi help guard`). "
+     "TMPDIR is TMP, where Go tests write. A target platform (GOOS, GOARCH) and `systemd-run` in TMP are allowed.",
      ("GOOS=linux go build ./...", "GOARCH=arm64 go test ./...", "cd {tmp}/x && systemd-run --user --scope make test"),
-     ("PATH=/x ls", "export HOME=/x", "TMPDIR={tmp} go test ./...", "GIT_DIR=x git log", "LD_PRELOAD=x ls", "BASH_ENV=x ls")),
+     ("PATH=/x ls", "export HOME=/x", "TMPDIR={tmp} go test ./...", "GIT_DIR=x git log", "LD_PRELOAD=x ls", "BASH_ENV=x ls", "PYTHONPATH=src python3 -m pytest",
+      "env PYTHONPATH=src pytest", "NODE_OPTIONS=--x npm test", "NODE_PATH=x npm test")),
+    TEXT_LINE,
     ("Report a refusal's [code]; do not work round it.", (), ("git push",)),
 )
 
@@ -91,6 +100,7 @@ WRITE = (
      ("qargi release push 1.0", "qargi release plan 1.0"), ()),
     ("Report a refusal's [code]; do not work round it.", (), ()),
     ("Run only the checks that cover your change; the lead runs the suite.", (), ()),
+    (TEXT_LINE[0], (), TEXT_LINE[2] + ("git commit -m 'x\nssh host' --allow-empty",)),
 )
 
 
@@ -161,14 +171,35 @@ def state_dir():
     return paths.state()
 
 
+def read_regular(path, limit=READ_MAX):
+    """The text of the regular file at path, at most limit bytes of it; an OSError for anything else: a link (a link to /dev/zero would fill memory), a pipe or a
+    device (a read would wait, the hook has two seconds), a directory, a file longer than limit. The file is opened without following a link and without
+    waiting for a writer, and what it is is asked of the descriptor opened, not of the name."""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0))
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > limit:
+            raise OSError("not a regular file of at most %d bytes: %s" % (limit, path))
+        data = b""
+        while len(data) <= limit:
+            chunk = os.read(fd, limit + 1 - len(data))
+            if not chunk:
+                break
+            data += chunk
+        if len(data) > limit:
+            raise OSError("longer than %d bytes: %s" % (limit, path))
+        return data.decode("utf-8")
+    finally:
+        os.close(fd)
+
+
 def stale_members(project, state=None):
     """(as_of, {member: [STALE | DRIFT]}) from the last `qargi agent list` of the project, or None: no stored reading, an unreadable one, or no member in a
     listed state. The file is data: a name or a state that is not of the form qargi writes is left out."""
     if not project:
         return None
     try:
-        with open(os.path.join(state or state_dir(), "agent-states.json"), encoding="utf-8") as f:
-            doc = json.load(f)
+        doc = json.loads(read_regular(os.path.join(state or state_dir(), "agent-states.json")))
         entry = doc["projects"][project]
         at, members = entry["at"], entry["members"]
     except (OSError, ValueError, KeyError, TypeError):
