@@ -474,6 +474,11 @@ _refusal() { # refuse|notice CODE key=value...
   local mode=$1; shift
   python3 -I "$QARGI_TOOL/lib/refusal.py" "$mode" --verb "${QARGI_VERB:-${verb:-}}" --project "${PROJECT:-}" --role "${QARGI_ROLE:-}" "$@"
 }
+# dry_stop HELPER: a dry run (QARGI_DRY set, as `--dry-run` sets it) changes nothing, so a helper that writes calls this first: reached in a dry run it is a
+# defect of the verb, not a refusal, and exits 70 naming the helper, before it takes a lock or makes a file. Outside a dry run it returns at once.
+dry_stop() {
+  [ -z "${QARGI_DRY:-}" ] || { echo "qargi: defect: $1 was reached in a dry run (QARGI_DRY is set): a dry run changes nothing, so this path must not write" >&2; exit 70; }
+}
 usage_die() { echo "qargi: $*" >&2; exit 2; }   # a usage error (unknown option, missing argument, a usage line): exit 2, as the manual page promises
 need_val() { # OPTION "$#" -> exit 2 when a valued option is the last word: call it first in each valued branch of an option loop
   [ "$2" -ge 2 ] || { echo "qargi: $1 needs a value" >&2; exit 2; }
@@ -487,6 +492,7 @@ run_clean() { # DIR COMMAND...: runs a command in DIR without the project's clou
 # said>": the quote is stored in the tracker so the choice is auditable.
 # Commands that call audit_log append their supplied request and approval words here.
 audit_log() { # verb [detail]
+  dry_stop audit_log
   local f=$DA_STATE/audit.log line rc=0
   # AUDIT_ORIGIN (set by the supervisor only) adds an origin field, so its lines can be told from the owner's
   line=$(jq -nc --arg t "$(now)" --arg v "$1" --arg d "${2:-}" --arg a "${ASKED:-}" --arg p "${APPROVED:-}" --arg n "${NESTED_SKIPPED:-}" --arg o "${AUDIT_ORIGIN:-}" \
@@ -548,6 +554,7 @@ need_asked() {
 
 # json_update FILE JQ_FILTER [jq args...]: atomic, locked in-place update.
 json_update() {
+  dry_stop json_update
   local file=$1 filter=$2; shift 2
   (
     flock 9

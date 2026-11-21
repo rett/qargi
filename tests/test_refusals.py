@@ -406,6 +406,72 @@ class ThePlanBasis(unittest.TestCase):
         self.assertEqual(R.basis_moved(self.token("a\n", "x y")[1], self.token("a\n", "x y")[1]), [])
 
 
+class TheDryStops(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="drystop.")
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.state = os.path.join(self.dir, "state")
+        os.makedirs(self.state)
+        self.file = os.path.join(self.dir, "data.json")
+        with open(self.file, "w") as f:
+            f.write('{"n":1}\n')
+        self.run_sh("true")             # the first load makes the state and the configuration: what a dry run must not add is what comes after
+
+    def run_sh(self, script, **env):
+        return sh(script, QARGI_STATE=self.state, QARGI_CONF=os.path.join(self.dir, "conf"), DATA=self.file, **env)
+
+    def listing(self):
+        return sorted(os.listdir(self.state)) + sorted(os.listdir(os.path.join(self.dir, "conf"))) + sorted(os.listdir(self.dir))
+
+    def test_audit_log_writes_one_line_outside_a_dry_run(self):
+        rc, out, err = self.run_sh('audit_log demo "some detail"')
+        self.assertEqual((rc, out, err), (0, "", ""))
+        with open(os.path.join(self.state, "audit.log"), encoding="utf-8") as f:
+            lines = f.read().splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertEqual((json.loads(lines[0])["verb"], json.loads(lines[0])["detail"]), ("demo", "some detail"))
+        rc, _, _ = self.run_sh('audit_log demo again', QARGI_DRY="")
+        self.assertEqual(rc, 0, "an empty QARGI_DRY is no dry run")
+
+    def test_audit_log_in_a_dry_run_is_a_defect_that_writes_nothing_and_takes_no_lock(self):
+        before = self.listing()
+        rc, out, err = self.run_sh('audit_log demo x; echo after', QARGI_DRY="1")
+        self.assertEqual((rc, out), (70, ""))
+        self.assertEqual(err, "qargi: defect: audit_log was reached in a dry run (QARGI_DRY is set): a dry run changes nothing, so this path must not write\n")
+        self.assertEqual(self.listing(), before)
+        self.assertFalse(os.path.exists(os.path.join(self.state, "audit.log")))
+        self.assertFalse(os.path.exists(os.path.join(self.state, "audit.log.lock")))
+
+    def test_need_asked_audits_first_so_it_stops_in_a_dry_run_too(self):
+        rc, out, err = self.run_sh('verb=start; need_asked; echo after', QARGI_DRY="1")
+        self.assertEqual((rc, out), (70, ""))
+        self.assertIn("audit_log was reached", err)
+
+    def test_json_update_updates_outside_a_dry_run(self):
+        rc, out, err = self.run_sh('json_update "$DATA" ".n = 2"')
+        self.assertEqual((rc, out, err), (0, "", ""))
+        with open(self.file) as f:
+            self.assertEqual(json.load(f), {"n": 2})
+        self.assertTrue(os.path.exists(self.file + ".lock"))
+
+    def test_json_update_in_a_dry_run_is_a_defect_that_changes_nothing_and_makes_no_lock_file(self):
+        before = self.listing()
+        rc, out, err = self.run_sh('json_update "$DATA" ".n = 2"; echo after', QARGI_DRY="1")
+        self.assertEqual((rc, out), (70, ""))
+        self.assertIn("qargi: defect: json_update was reached in a dry run", err)
+        with open(self.file) as f:
+            self.assertEqual(f.read(), '{"n":1}\n')
+        self.assertEqual(self.listing(), before)
+        self.assertFalse(os.path.exists(self.file + ".lock"))
+        self.assertFalse(os.path.exists(self.file + ".tmp"))
+
+    def test_dry_stop_is_for_any_writing_helper_and_names_it(self):
+        self.assertEqual(self.run_sh('dry_stop journal_line; echo after')[:2], (0, "after\n"))
+        rc, out, err = self.run_sh('dry_stop journal_line; echo after', QARGI_DRY="1")
+        self.assertEqual((rc, out), (70, ""))
+        self.assertIn("journal_line was reached in a dry run", err)
+
+
 class WhatTheSourceRaises(Tree):
     def test_a_raise_is_found_at_the_start_of_a_command_and_a_comment_is_not_one(self):
         self.put("lib/a.sh", "x() {\n  # refuse demo-code verb=no\n  [ a ] || refuse demo-code verb=\"$v\" n=2; true\n  if y; then notice demo-code ref=\"$r\"; fi\n"
