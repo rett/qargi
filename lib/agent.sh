@@ -1014,7 +1014,7 @@ case $verb in
     case $f in *.agents/*) echo "qargi: note: a worktree that linked it still has a dangling link; qargi project link $mproj --resource agents drops it" >&2;; esac;;
   for)
     a=${POS[0]:-}
-    [ -n "$a" ] && [ "$a" != lead ] && valid_role "$a" || usage_die "usage: qargi agent for ROLE [--profile P] [--project P] [--json]   (a role of: $DA_ROLES)"
+    [ -n "$a" ] && [ "$a" != lead ] && valid_role "$a" || usage_die "usage: qargi agent for ROLE [--profile P] [--runtime NAME] [--project P] [--json]   (a role of: $DA_ROLES)"
     [ -z "$PROFILE" ] || printf '%s' "$PROFILE" | grep -Eq '^[a-z][a-z0-9-]{0,30}$' || usage_die "--profile: a profile name (lower-case letters, digits and '-', at most 31)"
     [ -z "$RUNTIME" ] || printf '%s' "$RUNTIME" | grep -Eq '^[a-z][a-z0-9-]{0,40}$' || usage_die "--runtime: a runtime name (lower-case letters, digits and '-', at most 41)"
     [ -n "$PROJ" ] || PROJ=$(pymod help infer)
