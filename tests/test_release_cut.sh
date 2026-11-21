@@ -44,6 +44,7 @@ cat > "$T/lockrun.sh" <<'S'
 set -u
 die() { echo "die: $*"; exit 1; }
 now() { echo 2026-01-01T00:00:00Z; }
+dry_stop() { :; }   # lib/lib.sh's: the helpers under test stop in a dry run, which is not this case
 DA_STATE=$1; PROJ=app; . "$2"
 case $3 in
   intent) intent_write k '{"a":1}';;
@@ -450,5 +451,80 @@ git -C "$R" checkout -q master; printf '# Changelog\r\n\r\n## [Unreleased]\r\n\r
 git -C "$R" commit -q -am "crlf" && git -C "$R" branch -f develop master && git -C "$R" checkout -q parked
 rstart 0.1.1 --hotfix --date 2026-05-06 >/dev/null 2>&1
 git -C "$R" show hotfix/0.1.1:CHANGELOG.md | cmp -s - <(printf '# Changelog\r\n\r\n## [Unreleased]\r\n\r\n## [0.1.1] - 2026-05-06\r\n\r\n### Added\r\n- a thing\r\n') && ok "CRLF changelog, default layout: the released heading is inserted with CRLF and nothing else changes" || no "crlf default layout: $(git -C "$R" show hotfix/0.1.1:CHANGELOG.md 2>&1 | od -c | head -8)"
+
+# --- the allow-list of a dry run (QARGI_DRY=1): g and ghq pass what reads and end the verb with 70 on anything else; the writing helpers stop; without the
+# variable everything passes through. The functions are the ones of lib/gitflow.sh, run as they are.
+mk dry
+ROOTD=${DA%/bin/qargi}
+git -C "$R" remote add origin "$T/dry-origin.git" 2>/dev/null; git init -q --bare "$T/dry-origin.git"
+printf '#!/usr/bin/env bash\necho "$*" >> "%s/ghq.log"\n' "$T" > "$T/ghstub"; chmod +x "$T/ghstub"
+# dryrun CMD ARGS...: the command (g or ghq, or a helper) of lib/gitflow.sh in a shell of its own, with a dry run on when DRY is set; prints its status
+dryrun() {
+  DRYV=${DRY:-} bash -c '. "$1/lib/lib.sh"; . "$1/lib/gitflow.sh"; REPO=$2; GH=$3; PROJ=app; shift 3; [ -z "$DRYV" ] || export QARGI_DRY=1; "$@"' x "$ROOTD" "$R" "$T/ghstub" "$@" >/dev/null 2>"$T/dry.err" </dev/null
+  echo $?
+}
+ensure=''
+for form in "rev-parse HEAD" "rev-list --count HEAD" "merge-base HEAD HEAD" "log -1" "show HEAD" "diff --stat" "diff-tree HEAD" "cat-file -t HEAD" "ls-tree HEAD" "for-each-ref" \
+            "ls-remote origin" "describe --always" "name-rev HEAD" "check-ref-format refs/heads/x" "status" "config --get user.name" "config --get-all user.name" "remote get-url origin" \
+            "branch --show-current" "branch --list" "tag --list" "worktree list" "symbolic-ref HEAD" "symbolic-ref -q --short HEAD"; do
+  rc=$(DRY=1 dryrun g $form)
+  [ "$rc" != 70 ] && ! grep -q "reached in a dry run" "$T/dry.err" || { no "dry run: g $form was refused: rc=$rc $(cat "$T/dry.err")"; ensure=bad; }
+done
+[ -z "$ensure" ] && ok "a dry run passes the reading forms of g: rev-parse, rev-list, merge-base, log, show, diff, diff-tree, cat-file, ls-tree, for-each-ref, ls-remote, describe, name-rev, check-ref-format, status and the listed forms of config, remote, branch, tag, worktree, symbolic-ref"
+before=$({ git -C "$R" for-each-ref; git -C "$R" worktree list; git -C "$R" config --list --local; cat "$R/.git/HEAD"; } | md5sum); ensure=''
+for form in "push origin master" "fetch origin" "update-ref refs/heads/zz HEAD" "commit --allow-empty -m x" "merge HEAD" "worktree add $T/zz-wt" "config user.name x" "config --unset user.name" "branch -d develop" \
+            "branch zz" "tag zz" "tag -d zz" "symbolic-ref HEAD refs/heads/zz" "symbolic-ref -d HEAD" "remote add other /nowhere" "reset --hard" "frobnicate" "checkout -b zz" "stash" "gc" "worktree prune"; do
+  rc=$(DRY=1 dryrun g $form)
+  [ "$rc" = 70 ] && grep -q "defect: git ${form%% *}.* was reached in a dry run" "$T/dry.err" || { no "dry run: g $form was not refused with 70: rc=$rc $(cat "$T/dry.err")"; ensure=bad; }
+done
+[ -z "$ensure" ] && ok "a dry run ends the verb with 70 on push, fetch, update-ref, commit, merge, worktree add, config NAME VALUE, branch -d, tag NAME, an unknown subcommand and the rest, naming the subcommand"
+[ "$before" = "$({ git -C "$R" for-each-ref; git -C "$R" worktree list; git -C "$R" config --list --local; cat "$R/.git/HEAD"; } | md5sum)" ] && ok "and none of them changed the repository" || no "a refused form changed the repository"
+ensure=''
+for form in "push origin develop" "fetch origin" "tag zz-open" "update-ref refs/heads/zz-open HEAD" "branch zz-open2"; do
+  rc=$(dryrun g $form)
+  [ "$rc" != 70 ] || { no "without a dry run g $form was refused: $(cat "$T/dry.err")"; ensure=bad; }
+done
+git -C "$R" rev-parse -q --verify refs/tags/zz-open >/dev/null && git -C "$R" rev-parse -q --verify refs/heads/zz-open >/dev/null && [ -z "$ensure" ] && ok "without QARGI_DRY=1 g is plain git: the writing forms pass through" || no "g without a dry run: $ensure"
+: > "$T/ghq.log"; ensure=''
+for form in "auth status" "repo view" "pr view 1" "pr list" "pr checks 1" "release view v1" "release list" "-R acme/x pr list --head b" "--repo acme/x release view v1"; do
+  rc=$(DRY=1 dryrun ghq $form)
+  [ "$rc" = 0 ] || { no "dry run: ghq $form was refused: rc=$rc $(cat "$T/dry.err")"; ensure=bad; }
+done
+[ -z "$ensure" ] && [ "$(wc -l < "$T/ghq.log")" = 9 ] && ok "a dry run passes the reading forms of ghq: auth status, repo view, pr view, pr list, pr checks, release view, release list (after -R or --repo)" || no "ghq reading forms: $ensure $(cat "$T/ghq.log")"
+: > "$T/ghq.log"; ensure=''
+for form in "release create v1" "pr create --base master" "api repos/acme/x" "pr merge 1" "-R acme/x pr close 1" "-R" "issue list" "auth login"; do
+  rc=$(DRY=1 dryrun ghq $form)
+  [ "$rc" = 70 ] && grep -q "defect: gh .* was reached in a dry run" "$T/dry.err" || { no "dry run: ghq $form was not refused with 70: rc=$rc $(cat "$T/dry.err")"; ensure=bad; }
+done
+[ -z "$ensure" ] && [ ! -s "$T/ghq.log" ] && ok "a dry run ends the verb with 70 on gh release create, pr create, api and the rest, and gh is not run" || no "ghq refused forms: $ensure $(cat "$T/ghq.log")"
+ensure=''; for form in "release create v1" "pr create --base master" "api repos/acme/x"; do rc=$(dryrun ghq $form); [ "$rc" = 0 ] || ensure=bad; done
+[ -z "$ensure" ] && [ "$(wc -l < "$T/ghq.log")" = 3 ] && ok "without QARGI_DRY=1 ghq is plain gh" || no "ghq without a dry run: $ensure $(cat "$T/ghq.log")"
+# a refused git inside a command substitution ends the verb too (the exit of a subshell would end only the subshell): the USR1 trap of dry_on
+out=$(bash -c '. "$1/lib/lib.sh"; . "$1/lib/gitflow.sh"; REPO=$2; PROJ=app; dry_on; x=$(g push origin master); echo continued' x "$ROOTD" "$R" 2>&1); rc=$?
+[ "$rc" = 70 ] && ! grep -q continued <<<"$out" && grep -q "defect: git push .*was reached in a dry run" <<<"$out" && ok "a refused git in a command substitution ends the verb with 70 (dry_on's USR1 trap)" || no "refused git in a substitution: rc=$rc $out"
+# the helpers that write stop in a dry run, before they take a lock or make a file
+S2=$T/s2; mkdir -p "$S2"; ensure=''
+dh() { DRY=1 DA_NOSETUP=1 QARGI_STATE=$S2 dryrun "$@"; }
+for h in journal_line intent_write intent_update move_ref wcommit; do
+  case $h in
+    journal_line) rc=$(dh journal_line "$R" refs/heads/x "" abc test:verb "");;
+    intent_write) rc=$(dh intent_write k '{}');;
+    intent_update) rc=$(dh intent_update k '.a = 1');;
+    move_ref) rc=$(dh move_ref refs/heads/zz HEAD "");;
+    wcommit) rc=$(dh wcommit -m x);;
+  esac
+  [ "$rc" = 70 ] && grep -q "defect: $h was reached in a dry run" "$T/dry.err" || { no "dry run: $h was not stopped with 70: rc=$rc $(cat "$T/dry.err")"; ensure=bad; }
+done
+[ -z "$ensure" ] && [ -z "$(ls -A "$S2")" ] && ok "journal_line, intent_write, intent_update, move_ref and wcommit stop with 70 in a dry run, naming the helper, and make no file" || no "write helpers in a dry run: $ensure $(ls -A "$S2")"
+
+# --- bump_worktree: the temporary worktree of the plan of release start is removed by the exit trap, whatever ends the verb, so .git/worktrees is what it was
+wtl() { ls -A "$R/.git/worktrees" 2>/dev/null | paste -sd' '; git -C "$R" worktree list | md5sum; }
+mk bump
+jq '.release = {preflight: ["false"]}' "$T/c/projects/bump.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/bump.json"
+before=$(wtl); out=$($REL start 0.2.0 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "release.preflight failed" <<<"$out" && [ "$before" = "$(wtl)" ] && ! compgen -G "$T/s/release-wt.*" >/dev/null && ok "a refusal in the worktree of the plan leaves no worktree: .git/worktrees and git worktree list are as they were" || no "refused start left a worktree: rc=$rc $out; $(wtl)"
+jq 'del(.release)' "$T/c/projects/bump.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/bump.json"
+before=$(wtl); out=$($REL start 0.2.0 2>&1); rc=$?
+[ "$rc" = 0 ] && [ "$before" = "$(wtl)" ] && ! compgen -G "$T/s/release-wt.*" >/dev/null && ok "a plan that passes leaves no worktree either" || no "plan left a worktree: rc=$rc $out; $(wtl)"
 
 exit $fail

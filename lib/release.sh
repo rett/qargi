@@ -174,17 +174,22 @@ ci_scan() {
   done < <(pymod gates scan "$af" "$1" || true)
   [ -z "$unlisted" ] || echo "qargi: note: no gate is declared, so the CI jobs are not compared with gate names (jobs: $unlisted); declare gates, or list the jobs that are not gates in the answer ci.not_gates" >&2
 }
-GH=${QARGI_GH:-gh}   # the one way this script talks to GitHub; tests put a stub here
+GH=${QARGI_GH:-gh}   # the gh this script talks to (through ghq, lib/gitflow.sh); tests put a stub here
 repo_slug() { jq -r '.repo.url' "$af" | sed 's|^https://[^/]*/||; s|\.git$||'; }
 notes='' SITESRC=''   # the temporary file of `publish`, the extracted tag of `site`
-rel_exit() { [ -z "$notes" ] || rm -f "$notes"; [ -z "$SITESRC" ] || rm -rf "$SITESRC"; on_exit; }   # the one EXIT handler: what gitflow.sh cleans up, and the temporary files
+rel_exit() {   # the one EXIT handler: what gitflow.sh cleans up (the worktree of bump_worktree too), the temporary files, and in a dry run the last line
+  local rc=$?
+  [ -z "$notes" ] || rm -f "$notes"; [ -z "$SITESRC" ] || rm -rf "$SITESRC"
+  bump_cleanup; on_exit
+  dry_finish "$rc"
+}
 trap rel_exit EXIT
 # gh_release_state TAG -> sets GHS to found|missing|noauth|nogh|unchecked (and GHWHY): does GitHub have a release for the tag? Read-only.
 gh_release_state() {
   local out rc=0
   GHWHY='' GHS_FOR=$1
   command -v "$GH" >/dev/null 2>&1 || { GHS=nogh; return 0; }
-  out=$("$GH" -R "$(repo_slug)" release view "$1" 2>&1 </dev/null) || rc=$?
+  out=$(ghq -R "$(repo_slug)" release view "$1" 2>&1 </dev/null) || rc=$?
   if [ "$rc" = 0 ]; then GHS=found
   elif grep -qi 'auth login\|not logged in\|authentication' <<<"$out"; then GHS=noauth
   elif grep -qi 'release not found' <<<"$out"; then GHS=missing
@@ -556,7 +561,7 @@ pr_checks() {
   local out rc=0 line name state st
   PRC_STATE='' PRC_LINES='' PRC_WHY='' PRC_PASS=0 PRC_FAIL=0 PRC_PEND=0
   command -v "$GH" >/dev/null 2>&1 || { PRC_STATE=nogh; return 0; }
-  out=$("$GH" -R "$(repo_slug)" pr checks "$1" 2>&1 </dev/null) || rc=$?
+  out=$(ghq -R "$(repo_slug)" pr checks "$1" 2>&1 </dev/null) || rc=$?
   while IFS= read -r line; do
     [[ $line == *$'\t'* ]] || continue
     IFS=$'\t' read -r name state _ <<<"$line"
@@ -600,7 +605,7 @@ pr_find() {
   local out
   PR_NUM='' PR_URL=''
   command -v "$GH" >/dev/null 2>&1 || return 0
-  out=$("$GH" -R "$(repo_slug)" pr list --head "$1" --state open --json number,url --jq '.[] | "\(.number) \(.url)"' 2>/dev/null </dev/null | head -1) || return 0
+  out=$(ghq -R "$(repo_slug)" pr list --head "$1" --state open --json number,url --jq '.[] | "\(.number) \(.url)"' 2>/dev/null </dev/null | head -1) || return 0
   read -r PR_NUM PR_URL <<<"$out"
   case $PR_NUM in ''|*[!0-9]*) PR_NUM='' PR_URL='';; esac
   return 0
@@ -639,7 +644,7 @@ post_release() {
       *) echo "  GitHub release: not checked (${GHWHY:-no answer})";;
     esac
     if [ "$GHS" = found ]; then
-      names=$("$GH" -R "$(repo_slug)" release view "$VER" --json assets --jq '.assets[].name' 2>/dev/null </dev/null) || names='?'
+      names=$(ghq -R "$(repo_slug)" release view "$VER" --json assets --jq '.assets[].name' 2>/dev/null </dev/null) || names='?'
       if [ "$names" = '?' ]; then echo "  assets: not checked (the asset list could not be read)"
       else
         # release.assets entries: {version} replaced, a glob matched by its base name against the names the release has
@@ -772,6 +777,7 @@ step_gate() {
 }
 # cut_done STEP [HEAD [COMMIT]]: records that STEP ran (by the cut or by its own plan), when the cut of VER is recorded
 cut_done() {
+  dry_stop cut_done
   local via=own
   [ -f "$CUTREC" ] || return 0
   [ -z "$CUT" ] || via="cut"
@@ -861,7 +867,7 @@ case $verb in
     date_given=$DATE; [ -n "$DATE" ] || DATE=$(date +%F)
     printf '%s' "$DATE" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' || usage_die "--date YYYY-MM-DD"
     b0=$(sha_of "$BASE")
-    worktree "$BASE"
+    bump_worktree "$BASE"
     git -C "$WT" checkout -q --detach "$b0"
     # the preflight: every file the release must update is checked and rewritten in the temporary worktree first; a refusal
     # exits before any branch exists, so nothing has changed. A hotfix is cut from master, which does not have the content the hotfix brings (the
@@ -1037,7 +1043,7 @@ case $verb in
     if [ -n "$PR_NUM" ]; then
       echo "pushed $BR and updated PR #$PR_NUM${PR_URL:+: $PR_URL} (it was open already; its checks run on the new head)"
     else
-      url=$(cd "$REPO" && "$GH" pr create --base master --head "$BR" --title "$PROJ $VER" --body "$KIND $VER" 2>&1) || {
+      url=$(cd "$REPO" && ghq pr create --base master --head "$BR" --title "$PROJ $VER" --body "$KIND $VER" 2>&1) || {
         # a pull request that could not be listed is still found by the refusal of pr create
         PR_NUM=$(grep -o '/pull/[0-9]*' <<<"$url" | head -1 | tr -dc 0-9)
         if grep -qi 'already exists' <<<"$url" && [ -n "$PR_NUM" ]; then echo "pushed $BR and updated PR #$PR_NUM (it was open already; its checks run on the new head)"; url=''
@@ -1372,7 +1378,7 @@ case $verb in
       noauth) die "gh is not authenticated (gh auth login); nothing was published";;
       *) die "could not ask GitHub whether tag $VER has a release (${GHWHY:-no answer}); nothing was published";;
     esac
-    out=$("$GH" -R "$(repo_slug)" release create "$VER" --verify-tag --title "$title" --notes-file "$notes" "${assets[@]}" 2>&1 </dev/null) || die "gh release create failed for tag $VER: $out"
+    out=$(ghq -R "$(repo_slug)" release create "$VER" --verify-tag --title "$title" --notes-file "$notes" "${assets[@]}" 2>&1 </dev/null) || die "gh release create failed for tag $VER: $out"
     audit_log "release:publish" "$PROJ $VER${assets[0]:+ (${#assets[@]} asset(s))}"
     echo "published the release of tag $VER: $out"
     cut_next;;

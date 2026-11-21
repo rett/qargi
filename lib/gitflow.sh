@@ -15,7 +15,87 @@ if ! command -v marshal_check >/dev/null 2>&1; then
   fi
 fi
 
-g() { git -C "$REPO" "$@"; }
+# g ARGS -> git -C REPO ARGS. In a dry run (QARGI_DRY=1, `--dry-run` of a verb) it passes only what is on the allow-list of dry_git_ok, which reads and never
+# writes (GIT_OPTIONAL_LOCKS=0 keeps `status` from refreshing the index), and ends the verb with 70 on anything else, naming it (dry_deny): a dry path that reaches
+# a writing git is a defect of the verb, found by tests/test_release_cut.sh. Outside a dry run it is plain git.
+g() {
+  if [ "${QARGI_DRY:-}" = 1 ]; then dry_git_ok "$@" || dry_deny "git ${1:-}${2:+ $2}"; GIT_OPTIONAL_LOCKS=0 git -C "$REPO" "$@"; return; fi
+  git -C "$REPO" "$@"
+}
+# ghq ARGS -> gh ARGS ($GH, else gh): the one way the verbs that have a dry run talk to GitHub. Outside a dry run it is plain gh; in one only the reading forms of
+# dry_gh_ok pass and anything else (gh api too: a method cannot be told from the subcommand) ends the verb with 70.
+ghq() {
+  if [ "${QARGI_DRY:-}" = 1 ]; then dry_gh_ok "$@" || dry_deny "gh ${1:-}${2:+ $2}"; fi
+  "${GH:-gh}" "$@"
+}
+# dry_git_ok ARGS -> 0 when the git command (the arguments after `git -C REPO`) only reads. The subcommands that read, and these forms only: config --get and
+# --get-all, remote get-url, branch --show-current and --list, tag --list, worktree list, symbolic-ref with one name and no value.
+dry_git_ok() {
+  local sub=${1:-} a n=0
+  shift || true
+  case $sub in
+    rev-parse|rev-list|merge-base|log|show|diff|diff-tree|cat-file|ls-tree|for-each-ref|ls-remote|describe|name-rev|check-ref-format|status) return 0;;
+    config) case ${1:-} in --get|--get-all) return 0;; esac; return 1;;
+    remote) [ "${1:-}" = get-url ];;
+    branch) case ${1:-} in --show-current|--list) return 0;; esac; return 1;;
+    tag) [ "${1:-}" = --list ];;
+    worktree) [ "${1:-}" = list ];;
+    symbolic-ref) for a in "$@"; do case $a in -d|--delete|-m) return 1;; -*) ;; *) n=$((n + 1));; esac; done; [ "$n" = 1 ];;
+    *) return 1;;
+  esac
+}
+# dry_gh_ok ARGS -> 0 when the gh command only reads: auth status, repo view, pr view, pr list, pr checks, release view, release list (after a -R REPO or --repo REPO)
+dry_gh_ok() {
+  case ${1:-} in -R|--repo) [ $# -ge 2 ] || return 1; shift 2;; --repo=*) shift;; esac
+  case "${1:-} ${2:-}" in
+    "auth status"|"repo view"|"pr view"|"pr list"|"pr checks"|"release view"|"release list") return 0;;
+  esac
+  return 1
+}
+# dry_deny WHAT -> a defect: the verb reached WHAT in a dry run. Exit 70; inside a command substitution the exit ends only the subshell, so the verb's USR1 trap
+# (dry_on sets it, and DRY_TRAP) ends the verb too.
+dry_deny() {
+  echo "qargi: defect: $1 was reached in a dry run (QARGI_DRY=1): a dry run changes nothing, so a git or gh command that is not on the allow-list (dry_git_ok, dry_gh_ok in lib/gitflow.sh) is refused; list it there only if it reads" >&2
+  [ -z "${DRY_TRAP:-}" ] || [ "${BASHPID:-$$}" = "$$" ] || kill -USR1 "$$" 2>/dev/null
+  exit 70
+}
+# ---- the dry run of a verb (`--dry-run`: release start, release push and release fix --push). dry_on makes the verb one: QARGI_DRY=1 stops the helpers that write
+# (dry_stop in lib/lib.sh and in the journal, intent, cut, move_ref and commit helpers here), g and ghq pass only what reads, and the verb's refusals are printed as
+# they would be, with dry=1 first in the contract line's detail and counted; the last line of standard output says how many would refuse (dry_finish, from the exit
+# trap), and the status is 0, or 1 when any would. A refusal ends the verb, as it would, except a check the call site declares independent (DRY_INDEP=1 at the call):
+# that one is listed and the verb goes on, so several may be shown.
+DRYN=0 DRY_INDEP='' DRY_TRAP=''
+dry_on() {
+  export QARGI_DRY=1 GIT_OPTIONAL_LOCKS=0
+  DRY_TRAP=1; trap 'exit 70' USR1; trap 'exit 130' INT; trap 'exit 143' TERM
+  refuse() { refuse_more '' "$@"; }   # lib/lib.sh's refuse, for every caller that has no more to say (need_plan)
+}
+# refuse_more MORE CODE key=value... -> refuse CODE as lib/lib.sh does, then one `  more: MORE` line after the refusal's own lines, for what is particular to this case
+# (the commits, the route that fits). The contract line stays the first line. In a dry run see dry_on.
+refuse_more() {
+  local more=$1 text rc=0 first rest
+  shift
+  text=$(_refusal refuse "$@" 2>&1) || rc=$?
+  if [ "$rc" = 70 ]; then printf '%s\n' "$text" >&2; exit 70; fi
+  if [ "${QARGI_DRY:-}" = 1 ]; then
+    first=${text%%$'\n'*}; rest=${text#*$'\n'}
+    if [[ $first == *'"detail":""'* ]]; then first=${first/'"detail":""'/'"detail":"dry=1"'}; else first=${first/'"detail":"'/'"detail":"dry=1 '}; fi
+    text=$first$'\n'$rest
+  fi
+  printf '%s\n' "$text" >&2
+  [ -z "$more" ] || printf '  more: %s\n' "$more" >&2
+  if [ "${QARGI_DRY:-}" = 1 ] && [ -n "${DRY_INDEP:-}" ]; then DRYN=$((DRYN + 1)); return 0; fi
+  exit "$rc"
+}
+# dry_finish STATUS -> in a dry run, the last line of standard output and the status of the verb (from the exit trap): a refusal that ended the verb (status 1) and the
+# ones listed before it are what would refuse; a status other than 0 or 1 is a defect or a usage error and has no such line
+dry_finish() {
+  local n
+  [ "${QARGI_DRY:-}" = 1 ] && [ "$1" -le 1 ] || return 0
+  n=$((DRYN + $1))
+  echo "dry-run: $n would refuse; nothing was changed"
+  [ "$n" = 0 ] || exit 1
+}
 rec() { echo "$RDIR/$PROJ-${1//\//_}.json"; }   # branch -> the file that records its last full-suite run
 sha_of() { g rev-parse -q --verify "refs/heads/$1" || true; }
 # "SHA pass|fail" of the last whole-suite run of a branch, only if it ran the project's current test command. It also selects on verify.environment
@@ -54,6 +134,7 @@ journal_push() {
 # tests/test_release_cut.sh cuts journal_line out of this file with sed (from its name to the first line that is a lone closing brace) and runs it
 # alone for the lock cases, from another directory, so neither a second function that journal_line called nor a path to a file of lib/ would be there.
 journal_line() {
+  dry_stop journal_line
   local repo ref=$2 verb=$5 zero=0000000000000000000000000000000000000000 f=${DA_STATE:-}/ref-journal.jsonl
   if [ "${3:-}" != - ]; then journal_line "$1" "$2" - '' "$5" "$6" "${7:-}" <<<"${3:-$zero} ${4:-$zero}"; return 0; fi
   repo=$(readlink -f "$1" 2>/dev/null) || repo=$1
@@ -250,7 +331,25 @@ changelog_check() {
 }
 
 WT=''
-cleanup() { [ -z "$WT" ] || { g worktree remove --force "$WT" >/dev/null 2>&1 || true; rm -rf "$WT"; WT=''; }; }
+cleanup() {
+  [ -z "$WT" ] || { if [ "$WT" = "${BUMPWT:-}" ]; then bump_cleanup; else g worktree remove --force "$WT" >/dev/null 2>&1 || true; rm -rf "$WT"; WT=''; fi; }
+}
+# bump_worktree COMMIT -> WT: a detached temporary worktree there, made with git directly, not through g: the one declared exception of a dry run (QARGI_DRY=1),
+# for the verb whose plan already builds its commit in a worktree (release start). It is the only such caller. BUMPWT names the worktree before git is asked to
+# make it, so the verb's exit trap (bump_cleanup, from rel_exit, which also runs on INT and TERM) removes whatever a refusal or an interrupt leaves, and the list
+# of .git/worktrees is what it was.
+BUMPWT=''
+bump_worktree() {
+  WT=$(mktemp -d "$DA_STATE/release-wt.XXXXXX") || fail "could not make a temporary directory for the worktree of $1"
+  BUMPWT=$WT
+  git -C "$REPO" worktree add -q --detach "$WT" "$1" 2>/dev/null || { bump_cleanup; WT=''; fail "could not make a temporary worktree of $1"; }
+}
+# bump_cleanup -> removes the worktree of bump_worktree (git worktree remove --force, then git worktree prune) and its directory; safe to call twice
+bump_cleanup() {
+  [ -z "$BUMPWT" ] || { git -C "$REPO" worktree remove --force "$BUMPWT" >/dev/null 2>&1 || true; rm -rf "$BUMPWT"; git -C "$REPO" worktree prune >/dev/null 2>&1 || true; }
+  [ "$WT" != "$BUMPWT" ] || WT=''
+  BUMPWT=''
+}
 # busy_begin KIND NAME / busy_end: a whole-suite run is in progress. The pid file $DA_STATE/busy/PROJECT.KIND.NAME.pid is what
 # `qargi lead compact-check` reads (a live pid: not now); busy_end and the EXIT trap remove it, and a file whose pid is gone is ignored.
 BUSY=''
@@ -828,7 +927,7 @@ gates_line() {
   l=$(jq -r '(.gates // []) | if length == 0 then empty else map("\(.name) \(.result)") | join(", ") end' "$f" 2>/dev/null) || return 0
   [ -z "$l" ] || echo "  gates: $l"
 }
-wcommit() { git -C "$WT" commit -q "$@" || die "the commit failed (is a git user.name and user.email set?)"; }
+wcommit() { dry_stop wcommit; git -C "$WT" commit -q "$@" || die "the commit failed (is a git user.name and user.email set?)"; }
 
 
 # merge_step INTO_SHA FROM KEY MESSAGE [LABEL] -> MERGED (the merge commit); a --no-ff merge made in a temporary worktree.
@@ -887,6 +986,7 @@ merge_forget() { local k; for k in "$@"; do rm -f "$DA_STATE/conflicts/$PROJ-$k.
 intent_file() { printf '%s/finish-intent/%s-%s.json' "$DA_STATE" "$PROJ" "${1//\//_}"; }   # KEY
 intent_has() { [ -f "$(intent_file "$1")" ]; }
 intent_write() { # KEY JSON: create or replace the record, atomically, under its lock
+  dry_stop intent_write
   local f; f=$(intent_file "$1")
   mkdir -p "$(dirname "$f")" && chmod 700 "$(dirname "$f")" 2>/dev/null
   # a flock that failed (or is not installed) took no lock: say so, never write as if it had (status 4, as in pid_lock)
@@ -933,6 +1033,7 @@ intent_lock() { pid_lock "$(intent_file "$1").run" "finish of $1"; }   # KEY
 intent_unlock() { [ -z "$INTENT_LOCK" ] || rm -rf "$INTENT_LOCK"; INTENT_LOCK=''; }
 intent_get() { jq -r "$2" "$(intent_file "$1")"; }   # KEY JQ_FILTER
 intent_update() { # KEY JQ_FILTER [jq args]: rewrite the record in place, under its lock
+  dry_stop intent_update
   local f; f=$(intent_file "$1"); shift
   json_update "$f" "$@" || die "could not update the intent record $f"
 }
@@ -998,6 +1099,7 @@ intent_remove_advice() {
 }
 # move_ref REF NEW OLD -> update-ref REF to NEW from OLD; done already (REF is NEW) is not an error; any other value is
 move_ref() {
+  dry_stop move_ref
   local cur; cur=$(g rev-parse -q --verify "$1" 2>/dev/null || true)
   [ "$cur" = "$2" ] && return 0
   g update-ref "$1" "$2" "$3"
@@ -1062,7 +1164,7 @@ project_load() { # PROJ (or inferred) -> af, REPO, TESTCMD, METH
   WT_ROOT=$(jq -r '.worktrees.root // ""' "$af"); WT_ROOT=${WT_ROOT/#\~/$HOME}   # where qargi makes worktrees: ROOT/<branch>
   [ -n "$WT_ROOT" ] || WT_ROOT=$DA_STATE/worktrees/$PROJ
   PARK=$(jq -r '.repo.parking_branch // "scratch"' "$af")   # the branch the main checkout rests on while qargi moves develop
-  RDIR=$DA_STATE/releases; mkdir -p "$RDIR"
+  RDIR=$DA_STATE/releases; [ "${QARGI_DRY:-}" = 1 ] || mkdir -p "$RDIR"   # a dry run makes no directory
 }
 
 # marshal_flow FUNC ARGS...: runs the shell API function FUNC (marshal_check or marshal_start) for a flow verb. Unless the lead gave --assume-unreachable-ok
