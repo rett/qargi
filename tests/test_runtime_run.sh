@@ -21,7 +21,7 @@ export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T TMPDIR=$T/
 unset QARGI_PROJECT QARGI_LEAD_RUNTIME
 mkdir -p "$HOME" "$T/c/projects" "$T/s" "$T/tmp" "$T/scr" "$HOME/.codex-members"
 echo '{}' > "$HOME/.codex-members/auth.json"   # the members' sign-in of the shipped codex: a file of the test's own home
-trap 'rm -rf "$T" "$HERMETIC"' EXIT
+trap 'kill_bg; rm -rf "$T" "$HERMETIC"' EXIT
 
 TOOL=$T/tool; mkdir -p "$TOOL"
 copy_tool "$SRC" "$TOOL"
@@ -47,7 +47,9 @@ nx_project() { # NAME FIXTURE: the stored answers of a fixture project, with a r
 }
 nx_prep() { # PROJECT ARGS...: a prepare in the project's repository, its output (standard error too) masked; the run is left in RUN
   local p=$1; shift
+  # the goldens were recorded with the scratch on disk: the warning of a scratch on a tmpfs (this suite may run on one) is not part of what is compared
   PREP=$("$DA" local prepare --repo "$T/repo-$p" --base develop --scratch "$T/scr" "$@" 2>&1); PREP_RC=$?
+  PREP=$(grep -v '^qargi: warning: --scratch .* is on a tmpfs' <<<"$PREP")
   RUN=$(sed -n 's/^RUN=//p' <<<"$PREP")
   echo "--- prepare $p $*"; mask <<<"$PREP"; echo "exit $PREP_RC"
 }
@@ -96,6 +98,7 @@ mkfake fakehid '.dispatch.hidden_paths.prefixes = ["'"$T"'/hid"]'
 mkfake fakedis
 mkfake fakechg
 mkfake fakeuse
+mkfake fakelate
 mkdir -p "$T/hid"
 mkproj() { # NAME PROVIDER-JSON EXTRAS-JSON PROFILES-JSON [ACCEPT]: stored answers with a repository of their own (and the members of an in-session own runtime)
   local repo=$T/repo-$1
@@ -152,6 +155,22 @@ prep two --slug a6 --profile cx-build --runtime claude-code
 before=$(made)
 prep two --slug a7 --runtime nosuch
 { [ "$PREP_RC" = 1 ] && [ "$(refusal_code "$PREP")" = runtime-not-enabled ] && [ "$(made)" = "$before" ]; } && ok prepare-runtime-not-enabled || no "a runtime not enabled: rc=$PREP_RC $PREP"
+
+# the profile a role asks for is the one qargi agent for resolves: the profile named like the role, the shipped ones (write, test) included, else build or review. A
+# project whose build profile names an extra runtime says nothing of it for the roles write and test, which take the shipped profiles of their own name
+mkproj wt "$CC" '["fakecx"]' '{"build":{"runtime":"fakecx"}}'
+prep wt --slug w0 --role write
+{ [ "$PREP_RC" = 0 ] && [ "$(line RUNTIME)" = claude-code ] && [ "$(line PROFILE)" = write ] && ! grep -q RUNTIME_OVERRIDE <<<"$PREP"; } \
+  && ok role-write-own-runtime || no "the write role, no option: rc=$PREP_RC $PREP"
+for r in write test; do
+  prep wt --slug "${r}x" --role "$r" --runtime fakecx
+  { [ "$PREP_RC" = 0 ] && [ "$(line RUNTIME)" = fakecx ] && [ "$(line PROFILE)" = "$r" ] \
+    && [ "$(line RUNTIME_OVERRIDE | sed 's/: .*//')" = "profile $r names no runtime (claude-code), resolved in fakecx" ]; } \
+    && ok "role-$r-override-extra" || no "the $r role against the project's own runtime: rc=$PREP_RC $PREP"
+  prep wt --slug "${r}c" --role "$r" --runtime claude-code
+  { [ "$PREP_RC" = 0 ] && [ "$(line RUNTIME)" = claude-code ] && [ "$(line PROFILE)" = "$r" ] && ! grep -q RUNTIME_OVERRIDE <<<"$PREP"; } \
+    && ok "role-$r-silent-own" || no "the $r role with the project's own runtime as an option: rc=$PREP_RC $PREP"
+done
 
 # --- the read-only barrier is the barrier of the runtime the run is prepared for, asked after that runtime is known (F5). The project's own runtime has no
 # barrier and the project accepted that; the extra one has none either. The acceptance is for the own runtime and does not let the extra one start.
@@ -252,6 +271,29 @@ jq '.dispatch.mode = "in-session"' "$TOOL/lib/providers/fakeuse.json" > "$T/use.
 out=$(dispatch); rc=$?
 { [ "$rc" = 1 ] && [ "$(refusal_code "$out")" = runtime-drift ] && grep -q 'name=fakeuse why=not-usable' <<<"$out"; } && ok drift-unusable || no "a run of a runtime no longer usable: rc=$rc $out"
 
+# --- the wait for the lock of a sign-in has no bound: a run that waited is checked again when it holds the lock. The test holds the lock of the members' sign-in, the
+# run queues behind it, the project stops enabling the runtime meanwhile, and the lock is let go: the run is refused as drift, no member is started
+mkproj lk "$CC" '["fakelate"]' null
+LKF=$HOME/.fakelate-members/.qargi-run.lock
+prep lk --slug l1 --runtime fakelate
+LKRUN=$RUN
+printf 'TASK: change the thing\nDONE: it is changed\n' > "$RUN/task.md"
+rm -f "$T/lk-held" "$T/lk-go" "$T/lk.rc"
+# the holder takes the lock, says so, and keeps it until the test makes the file lk-go (or 30 s pass)
+spawn_bg bash -c 'flock 9; : > "$1/lk-held"; for _ in $(seq 300); do [ -e "$1/lk-go" ] && break; sleep 0.1; done' _ "$T" 9> "$LKF"
+LKHOLD=$SPAWNED_PID
+wait_until '[ -e "$T/lk-held" ]' 30 || no "the test could not take the lock of the sign-in"
+spawn_bg bash -c '"$1" local run "$2" > "$3" 2>&1; echo $? > "$4"' _ "$DA" "$LKRUN" "$T/lk.out" "$T/lk.rc"
+wait_until 'grep -q "waiting for it to end" "$T/lk.out"' 30 || no "the run did not queue behind the lock: $(cat "$T/lk.out")"
+jq '.models.extra_runtimes.local -= ["fakelate"]' "$T/c/projects/lk.json" > "$T/lk.json" && mv "$T/lk.json" "$T/c/projects/lk.json"
+: > "$T/lk-go"; wait "$LKHOLD"
+wait_until '[ -s "$T/lk.rc" ]' 60 || no "the run did not end after the lock was let go"
+out=$(cat "$T/lk.out")
+{ [ "$(cat "$T/lk.rc" 2>/dev/null)" = 1 ] && [ "$(refusal_code "$out")" = runtime-drift ] && grep -q 'name=fakelate why=not-enabled' <<<"$out" \
+  && [ "$(jq -r .outcome "$LKRUN/dispatch.json")" = refused ] && [ ! -e "$LKRUN/out/transcript" ] && [ -z "$($LC -C "$LKRUN/clone" log origin/main..HEAD --format=%s)" ] \
+  && flock -n "$LKF" true; } \
+  && ok drift-after-lock-wait || no "a run that waited for the lock after its runtime was disabled: rc=$(cat "$T/lk.rc" 2>/dev/null) $out"
+
 # --- a run of the project's own runtime is never drift for an extra runtime's sake, and an in-session own run is still not started by qargi
 prep two --slug o1
 out=$(dispatch); rc=$?
@@ -263,15 +305,15 @@ out=$(dispatch --dry-run); rc=$?
 # --- the views: local list has a RUNTIME column and review check a runtime= line, from the registry line, with the model as asked for (never "confirmed")
 LIST=$("$DA" local list 2>&1)
 { grep -q '^ROLE  *SLUG  *AGE  *APPLIED  *MERGED  *RUNTIME  *RUN$' <<<"$LIST" \
-  && grep -E "^build +u1 .* fakever +$RUNX  model=gpt-6.1-terra \(requested, override verified\)\$" <<<"$LIST" >/dev/null \
-  && grep -E "^build +u2 .* fakecx +$T/scr/qargi\.[A-Za-z0-9]{6}  model=gpt-6.1-terra \(requested, not confirmed\)\$" <<<"$LIST" >/dev/null \
+  && grep -E "^build +u1 .* fakever +$RUNX  model=gpt-6.1-terra \(requested at prepare, override verified\)\$" <<<"$LIST" >/dev/null \
+  && grep -E "^build +u2 .* fakecx +$T/scr/qargi\.[A-Za-z0-9]{6}  model=gpt-6.1-terra \(requested at prepare, not confirmed\)\$" <<<"$LIST" >/dev/null \
   && grep -E "^build +o1 .* claude-code +$T/scr/qargi\.[A-Za-z0-9]{6}\$" <<<"$LIST" >/dev/null; } \
   && ok list-runtime-column || no "local list: $LIST"
 out=$("$DA" review check "$RUNX/out" 2>&1)
-grep -qx 'runtime=fakever model=gpt-6.1-terra (requested, override verified)' <<<"$out" && ok override-verified-wording || no "review check, a verified override: $out"
+grep -qx 'runtime=fakever model=gpt-6.1-terra (requested at prepare, override verified)' <<<"$out" && ok override-verified-wording || no "review check, a verified override: $out"
 RUNCX=$(sed -n 's/^build  *u2 .* \(\/[^ ]*qargi\.[A-Za-z0-9]*\)  model=.*/\1/p' <<<"$LIST")
 out=$("$DA" review check "$RUNCX/out" 2>&1)
-grep -qx 'runtime=fakecx model=gpt-6.1-terra (requested, not confirmed)' <<<"$out" && ok review-check-not-confirmed || no "review check, an unverified override: $RUNCX $out"
+grep -qx 'runtime=fakecx model=gpt-6.1-terra (requested at prepare, not confirmed)' <<<"$out" && ok review-check-not-confirmed || no "review check, an unverified override: $RUNCX $out"
 RUNO1=$(sed -n 's/^build  *o1 .* \(\/[^ ]*qargi\.[A-Za-z0-9]*\)$/\1/p' <<<"$LIST")
 out=$("$DA" review check "$RUNO1/out" 2>&1)
 { grep -qx 'runtime=claude-code' <<<"$out" && ! grep -q 'confirmed\|verified' <<<"$out"; } && ok review-check-insession-runtime || no "review check, an in-session run: $RUNO1 $out"

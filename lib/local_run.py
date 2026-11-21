@@ -135,6 +135,7 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import attempts as A
 import prepared_request as PR
+import refusal as RF
 import member_skills as MS
 import provider as P  # noqa: E402
 import paths  # noqa: E402
@@ -184,6 +185,13 @@ class Stop(Exception):
 
 def fail(msg, code=2):
     raise Stop(msg, code)
+
+
+class Drift(Stop):
+    """The run drifted while it waited for the lock: a refusal (exit 1) that prints as qargi local run prints runtime-drift before it starts (text: that print)."""
+    def __init__(self, msg, text):
+        Stop.__init__(self, msg, 1)
+        self.text = text
 
 
 # ---- the data -----------------------------------------------------------------------------------------------------------------------
@@ -987,6 +995,21 @@ def drift_check(run, project, runtime, cls):
     return None
 
 
+def drift_after_lock(plan, run):
+    """The run drift_check passed before it waited for the lock is checked again once it holds it: the wait has no bound, and the owner may have disabled
+    the runtime, or it or the profile may have changed, in that time. A drift is the refusal runtime-drift (exit 1, as before the wait), and nothing is started."""
+    found = drift_check(run, plan["project"], plan["runtime"], plan["class"])
+    if found is None:
+        return
+    why, detail = found
+    detail = " ".join(detail.split())
+    try:
+        text, _ = RF.render(RF.load(), "runtime-drift", [("name", plan["runtime"]), ("why", why)], verb="local run", project=plan["project"])
+    except RF.Defect as e:
+        text = "qargi: defect: %s\n" % e
+    raise Drift("the run was prepared for the runtime %s, which it can no longer start on (%s): %s" % (plan["runtime"], why, detail), text + "qargi: %s\n" % detail)
+
+
 def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     """Everything a run needs, as a dict; Stop for a refusal. Nothing is written."""
     if not os.path.isfile(os.path.join(run, "refs.before")) or not os.path.isdir(os.path.join(run, "clone")):
@@ -1143,7 +1166,7 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
         fail("dispatch.cwd of %s is %s, outside the clone" % (runtime, cwd))
     exe, how, exe_notes = find_command(runtime, argv[0], run, keep)
     watched = git_watch(argv_t, class_extra(disp, cls, runtime), cls, argv, clone)
-    return {"runtime": runtime, "class": cls, "argv": argv, "exe": exe, "exe_from": how, "cwd": cwd, "via": via, "prompt": prompt, "prompt_file": pfile,
+    return {"runtime": runtime, "class": cls, "project": project, "argv": argv, "exe": exe, "exe_from": how, "cwd": cwd, "via": via, "prompt": prompt, "prompt_file": pfile,
             "timeout_s": to, "env_pass": passed, "env": child_env(run, tmp, passed, home), "exit": ex, "model": mname, "effort_native": native,
             "home": home, "skills": skills, "prepared": prepared, "notes": exe_notes + notes + ([note] if note else []) + home_notes(home) + ([rcfg["note"]] if rcfg and rcfg["note"] else []),
             "output_format": (disp.get("output") or {}).get("format", "text"), "usage": (disp.get("output") or {}).get("usage"), "run_config": rcfg,
@@ -2193,7 +2216,7 @@ def run_started(plan, run, store, dispatch_state, sig):
     write_private(dispatch, json.dumps(begun, indent=2, sort_keys=True) + "\n")
     made, home_left, staged, locks = [], [], False, []
     git0 = git_state(os.path.join(run, "clone")) if plan["git_watch"] else None   # before the member starts: what git in the clone would run
-    proc = code = error = outcome = left = None
+    proc = code = error = outcome = left = drifted = None
     timed_out, stop_code = False, 2
     unexpected = None
     previous = prev_manifest = False
@@ -2201,6 +2224,7 @@ def run_started(plan, run, store, dispatch_state, sig):
         try:
             if home:
                 locks = take_lock(home, plan["runtime"], sig)   # the runs that share a sign-in run one at a time: held until the links are gone
+                drift_after_lock(plan, run)              # the wait for the lock has no bound: what was checked before it is checked again
                 made = make_home(run, home)              # the links exist for the length of the run only
             if plan.get('skills') is not None:
                 MS.current(store, plan['prepared'], plan['prepared']['request']['project'], plan['runtime'])
@@ -2265,6 +2289,7 @@ def run_started(plan, run, store, dispatch_state, sig):
                 code = proc.returncode
         except Stop as e:                                # the run home, the configuration file, the transcripts or the report could not be made as the run needs
             outcome, error, stop_code = "refused", str(e), e.code
+            drifted = getattr(e, "text", None)
             if proc is not None:                         # the start record could not be rewritten once the member had started: it is stopped, never
                 left = kill_group(proc)                  # left running after the runner has gone
                 code = proc.returncode
@@ -2365,7 +2390,9 @@ def run_started(plan, run, store, dispatch_state, sig):
     if gitdir:
         rec["git_dir"] = gitdir
     write_private(dispatch, json.dumps(rec, indent=2, sort_keys=True) + "\n")
-    if error:
+    if drifted:
+        sys.stderr.write(drifted)
+    elif error:
         print("qargi: %s" % error, file=sys.stderr)
     print("RUNTIME=" + plan["runtime"])
     print("OUTCOME=" + outcome + (" (timed out after %ds%s)" % (plan["timeout_s"], "; " + stopped_text(left) if left else "") if timed_out else "")
