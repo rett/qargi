@@ -459,6 +459,21 @@ res_name() {
 }
 
 die() { echo "qargi: $*" >&2; exit 1; }
+# fail MESSAGE...: a failure that is not a rule (a tool that did not run, a file that cannot be written): the output and the exit status of die. tests/refusal-sites.txt
+# counts the die calls that are not yet either this or a refusal, and the count may only go down.
+fail() { echo "qargi: $*" >&2; exit 1; }
+# refuse CODE key=value...: a rule refused the verb. lib/refusals.json holds the rule, why it exists and the next step; lib/refusal.py prints the contract line
+# (qargi-refusal/1 and a JSON object) and the human lines on standard error, and answers with the code's exit status (70 for a caller that is wrong: an unknown
+# code or field, a value of the wrong type, a code that is not live). The verb, the project and the role of the line are the script's `verb` (or QARGI_VERB),
+# PROJECT and QARGI_ROLE, as far as they are names. refuse exits with that status; run only on the refusal path (it starts python).
+refuse() { _refusal refuse "$@"; exit $?; }
+# notice CODE key=value...: the same message and next step from the catalogue as `qargi: note [CODE] ...`, with no contract line, and returns 0: for a verb that
+# did its work and names a rule that will apply later. A caller that is wrong exits 70.
+notice() { local rc=0; _refusal notice "$@" || rc=$?; [ "$rc" = 0 ] || exit "$rc"; }
+_refusal() { # refuse|notice CODE key=value...
+  local mode=$1; shift
+  python3 -I "$QARGI_TOOL/lib/refusal.py" "$mode" --verb "${QARGI_VERB:-${verb:-}}" --project "${PROJECT:-}" --role "${QARGI_ROLE:-}" "$@"
+}
 usage_die() { echo "qargi: $*" >&2; exit 2; }   # a usage error (unknown option, missing argument, a usage line): exit 2, as the manual page promises
 need_val() { # OPTION "$#" -> exit 2 when a valued option is the last word: call it first in each valued branch of an option loop
   [ "$2" -ge 2 ] || { echo "qargi: $1 needs a value" >&2; exit 2; }
@@ -493,7 +508,11 @@ audit_log() { # verb [detail]
 # apply (provisioning seeding its stores) may skip it, through need_plan_nested alone.
 plan_token() { sha256sum | cut -c1-12; }
 need_plan() { # expected-token; the caller's --plan value is $PLAN_ARG; always checked, whatever the environment holds
-  [ "${PLAN_ARG:-}" = "$1" ] || die "the plan changed or --plan is missing: run the plan, show it to the user, then apply exactly that with --plan $1"
+  [ "${PLAN_ARG:-}" = "$1" ] && return 0
+  local tok=() # the token is shown only when it is one (12 hex digits): a refusal never becomes a defect of the caller for it
+  [[ $1 =~ ^[0-9a-f]{12}$ ]] && tok=("token=$1")
+  [ -n "${PLAN_ARG:-}" ] || refuse plan-missing "${tok[@]}"
+  refuse plan-stale moved=unrecorded "${tok[@]}"
 }
 need_plan_nested() { # as need_plan, but a call nested in an approved apply (QARGI_NESTED set) skips the check; canon apply only
   [ -z "${QARGI_NESTED:-}" ] || { NESTED_SKIPPED=1; return 0; }   # the audit line says "nested" only when the check was skipped

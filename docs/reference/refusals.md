@@ -46,8 +46,8 @@ compares them with that page.
 | [`member-push`](#member-push) | guard | 2 | planned | A member never pushes |
 | [`member-lead-verb`](#member-lead-verb) | guard | 2 | planned | A member does not run the lead's verbs |
 | [`member-run-record`](#member-run-record) | guard | 2 | planned | A member does not write the lead's run records |
-| [`plan-missing`](#plan-missing) | plan | 1 | planned | A token covers the plan the person saw |
-| [`plan-stale`](#plan-stale) | plan | 1 | planned | A token covers the plan the person saw |
+| [`plan-missing`](#plan-missing) | plan | 1 | live | A token covers the plan the person saw |
+| [`plan-stale`](#plan-stale) | plan | 1 | live | A token covers the plan the person saw |
 | [`release-notes-empty`](#release-notes-empty) | release | 1 | planned | A release has notes |
 | [`release-fragments-unfolded`](#release-fragments-unfolded) | release | 1 | planned | A release branch holds no unfolded changelog fragment when it is pushed or finished |
 | [`seated-project`](#seated-project) | seat-door | 1 | planned | A marshal claim, take or release is not run on a seated project (R27) |
@@ -227,7 +227,7 @@ compares them with that page.
 
 - Rule: A token covers the plan the person saw.
 - Why: an apply with no token has no plan that anybody was shown.
-- Exit 1, planned.
+- Exit 1, live.
 - Fields: `verb` (verb), `token` (token), `context` (enum:lead,host).
 - Message: `the plan changed or --plan is missing: {verb} was given no --plan`
 - Next, for a lead: run {verb} without --plan, show the plan to the user, then apply exactly that with --plan {token}
@@ -237,7 +237,7 @@ compares them with that page.
 
 - Rule: A token covers the plan the person saw.
 - Why: what the plan hashed changed after it was shown.
-- Exit 1, planned.
+- Exit 1, live.
 - Fields: `verb` (verb), `moved` (label-list), `token` (token), `context` (enum:lead,host).
 - Message: `the plan changed or --plan is missing: the plan of {verb} is no longer the one shown (moved: {moved})`
 - Next, for a lead: run {verb} without --plan, show the new plan, then apply exactly that with --plan {token}

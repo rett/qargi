@@ -8,7 +8,7 @@
 47 lib/feature.sh
 62 lib/gitflow.sh
 7 lib/lead.sh
-12 lib/lib.sh
+11 lib/lib.sh
 85 lib/local.sh
 9 lib/marshal.sh
 4 lib/memory.sh

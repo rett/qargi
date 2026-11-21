@@ -191,8 +191,8 @@ class Rendering(unittest.TestCase):
                 self.render(pairs)
         with self.assertRaises(R.Defect):
             R.render(demo(), "unknown-code", [])
-        with self.assertRaises(R.Defect):
-            self.render([], verb="Not A Verb")
+        text, _ = self.render([], verb="Not A Verb")
+        self.assertIsNone(json.loads(text.split("\n")[0].split(" ", 1)[1])["verb"], "a default that is not a verb is no verb, never a defect")
         for status in ("planned", "withdrawn"):
             with self.subTest(status), self.assertRaises(R.Defect):
                 self.render([], cat=demo(status=status))
@@ -206,12 +206,109 @@ class Rendering(unittest.TestCase):
         n = run("notice", "verify-env-signals")
         self.assertEqual((n.returncode, n.stdout), (0, ""))
         self.assertTrue(n.stderr.startswith("qargi: note [verify-env-signals] "))
-        for args in (("refuse", "nope-code"), ("refuse", "verify-env-signals", "x=1"), ("refuse", "plan-stale"), ("refuse",), ("refuse", "verify-env-signals", "bare")):
+        for args in (("refuse", "nope-code"), ("refuse", "verify-env-signals", "x=1"), ("refuse", "cut-fix-outside"), ("refuse",), ("refuse", "verify-env-signals", "bare")):
             with self.subTest(args=args):
                 d = run(*args)
                 self.assertEqual((d.returncode, d.stdout), (70, ""), d.stderr)
                 self.assertTrue(d.stderr.startswith("qargi: defect: "))
         self.assertEqual(run("nonsense").returncode, 2)
+
+
+def sh(script, **env):
+    """Runs a bash script that has sourced lib/lib.sh, in the scratch home of the test; (status, standard output, standard error)."""
+    e = dict(os.environ, **env)
+    r = subprocess.run(["bash", "-c", 'set -u; . "$1/lib.sh"; shift; ' + script, "bash", LIB], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                       universal_newlines=True, env=e)
+    return r.returncode, r.stdout, r.stderr
+
+
+def contract(err):
+    """The JSON object of the contract line in a standard error text."""
+    lines = [l for l in err.split("\n") if l.startswith("qargi-refusal/1 ")]
+    assert len(lines) == 1, err
+    return json.loads(lines[0][len("qargi-refusal/1 "):])
+
+
+class TheShellHelpers(unittest.TestCase):
+    def test_refuse_prints_the_refusal_and_exits_with_the_code_status(self):
+        rc, out, err = sh('verb=push; refuse plan-stale moved=head,base token=0123456789ab; echo not-reached', PROJECT="acme", QARGI_ROLE="lead")
+        self.assertEqual((rc, out), (1, ""))
+        obj = contract(err)
+        self.assertEqual((obj["code"], obj["exit"], obj["verb"], obj["project"], obj["role"]), ("plan-stale", 1, "push", "acme", "lead"))
+        self.assertEqual(obj["detail"], "moved=head,base token=0123456789ab")
+        lines = err.strip().split("\n")
+        self.assertEqual(len(lines), 4)
+        self.assertTrue(lines[1].startswith("qargi: refused [plan-stale] "))
+        self.assertTrue(lines[2].startswith("  why: "))
+        self.assertIn("--plan 0123456789ab", lines[3])
+
+    def test_refuse_names_the_verb_from_qargi_verb_before_the_scripts_own_and_a_field_wins(self):
+        _, _, err = sh('verb=push; refuse plan-missing', QARGI_VERB="release push")
+        self.assertEqual(contract(err)["verb"], "release push")
+        _, _, err = sh('verb=push; refuse plan-missing verb="branch prune"')
+        self.assertEqual(contract(err)["verb"], "branch prune")
+        _, _, err = sh('verb="--help"; refuse plan-missing')
+        self.assertIsNone(contract(err)["verb"], "a script word that is not a verb is no verb")
+
+    def test_a_caller_that_is_wrong_exits_70_and_prints_no_refusal(self):
+        for script in ("refuse no-such-code", "refuse plan-missing nofield=1", "refuse plan-missing token=nothex", "refuse cut-fix-outside commits=a1b2c3d",
+                       "refuse", "notice no-such-code", "notice plan-missing token=x"):
+            with self.subTest(script=script):
+                rc, out, err = sh(script + "; echo after")
+                self.assertEqual((rc, out), (70, ""), err)
+                self.assertNotIn("qargi-refusal", err)
+                self.assertTrue(err.startswith("qargi: defect: "), err)
+
+    def test_notice_returns_and_the_verb_goes_on(self):
+        rc, out, err = sh('notice plan-missing verb="release push" token=0123456789ab; echo after')
+        self.assertEqual((rc, out), (0, "after\n"))
+        self.assertTrue(err.startswith("qargi: note [plan-missing] "), err)
+        self.assertNotIn("qargi-refusal", err)
+        self.assertNotIn("refused", err)
+        self.assertEqual(len(err.strip().split("\n")), 2)
+
+    def test_fail_and_die_print_one_line_and_exit_1(self):
+        for word in ("fail", "die"):
+            with self.subTest(word):
+                self.assertEqual(sh('%s "it broke:" x; echo after' % word), (1, "", "qargi: it broke: x\n"))
+
+    def test_need_plan_passes_the_token_and_refuses_a_missing_or_a_stale_one_with_its_own_code(self):
+        rc, out, err = sh('PLAN_ARG=0123456789ab; need_plan 0123456789ab; echo ok')
+        self.assertEqual((rc, out, err), (0, "ok\n", ""))
+        rc, out, err = sh('PLAN_ARG=; verb=merge; need_plan 0123456789ab; echo not-reached')
+        self.assertEqual((rc, out), (1, ""))
+        self.assertEqual(contract(err)["code"], "plan-missing")
+        self.assertIn("--plan 0123456789ab", err)
+        rc, out, err = sh('PLAN_ARG=ba9876543210; verb=merge; need_plan 0123456789ab; echo not-reached')
+        self.assertEqual((rc, out), (1, ""))
+        obj = contract(err)
+        self.assertEqual((obj["code"], obj["verb"]), ("plan-stale", "merge"))
+        self.assertIn("--plan 0123456789ab", err)
+        rc, out, err = sh('unset PLAN_ARG; need_plan 0123456789ab')
+        self.assertEqual((rc, contract(err)["code"]), (1, "plan-missing"), "an unset --plan is a missing one")
+
+    def test_the_two_refusals_keep_the_words_the_scripts_tests_look_for(self):
+        for script in ("PLAN_ARG=; need_plan 0123456789ab", "PLAN_ARG=ba9876543210; need_plan 0123456789ab"):
+            _, _, err = sh(script)
+            self.assertIn("the plan changed or --plan is missing", err)
+
+    def test_a_token_that_is_not_twelve_hex_digits_is_left_out_and_is_still_a_refusal(self):
+        for tok in ("short", "0123456789AB", "0123456789abc"):
+            with self.subTest(token=tok):
+                rc, out, err = sh('PLAN_ARG=; need_plan "$TOK"; echo after', TOK=tok)
+                self.assertEqual((rc, out), (1, ""), err)
+                obj = contract(err)
+                self.assertEqual(obj["code"], "plan-missing")
+                self.assertNotIn("token=", obj["detail"])
+                self.assertIn("--plan ?", err)
+
+    def test_the_nested_variable_does_not_stand_in_for_the_token_except_for_need_plan_nested(self):
+        rc, out, err = sh('PLAN_ARG=; need_plan 0123456789ab; echo after', QARGI_NESTED="1")
+        self.assertEqual((rc, contract(err)["code"]), (1, "plan-missing"))
+        rc, out, err = sh('PLAN_ARG=; need_plan_nested 0123456789ab; echo after', QARGI_NESTED="1")
+        self.assertEqual((rc, out, err), (0, "after\n", ""))
+        rc, out, err = sh('PLAN_ARG=; need_plan_nested 0123456789ab; echo after')
+        self.assertEqual((rc, contract(err)["code"]), (1, "plan-missing"))
 
 
 class WhatTheSourceRaises(Tree):

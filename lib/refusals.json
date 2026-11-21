@@ -291,7 +291,7 @@
       "why": "an apply with no token has no plan that anybody was shown",
       "class": "plan",
       "exit": 1,
-      "status": "planned",
+      "status": "live",
       "fields": {"verb": "verb", "token": "token", "context": "enum:lead,host"},
       "message": "the plan changed or --plan is missing: {verb} was given no --plan",
       "next": {"lead": "run {verb} without --plan, show the plan to the user, then apply exactly that with --plan {token}", "host": "plan again with qargi host {verb}, show it, then apply exactly that with --plan {token}: a token from a lead's plan never matches (R77)"}
@@ -301,7 +301,7 @@
       "why": "what the plan hashed changed after it was shown",
       "class": "plan",
       "exit": 1,
-      "status": "planned",
+      "status": "live",
       "fields": {"verb": "verb", "moved": "label-list", "token": "token", "context": "enum:lead,host"},
       "message": "the plan changed or --plan is missing: the plan of {verb} is no longer the one shown (moved: {moved})",
       "next": {"lead": "run {verb} without --plan, show the new plan, then apply exactly that with --plan {token}", "host": "plan again with qargi host {verb}, show the new plan, then apply exactly that with --plan {token}: a token from a lead's plan never matches (R77)"}

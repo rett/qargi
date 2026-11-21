@@ -176,9 +176,7 @@ def render(cat, code, pairs, notice=False, verb=None, project=None, role=None):
     nxt = fill(e["next"][who], fields, values, fields)
     if notice:
         return "qargi: note [%s] %s\n  next: %s\n" % (code, message, nxt), 0
-    verb = values.get("verb") or verb or None
-    if verb is not None and not (len(verb) <= 80 and VERB_RE.match(verb)):
-        raise Defect("the verb %r is not a verb" % verb)
+    verb = values.get("verb") or (verb if verb and len(verb) <= 80 and VERB_RE.match(verb) else None)   # the caller's default is an environment value: not a verb is no verb
     detail = " ".join("%s=%s" % (k, detail_value(fields[k], values[k])) for k in fields if k in values and k != "verb")
     obj = {"code": code, "exit": e["exit"], "verb": verb, "project": project if project and PROJECT_RE.match(project) else None,
            "role": role if role and ROLE_RE.match(role) else None, "epoch": None, "state": None, "tx": None, "detail": detail}
