@@ -51,7 +51,10 @@ option is refused for any other tier.
 
 The session-start hook shows the tiers, highest first, then the README of the highest tier
 that has one, each tier's indexes and the notes marked `always`, with size caps and a list of
-what was not loaded. When you dispatch a member, `qargi local prepare` prints a
+what was not loaded; after the tiers and the marshal block it adds the lead card, the rules that refuse late (`qargi role card lead`,
+at most 1600 characters, left out when it cannot be made in two seconds), with the members that are STALE or DRIFT as of the last
+`qargi agent list`. A runtime with no session-start hook has no card in its context: run `qargi role card lead` at the start. The card
+of a member is the `CARD:` block at the end of its task block (`qargi role card ROLE --run RUN` prints it for a prepared run). When you dispatch a member, `qargi local prepare` prints a
 `TASK-BLOCK MEMORY` block with the same tier summary and the always-load notes, and warns
 when the repo tier has uncommitted changes, because the member's clone has only the
 committed copy.

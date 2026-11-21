@@ -46,7 +46,7 @@ dry_git_ok() {
 }
 # dry_gh_ok ARGS -> 0 when the gh command only reads: auth status, repo view, pr view, pr list, pr checks, release view, release list (after a -R REPO or --repo REPO)
 dry_gh_ok() {
-  case ${1:-} in -R|--repo) [ $# -ge 2 ] || return 1; shift 2;; --repo=*) shift;; esac
+  case ${1:-} in -R|--repo) [ $# -ge 2 ] || return 1; shift; shift;; --repo=*) shift;; esac
   case "${1:-} ${2:-}" in
     "auth status"|"repo view"|"pr view"|"pr list"|"pr checks"|"release view"|"release list") return 0;;
   esac

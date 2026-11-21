@@ -94,7 +94,7 @@
 29 bash tests/test_release_ci.sh
 1 bash tests/test_changelog_section.sh
 12 bash tests/test_marshal_hook.sh
-2 python3 tests/test_help.py
+9 python3 tests/test_help.py
 2 python3 tests/test_tools.py
 1 python3 tests/test_procenv.py
 0 python3 tests/role_seed_sim.py shared
