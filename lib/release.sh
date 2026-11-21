@@ -191,10 +191,10 @@ ci_scan() {
 }
 GH=${QARGI_GH:-gh}   # the gh this script talks to (through ghq, lib/gitflow.sh); tests put a stub here
 repo_slug() { jq -r '.repo.url' "$af" | sed 's|^https://[^/]*/||; s|\.git$||'; }
-notes='' SITESRC=''   # the temporary file of `publish`, the extracted tag of `site`
+notes='' SITESRC='' ftmp=''   # the temporary file of `publish`, the extracted tag of `site`, the scratch directory of the checks of `finish`
 rel_exit() {   # the one EXIT handler: what gitflow.sh cleans up (the worktree of bump_worktree too), the temporary files, and in a dry run the last line
   local rc=$?
-  [ -z "$notes" ] || rm -f "$notes"; [ -z "$SITESRC" ] || rm -rf "$SITESRC"
+  [ -z "$notes" ] || rm -f "$notes"; [ -z "$SITESRC" ] || rm -rf "$SITESRC"; [ -z "$ftmp" ] || rm -rf "$ftmp"
   [ "$PSF" = /dev/null ] || rm -f "$PSF"; [ -z "$DRYTMP" ] || rm -rf "$DRYTMP"
   bump_cleanup; on_exit
   dry_finish "$rc"
@@ -879,6 +879,7 @@ step_gate() {
         refuse cut-branch-moved verb="release $1" ${CW_ARGS[@]+"${CW_ARGS[@]}"};;
       cut-fix-outside)
         refuse cut-fix-outside verb="release $1" ${CW_ARGS[@]+"${CW_ARGS[@]}"};;
+      *) echo "qargi: defect: cut_why returned the code '$CW_CODE', which step_gate has no refusal for (lib/release.sh): the step $1 of $VER was not run" >&2; exit 70;;
     esac
   fi
   echo "$1 runs under the cut $PLAN_ARG of $VER (approved once, in the words: $APPROVED)"

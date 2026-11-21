@@ -44,6 +44,7 @@ head_of() { git -C "$R" rev-parse "refs/heads/$1"; }
 cutget() { jq -r "$1" "$CR"; }
 jhas() { [ -f "$J" ] && jq -Rc --arg r "$1" --arg o "$2" --arg n "$3" 'fromjson? | select((.ref | endswith($r)) and .old == $o and .new == $n)' "$J" | grep -q .; }
 mkrun() { $DA local prepare --repo "$R" --base develop --slug "$1" --scratch "$T/scr" | sed -n 's/^RUN=//p'; }
+leftover() { find "$T/s" -maxdepth 1 -name '.release-*'; }   # what a verb left in the state directory: its scratch files are removed on every exit
 snap() { { git -C "$R" for-each-ref; git -C "$R" worktree list --porcelain; [ ! -f "$J" ] || cat "$J"; cat "$T/s/release/"*.cut.json "$T/s/audit.log" 2>/dev/null; } | md5sum; }
 
 # --- a fix that stays inside the paths of the cut: --record journals it with no plan and no approval, says it is inside, and push goes on under the cut
@@ -145,7 +146,7 @@ before=$(snap); out=$($REL push 0.2.0 2>&1); rc=$?
 [ "$rc" = 1 ] && grep -q '^qargi-refusal/1 {"code":"release-fragments-unfolded","exit":1,"verb":"release push"' <<<"$out" && grep -q 'detail":"count=1"' <<<"$out" && grep -q "next: fold them in the fix worktree, commit, then run qargi release fix VER --record" <<<"$out" && ! grep -q '^plan token' <<<"$out" && [ "$before" = "$(snap)" ] \
   && ok "push refuses while a fragment is at the branch head: release-fragments-unfolded, count 1, no plan token, nothing changed" || no "push with a fragment: rc=$rc $out"
 out=$($REL finish 0.2.0 2>&1); rc=$?
-[ "$rc" = 1 ] && grep -q '"code":"release-fragments-unfolded","exit":1,"verb":"release finish"' <<<"$out" && ok "finish refuses too" || no "finish with a fragment: rc=$rc $out"
+[ "$rc" = 1 ] && grep -q '"code":"release-fragments-unfolded","exit":1,"verb":"release finish"' <<<"$out" && [ -z "$(leftover)" ] && ok "finish refuses too, and leaves nothing in the state directory" || no "finish with a fragment: rc=$rc $out"
 W=$($REL fix 0.2.0 | sed -n 's/^worktree: //p')
 git -C "$W" rm -q changelog.d/a.md && git -C "$W" commit -q -m "remove the fragment, forgetting the note"
 out=$($REL push 0.2.0 2>&1); rc=$?
@@ -176,7 +177,7 @@ before=$(snap); out=$($REL push 0.2.0 2>&1); rc=$?
 [ "$rc" = 1 ] && grep -q '"code":"release-fragments-unfolded","exit":1,"verb":"release push"' <<<"$out" && grep -q "has no released section for 0.2.0" <<<"$out" && ! grep -q '^plan token' <<<"$out" && [ "$before" = "$(snap)" ] \
   && ok "push refuses a branch whose changelog has no section of the version (its fragments deleted with it), naming the missing section" || no "push, no section: rc=$rc $out"
 out=$($REL finish 0.2.0 2>&1); rc=$?
-[ "$rc" = 1 ] && grep -q '"code":"release-fragments-unfolded","exit":1,"verb":"release finish"' <<<"$out" && grep -q "has no released section for 0.2.0" <<<"$out" && ok "and finish refuses it" || no "finish, no section: rc=$rc $out"
+[ "$rc" = 1 ] && grep -q '"code":"release-fragments-unfolded","exit":1,"verb":"release finish"' <<<"$out" && grep -q "has no released section for 0.2.0" <<<"$out" && [ -z "$(leftover)" ] && ok "and finish refuses it, leaving nothing in the state directory" || no "finish, no section: rc=$rc $out"
 git -C "$W" rm -q CHANGELOG.md && git -C "$W" commit -q -m "delete the changelog"
 out=$($REL push 0.2.0 2>&1); rc=$?
 [ "$rc" = 1 ] && grep -q '"code":"release-fragments-unfolded","exit":1,"verb":"release push"' <<<"$out" && grep -q "has no CHANGELOG.md" <<<"$out" && ok "push refuses a branch with no CHANGELOG.md at the head" || no "push, no changelog: rc=$rc $out"
@@ -187,7 +188,7 @@ out=$($REL finish 0.2.0 2>&1); rc=$?
 PRE=$EMPTYCL cutup f4 "$FRAG"; PRE=''
 cm src/code.go "changed" "a code fix"
 before=$(snap); $REL fix 0.2.0 --push --dry-run --plan "$CT" >"$T/do" 2>"$T/de"; rc=$?
-[ "$rc" = 1 ] && [ "$(tail -n 1 "$T/do")" = "dry-run: 2 would refuse; nothing was changed" ] && grep -q '^qargi-refusal/1 {"code":"release-fragments-unfolded","exit":1,"verb":"release push".*"detail":"dry=1 count=1"' "$T/de" && grep -q '^qargi-refusal/1 {"code":"cut-fix-outside","exit":1,"verb":"release push".*"detail":"dry=1 commits=' "$T/de" && [ "$before" = "$(snap)" ] \
+[ "$rc" = 1 ] && [ "$(tail -n 1 "$T/do")" = "dry-run: 2 would refuse; nothing was changed" ] && grep -q '^qargi-refusal/1 {"code":"release-fragments-unfolded","exit":1,"verb":"release push".*"detail":"dry=1 count=1"' "$T/de" && grep -q '^qargi-refusal/1 {"code":"cut-fix-outside","exit":1,"verb":"release push".*"detail":"dry=1 commits=' "$T/de" && [ "$before" = "$(snap)" ] && [ -z "$(leftover)" ] \
   && ok "fix --push --dry-run lists both an unfolded fragment and a commit outside the cut's paths: 2 would refuse, nothing changed" || no "independent refusals: rc=$rc $(cat "$T/do" "$T/de")"
 
 # --- what is judged is what the commits contain, not what the configuration shows: a gitlink is a change of a path even when diff.ignoreSubmodules hides it, and a replace ref changes nothing
@@ -217,7 +218,7 @@ mkdir -p "$W/changelog.d" && ln -s ../src/code.go "$W/changelog.d/link.md" && gi
 cm changelog.d/ok.md "- a note" "a fragment"; l4=$(head_of release/0.2.0)
 git -C "$W" update-index --add --cacheinfo "160000,$(head_of master),changelog.d/sub" && git -C "$W" commit -q -m "a gitlink in the fragments directory"; l5=$(head_of release/0.2.0)
 out=$($REL fix 0.2.0 --record 2>&1)
-grep -q "of these commits; ${l1:0:7} ${l2:0:7} ${l3:0:7} ${l5:0:7} change a path" <<<"$out" \
+grep -q "of these commits; ${l1:0:7} ${l2:0:7} ${l3:0:7} ${l5:0:7} change a path" <<<"$out" && ! grep -q "${l4:0:7}" <<<"$out" \
   && ok "VERSION/x and CHANGELOG.md/build.sh are not the files VERSION and CHANGELOG.md, a symlink and a gitlink in the fragments directory are not fragments: all outside; the fragment between them is inside" || no "whole names and kinds: $out"
 cutup c10
 chmod +x "$W/CHANGELOG.md" && git -C "$W" add -A && git -C "$W" commit -q -m "make the changelog executable"; m1=$(head_of release/0.2.0)
