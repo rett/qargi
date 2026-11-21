@@ -430,6 +430,29 @@ class Review(HookCase):
         self.assertEqual(self.call("Bash", {"command": cmd}, c).returncode, 2, cmd)
         self.assertEqual(self.call("Bash", {"command": cmd}, tmp).returncode, 0, cmd)
 
+    def test_an_init_with_a_git_dir_or_an_abbreviated_separate_git_dir_is_judged_at_every_place_it_writes(self):
+        """git init uses --git-dir (or GIT_DIR) as its repository, so that directory is written whatever DIR says; git takes any unique prefix of a long option, so
+        --separate-git, --sep and --se=DIR name the --separate-git-dir directory too. Refused from a shell in the clone and from one in TMP, under both classes."""
+        self.ability("review")
+        c, tmp = self.clone, os.path.join(self.run, "tmp")
+        os.makedirs(tmp)
+        refused = ["git --git-dir=%s/.git init %s/y" % (c, tmp), "git --git-dir %s/.git init %s/y" % (c, tmp), "git --git-dir=%s/g init %s/y" % (c, tmp),
+                   "git --git-dir=../../clone/.git init %s/y" % tmp, "git -C %s --git-dir=../clone/.git init y" % tmp, "GIT_DIR=%s/.git git init %s/y" % (c, tmp),
+                   "GIT_DIR=../../clone/.git git init %s/y" % tmp,
+                   "git init --separate-git %s/g %s/z" % (c, tmp), "git init --sep %s/g %s/z" % (c, tmp), "git -C %s init --separate-git ../clone/g z" % tmp,
+                   "git init --se=%s/g %s/z" % (c, tmp), "git clone --separate-git %s/g %s %s/x" % (c, c, tmp), "git init --separate-git-dir=%s/g %s/z" % (c, tmp)]
+        passes = ["git --git-dir=%s/y/.git init %s/y" % (tmp, tmp), "git --git-dir=g init %s/y" % tmp, "git init --separate-git %s/g %s/z" % (tmp, tmp),
+                  "git init --se=%s/g %s/z" % (tmp, tmp), "git -C %s init --separate-git g z" % tmp, "git clone --separate-git %s/g %s %s/x" % (tmp, c, tmp)]
+        for cls in ((), ("--class", "read-only")):
+            for cwd in (c, tmp):
+                for cmd in refused:
+                    r = self.call("Bash", {"command": cmd}, cwd, *cls)
+                    self.assertEqual(r.returncode, 2, (cmd, cwd, cls, r.stderr))
+        for cls in ((), ("--class", "read-only")):                  # the same forms with only places of TMP are no change of the clone, from a shell in TMP
+            for cmd in passes:
+                r = self.call("Bash", {"command": cmd}, tmp, *cls)
+                self.assertEqual(r.returncode, 0, (cmd, tmp, cls, r.stderr))
+
     def test_a_clone_or_an_init_with_no_directory_is_judged_where_git_runs(self):
         """With no DIR the tree is made in the directory git runs in: the shell's, or the one the -C options give."""
         self.ability("review")

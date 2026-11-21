@@ -1878,6 +1878,10 @@ def write_targets(toks, i):
                 sub = rest[k] if k < len(rest) else ""
                 if sub in GIT_WRITES and not (sub == "tag" and lists_tags(rest[k + 1:])):
                     new_dir, separate, sure = git_new_tree(sub, rest[k + 1:]) if sub in GIT_NEW_TREE else (None, [], True)
+                    gitdirs = [v for n, v in opts if n == "--git-dir" and v] + [t.split("=", 1)[1] for t in toks[:i] if t.startswith("GIT_DIR=")]
+                    if sub == "init" and gitdirs:                                     # git init uses that git directory as the repository (git clone ignores it): the place git runs is judged too
+                        sure = False
+                        targets += [("git init", g) for d in (chdir, git_under(chdir, new_dir) if new_dir is not None else chdir) for g in (git_under(d, v) for v in gitdirs)]    # a relative one from the -C options, and from DIR
                     if new_dir is None or not sure:                                   # judged where git runs: the tree is made in that directory, or the operands are not known
                         targets.append(("git " + sub, gitdir or "."))
                         if chdir != gitdir:
@@ -1942,6 +1946,8 @@ def git_new_tree(sub, args):
             places.append(a)
         elif a.startswith("--"):
             name, eq, value = a.partition("=")
+            if name not in values and len(name) > 2 and "--separate-git-dir".startswith(name) and "--separate-git-dir" in values:
+                name = "--separate-git-dir"                            # git takes any prefix of a long option (--separate-git, --se) when it is the only one
             if name in values:
                 if not eq:
                     value = args[k] if k < len(args) else None
