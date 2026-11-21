@@ -8,8 +8,9 @@
 #       (git rev-parse OLD^{tree}) and REF is at OLD now (the move is a compare-and-swap: update-ref REF NEW OLD). The move is
 #       journaled with the reason (verb ref:rewrite, why TEXT), so `qargi local verify` and `local clean` of a run prepared before
 #       it accept it and name it as a rewrite, and `local clean`, `local list`, `lead compact-check` and `feature finish` follow a recorded run's applied tip to NEW (lib/merged.py).
-#       Nothing else changes: no working tree (the trees are the same), no other ref, nothing on origin. The lead's verb: the guard
-#       refuses it to a member.
+#       Nothing else changes: no working tree (the trees are the same), no other ref, nothing on origin. A release/* or hotfix/* branch (a fix
+#       reworded before the release goes out) is rewritten the same way while origin has no branch of that name (asked live: a branch that was
+#       pushed, and an origin that cannot be asked, refuse); a long-lived or feature branch never. The lead's verb: the guard refuses it to a member.
 #
 #   ref.sh record --deleted REF OLD --why TEXT [--project P]
 #       The lead deleted a branch by hand (git branch -D, git push --delete) that no flow verb deleted. REF (a branch NAME, or origin/NAME for the branch NAME
@@ -147,8 +148,16 @@ fi
 . "$(dirname "$0")/gitflow.sh"
 project_load
 ref=${ARGS[0]}; ref=${ref#refs/heads/}
-case $ref in agent/?*) ;; *) die "only an agent/* branch is rewritten this way (not $ref): a long-lived, feature, release or hotfix branch is never rewritten";; esac
+case $ref in agent/?*|release/?*|hotfix/?*) ;; *) die "only an agent/* branch (or a release/* or hotfix/* branch origin does not have) is rewritten this way (not $ref): a long-lived or feature branch is never rewritten";; esac
 git check-ref-format "refs/heads/$ref" || die "'$ref' is not a branch name"
+case $ref in release/?*|hotfix/?*)   # nobody else has the branch while origin has none: asked live, and an origin that cannot be asked is not an answer
+  remote_tip "$ref"
+  case $RSTATE in
+    none|absent) ;;
+    found) fail "$ref is on origin (at ${RTIP:0:12}, asked live): a branch that was pushed is never rewritten; nothing was moved";;
+    *) fail "origin could not be asked whether it has $ref (${RWHY:-no answer}): a release or hotfix branch is rewritten only while origin has none; nothing was moved";;
+  esac;;
+esac
 old=$(g rev-parse -q --verify "${ARGS[1]}^{commit}" 2>/dev/null) || die "OLD (${ARGS[1]}) is not a commit of $REPO"
 new=$(g rev-parse -q --verify "${ARGS[2]}^{commit}" 2>/dev/null) || die "NEW (${ARGS[2]}) is not a commit of $REPO"
 [ "$old" != "$new" ] || die "OLD and NEW are the same commit: there is nothing to record"

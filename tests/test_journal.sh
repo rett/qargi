@@ -319,6 +319,45 @@ out=$($DA local clean "$RN" 2>&1); rc=$?
 out=$($DA local close "$RN" --applied-by-am 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "merge that branch" <<<"$out" && ! grep -q "rewrite" <<<"$out" && ok "close of an applied run at its journaled tip: as before" || no "plain close refusal: rc=$rc $out"
 
+# --- qargi ref record --rewrite of a release or hotfix branch: allowed while origin has no branch of that name (asked live), the same tree, journaled as any rewrite
+git -C "$A" branch release/9.0.0 "$(git -C "$A" commit-tree -p develop -m "release: a fix" "$(git -C "$A" rev-parse 'develop^{tree}')")"   # one commit on top of develop, so that same() has a parent to reuse
+git -C "$A" branch hotfix/9.0.1 "$(git -C "$A" commit-tree -p master -m "hotfix: a fix" "$(git -C "$A" rev-parse 'master^{tree}')")"
+$DA ref note release/9.0.0 hotfix/9.0.1 >/dev/null 2>&1 || no "(setup) note release/9.0.0 and hotfix/9.0.1"
+R=$(fresh r-rewrite-release); RC=$(fresh r-rewrite-hotfix); ro=$(sha release/9.0.0); rn=$(same "$ro" "release: reworded"); n=$(jn)
+out=$($REF release/9.0.0 "$ro" "$rn" --why "reworded the fix" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(sha release/9.0.0)" = "$rn" ] && [ "$(jn)" = $((n + 1)) ] && jq -e --arg o "$ro" --arg n "$rn" 'select(.verb == "ref:rewrite" and .ref == "refs/heads/release/9.0.0" and .old == $o and .new == $n and .why == "reworded the fix")' "$J" >/dev/null; } \
+  && ok "ref record --rewrite moves a release branch that origin does not have and journals the move with the reason" || no "release rewrite: rc=$rc $out"
+out=$($DA local verify "$R" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "release/9.0.0 moved by a rewrite (qargi ref record --rewrite: reworded the fix)" <<<"$out" && ok "verify accepts the rewrite of the release branch and names it as one" || no "verify after release rewrite: rc=$rc $out"
+ho=$(sha hotfix/9.0.1); hn=$(same "$ho" "hotfix: reworded")
+out=$($REF hotfix/9.0.1 "$ho" "$hn" --why "reworded the hotfix" 2>&1); rc=$?
+[ $rc = 0 ] && [ "$(sha hotfix/9.0.1)" = "$hn" ] && jhas hotfix/9.0.1 "$ho" "$hn" && ok "a hotfix branch that origin does not have is rewritten the same way" || no "hotfix rewrite: rc=$rc $out"
+echo '{}' > "$RC/out/manifest.json"; out=$($DA local clean "$RC" 2>&1); rc=$?
+[ $rc = 0 ] && [ ! -e "$RC" ] && grep -q "hotfix/9.0.1 moved by a rewrite" <<<"$out" && ok "and plain clean of a run prepared before accepts the rewrite and names it" || no "clean after hotfix rewrite: rc=$rc $out"
+cur=$(sha release/9.0.0); n=$(jn)
+out=$($REF release/9.0.0 "$cur" "$(git -C "$A" commit-tree -p "$cur~1" -m other "$(git -C "$A" mktree </dev/null)")" --why x 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "trees of OLD .* differ" <<<"$out" && [ "$(sha release/9.0.0)" = "$cur" ] && [ "$(jn)" = "$n" ] && ok "a release branch is rewritten only to the same tree, as an agent branch is" || no "release other tree: rc=$rc $out"
+# a branch origin has is never rewritten; an origin that cannot be asked is no answer; a repository with no origin has nobody to ask
+git -C "$A" push -q origin release/9.0.0
+out=$($REF release/9.0.0 "$cur" "$(same "$cur" "release: again")" --why x 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "release/9.0.0 is on origin" <<<"$out" && [ "$(sha release/9.0.0)" = "$cur" ] && [ "$(jn)" = "$n" ] && ok "a release branch that was pushed is refused: nothing moves, nothing is journaled" || no "pushed release rewrite: rc=$rc $out"
+git -C "$A" remote set-url origin "$T/nowhere.git"
+out=$($REF release/9.0.0 "$cur" "$(same "$cur" "release: again")" --why x 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "origin could not be asked whether it has release/9.0.0" <<<"$out" && [ "$(sha release/9.0.0)" = "$cur" ] && [ "$(jn)" = "$n" ] && ok "an origin that cannot be asked refuses the rewrite (unchecked)" || no "unchecked release rewrite: rc=$rc $out"
+git -C "$A" remote set-url origin "$T/origin.git"
+git -C "$A" remote rename origin elsewhere >/dev/null 2>&1; hc=$(sha hotfix/9.0.1)
+out=$($REF hotfix/9.0.1 "$hc" "$(same "$hc" "hotfix: again")" --why "no origin to ask" 2>&1); rc=$?
+git -C "$A" remote rename elsewhere origin >/dev/null 2>&1
+[ $rc = 0 ] && ok "a repository with no origin rewrites a hotfix branch: there is nobody to ask" || no "no origin rewrite: rc=$rc $out"
+git -C "$A" branch feature/rw9 develop; fo=$(sha feature/rw9)
+out=$($REF feature/rw9 "$fo" "$(hand feature/rw9)" --why x 2>&1); rc=$?
+git -C "$A" branch -D feature/rw9 >/dev/null
+[ $rc = 1 ] && grep -q "only an agent/\* branch" <<<"$out" && ok "a feature branch is still refused" || no "feature rewrite: rc=$rc $out"
+ht=$(sha hotfix/9.0.1)
+git -C "$A" push -q origin :refs/heads/release/9.0.0
+git -C "$A" branch -D release/9.0.0 hotfix/9.0.1 >/dev/null
+$DA ref record --deleted release/9.0.0 "$cur" --why "test cleanup" >/dev/null 2>&1 && $DA ref record --deleted hotfix/9.0.1 "$ht" --why "test cleanup" >/dev/null 2>&1 || no "(setup) record the cleanup of release/9.0.0 and hotfix/9.0.1"
+
 # --- qargi ref record --deleted: a branch deleted by hand is journaled from the commit it was at to absent, so a run prepared before it verifies
 DEL="$DA ref record --deleted"
 # a branch the lead made and noted, a strict run prepared, then the lead deletes the branch with git: refused until the deletion is recorded
