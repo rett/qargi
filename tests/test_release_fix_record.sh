@@ -61,6 +61,7 @@ out=$($DA local verify "$RA" 2>&1); rc=$?
 [ "$rc" = 0 ] && ok "a run prepared before the fix commit verifies once the fix is recorded" || no "verify after record: rc=$rc $out"
 out=$($REL fix 0.2.0 --record 2>&1); rc=$?
 [ "$rc" = 0 ] && grep -q "already leads to" <<<"$out" && grep -q "where the cut $CT left it" <<<"$out" && ok "--record again changes nothing and says so" || no "record again: rc=$rc $out"
+out=$($REL plan 0.2.0 2>&1); grep -q "^  fix recorded .* at ${h1:0:7} (inside the cut's paths)" <<<"$out" && ok "the report of the cut shows the recorded fix" || no "cut report: $out"
 out=$($REL push 0.2.0 --plan "$CT" 2>&1); rc=$?
 [ "$rc" = 0 ] && [ "$(git -C "$O" rev-parse refs/heads/release/0.2.0)" = "$h1" ] && [ "$(cutget '.done.push.head')" = "$h1" ] && [ "$(cutget '.done.push.via')" = cut ] && [ "$(cutget '.done.push.seq')" -gt "$(cutget '.done.fix.seq')" ] \
   && ok "push --plan CUT passes after the recorded fix: the branch is pushed, push is recorded after fix, and the cut's words are the push's" || no "push after record: rc=$rc $out"

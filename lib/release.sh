@@ -30,8 +30,17 @@
 #                                           that cannot be applied refuses the run, and the waiver is as for feature verify (per run, audited)
 #                                           With the answer release.version_files (a list of paths) start, status and verify check that each file contains
 #                                           VERSION at the release branch and warn of the ones that do not: "bump these on the release branch". No answer, no check.
-#   release.sh fix VERSION [--hotfix] [--push [--plan T --approved W]]
-#                                           a worktree on the release branch under the worktree root (prints its path), to commit a fix in; --push is `push`
+#   release.sh fix VERSION [--hotfix] [--push [--plan T --approved W] | --record]
+#                                           a worktree on the release branch under the worktree root (prints its path), to commit a fix in; --push is `push`.
+#                                           --record journals the commits made there (the lead's record of fact: no plan, no token, no approval; lead only) so a run prepared
+#                                           before them verifies, and with a live cut says whether they stay inside the cut's fix_paths (the paths its plan named: the fragments
+#                                           directory, CHANGELOG.md, the version file and release.version_files; docs/ and the manual pages are outside). Inside: `fix` is recorded
+#                                           and push goes on under the cut's approval. Outside: nothing is recorded, the notice cut-fix-outside lists the commits, and push takes its
+#                                           own plan (which re-anchors the cut). `push` makes the same catch-up and the same check itself.
+#   release.sh start|push|fix --push ... --dry-run
+#                                           the verb as far as its refusals, changing nothing (QARGI_DRY=1): the plan and its token, what invalidates it, and with --plan the refusals the
+#                                           apply would meet (plan-stale naming the labels that moved, the cut's codes), each printed as the apply prints it with dry=1 first in
+#                                           the detail; the last line is `dry-run: N would refuse; nothing was changed`, the status 0 or 1.
 #   release.sh push VERSION [--hotfix] [--plan T --approved W]     push the branch, open the pull request into master (or say "updated PR #N" when it is open)
 #                                           With the answer release.notes_file the plan warns of the items of the VERSION section of CHANGELOG.md that the file
 #                                           does not mention (an item is mentioned when its leading `backticked term`, else its first three words, is in the file,
@@ -915,6 +924,7 @@ cut_report() {
   [ -f "$CUTREC" ] || return 0
   echo "cut $(cut_get .token) ($(cut_get .kind) $VER, planned $(cut_get .at), approved $(cut_get '.approval.at // empty') in the words: $(cut_get '.approval.words // empty')):"
   jq -r '. as $r | .steps[] | "  " + . + ": " + (if $r.done[.] != null then "done " + $r.done[.].at + " (" + $r.done[.].via + ($r.done[.].commit | if . != "" then ", " + .[0:7] else "" end) + ")" else "pending" end)' "$CUTREC"
+  jq -r 'select(.done.fix != null) | "  fix recorded " + .done.fix.at + " at " + (.done.fix.head[0:7]) + " (inside the cut'"'"'s paths)"' "$CUTREC"
   cut_next
 }
 # fix_paths_derive -> the paths a fix may change and still go on under the cut's approval, one to a line, from the project's answers: the directory of
