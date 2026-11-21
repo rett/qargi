@@ -2634,11 +2634,12 @@ def _link_lines(doc, runtime):
             lines.append("link: %s -> %s: refused: %s" % (_show(frm), _show(to), home_link_problem(frm)))
             continue
         real = _source_real(frm)
-        present = os.path.lexists(os.path.join(os.path.realpath(os.path.expanduser("~")), frm[2:])) and os.path.isfile(real)
+        exists = os.path.lexists(os.path.join(os.path.realpath(os.path.expanduser("~")), frm[2:]))
+        state = "missing" if not exists or not os.path.exists(real) else "present" if os.path.isfile(real) else "not a regular file"
         one = copy.deepcopy(doc)
         one["dispatch"]["home"]["link"] = [ln]
         forbidden = home_source_forbidden(one, runtime)
-        lines.append("link: %s -> %s (real path %s): %s, %s" % (frm, to, real, "present" if present else "missing",
+        lines.append("link: %s -> %s (real path %s): %s, %s" % (frm, to, real, state,
                      "not inside ~/.codex" if forbidden is None else "refused: " + _first_line(forbidden)))
     why = ("dispatch.home: " + shape[0]) if shape else home_source_problem(doc, runtime)
     if why is None:

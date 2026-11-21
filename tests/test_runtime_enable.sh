@@ -247,6 +247,11 @@ out=$(EN en5 --runtime fakecx 2>&1); rc=$?
   && ok "link-source-missing: the plan says missing, the refusal is the one prepare gives, and no token is printed" || no "missing: rc=$rc $out"
 mv "$HOME/.fakecx-members/auth.gone" "$HOME/.fakecx-members/auth.json"
 mkdir -p "$HOME/.codex"; echo '{}' > "$HOME/.codex/auth.json"
+mkdir -p "$HOME/.fakedirsrc-members/auth.json"
+fake_command_runtime "$SRC" "$TOOL" fakedirsrc '.dispatch.home.link = [{from: "~/.fakedirsrc-members/auth.json", to: "auth.json"}]'
+out=$(EN en5 --runtime fakedirsrc 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q ': not a regular file, not inside ~/.codex' <<<"$out" && ! grep -q ': missing' <<<"$out" && grep -q 'is not a regular file' <<<"$out" && ! grep -q '^plan token' <<<"$out"; } \
+  && ok "link-source-directory: a directory as the sign-in is called not a regular file in the plan, not missing, and no token is printed" || no "directory source: rc=$rc $out"
 mkdir -p "$HOME/.fakeln-members"; ln -s "$HOME/.codex/auth.json" "$HOME/.fakeln-members/auth.json"
 fake_command_runtime "$SRC" "$TOOL" fakeln
 out=$(EN en5 --runtime fakeln 2>&1); rc=$?
