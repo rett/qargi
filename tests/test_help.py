@@ -260,22 +260,22 @@ class Render(unittest.TestCase):
         self.assertNotIn("this directory", text)
         self.assertNotIn("Claude Code", C.COMMANDS["team"]["desc"])
 
-    def test_the_guard_topic_and_the_review_role_say_what_a_read_only_member_runs_where_tmpdir_points_and_what_a_piece_after_a_cut_may_not_start_with(self):
-        """What the guard refuses a read-only member, as the member needs to read it: an assignment (not the command), the TMP that TMPDIR is, and the words the
-        guard reads after a separator. The behaviour itself is tested in test_guard.py."""
+    def test_the_guard_topic_and_the_read_only_card_say_what_a_read_only_member_runs_where_tmpdir_points_and_what_a_piece_after_a_cut_may_not_start_with(self):
+        """What the guard refuses a read-only member, as the member needs to read it: the guard topic says it all (an assignment, not the command; the TMP that TMPDIR
+        is; the words the guard reads after a separator) and the read-only card, which the task block carries in place of the review role's text, says what a reviewer
+        acts on. The behaviour itself is tested in test_guard.py, the card against the guard in test_rolecard.py."""
         topic = " ".join(" ".join(C.TOPICS["guard"][1]).split())
-        role = " ".join(slurp(os.path.join(ROOT, "roles", "review", "ROLE.md")).split())
-        for name, text in (("the guard topic", topic), ("the review role", role)):
-            for needle in ("build, vet and test", "TMPDIR", "OUT and TMP", "git push", "git tag", "ssh", "scp", "sftp", "gh", "not mid-sentence" if text is topic else "middle of a sentence"):
-                self.assertIn(needle, text, "%s does not say %r" % (name, needle))
-            self.assertNotIn("is not set", text, name)
+        for needle in ("build, vet and test", "TMPDIR", "OUT and TMP", "git push", "git tag", "ssh", "scp", "sftp", "gh", "not mid-sentence"):
+            self.assertIn(needle, topic, "the guard topic does not say %r" % needle)
+        self.assertNotIn("is not set", topic)
         self.assertIn("is refused, not the command", topic)
-        self.assertIn("not the command", role)
         self.assertIn("the run's TMP", topic)
-        self.assertIn("the run's TMP", role)
-        self.assertIn("a Go test writes", role)
-        self.assertIn("environment", role)
-        self.assertIn("never the clone", role)
+        card = subprocess.run([sys.executable, "-I", os.path.join(LIB, "rolecard.py"), "card", "review"], capture_output=True, text=True, check=True).stdout
+        card = " ".join(card.split())
+        for needle in ("TMPDIR", "OUT and TMP", "PATH, HOME, TMPDIR, GIT_*, LD_*, BASH_*", "pass the TMP path as an argument", "a target platform", "Do not run the whole suite"):
+            self.assertIn(needle, card, "the read-only card does not say %r" % needle)
+        role = " ".join(slurp(os.path.join(ROOT, "roles", "review", "ROLE.md")).split())
+        self.assertNotIn("TMPDIR", role, "what the guard refuses of a read-only run is on the card, not in the role text")
 
     def test_review_check_help_and_the_review_role_state_the_report_only_rule(self):
         # what review_check.py requires of a report-only run: the manifest beside the report, a closing verdict line, SCOPE as a hard limit, a batch warning
