@@ -1593,7 +1593,7 @@ $vout}"
     rt_cell() { local r; [ -n "$showrt" ] || return 0; r=$(reg_get "$1" runtime); printf '%-12s ' "$(printf '%s' "${r:--}" | plain)"; }   # RUN -> the cell, or nothing
     rt_note() { # RUN -> "  model=M (requested, ...)" for a line that records the model, else nothing
       local m; m=$(reg_get "$1" model); [ -n "$m" ] || return 0
-      if [ "$(reg_json "$1" '.model_confirmed')" = true ]; then printf '  model=%s (requested, override verified)' "$m"; else printf '  model=%s (requested, not confirmed)' "$m"; fi
+      if [ "$(reg_json "$1" '.model_confirmed')" = true ]; then printf '  model=%s (requested at prepare, override verified)' "$m"; else printf '  model=%s (requested at prepare, not confirmed)' "$m"; fi
     }
     printf '%-10s %-18s %-10s %-6s %-8s %s%s\n' ROLE SLUG AGE APPLIED MERGED "${showrt:+RUNTIME      }" RUN
     nowe=$(date +%s)

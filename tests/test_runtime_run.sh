@@ -281,15 +281,15 @@ out=$(dispatch --dry-run); rc=$?
 # --- the views: local list has a RUNTIME column and review check a runtime= line, from the registry line, with the model as asked for (never "confirmed")
 LIST=$("$DA" local list 2>&1)
 { grep -q '^ROLE  *SLUG  *AGE  *APPLIED  *MERGED  *RUNTIME  *RUN$' <<<"$LIST" \
-  && grep -E "^build +u1 .* fakever +$RUNX  model=gpt-6.1-terra \(requested, override verified\)\$" <<<"$LIST" >/dev/null \
-  && grep -E "^build +u2 .* fakecx +$T/scr/qargi\.[A-Za-z0-9]{6}  model=gpt-6.1-terra \(requested, not confirmed\)\$" <<<"$LIST" >/dev/null \
+  && grep -E "^build +u1 .* fakever +$RUNX  model=gpt-6.1-terra \(requested at prepare, override verified\)\$" <<<"$LIST" >/dev/null \
+  && grep -E "^build +u2 .* fakecx +$T/scr/qargi\.[A-Za-z0-9]{6}  model=gpt-6.1-terra \(requested at prepare, not confirmed\)\$" <<<"$LIST" >/dev/null \
   && grep -E "^build +o1 .* claude-code +$T/scr/qargi\.[A-Za-z0-9]{6}\$" <<<"$LIST" >/dev/null; } \
   && ok list-runtime-column || no "local list: $LIST"
 out=$("$DA" review check "$RUNX/out" 2>&1)
-grep -qx 'runtime=fakever model=gpt-6.1-terra (requested, override verified)' <<<"$out" && ok override-verified-wording || no "review check, a verified override: $out"
+grep -qx 'runtime=fakever model=gpt-6.1-terra (requested at prepare, override verified)' <<<"$out" && ok override-verified-wording || no "review check, a verified override: $out"
 RUNCX=$(sed -n 's/^build  *u2 .* \(\/[^ ]*qargi\.[A-Za-z0-9]*\)  model=.*/\1/p' <<<"$LIST")
 out=$("$DA" review check "$RUNCX/out" 2>&1)
-grep -qx 'runtime=fakecx model=gpt-6.1-terra (requested, not confirmed)' <<<"$out" && ok review-check-not-confirmed || no "review check, an unverified override: $RUNCX $out"
+grep -qx 'runtime=fakecx model=gpt-6.1-terra (requested at prepare, not confirmed)' <<<"$out" && ok review-check-not-confirmed || no "review check, an unverified override: $RUNCX $out"
 RUNO1=$(sed -n 's/^build  *o1 .* \(\/[^ ]*qargi\.[A-Za-z0-9]*\)$/\1/p' <<<"$LIST")
 out=$("$DA" review check "$RUNO1/out" 2>&1)
 { grep -qx 'runtime=claude-code' <<<"$out" && ! grep -q 'confirmed\|verified' <<<"$out"; } && ok review-check-insession-runtime || no "review check, an in-session run: $RUNO1 $out"
