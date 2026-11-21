@@ -812,11 +812,12 @@ cut_anchor() {
           | {s: (.value.seq // 0), a: (.value.at // ""), p: ({fix: 2, push: 1, start: 0})[.key], h: .value.head}] | sort_by([.s, .a, .p]) | (last // {}) | .h // empty' "$CUTREC" 2>/dev/null
 }
 # fix_scan ANCHOR HEAD -> FIX_ON (1 when HEAD follows ANCHOR on the first-parent line of the branch, empty when the branch was reset or rewritten), FIX_COMMITS (the commits from ANCHOR
-# to HEAD, oldest first) and FIX_OUT (the abbreviated ids of those that change a path outside the .fix_paths of the cut record: a path is matched whole, a directory by prefix, and
-# a rename counts on both sides; a merge is judged by its difference from its first parent). A record with no .fix_paths covers nothing.
+# to HEAD, oldest first) and FIX_OUT (the abbreviated ids of those that change a path outside the .fix_paths of the cut record: a file is matched by its whole name, only the
+# directories of .fix_dirs (the fragments directory) by prefix, and a rename counts on both sides; an entry that is a symlink or a gitlink, or whose mode changes, is outside whatever
+# its path; a merge is judged by its difference from its first parent). A record with no .fix_paths covers nothing.
 fix_scan() {
   local anchor=$1 head=$2 c first
-  local -a paths=() ps=()
+  local -a paths=() ps=() dirs=() dargs=()
   FIX_ON=1 FIX_COMMITS=() FIX_OUT=()
   mapfile -t FIX_COMMITS < <(GIT_NO_REPLACE_OBJECTS=1 g rev-list --first-parent --reverse "$anchor..$head")
   if [ "${#FIX_COMMITS[@]}" -gt 0 ]; then
@@ -824,11 +825,13 @@ fix_scan() {
     [ "$first" = "$anchor" ] || FIX_ON=''
   elif [ "$head" != "$anchor" ]; then FIX_ON=''; fi
   [ -n "$FIX_ON" ] || return 0
-  mapfile -t paths < <(jq -r '.fix_paths // [] | .[]' "$CUTREC" 2>/dev/null)
+  mapfile -t paths < <(jq -r '(.fix_dirs // []) as $d | .fix_paths // [] | .[] | select(. as $p | $d | index($p) | not)' "$CUTREC" 2>/dev/null)
+  mapfile -t dirs < <(jq -r '.fix_dirs // [] | .[]' "$CUTREC" 2>/dev/null)
+  for c in ${dirs[@]+"${dirs[@]}"}; do dargs+=(--dir "$c"); done
   for c in ${FIX_COMMITS[@]+"${FIX_COMMITS[@]}"}; do
     # diff-tree, not diff: diff is porcelain and honours diff.ignoreSubmodules and submodule.NAME.ignore, which would leave an added or bumped gitlink out; no replace object may
     # change what is judged. A git that fails leaves nothing for the filter to see, so a failure of either side of the pipe counts the commit as outside
-    GIT_NO_REPLACE_OBJECTS=1 g diff-tree -r --no-renames --name-only -z --ignore-submodules=none "$c^" "$c" | python3 -I "$RL" outside ${paths[@]+"${paths[@]}"} >/dev/null
+    GIT_NO_REPLACE_OBJECTS=1 g diff-tree -r --no-renames --raw -z --ignore-submodules=none "$c^" "$c" | python3 -I "$RL" outside ${dargs[@]+"${dargs[@]}"} ${paths[@]+"${paths[@]}"} >/dev/null
     ps=("${PIPESTATUS[@]}")
     { [ "${ps[0]}" = 0 ] && [ "${ps[1]}" = 0 ]; } || FIX_OUT+=("${c:0:7}")
   done
@@ -1014,7 +1017,7 @@ case $verb in
     haspush=''; g remote get-url origin >/dev/null 2>&1 && haspush=1
     site=''; site_answers 2>/dev/null && [ "$SITE_ON" = true ] && site=1
     steps="start${haspush:+ push} finish${site:+ site}"
-    fixp=$(fix_paths_derive); fixl=$(printf '%s' "$fixp" | paste -sd' ' -)
+    fixp=$(fix_paths_derive); fixd=$(fragments_dir); fixl=$(printf '%s' "$fixp" | paste -sd' ' -)
     tok=$(printf '%s\n' "$PROJ" "$KIND" "$VER" "$DATE" "$KEEP" "$ALLOW_EMPTY" "$BR" "$BASE" "$b0" "$msha" "$second" "$steps" "$stok" "$fixl" | plan_token --basis "project kind version date keep allow-empty branch base head master second steps start-plan fix-paths")
     echo "cut $KIND $VER of $PROJ: one plan and one approval for the whole ceremony. Approve it once; then run each step with --plan $tok alone (the words are recorded once), and each step is refused, before anything moves, if what this plan fixed no longer holds."
     echo "1. start: create $BR from $BASE and bump the version (nothing is pushed). Its own plan:"
@@ -1039,8 +1042,8 @@ case $verb in
     mkdir -p "$DA_STATE/release"
     jq -n --arg p "$PROJ" --arg v "$VER" --arg k "$KIND" --arg tok "$tok" --arg at "$(now)" --arg date "$DATE" --arg keep "$KEEP" --arg ae "$ALLOW_EMPTY" --arg b0 "$b0" --arg m "$msha" \
       --arg second "$second" --arg st "$stok" --arg words "$APPROVED" --argjson steps "$(printf '%s\n' "${steps// /$'\n'}" | jq -R . | jq -sc .)" --arg lead "$LEAD_ID" \
-      --argjson fixpaths "$(printf '%s\n' "$fixp" | jq -R . | jq -sc .)" \
-      '{schema:1, project:$p, version:$v, kind:$k, token:$tok, at:$at, date:$date, keep:$keep, allow_empty:$ae, base_sha:$b0, master_sha:$m, second:$second, start_token:$st, steps:$steps, fix_paths:$fixpaths, approval:{words:$words, at:$at}, lead:{id:$lead}, done:{}}' > "$CUTREC.tmp" \
+      --argjson fixpaths "$(printf '%s\n' "$fixp" | jq -R . | jq -sc .)" --argjson fixdirs "$(printf '%s\n' "$fixd" | jq -R 'select(. != "")' | jq -sc .)" \
+      '{schema:1, project:$p, version:$v, kind:$k, token:$tok, at:$at, date:$date, keep:$keep, allow_empty:$ae, base_sha:$b0, master_sha:$m, second:$second, start_token:$st, steps:$steps, fix_paths:$fixpaths, fix_dirs:$fixdirs, approval:{words:$words, at:$at}, lead:{id:$lead}, done:{}}' > "$CUTREC.tmp" \
       && chmod 600 "$CUTREC.tmp" && mv "$CUTREC.tmp" "$CUTREC" || die "could not write the cut record $CUTREC"
     audit_log "release:cut" "$PROJ $VER $KIND plan $tok steps: $steps"
     echo "approved the cut $tok of $KIND $VER in the words: $APPROVED"

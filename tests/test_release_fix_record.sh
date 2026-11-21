@@ -192,4 +192,35 @@ out=$($REL fix 0.2.0 --record 2>&1); rc=$?
 [ "$rc" = 0 ] && grep -q "outside the cut: push will take its own plan" <<<"$out" && grep -q "the commits ${p1:0:7} leave the paths" <<<"$out" && [ "$(cutget '.done | has("fix")')" = false ] \
   && ok "a refs/replace entry that makes a code commit look empty does not change what is judged" || no "replace: rc=$rc $out; $(cat "$CR")"
 
+# --- a path entry of the cut is a whole name (a directory only for the fragments directory), and an entry is judged by its kind: a symlink, a gitlink or a mode change is outside
+cutup c9 '.release = {changelog: {fragments: "changelog.d"}}'
+[ "$(cutget '.fix_dirs | join(" ")')" = "changelog.d" ] && ok "the cut record names the fragments directory as the one prefix entry (.fix_dirs)" || no "fix_dirs: $(cutget '.fix_dirs')"
+git -C "$W" rm -q VERSION && mkdir "$W/VERSION" && echo x > "$W/VERSION/x" && git -C "$W" add -A && git -C "$W" commit -q -m "VERSION becomes a directory"; l1=$(head_of release/0.2.0)
+git -C "$W" rm -q CHANGELOG.md && mkdir "$W/CHANGELOG.md" && echo x > "$W/CHANGELOG.md/build.sh" && git -C "$W" add -A && git -C "$W" commit -q -m "CHANGELOG.md becomes a directory"; l2=$(head_of release/0.2.0)
+mkdir -p "$W/changelog.d" && ln -s ../src/code.go "$W/changelog.d/link.md" && git -C "$W" add -A && git -C "$W" commit -q -m "a symlink in the fragments directory"; l3=$(head_of release/0.2.0)
+cm changelog.d/ok.md "- a note" "a fragment"; l4=$(head_of release/0.2.0)
+git -C "$W" update-index --add --cacheinfo "160000,$(head_of master),changelog.d/sub" && git -C "$W" commit -q -m "a gitlink in the fragments directory"; l5=$(head_of release/0.2.0)
+out=$($REL fix 0.2.0 --record 2>&1)
+grep -q "of these commits; ${l1:0:7} ${l2:0:7} ${l3:0:7} ${l5:0:7} change a path" <<<"$out" \
+  && ok "VERSION/x and CHANGELOG.md/build.sh are not the files VERSION and CHANGELOG.md, a symlink and a gitlink in the fragments directory are not fragments: all outside; the fragment between them is inside" || no "whole names and kinds: $out"
+cutup c10
+chmod +x "$W/CHANGELOG.md" && git -C "$W" add -A && git -C "$W" commit -q -m "make the changelog executable"; m1=$(head_of release/0.2.0)
+out=$($REL fix 0.2.0 --record 2>&1)
+grep -q "of these commits; ${m1:0:7} change a path" <<<"$out" && ok "a mode change of a named file is outside" || no "mode change: $out"
+cutup c11
+rm "$W/VERSION" && ln -s CHANGELOG.md "$W/VERSION" && git -C "$W" add -A && git -C "$W" commit -q -m "VERSION becomes a symlink"; m2=$(head_of release/0.2.0)
+out=$($REL fix 0.2.0 --record 2>&1)
+grep -q "of these commits; ${m2:0:7} change a path" <<<"$out" && ok "a named file that becomes a symlink is outside" || no "symlink: $out"
+# the filter itself, on crafted raw entries (name, old and new mode)
+RLP=${DA%/bin/qargi}/lib/release_layout.py
+RAWF() { printf ':%s %s 0000000000000000000000000000000000000000 1111111111111111111111111111111111111111 M\0%s\0' "$1" "$2" "$3"; }
+out=$(RAWF 100644 100644 changelog.d/a.md | python3 -I "$RLP" outside --dir changelog.d CHANGELOG.md); rc=$?
+[ "$rc" = 0 ] && [ -z "$out" ] && ok "the filter: a file under the directory is inside" || no "filter inside: rc=$rc $out"
+out=$(RAWF 100644 100644 changelog.d | python3 -I "$RLP" outside --dir changelog.d CHANGELOG.md); rc=$?
+[ "$rc" = 1 ] && [ "$out" = changelog.d ] && ok "the filter: a file named as the directory is not under it" || no "filter dir name: rc=$rc $out"
+out=$({ RAWF 100644 100644 CHANGELOG.md; RAWF 100644 100755 VERSION; RAWF 000000 120000 CHANGELOG.md/x; RAWF 160000 000000 CHANGELOG.md; } | python3 -I "$RLP" outside CHANGELOG.md VERSION); rc=$?
+[ "$rc" = 1 ] && [ "$out" = "$(printf 'VERSION\nCHANGELOG.md/x\nCHANGELOG.md')" ] && ok "the filter: a mode change, a name that only starts with an entry, and a gitlink are outside; a plain edit of an entry is inside" || no "filter matrix: rc=$rc $out"
+out=$({ RAWF 000000 100644 VERSION; RAWF 100755 000000 VERSION; } | python3 -I "$RLP" outside VERSION); rc=$?
+[ "$rc" = 0 ] && ok "the filter: an added or deleted regular file is inside" || no "filter add/delete: rc=$rc $out"
+
 exit $fail
