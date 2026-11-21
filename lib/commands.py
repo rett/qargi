@@ -1789,11 +1789,13 @@ COMMANDS = {
                                 "window, and any other id is assumed at 200,000. The table gives the API's window, which the product may cap lower on some plans, so "
                                 "lead.context_window overrides it. While the window is only assumed the line shows the tokens in use and says window unknown; set "
                                 "lead.context_window, with no percentage and no advice to compact; when the tokens exceed the guess it adds that they do, since the real window is larger. "
-                                "--json says window_source answer, model or assumed; while it is assumed percent is null (window is the guess) and window_exceeded says whether the tokens "
+                                "A window that the model id gave counts as assumed too once the tokens exceed it (the table is wrong for that id, for example a [1m] id whose entry is smaller than the real window): "
+                                "the same line, no percentage and no advice. "
+                                "--json says window_source answer, model or assumed; while it is assumed (a model window the tokens exceed included) percent is null (window is the guess) and window_exceeded says whether the tokens "
                                 "are beyond it. Read only; a transcript that cannot be found or read prints unknown and exits 0."),
                           examples=["qargi lead usage", "qargi project set acme lead.context_window 1000000"]),
             "compact-check": verb("Is a compact of the session safe now? Exit 0 safe, 1 not, with every reason and the block to re-read after it", [],
-                                  [PROJECT_OPT, opt("--advise", "also say whether a compact is advised: from 50% of the window, strongly from 70%; no advice on an assumed window (unknown model window and no lead.context_window)"), opt("--json", "machine-readable")],
+                                  [PROJECT_OPT, opt("--advise", "also say whether a compact is advised: from 50% of the window, strongly from 70%; no advice on an assumed window (unknown model window and no lead.context_window), nor when the tokens exceed the window the model id gave"), opt("--json", "machine-readable")],
                                   desc=("Not safe while a local run is prepared and not verified, verified and not applied, or applied and not merged; a merge waits for its "
                                         "resolution; a whole-suite run (feature verify, release verify) is running; the handoff note written by marshal handoff --write is older "
                                         "than the last merge; or a release or hotfix branch is open. An applied run counts as merged by the test local list and local clean use: its applied tip is on a branch other than agent/*, or the commit the tip was rewritten to (ref record --rewrite) is, wherever the run directory lies. It prints the restart block: the handoff note, qargi marshal status, "

@@ -854,6 +854,16 @@ class Surface(Env):
         self.assertIn("open to a member", text)
 
 
+class WindowHelp(unittest.TestCase):
+    def test_a_window_from_the_model_that_the_tokens_exceed_counts_as_assumed_in_the_help_the_man_page_and_the_flow_page(self):
+        for name, text in (("help", C.COMMANDS["lead"]["verbs"]["usage"]["desc"]), ("man page", H.man().replace("\\-", "-")),
+                           ("docs/flow/marshal.md", slurp(os.path.join(ROOT, "docs", "flow", "marshal.md")))):
+            flat = " ".join(text.split())
+            self.assertRegex(flat, r"window that the (model id|table) gave( for the model id)? counts as assumed too once the tokens exceed it", name)
+            self.assertIn("no percentage and no advice", flat, name)
+        self.assertIn("nor when the tokens exceed the window the model id gave", C.COMMANDS["lead"]["verbs"]["compact-check"]["opts"][1]["help"])
+
+
 class RefusalHelp(Env):
     """qargi help refusal [CODE]: the catalogue entry of a code (lib/refusals.json, read through lib/refusal.py), the list of the codes, an unknown code."""
 
