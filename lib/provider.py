@@ -87,6 +87,8 @@ Usage: provider.py list
                                          stderr), 2 with the qargi provider accept command when it may not, 4 when PROVIDER is
                                          one of the project's extra runtimes (models.extra_runtimes.local) and has no barrier of
                                          its own: the project's acceptance does not count for it, so no command is offered
+       provider.py reads-warning NAME    the line that says what members on the local runtime NAME can read, when its definition does not confine
+                                         reads (dispatch.reads); nothing for a runtime that confines them or works in the session
        provider.py runtimes PROJECT [--conf DIR]
                                          the runtimes of the project's local surface: the line "primary NAME", then a line
                                          "extra NAME" for each runtime of models.extra_runtimes.local
@@ -1516,6 +1518,7 @@ def validate2(d, name=None):
         out += [("fail", m) for m in output_usage_problems(disp.get("output"))]
         out += [("fail", m) for m in run_config_problems(disp, d.get("resources"), shape=False)]
         out += [("fail", m) for m in hidden_paths_problems(disp, shape=False)]
+        out += [("fail", m) for m in _reads_problems(disp)]
     notes = d.get("notes")
     if d.get("surface") == "local" and isinstance(disp, dict) and disp.get("mode") == "in-session" and not (isinstance(notes, dict) and "spawn" in notes):
         out.append(("warn", "notes.spawn: a local runtime that works in the session has no way to tell a lead how to start a member without a 'spawn' note (qargi provider notes spawn)"))
@@ -2300,6 +2303,86 @@ def launch_line(name, render, root=None, library=None, project=None, conf=None):
         words = m.group(1).split()
         return m.group(1) if words and os.path.isfile(words[-1]) else ""
     return re.sub(r"\[([^\]]*)\]", group, tpl)
+
+
+# ---- what a runtime's sandbox does not hold: dispatch.reads ----------------------------------------------------------------------
+
+READS_KEYS = ("confined", "exposes", "note")
+READS_PHRASE = "reads are not confined"      # the words an approval of a runtime that does not confine reads must carry (letter case and runs of blanks ignored)
+
+
+def _reads_problems(disp):
+    """The findings of dispatch.reads, as messages. dispatch.reads says what the runtime's sandbox does not hold: {confined: true|false, exposes:
+    [paths a member can read that are the user's own, ~/PATH or absolute], note: what they hold}. Absent: the runtime does not confine reads and
+    names no path."""
+    reads = disp.get("reads") if isinstance(disp, dict) else None
+    if reads is None:
+        return []
+    if not isinstance(reads, dict):
+        return ["dispatch.reads: %s is not an object {confined, exposes, note}" % _show(reads)]
+    bad = ["dispatch.reads.%s: unknown key (confined, exposes, note)" % k for k in reads if k not in READS_KEYS]
+    if not isinstance(reads.get("confined"), bool):
+        bad.append("dispatch.reads.confined: true or false is required")
+    ex = reads.get("exposes", [])
+    if not isinstance(ex, list) or len(ex) > 8 or not all(isinstance(x, str) and x.strip() for x in ex):
+        bad.append("dispatch.reads.exposes: a list of at most 8 paths (~/PATH or absolute), each a non-empty text")
+    note = reads.get("note")
+    if note is not None and not (isinstance(note, str) and note.strip() and len(note) <= 300):
+        bad.append("dispatch.reads.note: a non-empty text of at most 300 characters")
+    return bad
+
+
+def reads_claim(doc):
+    """{confined, exposes, note, declared} of a definition: what its dispatch.reads says. A definition with no valid dispatch.reads does not confine
+    reads and names no path (declared false): nothing is assumed in its favour."""
+    disp = doc.get("dispatch") if isinstance(doc, dict) else None
+    r = disp.get("reads") if isinstance(disp, dict) else None
+    if isinstance(r, dict) and not _reads_problems(disp):
+        return {"confined": r["confined"], "exposes": list(r.get("exposes") or []), "note": r.get("note"), "declared": True}
+    return {"confined": False, "exposes": [], "note": None, "declared": False}
+
+
+def reads_warning(name, doc):
+    """The line that says what members on the runtime NAME can read, or None when the runtime confines reads (its definition says so) or is no
+    command runtime (a member of a runtime that works in the session is not one this warning is about)."""
+    disp = doc.get("dispatch") if isinstance(doc, dict) else None
+    if not isinstance(disp, dict) or disp.get("mode") != "command":
+        return None
+    c = reads_claim(doc)
+    if c["confined"]:
+        return None
+    if c["exposes"]:
+        what = "the real %s%s and whatever else this account can read" % (" and ".join(c["exposes"]), " (%s)" % c["note"] if c["note"] else "")
+    else:
+        what = "whatever this account can read"
+    return "members on %s can read %s: %s" % (name, what, READS_PHRASE)
+
+
+def reads_acknowledged(words):
+    """Do the owner's words carry the phrase (letter case and runs of blanks ignored)?"""
+    return READS_PHRASE in " ".join((words or "").lower().split())
+
+
+def reads_warning_of(name, root=None, library=None):
+    """reads_warning() of the runtime NAME (a runtime or a family name, resolved on the local surface); None for an unknown runtime or one that
+    cannot be used as it stands: the warning says nothing it cannot know."""
+    try:
+        runtime = resolve_runtime(name.strip(), "local", root, library)
+        return reads_warning(runtime, definition(runtime, "local", root, library))
+    except (ProviderError, AttributeError):
+        return None
+
+
+
+def cmd_reads_warning(args):
+    """reads-warning NAME: the line reads_warning_of() gives for the local runtime NAME (a runtime or a family name), nothing when there is none."""
+    if len(args) != 1:
+        print("usage: provider.py reads-warning NAME", file=sys.stderr)
+        return 2
+    line = reads_warning_of(args[0])
+    if line:
+        print(line)
+    return 0
 
 
 # ---- the runtimes a project runs members on: the enabled set --------------------------------------------------------------
@@ -3103,7 +3186,7 @@ def cmd_of(args, if_set=False):
 def main(argv):
     usage = ("usage: qargi provider list | show NAME [--project P] [--json] | effective RUNTIME SURFACE CAP [--project P] | check NAME|DIR [--project P] | new NAME [--kind K] [--from F] | import SOURCE [--name N] | seal NAME | remove NAME "
              "| enable|disable PROJECT EXT | attest NAME CAP --asked W ... | accept NAME --surface S --no-barrier [--project P] --asked WORDS "
-             "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] [--project P] | require-skills NAME [--project P] | launch NAME RENDER [--project P] | adapter-run NAME SURFACE VERB [--check] | addenda NAME SURFACE | notes [TOPIC] [--project P] | model NAME SURFACE TIER | of PROJECT [--surface S] | of-if-set PROJECT --surface S | runtimes PROJECT")
+             "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] [--project P] | require-skills NAME [--project P] | launch NAME RENDER [--project P] | adapter-run NAME SURFACE VERB [--check] | addenda NAME SURFACE | notes [TOPIC] [--project P] | model NAME SURFACE TIER | of PROJECT [--surface S] | of-if-set PROJECT --surface S | runtimes PROJECT | reads-warning NAME")
     if not argv:
         print(usage, file=sys.stderr)
         return 2
@@ -3151,6 +3234,8 @@ def main(argv):
             return cmd_hidden_paths(rest)
         if verb == "notes":
             return cmd_notes(rest)
+        if verb == "reads-warning":
+            return cmd_reads_warning(rest)
         if verb == "runtimes" and (len(rest) == 1 or (len(rest) == 3 and rest[1] == "--conf")):
             return cmd_runtimes(rest)
         if verb == "model":

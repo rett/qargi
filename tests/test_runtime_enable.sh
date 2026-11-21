@@ -100,4 +100,31 @@ out=$(guard local bar); rc=$?
 out=$(guard local bar3); rc=$?
 { [ "$rc" = 2 ] && grep -q 'qargi provider accept fakeno' <<<"$out"; } && ok "barrier_guard of a project whose own runtime has none is refused with the accept command (exit 2), as before" || no "guard bar3: rc=$rc $out"
 
+# --- what the sandbox does not hold: the reads claim of a definition (dispatch.reads)
+CX=$SRC/lib/providers/codex.json
+[ "$(jq -r '.. | .reads? // empty | .confined' "$CX")" = false ] && jq -e '.dispatch.reads.exposes == ["~/.codex"] and (.dispatch.reads.note | test("sessions"))' "$CX" >/dev/null \
+  && ok "the shipped codex definition says that reads are not confined, and names ~/.codex" || no "codex.json: dispatch.reads"
+jq -e '.capabilities.read_only_barrier.note | test("sessions") and test("history") and test("~/.codex") and test("not its reads")' "$CX" >/dev/null \
+  && ok "the barrier note of the shipped codex definition names the reads: ~/.codex, its sessions and history" || no "codex.json: the barrier note"
+out=$(rb codex local --project two 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q 'sessions' <<<"$out"; } && ok "the note is printed wherever the barrier is: require-barrier prints the whole of it" || no "codex note: rc=$rc $out"
+out=$("$DA" provider reads-warning fakecx 2>&1)
+[ "$out" = "members on fakecx can read the real ~/.codex (sessions, history, sign-in) and whatever else this account can read: reads are not confined" ] \
+  && ok "reads-warning: the words of the plan, with the exposed paths and what they hold" || no "reads-warning fakecx: $out"
+out=$("$DA" provider reads-warning fakeconf 2>&1); [ -z "$out" ] && ok "reads-warning: a runtime whose definition says reads are confined has none" || no "reads-warning fakeconf: $out"
+out=$("$DA" provider reads-warning claude-code 2>&1); [ -z "$out" ] && ok "reads-warning: a runtime that works in the session has none" || no "reads-warning claude-code: $out"
+fake_command_runtime "$SRC" "$TOOL" fakenoreads 'del(.dispatch.reads)'
+out=$("$DA" provider reads-warning fakenoreads 2>&1)
+[ "$out" = "members on fakenoreads can read whatever this account can read: reads are not confined" ] \
+  && ok "reads-warning: a command runtime with no dispatch.reads counts as not confined, with no path named" || no "reads-warning fakenoreads: $out"
+fake_command_runtime "$SRC" "$TOOL" fakebadreads '.dispatch.reads = {"confined": "no", "paths": []}'
+mkdir -p "$HOME/.fakenoreads-members" "$HOME/.fakebadreads-members"
+python3 -I "$TOOL/lib/provider.py" check fakebadreads >"$T/o" 2>&1; rc=$?
+{ [ "$rc" = 1 ] && grep -q 'dispatch.reads.confined' "$T/o" && grep -q 'dispatch.reads.paths: unknown key' "$T/o"; } \
+  && ok "a malformed dispatch.reads fails provider check" || no "bad reads: rc=$rc $(cat "$T/o")"
+out=$("$DA" provider reads-warning fakebadreads 2>&1)
+[ "$out" = "members on fakebadreads can read whatever this account can read: reads are not confined" ] && ok "a malformed claim is no claim: reads are not confined, nothing named" || no "reads-warning fakebadreads: $out"
+out=$("$DA" provider reads-warning nosuch 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ -z "$out" ]; } && ok "reads-warning of an unknown runtime says nothing" || no "reads-warning nosuch: rc=$rc $out"
+
 exit $fail

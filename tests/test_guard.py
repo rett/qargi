@@ -1116,7 +1116,7 @@ class Skills(HookCase):
     def test_lets_the_read_only_provider_verbs_through(self):
         for c in ("qargi provider list", "qargi provider show claude", "python3 -I lib/provider.py require-barrier claude cloud",
                   "python3 -I lib/provider.py effective claude local read_only_barrier", "echo qargi provider accept", "grep -n 'provider accept' lib/commands.py",
-                  "qargi provider runtimes p", "python3 -I lib/provider.py runtimes p --conf /tmp/c"):
+                  "qargi provider runtimes p", "qargi provider reads-warning codex","python3 -I lib/provider.py runtimes p --conf /tmp/c"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
