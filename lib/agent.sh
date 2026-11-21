@@ -557,8 +557,10 @@ models() { # the bases, the profiles with the project's own merged in, the escal
   pf=$(pf_json "$proj")
   prov=$(provider_for "$proj" local) || exit $?   # the members are local
   if [ -z "${MODELS_OWN:-}" ]; then   # a project with extra runtimes: each profile is resolved in its own runtime (models_extras asks this function for the project's own)
-    xr=$(apy runtimes "$proj") || exit 1
-    if [ "$(jq '.extra | length' <<<"$xr")" != 0 ]; then models_extras "$proj" "$prov" "$pf" "$xr"; return; fi
+    if has_extras "$pf"; then
+      xr=$(apy runtimes "$proj") || exit 1
+      if [ "$(jq '.extra | length' <<<"$xr")" != 0 ]; then models_extras "$proj" "$prov" "$pf" "$xr"; return; fi
+    fi
   fi
   pd=$(pdesc "$prov" local) || exit 1
   mode=$(apy dmode "$prov") || exit 1
@@ -785,10 +787,17 @@ profile_runtime() { # role profile-or-empty project -> the runtime the entry of 
     | if type == "string" and test("^[a-z][a-z0-9-]{0,40}$") then . else "?" end'
 }
 
-pick_runtime() { # role profile-or-empty project own-runtime
-  local role=$1 prof=$2 proj=$3 own=$4 rts want verdict
-  rts=$(apy runtimes "$proj") || exit 1
-  HASX=$(jq -r '.extra | join(" ")' <<<"$rts")
+has_extras() { # answers-json -> 0 when the answers list extra runtimes (the cheap reading: a list that names none needs no look at the runtimes)
+  jq -e '(.models.extra_runtimes.local? // []) | type == "array" and any(.[]; type == "string")' <<<"$1" >/dev/null 2>&1
+}
+
+pick_runtime() { # role profile-or-empty project own-runtime answers-json
+  local role=$1 prof=$2 proj=$3 own=$4 want verdict rts
+  HASX=''
+  if has_extras "$5"; then
+    rts=$(apy runtimes "$proj") || exit 1
+    HASX=$(jq -r '.extra | join(" ")' <<<"$rts")
+  fi
   RT=$own want=$RUNTIME
   [ -n "$want" ] || want=$(profile_runtime "$role" "$prof" "$proj") || exit $?
   [ "$want" != '?' ] || { echo "qargi: the profile of the $role role names a runtime that is not a runtime name (lower-case letters, digits and '-')" >&2; exit 2; }
@@ -819,7 +828,7 @@ resolve_for() { # role profile-or-empty project-or-empty -> prints the answer, o
   # shellcheck disable=SC2034  # refuse (lib/lib.sh) names the verb and the project of its contract line from these
   PROJECT=$proj QARGI_VERB="agent for"
   pf=$(pf_json "$proj"); own=$(provider_for "$proj" local) || exit $?
-  pick_runtime "$role" "$prof" "$proj" "$own"
+  pick_runtime "$role" "$prof" "$proj" "$own" "$pf"
   prov=$RT
   mode=$(apy dmode "$prov") || exit 1
   if [ "$mode" = command ]; then resolve_command "$role" "$prof" "$proj" "$prov"; return; fi
