@@ -153,6 +153,22 @@ before=$(made)
 prep two --slug a7 --runtime nosuch
 { [ "$PREP_RC" = 1 ] && [ "$(refusal_code "$PREP")" = runtime-not-enabled ] && [ "$(made)" = "$before" ]; } && ok prepare-runtime-not-enabled || no "a runtime not enabled: rc=$PREP_RC $PREP"
 
+# the profile a role asks for is the one qargi agent for resolves: the profile named like the role, the shipped ones (write, test) included, else build or review. A
+# project whose build profile names an extra runtime says nothing of it for the roles write and test, which take the shipped profiles of their own name
+mkproj wt "$CC" '["fakecx"]' '{"build":{"runtime":"fakecx"}}'
+prep wt --slug w0 --role write
+{ [ "$PREP_RC" = 0 ] && [ "$(line RUNTIME)" = claude-code ] && [ "$(line PROFILE)" = write ] && ! grep -q RUNTIME_OVERRIDE <<<"$PREP"; } \
+  && ok role-write-own-runtime || no "the write role, no option: rc=$PREP_RC $PREP"
+for r in write test; do
+  prep wt --slug "${r}x" --role "$r" --runtime fakecx
+  { [ "$PREP_RC" = 0 ] && [ "$(line RUNTIME)" = fakecx ] && [ "$(line PROFILE)" = "$r" ] \
+    && [ "$(line RUNTIME_OVERRIDE | sed 's/: .*//')" = "profile $r names no runtime (claude-code), resolved in fakecx" ]; } \
+    && ok "role-$r-override-extra" || no "the $r role against the project's own runtime: rc=$PREP_RC $PREP"
+  prep wt --slug "${r}c" --role "$r" --runtime claude-code
+  { [ "$PREP_RC" = 0 ] && [ "$(line RUNTIME)" = claude-code ] && [ "$(line PROFILE)" = "$r" ] && ! grep -q RUNTIME_OVERRIDE <<<"$PREP"; } \
+    && ok "role-$r-silent-own" || no "the $r role with the project's own runtime as an option: rc=$PREP_RC $PREP"
+done
+
 # --- the read-only barrier is the barrier of the runtime the run is prepared for, asked after that runtime is known (F5). The project's own runtime has no
 # barrier and the project accepted that; the extra one has none either. The acceptance is for the own runtime and does not let the extra one start.
 before=$(made)

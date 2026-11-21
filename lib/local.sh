@@ -792,9 +792,10 @@ case $verb in
       PROJECT=$CPJ QARGI_VERB="local prepare"
       if jq -e '(.models.extra_runtimes.local? // []) | type == "array" and any(.[]; type == "string")' "$DA_CONF/projects/$CPJ.json" >/dev/null 2>&1 \
          && pymod provider runtimes "$CPJ" </dev/null 2>/dev/null | grep -q '^extra '; then HASX=1; fi
-      # the profile the run asks for (--profile, else the profile named like the role, else build or review by class), and the runtime it names ("?" when it is not a name)
-      PRTN=$(jq -r --arg prof "$SELECTOR" --arg role "$ROLE" --arg cls "$CLASS" '(.profiles // {}) as $pf
-        | (if $prof != "" then $prof elif ($pf | type) == "object" and ($pf | has($role)) then $role elif $cls == "read-only" then "review" else "build" end) as $pn
+      # the profile the run asks for (--profile, else the profile named like the role, the shipped profiles (lib/model-defaults.json) included, else build or review
+      # by class: the rule of qargi agent for, REQUESTED in agent.sh), and the runtime it names ("?" when it is not a name)
+      PRTN=$(jq -r --slurpfile d "$(dirname "$0")/model-defaults.json" --arg prof "$SELECTOR" --arg role "$ROLE" --arg cls "$CLASS" '(.profiles // {}) as $pf
+        | (if $prof != "" then $prof elif ($d[0].profiles | has($role)) or (($pf | type) == "object" and ($pf | has($role))) then $role elif $cls == "read-only" then "review" else "build" end) as $pn
         | $pn, (($pf | objects | .[$pn]? | objects | .runtime?) // empty | if type == "string" and test("^[a-z][a-z0-9-]{0,40}$") then . else "?" end)' "$DA_CONF/projects/$CPJ.json" 2>/dev/null) || PRTN=''
       PN=$(sed -n 1p <<<"$PRTN"); PRTN=$(sed -n 2p <<<"$PRTN")
       # a project without extras takes no runtime but its own
