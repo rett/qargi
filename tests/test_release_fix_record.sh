@@ -167,6 +167,22 @@ PRE="printf '# Changelog\n\n## [Unreleased]\n\n' > CHANGELOG.md; mkdir changelog
 out=$($REL start 0.2.0 2>&1); rc=$?
 [ "$rc" = 1 ] && grep -q '"code":"release-notes-empty"' <<<"$out" && ok "with the answer but no fragment (only .gitkeep) and an empty unreleased section the notes are still empty" || no "answer without fragments: rc=$rc $out"
 
+# a branch that deletes its fragments together with the released section, or with the changelog, folded nothing: push and finish refuse
+PRE=$EMPTYCL mk f5 "$FRAG"; PRE=''
+t=$($REL start 0.2.0 | tok); $REL start 0.2.0 --plan "$t" --approved go >/dev/null 2>&1
+W=$($REL fix 0.2.0 | sed -n 's/^worktree: //p')
+git -C "$W" rm -q changelog.d/a.md && printf '# Changelog\n\n## [Unreleased]\n\n' > "$W/CHANGELOG.md" && git -C "$W" commit -q -am "delete the fragment and the section of the version"
+before=$(snap); out=$($REL push 0.2.0 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q '"code":"release-fragments-unfolded","exit":1,"verb":"release push"' <<<"$out" && grep -q "has no released section for 0.2.0" <<<"$out" && ! grep -q '^plan token' <<<"$out" && [ "$before" = "$(snap)" ] \
+  && ok "push refuses a branch whose changelog has no section of the version (its fragments deleted with it), naming the missing section" || no "push, no section: rc=$rc $out"
+out=$($REL finish 0.2.0 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q '"code":"release-fragments-unfolded","exit":1,"verb":"release finish"' <<<"$out" && grep -q "has no released section for 0.2.0" <<<"$out" && ok "and finish refuses it" || no "finish, no section: rc=$rc $out"
+git -C "$W" rm -q CHANGELOG.md && git -C "$W" commit -q -m "delete the changelog"
+out=$($REL push 0.2.0 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q '"code":"release-fragments-unfolded","exit":1,"verb":"release push"' <<<"$out" && grep -q "has no CHANGELOG.md" <<<"$out" && ok "push refuses a branch with no CHANGELOG.md at the head" || no "push, no changelog: rc=$rc $out"
+out=$($REL finish 0.2.0 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q '"code":"release-fragments-unfolded","exit":1,"verb":"release finish"' <<<"$out" && grep -q "has no CHANGELOG.md" <<<"$out" && ok "and finish refuses it" || no "finish, no changelog: rc=$rc $out"
+
 # --- a dry run lists independent refusals: an unfolded fragment and a commit outside the cut's paths
 PRE=$EMPTYCL cutup f4 "$FRAG"; PRE=''
 cm src/code.go "changed" "a code fix"

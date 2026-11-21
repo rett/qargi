@@ -552,29 +552,29 @@ fragments_at() {
   g ls-tree -r -z --name-only "$1" -- "$d" | python3 -I "$RL" fragments || true
 }
 # fragments_check REF -> with the answer release.changelog.fragments: refuses (release-fragments-unfolded) while the directory at REF, the head of the branch, holds a fragment, or while the
-# released section of the changelog there is empty; the fix is to fold them in the fix worktree, commit, and record the commits. A check that does not depend on the ones around it (DRY_INDEP).
+# released section of the changelog there is empty or missing, or the changelog itself is: a branch that deletes its fragments together with the section or the file did not fold
+# them. The fix is to fold them in the fix worktree, commit, and record the commits. A check that does not depend on the ones around it (DRY_INDEP).
 fragments_check() {
-  local d n tmp rc=0
+  local d n rc=0 why=''
   d=$(fragments_dir); [ -n "$d" ] || return 0
   n=$(fragments_at "$1" | grep -c . || true)
   if [ "$n" -gt 0 ]; then
-    REFUSE_MORE="$d holds $n fragment$([ "$n" = 1 ] || echo s) at the head of $BR (${1:0:7}); fold $([ "$n" = 1 ] && echo it || echo them) into the changelog's section of $VER in the fix worktree (qargi release fix $VER${HOTFIX:+ --hotfix} makes it), remove $([ "$n" = 1 ] && echo it || echo them), commit, then qargi release fix $VER${HOTFIX:+ --hotfix} --record"
-    DRY_INDEP=1
-    refuse release-fragments-unfolded verb="release $verb" count="$n"
-    DRY_INDEP=''
-    return 0
+    why="$d holds $n fragment$([ "$n" = 1 ] || echo s) at the head of $BR (${1:0:7}); fold $([ "$n" = 1 ] && echo it || echo them) into the changelog's section of $VER in the fix worktree (qargi release fix $VER${HOTFIX:+ --hotfix} makes it), remove $([ "$n" = 1 ] && echo it || echo them), commit, then qargi release fix $VER${HOTFIX:+ --hotfix} --record"
+  elif ! g cat-file -e "$1:CHANGELOG.md" 2>/dev/null; then
+    why="$BR (${1:0:7}) has no CHANGELOG.md, so the notes of $VER that $d stood for are nowhere: restore it with the section of $VER in the fix worktree (qargi release fix $VER${HOTFIX:+ --hotfix} makes it), commit, then qargi release fix $VER${HOTFIX:+ --hotfix} --record"
+  else
+    # a pipe, not a file: nothing is left in the state directory, in a dry run least of all
+    g show "$1:CHANGELOG.md" 2>/dev/null | python3 -I "$RL" section-empty - "$VER" "$af" || rc=$?
+    case $rc in
+      1) why="the section of $VER in the CHANGELOG.md of $BR (${1:0:7}) has no notes: fold the fragments of $d into it in the fix worktree, commit, then qargi release fix $VER${HOTFIX:+ --hotfix} --record";;
+      2) why="the CHANGELOG.md of $BR (${1:0:7}) has no released section for $VER, so the fragments of $d were removed with it or never folded: restore the section with the notes in the fix worktree, commit, then qargi release fix $VER${HOTFIX:+ --hotfix} --record";;
+    esac
   fi
-  g cat-file -e "$1:CHANGELOG.md" 2>/dev/null || return 0
-  tmp=$(mktemp "$DA_STATE/.release-fragments-chk.XXXXXX") || return 0
-  g show "$1:CHANGELOG.md" > "$tmp" 2>/dev/null
-  python3 -I "$RL" section-empty "$tmp" "$VER" "$af" || rc=$?
-  rm -f "$tmp"
-  if [ "$rc" = 1 ]; then
-    REFUSE_MORE="the section of $VER in the CHANGELOG.md of $BR (${1:0:7}) has no notes: fold the fragments of $d into it in the fix worktree, commit, then qargi release fix $VER${HOTFIX:+ --hotfix} --record"
-    DRY_INDEP=1
-    refuse release-fragments-unfolded verb="release $verb" count="$n"
-    DRY_INDEP=''
-  fi
+  [ -n "$why" ] || return 0
+  REFUSE_MORE=$why
+  DRY_INDEP=1
+  refuse release-fragments-unfolded verb="release $verb" count="$n"
+  DRY_INDEP=''
   return 0
 }
 # has_answer KEY -> whether the release answer KEY (release.KEY) is set

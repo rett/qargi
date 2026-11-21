@@ -235,10 +235,10 @@ def cmd_changelog(argv):
 
 
 def cmd_section_empty(argv):
-    """FILE VER AF: exit 0 when the released section of VER has notes (a line that is not blank and not a heading), 1 when it is empty, 2 when the changelog has no such section."""
+    """FILE (- for standard input) VER AF: exit 0 when the released section of VER has notes (a line that is not blank and not a heading), 1 when it is empty, 2 when the changelog has no such section."""
     path, ver, af = argv[:3]
     _, rel = templates(load_release(af))
-    t = open(path, encoding="utf-8", errors="replace").read()
+    t = sys.stdin.buffer.read().decode("utf-8", "replace") if path == "-" else open(path, encoding="utf-8", errors="replace").read()
     m = re.search(r"^" + heading_re(rel, ver) + r"[^\n]*(?:\n|\Z)", t, re.M)
     if not m:
         return 2
