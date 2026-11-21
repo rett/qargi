@@ -63,6 +63,14 @@ ASKED = opt("--asked", "your request, in your words, naming the cloud instance f
 WORKTREE = opt("--worktree", "write the repo tier into DIR, another worktree of the project's repository (the same path inside it), instead of its checkout; the plan says on which branch to commit it", "DIR", "dir")
 PLAN = opt("--plan", "the plan token printed by the same command without --approved", "TOKEN")
 APPROVED = opt("--approved", "your go-ahead for exactly that plan, in your words", "WORDS")
+DRY = opt("--dry-run", "print what the apply would do and change nothing: the plan with its token, then each refusal the apply would meet, ending with 'dry-run: N would refuse; nothing was changed'")
+DRY_NOTE = ("--dry-run changes nothing: no ref, no push, no pull request, no audit line, no lock and no file in the state directory (QARGI_DRY=1 inside the verb: a helper that writes, "
+            "or a git or gh command that is not a read, stops it with exit 70, a defect of the verb). It prints the plan with the same token the plain plan has, and ends with 'invalidated by: ...', "
+            "the labels of the plan (what changing any of them makes the token stale). Given --plan TOKEN it also says what the apply would meet: the token is compared with the plan as it is now "
+            "(plan-stale names the labels that moved), and each other refusal is printed in the normal format of a refusal, with dry=1 first in the detail of the contract line; the first refusal "
+            "stops it, as it would the apply, except a check that is independent of the others, which is listed and the run goes on, so several may be shown. Origin is asked with git ls-remote "
+            "and never fetched (the plan says 'not fetched'). The last line of standard output is 'dry-run: N would refuse; nothing was changed', and the exit status is what the apply would exit with: 0, "
+            "or 1 when N is not 0. Ask it just before asking the owner: a token dies when what it hashed changes.")
 EXEC = opt("--approve-exec", "name every executable the pack holds, separated by commas, to approve running them", "NAMES")
 LOCAL_TARGET = opt("--target", "session.render_target of an eligible local runtime; omitted selects the project's member runtime", "TARGET")
 TARGET = opt("--target", "claude-code renders for a local session; any eligible local session.render_target is supported; managed-agents (the default for apply) is the cloud update", "TARGET", ("claude-code", "managed-agents"))
@@ -361,7 +369,7 @@ COMMANDS = {
                            desc=GATES_NOTE + " " + ENV_NOTE + " " + OTHER_RUNS_NOTE + " " + SUITE_FAIL_NOTE + " " + FLOW_UNREACHABLE_NOTE,
                            examples=["qargi feature verify login", 'qargi feature verify login --waive-environment cpu --plan TOKEN --approved "go ahead"']),
             "finish": verb("Merge the feature into develop with --no-ff and delete it", [("NAME", "none")],
-                           [PROJECT_OPT, opt("--keep", "keep the branch"), PLAN, APPROVED, RESOLVED_OPT, FLOW_UNREACHABLE_OPT],
+                           [PROJECT_OPT, opt("--keep", "keep the branch"), PLAN, APPROVED, RESOLVED_OPT, FLOW_UNREACHABLE_OPT, DRY],
                            desc=("Needs a passing whole-suite run at the feature's head. A feature behind develop is refused (exit 1, nothing changed); when both sides "
                                  "changed the same files since their merge base, the message lists them and says to run qargi feature sync first. With the answer release.changelog.numbered true it also refuses a changelog with duplicate item numbers (qargi changelog renumber). Pushes develop if the repository has an origin. With the answer branches.delete_merged "
                                  "local+remote (default local) it also deletes the feature branch on origin when origin has it (asked live) and holds nothing the feature lacks; the plan shows "
@@ -371,7 +379,10 @@ COMMANDS = {
                                  "nothing: the merge is left in progress in a worktree under the state directory (exit 3), you or the lead resolve and commit it there, "
                                  "and the same command with --resolved applies exactly that merge. It is refused first (exit 1, nothing changed) while a run prepared against feature/NAME is open, and lists "
                                  "each one: prepared and not verified, verified and not applied, or applied and not merged. A run that was cleaned, discarded (local clean --discard), closed "
-                                 "(local close --applied-by-am) or applied and merged is not open. " + FLOW_UNREACHABLE_NOTE)),
+                                 "(local close --applied-by-am) or applied and merged is not open. " + FLOW_UNREACHABLE_NOTE + " " + DRY_NOTE +
+                                 " For finish it also renews no lease of the feature's lead (the marshal is asked without --renew and with --no-fetch), takes no lock and writes no intent file; a finish that was cut off is shown as it would be completed, "
+                                 "with its record left as it is; an open run of the feature is a refusal (feature-runs-open) that it lists beside the ones that follow. Not for the other feature verbs (exit 2)."),
+                           examples=["qargi feature finish login --dry-run", "qargi feature finish login --dry-run --plan TOKEN"]),
         },
     },
     "marshal": {
@@ -482,11 +493,12 @@ COMMANDS = {
         "scripts": ["branch.sh"],
         "verbs": {
             "prune": verb("List, or with the token and an approval delete, the merged agent/* and feature/* branches and their worktrees", [],
-                          [PROJECT_OPT, opt("--remote", "also the merged agent/* and feature/* branches on origin (fetches first)"), PLAN, APPROVED],
+                          [PROJECT_OPT, opt("--remote", "also the merged agent/* and feature/* branches on origin (fetches first)"), PLAN, APPROVED, DRY],
                           desc=("A branch is merged when it was merged with --no-ff into develop, into a branch of repo.long_lived or repo.detached or the remote-tracking branch origin/BRANCH of a detached one "
                                 "(a detached branch that origin changes only through a pull request lags behind it locally; fetch first, --remote does), or, for an agent branch, into an open feature. "
-                                "A branch that only sits at a tip was never merged and is kept."),
-                          examples=["qargi branch prune", "qargi branch prune --remote --plan TOKEN --approved \"yes, prune them\""]),
+                                "A branch that only sits at a tip was never merged and is kept. " + DRY_NOTE + " For prune it asks origin, with --remote, with git ls-remote: a branch of origin whose tip this repository does not have "
+                                "is kept ('its tip is not fetched') where the apply, which fetches first, might prune it."),
+                          examples=["qargi branch prune", "qargi branch prune --dry-run", "qargi branch prune --remote --plan TOKEN --approved \"yes, prune them\""]),
         },
     },
     "changelog": {
@@ -709,7 +721,7 @@ COMMANDS = {
                                "Run again, plan shows the recorded cut and which steps ran (release status does too); --again discards it. A cut cannot begin once the branch or the tag exists."),
                          examples=["qargi release plan 0.2.4", "qargi release plan 0.2.4 --date 2026-11-12 --plan TOKEN --approved \"cut 0.2.4\"", "qargi release start 0.2.4 --plan TOKEN"]),
             "start": verb("Cut release/VERSION from develop (hotfix/VERSION from master) and bump the version", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT, opt("--date", "the changelog and man page date (default today)", "YYYY-MM-DD"),
-                                                                                                    opt("--allow-empty-notes", "release although the unreleased section of CHANGELOG.md ('## [Unreleased]' by default) is empty"), PLAN, APPROVED],
+                                                                                                    opt("--allow-empty-notes", "release although the unreleased section of CHANGELOG.md ('## [Unreleased]' by default) is empty"), PLAN, APPROVED, DRY],
                           desc=("Without --approved it changes nothing: it prints the plan (the branch, the base it is cut from and that base's head, the one commit that bumps the version, the files "
                                 "the commit changes, the date) and a plan token. Apply it with the same command and --plan TOKEN --approved \"<your go-ahead>\" (the token covers the head of the base "
                                 "and the date, so a plan that went stale is refused); the apply creates the branch and writes a line of the audit log. Nothing is pushed. "
@@ -724,7 +736,9 @@ COMMANDS = {
                                 "When master and the new branch share no history (no merge base: master is one snapshot commit, say) it says so and that release push joins them. "
                                 "With the answer release.version_files (a list of paths relative to the repository) it checks, once VERSION is bumped, that each listed file on the new branch "
                                 "contains the version (as a whole version: 0.2.1 is not found in 0.2.10) and prints a warning naming the ones that do not: bump these on the release branch "
-                                "(release fix makes the worktree). It is a warning, not a refusal, because the files are bumped on the branch start creates; without the answer nothing is checked.")),
+                                "(release fix makes the worktree). It is a warning, not a refusal, because the files are bumped on the branch start creates; without the answer nothing is checked. "
+                                + DRY_NOTE + " For start the temporary worktree in which the plan builds the bump commit is removed again, also when the dry run is interrupted."),
+                          examples=["qargi release start 0.2.4 --dry-run", "qargi release start 0.2.4 --dry-run --plan TOKEN"]),
             "status": verb("Show the branch, its commits and whether the whole suite passed at its head", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT],
                          desc=("The full-suite verdict names the command that produced it, when it ran, how long it took and the mode the command names (-j N, shard I/K), from the suite record (a record made before the duration was kept shows the command and the time only). When release.test_command is set and is not that command, "
                                "a line of its own says so: the pass is then not the release gate (release verify runs release.test_command). With declared gates a 'gates:' line lists each with its result at the last run. " + REMOTE_NOTE + " " + TAG_NOTE + " Only when the optional answer release.sign is set (the default is not) and the tag has no GitHub release, it also says 'awaiting signature' "
@@ -751,13 +765,15 @@ COMMANDS = {
                                  "is reported as unknown, a note and never a failure. --strict refuses (exit 1, nothing run) when any job matches no gate name (the listed ones match), also with no gate declared. Without a workflow it prints nothing new. "
                                  "On the release branch, with release.version_files set, it also shows whether every listed file contains VERSION (a warning for the ones that do not). " + OTHER_RUNS_NOTE + " " + SUITE_FAIL_NOTE),
             "fix": verb("Make a worktree on the release branch to commit a fix in, and push the fix again with --push", [("VERSION", "none")],
-                        [PROJECT_OPT, HOTFIX_OPT, opt("--push", "push the committed fix: the same as release push (the plan token and approval below)"), PLAN, APPROVED],
+                        [PROJECT_OPT, HOTFIX_OPT, opt("--push", "push the committed fix: the same as release push (the plan token and approval below)"), PLAN, APPROVED, DRY],
                         desc=("For the pull request whose checks failed, or a change review asked for. Without --push it creates the worktree of release/VERSION (hotfix/VERSION with --hotfix) "
                               "under the worktree root (worktrees.root, default <state>/worktrees/<project>/<branch>), prints 'worktree: PATH' and the next step, and changes nothing else; "
                               "run again it names the same worktree. Fix there, commit on the branch, then run it with --push (or release push), which asks for a plan token and an approval, "
                               "pushes the branch and updates the open pull request, whose checks run again. Refused when the branch does not exist or the tag VERSION does (then it is a hotfix). "
-                              "release finish removes the worktree with the branch when it is clean.")),
-            "push": verb("Push the branch and open the pull request into master", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT, PLAN, APPROVED],
+                              "release finish removes the worktree with the branch when it is clean. "
+                              + DRY_NOTE + " With fix it is for --push only (a usage error, exit 2, without it)."),
+                        examples=["qargi release fix 0.2.4", "qargi release fix 0.2.4 --push --dry-run"]),
+            "push": verb("Push the branch and open the pull request into master", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT, PLAN, APPROVED, DRY],
                          desc=REMOTE_NOTE + " When release.notes_file is set the plan reads that file and the VERSION section of CHANGELOG.md at the head of the branch and warns of the items of the section that the file "
                               "does not mention (never a refusal; the plan still has its token). An item is a line at the margin that starts with -, *, + or a number and a dot; it is mentioned when its leading `backticked term`, "
                               "else its first three words, occurs in the file, ignoring case and spacing. A notes file that is not on the branch is a warning. When release.preflight is set it runs in a copy of the branch once the plan is approved, before anything is pushed; a non-zero exit refuses. "
@@ -767,7 +783,8 @@ COMMANDS = {
                               "the plan has the line 'join the history of master': once approved, master is merged into the branch with -s ours --allow-unrelated-histories, in a temporary worktree, "
                               "as a new commit after the version bump and before the push, so CI runs on the joined head and release finish is an ordinary --no-ff merge. The tree of the branch must be the same "
                               "before and after (checked, with the parents of the commit); otherwise nothing moves and nothing is pushed. The plan token covers the join and master's head. "
-                              "A branch that is checked out in a worktree with uncommitted changes is refused for the join."),
+                              "A branch that is checked out in a worktree with uncommitted changes is refused for the join. " + DRY_NOTE,
+                         examples=["qargi release push 0.2.4 --dry-run", "qargi release push 0.2.4 --dry-run --plan TOKEN"]),
             "finish": verb("After the checks pass: merge into master, tag, merge the tagged commit back, delete the branch, push", [("VERSION", "none")],
                            [PROJECT_OPT, HOTFIX_OPT, opt("--keep", "keep the branch"),
                             opt("--ignore-checks", "finish although the pull request's checks fail, are pending or cannot be read; WORDS are your reason, in your own words, recorded in the output and the audit log", "WORDS"),
@@ -2051,6 +2068,8 @@ ENVIRONMENT = [
     ("QARGI_RUNS_ROOT", "a directory to scan for local run directories (qargi.*) in qargi report, besides the registry"),
     ("QARGI_PROJECT", "the project to use when the current directory is not inside its repository"),
     ("QARGI_ROLES", "the list of work roles (default: build review write test)"),
+    ("QARGI_DRY", "set to 1 by --dry-run inside the verb that has it (release start, push and fix --push, feature finish, branch prune): a helper that writes (the audit log, the state files, the journal, a ref move, a commit) "
+                  "stops the verb with exit 70, and git and gh pass only commands that read; unset, empty and 0 are a normal run. Do not set it yourself"),
     ("QARGI_DRY_RUN", "print a session request, with secrets masked, instead of sending it; qargi env apply stops before it runs the bootstrap"),
     ("QARGI_ENV_TIMEOUT", "seconds the dry run of qargi env plan and apply may take (default 120)"),
     ("QARGI_HOOK_MARSHAL_SECS", "seconds the session-start hook gives the read of the open features (qargi marshal status --all --brief --no-fetch) before it leaves the block out "

@@ -198,6 +198,24 @@ names the tag (`merging tag VERSION (the master merge commit abc1234) conflicts`
 worktree and a run with `--resolved` uses it only when it is a merge of exactly the current master and the release branch head
 (any other file is removed and the merge made anew).
 
+## A dry run before asking the owner
+
+A token dies when what it hashed changes, and a refusal found after the owner approved costs a second approval. So the verbs that
+are most often refused late take `--dry-run`: `release start`, `release push`, `release fix VERSION --push` (only with `--push`;
+without it `--dry-run` is a usage error, exit 2), `feature finish` and `branch prune`. `QARGI_DRY=1` is the switch the scripts use
+inside the verb; do not set it yourself.
+
+- A dry run changes nothing: no ref, no push, no pull request, no audit line, no lock, no file in the state directory (the temporary
+  worktree in which `release start` builds its bump commit is removed again, also when the run is interrupted). A helper that would
+  write, or a git or `gh` command that is not a read (`gh api` included), ends it with exit 70, a defect of the verb.
+- It prints the plan with the token of the plain plan and, last, `invalidated by: ...`, the labels of the plan. With `--plan TOKEN`
+  it compares the token with the plan as it is now (`plan-stale` names the labels that moved) and prints each other refusal the
+  apply would meet in the normal format, `qargi-refusal/1` line first with `dry=1` first in its `detail`. The first refusal ends it,
+  as it ends the apply, except a check that is independent of the others, so several may be listed. Origin is asked with
+  `git ls-remote` and never fetched.
+- The last line of standard output is `dry-run: N would refuse; nothing was changed`, and the exit status is what the apply would
+  exit with: 0, or 1 when N is not 0.
+
 ## Detached branches
 
 A long-lived branch that must never meet the git-flow branches, such as a documentation site, is listed in the answers as
