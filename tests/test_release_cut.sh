@@ -175,7 +175,7 @@ out=$($REL plan 0.2.0 --date 2026-03-04 2>&1); ct=$(tok <<<"$out"); $REL plan 0.
 $REL start 0.2.0 --plan "$ct" >/dev/null 2>&1
 w=$($REL fix 0.2.0 | sed -n 's/^worktree: //p'); echo fix > "$w/fix.txt"; git -C "$w" add fix.txt && git -C "$w" commit -q -m "a fix"
 out=$($REL push 0.2.0 --plan "$ct" 2>&1); rc=$?
-[ "$rc" != 0 ] && grep -q "does not cover push" <<<"$out" && grep -q "something was committed on it" <<<"$out" && [ -z "$(git -C "$R" ls-remote origin refs/heads/release/0.2.0)" ] && ok "a commit on the branch after start: push under the cut is refused and nothing is pushed" || no "push after a fix: rc=$rc $out"
+[ "$rc" != 0 ] && grep -q "does not cover push" <<<"$out" && grep -q "change a path the cut's plan did not name" <<<"$out" && grep -q '^qargi-refusal/1 {"code":"cut-fix-outside","exit":1,"verb":"release push"' <<<"$out" && [ -z "$(git -C "$R" ls-remote origin refs/heads/release/0.2.0)" ] && ok "a commit outside the cut's paths on the branch after start: push under the cut is refused with cut-fix-outside and nothing is pushed" || no "push after a fix: rc=$rc $out"
 t=$($REL push 0.2.0 | tok); out=$($REL push 0.2.0 --plan "$t" --approved "pushing the fix" 2>&1); rc=$?
 [ "$rc" = 0 ] && grep -q '"push"' <(jq -c '.done | keys' "$T/s/release/cut2-0.2.0.cut.json") && [ "$(jq -r '.done.push.via' "$T/s/release/cut2-0.2.0.cut.json")" = own ] && ok "the push by its own plan is recorded in the cut as done by its own plan" || no "own push: rc=$rc $out"
 git -C "$R" update-ref refs/heads/master "$(git -C "$R" commit-tree -p master -m moved 'master^{tree}')"

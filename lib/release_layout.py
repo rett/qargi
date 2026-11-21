@@ -9,6 +9,7 @@ Answers, under `release` in the project's answers file (every one optional; the 
   release.changelog.released   the heading of a released section (default "## [{version}] - {date}"); {version} is required, {date} is optional
   release.changelog.numbered   true when the items under the unreleased heading are numbered ("12. text" or "- 12. text"; default false): feature sync and
                                feature finish then check them for duplicates (lib/changelog_numbers.py, qargi changelog renumber)
+  release.changelog.fragments  a directory (default none) of changelog fragments, one of the paths a fix may change and still go on under the cut's approval (release plan)
   release.version_files        other files that carry the version (a list of paths relative to the repository; default none): `release start` lists the
                                ones that do not yet contain VERSION, `release status` and `release verify` show the same check on the release branch
   release.man_pages            the manual pages whose .TH date and version the release sets (default: the man/*.1 files of the repository)
@@ -29,6 +30,8 @@ Answers, under `release` in the project's answers file (every one optional; the 
   release_layout.py has-section FILE VER AF            exit 0 when the changelog has a released section for VER
   release_layout.py notes-missing SECTION NOTES        print the items of the changelog section SECTION that the file NOTES does not mention (exit 1 if any)
   release_layout.py has-version FILE|- VER             exit 0 when FILE (or stdin) contains VER as a whole version (0.2.1 is not found in 0.2.10 or 10.2.1)
+  release_layout.py outside PATH...                    reads file names (NUL separated, as git diff -z prints them) on standard input and prints each one that is
+                               neither one of the PATHs nor under one (a path is matched whole, a directory by prefix); exit 1 when there is one. A rename lists both of its names
 """
 import json
 import os
@@ -38,7 +41,7 @@ import sys
 DEFAULT_UNRELEASED = "## [Unreleased]"
 DEFAULT_RELEASED = "## [{version}] - {date}"
 LAYOUT_KEYS = ("version_file", "version_files", "changelog", "man_pages", "test_command", "preflight", "hotfix_preflight", "finish_check")
-CHANGELOG_KEYS = ("unreleased", "released", "numbered")
+CHANGELOG_KEYS = ("unreleased", "released", "numbered", "fragments")
 CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
 PLACEHOLDER_RE = re.compile(r"\{([^{}]*)\}")
 
@@ -96,6 +99,8 @@ def problems(rel):
                 p = template_problem("release.changelog.unreleased", c["unreleased"], ("version",), DEFAULT_UNRELEASED)
                 if p:
                     out.append(p)
+            if "fragments" in c and not rel_name_ok(c["fragments"]):
+                out.append("release.changelog.fragments: a directory relative to the repository (no .., no #, not starting with - or /) whose files, but README* and .gitkeep, are changelog fragments to be folded into the changelog on the release branch")
             if "numbered" in c and not isinstance(c["numbered"], bool):
                 out.append("release.changelog.numbered: true or false (true: the items under the unreleased heading are numbered; see qargi changelog)")
             if "released" in c:
@@ -332,6 +337,21 @@ def cmd_th_empty(argv):
     return bad
 
 
+def cmd_outside(argv):
+    """The names on standard input (NUL separated) that no PATH covers: the file itself, or a directory above it. Printed one to a line."""
+    paths = [p.rstrip("/") for p in argv if p.rstrip("/")]
+    bad = []
+    for raw in sys.stdin.buffer.read().split(b"\0"):
+        if not raw:
+            continue
+        name = raw.decode("utf-8", "surrogateescape")
+        if not any(name == p or name.startswith(p + "/") for p in paths):
+            bad.append(name)
+    for name in bad:
+        print(name)
+    return 1 if bad else 0
+
+
 def main(argv):
     if not argv:
         print(__doc__, file=sys.stderr)
@@ -357,6 +377,8 @@ def main(argv):
         return cmd_notes_missing(rest)
     if cmd == "has-version" and len(rest) == 2:
         return cmd_has_version(rest)
+    if cmd == "outside":
+        return cmd_outside(rest)
     print("qargi: release_layout.py: unknown command or wrong arguments: %s" % cmd, file=sys.stderr)
     return 2
 

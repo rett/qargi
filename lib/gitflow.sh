@@ -197,18 +197,23 @@ journal_warn_bad() {
 # (that line may be the creation or the deletion that bounds the branch's present life, so the steps could reach back into an earlier one; the
 # other readers of the journal skip such a line, this one refuses to write from it): the deletion then explains only a run that
 # had the branch at TIP, and one line on stderr says so, with the reason, because verify will refuse a run prepared while the branch was
-# at another commit. A branch that is kept gets no such line either: a commit made with git on a branch that stays is still the lead's
-# to explain. Fail-soft, as journal_line is.
+# at another commit. A branch that is kept is brought up the same way, by journal_catchup, when the lead says so
+# (`qargi release fix VER --record`) or when `release push` takes its head under a plan. Fail-soft, as journal_line is.
 JOURNAL_REACH_MAX=500
 journal_reach() {
   local side=$1 ref=$2 tip=$3 verb=$4 name=${2#refs/heads/}
-  local why='a commit made on the branch with git; the verb took the branch with it'   # journal_steps (lib/local.sh) knows these steps by this text: keep the two the same
   [ "$side" = local ] || name=origin/$name
+  journal_catchup "$side" "$ref" "$tip" "$verb" || echo "note: the journal does not lead to ${tip:0:7}, where $name was deleted ($REACH_NONE): qargi local verify will refuse a run prepared earlier, while $name was at another commit" >&2
+  return 0
+}
+# journal_catchup SIDE REF TIP VERB -> the body of journal_reach, for a branch that stays: writes the steps the journal lacks (journal_reach_scan), along the first-parent line of TIP,
+# each with VERB and the why below, so a run prepared before the commits made with git still verifies. Returns 0 (REACH_STEPS holds what was written, empty when the journal led to
+# TIP already) or 1 with nothing written and REACH_NONE saying why the journal cannot be brought to TIP (journal_reach's reasons).
+journal_catchup() {
+  local side=$1 ref=$2 tip=$3 verb=$4
+  local why='a commit made on the branch with git; the verb took the branch with it'   # journal_steps (lib/local.sh) knows these steps by this text: keep the two the same
   journal_reach_scan "$side" "$ref" "$tip"
-  if [ -n "$REACH_NONE" ]; then
-    echo "note: the journal does not lead to ${tip:0:7}, where $name was deleted ($REACH_NONE): qargi local verify will refuse a run prepared earlier, while $name was at another commit" >&2
-    return 0
-  fi
+  [ -z "$REACH_NONE" ] || return 1
   [ "${#REACH_STEPS[@]}" = 0 ] || printf '%s\n' "${REACH_STEPS[@]}" | journal_line "$REPO" "$ref" - '' "$verb" "$REACH_URL" "$why"
   return 0
 }

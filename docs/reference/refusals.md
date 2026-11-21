@@ -46,7 +46,7 @@ compares them with that page.
 | [`cut-not-covering`](#cut-not-covering) | cut | 1 | live | The approval of a release cut covers only the steps its plan listed, while what the cut fixed still holds |
 | [`cut-lead-changed`](#cut-lead-changed) | cut | 1 | live | A release cut belongs to the lead that approved it |
 | [`cut-branch-moved`](#cut-branch-moved) | cut | 1 | live | A release cut stands only while its branch is where the cut left it |
-| [`cut-fix-outside`](#cut-fix-outside) | cut | 1 | planned | A fix recorded on a release branch goes on under the cut's approval only when it stays inside the paths the cut named |
+| [`cut-fix-outside`](#cut-fix-outside) | cut | 1 | live | A fix recorded on a release branch goes on under the cut's approval only when it stays inside the paths the cut named |
 | [`feature-runs-open`](#feature-runs-open) | feature | 1 | planned | A feature is finished when none of its runs is open |
 | [`ro-write-outside`](#ro-write-outside) | guard | 2 | live | A read-only run writes only OUT and TMP |
 | [`ro-second-tree`](#ro-second-tree) | guard | 2 | live | A read-only run makes no second tree of the clone inside the clone |
@@ -157,7 +157,7 @@ compares them with that page.
 
 - Rule: A fix recorded on a release branch goes on under the cut's approval only when it stays inside the paths the cut named.
 - Why: the cut approved a release, not a change of the code.
-- Exit 1, planned.
+- Exit 1, live.
 - Fields: `verb` (verb), `commits` (sha-list).
 - Message: `the commits {commits} leave the paths the cut covers`
 - Next, for a lead: run qargi release push VER without the cut's token: its own plan lists every commit and takes the owner's approval

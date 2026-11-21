@@ -361,7 +361,7 @@
       "why": "the cut approved a release, not a change of the code",
       "class": "cut",
       "exit": 1,
-      "status": "planned",
+      "status": "live",
       "fields": {"verb": "verb", "commits": "sha-list"},
       "message": "the commits {commits} leave the paths the cut covers",
       "next": {"lead": "run qargi release push VER without the cut's token: its own plan lists every commit and takes the owner's approval", "host": "run qargi release push VER without the cut's token: its own plan lists every commit and takes the owner's approval"}
