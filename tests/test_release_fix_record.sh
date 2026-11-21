@@ -174,4 +174,22 @@ before=$(snap); $REL fix 0.2.0 --push --dry-run --plan "$CT" >"$T/do" 2>"$T/de";
 [ "$rc" = 1 ] && [ "$(tail -n 1 "$T/do")" = "dry-run: 2 would refuse; nothing was changed" ] && grep -q '^qargi-refusal/1 {"code":"release-fragments-unfolded","exit":1,"verb":"release push".*"detail":"dry=1 count=1"' "$T/de" && grep -q '^qargi-refusal/1 {"code":"cut-fix-outside","exit":1,"verb":"release push".*"detail":"dry=1 commits=' "$T/de" && [ "$before" = "$(snap)" ] \
   && ok "fix --push --dry-run lists both an unfolded fragment and a commit outside the cut's paths: 2 would refuse, nothing changed" || no "independent refusals: rc=$rc $(cat "$T/do" "$T/de")"
 
+# --- what is judged is what the commits contain, not what the configuration shows: a gitlink is a change of a path even when diff.ignoreSubmodules hides it, and a replace ref changes nothing
+cutup c7
+git -C "$R" config diff.ignoreSubmodules all
+git -C "$W" update-index --add --cacheinfo "160000,$(head_of master),sub" && git -C "$W" commit -q -m "add a gitlink"; g1=$(head_of release/0.2.0)
+[ -z "$(git -C "$R" diff --name-only "$g1^" "$g1")" ] && ok "(setup) with diff.ignoreSubmodules=all the porcelain diff does not list the gitlink" || no "(setup) the porcelain diff lists the gitlink: $(git -C "$R" diff --name-only "$g1^" "$g1")"
+out=$($REL fix 0.2.0 --record 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q "outside the cut: push will take its own plan" <<<"$out" && grep -q "the commits ${g1:0:7} leave the paths" <<<"$out" && [ "$(cutget '.done | has("fix")')" = false ] \
+  && ok "a commit that only adds a gitlink is outside the cut with diff.ignoreSubmodules=all: cut-fix-outside, no fix recorded" || no "gitlink: rc=$rc $out; $(cat "$CR")"
+out=$($REL push 0.2.0 --plan "$CT" 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q '"code":"cut-fix-outside"' <<<"$out" && [ -z "$(git -C "$O" for-each-ref refs/heads/release/0.2.0)" ] && ok "and push under the cut is refused: nothing was pushed" || no "push after a gitlink: rc=$rc $out"
+cutup c8
+cm src/code.go "replaced" "a code fix that a replace ref hides"; p1=$(head_of release/0.2.0)
+rp=$(git -C "$R" commit-tree "$(git -C "$R" rev-parse "$p1^^{tree}")" -p "$(git -C "$R" rev-parse "$p1^")" -m "the same tree as its parent")
+git -C "$R" replace "$p1" "$rp"
+out=$($REL fix 0.2.0 --record 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q "outside the cut: push will take its own plan" <<<"$out" && grep -q "the commits ${p1:0:7} leave the paths" <<<"$out" && [ "$(cutget '.done | has("fix")')" = false ] \
+  && ok "a refs/replace entry that makes a code commit look empty does not change what is judged" || no "replace: rc=$rc $out; $(cat "$CR")"
+
 exit $fail

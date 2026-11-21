@@ -816,17 +816,21 @@ cut_anchor() {
 # a rename counts on both sides; a merge is judged by its difference from its first parent). A record with no .fix_paths covers nothing.
 fix_scan() {
   local anchor=$1 head=$2 c first
-  local -a paths=()
+  local -a paths=() ps=()
   FIX_ON=1 FIX_COMMITS=() FIX_OUT=()
-  mapfile -t FIX_COMMITS < <(g rev-list --first-parent --reverse "$anchor..$head")
+  mapfile -t FIX_COMMITS < <(GIT_NO_REPLACE_OBJECTS=1 g rev-list --first-parent --reverse "$anchor..$head")
   if [ "${#FIX_COMMITS[@]}" -gt 0 ]; then
-    first=$(g rev-parse "${FIX_COMMITS[0]}^" 2>/dev/null) || first=''
+    first=$(GIT_NO_REPLACE_OBJECTS=1 g rev-parse "${FIX_COMMITS[0]}^" 2>/dev/null) || first=''
     [ "$first" = "$anchor" ] || FIX_ON=''
   elif [ "$head" != "$anchor" ]; then FIX_ON=''; fi
   [ -n "$FIX_ON" ] || return 0
   mapfile -t paths < <(jq -r '.fix_paths // [] | .[]' "$CUTREC" 2>/dev/null)
   for c in ${FIX_COMMITS[@]+"${FIX_COMMITS[@]}"}; do
-    g diff --name-only --no-renames -z "$c^" "$c" | python3 -I "$RL" outside ${paths[@]+"${paths[@]}"} >/dev/null || FIX_OUT+=("${c:0:7}")
+    # diff-tree, not diff: diff is porcelain and honours diff.ignoreSubmodules and submodule.NAME.ignore, which would leave an added or bumped gitlink out; no replace object may
+    # change what is judged. A git that fails leaves nothing for the filter to see, so a failure of either side of the pipe counts the commit as outside
+    GIT_NO_REPLACE_OBJECTS=1 g diff-tree -r --no-renames --name-only -z --ignore-submodules=none "$c^" "$c" | python3 -I "$RL" outside ${paths[@]+"${paths[@]}"} >/dev/null
+    ps=("${PIPESTATUS[@]}")
+    { [ "${ps[0]}" = 0 ] && [ "${ps[1]}" = 0 ]; } || FIX_OUT+=("${c:0:7}")
   done
 }
 # cut_why STEP OWN_TOKEN -> sets CW_CODE (empty when the cut may stand in for this step now; else the refusal code: cut-not-covering, cut-branch-moved), CW_ARGS (the
