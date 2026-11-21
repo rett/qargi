@@ -47,7 +47,9 @@ nx_project() { # NAME FIXTURE: the stored answers of a fixture project, with a r
 }
 nx_prep() { # PROJECT ARGS...: a prepare in the project's repository, its output (standard error too) masked; the run is left in RUN
   local p=$1; shift
+  # the goldens were recorded with the scratch on disk: the warning of a scratch on a tmpfs (this suite may run on one) is not part of what is compared
   PREP=$("$DA" local prepare --repo "$T/repo-$p" --base develop --scratch "$T/scr" "$@" 2>&1); PREP_RC=$?
+  PREP=$(grep -v '^qargi: warning: --scratch .* is on a tmpfs' <<<"$PREP")
   RUN=$(sed -n 's/^RUN=//p' <<<"$PREP")
   echo "--- prepare $p $*"; mask <<<"$PREP"; echo "exit $PREP_RC"
 }
