@@ -1578,9 +1578,24 @@ $vout}"
       for d in ${LRUNS_ORDER[@]+"${LRUNS_ORDER[@]}"}; do [ -d "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] && runs+=("$d"); done
     fi
     mapfile -t gone < <(gone_runs "$scr")
-    printf '%-10s %-18s %-10s %-6s %-8s %s\n' ROLE SLUG AGE APPLIED MERGED RUN
-    nowe=$(date +%s)
     plain() { LC_ALL=C tr -d '\000-\037\177'; }   # the files of a run are a member's to write: no control or escape byte reaches the terminal
+    # a RUNTIME column and a model note, for the runs of a project that has extra runtimes (models.extra_runtimes.local): the lead's registry line names the runtime of each run
+    # prepared since (and the model asked for, with whether the runtime's override is verified: never "confirmed", since no runtime reports the model that answered); a run
+    # prepared before shows "-". Nothing is added while no listed run belongs to such a project, so a project without extras sees the list it always saw.
+    showrt='' pj=''
+    for d in ${runs[@]+"${runs[@]}"} ${gone[@]+"${gone[@]}"}; do
+      [ -n "$d" ] || continue
+      if [ -n "$(reg_get "$d" runtime)" ]; then showrt=1; break; fi
+      pj=$(reg_get "$d" project)
+      if [ -n "$pj" ] && valid_project "$pj" && jq -e '(.models.extra_runtimes.local? // []) | type == "array" and any(.[]; type == "string")' "$DA_CONF/projects/$pj.json" >/dev/null 2>&1; then showrt=1; break; fi
+    done
+    rt_cell() { local r; [ -n "$showrt" ] || return 0; r=$(reg_get "$1" runtime); printf '%-12s ' "$(printf '%s' "${r:--}" | plain)"; }   # RUN -> the cell, or nothing
+    rt_note() { # RUN -> "  model=M (requested, ...)" for a line that records the model, else nothing
+      local m; m=$(reg_get "$1" model); [ -n "$m" ] || return 0
+      if [ "$(reg_json "$1" '.model_confirmed')" = true ]; then printf '  model=%s (requested, override verified)' "$m"; else printf '  model=%s (requested, not confirmed)' "$m"; fi
+    }
+    printf '%-10s %-18s %-10s %-6s %-8s %s%s\n' ROLE SLUG AGE APPLIED MERGED "${showrt:+RUNTIME      }" RUN
+    nowe=$(date +%s)
     for d in ${runs[@]+"${runs[@]}"}; do
       [ -z "$WANT_ACTOR$WANT_FEATURE" ] || list_match "$d" || continue
       sl=$(reg_get "$d" slug)
@@ -1596,7 +1611,7 @@ $vout}"
         else mrc=0; merged_tip "$rp" "${atip:-}" "${_ab:-}" "$d" || mrc=$?; case $mrc in 0) mg=yes;; 2) mg='?';; esac; fi
       elif [ -n "$(reg_get "$d" closed)" ]; then ap=closed; mg=-   # local close --applied-by-am: applied by hand, no tip to follow
       fi
-      printf '%-10s %-18s %-10s %-6s %-8s %s%s\n' "$( (cat "$d/ability" 2>/dev/null || echo '?') | plain)" "$(printf '%s' "${sl:--}" | plain)" "$ag" "$ap" "$mg" "$(printf '%s' "$d" | plain)" "$(list_fields "$d" | plain)"
+      printf '%-10s %-18s %-10s %-6s %-8s %s%s%s\n' "$( (cat "$d/ability" 2>/dev/null || echo '?') | plain)" "$(printf '%s' "${sl:--}" | plain)" "$ag" "$ap" "$mg" "$(rt_cell "$d")$(printf '%s' "$d" | plain)" "$(list_fields "$d" | plain)" "$(rt_note "$d" | plain)"
       # what a start of local run left in the run home (a runner killed with SIGKILL): named under its run
       while IFS= read -r rl; do
         [ -z "$rl" ] || printf '  residue: %s; qargi local run RUN --again replaces a link left there, qargi local clean RUN removes the run with it\n' "$(printf '%s' "$rl" | plain)"
@@ -1617,8 +1632,8 @@ $vout}"
         else mrc=0; merged_tip "$rp" "${atip:-}" "${_ab:-}" "$d" || mrc=$?; case $mrc in 0) mg=yes;; 2) mg='?';; esac; fi
       elif [ -n "$(reg_get "$d" closed)" ]; then ap=closed; mg=-
       fi
-      printf '%-10s %-18s %-10s %-6s %-8s %s%s\n' "$(printf '%s' "$(reg_get "$d" ability)" | plain)" "$(printf '%s' "${sl:--}" | plain)" "$ag" "$ap" "$mg" \
-        "$(printf '%s  directory gone%s' "$d" "${sv:+, saved copy $sv (qargi review apply --from-saved ${d##*/})}" | plain)" "$(list_fields "$d" | plain)"
+      printf '%-10s %-18s %-10s %-6s %-8s %s%s%s\n' "$(printf '%s' "$(reg_get "$d" ability)" | plain)" "$(printf '%s' "${sl:--}" | plain)" "$ag" "$ap" "$mg" \
+        "$(rt_cell "$d")$(printf '%s  directory gone%s' "$d" "${sv:+, saved copy $sv (qargi review apply --from-saved ${d##*/})}" | plain)" "$(list_fields "$d" | plain)" "$(rt_note "$d" | plain)"
     done;;
   run)
     # the project of the run is the stored one that has its repository; its local runtime says how to start the member (lib/local_run.py)

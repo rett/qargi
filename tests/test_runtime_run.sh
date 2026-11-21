@@ -260,6 +260,43 @@ prep cmd --slug o2
 out=$(dispatch --dry-run); rc=$?
 { [ "$rc" = 0 ] && grep -q '^ARGV=\["fakeown","exec"' <<<"$out"; } && ok run-own-command-runtime || no "a run of the own command runtime: rc=$rc $out"
 
+# --- the views: local list has a RUNTIME column and review check a runtime= line, from the registry line, with the model as asked for (never "confirmed")
+LIST=$("$DA" local list 2>&1)
+{ grep -q '^ROLE  *SLUG  *AGE  *APPLIED  *MERGED  *RUNTIME  *RUN$' <<<"$LIST" \
+  && grep -E "^build +u1 .* fakever +$RUNX  model=gpt-6.1-terra \(requested, override verified\)\$" <<<"$LIST" >/dev/null \
+  && grep -E "^build +u2 .* fakecx +$T/scr/qargi\.[A-Za-z0-9]{6}  model=gpt-6.1-terra \(requested, not confirmed\)\$" <<<"$LIST" >/dev/null \
+  && grep -E "^build +o1 .* claude-code +$T/scr/qargi\.[A-Za-z0-9]{6}\$" <<<"$LIST" >/dev/null; } \
+  && ok list-runtime-column || no "local list: $LIST"
+out=$("$DA" review check "$RUNX/out" 2>&1)
+grep -qx 'runtime=fakever model=gpt-6.1-terra (requested, override verified)' <<<"$out" && ok override-verified-wording || no "review check, a verified override: $out"
+RUNCX=$(sed -n 's/^build  *u2 .* \(\/[^ ]*qargi\.[A-Za-z0-9]*\)  model=.*/\1/p' <<<"$LIST")
+out=$("$DA" review check "$RUNCX/out" 2>&1)
+grep -qx 'runtime=fakecx model=gpt-6.1-terra (requested, not confirmed)' <<<"$out" && ok review-check-not-confirmed || no "review check, an unverified override: $RUNCX $out"
+RUNO1=$(sed -n 's/^build  *o1 .* \(\/[^ ]*qargi\.[A-Za-z0-9]*\)$/\1/p' <<<"$LIST")
+out=$("$DA" review check "$RUNO1/out" 2>&1)
+{ grep -qx 'runtime=claude-code' <<<"$out" && ! grep -q 'confirmed\|verified' <<<"$out"; } && ok review-check-insession-runtime || no "review check, an in-session run: $RUNO1 $out"
+
+# --- provider notes --run reads the runtime the registry line of a prepared run records: a run on an extra runtime is started by qargi local run, a run of the in-session own runtime
+# by the session's tool; the line is the one prepare wrote, not a line written by hand
+out=$("$DA" provider notes spawn --run "$RUNX" --project two 2>&1)
+{ grep -q 'qargi local run RUN' <<<"$out" && ! grep -q 'Agent tool' <<<"$out"; } && ok notes-run-extra-runtime || no "provider notes spawn --run, a run on an extra runtime: $out"
+out=$("$DA" provider notes spawn --run "$RUNO1" --project two 2>&1)
+{ grep -q 'Agent tool' <<<"$out" && ! grep -q 'qargi local run RUN' <<<"$out"; } && ok notes-run-own-runtime || no "provider notes spawn --run, a run of the own runtime: $out"
+
+# --- an open run prepared before the project had extra runtimes keeps its line as written: after the enable it still starts on the project's own runtime, is not
+# stale, shows "-" in the list and no runtime= line in review check
+mkproj late '{"local":"fakeown"}' null null "$ACC"
+prep late --slug e1
+LATE=$RUN
+{ ! regline "$LATE" | jq -e 'has("runtime")' >/dev/null; } && ok registry-no-extras-no-key || no "the line of a project without extras: $(regline "$LATE")"
+jq '.models.extra_runtimes = {local: ["fakecx"]}' "$T/c/projects/late.json" > "$T/late.json" && mv "$T/late.json" "$T/c/projects/late.json"
+printf 'TASK: x\nDONE: y\n' > "$LATE/task.md"; out=$("$DA" local run "$LATE" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q '^ARGV=\["fakeown","exec"' <<<"$out" && READY "$LATE" >/dev/null; } && ok open-run-before-enable || no "an open run prepared before the enable: rc=$rc $out"
+LIST=$("$DA" local list 2>&1)
+grep -E " - +$LATE\$" <<<"$LIST" >/dev/null && ok list-run-before-enable-dash || no "local list, a run prepared before the enable: $LIST"
+out=$("$DA" review check "$LATE/out" 2>&1)
+! grep -q '^runtime=' <<<"$out" && ok review-check-no-runtime-line || no "review check, a run prepared before the enable: $out"
+
 # --- a reading review: a read-only run on an extra runtime gets the read-only sandbox and no directory the member may write, whatever the profile says
 prep two --slug v1 --role review --runtime fakecx
 out=$(dispatch --dry-run); rc=$?

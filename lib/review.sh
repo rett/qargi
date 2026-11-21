@@ -150,6 +150,18 @@ if [ "$verb" = check ]; then
     lc_ready "$CLASS_RUN" || exit 3
     [ "$LC_SCHEMA" != true ] || lc product-matches "$CLASS_RUN" >/dev/null || exit 3
     marshal_touch_run "$CLASS_RUN"   # renew only after the lead's authoritative class validation
+    # the runtime the run was prepared for, from the lead's registry line only (never from a file of the run directory, which a member can write): printed for a run of a
+    # project that had extra runtimes at prepare, and not for one prepared before. The model is the one asked for: no runtime reports which model answered, so the line says
+    # "requested", and "override verified" when the runtime's per-dispatch model override is (never "confirmed").
+    rt=$(reg_get "$CLASS_RUN" runtime)
+    if [ -n "$rt" ]; then
+      md=$(reg_get "$CLASS_RUN" model); mc=''
+      if [ -n "$md" ]; then
+        if [ "$(reg_json "$CLASS_RUN" '.model_confirmed')" = true ]; then mc=' (requested, override verified)'; else mc=' (requested, not confirmed)'; fi
+        md=" model=$md"
+      fi
+      printf 'runtime=%s%s%s\n' "$rt" "$md" "$mc" | LC_ALL=C tr -d '\000-\010\013-\037\177'
+    fi
   fi
   rc=0; python3 -I "$(dirname "$0")/review_check.py" "$@" || rc=$?
   # The project's declared take-in scrub (answers review.scrub and review.trailer_policy; neither set: nothing more is checked or printed) runs on a series
