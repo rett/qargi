@@ -2364,11 +2364,6 @@ def reads_warning(name, doc):
     return "members on %s can read %s: %s" % (name, what, READS_PHRASE)
 
 
-def reads_acknowledged(words):
-    """Do the owner's words carry the phrase (letter case and runs of blanks ignored)?"""
-    return READS_PHRASE in " ".join((words or "").lower().split())
-
-
 def reads_warning_of(name, root=None, library=None):
     """reads_warning() of the runtime NAME (a runtime or a family name, resolved on the local surface); None for an unknown runtime or one that
     cannot be used as it stands: the warning says nothing it cannot know."""

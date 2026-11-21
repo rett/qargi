@@ -179,6 +179,9 @@ EN en1 --runtime fakecx --approved "go" >"$T/o" 2>"$T/e"; rc=$?
 EN en1 --runtime fakecx --plan "$etok" --approved "go ahead" >"$T/o" 2>"$T/e"; rc=$?
 { [ "$rc" = 1 ] && grep -q '"code":"runtime-reads-unacknowledged"' "$T/e" && grep -q 'refused \[runtime-reads-unacknowledged\] the approval of the runtime fakecx does not carry the phrase' "$T/e" \
   && [ "$(answers_of en1)" = '"none"' ] && [ "$(nlines enable)" = 0 ]; } && ok "reads-unacknowledged: an approval without the phrase is runtime-reads-unacknowledged (exit 1), stores nothing and writes no audit line" || no "no phrase: rc=$rc $(cat "$T/e")"
+EN en1 --runtime fakecx --plan "$etok" --approved "all threads are not confined, they said" >"$T/o" 2>"$T/e"; rc=$?
+{ [ "$rc" = 1 ] && grep -q '"code":"runtime-reads-unacknowledged"' "$T/e" && [ "$(answers_of en1)" = '"none"' ] && [ "$(nlines enable)" = 0 ]; } \
+  && ok "reads-phrase-as-words: 'threads are not confined' does not carry the phrase (runtime-reads-unacknowledged, nothing stored)" || no "threads: rc=$rc $(cat "$T/e")"
 EN en1 --runtime fakecx --plan "$etok" --approved "go ahead, reads  ARE
 not Confined" >"$T/o" 2>"$T/e"; rc=$?
 { [ "$rc" = 0 ] && [ "$(answers_of en1)" = '{"local":["fakecx"]}' ]; } && ok "reads-acknowledged: the same token is still good, and words that carry the phrase (other letter case, runs of blanks) store it" || no "phrase: rc=$rc $(cat "$T/e" "$T/o")"
