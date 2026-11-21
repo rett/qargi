@@ -389,13 +389,18 @@ project_provider_if_set() { # project-or-empty surface
 cloud_note() { # project topic
   ( unset QARGI_LEAD_RUNTIME; pymod provider notes "$2" --project "$1" --surface cloud </dev/null )
 }
-# barrier_guard SURFACE PROJECT-or-empty: a read-only role is about to run on SURFACE. Exits 2 with the reason and the
-# `qargi provider accept` command when the project's provider has no read-only barrier there and the project did not accept
-# that; a partial barrier passes and prints its note on stderr. (lib/provider.py require-barrier decides.)
+# barrier_guard SURFACE PROJECT-or-empty [RUNTIME]: a read-only role is about to run on SURFACE, on RUNTIME (default: the project's provider
+# for the surface). Exits 2 with the reason and the `qargi provider accept` command when the project's own provider has no read-only barrier
+# there and the project did not accept that; a partial barrier passes and prints its note on stderr. A RUNTIME that is one of the project's
+# extra runtimes (models.extra_runtimes.local) needs a barrier of its own: the acceptance of the project's provider does not count for it, and
+# without one it is refused with runtime-barrier-missing (exit 1). (lib/provider.py require-barrier decides.)
 barrier_guard() {
-  local rc=0 prov
-  prov=$(project_provider "${2:-}" "$1") || exit $?   # no default provider: a project with none for this surface is refused here (exit 2)
+  local rc=0 prov=${3:-}
+  [ -n "$prov" ] || prov=$(project_provider "${2:-}" "$1") || exit $?   # no default provider: a project with none for this surface is refused here (exit 2)
   pymod provider require-barrier "$prov" "$1" ${2:+--project "$2"} || rc=$?
+  if [ "$rc" = 4 ]; then
+    refuse runtime-barrier-missing name="$prov"
+  fi
   [ "$rc" = 0 ] || exit "$rc"
 }
 

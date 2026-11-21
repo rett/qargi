@@ -84,7 +84,12 @@ Usage: provider.py list
                                          lib/provider.sh does it: plan first, then the token and the approval
        provider.py require-barrier PROVIDER SURFACE [--project P]
                                          exit 0 when a read-only role may run there (a partial barrier prints its note to
-                                         stderr), 2 with the qargi provider accept command when it may not
+                                         stderr), 2 with the qargi provider accept command when it may not, 4 when PROVIDER is
+                                         one of the project's extra runtimes (models.extra_runtimes.local) and has no barrier of
+                                         its own: the project's acceptance does not count for it, so no command is offered
+       provider.py runtimes PROJECT [--conf DIR]
+                                         the runtimes of the project's local surface: the line "primary NAME", then a line
+                                         "extra NAME" for each runtime of models.extra_runtimes.local
        provider.py effective PROVIDER SURFACE CAPABILITY [--project P]
                                          prints yes, partial or no (what enforcement may rely on; with a project, as composed with its
                                          enabled extensions); exit 1 when the provider does not list the surface, 2 on a conflict
@@ -2297,6 +2302,56 @@ def launch_line(name, render, root=None, library=None, project=None, conf=None):
     return re.sub(r"\[([^\]]*)\]", group, tpl)
 
 
+# ---- the runtimes a project runs members on: the enabled set --------------------------------------------------------------
+
+def extra_runtimes_of(answers):
+    """The names models.extra_runtimes.local of the answers lists, in the order stored: the other runtimes of the local surface the project may
+    start members on beside its own (qargi provider enable PROJECT --runtime NAME). [] when the answer is absent, null, empty or not a list of names."""
+    models = answers.get("models") if isinstance(answers, dict) else None
+    ex = models.get("extra_runtimes") if isinstance(models, dict) else None
+    lst = ex.get("local") if isinstance(ex, dict) else None
+    return [x for x in lst if isinstance(x, str)] if isinstance(lst, list) else []
+
+
+def runtimes_from(answers, project=None, root=None, library=None):
+    """(primary, [extra]) of a project's answers: the runtime of its local surface (resolve_project: NoProvider when it names none) and the
+    runtimes listed in models.extra_runtimes.local, each once, the primary never among them. The enabled set of a project is {primary} + extra;
+    "the project has extras" is the second not being empty."""
+    primary = resolve_project(answers, "local", project, root, library)[0]
+    extra = []
+    for n in extra_runtimes_of(answers):
+        if n != primary and n not in extra:
+            extra.append(n)
+    return primary, extra
+
+
+def local_runtimes_of(project, conf=None, root=None, library=None):
+    """(primary, [extra]) of a stored project: runtimes_from() of its answers. NoProvider (exit 2) when there is no such project or it names no
+    local runtime. The one function that answers which runtimes a project's members may run on."""
+    return runtimes_from(_stored_answers(project, conf), project, root, library)
+
+
+def has_extras(project, conf=None, root=None, library=None):
+    """Does the project have extra runtimes (models.extra_runtimes.local is a non-empty list that names a runtime other than its own)? False for
+    a project that names no local runtime."""
+    try:
+        return bool(local_runtimes_of(project, conf, root, library)[1])
+    except ProviderError:
+        return False
+
+
+def is_extra(runtime, project, conf=None, root=None, library=None):
+    """Is the runtime one of the project's enabled extras (listed in models.extra_runtimes.local and not the project's own)? A project that names
+    no local runtime, or has no stored answers, has none."""
+    if not project or not isinstance(runtime, str):
+        return False
+    try:
+        primary, extra = local_runtimes_of(project, conf, root, library)
+    except ProviderError:
+        return False
+    return runtime in extra and runtime != primary
+
+
 # ---- the read-only barrier ----------------------------------------------------------------------------------------------
 
 def project_answers(project, conf=None):
@@ -2327,8 +2382,11 @@ def accept_command(provider, surface, project=None):
 
 def require_barrier(provider, surface, project=None, root=None, conf=None, library=None):
     """May a read-only role run on this surface of the provider? (state, text): state is yes, partial (text is the note),
-    accepted (the project recorded that it accepts no barrier here) or refused (text says why and names the command). The barrier
-    is the runtime's composed with the project's enabled extensions (a barrier an extension provides counts once it is verified)."""
+    accepted (the project recorded that it accepts no barrier here), refused (text says why and names the command) or missing (the runtime is
+    one of the project's extra runtimes: text says why). The barrier is the runtime's composed with the project's enabled extensions (a barrier an
+    extension provides counts once it is verified). The barrier belongs to the runtime the role runs on, never to the project: the acceptance
+    models.accept_no_barrier.local was given for the project's own runtime and does not count for an extra runtime, so a barrier that is neither
+    yes nor partial on an extra is missing, and nothing the project recorded changes that."""
     v = effective(provider, surface, "read_only_barrier", root, library, project=project, conf=conf)
     if v == "yes":
         return "yes", ""
@@ -2341,14 +2399,32 @@ def require_barrier(provider, surface, project=None, root=None, conf=None, libra
     cell = _dict(_dict(doc and doc.get("capabilities")).get("read_only_barrier"))
     if v == "partial":
         return "partial", "%s has only a partial read-only barrier on %s: %s" % (provider, surface, cell.get("note") or "see qargi provider show %s" % provider)
-    if accepted(project, surface, conf):
-        return "accepted", ""
     by = (comp["provenance"] if comp else {}).get("capabilities.read_only_barrier")
     claim = barrier_claim_problem(doc, by=by if by != provider else None) if doc is not None else None
     why = claim or ("not supported" if cell.get("value") == "no" or doc is None else "not verified, so it counts as not supported")
+    if surface == "local" and is_extra(provider, project, conf, root, library):
+        return "missing", ("the runtime %s has no read-only barrier on %s (%s). A read-only role needs the barrier of its own runtime: the acceptance "
+                           "of the project's own runtime does not count for an extra runtime" % (provider, surface, why))
+    if accepted(project, surface, conf):
+        return "accepted", ""
     return "refused", ("the provider %s has no read-only barrier on %s (%s), so a read-only role is refused there.\n"
                        "To run it anyway, on your own responsibility, record that you accept this for the project:\n  %s"
                        % (provider, surface, why, accept_command(provider, surface, project)))
+
+
+MISSING_BARRIER = 4        # the exit status of require-barrier for an extra runtime with no read-only barrier (2 is a project's own runtime without one)
+
+
+def cmd_runtimes(args):
+    """runtimes PROJECT [--conf DIR]: "primary NAME", then "extra NAME" for each runtime of models.extra_runtimes.local."""
+    conf = None
+    if len(args) == 3 and args[1] == "--conf":
+        args, conf = args[:1], args[2]
+    primary, extra = local_runtimes_of(args[0], conf)
+    print("primary " + primary)
+    for n in extra:
+        print("extra " + n)
+    return 0
 
 
 def cmd_require_barrier(provider, surface, project):
@@ -2358,6 +2434,9 @@ def cmd_require_barrier(provider, surface, project):
     if state == "refused":
         print("qargi: " + text, file=sys.stderr)
         return 2
+    if state == "missing":                         # an extra runtime without its own barrier: lib.sh barrier_guard raises runtime-barrier-missing on this status
+        print("qargi: " + text, file=sys.stderr)
+        return MISSING_BARRIER
     if state == "partial":
         print("qargi: note: " + text, file=sys.stderr)
     return 0
@@ -3024,7 +3103,7 @@ def cmd_of(args, if_set=False):
 def main(argv):
     usage = ("usage: qargi provider list | show NAME [--project P] [--json] | effective RUNTIME SURFACE CAP [--project P] | check NAME|DIR [--project P] | new NAME [--kind K] [--from F] | import SOURCE [--name N] | seal NAME | remove NAME "
              "| enable|disable PROJECT EXT | attest NAME CAP --asked W ... | accept NAME --surface S --no-barrier [--project P] --asked WORDS "
-             "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] [--project P] | require-skills NAME [--project P] | launch NAME RENDER [--project P] | adapter-run NAME SURFACE VERB [--check] | addenda NAME SURFACE | notes [TOPIC] [--project P] | model NAME SURFACE TIER | of PROJECT [--surface S] | of-if-set PROJECT --surface S")
+             "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] [--project P] | require-skills NAME [--project P] | launch NAME RENDER [--project P] | adapter-run NAME SURFACE VERB [--check] | addenda NAME SURFACE | notes [TOPIC] [--project P] | model NAME SURFACE TIER | of PROJECT [--surface S] | of-if-set PROJECT --surface S | runtimes PROJECT")
     if not argv:
         print(usage, file=sys.stderr)
         return 2
@@ -3072,6 +3151,8 @@ def main(argv):
             return cmd_hidden_paths(rest)
         if verb == "notes":
             return cmd_notes(rest)
+        if verb == "runtimes" and (len(rest) == 1 or (len(rest) == 3 and rest[1] == "--conf")):
+            return cmd_runtimes(rest)
         if verb == "model":
             return cmd_model(rest)
         if verb == "of":

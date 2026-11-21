@@ -56,6 +56,7 @@ compares them with that page.
 | [`member-run-record`](#member-run-record) | guard | 2 | live | A member does not write the lead's run records |
 | [`plan-missing`](#plan-missing) | plan | 1 | live | A token covers the plan the person saw |
 | [`plan-stale`](#plan-stale) | plan | 1 | live | A token covers the plan the person saw |
+| [`runtime-barrier-missing`](#runtime-barrier-missing) | project-rule | 1 | live | A read-only role needs the barrier of its own runtime; the acceptance of the project's own runtime does not count |
 | [`release-notes-empty`](#release-notes-empty) | release | 1 | live | A release has notes |
 | [`release-fragments-unfolded`](#release-fragments-unfolded) | release | 1 | live | A release branch holds no unfolded changelog fragment when it is pushed or finished |
 | [`seated-project`](#seated-project) | seat-door | 1 | planned | A marshal claim, take or release is not run on a seated project (R27) |
@@ -256,6 +257,17 @@ compares them with that page.
 - Message: `the plan changed or --plan is missing: the plan of {verb} is no longer the one shown (moved: {moved})`
 - Next, for a lead: run {verb} without --plan, show the new plan, then apply exactly that with --plan {token}
 - Next, in the owner's own session (`host`): plan again with qargi host {verb}, show the new plan, then apply exactly that with --plan {token}: a token from a lead's plan never matches (R77)
+
+## Class project-rule
+
+### runtime-barrier-missing
+
+- Rule: A read-only role needs the barrier of its own runtime; the acceptance of the project's own runtime does not count.
+- Why: an acceptance was given for one runtime's missing barrier, and another runtime's missing barrier is another risk.
+- Exit 1, live.
+- Fields: `name` (label).
+- Message: `the runtime {name} has no read-only barrier, so a read-only role is refused on it`
+- Next, for a lead: run the read-only role on a runtime that has a barrier (qargi provider show {name} says what its barrier claims), or leave --runtime out
 
 ## Class release
 
