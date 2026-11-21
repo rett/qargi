@@ -339,5 +339,76 @@ class Cli(unittest.TestCase):
             self.assertIn(words, r.stderr, args)
 
 
+
+class Fixture(unittest.TestCase):
+    """A repository and a project that `qargi local prepare` and `qargi agent` work on, in the scratch home."""
+
+    def setUp(self):
+        self.t = tempfile.mkdtemp(prefix="cardfix.")
+        self.addCleanup(shutil.rmtree, self.t, True)
+        self.conf, self.state = os.path.join(self.t, "conf"), os.path.join(self.t, "state")
+        self.env = dict(os.environ, QARGI_CONF=self.conf, QARGI_STATE=self.state, QARGI_RUN_TMP=self.t)
+        self.repo = os.path.join(self.t, "fixrepo")
+        git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.net"]
+        os.makedirs(os.path.join(self.repo, "tests"))
+        subprocess.run(["git", "init", "-q", "-b", "main", self.repo], check=True)
+        with open(os.path.join(self.repo, "tests", "check.sh"), "w") as f:
+            f.write("#!/bin/sh\nexit 0\n")
+        os.chmod(os.path.join(self.repo, "tests", "check.sh"), 0o755)
+        subprocess.run(git + ["-C", self.repo, "add", "-A"], check=True)
+        subprocess.run(git + ["-C", self.repo, "commit", "-q", "-m", "one"], check=True)
+        os.makedirs(os.path.join(self.conf, "projects"))
+        with open(os.path.join(self.conf, "projects", "fixproj.json"), "w") as f:
+            json.dump({"schema": 1, "project": "fixproj", "repo": {"url": "https://github.com/example/fixproj", "path": self.repo, "long_lived": ["main"]},
+                       "roles": {"build": {"base": "main", "push": {"mode": "none"}}}, "models": {"provider": {"local": "claude-code", "cloud": "claude-platform"}},
+                       "memory": {}, "budget_cents": 500}, f)
+        with open(os.path.join(self.t, "task.txt"), "w") as f:
+            f.write("Add the flag --quiet to the tool.\n")
+
+    def qargi(self, *args, **kw):
+        return run([BIN] + list(args), env=kw.pop("env", self.env), **kw)
+
+
+class Prepare(Fixture):
+    def prepare(self, role, slug, *scope):
+        args = ["local", "prepare", "--repo", self.repo, "--base", "main", "--scratch", self.t, "--slug", slug, "--role", role, "--task-file", os.path.join(self.t, "task.txt"),
+                "--done", "bash tests/check.sh"]
+        for s in scope:
+            args += ["--scope", s]
+        r = self.qargi(*args)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        run_dir = re.search(r"(?m)^RUN=(.*)$", r.stdout).group(1)
+        with open(os.path.join(run_dir, "task.md"), encoding="utf-8") as f:
+            return run_dir, f.read()
+
+    def test_the_task_block_carries_the_card_of_the_role_made_with_the_runs_paths_after_the_path_lines(self):
+        for role in ("build", "review", "test", "write"):
+            run_dir, text = self.prepare(role, "s" + role, "lib/", "docs/guide.md")
+            card = run(PY + [os.path.join(LIB, "rolecard.py"), "card", role, "--run", run_dir], env=self.env)
+            self.assertEqual(card.returncode, 0, card.stderr)
+            head, _, tail = text.partition("\nCARD:\n")
+            self.assertEqual(tail, card.stdout, "%s: the card is the last block, and the whole of it" % role)
+            self.assertRegex(head, r"CONTRACT: [^\n]+/contract\n$", "the card follows the path lines")
+            self.assertEqual(len(re.findall(r"(?m)^CARD:$", text)), 1)
+            self.assertNotIn("\n\n", tail.rstrip("\n"), "no blank line in the card: a block that follows it is a block of its own")
+            self.assertEqual(SCOPE_LINE.search(text).group(1), "lib/, docs/guide.md", "the card adds no SCOPE line: review check reads the first one")
+            self.assertEqual(len([l for l in text.split("\n") if l.startswith("DONE: ")]), 1)
+
+    def test_a_read_only_card_names_the_real_paths_and_the_run(self):
+        run_dir, text = self.prepare("review", "sread")
+        with open(os.path.join(run_dir, "tmpdir")) as f:
+            tmp = f.read().strip()
+        card = text.partition("\nCARD:\n")[2]
+        for need in ("qargi local report %s < FILE" % run_dir, "git -C %s clone %s x" % (tmp, os.path.join(run_dir, "clone")), "cp -a %s %s/x" % (os.path.join(run_dir, "clone"), tmp),
+                     "git -C %s/x am %s/NAME.patch" % (tmp, os.path.join(run_dir, "out"))):
+            self.assertIn(need, card)
+
+    def test_the_submodule_line_is_written_with_the_block_not_appended_after_the_card(self):
+        with open(os.path.join(LIB, "local.sh"), encoding="utf-8") as f:
+            src = f.read()
+        self.assertNotRegex(src, r"SUBMODULES: %s[^\n]*>> ")
+        self.assertRegex(src, r"(?s)taskblock_write\(\) \{.*SUBMODULES: .*CARD:")
+
+
 if __name__ == "__main__":
     unittest.main()
