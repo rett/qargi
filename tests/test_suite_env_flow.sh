@@ -394,7 +394,7 @@ if [ -n "$real" ] && [ "${rv:-0}" -ge 254 ] && "$real" --user --scope --quiet --
   cg=$(sed -n 's/^0:://p' /proc/self/cgroup); app=''; case $cg in *app.slice*) app=/sys/fs/cgroup${cg%%/app.slice*}/app.slice;; esac
   cpumax_files() { [ -z "$app" ] || find "$app" -name cpu.max 2>/dev/null | sort; }
   cpumax_files > "$T/cpumax.before"
-  setcmd "echo '\${VERIFY_X}' pid=\$\$; { find '${app:-/nonexistent}' -name cpu.max 2>/dev/null | sort > $T/cpumax.during; } ; setsid sleep 300 &"
+  setcmd "echo '\${VERIFY_X}' pid=\$\$; { find '${app:-/nonexistent}' -name cpu.max 2>/dev/null | sort > $T/cpumax.during; } ; setsid sleep 300 & p=\$!; until [ \"\$(cat /proc/\$p/comm)\" != bash ]; do :; done"
   for q in '"200%"' '"max"' ''; do
     case $q in '') d='{}'; want_max='max 100000';; '"max"') d='{"cpu_quota":"max"}'; want_max='max 100000';; *) d="{\"cpu_quota\":$q}"; want_max='200000 100000';; esac
     setenv "$d"; reset
