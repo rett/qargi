@@ -516,4 +516,32 @@ run message --project on-one --lead-runtime lead-two; run identity --project on-
 out=$(QARGI_LEAD_RUNTIME=lead-one "$DA" provider notes identity --project on-two 2>&1)
 [ "$before" = "$(tree)" ] && ok "naming a lead runtime stores and rewrites nothing (answers, definitions, state, home), answered or refused" || no "a lead runtime changed a file"
 
+
+# a project without extra runtimes: every topic answers as it did before runtime-per-profile (the fixtures of tests/fixtures/runtime-no-extras,
+# recorded from the head before it, are the two projects of the design; NOTES_RECORD=1 writes them again when a shipped note changes)
+FIX=$SRC/tests/fixtures/runtime-no-extras
+notes_dump() { # NAME: for the stored project NAME, each topic its runtime and the two lead runtimes answer, as the verb printed it
+  local p=$1 v t vs topics
+  vs=("" "--lead-runtime claude-code" "--lead-runtime codex" "env")
+  topics=$(for v in "${vs[@]}"; do
+    case $v in env) QARGI_LEAD_RUNTIME=codex "$DA" provider notes --project "$p" 2>/dev/null;; *) "$DA" provider notes --project "$p" $v 2>/dev/null;; esac
+  done | sort -u)
+  for v in "${vs[@]}"; do
+    for t in "" $topics nosuch; do
+      printf '>>> notes %s --project %s %s\n' "$t" "$p" "$v"
+      case $v in
+        env) QARGI_LEAD_RUNTIME=codex "$DA" provider notes $t --project "$p" 2>&1; printf 'exit %s\n' "$?";;
+        *) "$DA" provider notes $t --project "$p" $v 2>&1; printf 'exit %s\n' "$?";;
+      esac
+    done
+  done
+}
+for f in project project-command; do
+  jq '.project = "demo"' "$FIX/$f.json" > "$T/c/projects/demo.json"
+  if [ -n "${NOTES_RECORD:-}" ]; then notes_dump demo > "$FIX/notes-$f.golden"; ok "recorded notes-$f.golden"; continue; fi
+  notes_dump demo > "$T/notes-$f.out"
+  cmp -s "$T/notes-$f.out" "$FIX/notes-$f.golden" && ok "no extras: provider notes of $f.json answers every topic as recorded" || no "no extras: notes of $f.json changed: $(diff "$FIX/notes-$f.golden" "$T/notes-$f.out" | head -5)"
+done
+rm -f "$T/c/projects/demo.json"
+
 exit $fail
