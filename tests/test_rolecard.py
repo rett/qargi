@@ -6,6 +6,7 @@ a command of lib/commands.py; the lead card's tail from the stored member states
 UPDATE_GOLDEN=1 python3 tests/test_rolecard.py rewrites tests/golden/rolecard/* (read the diff before committing it)."""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import json, os, re, shutil, subprocess, sys, tempfile, unittest
+from unittest import mock
 
 TESTS = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(TESTS)
@@ -154,11 +155,15 @@ class Cards(unittest.TestCase):
         text = RC.card("review")["card"]
         for need in ("Do not run the whole suite", "OUT/report.md", "qargi local report RUN < FILE", "--from NAME", "reads OUT only", "git -C TMP clone CLONE x",
                      "a relative directory lands under -C", "git -C TMP/x am", "cp -a CLONE TMP/x", "git worktree add", "git show BASE_SHA:PATH", "git diff BASE_SHA",
-                     "PATH, HOME, TMPDIR, GIT_*, LD_*, BASH_*", "a target platform", "systemd-run", "[code]"):
+                     "Assign no variable that picks a program or options", "PATH, HOME, TMPDIR, GIT_*, LD_*, BASH_*, PYTHONPATH, NODE_OPTIONS", "see `qargi help guard`",
+                     "A target platform (GOOS, GOARCH)", "systemd-run", "TMPDIR is TMP, where Go tests write", "[code]", RC.TEXT_LINE[0]):
             self.assertIn(need, text)
+        self.assertNotIn("Other build variables", text, "a variable that is not a target platform is not allowed because it is a build variable")
         text = RC.card("build")["card"]
-        for need in ("git push", "the lead's verbs", "the lead's directories", "with its token; never apply it", "[code]", "the lead runs the suite"):
+        for need in ("git push", "the lead's verbs", "the lead's directories", "with its token; never apply it", "[code]", "the lead runs the suite", RC.TEXT_LINE[0]):
             self.assertIn(need, text)
+        for text in (RC.card("build")["card"], RC.card("review")["card"]):
+            self.assertIn("starts with git push, ssh or gh is refused: write such text with your file tool", text)
 
 
 class RoleText(unittest.TestCase):
@@ -239,45 +244,75 @@ class GuardBothWays(unittest.TestCase):
     def tearDownClass(cls):
         del cls.J
 
-    def fixture(self, ability):
+    def fixture(self, ability, cls):
+        """A run as the lead prepares it when the system has a shared-memory directory: the run directory with its record, and TMP away from it, found only through the lead's
+        registry (STATE/local-runs.jsonl), as a real review-only member finds it (tmp_run in lib/guard.py). The class file says what the run is held to."""
         t = tempfile.mkdtemp(prefix="guardcard.")
         self.addCleanup(shutil.rmtree, t, True)
         self.run_dir = os.path.join(t, "qargi.x")
-        for d in ("clone/src", "out", "tmp"):
+        tmp = os.path.join(t, "shm", "qargi-run.X")
+        state = os.path.join(t, "state")
+        for d in ("clone/src", "out"):
             os.makedirs(os.path.join(self.run_dir, d))
+        os.makedirs(tmp)
+        os.makedirs(state)
         open(os.path.join(self.run_dir, "refs.before"), "w").close()
-        with open(os.path.join(self.run_dir, "ability"), "w") as f:
-            f.write(ability + "\n")
-        return {"clone": os.path.join(self.run_dir, "clone"), "out": os.path.join(self.run_dir, "out"), "tmp": os.path.join(self.run_dir, "tmp"), "run": self.run_dir}
+        for name, text in (("ability", ability), ("class", cls), ("tmpdir", tmp)):
+            with open(os.path.join(self.run_dir, name), "w") as f:
+                f.write(text + "\n")
+        with open(os.path.join(state, "local-runs.jsonl"), "w") as f:
+            f.write(json.dumps({"run": self.run_dir, "tmpdir": tmp}) + "\n")
+        patch = mock.patch.dict(os.environ, {"QARGI_STATE": state})
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.assertFalse(os.path.exists(os.path.join(self.run_dir, "tmp")), "TMP is not the run's tmp directory")
+        return {"clone": os.path.join(self.run_dir, "clone"), "out": os.path.join(self.run_dir, "out"), "tmp": tmp, "run": self.run_dir}
 
-    def judge(self, cmd, cwd):
+    def judge(self, cmd, cwd, under=""):
         self.J.cwd = cwd
-        return self.J.judge(cmd, "")
+        return self.J.judge(cmd, under)
 
-    def both_ways(self, ability, cls):
-        p = self.fixture(ability)
+    def both_ways(self, ability, cls, judged):
+        """judged: (where the shell is, what the guard is started with): "clone" or "tmp", and its --class. Started with no class, the guard finds the run from the
+        directory the shell is in, so TMP (away from the run) is judged under the class alone, as the hook starts a read-only member."""
+        p = self.fixture(ability, cls)
         probes = RC.probes(cls, p)
         self.assertGreater(len(probes["allowed"]), 3)
         self.assertGreater(len(probes["refused"]), 3)
-        for cwd in (p["clone"], p["tmp"]):
+        for where, under in judged:
+            cwd = p[where]
             for cmd in probes["allowed"]:
-                self.assertIsNone(self.judge(cmd, cwd), "the card says `%s` is lawful for class %s (shell in %s)" % (cmd, cls, cwd))
+                self.assertIsNone(self.judge(cmd, cwd, under), "the card says `%s` is lawful for class %s (shell in %s, --class %r)" % (cmd, cls, cwd, under))
             for cmd in probes["refused"]:
-                got = self.judge(cmd, cwd)
-                self.assertTrue(got and "qargi guard:" in got, "the card says `%s` is refused for class %s (shell in %s), the guard says %r" % (cmd, cls, cwd, got))
+                got = self.judge(cmd, cwd, under)
+                self.assertTrue(got and "qargi guard:" in got,
+                                "the card says `%s` is refused for class %s (shell in %s, --class %r), the guard says %r" % (cmd, cls, cwd, under, got))
 
     def test_the_read_only_card(self):
-        self.both_ways("review", "read-only")
+        self.both_ways("review", "read-only", (("clone", ""), ("clone", "read-only"), ("tmp", "read-only")))
 
     def test_the_write_card(self):
-        self.both_ways("build", "write")
+        self.both_ways("build", "write", (("clone", ""), ("tmp", "")))
+
+    def test_every_variable_the_read_only_card_names_is_one_the_guard_refuses_to_assign(self):
+        """The card names PATH, HOME, TMPDIR, GIT_*, LD_*, BASH_*, PYTHONPATH and NODE_OPTIONS: the guard's own table (RESTRICTED_ENV and its prefixes) holds each, so the
+        card says nothing the guard does not hold to; a target platform, which it allows, is in neither."""
+        G = self.J.m
+        card = RC.card("review")["card"]
+        names = re.search(r"\(([^()]*), \.\.\.;", card).group(1).split(", ")
+        self.assertIn("PYTHONPATH", names)
+        self.assertIn("NODE_OPTIONS", names)
+        for name in names:
+            self.assertTrue(G.restricted_name(name.replace("*", "x")), name)
+        for name in ("GOOS", "GOARCH"):
+            self.assertFalse(G.restricted_name(name), name)
 
     def test_the_skills_directory_of_the_runtime_is_one_of_the_lead_directories_the_write_card_names(self):
         """The card says `skills`; the directory is the runtime's (its definition names it), so the module cannot probe it by name: this does, under both classes."""
         dirs = run(PY + [os.path.join(LIB, "provider.py"), "skills-dirs"]).stdout.split()
         self.assertTrue(dirs)
         for ability in ("build", "review"):
-            p = self.fixture(ability)
+            p = self.fixture(ability, "read-only" if ability == "review" else "write")
             for d in dirs:
                 for cwd in (p["clone"], p["tmp"]):
                     got = self.judge("printf x > ~/%s/x" % d, cwd)
@@ -286,7 +321,7 @@ class GuardBothWays(unittest.TestCase):
     def test_the_card_commands_with_the_words_for_the_paths_are_judged_alike(self):
         """The probes of a card made with no run are the words CLONE, OUT, TMP and RUN: still commands, and the lists are as long as with real paths."""
         for cls in ("read-only", "write"):
-            self.assertEqual(len(RC.probes(cls)["allowed"]), len(RC.probes(cls, self.fixture("review" if cls == "read-only" else "build"))["allowed"]))
+            self.assertEqual(len(RC.probes(cls)["allowed"]), len(RC.probes(cls, self.fixture("review" if cls == "read-only" else "build", cls))["allowed"]))
 
 
 class LeadTail(unittest.TestCase):
@@ -333,6 +368,58 @@ class LeadTail(unittest.TestCase):
         os.remove(path)
         os.mkdir(path)                                           # a directory where the file is: unreadable, not an error
         self.assertEqual(self.tail()[1], [])
+
+
+class LeadTailFile(unittest.TestCase):
+    """The stored reading is data: a thing that is not a regular file of a size qargi writes is no reading, and is not waited for."""
+
+    def setUp(self):
+        self.t = tempfile.mkdtemp(prefix="tailfile.")
+        self.addCleanup(shutil.rmtree, self.t, True)
+        self.path = os.path.join(self.t, "agent-states.json")
+
+    def card_fast(self):
+        """The card is made in a process of its own, as the hook makes it, under a timeout: a read that waits on the file (a pipe) or fills memory (a link to a device)
+        does not come back, and the card is the one without the tail."""
+        r = run(PY + [os.path.join(LIB, "rolecard.py"), "card", "lead", "--project", "acme"], env=dict(os.environ, QARGI_STATE=self.t), timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("Members STALE or DRIFT", r.stdout)
+        self.assertEqual(r.stdout, RC.card("lead")["card"] + "\n", "the card without the tail")
+        self.assertIsNone(RC.stale_members("acme", self.t))
+
+    def test_a_link_to_a_device_is_no_reading(self):
+        os.symlink("/dev/zero", self.path)
+        self.card_fast()
+
+    def test_a_link_to_a_real_reading_is_no_reading_either(self):
+        write_states(os.path.join(self.t, "elsewhere"), "acme", "2026-11-21T10:00:00Z", {"forge": ["STALE"]})
+        os.symlink(os.path.join(self.t, "elsewhere", "agent-states.json"), self.path)
+        self.card_fast()
+
+    def test_a_pipe_is_no_reading_and_is_not_waited_for(self):
+        os.mkfifo(self.path)
+        self.card_fast()
+
+    def test_a_file_longer_than_the_room_is_no_reading(self):
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump({"schema": 1, "projects": {"acme": {"at": "2026-11-21T10:00:00Z", "members": {"forge": ["STALE"], "pad": ["x" * RC.READ_MAX]}}}}, f)
+        self.assertGreater(os.path.getsize(self.path), RC.READ_MAX)
+        self.card_fast()
+
+    def test_a_large_sparse_file_is_no_reading_and_is_not_read(self):
+        with open(self.path, "wb") as f:
+            f.truncate(62 * 1024 * 1024)
+        self.card_fast()
+
+    def test_a_reading_that_fits_is_read(self):
+        write_states(self.t, "acme", "2026-11-21T10:00:00Z", {"forge": ["STALE"]})
+        self.assertLess(os.path.getsize(self.path), RC.READ_MAX)
+        self.assertEqual(RC.stale_members("acme", self.t), ("2026-11-21T10:00:00Z", {"forge": ["STALE"]}))
+
+    def test_a_file_that_is_not_utf_8_is_no_reading(self):
+        with open(self.path, "wb") as f:
+            f.write(b"\xff\xfe{")
+        self.assertIsNone(RC.stale_members("acme", self.t))
 
 
 class Cli(unittest.TestCase):

@@ -272,7 +272,9 @@ class Render(unittest.TestCase):
         self.assertIn("the run's TMP", topic)
         card = subprocess.run([sys.executable, "-I", os.path.join(LIB, "rolecard.py"), "card", "review"], capture_output=True, text=True, check=True).stdout
         card = " ".join(card.split())
-        for needle in ("TMPDIR", "OUT and TMP", "PATH, HOME, TMPDIR, GIT_*, LD_*, BASH_*", "pass the TMP path as an argument", "a target platform", "Do not run the whole suite"):
+        for needle in ("TMPDIR is TMP, where Go tests write", "OUT and TMP", "PATH, HOME, TMPDIR, GIT_*, LD_*, BASH_*, PYTHONPATH, NODE_OPTIONS", "see `qargi help guard`",
+                       "A target platform (GOOS, GOARCH)", "Do not run the whole suite",
+                       "A line, even in a heredoc, a quoted string or a commit message, that starts with git push, ssh or gh is refused: write such text with your file tool."):
             self.assertIn(needle, card, "the read-only card does not say %r" % needle)
         role = " ".join(slurp(os.path.join(ROOT, "roles", "review", "ROLE.md")).split())
         self.assertNotIn("TMPDIR", role, "what the guard refuses of a read-only run is on the card, not in the role text")

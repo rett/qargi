@@ -4,3 +4,4 @@ Class write (a barrier, not a sandbox):
 - A plan you compute goes in your report with its token; never apply it.
 - Report a refusal's [code]; do not work round it.
 - Run only the checks that cover your change; the lead runs the suite.
+- A line, even in a heredoc, a quoted string or a commit message, that starts with git push, ssh or gh is refused: write such text with your file tool.
