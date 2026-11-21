@@ -309,6 +309,13 @@ GIT_WRITES = {"add", "commit", "apply", "am", "checkout", "switch", "reset", "rm
 FD_NAME = r"\{[A-Za-z_][A-Za-z0-9_]*(?:\[.*?\])?\}"             # {fd} or {arr[i]} (the subscript may hold brackets and a blank, quoted in the command and bare in the words: {a[b[1]]}, {a["x y"]}, up to the first ]}) before a redirection operator: bash opens a descriptor and stores its number in the variable (or the array element)
 REDIR = re.compile(r"^(?:\d*|&|" + FD_NAME + r")(?:>>|>\||<>|>)(.*)$")           # > >> >| <> &> &>> and N> N>> N>| N<> and {fd}>, the target stuck to it or in the next word
 GIT_OUTPUT_DIRS = {"format-patch", "archive"}                    # git subcommands whose -o names where they write
+GIT_NEW_TREE = {"clone": ("-o", "--origin", "-b", "--branch", "-u", "--upload-pack", "--depth", "--template", "--reference", "--reference-if-able", "--separate-git-dir", "-c", "--config",
+                         "-j", "--jobs", "--shallow-since", "--shallow-exclude", "--filter", "--server-option", "--bundle-uri", "--revision", "--ref-format", "--object-format"),
+                "init": ("-b", "--initial-branch", "--template", "--separate-git-dir", "--object-format", "--ref-format")}   # git clone and git init: the options that take a value (the next word, or glued: --depth=1, -bmain)
+GIT_NEW_TREE_FLAGS = {"clone": {"-l", "--local", "-s", "--shared", "-q", "--quiet", "-v", "--verbose", "--progress", "-n", "--no-checkout", "--bare", "--mirror", "--tags", "--single-branch",
+                                "--recursive", "--recurse-submodules", "--shallow-submodules", "--remote-submodules", "--dissociate", "--sparse", "--also-filter-submodules",
+                                "--reject-shallow", "-4", "-6", "--ipv4", "--ipv6", "-h", "--help"},
+                      "init": {"-q", "--quiet", "--bare", "--shared", "-h", "--help"}}   # and the ones that take none (--no-NAME takes none, whatever NAME is)
 
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
 SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
@@ -1833,10 +1840,18 @@ def write_targets(toks, i):
             for rest, redirs in ((without_redirections(rest), False), (rest, True)):   # both readings, as git_refusal: without the redirections the shell takes out, and as written (a quoted '>x' is a word)
                 opts, k = git_global(rest, redirs)
                 gitdir = next((v for n, v in reversed(opts) if n == "-C" and v), None)
+                chdir = git_chdir(opts)                                               # all the -C options, each against the one before it
                 trees = [v for n, v in opts if n == "--work-tree" and v] + [t.split("=", 1)[1] for t in toks[:i] if t.startswith("GIT_WORK_TREE=")]
                 sub = rest[k] if k < len(rest) else ""
                 if sub in GIT_WRITES and not (sub == "tag" and lists_tags(rest[k + 1:])):
-                    targets.append(("git " + sub, gitdir or "."))
+                    new_dir, separate, sure = git_new_tree(sub, rest[k + 1:]) if sub in GIT_NEW_TREE else (None, [], True)
+                    if new_dir is None or not sure:                                   # judged where git runs: the tree is made in that directory, or the operands are not known
+                        targets.append(("git " + sub, gitdir or "."))
+                        if chdir != gitdir:
+                            targets.append(("git " + sub, chdir))
+                    if new_dir is not None:                                           # git clone SRC DIR and git init DIR change DIR, a relative one against the -C options, not the shell's directory
+                        targets.append(("git " + sub, git_under(chdir, new_dir)))
+                    targets += [("git " + sub, git_under(chdir, d)) for d in separate]
                     targets += [("git " + sub, tree) for tree in trees]                # --work-tree DIR and GIT_WORK_TREE=DIR name where the tree is changed, as -C does
                 if sub not in GIT_WRITES and git_mutates(sub, rest[k + 1:]):
                     targets.append(("git " + sub, gitdir or "."))
@@ -1846,10 +1861,8 @@ def write_targets(toks, i):
                     if config_written(rest[k + 1:]) != []:                         # a write: GIT_CONFIG=FILE in front of it names the file, as --file does
                         targets += [("git config --file", t.split("=", 1)[1]) for t in toks[:i] if t.startswith("GIT_CONFIG=")]
                 places = [t for t in rest[k + 1:] if not t.startswith("-")]
-                if sub == "clone" and len(places) > 1:                        # git clone URL DIR, git init DIR, git worktree add DIR
-                    targets.append(("git clone", places[-1]))
-                elif sub in ("init", "worktree") and places[sub == "worktree":][:1]:
-                    targets.append(("git " + sub, places[sub == "worktree":][0]))
+                if sub == "worktree" and places[1:][:1]:                      # git worktree add DIR (git clone SRC DIR and git init DIR are judged above)
+                    targets.append(("git worktree", places[1]))
                 for n in range(k + 1, len(rest)):                             # git log|diff|show --output=FILE, format-patch -o DIR, archive -o FILE, apply --directory=DIR
                     v = option_value(rest, n, ("--output", "--output-directory") + (("-o",) if sub in GIT_OUTPUT_DIRS else ()) + (("--directory",) if sub == "apply" else ()))
                     if v is not None:
@@ -1857,6 +1870,63 @@ def write_targets(toks, i):
                 if sub == "bundle" and rest[k + 1:k + 2] == ["create"] and len(rest) > k + 2:
                     targets.append(("git bundle create", rest[k + 2]))
     return targets
+
+
+def git_chdir(opts):
+    """The directory the -C options of a git command put it in, as one path text: git applies each -C in turn, the first against the directory the shell is in, and
+    an absolute one (also ~ and a variable that stands for one: the shell expands them before git sees the word) starts over. None when there is none (an
+    empty -C changes nothing)."""
+    path = None
+    for name, value in opts:
+        if name == "-C" and value:
+            path = git_under(path, value)
+    return path
+
+
+def git_under(chdir, path):
+    """path as the one text that names it from the directory the shell is in, for a git command that the -C options (git_chdir) moved: a relative path is against them."""
+    return path if chdir is None or expand_path(path).startswith("/") else chdir.rstrip("/") + "/" + path
+
+
+def git_new_tree(sub, args):
+    """(dir, separate, sure) for `git clone|init ARGS` (args: the words after the subcommand): dir is the directory it makes the tree in (the last operand: git clone SRC DIR,
+    git init DIR; None when there is none: the tree is then made in the directory git runs in), separate the directories --separate-git-dir names (a second place it
+    writes), and sure is False when an option is not one the guard knows (a new option, or an abbreviation of one, may take the next word, and then the operands are
+    not the ones read here)."""
+    values, flags = GIT_NEW_TREE[sub], GIT_NEW_TREE_FLAGS[sub]
+    places, separate, sure, k = [], [], True, 0
+    while k < len(args):
+        a = args[k]
+        k += 1
+        if BARE_REDIR.match(a):                                        # a redirection the other reading leaves in (a word that looks like one): it is no operand, nor is its file
+            k += 1
+        elif LEADING_REDIR.match(a) or REDIR.match(a):
+            continue
+        elif a == "--":
+            places += [t for t in args[k:] if not (LEADING_REDIR.match(t) or REDIR.match(t))]
+            break
+        elif not a.startswith("-") or a == "-":
+            places.append(a)
+        elif a.startswith("--"):
+            name, eq, value = a.partition("=")
+            if name in values:
+                if not eq:
+                    value = args[k] if k < len(args) else None
+                    k += 1
+                if name == "--separate-git-dir" and value:
+                    separate.append(value)
+            elif name not in flags and not name.startswith("--no-"):
+                sure = False
+        else:
+            for n, letter in enumerate(a[1:], 1):                      # -qb main, -bmain, -q: a cluster of letters, the first that takes a value ends it
+                if "-" + letter in values:
+                    if not a[n + 1:]:
+                        k += 1
+                    break
+                if "-" + letter not in flags:
+                    sure = False
+    dir_ = places[-1] if places and (sub == "init" or len(places) > 1) else None
+    return dir_, separate, sure
 
 
 def git_mutates(sub, args):
@@ -2190,7 +2260,7 @@ def review_segment(toks, i, here, text=""):
             why = unreadable_target(what, dest, here)
             if why:
                 return why
-            if ro and UNKNOWN.search(expand_path(dest).rpartition("/")[0]) and not DEVICE.match(dest):
+            if ro and not DEVICE.match(dest) and UNKNOWN.search(expand_path(dest) if what in ("git clone", "git init") else expand_path(dest).rpartition("/")[0]):   # a clone or an init makes the whole name: its last word too
                 return OwnReason("under the read-only class %s writes through a directory name that a variable, a substitution or a glob builds (%s), which the guard cannot read "
                                  "to tell the clone from OUT; write the path out" % (what, dest))
             full = resolve(here, dest)

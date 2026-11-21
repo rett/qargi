@@ -377,6 +377,66 @@ class Review(HookCase):
             r = self.call(tool, inp)
             self.assertEqual(r.returncode, 0, (tool, inp, r.stderr))
 
+    def test_a_clone_or_an_init_is_judged_at_its_directory_and_a_relative_one_is_taken_from_the_c_options(self):
+        """git clone SRC DIR and git init DIR make a tree in DIR, so DIR is the place judged, not the directory the shell is in. A relative DIR is resolved as git
+        resolves it: against the directory the -C options give (each against the one before it, the first against the shell's directory), and against the
+        shell's directory only when there is no -C. So a member can make a copy of the clone in TMP from the clone, and cannot make one in the clone from TMP."""
+        self.ability("review")
+        c, o, tmp = self.clone, self.out, os.path.join(self.run, "tmp")
+        os.makedirs(tmp)
+        passes = ["git clone %s %s/x" % (c, tmp), "git -C %s clone %s x" % (tmp, c), "git init %s/y" % tmp, "git -C %s init y" % tmp, "git -C %s init -b main y" % tmp,
+                  "git -C %s -C ../out init z" % tmp, "git -C %s -C ../tmp init z" % c, "git -C %s -C %s init z" % (c, tmp), "git -C %s clone %s %s/x" % (c, c, tmp),
+                  "git clone --depth 1 %s %s/x" % (c, tmp), "git clone --depth=1 -b main %s %s/x" % (c, tmp), "git -C %s clone -bmain %s x" % (tmp, c),
+                  "git -C %s clone --branch main --single-branch %s x" % (tmp, c), "git clone -- %s %s/x" % (c, tmp), "git init --initial-branch main %s/y" % tmp,
+                  "git -C %s init --separate-git-dir g z" % tmp, "git -C %s clone %s x 2>&1" % (tmp, c), "git clone %s %s/x 2>/dev/null" % (c, tmp),
+                  "git -C %s clone --mirror %s x.git" % (tmp, c), "git -c core.autocrlf=false -C %s clone %s x" % (tmp, c), "git clone %s %s/x && git -C %s/x log" % (c, tmp, tmp),
+                  "git -C %s clone %s ../out/x" % (tmp, c), "git clone %s %s/x" % (c, o)]
+        refused = ["git -C %s clone %s x" % (c, c), "git -C %s init sub" % c, "git -C %s -C ../clone init z" % tmp, "git -C %s clone %s ../clone/x" % (tmp, c),
+                   "git clone %s %s/x" % (c, c), "git init %s/y" % c, "git init -b main %s/y" % c, "git -C %s init -b main sub" % c, "git init --initial-branch main %s/y" % c,
+                   "git clone --depth 1 %s %s/x" % (tmp, c), "git clone -b main %s %s/x" % (tmp, c), "git clone -bmain %s %s/x" % (tmp, c), "git -C %s clone %s sub" % (c, tmp),
+                   "git init --separate-git-dir %s/g %s/z" % (c, tmp), "git -C %s init --separate-git-dir ../clone/g z" % tmp, "git init -- %s/y" % c,
+                   "git clone %s %s/x 2>/dev/null" % (tmp, c), "git -C %s -C sub init z" % c, "git -C %s clone %s" % (c, tmp), "git -C %s init" % c,
+                   "git -C %s clone %s x" % (os.path.join(c, "src"), tmp),
+                   "git worktree add %s/w" % c, "git -C %s worktree add %s/w" % (c, tmp), "git -C %s init y" % self.t,
+                   "git clone %s ~/x" % tmp, "git -C ~ clone %s x" % tmp, "git -C %s -C ~ clone %s x" % (tmp, tmp)]
+        for cls in ((), ("--class", "read-only")):
+            for cwd in (c, tmp):                                   # from a shell in the clone and from one in TMP alike
+                for cmd in passes:
+                    r = self.call("Bash", {"command": cmd}, cwd, *cls)
+                    self.assertEqual(r.returncode, 0, (cmd, cwd, cls, r.stderr))
+                for cmd in refused:
+                    r = self.call("Bash", {"command": cmd}, cwd, *cls)
+                    self.assertEqual(r.returncode, 2, (cmd, cwd, cls, r.stderr))
+                    self.assertIn("only OUT and the temporary directory (TMP) are written", r.stderr, (cmd, cwd))
+                for cmd in ("git -C $d clone %s x" % tmp, "git -C %s clone %s $d" % (tmp, c), "git clone %s %s/$d" % (tmp, tmp), "git init %s/y$(pwd)" % tmp):      # a directory a variable builds is not read: refused, whichever way
+                    r = self.call("Bash", {"command": cmd}, cwd, *cls)
+                    self.assertEqual(r.returncode, 2, (cmd, cwd, cls, r.stderr))
+                    self.assertIn("the guard cannot read", r.stderr, (cmd, cwd))
+        cmd = "git -C src clone %s x" % tmp                          # relative to where the shell is: src of the clone, or src of TMP
+        self.assertEqual(self.call("Bash", {"command": cmd}, c).returncode, 2, cmd)
+        self.assertEqual(self.call("Bash", {"command": cmd}, tmp).returncode, 0, cmd)
+
+    def test_a_clone_or_an_init_with_no_directory_is_judged_where_git_runs(self):
+        """With no DIR the tree is made in the directory git runs in: the shell's, or the one the -C options give."""
+        self.ability("review")
+        c, tmp = self.clone, os.path.join(self.run, "tmp")
+        os.makedirs(tmp)
+        for cmd, in_clone, in_tmp in (("git clone %s" % c, 2, 0), ("git init", 2, 0), ("git -C %s clone %s" % (tmp, c), 0, 0), ("git -C %s init" % c, 2, 2),
+                                      ("git -C %s clone %s" % (c, tmp), 2, 2), ("git clone -b main %s" % tmp, 2, 0), ("git init -q", 2, 0), ("git init --bare", 2, 0)):
+            self.assertEqual(self.call("Bash", {"command": cmd}, c).returncode, in_clone, cmd)
+            self.assertEqual(self.call("Bash", {"command": cmd}, tmp).returncode, in_tmp, cmd)
+
+    def test_a_clone_option_the_guard_does_not_know_is_judged_where_git_runs_as_well(self):
+        """An option the guard has no entry for may take the next word, and then the operands are not the ones it read: the tree is also judged where git runs."""
+        self.ability("review")
+        c, tmp = self.clone, os.path.join(self.run, "tmp")
+        os.makedirs(tmp)
+        for cmd, in_clone, in_tmp in (("git clone --newopt v %s %s/x" % (c, tmp), 2, 0), ("git clone --newopt v %s x" % c, 2, 0), ("git clone --newopt=v %s %s/x" % (c, tmp), 2, 0),
+                                      ("git clone --newopt v %s %s/x" % (tmp, c), 2, 2), ("git -C %s clone --newopt v %s x" % (tmp, c), 0, 0),
+                                      ("git clone --no-newopt %s %s/x" % (c, tmp), 0, 0), ("git clone --no-checkout --depth 1 %s %s/x" % (c, tmp), 0, 0)):
+            self.assertEqual(self.call("Bash", {"command": cmd}, c).returncode, in_clone, cmd)
+            self.assertEqual(self.call("Bash", {"command": cmd}, tmp).returncode, in_tmp, cmd)
+
     def test_build_may_change_the_clone(self):
         self.ability("build")
         for tool, inp in self.writes() + self.reads():
