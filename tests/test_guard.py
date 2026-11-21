@@ -921,6 +921,21 @@ class Skills(HookCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
+    def test_refuses_project_set_of_a_profiles_runtime_to_a_member(self):
+        """profiles.<name>.runtime picks the runtime a profile's members run on (another barrier, sign-in and executable), so a member may not set it, nor
+        a whole profile or all profiles, which hold it. A profile's other answers (tier, effort, model) stay open."""
+        for path in ("profiles", "profiles.build", "profiles.codex-build.runtime", "profiles.x.runtime", "profiles.x.runtime.y"):
+            for form in ("qargi project set p %s v", "sudo qargi project set p %s v", "bash -c 'qargi project set p %s v'", "echo $(qargi project set p %s v)",
+                         "./lib/project.sh set p %s v"):
+                c = form % path
+                r = self.bash(c)
+                self.assertEqual(r.returncode, 2, c)
+                self.assertIn("qargi project set of %s changes which runtime the members of a profile run on" % path, r.stderr, c)
+        for c in ("qargi project set p profiles.x.tier deep", "qargi project set p profiles.x.effort high", "qargi project set p profilesruntime x",
+                  "qargi project show p", "echo qargi project set p profiles.x.runtime codex"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
     def test_refuses_project_set_of_executed_answers_to_a_member(self):
         """The release answers (release.*), test_command and env.* are run or passed to a process by the lead later (release verify, the preflight,
         the suite), and qargi release site builds and commits the site the site answers (site.*) name, so a member that could set them would run
@@ -1115,7 +1130,22 @@ class Skills(HookCase):
 
     def test_lets_the_read_only_provider_verbs_through(self):
         for c in ("qargi provider list", "qargi provider show claude", "python3 -I lib/provider.py require-barrier claude cloud",
-                  "python3 -I lib/provider.py effective claude local read_only_barrier", "echo qargi provider accept", "grep -n 'provider accept' lib/commands.py"):
+                  "python3 -I lib/provider.py effective claude local read_only_barrier", "echo qargi provider accept", "grep -n 'provider accept' lib/commands.py",
+                  "qargi provider runtimes p", "qargi provider reads-warning codex","python3 -I lib/provider.py runtimes p"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_refuses_provider_enable_and_disable_of_a_runtime_to_a_member(self):
+        """provider enable|disable PROJECT --runtime NAME approves what a member may run on (another barrier, a sign-in linked into the run, an
+        executable): it takes the owner's words and is not in PROVIDER_READ, so a member may not run it, in any form, nor the script behind it."""
+        for form in ("qargi provider enable p --runtime codex", "qargi provider disable p --runtime codex", "/opt/q/bin/qargi provider enable p --runtime codex --plan 0123456789ab --approved go",
+                     "sudo qargi provider enable p --runtime codex", "bash -c 'qargi provider enable p --runtime codex'", "env FOO=1 qargi provider disable p --runtime codex",
+                     "cd src && qargi provider enable p --runtime codex", "echo $(qargi provider enable p --runtime codex)", "bash lib/provider.sh enable p --runtime codex",
+                     "python3 -I lib/provider.py enable p --runtime codex", "./lib/provider.sh disable p --runtime codex", "python3 -I lib/provider.py runtime-info p codex enable"):
+            r = self.bash(form)
+            self.assertEqual(r.returncode, 2, form)
+            self.assertIn("changes the provider definitions and is not available to an agent", r.stderr, form)
+        for c in ("echo qargi provider enable p --runtime codex", "grep -n 'provider enable' lib/commands.py"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 

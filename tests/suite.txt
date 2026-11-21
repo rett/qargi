@@ -24,6 +24,7 @@ fast | par | 300 | 8 | python3 tests/test_render.py | lib/render.py
 full | par | 300 | 68 | python3 tests/test_provider_adapter.py | lib/provider*.sh lib/provider*.py
 full | par | 300 | 59 | bash tests/test_provider_degrade.sh | lib/provider*.sh lib/provider*.py
 fast | par | 300 | 19 | bash tests/test_provider_notes.sh | lib/provider*.sh lib/provider*.py
+fast | par | 300 | 38 | bash tests/test_runtime_enable.sh | lib/provider*.sh lib/provider*.py lib/providers/* lib/gated_answers.py lib/project.sh lib/lib.sh lib/guard.py tests/fakeprov.sh tests/fixtures/runtime-no-extras/*
 fast | par | 300 | 20 | bash tests/conformance.sh claude-code
 fast | par | 300 | 8 | bash tests/conformance.sh claude-platform
 fast | par | 300 | 5 | bash tests/conformance.sh codex | lib/conformance/run.sh lib/conformance/cases.py lib/local_run.py lib/providers/codex.json lib/local.sh lib/lib.sh lib/attempts.py

@@ -84,7 +84,20 @@ Usage: provider.py list
                                          lib/provider.sh does it: plan first, then the token and the approval
        provider.py require-barrier PROVIDER SURFACE [--project P]
                                          exit 0 when a read-only role may run there (a partial barrier prints its note to
-                                         stderr), 2 with the qargi provider accept command when it may not
+                                         stderr), 2 with the qargi provider accept command when it may not, 4 when PROVIDER is
+                                         one of the project's extra runtimes (models.extra_runtimes.local) and has no barrier of
+                                         its own: the project's acceptance does not count for it, so no command is offered
+       provider.py enable|disable PROJECT --runtime NAME [--asked W] [--plan T --approved W]
+                                         an extra runtime for one project (models.extra_runtimes.local of its answers): lib/provider.sh makes the
+                                         plan (runtime_plan: the runtime, its link sources, barrier, reads, tool packs), the token and the
+                                         approval; a runtime that does not confine reads needs approval words that carry "reads are not confined"
+       provider.py runtime-info PROJECT NAME enable|disable
+                                         the plan of that verb as one JSON object (what provider.sh reads)
+       provider.py reads-warning NAME    the line that says what members on the local runtime NAME can read, when its definition does not confine
+                                         reads (dispatch.reads); nothing for a runtime that confines them or works in the session
+       provider.py runtimes PROJECT
+                                         the runtimes of the project's local surface: the line "primary NAME", then a line
+                                         "extra NAME" for each runtime of models.extra_runtimes.local
        provider.py effective PROVIDER SURFACE CAPABILITY [--project P]
                                          prints yes, partial or no (what enforcement may rely on; with a project, as composed with its
                                          enabled extensions); exit 1 when the provider does not list the surface, 2 on a conflict
@@ -1511,6 +1524,7 @@ def validate2(d, name=None):
         out += [("fail", m) for m in output_usage_problems(disp.get("output"))]
         out += [("fail", m) for m in run_config_problems(disp, d.get("resources"), shape=False)]
         out += [("fail", m) for m in hidden_paths_problems(disp, shape=False)]
+        out += [("fail", m) for m in _reads_problems(disp)]
     notes = d.get("notes")
     if d.get("surface") == "local" and isinstance(disp, dict) and disp.get("mode") == "in-session" and not (isinstance(notes, dict) and "spawn" in notes):
         out.append(("warn", "notes.spawn: a local runtime that works in the session has no way to tell a lead how to start a member without a 'spawn' note (qargi provider notes spawn)"))
@@ -2297,6 +2311,136 @@ def launch_line(name, render, root=None, library=None, project=None, conf=None):
     return re.sub(r"\[([^\]]*)\]", group, tpl)
 
 
+# ---- what a runtime's sandbox does not hold: dispatch.reads ----------------------------------------------------------------------
+
+READS_KEYS = ("confined", "exposes", "note")
+READS_PHRASE = "reads are not confined"      # the words an approval of a runtime that does not confine reads must carry (letter case and runs of blanks ignored)
+
+
+def _reads_problems(disp):
+    """The findings of dispatch.reads, as messages. dispatch.reads says what the runtime's sandbox does not hold: {confined: true|false, exposes:
+    [paths a member can read that are the user's own, ~/PATH or absolute], note: what they hold}. Absent: the runtime does not confine reads and
+    names no path."""
+    reads = disp.get("reads") if isinstance(disp, dict) else None
+    if reads is None:
+        return []
+    if not isinstance(reads, dict):
+        return ["dispatch.reads: %s is not an object {confined, exposes, note}" % _show(reads)]
+    bad = ["dispatch.reads.%s: unknown key (confined, exposes, note)" % k for k in reads if k not in READS_KEYS]
+    if not isinstance(reads.get("confined"), bool):
+        bad.append("dispatch.reads.confined: true or false is required")
+    ex = reads.get("exposes", [])
+    if not isinstance(ex, list) or len(ex) > 8 or not all(isinstance(x, str) and x.strip() for x in ex):
+        bad.append("dispatch.reads.exposes: a list of at most 8 paths (~/PATH or absolute), each a non-empty text")
+    note = reads.get("note")
+    if note is not None and not (isinstance(note, str) and note.strip() and len(note) <= 300):
+        bad.append("dispatch.reads.note: a non-empty text of at most 300 characters")
+    return bad
+
+
+def reads_claim(doc):
+    """{confined, exposes, note, declared} of a definition: what its dispatch.reads says. A definition with no valid dispatch.reads does not confine
+    reads and names no path (declared false): nothing is assumed in its favour."""
+    disp = doc.get("dispatch") if isinstance(doc, dict) else None
+    r = disp.get("reads") if isinstance(disp, dict) else None
+    if isinstance(r, dict) and not _reads_problems(disp):
+        return {"confined": r["confined"], "exposes": list(r.get("exposes") or []), "note": r.get("note"), "declared": True}
+    return {"confined": False, "exposes": [], "note": None, "declared": False}
+
+
+def reads_warning(name, doc):
+    """The line that says what members on the runtime NAME can read, or None when the runtime confines reads (its definition says so) or is no
+    command runtime (a member of a runtime that works in the session is not one this warning is about)."""
+    disp = doc.get("dispatch") if isinstance(doc, dict) else None
+    if not isinstance(disp, dict) or disp.get("mode") != "command":
+        return None
+    c = reads_claim(doc)
+    if c["confined"]:
+        return None
+    if c["exposes"]:
+        what = "the real %s%s and whatever else this account can read" % (" and ".join(c["exposes"]), " (%s)" % c["note"] if c["note"] else "")
+    else:
+        what = "whatever this account can read"
+    return "members on %s can read %s: %s" % (name, what, READS_PHRASE)
+
+
+def reads_acknowledged(words):
+    """Do the owner's words carry the phrase (letter case and runs of blanks ignored)?"""
+    return READS_PHRASE in " ".join((words or "").lower().split())
+
+
+def reads_warning_of(name, root=None, library=None):
+    """reads_warning() of the runtime NAME (a runtime or a family name, resolved on the local surface); None for an unknown runtime or one that
+    cannot be used as it stands: the warning says nothing it cannot know."""
+    try:
+        runtime = resolve_runtime(name.strip(), "local", root, library)
+        return reads_warning(runtime, definition(runtime, "local", root, library))
+    except (ProviderError, AttributeError):
+        return None
+
+
+
+def cmd_reads_warning(args):
+    """reads-warning NAME: the line reads_warning_of() gives for the local runtime NAME (a runtime or a family name), nothing when there is none."""
+    if len(args) != 1:
+        print("usage: provider.py reads-warning NAME", file=sys.stderr)
+        return 2
+    line = reads_warning_of(args[0])
+    if line:
+        print(line)
+    return 0
+
+
+# ---- the runtimes a project runs members on: the enabled set --------------------------------------------------------------
+
+def extra_runtimes_of(answers):
+    """The names models.extra_runtimes.local of the answers lists, in the order stored: the other runtimes of the local surface the project may
+    start members on beside its own (qargi provider enable PROJECT --runtime NAME). [] when the answer is absent, null, empty or not a list of names."""
+    models = answers.get("models") if isinstance(answers, dict) else None
+    ex = models.get("extra_runtimes") if isinstance(models, dict) else None
+    lst = ex.get("local") if isinstance(ex, dict) else None
+    return [x for x in lst if isinstance(x, str)] if isinstance(lst, list) else []
+
+
+def runtimes_from(answers, project=None, root=None, library=None):
+    """(primary, [extra]) of a project's answers: the runtime of its local surface (resolve_project: NoProvider when it names none) and the
+    runtimes listed in models.extra_runtimes.local, each once, the primary never among them. The enabled set of a project is {primary} + extra;
+    "the project has extras" is the second not being empty."""
+    primary = resolve_project(answers, "local", project, root, library)[0]
+    extra = []
+    for n in extra_runtimes_of(answers):
+        if n != primary and n not in extra:
+            extra.append(n)
+    return primary, extra
+
+
+def local_runtimes_of(project, conf=None, root=None, library=None):
+    """(primary, [extra]) of a stored project: runtimes_from() of its answers. NoProvider (exit 2) when there is no such project or it names no
+    local runtime. The one function that answers which runtimes a project's members may run on."""
+    return runtimes_from(_stored_answers(project, conf), project, root, library)
+
+
+def has_extras(project, conf=None, root=None, library=None):
+    """Does the project have extra runtimes (models.extra_runtimes.local is a non-empty list that names a runtime other than its own)? False for
+    a project that names no local runtime."""
+    try:
+        return bool(local_runtimes_of(project, conf, root, library)[1])
+    except ProviderError:
+        return False
+
+
+def is_extra(runtime, project, conf=None, root=None, library=None):
+    """Is the runtime one of the project's enabled extras (listed in models.extra_runtimes.local and not the project's own)? A project that names
+    no local runtime, or has no stored answers, has none."""
+    if not project or not isinstance(runtime, str):
+        return False
+    try:
+        primary, extra = local_runtimes_of(project, conf, root, library)
+    except ProviderError:
+        return False
+    return runtime in extra and runtime != primary
+
+
 # ---- the read-only barrier ----------------------------------------------------------------------------------------------
 
 def project_answers(project, conf=None):
@@ -2327,8 +2471,11 @@ def accept_command(provider, surface, project=None):
 
 def require_barrier(provider, surface, project=None, root=None, conf=None, library=None):
     """May a read-only role run on this surface of the provider? (state, text): state is yes, partial (text is the note),
-    accepted (the project recorded that it accepts no barrier here) or refused (text says why and names the command). The barrier
-    is the runtime's composed with the project's enabled extensions (a barrier an extension provides counts once it is verified)."""
+    accepted (the project recorded that it accepts no barrier here), refused (text says why and names the command) or missing (the runtime is
+    one of the project's extra runtimes: text says why). The barrier is the runtime's composed with the project's enabled extensions (a barrier an
+    extension provides counts once it is verified). The barrier belongs to the runtime the role runs on, never to the project: the acceptance
+    models.accept_no_barrier.local was given for the project's own runtime and does not count for an extra runtime, so a barrier that is neither
+    yes nor partial on an extra is missing, and nothing the project recorded changes that."""
     v = effective(provider, surface, "read_only_barrier", root, library, project=project, conf=conf)
     if v == "yes":
         return "yes", ""
@@ -2341,14 +2488,29 @@ def require_barrier(provider, surface, project=None, root=None, conf=None, libra
     cell = _dict(_dict(doc and doc.get("capabilities")).get("read_only_barrier"))
     if v == "partial":
         return "partial", "%s has only a partial read-only barrier on %s: %s" % (provider, surface, cell.get("note") or "see qargi provider show %s" % provider)
-    if accepted(project, surface, conf):
-        return "accepted", ""
     by = (comp["provenance"] if comp else {}).get("capabilities.read_only_barrier")
     claim = barrier_claim_problem(doc, by=by if by != provider else None) if doc is not None else None
     why = claim or ("not supported" if cell.get("value") == "no" or doc is None else "not verified, so it counts as not supported")
+    if surface == "local" and is_extra(provider, project, conf, root, library):
+        return "missing", ("the runtime %s has no read-only barrier on %s (%s). A read-only role needs the barrier of its own runtime: the acceptance "
+                           "of the project's own runtime does not count for an extra runtime" % (provider, surface, why))
+    if accepted(project, surface, conf):
+        return "accepted", ""
     return "refused", ("the provider %s has no read-only barrier on %s (%s), so a read-only role is refused there.\n"
                        "To run it anyway, on your own responsibility, record that you accept this for the project:\n  %s"
                        % (provider, surface, why, accept_command(provider, surface, project)))
+
+
+MISSING_BARRIER = 4        # the exit status of require-barrier for an extra runtime with no read-only barrier (2 is a project's own runtime without one)
+
+
+def cmd_runtimes(args):
+    """runtimes PROJECT: "primary NAME", then "extra NAME" for each runtime of models.extra_runtimes.local."""
+    primary, extra = local_runtimes_of(args[0])
+    print("primary " + primary)
+    for n in extra:
+        print("extra " + n)
+    return 0
 
 
 def cmd_require_barrier(provider, surface, project):
@@ -2358,6 +2520,9 @@ def cmd_require_barrier(provider, surface, project):
     if state == "refused":
         print("qargi: " + text, file=sys.stderr)
         return 2
+    if state == "missing":                         # an extra runtime without its own barrier: lib.sh barrier_guard raises runtime-barrier-missing on this status
+        print("qargi: " + text, file=sys.stderr)
+        return MISSING_BARRIER
     if state == "partial":
         print("qargi: note: " + text, file=sys.stderr)
     return 0
@@ -2369,6 +2534,188 @@ def cmd_effective(provider, surface, capability, project=None):
     if surface not in surfaces_of(provider):
         raise ProviderError("the provider %s does not list the surface %s" % (provider, surface))
     print(effective(provider, surface, capability, project=project))
+    return 0
+
+
+# ---- the enable plan of an extra runtime -----------------------------------------------------------------------------------------
+
+EXTRA_WHY = ("not-sealed", "not-local", "not-command", "is-primary")   # why a runtime cannot be an extra one (the field `why` of runtime-unusable)
+
+
+def runtime_verdict(project, name, conf=None, root=None, library=None):
+    """"ok", or why the runtime NAME cannot be an extra runtime of the project: is-primary (it is the project's own), not-sealed (a library pack
+    that is not sealed or changed since), not-local (it does not serve the local surface) or not-command (qargi local run does not start it as a
+    command). ProviderError when there is no such runtime."""
+    return runtime_problem(name, local_runtimes_of(project, conf, root, library)[0], root, library)
+
+
+def runtime_problem(name, primary, root=None, library=None):
+    """runtime_verdict() for a project whose own runtime (primary, or None) is known: "ok" or the reason NAME cannot be an extra runtime. ProviderError
+    when there is no such runtime."""
+    if not isinstance(name, str) or not NAME_RE.match(name) or name in NON_PROVIDERS:
+        raise ProviderError("no runtime named %s (qargi provider list)" % _show(name))
+    e = entry_any(name, root, library)
+    if e is None or (_kind(e) != "provider"):
+        raise ProviderError("no runtime '%s' (qargi provider list)" % name)
+    if name == primary:
+        return "is-primary"
+    state, _ = seal_state(e)
+    if state not in ("shipped", "sealed"):
+        return "not-sealed"
+    docs = _docs(e)
+    if "local" not in docs:
+        return "not-local"
+    disp = docs["local"].get("dispatch")
+    if not isinstance(disp, dict) or disp.get("mode") != "command":
+        return "not-command"
+    return "ok"
+
+
+def role_tool_packs(project, conf=None):
+    """{role: [(pack, [scopes])] or None} of the tool packs a member of each role of the project would get, from the links as they stand (the packs
+    `qargi tool effective` lists for the role); None for a role whose links cannot be read."""
+    import packs_mcp
+    conf = conf or _conf()
+    roles = (project_answers(project, conf) or {}).get("roles")
+    links = []
+    try:
+        with open(os.path.join(conf, "packs", "links.json")) as f:
+            doc = json.load(f)
+        links = doc.get("links") if isinstance(doc, dict) and isinstance(doc.get("links"), list) else []
+    except (OSError, ValueError):
+        links = []
+    out = {}
+    for role in sorted(roles) if isinstance(roles, dict) else []:
+        try:
+            eff = packs_mcp.effective(conf, project, role)
+        except packs_mcp.McpError:
+            out[role] = None
+            continue
+        row = []
+        for entry in eff:
+            if not entry.startswith("tool:"):
+                continue
+            scopes = sorted({x.get("scope") for x in links if isinstance(x, dict) and x.get("pack") == entry and packs_mcp.reaches(x, project, role)} - {None})
+            row.append((entry[5:], scopes))
+        out[role] = row
+    return out
+
+
+def _first_line(text):
+    return text.split("\n")[0]
+
+
+def _link_lines(doc, runtime):
+    """([lines], refusal or None): the sign-in links of the runtime's run home, FROM -> TO with the real path, present or missing, and the verdict
+    a local prepare would give (the rule of home_source_problem, for a shipped runtime and a library pack alike). No content of a source is read."""
+    disp = doc.get("dispatch") if isinstance(doc.get("dispatch"), dict) else {}
+    home = disp.get("home") if isinstance(disp.get("home"), dict) else None
+    links = home.get("link") if home and isinstance(home.get("link"), list) else []
+    if not links:
+        return ["links: none"], None
+    lines = []
+    shape = home_problems(home, disp.get("env_pass") if isinstance(disp.get("env_pass"), list) else (), shape=False)
+    for ln in links:
+        frm = ln.get("from") if isinstance(ln, dict) else None
+        to = ln.get("to") if isinstance(ln, dict) else None
+        if home_link_problem(frm):
+            lines.append("link: %s -> %s: refused: %s" % (_show(frm), _show(to), home_link_problem(frm)))
+            continue
+        real = _source_real(frm)
+        present = os.path.lexists(os.path.join(os.path.realpath(os.path.expanduser("~")), frm[2:])) and os.path.isfile(real)
+        one = copy.deepcopy(doc)
+        one["dispatch"]["home"]["link"] = [ln]
+        forbidden = home_source_forbidden(one, runtime)
+        lines.append("link: %s -> %s (real path %s): %s, %s" % (frm, to, real, "present" if present else "missing",
+                     "not inside ~/.codex" if forbidden is None else "refused: " + _first_line(forbidden)))
+    why = ("dispatch.home: " + shape[0]) if shape else home_source_problem(doc, runtime)
+    if why is None:
+        lines.append("runs that share a link source run one at a time, so a build and a review on %s queue" % runtime)
+    return lines, why
+
+
+def runtime_plan(project, name, verb, conf=None, root=None, library=None):
+    """The plan of `qargi provider enable|disable PROJECT --runtime NAME`: {verdict, lines, refusal, nothing, new, needs_phrase, phrase}. lines are
+    the plan, one per element (the token is made over them); refusal is a message (exit 2, no token is printed); nothing says the project is
+    already as asked; new is what models.extra_runtimes.local would become. For an enable, verdict is runtime_verdict() and the lines are only made
+    when it is ok."""
+    conf = conf or _conf()
+    answers = _stored_answers(project, conf)
+    cur = extra_runtimes_of(answers)
+    out = {"verdict": "ok", "lines": [], "refusal": None, "nothing": None, "new": None, "needs_phrase": False, "phrase": READS_PHRASE}
+    if verb == "disable":
+        if name not in cur:
+            out["nothing"] = "nothing to do: %s is not enabled for %s" % (name, project)
+            return out
+        out["new"] = [x for x in cur if x != name]
+        users = sorted(p for p, pf in (answers.get("profiles") or {}).items() if isinstance(pf, dict) and pf.get("runtime") == name) if isinstance(answers.get("profiles"), dict) else []
+        out["lines"] = ["disable runtime %s for project %s (models.extra_runtimes.local)" % (name, project),
+                        "runs prepared for it are refused when they start (the project no longer runs on it); finished runs are verified, reviewed, applied and cleaned as before",
+                        "effect: models.extra_runtimes.local of project %s becomes %s" % (project, json.dumps(out["new"]))]
+        if users:
+            out["refusal"] = "profile%s %s of project %s name%s the runtime %s: unset profiles.NAME.runtime first (qargi project unset %s profiles.%s.runtime)" % (
+                "s" if len(users) > 1 else "", ", ".join(users), project, "" if len(users) > 1 else "s", name, project, users[0])
+        return out
+    if name in cur:
+        out["nothing"] = "nothing to do: %s is enabled for %s already" % (name, project)
+        return out
+    out["verdict"] = runtime_verdict(project, name, conf, root, library)
+    if out["verdict"] != "ok":
+        return out
+    e = entry_any(name, root, library)
+    doc = composed(name, "local", project, root, library, conf)
+    out["new"] = cur + [name]
+    disp = doc.get("dispatch") if isinstance(doc.get("dispatch"), dict) else {}
+    seal = seal_state(e)[0]
+    lines = ["enable runtime %s for project %s (models.extra_runtimes.local)" % (name, project),
+             "runtime: %s (%s%s), mode command, serves the local surface" % (name, e["origin"], ", sealed" if seal == "sealed" else "")]
+    argv = disp.get("argv")
+    exe = argv[0] if isinstance(argv, list) and argv and isinstance(argv[0], str) else None
+    if exe:
+        import shutil
+        found = shutil.which(exe)
+        lines.append("executable: %s -> %s" % (exe, found) if found else "executable: %s (not found on PATH now)" % exe)
+    link_lines, out["refusal"] = _link_lines(doc, name)
+    lines += link_lines
+    # the barrier, with its whole note, and what it means for a read-only role
+    v = effective(name, "local", "read_only_barrier", root, library, project=project, conf=conf)
+    cell = _dict(_dict(doc.get("capabilities")).get("read_only_barrier"))
+    lines.append("read-only barrier: %s%s%s" % (v, " (verified %s)" % cell["verified_on"] if cell.get("verified_on") else "", ": %s" % cell["note"] if cell.get("note") else ""))
+    if v == "no":
+        lines.append("read-only roles (review) on %s are refused: it has no read-only barrier, and the acceptance of the project's own runtime does not count for it" % name)
+    else:
+        lines.append("read-only roles (review) on %s run under the %s barrier: no `provider accept` is asked and none counts" % (name, "partial" if v == "partial" else "read-only"))
+        lines.append("a read-only member on %s reads and reports and runs nothing that writes (no build, no test that writes a cache, no patch applied): "
+                     "put the diff and the test output on disk first" % name)
+    unverified = [c for c in ("per_dispatch_model_override", "per_dispatch_effort_override") if cap(name, "local", c, root, library, project=project, conf=conf) != "yes"]
+    lines.append("model and effort of a run on %s are requested, not confirmed: %s" % (name, "the override claims are unverified (%s)" % ", ".join(unverified)
+                 if unverified else "an override that is verified still does not report the model that answered"))
+    warn = reads_warning(name, doc)
+    if warn:
+        out["needs_phrase"] = True
+        lines.append("reads: " + warn)
+        lines.append("the owner's approval words must contain: \"%s\"" % READS_PHRASE)
+    else:
+        lines.append("reads: confined, as the definition of %s claims (qargi has not verified it)" % name)
+    packs = role_tool_packs(project, conf)
+    for role, row in packs.items():
+        lines.append("tool packs of role %s: %s" % (role, "none" if row == [] else "unreadable (qargi tool effective %s %s)" % (project, role) if row is None
+                                                      else ", ".join("%s (%s)" % (p, "/".join(s) or "?") for p, s in row)))
+    lines.append("the MCP servers of tool packs run outside the sandbox; the list is read now, and a pack linked later is not approved again")
+    hp = disp.get("hidden_paths") if isinstance(disp.get("hidden_paths"), dict) else None
+    if hp:
+        lines.append("hidden paths: %s (%s)" % (", ".join(hp.get("prefixes") or []), hp.get("note", "")))
+    lines.append("not available to a member on %s: a qargi guard hook (the barrier of its definition holds it), managed member skills, pack renders" % name)
+    lines.append("effect: models.extra_runtimes.local of project %s becomes %s" % (project, json.dumps(out["new"])))
+    out["lines"] = lines
+    return out
+
+
+def cmd_runtime_info(args):
+    """runtime-info PROJECT NAME enable|disable: the plan of provider.sh as JSON (runtime_plan)."""
+    if len(args) != 3 or args[2] not in ("enable", "disable"):
+        raise Unsupported("usage: provider.py runtime-info PROJECT NAME enable|disable")
+    sys.stdout.write(json.dumps(runtime_plan(args[0], args[1], args[2])) + "\n")
     return 0
 
 
@@ -3024,7 +3371,7 @@ def cmd_of(args, if_set=False):
 def main(argv):
     usage = ("usage: qargi provider list | show NAME [--project P] [--json] | effective RUNTIME SURFACE CAP [--project P] | check NAME|DIR [--project P] | new NAME [--kind K] [--from F] | import SOURCE [--name N] | seal NAME | remove NAME "
              "| enable|disable PROJECT EXT | attest NAME CAP --asked W ... | accept NAME --surface S --no-barrier [--project P] --asked WORDS "
-             "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] [--project P] | require-skills NAME [--project P] | launch NAME RENDER [--project P] | adapter-run NAME SURFACE VERB [--check] | addenda NAME SURFACE | notes [TOPIC] [--project P] | model NAME SURFACE TIER | of PROJECT [--surface S] | of-if-set PROJECT --surface S")
+             "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] [--project P] | require-skills NAME [--project P] | launch NAME RENDER [--project P] | adapter-run NAME SURFACE VERB [--check] | addenda NAME SURFACE | notes [TOPIC] [--project P] | model NAME SURFACE TIER | of PROJECT [--surface S] | of-if-set PROJECT --surface S | runtimes PROJECT | reads-warning NAME | enable|disable PROJECT --runtime NAME")
     if not argv:
         print(usage, file=sys.stderr)
         return 2
@@ -3033,6 +3380,10 @@ def main(argv):
         sh = os.path.join(HERE, "provider.sh")
         sys.stdout.flush()
         os.execv(sh, [sh, "accept"] + rest)
+    if verb in ("enable", "disable") and "--runtime" in rest:     # an extra runtime of a project: the same shell gate (plan, token, approval, audit line)
+        sh = os.path.join(HERE, "provider.sh")
+        sys.stdout.flush()
+        os.execv(sh, [sh, verb] + rest)
     try:
         if verb == "list" and not rest:
             return cmd_list()
@@ -3072,6 +3423,12 @@ def main(argv):
             return cmd_hidden_paths(rest)
         if verb == "notes":
             return cmd_notes(rest)
+        if verb == "runtime-info":
+            return cmd_runtime_info(rest)
+        if verb == "reads-warning":
+            return cmd_reads_warning(rest)
+        if verb == "runtimes" and len(rest) == 1:
+            return cmd_runtimes(rest)
         if verb == "model":
             return cmd_model(rest)
         if verb == "of":

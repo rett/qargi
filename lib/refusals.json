@@ -396,6 +396,36 @@
       "message": "{count} run(s) of this feature are still open: {runs}",
       "next": {"lead": "take each run in (qargi local verify, then merge it), or close it: qargi local clean RUN once its work is merged (--discard drops it on purpose), qargi local close RUN --applied-by-am when its patches were applied by hand; then run {verb} again", "host": "take each run in (qargi local verify, then merge it), or close it: qargi local clean RUN once its work is merged (--discard drops it on purpose), qargi local close RUN --applied-by-am when its patches were applied by hand; then run {verb} again"}
     },
+    "runtime-unusable": {
+      "rule": "An extra runtime is sealed, local, started by a command, and not the project's own",
+      "why": "qargi local run starts a member of an extra runtime itself, so it must be a definition qargi has reviewed that it can start",
+      "class": "project-rule",
+      "exit": 1,
+      "status": "live",
+      "fields": {"verb": "verb", "name": "label", "why": "enum:not-sealed,not-local,not-command,is-primary"},
+      "message": "the runtime {name} cannot be enabled as an extra runtime of this project ({why})",
+      "next": {"lead": "qargi provider check {name} (a library pack is sealed with qargi provider seal), or choose a runtime that serves the local surface and is started by a command (qargi provider list); the project's own runtime is not an extra one", "host": "qargi provider check {name} (a library pack is sealed with qargi provider seal), or choose a runtime that serves the local surface and is started by a command (qargi provider list); the project's own runtime is not an extra one"}
+    },
+    "runtime-reads-unacknowledged": {
+      "rule": "The owner's approval of a runtime that does not confine reads says so",
+      "why": "a member on such a runtime can read what the account can read, the owner's own sessions among it, and the owner approves that knowingly",
+      "class": "project-rule",
+      "exit": 1,
+      "status": "live",
+      "fields": {"verb": "verb", "name": "label", "context": "enum:lead,host"},
+      "message": "the approval of the runtime {name} does not carry the phrase the plan printed: reads are not confined",
+      "next": {"lead": "ask the owner again, showing the plan, and apply with --plan TOKEN (the token is still good) and the owner's own words, which must contain the phrase; do not write the phrase for the owner", "host": "approve again with --plan TOKEN (the token is still good) and words that carry the phrase the plan printed"}
+    },
+    "runtime-barrier-missing": {
+      "rule": "A read-only role needs the barrier of its own runtime; the acceptance of the project's own runtime does not count",
+      "why": "an acceptance was given for one runtime's missing barrier, and another runtime's missing barrier is another risk",
+      "class": "project-rule",
+      "exit": 1,
+      "status": "live",
+      "fields": {"name": "label"},
+      "message": "the runtime {name} has no read-only barrier, so a read-only role is refused on it",
+      "next": {"lead": "run the read-only role on a runtime that has a barrier (qargi provider show {name} says what its barrier claims), or leave --runtime out", "host": "run the read-only role on a runtime that has a barrier (qargi provider show {name} says what its barrier claims), or leave --runtime out"}
+    },
     "ro-write-outside": {
       "rule": "A read-only run writes only OUT and TMP",
       "why": "a review that changes the code it reviews is no longer a review",
