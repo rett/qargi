@@ -8,8 +8,17 @@
 #       (git rev-parse OLD^{tree}) and REF is at OLD now (the move is a compare-and-swap: update-ref REF NEW OLD). The move is
 #       journaled with the reason (verb ref:rewrite, why TEXT), so `qargi local verify` and `local clean` of a run prepared before
 #       it accept it and name it as a rewrite, and `local clean`, `local list`, `lead compact-check` and `feature finish` follow a recorded run's applied tip to NEW (lib/merged.py).
-#       Nothing else changes: no working tree (the trees are the same), no other ref, nothing on origin. The lead's verb: the guard
-#       refuses it to a member.
+#       Nothing else changes: no working tree (the trees are the same), no other ref, nothing on origin. A release/* or hotfix/* branch (a fix
+#       reworded before the release goes out) is rewritten the same way while origin has no branch of that name (asked live: a branch that was
+#       pushed, and an origin that cannot be asked, refuse); a long-lived or feature branch never. The lead's verb: the guard refuses it to a member.
+#
+#   ref.sh record --deleted REF OLD --why TEXT [--project P]
+#       The lead deleted a branch by hand (git branch -D, git push --delete) that no flow verb deleted. REF (a branch NAME, or origin/NAME for the branch NAME
+#       of origin, whose live value is asked) is absent now and is not a long-lived branch (master, develop, repo.long_lived, repo.detached, the parking
+#       branch), and OLD is the commit it was at. The deletion is journaled (verb ref:deleted, why TEXT) from OLD to absent, after the commits the lead
+#       made on the branch with git since the journal last had it (journal_reach: the steps a flow verb that deletes a branch writes), so `qargi local verify`
+#       and `local clean` of a run prepared before accept it and name it. Nothing is moved or deleted: the branch is gone already. A branch deleted this way
+#       and made again is noted with `ref note`, whose line starts at absent. The lead's verb: the guard refuses it to a member.
 #
 #   ref.sh note REF[@SHA]... [--why TEXT] [--project P]
 #       The lead made a branch by hand (git branch, git switch -c) or pushed one (git push: the branch is new on origin). Each REF (a branch NAME, or
@@ -25,20 +34,31 @@
 
 verb=${1:-}; shift || true
 PROJ='' MODE='' WHY='' ARGS=()
+USAGE="usage: qargi ref record --rewrite REF OLD NEW --why \"TEXT\" [--project P] | qargi ref record --deleted REF OLD --why \"TEXT\" [--project P] | qargi ref note REF[@SHA]... [--why \"TEXT\"] [--project P]"
+setmode() { [ -z "$MODE" ] || [ "$MODE" = "$1" ] || usage_die "ref record takes --rewrite or --deleted, not both; $USAGE"; MODE=$1; }
 while [ $# -gt 0 ]; do
   case $1 in
     --project) need_val "$1" $#; PROJ=$2; shift 2;;
-    --rewrite) MODE=rewrite; shift;;
+    --rewrite) setmode rewrite; shift;;
+    --deleted) setmode deleted; shift;;
     --why) need_val "$1" $#; WHY=$2; shift 2;;
     -*) usage_die "unknown option $1";;
     *) ARGS+=("$1"); shift;;
   esac
 done
-USAGE="usage: qargi ref record --rewrite REF OLD NEW --why \"TEXT\" [--project P] | qargi ref note REF[@SHA]... [--why \"TEXT\"] [--project P]"
 case $verb in record|note) ;; *) usage_die "$USAGE";; esac
+# ref_side NAME -> SIDE (local, or remote for origin/NAME) and BR (the branch name) of a REF the lead wrote
+ref_side() {
+  side=local br=$1
+  case $1 in
+    refs/remotes/origin/?*) side=remote br=${1#refs/remotes/origin/};;
+    origin/?*) side=remote br=${1#origin/};;
+    refs/heads/?*) br=${1#refs/heads/};;
+  esac
+}
 if [ "$verb" = note ]; then
   [ "${#ARGS[@]}" -ge 1 ] || usage_die "ref note takes one or more REF (a branch NAME, or origin/NAME for a branch of origin); $USAGE"
-  [ -z "$MODE" ] || usage_die "ref note takes no --rewrite; $USAGE"
+  [ -z "$MODE" ] || usage_die "ref note takes no --rewrite and no --deleted; $USAGE"
   . "$(dirname "$0")/gitflow.sh"
   project_load
   jf=$DA_STATE/ref-journal.jsonl
@@ -48,12 +68,7 @@ if [ "$verb" = note ]; then
   bad=0
   for a in "${ARGS[@]}"; do
     pin=''; if [[ $a =~ ^(.+)@([0-9a-fA-F]{7,40})$ ]]; then a=${BASH_REMATCH[1]}; pin=${BASH_REMATCH[2]}; pin=${pin,,}; fi
-    side=local br=$a
-    case $a in
-      refs/remotes/origin/?*) side=remote br=${a#refs/remotes/origin/};;
-      origin/?*) side=remote br=${a#origin/};;
-      refs/heads/?*) br=${a#refs/heads/};;
-    esac
+    ref_side "$a"
     if ! git check-ref-format "refs/heads/$br"; then echo "qargi: '$a' is not a branch name; nothing was noted for it" >&2; bad=1; continue; fi
     if [ "$side" = local ]; then
       cur=$(sha_of "$br"); [ -n "$cur" ] || { echo "qargi: no branch $br in $REPO; nothing was noted for it" >&2; bad=1; continue; }
@@ -69,11 +84,12 @@ if [ "$verb" = note ]; then
     if [ -n "$pin" ] && [[ $cur != "$pin"* ]]; then
       echo "qargi: $a is at ${cur:0:12}, not at $pin: it moved since you looked; nothing was noted for it" >&2; bad=1; continue
     fi
-    # from absent, or from where the lead's last note of this ref left it
+    # from absent, or from where the lead's last note of this ref left it; a deletion since that note (a verb's, or ref record --deleted) puts the start back at absent
     old=''
     if [ -f "$jf" ]; then
       old=$(jq -nRr --arg r "$rp" --arg ref "refs/heads/$br" --arg side "$side" --arg u "$uk" \
-        '[ inputs | fromjson? | select(type == "object" and .verb == "ref:note" and .repo == $r and .ref == $ref and (if $side == "remote" then .remote == "origin" and .url == $u else (has("remote") | not) end)) ] | last | .new // empty' "$jf" 2>/dev/null) || old=''
+        '[ inputs | fromjson? | select(type == "object" and .repo == $r and .ref == $ref and (.new | type) == "string" and (.verb == "ref:note" or (.new | test("^0+$")))
+             and (if $side == "remote" then .remote == "origin" and .url == $u else (has("remote") | not) end)) ] | last | select(. != null and (.new | test("^0+$") | not)) | .new' "$jf" 2>/dev/null) || old=''
     fi
     [ "$old" != "$cur" ] || { echo "$a is at ${cur:0:12} as your last note left it: nothing to note"; continue; }
     if [ -n "$old" ]; then   # a second note continues the line only along a fast-forward: a rewrite between the notes is not the lead's to accept unseen
@@ -96,14 +112,52 @@ if [ "$verb" = note ]; then
   [ "$bad" = 0 ] || exit 1
   exit 0
 fi
-[ "$MODE" = rewrite ] || usage_die "ref record needs --rewrite (the one kind of move it records); $USAGE"
+case $MODE in rewrite|deleted) ;; *) usage_die "ref record needs --rewrite or --deleted (the two kinds of change it records); $USAGE";; esac
+if [ "$MODE" = deleted ]; then
+  [ "${#ARGS[@]}" = 2 ] || usage_die "ref record --deleted takes REF and OLD; $USAGE"
+  [ -n "$WHY" ] || usage_die "ref record --deleted needs --why \"TEXT\": the reason is journaled and verify names it"
+  . "$(dirname "$0")/gitflow.sh"
+  project_load
+  a=${ARGS[0]}; ref_side "$a"
+  git check-ref-format "refs/heads/$br" || fail "'$a' is not a branch name"
+  case $br in master|develop) fail "$br is a long-lived branch: it is never deleted, so there is no deletion to record";; esac
+  printf '%s\n%s\n%s\n' "$(jq -r '(.repo.long_lived // [])[]' "$af")" "$DETACHED" "$PARK" | grep -Fxq -- "$br" \
+    && fail "$br is a long-lived branch (repo.long_lived, repo.detached or the parking branch): it is never deleted, so there is no deletion to record"
+  old=$(g rev-parse -q --verify "${ARGS[1]}^{commit}" 2>/dev/null) || fail "OLD (${ARGS[1]}) is not a commit of $REPO (fetch it?)"
+  uk=''
+  if [ "$side" = local ]; then
+    cur=$(sha_of "$br"); [ -z "$cur" ] || fail "$br is at ${cur:0:12} in $REPO: it is not deleted; nothing was journaled"
+  else
+    g remote get-url origin >/dev/null 2>&1 || fail "$REPO has no origin; nothing was journaled for $a"
+    uk=$(url_key "$(g remote get-url origin)")
+    remote_tip "$br"
+    case $RSTATE in
+      absent) ;;
+      found) fail "origin still has $br at ${RTIP:0:12} (asked live): it is not deleted there; nothing was journaled";;
+      *) fail "origin could not be asked about $br (${RWHY:-no answer}); nothing was journaled";;
+    esac
+  fi
+  journal_reach "$side" "refs/heads/$br" "$old" ref:deleted   # the commits made with git since the journal last had the branch, as a verb that deletes it writes them
+  journal_line "$REPO" "refs/heads/$br" "$old" "" ref:deleted "$uk" "$WHY"
+  audit_log "ref:deleted" "$PROJ $a ${old:0:12}"
+  echo "journaled the deletion of $a at ${old:0:12}: $WHY"
+  exit 0
+fi
 [ "${#ARGS[@]}" = 3 ] || usage_die "ref record --rewrite takes REF, OLD and NEW; $USAGE"
 [ -n "$WHY" ] || usage_die "ref record --rewrite needs --why \"TEXT\": the reason is journaled and verify names it"
 . "$(dirname "$0")/gitflow.sh"
 project_load
 ref=${ARGS[0]}; ref=${ref#refs/heads/}
-case $ref in agent/?*) ;; *) die "only an agent/* branch is rewritten this way (not $ref): a long-lived, feature, release or hotfix branch is never rewritten";; esac
+case $ref in agent/?*|release/?*|hotfix/?*) ;; *) die "only an agent/* branch (or a release/* or hotfix/* branch origin does not have) is rewritten this way (not $ref): a long-lived or feature branch is never rewritten";; esac
 git check-ref-format "refs/heads/$ref" || die "'$ref' is not a branch name"
+case $ref in release/?*|hotfix/?*)   # nobody else has the branch while origin has none: asked live, and an origin that cannot be asked is not an answer
+  remote_tip "$ref"
+  case $RSTATE in
+    none|absent) ;;
+    found) fail "$ref is on origin (at ${RTIP:0:12}, asked live): a branch that was pushed is never rewritten; nothing was moved";;
+    *) fail "origin could not be asked whether it has $ref (${RWHY:-no answer}): a release or hotfix branch is rewritten only while origin has none; nothing was moved";;
+  esac;;
+esac
 old=$(g rev-parse -q --verify "${ARGS[1]}^{commit}" 2>/dev/null) || die "OLD (${ARGS[1]}) is not a commit of $REPO"
 new=$(g rev-parse -q --verify "${ARGS[2]}^{commit}" 2>/dev/null) || die "NEW (${ARGS[2]}) is not a commit of $REPO"
 [ "$old" != "$new" ] || die "OLD and NEW are the same commit: there is nothing to record"

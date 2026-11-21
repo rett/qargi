@@ -142,7 +142,7 @@ full | par | 300 | 40 | bash tests/test_marshal_batch.sh | lib/marshal*.sh lib/m
 full | par | 300 | 17 | python3 tests/test_marshal_startup.py | lib/marshal*.sh lib/marshal*.py tests/startup-budget.txt
 # Isolate this long workflow test from the parallel pool.
 # Measured by a member on this host (not the reference machine): 286 s alone; beside other work 331 to 344 s (two more copies of the test running) and 381 to 409 s (a whole run, as the lead saw it), so the timeout is raised from 300 to 600 s. The budget stays at 108 s: the time limit of the CI jobs (.github/workflows/test.yml, checked by tests/test_ci.py) has no room for a larger one until the workflow follows.
-full | serial | 600 | 108 | bash tests/test_journal.sh | lib/merged.py lib/local.sh
+full | serial | 600 | 108 | bash tests/test_journal.sh | lib/merged.py lib/local.sh lib/ref.sh
 full | par | 850 | 185 | bash tests/test_runs_close.sh | lib/local.sh lib/local_run.py lib/procenv.py lib/lib.sh lib/ref.sh lib/feature.sh lib/review.sh lib/review_check.py lib/lead_usage.py lib/merged.py lib/owned_refs.py tests/class_cases.py tests/fixtures/run-classes.json
 fast | par | 300 | 19 | bash tests/test_upstream.sh | lib/upstream.sh
 fast | par | 300 | 21 | bash tests/test_team.sh | lib/team.sh
