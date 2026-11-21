@@ -3,8 +3,8 @@
 # refusals the apply would meet (each as the apply prints it, with dry=1 first in the detail of the contract line) and `dry-run: N would refuse; nothing was changed`, and
 # changes nothing: the refs of the repository and of its origin, .git/worktrees, the state directory (the audit log, the ref journal, the intent and lock files, the marshal
 # records, the stored plans), no lease renewed, nothing fetched. Every case compares a snapshot of all of it before and after. Offline: a bare repository is the origin.
-# The last part is `branch prune --agents`, the one deletion of branch prune that is not gated: the merged agent branches at once, journaled first, the lead's, branches only (a
-# branch held by any worktree is kept, as is one the journal does not reach).
+# The last parts are `branch prune --agents`, the one deletion of branch prune that is not gated: the merged agent branches at once, journaled first, the lead's, branches only (a
+# branch held by any worktree is kept, as is one the journal does not reach), and the refs backend of the marshal, which a dry run of feature finish reads without a write.
 # Run: tests/test_dry_run.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -249,6 +249,28 @@ before=$(git -C "$R" for-each-ref | md5sum)
 out=$($B prune --agents 2>&1); rc=$?
 [ "$rc" = 0 ] && [ "$before" = "$(git -C "$R" for-each-ref | md5sum)" ] && ! grep -q "^deleted" <<<"$out" && ok "--agents with that journal deletes nothing" || no "agents, unreadable journal: rc=$rc $out"
 out=$($B prune 2>&1); grep -q "delete local agent/m1 " <<<"$out" && grep -q "journal: no step will be journaled for agent/m1" <<<"$out" && ok "the gated prune still plans those branches, with the note that the journal does not lead to them" || no "gated prune, unreadable journal: $out"
+
+# ---------------------------------------------------------------------------------------------------------------------------- feature finish --dry-run: the refs backend of the marshal
+# the shared refs backend writes when it reads (the lock file, the high-water mark, the cache of the observed oids with the boot id); a dry run reads like a member's run: the state directory is as it was,
+# also when the cache holds another boot id (the first dry run after a reboot), and when the lock file and the mark file are missing
+mkproj mrk with-origin
+WORDS="the shared refs are fine for this project"
+own() { local p tk; p=$($DA marshal "$@" 2>&1); tk=$(tok <<<"$p"); [ -n "$tk" ] || { printf '%s\n' "$p"; return 1; }; $DA marshal "$@" --plan "$tk" --approved "$WORDS" 2>&1; }
+own enable >/dev/null && own key init --principal lead@dry > "$T/key.out" && own signers add --line "$(grep -m1 'namespaces="qargi-marshal" ssh-ed25519 ' "$T/key.out" | sed 's/^[[:space:]]*//')" >/dev/null && own enable --integrity advisory >/dev/null || no "(setup) marshal: $(cat "$T/key.out")"
+$F start fa >/dev/null 2>&1; task t1 feature/fa; $F merge fa agent/t1 >/dev/null 2>&1; $F verify fa >/dev/null 2>&1
+$F finish fa >/dev/null 2>&1   # a plain plan reads the marshal: its files are made
+SF=$T/s/features
+[ -e "$SF/.refs-mrk.lock" ] && [ -e "$SF/.observed-mrk.json" ] && [ -e "$SF/.accepted-mrk.json" ] && ok "(setup) the refs backend with signed records: a read of the marshal has made its lock file, its cache of observed oids and its high-water mark" || no "(setup) refs backend: $(ls -A "$SF" 2>&1)"
+dry $F finish fa --dry-run
+[ "$rc" = 0 ] && [ "$(lastline)" = "dry-run: 0 would refuse; nothing was changed" ] && [ "$s0" = "$s1" ] && ok "feature finish --dry-run on the refs backend: the state directory, the lock file included, is as it was" || no "refs backend dry run: rc=$rc $(cat "$T/do" "$T/de")"
+jq -c 'map_values(.[2] = "another-boot-id")' "$SF/.observed-mrk.json" > "$T/x.json" && mv "$T/x.json" "$SF/.observed-mrk.json"
+dry $F finish fa --dry-run
+[ "$rc" = 0 ] && [ "$s0" = "$s1" ] && jq -e 'to_entries | all(.value[2] == "another-boot-id")' "$SF/.observed-mrk.json" >/dev/null && ok "with another boot id in the cache (a reboot since) the dry run does not rewrite the cache of observed oids" || no "refs backend dry run, another boot id: rc=$rc $(cat "$T/do" "$T/de")"
+mv "$SF/.accepted-mrk.json" "$T/accepted.json"; rm -f "$SF/.refs-mrk.lock"
+dry $F finish fa --dry-run
+[ "$rc" = 0 ] && [ "$s0" = "$s1" ] && [ ! -e "$SF/.refs-mrk.lock" ] && [ ! -e "$SF/.accepted-mrk.json" ] && ok "with the lock file and the high-water mark file missing the dry run creates neither" || no "refs backend dry run, no lock and no mark: rc=$rc $(cat "$T/do" "$T/de"); $(ls -A "$SF")"
+s0=$(snap); $F finish fa >/dev/null 2>&1
+[ "$s0" != "$(snap)" ] && [ -e "$SF/.refs-mrk.lock" ] && [ -e "$SF/.accepted-mrk.json" ] && ok "(control) the same state, without --dry-run, writes: the lock file and the mark are made again" || no "(control) the plain finish plan left the state as it was: $(ls -A "$SF")"
 
 # ---------------------------------------------------------------------------------------------------------------------------- feature-runs-open
 # feature finish refuses while a run of the feature is open: the code carries the count and the names of the runs (a digest of them in the contract line), the message names three
