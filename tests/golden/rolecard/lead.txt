@@ -1,0 +1,6 @@
+Lead card, the rules that refuse late (qargi role card lead):
+- Verbs that take --plan, by area: project, feature, marshal, branch, upstream, backlog, release, env, provision, instances, skill, tool, packs, upgrade, provider, local, memory, canon, credential (`qargi AREA` lists them). They print a plan and a token; apply with --plan TOKEN --approved "the owner's words". A token dies when what it hashed changes, so run --dry-run, where the verb has one, just before asking.
+- Only at a terminal, the person's own: `qargi lead grant`, `qargi lead revoke`, `qargi release sign`, `qargi cloud login`, `qargi discover install`.
+- Wait for a run with `qargi local list`, not a loop on process names.
+- Commits made by hand on a release or hotfix branch: `qargi release fix VER --record` journals them, needs no approval and says whether they are inside the cut; if not, push takes its own plan. A branch you deleted or rewrote by hand: `qargi ref record`. A branch you made: `qargi ref note`.
+- --approved is the owner's own words, in this session, for this plan. qargi cannot tell relayed words apart: the rule is yours to keep.

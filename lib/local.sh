@@ -697,11 +697,15 @@ taskblock_check() {
 }
 
 # taskblock_write RUN ROLE CLASS REPO URL BASE BSHA TMP DONE TASKFILE SCOPE...: RUN/task.md, the sections in a fixed order: ROLE, ABILITY (the role's text), TASK,
-# DONE, PROFILE (the repository's profile, CONFIG/profiles/<repository>.md, when there is one), BASE, BASE_SHA, SCOPE (paths comma separated; none without any), then the paths.
+# DONE, PROFILE (the repository's profile, CONFIG/profiles/<repository>.md, when there is one), BASE, BASE_SHA, SCOPE (paths comma separated; none without any), then the paths,
+# SUBMODULES (the submodules checked out for the role, when there are any) and CARD: the role's card (lib/rolecard.py, with the run's real paths), what the guard and the
+# verbs hold the role to, so that a member reads a limit before it is refused by it. The card is one block with no blank line in it (the memory packet, when prepare adds one,
+# follows as a block of its own), and none of its lines reads as SCOPE or DONE to review check.
 taskblock_write() {
-  local run=$1 role=$2 class=$3 repo=$4 url=$5 base=$6 bsha=$7 tmpd=$8 done=$9 f=${10} name pf rd out s sc=''; shift 10
+  local run=$1 role=$2 class=$3 repo=$4 url=$5 base=$6 bsha=$7 tmpd=$8 done=$9 f=${10} name pf rd out s card sc=''; shift 10
   for s in "$@"; do s=${s#./}; sc+="${sc:+, }$s"; done
   rd=$(role_dir "$role"); out=$run/task.md.new
+  card=$(python3 -I "$(dirname "$0")/rolecard.py" card "$role" --run "$run" </dev/null) || { echo "qargi: could not make the card of role $role" >&2; return 1; }
   if [ -n "$repo" ]; then name=$(basename -- "$repo"); else name=${url%/}; name=${name##*/}; name=${name%.git}; fi
   pf=$DA_CONF/profiles/$name.md
   {
@@ -711,6 +715,8 @@ taskblock_write() {
     if [ -n "$name" ] && [ -f "$pf" ] && [ ! -L "$pf" ] && grep -q '[^[:space:]]' "$pf" && ! grep -Eq "$TB_SCOPE_RE" "$pf"; then printf '\nPROFILE:\n'; cat "$pf"; fi
     printf '\nBASE: %s\nBASE_SHA: %s\nSCOPE: %s\nRUN_DIR: %s\nCLONE: %s/clone\nOUT: %s/out\nTMP: %s\nGIT: %s/git\nCONTRACT: %s/contract\n' \
       "$base" "$bsha" "${sc:-none}" "$run" "$run" "$run" "$tmpd" "$run" "$run"
+    [ -z "${SUBS:-}" ] || printf 'SUBMODULES: %s\n' "${SUBS#SUBMODULES=}"
+    printf '\nCARD:\n%s\n' "$card"
   } > "$out" && mv -f "$out" "$run/task.md"
 }
 
@@ -907,7 +913,6 @@ WRAP
     echo "BASE_SHA=$BSHA"
     echo "CONTRACT=$RUN/contract"
     [ -z "$SUBS" ] || echo "$SUBS"
-    [ -z "$TASKF" ] || [ -z "$SUBS" ] || printf 'SUBMODULES: %s\n' "${SUBS#SUBMODULES=}" >> "$RUN/task.md"
     [ -z "$TASKF" ] || echo "TASK_FILE=$RUN/task.md"
     echo
     echo "TASK-BLOCK PATHS"

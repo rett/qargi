@@ -10,7 +10,8 @@
 # two projects can each have a worker.
 #
 #   agent.sh add NAME [--roles build,write,review,test] [--model M] [--effort E] --project P
-#   agent.sh list [--project P]
+#   agent.sh list [--project P]            also stores, per project listed, the time and each member's STALE or DRIFT in STATE/agent-states.json
+#                                          (what the lead card's line "members STALE or DRIFT as of TIME" reads; a failed write is ignored)
 #   agent.sh rename OLD NEW [--project P]
 #   agent.sh refresh NAME [--project P]    re-render a member from the current definition, keeping its name, roles, model and effort;
 #                                          writes the copy in config and the runtime's file again (a missing file comes back)
@@ -514,6 +515,18 @@ member_states() { # role-classes-json -> {"PROJECT/NAME": [MISSING | STALE | DRI
   apy states "$MEMBERS_FILE" "$1" "$COPIES"
 }
 
+states_note() { # STATES-JSON PROJECT-OR-EMPTY: keep what `list` read, for the lead card (STATE/agent-states.json: per project the time and each member's STALE or DRIFT)
+  local f=$DA_STATE/agent-states.json upd
+  upd=$(jq -c --arg proj "$2" --arg at "$(now)" --argjson st "$1" '
+    (if $proj != "" then {($proj): {at: $at, members: {}}} else {} end)   # a project with no member is stored with none
+    + ([(.projects // {}) | to_entries[] | select($proj == "" or .key == $proj) | .key as $p
+      | {key: $p, value: {at: $at, members: ([.value | keys[] | . as $n | {key: $n, value: [($st[$p + "/" + $n] // [])[] | select(. == "STALE" or . == "DRIFT")]}] | from_entries)}}] | from_entries)' \
+    "$MEMBERS_FILE" 2>/dev/null) || return 0
+  [ -d "$DA_STATE" ] || return 0
+  [ -f "$f" ] || printf '{}\n' > "$f" 2>/dev/null || return 0
+  json_update "$f" '.schema = 1 | .projects = (if $proj == "" then $upd else (.projects // {}) + $upd end)' --arg proj "$2" --argjson upd "$upd" 2>/dev/null || true
+}
+
 role_classes() { # -> {role: class} for every role (a role without a readable class is left out)
   local r c o='{}'
   for r in $DA_ROLES; do
@@ -815,6 +828,7 @@ case $verb in
   add) add;;
   list)
     st=$(member_states "$(role_classes)") || exit 1
+    states_note "$st" "$PROJ"
     rows=$(jq -r --argjson st "$st" --arg proj "$PROJ" '[(.projects // {}) | to_entries[] | select($proj == "" or .key == $proj) | .key as $p | .value | to_entries[] | .value + {name: .key, project: $p}]
         | sort_by(.seq // 0)[] | [.project, .name, (.roles | join(",")), (.model // "-") + "/" + (.effort // "default"),
         (.file + (if ($st[.project + "/" + .name] // []) | length > 0 then " (" + (($st[.project + "/" + .name]) | join(", ")) + ": qargi agent refresh " + .name + " --project " + .project + ")" else "" end))] | @tsv' "$MEMBERS_FILE")
