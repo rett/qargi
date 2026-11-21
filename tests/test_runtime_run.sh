@@ -297,6 +297,62 @@ grep -E " - +$LATE\$" <<<"$LIST" >/dev/null && ok list-run-before-enable-dash ||
 out=$("$DA" review check "$LATE/out" 2>&1)
 ! grep -q '^runtime=' <<<"$out" && ok review-check-no-runtime-line || no "review check, a run prepared before the enable: $out"
 
+# --- verify, review, apply, close and clean never ask for the run's runtime: the same series returned by the project's own runtime and by an extra one gets the same
+# answers from them after the extra runtime is disabled and its definition is gone (the runtime= line of review check is the one expected difference)
+mkfake fakeinv
+for r in fakeown fakeinv; do   # the stub's commit gets a message with a body, as review check asks
+  sed -i 's/-m "Stub: a file"/-m "Stub: a file" -m "Adds a file, so that the series has a message that says what changed."/' "$TOOL/stubs/$r"
+done
+for x in a b c d; do mkproj "inv$x" '{"local":"fakeown"}' '["fakeinv"]' null "$ACC"; done   # one project and one repository for each run: an apply changes the refs the next verify compares
+collect() { # RUN BASE: the series the member made, collected by hand as a member would: the patches, a manifest and the series note in OUT
+  mkdir -p "$1/out/patches"
+  $LC -C "$1/clone" format-patch -q -o "$1/out/patches" "$2..HEAD"
+  git -C "$1/clone" log --reverse --format='%H%x09%s' "$2..HEAD" | jq -R -s -c '[split("\n")[] | select(length > 0) | split("\t") | {sha: .[0], subject: .[1]}] as $c
+    | {status: "DONE", commits: $c, commit_advice: ($c | map(. + {why_separate: "x", depends_on: [], builds_alone: true})), patch_groups: [{name: "stub", why: "one change", commits: ($c | map(.sha))}]}' > "$1/out/manifest.json"
+  echo "# series" > "$1/out/series.md"
+}
+mkseries() { # SLUG [prepare options]: prepare a build run in project inv<last letter of the slug>, start it and collect what the stub committed: RUN
+  local slug=$1 base
+  shift
+  prep "inv${slug#i}" --slug "$slug" "$@"
+  [ "$PREP_RC" = 0 ] || no "invariance: prepare $slug: $PREP"
+  base=$(line BASE_SHA)
+  out=$(dispatch) || no "invariance: run $slug: $out"
+  collect "$RUN" "$base"
+}
+mkseries ia;                    RA=$RUN       # the project's own runtime
+mkseries ib --runtime fakeinv;  RB=$RUN       # an extra one
+mkseries ic;                    RC=$RUN
+mkseries id --runtime fakeinv;  RD=$RUN
+for x in a b c d; do
+  jq '.models.extra_runtimes.local = []' "$T/c/projects/inv$x.json" > "$T/inv.json" && mv "$T/inv.json" "$T/c/projects/inv$x.json"
+done
+rm -rf "$TOOL/lib/providers/fakeinv.json" "$TOOL/lib/providers/fakeinv" "$TOOL/stubs/fakeinv"
+{ ! "$DA" provider runtimes invb 2>&1 | grep -q fakeinv; [ ! -e "$TOOL/lib/providers/fakeinv.json" ]; } || no "invariance: the runtime is still there"
+invmask() { # RUN: what a verb printed with the names that differ from one run to the next masked (the run, the series' commit ids, the slug)
+  sed -e "s#$1#RUN#g" -e "s#$T#T#g" -e 's/[0-9a-f]\{40\}/SHA/g' -e 's/[0-9a-f]\{7,12\}/ID/g' -e 's/qargi\.[A-Za-z0-9]\{6\}/qargi.XXXXXX/g' -e 's/qargi-run\.[A-Za-z0-9]\{6\}/qargi-run.XXXXXX/g' -e 's/\binv[a-d]\b/PROJ/g' -e 's/\bi[a-d]\b/SLUG/g'
+}
+invops() { # RUN PROJECT: verify, review check and apply, each with its exit status, masked
+  local op
+  for op in "local verify $1" "review check $1/out" "review apply $1 --project $2"; do
+    echo "--- ${op%% $1*}"; "$DA" $op 2>&1 | invmask "$1"; echo "exit ${PIPESTATUS[0]}"
+  done
+}
+invops2() { # RUN: verify, close (the patches were applied by hand) and clean
+  local op
+  for op in "local verify $1" "local close $1 --applied-by-am" "local clean $1"; do
+    echo "--- ${op%% $1*}"; "$DA" $op 2>&1 | invmask "$1"; echo "exit ${PIPESTATUS[0]}"
+  done
+}
+invops "$RA" inva > "$T/inv-a.out"; invops "$RB" invb > "$T/inv-b.out"
+invops2 "$RC" > "$T/inv-c.out"; invops2 "$RD" > "$T/inv-d.out"
+INVCASES_A=$(grep -c . "$T/inv-a.out")
+diff <(grep -v '^runtime=' "$T/inv-b.out") <(grep -v '^runtime=' "$T/inv-a.out") >"$T/inv-ab.diff" 2>&1; ab=$?
+diff "$T/inv-c.out" "$T/inv-d.out" >"$T/inv-cd.diff" 2>&1; cd=$?
+{ [ "$ab" = 0 ] && [ "$cd" = 0 ] && ! grep -q '^exit [1-9]' "$T/inv-a.out" "$T/inv-c.out" && [ "$INVCASES_A" -gt 6 ] \
+  && grep -q '^runtime=fakeinv ' "$T/inv-b.out" && grep -q '^runtime=fakeown ' "$T/inv-a.out"; } \
+  && ok invariance || no "invariance: verify, check, apply, close and clean differ for the extra runtime: $(cat "$T/inv-ab.diff" "$T/inv-cd.diff") | $(cat "$T/inv-a.out")"
+
 # --- a reading review: a read-only run on an extra runtime gets the read-only sandbox and no directory the member may write, whatever the profile says
 prep two --slug v1 --role review --runtime fakecx
 out=$(dispatch --dry-run); rc=$?
