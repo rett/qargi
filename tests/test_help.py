@@ -854,6 +854,66 @@ class Surface(Env):
         self.assertIn("open to a member", text)
 
 
+class RefusalHelp(Env):
+    """qargi help refusal [CODE]: the catalogue entry of a code (lib/refusals.json, read through lib/refusal.py), the list of the codes, an unknown code."""
+
+    def cli(self, *args):
+        return subprocess.run([BIN, *args], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60)
+
+    def entries(self):
+        with open(os.path.join(LIB, "refusals.json")) as f:
+            return json.load(f)["codes"]
+
+    def test_the_list_names_every_code_with_its_class_exit_and_status(self):
+        r = self.cli("help", "refusal")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        flat = " ".join(r.stdout.split())
+        for code, e in self.entries().items():
+            self.assertIn(code, r.stdout)
+            self.assertIn("(%s, exit %d, %s)" % (e["class"], e["exit"], e["status"]), flat)
+        self.assertIn("qargi help refusal CODE", r.stdout)
+        self.assertIn("refusal", self.cli("help").stdout)                        # the overview lists the topic
+
+    def test_a_code_prints_its_rule_why_class_exit_fields_and_next(self):
+        for code, e in self.entries().items():
+            r = self.cli("help", "refusal", code)
+            self.assertEqual(r.returncode, 0, (code, r.stderr))
+            flat = "".join(r.stdout.split())                                     # the text is wrapped, also at a hyphen: compare without any white space
+            self.assertTrue(flat.startswith("".join(("%s (%s)" % (code, e["status"])).split())), (code, flat[:60]))
+            for want in ("Rule: " + e["rule"].rstrip("."), "Why: " + e["why"].rstrip("."), "Class: %s    Exit: %d" % (e["class"], e["exit"]),
+                         "Message: " + e["message"], "Next, for a lead: " + e["next"]["lead"]):
+                self.assertIn("".join(want.split()), flat, code)
+            self.assertEqual("".join("Next, in the owner's own session (host):".split()) in flat, e["next"]["host"] != e["next"]["lead"], code)
+            for k, v in e["fields"].items():
+                self.assertIn("".join(("%s (%s)" % (k, v)).split()), flat, code)
+        flat = " ".join(self.cli("help", "refusal", "plan-stale").stdout.split())
+        self.assertIn("Fields: verb (verb), moved (label-list)", flat)
+        self.assertIn("a token from a lead's plan never matches (R77)", flat)
+
+    def test_an_unknown_code_or_two_words_exit_2_and_print_nothing_on_standard_output(self):
+        for args in (["nosuch-code"], ["plan-stale", "plan-missing"], ["PLAN-STALE"]):
+            r = self.cli("help", "refusal", *args)
+            self.assertEqual((r.returncode, r.stdout), (2, ""), args)
+            self.assertIn("no refusal code", r.stderr)
+            self.assertIn("qargi help refusal lists the codes", r.stderr)
+
+    def test_the_codes_are_completed_and_the_topic_is_in_the_man_page(self):
+        self.assertIn("plan-stale", H.complete(["help", "refusal", ""]))
+        self.assertIn("refusal", H.complete(["help", ""]))
+        self.assertEqual(H.complete(["help", "refusal", "plan-stale", ""]), [])
+        self.assertIn(".SH REFUSAL", H.man())
+        self.assertIn("refusal", C.TOPICS)
+
+    def test_the_reference_page_links_the_catalogue_and_the_environment_lists_the_refusal_variables(self):
+        self.assertIn("(refusals.md)", slurp(os.path.join(ROOT, "docs", "reference", "README.md")))
+        env = dict(C.ENVIRONMENT)
+        for k in ("QARGI_DRY", "QARGI_VERB", "QARGI_ROLE"):
+            self.assertIn(k, env)
+        man = H.man().replace("\\-", "-")
+        for k in ("QARGI_DRY", "QARGI_VERB", "QARGI_ROLE"):
+            self.assertIn(k, man)
+
+
 class ProviderNameHelp(unittest.TestCase):
     """The provider verbs take a runtime name, not a family name: the help says so, and the verbs agree."""
 

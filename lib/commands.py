@@ -2050,6 +2050,14 @@ TOPICS = {
         "The read-only class (review) may write only OUT and TMP (the run's TMPDIR). Recognized clone mutations are refused. It runs build, vet and test commands with its given environment; assigning PATH, TMPDIR or GIT_* is refused, not the command.",
         "Setting QARGI_NESTED (skips a plan token), or setting or unsetting QARGI_LEAD, is refused.",
         "A refusal is a result: report it."]),
+    "refusal": ("A refusal's code and the rule behind it", [
+        "A command that a rule stops prints, on standard error, a line that starts qargi-refusal/1 and holds one JSON object (the code, the exit status, the verb, the project, the role and, in detail, qargi's own text: "
+        "the typed fields as key=value, with dry=1 first in a dry run), then 'qargi: refused [CODE] message', a 'why:' line and a 'next:' line. The code names the rule once, in the catalogue lib/refusals.json. "
+        "qargi help refusal lists the codes; qargi help refusal CODE prints the entry of one (an unknown code exits 2): the rule, why it exists, its class and exit status, its status, "
+        "the fields its message fills, the message, and the next step for a lead and for the owner's own session.",
+        "A code is live when a verb raises it, planned when it is written down before a verb raises it (so that it is reviewed early) and withdrawn when it is no longer raised; a code is never reused. "
+        "The guard's refusals carry the code in front of their sentence. A note, 'qargi: note [CODE] ...', names a rule that will apply later and changes no exit status. "
+        "docs/reference/refusals.md is the page of the catalogue, generated from it."]),
     "naming": ("How resources are named", [
         "Project and role are single lower-case tokens. An instance is <project>-<role>, for example acme-build. A session is "
         "<instance>-<task-slug>, and the agent's branch is agent/<task-slug>.",
@@ -2118,6 +2126,8 @@ ENVIRONMENT = [
     ("QARGI_ROLES", "the list of work roles (default: build review write test)"),
     ("QARGI_DRY", "set to 1 by --dry-run inside the verb that has it (release start, push and fix --push, feature finish, branch prune): a helper that writes (the audit log, the state files, the journal, a ref move, a commit) "
                   "stops the verb with exit 70, and git and gh pass only commands that read; unset, empty and 0 are a normal run. Do not set it yourself"),
+    ("QARGI_VERB", "the verb a refusal's contract line names, as 'feature finish' (default: the verb the script was run as); the scripts that raise a refusal set it, you need not"),
+    ("QARGI_ROLE", "the role a refusal's contract line names (default: none); set by a member's run, you need not"),
     ("QARGI_DRY_RUN", "print a session request, with secrets masked, instead of sending it; qargi env apply stops before it runs the bootstrap"),
     ("QARGI_ENV_TIMEOUT", "seconds the dry run of qargi env plan and apply may take (default 120)"),
     ("QARGI_HOOK_MARSHAL_SECS", "seconds the session-start hook gives the read of the open features (qargi marshal status --all --brief --no-fetch) before it leaves the block out "
