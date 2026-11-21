@@ -625,28 +625,38 @@ COMMANDS = {
                  "in the repository and for the branch it deletes on origin: one line per commit, with the verb's own name and a why that says git made the step, "
                  "so a run prepared before those commits accepts the deletion, and verify names the verb. No such line is written for a branch that is kept, "
                  "that the journal never had, or whose tip is not within 500 first-parent commits of a commit the journal has it at (a branch rewritten by hand, for one). "
-                 "qargi ref record adds the one move a lead makes by hand "
-                 "that verify must still accept: the rewrite of an agent branch that keeps its content. qargi ref note adds the branches the lead made by hand or pushed "
-                 "(git branch, git push), so that verify does not blame the run for them."),
+                 "qargi ref record adds the two moves a lead makes by hand "
+                 "that verify must still accept: the rewrite of an agent branch, or of a release or hotfix branch not yet pushed, that keeps its content (--rewrite), and the deletion of a branch "
+                 "that no verb deleted (--deleted). qargi ref note adds the branches the lead made by hand or pushed "
+                 "(git branch, git push), so that verify does not blame the run for them; a branch deleted and made again is journaled with --deleted, then ref note, whose line starts at absent."),
         "scripts": ["ref.sh"],
         "verbs": {
-            "record": verb("Rewrite an agent branch to a commit with the same tree, and journal the move with the reason", [("REF", "branch"), ("OLD", "none"), ("NEW", "none")],
-                           [opt("--rewrite", "the kind of move: REF goes from OLD to NEW, whose trees must be identical"),
+            "record": verb("Rewrite a branch to a commit with the same tree, or record a branch deleted by hand, and journal the move with the reason", [("REF", "branch"), ("OLD", "none"), ("NEW", "none", True)],
+                           [opt("--rewrite", "the kind of move: REF goes from OLD to NEW, whose trees must be identical (exclusive with --deleted)"),
+                            opt("--deleted", "the kind of move: REF was deleted by hand and was at OLD; give no NEW (exclusive with --rewrite)"),
                             opt("--why", "the reason, journaled and named by local verify", "TEXT"), PROJECT_OPT],
-                           desc=("REF is an agent/* branch (agent/NAME or refs/heads/agent/NAME). It refuses NEW unless git rev-parse OLD^{tree} and NEW^{tree} are the same, "
+                           desc=("--rewrite: REF is an agent/* branch (agent/NAME or refs/heads/agent/NAME), or a release/* or hotfix/* branch that origin does not have (asked live: a branch that was pushed, "
+                                 "and an origin that cannot be asked, are refused); never a long-lived branch (master, develop, repo.long_lived, repo.detached, the parking branch) or a feature branch. "
+                                 "It refuses NEW unless git rev-parse OLD^{tree} and NEW^{tree} are the same, "
                                  "and REF unless it is at OLD now; the move is then a compare-and-swap (git update-ref REF NEW OLD), so nothing moves when REF changed meanwhile. "
                                  "The journal line has verb ref:rewrite and the reason, and a run prepared before the move verifies and is cleaned with it named as a rewrite; "
-                                 "local clean, local list, lead compact-check and feature finish follow the applied tip of a run to NEW (one test, lib/merged.py). No working tree, other ref or origin is touched. Not available in a member run."),
-                           examples=["qargi ref record --rewrite agent/fix-names 1a2b3c4 5d6e7f8 --why \"reworded two messages\""]),
+                                 "local clean, local list, lead compact-check and feature finish follow the applied tip of a run to NEW (one test, lib/merged.py). No working tree, other ref or origin is touched. "
+                                 "--deleted: REF is a branch NAME, or origin/NAME for a branch of origin (asked live); it must be absent now, must not be long-lived, and OLD must be a commit. "
+                                 "It first journals the commits made with git on the branch since the journal last had it (as a verb that deletes a branch does), then the deletion from OLD to absent "
+                                 "(verb ref:deleted, with the reason), so local verify and local clean of a run prepared before accept the deletion and name it as qargi ref deleted. "
+                                 "Nothing is moved or deleted: the branch is gone already. A branch deleted and made again is journaled with --deleted, then ref note. Not available in a member run."),
+                           examples=["qargi ref record --rewrite agent/fix-names 1a2b3c4 5d6e7f8 --why \"reworded two messages\"",
+                                     "qargi ref record --deleted agent/fix-names 1a2b3c4 --why \"deleted by hand after the merge\""]),
             "note": verb("Journal a branch you made by hand, or pushed to origin, so that local verify accepts it", [("REF", "none")],
                          [opt("--why", "a reason, journaled with a local branch", "TEXT"), PROJECT_OPT],
                          desc=("REF (give several) is a branch NAME, or origin/NAME for the branch NAME of origin, whose live value is asked (git ls-remote); the branch must exist now. "
                                "The journal line (verb ref:note) goes from the ref being absent to the value it has now, or, when you noted that ref before, from where the earlier note left it "
-                               "(pushing the same branch again); a second note is refused when the earlier note's value is not an ancestor of the current one (the ref was rewritten: inspect it; "
-                               "qargi ref record --rewrite records a rewrite of an agent branch that keeps its tree). The note prints the author and subject of the tip, and REF@SHA "
+                               "(pushing the same branch again), or from absent when the ref was deleted since (by ref record --deleted, or by a verb that deletes branches), so a branch made again with the same name is noted as created; "
+                               "a second note is refused when the earlier note's value is not an ancestor of the current one (the ref was rewritten: inspect it; "
+                               "qargi ref record --rewrite records a rewrite of an agent branch, or of a release or hotfix branch not yet pushed, that keeps its tree). The note prints the author and subject of the tip, and REF@SHA "
                                "(7 to 40 hex digits) notes REF only while it is at SHA, so the lead notes what it looked at. Nothing is created, moved or pushed. A run prepared before it then verifies with the branch named as one you noted. "
                                "Only a ref that did not exist when the run was prepared (or that you noted before) is accepted this way: a ref that existed then and has moved, "
-                               "a deletion, and any ref you did not note stay offending, so a branch the run's agent made or moved is still found. Note only what you made. "
+                               "a deletion that no verb made and you did not record (ref record --deleted), and any ref you did not note stay offending, so a branch the run's agent made or moved is still found. Note only what you made. "
                                "Not available in a member run. The harness's own worktree branches (worktree-bridge-NAME, held by the locked worktree bridge-NAME of the harness) need no note: verify leaves them out."),
                          examples=["qargi ref note feature/search origin/feature/search", "qargi ref note feature/search@1a2b3c4d"]),
         },
@@ -1379,8 +1389,9 @@ COMMANDS = {
                                  "It accepts the lead's own moves and names each one (\"develop moved by qargi feature finish\"): what the lead's ref journal records (the branches and tags "
                                  "that qargi's flow verbs move, push to origin or delete: feature finish and park, release and hotfix finish and push, branch prune, review apply, "
                                  "the parking branch following develop, a rewrite recorded with qargi ref record --rewrite, and the commits you made with git on a branch that "
-                                 "release finish, hotfix finish, feature finish or branch prune then deleted, named as that verb's deletion; a branch that still exists, "
-                                 "or that you deleted or rewrote by hand, is not covered), a remote-tracking ref of origin that says what origin has "
+                                 "release finish, hotfix finish, feature finish or branch prune then deleted, named as that verb's deletion; the commits you made with git on a release or hotfix branch "
+                                 "and journaled with qargi release fix VERSION --record; a branch you deleted with git and recorded with qargi ref record --deleted, named as qargi ref deleted; "
+                                 "a branch that still exists, or that you deleted or rewrote by hand and did not record, is not covered), a remote-tracking ref of origin that says what origin has "
                                  "(a fetch), the parking branch (repo.parking_branch, default scratch) fast-forwarded to develop's tip, by hand too, and the branches and branches of origin you noted "
                                  "(qargi ref note: a ref that did not exist when the run was prepared; one the run's agent could have made or moved and you did not note still fails). "
                                  "It also leaves out the harness's own bridge branches: a branch worktree-bridge-NAME while the locked worktree bridge-NAME of the harness (in its worktrees directory under the main checkout) holds it and its moves are fast-forwards (or once the worktree and the branch are gone). "

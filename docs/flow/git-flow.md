@@ -38,7 +38,13 @@ refusal changes nothing.
      qargi's own moves (`develop moved by qargi feature finish`, a fetch, the parking branch fast-forwarded to develop), so a run
      whose work is merged need not be cleaned before the next `feature finish`.
    - A branch you make or push yourself while a run is out is accepted once you journal it with
-     `qargi ref note BRANCH origin/BRANCH` (a ref that existed before the run still has to be explained). The harness's own
+     `qargi ref note BRANCH origin/BRANCH` (a ref that existed before the run still has to be explained). A branch you delete with
+     git (`git branch -D`, `git push --delete`) is journaled with `qargi ref record --deleted BRANCH OLD --why "<reason>"` (OLD is the
+     commit it was at; `origin/BRANCH` names a branch of origin, asked live; a long-lived branch is refused); a run prepared before then
+     verifies and cleans with the deletion named as `qargi ref deleted`. A branch deleted and made again with the same name is
+     `ref record --deleted`, then `ref note`, whose line starts at absent. A branch you reword by hand with the same tree
+     is `qargi ref record --rewrite BRANCH OLD NEW --why "<reason>"`, for an `agent/*` branch and also for a `release/*` or `hotfix/*`
+     branch that origin does not have yet (asked live), never a long-lived or a feature branch. The harness's own
      `worktree-bridge-*` branches are left out, as are the refs you declare a runtime's own with the answer `runs.owned_refs`
      (glob patterns such as `refs/heads/foo-*`; verify and clean name the pattern).
    - The answers a run is checked and applied by (`runs.owned_refs`, `repo.long_lived`, `repo.parking_branch`, `git.author`,
