@@ -24,7 +24,11 @@
 # Nothing is ever written to a runtime's user-level directory (for Claude Code ~/.claude/agents).
 #   agent.sh models [--project P] [--json]     the bases, the profiles (shipped and the project's), the members and what is wrong with them
 #   agent.sh remove NAME [--project P]
-#   agent.sh for ROLE [--profile P] [--project P] [--json]     the member of the project, model and effort for ROLE under a profile: dispatch spawns it
+#   agent.sh for ROLE [--profile P] [--runtime NAME] [--project P] [--json]     the member of the project, model and effort for ROLE under a profile: dispatch spawns it
+#                                                              The profile is resolved in a runtime, chosen in this order: --runtime, the `runtime` of the profile, the project's
+#                                                              own; it must be the project's own or one of models.extra_runtimes.local (runtime-not-enabled). Only a project that
+#                                                              has extra runtimes sees the runtime named: a fifth word of the line and the key `runtime` of the JSON; agent models
+#                                                              then has a RUNTIME column and resolves each profile in its own.
 #   agent.sh for ROLE [--profile P] --surface cloud --project P [--opt-in] [--json]     the same for the cloud: the registered instance
 #                                                              (<project>-worker or -reviewer), its model id and effort
 . "$(dirname "$0")/lib.sh"
@@ -39,6 +43,8 @@ AGENT_PY=$(cat <<'PYEOF'
 #   pdesc PROV SURFACE                                the runtime on a surface, as provider.summary() gives it: tiers, aliases, effort, model_pattern, reserved_names, adapter
 #   names                                             the providers that have a definition, one per line
 #   dmode PROV [PROJECT]                              the local dispatch mode; with PROJECT, also validate its extension composition
+#   runtimes PROJECT                                  {primary, extra}: the project's own runtime on the local surface and the extra ones (provider.local_runtimes_of)
+#   rtverdict PROJECT NAME                            ok, or why NAME cannot be an extra runtime of the project (provider.runtime_verdict)
 #   render PROV NAME ABILITIES CLASS MODEL EFFORT [PROJECT]
 #                                                     the member file the runtime of PROV renders: {runtime, path, content, sha256, inputs_hash, notes, agents}
 #                                                     With a PROJECT the runtime is the one composed with the extensions the project enabled (its
@@ -216,6 +222,11 @@ def main(argv):
             print(json.dumps(P.summary(a[0], a[1])))
         elif verb == "names" and not a:
             print("\n".join(P.names()))
+        elif verb == "runtimes" and len(a) == 1:
+            own, extra = P.local_runtimes_of(a[0])
+            print(json.dumps({"primary": own, "extra": extra}))
+        elif verb == "rtverdict" and len(a) == 2:
+            print(P.runtime_verdict(a[0], a[1]))
         elif verb == "dmode" and len(a) in (1, 2):
             print((P.composed(a[0], "local", (a[1] if len(a) == 2 else "") or None).get("dispatch") or {}).get("mode") or "")
         elif verb == "render" and len(a) in (6, 7):
@@ -242,7 +253,7 @@ pdesc() { # runtime surface -> its summary on that surface: tiers (ids), aliases
 }
 
 verb=${1:-}; shift || true
-POS=() ROLES='' MODEL='' EFFORT='' PROJ='' JSON='' PROFILE='' SURFACE='' OPTIN=''
+POS=() ROLES='' MODEL='' EFFORT='' PROJ='' JSON='' PROFILE='' SURFACE='' OPTIN='' RUNTIME=''
 while [ $# -gt 0 ]; do
   case $1 in
     --roles) need_val "$1" $#; ROLES=$2; shift 2;;
@@ -250,6 +261,7 @@ while [ $# -gt 0 ]; do
     --effort) need_val "$1" $#; EFFORT=$2; shift 2;;
     --project) need_val "$1" $#; PROJ=$2; shift 2;;
     --profile) need_val "$1" $#; PROFILE=$2; shift 2;;
+    --runtime) need_val "$1" $#; RUNTIME=$2; shift 2;;
     --json) JSON=1; shift;;
     --surface) need_val "$1" $#; SURFACE=${2:-}; shift 2;;
     --opt-in) OPTIN=1; shift;;
@@ -257,6 +269,7 @@ while [ $# -gt 0 ]; do
     *) POS+=("$1"); shift;;
   esac
 done
+[ -z "$RUNTIME" ] || [ "$verb" = for ] || usage_die "--runtime: only qargi agent for takes it"
 
 valid_name() { # name provider -> dies with the rule (the reserved names are the provider's)
   local n=$1 b lc p=$2
@@ -538,11 +551,17 @@ role_classes() { # -> {role: class} for every role (a role without a readable cl
 }
 
 models() { # the bases, the profiles with the project's own merged in, the escalation and the registered members
-  local proj=$PROJ pf prov pd tiers aliases rc out noeff=false st mode
+  local proj=$PROJ pf prov pd tiers aliases rc out noeff=false st mode xr
   if [ -n "$proj" ]; then [ -f "$DA_CONF/projects/$proj.json" ] || die "no stored answers for $proj"
   else proj=$(pymod help infer); fi   # no project at all is refused just below, by provider_for: the provider is the project's
   pf=$(pf_json "$proj")
   prov=$(provider_for "$proj" local) || exit $?   # the members are local
+  if [ -z "${MODELS_OWN:-}" ]; then   # a project with extra runtimes: each profile is resolved in its own runtime (models_extras asks this function for the project's own)
+    if has_extras "$pf"; then
+      xr=$(apy runtimes "$proj") || exit 1
+      if [ "$(jq '.extra | length' <<<"$xr")" != 0 ]; then models_extras "$proj" "$prov" "$pf" "$xr"; return; fi
+    fi
+  fi
   pd=$(pdesc "$prov" local) || exit 1
   mode=$(apy dmode "$prov") || exit 1
   if [ "$mode" = command ]; then models_command "$prov" "$proj"; return; fi
@@ -621,15 +640,18 @@ RESOLVEJQ="$RESOLVE_HEAD"'
           tier: $p.tier, model: $p.model, model_id: $p.model_id, effort: $p.effort, opt_in: $p.opt_in, purpose: $p.purpose}} end
     )'
 
+# The profile name a role asks for (--profile, else the profile named like the role, else build or review by class), shared by the resolver and by the
+# choice of the runtime, which reads the `runtime` the entry of that profile names before the profile is resolved.
+REQUESTED='
+  def requested:
+    if $prof != "" then $prof
+    elif ($d[0].profiles | has($role)) or (($pf.profiles | type) == "object" and ($pf.profiles | has($role))) then $role
+    elif $rclass == "read-only" then "review" else "build" end;'
 # A command runtime starts a process, so the base is logical and no registered member is needed.
 # Validate the selected raw entry before RESOLVE_HEAD calls profiles/pclean. In particular, a malformed
 # custom-role entry must not disappear and select the class fallback. Other entries remain independent.
 # Per-role member answers do not select command profiles; shared role/base/class refusals still apply.
-CMDJQ='
-  def requested:
-    if $prof != "" then $prof
-    elif ($d[0].profiles | has($role)) or (($pf.profiles | type) == "object" and ($pf.profiles | has($role))) then $role
-    elif $rclass == "read-only" then "review" else "build" end;
+CMDJQ="$REQUESTED"'
   def rawerr($pn):
     if ($pf | has("profiles") | not) or $pf.profiles == null then null
     elif ($pf.profiles | type) != "object" then "profiles is not an object (found \($pf.profiles | tojson))"
@@ -640,7 +662,8 @@ CMDJQ='
         elif ($r | has("abilities")) and (($r.abilities | type) != "array" or any($r.abilities[]; type != "string")) then "abilities \($r.abilities | tojson) are not a list of role names"
         elif ($r | has("abilities")) and any($r.abilities[]; $rc[.] == null) then "abilities contain an unknown role (\([$r.abilities[] | select($rc[.] == null)] | join(", ")))"
         elif ($r | has("purpose")) and (($r.purpose | type) != "string" or ($r.purpose | length) > 300) then "purpose is not a string of at most 300 characters"
-        elif (($r | keys) - ["base", "abilities", "purpose", "model", "tier", "effort"] | length) > 0 then "unknown profile keys (\(($r | keys) - ["base", "abilities", "purpose", "model", "tier", "effort"] | join(", ")))"
+        elif ($r | has("runtime")) and (($r.runtime | type) != "string" or ($r.runtime | test("^[a-z][a-z0-9-]{0,40}$") | not)) then "runtime \($r.runtime | tojson) is not a runtime name"
+        elif (($r | keys) - ["base", "abilities", "purpose", "model", "tier", "effort", "runtime"] | length) > 0 then "unknown profile keys (\(($r | keys) - ["base", "abilities", "purpose", "model", "tier", "effort", "runtime"] | join(", ")))"
         elif ($r | has("effort")) and ($r.effort | okeff | not) then "effort \($r.effort | tojson) is not a level (low, medium, high, xhigh, max)"
         elif ($r | has("model")) and ($r.model | okmod | not) then "model \($r.model | tojson) is not a model id (letters, digits, . -)"
         elif ($r | has("model")) and tier_of($r.model) == null and ($r.model | test($pat) | not) then "model \($r.model) is not in the catalog of \($prov) and does not match its pattern \($pat)"
@@ -649,7 +672,7 @@ CMDJQ='
     end;
   requested as $rawpn
   | rawerr($rawpn) as $err
-  | if $err != null then {code: 2, err: "the \($rawpn) profile is refused on \($prov): \($err)"}
+  | if $err != null then {code: 2, err: "the \($rawpn) profile is refused on \($prov): \($err)", model_refused: ($err | test("^model .* does not match its pattern"))}
     else '"$RESOLVE_HEAD"'
   def lerr: if $p.model_id == null then "the tier of the \($pn) profile (\($p.tier // "none")) is not in the catalog of \($prov)"
       elif $p.effort != null and ($efforts | has($p.effort) | not) then "effort \($p.effort) is not a level of \($prov) (\($efforts | keys | join(", ")))"
@@ -673,9 +696,8 @@ command_query() { # project runtime jq-program [role profile class] -> shared co
     --arg role "$role" --arg rclass "$cls" --arg prof "$prof" --arg use "$(jq -r '.use // ""' <<<"$pd")" "$PJQ$query" || die "could not resolve the profile"
 }
 
-models_command() { # runtime project -> each profile resolved under its logical base class, using the same CMDJQ as agent for
-  local prov=$1 proj=$2 out
-  out=$(command_query "$proj" "$prov" '
+models_command_out() { # runtime project -> the JSON of each profile resolved under its logical base class, using the same CMDJQ as agent for
+  command_query "$2" "$1" '
     def answer($role; $rclass; $prof): '"$CMDJQ"';
     [profiles | {key: .name, value: .}] | from_entries as $P
     | (($pf.profiles // {}) | if type == "object" then . else {} end) as $raw
@@ -696,7 +718,12 @@ models_command() { # runtime project -> each profile resolved under its logical 
                then . + {refused: null, flags: []} else . end end
          | {key: $n, value: .}] | from_entries),
        escalate: ($d[0].escalate | with_entries(.value = {tier: .value, model: $tiers[.value]})), members: []}
-    | .warnings = [.profiles[] | .name as $n | .flags[] | {kind: "profile", name: $n, message: .}]') || exit $?
+    | .warnings = [.profiles[] | .name as $n | .flags[] | {kind: "profile", name: $n, message: .}]'
+}
+
+models_command() { # runtime project -> each profile resolved under its logical base class, using the same CMDJQ as agent for
+  local prov=$1 proj=$2 out
+  out=$(models_command_out "$prov" "$proj") || exit $?
   if [ -n "$JSON" ]; then printf '%s\n' "$out"; return 0; fi
   echo "bases (logical, by guard class; command dispatch needs no member registration)"
   jq -r '.bases | to_entries[] | [.key, .value.class, (.value.abilities | join(","))] | @tsv' <<<"$out" \
@@ -708,18 +735,101 @@ models_command() { # runtime project -> each profile resolved under its logical 
   jq -r '"  offer \(.escalate.build.tier) (\(.escalate.build.model)) for a hard task: only when asked"' <<<"$out"
 }
 
+models_extras() { # project own-runtime answers runtimes-json -> the table of a project with extra runtimes: each profile resolved in its own runtime, and a RUNTIME column
+  local proj=$1 own=$2 pf=$3 xr=$4 base rts e v eo exj='{}' out
+  base=$( MODELS_OWN=1; JSON=1; models ) || exit $?   # the project's own runtime, as it is without extras
+  rts=$(jq -c '(.profiles // {}) | if type == "object" then with_entries(select(.value | type == "object" and (.runtime | type) == "string") | .value |= .runtime) else {} end' <<<"$pf")
+  for e in $(jq -r --argjson x "$xr" '[.[] | select(. as $r | $x.extra | index($r))] | unique | .[]' <<<"$rts"); do   # the extra runtimes some profile names
+    v=$(apy rtverdict "$proj" "$e" 2>/dev/null) || v=unknown
+    if [ "$v" = ok ] && eo=$(models_command_out "$e" "$proj" 2>/dev/null); then exj=$(jq -c --arg e "$e" --argjson o "$eo" '.[$e] = $o' <<<"$exj"); fi
+  done
+  out=$(jq -c --argjson rts "$rts" --argjson ex "$exj" --argjson xr "$xr" --arg own "$own" --argjson pd "$(pdesc "$own" local)" '
+    ((.mode // "") == "command") as $cmd
+    | .runtimes = $xr
+    | .profiles |= with_entries(.key as $n | ($rts[$n] // $own) as $rt
+        | if $rt == $own then .value += {runtime: $rt}
+            | if ($cmd | not) and .value.tier == null and .value.model == null and .value.model_id != null and (.value.model_id | test($pd.model_pattern // "^.+$") | not)
+              then .value.refused = "the \($n) profile is refused on \($own): model \(.value.model_id) is not in the catalog of \($own) and does not match its pattern"
+                | .value.flags = ["refused: " + .value.refused] else . end
+          elif $ex[$rt] != null then .value = (($ex[$rt].profiles[$n] // .value) + {runtime: $rt})
+          else .value += {runtime: $rt, refused: (if ($xr.extra | index($rt)) then "the runtime \($rt) cannot be used (qargi provider check \($rt))" else "the runtime \($rt) is not enabled for this project (qargi provider enable PROJECT --runtime \($rt))" end),
+               selected: null, requested_effort: null, model: null, model_id: null}
+               | .value.flags = ["refused: " + .value.refused] end)
+    | .warnings = ([.warnings[] | select(.kind != "profile")] + [.profiles | to_entries[] | .key as $n | (.value.flags // [])[] | {kind: "profile", name: $n, message: .}])' <<<"$base")
+  if [ -n "$JSON" ]; then printf '%s\n' "$out"; return 0; fi
+  echo "runtimes: $own (the project's own)$(jq -r '.runtimes.extra | map(", " + .) | join("")' <<<"$out")"
+  echo "bases (one member each, by guard class; logical, with no member to register, for a command runtime)"
+  jq -r '.bases | to_entries[] | [.key, .value.class, (.value.abilities | join(",")), (if .value.registered then "registered" elif .value.logical then "logical" else "not registered" end), (.value.flags | map("! " + .) | join("; "))] | @tsv' <<<"$out" \
+    | while IFS=$'\t' read -r n c a r fl; do printf '  %-10s %-10s %-18s %-15s %s\n' "$n" "$c" "$a" "$r" "$fl"; done
+  echo "profiles (base, runtime, tier -> alias -> model/effort or the selected model and requested effort, source; each resolved in its own runtime)"
+  jq -r '.profiles[] | [.name, (.base // "-"), .runtime,
+      (if has("selected") then ((.selected // "-") + "/" + (.requested_effort // "default")) else ((.tier // "?") + " -> " + (.model // "-") + " -> " + (.model_id // "-") + "/" + (.effort // "default")) end),
+      (.source + (if .via_roles then " (roles)" else "" end)),
+      ([if .opt_in then "opt-in" elif .name == "lead" and .refused == null then "never dispatched" else empty end] + (.flags | map("! " + .)) | join("; "))] | @tsv' <<<"$out" \
+    | while IFS=$'\t' read -r n b r d s fl; do printf '  %-13s %-9s %-12s %-52s %-10s %s\n' "$n" "$b" "$r" "$d" "$s" "$fl"; done
+  jq -r '"  offer \(.escalate.build.tier) (\(.escalate.build.model)) for a hard task: only when asked"' <<<"$out"
+  if [ "$(jq -r '.mode // ""' <<<"$out")" != command ]; then   # the project's own runtime works in the session: its members
+    echo "members"
+    if [ "$(jq '.members | length' <<<"$out")" = 0 ]; then echo "  none yet (qargi agent add NAME --project P)"; else
+      jq -r '.members[] | "  \(.name)\t\(.roles | join(","))\t\(.model // "-")/\(.effort // "default")\t\(.flags | map("! " + .) | join("; "))"' <<<"$out" \
+        | while IFS=$'\t' read -r n a me note; do printf '  %-12s %-22s %-28s %s\n' "${n# }" "$a" "$me" "$note"; done
+    fi
+  fi
+}
+
+# The runtime a request is resolved in (qargi agent for): --runtime, else the `runtime` the entry of the profile names, else the project's own. It must be the
+# project's own or one of its extra runtimes (models.extra_runtimes.local), and an extra one must still be usable as it stands. Sets RT, and HASX: the extra
+# runtimes of the project on one line, empty for a project that has none; a word of the runtime is printed on that condition and on no other.
+profile_runtime() { # role profile-or-empty project -> the runtime the entry of the requested profile names, as written ("?" when it is not a name); nothing when it names none
+  local pf; pf=$(pf_json "$3" | jq -c 'del(.roles, .lead)')
+  jq -nr --slurpfile d "$DEFAULTS" --argjson pf "$pf" --arg role "$1" --arg rclass "$(role_class "$1")" --arg prof "$2" "$REQUESTED"'
+    requested as $pn | ($pf.profiles | objects | .[$pn]? | objects | .runtime?) // empty
+    | if type == "string" and test("^[a-z][a-z0-9-]{0,40}$") then . else "?" end'
+}
+
+has_extras() { # answers-json -> 0 when the answers list extra runtimes (the cheap reading: a list that names none needs no look at the runtimes)
+  jq -e '(.models.extra_runtimes.local? // []) | type == "array" and any(.[]; type == "string")' <<<"$1" >/dev/null 2>&1
+}
+
+pick_runtime() { # role profile-or-empty project own-runtime answers-json
+  local role=$1 prof=$2 proj=$3 own=$4 want verdict rts
+  HASX=''
+  if has_extras "$5"; then
+    rts=$(apy runtimes "$proj") || exit 1
+    HASX=$(jq -r '.extra | join(" ")' <<<"$rts")
+  fi
+  RT=$own want=$RUNTIME
+  [ -n "$want" ] || want=$(profile_runtime "$role" "$prof" "$proj") || exit $?
+  [ "$want" != '?' ] || { echo "qargi: the profile of the $role role names a runtime that is not a runtime name (lower-case letters, digits and '-')" >&2; exit 2; }
+  [ -n "$want" ] && [ "$want" != "$own" ] || return 0
+  [[ " $HASX " == *" $want "* ]] || refuse runtime-not-enabled name="$want"
+  verdict=$(apy rtverdict "$proj" "$want") || exit 1
+  [ "$verdict" = ok ] || refuse runtime-unusable name="$want" why="$verdict"
+  RT=$want
+}
+
 resolve_command() { # role profile-or-empty project runtime -> the logical base, selected model and requested effort
   local role=$1 prof=$2 proj=$3 prov=$4 res code
   res=$(command_query "$proj" "$prov" "$CMDJQ" "$role" "$prof" "$(role_class "$role")") || exit $?
   code=$(jq -r .code <<<"$res")
-  if [ "$code" != 0 ]; then echo "qargi: $(jq -r .err <<<"$res")" >&2; exit "$code"; fi
-  if [ -n "$JSON" ]; then jq '.out' <<<"$res"; return 0; fi
-  jq -r '.out | "\(.member) \(.model // .model_id) \(.effort // "default") \(.profile)"' <<<"$res"
+  if [ "$code" != 0 ]; then
+    # a project with extra runtimes names the rule when a profile's own model is not one of the runtime it is resolved in
+    if [ -n "${HASX:-}" ] && [ "$(jq -r '.model_refused // false' <<<"$res")" = true ]; then
+      refuse runtime-profile-model name="$prov" profile="$(jq -r '.err | capture("^the (?<p>[a-z][a-z0-9-]*) profile").p' <<<"$res")"
+    fi
+    echo "qargi: $(jq -r .err <<<"$res")" >&2; exit "$code"
+  fi
+  if [ -n "$JSON" ]; then jq --arg x "${HASX:-}" --arg rt "${RT:-}" '.out | if $x != "" then . + {runtime: $rt} else . end' <<<"$res"; return 0; fi
+  jq -r --arg rt "${HASX:+ $RT}" '.out | "\(.member) \(.model // .model_id) \(.effort // "default") \(.profile)\($rt)"' <<<"$res"
 }
 
 resolve_for() { # role profile-or-empty project-or-empty -> prints the answer, or the reason on stderr (exit 1, or 2 for a refusal)
-  local role=$1 prof=$2 proj=$3 pf prov pd res code noeff=false mem mm want ov mode
-  pf=$(pf_json "$proj"); prov=$(provider_for "$proj" local) || exit $?
+  local role=$1 prof=$2 proj=$3 pf prov pd res code noeff=false mem mm want ov mode own bad
+  # shellcheck disable=SC2034  # refuse (lib/lib.sh) names the verb and the project of its contract line from these
+  PROJECT=$proj QARGI_VERB="agent for"
+  pf=$(pf_json "$proj"); own=$(provider_for "$proj" local) || exit $?
+  pick_runtime "$role" "$prof" "$proj" "$own" "$pf"
+  prov=$RT
   mode=$(apy dmode "$prov") || exit 1
   if [ "$mode" = command ]; then resolve_command "$role" "$prof" "$proj" "$prov"; return; fi
   ! no_effort "$prov" local || noeff=true
@@ -729,6 +839,11 @@ resolve_for() { # role profile-or-empty project-or-empty -> prints the answer, o
     --arg role "$role" --arg rclass "$(role_class "$role")" --arg prof "$prof" --arg proj "$proj" "$PJQ$RESOLVEJQ") || die "could not resolve the profile"
   code=$(jq -r .code <<<"$res")
   if [ "$code" != 0 ]; then echo "qargi: $(jq -r .err <<<"$res")" >&2; exit "$code"; fi
+  if [ -n "$HASX" ]; then   # with extra runtimes a profile's own model belongs to the runtime it is resolved in: one that is neither in its catalog nor of its pattern is refused
+    bad=$(jq -rn --argjson pf "$pf" --argjson pd "$pd" --arg pn "$(jq -r .out.profile <<<"$res")" '($pf.profiles | objects | .[$pn]? | objects | .model? | strings) as $m
+      | select(([$pd.tiers[], ($pd.aliases // {})[]] | index($m)) == null and ($m | test($pd.model_pattern // "^.+$") | not)) | $pn')
+    [ -z "$bad" ] || refuse runtime-profile-model name="$prov" profile="$bad"
+  fi
   # a provider that cannot set the model per dispatch runs the member's own model and no other
   ov=$(pymod provider effective "$prov" local per_dispatch_model_override ${proj:+--project "$proj"} 2>/dev/null) || ov=no
   if [ "$ov" = no ]; then
@@ -739,8 +854,8 @@ resolve_for() { # role profile-or-empty project-or-empty -> prints the answer, o
       exit 2
     fi
   fi
-  if [ -n "$JSON" ]; then jq '.out' <<<"$res"; return 0; fi
-  jq -r '.out | "\(.member) \(.model // "-") \(.effort // "default") \(.profile)"' <<<"$res"
+  if [ -n "$JSON" ]; then jq --arg x "$HASX" --arg rt "$prov" '.out | if $x != "" then . + {runtime: $rt} else . end' <<<"$res"; return 0; fi
+  jq -r --arg rt "${HASX:+ $prov}" '.out | "\(.member) \(.model // "-") \(.effort // "default") \(.profile)\($rt)"' <<<"$res"
   if [ "$(jq -r '.out.model // ""' <<<"$res")" = "" ]; then
     echo "qargi: warning: model $(jq -r '.out.model_id' <<<"$res") has no alias; the definition of member $(jq -r .out.member <<<"$res") applies. To pass an alias, give the profile a tier that has one in place of the model, such as tier: frontier" >&2
   fi
@@ -899,12 +1014,14 @@ case $verb in
     case $f in *.agents/*) echo "qargi: note: a worktree that linked it still has a dangling link; qargi project link $mproj --resource agents drops it" >&2;; esac;;
   for)
     a=${POS[0]:-}
-    [ -n "$a" ] && [ "$a" != lead ] && valid_role "$a" || usage_die "usage: qargi agent for ROLE [--profile P] [--project P] [--json]   (a role of: $DA_ROLES)"
+    [ -n "$a" ] && [ "$a" != lead ] && valid_role "$a" || usage_die "usage: qargi agent for ROLE [--profile P] [--runtime NAME] [--project P] [--json]   (a role of: $DA_ROLES)"
     [ -z "$PROFILE" ] || printf '%s' "$PROFILE" | grep -Eq '^[a-z][a-z0-9-]{0,30}$' || usage_die "--profile: a profile name (lower-case letters, digits and '-', at most 31)"
+    [ -z "$RUNTIME" ] || printf '%s' "$RUNTIME" | grep -Eq '^[a-z][a-z0-9-]{0,40}$' || usage_die "--runtime: a runtime name (lower-case letters, digits and '-', at most 41)"
     [ -n "$PROJ" ] || PROJ=$(pymod help infer)
     case $SURFACE in
       ''|local) resolve_for "$a" "$PROFILE" "$PROJ";;
-      cloud) [ -n "$PROJ" ] || PROJ=$(pymod help infer); resolve_cloud "$a" "$PROFILE" "$PROJ";;
+      cloud) [ -z "$RUNTIME" ] || usage_die "--runtime is for the local surface: a cloud instance runs on its own platform"
+        [ -n "$PROJ" ] || PROJ=$(pymod help infer); resolve_cloud "$a" "$PROFILE" "$PROJ";;
       *) usage_die "--surface: local or cloud";;
     esac;;
   *) usage_die "usage: qargi agent add|list|models|rename|refresh|remove|for ...";;

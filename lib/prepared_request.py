@@ -63,17 +63,29 @@ def validate(request):
     return request
 
 
+def refusal_text(stderr):
+    """The standard error of a refused verb without its contract line (the line a lead reads by machine, which says nothing here)."""
+    return "\n".join(l for l in stderr.strip().splitlines() if not l.startswith("qargi-refusal/1 "))
+
+
 def prepare(project, runtime, role, cls, selector=None):
-    """Resolve and bind before prepare creates RUN/TMP/clone artifacts."""
+    """Resolve and bind before prepare creates RUN/TMP/clone artifacts.
+
+    The profile is resolved in RUNTIME, which agent for is told when the project has extra runtimes or RUNTIME is not its own: the option beats the
+    runtime a profile names. The request of the project's own runtime is the one it was without extras: the answer of agent for is digested without
+    its `runtime` key, and the enabling record of an extra runtime joins the policy only for an extra runtime."""
     comp = P.compose(runtime, "local", project)
     dispatch = comp["definition"].get("dispatch")
     need(isinstance(dispatch, dict) and dispatch.get("mode") == "command", "runtime dispatch mode changed" + GUIDANCE)
+    primary, extra = P.local_runtimes_of(project)
     args = ["bash", HERE + "/agent.sh", "for", role, "--project", project, "--json"]
     if selector is not None:
         args += ["--profile", selector]
+    if extra or runtime != primary:
+        args += ["--runtime", runtime]
     result = subprocess.run(args, stdin=subprocess.DEVNULL, capture_output=True, text=True,
                             env=dict(os.environ, PATH=clean_path(), DA_NOSETUP="1"), close_fds=True, timeout=30)
-    need(result.returncode == 0, result.stderr.strip() or "command profile resolution failed")
+    need(result.returncode == 0, refusal_text(result.stderr) or "command profile resolution failed")
     try:
         selection = json.loads(result.stdout)
         need(selection["mode"] == "command" and selection["class"] == cls, "command profile mode/class mismatch")
@@ -87,13 +99,16 @@ def prepare(project, runtime, role, cls, selector=None):
     policy = {key: P.cap(runtime, "local", key, project=project) for key in (
         "per_dispatch_model_override", "per_dispatch_effort_override", "read_only_barrier")}
     policy["accept_no_barrier"] = P.accepted(project, "local")
+    if runtime != primary:
+        policy["enabled_extra"] = runtime
     profiles = (P.project_answers(project) or {}).get("profiles")
     selected_input = {"present": isinstance(profiles, dict) and selection["profile"] in profiles,
                       "value": profiles.get(selection["profile"]) if isinstance(profiles, dict) else None}
     with open(HERE + "/model-defaults.json", encoding="utf-8") as source:
         defaults = json.load(source)
     request["binding"] = dict(runtime=P.definition_hash(runtime), catalog=digest(models),
-                              composition=digest(comp), selection=digest([selection, selected_input, defaults]), policy=digest(policy))
+                              composition=digest(comp), selection=digest([{k: v for k, v in selection.items() if k != "runtime"}, selected_input, defaults]),
+                              policy=digest(policy))
     return validate(request)
 
 

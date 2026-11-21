@@ -1,0 +1,334 @@
+--- agent for build
+worker gpt-6.1-terra high build
+exit 0
+--- agent for build --json
+{
+  "role": "build",
+  "class": "write",
+  "profile": "build",
+  "mode": "command",
+  "profile_source": "shipped",
+  "base": "worker",
+  "member": "worker",
+  "tier": "balanced",
+  "model": null,
+  "model_id": "gpt-6.1-terra",
+  "effort": "high",
+  "opt_in": false,
+  "purpose": "changes the code of a project, with its tests and documentation, in a clone of its own"
+}
+exit 0
+--- agent for review
+reviewer gpt-6.1-sol high review
+exit 0
+--- agent for review --json
+{
+  "role": "review",
+  "class": "read-only",
+  "profile": "review",
+  "mode": "command",
+  "profile_source": "shipped",
+  "base": "reviewer",
+  "member": "reviewer",
+  "tier": "deep",
+  "model": null,
+  "model_id": "gpt-6.1-sol",
+  "effort": "high",
+  "opt_in": false,
+  "purpose": "judges a change someone else made and writes a report; read-only"
+}
+exit 0
+--- agent for --profile worker-fast
+worker gpt-6-luna low worker-fast
+exit 0
+--- agent for --profile reviewer-deep
+reviewer gpt-6.1-sol high reviewer-deep
+exit 0
+--- agent models
+bases (logical, by guard class; command dispatch needs no member registration)
+  worker     write      build,write,test
+  reviewer   read-only  review
+profiles (provider: codex, command mode; base, selected model id or alias, requested effort level, source)
+  lead        -         -                      default  shipped  never dispatched
+  build       worker    gpt-6.1-terra          high     shipped  
+  write       worker    gpt-6.1-terra          medium   shipped  
+  test        worker    gpt-6.1-terra          low      shipped  
+  review      reviewer  gpt-6.1-sol            high     shipped  
+  auditor     reviewer  gpt-6-luna             low      shipped  
+  advisor     reviewer  gpt-6.1-sol            high     shipped  
+  researcher  reviewer  gpt-6-astra            high     shipped  opt-in
+  worker-fast worker    gpt-6-luna             low      project  
+  reviewer-deep reviewer  gpt-6.1-sol            high     project  
+  offer frontier (gpt-6-astra) for a hard task: only when asked
+exit 0
+--- agent models --json
+{
+  "provider": "codex",
+  "mode": "command",
+  "effort_control": true,
+  "aliases": {
+    "fast": null,
+    "balanced": null,
+    "deep": null,
+    "frontier": null
+  },
+  "bases": {
+    "worker": {
+      "abilities": [
+        "build",
+        "write",
+        "test"
+      ],
+      "class": "write",
+      "logical": true,
+      "registered": false,
+      "flags": []
+    },
+    "reviewer": {
+      "abilities": [
+        "review"
+      ],
+      "class": "read-only",
+      "logical": true,
+      "registered": false,
+      "flags": []
+    }
+  },
+  "profiles": {
+    "lead": {
+      "name": "lead",
+      "base": null,
+      "class": null,
+      "tier": "balanced",
+      "model": null,
+      "model_id": null,
+      "effort": null,
+      "opt_in": false,
+      "purpose": "coordinates a team; shown here, never dispatched as a member",
+      "abilities": null,
+      "shipped": true,
+      "project": false,
+      "via_roles": false,
+      "source": "shipped",
+      "refused": null,
+      "mode": "command",
+      "selected": null,
+      "requested_effort": null,
+      "flags": []
+    },
+    "build": {
+      "name": "build",
+      "base": "worker",
+      "class": "write",
+      "tier": "balanced",
+      "model": null,
+      "model_id": "gpt-6.1-terra",
+      "effort": "high",
+      "opt_in": false,
+      "purpose": "changes the code of a project, with its tests and documentation, in a clone of its own",
+      "abilities": null,
+      "shipped": true,
+      "project": false,
+      "via_roles": false,
+      "source": "shipped",
+      "refused": null,
+      "mode": "command",
+      "selected": "gpt-6.1-terra",
+      "requested_effort": "high",
+      "flags": []
+    },
+    "write": {
+      "name": "write",
+      "base": "worker",
+      "class": "write",
+      "tier": "balanced",
+      "model": null,
+      "model_id": "gpt-6.1-terra",
+      "effort": "medium",
+      "opt_in": false,
+      "purpose": "writes the operational documentation on the documentation branch",
+      "abilities": null,
+      "shipped": true,
+      "project": false,
+      "via_roles": false,
+      "source": "shipped",
+      "refused": null,
+      "mode": "command",
+      "selected": "gpt-6.1-terra",
+      "requested_effort": "medium",
+      "flags": []
+    },
+    "test": {
+      "name": "test",
+      "base": "worker",
+      "class": "write",
+      "tier": "balanced",
+      "model": null,
+      "model_id": "gpt-6.1-terra",
+      "effort": "low",
+      "opt_in": false,
+      "purpose": "writes and repairs tests and reports how the suite behaves",
+      "abilities": null,
+      "shipped": true,
+      "project": false,
+      "via_roles": false,
+      "source": "shipped",
+      "refused": null,
+      "mode": "command",
+      "selected": "gpt-6.1-terra",
+      "requested_effort": "low",
+      "flags": []
+    },
+    "review": {
+      "name": "review",
+      "base": "reviewer",
+      "class": "read-only",
+      "tier": "deep",
+      "model": null,
+      "model_id": "gpt-6.1-sol",
+      "effort": "high",
+      "opt_in": false,
+      "purpose": "judges a change someone else made and writes a report; read-only",
+      "abilities": null,
+      "shipped": true,
+      "project": false,
+      "via_roles": false,
+      "source": "shipped",
+      "refused": null,
+      "mode": "command",
+      "selected": "gpt-6.1-sol",
+      "requested_effort": "high",
+      "flags": []
+    },
+    "auditor": {
+      "name": "auditor",
+      "base": "reviewer",
+      "class": "read-only",
+      "tier": "fast",
+      "model": null,
+      "model_id": "gpt-6-luna",
+      "effort": "low",
+      "opt_in": false,
+      "purpose": "checks a diff or a feature in a clone of its own, read-only",
+      "abilities": null,
+      "shipped": true,
+      "project": false,
+      "via_roles": false,
+      "source": "shipped",
+      "refused": null,
+      "mode": "command",
+      "selected": "gpt-6-luna",
+      "requested_effort": "low",
+      "flags": []
+    },
+    "advisor": {
+      "name": "advisor",
+      "base": "reviewer",
+      "class": "read-only",
+      "tier": "deep",
+      "model": null,
+      "model_id": "gpt-6.1-sol",
+      "effort": "high",
+      "opt_in": false,
+      "purpose": "reviews the lead's synthesized diff (diff stat, task reports, gate verdicts) before sign-off",
+      "abilities": null,
+      "shipped": true,
+      "project": false,
+      "via_roles": false,
+      "source": "shipped",
+      "refused": null,
+      "mode": "command",
+      "selected": "gpt-6.1-sol",
+      "requested_effort": "high",
+      "flags": []
+    },
+    "researcher": {
+      "name": "researcher",
+      "base": "reviewer",
+      "class": "read-only",
+      "tier": "frontier",
+      "model": null,
+      "model_id": "gpt-6-astra",
+      "effort": "high",
+      "opt_in": true,
+      "purpose": "research and design judgment on a hard question; read-only; use only when the lead or the owner names it for the task",
+      "abilities": null,
+      "shipped": true,
+      "project": false,
+      "via_roles": false,
+      "source": "shipped",
+      "refused": null,
+      "mode": "command",
+      "selected": "gpt-6-astra",
+      "requested_effort": "high",
+      "flags": []
+    },
+    "worker-fast": {
+      "name": "worker-fast",
+      "base": "worker",
+      "class": "write",
+      "tier": "fast",
+      "model": null,
+      "model_id": "gpt-6-luna",
+      "effort": "low",
+      "opt_in": false,
+      "purpose": "",
+      "abilities": [
+        "build"
+      ],
+      "shipped": false,
+      "project": true,
+      "via_roles": false,
+      "source": "project",
+      "refused": null,
+      "mode": "command",
+      "selected": "gpt-6-luna",
+      "requested_effort": "low",
+      "flags": []
+    },
+    "reviewer-deep": {
+      "name": "reviewer-deep",
+      "base": "reviewer",
+      "class": "read-only",
+      "tier": "deep",
+      "model": null,
+      "model_id": "gpt-6.1-sol",
+      "effort": "high",
+      "opt_in": false,
+      "purpose": "",
+      "abilities": [
+        "review"
+      ],
+      "shipped": false,
+      "project": true,
+      "via_roles": false,
+      "source": "project",
+      "refused": null,
+      "mode": "command",
+      "selected": "gpt-6.1-sol",
+      "requested_effort": "high",
+      "flags": []
+    }
+  },
+  "escalate": {
+    "build": {
+      "tier": "frontier",
+      "model": "gpt-6-astra"
+    },
+    "write": {
+      "tier": "frontier",
+      "model": "gpt-6-astra"
+    },
+    "test": {
+      "tier": "frontier",
+      "model": "gpt-6-astra"
+    },
+    "review": {
+      "tier": "frontier",
+      "model": "gpt-6-astra"
+    }
+  },
+  "members": [],
+  "warnings": []
+}
+exit 0

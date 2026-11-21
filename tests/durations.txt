@@ -154,3 +154,4 @@
 108 bash tests/test_suite_env_flow.sh
 15 python3 tests/test_rolecard.py
 34 bash tests/test_runtime_enable.sh
+17 bash tests/test_runtime_resolve.sh
