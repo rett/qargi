@@ -235,10 +235,10 @@ def cmd_changelog(argv):
 
 
 def cmd_section_empty(argv):
-    """FILE VER AF: exit 0 when the released section of VER has notes (a line that is not blank and not a heading), 1 when it is empty, 2 when the changelog has no such section."""
+    """FILE (- for standard input) VER AF: exit 0 when the released section of VER has notes (a line that is not blank and not a heading), 1 when it is empty, 2 when the changelog has no such section."""
     path, ver, af = argv[:3]
     _, rel = templates(load_release(af))
-    t = open(path, encoding="utf-8", errors="replace").read()
+    t = sys.stdin.buffer.read().decode("utf-8", "replace") if path == "-" else open(path, encoding="utf-8", errors="replace").read()
     m = re.search(r"^" + heading_re(rel, ver) + r"[^\n]*(?:\n|\Z)", t, re.M)
     if not m:
         return 2
@@ -367,15 +367,43 @@ def cmd_th_empty(argv):
     return bad
 
 
+FILE_MODES = ("100644", "100755")
+
+
 def cmd_outside(argv):
-    """The names on standard input (NUL separated) that no PATH covers: the file itself, or a directory above it. Printed one to a line."""
-    paths = [p.rstrip("/") for p in argv if p.rstrip("/")]
-    bad = []
-    for raw in sys.stdin.buffer.read().split(b"\0"):
-        if not raw:
+    """[--dir DIR]... [PATH]...: the entries of `git diff-tree -r --no-renames --raw -z` on standard input that the cut does not cover. A path is covered when it is a
+    PATH (the whole name: `VERSION/x` is not `VERSION`) or lies under a DIR (a directory, by prefix). An entry is outside too when it is a symlink or a gitlink on either
+    side (mode 120000, 160000), or when its mode changes (including the executable bit). The names are printed one to a line; exit 1 when there is one."""
+    paths, dirs, i = [], [], 0
+    while i < len(argv):
+        if argv[i] == "--dir" and i + 1 < len(argv):
+            dirs.append(argv[i + 1].rstrip("/"))
+            i += 2
             continue
-        name = raw.decode("utf-8", "surrogateescape")
-        if not any(name == p or name.startswith(p + "/") for p in paths):
+        paths.append(argv[i].rstrip("/"))
+        i += 1
+    paths = [p for p in paths if p]
+    dirs = [d for d in dirs if d]
+    bad = []
+    toks = sys.stdin.buffer.read().split(b"\0")
+    i = 0
+    while i < len(toks):
+        meta = toks[i]
+        i += 1
+        if not meta.startswith(b":"):
+            if meta:   # not the raw format: nothing can be judged, so whatever it names is outside
+                bad.append(meta.decode("utf-8", "surrogateescape"))
+            continue
+        fields = meta[1:].decode("ascii", "replace").split()
+        if i >= len(toks):
+            bad.append("(unreadable entry)")
+            break
+        name = toks[i].decode("utf-8", "surrogateescape")
+        i += 1
+        old, new = (fields[0], fields[1]) if len(fields) >= 2 else ("?", "?")
+        kinds_ok = all(m in FILE_MODES or m == "000000" for m in (old, new)) and (old == new or "000000" in (old, new))
+        covered = name in paths or any(name.startswith(d + "/") for d in dirs)
+        if not (covered and kinds_ok):
             bad.append(name)
     for name in bad:
         print(name)
