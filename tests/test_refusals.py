@@ -376,6 +376,13 @@ class ThePlanBasis(unittest.TestCase):
         self.assertEqual(tok, hashlib.sha256(b"a dry plan\n").hexdigest()[:12])
         self.assertFalse(os.path.exists(os.path.join(plans_dir(), tok + ".json")))
 
+    def test_only_one_is_a_dry_run_so_unset_empty_and_zero_keep_the_plan(self):
+        for value in ("", "0"):
+            with self.subTest(QARGI_DRY=value):
+                rc, tok, err = self.token("a plan for %r\n" % value, "line", QARGI_DRY=value)
+                self.assertEqual((rc, err), (0, ""))
+                self.assertEqual(stored(tok)["token"], tok)
+
     def test_a_plan_is_kept_seven_days_and_no_longer(self):
         os.makedirs(plans_dir(), mode=0o700, exist_ok=True)
         old, fresh, other = (os.path.join(plans_dir(), n) for n in ("aaaaaaaaaaaa.json", "bbbbbbbbbbbb.json", "keep.txt"))
@@ -430,8 +437,10 @@ class TheDryStops(unittest.TestCase):
             lines = f.read().splitlines()
         self.assertEqual(len(lines), 1)
         self.assertEqual((json.loads(lines[0])["verb"], json.loads(lines[0])["detail"]), ("demo", "some detail"))
-        rc, _, _ = self.run_sh('audit_log demo again', QARGI_DRY="")
-        self.assertEqual(rc, 0, "an empty QARGI_DRY is no dry run")
+        for value in ("", "0"):
+            with self.subTest(QARGI_DRY=value):
+                rc, _, err = self.run_sh('audit_log demo again', QARGI_DRY=value)
+                self.assertEqual(rc, 0, "only QARGI_DRY=1 is a dry run: " + err)
 
     def test_audit_log_in_a_dry_run_is_a_defect_that_writes_nothing_and_takes_no_lock(self):
         before = self.listing()
@@ -453,6 +462,12 @@ class TheDryStops(unittest.TestCase):
         with open(self.file) as f:
             self.assertEqual(json.load(f), {"n": 2})
         self.assertTrue(os.path.exists(self.file + ".lock"))
+        for value in ("", "0"):
+            with self.subTest(QARGI_DRY=value):
+                rc, out, err = self.run_sh('json_update "$DATA" ".n = 3"', QARGI_DRY=value)
+                self.assertEqual((rc, out, err), (0, "", ""), "only QARGI_DRY=1 is a dry run")
+                with open(self.file) as f:
+                    self.assertEqual(json.load(f), {"n": 3})
 
     def test_json_update_in_a_dry_run_is_a_defect_that_changes_nothing_and_makes_no_lock_file(self):
         before = self.listing()
@@ -470,6 +485,9 @@ class TheDryStops(unittest.TestCase):
         rc, out, err = self.run_sh('dry_stop journal_line; echo after', QARGI_DRY="1")
         self.assertEqual((rc, out), (70, ""))
         self.assertIn("journal_line was reached in a dry run", err)
+        for value in ("", "0"):
+            with self.subTest(QARGI_DRY=value):
+                self.assertEqual(self.run_sh('dry_stop journal_line; echo after', QARGI_DRY=value)[:2], (0, "after\n"), "only QARGI_DRY=1 is a dry run")
 
 
 class WhatTheSourceRaises(Tree):
