@@ -87,6 +87,14 @@ out=$(rb fakeno local --project bar3 2>&1); rc=$?
 { [ "$rc" = 2 ] && grep -q 'qargi provider accept fakeno --surface local --no-barrier --project bar3' <<<"$out"; } && ok "the project's own runtime with no barrier is refused with the accept command (exit 2), as before" || no "own runtime: rc=$rc $out"
 out=$(rb fakeno local --project plain 2>&1); rc=$?
 [ "$rc" = 2 ] && ok "a runtime that is not an extra of the project is judged as before (exit 2)" || no "not an extra: rc=$rc $out"
+# the recorded acceptance is for the project's own runtime only: a runtime that is neither its own nor an enabled extra gets none
+mkproj bar4 "$CC" '["fakecx"]'
+jq --argjson a "$ACC" '.models.accept_no_barrier = {local: $a}' "$T/c/projects/bar4.json" > "$T/bar.json" && mv "$T/bar.json" "$T/c/projects/bar4.json"
+out=$(rb fakeno local --project bar4 2>&1); rc=$?
+{ [ "$rc" = 4 ] && grep -q 'not the project.s own runtime' <<<"$out" && ! grep -q 'qargi provider accept' <<<"$out"; } \
+  && ok "acceptance-not-lent: a runtime that is neither the project's own nor an extra gets no acceptance (exit 4) from the one recorded for the own runtime" || no "fakeno on bar4: rc=$rc $out"
+out=$(rb claude-code local --project bar4 2>&1); rc=$?
+[ "$rc" = 0 ] && ok "and the project's own runtime is not affected" || no "own runtime on bar4: rc=$rc $out"
 
 # barrier_guard SURFACE PROJECT [RUNTIME]: the shell gate the verbs call
 guard() { ( . "$TOOL/lib/lib.sh"; barrier_guard "$@" ) 2>&1; }
@@ -97,6 +105,8 @@ out=$(guard local bar fakecx); rc=$?
 { [ "$rc" = 0 ] && grep -q 'partial read-only barrier' <<<"$out"; } && ok "barrier_guard with an extra runtime that has a partial barrier passes with its note" || no "guard fakecx: rc=$rc $out"
 out=$(guard local bar); rc=$?
 { [ "$rc" = 0 ] && grep -q 'partial read-only barrier' <<<"$out"; } && ok "barrier_guard with no runtime asks the project's own runtime, as before" || no "guard own: rc=$rc $out"
+out=$(guard local bar4 fakeno); rc=$?
+{ [ "$rc" = 1 ] && grep -q '"code":"runtime-barrier-missing"' <<<"$out"; } && ok "barrier_guard of a runtime that is not the project's own does not take its acceptance either (runtime-barrier-missing)" || no "guard bar4 fakeno: rc=$rc $out"
 out=$(guard local bar3); rc=$?
 { [ "$rc" = 2 ] && grep -q 'qargi provider accept fakeno' <<<"$out"; } && ok "barrier_guard of a project whose own runtime has none is refused with the accept command (exit 2), as before" || no "guard bar3: rc=$rc $out"
 
@@ -169,6 +179,9 @@ EN en1 --runtime fakecx --approved "go" >"$T/o" 2>"$T/e"; rc=$?
 EN en1 --runtime fakecx --plan "$etok" --approved "go ahead" >"$T/o" 2>"$T/e"; rc=$?
 { [ "$rc" = 1 ] && grep -q '"code":"runtime-reads-unacknowledged"' "$T/e" && grep -q 'refused \[runtime-reads-unacknowledged\] the approval of the runtime fakecx does not carry the phrase' "$T/e" \
   && [ "$(answers_of en1)" = '"none"' ] && [ "$(nlines enable)" = 0 ]; } && ok "reads-unacknowledged: an approval without the phrase is runtime-reads-unacknowledged (exit 1), stores nothing and writes no audit line" || no "no phrase: rc=$rc $(cat "$T/e")"
+EN en1 --runtime fakecx --plan "$etok" --approved "all threads are not confined, they said" >"$T/o" 2>"$T/e"; rc=$?
+{ [ "$rc" = 1 ] && grep -q '"code":"runtime-reads-unacknowledged"' "$T/e" && [ "$(answers_of en1)" = '"none"' ] && [ "$(nlines enable)" = 0 ]; } \
+  && ok "reads-phrase-as-words: 'threads are not confined' does not carry the phrase (runtime-reads-unacknowledged, nothing stored)" || no "threads: rc=$rc $(cat "$T/e")"
 EN en1 --runtime fakecx --plan "$etok" --approved "go ahead, reads  ARE
 not Confined" >"$T/o" 2>"$T/e"; rc=$?
 { [ "$rc" = 0 ] && [ "$(answers_of en1)" = '{"local":["fakecx"]}' ]; } && ok "reads-acknowledged: the same token is still good, and words that carry the phrase (other letter case, runs of blanks) store it" || no "phrase: rc=$rc $(cat "$T/e" "$T/o")"
@@ -234,6 +247,11 @@ out=$(EN en5 --runtime fakecx 2>&1); rc=$?
   && ok "link-source-missing: the plan says missing, the refusal is the one prepare gives, and no token is printed" || no "missing: rc=$rc $out"
 mv "$HOME/.fakecx-members/auth.gone" "$HOME/.fakecx-members/auth.json"
 mkdir -p "$HOME/.codex"; echo '{}' > "$HOME/.codex/auth.json"
+mkdir -p "$HOME/.fakedirsrc-members/auth.json"
+fake_command_runtime "$SRC" "$TOOL" fakedirsrc '.dispatch.home.link = [{from: "~/.fakedirsrc-members/auth.json", to: "auth.json"}]'
+out=$(EN en5 --runtime fakedirsrc 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q ': not a regular file, not inside ~/.codex' <<<"$out" && ! grep -q ': missing' <<<"$out" && grep -q 'is not a regular file' <<<"$out" && ! grep -q '^plan token' <<<"$out"; } \
+  && ok "link-source-directory: a directory as the sign-in is called not a regular file in the plan, not missing, and no token is printed" || no "directory source: rc=$rc $out"
 mkdir -p "$HOME/.fakeln-members"; ln -s "$HOME/.codex/auth.json" "$HOME/.fakeln-members/auth.json"
 fake_command_runtime "$SRC" "$TOOL" fakeln
 out=$(EN en5 --runtime fakeln 2>&1); rc=$?
@@ -278,6 +296,54 @@ out=$("$DA" project validate f1 2>&1); rc=$?
   && grep -q "^finding: models.extra_runtimes.local 'fakeinsession' cannot be used: not-command" <<<"$out" && grep -q "^finding: models.extra_runtimes.local 'claude-platform' cannot be used: not-local" <<<"$out" \
   && grep -q "^finding: models.extra_runtimes.local 'draftcx' cannot be used: not-sealed" <<<"$out" && ! grep -q "'fakecx'" <<<"$out"; } && ok "an extra that is unknown, in-session, not local or unsealed is a finding, and a usable one is none" || no "findings: rc=$rc $out"
 
+# --- a read-only local run of an extra runtime: the acceptance recorded for the project's own runtime does not count for it
+# (the verb passes the project's own runtime until it takes a profile's runtime, so these calls name the runtime as that change will)
+HOOK='{"input":"json-stdin","tool_pointer":"/event/tool","command_pointer":"/event/args/cmd","cwd_pointer":"/workdir","path_pointers":{"write":["/event/args/target"],"read":["/event/args/target"]},
+  "tool_names":{"shell":["run_shell"],"write":["patch_file"],"read":["open_file"]},"deny":{"exit":2,"stream":"stderr"},"allow":{"exit":0}}'
+export PATH=$TOOL/stubs:$PATH          # the stubs are found by name, as a runtime's command is
+# the shipped codex hides /dev from its member's commands, and this test's directory may lie there (a TMPDIR under /dev/shm): the fakes hide a directory of the test's
+NOHIDE='.dispatch.hidden_paths.prefixes = ["'"$T"'/hidden-nowhere"]'
+fake_command_runtime "$SRC" "$TOOL" lryes "$(BARRIER yes) | .dispatch.argv[0] = \"lryes\" | $NOHIDE"
+fake_command_runtime "$SRC" "$TOOL" lrno "$(BARRIER no) | .dispatch.argv[0] = \"lrno\" | $NOHIDE"
+fake_command_runtime "$SRC" "$TOOL" lrhk '.dispatch.argv |= map(select(type != "object" or .class != "read-only")) | .dispatch.argv[0] = "lrhk" | .barrier = {kind: "hook", hook: '"$HOOK"'} | '"$NOHIDE"
+for r in lryes lrno lrhk; do mkdir -p "$HOME/.$r-members"; echo '{}' > "$HOME/.$r-members/auth.json"; done
+git init -q -b main "$T/lrrepo" && git -C "$T/lrrepo" -c user.name=t -c user.email=t@example.net commit -q --allow-empty -m one
+mkproj lr '{"local":"lryes","cloud":"claude-platform"}' '["lrno","lrhk"]'
+jq --arg p "$T/lrrepo" '.repo.path = $p' "$T/c/projects/lr.json" > "$T/lr.json" && mv "$T/lr.json" "$T/c/projects/lr.json"
+eval "$("$DA" local prepare --repo "$T/lrrepo" --base main --slug lr1 --scratch "$T" --role review | sed '/^$/,$d' | sed 's/^/export /')"
+printf 'TASK: look\nDONE: a report\n' > "$RUN/task.md"
+# a run prepared before command requests names no runtime, so it may be run with any: the fixture of tests/test_local_run.sh
+python3 -I - "$RUN" "$SRC/lib" <<'PY'
+import json, os, sys
+sys.path.insert(0, sys.argv[2])
+import attempts as A
+s = A.Store(sys.argv[1])
+p = s.path + "/state.json"
+v = json.load(open(p)); v["prepared"].pop("request", None)
+with open(p, "w") as f: json.dump(v, f)
+p = os.environ["QARGI_STATE"] + "/local-runs.jsonl"
+rows = [json.loads(line) for line in open(p)]
+for row in rows:
+    if row.get("run") == s.run: row.pop("command_request", None)
+with open(p, "w") as f:
+    for row in rows: f.write(json.dumps(row) + "\n")
+PY
+lrun() { python3 -I "$TOOL/lib/local_run.py" "$RUN" --project lr --runtime "$1" --class read-only --dry-run 2>&1; }
+out=$(lrun lryes); rc=$?
+{ [ "$rc" = 0 ] && grep -q '^ARGV=' <<<"$out"; } && ok "local-run-extra: the project's own runtime with a barrier goes on" || no "own runtime, dry: rc=$rc $out"
+out=$(lrun lrno); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'lrno has no read-only barrier on local' <<<"$out" && ! grep -q '^ARGV=' <<<"$out"; } \
+  && ok "local-run-extra: an extra runtime with no barrier is refused (exit 2) and nothing starts" || no "extra without barrier: rc=$rc $out"
+jq --argjson a "$ACC" '.models.accept_no_barrier = {local: $a}' "$T/c/projects/lr.json" > "$T/lr.json" && mv "$T/lr.json" "$T/c/projects/lr.json"
+out=$(lrun lrno); rc=$?
+{ [ "$rc" = 2 ] && ! grep -q '^ARGV=' <<<"$out"; } && ok "local-run-extra: the acceptance of the project's own runtime does not let it start" || no "extra, accepted: rc=$rc $out"
+out=$(lrun lrhk); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'is a hook, which a local run does not apply' <<<"$out" && grep -q 'does not count for lrhk' <<<"$out" && ! grep -q 'provider accept' <<<"$out" && ! grep -q '^ARGV=' <<<"$out"; } \
+  && ok "local-run-extra: nor does it exempt an extra runtime whose barrier nothing in a local run applies; no accept command is offered" || no "extra hook, accepted: rc=$rc $out"
+jq 'del(.models.accept_no_barrier)' "$T/c/projects/lr.json" > "$T/lr.json" && mv "$T/lr.json" "$T/c/projects/lr.json"
+out=$(lrun lrhk); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'is a hook' <<<"$out"; } && ok "local-run-extra: and without an acceptance it is refused the same way" || no "extra hook: rc=$rc $out"
+
 # --- profiles.NAME.runtime: a profile selects among the runtimes the project enabled, and its model is checked against that runtime
 profproj() { # NAME EXTRAS-JSON PROFILES-JSON
   mkproj "$1" "$CC" "$2"
@@ -317,19 +383,23 @@ vcase pr11 0
 # a project without extras and without a profile runtime: validate is what it was (a second look at the fixture, with its profiles)
 vcase en6 0
 # project set of a profile's runtime: it selects among the enabled runtimes, so it is checked and stored by the plain verb
-profproj pr12 null '{"codexbuild":{"base":"worker","tier":"balanced","effort":"high","abilities":["build"]}}'
-"$DA" project set pr12 profiles.codexbuild.runtime fakecx >"$T/o" 2>&1; rc=$?
-{ [ "$rc" = 1 ] && grep -q 'that would make the project invalid' "$T/o" && [ "$(jq -r '.profiles["codexbuild"].runtime // "none"' "$T/c/projects/pr12.json")" = none ]; } \
+profproj pr12 null '{"codex-build":{"base":"worker","tier":"balanced","effort":"high","abilities":["build"]}}'
+"$DA" project set pr12 profiles.codex-build.runtime fakecx >"$T/o" 2>&1; rc=$?
+{ [ "$rc" = 1 ] && grep -q 'that would make the project invalid' "$T/o" && [ "$(jq -r '.profiles["codex-build"].runtime // "none"' "$T/c/projects/pr12.json")" = none ]; } \
   && ok "project set of a profile's runtime that is not enabled is refused by validate and changes nothing" || no "set not enabled: rc=$rc $(cat "$T/o")"
 out=$(EN pr12 --runtime fakeconf 2>&1); etok=$(tokof_ "$out")
 EN pr12 --runtime fakeconf --plan "$etok" --approved "go" >/dev/null 2>&1
-"$DA" project set pr12 profiles.codexbuild.runtime fakeconf >"$T/o" 2>&1; rc=$?
-{ [ "$rc" = 0 ] && [ "$(jq -r '.profiles["codexbuild"].runtime' "$T/c/projects/pr12.json")" = fakeconf ]; } && ok "and stored once the runtime is enabled" || no "set enabled: rc=$rc $(cat "$T/o")"
+"$DA" project set pr12 profiles.codex-build.runtime fakeconf >"$T/o" 2>&1; rc=$?
+{ [ "$rc" = 0 ] && [ "$(jq -r '.profiles["codex-build"].runtime' "$T/c/projects/pr12.json")" = fakeconf ]; } && ok "and stored once the runtime is enabled" || no "set enabled: rc=$rc $(cat "$T/o")"
 # a runtime a profile names cannot be disabled
 out=$("$DA" provider disable pr12 --runtime fakeconf 2>&1); rc=$?
-{ [ "$rc" = 2 ] && grep -q 'profile codexbuild of project pr12 names the runtime fakeconf: unset profiles.NAME.runtime first' <<<"$out" && ! grep -q '^plan token' <<<"$out" && [ "$(answers_of pr12)" = '{"local":["fakeconf"]}' ]; } \
+{ [ "$rc" = 2 ] && grep -q 'profile codex-build of project pr12 names the runtime fakeconf: unset profiles.NAME.runtime first' <<<"$out" && ! grep -q '^plan token' <<<"$out" && [ "$(answers_of pr12)" = '{"local":["fakeconf"]}' ]; } \
   && ok "disable is refused while a profile names the runtime, with no token" || no "disable with a profile: rc=$rc $out"
-jq 'del(.profiles.codexbuild.runtime)' "$T/c/projects/pr12.json" > "$T/pp.json" && mv "$T/pp.json" "$T/c/projects/pr12.json"   # what project unset does
+cmd=$(sed -n 's/.*(\(qargi project unset pr12 profiles[^)]*\)).*/\1/p' <<<"$out")
+[ "$cmd" = "qargi project unset pr12 profiles.codex-build.runtime" ] && ok "the refusal names the unset it asks for, the profile's name with its hyphen" || no "disable refusal command: [$cmd] $out"
+out=$(cd "$T" && "$DA" project unset pr12 profiles.codex-build.runtime 2>&1); rc=$?      # not from inside a run directory: unset is the lead's verb
+{ [ "$rc" = 0 ] && [ "$(jq -r '.profiles["codex-build"].runtime // "none"' "$T/c/projects/pr12.json")" = none ] && [ "$(jq -r '.profiles["codex-build"].base' "$T/c/projects/pr12.json")" = worker ]; } \
+  && ok "project unset takes that path (a hyphen in a name of the path) and removes the runtime of the profile only" || no "unset of a hyphenated path: rc=$rc $out"
 out=$("$DA" provider disable pr12 --runtime fakeconf 2>&1); etok=$(tokof_ "$out")
 "$DA" provider disable pr12 --runtime fakeconf --plan "$etok" --approved "ok" >/dev/null 2>&1
 [ "$(answers_of pr12)" = '{"local":[]}' ] && ok "and disabled once it does not" || no "disable after unset: $(answers_of pr12)"

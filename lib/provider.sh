@@ -7,7 +7,7 @@
 #
 # Applied, an enable writes models.extra_runtimes.local of the project's stored answers (lib/gated_answers.py) and one line to the audit log. The plan
 # comes from lib/provider.py (runtime-info). A runtime that does not confine reads (dispatch.reads of its definition) is approved only by words that
-# contain "reads are not confined" (runtime-reads-unacknowledged otherwise, and the token stays good); disable asks for no phrase.
+# contain "reads are not confined", as words (letter case and runs of blanks ignored; runtime-reads-unacknowledged otherwise, and the token stays good); disable asks for no phrase.
 #
 #   provider.sh accept NAME --surface S --no-barrier --asked "<your words>" [--project P]       plan: what would be recorded, and a token
 #   provider.sh accept NAME --surface S --no-barrier --asked "<your words>" [--project P] --plan TOKEN --approved "<your go-ahead>"
@@ -60,7 +60,7 @@ runtime_verb() { # enable|disable PROJECT --runtime NAME [--asked W] [--plan T -
   if [ "$(jq -r .needs_phrase <<<"$info")" = true ]; then
     phrase=$(jq -r .phrase <<<"$info")
     norm=$(printf '%s' "$APPROVED" | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ')
-    if ! grep -qF -- "$phrase" <<<"$norm"; then
+    if ! grep -qwF -- "$phrase" <<<"$norm"; then       # as words: "threads are not confined" does not carry "reads are not confined"
       refuse runtime-reads-unacknowledged name="$NAME"
     fi
   fi
