@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# `--dry-run` of the git-flow verbs that have one: release start, release push and release fix --push, feature finish and branch prune. A dry run prints the plan, the
+# refusals the apply would meet (each as the apply prints it, with dry=1 first in the detail of the contract line) and `dry-run: N would refuse; nothing was changed`, and
+# changes nothing: the refs of the repository and of its origin, .git/worktrees, the state directory (the audit log, the ref journal, the intent and lock files, the marshal
+# records, the stored plans), no lease renewed, nothing fetched. Every case compares a snapshot of all of it before and after. Offline: a bare repository is the origin.
+# Run: tests/test_dry_run.sh
+set -u
+cd "$(dirname "$0")/.." || exit 1
+# shellcheck source=hermetic.sh
+. tests/hermetic.sh
+T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
+trap 'rm -rf "$T" "$HERMETIC"' EXIT
+export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_LEAD=lead GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
+mkdir -p "$HOME" "$T/c/projects" "$T/s" "$T/bin"
+cd "$T" || exit 1   # not below the checkout: when that is a member's run directory, the verbs below would be refused as a member's
+REL="$DA release"; F="$DA feature"
+printf '#!/usr/bin/env bash\necho "$*" >> "%s/gh.log"\ncase "$*" in *"pr create"*) echo https://example.net/acme/x/pull/1;; esac\n' "$T" > "$T/gh"; chmod +x "$T/gh"; export QARGI_GH=$T/gh
+
+# snap: everything a dry run must leave as it was, as one digest: the refs of the repository (R) and of its origin (O), its worktrees, the names in .git and .git/worktrees (a fetch
+# leaves FETCH_HEAD), and the state directory with the digest of every file (the audit log, the ref journal, the intent and lock files, the marshal records, the stored plans)
+snap() { { git -C "$R" for-each-ref; git -C "$R" worktree list; ls -A "$R/.git" "$R/.git/worktrees" 2>/dev/null; [ -z "${O:-}" ] || git -C "$O" for-each-ref
+           find "$T/s" | sort; find "$T/s" -type f -exec md5sum {} + 2>/dev/null | sort -k2; } | md5sum; }
+lastline() { tail -n 1 "$T/do"; }
+wtl() { { ls -A "$R/.git/worktrees" 2>/dev/null; git -C "$R" worktree list; } | md5sum; }
+# dry ARGS...: runs the command (a qargi verb with --dry-run), standard output in $T/do, standard error in $T/de, and sets rc and the snapshots
+dry() { s0=$(snap); "$@" >"$T/do" 2>"$T/de"; rc=$?; s1=$(snap); }
+contract() { grep -m1 '^qargi-refusal/1 ' "$T/de"; }
+mkproj() { # NAME [with-origin]: a repository with master and develop, the project's answers, the main checkout parked
+  R=$T/$1; O=''; git init -q -b master "$R"; echo 0.1.0 > "$R/VERSION"
+  printf '# Changelog\n\n## [Unreleased]\n\n### Added\n- a thing\n' > "$R/CHANGELOG.md"
+  git -C "$R" add -A && git -C "$R" commit -q -m one && git -C "$R" branch develop
+  if [ -n "${2:-}" ]; then O=$T/$1-origin.git; git init -q --bare "$O"; git -C "$R" remote add origin "$O"; git -C "$R" push -q origin master develop; fi
+  git -C "$R" checkout -q -b parked
+  jq -n --arg p "$R" --arg n "$1" '{schema:1, project:$n, methodology:"gitflow", repo:{url:"https://github.com/acme/x", path:$p, long_lived:["master","develop"]}, test_command:"true"}' > "$T/c/projects/$1.json"
+  export QARGI_PROJECT=$1
+}
+task() { # NAME: a task branch with one commit, cut from develop (as an applied, verified series would be)
+  git -C "$R" branch "agent/$1" "${2:-develop}"; local w; w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R" worktree add -q "$w" "agent/$1"
+  echo "$1" > "$w/$1.txt"; git -C "$w" add -A; git -C "$w" commit -q -m "task $1"; git -C "$R" worktree remove --force "$w"
+}
+# rstart ARGS: release start through its plan (a token) and the approval; a refusal of the plan is printed and fails
+rstart() { local p t; p=$($REL start "$@" 2>&1); t=$(tok <<<"$p"); [ -n "$t" ] || { printf '%s\n' "$p"; return 1; }; $REL start "$@" --plan "$t" --approved go; }
+
+# ---------------------------------------------------------------------------------------------------------------------------- release
+mkproj rel with-origin
+$REL verify 0.2.0 >/dev/null 2>&1
+w0=$(wtl); dry $REL start 0.2.0 --date 2026-03-04 --dry-run
+[ "$rc" = 0 ] && [ "$(lastline)" = "dry-run: 0 would refuse; nothing was changed" ] && [ "$s0" = "$s1" ] && [ "$w0" = "$(wtl)" ] && [ -z "$(ls -A "$R/.git/worktrees" 2>/dev/null)" ] \
+  && ok "release start --dry-run: the plan, 0 would refuse, exit 0; the refs, the state directory and .git/worktrees are as they were" || no "start dry run: rc=$rc $(cat "$T/do" "$T/de")"
+dt=$(tok < "$T/do"); [ -n "$dt" ] && [ "$dt" = "$($REL start 0.2.0 --date 2026-03-04 | tok)" ] && ok "the token of a dry run is the plain plan's" || no "dry token $dt"
+before=$(wtl); dry $REL start 0.2.0 --date 2026-03-05 --dry-run --plan "$dt"
+[ "$rc" = 1 ] && contract | grep -q '"code":"plan-stale".*"detail":"dry=1 moved=date token=' && [ "$(lastline)" = "dry-run: 1 would refuse; nothing was changed" ] && [ "$s0" = "$s1" ] && [ "$before" = "$(wtl)" ] \
+  && ok "release start --dry-run with a token that moved: plan-stale names the label (date), dry=1 first in the detail, 1 would refuse, exit 1" || no "start dry run, stale: rc=$rc $(cat "$T/do" "$T/de")"
+# a refusing fixture: develop moved on since the suite last passed
+mkproj relno with-origin
+git -C "$R" update-ref refs/heads/develop "$(git -C "$R" commit-tree -p develop -m x 'develop^{tree}')"
+dry $REL start 0.2.0 --dry-run
+[ "$rc" = 1 ] && grep -q "the whole suite has no passing run at the head of develop" "$T/de" && [ "$(lastline)" = "dry-run: 1 would refuse; nothing was changed" ] && [ "$s0" = "$s1" ] && [ -z "$(ls -A "$R/.git/worktrees" 2>/dev/null)" ] \
+  && ok "release start --dry-run of a develop that did not pass: the refusal, 1 would refuse, exit 1, nothing changed" || no "start dry run, refused: rc=$rc $(cat "$T/do" "$T/de")"
+# a TERM while the worktree of the plan exists: the exit trap removes it, and no last line is printed (the status is 143)
+mkproj relterm with-origin
+$REL verify 0.2.0 >/dev/null 2>&1
+jq --arg m "$T/dmark" --arg g "$T/dgo" '.release = {preflight: ["sh", "-c", "touch " + $m + "; i=0; while [ ! -e " + $g + " ] && [ $i -lt 30 ]; do sleep 0.1; i=$((i + 1)); done"]}' "$T/c/projects/relterm.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/relterm.json"
+rm -f "$T/dmark" "$T/dgo"; s0=$(snap)
+$REL start 0.2.0 --dry-run >"$T/do" 2>"$T/de" & dpid=$!
+wait_until '[ -e "$T/dmark" ]' 10 && kill -TERM "$dpid"; : > "$T/dgo"; wait "$dpid"; rc=$?
+[ "$rc" = 143 ] && [ "$s0" = "$(snap)" ] && ! grep -q '^dry-run:' "$T/do" && ok "release start --dry-run ended by TERM while its worktree exists leaves .git/worktrees, git worktree list and the state directory as they were" || no "TERM: rc=$rc $(cat "$T/do" "$T/de"); $(ls -A "$R/.git/worktrees")"
+# push, and a fix outside the cut
+mkproj relpush with-origin
+$REL verify 0.2.0 >/dev/null 2>&1
+rstart 0.2.0 --date 2026-03-04 >/dev/null 2>&1 || no "(setup) release start"
+: > "$T/gh.log"; dry $REL push 0.2.0 --dry-run
+[ "$rc" = 0 ] && [ "$(lastline)" = "dry-run: 0 would refuse; nothing was changed" ] && [ "$s0" = "$s1" ] && ! grep -q "pr create" "$T/gh.log" && [ -z "$(git -C "$O" for-each-ref refs/heads/release)" ] \
+  && ok "release push --dry-run: 0 would refuse; nothing is pushed, no pull request is made, nothing changed" || no "push dry run: rc=$rc $(cat "$T/do" "$T/de")"
+mkproj relfix with-origin
+$REL verify 0.2.0 >/dev/null 2>&1
+ct=$($REL plan 0.2.0 --date 2026-03-04 2>&1 | tok); $REL plan 0.2.0 --date 2026-03-04 --plan "$ct" --approved "go ahead" >/dev/null 2>&1; $REL start 0.2.0 --plan "$ct" >/dev/null 2>&1
+w=$($REL fix 0.2.0 | sed -n 's/^worktree: //p'); echo fix > "$w/fix.txt"; git -C "$w" add fix.txt && git -C "$w" commit -q -m "a fix"; fx=$(git -C "$R" rev-parse --short=7 release/0.2.0)
+dry $REL fix 0.2.0 --push --dry-run --plan "$ct"
+[ "$rc" = 1 ] && contract | grep -q "\"code\":\"cut-fix-outside\",\"exit\":1,\"verb\":\"release push\".*\"detail\":\"dry=1 commits=$fx\"" && [ "$(lastline)" = "dry-run: 1 would refuse; nothing was changed" ] && [ "$s0" = "$s1" ] \
+  && ok "release fix --push --dry-run over a commit outside the cut: cut-fix-outside, 1 would refuse, nothing changed" || no "fix --push dry run: rc=$rc $(cat "$T/do" "$T/de")"
+
+# ---------------------------------------------------------------------------------------------------------------------------- feature finish
+mkproj fin with-origin
+$F start fa >/dev/null 2>&1; task t1 feature/fa; $F merge fa agent/t1 >/dev/null 2>&1; $F verify fa >/dev/null 2>&1
+plain=$($F finish fa 2>&1); pt=$(tok <<<"$plain")
+[ -n "$pt" ] && ok "(setup) a feature with a passing run: the plain plan has a token" || no "(setup) plain plan: $plain"
+# the marshal lease is renewed by a verb of the lead once a third of it has passed: with the clock ten minutes on, a plain verb would write the record, a dry run must not
+fclock=$(( $(date +%s) + 600 ))
+dry env QARGI_MARSHAL_NOW=$fclock $F finish fa --dry-run
+[ "$rc" = 0 ] && [ "$(lastline)" = "dry-run: 0 would refuse; nothing was changed" ] && [ "$s0" = "$s1" ] && grep -q "^invalidated by: project, branch, head, develop, keep, delete-merged, origin-branch, push$" "$T/do" && grep -q "^not fetched: origin is asked with ls-remote" "$T/do" \
+  && ok "feature finish --dry-run: the plan, what invalidates it, 0 would refuse, exit 0; the lease is not renewed and nothing is fetched or changed" || no "finish dry run: rc=$rc $(cat "$T/do" "$T/de")"
+s0=$(snap); env QARGI_MARSHAL_NOW=$fclock $F finish fa >/dev/null 2>&1; [ "$s0" != "$(snap)" ] && ok "(control) the same moment, without --dry-run, renews the lease: the snapshot does see a write" || no "(control) the plain finish plan left the snapshot as it was"
+[ "$(tok < "$T/do")" = "$pt" ] && ok "the token of the dry run is the plain plan's" || no "finish dry token: $(tok < "$T/do") against $pt"
+dry $F finish fa --dry-run --plan "$pt"
+[ "$rc" = 0 ] && grep -q "the plan $pt is the one shown: the apply of finish would go on" "$T/do" && grep -q "^not run in a dry run: the finish itself" "$T/do" && [ "$(lastline)" = "dry-run: 0 would refuse; nothing was changed" ] && [ "$s0" = "$s1" ] && [ "$(git -C "$R" rev-parse develop)" != "$(git -C "$R" rev-parse feature/fa)" ] \
+  && ok "with the token that was shown the dry run says the apply would go on, and merges, pushes and deletes nothing" || no "finish dry run with the token: rc=$rc $(cat "$T/do" "$T/de")"
+dry $F finish fa --keep --dry-run --plan "$pt"
+[ "$rc" = 1 ] && contract | grep -q '"code":"plan-stale","exit":1,"verb":"feature finish".*"detail":"dry=1 moved=keep token=' && grep -q "refused \[plan-stale\] .*moved: keep" "$T/de" && [ "$(lastline)" = "dry-run: 1 would refuse; nothing was changed" ] && [ "$s0" = "$s1" ] \
+  && ok "a token of another plan: plan-stale names the label that moved (keep), dry=1 first in the detail, 1 would refuse, exit 1" || no "finish dry run, stale: rc=$rc $(cat "$T/do" "$T/de")"
+dry $F finish fa --dry-run --approved go
+[ "$rc" = 0 ] && [ "$(git -C "$R" rev-parse develop)" != "$(git -C "$R" rev-parse feature/fa)" ] && [ "$s0" = "$s1" ] && ok "--approved with --dry-run applies nothing" || no "dry run with --approved: rc=$rc $(cat "$T/do" "$T/de")"
+# origin is asked, never fetched: a commit that reached origin's develop and is not here yet is named, and nothing is fetched
+oc=$(git -C "$O" commit-tree -p develop -m "on origin" 'develop^{tree}'); git -C "$O" update-ref refs/heads/develop "$oc"; rm -f "$R/.git/FETCH_HEAD"
+dry $F finish fa --dry-run
+[ "$rc" = 0 ] && grep -q "origin/develop is at ${oc:0:7}, which this repository does not have yet: the apply fetches it" "$T/do" && [ "$s0" = "$s1" ] && [ ! -e "$R/.git/FETCH_HEAD" ] \
+  && ok "origin's develop ahead of this repository: named with ls-remote, 'not fetched', no FETCH_HEAD, nothing changed" || no "finish dry run, origin ahead: rc=$rc $(cat "$T/do" "$T/de")"
+git -C "$R" fetch -q origin; dry $F finish fa --dry-run
+[ "$rc" = 1 ] && grep -q "develop is behind or differs from origin/develop" "$T/de" && [ "$(lastline)" = "dry-run: 1 would refuse; nothing was changed" ] && [ "$s0" = "$s1" ] && ok "origin's develop that is not in develop: a refusal the apply meets after its fetch, 1 would refuse" || no "finish dry run, origin differs: rc=$rc $(cat "$T/do" "$T/de")"
+git -C "$O" update-ref refs/heads/develop "$(git -C "$R" rev-parse develop)"; git -C "$R" fetch -q origin
+# another live lead holds the feature: the marshal's refusal, counted
+dry env QARGI_LEAD=bob $F finish fa --dry-run
+[ "$rc" = 1 ] && grep -q "led by lead" "$T/de" && [ "$(lastline)" = "dry-run: 1 would refuse; nothing was changed" ] && [ "$s0" = "$s1" ] && ok "a feature another lead holds: the marshal's refusal, 1 would refuse, nothing changed" || no "finish dry run, another lead: rc=$rc $(cat "$T/do" "$T/de")"
+# a finish with no passing run
+$F start fb >/dev/null 2>&1; task t2 feature/fb; $F merge fb agent/t2 >/dev/null 2>&1
+dry $F finish fb --dry-run
+[ "$rc" = 1 ] && grep -q "the whole suite has no passing run at the head of feature/fb" "$T/de" && [ "$(lastline)" = "dry-run: 1 would refuse; nothing was changed" ] && [ "$s0" = "$s1" ] && ok "feature finish --dry-run of a feature with no passing run: the refusal, 1 would refuse, nothing changed" || no "finish dry run, refused: rc=$rc $(cat "$T/do" "$T/de")"
+dry $F finish nope --dry-run
+[ "$rc" = 1 ] && grep -q "no branch feature/nope" "$T/de" && [ "$s0" = "$s1" ] && ok "a feature that does not exist: refused, and no record is made of it" || no "finish dry run, no feature: rc=$rc $(cat "$T/do" "$T/de")"
+# an earlier finish that was cut off left a record: the dry run shows what finishing it would do, and the record, its lock and the refs stay
+fh=$(git -C "$R" rev-parse feature/fa); dv=$(git -C "$R" rev-parse develop)
+mkdir -p "$T/s/finish-intent"
+jq -nc --arg d0 "$dv" --arg m "$fh" --arg h "$fh" '{schema:1, verb:"feature:finish", project:"fin", name:"fa", pushed:false, refs:[{ref:"refs/heads/develop", local_old:$d0, origin_old:"", new:$m}], ctx:{head:$h, keep:"1", pushd:"", pushwhy:"the repository has no origin", rdel:"", k:"k"}, done:[]}' > "$T/s/finish-intent/fin-feature-fa.json"
+dry $F finish fa --dry-run
+[ "$rc" = 0 ] && grep -q "finish feature fa of fin was cut off" "$T/do" && grep -q "^invalidated by: record$" "$T/do" && [ "$(lastline)" = "dry-run: 0 would refuse; nothing was changed" ] && [ "$s0" = "$s1" ] && [ ! -e "$T/s/finish-intent/fin-feature-fa.json.run" ] \
+  && ok "a finish that was cut off: the dry run shows what finishing it does, takes no lock and leaves the record as it is" || no "finish dry run, cut off: rc=$rc $(cat "$T/do" "$T/de")"
+rm -f "$T/s/finish-intent/fin-feature-fa.json"
+out=$($F status fa --dry-run 2>&1); rc=$?
+[ "$rc" = 2 ] && grep -q "belongs to feature finish" <<<"$out" && ok "--dry-run belongs to feature finish: another feature verb refuses it" || no "--dry-run on status: rc=$rc $out"
+exit $fail

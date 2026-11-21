@@ -23,12 +23,17 @@
 #                                                  attempt), and PARTS (signals, fds, tty, cpu) waives the refused parts for this run only
 #                                                  (recorded, audited, shown again by status). Only a refusal yields a token, which is good for
 #                                                  one run at that head; nothing refused, nothing to waive; not in a member run
-#   feature.sh finish NAME [--project P] [--keep] [--plan T --approved W]
+#   feature.sh finish NAME [--project P] [--keep] [--plan T --approved W] [--dry-run]
 #                                                  merge into develop with --no-ff and delete the branch; push develop if an
 #                                                  origin exists and the answer branches.push_develop is not false (the plan's first line says which).
 #                                                  Needs a passing run at the feature's head. A feature behind develop is refused; when
 #                                                  both sides changed the same files, the message lists them and says to sync first. Refused, with
 #                                                  the runs listed, while a run of the feature is open (not cleaned, discarded, closed or merged).
+#                                                  --dry-run (the verb's behaviour; the flag is declared in the help by a later change): the plan and its token, and with --plan
+#                                                  the refusals the apply would meet, changing nothing (QARGI_DRY=1: no lease renewed, no lock, no audit line, no file in the state
+#                                                  directory, no ref). Origin is asked with ls-remote and never fetched ("not fetched"). Each refusal is printed as the apply prints it,
+#                                                  with dry=1 first in the detail of the contract line where the refusal has a code; the last line is `dry-run: N would refuse; nothing
+#                                                  was changed`, the status 0, or 1 when any would.
 # The marshal (lib/marshal.sh) records who leads each feature: start makes you the lead, merge, sync, verify and finish ask it first
 # (another live lead: refused, nothing changes; an anonymous identity only warns). With the shared refs backend a remote that cannot be
 # asked is a refusal too (exit 3, nothing changes) unless the verb is given --assume-unreachable-ok, which goes on and writes the audit
@@ -37,12 +42,14 @@
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
-NAME_ARG='' EXTRA='' PROJ='' PLAN_ARG='' APPROVED='' KEEP='' RESOLVED='' PURPOSE='' WORKTREE='' ASSUME_UNREACHABLE='' WAIVE_ENV='' WAIVE_SET=''
+# shellcheck disable=SC2034  # QARGI_VERB is read by refuse and notice (lib/lib.sh): the verb of the contract line of a refusal
+QARGI_VERB="feature $verb"
+NAME_ARG='' EXTRA='' PROJ='' PLAN_ARG='' APPROVED='' KEEP='' RESOLVED='' PURPOSE='' WORKTREE='' ASSUME_UNREACHABLE='' WAIVE_ENV='' WAIVE_SET='' DRY_RUN=''
 # shellcheck disable=SC2034  # WAIVE_ENV and WAIVE_SET are read by suite_env_prepare (gitflow.sh)
 while [ $# -gt 0 ]; do
   case $1 in
     --waive-environment) need_val "$1" $#; WAIVE_ENV=$2; WAIVE_SET=1; shift 2;;
-    --project) need_val "$1" $#; PROJ=$2; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;; --approved) need_val "$1" $#; APPROVED=$2; shift 2;; --keep) KEEP=1; shift;; --resolved) RESOLVED=1; shift;; --purpose) need_val "$1" $#; PURPOSE=$2; shift 2;; --worktree) WORKTREE=1; shift;; --assume-unreachable-ok) ASSUME_UNREACHABLE=1; shift;;
+    --project) need_val "$1" $#; PROJ=$2; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;; --approved) need_val "$1" $#; APPROVED=$2; shift 2;; --keep) KEEP=1; shift;; --resolved) RESOLVED=1; shift;; --purpose) need_val "$1" $#; PURPOSE=$2; shift 2;; --worktree) WORKTREE=1; shift;; --assume-unreachable-ok) ASSUME_UNREACHABLE=1; shift;; --dry-run) DRY_RUN=1; shift;;
     -*) usage_die "unknown option $1";;
     *) if [ -z "$NAME_ARG" ]; then NAME_ARG=$1; else EXTRA=$1; fi; shift;;
   esac
@@ -56,8 +63,18 @@ case $verb in status|verify) actor_check feature "feature $verb" "$NAME_ARG" || 
 export RESOLVED
 [ -z "$WORKTREE" ] || [ "$verb" = start ] || die "--worktree belongs to feature start"
 [ -z "$WAIVE_SET" ] || [ "$verb" = verify ] || usage_die "--waive-environment belongs to feature verify"
+[ -z "$DRY_RUN" ] || [ "$verb" = finish ] || usage_die "--dry-run belongs to feature finish"
 case $verb in start|sync|merge|verify|finish) ;; *) [ -z "$ASSUME_UNREACHABLE" ] || die "--assume-unreachable-ok belongs to the verbs that ask the marshal first: feature start, sync, merge, verify and finish";; esac
 . "$(dirname "$0")/gitflow.sh"
+PSF=/dev/null DRYTMP=''   # PSF: the text of the plan, kept for a dry run (tee in the plan of finish), so --plan can be compared with it; DRYTMP: a scratch directory of the dry run
+[ -z "$DRY_RUN" ] || { dry_on; PSF=$(mktemp) || fail "could not make a temporary file"; }   # QARGI_DRY=1 before anything reads the project: from here the helpers that write stop, and g passes only what reads
+feat_exit() {   # the one EXIT handler: what gitflow.sh cleans up, the temporary files of a dry run, and in a dry run the last line
+  local rc=$?
+  [ "$PSF" = /dev/null ] || rm -f "$PSF"; [ -z "$DRYTMP" ] || rm -rf "$DRYTMP"
+  on_exit
+  dry_finish "$rc"
+}
+trap feat_exit EXIT
 # shellcheck disable=SC2154  # PROJ and TESTCMD come from project_load
 project_load
 # the declared gates (the answer gates; lib/gates.py) replace test_command in the verbs that read or make the whole-suite record: the feature tier
@@ -179,6 +196,39 @@ feature_finish_tail() {
   lead_advice
   intent_clear "$key"
 }
+# feat_dry_end TOKEN LABELS [CHECK...] -> the end of the plan of a dry run (--dry-run), once the plan and its token line are printed; it ends the verb. Without --plan it says what would
+# invalidate the plan (its labels, the words plan_token --basis keeps). With --plan it does what the apply does first: need_plan, so plan-stale names the labels that moved (the plan of
+# --plan was stored when it was shown; this one is not stored in a dry run, so it is put in a scratch state beside a copy of that one), then the CHECK command (the apply's checks that
+# only read). The refusals are printed as the apply prints them, with dry=1 in the detail of the contract line.
+feat_dry_end() {
+  local tok=$1 labels=$2
+  shift 2
+  if [ -z "$PLAN_ARG" ]; then echo "invalidated by: ${labels// /, }"; exit 0; fi
+  DRYTMP=$(mktemp -d) || fail "could not make a temporary directory"; mkdir "$DRYTMP/plans"
+  [ ! -f "$DA_STATE/plans/$PLAN_ARG.json" ] || cp "$DA_STATE/plans/$PLAN_ARG.json" "$DRYTMP/plans/"
+  QARGI_STATE=$DRYTMP python3 -I "$QARGI_TOOL/lib/refusal.py" basis store "$tok" "$labels" < "$PSF" 2>/dev/null || true
+  DA_STATE=$DRYTMP need_plan "$tok"
+  [ $# = 0 ] || "$@"
+  echo "the plan $tok is the one shown: the apply of finish would go on"
+  echo "not run in a dry run: the finish itself (the merge into develop, where a conflict is found when it is made, the push of develop and the deletion of the branches)"
+  exit 0
+}
+# feat_finish_checks -> what the apply of finish checks after the token and before it merges: develop and the branch are not checked out anywhere (a clean worktree of qargi's may hold the branch)
+feat_finish_checks() { need_free develop; need_free_wt "$BR"; }
+# feat_resume_checks -> the same for the completion of a finish that was cut off (feature_finish_resume): the merge commit of the record is here, develop and the branch are free
+feat_resume_checks() {
+  g cat-file -e "$MERGED^{commit}" 2>/dev/null || die "the merge commit of the interrupted finish is not in $REPO: nothing was changed"
+  need_free develop; [ -n "$KEEP" ] || need_free_wt "$BR"
+}
+# marshal_dry NAME -> the marshal's answer without a write: no lease is renewed (no --renew) and nothing is fetched (--no-fetch: a shared marshal is read from the cache this machine holds).
+# A refusal (status 1, the message already printed) ends the verb, as marshal_gate's does; any other failure is a warning.
+marshal_dry() {
+  local rc=0
+  marshal_py "$PROJ" check "$1" --no-fetch >/dev/null || rc=$?
+  [ "$rc" = 0 ] && return 0
+  [ "$rc" != 1 ] || exit 1
+  echo "qargi: warning: the marshal could not be asked (status $rc); going on" >&2
+}
 # feature_finish_resume -> a finish of the feature that was cut off after its push (intent_probe said so): shows what is left, and with --plan and --approved
 # does it (feature_finish_tail). The values are the record's, not the command line's; the plan token covers the record.
 feature_finish_resume() {
@@ -186,17 +236,17 @@ feature_finish_resume() {
   f=$(intent_file "$key")
   d0=$(jq -r '.refs[0].local_old' "$f"); rd0=$(jq -r '.refs[0].origin_old' "$f"); MERGED=$(jq -r '.refs[0].new' "$f")
   h=$(jq -r '.ctx.head' "$f"); KEEP=$(jq -r '.ctx.keep' "$f"); pushd=$(jq -r '.ctx.pushd' "$f"); pushwhy=$(jq -r '.ctx.pushwhy' "$f"); rdel=$(jq -r '.ctx.rdel' "$f"); k=$(jq -r '.ctx.k' "$f")
-  tok=$(jq -S -c 'del(.done)' "$f" | plan_token)
+  tok=$(jq -S -c 'del(.done)' "$f" | tee "$PSF" | plan_token --basis "record")
   echo "finish feature $NAME_ARG of $PROJ was cut off$([ -n "$pushd" ] && echo ": origin holds the merge into develop (asked just now)" || echo " (develop was not to be pushed)"); finishing it:"
   echo "  develop ${d0:0:7} -> ${MERGED:0:7}${KEEP:+; $BR is kept}$([ -n "$KEEP" ] || echo "; $BR is deleted")${rdel:+; origin/$BR is deleted (${rdel:0:7})}"
   echo "  steps already done: $(jq -r '.done | if length == 0 then "none" else join(", ") end' "$f")"
   # as in the plan of the finish: the commits made with git that the deletions still to come take into the journal
   [ -n "$KEEP" ] || intent_marked "$key" branch || [ "$(sha_of "$BR")" != "$h" ] || journal_reach_plan local "refs/heads/$BR" "$h"
   [ -z "$rdel" ] || journal_reach_plan remote "refs/heads/$BR" "$rdel"
-  if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi feature finish $NAME_ARG --plan $tok --approved \"...\")"; exit 0; fi
+  if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi feature finish $NAME_ARG --plan $tok --approved \"...\")"; [ -n "$DRY_RUN" ] || exit 0; fi
+  [ -z "$DRY_RUN" ] || feat_dry_end "$tok" "record" feat_resume_checks
   need_plan "$tok"
-  g cat-file -e "$MERGED^{commit}" 2>/dev/null || die "the merge commit of the interrupted finish is not in $REPO: nothing was changed"
-  need_free develop; [ -n "$KEEP" ] || need_free_wt "$BR"
+  feat_resume_checks
   hold_begin "$NAME_ARG"
   feature_finish_tail
 }
@@ -346,9 +396,13 @@ case $verb in
     [ "$res" = pass ] || suite_failure_report
     [ "$res" = pass ];;
   finish)
-    marshal_gate "$NAME_ARG"
+    if [ -z "$DRY_RUN" ]; then marshal_gate "$NAME_ARG"
+    else
+      # a dry run renews no lease and takes no lock; the marshal is asked only for a branch that exists (a record of a branch that is gone is abandoned by the question)
+      [ -z "$(sha_of "$BR")" ] || marshal_dry "$NAME_ARG"
+    fi
     # a finish that was cut off after its push left a record (gitflow.sh, intent_*): complete it, or drop it when the push never happened
-    intent_lock "feature-$NAME_ARG"
+    [ -n "$DRY_RUN" ] || intent_lock "feature-$NAME_ARG"
     if intent_has "feature-$NAME_ARG"; then
       intent_probe "feature-$NAME_ARG"
       if [ "$IP" = old ]; then
@@ -372,8 +426,22 @@ case $verb in
     d0=$(sha_of develop); [ -n "$d0" ] || die "no develop branch"
     g merge-base --is-ancestor "$d0" "$BR" || die "develop has moved on since $BR was cut: qargi feature sync $NAME_ARG, verify again, then finish (the run must have seen what develop now holds)"
     if g remote get-url origin >/dev/null 2>&1; then
-      g fetch -q origin 2>/dev/null || die "fetch failed"
-      if g rev-parse -q --verify refs/remotes/origin/develop >/dev/null; then g merge-base --is-ancestor origin/develop develop || die "develop is behind or differs from origin/develop: reconcile them first"; fi
+      otip=''
+      if [ -n "$DRY_RUN" ]; then
+        # not fetched: origin is asked with ls-remote, and develop there is compared when its commit is already here
+        echo "not fetched: origin is asked with ls-remote (the apply fetches it first)"
+        remote_tip develop
+        case $RSTATE in
+          found)
+            if g cat-file -e "$RTIP^{commit}" 2>/dev/null; then otip=$RTIP
+            else echo "origin/develop is at ${RTIP:0:7}, which this repository does not have yet: the apply fetches it, then compares it with develop"; fi;;
+          unchecked) fail "fetch failed (origin could not be asked: $RWHY)";;
+        esac
+      else
+        g fetch -q origin 2>/dev/null || die "fetch failed"
+        otip=$(g rev-parse -q --verify refs/remotes/origin/develop || true)
+      fi
+      [ -z "$otip" ] || g merge-base --is-ancestor "$otip" develop || die "develop is behind or differs from origin/develop: reconcile them first"
     fi
     detached_mix "$BR" develop
     [ -z "$(wt_of "$BR")" ] || need_free_wt "$BR"   # a dirty worktree of the branch is found before the plan, not after the merge
@@ -392,7 +460,7 @@ case $verb in
     if ! g remote get-url origin >/dev/null 2>&1; then pushwhy="the repository has no origin"
     elif [ "$PUSH_DEVELOP" = false ]; then pushwhy="branches.push_develop is false"
     else pushd=1; fi
-    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$d0" "$KEEP" "$DELETE_MERGED" "$rdel" "$pushd" | plan_token)
+    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$d0" "$KEEP" "$DELETE_MERGED" "$rdel" "$pushd" | tee "$PSF" | plan_token --basis "project branch head develop keep delete-merged origin-branch push")
     if [ -n "$pushd" ]; then echo "will push develop to origin"; else echo "local only, will not push ($pushwhy)"; fi
     echo "finish feature $NAME_ARG of $PROJ: merge $BR into develop with --no-ff${KEEP:+, keep the branch}$([ -n "$KEEP" ] || echo ", delete the branch")${rdel:+, delete origin/$BR (${rdel:0:7})}${pushd:+, push develop}"
     [ -z "$rnote" ] || echo "  note: $rnote"
@@ -402,11 +470,11 @@ case $verb in
     remote_report develop; remote_report "$BR"
     suite_env_waived_line "$BR"
     show_incoming develop "$BR"; backlog_note develop "$BR"
-    if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi feature finish $NAME_ARG${KEEP:+ --keep} --plan $tok --approved \"...\")"; exit 0; fi
+    if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi feature finish $NAME_ARG${KEEP:+ --keep} --plan $tok --approved \"...\")"; [ -n "$DRY_RUN" ] || exit 0; fi
+    [ -z "$DRY_RUN" ] || feat_dry_end "$tok" "project branch head develop keep delete-merged origin-branch push" feat_finish_checks
     need_plan "$tok"
     if [ -n "${STALE_REC:-}" ]; then intent_drop "feature-$NAME_ARG"; echo "note: an earlier finish of $NAME_ARG stopped before anything reached origin or moved here; its record is removed and this one starts again" >&2; fi
-    need_free develop
-    need_free_wt "$BR"
+    feat_finish_checks
     hold_begin "$NAME_ARG"
     k="feature-$NAME_ARG-into-develop"
     merge_step "$d0" "refs/heads/$BR" "$k" "Merge branch '$BR' into develop"
