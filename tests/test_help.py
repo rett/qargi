@@ -854,6 +854,97 @@ class Surface(Env):
         self.assertIn("open to a member", text)
 
 
+class EarlyRulesHelp(Env):
+    """The forms the rules-visible-early change put in the scripts are declared in lib/commands.py, with the usage errors the declaration promises."""
+
+    def cli(self, *args):
+        return subprocess.run([BIN, *args], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60)
+
+    def test_the_dry_run_is_declared_on_the_five_verbs_and_on_no_other(self):
+        has = {(c, v) for c in C.COMMANDS for v, spec in verbs(c).items() if "--dry-run" in {o["flag"] for o in spec["opts"]}}
+        # `local run --dry-run` and the commands with a flag of their own (export, import) print what would run and are another change
+        self.assertEqual({x for x in has if x[0] in ("release", "feature", "branch")},
+                         {("release", "start"), ("release", "push"), ("release", "fix"), ("feature", "finish"), ("branch", "prune")})
+        for c, v in (("release", "start"), ("release", "push"), ("release", "fix"), ("feature", "finish"), ("branch", "prune")):
+            flat = " ".join(C.COMMANDS[c]["verbs"][v]["desc"].split())
+            for want in ("dry-run: N would refuse; nothing was changed", "dry=1 first in the detail of the contract line", "git ls-remote", "the same token the plain plan has"):
+                self.assertIn(want, flat, "%s %s" % (c, v))
+        self.assertIn("for --push only (a usage error, exit 2, without it)", " ".join(C.COMMANDS["release"]["verbs"]["fix"]["desc"].split()))
+        self.assertIn("QARGI_DRY", dict(C.ENVIRONMENT))
+        man = H.man().replace("\\-", "-")
+        self.assertIn("dry-run", man)
+        self.assertIn("QARGI_DRY", man)
+
+    def test_the_dry_run_flag_of_another_verb_is_a_usage_error_as_declared(self):
+        for args, words in ((["release", "fix", "9.9.9", "--dry-run"], "--dry-run belongs to release start, release push and release fix --push"),
+                            (["release", "finish", "9.9.9", "--dry-run"], "--dry-run belongs to release start, release push and release fix --push"),
+                            (["feature", "start", "x", "--dry-run"], "--dry-run belongs to feature finish")):
+            r = self.cli(*args)
+            self.assertEqual((r.returncode, r.stdout), (2, ""), args)
+            self.assertIn(words, r.stderr, args)
+
+    def test_release_fix_record_is_declared_with_its_exclusions(self):
+        fix = C.COMMANDS["release"]["verbs"]["fix"]
+        self.assertIn("--record", {o["flag"] for o in fix["opts"]})
+        flat = " ".join(fix["desc"].split())
+        for want in ("no plan, no token and no approval", "exclusive with --push, --plan and --approved", "fix_paths", "inside the cut: push goes on under its approval",
+                     "cut-fix-outside", "cut-branch-moved", "own_plan", "a later fix inside the paths goes on under the cut again"):
+            self.assertIn(want, flat)
+        self.assertIn("fix_paths", " ".join(C.COMMANDS["release"]["verbs"]["plan"]["desc"].split()))
+        for flag in ("--record", "--dry-run", "--push"):
+            self.assertIn(flag, H.complete(["release", "fix", "9.9.9", "--"]))                     # the completion offers each flag
+        self.assertIn("--deleted", H.complete(["ref", "record", "--"]))
+        self.assertIn("--agents", H.complete(["branch", "prune", "--"]))
+        for args, words in ((["release", "fix", "9.9.9", "--record", "--push"], "--record and --push are two ways of taking a fix in"),
+                            (["release", "fix", "9.9.9", "--record", "--plan", "abc"], "--record asks for no plan and no approval"),
+                            (["release", "fix", "9.9.9", "--record", "--approved", "ok"], "--record asks for no plan and no approval"),
+                            (["release", "start", "9.9.9", "--record"], "--record belongs to release fix")):
+            r = self.cli(*args)
+            self.assertEqual((r.returncode, r.stdout), (2, ""), args)
+            self.assertIn(words, r.stderr, args)
+
+    def test_the_answer_for_changelog_fragments_is_described_and_completes(self):
+        self.assertIn("release.changelog.fragments", H.EXTRA_KEYS)
+        desc = " ".join(C.COMMANDS["release"]["desc"].split())
+        for want in ("release.changelog.fragments", "release-fragments-unfolded", "README* and .gitkeep", "release-notes-empty", "release fix VERSION --record"):
+            self.assertIn(want, desc)
+        flow = " ".join(slurp(os.path.join(ROOT, "docs", "flow", "git-flow.md")).split())
+        for want in ("`release.changelog.fragments`", "`release-fragments-unfolded`", "`fix_paths`", "`own_plan`", "`release fix VERSION --record`", "`cut-fix-outside`"):
+            self.assertIn(want, flow)
+        self.assertIn("release.changelog.fragments", [k for k, _ in H.keys([])])
+
+    def test_ref_record_declares_deleted_and_the_rewrite_of_a_release_branch(self):
+        record = C.COMMANDS["ref"]["verbs"]["record"]
+        self.assertEqual({o["flag"] for o in record["opts"]}, {"--rewrite", "--deleted", "--why", "--project"})
+        self.assertEqual([(a[0], a[2] if len(a) > 2 else False) for a in record["args"]], [("REF", False), ("OLD", False), ("NEW", True)])
+        flat = " ".join(record["desc"].split())
+        for want in ("release/* or hotfix/* branch that origin does not have", "ref:deleted", "qargi ref deleted", "never a long-lived branch"):
+            self.assertIn(want, flat)
+        for stale in ("agent/* only", "the one move"):
+            self.assertNotIn(stale, flat + " " + C.COMMANDS["ref"]["desc"])
+        self.assertIn("starts at absent", " ".join(C.COMMANDS["ref"]["desc"].split()))
+        self.assertIn("from absent when the ref was deleted since", " ".join(C.COMMANDS["ref"]["verbs"]["note"]["desc"].split()))
+        self.assertNotIn("deleted or rewrote by hand, is not covered", " ".join(C.COMMANDS["local"]["verbs"]["verify"]["desc"].split()))
+        r = self.cli("ref", "record", "--rewrite", "--deleted", "agent/x", "a", "--why", "x")
+        self.assertEqual((r.returncode, r.stdout), (2, ""))
+        self.assertIn("takes --rewrite or --deleted, not both", r.stderr)
+
+    def test_branch_prune_agents_is_declared_as_the_one_ungated_deletion(self):
+        prune = C.COMMANDS["branch"]["verbs"]["prune"]
+        self.assertEqual({o["flag"] for o in prune["opts"]}, {"--project", "--remote", "--agents", "--plan", "--approved", "--dry-run"})
+        flat = " ".join(prune["desc"].split())
+        for want in ("--agents is local only and the exception to the gate", "takes no --plan, --approved or --remote (a usage error, exit 2)", "never a feature branch", "(exit 2)"):
+            self.assertIn(want, flat)
+        self.assertIn("The one deletion that is not gated is prune --agents", " ".join(C.COMMANDS["branch"]["desc"].split()))
+        for extra in ("--remote", "--plan x", "--approved y"):
+            r = self.cli("branch", "prune", "--agents", *extra.split())
+            self.assertEqual((r.returncode, r.stdout), (2, ""), extra)
+            self.assertIn("--agents", r.stderr)
+        flow = " ".join(slurp(os.path.join(ROOT, "docs", "flow", "git-flow.md")).split())
+        self.assertIn("`qargi branch prune --agents [--dry-run]` is the exception to the gate", flow)
+        self.assertIn("qargi branch prune --agents", slurp(os.path.join(ROOT, "skills", "qargi-flow", "SKILL.md")))
+
+
 class WindowHelp(unittest.TestCase):
     def test_a_window_from_the_model_that_the_tokens_exceed_counts_as_assumed_in_the_help_the_man_page_and_the_flow_page(self):
         for name, text in (("help", C.COMMANDS["lead"]["verbs"]["usage"]["desc"]), ("man page", H.man().replace("\\-", "-")),
