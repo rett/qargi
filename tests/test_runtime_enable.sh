@@ -301,9 +301,11 @@ out=$("$DA" project validate f1 2>&1); rc=$?
 HOOK='{"input":"json-stdin","tool_pointer":"/event/tool","command_pointer":"/event/args/cmd","cwd_pointer":"/workdir","path_pointers":{"write":["/event/args/target"],"read":["/event/args/target"]},
   "tool_names":{"shell":["run_shell"],"write":["patch_file"],"read":["open_file"]},"deny":{"exit":2,"stream":"stderr"},"allow":{"exit":0}}'
 export PATH=$TOOL/stubs:$PATH          # the stubs are found by name, as a runtime's command is
-fake_command_runtime "$SRC" "$TOOL" lryes "$(BARRIER yes) | .dispatch.argv[0] = \"lryes\""
-fake_command_runtime "$SRC" "$TOOL" lrno "$(BARRIER no) | .dispatch.argv[0] = \"lrno\""
-fake_command_runtime "$SRC" "$TOOL" lrhk '.dispatch.argv |= map(select(type != "object" or .class != "read-only")) | .dispatch.argv[0] = "lrhk" | .barrier = {kind: "hook", hook: '"$HOOK"'}'
+# the shipped codex hides /dev from its member's commands, and this test's directory may lie there (a TMPDIR under /dev/shm): the fakes hide a directory of the test's
+NOHIDE='.dispatch.hidden_paths.prefixes = ["'"$T"'/hidden-nowhere"]'
+fake_command_runtime "$SRC" "$TOOL" lryes "$(BARRIER yes) | .dispatch.argv[0] = \"lryes\" | $NOHIDE"
+fake_command_runtime "$SRC" "$TOOL" lrno "$(BARRIER no) | .dispatch.argv[0] = \"lrno\" | $NOHIDE"
+fake_command_runtime "$SRC" "$TOOL" lrhk '.dispatch.argv |= map(select(type != "object" or .class != "read-only")) | .dispatch.argv[0] = "lrhk" | .barrier = {kind: "hook", hook: '"$HOOK"'} | '"$NOHIDE"
 for r in lryes lrno lrhk; do mkdir -p "$HOME/.$r-members"; echo '{}' > "$HOME/.$r-members/auth.json"; done
 git init -q -b main "$T/lrrepo" && git -C "$T/lrrepo" -c user.name=t -c user.email=t@example.net commit -q --allow-empty -m one
 mkproj lr '{"local":"lryes","cloud":"claude-platform"}' '["lrno","lrhk"]'
