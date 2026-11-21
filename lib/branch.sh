@@ -10,12 +10,13 @@
 #       an open feature/* (an agent branch), and is still in that branch's history; a branch that only sits at the tip of one of them
 #       was never merged and is kept.
 #       Never touched: master, develop, the branches of repo.long_lived and repo.detached, the parking branch, an unmerged branch, a
-#       branch checked out in a worktree that qargi did not make (the main checkout, the runtime's own worktrees) or in a dirty one.
+#       branch checked out in a worktree that qargi did not make (the main checkout, any worktree inside the repository, the runtime's own worktrees, one outside the root) or in a dirty one.
 #       Nothing is pushed except the deletions on origin, each as a lease on the tip the plan showed.
 #       --agents: the one deletion that is not gated. It deletes the merged agent/* branches of this repository, at once: it prints what it deletes (the plan), takes no token and no
 #       approval, and is the lead's (a member run is refused, exit 2). Each branch is brought into the ref journal first (journal_reach: the commits made with git on it), then deleted
-#       only if it is still at the tip the plan showed, then journaled as deleted (branch:prune); a worktree of it that qargi made and that is clean goes with it. Its tip stays
-#       reachable from the merge it was merged by. feature/* branches and --remote stay gated: --agents with --remote, --plan or --approved is a usage error (exit 2).
+#       only if it is still at the tip the plan showed, then journaled as deleted (branch:prune). It deletes branches only, never a worktree: a branch held by any worktree is kept
+#       ("held by worktree W; the gated prune removes it": git does not list the ignored files of a worktree, and the removal of the directory would take them), and so is a branch
+#       whose journal does not reach its tip (a branch rewritten by hand, a journal line that is not JSON). Its tip stays reachable from the merge it was merged by. feature/* branches and --remote stay gated: --agents with --remote, --plan or --approved is a usage error (exit 2).
 #       --dry-run (the verb's behaviour; the flag is declared in the help by a later change): the plan and its token, and with --plan the refusal the apply would meet (plan-stale
 #       naming the labels that moved), changing nothing (QARGI_DRY=1: no ref, no file in the state directory, no audit line). With --remote origin is asked with ls-remote and never
 #       fetched ("not fetched"). The last line is `dry-run: N would refuse; nothing was changed`, the status 0, or 1 when any would.
@@ -109,6 +110,13 @@ merged_into() { # SHA KIND(agent|feature) -> the branch it is merged into, else 
 TAB=$(printf '\t')
 pats=('refs/heads/agent/*'); [ -n "$AGENTS" ] || pats+=('refs/heads/feature/*')   # --agents prunes the agent branches only
 what='agent/* or feature/*'; [ -z "$AGENTS" ] || what='agent/*'
+MAINWT=$(wt_path "$(g worktree list --porcelain | sed -n '1s/^worktree //p')")   # the main worktree: the first entry of the list
+wt_made() { # PATH -> 0 for a worktree qargi made: under the root, and neither the main worktree nor inside the repository (a root may contain the repository; the runtime makes worktrees in it)
+  local p; p=$(wt_path "$1")
+  [ "$p" != "$MAINWT" ] && [ "$p" != "$(wt_path "$REPO")" ] || return 1
+  case $p in "$(wt_path "$REPO")"/*) return 1;; esac
+  wt_in_root "$1"
+}
 LOCAL=() REM=() KEPT=()   # tab-separated. LOCAL: branch, sha, merged into, worktree to remove (or empty); REM: branch, sha, merged into
 while IFS= read -r ref; do
   b=${ref#refs/heads/}
@@ -116,11 +124,15 @@ while IFS= read -r ref; do
   sha=$(sha_of "$b"); kind=${b%%/*}
   into=$(merged_into "$sha" "$kind"); [ -n "$into" ] || continue
   w=$(held "$b")
-  if [ -z "$w" ]; then LOCAL+=("$b$TAB$sha$TAB$into$TAB")
-  elif wt_in_root "$w"; then
-    if [ -z "$(git -C "$w" status --porcelain 2>/dev/null)" ]; then LOCAL+=("$b$TAB$sha$TAB$into$TAB$w")
-    else KEPT+=("$b: its worktree $w has uncommitted changes"); fi
-  else KEPT+=("$b: checked out in $w, which qargi did not make"); fi
+  if [ -n "$w" ] && ! wt_made "$w"; then KEPT+=("$b: checked out in $w, which qargi did not make"); continue; fi
+  if [ -n "$w" ] && [ -n "$(git -C "$w" status --porcelain 2>/dev/null)" ]; then KEPT+=("$b: its worktree $w has uncommitted changes"); continue; fi
+  if [ -n "$AGENTS" ]; then
+    # --agents deletes branches only: no worktree is removed (git status does not list ignored files, so a clean worktree may hold some), and a branch the journal does not reach keeps its deletion for the gated prune
+    if [ -n "$w" ]; then KEPT+=("$b: held by worktree $w; the gated prune removes it"); continue; fi
+    journal_reach_scan local "refs/heads/$b" "$sha"
+    if [ -n "$REACH_NONE" ]; then KEPT+=("$b: its journal does not reach ${sha:0:7} ($REACH_NONE); the gated prune deletes it"); continue; fi
+  fi
+  LOCAL+=("$b$TAB$sha$TAB$into$TAB$w")
 done < <(g for-each-ref --format='%(refname)' "${pats[@]}")
 
 if [ -n "$REMOTE" ]; then
@@ -159,9 +171,10 @@ if [ -n "$AGENTS" ]; then
   [ -z "$DRY_RUN" ] || { echo "the apply of --agents would delete these ${#LOCAL[@]} branches at once"; exit 0; }
   n=0
   for e in "${LOCAL[@]}"; do
-    IFS=$TAB read -r b sha _ w <<<"$e"
-    journal_reach local "refs/heads/$b" "$sha" branch:prune   # first: the commits made with git on the branch are journaled before it goes, so a run prepared earlier is explained
-    [ -z "$w" ] || wt_drop "$b"
+    IFS=$TAB read -r b sha _ <<<"$e"   # no worktree: the plan kept every branch a worktree holds
+    [ "$(sha_of "$b")" = "$sha" ] || { echo "qargi: warning: kept $b (it moved since the plan)" >&2; continue; }
+    # first: the commits made with git on the branch are journaled before it goes, so a run prepared earlier is explained; a journal that no longer reaches the tip keeps the branch
+    journal_catchup local "refs/heads/$b" "$sha" branch:prune || { echo "qargi: warning: kept $b (its journal does not reach ${sha:0:7}: $REACH_NONE)" >&2; continue; }
     if g update-ref -d "refs/heads/$b" "$sha"; then journal_ref "$REPO" "refs/heads/$b" "$sha" "" branch:prune; n=$((n + 1)); echo "deleted $b"
     else echo "qargi: warning: could not delete $b (it moved meanwhile)" >&2; fi
   done

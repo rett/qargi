@@ -3,7 +3,8 @@
 # refusals the apply would meet (each as the apply prints it, with dry=1 first in the detail of the contract line) and `dry-run: N would refuse; nothing was changed`, and
 # changes nothing: the refs of the repository and of its origin, .git/worktrees, the state directory (the audit log, the ref journal, the intent and lock files, the marshal
 # records, the stored plans), no lease renewed, nothing fetched. Every case compares a snapshot of all of it before and after. Offline: a bare repository is the origin.
-# The last part is `branch prune --agents`, the one deletion of branch prune that is not gated: the merged agent branches at once, journaled first, the lead's.
+# The last part is `branch prune --agents`, the one deletion of branch prune that is not gated: the merged agent branches at once, journaled first, the lead's, branches only (a
+# branch held by any worktree is kept, as is one the journal does not reach).
 # Run: tests/test_dry_run.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -164,7 +165,7 @@ dry $B prune --dry-run
 [ "$rc" = 0 ] && grep -q "^no merged agent/\* or feature/\* branches to prune" "$T/do" && [ "$(lastline)" = "dry-run: 0 would refuse; nothing was changed" ] && [ "$s0" = "$s1" ] && ok "branch prune --dry-run with nothing to prune: the plan says so, 0 would refuse" || no "prune dry run, nothing: rc=$rc $(cat "$T/do" "$T/de")"
 
 # ---------------------------------------------------------------------------------------------------------------------------- branch prune --agents
-# the one deletion that is not gated: the merged agent/* branches of the repository, at once, journaled first, the lead's
+# the one deletion that is not gated: the merged agent/* branches of the repository, at once, journaled first, the lead's; it deletes branches only, so a branch a worktree holds is kept
 mkproj agp with-origin
 $F start fa >/dev/null 2>&1; task t1 feature/fa; task t2 feature/fa; task t5 feature/fa; task t6 feature/fa
 git -C "$R" branch agent/hand develop; $DA ref note agent/hand >/dev/null 2>&1   # a branch the lead made and noted, then committed on with git
@@ -173,13 +174,14 @@ for b in t1 t2 t5 t6 hand; do $F merge fa "agent/$b" >/dev/null 2>&1; done   # m
 task t3   # not merged anywhere: kept
 $F start pb >/dev/null 2>&1; task t4 feature/pb; $F merge pb agent/t4 >/dev/null 2>&1; $F verify pb >/dev/null 2>&1
 fp=$($F finish pb --keep 2>&1 | tok); $F finish pb --keep --plan "$fp" --approved go >/dev/null 2>&1   # feature/pb is merged into develop and kept: gated
-mkdir -p "$T/s/worktrees/agp/agent"; git -C "$R" worktree add -q "$T/s/worktrees/agp/agent/t2" agent/t2   # a worktree qargi made, clean: goes with its branch
+for b in t1 t2 t3 t4 t5 t6; do $DA ref note "agent/$b" >/dev/null 2>&1; done   # the branches the verbs made are in the ref journal; --agents keeps one the journal does not reach
+mkdir -p "$T/s/worktrees/agp/agent"; git -C "$R" worktree add -q "$T/s/worktrees/agp/agent/t2" agent/t2   # a worktree qargi made, clean: its branch is kept all the same (the gated prune removes it)
 git -C "$R" worktree add -q "$T/s/worktrees/agp/agent/t5" agent/t5; echo dirty > "$T/s/worktrees/agp/agent/t5/dirty.txt"   # a dirty one: its branch is kept
 git -C "$R" push -q origin agent/t6
-tips=$(for b in t1 t2 t4 t6 hand; do git -C "$R" rev-parse "agent/$b"; done | paste -sd' ')
+tips=$(for b in t1 t4 t6 hand; do git -C "$R" rev-parse "agent/$b"; done | paste -sd' ')
 dry $B prune --agents --dry-run
-[ "$rc" = 0 ] && grep -q "^prune the merged agent branches of agp: 5 local (--agents: no plan token and no approval" "$T/do" && grep -q "^the apply of --agents would delete these 5 branches at once" "$T/do" && ! grep -q "^plan token" "$T/do" && ! grep -q "feature/pb" "$T/do" \
-  && grep -q "^  kept agent/t5: its worktree .* has uncommitted changes" "$T/do" && [ "$(lastline)" = "dry-run: 0 would refuse; nothing was changed" ] && [ "$s0" = "$s1" ] \
+[ "$rc" = 0 ] && grep -q "^prune the merged agent branches of agp: 4 local (--agents: no plan token and no approval" "$T/do" && grep -q "^the apply of --agents would delete these 4 branches at once" "$T/do" && ! grep -q "^plan token" "$T/do" && ! grep -q "feature/pb" "$T/do" \
+  && grep -q "^  kept agent/t5: its worktree .* has uncommitted changes" "$T/do" && grep -q "^  kept agent/t2: held by worktree .*agent/t2; the gated prune removes it$" "$T/do" && ! grep -q "remove its worktree" "$T/do" && [ "$(lastline)" = "dry-run: 0 would refuse; nothing was changed" ] && [ "$s0" = "$s1" ] \
   && ok "branch prune --agents --dry-run: the plan (the merged agent branches only, no token), nothing is deleted or changed" || no "agents dry run: rc=$rc $(cat "$T/do" "$T/de")"
 out=$(QARGI_MEMBER_RUN=1 $B prune --agents 2>&1); rc=$?
 [ "$rc" = 2 ] && grep -q "not available in a member run" <<<"$out" && [ -n "$(git -C "$R" rev-parse -q --verify refs/heads/agent/t1)" ] && ok "a member run is refused (exit 2) and deletes nothing" || no "agents in a member run: rc=$rc $out"
@@ -190,21 +192,63 @@ done
 ok "--agents with --remote, --plan or --approved is a usage error (exit 2), and deletes nothing"
 before_audit=$(wc -l < "$T/s/audit.log" 2>/dev/null || echo 0)
 out=$($B prune --agents 2>&1); rc=$?
-gone=''; for b in t1 t2 t4 t6 hand; do git -C "$R" rev-parse -q --verify "refs/heads/agent/$b" >/dev/null && gone="$gone $b"; done
-[ "$rc" = 0 ] && [ -z "$gone" ] && grep -q "^deleted agent/t1$" <<<"$out" && grep -q "^removed the worktree .*agent/t2" <<<"$out" && grep -q "^pruned 5 local branch(es)$" <<<"$out" && ! grep -q "^plan token: " <<<"$out" \
-  && ok "branch prune --agents deletes the merged agent branches at once, with no token and no approval, and the clean worktree qargi made goes with its branch" || no "agents apply: rc=$rc gone=$gone $out"
-[ -n "$(git -C "$R" rev-parse -q --verify refs/heads/agent/t3)" ] && [ -n "$(git -C "$R" rev-parse -q --verify refs/heads/agent/t5)" ] && [ -n "$(git -C "$R" rev-parse -q --verify refs/heads/feature/pb)" ] && [ -n "$(git -C "$R" rev-parse -q --verify refs/heads/feature/fa)" ] \
-  && [ -n "$(git -C "$O" rev-parse -q --verify refs/heads/agent/t6)" ] && ok "kept: the unmerged agent branch, the one with a dirty worktree, the feature branches (gated) and the branch on origin (--remote stays gated)" || no "agents kept: $(git -C "$R" for-each-ref --format='%(refname)' refs/heads)"
+gone=''; for b in t1 t4 t6 hand; do git -C "$R" rev-parse -q --verify "refs/heads/agent/$b" >/dev/null && gone="$gone $b"; done
+[ "$rc" = 0 ] && [ -z "$gone" ] && grep -q "^deleted agent/t1$" <<<"$out" && ! grep -q "removed the worktree" <<<"$out" && grep -q "^pruned 4 local branch(es)$" <<<"$out" && ! grep -q "^plan token: " <<<"$out" \
+  && ok "branch prune --agents deletes the merged agent branches at once, with no token and no approval" || no "agents apply: rc=$rc gone=$gone $out"
+[ -n "$(git -C "$R" rev-parse -q --verify refs/heads/agent/t3)" ] && [ -n "$(git -C "$R" rev-parse -q --verify refs/heads/agent/t5)" ] && [ -n "$(git -C "$R" rev-parse -q --verify refs/heads/agent/t2)" ] && [ -d "$T/s/worktrees/agp/agent/t2" ] && [ -n "$(git -C "$R" rev-parse -q --verify refs/heads/feature/pb)" ] && [ -n "$(git -C "$R" rev-parse -q --verify refs/heads/feature/fa)" ] \
+  && [ -n "$(git -C "$O" rev-parse -q --verify refs/heads/agent/t6)" ] && ok "kept: the unmerged agent branch, the ones a worktree holds (a clean one too, and the worktree stays), the feature branches (gated) and the branch on origin (--remote stays gated)" || no "agents kept: $(git -C "$R" for-each-ref --format='%(refname)' refs/heads)"
 reach=1; for t in $tips; do git -C "$R" cat-file -e "$t^{commit}" && { git -C "$R" merge-base --is-ancestor "$t" feature/fa || git -C "$R" merge-base --is-ancestor "$t" develop; } || reach=''; done
 [ -n "$reach" ] && ok "every tip stays reachable from the branch it was merged into" || no "a tip is not reachable"
 J=$T/s/ref-journal.jsonl
 jq -e -s --arg r "$(readlink -f "$R")" '[.[] | select(.ref == "refs/heads/agent/hand" and .repo == $r)] | (.[0].old | test("^0+$")) and (.[-1].new | test("^0+$")) and (.[-1].verb == "branch:prune") and (length >= 3) and ([.[1:-1][] | select(.verb == "branch:prune" and (.why | test("^a commit made on the branch with git")))] | length >= 1)' "$J" >/dev/null \
   && ok "the commits made with git on a noted branch are journaled before it is deleted (journal_reach), then the deletion (branch:prune)" || no "journal of agent/hand: $(jq -c 'select(.ref == "refs/heads/agent/hand") | [.old[0:7], .new[0:7], .verb]' "$J" | paste -sd' ')"
 jq -e -s '[.[] | select(.ref == "refs/heads/agent/t1")] | .[-1] | (.new | test("^0+$")) and .verb == "branch:prune"' "$J" >/dev/null && ok "each deletion is a line of the journal" || no "journal of agent/t1"
-[ "$(wc -l < "$T/s/audit.log")" = $((before_audit + 1)) ] && tail -n 1 "$T/s/audit.log" | jq -e '.verb == "branch:prune" and (.detail | test("agp 5 local 0 remote")) and .approved == ""' >/dev/null && ok "one audit line, branch:prune, with no approval words" || no "audit line: $(tail -n 2 "$T/s/audit.log")"
+[ "$(wc -l < "$T/s/audit.log")" = $((before_audit + 1)) ] && tail -n 1 "$T/s/audit.log" | jq -e '.verb == "branch:prune" and (.detail | test("agp 4 local 0 remote")) and .approved == ""' >/dev/null && ok "one audit line, branch:prune, with no approval words" || no "audit line: $(tail -n 2 "$T/s/audit.log")"
 out=$($B prune --agents 2>&1); rc=$?
 [ "$rc" = 0 ] && grep -q "^no merged agent/\* branches to prune" <<<"$out" && ok "a second run finds nothing to prune" || no "agents, nothing left: rc=$rc $out"
-out=$($B prune 2>&1); grep -q "delete local feature/pb" <<<"$out" && ! grep -q "delete local agent/" <<<"$out" && grep -q "^plan token: " <<<"$out" && ok "the plain prune still plans the feature branch and asks for a token" || no "plain prune after --agents: $out"
+out=$($B prune 2>&1); grep -q "delete local feature/pb" <<<"$out" && grep -q "delete local agent/t2 .*; remove its worktree .*agent/t2" <<<"$out" && ! grep -Eq "delete local agent/(t1|t4|t6|hand) " <<<"$out" && grep -q "^plan token: " <<<"$out" \
+  && ok "the plain prune still plans the feature branch and the agent branch a clean worktree of qargi holds (with its worktree), and asks for a token" || no "plain prune after --agents: $out"
+
+# ---------------------------------------------------------------------------------------------------------------------------- branch prune --agents: worktrees and the journal
+# a worktrees.root that contains the repository (the project's validation accepts it): a merged agent branch checked out in the main checkout is kept, so is one outside the root, one in a worktree
+# the runtime made inside the repository, one in a clean worktree qargi made (git does not list its ignored files, and status.showUntrackedFiles=no hides its untracked ones: --agents removes no
+# worktree), one that repo.long_lived or repo.detached names, and one the journal does not reach (made by hand and not noted, or a journal with a line that is not JSON); a free one is deleted
+mkproj agr with-origin
+jq --arg r "$T" '.worktrees = {root: $r} | .repo.long_lived += ["agent/ll"] | .repo.detached = ["agent/dt"]' "$T/c/projects/agr.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/agr.json"
+$F start fa >/dev/null 2>&1
+for b in m1 o1 q1 i1 d1 d2 d3; do task "$b" feature/fa; done
+git -C "$R" branch agent/ll develop; git -C "$R" branch agent/dt develop
+for b in m1 o1 q1 i1 d1 d3 ll dt; do $DA ref note "agent/$b" >/dev/null 2>&1; done   # d2 is made by hand and not noted
+for b in m1 o1 q1 i1 d1 d2 d3; do $F merge fa "agent/$b" >/dev/null 2>&1; done
+printf '*.local\n' >> "$R/.git/info/exclude"; git -C "$R" config status.showUntrackedFiles no
+wo=$(mktemp -d); rmdir "$wo"; wi=$R/.wt-d3                                   # outside the root; inside the repository
+git -C "$R" checkout -q agent/m1                                             # the main checkout holds it (the root contains the repository, so the path test alone calls it qargi's)
+git -C "$R" worktree add -q "$wo" agent/o1
+git -C "$R" worktree add -q "$wi" agent/d3
+git -C "$R" worktree add -q "$T/agent/q1" agent/q1                           # a clean worktree qargi made
+git -C "$R" worktree add -q "$T/agent/i1" agent/i1; echo secret > "$T/agent/i1/.env.local"; echo note > "$T/agent/i1/untracked.txt"   # an ignored and an untracked file: git status is clean
+[ -z "$(git -C "$T/agent/i1" status --porcelain)" ] && ok "(setup) the worktree with an ignored and an untracked file reports a clean status" || no "(setup) i1 status: $(git -C "$T/agent/i1" status --porcelain)"
+dry $B prune --agents --dry-run
+[ "$rc" = 0 ] && grep -q "^  delete local agent/d1 " "$T/do" && ! grep -q "remove its worktree" "$T/do" && [ "$(grep -c '^  delete local' "$T/do")" = 1 ] && grep -q "^  kept agent/m1: checked out in $(readlink -f "$R"), which qargi did not make$" "$T/do" \
+  && grep -q "^  kept agent/o1: checked out in $wo, which qargi did not make$" "$T/do" && grep -q "^  kept agent/d3: checked out in $wi, which qargi did not make$" "$T/do" && grep -q "^  kept agent/q1: held by worktree $T/agent/q1; the gated prune removes it$" "$T/do" \
+  && grep -q "^  kept agent/i1: held by worktree $T/agent/i1; the gated prune removes it$" "$T/do" && grep -Eq "^  kept agent/d2: its journal does not reach [0-9a-f]{7} \(the journal has no line of it: .*; the gated prune deletes it$" "$T/do" && [ "$s0" = "$s1" ] \
+  && ok "--agents --dry-run, root containing the repository: only the branch no worktree holds and the journal reaches is planned; the main checkout's, the outside one, the one inside the repository, the clean worktrees' and the unreached one are kept" || no "agents (root containing the repository) dry run: rc=$rc $(cat "$T/do" "$T/de")"
+out=$($B prune --agents 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q "^deleted agent/d1$" <<<"$out" && grep -q "^pruned 1 local branch(es)$" <<<"$out" && ! grep -Eq "^removed the worktree|could not remove" <<<"$out" && ! git -C "$R" rev-parse -q --verify refs/heads/agent/d1 >/dev/null \
+  && ok "--agents deletes the one branch that is free, and removes no worktree" || no "agents apply (root containing the repository): rc=$rc $out"
+kept=1; for b in m1 o1 q1 i1 d2 d3 ll dt; do git -C "$R" rev-parse -q --verify "refs/heads/agent/$b" >/dev/null || kept=''; done
+[ -n "$kept" ] && [ "$(git -C "$R" symbolic-ref -q HEAD)" = refs/heads/agent/m1 ] && [ -d "$wo" ] && [ -d "$wi" ] && [ -d "$T/agent/q1" ] && [ -f "$T/agent/i1/.env.local" ] && [ -f "$T/agent/i1/untracked.txt" ] && git -C "$R" worktree list | grep -q "$T/agent/i1" \
+  && ok "every other branch is kept, the main checkout is still on its branch, no worktree is gone, and the ignored and the untracked file are there" || no "agents apply kept: $(git -C "$R" for-each-ref --format='%(refname)' refs/heads/agent) $(git -C "$R" worktree list)"
+# the journal is unreadable (a line that is not JSON): a branch no worktree holds is kept as well
+git -C "$R" checkout -q parked; for w in "$T/agent/q1" "$T/agent/i1" "$wo" "$wi"; do git -C "$R" worktree remove --force "$w"; done
+printf 'not json\n' >> "$T/s/ref-journal.jsonl"
+dry $B prune --agents --dry-run
+[ "$rc" = 0 ] && grep -q "^no merged agent/\* branches to prune" "$T/do" && ! grep -q "^  delete local" "$T/do" && grep -q "^  kept agent/m1: its journal does not reach .*is not JSON" "$T/do" && [ "$s0" = "$s1" ] \
+  && ok "--agents --dry-run with a journal that has a line that is not JSON: nothing is planned, each branch is kept with the reason" || no "agents, unreadable journal, dry run: rc=$rc $(cat "$T/do" "$T/de")"
+before=$(git -C "$R" for-each-ref | md5sum)
+out=$($B prune --agents 2>&1); rc=$?
+[ "$rc" = 0 ] && [ "$before" = "$(git -C "$R" for-each-ref | md5sum)" ] && ! grep -q "^deleted" <<<"$out" && ok "--agents with that journal deletes nothing" || no "agents, unreadable journal: rc=$rc $out"
+out=$($B prune 2>&1); grep -q "delete local agent/m1 " <<<"$out" && grep -q "journal: no step will be journaled for agent/m1" <<<"$out" && ok "the gated prune still plans those branches, with the note that the journal does not lead to them" || no "gated prune, unreadable journal: $out"
 
 # ---------------------------------------------------------------------------------------------------------------------------- feature-runs-open
 # feature finish refuses while a run of the feature is open: the code carries the count and the names of the runs (a digest of them in the contract line), the message names three
