@@ -1636,6 +1636,21 @@ $vout}"
       [ "$(reg_json "$RUN" '.command_request // ""')" != 1 ] || echo "qargi: prepared command runtime is unavailable; re-prepare with qargi local prepare before running" >&2
       exit "$rrc"
     }
+    # the runtime of the run: the one the registry line names (a project with extra runtimes), else the project's own as ever. The run starts on it or is refused as
+    # drift when it is no longer enabled or usable, or what it was prepared against changed (the request is checked again here, with the runtime that was in it)
+    RRT=$(reg_get "$RUN" runtime)
+    if [ -n "$RRT" ]; then
+      RPROV=$RRT
+      drc=0; dout=$(python3 -I "$(dirname "$0")/local_run.py" "$(realpath -- "$RUN")" --project "$RPJ" --runtime "$RPROV" --class "$RCLASS" --drift-check) || drc=$?
+      if [ "$drc" = 6 ]; then
+        # shellcheck disable=SC2034  # refuse (lib.sh) names the verb and the project of its contract line from these
+        PROJECT=$RPJ QARGI_VERB="local run"
+        ( refuse runtime-drift name="$RPROV" why="$(sed -n 1p <<<"$dout")" ) || drc=$?
+        echo "qargi: $(sed -n 2p <<<"$dout")" >&2
+        exit "$drc"
+      fi
+      [ "$drc" = 0 ] || exit "$drc"
+    fi
     DRY=''
     for a in "$@"; do [ "$a" != --dry-run ] || DRY=1; done
     if [ -z "$DRY" ]; then

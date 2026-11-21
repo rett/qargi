@@ -93,6 +93,9 @@ mkfake fakever "$VERIFIED"              # the same, its model override verified
 mkfake fakeno "$(BARRIER no)"           # no read-only barrier
 mkfake fakeown "$(BARRIER no)"          # a project's own runtime whose missing barrier the project accepted
 mkfake fakehid '.dispatch.hidden_paths.prefixes = ["'"$T"'/hid"]'
+mkfake fakedis
+mkfake fakechg
+mkfake fakeuse
 mkdir -p "$T/hid"
 mkproj() { # NAME PROVIDER-JSON EXTRAS-JSON PROFILES-JSON [ACCEPT]: stored answers with a repository of their own (and the members of an in-session own runtime)
   local repo=$T/repo-$1
@@ -110,14 +113,14 @@ CC='{"local":"claude-code","cloud":"claude-platform"}'
 ACC='{"by":"me","at":"2026-11-11T12:00:00Z","reason":"the owner said so"}'
 PROFILES='{"cx-build":{"base":"worker","tier":"balanced","effort":"high","runtime":"fakecx"},"cx-review":{"base":"reviewer","tier":"deep","runtime":"fakecx"},
   "cc-fast":{"base":"worker","tier":"fast","effort":"low"},"cc-own":{"base":"worker","tier":"fast","runtime":"claude-code"}}'
-mkproj two "$CC" '["fakecx","fakever","fakeno"]' "$PROFILES"
+mkproj two "$CC" '["fakecx","fakever","fakeno","fakedis","fakechg","fakeuse"]' "$PROFILES"
 mkproj cmd '{"local":"fakeown"}' '["fakeno","fakecx"]' null "$ACC"
 prep() { # PROJECT ARGS...: local prepare in the project's repository, standard error with standard output: PREP, PREP_RC and RUN
   local p=$1; shift
   PREP=$("$DA" local prepare --repo "$T/repo-$p" --base main --scratch "${SCRATCH:-$T/scr}" "$@" 2>&1); PREP_RC=$?
   RUN=$(sed -n 's/^RUN=//p' <<<"$PREP")
 }
-line() { sed -n "s/^$1=//p" <<<"$PREP"; }          # the value of a KEY= line of the last prepare
+line() { sed -n "s/^$1=//p" <<<"$PREP" | head -1; }          # the value of a KEY= line of the last prepare
 regline() { jq -c --arg r "$1" 'select(.run == $r)' "$QARGI_STATE/local-runs.jsonl"; }
 refusal_code() { sed -n 's/^qargi-refusal\/1 .*"code":"\([a-z-]*\)".*/\1/p' <<<"$1"; }
 made() { { ls "$T/scr"; ls -d "$T"/qargi-run.* 2>/dev/null; } | wc -l; }   # what a prepare leaves: run directories and temporary directories
@@ -221,5 +224,52 @@ setline "$CMDOWN" '.runtime = "fakecx"'
 out=$(READY "$CMDOWN"); rc=$?
 { [ "$rc" != 0 ] && grep -q 'prepared command request disagrees with lead registry' <<<"$out"; } && ok agreement-compares-runtime || no "a line whose runtime was changed must fail: rc=$rc $out"
 setline "$CMDOWN" '.runtime = "fakeown"'
+
+# --- local run starts a run on the runtime it was prepared for: the registry line names it, the mirrors say so, and the lead's project is the one asked
+dispatch() { printf 'TASK: change the thing\nDONE: it is changed\n' > "$RUN/task.md"; "$DA" local run "$RUN" "$@" 2>&1; }
+prep two --slug u1 --profile cx-build --runtime fakever
+out=$(dispatch); rc=$?
+{ [ "$rc" = 0 ] && jq -e '.runtime == "fakever" and .class == "write"' "$RUN/dispatch.json" >/dev/null && jq -e '.runtime == "fakever"' "$RUN/request.json" >/dev/null \
+  && [ "$($LC -C "$RUN/clone" log -1 --format=%s)" = "Stub: a file" ]; } && ok run-on-extra-runtime || no "a run on the extra runtime: rc=$rc $out"
+RUNX=$RUN
+prep two --slug u2 --runtime fakecx
+out=$(dispatch --dry-run); rc=$?
+{ [ "$rc" = 0 ] && grep -q '^ARGV=\["fakecx","exec"' <<<"$out"; } && ok run-dry-names-command-of-runtime || no "dry run on the extra runtime: rc=$rc $out"
+
+# --- a run prepared for a runtime that the project no longer enables, or that can no longer be used, or that changed since, is refused (drift), and starts nothing
+prep two --slug d1 --runtime fakedis
+jq '.models.extra_runtimes.local -= ["fakedis"]' "$T/c/projects/two.json" > "$T/two.json" && mv "$T/two.json" "$T/c/projects/two.json"
+out=$(dispatch); rc=$?
+{ [ "$rc" = 1 ] && [ "$(refusal_code "$out")" = runtime-drift ] && grep -q 'name=fakedis why=not-enabled' <<<"$out" && [ -z "$($LC -C "$RUN/clone" log origin/main..HEAD --format=%s)" ] && [ ! -e "$RUN/dispatch.json" ]; } \
+  && ok drift-disabled || no "a run of a disabled runtime: rc=$rc $out"
+prep two --slug d2 --runtime fakechg
+jq '.dispatch.timeout_s = 77' "$TOOL/lib/providers/fakechg.json" > "$T/chg.json" && mv "$T/chg.json" "$TOOL/lib/providers/fakechg.json"
+out=$(dispatch); rc=$?
+{ [ "$rc" = 1 ] && [ "$(refusal_code "$out")" = runtime-drift ] && grep -q 'name=fakechg why=changed' <<<"$out" && grep -q 're-prepare' <<<"$out" && [ ! -e "$RUN/dispatch.json" ]; } \
+  && ok drift-changed || no "a run of a runtime changed since prepare: rc=$rc $out"
+prep two --slug d3 --runtime fakeuse
+jq '.dispatch.mode = "in-session"' "$TOOL/lib/providers/fakeuse.json" > "$T/use.json" && mv "$T/use.json" "$TOOL/lib/providers/fakeuse.json"
+out=$(dispatch); rc=$?
+{ [ "$rc" = 1 ] && [ "$(refusal_code "$out")" = runtime-drift ] && grep -q 'name=fakeuse why=not-usable' <<<"$out"; } && ok drift-unusable || no "a run of a runtime no longer usable: rc=$rc $out"
+
+# --- a run of the project's own runtime is never drift for an extra runtime's sake, and an in-session own run is still not started by qargi
+prep two --slug o1
+out=$(dispatch); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'dispatches in the lead.s own session' <<<"$out" && ! grep -q 'runtime-drift' <<<"$out"; } && ok insession-run-refused-as-before || no "an in-session run of a project with extras: rc=$rc $out"
+prep cmd --slug o2
+out=$(dispatch --dry-run); rc=$?
+{ [ "$rc" = 0 ] && grep -q '^ARGV=\["fakeown","exec"' <<<"$out"; } && ok run-own-command-runtime || no "a run of the own command runtime: rc=$rc $out"
+
+# --- a reading review: a read-only run on an extra runtime gets the read-only sandbox and no directory the member may write, whatever the profile says
+prep two --slug v1 --role review --runtime fakecx
+out=$(dispatch --dry-run); rc=$?
+argv=$(sed -n 's/^ARGV=//p' <<<"$out")
+{ [ "$rc" = 0 ] && jq -e 'index("--sandbox") as $i | $i != null and .[$i + 1] == "read-only" and (index("workspace-write") == null) and (index("--add-dir") == null)' <<<"$argv" >/dev/null; } \
+  && ok reading-review-read-only || no "a read-only run on an extra runtime: rc=$rc $out"
+prep two --slug v2 --role review --profile cx-review
+out=$(dispatch --dry-run); rc=$?
+argv=$(sed -n 's/^ARGV=//p' <<<"$out")
+{ [ "$rc" = 0 ] && [ "$(line RUNTIME)" = fakecx ] && jq -e 'index("--sandbox") as $i | $i != null and .[$i + 1] == "read-only" and (index("workspace-write") == null) and (index("--add-dir") == null)' <<<"$argv" >/dev/null; } \
+  && ok reading-review-by-profile || no "a read-only run by a profile of an extra runtime: rc=$rc $out"
 
 exit $fail
