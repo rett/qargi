@@ -1120,6 +1120,20 @@ class Skills(HookCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
+    def test_refuses_provider_enable_and_disable_of_a_runtime_to_a_member(self):
+        """provider enable|disable PROJECT --runtime NAME approves what a member may run on (another barrier, a sign-in linked into the run, an
+        executable): it takes the owner's words and is not in PROVIDER_READ, so a member may not run it, in any form, nor the script behind it."""
+        for form in ("qargi provider enable p --runtime codex", "qargi provider disable p --runtime codex", "/opt/q/bin/qargi provider enable p --runtime codex --plan 0123456789ab --approved go",
+                     "sudo qargi provider enable p --runtime codex", "bash -c 'qargi provider enable p --runtime codex'", "env FOO=1 qargi provider disable p --runtime codex",
+                     "cd src && qargi provider enable p --runtime codex", "echo $(qargi provider enable p --runtime codex)", "bash lib/provider.sh enable p --runtime codex",
+                     "python3 -I lib/provider.py enable p --runtime codex", "./lib/provider.sh disable p --runtime codex", "python3 -I lib/provider.py runtime-info p codex enable"):
+            r = self.bash(form)
+            self.assertEqual(r.returncode, 2, form)
+            self.assertIn("changes the provider definitions and is not available to an agent", r.stderr, form)
+        for c in ("echo qargi provider enable p --runtime codex", "grep -n 'provider enable' lib/commands.py"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
     def test_refuses_provider_check_to_a_member(self):
         # it records its result in verified.json, so it is not a read
         r = self.bash("qargi provider check claude")
