@@ -84,8 +84,8 @@ DIE_AFTER="push -q --atomic" DIE_FLAG=$T/die-r $REL finish 0.2.0 --plan "$t" --a
 out=$($REL finish 0.2.0 2>&1); rc=$?; t2=$(tok <<<"$out")
 grep -q "the tag 0.2.0 exists already" <<<"$out" && no "the re-run died at the tag that exists already" || ok "the re-run does not die at \"the tag exists already\""
 [ $rc = 0 ] && [ -n "$t2" ] && grep -q "was cut off" <<<"$out" && [ "$(rev "$R" master)" = "$m0" ] && ok "it says the finish was cut off, prints a plan token and changes nothing" || no "release resume plan: rc=$rc $out"
-grep -qxF "$(takes release/0.2.0 "$rb0" "$rb1")" <<<"$out" && ! grep -q "journal: takes .* on origin/" <<<"$out" \
-  && ok "its plan lists the fix committed with git on the release branch, and nothing for origin: release push took the fix there" || no "release resume plan, journal line: $out"
+! grep -q "journal: takes" <<<"$out" \
+  && ok "its plan lists no commit made with git for the journal: release push took the fix, and journaled it, when it pushed" || no "release resume plan, journal line: $out"
 out=$($REL finish 0.2.0 --plan "$t2" --approved "go on" 2>&1); rc=$?
 nm=$(rev "$O" refs/heads/master)
 [ $rc = 0 ] && [ "$(rev "$R" master)" = "$nm" ] && [ "$(rev "$R" develop)" = "$(rev "$O" refs/heads/develop)" ] && [ "$(rev "$R" release/0.2.0)" = none ] && [ ! -e "$INTENT/app-release-0.2.0.json" ] \
@@ -93,7 +93,8 @@ nm=$(rev "$O" refs/heads/master)
 [ "$(rev "$R" "refs/tags/0.2.0^{commit}")" = "$nm" ] && ok "the tag stays on the merge origin has" || no "tag"
 [ "$(jq -rs '[.[] | select(.verb == "release:finish")] | length' "$T/s/audit.log")" = 1 ] && ok "and the audit line is written once" || no "audit: $(cat "$T/s/audit.log")"
 [ "$(jq -rs '[.[] | select(.ref == "refs/tags/0.2.0")] | length' "$T/s/ref-journal.jsonl")" = 2 ] && ok "the ref journal has the tag's push and its local line, once each" || no "journal: $(grep -c . "$T/s/ref-journal.jsonl")"
-[ "$(stepped release/0.2.0 "$rb0" "$rb1" release:finish)" = 1 ] && ok "and the fix committed with git on the release branch, taken by the finish, once" || no "journal step of release/0.2.0: $(grep release/0.2.0 "$T/s/ref-journal.jsonl")"
+[ "$(stepped release/0.2.0 "$rb0" "$rb1" release:fix)" = 1 ] && [ "$(stepped release/0.2.0 "$rb0" "$rb1" release:finish)" = 0 ] \
+  && ok "and the fix committed with git on the release branch, taken by release push as release:fix, once, and not again by the finish" || no "journal step of release/0.2.0: $(grep release/0.2.0 "$T/s/ref-journal.jsonl")"
 
 # --- origin holds something else than the record intended: refused, and what differs is named
 commit_on develop late2.txt   # the changelog has nothing under Unreleased now: the start is told so (--allow-empty-notes)

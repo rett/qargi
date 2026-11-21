@@ -486,7 +486,7 @@ reach() {
 # origin: there too). The run must verify and name each verb, with the number of commits made with git that the verb took. A second run, prepared after
 # the first of the two commits on the release branch (with origin: after release push took it there), must verify as well and count the one commit left.
 gone_flow() {
-  local v=$1 lbl=$3 org=${4:-} fr fm r0 r1 r2 f0 f1 z0 z1 out outm rc said pf pr pp bad gw=" made with git, taken by the verb)"
+  local v=$1 lbl=$3 org=${4:-} fr fm r0 r1 r2 f0 f1 z0 z1 out outm rc said pf pr pp bad rtakes r1verb rnamed gw=" made with git, taken by the verb)"
   $REL verify "$v" >/dev/null 2>&1; rstart "$v" --date 2026-02-02 --allow-empty-notes >/dev/null 2>&1 || no "(setup) $lbl: release start $v"
   $F start gf >/dev/null 2>&1; task agent/gz gz.txt one; $DA ref note agent/gz >/dev/null 2>&1 || no "(setup) $lbl: note agent/gz"
   if [ -n "$org" ]; then
@@ -506,7 +506,9 @@ gone_flow() {
   out=$(approve $REL finish "$v") || no "(setup) $lbl: release finish: $out"; said+=$'\n'$out; pr=$(planned)
   out=$(approve $DA branch prune ${org:+--remote}) || no "(setup) $lbl: branch prune: $out"; said+=$'\n'$out; pp=$(planned)
   # each plan says how many commits made with git the deletion takes into the journal, and from which commit to which
-  grep -qxF "$(takes 1 feature/gf "$f0" "$f1")" <<<"$pf" && grep -qxF "$(takes 2 "release/$v" "$r0" "$r2")" <<<"$pr" && grep -qxF "$(takes 1 agent/gz "$z0" "$z1" '    ')" <<<"$pp" \
+  # with an origin release push journaled the first fix when it took it there (release:fix), so the deletion takes the second only
+  if [ -n "$org" ]; then rtakes=$(takes 1 "release/$v" "$r1" "$r2"); else rtakes=$(takes 2 "release/$v" "$r0" "$r2"); fi
+  grep -qxF "$(takes 1 feature/gf "$f0" "$f1")" <<<"$pf" && grep -qxF "$rtakes" <<<"$pr" && grep -qxF "$(takes 1 agent/gz "$z0" "$z1" '    ')" <<<"$pp" \
     && ok "$lbl: the plans of feature finish, release finish and branch prune each list the commits made with git that the deletion takes: their number and range" || no "$lbl: plan lines: $(grep -h 'journal:' <<<"$pf"$'\n'"$pr"$'\n'"$pp")"
   if [ -n "$org" ]; then
     grep -qxF "$(takes 1 origin/feature/gf "$f0" "$f1")" <<<"$pf" && grep -qxF "$(takes 1 "origin/release/$v" "$r1" "$r2")" <<<"$pr" && grep -qxF "$(takes 1 origin/agent/gz "$z0" "$z1" '    ')" <<<"$pp" \
@@ -518,8 +520,9 @@ gone_flow() {
   ! grep -E "does not lead to .*, where (origin/)?(release/$v|feature/gf|agent/gz) was deleted" <<<"$said" || no "$lbl: a note for a branch whose steps were journaled"
   { [ "$(sha "release/$v")" = "$Z" ] && [ "$(sha feature/gf)" = "$Z" ] && [ "$(sha agent/gz)" = "$Z" ] && [ "$r1" != "$r0" ] && [ "$r2" != "$r1" ] && [ "$f1" != "$f0" ] && [ "$z1" != "$z0" ]; } \
     || no "(setup) $lbl: the three branches are not deleted, or a commit by hand did not move one"
-  reach "release/$v" "$r0" "$r1" release:finish && reach "release/$v" "$r1" "$r2" release:finish && jhas "release/$v" "$r2" "$Z" \
-    && ok "$lbl: release finish journals each commit the lead made on the release branch with git, one step a commit, then the deletion at the released head" || no "$lbl: no steps $r0 -> $r1 -> $r2 before the deletion of release/$v: $(grep "release/$v" "$J" | tail -n 5)"
+  if [ -n "$org" ]; then r1verb=release:fix; else r1verb=release:finish; fi   # with an origin release push journaled the first fix
+  reach "release/$v" "$r0" "$r1" "$r1verb" && reach "release/$v" "$r1" "$r2" release:finish && jhas "release/$v" "$r2" "$Z" \
+    && ok "$lbl: the commits the lead made on the release branch with git are journaled, one step a commit (the first by release push with an origin, else by release finish), then the deletion at the released head" || no "$lbl: no steps $r0 -> $r1 -> $r2 before the deletion of release/$v: $(grep "release/$v" "$J" | tail -n 5)"
   reach feature/gf "$f0" "$f1" feature:finish && ok "$lbl: feature finish journals the commit made with git on the feature branch (a journaled task merge followed it)" || no "$lbl: no step $f0 -> $f1 of feature/gf: $(grep 'feature/gf' "$J" | tail -n 5)"
   reach agent/gz "$z0" "$z1" branch:prune && ok "$lbl: branch prune journals the commit made with git on the agent branch" || no "$lbl: no step $z0 -> $z1 of agent/gz: $(grep 'agent/gz' "$J" | tail -n 4)"
   # the steps are written together, and each is a whole journal line: every field, the reason, and for a branch of origin the remote and its URL
@@ -530,7 +533,8 @@ gone_flow() {
     && ok "$lbl: each step a deleting verb wrote is a whole journal line: at, epoch, verb, project, repo, ref, old, new, by and the reason (and remote and url for origin)" || no "$lbl: step lines: $bad"
   out=$(verify "$fr"); rc=$?
   [ $rc = 0 ] && ok "$lbl: a run prepared before the lead committed on the release, feature and agent branches verifies after the verbs deleted them" || no "$lbl: verify after the deletions: rc=$rc $out"
-  grep -qF "release/$v deleted by qargi release finish (2 commits$gw" <<<"$out" && ok "$lbl: verify names release finish for the deleted release branch, and the two commits made with git that it took" || no "$lbl: release/$v is not accepted as deleted by release finish with its 2 commits: $(grep "release/$v" <<<"$out")"
+  if [ -n "$org" ]; then rnamed="release/$v deleted by qargi release fix (1 commit$gw, qargi release finish (1 commit$gw"; else rnamed="release/$v deleted by qargi release finish (2 commits$gw"; fi
+  grep -qF "$rnamed" <<<"$out" && ok "$lbl: verify names the verbs that took the commits made with git on the deleted release branch, and how many each took (with an origin: release fix, then release finish)" || no "$lbl: release/$v is not accepted as deleted with its 2 commits: $(grep "release/$v" <<<"$out")"
   grep -qF "feature/gf deleted by qargi feature finish (1 commit$gw, qargi feature merge" <<<"$out" && ok "$lbl: and feature finish for the deleted feature branch, with the one commit made with git; the task merge is named without a count" || no "$lbl: feature/gf is not accepted as deleted by feature finish with its 1 commit: $(grep 'feature/gf' <<<"$out")"
   grep -qF "agent/gz deleted by qargi branch prune (1 commit$gw" <<<"$out" && ok "$lbl: and branch prune for the deleted agent branch, with the one commit made with git" || no "$lbl: agent/gz is not accepted as deleted by branch prune with its 1 commit: $(grep 'agent/gz' <<<"$out")"
   # the run prepared at the first of the two commits made with git on the release branch: the journal leads on from that commit

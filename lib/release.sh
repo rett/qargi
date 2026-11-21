@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2154  # af, REPO, PROJ, TESTCMD come from gitflow.sh (project_load)
+# shellcheck disable=SC2154,SC2034  # af, REPO, PROJ, TESTCMD come from gitflow.sh (project_load); REFUSE_MORE, CW_* and FIX_* are read by refuse and the callers of cut_why
 # Releases and hotfixes, by the usual git-flow rules (long-lived master and develop, short-lived release and hotfix branches):
 #   release/<version>  from develop, merged into master (tagged); that tagged master merge commit is then merged into develop; then deleted
 #   hotfix/<version>   from master,  merged into master (tagged); that master merge commit is then merged into develop, or into the open release branch
@@ -30,8 +30,17 @@
 #                                           that cannot be applied refuses the run, and the waiver is as for feature verify (per run, audited)
 #                                           With the answer release.version_files (a list of paths) start, status and verify check that each file contains
 #                                           VERSION at the release branch and warn of the ones that do not: "bump these on the release branch". No answer, no check.
-#   release.sh fix VERSION [--hotfix] [--push [--plan T --approved W]]
-#                                           a worktree on the release branch under the worktree root (prints its path), to commit a fix in; --push is `push`
+#   release.sh fix VERSION [--hotfix] [--push [--plan T --approved W] | --record]
+#                                           a worktree on the release branch under the worktree root (prints its path), to commit a fix in; --push is `push`.
+#                                           --record journals the commits made there (the lead's record of fact: no plan, no token, no approval; lead only) so a run prepared
+#                                           before them verifies, and with a live cut says whether they stay inside the cut's fix_paths (the paths its plan named: the fragments
+#                                           directory, CHANGELOG.md, the version file and release.version_files; docs/ and the manual pages are outside). Inside: `fix` is recorded
+#                                           and push goes on under the cut's approval. Outside: nothing is recorded, the notice cut-fix-outside lists the commits, and push takes its
+#                                           own plan (which re-anchors the cut). `push` makes the same catch-up and the same check itself.
+#   release.sh start|push|fix --push ... --dry-run
+#                                           the verb as far as its refusals, changing nothing (QARGI_DRY=1): the plan and its token, what invalidates it, and with --plan the refusals the
+#                                           apply would meet (plan-stale naming the labels that moved, the cut's codes), each printed as the apply prints it with dry=1 first in
+#                                           the detail; the last line is `dry-run: N would refuse; nothing was changed`, the status 0 or 1.
 #   release.sh push VERSION [--hotfix] [--plan T --approved W]     push the branch, open the pull request into master (or say "updated PR #N" when it is open)
 #                                           With the answer release.notes_file the plan warns of the items of the VERSION section of CHANGELOG.md that the file
 #                                           does not mention (an item is mentioned when its leading `backticked term`, else its first three words, is in the file,
@@ -102,7 +111,7 @@
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
-STRICT=''; VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY='' NOTES_OPT='' FIXPUSH='' IGNORE_CHECKS='' IGNORE_SET='' IGNORED='' RECREATE='' STEPNAME='' EVIDENCE='' EVIDENCE_SET='' AGAIN='' WAIVE_ENV='' WAIVE_SET=''; ASSETS=() ASSET_DIRS=()
+STRICT=''; VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY='' NOTES_OPT='' FIXPUSH='' FIXREC='' DRY_RUN='' IGNORE_CHECKS='' IGNORE_SET='' IGNORED='' RECREATE='' STEPNAME='' EVIDENCE='' EVIDENCE_SET='' AGAIN='' WAIVE_ENV='' WAIVE_SET=''; ASSETS=() ASSET_DIRS=()
 # shellcheck disable=SC2034  # WAIVE_ENV and WAIVE_SET are read by suite_env_prepare (gitflow.sh)
 while [ $# -gt 0 ]; do
   case $1 in
@@ -110,7 +119,7 @@ while [ $# -gt 0 ]; do
     --project) need_val "$1" $#; PROJ=$2; shift 2;; --date) need_val "$1" $#; DATE=$2; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
     --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
     --asset) need_val "$1" $#; ASSETS+=("$2"); shift 2;; --asset-dir) need_val "$1" $#; ASSET_DIRS+=("$2"); shift 2;; --recreate) RECREATE=1; shift;; --notes-file) need_val "$1" $#; NOTES_OPT=$2; shift 2;;
-    --push) FIXPUSH=1; shift;; --ignore-checks) need_val "$1" $#; IGNORE_CHECKS=$2; IGNORE_SET=1; shift 2;;
+    --push) FIXPUSH=1; shift;; --record) FIXREC=1; shift;; --dry-run) DRY_RUN=1; shift;; --ignore-checks) need_val "$1" $#; IGNORE_CHECKS=$2; IGNORE_SET=1; shift 2;;
     --hotfix) HOTFIX=1; shift;; --keep) KEEP=1; shift;; --resolved) RESOLVED=1; shift;; --allow-empty-notes) ALLOW_EMPTY=1; shift;;
     --strict) STRICT=1; shift;;
     --evidence) need_val "$1" $#; EVIDENCE=$2; EVIDENCE_SET=1; shift 2;; --again) AGAIN=1; shift;;
@@ -125,14 +134,20 @@ done
 [ "$verb" = verify ] || [ -z "$STRICT" ] || usage_die "--strict belongs to release verify"
 [ "$verb" = verify ] || [ -z "$WAIVE_SET" ] || usage_die "--waive-environment belongs to release verify"
 [ "$verb" = fix ] || [ -z "$FIXPUSH" ] || usage_die "--push belongs to release fix"
+[ "$verb" = fix ] || [ -z "$FIXREC" ] || usage_die "--record belongs to release fix"
+[ -z "$FIXREC" ] || [ -z "$FIXPUSH" ] || usage_die "--record and --push are two ways of taking a fix in: --record journals the commits and asks nothing, --push is release push"
+[ -z "$FIXREC" ] || [ -z "$PLAN_ARG$APPROVED" ] || usage_die "--record asks for no plan and no approval: it records a fact, it takes neither --plan nor --approved"
 [ "$verb" = finish ] || [ -z "$IGNORE_SET" ] || usage_die "--ignore-checks belongs to release finish"
 [ -z "$IGNORE_SET" ] || printf '%s' "$IGNORE_CHECKS" | grep -q '[^[:space:]]' || usage_die "--ignore-checks needs the reason, in the words you gave: --ignore-checks \"...\""
 [ "$verb" != fix ] || [ -z "$FIXPUSH" ] || verb=push   # fix --push is push
+[ -z "$DRY_RUN" ] || [ "$verb" = start ] || [ "$verb" = push ] || usage_die "--dry-run belongs to release start, release push and release fix --push"
 export PLAN_ARG RESOLVED   # need_plan reads PLAN_ARG; merge_step reads RESOLVED
 
 [ -n "$VER" ] || usage_die "usage: qargi release plan|start|status|verify|fix|push|finish|step|assets|sign|publish|site VERSION [--hotfix] [--project P]"
 printf '%s' "$VER" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || usage_die "'$VER' is not a version like 0.1.1"
 . "$(dirname "$0")/gitflow.sh"
+PSF=/dev/null DRYTMP=''   # PSF: the text of the plan, kept for a dry run (tee in the plan of start and push), so --plan can be compared with it; DRYTMP: a scratch directory of the dry run
+[ -z "$DRY_RUN" ] || { dry_on; PSF=$(mktemp) || fail "could not make a temporary file"; }   # QARGI_DRY=1 before anything reads the project: from here the helpers that write stop and g and ghq pass only what reads
 project_load
 read -r REL_PAT HOT_PAT < <(python3 -I - "$(dirname "$0")" "$METH" <<'PY'
 import sys; sys.path.insert(0, sys.argv[1]); import methodology as M
@@ -174,17 +189,23 @@ ci_scan() {
   done < <(pymod gates scan "$af" "$1" || true)
   [ -z "$unlisted" ] || echo "qargi: note: no gate is declared, so the CI jobs are not compared with gate names (jobs: $unlisted); declare gates, or list the jobs that are not gates in the answer ci.not_gates" >&2
 }
-GH=${QARGI_GH:-gh}   # the one way this script talks to GitHub; tests put a stub here
+GH=${QARGI_GH:-gh}   # the gh this script talks to (through ghq, lib/gitflow.sh); tests put a stub here
 repo_slug() { jq -r '.repo.url' "$af" | sed 's|^https://[^/]*/||; s|\.git$||'; }
 notes='' SITESRC=''   # the temporary file of `publish`, the extracted tag of `site`
-rel_exit() { [ -z "$notes" ] || rm -f "$notes"; [ -z "$SITESRC" ] || rm -rf "$SITESRC"; on_exit; }   # the one EXIT handler: what gitflow.sh cleans up, and the temporary files
+rel_exit() {   # the one EXIT handler: what gitflow.sh cleans up (the worktree of bump_worktree too), the temporary files, and in a dry run the last line
+  local rc=$?
+  [ -z "$notes" ] || rm -f "$notes"; [ -z "$SITESRC" ] || rm -rf "$SITESRC"
+  [ "$PSF" = /dev/null ] || rm -f "$PSF"; [ -z "$DRYTMP" ] || rm -rf "$DRYTMP"
+  bump_cleanup; on_exit
+  dry_finish "$rc"
+}
 trap rel_exit EXIT
 # gh_release_state TAG -> sets GHS to found|missing|noauth|nogh|unchecked (and GHWHY): does GitHub have a release for the tag? Read-only.
 gh_release_state() {
   local out rc=0
   GHWHY='' GHS_FOR=$1
   command -v "$GH" >/dev/null 2>&1 || { GHS=nogh; return 0; }
-  out=$("$GH" -R "$(repo_slug)" release view "$1" 2>&1 </dev/null) || rc=$?
+  out=$(ghq -R "$(repo_slug)" release view "$1" 2>&1 </dev/null) || rc=$?
   if [ "$rc" = 0 ]; then GHS=found
   elif grep -qi 'auth login\|not logged in\|authentication' <<<"$out"; then GHS=noauth
   elif grep -qi 'release not found' <<<"$out"; then GHS=missing
@@ -523,6 +544,39 @@ man_pages_at() {
   if jq -e '(.release? // {}) | has("man_pages")' "$af" >/dev/null 2>&1; then jq -r '.release.man_pages[]' "$af"
   else g ls-tree -r --name-only "$1" | grep -E '(^|/)man[0-9]?/[^/]+\.[1-9]$' || true; fi
 }
+# fragments_dir -> the answer release.changelog.fragments (empty: no answer, and the changelog is the only place for notes)
+fragments_dir() { jq -r '(.release? // {}).changelog.fragments // empty' "$af"; }
+# fragments_at REF -> the changelog fragments in the directory of the answer at REF, one to a line: any file in it but README* and .gitkeep (release_layout.py fragments)
+fragments_at() {
+  local d; d=$(fragments_dir); [ -n "$d" ] || return 0
+  g ls-tree -r -z --name-only "$1" -- "$d" | python3 -I "$RL" fragments || true
+}
+# fragments_check REF -> with the answer release.changelog.fragments: refuses (release-fragments-unfolded) while the directory at REF, the head of the branch, holds a fragment, or while the
+# released section of the changelog there is empty; the fix is to fold them in the fix worktree, commit, and record the commits. A check that does not depend on the ones around it (DRY_INDEP).
+fragments_check() {
+  local d n tmp rc=0
+  d=$(fragments_dir); [ -n "$d" ] || return 0
+  n=$(fragments_at "$1" | grep -c . || true)
+  if [ "$n" -gt 0 ]; then
+    REFUSE_MORE="$d holds $n fragment$([ "$n" = 1 ] || echo s) at the head of $BR (${1:0:7}); fold $([ "$n" = 1 ] && echo it || echo them) into the changelog's section of $VER in the fix worktree (qargi release fix $VER${HOTFIX:+ --hotfix} makes it), remove $([ "$n" = 1 ] && echo it || echo them), commit, then qargi release fix $VER${HOTFIX:+ --hotfix} --record"
+    DRY_INDEP=1
+    refuse release-fragments-unfolded verb="release $verb" count="$n"
+    DRY_INDEP=''
+    return 0
+  fi
+  g cat-file -e "$1:CHANGELOG.md" 2>/dev/null || return 0
+  tmp=$(mktemp "$DA_STATE/.release-fragments-chk.XXXXXX") || return 0
+  g show "$1:CHANGELOG.md" > "$tmp" 2>/dev/null
+  python3 -I "$RL" section-empty "$tmp" "$VER" "$af" || rc=$?
+  rm -f "$tmp"
+  if [ "$rc" = 1 ]; then
+    REFUSE_MORE="the section of $VER in the CHANGELOG.md of $BR (${1:0:7}) has no notes: fold the fragments of $d into it in the fix worktree, commit, then qargi release fix $VER${HOTFIX:+ --hotfix} --record"
+    DRY_INDEP=1
+    refuse release-fragments-unfolded verb="release $verb" count="$n"
+    DRY_INDEP=''
+  fi
+  return 0
+}
 # has_answer KEY -> whether the release answer KEY (release.KEY) is set
 has_answer() { jq -e --arg k "$1" '(.release? // {}) | has($k)' "$af" >/dev/null 2>&1; }
 # answer_text KEY -> the release answer KEY as one line for a plan: the words of a list, the text of a command line ({version} is replaced when it runs)
@@ -556,7 +610,7 @@ pr_checks() {
   local out rc=0 line name state st
   PRC_STATE='' PRC_LINES='' PRC_WHY='' PRC_PASS=0 PRC_FAIL=0 PRC_PEND=0
   command -v "$GH" >/dev/null 2>&1 || { PRC_STATE=nogh; return 0; }
-  out=$("$GH" -R "$(repo_slug)" pr checks "$1" 2>&1 </dev/null) || rc=$?
+  out=$(ghq -R "$(repo_slug)" pr checks "$1" 2>&1 </dev/null) || rc=$?
   while IFS= read -r line; do
     [[ $line == *$'\t'* ]] || continue
     IFS=$'\t' read -r name state _ <<<"$line"
@@ -600,7 +654,7 @@ pr_find() {
   local out
   PR_NUM='' PR_URL=''
   command -v "$GH" >/dev/null 2>&1 || return 0
-  out=$("$GH" -R "$(repo_slug)" pr list --head "$1" --state open --json number,url --jq '.[] | "\(.number) \(.url)"' 2>/dev/null </dev/null | head -1) || return 0
+  out=$(ghq -R "$(repo_slug)" pr list --head "$1" --state open --json number,url --jq '.[] | "\(.number) \(.url)"' 2>/dev/null </dev/null | head -1) || return 0
   read -r PR_NUM PR_URL <<<"$out"
   case $PR_NUM in ''|*[!0-9]*) PR_NUM='' PR_URL='';; esac
   return 0
@@ -639,7 +693,7 @@ post_release() {
       *) echo "  GitHub release: not checked (${GHWHY:-no answer})";;
     esac
     if [ "$GHS" = found ]; then
-      names=$("$GH" -R "$(repo_slug)" release view "$VER" --json assets --jq '.assets[].name' 2>/dev/null </dev/null) || names='?'
+      names=$(ghq -R "$(repo_slug)" release view "$VER" --json assets --jq '.assets[].name' 2>/dev/null </dev/null) || names='?'
       if [ "$names" = '?' ]; then echo "  assets: not checked (the asset list could not be read)"
       else
         # release.assets entries: {version} replaced, a glob matched by its base name against the names the release has
@@ -708,12 +762,20 @@ cut_lead_check() {
     # the cut is approved again only while the release has not begun: with the branch or the tag there, plan --again discards the record and then refuses; with only the record saying start ran, it
     # would plan the cut anew, but the steps after start need the branch, so the message offers the own plan of each step in every state (nothing writes a lead into an existing record)
     if branch_exists "$BR" || g rev-parse -q --verify "refs/tags/$VER" >/dev/null 2>&1 || [ -n "$(cut_get '.done.start // empty')" ]; then
-      die "the cut record of $VER names no lead (it was approved before a cut was bound to the lead that approved it): nothing was changed. Approving the cut again is not offered, because the release has begun (plan --again would discard the record, and refuses while $BR or the tag $VER exists): this step and every later one is run with its own plan ($own)"
+      REFUSE_MORE="the cut record of $VER names no lead (it was approved before a cut was bound to the lead that approved it): nothing was changed. Approving the cut again is not offered, because the release has begun (plan --again would discard the record, and refuses while $BR or the tag $VER exists): this step and every later one is run with its own plan ($own)"
+      refuse cut-lead-changed verb="release $verb"
     fi
-    die "the cut record of $VER names no lead (it was approved before a cut was bound to the lead that approved it): nothing was changed. The cut can be approved again, because the release has not begun (qargi release plan $VER${HOTFIX:+ --hotfix} --again, then --plan and --approved), or this step is run with its own plan ($own)"
+    REFUSE_MORE="the cut record of $VER names no lead (it was approved before a cut was bound to the lead that approved it): nothing was changed. The cut can be approved again, because the release has not begun (qargi release plan $VER${HOTFIX:+ --hotfix} --again, then --plan and --approved), or this step is run with its own plan ($own)"
+    refuse cut-lead-changed verb="release $verb"
   fi
-  cut_lead_id || die "the lead identity cannot be determined ($LEAD_WHY), so $verb of $VER cannot run under the cut: nothing was changed. The lead that approved the cut runs the step, or this lead asks the owner to approve the step with its own plan ($own)"
-  [ "$LEAD_ID" = "$rec" ] || die "the cut of $VER was approved under another lead: nothing was changed. That lead runs $verb under the cut, or this lead asks the owner to approve the step with its own plan ($own)"
+  cut_lead_id || {
+    REFUSE_MORE="the lead identity cannot be determined ($LEAD_WHY), so $verb of $VER cannot run under the cut: nothing was changed. The lead that approved the cut runs the step, or this lead asks the owner to approve the step with its own plan ($own)"
+    refuse cut-lead-changed verb="release $verb"
+  }
+  [ "$LEAD_ID" = "$rec" ] || {
+    REFUSE_MORE="the cut of $VER was approved under another lead: nothing was changed. That lead runs $verb under the cut, or this lead asks the owner to approve the step with its own plan ($own)"
+    refuse cut-lead-changed verb="release $verb"
+  }
 }
 cut_load() {
   local rk
@@ -742,40 +804,110 @@ cut_load() {
     KEEP=$rk
   fi
 }
-# cut_why STEP OWN_TOKEN -> prints why the cut may not stand in for this step now (nothing when it may). It reads what the verb has at that point:
+# cut_anchor -> the head of the branch where the cut last stood: the latest of .done.fix.head, .done.push.head and .done.start.head (by the sequence number cut_done keeps,
+# then the time, then fix over push over start). A commit made on the branch since then is what push has to take under the cut's approval or under its own.
+cut_anchor() {
+  # shellcheck disable=SC2016  # a jq program
+  jq -r '[.done | to_entries[] | select(.key == "fix" or .key == "push" or .key == "start") | select((.value.head // "") != "")
+          | {s: (.value.seq // 0), a: (.value.at // ""), p: ({fix: 2, push: 1, start: 0})[.key], h: .value.head}] | sort_by([.s, .a, .p]) | (last // {}) | .h // empty' "$CUTREC" 2>/dev/null
+}
+# fix_scan ANCHOR HEAD -> FIX_ON (1 when HEAD follows ANCHOR on the first-parent line of the branch, empty when the branch was reset or rewritten), FIX_COMMITS (the commits from ANCHOR
+# to HEAD, oldest first) and FIX_OUT (the abbreviated ids of those that change a path outside the .fix_paths of the cut record: a path is matched whole, a directory by prefix, and
+# a rename counts on both sides; a merge is judged by its difference from its first parent). A record with no .fix_paths covers nothing.
+fix_scan() {
+  local anchor=$1 head=$2 c first
+  local -a paths=()
+  FIX_ON=1 FIX_COMMITS=() FIX_OUT=()
+  mapfile -t FIX_COMMITS < <(g rev-list --first-parent --reverse "$anchor..$head")
+  if [ "${#FIX_COMMITS[@]}" -gt 0 ]; then
+    first=$(g rev-parse "${FIX_COMMITS[0]}^" 2>/dev/null) || first=''
+    [ "$first" = "$anchor" ] || FIX_ON=''
+  elif [ "$head" != "$anchor" ]; then FIX_ON=''; fi
+  [ -n "$FIX_ON" ] || return 0
+  mapfile -t paths < <(jq -r '.fix_paths // [] | .[]' "$CUTREC" 2>/dev/null)
+  for c in ${FIX_COMMITS[@]+"${FIX_COMMITS[@]}"}; do
+    g diff --name-only --no-renames -z "$c^" "$c" | python3 -I "$RL" outside ${paths[@]+"${paths[@]}"} >/dev/null || FIX_OUT+=("${c:0:7}")
+  done
+}
+# cut_why STEP OWN_TOKEN -> sets CW_CODE (empty when the cut may stand in for this step now; else the refusal code: cut-not-covering, cut-branch-moved), CW_ARGS (the
+# fields of that code besides the verb) and CW_TEXT (what is particular: the heads, the sentence step_gate adds to the refusal). It reads what the verb has at that point:
 # h and second (push, finish), tc (site).
 cut_why() {
   local s=$1 tok=$2 need='' p anchor
+  CW_CODE='' CW_ARGS=() CW_TEXT='' CW_FIX=''
   case $s in push) need=start;; finish) need="start$(jq -e '.steps | index("push") != null' "$CUTREC" >/dev/null && echo ' push')";; site) need=finish;; esac
   for p in $need; do
-    jq -e --arg p "$p" '.done[$p] != null' "$CUTREC" >/dev/null || { echo "the step $p of the cut is not done yet (qargi release plan $VER shows where the cut is)"; return 0; }
+    jq -e --arg p "$p" '.done[$p] != null' "$CUTREC" >/dev/null || { CW_CODE=cut-not-covering CW_ARGS=(step="$s") CW_TEXT="the step $p of the cut is not done yet (qargi release plan $VER shows where the cut is)"; return 0; }
   done
-  anchor=$(cut_get '.done.push.head // .done.start.head // empty')
+  if [ "$s" = push ]; then anchor=$(cut_anchor)   # a fix the lead recorded moves the anchor; push takes the commits since it
+  elif jq -e '.steps | index("push") != null' "$CUTREC" >/dev/null; then anchor=$(cut_get '.done.push.head // empty')   # finish needs the head that was pushed, the one CI saw
+  else anchor=$(cut_anchor); fi
   case $s in
-    start) [ "$tok" = "$(cut_get .start_token)" ] || echo "the plan of start is not the one the cut froze (the head of $BASE, the files it bumps or the date differ)";;
-    push) [ "$h" = "$anchor" ] || echo "$BR is at ${h:0:7}, not at ${anchor:0:7} where the cut left it: something was committed on it";;
+    start) [ "$tok" = "$(cut_get .start_token)" ] || { CW_CODE=cut-not-covering CW_ARGS=(step=start) CW_TEXT="the plan of start is not the one the cut froze (the head of $BASE, the files it bumps or the date differ)"; };;
+    push)
+      [ "$h" != "$anchor" ] || return 0
+      fix_scan "$anchor" "$h"
+      if [ -z "$FIX_ON" ]; then CW_CODE=cut-branch-moved CW_ARGS=(ref="$BR") CW_TEXT="$BR is at ${h:0:7}, which does not follow ${anchor:0:7}, where the cut left it, on the branch's own line: it was reset or rewritten"
+      elif [ "${#FIX_OUT[@]}" -gt 0 ]; then
+        CW_CODE=cut-fix-outside CW_ARGS=(commits="$(IFS=,; echo "${FIX_OUT[*]}")") CW_TEXT="${#FIX_OUT[@]} of the ${#FIX_COMMITS[@]} commits since ${anchor:0:7} change a path the cut's plan did not name (${FIX_OUT[*]})"
+      else CW_FIX=1; fi;;
     finish)
-      if [ "$h" != "$anchor" ]; then echo "$BR is at ${h:0:7}, not at ${anchor:0:7} where the cut left it (the head the pull request's checks ran on): something was committed on it"
-      elif [ "$(sha_of master)" != "$(cut_get .master_sha)" ]; then echo "master is at $(sha_of master | cut -c1-7), not at $(cut_get .master_sha | cut -c1-7) where the plan showed it"
-      elif [ "$second" != "$(cut_get .second)" ]; then echo "the second merge goes into $second, the plan said $(cut_get .second)"; fi;;
+      if [ "$h" != "$anchor" ]; then CW_CODE=cut-branch-moved CW_ARGS=(ref="$BR") CW_TEXT="$BR is at ${h:0:7}, not at ${anchor:0:7} where the cut left it (the head the pull request's checks ran on): something was committed on it"
+      elif [ "$(sha_of master)" != "$(cut_get .master_sha)" ]; then CW_CODE=cut-branch-moved CW_ARGS=(ref=master) CW_TEXT="master is at $(sha_of master | cut -c1-7), not at $(cut_get .master_sha | cut -c1-7) where the plan showed it"
+      elif [ "$second" != "$(cut_get .second)" ]; then CW_CODE=cut-not-covering CW_ARGS=(step=finish) CW_TEXT="the second merge goes into $second, the plan said $(cut_get .second)"; fi;;
     site)
-      [ "$tc" = "$(cut_get '.done.finish.commit // empty')" ] || echo "the tag $VER is at ${tc:0:7}, not the commit ($(cut_get '.done.finish.commit // empty' | cut -c1-7)) that the cut's finish tagged";;
+      [ "$tc" = "$(cut_get '.done.finish.commit // empty')" ] || { CW_CODE=cut-branch-moved CW_ARGS=(ref="$VER") CW_TEXT="the tag $VER is at ${tc:0:7}, not the commit ($(cut_get '.done.finish.commit // empty' | cut -c1-7)) that the cut's finish tagged"; };;
   esac
 }
-# step_gate STEP OWN_TOKEN: the check before a step moves anything: its own plan token, or under the cut what cut_why allows
+# step_gate STEP OWN_TOKEN: the check before a step moves anything: its own plan token, or under the cut what cut_why allows (a refusal with the code cut_why found)
 step_gate() {
-  local why
   if [ -z "$CUT" ]; then need_plan "$2"; return 0; fi
-  why=$(cut_why "$1" "$2")
-  [ -z "$why" ] || die "the cut $PLAN_ARG does not cover $1 of $VER any more: $why. Nothing was changed. Run this step with its own plan (qargi release $1 $VER${HOTFIX:+ --hotfix}, then --plan and --approved): the cut goes on from where that leaves it"
+  cut_why "$1" "$2"
+  if [ -n "$CW_CODE" ]; then
+    REFUSE_MORE="the cut $PLAN_ARG does not cover $1 of $VER any more: $CW_TEXT. Nothing was changed. Run this step with its own plan (qargi release $1 $VER${HOTFIX:+ --hotfix}, then --plan and --approved): the cut goes on from where that leaves it"
+    case $CW_CODE in
+      cut-not-covering)
+        refuse cut-not-covering verb="release $1" ${CW_ARGS[@]+"${CW_ARGS[@]}"};;
+      cut-branch-moved)
+        refuse cut-branch-moved verb="release $1" ${CW_ARGS[@]+"${CW_ARGS[@]}"};;
+      cut-fix-outside)
+        refuse cut-fix-outside verb="release $1" ${CW_ARGS[@]+"${CW_ARGS[@]}"};;
+    esac
+  fi
   echo "$1 runs under the cut $PLAN_ARG of $VER (approved once, in the words: $APPROVED)"
 }
-# cut_done STEP [HEAD [COMMIT]]: records that STEP ran (by the cut or by its own plan), when the cut of VER is recorded
+# dry_after_plan STEP TOKEN LABELS -> the end of the plan of a dry run (--dry-run), once the plan and its token line are printed; it ends the verb. Without --plan it says what would
+# invalidate the plan (its labels, the words plan_token --basis keeps). With --plan it does what the apply does first: step_gate (the token, or under the cut what cut_why allows), so
+# plan-stale names the labels that moved and a cut that no longer covers the step says so; the refusals are printed as the apply would print them, with dry=1 in their detail.
+dry_after_plan() {
+  if [ -z "$PLAN_ARG" ]; then echo "invalidated by: ${3// /, }"; exit 0; fi
+  if [ -z "$CUT" ]; then
+    # the plan of --plan was stored when it was shown (plan_token --basis); this plan is not stored in a dry run, so it is put in a scratch state beside a copy of that one: need_plan then
+    # names the labels whose lines differ, as it would in the apply
+    DRYTMP=$(mktemp -d) || fail "could not make a temporary directory"; mkdir "$DRYTMP/plans"
+    [ ! -f "$DA_STATE/plans/$PLAN_ARG.json" ] || cp "$DA_STATE/plans/$PLAN_ARG.json" "$DRYTMP/plans/"
+    QARGI_STATE=$DRYTMP python3 -I "$QARGI_TOOL/lib/refusal.py" basis store "$2" "$3" < "$PSF" 2>/dev/null || true
+    DA_STATE=$DRYTMP step_gate "$1" "$2"
+    echo "the plan $2 is the one shown: the apply of $1 would go on"
+  else step_gate "$1" "$2"; fi
+  case $1 in
+    push)
+      [ -z "${join:-}" ] || need_free_wt "$BR"
+      pk=$(preflight_key); [ -z "$pk" ] || echo "not run in a dry run: the preflight (release.$pk), which the apply runs in a copy of $BR before the push"
+      echo "not asked in a dry run: gh pr create; the push would update the open pull request of $BR, or open one";;
+  esac
+  exit 0
+}
+# cut_done STEP [HEAD [COMMIT [OWN_PLAN]]]: records that STEP ran (by the cut or by its own plan), when the cut of VER is recorded
 cut_done() {
+  dry_stop cut_done
   local via=own
   [ -f "$CUTREC" ] || return 0
   [ -z "$CUT" ] || via="cut"
-  json_update "$CUTREC" '.done[$s] = {at: $t, via: $v, head: $h, commit: $c}' --arg s "$1" --arg t "$(now)" --arg v "$via" --arg h "${2:-}" --arg c "${3:-}" \
+  # seq counts the steps of the record, so what came last is told without the clock (two steps can fall in one second); own_plan, for a push under its own plan, is that plan's token
+  # shellcheck disable=SC2016  # a jq program
+  json_update "$CUTREC" '.done[$s] = ({at: $t, via: $v, head: $h, commit: $c, seq: ((([.done[] | (.seq // 0)] | max) // 0) + 1)} + (if $o == "" then {} else {own_plan: $o} end))' \
+    --arg s "$1" --arg t "$(now)" --arg v "$via" --arg h "${2:-}" --arg c "${3:-}" --arg o "${4:-}" \
     || echo "note: could not record the step $1 in the cut record $CUTREC" >&2
   audit_log "release:cut-step" "$PROJ $VER $1 via $via plan $(cut_get .token)"
 }
@@ -792,7 +924,65 @@ cut_report() {
   [ -f "$CUTREC" ] || return 0
   echo "cut $(cut_get .token) ($(cut_get .kind) $VER, planned $(cut_get .at), approved $(cut_get '.approval.at // empty') in the words: $(cut_get '.approval.words // empty')):"
   jq -r '. as $r | .steps[] | "  " + . + ": " + (if $r.done[.] != null then "done " + $r.done[.].at + " (" + $r.done[.].via + ($r.done[.].commit | if . != "" then ", " + .[0:7] else "" end) + ")" else "pending" end)' "$CUTREC"
+  jq -r 'select(.done.fix != null) | "  fix recorded " + .done.fix.at + " at " + (.done.fix.head[0:7]) + " (inside the cut'"'"'s paths)"' "$CUTREC"
   cut_next
+}
+# fix_paths_derive -> the paths a fix may change and still go on under the cut's approval, one to a line, from the project's answers: the directory of
+# release.changelog.fragments when set, CHANGELOG.md, release.version_file (unless none; default VERSION) and each of release.version_files. docs/ is outside, and so are the
+# manual pages (release.man_pages): a page is generated from the code, so a change to it is a change of the code.
+fix_paths_derive() {
+  {
+    jq -r '(.release? // {}).changelog.fragments // empty' "$af"
+    echo CHANGELOG.md
+    [ "$VFILE" = none ] || echo "$VFILE"
+    jq -r '(.release? // {}).version_files // [] | .[]' "$af"
+  } | awk 'NF && !seen[$0]++'
+}
+# fix_record -> `release fix VER --record`, with h the head of BR: a record of fact, lead-only, with no plan, no token and no approval. With a live cut the head must follow the
+# cut's anchor on the branch's own line (else cut-branch-moved); the journal is brought up to the head (journal_catchup), so a run prepared before the commits still verifies; and the
+# commits since the anchor are judged against the cut's .fix_paths: inside, the cut records `fix` and push goes on under the cut's approval; otherwise nothing is recorded in the cut and
+# the notice cut-fix-outside lists them (push then takes its own plan). Exit 0 in every case that wrote the journal. Without a cut it only journals and says nothing of one.
+fix_record() {
+  local anchor='' live='' n a b
+  cut_lead_only "recording a fix"
+  if [ -f "$CUTREC" ] && [ -z "$(cut_get '.done.finish // empty')" ]; then live=1; anchor=$(cut_anchor); fi
+  if [ -n "$live" ] && [ -n "$anchor" ] && [ "$h" != "$anchor" ]; then
+    fix_scan "$anchor" "$h"
+    if [ -z "$FIX_ON" ]; then
+      REFUSE_MORE="$BR is at ${h:0:7}, which does not follow ${anchor:0:7}, where the cut left it, on the branch's own line: it was reset or rewritten. Nothing was recorded"
+      refuse cut-branch-moved verb="release fix" ref="$BR"
+    fi
+  fi
+  if journal_catchup local "refs/heads/$BR" "$h" "$KIND:fix"; then
+    n=${#REACH_STEPS[@]}
+    if [ "$n" = 0 ]; then echo "journal: already leads to ${h:0:7} on $BR; nothing to add"
+    else a=${REACH_STEPS[0]%% *}; b=${REACH_STEPS[n - 1]##* }; echo "journaled $n commit$([ "$n" = 1 ] || echo s) made with git on $BR (${a:0:7}..${b:0:7}): a run prepared before $([ "$n" = 1 ] && echo it || echo them) still verifies"; fi
+  else
+    echo "note: the journal does not lead to ${h:0:7} on $BR ($REACH_NONE): qargi local verify will refuse a run prepared while $BR was at another commit" >&2
+  fi
+  [ -n "$live" ] && [ -n "$anchor" ] || return 0
+  if [ "$h" = "$anchor" ]; then echo "$BR is where the cut $(cut_get .token) left it (${h:0:7}): nothing new for the cut"; return 0; fi
+  fix_scan "$anchor" "$h"
+  if [ "${#FIX_OUT[@]}" = 0 ]; then
+    cut_done fix "$h"
+    echo "inside the cut: ${#FIX_COMMITS[@]} commit$([ "${#FIX_COMMITS[@]}" = 1 ] || echo s) since ${anchor:0:7} change only the paths the cut's plan named: push goes on under its approval (qargi release push $VER${HOTFIX:+ --hotfix} --plan $(cut_get .token))"
+  else
+    echo "outside the cut: push will take its own plan (the cut records nothing of these commits; $(IFS=' '; echo "${FIX_OUT[*]}") change a path the cut's plan did not name)"
+    notice cut-fix-outside verb="release fix" commits="$(IFS=,; echo "${FIX_OUT[*]}")"
+  fi
+}
+# push_since_cut -> for the plan of push, with a recorded cut that has not finished: the commits since the cut's anchor, and which approval takes them (the cut's, when they stay
+# inside its paths, else this plan's own). Nothing without a cut or when the branch is where the cut left it.
+push_since_cut() {
+  local anchor c
+  [ -f "$CUTREC" ] && [ -z "$(cut_get '.done.finish // empty')" ] || return 0
+  anchor=$(cut_anchor); [ -n "$anchor" ] && [ "$h" != "$anchor" ] || return 0
+  fix_scan "$anchor" "$h"
+  if [ -z "$FIX_ON" ]; then echo "warning: $BR is at ${h:0:7}, which does not follow ${anchor:0:7}, where the cut $(cut_get .token) left it, on the branch's own line: it was reset or rewritten, so the cut does not cover this push"; return 0; fi
+  echo "commits on $BR since the cut $(cut_get .token) last stood at ${anchor:0:7}: ${#FIX_COMMITS[@]}"
+  for c in "${FIX_COMMITS[@]}"; do echo "  $(g log -1 --format='%h %s' "$c")"; done | head -n 30
+  if [ "${#FIX_OUT[@]}" = 0 ]; then echo "  all of them change only the paths the cut's plan named: the push goes on under the cut's approval (--plan $(cut_get .token)); this plan covers them too"
+  else echo "  outside the cut's paths: ${FIX_OUT[*]}: the cut does not cover this push; this plan lists every commit above and takes the owner's own approval"; fi
 }
 cut_load
 
@@ -820,13 +1010,14 @@ case $verb in
     haspush=''; g remote get-url origin >/dev/null 2>&1 && haspush=1
     site=''; site_answers 2>/dev/null && [ "$SITE_ON" = true ] && site=1
     steps="start${haspush:+ push} finish${site:+ site}"
-    tok=$(printf '%s\n' "$PROJ" "$KIND" "$VER" "$DATE" "$KEEP" "$ALLOW_EMPTY" "$BR" "$BASE" "$b0" "$msha" "$second" "$steps" "$stok" | plan_token)
+    fixp=$(fix_paths_derive); fixl=$(printf '%s' "$fixp" | paste -sd' ' -)
+    tok=$(printf '%s\n' "$PROJ" "$KIND" "$VER" "$DATE" "$KEEP" "$ALLOW_EMPTY" "$BR" "$BASE" "$b0" "$msha" "$second" "$steps" "$stok" "$fixl" | plan_token --basis "project kind version date keep allow-empty branch base head master second steps start-plan fix-paths")
     echo "cut $KIND $VER of $PROJ: one plan and one approval for the whole ceremony. Approve it once; then run each step with --plan $tok alone (the words are recorded once), and each step is refused, before anything moves, if what this plan fixed no longer holds."
     echo "1. start: create $BR from $BASE and bump the version (nothing is pushed). Its own plan:"
     grep -v '^plan token:' <<<"$sout" | sed 's/^/     /'
     n=2
     if [ -n "$haspush" ]; then
-      echo "$n. push: push $BR to origin and open the pull request into master, so CI runs on the commit that will be released (a branch that shares no history with master is joined first). The cut covers the branch as start leaves it; a fix committed on it before the push is pushed with the push's own plan (release fix --push), and the cut goes on from there."
+      echo "$n. push: push $BR to origin and open the pull request into master, so CI runs on the commit that will be released (a branch that shares no history with master is joined first). The cut covers the branch as start leaves it, and a fix that changes only these paths goes on under this approval: $fixl (docs/ and the manual pages are outside: a manual page is generated from the code). A commit that changes any other path is pushed with the push's own plan (release fix VER --push), shown and approved on its own, and the cut goes on from there. qargi release fix $VER --record journals the commits and says which of the two applies."
     else echo "$n. push: not in this cut: the repository has no origin remote, so no CI runs; finish then needs a passing local whole-suite run at the head (qargi release verify $VER${HOTFIX:+ --hotfix})"; fi
     n=3
     echo "$n. finish: merge $BR into master with --no-ff (master is at ${msha:0:7}), tag $VER on that merge commit, merge the tag commit into $second with --no-ff$([ -n "$KEEP" ] && echo ", keep $BR" || echo ", delete $BR"), then push master, $second and the tag together (all or none). THIS IS THE PUSH AND TAG GATE: the approval words you give record that you released it. Needs the pull request's checks passed (a failing or pending check is refused; --ignore-checks \"...\" at the call, in your own words, is recorded) and the branch still at the head that was pushed.$(! has_answer finish_check || echo " release.finish_check runs in a copy of the branch first, before anything is merged, tagged or pushed (a non-zero exit refuses): $(answer_text finish_check).")"
@@ -844,7 +1035,8 @@ case $verb in
     mkdir -p "$DA_STATE/release"
     jq -n --arg p "$PROJ" --arg v "$VER" --arg k "$KIND" --arg tok "$tok" --arg at "$(now)" --arg date "$DATE" --arg keep "$KEEP" --arg ae "$ALLOW_EMPTY" --arg b0 "$b0" --arg m "$msha" \
       --arg second "$second" --arg st "$stok" --arg words "$APPROVED" --argjson steps "$(printf '%s\n' "${steps// /$'\n'}" | jq -R . | jq -sc .)" --arg lead "$LEAD_ID" \
-      '{schema:1, project:$p, version:$v, kind:$k, token:$tok, at:$at, date:$date, keep:$keep, allow_empty:$ae, base_sha:$b0, master_sha:$m, second:$second, start_token:$st, steps:$steps, approval:{words:$words, at:$at}, lead:{id:$lead}, done:{}}' > "$CUTREC.tmp" \
+      --argjson fixpaths "$(printf '%s\n' "$fixp" | jq -R . | jq -sc .)" \
+      '{schema:1, project:$p, version:$v, kind:$k, token:$tok, at:$at, date:$date, keep:$keep, allow_empty:$ae, base_sha:$b0, master_sha:$m, second:$second, start_token:$st, steps:$steps, fix_paths:$fixpaths, approval:{words:$words, at:$at}, lead:{id:$lead}, done:{}}' > "$CUTREC.tmp" \
       && chmod 600 "$CUTREC.tmp" && mv "$CUTREC.tmp" "$CUTREC" || die "could not write the cut record $CUTREC"
     audit_log "release:cut" "$PROJ $VER $KIND plan $tok steps: $steps"
     echo "approved the cut $tok of $KIND $VER in the words: $APPROVED"
@@ -861,7 +1053,7 @@ case $verb in
     date_given=$DATE; [ -n "$DATE" ] || DATE=$(date +%F)
     printf '%s' "$DATE" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' || usage_die "--date YYYY-MM-DD"
     b0=$(sha_of "$BASE")
-    worktree "$BASE"
+    bump_worktree "$BASE"
     git -C "$WT" checkout -q --detach "$b0"
     # the preflight: every file the release must update is checked and rewritten in the temporary worktree first; a refusal
     # exits before any branch exists, so nothing has changed. A hotfix is cut from master, which does not have the content the hotfix brings (the
@@ -874,6 +1066,7 @@ case $verb in
       else run_preflight "$WT"; pre_line="preflight (release.preflight): passed on $BASE (at ${b0:0:7}); it runs again in a copy of $BR when you push"; fi
     fi
     oldver=''; cl_line=''
+    fragn=$(fragments_at "$b0" | grep -c . || true)   # with the answer release.changelog.fragments the fragments at the base count as notes: no --allow-empty-notes, and the branch folds them
     if [ "$VFILE" != none ]; then
       if [ -f "$WT/$VFILE" ]; then oldver=$(tr -d '[:space:]' < "$WT/$VFILE"); echo "$VER" > "$WT/$VFILE"; git -C "$WT" add -- "$VFILE"
       elif [ "$VFILE_SET" = true ]; then die "release.version_file: $VFILE is not a file at the head of $BASE (set it to none when the project has no version file)"; fi
@@ -885,25 +1078,33 @@ case $verb in
       git -C "$WT" add "$mp"
     done < <(man_pages_at "$b0")
     if [ -f "$WT/CHANGELOG.md" ]; then
-      cl_out=$(python3 -I "$RL" changelog "$WT/CHANGELOG.md" "$VER" "$DATE" "$ALLOW_EMPTY" "$af" "$KIND") || exit 1
+      cl_allow=$ALLOW_EMPTY; [ "$fragn" = 0 ] || cl_allow=1   # a fragment is a note: the unreleased section may be empty
+      cl_rc=0; cl_out=$(python3 -I "$RL" changelog "$WT/CHANGELOG.md" "$VER" "$DATE" "$cl_allow" "$af" "$KIND") || cl_rc=$?
+      if [ "$cl_rc" = 3 ]; then
+        REFUSE_MORE=${cl_out#*$'\t'}
+        refuse release-notes-empty verb="release $verb"
+      fi
+      [ "$cl_rc" = 0 ] || exit 1
       [ "$cl_out" != heading-added ] || cl_line="CHANGELOG.md: $BASE has no unreleased heading, so the heading for $VER was added with no entries; the changes of this hotfix are recorded under it on $BR, and release finish refuses until there are entries under it (the push preflight, when the project sets one, is its own)"
       git -C "$WT" add CHANGELOG.md
     fi
     # the plan: the branch, where it is cut from, the bump commit and the files it changes (all made in the temporary worktree above, so a refusal comes
     # before a token does); the token covers them, the date and the head of the base
     bumped=$(git -C "$WT" diff --cached --name-only)
-    tok=$({ printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$KIND" "$BR" "$BASE" "$b0" "$VER" "$DATE"; printf '%s\n' "$bumped"; } | plan_token)
+    tok=$({ printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$KIND" "$BR" "$BASE" "$b0" "$VER" "$DATE"; printf '%s\n' "$bumped"; } | tee "$PSF" | plan_token --basis "project kind branch base head version date files")
     echo "start $KIND $VER of $PROJ: create $BR from $BASE (at ${b0:0:7}), as one commit \"Bumped version number to $VER\" on top of it; nothing is pushed"
     bl='none (an empty commit)'; [ -z "$bumped" ] || bl=$(printf '%s' "$bumped" | paste -sd, - | sed 's/,/, /g')
     echo "files the commit changes: $bl"
     echo "the version becomes $VER${oldver:+ (was $oldver)} and the changelog (and a man page) is dated $DATE"
     [ -z "$cl_line" ] || echo "$cl_line"
+    [ "$fragn" = 0 ] || echo "changelog fragments (release.changelog.fragments: $(fragments_dir)): $fragn fragment$([ "$fragn" = 1 ] || echo s), to be folded on the branch"
     [ -z "$pre_line" ] || echo "$pre_line"
     hn=$(hotfix_develop_note) && echo "warning: $hn"
     if [ -z "$APPROVED" ]; then
       echo "plan token: $tok   (apply with: qargi release start $VER${HOTFIX:+ --hotfix}${date_given:+ --date $date_given}${ALLOW_EMPTY:+ --allow-empty-notes} --plan $tok --approved \"...\")"
-      exit 0
+      [ -n "$DRY_RUN" ] || exit 0
     fi
+    [ -z "$DRY_RUN" ] || dry_after_plan start "$tok" "project kind branch base head version date files"
     step_gate start "$tok"
     # the bookkeeping of an earlier finish of this version (the master merge commit it parked, the merges resolved but not applied) belongs to a
     # release that was given up: the branch is new, so none of it can be used any more. Only files; a merge still waiting in a worktree is the lead's to remove.
@@ -989,6 +1190,7 @@ case $verb in
     # a worktree on the release branch to commit a fix in, once the pull request's checks failed or review asked for a change
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi release start $VER${HOTFIX:+ --hotfix})"
     g rev-parse -q --verify "refs/tags/$VER" >/dev/null && die "the tag $VER exists already: $BR was finished, a fix is a hotfix now (qargi release start $VER --hotfix)"
+    if [ -n "$FIXREC" ]; then fix_record; exit 0; fi
     fw=$(held "$BR")
     if [ -z "$fw" ]; then
       wtp=$WT_ROOT/$BR; [ ! -e "$wtp" ] || die "$wtp exists already but does not hold $BR: remove or move it"
@@ -999,14 +1201,14 @@ case $verb in
     fi
     [ -z "$(git -C "$fw" status --porcelain 2>/dev/null)" ] || echo "note: $fw has uncommitted changes"
     echo "worktree: $fw"
-    echo "next: fix there (minor fixes only) and commit on $BR; then push the fix with: qargi release fix $VER${HOTFIX:+ --hotfix} --push (the same as release push: a plan token and an approval; it updates the open pull request, whose checks run again)"
+    echo "next: fix there (minor fixes only) and commit on $BR; then qargi release fix $VER${HOTFIX:+ --hotfix} --record journals the commits (no plan, no approval) and says whether they stay inside the cut; push the fix with: qargi release fix $VER${HOTFIX:+ --hotfix} --push (the same as release push: a plan token and an approval; it updates the open pull request, whose checks run again)"
     echo "when the checks pass: qargi release finish $VER${HOTFIX:+ --hotfix} (finish removes the worktree)";;
   push)
     rel_valid
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi release start $VER${HOTFIX:+ --hotfix})"
     g remote get-url origin >/dev/null 2>&1 || die "the repository has no origin remote to push $BR to"
     join='' msha=''; if branch_exists master && no_merge_base master "$BR"; then join=1; msha=$(sha_of master); fi   # the plan joins the history of master first (the master it shows)
-    tok=$( { printf '%s\n%s\n%s\n' "$PROJ" "$BR" "$h"; [ -z "$join" ] || printf 'join\n%s\n' "$msha"; } | plan_token)
+    tok=$( { printf '%s\n%s\n%s\n' "$PROJ" "$BR" "$h"; [ -z "$join" ] || printf 'join\n%s\n' "$msha"; } | tee "$PSF" | plan_token --basis "project branch head join master")
     echo "push $BR (at $(g rev-parse --short "$BR")) to origin and open a pull request into master, so CI runs on the commit that will be released"
     if [ -n "$join" ]; then
       echo "master (at $(g rev-parse --short master)) and $BR have no merge base: they share no history, so finish could not merge them (git refuses unrelated histories; master may be one snapshot commit)"
@@ -1014,12 +1216,18 @@ case $verb in
       jb=$(join_blocker "$BR"); [ -z "$jb" ] || echo "warning: $jb"
     fi
     pk=$(preflight_key); [ -z "$pk" ] || echo "preflight (release.$pk, run in a copy of $BR before the push): $(answer_text "$pk")"
+    push_since_cut
+    fragments_check "$h"
     notes_report
     remote_report "$BR"
     pw=$(wt_of "$BR"); [ -z "$pw" ] || [ -z "$(git -C "$pw" status --porcelain 2>/dev/null)" ] || echo "warning: $pw has uncommitted changes: only what is committed on $BR is pushed"
     pr_find "$BR"; [ -z "$PR_NUM" ] || echo "the pull request #$PR_NUM of $BR is open already: the push updates it${PR_URL:+ ($PR_URL)}"
-    if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release push $VER${HOTFIX:+ --hotfix} --plan $tok --approved \"...\")"; exit 0; fi
+    if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release push $VER${HOTFIX:+ --hotfix} --plan $tok --approved \"...\")"; [ -n "$DRY_RUN" ] || exit 0; fi
+    [ -z "$DRY_RUN" ] || dry_after_plan push "$tok" "project branch head${join:+ join master}"
     step_gate push "$tok"
+    # the commits the lead made with git on the branch since the journal last had it are journaled first, so a run prepared before them verifies (what `release fix --record` does)
+    journal_catchup local "refs/heads/$BR" "$h" "$KIND:fix" || echo "note: the journal does not lead to ${h:0:7} on $BR ($REACH_NONE): qargi local verify will refuse a run prepared while $BR was at another commit" >&2
+    [ -z "$CUT" ] || [ -z "$CW_FIX" ] || cut_done fix "$h"   # inside the cut's paths: the fix is recorded, and the push under the cut records the head after it
     worktree "$h"; run_preflight "$WT"; cleanup
     if [ -n "$join" ]; then
       need_free_wt "$BR"
@@ -1031,13 +1239,13 @@ case $verb in
     g push -q -u origin "$BR" || die "pushing $BR failed"
     journal_push "refs/heads/$BR" "$rb0" "$h" "$KIND:push"
     audit_log "release:push" "$PROJ $BR"
-    cut_done push "$h"
+    cut_done push "$h" "" "$([ -n "$CUT" ] || echo "$tok")"   # a push under its own plan records its token (own_plan) and re-anchors the cut: a later fix is counted from this head
     command -v "$GH" >/dev/null 2>&1 || die "pushed $BR, but gh is not installed: open the pull request into master yourself"
     pr_find "$BR"
     if [ -n "$PR_NUM" ]; then
       echo "pushed $BR and updated PR #$PR_NUM${PR_URL:+: $PR_URL} (it was open already; its checks run on the new head)"
     else
-      url=$(cd "$REPO" && "$GH" pr create --base master --head "$BR" --title "$PROJ $VER" --body "$KIND $VER" 2>&1) || {
+      url=$(cd "$REPO" && ghq pr create --base master --head "$BR" --title "$PROJ $VER" --body "$KIND $VER" 2>&1) || {
         # a pull request that could not be listed is still found by the refusal of pr create
         PR_NUM=$(grep -o '/pull/[0-9]*' <<<"$url" | head -1 | tr -dc 0-9)
         if grep -qi 'already exists' <<<"$url" && [ -n "$PR_NUM" ]; then echo "pushed $BR and updated PR #$PR_NUM (it was open already; its checks run on the new head)"; url=''
@@ -1082,6 +1290,7 @@ case $verb in
         rm -rf "$ftmp"; die "the CHANGELOG.md of $BR has no entries under '$rhead' (the section is missing or empty): a hotfix brings its own. Fix: record the entries under that heading on $BR (qargi release fix $VER --hotfix makes the worktree), commit, then finish. Nothing was changed"
       fi
     fi
+    fragments_check "$h"   # with release.changelog.fragments: none may be left at the head, and the released section must have notes
     # a manual page that leaves with an empty .TH date or version (a regenerated page that lost what `start` set) is not released
     emptyth=''
     while IFS= read -r mp; do
@@ -1372,7 +1581,7 @@ case $verb in
       noauth) die "gh is not authenticated (gh auth login); nothing was published";;
       *) die "could not ask GitHub whether tag $VER has a release (${GHWHY:-no answer}); nothing was published";;
     esac
-    out=$("$GH" -R "$(repo_slug)" release create "$VER" --verify-tag --title "$title" --notes-file "$notes" "${assets[@]}" 2>&1 </dev/null) || die "gh release create failed for tag $VER: $out"
+    out=$(ghq -R "$(repo_slug)" release create "$VER" --verify-tag --title "$title" --notes-file "$notes" "${assets[@]}" 2>&1 </dev/null) || die "gh release create failed for tag $VER: $out"
     audit_log "release:publish" "$PROJ $VER${assets[0]:+ (${#assets[@]} asset(s))}"
     echo "published the release of tag $VER: $out"
     cut_next;;

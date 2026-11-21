@@ -18,7 +18,7 @@
 22 lib/provision.sh
 9 lib/ref.sh
 33 lib/registry.sh
-113 lib/release.sh
+108 lib/release.sh
 63 lib/review.sh
 35 lib/session.sh
 2 lib/supervise.sh

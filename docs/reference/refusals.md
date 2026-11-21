@@ -43,10 +43,10 @@ compares them with that page.
 | --- | --- | --- | --- | --- |
 | [`approval-missing`](#approval-missing) | approval | 1 | planned | An apply that the owner must approve is given the owner's own words with --approved |
 | [`approval-inside-run`](#approval-inside-run) | approval | 1 | planned | A member run, or a verb called inside an approved apply, never gives --approved |
-| [`cut-not-covering`](#cut-not-covering) | cut | 1 | planned | The approval of a release cut covers only the steps its plan listed, while what the cut fixed still holds |
-| [`cut-lead-changed`](#cut-lead-changed) | cut | 1 | planned | A release cut belongs to the lead that approved it |
-| [`cut-branch-moved`](#cut-branch-moved) | cut | 1 | planned | A release cut stands only while its branch is where the cut left it |
-| [`cut-fix-outside`](#cut-fix-outside) | cut | 1 | planned | A fix recorded on a release branch goes on under the cut's approval only when it stays inside the paths the cut named |
+| [`cut-not-covering`](#cut-not-covering) | cut | 1 | live | The approval of a release cut covers only the steps its plan listed, while what the cut fixed still holds |
+| [`cut-lead-changed`](#cut-lead-changed) | cut | 1 | live | A release cut belongs to the lead that approved it |
+| [`cut-branch-moved`](#cut-branch-moved) | cut | 1 | live | A release cut stands only while its branch is where the cut left it |
+| [`cut-fix-outside`](#cut-fix-outside) | cut | 1 | live | A fix recorded on a release branch goes on under the cut's approval only when it stays inside the paths the cut named |
 | [`feature-runs-open`](#feature-runs-open) | feature | 1 | planned | A feature is finished when none of its runs is open |
 | [`ro-write-outside`](#ro-write-outside) | guard | 2 | live | A read-only run writes only OUT and TMP |
 | [`ro-second-tree`](#ro-second-tree) | guard | 2 | live | A read-only run makes no second tree of the clone inside the clone |
@@ -56,8 +56,8 @@ compares them with that page.
 | [`member-run-record`](#member-run-record) | guard | 2 | live | A member does not write the lead's run records |
 | [`plan-missing`](#plan-missing) | plan | 1 | live | A token covers the plan the person saw |
 | [`plan-stale`](#plan-stale) | plan | 1 | live | A token covers the plan the person saw |
-| [`release-notes-empty`](#release-notes-empty) | release | 1 | planned | A release has notes |
-| [`release-fragments-unfolded`](#release-fragments-unfolded) | release | 1 | planned | A release branch holds no unfolded changelog fragment when it is pushed or finished |
+| [`release-notes-empty`](#release-notes-empty) | release | 1 | live | A release has notes |
+| [`release-fragments-unfolded`](#release-fragments-unfolded) | release | 1 | live | A release branch holds no unfolded changelog fragment when it is pushed or finished |
 | [`seated-project`](#seated-project) | seat-door | 1 | planned | A marshal claim, take or release is not run on a seated project (R27) |
 | [`assignment-invalid`](#assignment-invalid) | seat-door | 1 | planned | An assignment is well formed and names nothing reserved or unsafe (R4, R5, R18, R19, R28, R89) |
 | [`transfer-open`](#transfer-open) | seat-door | 1 | planned | A new assignment waits while a transfer is open (R43) |
@@ -130,16 +130,16 @@ compares them with that page.
 
 - Rule: The approval of a release cut covers only the steps its plan listed, while what the cut fixed still holds.
 - Why: a cut approves one plan; a step that no longer matches it is a different plan.
-- Exit 1, planned.
+- Exit 1, live.
 - Fields: `verb` (verb), `step` (label).
-- Message: `the approval of the release cut does not cover the step {step} of {verb} any more`
+- Message: `the approval of the release cut does not cover the step {step} of {verb}`
 - Next, for a lead: run {verb} without the cut's token, show its own plan, and apply that with its token and the owner's words
 
 ### cut-lead-changed
 
 - Rule: A release cut belongs to the lead that approved it.
 - Why: the approval was given to that lead's plan.
-- Exit 1, planned.
+- Exit 1, live.
 - Fields: `verb` (verb).
 - Message: `the release cut of {verb} was approved by another lead, or by a lead that cannot be told`
 - Next, for a lead: plan {verb} again with its own token and take the owner's approval for it
@@ -148,16 +148,16 @@ compares them with that page.
 
 - Rule: A release cut stands only while its branch is where the cut left it.
 - Why: the owner approved the plan for that head.
-- Exit 1, planned.
+- Exit 1, live.
 - Fields: `verb` (verb), `ref` (ref).
 - Message: `{ref} is not where the release cut left it`
-- Next, for a lead: record the commits with qargi release fix VER --record, or run {verb} with its own plan
+- Next, for a lead: journal commits made on the branch with qargi release fix VER --record (push goes on under the cut while they stay inside the paths its plan named), or run {verb} with its own plan: shown, and approved anew
 
 ### cut-fix-outside
 
 - Rule: A fix recorded on a release branch goes on under the cut's approval only when it stays inside the paths the cut named.
 - Why: the cut approved a release, not a change of the code.
-- Exit 1, planned.
+- Exit 1, live.
 - Fields: `verb` (verb), `commits` (sha-list).
 - Message: `the commits {commits} leave the paths the cut covers`
 - Next, for a lead: run qargi release push VER without the cut's token: its own plan lists every commit and takes the owner's approval
@@ -263,18 +263,18 @@ compares them with that page.
 
 - Rule: A release has notes.
 - Why: a release with no notes says nothing about what changed.
-- Exit 1, planned.
+- Exit 1, live.
 - Fields: `verb` (verb).
-- Message: `the released section of the changelog is empty`
+- Message: `the unreleased section of the changelog is empty, and no changelog fragment stands in for notes`
 - Next, for a lead: write the notes, pass --allow-empty-notes, or set the answer release.changelog.fragments so that the fragments count as notes
 
 ### release-fragments-unfolded
 
 - Rule: A release branch holds no unfolded changelog fragment when it is pushed or finished.
 - Why: a fragment left in the directory is a note that never reached the changelog.
-- Exit 1, planned.
+- Exit 1, live.
 - Fields: `verb` (verb), `count` (count).
-- Message: `{count} changelog fragments are not folded into the changelog`
+- Message: `{count} changelog fragments are left unfolded, or the released section of the changelog is empty`
 - Next, for a lead: fold them in the fix worktree, commit, then run qargi release fix VER --record
 
 ## Class seat-door
