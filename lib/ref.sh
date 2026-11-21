@@ -10,7 +10,7 @@
 #       it accept it and name it as a rewrite, and `local clean`, `local list`, `lead compact-check` and `feature finish` follow a recorded run's applied tip to NEW (lib/merged.py).
 #       Nothing else changes: no working tree (the trees are the same), no other ref, nothing on origin. A release/* or hotfix/* branch (a fix
 #       reworded before the release goes out) is rewritten the same way while origin has no branch of that name (asked live: a branch that was
-#       pushed, and an origin that cannot be asked, refuse); a long-lived or feature branch never. The lead's verb: the guard refuses it to a member.
+#       pushed, and an origin that cannot be asked, refuse); a long-lived branch (master, develop, repo.long_lived, repo.detached, the parking branch) or a feature branch never. The lead's verb: the guard refuses it to a member.
 #
 #   ref.sh record --deleted REF OLD --why TEXT [--project P]
 #       The lead deleted a branch by hand (git branch -D, git push --delete) that no flow verb deleted. REF (a branch NAME, or origin/NAME for the branch NAME
@@ -56,6 +56,13 @@ ref_side() {
     refs/heads/?*) br=${1#refs/heads/};;
   esac
 }
+# branch_name_ok NAME: NAME can be a local branch (git check-ref-format --branch refuses HEAD and -x, which a refs/heads/ check alone lets through)
+branch_name_ok() { git check-ref-format "refs/heads/$1" 2>/dev/null && git check-ref-format --branch "$1" >/dev/null 2>&1; }
+# is_long_lived NAME: NAME is master, develop, repo.long_lived, repo.detached or the parking branch: a branch no ref record moves or deletes
+is_long_lived() {
+  case $1 in master|develop) return 0;; esac
+  printf '%s\n%s\n%s\n' "$(jq -r '(.repo.long_lived // [])[]' "$af")" "$DETACHED" "$PARK" | grep -Fxq -- "$1"
+}
 if [ "$verb" = note ]; then
   [ "${#ARGS[@]}" -ge 1 ] || usage_die "ref note takes one or more REF (a branch NAME, or origin/NAME for a branch of origin); $USAGE"
   [ -z "$MODE" ] || usage_die "ref note takes no --rewrite and no --deleted; $USAGE"
@@ -69,7 +76,7 @@ if [ "$verb" = note ]; then
   for a in "${ARGS[@]}"; do
     pin=''; if [[ $a =~ ^(.+)@([0-9a-fA-F]{7,40})$ ]]; then a=${BASH_REMATCH[1]}; pin=${BASH_REMATCH[2]}; pin=${pin,,}; fi
     ref_side "$a"
-    if ! git check-ref-format "refs/heads/$br"; then echo "qargi: '$a' is not a branch name; nothing was noted for it" >&2; bad=1; continue; fi
+    if ! branch_name_ok "$br"; then echo "qargi: '$a' is not a branch name; nothing was noted for it" >&2; bad=1; continue; fi
     if [ "$side" = local ]; then
       cur=$(sha_of "$br"); [ -n "$cur" ] || { echo "qargi: no branch $br in $REPO; nothing was noted for it" >&2; bad=1; continue; }
     else
@@ -119,10 +126,9 @@ if [ "$MODE" = deleted ]; then
   . "$(dirname "$0")/gitflow.sh"
   project_load
   a=${ARGS[0]}; ref_side "$a"
-  git check-ref-format "refs/heads/$br" || fail "'$a' is not a branch name"
+  branch_name_ok "$br" || fail "'$a' is not a branch name"
   case $br in master|develop) fail "$br is a long-lived branch: it is never deleted, so there is no deletion to record";; esac
-  printf '%s\n%s\n%s\n' "$(jq -r '(.repo.long_lived // [])[]' "$af")" "$DETACHED" "$PARK" | grep -Fxq -- "$br" \
-    && fail "$br is a long-lived branch (repo.long_lived, repo.detached or the parking branch): it is never deleted, so there is no deletion to record"
+  ! is_long_lived "$br" || fail "$br is a long-lived branch (repo.long_lived, repo.detached or the parking branch): it is never deleted, so there is no deletion to record"
   old=$(g rev-parse -q --verify "${ARGS[1]}^{commit}" 2>/dev/null) || fail "OLD (${ARGS[1]}) is not a commit of $REPO (fetch it?)"
   uk=''
   if [ "$side" = local ]; then
@@ -147,9 +153,13 @@ fi
 [ -n "$WHY" ] || usage_die "ref record --rewrite needs --why \"TEXT\": the reason is journaled and verify names it"
 . "$(dirname "$0")/gitflow.sh"
 project_load
-ref=${ARGS[0]}; ref=${ref#refs/heads/}
-case $ref in agent/?*|release/?*|hotfix/?*) ;; *) die "only an agent/* branch (or a release/* or hotfix/* branch origin does not have) is rewritten this way (not $ref): a long-lived or feature branch is never rewritten";; esac
-git check-ref-format "refs/heads/$ref" || die "'$ref' is not a branch name"
+ref_side "${ARGS[0]}"; ref=$br
+[ "$side" = local ] || ref=${ARGS[0]}   # a branch of origin is nothing to rewrite here
+NOREWRITE="only an agent/* branch (or a release/* or hotfix/* branch origin does not have) is rewritten this way (not $ref): a long-lived or feature branch is never rewritten"
+[ "$side" = local ] || die "$NOREWRITE"
+case $ref in agent/?*|release/?*|hotfix/?*) ;; *) die "$NOREWRITE";; esac
+branch_name_ok "$ref" || fail "'$ref' is not a branch name"
+! is_long_lived "$ref" || fail "$ref is a long-lived branch (master, develop, repo.long_lived, repo.detached or the parking branch): it is never rewritten; nothing was moved"
 case $ref in release/?*|hotfix/?*)   # nobody else has the branch while origin has none: asked live, and an origin that cannot be asked is not an answer
   remote_tip "$ref"
   case $RSTATE in

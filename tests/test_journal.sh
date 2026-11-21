@@ -353,6 +353,30 @@ git -C "$A" branch feature/rw9 develop; fo=$(sha feature/rw9)
 out=$($REF feature/rw9 "$fo" "$(hand feature/rw9)" --why x 2>&1); rc=$?
 git -C "$A" branch -D feature/rw9 >/dev/null
 [ $rc = 1 ] && grep -q "only an agent/\* branch" <<<"$out" && ok "a feature branch is still refused" || no "feature rewrite: rc=$rc $out"
+# a maintenance line or an agent branch the project declares long-lived (repo.long_lived) is never rewritten, with no origin to ask either
+git -C "$A" branch release/2.x "$(git -C "$A" commit-tree -p develop -m "release: maintenance" "$(git -C "$A" rev-parse 'develop^{tree}')")"
+git -C "$A" branch agent/pinned "$(git -C "$A" commit-tree -p develop -m "pinned" "$(git -C "$A" rev-parse 'develop^{tree}')")"
+cp "$T/c/projects/app.json" "$T/app.json.keep"
+jq '.repo.long_lived += ["release/2.x", "agent/pinned"]' "$T/app.json.keep" > "$T/c/projects/app.json"
+git -C "$A" remote rename origin elsewhere >/dev/null 2>&1
+n=$(jn)
+for ll in release/2.x agent/pinned; do
+  lo=$(sha "$ll")
+  out=$($REF "$ll" "$lo" "$(same "$lo" "reworded")" --why x 2>&1); rc=$?
+  [ $rc = 1 ] && grep -q "$ll is a long-lived branch" <<<"$out" && [ "$(sha "$ll")" = "$lo" ] && [ "$(jn)" = "$n" ] \
+    && ok "$ll is in repo.long_lived: the rewrite is refused (no origin), nothing moves, nothing is journaled" || no "long-lived rewrite $ll: rc=$rc $out"
+done
+git -C "$A" remote rename elsewhere origin >/dev/null 2>&1
+cp "$T/app.json.keep" "$T/c/projects/app.json"
+git -C "$A" branch -D release/2.x agent/pinned >/dev/null
+# a name that cannot be a branch (HEAD, -x) is refused by every ref verb that takes one
+n=$(jn); dv=$(sha develop)
+for bad in HEAD refs/heads/-x; do
+  out=$($DA ref record --deleted "$bad" "$dv" --why x 2>&1); rc=$?
+  [ $rc = 1 ] && grep -q "is not a branch name" <<<"$out" && [ "$(jn)" = "$n" ] && ok "ref record --deleted $bad is refused: not a branch name, nothing journaled" || no "--deleted $bad: rc=$rc $out"
+done
+out=$($DA ref note HEAD 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "is not a branch name" <<<"$out" && [ "$(jn)" = "$n" ] && ok "ref note HEAD is refused: not a branch name, nothing journaled" || no "note HEAD: rc=$rc $out"
 ht=$(sha hotfix/9.0.1)
 git -C "$A" push -q origin :refs/heads/release/9.0.0
 git -C "$A" branch -D release/9.0.0 hotfix/9.0.1 >/dev/null
