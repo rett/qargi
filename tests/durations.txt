@@ -136,6 +136,7 @@
 53 bash tests/test_release_master_merge.sh
 61 bash tests/test_release_cut.sh
 57 bash tests/test_release_fix_record.sh
+82 bash tests/test_dry_run.sh
 5 python3 tests/test_marshal_batch.py
 36 bash tests/test_marshal_batch.sh
 15 python3 tests/test_marshal_startup.py

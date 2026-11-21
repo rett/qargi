@@ -391,10 +391,10 @@
       "why": "an open run holds patches that are not taken in",
       "class": "feature",
       "exit": 1,
-      "status": "planned",
-      "fields": {"verb": "verb", "count": "count"},
-      "message": "{count} runs of this feature are still open",
-      "next": {"lead": "take each in with qargi local verify, or close it (qargi local close RUN --applied-by-am), then run {verb} again", "host": "take each in with qargi local verify, or close it (qargi local close RUN --applied-by-am), then run {verb} again"}
+      "status": "live",
+      "fields": {"verb": "verb", "count": "count", "runs": "name-list"},
+      "message": "{count} run(s) of this feature are still open: {runs}",
+      "next": {"lead": "take each run in (qargi local verify, then merge it), or close it: qargi local clean RUN once its work is merged (--discard drops it on purpose), qargi local close RUN --applied-by-am when its patches were applied by hand; then run {verb} again", "host": "take each run in (qargi local verify, then merge it), or close it: qargi local clean RUN once its work is merged (--discard drops it on purpose), qargi local close RUN --applied-by-am when its patches were applied by hand; then run {verb} again"}
     },
     "ro-write-outside": {
       "rule": "A read-only run writes only OUT and TMP",
