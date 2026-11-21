@@ -565,6 +565,16 @@ pack_warn() {
     | group_by(.[0])[] | .[0][0] + "\t" + (map(.[1]) | unique | join(", "))' "$links" 2>/dev/null)
 }
 
+# reads_warn RUNTIME [INDENT]: when the local runtime RUNTIME (a runtime or a family name) is a command runtime whose definition does not confine reads
+# (dispatch.reads), prints the warning of the enable plan as a `warning:` line: members on it can read what the account can read, the owner's own
+# sessions among it. Prints nothing for a runtime that confines reads, works in the session or is unknown. The places that make a runtime the project's
+# own (new, attach, set) print it and ask for no phrase; validate and every other verb stay silent about it
+reads_warn() {
+  local w
+  w=$(pymod provider reads-warning "$1" </dev/null 2>/dev/null) || return 0
+  [ -z "$w" ] || echo "${2:-}warning: $w"
+}
+
 # no_provider FILE [NAME]: prints the findings and returns 0 when the answers name no provider (models.provider missing, not a string or an
 # object, or blank: the same rule as provider.py project_provider), or leave a surface without one (the object form), or name one that
 # has no definition, or a name that serves only one surface, or a single name resolved through its family (the notice of
@@ -827,6 +837,7 @@ PY
     if [ -n "$url" ]; then echo "  qargi answers stored for $url (outside the repository)"; else echo "  no --url: the answers are stored later, when the remote exists: qargi project attach $dir --url URL"; fi
     echo "  deployment: ${dep:-not chosen (see below)}"
     echo "  provider: $ptxt"
+    reads_warn "${provl:-$prov}" "  "
     echo
     if [ -z "$APPROVED" ]; then
       python3 -I "$lib/methodology.py" deployment "$meth"
@@ -960,6 +971,7 @@ PY
     fi
     if [ -z "$APPROVED" ]; then
       echo "stored answers would be:"; jq . <<<"$ans"
+      reads_warn "$(jq -r '(.models.provider // "") | if type == "string" then . elif type == "object" then (.local // "") else "" end' <<<"$ans")"
       no_provider /dev/stdin "$n" <<<"$ans" || true   # attach does not guess a provider and stores none
       echo "plan token: $tok   (store with: qargi project attach $dir --plan $tok --approved \"...\"${force:+ --force})"
       exit 0
@@ -1115,7 +1127,8 @@ PY
     echo "$n: $path = $val$(set_note "$n" "$path" "$val")"
     echo "was: $was"
     [ -z "$carry" ] || echo "note: models.provider was the single name '$carry'; it is now one name per surface, and the surface you did not set keeps '$carry'"
-    case $path in models.provider|models.provider.*) no_provider "$PROJ_DIR/$n.json" "$n" || true;; esac;;
+    case $path in models.provider|models.provider.*) no_provider "$PROJ_DIR/$n.json" "$n" || true;; esac
+    case $path in models.provider|models.provider.local) reads_warn "$(pymod provider of-if-set "$n" --conf "$DA_CONF" --surface local 2>/dev/null </dev/null)";; esac;;
   unset)
     # remove one answer; the same refusals as set (the marshal backend, the answers that take a plan token), and a member never runs it: its guard
     # may not name this verb, so the refusal is made here, from the member's run directory or its marked environment

@@ -334,4 +334,31 @@ out=$("$DA" provider disable pr12 --runtime fakeconf 2>&1); etok=$(tokof_ "$out"
 "$DA" provider disable pr12 --runtime fakeconf --plan "$etok" --approved "ok" >/dev/null 2>&1
 [ "$(answers_of pr12)" = '{"local":[]}' ] && ok "and disabled once it does not" || no "disable after unset: $(answers_of pr12)"
 
+# --- where a runtime becomes the project's own: the reads warning is printed, no phrase is asked, and validate stays silent
+W='warning: members on fakecx can read the real ~/.codex (sessions, history, sign-in) and whatever else this account can read: reads are not confined'
+mkdir -p "$T/newparent"
+out=$("$DA" project new nwa --dir "$T/newparent/nwa" --provider-local fakecx --provider-cloud claude-platform 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -qxF "  $W" <<<"$out" && grep -q '^plan token' <<<"$out"; } && ok "reads-warning-at-new: the plan of project new prints the warning for a local runtime that does not confine reads, and asks for no phrase" || no "new: rc=$rc $out"
+out=$("$DA" project new nwb --dir "$T/newparent/nwb" --provider-local claude-code --provider-cloud claude-platform 2>&1)
+! grep -q 'warning:' <<<"$out" && ok "nothing for a runtime that works in the session" || no "new in-session: $out"
+out=$("$DA" project new nwc --dir "$T/newparent/nwc" --provider-local fakeconf --provider-cloud claude-platform 2>&1)
+! grep -q 'warning:' <<<"$out" && ok "nothing for a runtime whose definition says reads are confined" || no "new confined: $out"
+git init -q -b main "$T/attrepo" && git -C "$T/attrepo" -c user.name=t -c user.email=t@example.net commit -q --allow-empty -m one
+out=$("$DA" project attach "$T/attrepo" --name att --url https://github.com/example/att --provider-local fakecx --provider-cloud claude-platform 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -qxF "$W" <<<"$out" && grep -q '^plan token' <<<"$out"; } && ok "the plan of project attach prints it too" || no "attach: rc=$rc $(grep -n 'warning\|token' <<<"$out")"
+out=$("$DA" project attach "$T/attrepo" --name att --url https://github.com/example/att --provider-local claude-code --provider-cloud claude-platform 2>&1)
+! grep -q 'warning:' <<<"$out" && ok "and prints nothing for an in-session runtime" || no "attach in-session: $out"
+mkproj st1 "$CC"
+out=$("$DA" project set st1 models.provider.local fakecx 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -qxF "$W" <<<"$out" && [ "$(jq -r .models.provider.local "$T/c/projects/st1.json")" = fakecx ]; } && ok "reads-warning-at-set: project set models.provider.local stores it and prints the warning" || no "set local: rc=$rc $out"
+out=$("$DA" project set st1 models.provider.local claude-code 2>&1)
+! grep -q 'warning:' <<<"$out" && ok "set to an in-session runtime prints none" || no "set in-session: $out"
+out=$("$DA" project set st1 models.provider '{"local":"fakecx","cloud":"claude-platform"}' 2>&1)
+grep -qxF "$W" <<<"$out" && ok "set of the whole answer prints it for the local runtime" || no "set whole: $out"
+out=$("$DA" project set st1 models.provider.cloud claude-platform 2>&1)
+! grep -q 'warning:' <<<"$out" && ok "set of the cloud runtime prints none" || no "set cloud: $out"
+out=$("$DA" project validate st1 2>&1)
+! grep -q 'warning:' <<<"$out" && ok "project validate of a project already on such a runtime stays silent" || no "validate: $out"
+out=$("$DA" project show st1 2>&1); ! grep -q 'warning:' <<<"$out" && ok "so do the other verbs" || no "show: $out"
+
 exit $fail
