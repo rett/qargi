@@ -215,5 +215,11 @@ setline() { # RUN JQ-FILTER: the registry line of RUN rewritten by the filter, b
   local f=$QARGI_STATE/local-runs.jsonl
   jq -c --arg r "$1" "if .run == \$r then ($2) else . end" "$f" > "$f.new" && mv "$f.new" "$f"
 }
+setline "$CMDOWN" '.model_confirmed = true | .model = "other-model"'
+READY "$CMDOWN" >/dev/null && ok model-confirmed-not-compared || no "a flipped model_confirmed (or another model) must not fail the agreement: $(READY "$CMDOWN")"
+setline "$CMDOWN" '.runtime = "fakecx"'
+out=$(READY "$CMDOWN"); rc=$?
+{ [ "$rc" != 0 ] && grep -q 'prepared command request disagrees with lead registry' <<<"$out"; } && ok agreement-compares-runtime || no "a line whose runtime was changed must fail: rc=$rc $out"
+setline "$CMDOWN" '.runtime = "fakeown"'
 
 exit $fail
