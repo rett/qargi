@@ -531,6 +531,39 @@ man_pages_at() {
   if jq -e '(.release? // {}) | has("man_pages")' "$af" >/dev/null 2>&1; then jq -r '.release.man_pages[]' "$af"
   else g ls-tree -r --name-only "$1" | grep -E '(^|/)man[0-9]?/[^/]+\.[1-9]$' || true; fi
 }
+# fragments_dir -> the answer release.changelog.fragments (empty: no answer, and the changelog is the only place for notes)
+fragments_dir() { jq -r '(.release? // {}).changelog.fragments // empty' "$af"; }
+# fragments_at REF -> the changelog fragments in the directory of the answer at REF, one to a line: any file in it but README* and .gitkeep (release_layout.py fragments)
+fragments_at() {
+  local d; d=$(fragments_dir); [ -n "$d" ] || return 0
+  g ls-tree -r -z --name-only "$1" -- "$d" | python3 -I "$RL" fragments || true
+}
+# fragments_check REF -> with the answer release.changelog.fragments: refuses (release-fragments-unfolded) while the directory at REF, the head of the branch, holds a fragment, or while the
+# released section of the changelog there is empty; the fix is to fold them in the fix worktree, commit, and record the commits. A check that does not depend on the ones around it (DRY_INDEP).
+fragments_check() {
+  local d n tmp rc=0
+  d=$(fragments_dir); [ -n "$d" ] || return 0
+  n=$(fragments_at "$1" | grep -c . || true)
+  if [ "$n" -gt 0 ]; then
+    REFUSE_MORE="$d holds $n fragment$([ "$n" = 1 ] || echo s) at the head of $BR (${1:0:7}); fold $([ "$n" = 1 ] && echo it || echo them) into the changelog's section of $VER in the fix worktree (qargi release fix $VER${HOTFIX:+ --hotfix} makes it), remove $([ "$n" = 1 ] && echo it || echo them), commit, then qargi release fix $VER${HOTFIX:+ --hotfix} --record"
+    DRY_INDEP=1
+    refuse release-fragments-unfolded verb="release $verb" count="$n"
+    DRY_INDEP=''
+    return 0
+  fi
+  g cat-file -e "$1:CHANGELOG.md" 2>/dev/null || return 0
+  tmp=$(mktemp "$DA_STATE/.release-fragments-chk.XXXXXX") || return 0
+  g show "$1:CHANGELOG.md" > "$tmp" 2>/dev/null
+  python3 -I "$RL" section-empty "$tmp" "$VER" "$af" || rc=$?
+  rm -f "$tmp"
+  if [ "$rc" = 1 ]; then
+    REFUSE_MORE="the section of $VER in the CHANGELOG.md of $BR (${1:0:7}) has no notes: fold the fragments of $d into it in the fix worktree, commit, then qargi release fix $VER${HOTFIX:+ --hotfix} --record"
+    DRY_INDEP=1
+    refuse release-fragments-unfolded verb="release $verb" count="$n"
+    DRY_INDEP=''
+  fi
+  return 0
+}
 # has_answer KEY -> whether the release answer KEY (release.KEY) is set
 has_answer() { jq -e --arg k "$1" '(.release? // {}) | has($k)' "$af" >/dev/null 2>&1; }
 # answer_text KEY -> the release answer KEY as one line for a plan: the words of a list, the text of a command line ({version} is replaced when it runs)
@@ -997,6 +1030,7 @@ case $verb in
       else run_preflight "$WT"; pre_line="preflight (release.preflight): passed on $BASE (at ${b0:0:7}); it runs again in a copy of $BR when you push"; fi
     fi
     oldver=''; cl_line=''
+    fragn=$(fragments_at "$b0" | grep -c . || true)   # with the answer release.changelog.fragments the fragments at the base count as notes: no --allow-empty-notes, and the branch folds them
     if [ "$VFILE" != none ]; then
       if [ -f "$WT/$VFILE" ]; then oldver=$(tr -d '[:space:]' < "$WT/$VFILE"); echo "$VER" > "$WT/$VFILE"; git -C "$WT" add -- "$VFILE"
       elif [ "$VFILE_SET" = true ]; then die "release.version_file: $VFILE is not a file at the head of $BASE (set it to none when the project has no version file)"; fi
@@ -1008,7 +1042,13 @@ case $verb in
       git -C "$WT" add "$mp"
     done < <(man_pages_at "$b0")
     if [ -f "$WT/CHANGELOG.md" ]; then
-      cl_out=$(python3 -I "$RL" changelog "$WT/CHANGELOG.md" "$VER" "$DATE" "$ALLOW_EMPTY" "$af" "$KIND") || exit 1
+      cl_allow=$ALLOW_EMPTY; [ "$fragn" = 0 ] || cl_allow=1   # a fragment is a note: the unreleased section may be empty
+      cl_rc=0; cl_out=$(python3 -I "$RL" changelog "$WT/CHANGELOG.md" "$VER" "$DATE" "$cl_allow" "$af" "$KIND") || cl_rc=$?
+      if [ "$cl_rc" = 3 ]; then
+        REFUSE_MORE=${cl_out#*$'\t'}
+        refuse release-notes-empty verb="release $verb"
+      fi
+      [ "$cl_rc" = 0 ] || exit 1
       [ "$cl_out" != heading-added ] || cl_line="CHANGELOG.md: $BASE has no unreleased heading, so the heading for $VER was added with no entries; the changes of this hotfix are recorded under it on $BR, and release finish refuses until there are entries under it (the push preflight, when the project sets one, is its own)"
       git -C "$WT" add CHANGELOG.md
     fi
@@ -1021,6 +1061,7 @@ case $verb in
     echo "files the commit changes: $bl"
     echo "the version becomes $VER${oldver:+ (was $oldver)} and the changelog (and a man page) is dated $DATE"
     [ -z "$cl_line" ] || echo "$cl_line"
+    [ "$fragn" = 0 ] || echo "changelog fragments (release.changelog.fragments: $(fragments_dir)): $fragn fragment$([ "$fragn" = 1 ] || echo s), to be folded on the branch"
     [ -z "$pre_line" ] || echo "$pre_line"
     hn=$(hotfix_develop_note) && echo "warning: $hn"
     if [ -z "$APPROVED" ]; then
@@ -1139,6 +1180,7 @@ case $verb in
     fi
     pk=$(preflight_key); [ -z "$pk" ] || echo "preflight (release.$pk, run in a copy of $BR before the push): $(answer_text "$pk")"
     push_since_cut
+    fragments_check "$h"
     notes_report
     remote_report "$BR"
     pw=$(wt_of "$BR"); [ -z "$pw" ] || [ -z "$(git -C "$pw" status --porcelain 2>/dev/null)" ] || echo "warning: $pw has uncommitted changes: only what is committed on $BR is pushed"
@@ -1210,6 +1252,7 @@ case $verb in
         rm -rf "$ftmp"; die "the CHANGELOG.md of $BR has no entries under '$rhead' (the section is missing or empty): a hotfix brings its own. Fix: record the entries under that heading on $BR (qargi release fix $VER --hotfix makes the worktree), commit, then finish. Nothing was changed"
       fi
     fi
+    fragments_check "$h"   # with release.changelog.fragments: none may be left at the head, and the released section must have notes
     # a manual page that leaves with an empty .TH date or version (a regenerated page that lost what `start` set) is not released
     emptyth=''
     while IFS= read -r mp; do

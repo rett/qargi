@@ -371,9 +371,9 @@
       "why": "a release with no notes says nothing about what changed",
       "class": "release",
       "exit": 1,
-      "status": "planned",
+      "status": "live",
       "fields": {"verb": "verb"},
-      "message": "the released section of the changelog is empty",
+      "message": "the unreleased section of the changelog is empty, and no changelog fragment stands in for notes",
       "next": {"lead": "write the notes, pass --allow-empty-notes, or set the answer release.changelog.fragments so that the fragments count as notes", "host": "write the notes, pass --allow-empty-notes, or set the answer release.changelog.fragments so that the fragments count as notes"}
     },
     "release-fragments-unfolded": {
@@ -381,9 +381,9 @@
       "why": "a fragment left in the directory is a note that never reached the changelog",
       "class": "release",
       "exit": 1,
-      "status": "planned",
+      "status": "live",
       "fields": {"verb": "verb", "count": "count"},
-      "message": "{count} changelog fragments are not folded into the changelog",
+      "message": "{count} changelog fragments are left unfolded, or the released section of the changelog is empty",
       "next": {"lead": "fold them in the fix worktree, commit, then run qargi release fix VER --record", "host": "fold them in the fix worktree, commit, then run qargi release fix VER --record"}
     },
     "feature-runs-open": {

@@ -56,8 +56,8 @@ compares them with that page.
 | [`member-run-record`](#member-run-record) | guard | 2 | live | A member does not write the lead's run records |
 | [`plan-missing`](#plan-missing) | plan | 1 | live | A token covers the plan the person saw |
 | [`plan-stale`](#plan-stale) | plan | 1 | live | A token covers the plan the person saw |
-| [`release-notes-empty`](#release-notes-empty) | release | 1 | planned | A release has notes |
-| [`release-fragments-unfolded`](#release-fragments-unfolded) | release | 1 | planned | A release branch holds no unfolded changelog fragment when it is pushed or finished |
+| [`release-notes-empty`](#release-notes-empty) | release | 1 | live | A release has notes |
+| [`release-fragments-unfolded`](#release-fragments-unfolded) | release | 1 | live | A release branch holds no unfolded changelog fragment when it is pushed or finished |
 | [`seated-project`](#seated-project) | seat-door | 1 | planned | A marshal claim, take or release is not run on a seated project (R27) |
 | [`assignment-invalid`](#assignment-invalid) | seat-door | 1 | planned | An assignment is well formed and names nothing reserved or unsafe (R4, R5, R18, R19, R28, R89) |
 | [`transfer-open`](#transfer-open) | seat-door | 1 | planned | A new assignment waits while a transfer is open (R43) |
@@ -263,18 +263,18 @@ compares them with that page.
 
 - Rule: A release has notes.
 - Why: a release with no notes says nothing about what changed.
-- Exit 1, planned.
+- Exit 1, live.
 - Fields: `verb` (verb).
-- Message: `the released section of the changelog is empty`
+- Message: `the unreleased section of the changelog is empty, and no changelog fragment stands in for notes`
 - Next, for a lead: write the notes, pass --allow-empty-notes, or set the answer release.changelog.fragments so that the fragments count as notes
 
 ### release-fragments-unfolded
 
 - Rule: A release branch holds no unfolded changelog fragment when it is pushed or finished.
 - Why: a fragment left in the directory is a note that never reached the changelog.
-- Exit 1, planned.
+- Exit 1, live.
 - Fields: `verb` (verb), `count` (count).
-- Message: `{count} changelog fragments are not folded into the changelog`
+- Message: `{count} changelog fragments are left unfolded, or the released section of the changelog is empty`
 - Next, for a lead: fold them in the fix worktree, commit, then run qargi release fix VER --record
 
 ## Class seat-door

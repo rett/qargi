@@ -22,7 +22,9 @@ mk() { # NAME [ANSWERS-JQ]: a repository with origin, master and develop, a vers
   echo 0.1.0 > "$R/VERSION"; echo 0.1.0 > "$R/pkg/version.txt"; echo code > "$R/src/code.go"; echo guide > "$R/docs/guide.md"
   printf '.TH APP 1 "2026-01-01" "app 0.1.0"\n.SH NAME\napp\n' > "$R/man/app.1"
   printf '# Changelog\n\n## [Unreleased]\n\n### Added\n- a thing\n' > "$R/CHANGELOG.md"
-  git -C "$R" add -A && git -C "$R" commit -q -m one && git -C "$R" branch develop && git -C "$R" remote add origin "$O" && git -C "$R" push -q origin master develop
+  git -C "$R" add -A && git -C "$R" commit -q -m one
+  [ -z "${PRE:-}" ] || { (cd "$R" && eval "$PRE") && git -C "$R" add -A && git -C "$R" commit -q -m "the base of the test"; }   # PRE: shell text that changes the base before develop is made
+  git -C "$R" branch develop && git -C "$R" remote add origin "$O" && git -C "$R" push -q origin master develop
   git -C "$R" checkout -q -b parked
   jq -n --arg p "$R" --arg n "$1" '{schema:1, project:$n, methodology:"gitflow", repo:{url:"https://github.com/acme/x", path:$p, long_lived:["master","develop"]}, test_command:"true"}' > "$T/c/projects/$1.json"
   [ -z "${2:-}" ] || { jq "$2" "$T/c/projects/$1.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/$1.json"; }
@@ -129,5 +131,39 @@ mkdir -p "$W/changelog.d"; git -C "$W" mv docs/guide.md changelog.d/guide.md; gi
 git -C "$W" mv CHANGELOG.md docs/CHANGELOG.md; git -C "$W" commit -q -m "rename the changelog into docs"; r2=$(head_of release/0.2.0)
 out=$($REL fix 0.2.0 --record 2>&1)
 grep -q "the commits ${r1:0:7},${r2:0:7} leave the paths\|the commits ${r1:0:7}, ${r2:0:7} leave the paths" <<<"$out" && ok "a rename counts on both sides: out of docs/ into the fragments directory, and out of the changelog into docs/, are both outside" || no "renames: $out"
+
+# --- changelog fragments (release.changelog.fragments): they count as notes at start, and push and finish refuse while one is left at the branch head or the released section is empty
+FRAG='.release = {changelog: {fragments: "changelog.d"}}'
+EMPTYCL="printf '# Changelog\n\n## [Unreleased]\n\n' > CHANGELOG.md; mkdir changelog.d; echo '- a fragment' > changelog.d/a.md; echo readme > changelog.d/README.md; : > changelog.d/.gitkeep"
+PRE=$EMPTYCL mk f1 "$FRAG"; PRE=''
+out=$($REL start 0.2.0 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q "changelog fragments (release.changelog.fragments: changelog.d): 1 fragment, to be folded on the branch" <<<"$out" && ok "start with the answer: an empty unreleased section is fine when a fragment stands in for notes (README and .gitkeep are not fragments); the plan says 1 fragment, to be folded on the branch" || no "fragment plan: rc=$rc $out"
+t=$(tok <<<"$out"); out=$($REL start 0.2.0 --plan "$t" --approved go 2>&1); rc=$?
+[ "$rc" = 0 ] && git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && ok "and the start is applied with no --allow-empty-notes" || no "fragment start: rc=$rc $out"
+before=$(snap); out=$($REL push 0.2.0 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q '^qargi-refusal/1 {"code":"release-fragments-unfolded","exit":1,"verb":"release push"' <<<"$out" && grep -q 'detail":"count=1"' <<<"$out" && grep -q "next: fold them in the fix worktree, commit, then run qargi release fix VER --record" <<<"$out" && ! grep -q '^plan token' <<<"$out" && [ "$before" = "$(snap)" ] \
+  && ok "push refuses while a fragment is at the branch head: release-fragments-unfolded, count 1, no plan token, nothing changed" || no "push with a fragment: rc=$rc $out"
+out=$($REL finish 0.2.0 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q '"code":"release-fragments-unfolded","exit":1,"verb":"release finish"' <<<"$out" && ok "finish refuses too" || no "finish with a fragment: rc=$rc $out"
+W=$($REL fix 0.2.0 | sed -n 's/^worktree: //p')
+git -C "$W" rm -q changelog.d/a.md && git -C "$W" commit -q -m "remove the fragment, forgetting the note"
+out=$($REL push 0.2.0 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q '"code":"release-fragments-unfolded"' <<<"$out" && grep -q "has no notes" <<<"$out" && ok "with no fragment left and an empty released section push still refuses: the note was not folded" || no "empty released section: rc=$rc $out"
+printf -- '- a fragment\n' >> "$W/CHANGELOG.md"; git -C "$W" commit -q -am "fold the fragment"
+out=$($REL fix 0.2.0 --record 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q "journaled 2 commits" <<<"$out" && ok "the fold is recorded" || no "record the fold: rc=$rc $out"
+out=$($REL push 0.2.0 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q '^plan token:' <<<"$out" && ok "once the fragment is folded (only README and .gitkeep remain) push shows its plan" || no "push after the fold: rc=$rc $out"
+t=$(tok <<<"$out"); out=$($REL push 0.2.0 --plan "$t" --approved go 2>&1); rc=$?
+[ "$rc" = 0 ] && out=$($REL finish 0.2.0 2>&1) && grep -q '^plan token:' <<<"$out" && ok "and so does finish" || no "push or finish after the fold: rc=$rc $out"
+
+PRE=$EMPTYCL mk f2; PRE=''
+out=$($REL start 0.2.0 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q '^qargi-refusal/1 {"code":"release-notes-empty","exit":1,"verb":"release start"' <<<"$out" && grep -q "next: write the notes, pass --allow-empty-notes, or set the answer release.changelog.fragments" <<<"$out" && grep -q "more: CHANGELOG.md has nothing under '## \[Unreleased\]'" <<<"$out" \
+  && ok "without the answer an empty unreleased section is release-notes-empty, and the next step names the option and the answer" || no "notes empty: rc=$rc $out"
+out=$($REL start 0.2.0 --allow-empty-notes 2>&1); [ "$?" = 0 ] && grep -q '^plan token:' <<<"$out" && ok "--allow-empty-notes still waives it" || no "allow empty: $out"
+PRE="printf '# Changelog\n\n## [Unreleased]\n\n' > CHANGELOG.md; mkdir changelog.d; : > changelog.d/.gitkeep" mk f3 "$FRAG"
+out=$($REL start 0.2.0 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q '"code":"release-notes-empty"' <<<"$out" && ok "with the answer but no fragment (only .gitkeep) and an empty unreleased section the notes are still empty" || no "answer without fragments: rc=$rc $out"
 
 exit $fail
