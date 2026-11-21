@@ -1,0 +1,90 @@
+### feature verify f
+running the whole suite on feature/f at SHA: echo suite-ran; touch TMP/ran
+suite-ran
+full suite: pass at SHA
+rc=0
+### feature status f
+feature f of app on feature/f at SHA, 0 commit(s) ahead of develop, 0 behind
+full suite: pass at this head
+feature f of app
+  status: active
+tasks: none
+agent branches of feature/f (prepared against it) not merged into it: none
+worktrees on feature/f or agent/*: none
+files also changed by another open feature: none
+rc=0
+### release verify 0.2.0
+running the whole suite on develop at SHA: echo suite-ran; touch TMP/ran
+suite-ran
+full suite: pass at SHA
+rc=0
+### release status 0.2.0
+no release/0.2.0 yet. develop is at SHA, full suite: pass at this head (command: echo suite-ran; touch TMP/ran; ran AT; took Ns)
+rc=0
+### records
+{
+  "command": "echo suite-ran; touch TMP/ran",
+  "mode": "",
+  "result": "pass",
+  "sha": "SHA"
+}
+{
+  "command": "echo suite-ran; touch TMP/ran",
+  "mode": "",
+  "result": "pass",
+  "sha": "SHA"
+}
+### feature verify f
+running the whole suite on feature/f at SHA: echo before-fail; exit 3
+before-fail
+full suite: fail at SHA
+no failing test name in the output; its last lines:
+  before-fail
+log of the whole run: TMP/s/suite-logs/app.feature-f.log
+rc=1
+### feature status f
+feature f of app on feature/f at SHA, 0 commit(s) ahead of develop, 0 behind
+full suite: fail at this head
+feature f of app
+  status: active
+tasks: none
+agent branches of feature/f (prepared against it) not merged into it: none
+worktrees on feature/f or agent/*: none
+files also changed by another open feature: none
+rc=0
+### release verify 0.2.0
+running the whole suite on develop at SHA: echo before-fail; exit 3
+before-fail
+full suite: fail at SHA
+no failing test name in the output; its last lines:
+  before-fail
+log of the whole run: TMP/s/suite-logs/app.release-0.2.0.log
+rc=1
+### release status 0.2.0
+no release/0.2.0 yet. develop is at SHA, full suite: fail at this head (command: echo before-fail; exit 3; ran AT; took Ns)
+rc=0
+### records
+{
+  "command": "echo before-fail; exit 3",
+  "mode": "",
+  "result": "fail",
+  "sha": "SHA"
+}
+{
+  "command": "echo before-fail; exit 3",
+  "mode": "",
+  "result": "fail",
+  "sha": "SHA"
+}
+### state
+./busy
+./features
+./features/app-f.json
+./features/app-f.json.lock
+./releases
+./releases/app-develop.json
+./releases/app-feature_f.json
+./sessions.json
+./suite-logs
+./suite-logs/app.feature-f.log
+./suite-logs/app.release-0.2.0.log

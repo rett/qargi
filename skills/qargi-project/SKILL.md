@@ -42,4 +42,6 @@ Teams (optional): `lead` (model, effort; it cannot be a role) and `teams.<name>`
 
 Lead context window (`lead.context_window`, default `null`: from the session's model): `project set` it (path `lead.context_window`, tokens) only when known.
 
+Verify environment (`verify.environment`, default off): set it only when asked, since loosening it takes the user's words (docs/reference/verify-environment.md).
+
 Push grant for the lead (`lead.push`, default none): `local` (this session may push `agent/*` and open pull requests), `cloud: branches` (a cloud or console lead may, with a token file and a vault, set up by `qargi credential setup lead-push PROJECT`), `branch_pattern` (`agent/...`), `merge` and `release` (`ask` or `never`; never automatic). Only the lead ever pushes.

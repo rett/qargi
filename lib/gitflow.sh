@@ -18,8 +18,9 @@ fi
 g() { git -C "$REPO" "$@"; }
 rec() { echo "$RDIR/$PROJ-${1//\//_}.json"; }   # branch -> the file that records its last full-suite run
 sha_of() { g rev-parse -q --verify "refs/heads/$1" || true; }
-# "SHA pass|fail" of the last whole-suite run of a branch, only if it ran the project's current test command
-verified() { local f; f=$(rec "$1"); [ -f "$f" ] && jq -r --arg c "$TESTCMD" 'select(.command == $c) | .sha + " " + .result' "$f" 2>/dev/null; }
+# "SHA pass|fail" of the last whole-suite run of a branch, only if it ran the project's current test command. It also selects on verify.environment
+# (SUITE_ENV_ID, empty when the setting is off): a set, changed or removed declaration, or a new launcher, makes earlier runs stale.
+verified() { local f; f=$(rec "$1"); [ -f "$f" ] && jq -r --arg c "$TESTCMD" --arg e "${SUITE_ENV_ID:-}" 'select(.command == $c and (.environment.id // "") == $e) | .sha + " " + .result' "$f" 2>/dev/null; }
 
 # journal_ref REPO REF OLD NEW VERB -> appends one line to the lead's ref journal ($DA_STATE/ref-journal.jsonl) after a local
 # branch or tag was created (OLD empty), moved or deleted (NEW empty) by one of qargi's own verbs. `qargi local verify` and
@@ -255,6 +256,20 @@ cleanup() { [ -z "$WT" ] || { g worktree remove --force "$WT" >/dev/null 2>&1 ||
 BUSY=''
 busy_begin() { mkdir -p "$DA_STATE/busy" 2>/dev/null; BUSY=$DA_STATE/busy/$PROJ.$1.${2//\//_}.pid; echo "$$" > "$BUSY" 2>/dev/null || BUSY=''; }
 busy_end() { [ -z "$BUSY" ] || rm -f "$BUSY"; BUSY=''; }
+# busy_same_refuse KIND NAME: with verify.environment on, a second whole-suite run of the same KIND and NAME while the first is alive is refused, before anything is made
+# or claimed: the two would share one directory for the reports of the launcher (run_suite_logged), and the second would delete the first's reports, so the first could
+# end on a refusal code that is not its own. It reads the pid file busy_begin writes, and busy_begin runs only after the launcher's attempt, the worktree, the claim and
+# the warning of the other runs: a second verify started while the first is still preparing (seconds) is not refused, and this window is not closed. A mark whose pid is
+# alive but is no verify (a pid reused after a verify died without its EXIT trap) refuses too, so the message names the file to remove. With the setting off nothing changes (the two runs share the log, as they always did, and other_runs_warning says so).
+busy_same_refuse() {
+  local f=$DA_STATE/busy/$PROJ.$1.${2//\//_}.pid pid
+  [ -n "${SUITE_ENV:-}" ] && [ -f "$f" ] || return 0
+  pid=$(cat "$f" 2>/dev/null) || return 0
+  case $pid in ''|*[!0-9]*) return 0;; esac
+  [ "$pid" != "$$" ] || return 0
+  kill -0 "$pid" 2>/dev/null || return 0
+  die "another $1 of $2 is running (pid $pid, busy mark $f): with verify.environment the two runs would share one directory for the reports of the launcher, and the second would delete the first's. Wait for it to end (if pid $pid is no qargi verify, the mark is stale: remove $f). Nothing was run"
+}
 # lead_advice [--feature NAME]: the one line of the stage verbs (feature finish, the last merge of a feature, release finish, marshal handoff):
 # the lead's context in use and whether a compact is safe now (lib/lead_usage.py). Fail-soft: it never changes the status of the verb.
 lead_advice() {
@@ -418,7 +433,7 @@ run_gates() {
     fi
     echo "== gate $name ($tier): $cmd"
     t0=$SECONDS
-    if run_clean "$WT" bash -c "$cmd"; then res=pass; else res=fail; rc=1; fi
+    if run_suite_cmd "$cmd" "$(printf 'gate-%03d' "$i")"; then res=pass; else res=fail; rc=1; fi
     echo "== gate $name: $res ($((SECONDS - t0))s)"
     result["$name"]=$res
     rows[i]=$(jq -nc --arg n "$name" --arg t "$tier" --arg r "$res" --argjson d "$((SECONDS - t0))" '{name:$n, tier:$t, result:$r, seconds:$d}')
@@ -435,19 +450,287 @@ run_gates() {
   done
   return "$rc"
 }
+# verify.environment (lib/suite_env.py): with the project answer verify.environment set, every whole-suite command of a verify (the test command, or each
+# gate) starts through the launcher; unset or null is off and nothing below changes a byte of what a verify does or records. The declaration is read from
+# the answers and compared with the one qargi last accepted (STATE/verify-env.json, `suite_env.py approved`).
+SE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/suite_env.py
+# suite_env_load refuse|report -> SUITE_ENV (the declaration as compact JSON, empty when off), SUITE_ENV_ID (empty when off) and SUITE_ENV_FINDING. An invalid
+# declaration, or answers that differ from the accepted declaration (a hand edit of the answers file, in either direction), is a refusal with refuse; with
+# report (status) it is only SUITE_ENV_FINDING, which suite_env_status prints (an invalid declaration or an unreadable state file too: status goes on and treats the
+# setting as off). Called wherever gates_load is, so `verified` knows the id.
+suite_env_load() {
+  local decl out rc=0 chk
+  SUITE_ENV='' SUITE_ENV_ID='' SUITE_ENV_FINDING=''
+  # a finding the verbs that refuse die on; status keeps it (the first one) and goes on as if the setting were off, so a damaged file never stops a status
+  decl=$(jq -c 'if (.verify | type) == "object" and (.verify | has("environment")) then .verify.environment else null end' "$af" 2>/dev/null) \
+    || { suite_env_finding "$1" "the answers of $PROJ cannot be read (verify.environment)"; return 0; }
+  out=$(python3 -I "$SE" problems "$decl" 2>&1) || rc=$?
+  if [ "$rc" != 0 ]; then
+    suite_env_finding "$1" "verify-env-invalid: verify.environment of $PROJ is not valid:"$'\n'"$(printf '%s\n' "$out" | sed 's/^/  /')"$'\n'"fix it with qargi project set $PROJ verify.environment JSON"
+    return 0
+  fi
+  rc=0; chk=$(python3 -I "$SE" approved check "$PROJ" "$decl" --state "$DA_STATE" 2>&1) || rc=$?
+  case $rc in
+    0) ;;
+    1) suite_env_finding "$1" "verify-env-change-unapproved: verify.environment in the answers of $PROJ differs from the declaration qargi last accepted (answers $(jq -r '.answers[0:12]' <<<"$chk"), accepted $(jq -r '.state[0:12]' <<<"$chk")). Restore the answers, or change it with qargi project set $PROJ verify.environment JSON (a loosening needs a plan token and the owner's words)" "Nothing was run or changed.";;
+    *) suite_env_finding "$1" "verify-env-change-unapproved: the accepted declarations of verify.environment cannot be read: $chk"; return 0;;
+  esac
+  [ "$decl" = null ] && return 0
+  SUITE_ENV=$decl
+  SUITE_ENV_ID=$(python3 -I "$SE" id "$decl") || { SUITE_ENV='' SUITE_ENV_ID=''; suite_env_finding "$1" "the id of verify.environment of $PROJ cannot be computed"; return 0; }
+}
+suite_env_finding() { # MODE MESSAGE [AFTER]: with refuse a refusal (AFTER ends the message); with report the finding is kept, the first one
+  if [ "$1" = refuse ]; then die "$2${3:+. $3}"; fi
+  [ -n "${SUITE_ENV_FINDING:-}" ] || SUITE_ENV_FINDING=$2
+}
+# suite_env_status BRANCH AGAIN -> the lines `feature status` and `release status` add when verify.environment is, or was, in play: the unapproved finding, why a
+# recorded run no longer counts (its declaration or launcher is not the current one), and a waiver the run was made under. Nothing when it is off and the
+# record has no environment.
+suite_env_status() {  # AGAIN: the command line that verifies again
+  local f rid
+  [ -z "${SUITE_ENV_FINDING:-}" ] || echo "  $SUITE_ENV_FINDING"
+  f=$(rec "$1"); [ -f "$f" ] || return 0
+  rid=$(jq -r '.environment.id // ""' "$f" 2>/dev/null) || return 0
+  if [ "$rid" != "${SUITE_ENV_ID:-}" ]; then
+    if [ -n "${SUITE_ENV_FINDING:-}" ] && [ -z "${SUITE_ENV_ID:-}" ]; then   # an invalid declaration or an unreadable file is not "off": the answers give no declaration at all
+      echo "  why: the last run used verify.environment ${rid:-off}, and the answers give no usable declaration now (the finding above): that run does not count until it is fixed"
+    else
+      echo "  why: the last run used verify.environment ${rid:-off}, the answers now give ${SUITE_ENV_ID:-off} (the declaration or the launcher changed): that run does not count; run $2"
+    fi
+  fi
+  suite_env_waived_line "$1"
+}
+# suite_env_waived_line BRANCH -> "  verify.environment: cpu waived-failed (CODE)" when the last run of the branch was made under a waiver and a waived part failed
+suite_env_waived_line() {
+  local f l
+  f=$(rec "$1"); [ -f "$f" ] || return 0
+  l=$(jq -r '(.environment // {}) as $e | [($e.parts // {}) | to_entries[] | select(.value == "waived-failed") | .key] as $p | if ($p | length) == 0 then empty else "\($p | join(", ")) waived-failed (\(($e.codes // []) | join(", ")))" end' "$f" 2>/dev/null) || return 0
+  [ -z "$l" ] || echo "  verify.environment: $l: that run was made under a waiver"
+}
+# suite_env_note BRANCH -> " (verify.environment: cpu waived-failed)" for the end of a verdict line, when the last run of the branch had a waived part fail
+suite_env_note() {
+  local f l
+  f=$(rec "$1"); [ -f "$f" ] || return 0
+  l=$(jq -r '[((.environment // {}).parts // {}) | to_entries[] | select(.value == "waived-failed") | "\(.key) waived-failed"] | join(", ")' "$f" 2>/dev/null) || return 0
+  [ -z "$l" ] || printf ' (verify.environment: %s)' "$l"
+}
+# suite_env_prepare AGAIN BRANCH HEAD -> before the worktree of a verify: the attempt the launcher makes for the run (suite_env.py probe) and the waiver
+# (--waive-environment PARTS --plan T --approved W, WAIVE_ENV; per run: only the count of the tokens used is kept, in the state). AGAIN is the command line to repeat. Sets ENV_WAIVE (the waived parts,
+# comma-separated) and ENV_CPU_CODE (the code that sends the run to the no-scope route when cpu is waived and the attempt failed). Only a refusal of a part
+# yields a token: the attempt's refusal prints one for exactly the refused parts, and so does a refusal during the run (suite_env_settle); a waiver names
+# parts that are on, covers at least every part the attempt refused, and stands on the token of the refusal, which is good for one run at that head (the
+# token holds the number of waivers made at the head: a run that used it moves that number, so the next refusal gets another token and this one is spent).
+# A member run never waives (the words are the owner's). Nothing is run or recorded when it refuses.
+suite_env_prepare() {
+  local again=$1 br=$2 head=$3 out rc=0 p codes first g missing='' used=''
+  local want_csv need_csv want_tok
+  local -a want=() need=()
+  ENV_WAIVE='' ENV_CPU_CODE='' SE_AGAIN=$again SE_BR=$br SE_HEAD=$head SE_KEY='' SE_GEN=0 SE_CLAIM_ARGS=()
+  if [ -n "${WAIVE_SET:-}" ]; then
+    [ -z "${APPROVED:-}" ] || suite_env_not_member
+    [ -n "$SUITE_ENV" ] || die "verify-env-waive-unknown: --waive-environment names parts of verify.environment, which is off for $PROJ: there is nothing to waive"
+    [ -n "$WAIVE_ENV" ] || die "verify-env-waive-unknown: --waive-environment names no part (the parts are signals, fds, tty, cpu)"
+    IFS=, read -ra want <<<"$WAIVE_ENV"
+    for p in "${want[@]}"; do
+      case $p in
+        signals|fds|tty) ;;
+        cpu) if jq -e 'has("cpu_quota") and .cpu_quota == null' >/dev/null 2>&1 <<<"$SUITE_ENV"; then
+               die "verify-env-waive-unknown: cpu is off in verify.environment of $PROJ (cpu_quota is null): there is nothing to waive"
+             fi;;
+        env) die "verify-env-waive-unknown: the part env cannot fail and cannot be waived (the parts that can be waived are signals, fds, tty, cpu)";;
+        *) die "verify-env-waive-unknown: '$p' is not a part of verify.environment (the parts that can be waived are signals, fds, tty, cpu)";;
+      esac
+    done
+    mapfile -t want < <(printf '%s\n' "${want[@]}" | sort -u)
+  fi
+  [ -n "$SUITE_ENV" ] || return 0
+  case $again in   # the pid file the verb's busy_begin writes: a second verify of the same name is refused before the attempt, the waiver or the worktree
+    "qargi feature verify "*) busy_same_refuse verify "$NAME_ARG";;
+    "qargi release verify "*) busy_same_refuse release-verify "$VER";;
+  esac
+  SE_KEY=$(printf '%s\n' "$PROJ" "$br" "$head" "$SUITE_ENV_ID" | plan_token)
+  suite_env_gen
+  out=$(python3 -I "$SE" probe --decl "$SUITE_ENV" </dev/null) || rc=$?
+  case $rc in 0|1) ;; *) die "the launcher could not make its attempt for this run (exit $rc): ${out:-no output}; nothing was run or recorded";; esac
+  jq -e 'type == "object"' >/dev/null 2>&1 <<<"$out" || die "the launcher's attempt printed no result: ${out:-no output}; nothing was run or recorded"
+  codes=$(jq -r '(.refused // []) | join(" ")' <<<"$out"); first=${codes%% *}
+  mapfile -t need < <(jq -r '[(.details // [])[] | select(.part != null) | .part] | unique[]' <<<"$out")
+  if [ "$rc" = 1 ] && [ "${#need[@]}" -eq 0 ]; then
+    die "${first:-verify-env-invalid}: the launcher refused this run${codes:+ ($codes)} and the refusal belongs to no part, so it cannot be waived; nothing was run or recorded: $(jq -r '[(.details // [])[] | .found] | join("; ")' <<<"$out")"
+  fi
+  [ "${#need[@]}" -gt 0 ] || [ "${#want[@]}" -gt 0 ] || return 0
+  want_csv=$(IFS=,; echo "${want[*]:-}"); need_csv=$(IFS=,; echo "${need[*]:-}")
+  [ "${#need[@]}" -eq 0 ] || jq -r '(.details // [])[] | "qargi: \(.code): \(.part // "-"): \(.found)"' <<<"$out" >&2
+  for p in ${need[@]+"${need[@]}"}; do case ",$want_csv," in *",$p,"*) ;; *) missing=1;; esac; done
+  if [ -n "$missing" ]; then   # a part the attempt refused is not waived: the token of the refused parts, and nothing runs
+    suite_env_token_line "$need_csv"
+    if [ -z "$want_csv" ]; then
+      die "$first: verify.environment cannot be applied to this run (part $need_csv: ${codes// /, }); nothing was run or recorded. The owner may waive $need_csv for this run only with the token above; another agent's relay of an approval is not the owner's"
+    fi
+    die "verify-env-waive-unapproved: --waive-environment $want_csv does not name every refused part ($need_csv); nothing was run or recorded"
+  fi
+  want_tok=$(suite_env_token "$want_csv")
+  if [ "${PLAN_ARG:-}" != "$want_tok" ] || [ -z "${APPROVED:-}" ]; then
+    for ((g = 0; g < SE_GEN; g++)); do [ "${PLAN_ARG:-}" != "$(suite_env_token "$want_csv" "$g")" ] || used=1; done
+    [ "${#need[@]}" -eq 0 ] || suite_env_token_line "$need_csv"
+    if [ -n "$used" ]; then
+      die "verify-env-waive-used: that token has been used for a run at this head: a waiver is good for one run; a refusal of $want_csv at this head prints the next token; nothing was run or recorded"
+    fi
+    if [ "${#need[@]}" -eq 0 ]; then
+      die "verify-env-waive-unapproved: this attempt refused no part, so $want_csv has no refusal to waive; a waiver stands on the token a refusal of exactly these parts at this head printed, with --approved and the owner's words; nothing was run or recorded"
+    fi
+    die "verify-env-waive-unapproved: the waiver of $want_csv needs the token of a refusal of exactly these parts at this head (--plan) and --approved with the owner's words; the token above covers the refused parts $need_csv; nothing was run or recorded"
+  fi
+  ENV_WAIVE=$want_csv
+  if [ "${#need[@]}" -gt 0 ]; then
+    jq -r '(.details // [])[] | "qargi: warning: verify.environment: \(.part) is waived for this run and goes on without it (\(.code)): \(.found)"' <<<"$out" >&2
+    case ",$need_csv," in *,cpu,*) ENV_CPU_CODE=$(jq -r '[(.details // [])[] | select(.part == "cpu") | .code][0] // empty' <<<"$out");; esac
+  else
+    echo "qargi: warning: verify.environment: $want_csv is waived for this run, and the attempt before it applied every part" >&2
+  fi
+  SE_CLAIM_ARGS=("$want_csv" "${codes:+ codes: ${codes// /,}}")   # the token is spent by suite_env_claim_now, which each verb calls after its own checks
+}
+# suite_env_claim_now -> the verb's call, after its own pre-run checks (the worktree, the CI scan and --strict) and before it makes or touches anything else
+# (the busy mark, the suite log, the reports): a run under a waiver claims its token here (suite_env_claim); a run without one has nothing to claim.
+suite_env_claim_now() { [ -z "${ENV_WAIVE:-}" ] || suite_env_claim "${SE_CLAIM_ARGS[@]}"; }
+# suite_env_gen -> SE_GEN, how many waivers were made so far at this branch, head and declaration (SE_KEY): the larger of the claim files
+# $DA_STATE/verify-env-waivers/KEY.N (one for each run that started under a waiver, counted from 0 while they are there) and the number in KEY.count, which
+# suite_env_claim keeps under a lock, so that a claim file that is deleted does not make its token good again. The number is part of every waiver token, which is
+# how a token is good for one run. Nothing is made here; a count that is not a number is a refusal (verify-env-waiver-dir).
+suite_env_gen() {
+  local d=$DA_STATE/verify-env-waivers c=0 n=0
+  while [ -e "$d/$SE_KEY.$n" ]; do n=$((n + 1)); done
+  if [ -e "$d/$SE_KEY.count" ]; then
+    c=$(cat "$d/$SE_KEY.count" 2>/dev/null) || c=x
+    case $c in ''|*[!0-9]*) die "verify-env-waiver-dir: $d/$SE_KEY.count does not hold a number: the number of waivers made at this head cannot be read, so a spent token could not be told from a new one; nothing was run or recorded";; esac
+  fi
+  [ "$c" -le "$n" ] || n=$c
+  SE_GEN=$n
+}
+# suite_env_token PARTS [GEN] -> the token of a waiver of exactly PARTS (sorted, comma-separated) at this branch, head and declaration, for waiver number GEN (default: the next)
+suite_env_token() {
+  { printf '%s\n' "$PROJ" "$SE_BR" "$SE_HEAD" "$SUITE_ENV_ID"; tr , '\n' <<<"$1"; printf 'waiver %s\n' "${2:-$SE_GEN}"; } | plan_token
+}
+# suite_env_token_line PARTS -> the line that names the token of a refusal of PARTS and the command that waives them once
+suite_env_token_line() {
+  echo "plan token: $(suite_env_token "$1")   (to run once without $1: $SE_AGAIN --waive-environment $1 --plan $(suite_env_token "$1") --approved \"<the owner's words>\")"
+}
+# suite_env_claim PARTS CODES -> called by suite_env_claim_now, when every check of suite_env_prepare and of the verb itself has passed and before the verb makes or
+# touches anything else (the busy mark, the suite log, the reports): the waiver is used. The claim file number SE_GEN is made once, so a second verify at the same head that holds the same token loses
+# here, with nothing run, nothing written and nothing audited; the winner raises KEY.count (under a lock: a deleted claim file does not reopen the token), and the
+# audit line is written at the claim. A verb that stops before this point leaves the token as it was.
+suite_env_claim() {
+  local d=$DA_STATE/verify-env-waivers f rc=0
+  f=$d/$SE_KEY.$SE_GEN
+  mkdir -p "$d" 2>/dev/null || die "verify-env-waiver-dir: the directory $d for the waivers of verify.environment cannot be made; nothing was run or recorded"
+  if ! ( set -C; : > "$f" ) 2>/dev/null; then
+    [ -e "$f" ] || die "verify-env-waiver-dir: the claim $f of the waiver cannot be made; nothing was run or recorded"
+    die "verify-env-waive-used: another verify at this head used the waiver at the same moment; nothing was run or recorded"
+  fi
+  ( umask 077; flock 9 || exit 4
+    c=$(cat "$d/$SE_KEY.count" 2>/dev/null); case $c in ''|*[!0-9]*) c=0;; esac
+    [ "$c" -ge $((SE_GEN + 1)) ] || { printf '%s\n' $((SE_GEN + 1)) > "$d/$SE_KEY.count.tmp" && mv -f "$d/$SE_KEY.count.tmp" "$d/$SE_KEY.count"; }
+  ) 9>"$d/.lock" || rc=$?
+  [ "$rc" = 0 ] || die "verify-env-waiver-dir: the count of the waivers made at this head could not be kept in $d (status $rc: the lock or the write failed); nothing was run or recorded"
+  SE_GEN=$((SE_GEN + 1))
+  audit_log "verify:environment-waived" "$PROJ $SE_BR ${SE_HEAD:0:12} parts: $1$2"
+}
+# suite_env_not_member -> exits 2 in a member run: the owner's words are not a member's to give (the check is the one of project unset: a failure to tell is a refusal)
+suite_env_not_member() {
+  local mrc=0
+  python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import marshal_refs; sys.exit(0 if marshal_refs.in_member_run() else 3)' "$(dirname "$SE")" || mrc=$?
+  case $mrc in
+    3) ;;
+    0) echo "qargi: --waive-environment with --approved is not available in a member run: the waiver of a part of verify.environment is the owner's, with the owner's words; report the refusal and its token instead" >&2; exit 2;;
+    *) echo "qargi: --waive-environment with --approved could not tell whether this is a member run (the check failed with status $mrc); refused: the waiver is the owner's" >&2; exit 2;;
+  esac
+}
+# run_suite_cmd COMMAND LABEL -> runs one whole-suite command in the worktree WT: through run_clean as before when verify.environment is off; when on, through the
+# launcher with the command in its argv only. The report of the launcher goes to ENV_DIR/LABEL.json and decides what the status means: a complete report
+# makes the status the command's; a refusal or a missing report is noted in ENV_DIR (refused, noreport) for suite_env_settle and the status is never 0.
+run_suite_cmd() {
+  local cmd=$1 label=${2:-suite} rep rc=0 st route=scope
+  if [ -z "${SUITE_ENV:-}" ]; then run_clean "$WT" bash -c "$cmd"; return; fi
+  rep=$ENV_DIR/$label.json
+  local -a opt=()
+  [ -z "${ENV_CPU_CODE:-}" ] || { opt=(--cpu-route no-scope --cpu-code "$ENV_CPU_CODE"); route=noscope; }
+  jq -e 'has("cpu_quota") and .cpu_quota == null' >/dev/null 2>&1 <<<"$SUITE_ENV" && route=noscope
+  run_clean "$WT" python3 -I "$SE" run --decl "$SUITE_ENV" --waive "${ENV_WAIVE:-}" --report "$rep" ${opt[@]+"${opt[@]}"} -- bash -c "$cmd" || rc=$?
+  st=missing
+  [ -f "$rep" ] && st=$(jq -r 'if .complete == true then (if ((.refused // []) | length) > 0 then "refused " + (.refused | join(" ")) else "ok" end) else "incomplete" end' "$rep" 2>/dev/null)
+  case $st in
+    ok) return "$rc";;
+    refused*) printf '%s\n' "${st#refused }" >> "$ENV_DIR/refused"; return "$rc";;
+    *) printf '%s %s\n' "$route" "$rc" >> "$ENV_DIR/noreport"; [ "$rc" != 0 ] || rc=125; return "$rc";;
+  esac
+}
+# suite_env_settle -> after run_suite_logged, before anything is recorded: a run the launcher refused, or that left no report, ends the verb here. The verdict
+# is read from the reports, never from an exit status alone: a lost scope is never a test failure. A refusal of a part during the run (the attempt had passed)
+# prints the token for the refused parts and the parts already waived, as the attempt's refusal does; the waiver of the run just made is spent (suite_env_claim).
+suite_env_settle() {
+  local codes route parts
+  [ -n "${SUITE_ENV:-}" ] && [ -n "${ENV_DIR:-}" ] || return 0
+  if [ -s "$ENV_DIR/refused" ]; then
+    codes=$(tr ' ' '\n' < "$ENV_DIR/refused" | awk 'NF && !s[$0]++' | tr '\n' ' '); codes=${codes% }
+    parts=$({ jq -r '(.details // [])[] | select(.part != null) | .part' "$ENV_DIR"/*.json 2>/dev/null; tr , '\n' <<<"${ENV_WAIVE:-}"; } | awk 'NF && !s[$0]++' | LC_ALL=C sort | paste -sd, -)
+    if [ -n "$parts" ]; then
+      suite_env_token_line "$parts"
+      die "${codes%% *}: the launcher refused this run (${codes// /, }); the suite did not run, nothing is recorded. Each refusal is in the log above; the owner may waive $parts for one run with the token above"
+    fi
+    die "${codes%% *}: the launcher refused this run (${codes// /, }) and the refusal belongs to no part, so it cannot be waived; the suite did not run, nothing is recorded"
+  fi
+  if [ -s "$ENV_DIR/noreport" ]; then
+    route=$(awk 'NR == 1 {print $1}' "$ENV_DIR/noreport")
+    if [ "$route" = scope ]; then
+      die "verify-env-cpu-no-user-manager: the scope could not be made and the launcher left no report (the suite did not run to a verdict); nothing is recorded. The last lines of the log:"$'\n'"$(tail -5 "${SUITE_LOG:-/dev/null}" 2>/dev/null | sed 's/^/  /')"
+    fi
+    die "the launcher left no report on the no-scope route: a fault of the launcher, not a result of the suite; nothing is recorded. The last lines of the log:"$'\n'"$(tail -5 "${SUITE_LOG:-/dev/null}" 2>/dev/null | sed 's/^/  /')"
+  fi
+}
+# suite_env_record -> the `environment` member of the suite record as JSON, `null` when the setting is off: the id, the launcher, the declaration, each part
+# as applied | waived-failed | off (the worst over the commands of the run), the codes of waived parts, what was read back, the cleanup and what was left
+suite_env_record() {
+  local f
+  [ -n "${SUITE_ENV:-}" ] || { echo null; return 0; }
+  local -a files=()
+  while IFS= read -r f; do files+=("$f"); done < <(find "${ENV_DIR:-/nonexistent}" -maxdepth 1 -name '*.json' 2>/dev/null | sort)
+  [ "${#files[@]}" -gt 0 ] || { echo "the launcher left no report for this run: a run that no launcher report stands behind is not recorded" >&2; return 1; }
+  # one launcher and one declaration over the whole run: a report of another id or launcher (the launcher replaced while the run was going) is no record
+  jq -sc --arg id "$SUITE_ENV_ID" '
+    def rank: ({"refused":3, "waived-failed":2, "applied":1, "off":0})[.] // 0;
+    .[0] as $f
+    | if any(.[]; .id != $id or .launcher != $f.launcher) then error("the reports of the launcher differ in their id or launcher version") else . end
+    | {id:$id, launcher:$f.launcher, declared:$f.declared,
+       parts: (reduce (.[] | (.parts // {}) | to_entries[]) as $e ({}; .[$e.key] = (if .[$e.key] == null or ($e.value | rank) > (.[$e.key] | rank) then $e.value else .[$e.key] end))),
+       codes: ([.[] | (.codes // [])[]] | unique),
+       readback: ($f.readback // {}), cleanup: $f.cleanup,
+       leftovers: [.[] | (.leftovers // [])[]]}
+    + (if any(.[]; (.survivors // []) | length > 0) then {survivors: [.[] | (.survivors // [])[]]} else {} end)' "${files[@]}"
+}
 run_suite() { # the project's test command in the worktree WT, or the declared gates (gates_load)
-  if [ -n "${GATES:-}" ]; then run_gates; else run_clean "$WT" bash -c "$TESTCMD"; fi
+  if [ -n "${GATES:-}" ]; then run_gates; else run_suite_cmd "$TESTCMD" suite; fi
 }
 # run_suite_logged NAME -> run_suite with its output (both streams, on stdout) shown as it comes and kept in
 # $DA_STATE/suite-logs/PROJECT.NAME.log (SUITE_LOG; mode 600; the last run of that name). The status is the suite's.
+# Under a waiver the token was claimed before the log is made (suite_env_claim_now: a losing verify must not clobber the winner's log), so a refusal here has spent it and
+# written its audit line, and its message says so.
 run_suite_logged() {
   local rc
   SUITE_LOG=$DA_STATE/suite-logs/$PROJ.${1//\//_}.log
   GATES_FILE=$DA_STATE/suite-logs/$PROJ.${1//\//_}.gates.jsonl   # of this run, as the log is: two verifies at once keep their gate lists apart. Set here, not in run_gates: that runs in the pipeline's subshell
+  ENV_DIR=''
   if ( umask 077; mkdir -p "$DA_STATE/suite-logs" && : > "$SUITE_LOG" ) 2>/dev/null; then
+    if [ -n "${SUITE_ENV:-}" ]; then   # the reports of the launcher, one per command of this run, beside the log
+      ENV_DIR=$DA_STATE/suite-logs/$PROJ.${1//\//_}.env
+      rm -rf "$ENV_DIR"
+      ( umask 077; mkdir -p "$ENV_DIR" ) 2>/dev/null || die "verify-env-no-log: the directory $ENV_DIR for the reports of the launcher cannot be made; nothing was run${ENV_WAIVE:+. The waiver token was spent}"
+    fi
     run_suite 2>&1 | tee "$SUITE_LOG"
     rc=${PIPESTATUS[0]}
-  else SUITE_LOG=''; run_suite; rc=$?; fi
+  else
+    [ -z "${SUITE_ENV:-}" ] || die "verify-env-no-log: the suite log $SUITE_LOG cannot be created; with verify.environment the suite's output goes to a log and never to a terminal (the tty part); nothing was run${ENV_WAIVE:+. The waiver token was spent}"
+    SUITE_LOG=''; run_suite; rc=$?
+  fi
   return "$rc"
 }
 # suite_failure_report -> after a failed run_suite_logged, the last lines of the verb's output: the failing steps (`FAILED: step` lines of
@@ -531,11 +814,13 @@ suite_mode() {
 # record_suite BRANCH SHA RESULT SECONDS: the record of the last whole-suite run of BRANCH (the head, the verdict, when, the command, how
 # long it took and the mode the command names), which `release status` shows
 record_suite() {
-  local gj=null
+  local gj=null ej
   # with declared gates the record also lists each gate's name, tier and result, in the order they ran
   if [ -n "${GATES:-}" ]; then gj=$(jq -sc '.' "${GATES_FILE:-/dev/null}" 2>/dev/null) || gj='[]'; [ -n "$gj" ] || gj='[]'; fi
-  jq -nc --arg s "$2" --arg r "$3" --arg t "$(now)" --arg c "$TESTCMD" --argjson d "$4" --arg m "$(suite_mode "$TESTCMD")" --argjson g "$gj" \
-    '{sha:$s, result:$r, at:$t, command:$c, seconds:$d, mode:$m} + (if $g == null then {} else {gates:$g} end)' > "$(rec "$1")"
+  # with verify.environment the record also holds what the launcher applied (suite_env_record); off: no such member, the record is as it always was
+  ej=$(suite_env_record) || die "the environment of the run cannot be recorded (see above); nothing is recorded"; [ -n "$ej" ] || ej=null
+  jq -nc --arg s "$2" --arg r "$3" --arg t "$(now)" --arg c "$TESTCMD" --argjson d "$4" --arg m "$(suite_mode "$TESTCMD")" --argjson g "$gj" --argjson e "$ej" \
+    '{sha:$s, result:$r, at:$t, command:$c, seconds:$d, mode:$m} + (if $g == null then {} else {gates:$g} end) + (if $e == null then {} else {environment:$e} end)' > "$(rec "$1")"
 }
 # gates_line BRANCH -> "  gates: NAME pass, NAME fail, NAME not run" from the last record of BRANCH; nothing when the record lists no gate
 gates_line() {

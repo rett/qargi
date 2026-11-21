@@ -450,8 +450,9 @@ class ActorFeatureNarrowing(unittest.TestCase):
         self.assertEqual(gate(["feature", "status", "--project", "alpha", "beta"])[0], 2)
 
     def test_an_undeclared_option_fails_closed(self):
-        # feature.sh reads --purpose and --plan with a value, the verbs' tables declare neither for verify and status: without this the gate read alpha, the verb ran beta
-        for line in (["feature", "verify", "--purpose", "alpha", "beta"], ["feature", "verify", "--plan", "alpha", "beta"], ["feature", "status", "--purpose", "alpha", "beta"],
+        # feature.sh reads --purpose with a value and --keep and --resolved without, and the table of verify declares none of them (--plan it declares since
+        # verify.environment: a waiver needs it): without this the gate read alpha, the verb ran beta
+        for line in (["feature", "verify", "--purpose", "alpha", "beta"], ["feature", "verify", "--keep", "alpha", "beta"], ["feature", "status", "--purpose", "alpha", "beta"],
                      ["feature", "verify", "--purpose=x", "alpha"], ["feature", "verify", "alpha", "--bogus"], ["feature", "verify", "-x", "alpha"], ["feature", "verify", "--", "alpha"]):
             rc, err = gate(line)
             self.assertEqual(rc, 2, line)

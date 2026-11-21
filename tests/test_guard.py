@@ -169,9 +169,11 @@ class HookCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.J = _Judge(LIBDIR, "guard_" + cls.__name__.lower(), None)
+        cls.cwd = os.path.realpath(tempfile.mkdtemp())          # where guard() says the call runs: the guard takes the run class from the working directory, so a test run from inside a read-only run's clone must not be judged as that run
 
     @classmethod
     def tearDownClass(cls):
+        shutil.rmtree(cls.cwd, ignore_errors=True)
         del cls.J
 
     def hook(self, args, payload, env=None):
@@ -181,7 +183,7 @@ class HookCase(unittest.TestCase):
         return self.J.budget(readings)
 
     def guard(self, command):
-        return self.hook([], {"tool_input": {"command": command}})
+        return self.hook([], {"tool_input": {"command": command}, "cwd": self.cwd})
 
 
 class Guard(HookCase):
@@ -194,14 +196,24 @@ class Guard(HookCase):
 
     def test_refuses_what_publishes_or_reaches_out(self):
         for c in ("git push", "git push origin main", "/tmp/x/git -C /r push -f", "cd a && git push", "make gate-go; git push", "timeout 5 git push",
-                  "echo hi | gh pr list", "gh api repos/x", "ssh host ls", "sudo scp a b:", "sftp host", "git remote add o u", "git remote set-url origin u"):
+                  "echo hi | gh pr list", "gh api repos/x", "ssh host ls", "sudo scp a b:", "sftp host", "git remote add o u", "git remote set-url origin u",
+                  # the shell takes a redirection out of the words: git, with one between it and its subcommand, runs the same subcommand
+                  "git 2>/dev/null push", "git >/dev/null push", "git 2>/dev/null push origin master", "git -C . 2>/dev/null push", "timeout 5 git 2>/dev/null push",
+                  "git {fd}>f push", "git 2>/dev/null remote add o u", "git > /dev/null push", "git -C . {fd}> f push", "git 2>&1 remote set-url origin u",
+                  # a quoted value that reads as a redirection is the value of the option (git -C '>x' push is a push in the directory named >x)
+                  "git --namespace '>x' push", "git -C '>x' push", "git --git-dir '>x' push", "git -C '>x' remote add o u", "git --namespace '>' push origin master",
+                  "git -C \">x\" push", "git -C \\>x push", "git -C '2>x' push", "git --work-tree '>x' push", "git -C '>x' -c alias.p=push p",
+                  "git -C \">x\" config alias.p push", "timeout 5 git -C '>x' push", "sudo git -C '>x' push", "bash -c \"git -C '>x' push\"",
+                  "git --git-dir '>r'$LIB/.git push"):
             r = self.guard(c)
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("Agents never push", r.stderr)
 
     def test_lets_ordinary_work_through(self):
         for c in ("ls -la", "git status", "git commit -m 'a push of work'", "/tmp/x/git log --oneline", "git remote -v", "git diff c2e9439..HEAD",
-                  "go test ./... && go vet ./...", "grep -n 'git push' file", "make gate-go", "gitleaks git --log-opts A..B"):
+                  "go test ./... && go vet ./...", "grep -n 'git push' file", "make gate-go", "gitleaks git --log-opts A..B",
+                  "git {fd}>f status", "git status 2>&1", "git 2>/dev/null status", "git -C . 2>/dev/null log --oneline", "git 2>/dev/null remote -v",
+                  "git 2>$TMPDIR/e log", "git -C '>x' log", "git -C '>x' status 2>&1"):
             self.assertEqual(self.guard(c).returncode, 0, c)
 
     def test_input_that_is_empty_or_no_json_is_refused_and_names_the_cause(self):
@@ -495,6 +507,8 @@ class Skills(HookCase):
             os.makedirs(os.path.join(self.t, d))
         self.lib, self.lskill = os.path.join(self.conf, "packs"), os.path.join(self.home, ".claude/skills")
         os.symlink(self.lib, os.path.join(self.clone, "link-to-library"))
+        os.symlink(self.lib, os.path.join(self.clone, ">lib"))              # links whose names read as a redirection: a quoted word of git -C
+        os.symlink("/", os.path.join(self.clone, ">r"))
         self.run_dir = os.path.join(self.t, "run")                       # what `qargi local prepare` leaves: ability and refs.before
         for name, text in (("ability", "build\n"), ("refs.before", "")):
             with open(os.path.join(self.run_dir, name), "w") as f:
@@ -683,10 +697,11 @@ class Skills(HookCase):
 
     def test_refuses_project_set_of_the_ci_and_deviation_answers_and_the_newer_lead_answers_to_a_member(self):
         """ci.not_gates takes a CI job out of the comparison with the gates and methodology_accepted takes a deviation out of the open ones: both are the lead's,
-        so project set refuses them (whole or by a dotted path) as it refuses the other lead-only answers; so are the newer release, review and backlog answers.
-        Look-alikes (cis, ci_jobs, methodology, methodology_accepted_x) stay open."""
+        so project set refuses them (whole or by a dotted path) as it refuses the other lead-only answers; so are the newer release, review and backlog answers, and verify.environment
+        (the environment a whole-suite run starts under: a loosening of it takes a plan token and the owner's words, which a member run must not give).
+        Look-alikes (cis, ci_jobs, methodology, methodology_accepted_x, verifier, verify_x) stay open."""
         for path in ("ci", "ci.not_gates", "ci.not_gates.0", "methodology_accepted", "methodology_accepted.0", "release.finish_check", "release.hotfix_preflight",
-                     "review.reject_trailers", "backlog.archive", "backlog.section"):
+                     "review.reject_trailers", "backlog.archive", "backlog.section", "verify", "verify.environment", "verify.environment.cpu_quota"):
             for form in ("qargi project set p %s v", "sudo qargi project set p %s v", "cd src && qargi project set p %s v", "bash -c 'qargi project set p %s v'",
                          "echo $(qargi project set p %s v)", "./lib/project.sh set p %s v"):
                 c = form % path
@@ -694,7 +709,7 @@ class Skills(HookCase):
                 self.assertEqual(r.returncode, 2, c)
                 self.assertIn("qargi project set of %s changes" % path, r.stderr, c)
         for c in ("qargi project set p cis v", "qargi project set p ci_jobs v", "qargi project set p methodology v", "qargi project set p methodology_accepted_x v",
-                  "echo qargi project set p ci.not_gates x", "qargi project show p"):
+                  "qargi project set p verifier x", "qargi project set p verify_x v", "echo qargi project set p verify.environment x", "echo qargi project set p ci.not_gates x", "qargi project show p"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
@@ -867,13 +882,120 @@ class Skills(HookCase):
                      "sudo qargi release publish 0.2.0", "bash -c 'qargi release publish 0.2.0'", "env FOO=1 qargi release publish 0.2.0", "cd src && qargi release publish 0.2.0",
                      "echo $(qargi release publish 0.2.0)", "qargi release publish 0.2.0 --project p", "qargi 'release' 'publish' 0.2.0", "eval 'qargi release publish 0.2.0'",
                      "bash lib/release.sh publish 0.2.0", "./lib/release.sh publish 0.2.0 --plan 0123456789ab --approved go", "v=publish; qargi release $v 0.2.0",
-                     "qargi release ${V:-publish} 0.2.0", "qargi release --project p publish 0.2.0"):
+                     "qargi release ${V:-publish} 0.2.0", "qargi release --project p publish 0.2.0",
+                     # a quoted '>' reads as a redirection and must not take the verb after it with it
+                     "qargi release '>' publish 0.2.0", "qargi release '2>' publish 0.2.0 --plan 0123456789ab --approved go", "qargi release '>>' publish 0.2.0",
+                     # real redirections before the verb: the shell takes them out (two or more push the verb out of the first three words), so publish is the verb
+                     "qargi release > /dev/null 2>&1 publish 0.2.0", "qargi release >/dev/null 2>/dev/null 2>&1 publish 0.2.0",
+                     "qargi release 2>/dev/null 2>/dev/null 2>/dev/null publish 0.2.0", "qargi release > $TMPDIR/x 2>&1 publish 0.2.0",
+                     "bash lib/release.sh > /dev/null 2>&1 publish 0.2.0", "sudo qargi release > /dev/null 2>&1 publish 0.2.0",
+                     "qargi release 2>/dev/null publish 0.2.0"):
             r = self.bash(form)
             self.assertEqual(r.returncode, 2, form)
             self.assertIn("qargi guard:", r.stderr)
             self.assertIn("qargi release publish creates a GitHub release and is not available to an agent", r.stderr)
         for c in ("qargi release status 0.2.0", "qargi release verify 0.2.0 --project p", "qargi release push 0.2.0", "bash lib/release.sh status 0.2.0",
+                  "qargi release status 0.2.0 > $TMPDIR/s.log", "qargi release status > \"$TMPDIR/s.log\" 0.2.0",
+                  "qargi release verify 0.2.0 > /dev/null 2>&1", "qargi release status > /dev/null 2>&1 0.2.0", "qargi release status 0.2.0 > publish",
                   "echo qargi release publish", "grep -n 'release publish' lib/commands.py", "qargi help release publish"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_a_redirection_after_the_program_or_the_area_hides_no_verb(self):
+        """The shell takes a redirection out of the words before qargi sees them: qargi, with one written after the program or after the area, runs the same verb. The
+        guard reads the words as they are and without the redirections, and refuses when either is a refused verb."""
+        for c in ("qargi 2>/dev/null skill new x", "qargi skill 2>/dev/null new x", "qargi > /dev/null release publish 0.2.0", "qargi 2>/dev/null project set p test_command x",
+                  "qargi 2>/dev/null upgrade", "qargi 2>/dev/null marshal claim f", "qargi 2>/dev/null packs link p", "qargi > /dev/null 2>&1 release verify 0.2.0 --waive-environment cpu --approved go",
+                  "qargi >/dev/null skill new x", "qargi 2>&1 tool new x", "qargi >> $TMPDIR/l 2>&1 upgrade", "sudo qargi 2>/dev/null skill new x", "env FOO=1 qargi 2>/dev/null upgrade",
+                  "bash lib/upgrade.sh 2>/dev/null", "bash lib/marshal.sh 2>/dev/null claim f",
+                  "bash -c 'qargi 2>/dev/null skill new x'", "echo $(qargi 2>/dev/null upgrade)", "qargi 2>/dev/null provider accept claude",
+                  "qargi 2>/dev/null project set p models.x y",
+                  # a named descriptor ({fd}>f, {x}<&0) is taken out by the shell as well, after the program, after the area and before the program
+                  "qargi {fd}>f skill new x", "qargi skill {fd}>f new x", "qargi {x}<&0 upgrade", "qargi {fd}>f release publish 0.2.0", "sudo {fd}>f qargi skill new x",
+                  "{fd}>f qargi skill new x", "{fd}>f qargi upgrade", "qargi {fd}> f skill new x", "qargi {_a1}>>f upgrade",
+                  # the name may be a subscripted array element (bash 5: {a[1]}>f)
+                  "{a[1]}>f qargi skill new x", "qargi {a[1]}>f skill new x", "qargi skill {a[1]}>f new x", "sudo {a[1]}>f qargi upgrade", "{a[$i]}>f qargi upgrade",
+                  "{a[0]}<&0 qargi upgrade", "qargi {a[0]}<&0 upgrade", "{A_1[k]}>>f qargi skill new x",
+                  # a subscript may hold brackets itself (bash accepts a[b[1]])
+                  "{a[b[1]]}>f qargi upgrade", "qargi {a[b[1]]}>f upgrade", "qargi skill {a[b[1]]}>f new x", "{a[b[c[1]]]}>f qargi upgrade",
+                  # the subscript may hold a blank, quoted or escaped: the words carry no quotes, so the guard reads {a[x y]}>f, and a blank inside the name is bash's own
+                  '{a["x y"]}>f qargi upgrade', "{a[x\\ y]}>f qargi upgrade", 'sudo {a["x y"]}>f qargi upgrade', "{a['p q']}>f qargi upgrade",
+                  'qargi {a["x y"]}>f upgrade', "qargi skill {a['x y']}>f new x", "qargi {a[x\\ y]}>f upgrade", 'git {a["x y"]}>f push', "git {a['x y']}>f push origin master"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("qargi guard:", r.stderr)
+        # normal use with a redirect of the output stays allowed
+        for c in ("qargi list > $TMPDIR/l.log", "qargi status > $TMPDIR/s.log 2>&1", "qargi feature status > $TMPDIR/f.log", "qargi 2>/dev/null list", "qargi > $TMPDIR/s.log status",
+                  "qargi 2>/dev/null feature status", "qargi skill list > $TMPDIR/k.log", "qargi 2>/dev/null skill list", "qargi project show 2>/dev/null",
+                  "qargi release status > /dev/null 2>&1 0.2.0", "bash lib/feature.sh status > $TMPDIR/f.log", "qargi 2>/dev/null project set p name x",
+                  "qargi skill list {fd}>$TMPDIR/k.log", "{fd}>$TMPDIR/k.log qargi list", "qargi {fd}> $TMPDIR/k.log list", "qargi {fd}>f skill list", "{ qargi list; }", "{ qargi skill list; }",
+                  "{a[1]}>f ls", "qargi {a[1]}> $TMPDIR/k.log list", "echo '{a[1]}>b'", "echo ${a[1]} > out.txt", "ls {a[1]}", "qargi {a[1]}>f list",
+                  "{a[1]}>f qargi feature status", "{a[b[1]]}>f ls",
+                  # a quoted string that holds a blank is text, with or without a redirection-like start
+                  "echo '{a[x y]}>b'", "echo '2>x y'", 'qargi feature status "{a[x y]}>f"', '{a["x y"]}>f ls', 'qargi {a["x y"]}>f list'):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_refuses_the_waiver_of_the_verify_environment_to_a_member(self):
+        """release verify --waive-environment PARTS --plan T --approved W is the owner's waiver of a part of verify.environment. The shell refuses it in a member run
+        by the member mark and the run directory, which a member that another session started has neither of, so the guard refuses the option with --approved (feature verify
+        is refused as a whole). The attempt without --approved only prints the token and stays open; a flag a variable, a substitution or xargs builds is read as either."""
+        for v in ("release verify 0.2.0 --waive-environment cpu --plan 0123456789ab --approved go", "feature verify f --waive-environment cpu --plan 0123456789ab --approved go",
+                  "release verify 0.2.0 --hotfix --project p --approved go --plan 0123456789ab --waive-environment fds,tty",
+                  "release --project p verify 0.2.0 --waive-environment cpu --approved go"):
+            for form in ("qargi %s", "/opt/q/bin/qargi %s", "sudo qargi %s", "cd src && qargi %s", "bash -c 'qargi %s'", "env FOO=1 qargi %s", "echo $(qargi %s)",
+                         "bash lib/%s", "lib/%s"):
+                area = v.split()[0]
+                c = (form % v) if not form.startswith(("bash lib", "lib")) else (form % (area + ".sh" + v[len(area):]))
+                r = self.bash(c)
+                self.assertEqual(r.returncode, 2, c)
+                self.assertIn("verify with --waive-environment and --approved waives a part of verify.environment", r.stderr, c)
+        for c in ("qargi release verify 0.2.0 --approved go $F", "qargi release verify 0.2.0 --waive-environment $P", "qargi release verify 0.2.0 --waive-environment cpu \"$(cat t)\"",
+                  "echo 0.2.0 | xargs qargi release verify --approved go", "qargi release verify 0.2.0 $W $A",
+                  # one word that splits into several (a variable, an array expansion, a substitution) can carry both options, after --project too
+                  "qargi release verify 0.2.0 --project p $X", "qargi release --project p verify 0.2.0 $X", "qargi release verify 0.2.0 --project p \"${A[@]}\"",
+                  "qargi release verify 0.2.0 --project p $(cat args)", "bash lib/release.sh verify 0.2.0 --project p $X"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("verify with --waive-environment and --approved waives a part of verify.environment", r.stderr, c)
+        # real redirections before the verb: two or more push it out of the first three raw words, and the shell removes them
+        for c in ("qargi release > /dev/null 2>&1 verify 0.2.0 --waive-environment cpu --approved go",
+                  "qargi release >/dev/null 2>/dev/null 2>&1 verify 0.2.0 --waive-environment cpu --approved go",
+                  "qargi release 2>/dev/null 2>/dev/null 2>/dev/null verify 0.2.0 --waive-environment cpu --approved go",
+                  "bash lib/release.sh > /dev/null 2>&1 verify 0.2.0 --waive-environment cpu --approved go",
+                  "sudo qargi release > /dev/null 2>&1 verify 0.2.0 --waive-environment cpu --approved go",
+                  "qargi release > $TMPDIR/x 2>&1 verify 0.2.0 --waive-environment cpu --approved go",
+                  "qargi feature 2>/dev/null verify f --waive-environment cpu --approved go"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("qargi guard:", r.stderr)
+        # a redirection and its target are taken out of the words by the shell: a target built from a variable is no argument of the verb
+        for c in ("qargi release verify 0.2.0 > \"$TMPDIR/v.log\"", "qargi release verify 0.2.0 >$TMPDIR/v.log 2>&1", "qargi release verify 0.2.0 2> $TMPDIR/v.err",
+                  "qargi release verify 0.2.0 >> \"${TMPDIR}/v.log\"", "qargi release verify 0.2.0 --project p &> \"$TMPDIR/all.log\"", "> $TMPDIR/v.log qargi release verify 0.2.0",
+                  "qargi release verify 0.2.0 --waive-environment cpu > $TMPDIR/v.log", "qargi release verify 0.2.0 --plan 0123456789ab --approved go 2>/dev/null"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+        # a redirection hides nothing else: the pair, or a word that can be either, still refuses
+        # a quoted '>' is an argument, but the guard's words carry no quotes: it must not take the next word (an option) with it
+        for c in ("qargi release verify '>' --approved go 0.2.0 --waive-environment cpu", "qargi release verify '>>' --approved go 0.2.0 --waive-environment cpu",
+                  "qargi release verify '2>' --approved go 0.2.0 --waive-environment cpu", "qargi release verify 0.2.0 --waive-environment cpu '2>' --approved go",
+                  "qargi release verify 0.2.0 --approved go '>' --waive-environment cpu", "qargi release verify 0.2.0 --waive-environment cpu >/dev/null --approved go",
+                  "qargi release verify 0.2.0 '>' --waive-environment cpu --approved go", "qargi release verify \">\" --approved go 0.2.0 --waive-environment cpu"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("verify with --waive-environment and --approved waives a part of verify.environment", r.stderr, c)
+        for c in ("qargi release verify 0.2.0 --waive-environment cpu --approved $W > $TMPDIR/v.log", "qargi release verify 0.2.0 > $TMPDIR/v.log --approved $X",
+                  "qargi release verify 0.2.0 --approved go >$TMPDIR/v.log $X", "qargi release verify 0.2.0 --waive-environment cpu --approved go > $TMPDIR/v.log",
+                  "qargi release verify 0.2.0 $X>$TMPDIR/v.log", "qargi release verify 0.2.0 --approved go --waive-environment $P 2> /dev/null"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("verify with --waive-environment and --approved waives a part of verify.environment", r.stderr, c)
+        for c in ("qargi release verify 0.2.0", "qargi release verify 0.2.0 --project p", "qargi release verify 0.2.0 --hotfix", "qargi release verify 0.2.0 --waive-environment cpu",
+                  "qargi release verify 0.2.0 --plan 0123456789ab --approved go", "qargi release status 0.2.0 --approved go",
+                  "echo qargi release verify 0.2.0 --waive-environment cpu --approved go", "grep -n 'waive-environment' lib/release.sh",
+                  # what is not a verify, or has every word in the open without both options, is not over-blocked
+                  "qargi release status 0.2.0 --project p $X", "qargi release verify 0.2.0 --project p --waive-environment fds,tty",
+                  "qargi release verify 0.2.0 --hotfix --project p --plan 0123456789ab --approved go"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
@@ -1028,6 +1150,13 @@ class Skills(HookCase):
                   "echo y > ~/.claude/agents/m.md", "echo y > ~/.claude/plugins/p.json", "cd %s && echo y > .claude/skills/p/SKILL.md" % self.proj,
                   "rm -rf %s/.claude" % self.proj, "echo y > link-to-library/links.json", "cp a.md link-to-library/", "rm -rf link-to-library/skills", "tar xf a.tgz -C %s/x" % ls, "tar czf %s/x/b.tgz ." % ls, "tar --extract --file=a.tgz --directory=%s/x" % ls, "unzip -o a.zip -d %s/x" % ls, "curl -o %s/x/SKILL.md http://h/f" % ls,
                   "find %s -name '*.md' -delete" % ls, "find %s -exec rm {} +" % lib, "git -C %s checkout ." % lib, "patch %s/x/SKILL.md fix.diff" % ls,
+                  # a write through a bare named descriptor ({fd}> FILE opens the file for writing: refused here, allowed before 0.3.5)
+                  "echo x {fd}> $HOME/.claude/skills/x/SKILL.md", "{fd}> $HOME/.claude/skills/x/SKILL.md echo x", "exec {fd}> $HOME/.claude/skills/x/SKILL.md",
+                  "echo x {fd}>$HOME/.claude/skills/x/SKILL.md", "echo x {a[1]}> $HOME/.claude/skills/x/SKILL.md",
+                  'echo x {a["x y"]}> $HOME/.claude/skills/x/SKILL.md', "echo x {a[x\\ y]}> $HOME/.claude/skills/x/SKILL.md",
+                  "git 2>/dev/null -C %s checkout ." % lib, "git -C %s 2>/dev/null checkout ." % lib, "git {fd}>f -C %s checkout ." % lib,
+                  # a quoted value that reads as a redirection is the value of -C or --work-tree: the links >lib and >r lead to the library
+                  "git -C '>lib' checkout .", "git -C \">lib\" rm -rf .", "git --work-tree '>lib' checkout .", "git -C '>lib' clean -fdx", "git -C '>r'%s checkout ." % lib,
                   "bash -c 'echo y > %s/links.json'" % lib, "sh -c \"cd %s/x; touch y\"" % ls, "eval 'rm %s/x/SKILL.md'" % ls,
                   "echo $(echo y > %s/links.json)" % lib):
             r = self.bash(c)
@@ -5123,6 +5252,13 @@ class ShellStringRedirection(HookCase):
         for ok in ("2>&1", ">&2", "&>/dev/null", ">|/dev/null", "2>/dev/null"):
             with self.subTest(ok=ok):
                 self.assertFalse(m.quoted_string(ok))
+        # a blank inside the name of a named descriptor is bash's own ({a["x y"]}>f reaches the guard as {a[x y]}>f): a redirection, no string; one after the operator is a string
+        for ok in ("{a[x y]}>f", "{a[x y]}>", "{a[b[x y]]}>f", "{a[x y]}>>f"):
+            with self.subTest(ok=ok):
+                self.assertFalse(m.quoted_string(ok))
+        for word in ("2>x y", "{a[x y]}>f g", "{a[x y]}>f;ls", "{fd}>f g", ">x y"):
+            with self.subTest(word=word):
+                self.assertTrue(m.quoted_string(word))
         self.refused("bash -c $'2>/dev/null\\x3b%s/install.sh'" % self.ROOT, InstallScript.WHY)
 
     def test_the_forms_0_3_2_refused(self):
@@ -5897,6 +6033,34 @@ class FifthReview(HookCase):
             verdicts = dict(zip(cases, in_parallel(J.judge, cases.values())))
         for name, why in verdicts.items():
             self.assertNotIn(BUDGET_REFUSAL, why or "", name)
+
+    def test_the_named_descriptor_patterns_stay_fast_on_a_long_word(self):
+        """FD_NAME starts every pattern that reads a redirection ({fd}>f, {a[i]}>f): its subscript is a lazy run, so a word of 200000 characters that holds no
+        closing bracket, or only closings that no brace follows, must cost a pass over it and no more (each pattern is tried at the start of the word only).
+        No wall-clock constant: each word is built at a size n and at 4n, and the run on 4n must cost under eight times the run on n (a pass over it costs
+        four times, a quadratic one sixteen) plus a floor that timer noise cannot pass."""
+        m = _Judge(LIBDIR, "guard_fd_name", self.clone).m
+
+        def words(n):
+            return {"no closing": "{a[" + "x" * n, "no brace": "{a[" + "x" * n + "]", "closings": "{a[" + "]" * n, "brackets": "{a[" + "[" * n + "]}>f", "brackets and closings": "{a" + "[]" * (n // 2),
+                    "blanks": "{a[" + "x y" * (n // 3) + "]}>f", "quoted blank": '{a["x y"]}>f' + "g" * n, "braces": "{a[" + "]}" * (n // 2), "long name": "{" + "a" * n + "}>f"}
+
+        def cost(word):
+            best = None
+            for _ in range(3):
+                t0 = time.perf_counter()
+                for rx in (m.REDIR, m.LEADING_REDIR, m.BARE_REDIR, m.FD_REDIR_WORD):
+                    rx.match(word)
+                m.is_redirection(word)
+                m.quoted_string(word)
+                spent = time.perf_counter() - t0
+                best = spent if best is None else min(best, spent)
+            return best
+
+        n = 50000
+        small, large = words(n), words(4 * n)
+        for name in small:
+            self.assertLess(cost(large[name]), 8 * cost(small[name]) + 0.05, name)
 
 
 def case_pool(t):

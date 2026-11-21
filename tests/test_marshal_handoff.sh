@@ -143,6 +143,29 @@ grep -q "another test command" "$T/o" && ok "gates: a changed gate command does 
 jq 'del(.gates)' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"
 H f1; ! grep -q "== gates" "$T/o" && ok "gates: without gates the note has no gates section" || no "SPEC gates section without gates"
 H f1 --json; jq -e '.gates == []' "$T/o" >/dev/null && ok "gates: --json has an empty list without gates" || no "SPEC gates json without gates: $(jq -c .gates "$T/o")"
+# the run counts only under the current verify.environment id, as `feature status` and `feature finish` judge it (lib/gitflow.sh verified)
+RECF=$S/releases/app-feature_f1.json
+setrec() { # ID|-: the record of feature f1 at the tip, with the test command of the answers; ID is the environment id it was made under ("-": a record with none)
+  jq --arg sha "$(tip feature/f1)" --arg id "$1" '.command = "true" | .sha = $sha | .result = "pass" | del(.environment) | if $id != "-" then .environment = {id: $id} else . end' "$RECF" > "$T/rec.tmp" && mv "$T/rec.tmp" "$RECF"
+}
+setenvans() { jq --argjson d "$1" '.verify = {environment: $d}' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"; }
+ENVID=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import suite_env as E; print(E.suite_env_id(E.normalise({"cpu_quota": None})))' "$TOOL/lib")
+setrec -; H f1
+grep -q "whole suite: pass at this tip" "$T/o" && ok "environment: a run with none counts while the setting is off" || no "SPEC environment off, no id: $(sed -n '/== features/,/== marshal/p' "$T/o")"
+setrec abcdef123456; H f1
+grep -q "another verify.environment" "$T/o" && ! grep -q "whole suite: pass at this tip" "$T/o" && ok "environment: a run made under a declaration does not count once the setting is off" || no "SPEC environment run with id, setting off: $(sed -n '/== features/,/== marshal/p' "$T/o")"
+H f1 --json; jq -e '.features[0].suite.state == "other-environment"' "$T/o" >/dev/null && ok "environment: --json says other-environment" || no "SPEC environment json: $(jq -c '.features[0].suite' "$T/o")"
+setenvans '{"cpu_quota": null}'; setrec -; H f1
+grep -q "another verify.environment" "$T/o" && ok "environment: a run with none does not count once the setting is on" || no "SPEC environment setting on, no id: $(sed -n '/== features/,/== marshal/p' "$T/o")"
+setrec abcdef123456; H f1
+grep -q "another verify.environment" "$T/o" && ok "environment: a run under another declaration or launcher does not count" || no "SPEC environment other id: $(sed -n '/== features/,/== marshal/p' "$T/o")"
+setrec "$ENVID"; H f1
+grep -q "whole suite: pass at this tip" "$T/o" && ok "environment: a run under the current declaration counts" || no "SPEC environment same id: $(sed -n '/== features/,/== marshal/p' "$T/o")"
+setenvans '{"cpu_quota": "bogus"}'; setrec -; H f1
+grep -q "whole suite: pass at this tip" "$T/o" && ok "environment: an invalid declaration is read as off, as feature status does" || no "SPEC environment invalid: $(sed -n '/== features/,/== marshal/p' "$T/o")"
+setenvans '{"cpu_quota": null}'; printf 'not json' > "$S/verify-env.json"; setrec -; H f1
+grep -q "whole suite: pass at this tip" "$T/o" && ok "environment: an unreadable file of accepted declarations reads as off, as feature status does" || no "SPEC environment state unreadable: $(sed -n '/== features/,/== marshal/p' "$T/o")"
+rm -f "$S/verify-env.json"; jq 'del(.verify)' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"
 
 # accepted deviations from the methodology (methodology_accepted, set by the lead) are printed apart from the open gaps; one whose gap is gone says so
 H f1; ! grep -q "== methodology deviations" "$T/o" && ok "deviations: without accepted deviations the note has no such section" || no "SPEC deviations absent"
