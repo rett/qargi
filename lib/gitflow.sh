@@ -68,13 +68,14 @@ DRYN=0 DRY_INDEP='' DRY_TRAP=''
 dry_on() {
   export QARGI_DRY=1 GIT_OPTIONAL_LOCKS=0
   DRY_TRAP=1; trap 'exit 70' USR1; trap 'exit 130' INT; trap 'exit 143' TERM
-  refuse() { refuse_more '' "$@"; }   # lib/lib.sh's refuse, for every caller that has no more to say (need_plan)
 }
-# refuse_more MORE CODE key=value... -> refuse CODE as lib/lib.sh does, then one `  more: MORE` line after the refusal's own lines, for what is particular to this case
-# (the commits, the route that fits). The contract line stays the first line. In a dry run see dry_on.
-refuse_more() {
-  local more=$1 text rc=0 first rest
-  shift
+# refuse CODE key=value... -> lib/lib.sh's refuse, redefined for the verbs that source this file. REFUSE_MORE, when set before the call, is printed as one `  more: TEXT`
+# line after the refusal's own lines: what is particular to this case (the commits, the route that fits); the contract line stays the first line. In a dry run (dry_on)
+# the refusal is printed with dry=1 first in the detail of the contract line and counted, and it ends the verb unless DRY_INDEP is set. The lint of lib/refusal.py finds a
+# raise by `refuse CODE` at the start of a command, so the code is written out at every call.
+refuse() {
+  local more=${REFUSE_MORE:-} text rc=0 first rest
+  REFUSE_MORE=''
   text=$(_refusal refuse "$@" 2>&1) || rc=$?
   if [ "$rc" = 70 ]; then printf '%s\n' "$text" >&2; exit 70; fi
   if [ "${QARGI_DRY:-}" = 1 ]; then

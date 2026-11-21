@@ -331,9 +331,9 @@
       "why": "a cut approves one plan; a step that no longer matches it is a different plan",
       "class": "cut",
       "exit": 1,
-      "status": "planned",
+      "status": "live",
       "fields": {"verb": "verb", "step": "label"},
-      "message": "the approval of the release cut does not cover the step {step} of {verb} any more",
+      "message": "the approval of the release cut does not cover the step {step} of {verb}",
       "next": {"lead": "run {verb} without the cut's token, show its own plan, and apply that with its token and the owner's words", "host": "run {verb} without the cut's token, show its own plan, and apply that with its token and the owner's words"}
     },
     "cut-lead-changed": {
@@ -341,7 +341,7 @@
       "why": "the approval was given to that lead's plan",
       "class": "cut",
       "exit": 1,
-      "status": "planned",
+      "status": "live",
       "fields": {"verb": "verb"},
       "message": "the release cut of {verb} was approved by another lead, or by a lead that cannot be told",
       "next": {"lead": "plan {verb} again with its own token and take the owner's approval for it", "host": "plan {verb} again with its own token and take the owner's approval for it"}
@@ -351,10 +351,10 @@
       "why": "the owner approved the plan for that head",
       "class": "cut",
       "exit": 1,
-      "status": "planned",
+      "status": "live",
       "fields": {"verb": "verb", "ref": "ref"},
       "message": "{ref} is not where the release cut left it",
-      "next": {"lead": "record the commits with qargi release fix VER --record, or run {verb} with its own plan", "host": "record the commits with qargi release fix VER --record, or run {verb} with its own plan"}
+      "next": {"lead": "journal commits made on the branch with qargi release fix VER --record (push goes on under the cut while they stay inside the paths its plan named), or run {verb} with its own plan: shown, and approved anew", "host": "journal commits made on the branch with qargi release fix VER --record (push goes on under the cut while they stay inside the paths its plan named), or run {verb} with its own plan: shown, and approved anew"}
     },
     "cut-fix-outside": {
       "rule": "A fix recorded on a release branch goes on under the cut's approval only when it stays inside the paths the cut named",

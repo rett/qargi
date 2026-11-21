@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2154  # af, REPO, PROJ, TESTCMD come from gitflow.sh (project_load)
+# shellcheck disable=SC2154,SC2034  # af, REPO, PROJ, TESTCMD come from gitflow.sh (project_load); REFUSE_MORE, CW_* and FIX_* are read by refuse and the callers of cut_why
 # Releases and hotfixes, by the usual git-flow rules (long-lived master and develop, short-lived release and hotfix branches):
 #   release/<version>  from develop, merged into master (tagged); that tagged master merge commit is then merged into develop; then deleted
 #   hotfix/<version>   from master,  merged into master (tagged); that master merge commit is then merged into develop, or into the open release branch
@@ -713,12 +713,20 @@ cut_lead_check() {
     # the cut is approved again only while the release has not begun: with the branch or the tag there, plan --again discards the record and then refuses; with only the record saying start ran, it
     # would plan the cut anew, but the steps after start need the branch, so the message offers the own plan of each step in every state (nothing writes a lead into an existing record)
     if branch_exists "$BR" || g rev-parse -q --verify "refs/tags/$VER" >/dev/null 2>&1 || [ -n "$(cut_get '.done.start // empty')" ]; then
-      die "the cut record of $VER names no lead (it was approved before a cut was bound to the lead that approved it): nothing was changed. Approving the cut again is not offered, because the release has begun (plan --again would discard the record, and refuses while $BR or the tag $VER exists): this step and every later one is run with its own plan ($own)"
+      REFUSE_MORE="the cut record of $VER names no lead (it was approved before a cut was bound to the lead that approved it): nothing was changed. Approving the cut again is not offered, because the release has begun (plan --again would discard the record, and refuses while $BR or the tag $VER exists): this step and every later one is run with its own plan ($own)"
+      refuse cut-lead-changed verb="release $verb"
     fi
-    die "the cut record of $VER names no lead (it was approved before a cut was bound to the lead that approved it): nothing was changed. The cut can be approved again, because the release has not begun (qargi release plan $VER${HOTFIX:+ --hotfix} --again, then --plan and --approved), or this step is run with its own plan ($own)"
+    REFUSE_MORE="the cut record of $VER names no lead (it was approved before a cut was bound to the lead that approved it): nothing was changed. The cut can be approved again, because the release has not begun (qargi release plan $VER${HOTFIX:+ --hotfix} --again, then --plan and --approved), or this step is run with its own plan ($own)"
+    refuse cut-lead-changed verb="release $verb"
   fi
-  cut_lead_id || die "the lead identity cannot be determined ($LEAD_WHY), so $verb of $VER cannot run under the cut: nothing was changed. The lead that approved the cut runs the step, or this lead asks the owner to approve the step with its own plan ($own)"
-  [ "$LEAD_ID" = "$rec" ] || die "the cut of $VER was approved under another lead: nothing was changed. That lead runs $verb under the cut, or this lead asks the owner to approve the step with its own plan ($own)"
+  cut_lead_id || {
+    REFUSE_MORE="the lead identity cannot be determined ($LEAD_WHY), so $verb of $VER cannot run under the cut: nothing was changed. The lead that approved the cut runs the step, or this lead asks the owner to approve the step with its own plan ($own)"
+    refuse cut-lead-changed verb="release $verb"
+  }
+  [ "$LEAD_ID" = "$rec" ] || {
+    REFUSE_MORE="the cut of $VER was approved under another lead: nothing was changed. That lead runs $verb under the cut, or this lead asks the owner to approve the step with its own plan ($own)"
+    refuse cut-lead-changed verb="release $verb"
+  }
 }
 cut_load() {
   local rk
@@ -747,32 +755,41 @@ cut_load() {
     KEEP=$rk
   fi
 }
-# cut_why STEP OWN_TOKEN -> prints why the cut may not stand in for this step now (nothing when it may). It reads what the verb has at that point:
+# cut_why STEP OWN_TOKEN -> sets CW_CODE (empty when the cut may stand in for this step now; else the refusal code: cut-not-covering, cut-branch-moved), CW_ARGS (the
+# fields of that code besides the verb) and CW_TEXT (what is particular: the heads, the sentence step_gate adds to the refusal). It reads what the verb has at that point:
 # h and second (push, finish), tc (site).
 cut_why() {
   local s=$1 tok=$2 need='' p anchor
+  CW_CODE='' CW_ARGS=() CW_TEXT=''
   case $s in push) need=start;; finish) need="start$(jq -e '.steps | index("push") != null' "$CUTREC" >/dev/null && echo ' push')";; site) need=finish;; esac
   for p in $need; do
-    jq -e --arg p "$p" '.done[$p] != null' "$CUTREC" >/dev/null || { echo "the step $p of the cut is not done yet (qargi release plan $VER shows where the cut is)"; return 0; }
+    jq -e --arg p "$p" '.done[$p] != null' "$CUTREC" >/dev/null || { CW_CODE=cut-not-covering CW_ARGS=(step="$s") CW_TEXT="the step $p of the cut is not done yet (qargi release plan $VER shows where the cut is)"; return 0; }
   done
   anchor=$(cut_get '.done.push.head // .done.start.head // empty')
   case $s in
-    start) [ "$tok" = "$(cut_get .start_token)" ] || echo "the plan of start is not the one the cut froze (the head of $BASE, the files it bumps or the date differ)";;
-    push) [ "$h" = "$anchor" ] || echo "$BR is at ${h:0:7}, not at ${anchor:0:7} where the cut left it: something was committed on it";;
+    start) [ "$tok" = "$(cut_get .start_token)" ] || { CW_CODE=cut-not-covering CW_ARGS=(step=start) CW_TEXT="the plan of start is not the one the cut froze (the head of $BASE, the files it bumps or the date differ)"; };;
+    push) [ "$h" = "$anchor" ] || { CW_CODE=cut-branch-moved CW_ARGS=(ref="$BR") CW_TEXT="$BR is at ${h:0:7}, not at ${anchor:0:7} where the cut left it: something was committed on it"; };;
     finish)
-      if [ "$h" != "$anchor" ]; then echo "$BR is at ${h:0:7}, not at ${anchor:0:7} where the cut left it (the head the pull request's checks ran on): something was committed on it"
-      elif [ "$(sha_of master)" != "$(cut_get .master_sha)" ]; then echo "master is at $(sha_of master | cut -c1-7), not at $(cut_get .master_sha | cut -c1-7) where the plan showed it"
-      elif [ "$second" != "$(cut_get .second)" ]; then echo "the second merge goes into $second, the plan said $(cut_get .second)"; fi;;
+      if [ "$h" != "$anchor" ]; then CW_CODE=cut-branch-moved CW_ARGS=(ref="$BR") CW_TEXT="$BR is at ${h:0:7}, not at ${anchor:0:7} where the cut left it (the head the pull request's checks ran on): something was committed on it"
+      elif [ "$(sha_of master)" != "$(cut_get .master_sha)" ]; then CW_CODE=cut-branch-moved CW_ARGS=(ref=master) CW_TEXT="master is at $(sha_of master | cut -c1-7), not at $(cut_get .master_sha | cut -c1-7) where the plan showed it"
+      elif [ "$second" != "$(cut_get .second)" ]; then CW_CODE=cut-not-covering CW_ARGS=(step=finish) CW_TEXT="the second merge goes into $second, the plan said $(cut_get .second)"; fi;;
     site)
-      [ "$tc" = "$(cut_get '.done.finish.commit // empty')" ] || echo "the tag $VER is at ${tc:0:7}, not the commit ($(cut_get '.done.finish.commit // empty' | cut -c1-7)) that the cut's finish tagged";;
+      [ "$tc" = "$(cut_get '.done.finish.commit // empty')" ] || { CW_CODE=cut-branch-moved CW_ARGS=(ref="$VER") CW_TEXT="the tag $VER is at ${tc:0:7}, not the commit ($(cut_get '.done.finish.commit // empty' | cut -c1-7)) that the cut's finish tagged"; };;
   esac
 }
-# step_gate STEP OWN_TOKEN: the check before a step moves anything: its own plan token, or under the cut what cut_why allows
+# step_gate STEP OWN_TOKEN: the check before a step moves anything: its own plan token, or under the cut what cut_why allows (a refusal with the code cut_why found)
 step_gate() {
-  local why
   if [ -z "$CUT" ]; then need_plan "$2"; return 0; fi
-  why=$(cut_why "$1" "$2")
-  [ -z "$why" ] || die "the cut $PLAN_ARG does not cover $1 of $VER any more: $why. Nothing was changed. Run this step with its own plan (qargi release $1 $VER${HOTFIX:+ --hotfix}, then --plan and --approved): the cut goes on from where that leaves it"
+  cut_why "$1" "$2"
+  if [ -n "$CW_CODE" ]; then
+    REFUSE_MORE="the cut $PLAN_ARG does not cover $1 of $VER any more: $CW_TEXT. Nothing was changed. Run this step with its own plan (qargi release $1 $VER${HOTFIX:+ --hotfix}, then --plan and --approved): the cut goes on from where that leaves it"
+    case $CW_CODE in
+      cut-not-covering)
+        refuse cut-not-covering verb="release $1" ${CW_ARGS[@]+"${CW_ARGS[@]}"};;
+      cut-branch-moved)
+        refuse cut-branch-moved verb="release $1" ${CW_ARGS[@]+"${CW_ARGS[@]}"};;
+    esac
+  fi
   echo "$1 runs under the cut $PLAN_ARG of $VER (approved once, in the words: $APPROVED)"
 }
 # cut_done STEP [HEAD [COMMIT]]: records that STEP ran (by the cut or by its own plan), when the cut of VER is recorded

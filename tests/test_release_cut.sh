@@ -141,13 +141,13 @@ out=$($REL start 0.2.0 --date 2026-03-04 --plan wrongtoken 2>&1); rc=$?
 out=$($REL push 0.2.0 --plan wrongtoken 2>&1); rc=$?
 [ "$rc" = 1 ] && grep -q "is recorded and wrongtoken is not its token" <<<"$out" && ok "the same for push" || no "push with a wrong token: rc=$rc $out"
 out=$($REL start 0.2.0 --date 2026-04-05 --plan "$ct" 2>&1); rc=$?
-[ "$rc" != 0 ] && grep -q "does not cover start" <<<"$out" && ! git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && ok "start under the cut with another date: refused before anything is created" || no "start with another date: rc=$rc $out"
+[ "$rc" != 0 ] && grep -q "does not cover start" <<<"$out" && ! git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && grep -q '^qargi-refusal/1 {"code":"cut-not-covering","exit":1,"verb":"release start"' <<<"$out" && ok "start under the cut with another date: refused before anything is created, with the code cut-not-covering on the first line" || no "start with another date: rc=$rc $out"
 out=$($REL start 0.2.0 --plan "$ct" 2>&1); rc=$?
 [ "$rc" = 0 ] && git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && [ "$(git -C "$R" show release/0.2.0:CHANGELOG.md | grep -c '^## \[0.2.0\] - 2026-03-04')" = 1 ] && [ "$(cutstate)" = "start:done push:pending finish:pending" ] \
   && grep -q "next in the cut $ct: qargi release push 0.2.0 --plan $ct" <<<"$out" && grep '"verb":"release:start"' "$T/s/audit.log" | grep -q '"approved":"ship it"' \
   && ok "start --plan alone runs the step: the date is the cut's, the audit line carries the recorded words, the cut shows the step done" || no "start under the cut: rc=$rc $out; $(cutstate)"
 out=$($REL finish 0.2.0 --plan "$ct" 2>&1); rc=$?
-[ "$rc" != 0 ] && grep -q "the step push of the cut is not done yet" <<<"$out" && ok "finish before push: refused, naming the step" || no "finish before push: rc=$rc $out"
+[ "$rc" != 0 ] && grep -q "the step push of the cut is not done yet" <<<"$out" && grep -q '^qargi-refusal/1 {"code":"cut-not-covering","exit":1,"verb":"release finish"' <<<"$out" && grep -q "refused \[cut-not-covering\]" <<<"$out" && ok "finish before push: refused with cut-not-covering, naming the step" || no "finish before push: rc=$rc $out"
 out=$($REL push 0.2.0 --plan "$ct" 2>&1); rc=$?
 [ "$rc" = 0 ] && [ -n "$(git -C "$R" ls-remote origin refs/heads/release/0.2.0)" ] && grep -q "pr create" "$T/gh.log" && [ "$(cutstate)" = "start:done push:done finish:pending" ] && ok "push --plan alone pushes the branch and opens the pull request" || no "push under the cut: rc=$rc $out"
 out=$($REL finish 0.2.0 --plan "$ct" --keep 2>&1); rc=$?
@@ -180,7 +180,7 @@ t=$($REL push 0.2.0 | tok); out=$($REL push 0.2.0 --plan "$t" --approved "pushin
 [ "$rc" = 0 ] && grep -q '"push"' <(jq -c '.done | keys' "$T/s/release/cut2-0.2.0.cut.json") && [ "$(jq -r '.done.push.via' "$T/s/release/cut2-0.2.0.cut.json")" = own ] && ok "the push by its own plan is recorded in the cut as done by its own plan" || no "own push: rc=$rc $out"
 git -C "$R" update-ref refs/heads/master "$(git -C "$R" commit-tree -p master -m moved 'master^{tree}')"
 out=$($REL finish 0.2.0 --plan "$ct" 2>&1); rc=$?
-[ "$rc" != 0 ] && grep -q "does not cover finish" <<<"$out" && grep -q "master is at" <<<"$out" && ! git -C "$R" rev-parse -q --verify refs/tags/0.2.0 >/dev/null && ok "master moved since the plan: finish under the cut is refused, nothing is tagged" || no "finish after master moved: rc=$rc $out"
+[ "$rc" != 0 ] && grep -q "does not cover finish" <<<"$out" && grep -q "master is at" <<<"$out" && ! git -C "$R" rev-parse -q --verify refs/tags/0.2.0 >/dev/null && grep -q '^qargi-refusal/1 {"code":"cut-branch-moved","exit":1,"verb":"release finish"' <<<"$out" && ok "master moved since the plan: finish under the cut is refused with cut-branch-moved, nothing is tagged" || no "finish after master moved: rc=$rc $out"
 
 # --- the approval of the cut is bound to the lead that recorded it (the marshal's identity: QARGI_LEAD, else user@host). Another lead is refused every
 # step under it, before anything moves, and is told the remedy; a step by its own plan and approval is not bound. Defence in depth only: QARGI_LEAD is
@@ -196,7 +196,7 @@ out=$(asa plan 0.2.0 --date 2026-03-04 2>&1); ct=$(tok <<<"$out"); asa plan 0.2.
 [ "$(jq -r '.lead.id' "$T/s/release/cutlead-0.2.0.cut.json")" = lead-a ] && ok "approving the cut records the lead that approved it" || no "no lead in the cut record: $(cat "$T/s/release/cutlead-0.2.0.cut.json" 2>&1)"
 before=$(snap); out=$(asb start 0.2.0 --plan "$ct" 2>&1); rc=$?
 [ "$rc" = 1 ] && grep -q "the cut of 0.2.0 $other start under the cut, $remedy (qargi release start 0.2.0, then --plan and --approved)" <<<"$out" && ! grep -q "$ct" <<<"$out" && [ "$before" = "$(snap)" ] \
-  && ok "another lead (QARGI_LEAD) is refused start under the cut: the message names the remedy and not the token; no ref, record or audit line changed" || no "start by another lead: rc=$rc $out"
+  && grep -q '^qargi-refusal/1 {"code":"cut-lead-changed","exit":1,"verb":"release start"' <<<"$out" && ok "another lead (QARGI_LEAD) is refused start under the cut with cut-lead-changed: the message names the remedy and not the token; no ref, record or audit line changed" || no "start by another lead: rc=$rc $out"
 before=$(snap); out=$($REL start 0.2.0 --plan "$ct" 2>&1); rc=$?
 [ "$rc" = 1 ] && grep -q "the cut of 0.2.0 $other start" <<<"$out" && [ "$before" = "$(snap)" ] && ok "no QARGI_LEAD (the anonymous identity) is another lead too: refused, nothing changed" || no "start, anonymous: rc=$rc $out"
 before=$(snap); out=$(QARGI_LEAD='not an id' $REL start 0.2.0 --plan "$ct" 2>&1); rc=$?

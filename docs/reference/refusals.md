@@ -43,9 +43,9 @@ compares them with that page.
 | --- | --- | --- | --- | --- |
 | [`approval-missing`](#approval-missing) | approval | 1 | planned | An apply that the owner must approve is given the owner's own words with --approved |
 | [`approval-inside-run`](#approval-inside-run) | approval | 1 | planned | A member run, or a verb called inside an approved apply, never gives --approved |
-| [`cut-not-covering`](#cut-not-covering) | cut | 1 | planned | The approval of a release cut covers only the steps its plan listed, while what the cut fixed still holds |
-| [`cut-lead-changed`](#cut-lead-changed) | cut | 1 | planned | A release cut belongs to the lead that approved it |
-| [`cut-branch-moved`](#cut-branch-moved) | cut | 1 | planned | A release cut stands only while its branch is where the cut left it |
+| [`cut-not-covering`](#cut-not-covering) | cut | 1 | live | The approval of a release cut covers only the steps its plan listed, while what the cut fixed still holds |
+| [`cut-lead-changed`](#cut-lead-changed) | cut | 1 | live | A release cut belongs to the lead that approved it |
+| [`cut-branch-moved`](#cut-branch-moved) | cut | 1 | live | A release cut stands only while its branch is where the cut left it |
 | [`cut-fix-outside`](#cut-fix-outside) | cut | 1 | planned | A fix recorded on a release branch goes on under the cut's approval only when it stays inside the paths the cut named |
 | [`feature-runs-open`](#feature-runs-open) | feature | 1 | planned | A feature is finished when none of its runs is open |
 | [`ro-write-outside`](#ro-write-outside) | guard | 2 | live | A read-only run writes only OUT and TMP |
@@ -130,16 +130,16 @@ compares them with that page.
 
 - Rule: The approval of a release cut covers only the steps its plan listed, while what the cut fixed still holds.
 - Why: a cut approves one plan; a step that no longer matches it is a different plan.
-- Exit 1, planned.
+- Exit 1, live.
 - Fields: `verb` (verb), `step` (label).
-- Message: `the approval of the release cut does not cover the step {step} of {verb} any more`
+- Message: `the approval of the release cut does not cover the step {step} of {verb}`
 - Next, for a lead: run {verb} without the cut's token, show its own plan, and apply that with its token and the owner's words
 
 ### cut-lead-changed
 
 - Rule: A release cut belongs to the lead that approved it.
 - Why: the approval was given to that lead's plan.
-- Exit 1, planned.
+- Exit 1, live.
 - Fields: `verb` (verb).
 - Message: `the release cut of {verb} was approved by another lead, or by a lead that cannot be told`
 - Next, for a lead: plan {verb} again with its own token and take the owner's approval for it
@@ -148,10 +148,10 @@ compares them with that page.
 
 - Rule: A release cut stands only while its branch is where the cut left it.
 - Why: the owner approved the plan for that head.
-- Exit 1, planned.
+- Exit 1, live.
 - Fields: `verb` (verb), `ref` (ref).
 - Message: `{ref} is not where the release cut left it`
-- Next, for a lead: record the commits with qargi release fix VER --record, or run {verb} with its own plan
+- Next, for a lead: journal commits made on the branch with qargi release fix VER --record (push goes on under the cut while they stay inside the paths its plan named), or run {verb} with its own plan: shown, and approved anew
 
 ### cut-fix-outside
 
