@@ -319,6 +319,77 @@ out=$($DA local clean "$RN" 2>&1); rc=$?
 out=$($DA local close "$RN" --applied-by-am 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "merge that branch" <<<"$out" && ! grep -q "rewrite" <<<"$out" && ok "close of an applied run at its journaled tip: as before" || no "plain close refusal: rc=$rc $out"
 
+# --- qargi ref record --deleted: a branch deleted by hand is journaled from the commit it was at to absent, so a run prepared before it verifies
+DEL="$DA ref record --deleted"
+# a branch the lead made and noted, a strict run prepared, then the lead deletes the branch with git: refused until the deletion is recorded
+task agent/dl dl.txt one; $DA ref note agent/dl >/dev/null 2>&1 || no "(setup) note agent/dl"
+R=$(fresh r-del-local); dl=$(sha agent/dl); git -C "$A" branch -D agent/dl >/dev/null
+refused "$R" "a branch deleted by hand and not recorded"
+n=$(jn)
+out=$($DEL agent/dl "$dl" --why "the task was dropped" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(jn)" = $((n + 1)) ] && jq -e --arg o "$dl" --arg z "$Z" 'select(.verb == "ref:deleted" and .ref == "refs/heads/agent/dl" and .old == $o and .new == $z and .why == "the task was dropped" and (has("remote") | not))' "$J" >/dev/null; } \
+  && ok "ref record --deleted journals the deletion of a local branch from the commit it was at to absent, with the reason" || no "deleted: rc=$rc $out"
+out=$(verify "$R"); rc=$?
+[ $rc = 0 ] && grep -q "agent/dl deleted by qargi ref deleted" <<<"$out" && ok "verify accepts the deletion and names the verb" || no "verify after --deleted: rc=$rc $out"
+git -C "$A" branch agent/dl "$dl"; $DA ref note agent/dl >/dev/null 2>&1 || no "(setup) note agent/dl again"
+R=$(fresh r-del-clean); git -C "$A" branch -D agent/dl >/dev/null; $DEL agent/dl "$dl" --why "the task was dropped again" >/dev/null 2>&1 || no "(setup) --deleted agent/dl again"
+echo '{}' > "$R/out/manifest.json"; out=$($DA local clean "$R" 2>&1); rc=$?
+[ $rc = 0 ] && [ ! -e "$R" ] && grep -q "agent/dl deleted by qargi ref deleted" <<<"$out" && ok "and plain clean of a run prepared before accepts it and names it" || no "clean after --deleted: rc=$rc $out"
+# the commits made with git on the branch since the journal had it are journaled first, as a verb that deletes the branch does
+task agent/dc dc.txt one; $DA ref note agent/dc >/dev/null 2>&1 || no "(setup) note agent/dc"
+R=$(fresh r-del-reach); dc0=$(sha agent/dc); dc1=$(hand agent/dc); git -C "$A" update-ref refs/heads/agent/dc "$dc1"; dc2=$(hand agent/dc); git -C "$A" update-ref refs/heads/agent/dc "$dc2"
+git -C "$A" branch -D agent/dc >/dev/null
+out=$($DEL agent/dc "$dc2" --why "dropped after two commits by hand" 2>&1); rc=$?
+{ [ $rc = 0 ] && jq -Re --arg o "$dc0" --arg n "$dc1" 'fromjson? | select(.ref == "refs/heads/agent/dc" and .old == $o and .new == $n and .verb == "ref:deleted" and (.why | test("with git")))' "$J" >/dev/null \
+  && jq -Re --arg o "$dc1" --arg n "$dc2" 'fromjson? | select(.ref == "refs/heads/agent/dc" and .old == $o and .new == $n and .verb == "ref:deleted" and (.why | test("with git")))' "$J" >/dev/null \
+  && jhas agent/dc "$dc2" "$Z"; } && ok "ref record --deleted journals the two commits made with git on the branch, then the deletion" || no "deleted with steps: rc=$rc $out"
+out=$(verify "$R"); rc=$?
+[ $rc = 0 ] && grep -q "agent/dc deleted by qargi ref deleted" <<<"$out" && ok "a run prepared before those commits verifies" || no "verify after --deleted with steps: rc=$rc $out"
+# delete and recreate: the note of the new branch starts at absent, and a run prepared before the deletion follows both lines
+task agent/dn dn.txt one; $DA ref note agent/dn >/dev/null 2>&1 || no "(setup) note agent/dn"
+R=$(fresh r-del-recreate); dn0=$(sha agent/dn); git -C "$A" branch -D agent/dn >/dev/null
+$DEL agent/dn "$dn0" --why "recreated below" >/dev/null 2>&1 || no "(setup) --deleted agent/dn"
+git -C "$A" branch agent/dn develop; dn1=$(sha agent/dn)
+out=$($DA ref note agent/dn 2>&1); rc=$?
+{ [ $rc = 0 ] && grep -q "noted agent/dn: created at ${dn1:0:12}" <<<"$out" && jhas agent/dn "$Z" "$dn1"; } && ok "ref note of a branch made again after --deleted starts at absent, not at the earlier note" || no "note after --deleted: rc=$rc $out"
+out=$(verify "$R"); rc=$?
+[ $rc = 0 ] && grep -q "agent/dn moved by qargi ref deleted, qargi ref note" <<<"$out" && ok "a run prepared before the deletion verifies and names both lines" || no "verify after delete and recreate: rc=$rc $out"
+# a branch of origin: pushed by hand and noted, then deleted there by hand; the line carries origin's URL
+git -C "$A" branch agent/dr develop; git -C "$A" push -q origin agent/dr; $DA ref note origin/agent/dr >/dev/null 2>&1 || no "(setup) note origin/agent/dr"
+R=$(fresh r-del-remote); dr=$(git -C "$A" rev-parse agent/dr); n=$(jn)
+out=$($DEL origin/agent/dr "$dr" --why "still on origin" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "origin still has agent/dr" <<<"$out" && [ "$(jn)" = "$n" ] && ok "a branch that origin still has is refused, and nothing is journaled" || no "remote still there: rc=$rc $out"
+git -C "$A" push -q origin :refs/heads/agent/dr; git -C "$A" remote set-url origin "$T/nowhere.git"
+out=$($DEL origin/agent/dr "$dr" --why "origin cannot be asked" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "origin could not be asked" <<<"$out" && [ "$(jn)" = "$n" ] && ok "an origin that cannot be asked is refused as unchecked, and nothing is journaled" || no "remote unchecked: rc=$rc $out"
+git -C "$A" remote set-url origin "$T/origin.git"
+out=$($DEL origin/agent/dr "$dr" --why "deleted on origin by hand" 2>&1); rc=$?
+{ [ $rc = 0 ] && jq -e --arg o "$dr" --arg z "$Z" --arg u "$T/origin" 'select(.verb == "ref:deleted" and .ref == "refs/heads/agent/dr" and .old == $o and .new == $z and .remote == "origin" and .url == $u and .why == "deleted on origin by hand")' "$J" >/dev/null; } \
+  && ok "the deletion of a branch of origin is journaled with remote origin and the origin URL" || no "remote deleted: rc=$rc $out"
+out=$(verify "$R"); rc=$?
+[ $rc = 0 ] && grep -q "agent/dr on origin deleted by qargi ref deleted" <<<"$out" && ok "a run prepared before the push verifies once the deletion on origin is recorded" || no "verify after remote --deleted: rc=$rc $out"
+# refusals: nothing is journaled
+git -C "$A" branch agent/dx develop; dx=$(sha agent/dx); n=$(jn)
+out=$($DEL agent/dx "$dx" --why x 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "agent/dx is at ${dx:0:12}" <<<"$out" && [ "$(jn)" = "$n" ] && ok "a branch that still exists is refused" || no "existing branch: rc=$rc $out"
+dv=$(sha develop)
+out=$($DEL develop "$dv" --why x 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "develop is a long-lived branch" <<<"$out" && [ "$(jn)" = "$n" ] && ok "a long-lived branch is refused" || no "long-lived: rc=$rc $out"
+out=$($DEL scratch "$dv" --why x 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "scratch is a long-lived branch" <<<"$out" && [ "$(jn)" = "$n" ] && ok "so is the parking branch (it is never deleted either)" || no "parking branch: rc=$rc $out"
+out=$($DEL agent/nosuch 0123456789abcdef0123456789abcdef01234567 --why x 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "is not a commit" <<<"$out" && [ "$(jn)" = "$n" ] && ok "an OLD that is not a commit is refused" || no "OLD not a commit: rc=$rc $out"
+for bad in "agent/dz $dx" "agent/dz $dx --why" "--why x" "agent/dz --why x" "agent/dz $dx extra --why x"; do
+  # shellcheck disable=SC2086
+  out=$($DEL $bad 2>&1); rc=$?
+  [ $rc = 2 ] && [ "$(jn)" = "$n" ] && ok "ref record --deleted $bad is a usage error" || no "usage $bad: rc=$rc $out"
+done
+out=$($DA ref record --rewrite --deleted agent/dz "$dx" --why x 2>&1); rc=$?
+[ $rc = 2 ] && grep -q "not both" <<<"$out" && ok "--rewrite and --deleted together are a usage error" || no "both modes: rc=$rc $out"
+out=$($DA ref note --deleted agent/dz 2>&1); rc=$?
+[ $rc = 2 ] && grep -q "no --rewrite and no --deleted" <<<"$out" && ok "ref note takes no --deleted" || no "note --deleted: rc=$rc $out"
+git -C "$A" branch -D agent/dx >/dev/null
+
 # --- a branch the lead committed on with git, then deleted by a verb: a run prepared before those commits still verifies.
 # The journal has no line for a commit made with git (the fix of a release in the worktree of release fix, the entries of a hotfix, a commit
 # in a feature's worktree, a push by hand), so the line of the deletion started at a tip the journal did not lead to from the run's snapshot.
