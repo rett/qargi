@@ -59,6 +59,8 @@ compares them with that page.
 | [`runtime-unusable`](#runtime-unusable) | project-rule | 1 | live | An extra runtime is sealed, local, started by a command, and not the project's own |
 | [`runtime-reads-unacknowledged`](#runtime-reads-unacknowledged) | project-rule | 1 | live | The owner's approval of a runtime that does not confine reads says so |
 | [`runtime-barrier-missing`](#runtime-barrier-missing) | project-rule | 1 | live | A read-only role needs the barrier of its own runtime; the acceptance of the project's own runtime does not count |
+| [`runtime-not-enabled`](#runtime-not-enabled) | project-rule | 1 | live | A run uses a runtime the project enabled |
+| [`runtime-profile-model`](#runtime-profile-model) | project-rule | 1 | live | A profile's model belongs to the runtime the profile is resolved in |
 | [`release-notes-empty`](#release-notes-empty) | release | 1 | live | A release has notes |
 | [`release-fragments-unfolded`](#release-fragments-unfolded) | release | 1 | live | A release branch holds no unfolded changelog fragment when it is pushed or finished |
 | [`seated-project`](#seated-project) | seat-door | 1 | planned | A marshal claim, take or release is not run on a seated project (R27) |
@@ -289,6 +291,24 @@ compares them with that page.
 - Fields: `name` (label).
 - Message: `the runtime {name} has no read-only barrier, so a read-only role is refused on it`
 - Next, for a lead: run the read-only role on a runtime that has a barrier (qargi provider show {name} says what its barrier claims), or leave --runtime out
+
+### runtime-not-enabled
+
+- Rule: A run uses a runtime the project enabled.
+- Why: an extra runtime changes what a member may run on (another barrier, another sign-in), so the owner approves each one for the project, and a request names none that is not approved.
+- Exit 1, live.
+- Fields: `name` (label).
+- Message: `the runtime {name} is not enabled for this project, so a request cannot be resolved in it`
+- Next, for a lead: choose the project's own runtime or one it enabled (qargi provider runtimes PROJECT lists them); enabling one is the owner's approval: qargi provider enable PROJECT --runtime {name}
+
+### runtime-profile-model
+
+- Rule: A profile's model belongs to the runtime the profile is resolved in.
+- Why: a model id is the catalog of one runtime; resolved in another it would name a model that runtime does not offer, or run another model than the profile says.
+- Exit 1, live.
+- Fields: `name` (label), `profile` (label).
+- Message: `the profile {profile} names a model that the runtime {name} does not offer`
+- Next, for a lead: give the profile a tier in place of its model (a tier is resolved in the catalog of each runtime), or resolve it in a runtime that offers the model; qargi agent models lists each profile in its runtime
 
 ## Class release
 
