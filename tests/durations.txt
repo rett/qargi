@@ -147,5 +147,6 @@
 19 python3 tests/test_campaign.py
 3 bash tests/test_readonly_init.sh
 0 python3 tests/test_seat_contract.py
+2 python3 tests/test_refusals.py
 20 python3 tests/test_suite_env.py
 108 bash tests/test_suite_env_flow.sh

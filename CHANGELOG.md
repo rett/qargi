@@ -6,6 +6,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- The catalogue of refusals, `lib/refusals.json`, names each rule once: its code, the rule, why it exists, its class and exit status, its status (`live`, `planned` or `withdrawn`), the typed fields a raise may fill, a message and a `next` for a lead and for the owner's own session. It holds the fourteen `verify.environment` codes (with the sites that print them, as before), seventeen codes of the rules-visible-early design (`planned` until a verb raises each) and the thirty-one codes of the lead seat contract (R52 and R70, `planned`). `lib/refusal.py` renders a refusal (the line `qargi-refusal/1` and one JSON object, then the message, the reason and the next step; a value a lead chose is only a digest in `detail`, a list is three items and `+N`), checks the catalogue against its own rules, the code that raises it and the seat contract page (skipped, with a line saying so, when the page is absent), and generates `docs/reference/refusals.md`. `tests/refusal-sites.txt` is a shrink-only count of the `die` calls that are not yet classified as a rule or a failure.
+
 ## [0.3.5] - 2026-11-20
 
 ### Added
