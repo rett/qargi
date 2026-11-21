@@ -91,11 +91,11 @@ Usage: provider.py list
                                          an extra runtime for one project (models.extra_runtimes.local of its answers): lib/provider.sh makes the
                                          plan (runtime_plan: the runtime, its link sources, barrier, reads, tool packs), the token and the
                                          approval; a runtime that does not confine reads needs approval words that carry "reads are not confined"
-       provider.py runtime-info PROJECT NAME enable|disable [--conf DIR]
+       provider.py runtime-info PROJECT NAME enable|disable
                                          the plan of that verb as one JSON object (what provider.sh reads)
        provider.py reads-warning NAME    the line that says what members on the local runtime NAME can read, when its definition does not confine
                                          reads (dispatch.reads); nothing for a runtime that confines them or works in the session
-       provider.py runtimes PROJECT [--conf DIR]
+       provider.py runtimes PROJECT
                                          the runtimes of the project's local surface: the line "primary NAME", then a line
                                          "extra NAME" for each runtime of models.extra_runtimes.local
        provider.py effective PROVIDER SURFACE CAPABILITY [--project P]
@@ -2505,11 +2505,8 @@ MISSING_BARRIER = 4        # the exit status of require-barrier for an extra run
 
 
 def cmd_runtimes(args):
-    """runtimes PROJECT [--conf DIR]: "primary NAME", then "extra NAME" for each runtime of models.extra_runtimes.local."""
-    conf = None
-    if len(args) == 3 and args[1] == "--conf":
-        args, conf = args[:1], args[2]
-    primary, extra = local_runtimes_of(args[0], conf)
+    """runtimes PROJECT: "primary NAME", then "extra NAME" for each runtime of models.extra_runtimes.local."""
+    primary, extra = local_runtimes_of(args[0])
     print("primary " + primary)
     for n in extra:
         print("extra " + n)
@@ -2715,13 +2712,10 @@ def runtime_plan(project, name, verb, conf=None, root=None, library=None):
 
 
 def cmd_runtime_info(args):
-    """runtime-info PROJECT NAME enable|disable [--conf DIR]: the plan of provider.sh as JSON (runtime_plan)."""
-    conf = None
-    if len(args) == 5 and args[3] == "--conf":
-        args, conf = args[:3], args[4]
+    """runtime-info PROJECT NAME enable|disable: the plan of provider.sh as JSON (runtime_plan)."""
     if len(args) != 3 or args[2] not in ("enable", "disable"):
-        raise Unsupported("usage: provider.py runtime-info PROJECT NAME enable|disable [--conf DIR]")
-    sys.stdout.write(json.dumps(runtime_plan(args[0], args[1], args[2], conf)) + "\n")
+        raise Unsupported("usage: provider.py runtime-info PROJECT NAME enable|disable")
+    sys.stdout.write(json.dumps(runtime_plan(args[0], args[1], args[2])) + "\n")
     return 0
 
 
@@ -3433,7 +3427,7 @@ def main(argv):
             return cmd_runtime_info(rest)
         if verb == "reads-warning":
             return cmd_reads_warning(rest)
-        if verb == "runtimes" and (len(rest) == 1 or (len(rest) == 3 and rest[1] == "--conf")):
+        if verb == "runtimes" and len(rest) == 1:
             return cmd_runtimes(rest)
         if verb == "model":
             return cmd_model(rest)

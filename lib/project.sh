@@ -382,6 +382,9 @@ if isinstance(r, dict):
     import tools as _tools
     bad.extend(_tools.conflicts(r))
 prof = c.get("profiles")
+try: _own_local = provider.resolve_project(c, "local")[0]
+except provider.ProviderError: _own_local = None
+_extra_local = provider.extra_runtimes_of(c)
 if prof is not None:
     import os
     md = json.load(open(os.path.join(sys.argv[3], "model-defaults.json")))
@@ -397,8 +400,8 @@ if prof is not None:
         if not re.fullmatch(r"[a-z][a-z0-9-]{0,30}", pn): bad.append("%s: a lower-case name (letters, digits, hyphen; at most 31 characters)" % p); continue
         if not isinstance(pf, dict): bad.append("%s: an object like {base, tier, model, effort, purpose, abilities}" % p); continue
         for k in pf:
-            if k not in ("base", "tier", "model", "effort", "purpose", "abilities"):
-                bad.append("%s.%s: unknown key (base, tier, model, effort, purpose, abilities)" % (p, k))
+            if k not in ("base", "tier", "model", "effort", "purpose", "abilities", "runtime"):
+                bad.append("%s.%s: unknown key (base, tier, model, effort, purpose, abilities, runtime)" % (p, k))
         bases = md["bases"]
         b = pf.get("base")
         if b is None and pn in md["profiles"]: b = md["profiles"][pn].get("base")
@@ -406,9 +409,28 @@ if prof is not None:
             bad.append("%s.base: required for a profile of your own (%s)" % (p, ", ".join(bases)))
         elif "base" in pf and pf["base"] not in bases:
             bad.append("%s.base: one of %s" % (p, ", ".join(bases))); b = None
-        if "tier" in pf: need(pf["tier"] in tiers_ok, "%s.tier: one of %s" % (p, ", ".join(tiers_ok)))
-        if "model" in pf: need(isinstance(pf["model"], str) and (pf["model"] in aliases or model_ok.fullmatch(pf["model"])), "%s.model: %s" % (p, (", ".join(aliases) + " or " if aliases else "") + like("balanced")))
-        if "effort" in pf: need(pf["effort"] in efforts, "%s.effort: %s" % (p, "|".join(sorted(efforts))))
+        # a profile's tier, model and effort are checked against the runtime the profile runs on: its own `runtime` (the project's own or an enabled
+        # extra one), else the project's providers as before
+        p_ok, p_aliases, p_like, p_tiers, p_effort = model_ok, aliases, like, tiers_ok, None
+        if "runtime" in pf:
+            rt = pf["runtime"]
+            enabled = ([_own_local] if _own_local else []) + [x for x in _extra_local if isinstance(x, str)]
+            if not (isinstance(rt, str) and provider.NAME_RE.match(rt)):
+                bad.append("%s.runtime: a runtime name, the project's own or one enabled for it" % p)
+            elif rt not in enabled:
+                bad.append("%s.runtime: %s is not enabled for this project (qargi provider enable PROJECT --runtime %s)" % (p, rt, rt))
+            else:
+                _d = _runtime(rt, "local")
+                if _d:
+                    _rx = re.compile(_d["model_pattern"])
+                    p_ok, p_aliases, p_tiers, p_effort = _rx, [a for a in _d["aliases"].values() if a], list(_d["tiers"]), _d["effort"]
+                    p_like = lambda tier, _d=_d: "a model id like %s" % _d["tiers"][tier]
+        if "tier" in pf: need(pf["tier"] in p_tiers, "%s.tier: one of %s" % (p, ", ".join(p_tiers)))
+        if "model" in pf: need(isinstance(pf["model"], str) and (pf["model"] in p_aliases or p_ok.fullmatch(pf["model"])), "%s.model: %s" % (p, (", ".join(p_aliases) + " or " if p_aliases else "") + p_like("balanced")))
+        if "effort" in pf:
+            need(pf["effort"] in efforts, "%s.effort: %s" % (p, "|".join(sorted(efforts))))
+            if p_effort is not None and pf["effort"] in efforts and p_effort.get(pf["effort"]) is None:
+                bad.append("%s.effort: %s is not an effort level of the runtime %s" % (p, pf["effort"], pf["runtime"]))
         if "purpose" in pf: need(isinstance(pf["purpose"], str) and len(pf["purpose"]) <= 300, "%s.purpose: a string of at most 300 characters" % p)
         if "abilities" in pf:
             ab = pf["abilities"]

@@ -278,4 +278,60 @@ out=$("$DA" project validate f1 2>&1); rc=$?
   && grep -q "^finding: models.extra_runtimes.local 'fakeinsession' cannot be used: not-command" <<<"$out" && grep -q "^finding: models.extra_runtimes.local 'claude-platform' cannot be used: not-local" <<<"$out" \
   && grep -q "^finding: models.extra_runtimes.local 'draftcx' cannot be used: not-sealed" <<<"$out" && ! grep -q "'fakecx'" <<<"$out"; } && ok "an extra that is unknown, in-session, not local or unsealed is a finding, and a usable one is none" || no "findings: rc=$rc $out"
 
+# --- profiles.NAME.runtime: a profile selects among the runtimes the project enabled, and its model is checked against that runtime
+profproj() { # NAME EXTRAS-JSON PROFILES-JSON
+  mkproj "$1" "$CC" "$2"
+  jq --argjson p "$3" '.profiles = $p' "$T/c/projects/$1.json" > "$T/pp.json" && mv "$T/pp.json" "$T/c/projects/$1.json"
+}
+vcase() { # NAME WANTED-EXIT [GREP]: project validate
+  local out rc
+  out=$("$DA" project validate "$1" 2>&1); rc=$?
+  { [ "$rc" = "$2" ] && { [ -z "${3:-}" ] || grep -q -- "$3" <<<"$out"; }; } && ok "validate $1: exit $2${3:+, $3}" || no "validate $1: rc=$rc (wanted $2) $out"
+}
+CXB='{"codex-build":{"base":"worker","tier":"balanced","effort":"high","runtime":"fakecx","abilities":["build"]},"codex-review":{"base":"reviewer","tier":"deep","effort":"high","runtime":"fakecx"}}'
+profproj pr1 '["fakecx"]' "$CXB"
+vcase pr1 0
+profproj pr2 null "$CXB"
+vcase pr2 1 'profiles.codex-build.runtime: fakecx is not enabled for this project (qargi provider enable PROJECT --runtime fakecx)'
+profproj pr3 '["fakecx"]' '{"codex-build":{"base":"worker","tier":"balanced","model":"gpt-6-luna","runtime":"fakecx","abilities":["build"]}}'
+vcase pr3 0
+profproj pr4 '["fakecx"]' '{"codex-build":{"base":"worker","tier":"balanced","model":"claude-opus-5-5","runtime":"fakecx","abilities":["build"]}}'
+vcase pr4 1 'profiles.codex-build.model: .*a model id like gpt-'
+profproj pr5 '["fakecx"]' '{"claude-build":{"base":"worker","tier":"balanced","model":"gpt-6-luna","abilities":["build"]}}'
+vcase pr5 1 'profiles.claude-build.model'
+profproj pr6 null '{"own":{"base":"worker","tier":"balanced","model":"claude-opus-5-5","runtime":"claude-code","abilities":["build"]}}'
+vcase pr6 0
+profproj pr7 '["fakecx"]' '{"codex-build":{"base":"worker","tier":"ultra","runtime":"fakecx"}}'
+vcase pr7 1 'profiles.codex-build.tier: one of fast, balanced, deep, frontier'
+profproj pr8 '["fakecx"]' '{"codex-build":{"base":"worker","runtime":3}}'
+vcase pr8 1 'profiles.codex-build.runtime: a runtime name'
+profproj pr9 '["fakecx"]' '{"codex-build":{"base":"worker","runtime":"fakeyes"}}'
+vcase pr9 1 'fakeyes is not enabled'
+fake_command_runtime "$SRC" "$TOOL" fakenoeffort '.models.catalog = "noeffort"'
+mkdir -p "$HOME/.fakenoeffort-members"; echo '{}' > "$HOME/.fakenoeffort-members/auth.json"
+jq '.effort.max = null' "$SRC/lib/providers/catalogs/openai.json" | jq '.family = "noeffort"' > "$TOOL/lib/providers/catalogs/noeffort.json"
+profproj pr10 '["fakenoeffort"]' '{"codex-build":{"base":"worker","effort":"max","runtime":"fakenoeffort"}}'
+vcase pr10 1 'effort: max is not an effort level of the runtime fakenoeffort'
+profproj pr11 '["fakenoeffort"]' '{"codex-build":{"base":"worker","effort":"high","runtime":"fakenoeffort"}}'
+vcase pr11 0
+# a project without extras and without a profile runtime: validate is what it was (a second look at the fixture, with its profiles)
+vcase en6 0
+# project set of a profile's runtime: it selects among the enabled runtimes, so it is checked and stored by the plain verb
+profproj pr12 null '{"codexbuild":{"base":"worker","tier":"balanced","effort":"high","abilities":["build"]}}'
+"$DA" project set pr12 profiles.codexbuild.runtime fakecx >"$T/o" 2>&1; rc=$?
+{ [ "$rc" = 1 ] && grep -q 'that would make the project invalid' "$T/o" && [ "$(jq -r '.profiles["codexbuild"].runtime // "none"' "$T/c/projects/pr12.json")" = none ]; } \
+  && ok "project set of a profile's runtime that is not enabled is refused by validate and changes nothing" || no "set not enabled: rc=$rc $(cat "$T/o")"
+out=$(EN pr12 --runtime fakeconf 2>&1); etok=$(tokof_ "$out")
+EN pr12 --runtime fakeconf --plan "$etok" --approved "go" >/dev/null 2>&1
+"$DA" project set pr12 profiles.codexbuild.runtime fakeconf >"$T/o" 2>&1; rc=$?
+{ [ "$rc" = 0 ] && [ "$(jq -r '.profiles["codexbuild"].runtime' "$T/c/projects/pr12.json")" = fakeconf ]; } && ok "and stored once the runtime is enabled" || no "set enabled: rc=$rc $(cat "$T/o")"
+# a runtime a profile names cannot be disabled
+out=$("$DA" provider disable pr12 --runtime fakeconf 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'profile codexbuild of project pr12 names the runtime fakeconf: unset profiles.NAME.runtime first' <<<"$out" && ! grep -q '^plan token' <<<"$out" && [ "$(answers_of pr12)" = '{"local":["fakeconf"]}' ]; } \
+  && ok "disable is refused while a profile names the runtime, with no token" || no "disable with a profile: rc=$rc $out"
+jq 'del(.profiles.codexbuild.runtime)' "$T/c/projects/pr12.json" > "$T/pp.json" && mv "$T/pp.json" "$T/c/projects/pr12.json"   # what project unset does
+out=$("$DA" provider disable pr12 --runtime fakeconf 2>&1); etok=$(tokof_ "$out")
+"$DA" provider disable pr12 --runtime fakeconf --plan "$etok" --approved "ok" >/dev/null 2>&1
+[ "$(answers_of pr12)" = '{"local":[]}' ] && ok "and disabled once it does not" || no "disable after unset: $(answers_of pr12)"
+
 exit $fail

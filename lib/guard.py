@@ -52,7 +52,7 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     --user from another tool moves them all). The guard does not refuse it; the lead's verify of the patches is the backstop);
   - qargi project init (it stores a whole answers file, so it is a way to models.extensions and models.accept_no_barrier, which have gated verbs;
     found like the skill verbs), and qargi project set of any models answer, of release.*, of test_command, of gates, of env.*, of site.* (the commands, environment and site the lead later runs or builds), of packs.* (the opt-out of the render check), of git.* and review.* (the identity and the author rule qargi review apply gives the commits it applies, and the scrub command and trailer policy qargi review check runs), of ci.* and methodology_accepted (the CI jobs left out of the gate comparison, the deviations the lead accepts), of runs.* (the refs that verify and clean accept as a runtime's own) and of
-    roles.<role>.tools, a whole role or roles (the tools env apply installs and local prepare checks out; the other answers stay open). A project verb the guard cannot read is
+    roles.<role>.tools, a whole role or roles (the tools env apply installs and local prepare checks out; the other answers stay open), and of profiles.<name>.runtime, a whole profile or profiles (the runtime a profile's members run on; the other answers of a profile stay open). A project verb the guard cannot read is
     refused: set with a path that is missing or built by xargs, a variable, a substitution, a brace or a glob; and any command with the word project,
     link, unlink, set, unset or init after it and a shell expansion or xargs in the segment (found again inside `sh -c` and `eval` strings with the quotes
     taken off, so a quote or a backslash inside the verb does not hide it). Whatever the verb would have said, it is not read. lib/gated_answers.py, the store behind
@@ -256,6 +256,7 @@ PROJECT_SET_SUBST = re.compile(r"project(?:\.sh)?[\"']*\s+[\"']*set[\"']*\s")   
 AUDIT_SUBST = re.compile(r"packs_audit\.py[\"']*")   # `packs_audit.py ... $(...)`: the substitution may produce `store`, and splitting it off hides that
 UNREADABLE = "$`{}*?[]"                                     # in a word: a variable, a substitution, a brace or a glob builds it, so the guard cannot read what it is
 EXECUTED_ANSWERS = ("release", "test_command", "gates", "env", "upstream", "site", "backlog", "ci", "methodology_accepted", "verify")   # the answers the lead later runs, passes to a process, fetches from or builds from (release site), or decides with (ci.not_gates takes a CI job out of the gate comparison, methodology_accepted a deviation out of the open ones, verify.environment is the environment the lead's whole-suite runs start under and a loosening of it takes the owner's words): a member may not set them (project set)
+PROFILE_RUNTIME_PATH = re.compile(r"profiles|profiles\.[^.]+|profiles\.[^.]+\.runtime(?:\..*)?")   # profiles.<name>.runtime: which runtime a profile's member runs on (it selects among the runtimes the owner approved); a whole profile, or all of them, holds it
 ROLE_TOOLS_PATH = re.compile(r"roles|roles\.[^.]+|roles\.[^.]+\.tools(?:\..*)?")   # roles.<role>.tools: what env apply installs and local prepare checks out; a whole role, or all of them, holds it
 IDENTITY_ANSWERS = ("git", "review")   # git.author (the author review apply gives the applied commits) and review.keep_author (keep the member's instead): the lead's, a member may not set them (project set)
 PROJECT_VERBS = ("set", "unset", "init", "link", "unlink")  # the project verbs a member may not run (set, unset: the answers of the lead; init: the whole file; link, unlink: what a session loads)
@@ -3738,6 +3739,8 @@ def skill_verb_reading(prog, rest, via_xargs, here, exe, at, strip):
             return "qargi project set of %s opts the project out of the packs render check (packs.none) and is not available to an agent: propose the value in your report" % path
         if path in IDENTITY_ANSWERS or path.startswith(tuple(a + "." for a in IDENTITY_ANSWERS)):
             return "qargi project set of %s changes whose name the commits qargi review apply puts on a member's work (git.author, review.keep_author), or the scrub command and trailer policy qargi review check runs on a returned series (review.scrub, review.trailer_policy: the command is the lead's, run with its rights), and is not available to an agent: propose the value in your report" % path
+        if PROFILE_RUNTIME_PATH.fullmatch(path):
+            return "qargi project set of %s changes which runtime the members of a profile run on (profiles.<name>.runtime: another barrier, another sign-in, another executable) and is not available to an agent: propose the answer in your report" % path
         if ROLE_TOOLS_PATH.fullmatch(path):
             return "qargi project set of %s changes the tools the lead later installs and checks out (roles.<role>.tools: go install, a downloaded binary, a submodule) and is not available to an agent: propose the entry in your report" % path
     if area == "provider" and verb == "accept":
