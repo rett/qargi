@@ -18,14 +18,17 @@ and a `next` for a lead and for the owner's own session (`host`). A message and 
                                     (skipped, with a line saying so, when the page is absent), the generated page and the ratchet.
   refusal.py page                   the Markdown page of the catalogue (docs/reference/refusals.md)
   refusal.py sites [--root DIR]     the ratchet file: the unclassified `die` calls of each lib/*.sh
+  refusal.py basis store TOKEN LABELS   reads the plan on standard input, one labelled line per label, into STATE/plans/TOKEN.json
+  refusal.py basis moved OLD NEW        the labels whose lines differ between two stored plans, comma separated; exit 1 when either is unknown
 
-Library use: load, render, check, page_text."""
+The environment names the state directory (QARGI_STATE, else the layout of lib/paths.py). Library use: load, render, check, page_text."""
 import glob
 import hashlib
 import json
 import os
 import re
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -35,6 +38,7 @@ SEAT_PAGE = os.path.join("docs", "reference", "lead-seat.md")
 RATCHET = os.path.join("tests", "refusal-sites.txt")
 CONTRACT = "qargi-refusal/1"
 LINE_MAX = 4096
+PLAN_DAYS = 7                       # a stored plan is kept this long
 
 STATUSES = ("live", "planned", "withdrawn")
 EXITS = (1, 2, 77)                  # a refusal, a guard's deny, a lead refusal of the seat
@@ -185,6 +189,70 @@ def render(cat, code, pairs, notice=False, verb=None, project=None, role=None):
         obj["detail"] = obj["detail"][:max(0, len(obj["detail"]) - 64)]
         line = CONTRACT + " " + json.dumps(obj, separators=(",", ":"))
     return "%s\nqargi: refused [%s] %s\n  why: %s\n  next: %s\n" % (line, code, message, e["why"], nxt), e["exit"]
+
+
+# ---------------------------------------------------------------------------------------------------------------------------- the stored plans
+
+def state_dir():
+    sys.path.insert(0, HERE)
+    import paths
+    return paths.state()
+
+
+def basis_lines(text, labels):
+    """[(label, [lines])] for the plan text: line N takes label N, and the lines after the last label belong to it."""
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    out = [[label, []] for label in labels]
+    for n, line in enumerate(lines):
+        if not out:
+            break
+        out[min(n, len(out) - 1)][1].append(line)
+    return out
+
+
+def basis_store(token, labels, text, state=None):
+    state = state or state_dir()
+    d = os.path.join(state, "plans")
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    os.chmod(d, 0o700)
+    cutoff = time.time() - PLAN_DAYS * 86400
+    for p in glob.glob(os.path.join(d, "*.json")):          # a plan is kept seven days
+        try:
+            if os.path.getmtime(p) < cutoff:
+                os.unlink(p)
+        except OSError:
+            pass
+    rec = {"token": token, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+           "basis": [{"label": label, "lines": lines} for label, lines in basis_lines(text, labels)]}
+    path = os.path.join(d, token + ".json")
+    tmp = path + ".tmp.%d" % os.getpid()
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(rec, f, separators=(",", ":"))
+        f.write("\n")
+    os.replace(tmp, path)
+
+
+def basis_read(token, state=None):
+    if not TOKEN_RE.match(token or ""):
+        return None
+    try:
+        with open(os.path.join(state or state_dir(), "plans", token + ".json"), encoding="utf-8") as f:
+            rec = json.load(f)
+        return {b["label"]: b["lines"] for b in rec["basis"]}
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def basis_moved(old, new, state=None):
+    """The labels whose lines differ between two stored plans, or None when either is not stored."""
+    a, b = basis_read(old, state), basis_read(new, state)
+    if a is None or b is None:
+        return None
+    labels = list(a) + [k for k in b if k not in a]
+    return [k for k in labels if a.get(k) != b.get(k)]
 
 
 # ---------------------------------------------------------------------------------------------------------------------------- the lint
@@ -413,6 +481,12 @@ def page_text(cat):
            "lines only; in `detail` it is a digest of 12 hex digits. A list prints three items and `+N`. The line stays under 4 KiB. `notice`",
            "prints `qargi: note [code] ...` and a `next:` line, with no contract line, and exits 0: the verb did its work and names a rule that",
            "will apply later.", "",
+           "## What moved: the basis of a plan", "",
+           "`plan_token --basis \"LABELS\"` in a plan hashes its input as `plan_token` always has (a token is the same with or without the basis) and",
+           "keeps the labelled lines in `STATE/plans/TOKEN.json` (mode 600, seven days). LABELS are words separated by spaces: line N of the plan is",
+           "labelled with word N, and the lines after the last word belong to it. When `--plan` names a token that is no longer the plan's,",
+           "`plan-stale` says which labels differ between the plan that was shown and the plan now (`moved`), or `unrecorded` when either plan was",
+           "planned without a basis. Nothing is kept in a dry run.", "",
            "## Statuses", "",
            "- `live`: a verb of this build raises the code (or, for the `verify.environment` codes, prints it at the sites the catalogue lists).",
            "- `planned`: written down so that it is reviewed early; no verb raises it yet.",
@@ -496,13 +570,27 @@ def main(argv):
             for path, n in die_sites(root).items():
                 print("%d %s" % (n, path))
             return 0
+        if cmd == "basis" and len(argv) == 4 and argv[1] == "store":
+            if not TOKEN_RE.match(argv[2]):
+                raise Defect("%r is not a plan token" % argv[2])
+            labels = argv[3].split()
+            if not labels or any(not LABEL_RE.match(x) for x in labels):
+                raise Defect("--basis takes labels: lower case words, digits and hyphens, separated by spaces")
+            basis_store(argv[2], labels, sys.stdin.read())
+            return 0
+        if cmd == "basis" and len(argv) == 4 and argv[1] == "moved":
+            moved = basis_moved(argv[2], argv[3])
+            if moved is None:
+                return 1
+            print(",".join(moved))
+            return 0
     except Defect as e:
         sys.stderr.write("qargi: defect: %s\n" % e)
         return 70
     except (OSError, ValueError) as e:
         sys.stderr.write("qargi: defect: refusal.py: %s\n" % e)
         return 70
-    sys.stderr.write("usage: refusal.py refuse|notice [--verb V] [--project P] [--role R] CODE [KEY=VALUE ...] | check [--root DIR] | page | sites [--root DIR]\n")
+    sys.stderr.write("usage: refusal.py refuse|notice [--verb V] [--project P] [--role R] CODE [KEY=VALUE ...] | check [--root DIR] | page | sites [--root DIR] | basis store TOKEN LABELS | basis moved OLD NEW\n")
     return 2
 
 

@@ -20,6 +20,14 @@ lines only; in `detail` it is a digest of 12 hex digits. A list prints three ite
 prints `qargi: note [code] ...` and a `next:` line, with no contract line, and exits 0: the verb did its work and names a rule that
 will apply later.
 
+## What moved: the basis of a plan
+
+`plan_token --basis "LABELS"` in a plan hashes its input as `plan_token` always has (a token is the same with or without the basis) and
+keeps the labelled lines in `STATE/plans/TOKEN.json` (mode 600, seven days). LABELS are words separated by spaces: line N of the plan is
+labelled with word N, and the lines after the last word belong to it. When `--plan` names a token that is no longer the plan's,
+`plan-stale` says which labels differ between the plan that was shown and the plan now (`moved`), or `unrecorded` when either plan was
+planned without a basis. Nothing is kept in a dry run.
+
 ## Statuses
 
 - `live`: a verb of this build raises the code (or, for the `verify.environment` codes, prints it at the sites the catalogue lists).

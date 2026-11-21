@@ -4,7 +4,7 @@ digest for what a lead chose, a list as three and +N, `notice`), the codes a sou
 contract page (skipped, with a line saying so, when the page is absent), the generated page and the ratchet of unclassified `die` calls.
 Offline; a scratch home; no project. Run: python3 tests/test_refusals.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
-import copy, json, os, re, shutil, subprocess, sys, tempfile, unittest
+import hashlib, json, os, re, shutil, subprocess, sys, tempfile, time, unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LIB = os.path.join(ROOT, "lib")
@@ -309,6 +309,101 @@ class TheShellHelpers(unittest.TestCase):
         self.assertEqual((rc, out, err), (0, "after\n", ""))
         rc, out, err = sh('PLAN_ARG=; need_plan_nested 0123456789ab; echo after')
         self.assertEqual((rc, contract(err)["code"]), (1, "plan-missing"))
+
+
+def plans_dir():
+    return os.path.join(os.environ["QARGI_STATE"], "plans")
+
+
+def stored(token):
+    with open(os.path.join(plans_dir(), token + ".json"), encoding="utf-8") as f:
+        return json.load(f)
+
+
+class ThePlanBasis(unittest.TestCase):
+    PLAN = "head abc\nbase def\nfiles a b\n"
+
+    def token(self, text, labels=None, **env):
+        """plan_token (with --basis LABELS when given) on the text: (status, token, standard error)."""
+        script = 'printf "%s" "$PLAN" | plan_token' + (' --basis "$LABELS"' if labels is not None else "")
+        rc, out, err = sh(script, PLAN=text, LABELS=labels or "", **env)
+        return rc, out.strip(), err
+
+    def test_the_token_is_the_same_with_and_without_the_basis(self):
+        plain = hashlib.sha256(b"head abc\nbase def\nfiles a b\n").hexdigest()[:12]
+        self.assertEqual(self.token(self.PLAN), (0, plain, ""))
+        self.assertEqual(self.token(self.PLAN, "head base files"), (0, plain, ""))
+        self.assertEqual(self.token("", "head"), (0, hashlib.sha256(b"").hexdigest()[:12], ""))
+
+    def test_the_labelled_lines_are_kept_in_a_file_of_mode_600_in_a_directory_of_mode_700(self):
+        _, tok, _ = self.token(self.PLAN, "head base files")
+        rec = stored(tok)
+        self.assertEqual(rec["token"], tok)
+        self.assertEqual(rec["basis"], [{"label": "head", "lines": ["head abc"]}, {"label": "base", "lines": ["base def"]}, {"label": "files", "lines": ["files a b"]}])
+        self.assertEqual(os.stat(os.path.join(plans_dir(), tok + ".json")).st_mode & 0o777, 0o600)
+        self.assertEqual(os.stat(plans_dir()).st_mode & 0o777, 0o700)
+
+    def test_the_lines_after_the_last_label_belong_to_it_and_a_surplus_label_has_none(self):
+        self.assertEqual(R.basis_lines("a\nb\nc\nd\n", ["x", "y"]), [["x", ["a"]], ["y", ["b", "c", "d"]]])
+        self.assertEqual(R.basis_lines("a\n", ["x", "y"]), [["x", ["a"]], ["y", []]])
+        self.assertEqual(R.basis_lines("", ["x"]), [["x", []]])
+
+    def test_a_stale_token_names_the_labels_that_moved(self):
+        _, old, _ = self.token("head abc\nbase def\nfiles a b\n", "head base files")
+        _, new, _ = self.token("head abc\nbase f00\nfiles a b c\n", "head base files")
+        self.assertNotEqual(old, new)
+        rc, out, err = sh('PLAN_ARG="$OLD"; verb=push; need_plan "$NEW"', OLD=old, NEW=new)
+        self.assertEqual((rc, out), (1, ""))
+        obj = contract(err)
+        self.assertEqual((obj["code"], obj["verb"]), ("plan-stale", "push"))
+        self.assertEqual(obj["detail"], "moved=base,files token=" + new)
+        self.assertIn("(moved: base, files)", err)
+
+    def test_a_plan_made_without_a_basis_is_unrecorded(self):
+        _, old, _ = self.token("one\n")
+        _, new, _ = self.token("two\n", "line")
+        rc, out, err = sh('PLAN_ARG="$OLD"; need_plan "$NEW"', OLD=old, NEW=new)
+        self.assertEqual(rc, 1)
+        self.assertEqual(contract(err)["detail"], "moved=unrecorded token=" + new)
+        rc, out, err = sh('PLAN_ARG=0123456789ab; need_plan "$NEW"', NEW=new)
+        self.assertEqual(contract(err)["detail"], "moved=unrecorded token=" + new, "a token that was never planned is unrecorded too")
+        rc, out, err = sh('PLAN_ARG="../../x"; need_plan "$NEW"', NEW=new)
+        self.assertEqual((rc, contract(err)["detail"]), (1, "moved=unrecorded token=" + new), "a --plan that is no token reads no file")
+
+    def test_nothing_is_kept_in_a_dry_run(self):
+        rc, tok, err = self.token("a dry plan\n", "line", QARGI_DRY="1")
+        self.assertEqual((rc, err), (0, ""))
+        self.assertEqual(tok, hashlib.sha256(b"a dry plan\n").hexdigest()[:12])
+        self.assertFalse(os.path.exists(os.path.join(plans_dir(), tok + ".json")))
+
+    def test_a_plan_is_kept_seven_days_and_no_longer(self):
+        os.makedirs(plans_dir(), mode=0o700, exist_ok=True)
+        old, fresh, other = (os.path.join(plans_dir(), n) for n in ("aaaaaaaaaaaa.json", "bbbbbbbbbbbb.json", "keep.txt"))
+        for p in (old, fresh, other):
+            with open(p, "w") as f:
+                f.write("{}")
+        long_ago = time.time() - 8 * 86400
+        os.utime(old, (long_ago, long_ago))
+        os.utime(other, (long_ago, long_ago))
+        self.token("prune\n", "line")
+        self.assertFalse(os.path.exists(old))
+        self.assertTrue(os.path.exists(fresh))
+        self.assertTrue(os.path.exists(other), "only plan files are pruned")
+
+    def test_labels_that_are_not_words_are_a_defect_and_a_missing_label_list_a_usage_error(self):
+        rc, out, err = self.token("x\n", "Bad,Label")
+        self.assertEqual(rc, 70)
+        rc, out, err = sh('echo x | plan_token --basis')
+        self.assertEqual(rc, 2)
+        self.assertIn("needs the labels", err)
+        rc, _, err = sh('echo x | plan_token --basis ""')
+        self.assertEqual(rc, 70, err)
+
+    def test_the_stored_plans_are_read_by_token_only(self):
+        self.assertIsNone(R.basis_read("../x"))
+        self.assertIsNone(R.basis_read("0123456789ab"))
+        self.assertIsNone(R.basis_moved("0123456789ab", "ba9876543210"))
+        self.assertEqual(R.basis_moved(self.token("a\n", "x y")[1], self.token("a\n", "x y")[1]), [])
 
 
 class WhatTheSourceRaises(Tree):

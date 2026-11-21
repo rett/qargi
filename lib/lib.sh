@@ -506,13 +506,35 @@ audit_log() { # verb [detail]
 # An approval applies to the plan the user saw: plans print a token (a hash of what
 # would be done) and apply must be given that token. Calls nested inside an approved
 # apply (provisioning seeding its stores) may skip it, through need_plan_nested alone.
-plan_token() { sha256sum | cut -c1-12; }
+# plan_token [--basis "LABELS"]: the token of the plan on standard input (12 hex digits of its sha256). With --basis the labelled lines are also kept in
+# STATE/plans/TOKEN.json (lib/refusal.py; mode 600, seven days; nothing under QARGI_DRY): line N takes the Nth word of LABELS and the lines after the last word
+# belong to it, so a later need_plan can say which labels moved. The token is the same with or without --basis.
+plan_token() {
+  [ "${1:-}" = --basis ] || { sha256sum | cut -c1-12; return; }
+  [ $# -ge 2 ] || usage_die "plan_token --basis needs the labels: one word for each line of the plan"
+  local plan tok rc=0
+  plan=$(mktemp) || fail "plan_token: cannot make a temporary file"
+  cat > "$plan"
+  tok=$(sha256sum < "$plan" | cut -c1-12)
+  if [ -z "${QARGI_DRY:-}" ]; then
+    QARGI_STATE=$DA_STATE python3 -I "$QARGI_TOOL/lib/refusal.py" basis store "$tok" "$2" < "$plan" || rc=$?
+    case $rc in
+      0) ;;
+      70) rm -f "$plan"; exit 70;;
+      *) echo "qargi: note: the basis of the plan could not be kept, so a stale token will not say what moved" >&2;;
+    esac
+  fi
+  rm -f "$plan"
+  printf '%s\n' "$tok"
+}
 need_plan() { # expected-token; the caller's --plan value is $PLAN_ARG; always checked, whatever the environment holds
   [ "${PLAN_ARG:-}" = "$1" ] && return 0
-  local tok=() # the token is shown only when it is one (12 hex digits): a refusal never becomes a defect of the caller for it
+  local tok=() moved # the token is shown only when it is one (12 hex digits): a refusal never becomes a defect of the caller for it
   [[ $1 =~ ^[0-9a-f]{12}$ ]] && tok=("token=$1")
-  [ -n "${PLAN_ARG:-}" ] || refuse plan-missing "${tok[@]}"
-  refuse plan-stale moved=unrecorded "${tok[@]}"
+  [ -n "${PLAN_ARG:-}" ] || refuse plan-missing ${tok[@]+"${tok[@]}"}
+  # the labels whose lines differ between the plan that was shown and this one, when both were planned with plan_token --basis
+  moved=$(QARGI_STATE=$DA_STATE python3 -I "$QARGI_TOOL/lib/refusal.py" basis moved "$PLAN_ARG" "$1" 2>/dev/null) && [ -n "$moved" ] || moved=unrecorded
+  refuse plan-stale "moved=$moved" ${tok[@]+"${tok[@]}"}
 }
 need_plan_nested() { # as need_plan, but a call nested in an approved apply (QARGI_NESTED set) skips the check; canon apply only
   [ -z "${QARGI_NESTED:-}" ] || { NESTED_SKIPPED=1; return 0; }   # the audit line says "nested" only when the check was skipped
