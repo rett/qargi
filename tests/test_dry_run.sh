@@ -269,6 +269,9 @@ c=$(grep -m1 '^qargi-refusal/1 ' <<<"$out")
 dry $F finish fa --dry-run
 [ "$rc" = 1 ] && contract | grep -Eq '"code":"feature-runs-open","exit":1,"verb":"feature finish".*"detail":"dry=1 count=4 runs=sha256:[0-9a-f]{12}"' && grep -q "^plan token: " "$T/do" && grep -q "^invalidated by: " "$T/do" && [ "$(lastline)" = "dry-run: 1 would refuse; nothing was changed" ] && [ "$s0" = "$s1" ] \
   && ok "feature finish --dry-run with runs open: the refusal is listed with dry=1 and the plan goes on to its token, 1 would refuse, exit 1, nothing changed" || no "feature-runs-open dry run: rc=$rc $(cat "$T/do" "$T/de")"
+ft=$(tok < "$T/do"); dry $F finish fa --dry-run --plan "$ft"
+[ "$rc" = 1 ] && contract | grep -Eq '"code":"feature-runs-open".*"detail":"dry=1 count=4 ' && ! grep -q "is the one shown" "$T/do" && grep -q "^not run in a dry run: the finish itself" "$T/do" && [ "$(lastline)" = "dry-run: 1 would refuse; nothing was changed" ] && [ "$s0" = "$s1" ] \
+  && ok "feature finish --dry-run --plan with a refusal counted: it does not say the apply would go on" || no "dry run with the token and a refusal: rc=$rc $(cat "$T/do" "$T/de")"
 # a feature with no passing run and a run open: both are listed, 2 would refuse
 $F start fb >/dev/null 2>&1; task t2 feature/fb; $F merge fb agent/t2 >/dev/null 2>&1; rm5=$(mkrun r5 feature/fb)
 dry $F finish fb --dry-run

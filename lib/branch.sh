@@ -65,7 +65,7 @@ prune_dry_end() {
   [ ! -f "$DA_STATE/plans/$PLAN_ARG.json" ] || cp "$DA_STATE/plans/$PLAN_ARG.json" "$DRYTMP/plans/"
   QARGI_STATE=$DRYTMP python3 -I "$QARGI_TOOL/lib/refusal.py" basis store "$1" "$2" < "$PSF" 2>/dev/null || true
   DA_STATE=$DRYTMP need_plan "$1"
-  echo "the plan $1 is the one shown: the apply of branch prune would go on"
+  [ "$DRYN" != 0 ] || echo "the plan $1 is the one shown: the apply of branch prune would go on"
   echo "not run in a dry run: the deletion of the branches, of the worktrees qargi made and, with --remote, of the branches on origin"
   exit 0
 }
