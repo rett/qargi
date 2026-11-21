@@ -217,7 +217,7 @@ feat_dry_end() {
   QARGI_STATE=$DRYTMP python3 -I "$QARGI_TOOL/lib/refusal.py" basis store "$tok" "$labels" < "$PSF" 2>/dev/null || true
   DA_STATE=$DRYTMP need_plan "$tok"
   [ $# = 0 ] || "$@"
-  echo "the plan $tok is the one shown: the apply of finish would go on"
+  [ "$DRYN" != 0 ] || echo "the plan $tok is the one shown: the apply of finish would go on"
   echo "not run in a dry run: the finish itself (the merge into develop, where a conflict is found when it is made, the push of develop and the deletion of the branches)"
   exit 0
 }
