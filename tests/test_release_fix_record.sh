@@ -184,6 +184,43 @@ out=$($REL push 0.2.0 2>&1); rc=$?
 out=$($REL finish 0.2.0 2>&1); rc=$?
 [ "$rc" = 1 ] && grep -q '"code":"release-fragments-unfolded","exit":1,"verb":"release finish"' <<<"$out" && grep -q "has no CHANGELOG.md" <<<"$out" && ok "and finish refuses it" || no "finish, no changelog: rc=$rc $out"
 
+# --- coverage of the kinds of commit: a merge is judged against its first parent, a deleted file, names with a space and a newline, and a cut record of an older make
+cutup c12 '.release = {changelog: {fragments: "changelog.d"}, version_files: ["pkg/version.txt"]}'
+git -C "$W" checkout -q -b side && cm src/code.go "from the side" "a code change on a side branch" && git -C "$W" checkout -q release/0.2.0
+cm CHANGELOG.md "- a note" "a note on the release branch"; n1=$(head_of release/0.2.0)
+git -C "$W" merge -q --no-ff -m "merge the side branch" side; n2=$(head_of release/0.2.0)
+out=$($REL fix 0.2.0 --record 2>&1)
+grep -q "of these commits; ${n2:0:7} change a path" <<<"$out" && ! grep -q "${n1:0:7}" <<<"$out" \
+  && ok "a merge is judged by its difference from its first parent: the one that brings in a code change is outside, the commit before it is inside" || no "merge outside: $out"
+cutup c13 '.release = {changelog: {fragments: "changelog.d"}, version_files: ["pkg/version.txt"]}'
+git -C "$W" checkout -q -b side && cm changelog.d/side.md "- from the side" "a fragment on a side branch" && git -C "$W" checkout -q release/0.2.0
+cm CHANGELOG.md "- a note" "a note on the release branch"
+git -C "$W" merge -q --no-ff -m "merge the side branch" side
+out=$($REL fix 0.2.0 --record 2>&1)
+grep -q "inside the cut: 2 commits since" <<<"$out" && ok "a merge that brings in only a fragment is inside" || no "merge inside: $out"
+git -C "$W" rm -q pkg/version.txt && git -C "$W" commit -q -m "delete a version file"
+out=$($REL fix 0.2.0 --record 2>&1)
+grep -q "inside the cut: 1 commit since" <<<"$out" && ok "a deleted file of the cut's paths is inside" || no "deleted inside: $out"
+git -C "$W" rm -q docs/guide.md && git -C "$W" commit -q -m "delete a doc"; e1=$(head_of release/0.2.0)
+out=$($REL fix 0.2.0 --record 2>&1)
+grep -q "of these commits; ${e1:0:7} change a path" <<<"$out" && ok "a deleted file outside the cut's paths is outside" || no "deleted outside: $out"
+cutup c14 '.release = {changelog: {fragments: "changelog.d"}}'
+mkdir -p "$W/changelog.d" && echo x > "$W/changelog.d/a b.md" && printf 'x\n' > "$W/changelog.d/a
+b.md" && git -C "$W" add -A && git -C "$W" commit -q -m "fragments with a space and a newline in the name"
+out=$($REL fix 0.2.0 --record 2>&1)
+grep -q "inside the cut: 1 commit since" <<<"$out" && ok "names with a space and with a newline in the fragments directory are inside (the names are NUL separated)" || no "space and newline inside: $out"
+mkdir -p "$W/docs" && printf 'x\n' > "$W/docs/guide
+CHANGELOG.md" && echo x > "$W/docs/a b.md" && git -C "$W" add -A && git -C "$W" commit -q -m "docs with a space and a newline in the name"; s1=$(head_of release/0.2.0)
+out=$($REL fix 0.2.0 --record 2>&1)
+grep -q "of these commits; ${s1:0:7} change a path" <<<"$out" && ok "names with a space and with a newline outside the paths are outside, whatever a line of the name reads" || no "space and newline outside: $out"
+cutup c15
+jq 'del(.fix_paths, .fix_dirs) | .done |= map_values(del(.seq))' "$CR" > "$T/old.json" && mv "$T/old.json" "$CR"
+cm CHANGELOG.md "- a note" "a fold, which an older record does not cover"; o1=$(head_of release/0.2.0)
+out=$($REL fix 0.2.0 --record 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q "of these commits; ${o1:0:7} change a path" <<<"$out" && [ "$(cutget '.done | has("fix")')" = false ] && ok "a cut record with no fix_paths and no seq covers nothing: even a fold of the changelog is outside" || no "old record: rc=$rc $out; $(cat "$CR")"
+out=$($REL push 0.2.0 --plan "$CT" 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q '"code":"cut-fix-outside"' <<<"$out" && [ -z "$(git -C "$O" for-each-ref refs/heads/release/0.2.0)" ] && ok "and push under it is refused: the push takes its own plan" || no "push, old record: rc=$rc $out"
+
 # --- a dry run lists independent refusals: an unfolded fragment and a commit outside the cut's paths
 PRE=$EMPTYCL cutup f4 "$FRAG"; PRE=''
 cm src/code.go "changed" "a code fix"
