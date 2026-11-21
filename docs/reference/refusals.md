@@ -222,8 +222,8 @@ compares them with that page.
 - Exit 2, live.
 - Fields: none.
 - Message: `a member may not run this verb`
-- Next, for a lead: report what you needed in your report; the lead runs the verb
-- Printed at 1 site; `qargi help guard` says what a member's guard refuses.
+- Next, for a lead: report what you need in your task output; the lead, or the owner for a skill, runs the verb
+- Printed at 48 sites; `qargi help guard` says what a member's guard refuses.
 
 ### member-run-record
 
@@ -233,7 +233,7 @@ compares them with that page.
 - Fields: none.
 - Message: `a member may not write this run record`
 - Next, for a lead: write your outputs in OUT and report; the lead's registry records the run
-- Printed at 2 sites; `qargi help guard` says what a member's guard refuses.
+- Printed at 4 sites; `qargi help guard` says what a member's guard refuses.
 
 ## Class plan
 

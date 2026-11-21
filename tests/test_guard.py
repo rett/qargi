@@ -688,6 +688,21 @@ class RefusalCodes(HookCase):
             self.assertEqual(e["next"], {"lead": self.J.m.GUARD_NEXT[code], "host": self.J.m.GUARD_NEXT[code]}, code)
             self.assertTrue(e["sites"], code)
 
+    def test_the_sites_of_a_code_start_with_it_and_list_every_family_of_sentence_that_is_coded_so(self):
+        """The sites of the catalogue are the sentences the guard prints under a code: each starts `[CODE] qargi guard: `, the four run-record refusals are four sites,
+        and the lead's verbs list what skill_verb codes besides the lead's own sentence (a change of a skill, qargi upgrade, a verb a variable builds)."""
+        with open(os.path.join(LIBDIR, "refusals.json"), encoding="utf-8") as f:
+            codes = json.load(f)["codes"]
+        for code, e in codes.items():
+            if e["class"] == "guard":
+                for site in e["sites"]:
+                    self.assertTrue(site["text"].startswith("[%s] qargi guard: " % code), (code, site))
+        self.assertEqual(len(codes["member-run-record"]["sites"]), len({s["text"] for s in codes["member-run-record"]["sites"]}))
+        self.assertGreaterEqual(len(codes["member-run-record"]["sites"]), 4)
+        texts = " ".join(s["text"] for s in codes["member-lead-verb"]["sites"])
+        for words in ("changes a skill", "qargi upgrade", "a verb that a variable or a substitution builds", "is the lead's (it prepares", "qargi marshal"):
+            self.assertIn(words, texts)
+
     def test_a_coded_refusal_keeps_the_kind_of_its_advice(self):
         m = self.J.m
         for kind in (m.MarshalReason, m.OwnReason, m.TextReason, m.MemoryReason):

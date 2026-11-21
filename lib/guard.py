@@ -1547,7 +1547,7 @@ GUARD_NEXT = {                                       # the families of refusal l
     "ro-second-tree": "clone into TMP with git -C TMP clone CLONE x, then work in TMP/x",
     "ro-env-restricted": "pass the path as an argument instead of assigning the variable",
     "member-push": "return patches in OUT; the lead takes them in",
-    "member-lead-verb": "report what you needed in your report; the lead runs the verb",
+    "member-lead-verb": "report what you need in your task output; the lead, or the owner for a skill, runs the verb",
     "member-run-record": "write your outputs in OUT and report; the lead's registry records the run",
 }
 
