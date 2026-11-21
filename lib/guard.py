@@ -236,6 +236,11 @@ is read as the words of STRING. An option the table does not know may take the n
 of a shell is the first word past its options (bash -c -e STRING, -co errexit STRING); when the options cannot be read, every word after -c is read as a command.
 Not seen: a script built by code (python -c ...), a program or a verb held in a variable, the output of a substitution handed to sh -c (`bash -c "$(echo qargi upgrade)"`).
 
+Codes: six families of refusal carry a code of lib/refusals.json (class guard, exit 2), given back as `[CODE] ` before the sentence, which is the sentence it always was, and a
+`  next:` line after it (GUARD_NEXT, the table of the codes and their next steps): ro-write-outside (a read-only run writes only OUT and TMP), ro-second-tree (a clone, an
+init or a worktree made inside the clone), ro-env-restricted (a variable that decides what runs), member-push (a push, or reaching out), member-lead-verb (a qargi verb of the
+lead's) and member-run-record (the run's own record, or the run directory). Every other refusal is the one line `qargi guard: ...`, as before.
+
 Failure: the guard fails closed. Any unexpected exception ends in exit 2 with the reason on stderr. Input that is empty, is not
 valid UTF-8 or is not JSON is refused (exit 2): the call cannot be read. Known limits outside this file: a hook that cannot start, exits other than 0 or 2, times out or prints invalid
 JSON is a non-blocking error for the runtime and the action goes ahead, so agents/member.md sets `onFailure: "block"` and a `timeout` (a runtime that does not
@@ -1537,6 +1542,34 @@ def is_review(run):
     return CLASS == "read-only" or bool(run) and (ability_of(run) == "review" or run_class(run) == "read-only")
 
 
+GUARD_NEXT = {                                       # the families of refusal lib/refusals.json names (class guard): the code and the step the member takes instead; the sentence is the guard's own
+    "ro-write-outside": "write the report in OUT; to test patches make a copy in TMP and work there",
+    "ro-second-tree": "clone into TMP with git -C TMP clone CLONE x, then work in TMP/x",
+    "ro-env-restricted": "pass the path as an argument instead of assigning the variable",
+    "member-push": "return patches in OUT; the lead takes them in",
+    "member-lead-verb": "report what you needed in your report; the lead runs the verb",
+    "member-run-record": "write your outputs in OUT and report; the lead's registry records the run",
+}
+
+
+class Coded(str):
+    """A refusal that belongs to a family of GUARD_NEXT: the sentence as it always was, and its code."""
+    code = None
+
+
+def coded(reason, code):
+    """reason with the code of its family. A kind of refusal that decide_call gives its own advice (MarshalReason and its subclasses) keeps its kind."""
+    out = type(reason)(reason) if isinstance(reason, MarshalReason) else Coded(reason)
+    out.code = code
+    return out
+
+
+def framed(why, text):
+    """The text of a refusal as the hook gives it back: for a refusal with a code `[CODE] ` before the sentence and a `next:` line after it; any other as it is."""
+    code = getattr(why, "code", None)
+    return text if code is None else "[%s] %s\n  next: %s" % (code, text, GUARD_NEXT[code])
+
+
 NO_RUN = ("under the read-only class nothing is written or changed here: no run directory (the place of OUT and of the clone) is found from this directory, "
           "so no write can be shown to be the report; run from the clone")
 
@@ -1550,7 +1583,7 @@ def control_refusal(full):
     (tmpdir: `local clean` takes the one to remove from the lead's registry, never from this file), the repository and the tip it asks whether the work is
     merged (repo.path, applied), the credential path, the git wrapper."""
     if os.path.basename(full) in RUN_CONTROL and run_dir(os.path.dirname(full)) == os.path.dirname(full):
-        return "%s is the run's own record (the coordinator wrote it); a member does not change it" % full
+        return coded("%s is the run's own record (the coordinator wrote it); a member does not change it" % full, "member-run-record")
     return None
 
 
@@ -1562,7 +1595,7 @@ def run_dir_refusal(full):
     and nothing else; OUT, the clone and TMP are the member's."""
     run = run_dir(full if os.path.isdir(full) else os.path.dirname(full))
     if run and full == run:
-        return "%s is the run directory: a copy, an extraction, a link or a move into it can make any file of the run's record; name the files in out/ or the clone" % full
+        return coded("%s is the run directory: a copy, an extraction, a link or a move into it can make any file of the run's record; name the files in out/ or the clone" % full, "member-run-record")
     return None
 
 
@@ -1615,7 +1648,7 @@ def run_refusal(full, here):
     """The reason a command that removes or moves the path full takes the run directory (or a directory above it) away, with the record in it, or None."""
     run = run_dir(here)
     if run and inside(run, full):
-        return "%s is the run directory (or holds it): its record and its clone are not for a member to remove or move" % full
+        return coded("%s is the run directory (or holds it): its record and its clone are not for a member to remove or move" % full, "member-run-record")
     return None
 
 
@@ -2074,6 +2107,7 @@ def lists_tags(args):
 
 class MarshalReason(str):
     """A refusal about the marshal: decide() ends it with the marshal's advice instead of the skills'."""
+    code = None                                      # the family of GUARD_NEXT it belongs to, if any (coded)
 
 
 class OwnReason(MarshalReason):
@@ -2166,8 +2200,8 @@ def unreadable_target(what, dest, here):
         else:
             hit = []
         if hit:
-            return OwnReason("%s on %s could name %s, a record of the run (the coordinator wrote it), through a glob, a variable or a substitution the guard cannot read; "
-                             "write the path out" % (what, dest, hit[0]))
+            return coded(OwnReason("%s on %s could name %s, a record of the run (the coordinator wrote it), through a glob, a variable or a substitution the guard cannot read; "
+                                   "write the path out" % (what, dest, hit[0])), "member-run-record")
     return None
 
 
@@ -2209,9 +2243,9 @@ def review_refusal(call):
             return why
         run = run_dir(os.path.dirname(full)) or run_dir(cwd) or tmp_run(full)
         if CLASS == "read-only" and not run:
-            return OwnReason(NO_RUN)
+            return coded(OwnReason(NO_RUN), "ro-write-outside")
         if run and is_review(run) and not member_space(full, run):
-            return "under the read-only class only the report and the manifest in OUT, and the temporary directory (TMP), may be written (%s is not)" % fp
+            return coded("under the read-only class only the report and the manifest in OUT, and the temporary directory (TMP), may be written (%s is not)" % fp, "ro-write-outside")
         return None
     if call.kind != "shell":
         return None
@@ -2249,7 +2283,7 @@ def review_segment(toks, i, here, text=""):
     if reading(run_dir(here)):                               # what a read-only tool runs or reads its options from is not set by a member
         bad = next((n for n in env_names(toks, i) if restricted_name(n)), None)
         if bad:
-            return OwnReason(RESTRICTED_MSG % (bad, bad))
+            return coded(OwnReason(RESTRICTED_MSG % (bad, bad)), "ro-env-restricted")
     ro = reading(run_dir(here))
     src_last = None                                          # cp -t DIR SRC: write_targets names SRC too (as it always did); it is read, not written
     if prog in COPIERS and prog != "rsync" and any(cluster_value(toks[i + 1:], n, "t") is not None or toks[i + 1 + n].startswith("--target-directory") for n in range(len(toks) - i - 1)):
@@ -2261,21 +2295,23 @@ def review_segment(toks, i, here, text=""):
             if why:
                 return why
             if ro and not DEVICE.match(dest) and UNKNOWN.search(expand_path(dest) if what in ("git clone", "git init") else expand_path(dest).rpartition("/")[0]):   # a clone or an init makes the whole name: its last word too
-                return OwnReason("under the read-only class %s writes through a directory name that a variable, a substitution or a glob builds (%s), which the guard cannot read "
-                                 "to tell the clone from OUT; write the path out" % (what, dest))
+                return coded(OwnReason("under the read-only class %s writes through a directory name that a variable, a substitution or a glob builds (%s), which the guard cannot read "
+                                       "to tell the clone from OUT; write the path out" % (what, dest)), "ro-write-outside")
             full = resolve(here, dest)
             why = control_refusal(full) or (None if what == "git config" and dest == "." else run_dir_refusal(full))     # git config --list in the run directory reads: its "." is where it was run
             if why:
                 return why
             run = run_dir(full if os.path.isdir(full) else os.path.dirname(full)) or run_dir(here) or tmp_run(full)
             if CLASS == "read-only" and not run:
-                return OwnReason(NO_RUN)
+                return coded(OwnReason(NO_RUN), "ro-write-outside")
             if what.split()[0] in DESTRUCTIVE:
                 why = run_refusal(full, here)
                 if why and not (what == "mv" and fits_beside(move_places(toks[i + 1:]), dest, full, here, lambda p: run_refusal(p, here))):
                     return why
             if run and reading(run) and not DEVICE.match(dest) and not member_space(full, run) and braced != src_last:
-                return "under the read-only class only OUT and the temporary directory (TMP) are written: nothing in the clone or anywhere else may be changed (%s into %s)" % (what, dest)
+                second = what in ("git clone", "git init", "git worktree") and inside(full, os.path.join(os.path.realpath(run), "clone"))      # a second tree made in the clone
+                return coded("under the read-only class only OUT and the temporary directory (TMP) are written: nothing in the clone or anywhere else may be changed (%s into %s)"
+                             % (what, dest), "ro-second-tree" if second else "ro-write-outside")
     if prog in TOUCHERS or prog == "find":                    # the sources of cp, mv and ln, and every file a command takes away, are the run's record too
         rest = toks[i + 1:]
         files = operands(rest, any(os.path.basename(t) == "xargs" for t in toks[:i])) + [t[3:] for t in rest if t.startswith(("if=", "of="))]
@@ -3528,11 +3564,9 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
     (a quoted '>' that reads as a redirection is an argument) and without the redirections (the shell takes them out, so a redirection written after
     the program or the area word hides no verb); the command is refused when either reading is a refused one."""
     why = skill_verb_reading(prog, rest, via_xargs, here, exe, None, False)
-    if why:
-        return why
-    if any(is_redirection(t) and not quoted_string(t) for t in rest):
-        return skill_verb_reading(prog, rest, via_xargs, here, exe, None, True)
-    return None
+    if not why and any(is_redirection(t) and not quoted_string(t) for t in rest):
+        why = skill_verb_reading(prog, rest, via_xargs, here, exe, None, True)
+    return coded(why, "member-lead-verb") if why else None
 
 
 def skill_verb_reading(prog, rest, via_xargs, here, exe, at, strip):
@@ -4240,17 +4274,17 @@ def decide_call(call):
     hint = TEXT_HINT if call.kind == "shell" and QUOTED.search(call.command or "") else ""
     why = blocked(call.command) if call.kind == "shell" else None
     if why:
-        return "qargi guard: %s. Agents never push; return patches instead.%s" % (why, hint)
+        return framed(coded(why, "member-push"), "qargi guard: %s. Agents never push; return patches instead.%s" % (why, hint))
     why = skill_refusal(call)
     if isinstance(why, MarshalReason):
-        return "qargi guard: %s.%s" % (why, hint if type(why) in (MarshalReason, TextReason) else "")
+        return framed(why, "qargi guard: %s.%s" % (why, hint if type(why) in (MarshalReason, TextReason) else ""))
     if why:
-        return ("qargi guard: %s. Only a person, through qargi's own skills, changes a skill; propose the change in your report.%s" % (why, hint))
+        return framed(why, "qargi guard: %s. Only a person, through qargi's own skills, changes a skill; propose the change in your report.%s" % (why, hint))
     why = review_refusal(call)
     if isinstance(why, MarshalReason):
-        return "qargi guard: %s." % why
+        return framed(why, "qargi guard: %s." % why)
     if why:
-        return "qargi guard: %s. A review reads the work and writes its report to OUT." % why
+        return framed(why, "qargi guard: %s. A review reads the work and writes its report to OUT." % why)
     return None
 
 

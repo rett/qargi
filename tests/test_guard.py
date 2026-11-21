@@ -2,12 +2,26 @@
 """qargi __guard: the PreToolUse hook that keeps a local agent's Bash from publishing."""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 # hermetic: allow-file tmp,lock (the commands and paths the guard judges are text; the fixtures make their own directories)
-import collections, contextlib, importlib.util, io, json, multiprocessing, os, random, shutil, subprocess, sys, tarfile, tempfile, time, traceback, unittest
+import collections, contextlib, importlib.util, io, json, multiprocessing, os, random, re, shutil, subprocess, sys, tarfile, tempfile, time, traceback, unittest
 
 BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bin", "qargi")
 LIBDIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib")
 
 Verdict = collections.namedtuple("Verdict", "returncode stdout stderr")      # what a hook process ends with: the exit status and the two streams
+CODE = r"\[[a-z]+(?:-[a-z]+)+\] "                                                # the code of a family of refusals (class guard of lib/refusals.json), before the sentence
+GUARD_START = re.compile("(?:" + CODE + ")?qargi guard: ")
+GUARD_SHAPE = re.compile("qargi guard: [^\n]*|" + CODE + "qargi guard: [^\n]*\n  next: [^\n]*")
+
+
+def guard_starts(text):
+    """True when text starts as a refusal of the guard does: `qargi guard: `, with `[CODE] ` before it for a family that has a code."""
+    return GUARD_START.match(text) is not None
+
+
+def guard_shaped(text):
+    """True when text is one refusal of the guard as it is given back: one line from `qargi guard: `, or for a family that has a code `[CODE] ` before that line and a
+    `  next:` line after it (nothing else); a final newline is allowed."""
+    return GUARD_SHAPE.fullmatch(text[:-1] if text.endswith("\n") else text) is not None
 
 
 class _Judge:
@@ -555,6 +569,111 @@ class Review(HookCase):
         self.assertEqual(self.call("Edit", {"file_path": os.path.join(self.t, "f")}, cwd=self.t).returncode, 0)
         self.assertEqual(self.call("Bash", {"command": "echo x > f"}, cwd=self.t).returncode, 0)
         self.assertEqual(self.call("Bash", {"command": "git push"}, cwd=self.t).returncode, 2)
+
+
+class RefusalCodes(HookCase):
+    """Six families of the guard's refusals carry a code of lib/refusals.json (class guard): `[CODE] ` before the sentence, which is the sentence it always was, and a
+    `  next:` line after it from the table GUARD_NEXT. Every other refusal is one line without a code."""
+    setUp, tearDown, ability, call = Review.setUp, Review.tearDown, Review.ability, Review.call
+
+    def lines(self, r):
+        """The two lines of a coded refusal on standard error: the line with the code and the next line."""
+        self.assertEqual((r.returncode, r.stdout), (2, ""), r)
+        first, nxt = r.stderr.rstrip("\n").split("\n")
+        return first, nxt
+
+    def check(self, code, r, words, where):
+        first, nxt = self.lines(r)
+        self.assertTrue(first.startswith("[%s] qargi guard: " % code), (where, first))
+        self.assertIn(words, first, where)
+        self.assertEqual(nxt, "  next: " + self.J.m.GUARD_NEXT[code], where)
+
+    def test_each_family_has_its_code_its_sentence_and_its_next_line(self):
+        self.ability("review")
+        c, o, tmp = self.clone, self.out, os.path.join(self.run, "tmp")
+        os.makedirs(tmp)
+        cases = (
+            ("ro-write-outside", "Write", {"file_path": os.path.join(c, "src/a.go")}, c, "may be written"),
+            ("ro-write-outside", "Edit", {"file_path": os.path.join(self.t, "elsewhere.txt")}, c, "only the report and the manifest in OUT"),
+            ("ro-write-outside", "Bash", {"command": "echo x > src/a.go"}, c, "only OUT and the temporary directory (TMP) are written"),
+            ("ro-write-outside", "Bash", {"command": "cp /etc/hostname src/"}, c, "(cp into src/)"),
+            ("ro-write-outside", "Bash", {"command": "git clone %s %s" % (tmp, self.t)}, c, "(git clone into %s)" % self.t),
+            ("ro-write-outside", "Bash", {"command": "echo x > $d/f"}, c, "a directory name that a variable, a substitution or a glob builds"),
+            ("ro-second-tree", "Bash", {"command": "git -C %s init sub" % c}, tmp, "nothing in the clone or anywhere else may be changed"),
+            ("ro-second-tree", "Bash", {"command": "git -C %s -C ../clone init z" % tmp}, c, "(git init into"),
+            ("ro-second-tree", "Bash", {"command": "git clone %s x" % tmp}, c, "(git clone into x)"),
+            ("ro-second-tree", "Bash", {"command": "git worktree add %s/w" % tmp}, c, "(git worktree into .)"),
+            ("ro-second-tree", "Bash", {"command": "git clone %s" % tmp}, c, "(git clone into .)"),
+            ("ro-env-restricted", "Bash", {"command": "PATH=/x ls"}, c, "under the read-only class PATH may not be assigned"),
+            ("ro-env-restricted", "Bash", {"command": "export GIT_DIR=x"}, c, "GIT_DIR may not be assigned"),
+            ("ro-env-restricted", "Bash", {"command": "env HOME=/x git log"}, c, "HOME may not be assigned"),
+            ("member-push", "Bash", {"command": "git push origin main"}, c, "git push is not available to an agent. Agents never push; return patches instead."),
+            ("member-push", "Bash", {"command": "cd src && gh pr list"}, c, "gh is not available to an agent"),
+            ("member-push", "Monitor", {"command": "git push"}, c, "Agents never push"),
+            ("member-lead-verb", "Bash", {"command": "qargi local clean x --discard"}, c, "qargi local clean is the lead's"),
+            ("member-lead-verb", "Bash", {"command": "qargi marshal key"}, c, "manages the marshal's signing key"),
+            ("member-lead-verb", "Bash", {"command": "qargi skill new x"}, c, "changes a skill and is not available to an agent"),
+            ("member-lead-verb", "Bash", {"command": "bash -c 'qargi project set p gates x'"}, c, "changes a command or an environment the lead later runs"),
+            ("member-run-record", "Write", {"file_path": os.path.join(self.run, "ability")}, o, "is the run's own record"),
+            ("member-run-record", "Bash", {"command": "printf x > %s/ability" % self.run}, c, "is the run's own record"),
+            ("member-run-record", "Bash", {"command": "rm -rf %s" % self.run}, c, "is the run directory: a copy, an extraction"),
+            ("member-run-record", "Bash", {"command": "rm -rf %s" % self.t}, c, "(or holds it): its record and its clone are not for a member to remove or move"),
+            ("member-run-record", "Bash", {"command": "cp x %s" % self.run}, c, "is the run directory"),
+            ("member-run-record", "Bash", {"command": "echo x > %s/abilit?" % self.run}, c, "could name ability, a record of the run"),
+        )
+        for code, tool, inp, cwd, words in cases:                                  # by the run's ability file
+            self.check(code, self.call(tool, inp, cwd), words, (code, tool, inp, cwd))
+        self.ability("build")
+        for code, tool, inp, cwd, words in cases:                                  # by the class of the hook, whatever the run file says
+            self.check(code, self.call(tool, inp, cwd, "--class", "read-only"), words, (code, tool, inp, cwd))
+        for code, tool, inp, cwd, words in cases:                                  # a member of any class is refused its pushes, the lead's verbs and the run's record, and keeps the code
+            if code.startswith("member-"):
+                self.check(code, self.call(tool, inp, cwd), words, (code, tool, inp, cwd))
+        r = self.call("Write", {"file_path": os.path.join(self.t, "a.go")}, self.t, "--class", "read-only")    # no run directory is found
+        self.check("ro-write-outside", r, "no run directory", "no run")
+
+    def test_the_sentence_is_what_it_was_with_the_code_and_the_next_line_around_it(self):
+        self.ability("review")
+        raw = self.J.judge("git push", "")
+        self.assertEqual(raw, "[member-push] qargi guard: git push is not available to an agent. Agents never push; return patches instead.\n  next: " + self.J.m.GUARD_NEXT["member-push"])
+        r = self.call("Bash", {"command": "echo 'x'; git push"})                         # the advice about text follows the sentence, before the next line
+        first, nxt = self.lines(r)
+        self.assertIn("Agents never push; return patches instead. The guard cuts a command at every", first)
+        self.assertEqual(nxt, "  next: " + self.J.m.GUARD_NEXT["member-push"])
+
+    def test_a_refusal_of_no_family_is_one_line_with_no_code(self):
+        self.ability("review")
+        for tool, inp, cls in (("Bash", {"command": "export QARGI_LEAD=x"}, ()), ("Bash", {"command": "echo x\0y"}, ()), ("Bash", {"command": "ls"}, ("--class", "root")),
+                               ("Bash", {"command": "export QARGI_NESTED=1"}, ()), ("mcp__x__y", {}, ())):
+            r = self.call(tool, inp, None, *cls)
+            self.assertEqual(r.returncode, 2, (tool, inp, r))
+            self.assertEqual(r.stderr.count("\n"), 1, (tool, inp, r.stderr))
+            self.assertTrue(r.stderr.startswith("qargi guard: "), (tool, inp, r.stderr))
+        for payload in ("", "not json", b"\xff\xfe"):
+            r = self.hook([], payload)
+            self.assertTrue(r.stderr.startswith("qargi guard: ") and r.stderr.count("\n") == 1, r)
+
+    def test_the_table_is_the_catalogue_of_the_guard_class(self):
+        """One table in guard.py and one catalogue: the six codes of class guard, live, exit 2, with the next step the table gives."""
+        with open(os.path.join(LIBDIR, "refusals.json"), encoding="utf-8") as f:
+            codes = json.load(f)["codes"]
+        guard = {k: v for k, v in codes.items() if v["class"] == "guard"}
+        self.assertEqual(sorted(guard), sorted(self.J.m.GUARD_NEXT))
+        self.assertEqual(sorted(guard), sorted(["ro-write-outside", "ro-second-tree", "ro-env-restricted", "member-push", "member-lead-verb", "member-run-record"]))
+        for code, e in guard.items():
+            self.assertEqual((e["exit"], e["status"], e["fields"]), (2, "live", {}), code)
+            self.assertEqual(e["next"], {"lead": self.J.m.GUARD_NEXT[code], "host": self.J.m.GUARD_NEXT[code]}, code)
+            self.assertTrue(e["sites"], code)
+
+    def test_a_coded_refusal_keeps_the_kind_of_its_advice(self):
+        m = self.J.m
+        for kind in (m.MarshalReason, m.OwnReason, m.TextReason, m.MemoryReason):
+            out = m.coded(kind("x"), "member-lead-verb")
+            self.assertEqual((type(out), str(out), out.code), (kind, "x", "member-lead-verb"))
+        out = m.coded("y", "member-push")
+        self.assertEqual((type(out), str(out), out.code), (m.Coded, "y", "member-push"))
+        self.assertEqual(m.framed("plain", "qargi guard: plain."), "qargi guard: plain.")
+        self.assertEqual(m.framed(m.OwnReason("o"), "qargi guard: o."), "qargi guard: o.")
 
 
 class Skills(HookCase):
@@ -1144,7 +1263,7 @@ class Skills(HookCase):
                     self.assertEqual(self.bash(form % v).returncode, 2, form % v)
                     r = self.bash(c)
                     self.assertEqual(r.returncode, 2, c)
-                    self.assertTrue(r.stderr.startswith("qargi guard:"), c)
+                    self.assertTrue(guard_starts(r.stderr), c)
         for c in ("qargi packs seed --json", "qargi packs --json seed"):
             self.assertIn("changes a skill and is not available to an agent", self.bash(c).stderr, c)
         for c in ("qargi skill list --json", "qargi env show --json", "qargi agent models --json", "qargi feature status --json", "qargi help approvals",
@@ -2561,7 +2680,7 @@ class ProviderHook(HookCase):
         doc = json.loads(r.stdout)
         self.assertEqual(doc["decision"], "deny")
         self.assertEqual(doc["detail"], [doc["reason"], {"again": "x%sy" % doc["reason"]}])
-        self.assertTrue(doc["reason"].startswith("qargi guard: "), doc)
+        self.assertTrue(guard_starts(doc["reason"]), doc)
         return doc["reason"]
 
     def test_a_json_deny_on_standard_output_with_exit_0(self):
@@ -2608,7 +2727,7 @@ class ProviderHook(HookCase):
         r = self.cli("put", {"dest": lib})
         self.assertEqual((r.returncode, r.stderr), (3, ""))
         self.assertIn("a protected location", r.stdout)
-        self.assertTrue(r.stdout.startswith("qargi guard: ") and r.stdout.endswith("\n"), r.stdout)
+        self.assertTrue(guard_starts(r.stdout) and r.stdout.endswith("\n"), r.stdout)
         r = self.cli("sh", {"command": "git push"})
         self.assertEqual((r.returncode, r.stderr), (3, ""))
         self.assertIn("Agents never push", r.stdout)
@@ -2634,7 +2753,7 @@ class ProviderHook(HookCase):
     def refused_before_judging(self, args, *words):
         r = self.run_guard(args, {"event": {"tool": "run_shell", "args": {"cmd": "ls"}}})
         self.assertEqual((r.returncode, r.stdout), (2, ""), r)
-        self.assertTrue(r.stderr.startswith("qargi guard: "), r.stderr)
+        self.assertTrue(guard_starts(r.stderr), r.stderr)
         for w in words:
             self.assertIn(w, r.stderr)
 
@@ -6167,10 +6286,10 @@ class SubprocessContract(unittest.TestCase):
         return Verdict(r.returncode, r.stdout.decode("utf-8", "replace"), r.stderr.decode("utf-8", "replace"))
 
     def refusal(self, r, where, text):
-        """A refusal is one line on the stream it belongs to, starting with the guard's name, and nothing on the other."""
+        """A refusal is one line on the stream it belongs to, starting with the guard's name (and for a family with a code, the code before it and a next line after it), and nothing on the other."""
         self.assertEqual(r.returncode, 2, (where, text, r))
         self.assertEqual(r.stdout, "", (where, text, r))
-        self.assertTrue(r.stderr.startswith("qargi guard: ") and r.stderr.endswith("\n") and r.stderr.count("\n") == 1, (where, text, r))
+        self.assertTrue(guard_shaped(r.stderr) and r.stderr.endswith("\n"), (where, text, r))
         self.assertIn(text, r.stderr, where)
 
     def test_an_allowed_call_is_exit_0_and_silence_on_both_streams(self):
@@ -6209,7 +6328,7 @@ class SubprocessContract(unittest.TestCase):
         self.assertEqual(md("ls"), Verdict(0, "", ""))
         r = cli("git push")                                    # a line on stdout, exit 3
         self.assertEqual((r.returncode, r.stderr), (3, ""), r)
-        self.assertTrue(r.stdout.startswith("qargi guard: ") and r.stdout.count("\n") == 1, r)
+        self.assertTrue(guard_shaped(r.stdout) and r.stdout.endswith("\n"), r)
         self.assertEqual(cli("ls"), Verdict(0, "", ""))
 
     def test_input_the_guard_cannot_read_is_refused(self):
