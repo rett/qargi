@@ -474,10 +474,10 @@ _refusal() { # refuse|notice CODE key=value...
   local mode=$1; shift
   python3 -I "$QARGI_TOOL/lib/refusal.py" "$mode" --verb "${QARGI_VERB:-${verb:-}}" --project "${PROJECT:-}" --role "${QARGI_ROLE:-}" "$@"
 }
-# dry_stop HELPER: a dry run (QARGI_DRY set, as `--dry-run` sets it) changes nothing, so a helper that writes calls this first: reached in a dry run it is a
+# dry_stop HELPER: a dry run (QARGI_DRY=1, as `--dry-run` sets it; unset, empty and 0 are a normal run) changes nothing, so a helper that writes calls this first: reached in a dry run it is a
 # defect of the verb, not a refusal, and exits 70 naming the helper, before it takes a lock or makes a file. Outside a dry run it returns at once.
 dry_stop() {
-  [ -z "${QARGI_DRY:-}" ] || { echo "qargi: defect: $1 was reached in a dry run (QARGI_DRY is set): a dry run changes nothing, so this path must not write" >&2; exit 70; }
+  [ "${QARGI_DRY:-}" != 1 ] || { echo "qargi: defect: $1 was reached in a dry run (QARGI_DRY is set): a dry run changes nothing, so this path must not write" >&2; exit 70; }
 }
 usage_die() { echo "qargi: $*" >&2; exit 2; }   # a usage error (unknown option, missing argument, a usage line): exit 2, as the manual page promises
 need_val() { # OPTION "$#" -> exit 2 when a valued option is the last word: call it first in each valued branch of an option loop
@@ -513,7 +513,7 @@ audit_log() { # verb [detail]
 # would be done) and apply must be given that token. Calls nested inside an approved
 # apply (provisioning seeding its stores) may skip it, through need_plan_nested alone.
 # plan_token [--basis "LABELS"]: the token of the plan on standard input (12 hex digits of its sha256). With --basis the labelled lines are also kept in
-# STATE/plans/TOKEN.json (lib/refusal.py; mode 600, seven days; nothing under QARGI_DRY): line N takes the Nth word of LABELS and the lines after the last word
+# STATE/plans/TOKEN.json (lib/refusal.py; mode 600, seven days; nothing under QARGI_DRY=1): line N takes the Nth word of LABELS and the lines after the last word
 # belong to it, so a later need_plan can say which labels moved. The token is the same with or without --basis.
 plan_token() {
   [ "${1:-}" = --basis ] || { sha256sum | cut -c1-12; return; }
@@ -522,7 +522,7 @@ plan_token() {
   plan=$(mktemp) || fail "plan_token: cannot make a temporary file"
   cat > "$plan"
   tok=$(sha256sum < "$plan" | cut -c1-12)
-  if [ -z "${QARGI_DRY:-}" ]; then
+  if [ "${QARGI_DRY:-}" != 1 ]; then
     QARGI_STATE=$DA_STATE python3 -I "$QARGI_TOOL/lib/refusal.py" basis store "$tok" "$2" < "$plan" || rc=$?
     case $rc in
       0) ;;

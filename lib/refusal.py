@@ -73,7 +73,7 @@ def split_type(spec):
     kind, _, arg = spec.partition(":")
     if kind == "enum":
         words = arg.split(",")
-        if not arg or any(not LABEL_RE.match(w) for w in words) or len(set(words)) != len(words):
+        if not arg or any(not LABEL_RE.fullmatch(w) for w in words) or len(set(words)) != len(words):
             raise ValueError("an enum lists its words: enum:a,b")
         return kind, words
     if arg or kind not in ("verb", "label", "label-list", "count", "token", "sha", "sha-list") + LEAD_CHOSEN:
@@ -95,19 +95,19 @@ def value_problem(spec, value):
     if kind == "enum":
         return None if value in words else "%r is not one of %s" % (value, ", ".join(words))
     if kind == "verb":
-        return None if len(value) <= 80 and VERB_RE.match(value) else "%r is not a verb" % value
+        return None if len(value) <= 80 and VERB_RE.fullmatch(value) else "%r is not a verb" % value
     if kind in ("label", "label-list"):
         for item in (items_of(value) if kind == "label-list" else [value]):
-            if not LABEL_RE.match(item):
+            if not LABEL_RE.fullmatch(item):
                 return "%r is not a label (lower case, digits and hyphens)" % item
         return None
     if kind == "count":
-        return None if re.match(r"^[0-9]{1,9}$", value) else "%r is not a count" % value
+        return None if re.fullmatch(r"[0-9]{1,9}", value) else "%r is not a count" % value
     if kind == "token":
-        return None if TOKEN_RE.match(value) else "%r is not a plan token (12 hex digits)" % value
+        return None if TOKEN_RE.fullmatch(value) else "%r is not a plan token (12 hex digits)" % value
     if kind in ("sha", "sha-list"):
         for item in (items_of(value) if kind == "sha-list" else [value]):
-            if not SHA_RE.match(item):
+            if not SHA_RE.fullmatch(item):
                 return "%r is not an abbreviated commit id" % item
         return None
     for item in (items_of(value) if kind.endswith("-list") else [value]):
@@ -180,10 +180,10 @@ def render(cat, code, pairs, notice=False, verb=None, project=None, role=None):
     nxt = fill(e["next"][who], fields, values, fields)
     if notice:
         return "qargi: note [%s] %s\n  next: %s\n" % (code, message, nxt), 0
-    verb = values.get("verb") or (verb if verb and len(verb) <= 80 and VERB_RE.match(verb) else None)   # the caller's default is an environment value: not a verb is no verb
+    verb = values.get("verb") or (verb if verb and len(verb) <= 80 and VERB_RE.fullmatch(verb) else None)   # the caller's default is an environment value: not a verb is no verb
     detail = " ".join("%s=%s" % (k, detail_value(fields[k], values[k])) for k in fields if k in values and k != "verb")
-    obj = {"code": code, "exit": e["exit"], "verb": verb, "project": project if project and PROJECT_RE.match(project) else None,
-           "role": role if role and ROLE_RE.match(role) else None, "epoch": None, "state": None, "tx": None, "detail": detail}
+    obj = {"code": code, "exit": e["exit"], "verb": verb, "project": project if project and PROJECT_RE.fullmatch(project) else None,
+           "role": role if role and ROLE_RE.fullmatch(role) else None, "epoch": None, "state": None, "tx": None, "detail": detail}
     line = CONTRACT + " " + json.dumps(obj, separators=(",", ":"))
     while len(line.encode("utf-8")) >= LINE_MAX and obj["detail"]:
         obj["detail"] = obj["detail"][:max(0, len(obj["detail"]) - 64)]
@@ -236,12 +236,18 @@ def basis_store(token, labels, text, state=None):
 
 
 def basis_read(token, state=None):
-    if not TOKEN_RE.match(token or ""):
+    if not TOKEN_RE.fullmatch(token or ""):
         return None
     try:
         with open(os.path.join(state or state_dir(), "plans", token + ".json"), encoding="utf-8") as f:
             rec = json.load(f)
-        return {b["label"]: b["lines"] for b in rec["basis"]}
+        out = {}
+        for b in rec["basis"]:
+            label, lines = b["label"], b["lines"]
+            if not (isinstance(label, str) and LABEL_RE.fullmatch(label) and isinstance(lines, list) and all(isinstance(x, str) for x in lines)):
+                return None             # a damaged or hand-edited file is no record: the caller says "unrecorded"
+            out[label] = lines
+        return out
     except (OSError, ValueError, KeyError, TypeError):
         return None
 
@@ -321,7 +327,7 @@ def check_catalogue(cat):
     for code, e in cat["codes"].items():
         def bad(msg):
             problems.append("%s: %s" % (code, msg))
-        if not CODE_RE.match(code):
+        if not CODE_RE.fullmatch(code):
             bad("a code is kebab-case")
         if not isinstance(e, dict):
             bad("an entry is an object")
@@ -346,7 +352,7 @@ def check_catalogue(cat):
             bad("fields is an object")
             continue
         for name, spec in fields.items():
-            if not NAME_RE.match(name):
+            if not NAME_RE.fullmatch(name):
                 bad("field name %r" % name)
             try:
                 split_type(spec)
@@ -538,7 +544,7 @@ def parse_raise(argv):
     pairs = []
     for word in rest[1:]:
         key, eq, value = word.partition("=")
-        if not eq or not NAME_RE.match(key):
+        if not eq or not NAME_RE.fullmatch(key):
             raise Defect("%r is not key=value" % word)
         pairs.append((key, value))
     return rest[0], pairs, opts
@@ -571,12 +577,15 @@ def main(argv):
                 print("%d %s" % (n, path))
             return 0
         if cmd == "basis" and len(argv) == 4 and argv[1] == "store":
-            if not TOKEN_RE.match(argv[2]):
+            if not TOKEN_RE.fullmatch(argv[2]):
                 raise Defect("%r is not a plan token" % argv[2])
             labels = argv[3].split()
-            if not labels or any(not LABEL_RE.match(x) for x in labels):
+            if not labels or any(not LABEL_RE.fullmatch(x) for x in labels):
                 raise Defect("--basis takes labels: lower case words, digits and hyphens, separated by spaces")
-            basis_store(argv[2], labels, sys.stdin.read())
+            try:
+                basis_store(argv[2], labels, sys.stdin.read())
+            except (OSError, UnicodeError):
+                return 1                # the plan cannot be kept (a state directory that cannot be written, text that is not UTF-8): not a defect, the caller says so and goes on
             return 0
         if cmd == "basis" and len(argv) == 4 and argv[1] == "moved":
             moved = basis_moved(argv[2], argv[3])
