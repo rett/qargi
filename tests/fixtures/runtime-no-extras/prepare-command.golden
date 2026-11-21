@@ -1,0 +1,109 @@
+--- prepare nxcommand --slug nxa --profile worker-fast
+RUN=T/scr/qargi.XXXXXX
+ROLE=build
+CLASS=write
+PROFILE=worker-fast
+MEMBER=worker
+MODEL=gpt-6-luna
+EFFORT=low
+CLONE=T/scr/qargi.XXXXXX/clone
+OUT=T/scr/qargi.XXXXXX/out
+TMP=T/qargi-run.XXXXXX
+GIT=T/scr/qargi.XXXXXX/git
+BASE_SHA=SHA
+CONTRACT=T/scr/qargi.XXXXXX/contract
+
+TASK-BLOCK PATHS
+RUN_DIR=T/scr/qargi.XXXXXX
+CLONE=T/scr/qargi.XXXXXX/clone
+OUT=T/scr/qargi.XXXXXX/out
+TMP=T/qargi-run.XXXXXX
+GIT=T/scr/qargi.XXXXXX/git
+BASE_SHA=SHA
+CONTRACT=T/scr/qargi.XXXXXX/contract
+exit 0
+{
+  "ability": "build",
+  "answers": {
+    "git": null,
+    "repo": {
+      "long_lived": [
+        "master",
+        "develop"
+      ],
+      "parking_branch": null
+    },
+    "review": null,
+    "runs": null
+  },
+  "base": "develop",
+  "class": "write",
+  "command_request": 1,
+  "lead": null,
+  "lifecycle": 1,
+  "profile": "worker-fast",
+  "project": "nxcommand",
+  "repo": "REPO",
+  "run": "RUN",
+  "slug": "nxa",
+  "tmpdir": "TMP"
+}
+--- prepare nxcommand --slug nxb --role review
+qargi: note: codex has only a partial read-only barrier on local: the Codex sandbox holds the shell commands of a member (read-only: no writes, workspace-write: the clone, its .git, OUT and TMPDIR only), not its reads: a member, read-only or not, can read whatever the account of the lead can read outside /dev, among it the real ~/.codex (its sessions and history and its configuration; the members' sign-in is the linked one, but the real auth.json is still a readable file), other repositories and keys; and not a hosted tool or an MCP server, which run outside the sandbox; no qargi guard hook runs: the publish and skill verbs are held only by the sandbox's write and network denial; the checks of the source showed shell writes refused and nothing more, so the claim stays partial
+RUN=T/scr/qargi.XXXXXX
+ROLE=review
+CLASS=read-only
+PROFILE=review
+MEMBER=reviewer
+MODEL=gpt-6.1-sol
+EFFORT=high
+CLONE=T/scr/qargi.XXXXXX/clone
+OUT=T/scr/qargi.XXXXXX/out
+TMP=T/qargi-run.XXXXXX
+GIT=T/scr/qargi.XXXXXX/git
+BASE_SHA=SHA
+CONTRACT=T/scr/qargi.XXXXXX/contract
+
+TASK-BLOCK PATHS
+RUN_DIR=T/scr/qargi.XXXXXX
+CLONE=T/scr/qargi.XXXXXX/clone
+OUT=T/scr/qargi.XXXXXX/out
+TMP=T/qargi-run.XXXXXX
+GIT=T/scr/qargi.XXXXXX/git
+BASE_SHA=SHA
+CONTRACT=T/scr/qargi.XXXXXX/contract
+exit 0
+{
+  "ability": "review",
+  "answers": {
+    "git": null,
+    "repo": {
+      "long_lived": [
+        "master",
+        "develop"
+      ],
+      "parking_branch": null
+    },
+    "review": null,
+    "runs": null
+  },
+  "base": "develop",
+  "class": "read-only",
+  "command_request": 1,
+  "lead": null,
+  "lifecycle": 1,
+  "profile": "review",
+  "project": "nxcommand",
+  "repo": "REPO",
+  "run": "RUN",
+  "slug": "nxb",
+  "tmpdir": "TMP"
+}
+--- local list --json
+{
+  "exit": 0,
+  "output": "ROLE       SLUG               AGE        APPLIED MERGED   RUN\nbuild      nxa                AGE         no     no       T/scr/qargi.XXXXXX\nreview     nxb                AGE         no     no       T/scr/qargi.XXXXXX\nbuild      nxa                AGE         no     no       T/scr/qargi.XXXXXX\nreview     nxb                AGE         no     no       T/scr/qargi.XXXXXX\n",
+  "plan": null,
+  "token": null,
+  "verb": "local list"
+}

@@ -61,6 +61,7 @@ compares them with that page.
 | [`runtime-barrier-missing`](#runtime-barrier-missing) | project-rule | 1 | live | A read-only role needs the barrier of its own runtime; the acceptance of the project's own runtime does not count |
 | [`runtime-not-enabled`](#runtime-not-enabled) | project-rule | 1 | live | A run uses a runtime the project enabled |
 | [`runtime-profile-model`](#runtime-profile-model) | project-rule | 1 | live | A profile's model belongs to the runtime the profile is resolved in |
+| [`runtime-hidden-path`](#runtime-hidden-path) | project-rule | 1 | live | A member sees its clone, contract and OUT |
 | [`release-notes-empty`](#release-notes-empty) | release | 1 | live | A release has notes |
 | [`release-fragments-unfolded`](#release-fragments-unfolded) | release | 1 | live | A release branch holds no unfolded changelog fragment when it is pushed or finished |
 | [`seated-project`](#seated-project) | seat-door | 1 | planned | A marshal claim, take or release is not run on a seated project (R27) |
@@ -94,6 +95,7 @@ compares them with that page.
 | [`not-assigned`](#not-assigned) | seat-gate | 77 | planned | A verb of class owner is not run by an assigned lead (R59) |
 | [`caretaker-denied`](#caretaker-denied) | seat-gate | 77 | planned | A caretaker runs no lead verb that writes (R63) |
 | [`gate-error`](#gate-error) | seat-gate | 77 | planned | A gate that cannot answer refuses (R67) |
+| [`runtime-drift`](#runtime-drift) | state | 1 | live | A run starts on the runtime it was prepared for |
 | [`verify-env-invalid`](#verify-env-invalid) | verify-environment | 1 | live | The verify.environment answer is a valid declaration |
 | [`verify-env-change-unapproved`](#verify-env-change-unapproved) | verify-environment | 1 | live | A change of verify.environment that loosens it takes the owner's approval, and the suite runs only under the declaration qargi last accepted |
 | [`verify-env-cpu-no-systemd-run`](#verify-env-cpu-no-systemd-run) | verify-environment | 1 | live | With the cpu part on, the suite runs in a scope made by systemd-run |
@@ -309,6 +311,16 @@ compares them with that page.
 - Fields: `name` (label), `profile` (label).
 - Message: `the profile {profile} names a model that the runtime {name} does not offer`
 - Next, for a lead: give the profile a tier in place of its model (a tier is resolved in the catalog of each runtime), or resolve it in a runtime that offers the model; qargi agent models lists each profile in its runtime
+
+### runtime-hidden-path
+
+- Rule: A member sees its clone, contract and OUT.
+- Why: a run whose member would not see what it works with starts and fails in a way that looks like the member's fault: the sandbox of some runtimes hides a place (a /dev of its own hides /dev/shm) that a scratch directory or a run's temporary directory may be in.
+- Exit 1, live.
+- Fields: `name` (label).
+- Message: `the member of this run on {name} would not see what it works with: the runtime's sandbox hides the place the run is in`
+- Next, for a lead: prepare the run again with --scratch on another filesystem, for example a directory under your home such as ~/.cache/qargi-runs, or set QARGI_RUN_TMP to a directory on another filesystem
+- Printed at 2 sites; the catalogue lists them.
 
 ## Class release
 
@@ -612,6 +624,17 @@ compares them with that page.
 - Fields: `verb` (verb).
 - Message: `{verb} is refused: the gate of the seat could not answer, so the verb was refused`
 - Next, for a lead: tell the owner: run the verb again, and if it is refused again the gate itself needs a look
+
+## Class state
+
+### runtime-drift
+
+- Rule: A run starts on the runtime it was prepared for.
+- Why: a run was prepared against one runtime's definition, catalog, barrier and policy, and the owner approved that runtime for the project; started on another, or on the same one changed since, it would run on what nobody looked at.
+- Exit 1, live.
+- Fields: `verb` (verb), `name` (label), `why` (enum:not-enabled,not-usable,changed).
+- Message: `the run was prepared for the runtime {name}, which it can no longer start on ({why})`
+- Next, for a lead: prepare the run again (qargi local prepare, with --runtime {name} if it is still the one to use); not-enabled: the project no longer lists the runtime (qargi provider runtimes PROJECT), not-usable: it is no longer sealed, local or started by a command (qargi provider check {name}), changed: its definition, catalog, profile or policy is not what it was at prepare
 
 ## Class verify-environment
 

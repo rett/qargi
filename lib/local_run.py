@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """qargi local run: start the member of a prepared local run as a command line, from the data of the project's local runtime.
 
-  local_run.py RUN --project P --runtime NAME --class write|read-only [--task FILE] [--model TIER|ID] [--effort LEVEL]
+  local_run.py RUN --project P --runtime NAME --class write|read-only [--task FILE] [--model TIER|ID] [--effort LEVEL] [--drift-check]
                [--timeout SECONDS] [--dry-run] [--again]
 
 lib/local.sh `run` finds the project and its runtime (the one resolver, `provider.py of`) and calls this. Everything the command line is
@@ -950,6 +950,41 @@ def read_run_file(path, limit, what):
         return data.decode("utf-8")
     except UnicodeDecodeError:
         fail("%s (%s) is not text" % (what, path))
+
+
+DRIFT_EXIT = 6    # --drift-check: the run is not current for its runtime (the first line of standard output says why, the second what)
+
+
+def drift_check(run, project, runtime, cls):
+    """None when the run may start on RUNTIME as prepared, else (why, detail). Only a run of a project with extra runtimes has something to drift from: its registry
+    line names the runtime it was prepared for, and its prepared request binds it. RUNTIME must still be the project's own or one of its enabled extra runtimes
+    (not-enabled), an extra one must still be sealed, local and started by a command (not-usable), and the request must still hold (changed: the runtime's
+    definition, catalog, composition, the profile or the policy is not what it was at prepare). A line without a runtime, or a run without a request, has none."""
+    store = A.Store(run)
+    row = store.registry()
+    if row is None or "lifecycle" not in row or "runtime" not in row:
+        return None
+    request = store.show()["prepared"].get("request")
+    if request is None:
+        return None
+    try:
+        primary, extra = P.local_runtimes_of(project)
+    except P.ProviderError as e:
+        return "not-enabled", "the runtimes of project %s cannot be read: %s" % (project, e)
+    if runtime != primary and runtime not in extra:
+        return "not-enabled", "the project enables %s, not %s" % (", ".join([primary] + extra), runtime)
+    if runtime != primary:
+        try:
+            problem = P.runtime_problem(runtime, primary)
+        except P.ProviderError as e:
+            return "not-usable", str(e)
+        if problem != "ok":
+            return "not-usable", "%s cannot be used as an extra runtime (%s)" % (runtime, problem)
+    try:
+        PR.current(request, project, runtime, cls)
+    except (PR.Invalid, P.ProviderError) as e:
+        return "changed", str(e)[:1000]
+    return None
 
 
 def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
@@ -2372,7 +2407,7 @@ def run_started(plan, run, store, dispatch_state, sig):
 def parse(argv):
     if len(argv) < 1 or argv[0].startswith("--"):
         fail("usage: local_run.py RUN --project P --runtime NAME --class write|read-only [--task FILE] [--model M] [--effort E] [--timeout S] [--dry-run] [--again]", 1)
-    o = {"run": argv[0], "task": None, "model": None, "effort": None, "timeout": None, "dry": False, "again": False, "project": None, "runtime": None, "class": None}
+    o = {"run": argv[0], "task": None, "model": None, "effort": None, "timeout": None, "dry": False, "again": False, "project": None, "runtime": None, "class": None, "drift": False}
     i = 1
     flags = {"--project": "project", "--runtime": "runtime", "--class": "class", "--task": "task", "--model": "model", "--effort": "effort", "--timeout": "timeout"}
     while i < len(argv):
@@ -2381,6 +2416,8 @@ def parse(argv):
             o["dry"], i = True, i + 1
         elif a == "--again":
             o["again"], i = True, i + 1
+        elif a == "--drift-check":
+            o["drift"], i = True, i + 1
         elif a in flags and i + 1 < len(argv):
             o[flags[a]], i = argv[i + 1], i + 2
         else:
@@ -2399,6 +2436,13 @@ def main(argv):
     try:
         o = parse(argv)
         run = os.path.realpath(o["run"])
+        if o["drift"]:
+            found = drift_check(run, o["project"], o["runtime"], o["class"])
+            if found:
+                print(found[0])
+                print(" ".join(found[1].split()))
+                return DRIFT_EXIT
+            return 0
         if not o["dry"]:
             earlier_start(run, o["again"])
         plan = build(run, o["project"], o["runtime"], o["class"], o["task"], o["model"], o["effort"], o["timeout"], keep)
