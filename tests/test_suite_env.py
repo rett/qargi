@@ -287,7 +287,8 @@ class Declaration(Scratch):
         self.assertEqual(SE.CODES[SE.CODE_WAIVER_DIR], None)
 
     def test_the_catalogue_of_refusals_lists_the_codes_of_the_table_and_no_other(self):
-        """lib/refusals.json (schema 1, a map of codes, each once) holds every code of CODES and no other, with the exit and the class of each; no code
+        """lib/refusals.json (schema 1, a map of codes, each once) holds every code of CODES, with the exit and the class of each, and (apart from the
+        codes of other classes, which tests/test_refusals.py reads) no other of the class verify-environment; no code
         of a shell file of lib/ is outside CODES (so the project and flow codes, invalid, change-unapproved and the waive codes, are all in CODES and
         there is none outside it); a code with a part has a site that prints it with that part (no-log is the one code with a part that no site prints:
         the launcher never reports it, a verb dies with it); and every line of every site is in the code: its literal text between the filled-in words
@@ -296,7 +297,7 @@ class Declaration(Scratch):
             cat = json.load(f)
         self.assertEqual(cat["schema"], 1)
         self.assertEqual(set(cat), {"schema", "codes"})
-        codes = cat["codes"]
+        codes = {c: e for c, e in cat["codes"].items() if e["class"] == "verify-environment"}
         self.assertEqual(set(codes), set(SE.CODES))
         printed, corpus = set(), ""
         for name in ("gitflow.sh", "project.sh", "feature.sh", "release.sh", "suite_env.py"):
@@ -310,7 +311,7 @@ class Declaration(Scratch):
         self.assertEqual(sorted(printed - set(SE.CODES) - {"verify-env-waivers"}), [])
         placeholder = re.compile(r"\b[A-Z][A-Z0-9_]*\b")
         for code, e in codes.items():
-            self.assertEqual(set(e), {"rule", "why", "class", "exit", "status", "sites"}, code)
+            self.assertEqual(set(e), {"rule", "why", "class", "exit", "status", "fields", "message", "next", "sites"}, code)   # the keys of every code (tests/test_refusals.py), and the sites of this one
             self.assertEqual((e["class"], e["exit"], e["status"]), ("verify-environment", 1, "live"), code)
             self.assertTrue(e["rule"] and e["why"] and e["sites"], code)
             part = SE.CODES[code]

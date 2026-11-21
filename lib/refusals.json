@@ -7,6 +7,9 @@
       "class": "verify-environment",
       "exit": 1,
       "status": "live",
+      "fields": {},
+      "message": "verify.environment is not a valid declaration",
+      "next": {"lead": "fix the answer with qargi project set PROJECT verify.environment JSON; docs/reference/verify-environment.md has the schema", "host": "fix the answer with qargi project set PROJECT verify.environment JSON; docs/reference/verify-environment.md has the schema"},
       "sites": [
         {"verbs": ["project validate", "project set", "project unset", "project init", "project new", "project attach"], "text": "verify-env-invalid: verify: an object like {environment: {...}} (the only answer in it is environment)"},
         {"verbs": ["project validate", "project set", "project unset", "project init", "project new", "project attach"], "text": "verify-env-invalid: verify.KEY: unknown key (the only answer in verify is environment)"},
@@ -57,6 +60,9 @@
       "class": "verify-environment",
       "exit": 1,
       "status": "live",
+      "fields": {},
+      "message": "verify.environment differs from the declaration qargi last accepted, or the change loosens it",
+      "next": {"lead": "restore the answers, or change it with qargi project set PROJECT verify.environment JSON; a loosening takes a plan token and the owner's words", "host": "restore the answers, or change it with qargi project set PROJECT verify.environment JSON; a loosening takes a plan token and the owner's words"},
       "sites": [
         {"verbs": ["project set", "project unset"], "text": "qargi: verify-env-change-unapproved: PATH would loosen the approved verify.environment (REASON); it takes a plan token and the owner's words"},
         {"verbs": ["project set", "project unset"], "text": "qargi: the plan token or the approval given does not cover this change (both --plan and --approved are needed, and the token is for this declaration)"},
@@ -73,6 +79,9 @@
       "class": "verify-environment",
       "exit": 1,
       "status": "live",
+      "fields": {},
+      "message": "the cpu part is on and systemd-run is not on the clean PATH",
+      "next": {"lead": "put systemd-run on the PATH, or set cpu_quota to null; the owner may waive the part for one run with the plan token the refusal printed", "host": "put systemd-run on the PATH, or set cpu_quota to null; the owner may waive the part for one run with the plan token the refusal printed"},
       "sites": [
         {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-cpu-no-systemd-run: cpu: systemd-run is not on PATH (CLEAN_PATH)"},
         {"verbs": ["feature verify", "release verify"], "text": "plan token: TOKEN   (to run once without PARTS: AGAIN --waive-environment PARTS --plan TOKEN --approved \"<the owner's words>\")"},
@@ -86,6 +95,9 @@
       "class": "verify-environment",
       "exit": 1,
       "status": "live",
+      "fields": {},
+      "message": "the cpu part is on and systemd-run is older than the launcher needs",
+      "next": {"lead": "use systemd 254 or newer, or set cpu_quota to null; the owner may waive the part for one run with the plan token the refusal printed", "host": "use systemd 254 or newer, or set cpu_quota to null; the owner may waive the part for one run with the plan token the refusal printed"},
       "sites": [
         {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-cpu-systemd-too-old: cpu: systemd-run reports 'LINE'; 254 or newer is needed"},
         {"verbs": ["feature verify", "release verify"], "text": "plan token: TOKEN   (to run once without PARTS: AGAIN --waive-environment PARTS --plan TOKEN --approved \"<the owner's words>\")"},
@@ -99,6 +111,9 @@
       "class": "verify-environment",
       "exit": 1,
       "status": "live",
+      "fields": {},
+      "message": "the cpu part is on and the scope could not be made",
+      "next": {"lead": "start a user manager for this session, or set cpu_quota to null; the owner may waive the part for one run with the plan token the refusal printed", "host": "start a user manager for this session, or set cpu_quota to null; the owner may waive the part for one run with the plan token the refusal printed"},
       "sites": [
         {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-cpu-no-user-manager: cpu: the scope could not be made and nothing was reported: TAIL"},
         {"verbs": ["feature verify", "release verify"], "text": "plan token: TOKEN   (to run once without PARTS: AGAIN --waive-environment PARTS --plan TOKEN --approved \"<the owner's words>\")"},
@@ -112,6 +127,9 @@
       "class": "verify-environment",
       "exit": 1,
       "status": "live",
+      "fields": {},
+      "message": "the cpu part is on and the launcher could not read back the quota it declared",
+      "next": {"lead": "read what the refusal found; the owner may waive the part for one run with the plan token the refusal printed", "host": "read what the refusal found; the owner may waive the part for one run with the plan token the refusal printed"},
       "sites": [
         {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-cpu-readback: cpu: this process is not alone in a new scope below qargi-verify.slice: a cpu.max read from a cgroup that is not this run's would prove nothing"},
         {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-cpu-readback: cpu: /proc/self/cgroup has no unified-hierarchy line"},
@@ -129,6 +147,9 @@
       "class": "verify-environment",
       "exit": 1,
       "status": "live",
+      "fields": {},
+      "message": "the suite would not start with default signal dispositions and an empty mask",
+      "next": {"lead": "start qargi from a shell that ignores and blocks no signal, or have the owner waive the part for one run with the plan token the refusal printed", "host": "start qargi from a shell that ignores and blocks no signal, or have the owner waive the part for one run with the plan token the refusal printed"},
       "sites": [
         {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-signals: signals: SigIgn and SigBlk cannot be read from /proc/self/status"},
         {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-signals: signals: SigIgn HEX and SigBlk HEX are not both zero"},
@@ -144,6 +165,9 @@
       "class": "verify-environment",
       "exit": 1,
       "status": "live",
+      "fields": {},
+      "message": "the suite would not start with only the descriptors the declaration allows",
+      "next": {"lead": "start qargi without extra open descriptors, or have the owner waive the part for one run with the plan token the refusal printed", "host": "start qargi without extra open descriptors, or have the owner waive the part for one run with the plan token the refusal printed"},
       "sites": [
         {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-fds: fds: cannot open /dev/null for standard input: ERROR"},
         {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-fds: fds: cannot list /proc/self/fd: ERROR"},
@@ -170,6 +194,9 @@
       "class": "verify-environment",
       "exit": 1,
       "status": "live",
+      "fields": {},
+      "message": "the suite would not run in a session of its own with no terminal",
+      "next": {"lead": "start the verify from a session that can make its own, or have the owner waive the part for one run with the plan token the refusal printed", "host": "start the verify from a session that can make its own, or have the owner waive the part for one run with the plan token the refusal printed"},
       "sites": [
         {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-tty: tty: setsid failed: ERROR"},
         {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-tty: tty: this process is not a session leader"},
@@ -187,6 +214,9 @@
       "class": "verify-environment",
       "exit": 1,
       "status": "live",
+      "fields": {},
+      "message": "the suite log or the directory for the launcher's reports cannot be made",
+      "next": {"lead": "make the state directory writable, then run the verb again; nothing was run or recorded", "host": "make the state directory writable, then run the verb again; nothing was run or recorded"},
       "sites": [
         {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-no-log: the directory DIR for the reports of the launcher cannot be made; nothing was run. The waiver token was spent"},
         {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-no-log: the suite log LOG cannot be created; with verify.environment the suite's output goes to a log and never to a terminal (the tty part); nothing was run. The waiver token was spent"}
@@ -198,6 +228,9 @@
       "class": "verify-environment",
       "exit": 1,
       "status": "live",
+      "fields": {},
+      "message": "the waiver lacks the token of a refusal of exactly these parts at this head, or the owner's words",
+      "next": {"lead": "run the verb without --waive-environment, read the refusal, and give the owner its plan token; apply the waiver only with --approved and the owner's own words", "host": "run the verb without --waive-environment, read the refusal, and give the owner its plan token; apply the waiver only with --approved and the owner's own words"},
       "sites": [
         {"verbs": ["feature verify", "release verify"], "text": "plan token: TOKEN   (to run once without PARTS: AGAIN --waive-environment PARTS --plan TOKEN --approved \"<the owner's words>\")"},
         {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-waive-unapproved: --waive-environment WANTED does not name every refused part (REFUSED); nothing was run or recorded"},
@@ -211,6 +244,9 @@
       "class": "verify-environment",
       "exit": 1,
       "status": "live",
+      "fields": {},
+      "message": "--waive-environment names a part that is off, cannot fail or does not exist",
+      "next": {"lead": "name only the parts the refusal listed: signals, fds, tty or cpu, and only those that are on", "host": "name only the parts the refusal listed: signals, fds, tty or cpu, and only those that are on"},
       "sites": [
         {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-waive-unknown: --waive-environment names parts of verify.environment, which is off for PROJECT: there is nothing to waive"},
         {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-waive-unknown: --waive-environment names no part (the parts are signals, fds, tty, cpu)"},
@@ -225,6 +261,9 @@
       "class": "verify-environment",
       "exit": 1,
       "status": "live",
+      "fields": {},
+      "message": "the token of this waiver was already used for a run at this head",
+      "next": {"lead": "a waiver is good for one run: refuse again at this head to get the next token, and show it to the owner", "host": "a waiver is good for one run: refuse again at this head to get the next token, and show it to the owner"},
       "sites": [
         {"verbs": ["feature verify", "release verify"], "text": "plan token: TOKEN   (to run once without PARTS: AGAIN --waive-environment PARTS --plan TOKEN --approved \"<the owner's words>\")"},
         {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-waive-used: that token has been used for a run at this head: a waiver is good for one run; a refusal of PARTS at this head prints the next token; nothing was run or recorded"},
@@ -237,12 +276,495 @@
       "class": "verify-environment",
       "exit": 1,
       "status": "live",
+      "fields": {},
+      "message": "the directory of the waivers, a claim or the count of the tokens used cannot be made, kept or read",
+      "next": {"lead": "make the state directory writable and remove a damaged count file by hand; nothing was run or recorded", "host": "make the state directory writable and remove a damaged count file by hand; nothing was run or recorded"},
       "sites": [
         {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-waiver-dir: FILE does not hold a number: the number of waivers made at this head cannot be read, so a spent token could not be told from a new one; nothing was run or recorded"},
         {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-waiver-dir: the directory DIR for the waivers of verify.environment cannot be made; nothing was run or recorded"},
         {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-waiver-dir: the claim FILE of the waiver cannot be made; nothing was run or recorded"},
         {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-waiver-dir: the count of the waivers made at this head could not be kept in DIR (status STATUS: the lock or the write failed); nothing was run or recorded"}
       ]
+    },
+    "plan-missing": {
+      "rule": "A token covers the plan the person saw",
+      "why": "an apply with no token has no plan that anybody was shown",
+      "class": "plan",
+      "exit": 1,
+      "status": "live",
+      "fields": {"verb": "verb", "token": "token", "context": "enum:lead,host"},
+      "message": "the plan changed or --plan is missing: {verb} was given no --plan",
+      "next": {"lead": "run {verb} without --plan, show the plan to the user, then apply exactly that with --plan {token}", "host": "plan again with qargi host {verb}, show it, then apply exactly that with --plan {token}: a token from a lead's plan never matches (R77)"}
+    },
+    "plan-stale": {
+      "rule": "A token covers the plan the person saw",
+      "why": "what the plan hashed changed after it was shown",
+      "class": "plan",
+      "exit": 1,
+      "status": "live",
+      "fields": {"verb": "verb", "moved": "label-list", "token": "token", "context": "enum:lead,host"},
+      "message": "the plan changed or --plan is missing: the plan of {verb} is no longer the one shown (moved: {moved})",
+      "next": {"lead": "run {verb} without --plan, show the new plan, then apply exactly that with --plan {token}", "host": "plan again with qargi host {verb}, show the new plan, then apply exactly that with --plan {token}: a token from a lead's plan never matches (R77)"}
+    },
+    "approval-missing": {
+      "rule": "An apply that the owner must approve is given the owner's own words with --approved",
+      "why": "the owner's words are the approval: a verb that needs them cannot be told they were given",
+      "class": "approval",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"verb": "verb", "token": "token"},
+      "message": "{verb} needs --approved with the owner's own words",
+      "next": {"lead": "show the plan to the owner, wait for the answer, then apply with --plan {token} --approved and the owner's words", "host": "show the plan to the owner, wait for the answer, then apply with --plan {token} --approved and the owner's words"}
+    },
+    "approval-inside-run": {
+      "rule": "A member run, or a verb called inside an approved apply, never gives --approved",
+      "why": "an approval is the owner's, given in the lead's session for the plan the owner saw; qargi can detect a run or a nested call, not relayed words",
+      "class": "approval",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} was given --approved inside a member run or a nested call",
+      "next": {"lead": "report the refusal and the plan token in your report; the lead applies the plan after the owner approves it", "host": "report the refusal and the plan token in your report; the lead applies the plan after the owner approves it"}
+    },
+    "cut-not-covering": {
+      "rule": "The approval of a release cut covers only the steps its plan listed, while what the cut fixed still holds",
+      "why": "a cut approves one plan; a step that no longer matches it is a different plan",
+      "class": "cut",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"verb": "verb", "step": "label"},
+      "message": "the approval of the release cut does not cover the step {step} of {verb} any more",
+      "next": {"lead": "run {verb} without the cut's token, show its own plan, and apply that with its token and the owner's words", "host": "run {verb} without the cut's token, show its own plan, and apply that with its token and the owner's words"}
+    },
+    "cut-lead-changed": {
+      "rule": "A release cut belongs to the lead that approved it",
+      "why": "the approval was given to that lead's plan",
+      "class": "cut",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "the release cut of {verb} was approved by another lead, or by a lead that cannot be told",
+      "next": {"lead": "plan {verb} again with its own token and take the owner's approval for it", "host": "plan {verb} again with its own token and take the owner's approval for it"}
+    },
+    "cut-branch-moved": {
+      "rule": "A release cut stands only while its branch is where the cut left it",
+      "why": "the owner approved the plan for that head",
+      "class": "cut",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"verb": "verb", "ref": "ref"},
+      "message": "{ref} is not where the release cut left it",
+      "next": {"lead": "record the commits with qargi release fix VER --record, or run {verb} with its own plan", "host": "record the commits with qargi release fix VER --record, or run {verb} with its own plan"}
+    },
+    "cut-fix-outside": {
+      "rule": "A fix recorded on a release branch goes on under the cut's approval only when it stays inside the paths the cut named",
+      "why": "the cut approved a release, not a change of the code",
+      "class": "cut",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"verb": "verb", "commits": "sha-list"},
+      "message": "the commits {commits} leave the paths the cut covers",
+      "next": {"lead": "run qargi release push VER without the cut's token: its own plan lists every commit and takes the owner's approval", "host": "run qargi release push VER without the cut's token: its own plan lists every commit and takes the owner's approval"}
+    },
+    "release-notes-empty": {
+      "rule": "A release has notes",
+      "why": "a release with no notes says nothing about what changed",
+      "class": "release",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "the released section of the changelog is empty",
+      "next": {"lead": "write the notes, pass --allow-empty-notes, or set the answer release.changelog.fragments so that the fragments count as notes", "host": "write the notes, pass --allow-empty-notes, or set the answer release.changelog.fragments so that the fragments count as notes"}
+    },
+    "release-fragments-unfolded": {
+      "rule": "A release branch holds no unfolded changelog fragment when it is pushed or finished",
+      "why": "a fragment left in the directory is a note that never reached the changelog",
+      "class": "release",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"verb": "verb", "count": "count"},
+      "message": "{count} changelog fragments are not folded into the changelog",
+      "next": {"lead": "fold them in the fix worktree, commit, then run qargi release fix VER --record", "host": "fold them in the fix worktree, commit, then run qargi release fix VER --record"}
+    },
+    "feature-runs-open": {
+      "rule": "A feature is finished when none of its runs is open",
+      "why": "an open run holds patches that are not taken in",
+      "class": "feature",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"verb": "verb", "count": "count"},
+      "message": "{count} runs of this feature are still open",
+      "next": {"lead": "take each in with qargi local verify, or close it (qargi local close RUN --applied-by-am), then run {verb} again", "host": "take each in with qargi local verify, or close it (qargi local close RUN --applied-by-am), then run {verb} again"}
+    },
+    "ro-write-outside": {
+      "rule": "A read-only run writes only OUT and TMP",
+      "why": "a review that changes the code it reviews is no longer a review",
+      "class": "guard",
+      "exit": 2,
+      "status": "planned",
+      "fields": {},
+      "message": "a read-only run may not write outside OUT and TMP",
+      "next": {"lead": "write the report in OUT; to test patches make a copy in TMP and work there", "host": "write the report in OUT; to test patches make a copy in TMP and work there"}
+    },
+    "ro-second-tree": {
+      "rule": "A read-only run makes no second tree of the clone inside the clone",
+      "why": "a git write is judged where the shell is, and a clone or an init inside the clone changes it",
+      "class": "guard",
+      "exit": 2,
+      "status": "planned",
+      "fields": {},
+      "message": "a read-only run may not clone or init inside the clone",
+      "next": {"lead": "clone into TMP with git -C TMP clone CLONE x, then work in TMP/x", "host": "clone into TMP with git -C TMP clone CLONE x, then work in TMP/x"}
+    },
+    "ro-env-restricted": {
+      "rule": "A read-only run does not assign the variables that decide what runs",
+      "why": "PATH, HOME, TMPDIR and the git and loader variables decide which program a command is",
+      "class": "guard",
+      "exit": 2,
+      "status": "planned",
+      "fields": {},
+      "message": "a read-only run may not assign this variable",
+      "next": {"lead": "pass the path as an argument instead of assigning the variable", "host": "pass the path as an argument instead of assigning the variable"}
+    },
+    "member-push": {
+      "rule": "A member never pushes",
+      "why": "the lead's branches are the lead's; a member hands patches back",
+      "class": "guard",
+      "exit": 2,
+      "status": "planned",
+      "fields": {},
+      "message": "a member may not push",
+      "next": {"lead": "return patches in OUT; the lead takes them in", "host": "return patches in OUT; the lead takes them in"}
+    },
+    "member-lead-verb": {
+      "rule": "A member does not run the lead's verbs",
+      "why": "the lead's verbs change the project's records, runs and branches",
+      "class": "guard",
+      "exit": 2,
+      "status": "planned",
+      "fields": {},
+      "message": "a member may not run this verb",
+      "next": {"lead": "report what you needed in your report; the lead runs the verb", "host": "report what you needed in your report; the lead runs the verb"}
+    },
+    "member-run-record": {
+      "rule": "A member does not write the lead's run records",
+      "why": "the run directory is the member's to write, and the lead's registry is the lead's",
+      "class": "guard",
+      "exit": 2,
+      "status": "planned",
+      "fields": {},
+      "message": "a member may not write this run record",
+      "next": {"lead": "write your outputs in OUT and report; the lead's registry records the run", "host": "write your outputs in OUT and report; the lead's registry records the run"}
+    },
+    "seat-record-invalid": {
+      "rule": "The answers file of a seated project is readable and its marker valid (R54)",
+      "why": "the seat cannot be judged from records that cannot be read",
+      "class": "seat-gate",
+      "exit": 77,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: the answers of the project cannot be read, or hold an invalid marker",
+      "next": {"lead": "stop and tell the owner: a lead cannot repair the seat records", "host": "stop and tell the owner: a lead cannot repair the seat records"}
+    },
+    "seat-record-missing": {
+      "rule": "A seated project has its assignment file and its projection (R55)",
+      "why": "a session the supervising layer did not assign has no seat",
+      "class": "seat-gate",
+      "exit": 77,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: this session has no bound seat record for a seated project",
+      "next": {"lead": "stop and tell the owner: this session was not assigned the seat", "host": "stop and tell the owner: this session was not assigned the seat"}
+    },
+    "records-disagree": {
+      "rule": "The assignment file and the projection agree on the holder (R56)",
+      "why": "a competing session with another unit's file is not the holder",
+      "class": "seat-gate",
+      "exit": 77,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: the assignment of this session and the projection of the seat disagree",
+      "next": {"lead": "stop: this session is not the holder; tell the owner", "host": "stop: this session is not the holder; tell the owner"}
+    },
+    "previous-epoch": {
+      "rule": "The assignment file is not of an earlier epoch than the projection (R57)",
+      "why": "a stale lead is refused after the cutover",
+      "class": "seat-gate",
+      "exit": 77,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: this session holds the seat of an earlier epoch",
+      "next": {"lead": "stop: the seat moved on; tell the owner", "host": "stop: the seat moved on; tell the owner"}
+    },
+    "projection-stale": {
+      "rule": "The projection is as new as the assignment file (R58)",
+      "why": "a write must not run on a projection that has not caught up",
+      "class": "seat-gate",
+      "exit": 77,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: the projection of the seat is older than the assignment",
+      "next": {"lead": "wait until the projection is current, then run the verb again; read-only verbs still run", "host": "wait until the projection is current, then run the verb again; read-only verbs still run"}
+    },
+    "transfer-in-progress": {
+      "rule": "No lead verb changes the project while a transfer is open (R60)",
+      "why": "the handoff must see a project that does not move",
+      "class": "seat-gate",
+      "exit": 77,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: a lead transfer is open, so a lead verb that writes is refused",
+      "next": {"lead": "finish the transfer with its own verbs, or wait for it to end", "host": "finish the transfer with its own verbs, or wait for it to end"}
+    },
+    "readback-pending": {
+      "rule": "No lead verb changes the project while a read-back is pending (R61)",
+      "why": "the incoming lead has not confirmed what it believes",
+      "class": "seat-gate",
+      "exit": 77,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: a read-back of the incoming lead is pending, so a lead verb that writes is refused",
+      "next": {"lead": "submit or wait for the read-back, then run the verb again", "host": "submit or wait for the read-back, then run the verb again"}
+    },
+    "seat-vacant": {
+      "rule": "A vacant seat is held by nobody who may write (R62)",
+      "why": "a project with no lead is looked after only by a caretaker",
+      "class": "seat-gate",
+      "exit": 77,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: the seat of the project is vacant",
+      "next": {"lead": "ask the owner to assign a lead or a caretaker", "host": "ask the owner to assign a lead or a caretaker"}
+    },
+    "not-assigned": {
+      "rule": "A verb of class owner is not run by an assigned lead (R59)",
+      "why": "the owner's verbs are the owner's, run outside the lead's session",
+      "class": "seat-gate",
+      "exit": 77,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: this verb is the owner's and this session is not the owner",
+      "next": {"lead": "ask the owner to run it as qargi host VERB, in the owner's own session", "host": "ask the owner to run it as qargi host VERB, in the owner's own session"}
+    },
+    "caretaker-denied": {
+      "rule": "A caretaker runs no lead verb that writes (R63)",
+      "why": "a caretaker keeps the project looked after; it does not lead",
+      "class": "seat-gate",
+      "exit": 77,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: a caretaker may not run this verb",
+      "next": {"lead": "run only qargi env check, doctor, packs check or marshal caretaker request, or ask the owner for a lead", "host": "run only qargi env check, doctor, packs check or marshal caretaker request, or ask the owner for a lead"}
+    },
+    "gate-error": {
+      "rule": "A gate that cannot answer refuses (R67)",
+      "why": "no answer is not permission",
+      "class": "seat-gate",
+      "exit": 77,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: the gate of the seat could not answer, so the verb was refused",
+      "next": {"lead": "tell the owner: run the verb again, and if it is refused again the gate itself needs a look", "host": "tell the owner: run the verb again, and if it is refused again the gate itself needs a look"}
+    },
+    "seated-project": {
+      "rule": "A marshal claim, take or release is not run on a seated project (R27)",
+      "why": "the seat decides who leads",
+      "class": "seat-door",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: the project is seated, so claim, take and release are refused",
+      "next": {"lead": "use the seat's own transfer verbs", "host": "use the seat's own transfer verbs"}
+    },
+    "assignment-invalid": {
+      "rule": "An assignment is well formed and names nothing reserved or unsafe (R4, R5, R18, R19, R28, R89)",
+      "why": "an assignment decides who leads",
+      "class": "seat-door",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: the assignment breaks the rules of its shape, names a reserved value or declares an unsafe path",
+      "next": {"lead": "correct the assignment and submit it again", "host": "correct the assignment and submit it again"}
+    },
+    "transfer-open": {
+      "rule": "A new assignment waits while a transfer is open (R43)",
+      "why": "two transfers at once cannot both be fenced",
+      "class": "seat-door",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: a transfer is open, so a new assignment is refused",
+      "next": {"lead": "finish or abort the open transfer first", "host": "finish or abort the open transfer first"}
+    },
+    "abort-after-fence": {
+      "rule": "A transfer cannot be aborted once the old lead is fenced (R42)",
+      "why": "the old lead is gone",
+      "class": "seat-door",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: the transfer is past the fence and cannot be aborted",
+      "next": {"lead": "complete the transfer", "host": "complete the transfer"}
+    },
+    "fence-required": {
+      "rule": "A transfer goes past the fence only with an accepted fence (R36)",
+      "why": "the old lead must be proven ended first",
+      "class": "seat-door",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: the step needs an accepted fence and there is none",
+      "next": {"lead": "record the fence, then take the step", "host": "record the fence, then take the step"}
+    },
+    "fence-unproven": {
+      "rule": "A fence proves the end of this epoch (R20, R29)",
+      "why": "a fence that proves nothing lets two leads write",
+      "class": "seat-door",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: the fence does not prove the end of this epoch",
+      "next": {"lead": "give a fence the transition allows, with proof", "host": "give a fence the transition allows, with proof"}
+    },
+    "readback-mismatch": {
+      "rule": "The read-back matches what the project says (R49)",
+      "why": "the incoming lead must believe what is true",
+      "class": "seat-door",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: the read-back does not match",
+      "next": {"lead": "read again from the stored records and submit the new read-back", "host": "read again from the stored records and submit the new read-back"}
+    },
+    "readback-exhausted": {
+      "rule": "A transfer allows three failed read-backs (R39)",
+      "why": "a lead that cannot read the project should not take it",
+      "class": "seat-door",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: a third read-back failed",
+      "next": {"lead": "the owner decides: abort the transfer or assign again", "host": "the owner decides: abort the transfer or assign again"}
+    },
+    "note-digest-mismatch": {
+      "rule": "The handoff note is the one recorded (R41, R47)",
+      "why": "a changed note is another note",
+      "class": "seat-door",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: the digest of the note differs from the recorded one",
+      "next": {"lead": "send the note that was recorded, or record the new one", "host": "send the note that was recorded, or record the new one"}
+    },
+    "note-invalid": {
+      "rule": "The handoff note verifies and belongs to this transfer (R47)",
+      "why": "a note of another transfer or version proves nothing",
+      "class": "seat-door",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: the note does not verify, or names another transfer or version",
+      "next": {"lead": "write the note again for this transfer", "host": "write the note again for this transfer"}
+    },
+    "seat-changed": {
+      "rule": "A seat write sees the seat it read (R12)",
+      "why": "two writers must not overwrite each other",
+      "class": "seat-door",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: the seat changed while this write was made",
+      "next": {"lead": "read the seat again and repeat the write", "host": "read the seat again and repeat the write"}
+    },
+    "refs-backend-active": {
+      "rule": "The shared refs backend and a seat exclude each other (R74)",
+      "why": "the two keep the marshal's records in different places",
+      "class": "seat-door",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: the shared refs backend is on",
+      "next": {"lead": "run marshal disable first, or leave the project unseated", "host": "run marshal disable first, or leave the project unseated"}
+    },
+    "approval-refused": {
+      "rule": "A verb given --approved on a seated project is refused unless qargi host runs it (R76)",
+      "why": "an approval is the owner's, typed outside the lead's session",
+      "class": "seat-door",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: --approved is given on a seated project outside qargi host",
+      "next": {"lead": "show the plan to the owner; the owner runs the apply as qargi host VERB", "host": "show the plan to the owner; the owner runs the apply as qargi host VERB"}
+    },
+    "authority-store-unsafe": {
+      "rule": "The authority store and the roots are safe paths (R8, R88, R89)",
+      "why": "a store a lead can edit is no authority",
+      "class": "seat-door",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: the authority store or a root is unsafe or unset",
+      "next": {"lead": "tell the owner: it is the owner's to repair", "host": "tell the owner: it is the owner's to repair"}
+    },
+    "content-too-large": {
+      "rule": "A record is within its limit (R18)",
+      "why": "a record is read whole",
+      "class": "seat-door",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: the record is larger than its limit",
+      "next": {"lead": "write a shorter record", "host": "write a shorter record"}
+    },
+    "content-invalid": {
+      "rule": "A record other than an assignment keeps to its shape (R18, R22, R32)",
+      "why": "a record that does not parse proves nothing",
+      "class": "seat-door",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: the record breaks the shape of its kind",
+      "next": {"lead": "correct the record and submit it again", "host": "correct the record and submit it again"}
+    },
+    "symlink-refused": {
+      "rule": "No path of the seat's stores is a symbolic link (R88)",
+      "why": "a link can point a write elsewhere",
+      "class": "seat-door",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: a path of the seat's stores is a symbolic link",
+      "next": {"lead": "replace the link with the directory it stands for", "host": "replace the link with the directory it stands for"}
+    },
+    "caretaker-not-vacant": {
+      "rule": "A caretaker order waits for a vacant seat (R75)",
+      "why": "a lead holds the seat",
+      "class": "seat-door",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: a lead holds the seat, so a caretaker order is refused",
+      "next": {"lead": "wait for the seat to be vacant", "host": "wait for the seat to be vacant"}
+    },
+    "host-in-sandbox": {
+      "rule": "qargi host runs only outside every sandbox, with a passed proof (R33, R103)",
+      "why": "the owner's own session is what the approvals rest on",
+      "class": "seat-door",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: qargi host was refused: the proof outside the sandbox failed",
+      "next": {"lead": "run it in the owner's own session, not in the lead's", "host": "run it in the owner's own session, not in the lead's"}
+    },
+    "member-sandbox-off": {
+      "rule": "A member is dispatched only into a sandbox (dispatch)",
+      "why": "a member without one could reach what the lead holds",
+      "class": "seat-door",
+      "exit": 1,
+      "status": "planned",
+      "fields": {"verb": "verb"},
+      "message": "{verb} is refused: the sandbox of the member is off, so the dispatch is refused",
+      "next": {"lead": "report it to the owner; do not work round it", "host": "report it to the owner; do not work round it"}
     }
   }
 }
