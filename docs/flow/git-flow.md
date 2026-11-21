@@ -33,8 +33,8 @@ refusal changes nothing.
    - A member's guard refuses `project set` of both answers, as the command is the lead's. A member's own `review check` (the
      member mark that `qargi local run` sets is in its environment) does not run the scrub or make the checkout and prints
      `scrub: not run (a member's check; the lead's check runs it)`; that does not fail the check.
-   - Then `qargi feature merge NAME BRANCH`, `qargi local clean RUN`, and `qargi branch prune` to delete merged `agent/*`
-     branches. Run `qargi local verify RUN` on every returned run before merging any of them. Verify and clean accept and name
+   - Then `qargi feature merge NAME BRANCH`, `qargi local clean RUN`, and `qargi branch prune --agents` to delete merged `agent/*`
+     branches (at once, no token: see Pruning merged branches). Run `qargi local verify RUN` on every returned run before merging any of them. Verify and clean accept and name
      qargi's own moves (`develop moved by qargi feature finish`, a fetch, the parking branch fast-forwarded to develop), so a run
      whose work is merged need not be cleaned before the next `feature finish`.
    - A branch you make or push yourself while a run is out is accepted once you journal it with
@@ -295,6 +295,15 @@ feature; a branch that only sits at the tip of develop or of a feature was never
 develop, the branches of `repo.long_lived` or `repo.detached`, the parking branch, an unmerged branch, or a branch checked out in a
 worktree qargi did not make (the main checkout, the runtime's own worktrees) or in a dirty one; each kept branch is listed with
 the reason. A remote branch is deleted as a lease on the tip the plan showed.
+
+`qargi branch prune --agents [--dry-run]` is the exception to the gate: it deletes the merged `agent/*` branches of the repository at
+once, with no plan token and no approval, because the tip of each stays reachable from the merge that took it in. It prints what it
+deletes (each branch, the commit and the branch it was merged into, the worktree qargi made that goes with it, the commits made with
+git that the journal takes in, and the branches kept with the reason); for each branch it first journals the commits made with git on
+it, so a run prepared before them still verifies, deletes it only while it is at the tip it printed, journals the deletion and writes
+one audit line. It is the lead's (a member run, and a call nested in an approved apply, are refused, exit 2). It is local only:
+`--agents` with `--remote`, `--plan` or `--approved` is a usage error (exit 2), and the `feature/*` branches and the branches on origin
+stay behind the plan and the approval above. With `--dry-run` it prints the same lines and deletes nothing.
 
 ## Following an upstream repository
 

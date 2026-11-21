@@ -485,20 +485,29 @@ COMMANDS = {
     "branch": {
         "summary": "Branch housekeeping: delete the merged agent and feature branches and their worktrees",
         "desc": ("Prune prints the merged agent/* and feature/* branches of the project (and with --remote the same branches on origin, asked live) and the worktrees "
-                 "qargi made for them, with a token; with --plan and --approved it deletes them. A branch is merged when it was merged with --no-ff into develop, "
+                 "qargi made for them, with a token; with --plan and --approved it deletes them. The one deletion that is not gated is prune --agents: it deletes the merged agent/* "
+                 "branches of the repository at once, with no token and no approval (the lead's; the tip of each stays reachable from the merge that took it in); the feature branches and "
+                 "the branches on origin always take a plan and an approval. A branch is merged when it was merged with --no-ff into develop, "
                  "into a branch of repo.long_lived or repo.detached, or, for an agent branch, into an open feature, and is still in that branch's history; a branch that merely sits at the tip of one of them "
                  "was never merged and is kept. It never deletes master, develop, the branches of repo.long_lived and repo.detached, the parking branch, an unmerged branch, "
                  "or a branch checked out in a worktree qargi did not make (the main checkout, the runtime's own worktrees) or in a dirty one; each kept branch is listed with "
                  "the reason. A remote branch is deleted as a lease on the tip the plan showed."),
         "scripts": ["branch.sh"],
         "verbs": {
-            "prune": verb("List, or with the token and an approval delete, the merged agent/* and feature/* branches and their worktrees", [],
-                          [PROJECT_OPT, opt("--remote", "also the merged agent/* and feature/* branches on origin (fetches first)"), PLAN, APPROVED, DRY],
+            "prune": verb("List, or with the token and an approval delete, the merged agent/* and feature/* branches and their worktrees; --agents deletes the merged agent/* ones at once", [],
+                          [PROJECT_OPT, opt("--remote", "also the merged agent/* and feature/* branches on origin (fetches first)"),
+                           opt("--agents", "only the merged agent/* branches of this repository, deleted at once with no --plan, --approved or --remote: plan lines printed, journaled, one audit line; the lead's"),
+                           PLAN, APPROVED, DRY],
                           desc=("A branch is merged when it was merged with --no-ff into develop, into a branch of repo.long_lived or repo.detached or the remote-tracking branch origin/BRANCH of a detached one "
                                 "(a detached branch that origin changes only through a pull request lags behind it locally; fetch first, --remote does), or, for an agent branch, into an open feature. "
                                 "A branch that only sits at a tip was never merged and is kept. " + DRY_NOTE + " For prune it asks origin, with --remote, with git ls-remote: a branch of origin whose tip this repository does not have "
-                                "is kept ('its tip is not fetched') where the apply, which fetches first, might prune it."),
-                          examples=["qargi branch prune", "qargi branch prune --dry-run", "qargi branch prune --remote --plan TOKEN --approved \"yes, prune them\""]),
+                                "is kept ('its tip is not fetched') where the apply, which fetches first, might prune it. "
+                                "--agents is local only and the exception to the gate: it takes no --plan, --approved or --remote (a usage error, exit 2) and deletes only merged agent/* branches, never a feature branch. "
+                                "It prints what it deletes (the lines of the plan: each branch, the commit and the branch it was merged into, the worktree qargi made that goes with it, the commits made with git "
+                                "that the journal takes in, and the branches kept with the reason), then for each branch brings the commits made with git on it into the ref journal first (so a run prepared before them still verifies), "
+                                "deletes it only if it is still at the tip the plan showed, and journals the deletion; one audit line records it. A member run, or a call nested in an approved apply, is refused (exit 2). "
+                                "With --dry-run it prints the plan and deletes nothing."),
+                          examples=["qargi branch prune", "qargi branch prune --agents", "qargi branch prune --dry-run", "qargi branch prune --remote --plan TOKEN --approved \"yes, prune them\""]),
         },
     },
     "changelog": {
