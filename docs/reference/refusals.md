@@ -61,7 +61,7 @@ compares them with that page.
 | [`runtime-barrier-missing`](#runtime-barrier-missing) | project-rule | 1 | live | A read-only role needs the barrier of its own runtime; the acceptance of the project's own runtime does not count |
 | [`runtime-not-enabled`](#runtime-not-enabled) | project-rule | 1 | live | A run uses a runtime the project enabled |
 | [`runtime-profile-model`](#runtime-profile-model) | project-rule | 1 | live | A profile's model belongs to the runtime the profile is resolved in |
-| [`runtime-hidden-path`](#runtime-hidden-path) | project-rule | 1 | live | A member sees its clone, contract and OUT |
+| [`runtime-hidden-path`](#runtime-hidden-path) | project-rule | 1 | planned | A member sees its clone, contract and OUT |
 | [`release-notes-empty`](#release-notes-empty) | release | 1 | live | A release has notes |
 | [`release-fragments-unfolded`](#release-fragments-unfolded) | release | 1 | live | A release branch holds no unfolded changelog fragment when it is pushed or finished |
 | [`seated-project`](#seated-project) | seat-door | 1 | planned | A marshal claim, take or release is not run on a seated project (R27) |
@@ -316,11 +316,10 @@ compares them with that page.
 
 - Rule: A member sees its clone, contract and OUT.
 - Why: a run whose member would not see what it works with starts and fails in a way that looks like the member's fault: the sandbox of some runtimes hides a place (a /dev of its own hides /dev/shm) that a scratch directory or a run's temporary directory may be in.
-- Exit 1, live.
+- Exit 1, planned.
 - Fields: `name` (label).
 - Message: `the member of this run on {name} would not see what it works with: the runtime's sandbox hides the place the run is in`
 - Next, for a lead: prepare the run again with --scratch on another filesystem, for example a directory under your home such as ~/.cache/qargi-runs, or set QARGI_RUN_TMP to a directory on another filesystem
-- Printed at 2 sites; the catalogue lists them.
 
 ## Class release
 

@@ -461,14 +461,10 @@
       "why": "a run whose member would not see what it works with starts and fails in a way that looks like the member's fault: the sandbox of some runtimes hides a place (a /dev of its own hides /dev/shm) that a scratch directory or a run's temporary directory may be in",
       "class": "project-rule",
       "exit": 1,
-      "status": "live",
+      "status": "planned",
       "fields": {"name": "label"},
       "message": "the member of this run on {name} would not see what it works with: the runtime's sandbox hides the place the run is in",
-      "next": {"lead": "prepare the run again with --scratch on another filesystem, for example a directory under your home such as ~/.cache/qargi-runs, or set QARGI_RUN_TMP to a directory on another filesystem", "host": "prepare the run again with --scratch on another filesystem, for example a directory under your home such as ~/.cache/qargi-runs, or set QARGI_RUN_TMP to a directory on another filesystem"},
-      "sites": [
-        {"verbs": ["local prepare", "local run"], "text": "the member of this write run of RUNTIME would not see what it works with: its runtime's sandbox hides PREFIXES from the member's commands (dispatch.hidden_paths: NOTE)"},
-        {"verbs": ["local prepare", "local run"], "text": "the member of this read-only run of RUNTIME would not see what it works with: its runtime's sandbox hides PREFIXES from the member's commands (dispatch.hidden_paths: NOTE)"}
-      ]
+      "next": {"lead": "prepare the run again with --scratch on another filesystem, for example a directory under your home such as ~/.cache/qargi-runs, or set QARGI_RUN_TMP to a directory on another filesystem", "host": "prepare the run again with --scratch on another filesystem, for example a directory under your home such as ~/.cache/qargi-runs, or set QARGI_RUN_TMP to a directory on another filesystem"}
     },
     "ro-write-outside": {
       "rule": "A read-only run writes only OUT and TMP",
