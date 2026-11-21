@@ -20,6 +20,10 @@ A name is used once among these packs and the shipped definitions. `qargi provid
 
 There is no default. Ask for each surface, and leave one out if the project never uses it: `qargi project set P models.provider.local NAME` and `models.provider.cloud NAME` (also `project new|attach --provider-local X --provider-cloud Y`). A family name works when exactly one runtime of it serves that surface; a runtime that does not serve the surface is refused. A verb that needs a surface the answers leave out stops with exit 2 and says which.
 
+## More local runtimes
+
+`qargi provider enable PROJECT --runtime NAME` plans, with a token, one more command runtime for the project's local members (`disable` likewise; `provider runtimes PROJECT` lists them). If it does not confine reads (`provider reads-warning NAME`), the approval must carry `reads are not confined`, else `runtime-reads-unacknowledged`: the words are the owner's, never yours. A review there only reads: advise a second review on the project's own runtime.
+
 ## Add a runtime with no code
 
 1. `qargi provider new fakecli [--from minimal|command|hook-cli|RUNTIME]` scaffolds an unsealed pack (unusable until sealed).
