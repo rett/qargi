@@ -150,4 +150,4 @@
 5 python3 tests/test_refusals.py
 20 python3 tests/test_suite_env.py
 108 bash tests/test_suite_env_flow.sh
-10 python3 tests/test_rolecard.py
+15 python3 tests/test_rolecard.py

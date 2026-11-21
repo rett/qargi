@@ -4,7 +4,9 @@
 # that has one, each tier's shared/INDEX.md and roles/lead/INDEX.md and the notes those indexes mark `always`, then the
 # reference store's; 16000 characters at most besides the marshal block). A note is read on demand: a directory tier's file,
 # or `qargi memory get STORE_ID /path.md`. Prints the JSON a SessionStart hook returns; nothing outside a registered project.
-# It always exits 0: when tiercontext.py fails, takes over 12 s or finds no file, the context is the marshal block alone and the
+# After the tiers and the marshal block comes the role's card (lib/rolecard.py card ROLE --project P: the rules that refuse late, and the
+# members STALE or DRIFT as of the last `qargi agent list`; 2 s, 1600 characters, control characters taken out; left out when it fails, is slow or is too long).
+# It always exits 0: when tiercontext.py fails, takes over 12 s or finds no file, the context is the marshal block and the card alone and the
 # systemMessage says why.
 #   hook.sh session-start [--project P] [--role lead]
 # Inside a registered project, before anything that can fail, it also (1) identifies the session: when stdin is not a
@@ -70,14 +72,19 @@ export QARGI_MARSHAL_BLOCK=$MBLOCK
 
 # the tiers, composed by tiercontext.py (all reading is there; 12 s at most). On failure the context is the summary and the marshal block.
 lib=$(dirname "$(readlink -f "$0")")
+# the role's card (lib/rolecard.py): the rules that refuse late, and the members STALE or DRIFT from the last `qargi agent list`; 2 s, 1600 characters at most, with the control characters
+# taken out, and left out when it fails, takes longer or is longer. It never blocks the session.
+CARD=$(timeout 2 python3 -I "$lib/rolecard.py" card "$HROLE" --project "$PRJ" 2>/dev/null </dev/null) || CARD=''
+CARD=$(printf '%s' "$CARD" | tr -d '\000-\010\013-\037')
+[ "${#CARD}" -le 1600 ] || CARD=''
 tj=$(timeout 12 python3 -I "$lib/tiercontext.py" hook --project "$PRJ" --role "$HROLE" 2>/dev/null </dev/null) || tj=''
 if ! printf '%s' "$tj" | jq -e 'type == "object" and (.context | type == "string")' >/dev/null 2>&1; then
   tj=$(jq -nc --arg w "$(command -v ant >/dev/null 2>&1 || echo 'ant is not installed')" '{context: "", files: 0, tiers: 0, cloud_why: $w}')
 fi
-jq -nc --arg p "$PRJ" --arg r "$HROLE" --arg b "$MBLOCK" --argjson t "$tj" '
+jq -nc --arg p "$PRJ" --arg r "$HROLE" --arg b "$MBLOCK" --arg c "$CARD" --argjson t "$tj" '
   ($t.files // 0) as $n | ($t.tiers // 0) as $k | ($t.cloud_why // "") as $w
   | (if $n == 0 then "qargi: \($p) resources not loaded (" + (if $w == "" then "no tier has files" else "no tier has files; cloud tier unreachable: \($w)" end) + ")"
      else "qargi: \($p) \($r) resources loaded (\($n) files from \($k) tiers)" + (if $w == "" then "" else "; cloud tier unreachable: \($w)" end) end) as $m
-  | (if $n == 0 then $b else $t.context + (if $b == "" then "" else "\n\n" + $b end) end) as $ctx
+  | ([(if $n == 0 then "" else $t.context end), $b, $c] | map(select(. != "")) | join("\n\n")) as $ctx
   | {systemMessage: $m} + (if $ctx == "" then {} else {hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}} end)'
 exit 0

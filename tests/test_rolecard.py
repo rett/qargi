@@ -410,5 +410,124 @@ class Prepare(Fixture):
         self.assertRegex(src, r"(?s)taskblock_write\(\) \{.*SUBMODULES: .*CARD:")
 
 
+
+class AgentStates(Fixture):
+    def setUp(self):
+        super().setUp()
+        self.agents = os.path.join(self.repo, ".claude", "agents")
+        self.states = os.path.join(self.state, "agent-states.json")
+
+    def stored(self):
+        with open(self.states, encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_agent_list_stores_the_states_the_lead_card_reads(self):
+        r = self.qargi("agent", "add", "forge", "--project", "fixproj", "--roles", "build,test")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(os.path.exists(self.states), "nothing is stored before a list")
+        self.assertEqual(self.qargi("agent", "list", "--project", "fixproj").returncode, 0)
+        doc = self.stored()
+        self.assertEqual(doc["schema"], 1)
+        self.assertRegex(doc["projects"]["fixproj"]["at"], r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$")
+        self.assertEqual(doc["projects"]["fixproj"]["members"], {"forge": []})
+        self.assertEqual(oct(os.stat(self.states).st_mode & 0o777), "0o600")
+        self.assertIsNone(RC.stale_members("fixproj", self.state), "a current member is no line")
+        with open(os.path.join(self.agents, "forge.md"), "a") as f:                 # edited by hand: DRIFT
+            f.write("a hand edit\n")
+        listing = self.qargi("agent", "list", "--project", "fixproj")
+        self.assertIn("DRIFT", listing.stdout)
+        self.assertEqual(self.stored()["projects"]["fixproj"]["members"], {"forge": ["DRIFT"]})
+        at, members = RC.stale_members("fixproj", self.state)
+        self.assertEqual(members, {"forge": ["DRIFT"]})
+        text = RC.card("lead", project="fixproj", state=self.state)["card"]
+        self.assertIn("Members STALE or DRIFT as of %s: forge (DRIFT)" % at, text)
+        self.assertEqual(self.qargi("agent", "refresh", "forge", "--project", "fixproj").returncode, 0)
+        self.qargi("agent", "list", "--project", "fixproj")
+        self.assertEqual(self.stored()["projects"]["fixproj"]["members"], {"forge": []})
+        self.assertIsNone(RC.stale_members("fixproj", self.state))
+
+    def test_a_list_of_one_project_keeps_the_reading_of_the_others(self):
+        self.qargi("agent", "add", "forge", "--project", "fixproj")
+        write_states(self.state, "elsewhere", "2026-01-01T00:00:00Z", {"old": ["STALE"]})
+        with open(self.states, encoding="utf-8") as f:
+            doc = json.load(f)
+        doc["projects"]["fixproj"] = {"at": "2026-01-01T00:00:00Z", "members": {"gone": ["STALE"]}}
+        with open(self.states, "w", encoding="utf-8") as f:
+            json.dump(doc, f)
+        self.qargi("agent", "list", "--project", "fixproj")
+        doc = self.stored()
+        self.assertEqual(doc["projects"]["elsewhere"]["members"], {"old": ["STALE"]})
+        self.assertEqual(doc["projects"]["fixproj"]["members"], {"forge": []})
+        self.qargi("agent", "list")                                                  # every project: the reading is replaced, no project of the file survives that has no member
+        self.assertEqual(sorted(self.stored()["projects"]), ["fixproj"])
+
+    def test_a_list_that_cannot_store_still_lists(self):
+        self.qargi("agent", "add", "forge", "--project", "fixproj")
+        os.mkdir(self.states)                                                        # a directory where the file goes
+        r = self.qargi("agent", "list", "--project", "fixproj")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("forge", r.stdout)
+
+
+class Hook(Fixture):
+    """lib/hook.sh session-start puts the lead card into the context: 1600 characters at most, two seconds, left out when it fails."""
+
+    def setUp(self):
+        super().setUp()
+        with open(os.path.join(self.conf, "projects", "fixproj.json"), "w") as f:
+            json.dump({"project": "fixproj", "repo": {"path": self.repo}, "memory": {}}, f)
+        self.bin = os.path.join(self.t, "shim")
+        os.makedirs(self.bin)
+        self.real = shutil.which("python3")
+
+    def hook(self, shim=None):
+        env = dict(self.env, QARGI_HOOK_MARSHAL_SECS="1")
+        if shim:
+            with open(os.path.join(self.bin, "python3"), "w") as f:
+                f.write("#!/bin/sh\ncase \"$*\" in *rolecard.py*) %s;; esac\nexec '%s' -B \"$@\"\n" % (shim, self.real))
+            os.chmod(os.path.join(self.bin, "python3"), 0o755)
+            env["PATH"] = self.bin + os.pathsep + env["PATH"]
+        r = subprocess.run(["bash", os.path.join(LIB, "hook.sh"), "session-start", "--project", "fixproj"], input='{"session_id":"abc"}', stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE, universal_newlines=True, env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout)
+
+    def context(self, doc):
+        return (doc.get("hookSpecificOutput") or {}).get("additionalContext", "")
+
+    def test_the_context_holds_the_lead_card(self):
+        doc = self.hook()
+        ctx = self.context(doc)
+        self.assertIn(RC.card("lead")["card"], ctx)
+        self.assertLessEqual(len(RC.card("lead")["card"]), RC.LEAD_CHARS)
+        self.assertEqual(doc["hookSpecificOutput"]["hookEventName"], "SessionStart")
+        self.assertNotIn("Members STALE or DRIFT", ctx, "no stored reading, no line")
+
+    def test_the_tail_comes_from_the_stored_states(self):
+        write_states(self.state, "fixproj", "2026-11-21T10:00:00Z", {"forge": ["STALE"]})
+        self.assertIn("- Members STALE or DRIFT as of 2026-11-21T10:00:00Z: forge (STALE);", self.context(self.hook()))
+        os.remove(os.path.join(self.state, "agent-states.json"))
+        self.assertNotIn("Members STALE or DRIFT", self.context(self.hook()))
+
+    def test_it_is_left_out_when_it_fails(self):
+        doc = self.hook("exit 1")
+        self.assertNotIn("Lead card", self.context(doc))
+        self.assertIn("systemMessage", doc)
+
+    def test_it_is_left_out_when_it_takes_over_two_seconds(self):
+        doc = self.hook("exec sleep 30")
+        self.assertNotIn("Lead card", self.context(doc))
+        self.assertIn("systemMessage", doc)
+
+    def test_a_card_longer_than_the_room_is_not_loaded(self):
+        doc = self.hook("printf 'x%.0s' $(seq 1 1700); exit 0")
+        self.assertNotIn("xxxxxxxx", self.context(doc))
+
+    def test_a_card_with_control_characters_is_not_loaded_as_it_is(self):
+        doc = self.hook("printf 'Lead card\\001\\033[31m red\\n'; exit 0")
+        ctx = self.context(doc)
+        self.assertNotIn("\x01", ctx)
+        self.assertNotIn("\x1b", ctx)
+
 if __name__ == "__main__":
     unittest.main()
