@@ -30,7 +30,7 @@ planned without a basis. Nothing is kept in a dry run.
 
 ## Statuses
 
-- `live`: a verb of this build raises the code (or, for the `verify.environment` codes, prints it at the sites the catalogue lists).
+- `live`: a verb of this build raises the code (or, for the `verify.environment` codes and the guard's, prints it at the sites the catalogue lists).
 - `planned`: written down so that it is reviewed early; no verb raises it yet.
 - `withdrawn`: no longer raised; the code is never reused.
 
@@ -183,7 +183,7 @@ compares them with that page.
 - Fields: none.
 - Message: `a read-only run may not write outside OUT and TMP`
 - Next, for a lead: write the report in OUT; to test patches make a copy in TMP and work there
-- Printed at 4 sites; [verify.environment](verify-environment.md) describes them.
+- Printed at 4 sites; `qargi help guard` says what a member's guard refuses.
 
 ### ro-second-tree
 
@@ -193,7 +193,7 @@ compares them with that page.
 - Fields: none.
 - Message: `a read-only run may not make a second tree (clone, init or worktree) inside the clone`
 - Next, for a lead: clone into TMP with git -C TMP clone CLONE x, then work in TMP/x
-- Printed at 1 sites; [verify.environment](verify-environment.md) describes them.
+- Printed at 1 site; `qargi help guard` says what a member's guard refuses.
 
 ### ro-env-restricted
 
@@ -203,7 +203,7 @@ compares them with that page.
 - Fields: none.
 - Message: `a read-only run may not assign this variable`
 - Next, for a lead: pass the path as an argument instead of assigning the variable
-- Printed at 1 sites; [verify.environment](verify-environment.md) describes them.
+- Printed at 1 site; `qargi help guard` says what a member's guard refuses.
 
 ### member-push
 
@@ -213,7 +213,7 @@ compares them with that page.
 - Fields: none.
 - Message: `a member may not push`
 - Next, for a lead: return patches in OUT; the lead takes them in
-- Printed at 1 sites; [verify.environment](verify-environment.md) describes them.
+- Printed at 1 site; `qargi help guard` says what a member's guard refuses.
 
 ### member-lead-verb
 
@@ -223,7 +223,7 @@ compares them with that page.
 - Fields: none.
 - Message: `a member may not run this verb`
 - Next, for a lead: report what you needed in your report; the lead runs the verb
-- Printed at 1 sites; [verify.environment](verify-environment.md) describes them.
+- Printed at 1 site; `qargi help guard` says what a member's guard refuses.
 
 ### member-run-record
 
@@ -233,7 +233,7 @@ compares them with that page.
 - Fields: none.
 - Message: `a member may not write this run record`
 - Next, for a lead: write your outputs in OUT and report; the lead's registry records the run
-- Printed at 2 sites; [verify.environment](verify-environment.md) describes them.
+- Printed at 2 sites; `qargi help guard` says what a member's guard refuses.
 
 ## Class plan
 
