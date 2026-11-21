@@ -2443,6 +2443,19 @@ def is_extra(runtime, project, conf=None, root=None, library=None):
 
 # ---- the read-only barrier ----------------------------------------------------------------------------------------------
 
+def is_primary(provider, surface, project, conf=None, root=None, library=None):
+    """Is the provider (a runtime or the family name that resolves to it) the project's own runtime of that surface (resolve_project of its stored
+    answers)? False when there is no such project or it names none."""
+    answers = project_answers(project, conf)
+    if answers is None:
+        return False
+    try:
+        own = resolve_project(answers, surface, project, root, library)[0]
+        return provider == own or _resolve(provider, surface, root, library)[0] == own
+    except ProviderError:
+        return False
+
+
 def project_answers(project, conf=None):
     """The project's stored answers as a dict, or None when there are none (or they cannot be read)."""
     if not project or not NAME_RE.match(project):
@@ -2472,10 +2485,11 @@ def accept_command(provider, surface, project=None):
 def require_barrier(provider, surface, project=None, root=None, conf=None, library=None):
     """May a read-only role run on this surface of the provider? (state, text): state is yes, partial (text is the note),
     accepted (the project recorded that it accepts no barrier here), refused (text says why and names the command) or missing (the runtime is
-    one of the project's extra runtimes: text says why). The barrier is the runtime's composed with the project's enabled extensions (a barrier an
+    one of the project's extra runtimes, or is not its own and relies on an acceptance: text says why). The barrier is the runtime's composed with the project's enabled extensions (a barrier an
     extension provides counts once it is verified). The barrier belongs to the runtime the role runs on, never to the project: the acceptance
     models.accept_no_barrier.local was given for the project's own runtime and does not count for an extra runtime, so a barrier that is neither
-    yes nor partial on an extra is missing, and nothing the project recorded changes that."""
+    yes nor partial on an extra is missing, and nothing the project recorded changes that. The same holds for a runtime that is neither the
+    project's own nor one of its extras: the recorded acceptance counts only for the project's own runtime of the surface."""
     v = effective(provider, surface, "read_only_barrier", root, library, project=project, conf=conf)
     if v == "yes":
         return "yes", ""
@@ -2495,6 +2509,9 @@ def require_barrier(provider, surface, project=None, root=None, conf=None, libra
         return "missing", ("the runtime %s has no read-only barrier on %s (%s). A read-only role needs the barrier of its own runtime: the acceptance "
                            "of the project's own runtime does not count for an extra runtime" % (provider, surface, why))
     if accepted(project, surface, conf):
+        if not is_primary(provider, surface, project, conf, root, library):
+            return "missing", ("the runtime %s has no read-only barrier on %s (%s), and it is not the project's own runtime: the acceptance "
+                               "models.accept_no_barrier.%s was given for the project's own runtime and does not count for another" % (provider, surface, why, surface))
         return "accepted", ""
     return "refused", ("the provider %s has no read-only barrier on %s (%s), so a read-only role is refused there.\n"
                        "To run it anyway, on your own responsibility, record that you accept this for the project:\n  %s"

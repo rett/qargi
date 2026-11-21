@@ -87,6 +87,14 @@ out=$(rb fakeno local --project bar3 2>&1); rc=$?
 { [ "$rc" = 2 ] && grep -q 'qargi provider accept fakeno --surface local --no-barrier --project bar3' <<<"$out"; } && ok "the project's own runtime with no barrier is refused with the accept command (exit 2), as before" || no "own runtime: rc=$rc $out"
 out=$(rb fakeno local --project plain 2>&1); rc=$?
 [ "$rc" = 2 ] && ok "a runtime that is not an extra of the project is judged as before (exit 2)" || no "not an extra: rc=$rc $out"
+# the recorded acceptance is for the project's own runtime only: a runtime that is neither its own nor an enabled extra gets none
+mkproj bar4 "$CC" '["fakecx"]'
+jq --argjson a "$ACC" '.models.accept_no_barrier = {local: $a}' "$T/c/projects/bar4.json" > "$T/bar.json" && mv "$T/bar.json" "$T/c/projects/bar4.json"
+out=$(rb fakeno local --project bar4 2>&1); rc=$?
+{ [ "$rc" = 4 ] && grep -q 'not the project.s own runtime' <<<"$out" && ! grep -q 'qargi provider accept' <<<"$out"; } \
+  && ok "acceptance-not-lent: a runtime that is neither the project's own nor an extra gets no acceptance (exit 4) from the one recorded for the own runtime" || no "fakeno on bar4: rc=$rc $out"
+out=$(rb claude-code local --project bar4 2>&1); rc=$?
+[ "$rc" = 0 ] && ok "and the project's own runtime is not affected" || no "own runtime on bar4: rc=$rc $out"
 
 # barrier_guard SURFACE PROJECT [RUNTIME]: the shell gate the verbs call
 guard() { ( . "$TOOL/lib/lib.sh"; barrier_guard "$@" ) 2>&1; }
@@ -97,6 +105,8 @@ out=$(guard local bar fakecx); rc=$?
 { [ "$rc" = 0 ] && grep -q 'partial read-only barrier' <<<"$out"; } && ok "barrier_guard with an extra runtime that has a partial barrier passes with its note" || no "guard fakecx: rc=$rc $out"
 out=$(guard local bar); rc=$?
 { [ "$rc" = 0 ] && grep -q 'partial read-only barrier' <<<"$out"; } && ok "barrier_guard with no runtime asks the project's own runtime, as before" || no "guard own: rc=$rc $out"
+out=$(guard local bar4 fakeno); rc=$?
+{ [ "$rc" = 1 ] && grep -q '"code":"runtime-barrier-missing"' <<<"$out"; } && ok "barrier_guard of a runtime that is not the project's own does not take its acceptance either (runtime-barrier-missing)" || no "guard bar4 fakeno: rc=$rc $out"
 out=$(guard local bar3); rc=$?
 { [ "$rc" = 2 ] && grep -q 'qargi provider accept fakeno' <<<"$out"; } && ok "barrier_guard of a project whose own runtime has none is refused with the accept command (exit 2), as before" || no "guard bar3: rc=$rc $out"
 
