@@ -210,7 +210,7 @@ class Rendering(unittest.TestCase):
         n = run("notice", "verify-env-signals")
         self.assertEqual((n.returncode, n.stdout), (0, ""))
         self.assertTrue(n.stderr.startswith("qargi: note [verify-env-signals] "))
-        for args in (("refuse", "nope-code"), ("refuse", "verify-env-signals", "x=1"), ("refuse", "cut-fix-outside"), ("refuse",), ("refuse", "verify-env-signals", "bare")):
+        for args in (("refuse", "nope-code"), ("refuse", "verify-env-signals", "x=1"), ("refuse", "approval-missing"), ("refuse",), ("refuse", "verify-env-signals", "bare")):
             with self.subTest(args=args):
                 d = run(*args)
                 self.assertEqual((d.returncode, d.stdout), (70, ""), d.stderr)
@@ -255,7 +255,7 @@ class TheShellHelpers(unittest.TestCase):
         self.assertIsNone(contract(err)["verb"], "a script word that is not a verb is no verb")
 
     def test_a_caller_that_is_wrong_exits_70_and_prints_no_refusal(self):
-        for script in ("refuse no-such-code", "refuse plan-missing nofield=1", "refuse plan-missing token=nothex", "refuse cut-fix-outside commits=a1b2c3d",
+        for script in ("refuse no-such-code", "refuse plan-missing nofield=1", "refuse plan-missing token=nothex", "refuse approval-missing token=a1b2c3d4e5f6",
                        "refuse", "notice no-such-code", "notice plan-missing token=x"):
             with self.subTest(script=script):
                 rc, out, err = sh(script + "; echo after")
