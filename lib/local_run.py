@@ -1024,26 +1024,30 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     rcfg = plan_run_config(disp, doc, run, home, project, cls, runtime)
     if cls == "read-only":
         state, text = P.require_barrier(runtime, "local", project)
-        if state == "refused":
+        if state not in ("yes", "partial", "accepted"):      # refused, missing (an extra runtime with no barrier of its own) or anything a later state adds: no member starts
             fail(text)
+        # the acceptance the project recorded for no barrier is for its own runtime of this surface: it exempts no other runtime (an extra) from the rules below
+        own = P.is_primary(runtime, "local", project)
+        own_accepted = own and P.accepted(project, "local")
+        way_out = ("Dispatch it where that barrier is applied, or, on your own responsibility, record that you accept no barrier for the project:\n  %s"
+                   % P.accept_command(runtime, "local", project)) if own else (
+                   "Dispatch it where that barrier is applied: the acceptance of no barrier is the project's own runtime's and does not count for %s." % runtime)
         prov = comp["provenance"] or {}
         by = next((x for x in (prov.get("barrier"), prov.get("capabilities.read_only_barrier")) if x not in (None, runtime)), None)
         if by is not None:
             # the barrier is an extension's: nothing in a local run applies it (an extension adds no class_argv), so it is no barrier here
-            if state in ("yes", "partial") and not P.accepted(project, "local"):
+            if state in ("yes", "partial") and not own_accepted:
                 fail("the read-only barrier of %s on local is provided by the extension %s (barrier kind %s), and qargi local run applies only the barrier the runtime's own "
                      "dispatch carries (class_argv, or a class group in argv), so it would start this member without it: a read-only run is refused here.\n"
-                     "Dispatch it where that barrier is applied, or, on your own responsibility, record that you accept no barrier for the project:\n  %s"
-                     % (runtime, by, (doc.get("barrier") or {}).get("kind"), P.accept_command(runtime, "local", project)))
-        elif (doc.get("barrier") or {}).get("kind") in ("hook", "adapter") and state in ("yes", "partial") and not P.accepted(project, "local") and not has_class_args(disp):
+                     "%s" % (runtime, by, (doc.get("barrier") or {}).get("kind"), way_out))
+        elif (doc.get("barrier") or {}).get("kind") in ("hook", "adapter") and state in ("yes", "partial") and not own_accepted and not has_class_args(disp):
             # the runtime's own barrier is a hook (it lives in the member file of a runtime that loads agent files; a local run has none) or an adapter's
             # barrier-check (a local run never calls it): nothing in this run applies it, so the capability that reads as held holds nothing here
             kind = doc["barrier"]["kind"]
             fail("the read-only barrier of %s on local is a %s, which a local run does not apply (%s) and its dispatch supplies no read-only arguments "
                  "(class_argv, or a {\"class\": \"read-only\"} group in argv), so it would start this member without a barrier: a read-only run is refused here.\n"
-                 "Dispatch it where that barrier is applied, or, on your own responsibility, record that you accept no barrier for the project:\n  %s"
-                 % (runtime, kind, "a local run has no agent file to carry the hook" if kind == "hook" else "a local run never calls the adapter's barrier-check",
-                    P.accept_command(runtime, "local", project)))
+                 "%s" % (runtime, kind, "a local run has no agent file to carry the hook" if kind == "hook" else "a local run never calls the adapter's barrier-check",
+                         way_out))
         elif (doc.get("barrier") or {}).get("kind") == "sandbox-args" and not has_class_args(disp):
             fail("the barrier of %s is sandbox-args but its dispatch supplies no read-only arguments (class_argv, or a {\"class\": \"read-only\"} group in argv)" % runtime)
         note = text if state == "partial" else ""

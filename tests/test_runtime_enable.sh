@@ -288,6 +288,52 @@ out=$("$DA" project validate f1 2>&1); rc=$?
   && grep -q "^finding: models.extra_runtimes.local 'fakeinsession' cannot be used: not-command" <<<"$out" && grep -q "^finding: models.extra_runtimes.local 'claude-platform' cannot be used: not-local" <<<"$out" \
   && grep -q "^finding: models.extra_runtimes.local 'draftcx' cannot be used: not-sealed" <<<"$out" && ! grep -q "'fakecx'" <<<"$out"; } && ok "an extra that is unknown, in-session, not local or unsealed is a finding, and a usable one is none" || no "findings: rc=$rc $out"
 
+# --- a read-only local run of an extra runtime: the acceptance recorded for the project's own runtime does not count for it
+# (the verb passes the project's own runtime until it takes a profile's runtime, so these calls name the runtime as that change will)
+HOOK='{"input":"json-stdin","tool_pointer":"/event/tool","command_pointer":"/event/args/cmd","cwd_pointer":"/workdir","path_pointers":{"write":["/event/args/target"],"read":["/event/args/target"]},
+  "tool_names":{"shell":["run_shell"],"write":["patch_file"],"read":["open_file"]},"deny":{"exit":2,"stream":"stderr"},"allow":{"exit":0}}'
+export PATH=$TOOL/stubs:$PATH          # the stubs are found by name, as a runtime's command is
+fake_command_runtime "$SRC" "$TOOL" lryes "$(BARRIER yes) | .dispatch.argv[0] = \"lryes\""
+fake_command_runtime "$SRC" "$TOOL" lrno "$(BARRIER no) | .dispatch.argv[0] = \"lrno\""
+fake_command_runtime "$SRC" "$TOOL" lrhk '.dispatch.argv |= map(select(type != "object" or .class != "read-only")) | .dispatch.argv[0] = "lrhk" | .barrier = {kind: "hook", hook: '"$HOOK"'}'
+for r in lryes lrno lrhk; do mkdir -p "$HOME/.$r-members"; echo '{}' > "$HOME/.$r-members/auth.json"; done
+git init -q -b main "$T/lrrepo" && git -C "$T/lrrepo" -c user.name=t -c user.email=t@example.net commit -q --allow-empty -m one
+mkproj lr '{"local":"lryes","cloud":"claude-platform"}' '["lrno","lrhk"]'
+jq --arg p "$T/lrrepo" '.repo.path = $p' "$T/c/projects/lr.json" > "$T/lr.json" && mv "$T/lr.json" "$T/c/projects/lr.json"
+eval "$("$DA" local prepare --repo "$T/lrrepo" --base main --slug lr1 --scratch "$T" --role review | sed '/^$/,$d' | sed 's/^/export /')"
+printf 'TASK: look\nDONE: a report\n' > "$RUN/task.md"
+# a run prepared before command requests names no runtime, so it may be run with any: the fixture of tests/test_local_run.sh
+python3 -I - "$RUN" "$SRC/lib" <<'PY'
+import json, os, sys
+sys.path.insert(0, sys.argv[2])
+import attempts as A
+s = A.Store(sys.argv[1])
+p = s.path + "/state.json"
+v = json.load(open(p)); v["prepared"].pop("request", None)
+with open(p, "w") as f: json.dump(v, f)
+p = os.environ["QARGI_STATE"] + "/local-runs.jsonl"
+rows = [json.loads(line) for line in open(p)]
+for row in rows:
+    if row.get("run") == s.run: row.pop("command_request", None)
+with open(p, "w") as f:
+    for row in rows: f.write(json.dumps(row) + "\n")
+PY
+lrun() { python3 -I "$TOOL/lib/local_run.py" "$RUN" --project lr --runtime "$1" --class read-only --dry-run 2>&1; }
+out=$(lrun lryes); rc=$?
+{ [ "$rc" = 0 ] && grep -q '^ARGV=' <<<"$out"; } && ok "local-run-extra: the project's own runtime with a barrier goes on" || no "own runtime, dry: rc=$rc $out"
+out=$(lrun lrno); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'lrno has no read-only barrier on local' <<<"$out" && ! grep -q '^ARGV=' <<<"$out"; } \
+  && ok "local-run-extra: an extra runtime with no barrier is refused (exit 2) and nothing starts" || no "extra without barrier: rc=$rc $out"
+jq --argjson a "$ACC" '.models.accept_no_barrier = {local: $a}' "$T/c/projects/lr.json" > "$T/lr.json" && mv "$T/lr.json" "$T/c/projects/lr.json"
+out=$(lrun lrno); rc=$?
+{ [ "$rc" = 2 ] && ! grep -q '^ARGV=' <<<"$out"; } && ok "local-run-extra: the acceptance of the project's own runtime does not let it start" || no "extra, accepted: rc=$rc $out"
+out=$(lrun lrhk); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'is a hook, which a local run does not apply' <<<"$out" && grep -q 'does not count for lrhk' <<<"$out" && ! grep -q 'provider accept' <<<"$out" && ! grep -q '^ARGV=' <<<"$out"; } \
+  && ok "local-run-extra: nor does it exempt an extra runtime whose barrier nothing in a local run applies; no accept command is offered" || no "extra hook, accepted: rc=$rc $out"
+jq 'del(.models.accept_no_barrier)' "$T/c/projects/lr.json" > "$T/lr.json" && mv "$T/lr.json" "$T/c/projects/lr.json"
+out=$(lrun lrhk); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'is a hook' <<<"$out"; } && ok "local-run-extra: and without an acceptance it is refused the same way" || no "extra hook: rc=$rc $out"
+
 # --- profiles.NAME.runtime: a profile selects among the runtimes the project enabled, and its model is checked against that runtime
 profproj() { # NAME EXTRAS-JSON PROFILES-JSON
   mkproj "$1" "$CC" "$2"
