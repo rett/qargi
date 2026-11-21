@@ -527,4 +527,58 @@ jq 'del(.release)' "$T/c/projects/bump.json" > "$T/x.json" && mv "$T/x.json" "$T
 before=$(wtl); out=$($REL start 0.2.0 2>&1); rc=$?
 [ "$rc" = 0 ] && [ "$before" = "$(wtl)" ] && ! compgen -G "$T/s/release-wt.*" >/dev/null && ok "a plan that passes leaves no worktree either" || no "plan left a worktree: rc=$rc $out; $(wtl)"
 
+# --- --dry-run of release start, release push and release fix --push: the plan and the refusals the apply would meet, and nothing changed (refs of the repository and of origin, the
+# worktrees, the state directory with its files, the audit log)
+dsnap() { { git -C "$R" for-each-ref; [ -z "${O:-}" ] || git -C "$O" for-each-ref; ls -A "$R/.git/worktrees" 2>/dev/null; git -C "$R" worktree list; find "$T/s" | sort; find "$T/s" -type f -exec md5sum {} + 2>/dev/null | sort -k2; } | md5sum; }
+lastline() { tail -n 1 "$T/do"; }
+mk d1 with-origin
+before=$(dsnap); $REL start 0.2.0 --date 2026-03-04 --dry-run >"$T/do" 2>"$T/de"; rc=$?
+[ "$rc" = 0 ] && [ "$(lastline)" = "dry-run: 0 would refuse; nothing was changed" ] && grep -q "^invalidated by: project, kind, branch, base, head, version, date, files$" "$T/do" && [ "$before" = "$(dsnap)" ] && [ ! -s "$T/de" ] \
+  && ok "start --dry-run: the plan, what invalidates it, 'dry-run: 0 would refuse; nothing was changed', exit 0; the repository, origin and the state directory are byte-identical" || no "start dry run: rc=$rc $(cat "$T/do" "$T/de")"
+dt=$(tok < "$T/do"); plain=$($REL start 0.2.0 --date 2026-03-04 2>&1)
+[ -n "$dt" ] && [ "$dt" = "$(tok <<<"$plain")" ] && ok "the token of the dry run is the plain plan's" || no "dry token $dt, plain: $plain"
+[ -z "$(ls -A "$R/.git/worktrees" 2>/dev/null)" ] && ok "the worktree the plan builds its bump commit in is gone: .git/worktrees is empty" || no "worktrees left: $(ls -A "$R/.git/worktrees")"
+before=$(dsnap); $REL start 0.2.0 --date 2026-03-04 --dry-run --plan "$dt" >"$T/do" 2>"$T/de"; rc=$?
+[ "$rc" = 0 ] && grep -q "the plan $dt is the one shown: the apply of start would go on" "$T/do" && [ "$(lastline)" = "dry-run: 0 would refuse; nothing was changed" ] && [ "$before" = "$(dsnap)" ] && ! git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null \
+  && ok "with the token that was shown the dry run says the apply would go on, and creates nothing" || no "dry run with the token: rc=$rc $(cat "$T/do" "$T/de")"
+before=$(dsnap); $REL start 0.2.0 --date 2026-03-05 --dry-run --plan "$dt" >"$T/do" 2>"$T/de"; rc=$?
+[ "$rc" = 1 ] && head -1 "$T/de" | grep -q '^qargi-refusal/1 {"code":"plan-stale","exit":1,"verb":"start".*"detail":"dry=1 moved=date token=' && grep -q "refused \[plan-stale\] .*moved: date" "$T/de" && [ "$(lastline)" = "dry-run: 1 would refuse; nothing was changed" ] && [ "$before" = "$(dsnap)" ] \
+  && ok "a token that is not the plan's: plan-stale names the label that moved (date), dry=1 comes first in the detail, the last line counts 1, exit 1" || no "dry run, stale: rc=$rc $(cat "$T/do" "$T/de")"
+
+mk d2 with-origin
+git -C "$R" update-ref refs/heads/develop "$(git -C "$R" commit-tree -p develop -m x 'develop^{tree}')"
+before=$(dsnap); $REL start 0.2.0 --dry-run >"$T/do" 2>"$T/de"; rc=$?
+[ "$rc" = 1 ] && grep -q "the whole suite has no passing run at the head of develop" "$T/de" && [ "$(lastline)" = "dry-run: 1 would refuse; nothing was changed" ] && [ "$before" = "$(dsnap)" ] && ok "start --dry-run of a develop that did not pass verify: the refusal, '1 would refuse', exit 1, nothing changed" || no "dry run, refused: rc=$rc $(cat "$T/do" "$T/de")"
+mk d2b
+out=$($REL start 0.2.0 --dry-run --approved go 2>&1); rc=$?
+[ "$rc" = 0 ] && ! git -C "$R" rev-parse -q --verify refs/heads/release/0.2.0 >/dev/null && ok "--approved with --dry-run applies nothing" || no "dry run with --approved: rc=$rc $out"
+for v in status verify finish; do out=$($REL $v 0.2.0 --dry-run 2>&1); [ "$?" = 2 ] && grep -q "belongs to release start, release push and release fix --push" <<<"$out" || no "--dry-run on $v: $out"; done
+out=$($REL fix 0.2.0 --dry-run 2>&1); [ "$?" = 2 ] && ok "--dry-run belongs to start, push and fix --push only" || no "--dry-run on fix: $out"
+
+# a TERM while the worktree of the plan exists: the exit trap removes it, and no last line is printed (the status is 143)
+mk d4 with-origin
+jq --arg m "$T/dmark" '.release = {preflight: ["sh", "-c", "touch " + $m + "; sleep 3"]}' "$T/c/projects/d4.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/d4.json"
+rm -f "$T/dmark"; before=$(dsnap)
+$REL start 0.2.0 --dry-run >"$T/do" 2>"$T/de" & dpid=$!
+wait_until '[ -e "$T/dmark" ]' 10 && kill -TERM "$dpid"; wait "$dpid"; rc=$?
+[ "$rc" = 143 ] && [ "$before" = "$(dsnap)" ] && ! grep -q '^dry-run:' "$T/do" && ok "a run ended by TERM while its worktree exists leaves .git/worktrees, git worktree list and the state directory as they were" || no "TERM: rc=$rc $(cat "$T/do" "$T/de"); $(ls -A "$R/.git/worktrees")"
+
+# push
+mk d5 with-origin
+rstart 0.2.0 --date 2026-03-04 >/dev/null 2>&1 || no "(setup) start d5"
+: > "$T/gh.log"; before=$(dsnap); $REL push 0.2.0 --dry-run >"$T/do" 2>"$T/de"; rc=$?
+[ "$rc" = 0 ] && [ "$(lastline)" = "dry-run: 0 would refuse; nothing was changed" ] && grep -q "^invalidated by: project, branch, head$" "$T/do" && [ "$before" = "$(dsnap)" ] && ! grep -q "pr create" "$T/gh.log" && [ -z "$(git -C "$O" for-each-ref refs/heads/release)" ] \
+  && ok "push --dry-run: the plan, what invalidates it, '0 would refuse'; nothing is pushed, no pull request is created, nothing changed" || no "push dry run: rc=$rc $(cat "$T/do" "$T/de")"
+pt=$(tok < "$T/do"); [ "$pt" = "$($REL push 0.2.0 | tok)" ] && ok "the token of the dry run is the plain plan's" || no "push dry token"
+before=$(dsnap); $REL push 0.2.0 --dry-run --plan "$pt" >"$T/do" 2>"$T/de"; rc=$?
+[ "$rc" = 0 ] && grep -q "the plan $pt is the one shown: the apply of push would go on" "$T/do" && grep -q "not asked in a dry run: gh pr create" "$T/do" && [ "$before" = "$(dsnap)" ] && ! grep -q "pr create" "$T/gh.log" && ok "with the plan's token the dry run says the push would go on, and does not push" || no "push dry run with the token: rc=$rc $(cat "$T/do" "$T/de")"
+before=$(dsnap); $REL push 0.2.0 --dry-run --plan abcdef012345 >"$T/do" 2>"$T/de"; rc=$?
+[ "$rc" = 1 ] && grep -q '"code":"plan-stale".*"detail":"dry=1 moved=unrecorded' "$T/de" && [ "$(lastline)" = "dry-run: 1 would refuse; nothing was changed" ] && [ "$before" = "$(dsnap)" ] && ok "push --dry-run with a token that was never planned: plan-stale, unrecorded" || no "push dry run, stale: rc=$rc $(cat "$T/do" "$T/de")"
+# the same fixture as the cut test: a commit outside the cut's paths, reported by fix --push --dry-run
+mk d6 with-origin
+out=$($REL plan 0.2.0 --date 2026-03-04 2>&1); dct=$(tok <<<"$out"); $REL plan 0.2.0 --date 2026-03-04 --plan "$dct" --approved "go ahead" >/dev/null 2>&1; $REL start 0.2.0 --plan "$dct" >/dev/null 2>&1
+w=$($REL fix 0.2.0 | sed -n 's/^worktree: //p'); echo fix > "$w/fix.txt"; git -C "$w" add fix.txt && git -C "$w" commit -q -m "a fix"; fx=$(git -C "$R" rev-parse --short=7 release/0.2.0)
+before=$(dsnap); $REL fix 0.2.0 --push --dry-run --plan "$dct" >"$T/do" 2>"$T/de"; rc=$?
+[ "$rc" = 1 ] && head -1 "$T/de" | grep -q "^qargi-refusal/1 {\"code\":\"cut-fix-outside\",\"exit\":1,\"verb\":\"release push\".*\"detail\":\"dry=1 commits=$fx\"" && [ "$(lastline)" = "dry-run: 1 would refuse; nothing was changed" ] && [ "$before" = "$(dsnap)" ] && [ -z "$(git -C "$O" for-each-ref refs/heads/release)" ] \
+  && ok "release fix --push --dry-run over a commit outside the cut's paths reports cut-fix-outside with the commit, and pushes nothing" || no "fix --push dry run: rc=$rc $(cat "$T/do" "$T/de")"
 exit $fail

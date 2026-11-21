@@ -166,4 +166,11 @@ PRE="printf '# Changelog\n\n## [Unreleased]\n\n' > CHANGELOG.md; mkdir changelog
 out=$($REL start 0.2.0 2>&1); rc=$?
 [ "$rc" = 1 ] && grep -q '"code":"release-notes-empty"' <<<"$out" && ok "with the answer but no fragment (only .gitkeep) and an empty unreleased section the notes are still empty" || no "answer without fragments: rc=$rc $out"
 
+# --- a dry run lists independent refusals: an unfolded fragment and a commit outside the cut's paths
+PRE=$EMPTYCL cutup f4 "$FRAG"; PRE=''
+cm src/code.go "changed" "a code fix"
+before=$(snap); $REL fix 0.2.0 --push --dry-run --plan "$CT" >"$T/do" 2>"$T/de"; rc=$?
+[ "$rc" = 1 ] && [ "$(tail -n 1 "$T/do")" = "dry-run: 2 would refuse; nothing was changed" ] && grep -q '^qargi-refusal/1 {"code":"release-fragments-unfolded","exit":1,"verb":"release push".*"detail":"dry=1 count=1"' "$T/de" && grep -q '^qargi-refusal/1 {"code":"cut-fix-outside","exit":1,"verb":"release push".*"detail":"dry=1 commits=' "$T/de" && [ "$before" = "$(snap)" ] \
+  && ok "fix --push --dry-run lists both an unfolded fragment and a commit outside the cut's paths: 2 would refuse, nothing changed" || no "independent refusals: rc=$rc $(cat "$T/do" "$T/de")"
+
 exit $fail

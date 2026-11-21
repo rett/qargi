@@ -102,7 +102,7 @@
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
-STRICT=''; VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY='' NOTES_OPT='' FIXPUSH='' FIXREC='' IGNORE_CHECKS='' IGNORE_SET='' IGNORED='' RECREATE='' STEPNAME='' EVIDENCE='' EVIDENCE_SET='' AGAIN='' WAIVE_ENV='' WAIVE_SET=''; ASSETS=() ASSET_DIRS=()
+STRICT=''; VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY='' NOTES_OPT='' FIXPUSH='' FIXREC='' DRY_RUN='' IGNORE_CHECKS='' IGNORE_SET='' IGNORED='' RECREATE='' STEPNAME='' EVIDENCE='' EVIDENCE_SET='' AGAIN='' WAIVE_ENV='' WAIVE_SET=''; ASSETS=() ASSET_DIRS=()
 # shellcheck disable=SC2034  # WAIVE_ENV and WAIVE_SET are read by suite_env_prepare (gitflow.sh)
 while [ $# -gt 0 ]; do
   case $1 in
@@ -110,7 +110,7 @@ while [ $# -gt 0 ]; do
     --project) need_val "$1" $#; PROJ=$2; shift 2;; --date) need_val "$1" $#; DATE=$2; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
     --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
     --asset) need_val "$1" $#; ASSETS+=("$2"); shift 2;; --asset-dir) need_val "$1" $#; ASSET_DIRS+=("$2"); shift 2;; --recreate) RECREATE=1; shift;; --notes-file) need_val "$1" $#; NOTES_OPT=$2; shift 2;;
-    --push) FIXPUSH=1; shift;; --record) FIXREC=1; shift;; --ignore-checks) need_val "$1" $#; IGNORE_CHECKS=$2; IGNORE_SET=1; shift 2;;
+    --push) FIXPUSH=1; shift;; --record) FIXREC=1; shift;; --dry-run) DRY_RUN=1; shift;; --ignore-checks) need_val "$1" $#; IGNORE_CHECKS=$2; IGNORE_SET=1; shift 2;;
     --hotfix) HOTFIX=1; shift;; --keep) KEEP=1; shift;; --resolved) RESOLVED=1; shift;; --allow-empty-notes) ALLOW_EMPTY=1; shift;;
     --strict) STRICT=1; shift;;
     --evidence) need_val "$1" $#; EVIDENCE=$2; EVIDENCE_SET=1; shift 2;; --again) AGAIN=1; shift;;
@@ -131,11 +131,14 @@ done
 [ "$verb" = finish ] || [ -z "$IGNORE_SET" ] || usage_die "--ignore-checks belongs to release finish"
 [ -z "$IGNORE_SET" ] || printf '%s' "$IGNORE_CHECKS" | grep -q '[^[:space:]]' || usage_die "--ignore-checks needs the reason, in the words you gave: --ignore-checks \"...\""
 [ "$verb" != fix ] || [ -z "$FIXPUSH" ] || verb=push   # fix --push is push
+[ -z "$DRY_RUN" ] || [ "$verb" = start ] || [ "$verb" = push ] || usage_die "--dry-run belongs to release start, release push and release fix --push"
 export PLAN_ARG RESOLVED   # need_plan reads PLAN_ARG; merge_step reads RESOLVED
 
 [ -n "$VER" ] || usage_die "usage: qargi release plan|start|status|verify|fix|push|finish|step|assets|sign|publish|site VERSION [--hotfix] [--project P]"
 printf '%s' "$VER" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || usage_die "'$VER' is not a version like 0.1.1"
 . "$(dirname "$0")/gitflow.sh"
+PSF=/dev/null DRYTMP=''   # PSF: the text of the plan, kept for a dry run (tee in the plan of start and push), so --plan can be compared with it; DRYTMP: a scratch directory of the dry run
+[ -z "$DRY_RUN" ] || { dry_on; PSF=$(mktemp) || fail "could not make a temporary file"; }   # QARGI_DRY=1 before anything reads the project: from here the helpers that write stop and g and ghq pass only what reads
 project_load
 read -r REL_PAT HOT_PAT < <(python3 -I - "$(dirname "$0")" "$METH" <<'PY'
 import sys; sys.path.insert(0, sys.argv[1]); import methodology as M
@@ -183,6 +186,7 @@ notes='' SITESRC=''   # the temporary file of `publish`, the extracted tag of `s
 rel_exit() {   # the one EXIT handler: what gitflow.sh cleans up (the worktree of bump_worktree too), the temporary files, and in a dry run the last line
   local rc=$?
   [ -z "$notes" ] || rm -f "$notes"; [ -z "$SITESRC" ] || rm -rf "$SITESRC"
+  [ "$PSF" = /dev/null ] || rm -f "$PSF"; [ -z "$DRYTMP" ] || rm -rf "$DRYTMP"
   bump_cleanup; on_exit
   dry_finish "$rc"
 }
@@ -863,6 +867,28 @@ step_gate() {
   fi
   echo "$1 runs under the cut $PLAN_ARG of $VER (approved once, in the words: $APPROVED)"
 }
+# dry_after_plan STEP TOKEN LABELS -> the end of the plan of a dry run (--dry-run), once the plan and its token line are printed; it ends the verb. Without --plan it says what would
+# invalidate the plan (its labels, the words plan_token --basis keeps). With --plan it does what the apply does first: step_gate (the token, or under the cut what cut_why allows), so
+# plan-stale names the labels that moved and a cut that no longer covers the step says so; the refusals are printed as the apply would print them, with dry=1 in their detail.
+dry_after_plan() {
+  if [ -z "$PLAN_ARG" ]; then echo "invalidated by: ${3// /, }"; exit 0; fi
+  if [ -z "$CUT" ]; then
+    # the plan of --plan was stored when it was shown (plan_token --basis); this plan is not stored in a dry run, so it is put in a scratch state beside a copy of that one: need_plan then
+    # names the labels whose lines differ, as it would in the apply
+    DRYTMP=$(mktemp -d) || fail "could not make a temporary directory"; mkdir "$DRYTMP/plans"
+    [ ! -f "$DA_STATE/plans/$PLAN_ARG.json" ] || cp "$DA_STATE/plans/$PLAN_ARG.json" "$DRYTMP/plans/"
+    QARGI_STATE=$DRYTMP python3 -I "$QARGI_TOOL/lib/refusal.py" basis store "$2" "$3" < "$PSF" 2>/dev/null || true
+    DA_STATE=$DRYTMP step_gate "$1" "$2"
+    echo "the plan $2 is the one shown: the apply of $1 would go on"
+  else step_gate "$1" "$2"; fi
+  case $1 in
+    push)
+      [ -z "${join:-}" ] || need_free_wt "$BR"
+      pk=$(preflight_key); [ -z "$pk" ] || echo "not run in a dry run: the preflight (release.$pk), which the apply runs in a copy of $BR before the push"
+      echo "not asked in a dry run: gh pr create; the push would update the open pull request of $BR, or open one";;
+  esac
+  exit 0
+}
 # cut_done STEP [HEAD [COMMIT [OWN_PLAN]]]: records that STEP ran (by the cut or by its own plan), when the cut of VER is recorded
 cut_done() {
   dry_stop cut_done
@@ -975,7 +1001,7 @@ case $verb in
     site=''; site_answers 2>/dev/null && [ "$SITE_ON" = true ] && site=1
     steps="start${haspush:+ push} finish${site:+ site}"
     fixp=$(fix_paths_derive); fixl=$(printf '%s' "$fixp" | paste -sd' ' -)
-    tok=$(printf '%s\n' "$PROJ" "$KIND" "$VER" "$DATE" "$KEEP" "$ALLOW_EMPTY" "$BR" "$BASE" "$b0" "$msha" "$second" "$steps" "$stok" "$fixl" | plan_token)
+    tok=$(printf '%s\n' "$PROJ" "$KIND" "$VER" "$DATE" "$KEEP" "$ALLOW_EMPTY" "$BR" "$BASE" "$b0" "$msha" "$second" "$steps" "$stok" "$fixl" | plan_token --basis "project kind version date keep allow-empty branch base head master second steps start-plan fix-paths")
     echo "cut $KIND $VER of $PROJ: one plan and one approval for the whole ceremony. Approve it once; then run each step with --plan $tok alone (the words are recorded once), and each step is refused, before anything moves, if what this plan fixed no longer holds."
     echo "1. start: create $BR from $BASE and bump the version (nothing is pushed). Its own plan:"
     grep -v '^plan token:' <<<"$sout" | sed 's/^/     /'
@@ -1055,7 +1081,7 @@ case $verb in
     # the plan: the branch, where it is cut from, the bump commit and the files it changes (all made in the temporary worktree above, so a refusal comes
     # before a token does); the token covers them, the date and the head of the base
     bumped=$(git -C "$WT" diff --cached --name-only)
-    tok=$({ printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$KIND" "$BR" "$BASE" "$b0" "$VER" "$DATE"; printf '%s\n' "$bumped"; } | plan_token)
+    tok=$({ printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$KIND" "$BR" "$BASE" "$b0" "$VER" "$DATE"; printf '%s\n' "$bumped"; } | tee "$PSF" | plan_token --basis "project kind branch base head version date files")
     echo "start $KIND $VER of $PROJ: create $BR from $BASE (at ${b0:0:7}), as one commit \"Bumped version number to $VER\" on top of it; nothing is pushed"
     bl='none (an empty commit)'; [ -z "$bumped" ] || bl=$(printf '%s' "$bumped" | paste -sd, - | sed 's/,/, /g')
     echo "files the commit changes: $bl"
@@ -1066,8 +1092,9 @@ case $verb in
     hn=$(hotfix_develop_note) && echo "warning: $hn"
     if [ -z "$APPROVED" ]; then
       echo "plan token: $tok   (apply with: qargi release start $VER${HOTFIX:+ --hotfix}${date_given:+ --date $date_given}${ALLOW_EMPTY:+ --allow-empty-notes} --plan $tok --approved \"...\")"
-      exit 0
+      [ -n "$DRY_RUN" ] || exit 0
     fi
+    [ -z "$DRY_RUN" ] || dry_after_plan start "$tok" "project kind branch base head version date files"
     step_gate start "$tok"
     # the bookkeeping of an earlier finish of this version (the master merge commit it parked, the merges resolved but not applied) belongs to a
     # release that was given up: the branch is new, so none of it can be used any more. Only files; a merge still waiting in a worktree is the lead's to remove.
@@ -1171,7 +1198,7 @@ case $verb in
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi release start $VER${HOTFIX:+ --hotfix})"
     g remote get-url origin >/dev/null 2>&1 || die "the repository has no origin remote to push $BR to"
     join='' msha=''; if branch_exists master && no_merge_base master "$BR"; then join=1; msha=$(sha_of master); fi   # the plan joins the history of master first (the master it shows)
-    tok=$( { printf '%s\n%s\n%s\n' "$PROJ" "$BR" "$h"; [ -z "$join" ] || printf 'join\n%s\n' "$msha"; } | plan_token)
+    tok=$( { printf '%s\n%s\n%s\n' "$PROJ" "$BR" "$h"; [ -z "$join" ] || printf 'join\n%s\n' "$msha"; } | tee "$PSF" | plan_token --basis "project branch head join master")
     echo "push $BR (at $(g rev-parse --short "$BR")) to origin and open a pull request into master, so CI runs on the commit that will be released"
     if [ -n "$join" ]; then
       echo "master (at $(g rev-parse --short master)) and $BR have no merge base: they share no history, so finish could not merge them (git refuses unrelated histories; master may be one snapshot commit)"
@@ -1185,7 +1212,8 @@ case $verb in
     remote_report "$BR"
     pw=$(wt_of "$BR"); [ -z "$pw" ] || [ -z "$(git -C "$pw" status --porcelain 2>/dev/null)" ] || echo "warning: $pw has uncommitted changes: only what is committed on $BR is pushed"
     pr_find "$BR"; [ -z "$PR_NUM" ] || echo "the pull request #$PR_NUM of $BR is open already: the push updates it${PR_URL:+ ($PR_URL)}"
-    if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release push $VER${HOTFIX:+ --hotfix} --plan $tok --approved \"...\")"; exit 0; fi
+    if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release push $VER${HOTFIX:+ --hotfix} --plan $tok --approved \"...\")"; [ -n "$DRY_RUN" ] || exit 0; fi
+    [ -z "$DRY_RUN" ] || dry_after_plan push "$tok" "project branch head${join:+ join master}"
     step_gate push "$tok"
     # the commits the lead made with git on the branch since the journal last had it are journaled first, so a run prepared before them verifies (what `release fix --record` does)
     journal_catchup local "refs/heads/$BR" "$h" "$KIND:fix" || echo "note: the journal does not lead to ${h:0:7} on $BR ($REACH_NONE): qargi local verify will refuse a run prepared while $BR was at another commit" >&2
