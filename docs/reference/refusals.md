@@ -47,7 +47,7 @@ compares them with that page.
 | [`cut-lead-changed`](#cut-lead-changed) | cut | 1 | live | A release cut belongs to the lead that approved it |
 | [`cut-branch-moved`](#cut-branch-moved) | cut | 1 | live | A release cut stands only while its branch is where the cut left it |
 | [`cut-fix-outside`](#cut-fix-outside) | cut | 1 | live | A fix recorded on a release branch goes on under the cut's approval only when it stays inside the paths the cut named |
-| [`feature-runs-open`](#feature-runs-open) | feature | 1 | planned | A feature is finished when none of its runs is open |
+| [`feature-runs-open`](#feature-runs-open) | feature | 1 | live | A feature is finished when none of its runs is open |
 | [`ro-write-outside`](#ro-write-outside) | guard | 2 | live | A read-only run writes only OUT and TMP |
 | [`ro-second-tree`](#ro-second-tree) | guard | 2 | live | A read-only run makes no second tree of the clone inside the clone |
 | [`ro-env-restricted`](#ro-env-restricted) | guard | 2 | live | A read-only run does not assign the variables that decide what runs |
@@ -168,10 +168,10 @@ compares them with that page.
 
 - Rule: A feature is finished when none of its runs is open.
 - Why: an open run holds patches that are not taken in.
-- Exit 1, planned.
-- Fields: `verb` (verb), `count` (count).
-- Message: `{count} runs of this feature are still open`
-- Next, for a lead: take each in with qargi local verify, or close it (qargi local close RUN --applied-by-am), then run {verb} again
+- Exit 1, live.
+- Fields: `verb` (verb), `count` (count), `runs` (name-list).
+- Message: `{count} run(s) of this feature are still open: {runs}`
+- Next, for a lead: take each run in (qargi local verify, then merge it), or close it: qargi local clean RUN once its work is merged (--discard drops it on purpose), qargi local close RUN --applied-by-am when its patches were applied by hand; then run {verb} again
 
 ## Class guard
 

@@ -131,11 +131,14 @@ run_warning() {
     echo "qargi: warning: the run $d of $1 has no passing verify (qargi local verify $d): the refs of the repository were never checked for it" >&2
   done
 }
-# open_run_gate NAME -> dies, listing them, when a run of feature/NAME is open: prepared and not verified, verified and not applied, or applied and not
-# merged (lead_usage.py open-runs, the list compact-check reads). A cleaned run, a discarded one (clean --discard), a closed one (local close
-# --applied-by-am) and an applied run whose branch is merged are not open. Nothing is changed.
+# open_run_gate NAME -> refuses (feature-runs-open: the count and the names of the runs, and a `more:` line that lists each run with the command that closes it) when a run of
+# feature/NAME is open: prepared and not verified, verified and not applied, or applied and not merged (lead_usage.py open-runs, the list compact-check reads). A cleaned run, a
+# discarded one (clean --discard), a closed one (local close --applied-by-am) and an applied run whose branch is merged are not open. Nothing is changed. In a dry run the refusal
+# is listed and the checks that follow go on (it is declared independent of them). A reader that fails is a failure, not this refusal.
+# shellcheck disable=SC2034  # REFUSE_MORE and DRY_INDEP are read by refuse (lib/gitflow.sh)
 open_run_gate() {
-  local out rc=0 d sl ro st cmd extra n=0 lines=''
+  local out rc=0 d sl ro st cmd extra n=0 lines='' rname
+  local -a names=()
   # The strict command validates and enumerates one snapshot. This gate does not
   # coordinate new preparation through the eventual merge.
   out=$(pymod lead_usage open-runs --state "$DA_STATE" --conf "$DA_CONF" --project "$PROJ" --feature "$1" </dev/null 2>&1) || rc=$?
@@ -146,9 +149,14 @@ open_run_gate() {
     [ -n "$sl" ] && [ -n "$ro" ] && [ -n "$st" ] && [ -n "$cmd" ] && [ -z "$extra" ] \
       || die "could not list the open runs of feature/$1 (invalid reader output); finish refused. Nothing was changed."
     n=$((n + 1)); lines+="  $d ($ro $sl): $st"$'\n'"    close it: ${cmd:-qargi local clean $d}"$'\n'
+    # the name of a run is its directory's: a value the lead chose, so it is shown, and only a digest of the list reaches the contract line (no comma: it separates the names)
+    rname=${d%/}; rname=$(printf '%s' "${rname##*/}" | tr -d '[:cntrl:]' | tr ',' '_' | cut -c1-200); names+=("${rname:-run}")
   done <<<"$out"
   [ "$n" -gt 0 ] || die "could not list the open runs of feature/$1 (empty reader output); finish refused. Nothing was changed."
-  die "feature $1 has $n open run(s); finish it when they are taken in or dropped:"$'\n'"${lines%$'\n'}"$'\n'"A read-only run (a report, no patches) closes with qargi local clean RUN; a run of work with qargi local clean RUN after its work is applied and merged (--discard drops it on purpose), or qargi local close RUN --applied-by-am when you applied its patches by hand (git am). Nothing was changed."
+  REFUSE_MORE="feature $1 has $n open run(s); finish it when they are taken in or dropped:"$'\n'"${lines%$'\n'}"$'\n'"A read-only run (a report, no patches) closes with qargi local clean RUN; a run of work with qargi local clean RUN after its work is applied and merged (--discard drops it on purpose), or qargi local close RUN --applied-by-am when you applied its patches by hand (git am). Nothing was changed."
+  DRY_INDEP=1
+  refuse feature-runs-open verb="feature finish" count="$n" runs="$(IFS=,; echo "${names[*]}")"
+  DRY_INDEP=''
 }
 # sync_numbers REF: with the answer release.changelog.numbered, a warning when the changelog at REF has duplicate item numbers (the sync is done either way;
 # feature finish refuses until they are renumbered)

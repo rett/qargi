@@ -205,4 +205,32 @@ jq -e -s '[.[] | select(.ref == "refs/heads/agent/t1")] | .[-1] | (.new | test("
 out=$($B prune --agents 2>&1); rc=$?
 [ "$rc" = 0 ] && grep -q "^no merged agent/\* branches to prune" <<<"$out" && ok "a second run finds nothing to prune" || no "agents, nothing left: rc=$rc $out"
 out=$($B prune 2>&1); grep -q "delete local feature/pb" <<<"$out" && ! grep -q "delete local agent/" <<<"$out" && grep -q "^plan token: " <<<"$out" && ok "the plain prune still plans the feature branch and asks for a token" || no "plain prune after --agents: $out"
+
+# ---------------------------------------------------------------------------------------------------------------------------- feature-runs-open
+# feature finish refuses while a run of the feature is open: the code carries the count and the names of the runs (a digest of them in the contract line), the message names three
+# and +N, the older text (each run with the command that closes it) follows as `more:`; a dry run lists the refusal and goes on to the checks after it
+mkproj orun with-origin
+jq '.models = {provider: {local: "claude-code", cloud: "claude-platform"}}' "$T/c/projects/orun.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/orun.json"
+export QARGI_RUN_TMP=$T/shm; mkdir -p "$T/shm" "$T/scr"
+mkrun() { $DA local prepare --repo "$R" --base "$2" --slug "$1" --scratch "$T/scr" | sed -n 's/^RUN=//p'; }
+$F start fa >/dev/null 2>&1; task t1 feature/fa; $F merge fa agent/t1 >/dev/null 2>&1; $F verify fa >/dev/null 2>&1
+rm1=$(mkrun r1 feature/fa); rm2=$(mkrun r2 feature/fa); rm3=$(mkrun r3 feature/fa); rm4=$(mkrun r4 feature/fa)
+refs0=$(git -C "$R" for-each-ref | md5sum)
+out=$($F finish fa 2>&1); rc=$?
+c=$(grep -m1 '^qargi-refusal/1 ' <<<"$out")
+[ "$rc" = 1 ] && [ "$(head -n 1 <<<"$out")" = "$c" ] && grep -q '"code":"feature-runs-open","exit":1,"verb":"feature finish"' <<<"$c" && grep -Eq '"detail":"count=4 runs=sha256:[0-9a-f]{12}"' <<<"$c" && ! grep -q "$T/scr" <<<"$c" \
+  && grep -Eq "^qargi: refused \[feature-runs-open\] 4 run\(s\) of this feature are still open: [^ ,]+, [^ ,]+, [^ ,]+ \+1$" <<<"$out" && grep -q "^  more: feature fa has 4 open run(s); finish it when they are taken in or dropped:" <<<"$out" \
+  && grep -q "^  $rm1 (build r1): prepared, not verified$" <<<"$out" && [ "$(grep -c '^    close it: ' <<<"$out")" = 4 ] && grep -q "Nothing was changed" <<<"$out" && [ "$refs0" = "$(git -C "$R" for-each-ref | md5sum)" ] \
+  && ok "feature finish with four runs open: feature-runs-open, the contract line first with the count and a digest of the names, three names and +1, each run with the way to close it" || no "feature-runs-open: rc=$rc $out"
+dry $F finish fa --dry-run
+[ "$rc" = 1 ] && contract | grep -Eq '"code":"feature-runs-open","exit":1,"verb":"feature finish".*"detail":"dry=1 count=4 runs=sha256:[0-9a-f]{12}"' && grep -q "^plan token: " "$T/do" && grep -q "^invalidated by: " "$T/do" && [ "$(lastline)" = "dry-run: 1 would refuse; nothing was changed" ] && [ "$s0" = "$s1" ] \
+  && ok "feature finish --dry-run with runs open: the refusal is listed with dry=1 and the plan goes on to its token, 1 would refuse, exit 1, nothing changed" || no "feature-runs-open dry run: rc=$rc $(cat "$T/do" "$T/de")"
+# a feature with no passing run and a run open: both are listed, 2 would refuse
+$F start fb >/dev/null 2>&1; task t2 feature/fb; $F merge fb agent/t2 >/dev/null 2>&1; rm5=$(mkrun r5 feature/fb)
+dry $F finish fb --dry-run
+[ "$rc" = 1 ] && contract | grep -Eq '"code":"feature-runs-open".*"detail":"dry=1 count=1 runs=sha256:' && grep -q "the whole suite has no passing run at the head of feature/fb" "$T/de" && [ "$(lastline)" = "dry-run: 2 would refuse; nothing was changed" ] && [ "$s0" = "$s1" ] \
+  && ok "an open run and a feature with no passing run: both are listed, 2 would refuse" || no "feature-runs-open and no passing run: rc=$rc $(cat "$T/do" "$T/de")"
+for r in "$rm1" "$rm2" "$rm3" "$rm4" "$rm5"; do $DA local clean "$r" --discard >/dev/null 2>&1; done
+dry $F finish fa --dry-run
+[ "$rc" = 0 ] && ! grep -q "feature-runs-open" "$T/de" && [ "$(lastline)" = "dry-run: 0 would refuse; nothing was changed" ] && [ "$s0" = "$s1" ] && ok "with every run cleaned the dry run has nothing to refuse" || no "no run open, dry run: rc=$rc $(cat "$T/do" "$T/de")"
 exit $fail

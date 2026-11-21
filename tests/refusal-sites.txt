@@ -5,7 +5,7 @@
 2 lib/changelog.sh
 6 lib/collect.sh
 17 lib/cred.sh
-47 lib/feature.sh
+46 lib/feature.sh
 62 lib/gitflow.sh
 7 lib/lead.sh
 11 lib/lib.sh
