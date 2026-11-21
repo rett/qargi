@@ -1,5 +1,5 @@
-Class read-only (the guard is a barrier, not a sandbox):
-- Read anything. Write only OUT and TMP; a build or test tool's caches are not judged.
+Class read-only (a barrier, not a sandbox):
+- Read anything but the lead's keys. Write only OUT and TMP; a build or test tool's caches are not judged.
 - Do not run the whole suite; run only the checks that cover what you review.
 - The report is OUT/report.md. If the file tool is refused: `qargi local report RUN < FILE`, or `--from NAME` for a file in OUT (it reads OUT only).
 - To test patches, copy in TMP: `git -C TMP clone CLONE x` (a relative directory lands under -C: TMP/x), then `git -C TMP/x am OUT/NAME.patch`; or `cp -a CLONE TMP/x`. In the copy git is yours, except push and remote changes.

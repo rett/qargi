@@ -52,8 +52,9 @@ class Exit(Exception):
 # filled in. A command in backticks that starts with `git` or `cp` stands in the lists, so a card says nothing the guard has not been asked.
 
 READ_ONLY = (
-    ("Class read-only (the guard is a barrier, not a sandbox):", (), ()),
-    ("Read anything. Write only OUT and TMP; a build or test tool's caches are not judged.", (), ()),
+    ("Class read-only (a barrier, not a sandbox):", (), ()),
+    ("Read anything but the lead's keys. Write only OUT and TMP; a build or test tool's caches are not judged.",
+     ("cat {clone}/README.md", "echo x > {tmp}/note", "echo x > {out}/report.md"), ("cat ~/.qargi/config/credentials/marshal_signing", "echo x > {clone}/note")),
     ("Do not run the whole suite; run only the checks that cover what you review.", (), ()),
     ("The report is OUT/report.md. If the file tool is refused: `qargi local report {run} < FILE`, or `--from NAME` for a file in OUT (it reads OUT only).",
      ("qargi local report {run} < {tmp}/report.md", "qargi local report {run} --from report.md"), ()),
@@ -80,7 +81,7 @@ LEAD_REFUSED = ("qargi local verify {run}", "qargi local clean {run}", "qargi lo
 LEAD_DIRS = ("printf x > ~/.qargi/memory/x", "printf x > ~/.qargi/state/ref-journal.jsonl", "printf x > ~/.qargi/config/packs/x", "printf x > {run}/ability")
 
 WRITE = (
-    ("Class write (the guard is a barrier, not a sandbox):", (), ()),
+    ("Class write (a barrier, not a sandbox):", (), ()),
     ("Work in CLONE; patches, report and manifest go in OUT, scratch files in TMP.",
      ("git commit -am x", "echo x > {clone}/f"), ()),
     ("Refused: git push, gh, ssh, git remote changes; the lead's verbs (local verify, clean, prepare, run; review apply; release fix, publish, sign; "
