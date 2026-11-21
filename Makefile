@@ -8,6 +8,9 @@
 # flock (util-linux) keeps two runs of a finishing verb apart and timeout (coreutils) bounds a question put to a remote; `qargi doctor` warns when either is missing.
 TOOLS := bash git jq shellcheck python3 ssh-keygen flock timeout
 PYTHON_MIN := 3.11
+# systemd-run is optional: only the cpu part of the project answer verify.environment needs it (a transient scope, systemd 254 or newer), and the bootstrap does not install it.
+# The doctor reports its version, and an absent or older one as `expected:` (a known failure that is accepted, not a problem).
+SYSTEMD_MIN := 254
 
 # The distribution, read from /etc/os-release (its ID and ID_LIKE words); the line that installs is the one that starts with sudo.
 OS_IDS := $(shell . /etc/os-release 2>/dev/null && echo "$$ID $$ID_LIKE")
@@ -36,6 +39,13 @@ doctor:
 	    echo "missing: $$t is not installed"; rc=1; \
 	  fi; \
 	done; \
+	if command -v systemd-run >/dev/null 2>&1; then \
+	  v=$$(systemd-run --version 2>&1 | head -n 1 | grep -Eo '[0-9]+' | head -n 1); \
+	  if [ "$${v:-0}" -ge $(SYSTEMD_MIN) ]; then echo "ok: systemd-run $$v"; \
+	  else echo "expected: systemd-run $${v:-unknown} is older than $(SYSTEMD_MIN); the cpu part of verify.environment is refused"; fi; \
+	else \
+	  echo "expected: systemd-run is not installed; the cpu part of verify.environment is refused (optional, not in the bootstrap)"; \
+	fi; \
 	if command -v python3 >/dev/null 2>&1 && ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= tuple(map(int, "$(PYTHON_MIN)".split("."))) else 1)'; then \
 	  echo "missing: python3 older than $(PYTHON_MIN)"; rc=1; \
 	fi; \

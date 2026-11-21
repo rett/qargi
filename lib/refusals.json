@@ -1,0 +1,248 @@
+{
+  "schema": 1,
+  "codes": {
+    "verify-env-invalid": {
+      "rule": "The verify.environment answer is a valid declaration",
+      "why": "the launcher judges the declaration, so one list says what is valid; a declaration with a problem would start the suite under something other than what was written",
+      "class": "verify-environment",
+      "exit": 1,
+      "status": "live",
+      "sites": [
+        {"verbs": ["project validate", "project set", "project unset", "project init", "project new", "project attach"], "text": "verify-env-invalid: verify: an object like {environment: {...}} (the only answer in it is environment)"},
+        {"verbs": ["project validate", "project set", "project unset", "project init", "project new", "project attach"], "text": "verify-env-invalid: verify.KEY: unknown key (the only answer in verify is environment)"},
+        {"verbs": ["project validate", "project set", "project unset", "project init", "project new", "project attach"], "text": "verify-env-invalid: verify.environment: verify.environment must be an object or null, not TYPE"},
+        {"verbs": ["project validate", "project set", "project unset", "project init", "project new", "project attach"], "text": "verify-env-invalid: verify.environment: unknown key 'KEY' (the keys are KEYS)"},
+        {"verbs": ["project validate", "project set", "project unset", "project init", "project new", "project attach"], "text": "verify-env-invalid: verify.environment: fds: VALUE is not one of VALUES"},
+        {"verbs": ["project validate", "project set", "project unset", "project init", "project new", "project attach"], "text": "verify-env-invalid: verify.environment: ci_fds is accepted only with fds ci-like"},
+        {"verbs": ["project validate", "project set", "project unset", "project init", "project new", "project attach"], "text": "verify-env-invalid: verify.environment: ci_fds: VALUE is not [READ, WRITE], two different integers from MIN to MAX"},
+        {"verbs": ["project validate", "project set", "project unset", "project init", "project new", "project attach"], "text": "verify-env-invalid: verify.environment: cpu_quota: VALUE is not \"N%\" (N from MIN to MAX), \"max\" or null"},
+        {"verbs": ["project validate", "project set", "project unset", "project init", "project new", "project attach"], "text": "verify-env-invalid: verify.environment: env_pass: VALUE is not a list of names"},
+        {"verbs": ["project validate", "project set", "project unset", "project init", "project new", "project attach"], "text": "verify-env-invalid: verify.environment: env_pass: a name is listed twice"},
+        {"verbs": ["project validate", "project set", "project unset", "project init", "project new", "project attach"], "text": "verify-env-invalid: verify.environment: env_set: VALUE is not an object of name to string"},
+        {"verbs": ["project validate", "project set", "project unset", "project init", "project new", "project attach"], "text": "verify-env-invalid: verify.environment: env_set: the value of NAME is not a string without NUL or line break"},
+        {"verbs": ["project validate", "project set", "project unset", "project init", "project new", "project attach"], "text": "verify-env-invalid: verify.environment: NAME is in both env_pass and env_set"},
+        {"verbs": ["project validate", "project set", "project unset", "project init", "project new", "project attach"], "text": "verify-env-invalid: verify.environment: LABEL: VALUE is not a variable name ([A-Za-z_][A-Za-z0-9_]*)"},
+        {"verbs": ["project validate", "project set", "project unset", "project init", "project new", "project attach"], "text": "verify-env-invalid: verify.environment: LABEL: NAME always passes and cannot be declared"},
+        {"verbs": ["project validate", "project set", "project unset", "project init", "project new", "project attach"], "text": "verify-env-invalid: verify.environment: LABEL: NAME: no QARGI_* name is accepted"},
+        {"verbs": ["project validate", "project set", "project unset", "project init", "project new", "project attach"], "text": "verify-env-invalid: verify.environment: LABEL: NAME cannot be accepted: the variables run_clean removes cannot be read from lib.sh"},
+        {"verbs": ["project validate", "project set", "project unset", "project init", "project new", "project attach"], "text": "verify-env-invalid: verify.environment: LABEL: NAME is removed from every suite run and cannot be declared"},
+        {"verbs": ["project init", "project attach"], "text": "qargi: the answers are not valid; nothing stored"},
+        {"verbs": ["project new"], "text": "qargi: the project was created but its answers are not valid; nothing stored (qargi project attach DIR --url URL)"},
+        {"verbs": ["project set"], "text": "qargi: that would make the project invalid; nothing changed"},
+        {"verbs": ["project unset"], "text": "qargi: that would make the project invalid (an answer it needs); nothing changed"},
+        {"verbs": ["feature verify", "feature finish", "release start", "release verify", "release finish"], "text": "qargi: verify-env-invalid: verify.environment of PROJECT is not valid:\n  PROBLEM\nfix it with qargi project set PROJECT verify.environment JSON"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-invalid: -: verify.environment must be an object or null, not TYPE"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-invalid: -: unknown key 'KEY' (the keys are KEYS)"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-invalid: -: fds: VALUE is not one of VALUES"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-invalid: -: ci_fds is accepted only with fds ci-like"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-invalid: -: ci_fds: VALUE is not [READ, WRITE], two different integers from MIN to MAX"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-invalid: -: cpu_quota: VALUE is not \"N%\" (N from MIN to MAX), \"max\" or null"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-invalid: -: env_pass: VALUE is not a list of names"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-invalid: -: env_pass: a name is listed twice"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-invalid: -: env_set: VALUE is not an object of name to string"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-invalid: -: env_set: the value of NAME is not a string without NUL or line break"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-invalid: -: NAME is in both env_pass and env_set"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-invalid: -: LABEL: VALUE is not a variable name ([A-Za-z_][A-Za-z0-9_]*)"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-invalid: -: LABEL: NAME always passes and cannot be declared"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-invalid: -: LABEL: NAME: no QARGI_* name is accepted"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-invalid: -: LABEL: NAME cannot be accepted: the variables run_clean removes cannot be read from lib.sh"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-invalid: -: LABEL: NAME is removed from every suite run and cannot be declared"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-invalid: the launcher refused this run (CODES) and the refusal belongs to no part, so it cannot be waived; nothing was run or recorded: FOUND"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-invalid: the launcher refused this run (CODES) and the refusal belongs to no part, so it cannot be waived; the suite did not run, nothing is recorded"}
+      ]
+    },
+    "verify-env-change-unapproved": {
+      "rule": "A change of verify.environment that loosens it takes the owner's approval, and the suite runs only under the declaration qargi last accepted",
+      "why": "a declaration edited by hand, or loosened without the owner, would make the suite run under a looser environment than the one approved",
+      "class": "verify-environment",
+      "exit": 1,
+      "status": "live",
+      "sites": [
+        {"verbs": ["project set", "project unset"], "text": "qargi: verify-env-change-unapproved: PATH would loosen the approved verify.environment (REASON); it takes a plan token and the owner's words"},
+        {"verbs": ["project set", "project unset"], "text": "qargi: the plan token or the approval given does not cover this change (both --plan and --approved are needed, and the token is for this declaration)"},
+        {"verbs": ["project set"], "text": "plan token: TOKEN   (apply with: qargi project set NAME PATH VALUE --plan TOKEN --approved \"<the owner's words>\"); nothing changed"},
+        {"verbs": ["project unset"], "text": "plan token: TOKEN   (apply with: qargi project unset NAME PATH --plan TOKEN --approved \"<the owner's words>\"); nothing changed"},
+        {"verbs": ["project init", "project new", "project attach"], "text": "qargi: verify-env-change-unapproved: the answers would change verify.environment from the approved declaration (HASH) to another (HASH); the approved one is DECLARATION; leave verify.environment as stored, or change it with: qargi project set NAME verify.environment JSON (a loosening takes a plan token and the owner's words); nothing stored"},
+        {"verbs": ["feature verify", "feature finish", "release start", "release verify", "release finish"], "text": "qargi: verify-env-change-unapproved: verify.environment in the answers of PROJECT differs from the declaration qargi last accepted (answers HASH, accepted HASH). Restore the answers, or change it with qargi project set PROJECT verify.environment JSON (a loosening needs a plan token and the owner's words). Nothing was run or changed."},
+        {"verbs": ["feature verify", "feature finish", "release start", "release verify", "release finish"], "text": "qargi: verify-env-change-unapproved: the accepted declarations of verify.environment cannot be read: FOUND"}
+      ]
+    },
+    "verify-env-cpu-no-systemd-run": {
+      "rule": "With the cpu part on, the suite runs in a scope made by systemd-run",
+      "why": "the cpu quota is applied by a transient scope; without systemd-run there is none to apply",
+      "class": "verify-environment",
+      "exit": 1,
+      "status": "live",
+      "sites": [
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-cpu-no-systemd-run: cpu: systemd-run is not on PATH (CLEAN_PATH)"},
+        {"verbs": ["feature verify", "release verify"], "text": "plan token: TOKEN   (to run once without PARTS: AGAIN --waive-environment PARTS --plan TOKEN --approved \"<the owner's words>\")"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-cpu-no-systemd-run: verify.environment cannot be applied to this run (part PARTS: CODES); nothing was run or recorded. The owner may waive PARTS for this run only with the token above; another agent's relay of an approval is not the owner's"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-cpu-no-systemd-run: the launcher refused this run (CODES); the suite did not run, nothing is recorded. Each refusal is in the log above; the owner may waive PARTS for one run with the token above"}
+      ]
+    },
+    "verify-env-cpu-systemd-too-old": {
+      "rule": "With the cpu part on, systemd-run is systemd 254 or newer",
+      "why": "an older systemd-run does not make the scope the launcher reads back",
+      "class": "verify-environment",
+      "exit": 1,
+      "status": "live",
+      "sites": [
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-cpu-systemd-too-old: cpu: systemd-run reports 'LINE'; 254 or newer is needed"},
+        {"verbs": ["feature verify", "release verify"], "text": "plan token: TOKEN   (to run once without PARTS: AGAIN --waive-environment PARTS --plan TOKEN --approved \"<the owner's words>\")"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-cpu-systemd-too-old: verify.environment cannot be applied to this run (part PARTS: CODES); nothing was run or recorded. The owner may waive PARTS for this run only with the token above; another agent's relay of an approval is not the owner's"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-cpu-systemd-too-old: the launcher refused this run (CODES); the suite did not run, nothing is recorded. Each refusal is in the log above; the owner may waive PARTS for one run with the token above"}
+      ]
+    },
+    "verify-env-cpu-no-user-manager": {
+      "rule": "With the cpu part on, the scope is made and the launcher reports",
+      "why": "a scope that cannot be made, or a launcher that leaves no report, is a fault of the environment, never a test failure",
+      "class": "verify-environment",
+      "exit": 1,
+      "status": "live",
+      "sites": [
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-cpu-no-user-manager: cpu: the scope could not be made and nothing was reported: TAIL"},
+        {"verbs": ["feature verify", "release verify"], "text": "plan token: TOKEN   (to run once without PARTS: AGAIN --waive-environment PARTS --plan TOKEN --approved \"<the owner's words>\")"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-cpu-no-user-manager: verify.environment cannot be applied to this run (part PARTS: CODES); nothing was run or recorded. The owner may waive PARTS for this run only with the token above; another agent's relay of an approval is not the owner's"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-cpu-no-user-manager: the scope could not be made and the launcher left no report (the suite did not run to a verdict); nothing is recorded. The last lines of the log:\n  LINES"}
+      ]
+    },
+    "verify-env-cpu-readback": {
+      "rule": "With the cpu part on, the launcher reads back that it is alone in a new scope below qargi-verify.slice with the declared cpu.max",
+      "why": "a quota that is not read back proves nothing about the run",
+      "class": "verify-environment",
+      "exit": 1,
+      "status": "live",
+      "sites": [
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-cpu-readback: cpu: this process is not alone in a new scope below qargi-verify.slice: a cpu.max read from a cgroup that is not this run's would prove nothing"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-cpu-readback: cpu: /proc/self/cgroup has no unified-hierarchy line"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-cpu-readback: cpu: the process is in PATH, not below qargi-verify.slice"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-cpu-readback: cpu: PATH has no cpu.max (the cpu controller is off there)"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-cpu-readback: cpu: cpu.max is 'VALUE', declared \"QUOTA\""},
+        {"verbs": ["feature verify", "release verify"], "text": "plan token: TOKEN   (to run once without PARTS: AGAIN --waive-environment PARTS --plan TOKEN --approved \"<the owner's words>\")"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-cpu-readback: verify.environment cannot be applied to this run (part PARTS: CODES); nothing was run or recorded. The owner may waive PARTS for this run only with the token above; another agent's relay of an approval is not the owner's"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-cpu-readback: the launcher refused this run (CODES); the suite did not run, nothing is recorded. Each refusal is in the log above; the owner may waive PARTS for one run with the token above"}
+      ]
+    },
+    "verify-env-signals": {
+      "rule": "The suite starts with default signal dispositions and an empty mask",
+      "why": "an ignored or blocked signal in the suite makes it behave unlike a fresh CI job",
+      "class": "verify-environment",
+      "exit": 1,
+      "status": "live",
+      "sites": [
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-signals: signals: SigIgn and SigBlk cannot be read from /proc/self/status"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-signals: signals: SigIgn HEX and SigBlk HEX are not both zero"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-signals: signals: SigIgn HEX and SigBlk HEX are not both zero (apart from signals 32 and 33)"},
+        {"verbs": ["feature verify", "release verify"], "text": "plan token: TOKEN   (to run once without PARTS: AGAIN --waive-environment PARTS --plan TOKEN --approved \"<the owner's words>\")"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-signals: verify.environment cannot be applied to this run (part PARTS: CODES); nothing was run or recorded. The owner may waive PARTS for this run only with the token above; another agent's relay of an approval is not the owner's"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-signals: the launcher refused this run (CODES); the suite did not run, nothing is recorded. Each refusal is in the log above; the owner may waive PARTS for one run with the token above"}
+      ]
+    },
+    "verify-env-fds": {
+      "rule": "The suite starts with only the descriptors the declaration allows",
+      "why": "a descriptor inherited from the caller is state the suite should not see",
+      "class": "verify-environment",
+      "exit": 1,
+      "status": "live",
+      "sites": [
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-fds: fds: cannot open /dev/null for standard input: ERROR"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-fds: fds: cannot list /proc/self/fd: ERROR"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-fds: fds: cannot place the pipes on LIST: ERROR"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-fds: fds: the open descriptors are LIST, expected LIST"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-fds: fds: descriptor N is close-on-exec: the command would not have it"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-fds: fds: the report descriptor N is not close-on-exec"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-fds: fds: the report descriptor N: ERROR"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-fds: fds: descriptor N (END end): ERROR"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-fds: fds: descriptor N is not a pipe"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-fds: fds: descriptor N (END end) has flags FLAGS, expected FLAGS"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-fds: fds: descriptor N is close-on-exec"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-fds: fds: a read of descriptor N gave RESULT, expected EAGAIN"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-fds: fds: a read of descriptor N failed with ERRNAME, expected EAGAIN"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-fds: fds: descriptors N and N are the same pipe"},
+        {"verbs": ["feature verify", "release verify"], "text": "plan token: TOKEN   (to run once without PARTS: AGAIN --waive-environment PARTS --plan TOKEN --approved \"<the owner's words>\")"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-fds: verify.environment cannot be applied to this run (part PARTS: CODES); nothing was run or recorded. The owner may waive PARTS for this run only with the token above; another agent's relay of an approval is not the owner's"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-fds: the launcher refused this run (CODES); the suite did not run, nothing is recorded. Each refusal is in the log above; the owner may waive PARTS for one run with the token above"}
+      ]
+    },
+    "verify-env-tty": {
+      "rule": "The suite runs in a session of its own with no terminal",
+      "why": "a controlling terminal or a terminal descriptor changes what a test sees; a hosted runner has none",
+      "class": "verify-environment",
+      "exit": 1,
+      "status": "live",
+      "sites": [
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-tty: tty: setsid failed: ERROR"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-tty: tty: this process is not a session leader"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-tty: tty: descriptors LIST are terminals"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-tty: tty: /dev/tty opens: the session has a controlling terminal"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-tty: tty: /dev/tty failed with ERRNAME, expected ENXIO"},
+        {"verbs": ["feature verify", "release verify"], "text": "plan token: TOKEN   (to run once without PARTS: AGAIN --waive-environment PARTS --plan TOKEN --approved \"<the owner's words>\")"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-tty: verify.environment cannot be applied to this run (part PARTS: CODES); nothing was run or recorded. The owner may waive PARTS for this run only with the token above; another agent's relay of an approval is not the owner's"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-tty: the launcher refused this run (CODES); the suite did not run, nothing is recorded. Each refusal is in the log above; the owner may waive PARTS for one run with the token above"}
+      ]
+    },
+    "verify-env-no-log": {
+      "rule": "With verify.environment on, the suite's output goes to a log and never to a terminal, and the launcher's reports have a directory",
+      "why": "the output cannot go to a terminal (the tty part), and a run that cannot keep its reports cannot be recorded; under a waiver the claim of its token comes first, so the token is spent, an audit line is written, and the second sentence of the message (when a waiver is in use) says so",
+      "class": "verify-environment",
+      "exit": 1,
+      "status": "live",
+      "sites": [
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-no-log: the directory DIR for the reports of the launcher cannot be made; nothing was run. The waiver token was spent"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-no-log: the suite log LOG cannot be created; with verify.environment the suite's output goes to a log and never to a terminal (the tty part); nothing was run. The waiver token was spent"}
+      ]
+    },
+    "verify-env-waive-unapproved": {
+      "rule": "A waiver of a part stands on the plan token of a refusal of exactly those parts at this head and on the owner's words",
+      "why": "a waiver loosens the environment for one run, so it is the owner's, for the refusal that was shown",
+      "class": "verify-environment",
+      "exit": 1,
+      "status": "live",
+      "sites": [
+        {"verbs": ["feature verify", "release verify"], "text": "plan token: TOKEN   (to run once without PARTS: AGAIN --waive-environment PARTS --plan TOKEN --approved \"<the owner's words>\")"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-waive-unapproved: --waive-environment WANTED does not name every refused part (REFUSED); nothing was run or recorded"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-waive-unapproved: this attempt refused no part, so WANTED has no refusal to waive; a waiver stands on the token a refusal of exactly these parts at this head printed, with --approved and the owner's words; nothing was run or recorded"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-waive-unapproved: the waiver of WANTED needs the token of a refusal of exactly these parts at this head (--plan) and --approved with the owner's words; the token above covers the refused parts REFUSED; nothing was run or recorded"}
+      ]
+    },
+    "verify-env-waive-unknown": {
+      "rule": "--waive-environment names parts of verify.environment that are on and can fail",
+      "why": "a waiver of a part that is off, that cannot fail or that does not exist waives nothing",
+      "class": "verify-environment",
+      "exit": 1,
+      "status": "live",
+      "sites": [
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-waive-unknown: --waive-environment names parts of verify.environment, which is off for PROJECT: there is nothing to waive"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-waive-unknown: --waive-environment names no part (the parts are signals, fds, tty, cpu)"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-waive-unknown: cpu is off in verify.environment of PROJECT (cpu_quota is null): there is nothing to waive"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-waive-unknown: the part env cannot fail and cannot be waived (the parts that can be waived are signals, fds, tty, cpu)"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-waive-unknown: 'WORD' is not a part of verify.environment (the parts that can be waived are signals, fds, tty, cpu)"}
+      ]
+    },
+    "verify-env-waive-used": {
+      "rule": "A waiver token is good for one run at its head",
+      "why": "a second run under the same words would be a waiver the owner did not give for it",
+      "class": "verify-environment",
+      "exit": 1,
+      "status": "live",
+      "sites": [
+        {"verbs": ["feature verify", "release verify"], "text": "plan token: TOKEN   (to run once without PARTS: AGAIN --waive-environment PARTS --plan TOKEN --approved \"<the owner's words>\")"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-waive-used: that token has been used for a run at this head: a waiver is good for one run; a refusal of PARTS at this head prints the next token; nothing was run or recorded"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-waive-used: another verify at this head used the waiver at the same moment; nothing was run or recorded"}
+      ]
+    },
+    "verify-env-waiver-dir": {
+      "rule": "A waiver is claimed in a directory of the state, with a count of the tokens used at the head, before the run starts",
+      "why": "a waiver that cannot be claimed or counted could not be told from a new one, so a spent token could be used again",
+      "class": "verify-environment",
+      "exit": 1,
+      "status": "live",
+      "sites": [
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-waiver-dir: FILE does not hold a number: the number of waivers made at this head cannot be read, so a spent token could not be told from a new one; nothing was run or recorded"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-waiver-dir: the directory DIR for the waivers of verify.environment cannot be made; nothing was run or recorded"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-waiver-dir: the claim FILE of the waiver cannot be made; nothing was run or recorded"},
+        {"verbs": ["feature verify", "release verify"], "text": "qargi: verify-env-waiver-dir: the count of the waivers made at this head could not be kept in DIR (status STATUS: the lock or the write failed); nothing was run or recorded"}
+      ]
+    }
+  }
+}

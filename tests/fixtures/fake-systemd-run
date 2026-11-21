@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# A stand-in for systemd-run in tests/test_suite_env_flow.sh. It makes no scope: it checks the argument list of the scope route of lib/suite_env.py and,
+# when the list is exactly the fixed one, executes the command after `--` (which has no scope around it, so the launcher's read-back of the cgroup refuses
+# with verify-env-cpu-readback). Nothing in the list comes from the test's declaration or the suite command: the only words that vary are the property
+# and the interpreter, and those are matched, not trusted.
+#
+# FAKE_SYSTEMD_MODE_FILE names a file whose first line is the mode (missing file or empty: ok):
+#   ok       --version says systemd 255; a run executes the command
+#   old      --version says systemd 253 (the launcher refuses before it runs anything)
+#   nouser   --version says systemd 255; a run prints nothing and exits 1 (no user manager: no scope, no report)
+# FAKE_SYSTEMD_LOG names a file that gets one line per call: `version`, `argv-ok PROP`, or `argv-BAD: WHAT`. An argument list that is not the fixed one exits 97.
+set -u
+mode=ok
+if [ -n "${FAKE_SYSTEMD_MODE_FILE:-}" ] && [ -f "$FAKE_SYSTEMD_MODE_FILE" ]; then mode=$(head -1 "$FAKE_SYSTEMD_MODE_FILE"); [ -n "$mode" ] || mode=ok; fi
+log() { [ -z "${FAKE_SYSTEMD_LOG:-}" ] || printf '%s\n' "$*" >> "$FAKE_SYSTEMD_LOG"; }
+if [ "${1:-}" = --version ]; then
+  log version
+  if [ "$mode" = old ]; then echo "systemd 253 (253.1-fake)"; else echo "systemd 255 (255.4-fake)"; fi
+  exit 0
+fi
+bad() { log "argv-BAD: $*"; echo "fake-systemd-run: unexpected argument list: $*" >&2; exit 97; }
+# the fixed head of the scope route: no word of the declaration or of the command may stand in it
+head_words=(--user --scope --quiet --collect --expand-environment=no --slice=qargi-verify.slice -p)
+args=("$@")
+for i in "${!head_words[@]}"; do
+  [ "${args[i]:-}" = "${head_words[i]}" ] || bad "argument $((i + 1)) is '${args[i]:-}', expected '${head_words[i]}'"
+done
+n=${#head_words[@]}
+prop=${args[n]:-}
+case $prop in CPUQuota=[1-9]*%|CPUWeight=100) ;; *) bad "property '$prop'";; esac
+[ "${args[n + 1]:-}" = -- ] || bad "no -- after the property"
+tail=("${args[@]:n + 2}")
+interp=${tail[0]:-}
+case ${interp##*/} in python|python3|python3.*) ;; *) bad "interpreter '$interp'";; esac
+[ -x "$interp" ] || bad "interpreter '$interp' is not an executable path"
+tail=("${tail[@]:1}")
+flags=()
+if [ "${tail[0]:-}" = -B ]; then flags=(-B); tail=("${tail[@]:1}"); fi
+[ "${tail[0]:-}" = -I ] || bad "expected -I after the interpreter, got '${tail[0]:-}'"
+case ${tail[1]:-} in */suite_env.py) ;; *) bad "expected the path of suite_env.py, got '${tail[1]:-}'";; esac
+[ "${#tail[@]}" -eq 5 ] && [ "${tail[2]}" = stage2 ] && [ "${tail[3]}" = --job-fd ] && [ "${tail[4]}" = 3 ] || bad "the tail is '${tail[*]}', expected: -I SCRIPT stage2 --job-fd 3"
+log "argv-ok $prop"
+case $mode in
+  nouser) exit 1;;
+  *) exec "$interp" ${flags[@]+"${flags[@]}"} "${tail[@]}";;
+esac

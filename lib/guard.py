@@ -250,7 +250,7 @@ HANDOFF_SUBST = re.compile(r"(?:marshal(?:\.sh)?[\"']*\s+[\"']*handoff|marshal_h
 PROJECT_SET_SUBST = re.compile(r"project(?:\.sh)?[\"']*\s+[\"']*set[\"']*\s")   # `project set ... $(...)`: the substitution may produce a models path, and splitting it off hides that
 AUDIT_SUBST = re.compile(r"packs_audit\.py[\"']*")   # `packs_audit.py ... $(...)`: the substitution may produce `store`, and splitting it off hides that
 UNREADABLE = "$`{}*?[]"                                     # in a word: a variable, a substitution, a brace or a glob builds it, so the guard cannot read what it is
-EXECUTED_ANSWERS = ("release", "test_command", "gates", "env", "upstream", "site", "backlog", "ci", "methodology_accepted")   # the answers the lead later runs, passes to a process, fetches from or builds from (release site), or decides with (ci.not_gates takes a CI job out of the gate comparison, methodology_accepted a deviation out of the open ones): a member may not set them (project set)
+EXECUTED_ANSWERS = ("release", "test_command", "gates", "env", "upstream", "site", "backlog", "ci", "methodology_accepted", "verify")   # the answers the lead later runs, passes to a process, fetches from or builds from (release site), or decides with (ci.not_gates takes a CI job out of the gate comparison, methodology_accepted a deviation out of the open ones, verify.environment is the environment the lead's whole-suite runs start under and a loosening of it takes the owner's words): a member may not set them (project set)
 ROLE_TOOLS_PATH = re.compile(r"roles|roles\.[^.]+|roles\.[^.]+\.tools(?:\..*)?")   # roles.<role>.tools: what env apply installs and local prepare checks out; a whole role, or all of them, holds it
 IDENTITY_ANSWERS = ("git", "review")   # git.author (the author review apply gives the applied commits) and review.keep_author (keep the member's instead): the lead's, a member may not set them (project set)
 PROJECT_VERBS = ("set", "unset", "init", "link", "unlink")  # the project verbs a member may not run (set, unset: the answers of the lead; init: the whole file; link, unlink: what a session loads)
@@ -306,7 +306,8 @@ GIT_WRITES = {"add", "commit", "apply", "am", "checkout", "switch", "reset", "rm
               "cherry-pick", "revert", "restore", "clean", "tag", "branch", "pull", "fetch", "init", "clone", "worktree",
               "notes", "update-ref", "config", "submodule", "update-index", "gc", "prune", "repack", "pack-refs", "replace", "filter-branch", "commit-tree",
               "write-tree", "mktag", "mktree", "fast-import", "read-tree", "checkout-index", "sparse-checkout", "maintenance"}
-REDIR = re.compile(r"^(?:\d*|&)(?:>>|>\||<>|>)(.*)$")           # > >> >| <> &> &>> and N> N>> N>| N<>, the target stuck to it or in the next word
+FD_NAME = r"\{[A-Za-z_][A-Za-z0-9_]*(?:\[.*?\])?\}"             # {fd} or {arr[i]} (the subscript may hold brackets and a blank, quoted in the command and bare in the words: {a[b[1]]}, {a["x y"]}, up to the first ]}) before a redirection operator: bash opens a descriptor and stores its number in the variable (or the array element)
+REDIR = re.compile(r"^(?:\d*|&|" + FD_NAME + r")(?:>>|>\||<>|>)(.*)$")           # > >> >| <> &> &>> and N> N>> N>| N<> and {fd}>, the target stuck to it or in the next word
 GIT_OUTPUT_DIRS = {"format-patch", "archive"}                    # git subcommands whose -o names where they write
 
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
@@ -333,9 +334,12 @@ ROOT_SCRIPTS = ("install.sh",)                                       # of those,
 # option with a redirection stuck to it (-X>/dev/null) makes any word naming a script the script; an option of another shell that takes a value
 # where bash has a flag of that letter is still read as the flag. A word after -c that reads as a redirection and holds a blank was one quoted word
 # (bash -c "2>/dev/null qargi upgrade"): it is read as the -c string too, beside the reading as a redirection (shell_string, quoted_string). The options of the wrappers in front (sudo, env, timeout ...) are read from WRAP_OPTS.
+# The guard is a best-effort check of the command text, not a sandbox: a form that the shell removes or builds and the guard cannot read is a known limit,
+# listed below in 'Still not seen'. It is not the only barrier either: a member's git has no credentials (no home, no configuration, no ssh) and
+# the push URL of the clone is disabled, so a push the guard missed still has nowhere to go.
 # Still not seen, after those readings:
 #   - a name the shell builds: a variable that holds the path (`P=.../install.sh; bash $P`), a for-loop over it, a glob (`bash .../inst*.sh`), a brace
-#     (`bash .../{install,x}.sh`), a redirection glued to the name (`bash .../install.sh>/dev/null`), and a `{fd}>` redirection written before the file;
+#     (`bash .../{install,x}.sh`), a redirection glued to the name (`bash .../install.sh>/dev/null`), and a `{fd}>` redirection written before the file of a script that only its own file is (OWN_ONLY: `python3 {fd}>f .../install_record.py`); the named descriptor beside `qargi`, before or after it and the area, is read (FD_NAME);
 #   - a plain variable as an option's value (`python3 -X $V dev FILE`): read as one word, while word splitting may make it none or several;
 #   - a program on python's standard input (`python3 < .../install_record.py`, `python3 - < FILE`), and names that xargs brings from a file it reads
 #     itself (`xargs -a LIST bash`);
@@ -478,12 +482,16 @@ def remote_operand(w):
     return w.startswith("rsync://") or bool(colon and head and "/" not in head and not head.isspace() and not re.search(r"\s", head))
 
 
-def git_global(rest):
+def git_global(rest, redirs=False):
     """([(option, value)], k): the global options of a git command line (-C DIR, -c K=V, --work-tree=D, --no-pager ...) and the index in rest of the subcommand
-    (len(rest) when there is none). value is None for an option with none."""
+    (len(rest) when there is none). value is None for an option with none. redirs: skip a redirection where an option or the subcommand goes (never an
+    option's value); a word shaped like one is then never the name of a subcommand."""
     opts, k = [], 0
-    while k < len(rest) and rest[k].startswith("-"):
+    while k < len(rest) and (rest[k].startswith("-") or (redirs and is_redirection(rest[k]))):
         t = rest[k]
+        if not t.startswith("-"):                  # a redirection where an option or the subcommand goes
+            k += 2 if BARE_REDIR.match(t) else 1
+            continue
         if t in GIT_VALUE_OPTS and k + 1 < len(rest):
             opts.append((t, rest[k + 1]))
             k += 2
@@ -501,8 +509,19 @@ def builds_word(w):
 
 def git_refusal(pre, rest):
     """The reason a git command line (pre: the words before git, with the assignments in front of it; rest: the words after) publishes, reaches out under another
-    name or runs a program a member names, or None. Only the subcommand counts: the first word after the global options (`git commit -m push` is no push)."""
-    opts, k = git_global(rest)
+    name or runs a program a member names, or None. Only the subcommand counts: the first word after the global options (`git commit -m push` is no push).
+    A redirection between git and its subcommand is no word of the command (`git 2>/dev/null push` is a push): the words are read without them, and as
+    written too, where a quoted word that looks like a redirection is the value of an option (`git -C '>x' push`): both readings are judged."""
+    for words, redirs in ((without_redirections(rest), False), (rest, True)):
+        why = git_words_refusal(pre, words, redirs)
+        if why:
+            return why
+    return None
+
+
+def git_words_refusal(pre, rest, redirs):
+    """git_refusal on one reading of the words after git (redirs: see git_global)."""
+    opts, k = git_global(rest, redirs)
     sub, args = (rest[k], rest[k + 1:]) if k < len(rest) else ("", [])
     if sub in GIT_PUSHERS:
         return "git %s is not available to an agent" % sub
@@ -706,8 +725,8 @@ def tokens(seg):
 
 
 KEYWORDS = {"if", "then", "elif", "else", "while", "until", "do", "!", "{", "(", "coproc"}   # a command follows them
-LEADING_REDIR = re.compile(r"^(?:\d*|&)(?:<<<|<<-?|<>|>>|>\||>&?|<&?|&>>?)")
-BARE_REDIR = re.compile(r"^(?:\d*|&)(?:<<<|<<-?|<>|>>|>\||>&?|<&?|&>>?)$")           # the operator alone: its target is the next word
+LEADING_REDIR = re.compile(r"^(?:\d*|&|" + FD_NAME + r")(?:<<<|<<-?|<>|>>|>\||>&?|<&?|&>>?)")
+BARE_REDIR = re.compile(r"^(?:\d*|&|" + FD_NAME + r")(?:<<<|<<-?|<>|>>|>\||>&?|<&?|&>>?)$")           # the operator alone: its target is the next word
 
 
 def wrapper_option(w, t):
@@ -876,6 +895,9 @@ def rejoin(words):
     return " ".join(out)
 
 
+FD_REDIR_WORD = re.compile("^" + FD_NAME + r"[<>]")
+
+
 @functools.cache
 def _cmd_tokens(seg):
     """The words of a segment, without what the grammar puts around a command: the ( stuck to the first word, a case pattern (x)), and the ) that closes
@@ -886,7 +908,9 @@ def _cmd_tokens(seg):
     elif toks[:1] and toks[0].endswith("()"):                # NAME() { ...
         toks = toks[1:]
     if toks:
-        toks[0] = toks[0].lstrip("({")
+        toks[0] = toks[0].lstrip("(")
+        if not FD_REDIR_WORD.match(toks[0]):                 # {fd}>f is a redirection: a { opens a group only as a word of its own
+            toks[0] = toks[0].lstrip("{")
         if not toks[0]:
             toks.pop(0)
     if toks[:1] == ["case"]:                                 # case WORD in PATTERN) command
@@ -1806,31 +1830,32 @@ def write_targets(toks, i):
         elif prog == "uniq" and len(args) > 1:
             targets.append((prog, args[1]))                               # uniq INPUT OUTPUT
         elif prog == "git":
-            opts, k = git_global(rest)
-            gitdir = next((v for n, v in reversed(opts) if n == "-C" and v), None)
-            trees = [v for n, v in opts if n == "--work-tree" and v] + [t.split("=", 1)[1] for t in toks[:i] if t.startswith("GIT_WORK_TREE=")]
-            sub = rest[k] if k < len(rest) else ""
-            if sub in GIT_WRITES and not (sub == "tag" and lists_tags(rest[k + 1:])):
-                targets.append(("git " + sub, gitdir or "."))
-                targets += [("git " + sub, tree) for tree in trees]                # --work-tree DIR and GIT_WORK_TREE=DIR name where the tree is changed, as -C does
-            if sub not in GIT_WRITES and git_mutates(sub, rest[k + 1:]):
-                targets.append(("git " + sub, gitdir or "."))
-                targets += [("git " + sub, tree) for tree in trees]
-            if sub == "config":
-                targets += git_config_targets(rest[k + 1:])
-                if config_written(rest[k + 1:]) != []:                         # a write: GIT_CONFIG=FILE in front of it names the file, as --file does
-                    targets += [("git config --file", t.split("=", 1)[1]) for t in toks[:i] if t.startswith("GIT_CONFIG=")]
-            places = [t for t in rest[k + 1:] if not t.startswith("-")]
-            if sub == "clone" and len(places) > 1:                        # git clone URL DIR, git init DIR, git worktree add DIR
-                targets.append(("git clone", places[-1]))
-            elif sub in ("init", "worktree") and places[sub == "worktree":][:1]:
-                targets.append(("git " + sub, places[sub == "worktree":][0]))
-            for n in range(k + 1, len(rest)):                             # git log|diff|show --output=FILE, format-patch -o DIR, archive -o FILE, apply --directory=DIR
-                v = option_value(rest, n, ("--output", "--output-directory") + (("-o",) if sub in GIT_OUTPUT_DIRS else ()) + (("--directory",) if sub == "apply" else ()))
-                if v is not None:
-                    targets.append(("git " + sub + " --output", v))
-            if sub == "bundle" and rest[k + 1:k + 2] == ["create"] and len(rest) > k + 2:
-                targets.append(("git bundle create", rest[k + 2]))
+            for rest, redirs in ((without_redirections(rest), False), (rest, True)):   # both readings, as git_refusal: without the redirections the shell takes out, and as written (a quoted '>x' is a word)
+                opts, k = git_global(rest, redirs)
+                gitdir = next((v for n, v in reversed(opts) if n == "-C" and v), None)
+                trees = [v for n, v in opts if n == "--work-tree" and v] + [t.split("=", 1)[1] for t in toks[:i] if t.startswith("GIT_WORK_TREE=")]
+                sub = rest[k] if k < len(rest) else ""
+                if sub in GIT_WRITES and not (sub == "tag" and lists_tags(rest[k + 1:])):
+                    targets.append(("git " + sub, gitdir or "."))
+                    targets += [("git " + sub, tree) for tree in trees]                # --work-tree DIR and GIT_WORK_TREE=DIR name where the tree is changed, as -C does
+                if sub not in GIT_WRITES and git_mutates(sub, rest[k + 1:]):
+                    targets.append(("git " + sub, gitdir or "."))
+                    targets += [("git " + sub, tree) for tree in trees]
+                if sub == "config":
+                    targets += git_config_targets(rest[k + 1:])
+                    if config_written(rest[k + 1:]) != []:                         # a write: GIT_CONFIG=FILE in front of it names the file, as --file does
+                        targets += [("git config --file", t.split("=", 1)[1]) for t in toks[:i] if t.startswith("GIT_CONFIG=")]
+                places = [t for t in rest[k + 1:] if not t.startswith("-")]
+                if sub == "clone" and len(places) > 1:                        # git clone URL DIR, git init DIR, git worktree add DIR
+                    targets.append(("git clone", places[-1]))
+                elif sub in ("init", "worktree") and places[sub == "worktree":][:1]:
+                    targets.append(("git " + sub, places[sub == "worktree":][0]))
+                for n in range(k + 1, len(rest)):                             # git log|diff|show --output=FILE, format-patch -o DIR, archive -o FILE, apply --directory=DIR
+                    v = option_value(rest, n, ("--output", "--output-directory") + (("-o",) if sub in GIT_OUTPUT_DIRS else ()) + (("--directory",) if sub == "apply" else ()))
+                    if v is not None:
+                        targets.append(("git " + sub + " --output", v))
+                if sub == "bundle" and rest[k + 1:k + 2] == ["create"] and len(rest) > k + 2:
+                    targets.append(("git bundle create", rest[k + 2]))
     return targets
 
 
@@ -2960,11 +2985,12 @@ def unreadable_project_verb(command):
 
 
 def quoted_string(t):
-    """True when the word t reads as a redirection and holds a blank, or a command separator (; | &) after the redirection's operator: the words carry no
-    quotes, and the shell cuts an unquoted word at a blank and at a separator, so t was one quoted word (bash -c "2>/dev/null qargi upgrade", or a separator
+    """True when the word t reads as a redirection and holds a blank, or a command separator (; | &), after the redirection's operator (a blank inside the name
+    of a named descriptor, {a["x y"]}>f, is bash's own and makes no string): the words carry no quotes, and the shell cuts an unquoted word at a blank and at a
+    separator, so t was one quoted word (bash -c "2>/dev/null qargi upgrade", or a separator
     written in ANSI-C quoting, $'2>/dev/null\\x3bPROGRAM'): no redirection, a string that starts with one. A dup such as 2>&1 or >&2 has its & in the operator."""
     m = LEADING_REDIR.match(t)
-    return is_redirection(t) and bool(re.search(r"\s", t) or (m and re.search(r"[;|&]", t[m.end():])))
+    return is_redirection(t) and bool(m and re.search(r"[\s;|&]", t[m.end():]))
 
 
 def shell_string(prog, rest):
@@ -3282,6 +3308,21 @@ def past_redirections(rest, k):
     return k
 
 
+def without_redirections(words):
+    """The words without the redirections and their targets (the shell takes them out before the program sees its arguments): the target of one that is a
+    word of its own is the next word, and one stuck to the operator is that word. A word that reads as a redirection and holds a blank or a separator after its
+    operator was one quoted word (quoted_string) and stays."""
+    out, k = [], 0
+    while k < len(words):
+        t = words[k]
+        if is_redirection(t) and not quoted_string(t):
+            k += 2 if BARE_REDIR.match(t) else 1
+        else:
+            out.append(t)
+            k += 1
+    return out
+
+
 def read_options(prog, rest):
     """The options of an interpreter (a shell, . or source, python) at the start of its words rest: (k, ends, readable, dirs). k is the index of the first word
     past them (the file, or the -c string of a shell), ends the letters that say the program is not a file (python's c or m, a shell's c or s), readable False
@@ -3410,26 +3451,37 @@ def own_named(prog, rest, script, here):
     return own_script(script, here)
 
 
-def skill_verb(prog, rest, via_xargs=False, here=".", exe=None, at=None):
+def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
     """The reason a qargi command (or the script behind it, run directly) is a verb that changes a skill, or None. via_xargs: xargs
     stands before the program, so its arguments come from standard input, where --write could be. here: the directory the command runs
-    in, and exe: the word that names the program, for the scripts that are only the tool's own (OWN_ONLY). at: the index in rest of the
-    script an interpreter runs, one of scripts_of (each is judged)."""
+    in, and exe: the word that names the program, for the scripts that are only the tool's own (OWN_ONLY). The words are read twice: as they are
+    (a quoted '>' that reads as a redirection is an argument) and without the redirections (the shell takes them out, so a redirection written after
+    the program or the area word hides no verb); the command is refused when either reading is a refused one."""
+    why = skill_verb_reading(prog, rest, via_xargs, here, exe, None, False)
+    if why:
+        return why
+    if any(is_redirection(t) and not quoted_string(t) for t in rest):
+        return skill_verb_reading(prog, rest, via_xargs, here, exe, None, True)
+    return None
+
+
+def skill_verb_reading(prog, rest, via_xargs, here, exe, at, strip):
+    """skill_verb for one reading of the words: strip True reads the words that name the area and the verb without the redirections and their targets."""
     # a ) with no ( in a word closes a substitution or group whose start the plain split cut off (`printf -v x 'b[%s(true; qargi upgrade)]' $`
     # runs `qargi upgrade` in an arithmetic subscript): the command ends there, so the verb is read without it
     cut = [t.split(")")[0] if ")" in t and "(" not in t else t for t in rest]
-    words = [t for t in cut if not t.startswith("-")]
+    words = [t for t in (without_redirections(cut) if strip else cut) if not t.startswith("-")]
     name, script = prog, exe or prog
     if prog not in SCRIPTS and at is None:               # also a script a shell runs, or sources into itself (`. install.sh` runs it as `sh install.sh` does)
         for k in scripts_of(prog, cut):                  # past the interpreter's options and their values (python3 -X dev, bash -o errexit); each word that may be it
             tick()
-            why = skill_verb(prog, rest, via_xargs, here, exe, at=k)
+            why = skill_verb_reading(prog, rest, via_xargs, here, exe, k, strip)
             if why:
                 return why
         return None
     if prog not in SCRIPTS:
         k = at
-        name, script, words = os.path.basename(cut[k]), cut[k], [t for t in cut[k + 1:] if not t.startswith("-")]
+        name, script, words = os.path.basename(cut[k]), cut[k], [t for t in (without_redirections(cut[k + 1:]) if strip else cut[k + 1:]) if not t.startswith("-")]
     if name in OWN_ONLY and not own_named(prog, cut, script, here):
         return None
     if name == "campaign.py" or (name in ("qargi", "jsonplan.py") and words[:1] == ["campaign"]):
@@ -3561,7 +3613,7 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None, at=None):
         if path == "models" or path.startswith("models."):
             return "qargi project set of %s changes which runtime the project uses or what counts as its barrier and is not available to an agent (qargi provider enable and qargi provider accept have a plan token)" % path
         if path in EXECUTED_ANSWERS or path.startswith(tuple(a + "." for a in EXECUTED_ANSWERS)):
-            return "qargi project set of %s changes a command or an environment the lead later runs, the remote it fetches from or the site it builds (the release answers, test_command, gates, env, upstream, the site answers qargi release site builds from) or the file that qargi backlog done rewrites (backlog.file) and is not available to an agent: propose the value in your report" % path
+            return "qargi project set of %s changes a command or an environment the lead later runs, the remote it fetches from or the site it builds (the release answers, test_command, gates, env, upstream, verify.environment, the site answers qargi release site builds from) or the file that qargi backlog done rewrites (backlog.file) and is not available to an agent: propose the value in your report" % path
         if path == "runs" or path.startswith("runs."):
             return "qargi project set of %s declares which refs verify and clean accept as created by a runtime (runs.owned_refs), a way round the ref check of a run, and is not available to an agent: propose the pattern in your report" % path
         if path == "packs" or path.startswith("packs."):
@@ -3578,6 +3630,21 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None, at=None):
         return "qargi provider adapter-run runs the adapter of a runtime, and with --check makes a private copy of a library adapter, and is not available to an agent"
     if area == "provider" and verb not in PROVIDER_READ:
         return "qargi provider %s changes the provider definitions and is not available to an agent" % verb
+    stripped = without_redirections(words)               # the reading where every redirection is one (the shell takes it out); words is the one where a quoted one is an argument
+    if area in ("feature", "release") and ("verify" in words[1:4] or "verify" in stripped[1:4]):
+        # a waiver of a part of verify.environment is the owner's words: the shell refuses it in a member run (in_member_run), but a member
+        # that another session started has no member mark and works outside its run directory, so the guard refuses the option with --approved (the attempt without --approved
+        # only prints a token and stays open). A word the guard cannot read (a variable, an array expansion, a substitution, or xargs) can split into several
+        # words and carry both options, so any such word is refused, as a path of the answers command is
+        argv = cut if prog in SCRIPTS else cut[k + 1:]
+        raw = argv
+        argv = without_redirections(raw)       # the shell takes a redirection and its target out of the words: a redirect to a path built from a variable is no argument of the verb
+        unreadable = via_xargs or any(any(c in t for c in UNREADABLE) for t in argv)
+        # the words carry no quotes, so a quoted '>' reads as a redirection and would take the next word (--approved) with it: the two options are looked for in the raw words too
+        waive, approved = "--waive-environment" in raw, "--approved" in raw
+        if (waive and approved) or unreadable:
+            return OwnReason("qargi %s verify with --waive-environment and --approved waives a part of verify.environment with the owner's words (a flag the guard cannot read could be either) "
+                             "and is not available to an agent; report the refusal and the plan token it printed instead" % area)
     if area == "release" and any(w == "site" for w in words[1:4]):
         return "qargi release site commits the built documentation site on the lead's site branch and is not available to an agent; report that the site of the release needs building"
     if area == "release" and any(w == "sign" for w in words[1:4]):
@@ -3593,7 +3660,10 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None, at=None):
     if area == "env" and (verb in ENV_LEAD or builds_word(verb)):
         return ("qargi env %s runs the project's dry-run or bootstrap command, which is project code, with the lead's rights, and is not available to an agent "
                 "(qargi env show only reads); report what you need in your task output" % (verb if verb in ENV_LEAD else "plan|apply"))
-    if area == "release" and any(w == "publish" or "$" in w or "`" in w for w in words[1:4]):   # a verb held in a variable could be publish
+    # the verb publish is looked for in the raw words (a quoted '>' reads as a redirection and would take the word after it, publish, with it) and in the words without the
+    # redirections (two or more real ones before it push it out of the first three raw words); a verb held in a variable could be publish too, and there a redirection's
+    # target is no verb, so the variable test reads the words without the redirections
+    if area == "release" and ("publish" in words[1:4] or "publish" in stripped[1:4] or any("$" in w or "`" in w for w in stripped[1:4])):
         return "qargi release publish creates a GitHub release and is not available to an agent; report that the tag needs publishing"
     if area == "feature" and verb == "park":
         return OwnReason("qargi feature park resets the parking branch to develop and checks it out in the main checkout (and journals the move), which is the lead's to do; "

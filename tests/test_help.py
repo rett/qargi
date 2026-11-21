@@ -141,6 +141,9 @@ class Sync(unittest.TestCase):
             for s in spec.get("scripts", []):
                 by_script.setdefault(s, set()).update(doc_flags(cmd))
         ignore = {"--help"}
+        # (script, flag) pairs that a script hands to another program and does not parse itself: doctor.py asks systemd-run `--version`, which is
+        # an argument of systemd-run and no flag of `qargi doctor`
+        passed_on = {("doctor.py", "--version")}
         for s, documented in by_script.items():
             src = slurp(os.path.join(LIB, s))
             found = set()
@@ -148,7 +151,7 @@ class Sync(unittest.TestCase):
                 found |= set(m.group(1).split("|"))
             if s.endswith(".py"):
                 found |= set(quoted.findall(src))
-            missing = {f for f in found if f.startswith("--")} - documented - ignore
+            missing = {f for f in found if f.startswith("--") and (s, f) not in passed_on} - documented - ignore
             self.assertFalse(missing, "%s parses %s, which lib/commands.py does not describe" % (s, sorted(missing)))
 
     def test_argument_types_are_known(self):
@@ -223,6 +226,10 @@ class Render(unittest.TestCase):
                        "on a record that lacks the tool (install.json without a tool_root, or runtimes recorded with no install.json) or its runtimes (install.json names the tool but no user runtime is in install.d)"):
             self.assertIn(needle, doctor)
         self.assertIn("the tools, the install records", C.COMMANDS["doctor"]["summary"])
+        for needle in ("verify-environment: whether the project declares verify.environment, as 'off' or as 'on' with the version of systemd-run",
+                       "a systemd-run that is missing or older than 254", "a declaration that differs from the one accepted for the project or is invalid",
+                       "the file of accepted declarations (verify-env.json in the state directory) when it cannot be read"):
+            self.assertIn(needle, doctor)
         self.assertIn("a lead model that cannot be determined (no transcript, no counted turn, no model id) is not a warning", doctor)
         for word in ("migrat", "moved into install.d"):
             self.assertNotIn(word, doctor)
@@ -612,7 +619,7 @@ class Rich(Env):
         keys = H.complete(["project", "set", "alpha", ""])
         for k in ("budget_cents", "lead.push.local", "roles.build.effort", "roles.write.model", "teams.code-docs.members", "lead.push.merge",
                   "release.version_file", "release.changelog.unreleased", "release.changelog.released", "release.man_pages", "release.test_command", "release.preflight",
-                  "ci.not_gates", "methodology_accepted", "review.reject_trailers", "backlog.file", "backlog.archive", "backlog.section"):
+                  "ci.not_gates", "methodology_accepted", "review.reject_trailers", "backlog.file", "backlog.archive", "backlog.section", "verify.environment"):
             self.assertIn(k, keys)
         self.assertEqual(dict(H.complete_described(["project", "set", "alpha", ""]))["budget_cents"], "now 1500")
         self.assertEqual(H.complete(["project", "set", "alpha", "roles.build.effort", ""]), list(C.EFFORTS))

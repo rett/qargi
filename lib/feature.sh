@@ -16,7 +16,13 @@
 #                                                  local only, takes --plan T --approved W. A detached branch never meets develop, master,
 #                                                  release, hotfix or feature branches: every merge between them is refused.
 #   feature.sh status NAME [--project P]
-#   feature.sh verify NAME [--project P]           the whole suite on the feature's head (the checkpoint before finishing)
+#   feature.sh verify NAME [--project P] [--waive-environment PARTS --plan T --approved W]
+#                                                  the whole suite on the feature's head (the checkpoint before finishing). With the answer
+#                                                  verify.environment the suite starts through lib/suite_env.py; a part of it that cannot be
+#                                                  applied refuses the run and prints a token (also when the run is refused after a passing
+#                                                  attempt), and PARTS (signals, fds, tty, cpu) waives the refused parts for this run only
+#                                                  (recorded, audited, shown again by status). Only a refusal yields a token, which is good for
+#                                                  one run at that head; nothing refused, nothing to waive; not in a member run
 #   feature.sh finish NAME [--project P] [--keep] [--plan T --approved W]
 #                                                  merge into develop with --no-ff and delete the branch; push develop if an
 #                                                  origin exists and the answer branches.push_develop is not false (the plan's first line says which).
@@ -31,9 +37,11 @@
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
-NAME_ARG='' EXTRA='' PROJ='' PLAN_ARG='' APPROVED='' KEEP='' RESOLVED='' PURPOSE='' WORKTREE='' ASSUME_UNREACHABLE=''
+NAME_ARG='' EXTRA='' PROJ='' PLAN_ARG='' APPROVED='' KEEP='' RESOLVED='' PURPOSE='' WORKTREE='' ASSUME_UNREACHABLE='' WAIVE_ENV='' WAIVE_SET=''
+# shellcheck disable=SC2034  # WAIVE_ENV and WAIVE_SET are read by suite_env_prepare (gitflow.sh)
 while [ $# -gt 0 ]; do
   case $1 in
+    --waive-environment) need_val "$1" $#; WAIVE_ENV=$2; WAIVE_SET=1; shift 2;;
     --project) need_val "$1" $#; PROJ=$2; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;; --approved) need_val "$1" $#; APPROVED=$2; shift 2;; --keep) KEEP=1; shift;; --resolved) RESOLVED=1; shift;; --purpose) need_val "$1" $#; PURPOSE=$2; shift 2;; --worktree) WORKTREE=1; shift;; --assume-unreachable-ok) ASSUME_UNREACHABLE=1; shift;;
     -*) usage_die "unknown option $1";;
     *) if [ -z "$NAME_ARG" ]; then NAME_ARG=$1; else EXTRA=$1; fi; shift;;
@@ -47,12 +55,15 @@ case $NAME_ARG in master|develop) die "'$NAME_ARG' is a long-lived branch";; esa
 case $verb in status|verify) actor_check feature "feature $verb" "$NAME_ARG" || exit $?;; esac   # a coordinator label: the feature this verb acts on is its own, checked where the name is resolved
 export RESOLVED
 [ -z "$WORKTREE" ] || [ "$verb" = start ] || die "--worktree belongs to feature start"
+[ -z "$WAIVE_SET" ] || [ "$verb" = verify ] || usage_die "--waive-environment belongs to feature verify"
 case $verb in start|sync|merge|verify|finish) ;; *) [ -z "$ASSUME_UNREACHABLE" ] || die "--assume-unreachable-ok belongs to the verbs that ask the marshal first: feature start, sync, merge, verify and finish";; esac
 . "$(dirname "$0")/gitflow.sh"
 # shellcheck disable=SC2154  # PROJ and TESTCMD come from project_load
 project_load
 # the declared gates (the answer gates; lib/gates.py) replace test_command in the verbs that read or make the whole-suite record: the feature tier
 case $verb in status|verify|finish) gates_load feature;; esac
+# verify.environment (lib/suite_env.py): the declaration, and the id that `verified` selects the suite record by; status only reports a finding
+case $verb in status) suite_env_load report;; verify|finish) suite_env_load refuse;; esac
 # NAME is a feature, or (feature merge only) a detached long-lived branch of the answers (repo.detached): the target of a merge, no feature
 DET=''
 if [ "$verb" != list ] && [ "$verb" != park ]; then
@@ -310,6 +321,7 @@ case $verb in
     if [ -z "$v" ]; then echo "full suite: not run on this branch"; echo "  next: qargi feature verify $NAME_ARG"
     elif [ "$ran" = "$h" ]; then echo "full suite: ${v##* } at this head"; gates_line "$BR"
     else echo "full suite: ${v##* } at an older head ($(g rev-parse --short "$ran" 2>/dev/null || echo "$ran"))"; stale_why "$BR" "$ran"; echo "  next: qargi feature verify $NAME_ARG"; fi
+    suite_env_status "$BR" "qargi feature verify $NAME_ARG"
     remote_report "$BR"; remote_report develop
     wt_outside_report
     if mout=$("$(dirname "$0")/marshal.sh" status "$NAME_ARG" --project "$PROJ" 2>/dev/null); then printf '%s\n' "$mout"; fi;;
@@ -317,16 +329,20 @@ case $verb in
     marshal_gate "$NAME_ARG"
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi feature start $NAME_ARG)"
     if [ -n "$GATES" ]; then gates_need feature; else [ -n "$TESTCMD" ] || die "no test_command in the answers for $PROJ: qargi project set $PROJ test_command '...'"; fi
+    suite_env_prepare "qargi feature verify $NAME_ARG" "$BR" "$h"   # the launcher's attempt and the waiver, before anything is made (verify.environment)
     worktree "$h"
+    suite_env_claim_now   # the waiver is used here, after the worktree and before the log (a refusal above spends nothing)
     echo "running the whole suite on $BR at $(g rev-parse --short "$BR"): $TESTCMD"
+    [ -z "$SUITE_ENV" ] || echo "verify.environment: on (id $SUITE_ENV_ID): the suite starts through the launcher$([ -z "$ENV_WAIVE" ] || echo ", waiving $ENV_WAIVE")"
     gates_note
     other_runs_warning
     hold_begin "$NAME_ARG"; busy_begin verify "$NAME_ARG"
     t0=$SECONDS
     if run_suite_logged "feature-$NAME_ARG"; then res=pass; else res=fail; fi
     busy_end; hold_end
+    suite_env_settle
     record_suite "$BR" "$h" "$res" "$((SECONDS - t0))"
-    echo "full suite: $res at $(g rev-parse --short "$BR")"
+    echo "full suite: $res at $(g rev-parse --short "$BR")$(suite_env_note "$BR")"
     [ "$res" = pass ] || suite_failure_report
     [ "$res" = pass ];;
   finish)
@@ -384,6 +400,7 @@ case $verb in
     [ -n "$KEEP" ] || journal_reach_plan local "refs/heads/$BR" "$h"
     [ -z "$rdel" ] || journal_reach_plan remote "refs/heads/$BR" "$rdel"
     remote_report develop; remote_report "$BR"
+    suite_env_waived_line "$BR"
     show_incoming develop "$BR"; backlog_note develop "$BR"
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi feature finish $NAME_ARG${KEEP:+ --keep} --plan $tok --approved \"...\")"; exit 0; fi
     need_plan "$tok"
