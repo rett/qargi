@@ -129,4 +129,36 @@ dry $F finish fa --dry-run
 rm -f "$T/s/finish-intent/fin-feature-fa.json"
 out=$($F status fa --dry-run 2>&1); rc=$?
 [ "$rc" = 2 ] && grep -q "belongs to feature finish" <<<"$out" && ok "--dry-run belongs to feature finish: another feature verb refuses it" || no "--dry-run on status: rc=$rc $out"
+
+# ---------------------------------------------------------------------------------------------------------------------------- branch prune
+B="$DA branch"
+mkproj prn with-origin
+$F start pa >/dev/null 2>&1; task t1 feature/pa; task t2 feature/pa; $F merge pa agent/t1 >/dev/null 2>&1; $F merge pa agent/t2 >/dev/null 2>&1   # two agent branches merged into an open feature
+$F start pb >/dev/null 2>&1; task t4 feature/pb; $F merge pb agent/t4 >/dev/null 2>&1; $F verify pb >/dev/null 2>&1
+fp=$($F finish pb --keep 2>&1 | tok); $F finish pb --keep --plan "$fp" --approved go >/dev/null 2>&1   # feature/pb is merged into develop and kept
+task t9   # not merged anywhere: kept
+git -C "$R" rev-parse -q --verify refs/heads/feature/pb >/dev/null && [ "$($B prune | grep -c '^  delete local')" = 4 ] && ok "(setup) four merged branches are listed by the plain plan: agent/t1, agent/t2, agent/t4 and feature/pb" || no "(setup) prune plan: $($B prune 2>&1)"
+pp=$($B prune | tok)
+dry $B prune --dry-run
+[ "$rc" = 0 ] && [ "$(lastline)" = "dry-run: 0 would refuse; nothing was changed" ] && [ "$s0" = "$s1" ] && [ "$(tok < "$T/do")" = "$pp" ] && grep -q "^invalidated by: project, remote, branches$" "$T/do" && [ "$(grep -c '^  delete local' "$T/do")" = 4 ] \
+  && [ -n "$(git -C "$R" rev-parse -q --verify refs/heads/agent/t1)" ] && ok "branch prune --dry-run: the plan with the plain plan's token, what invalidates it, 0 would refuse, exit 0; nothing is deleted and nothing else changed" || no "prune dry run: rc=$rc $(cat "$T/do" "$T/de")"
+dry $B prune --dry-run --plan "$pp"
+[ "$rc" = 0 ] && grep -q "the plan $pp is the one shown: the apply of branch prune would go on" "$T/do" && [ "$(lastline)" = "dry-run: 0 would refuse; nothing was changed" ] && [ "$s0" = "$s1" ] && [ -n "$(git -C "$R" rev-parse -q --verify refs/heads/agent/t2)" ] \
+  && ok "with the token that was shown the dry run says the apply would go on, and deletes nothing" || no "prune dry run with the token: rc=$rc $(cat "$T/do" "$T/de")"
+dry $B prune --dry-run --approved go
+[ "$rc" = 0 ] && [ "$s0" = "$s1" ] && [ "$(grep -c '^  delete local' "$T/do")" = 4 ] && ok "--approved with --dry-run applies nothing" || no "prune dry run with --approved: rc=$rc $(cat "$T/do" "$T/de")"
+task t3 feature/pa; $F merge pa agent/t3 >/dev/null 2>&1   # another merged branch since the plan: the plan changed
+dry $B prune --dry-run --plan "$pp"
+[ "$rc" = 1 ] && contract | grep -q '"code":"plan-stale","exit":1,"verb":"branch prune".*"detail":"dry=1 moved=branches token=' && [ "$(lastline)" = "dry-run: 1 would refuse; nothing was changed" ] && [ "$s0" = "$s1" ] && [ "$(grep -c '^  delete local' "$T/do")" = 5 ] \
+  && ok "a branch merged since the plan: plan-stale names the label that moved (branches), dry=1 first in the detail, 1 would refuse, exit 1, nothing deleted" || no "prune dry run, stale: rc=$rc $(cat "$T/do" "$T/de")"
+# --remote: origin is asked with ls-remote and never fetched; the branches on origin are planned, and a tip this repository does not have is kept as 'not fetched'
+git -C "$R" push -q origin agent/t1 agent/t2 feature/pb
+git clone -q "$O" "$T/other" && git -C "$T/other" -c user.name=t -c user.email=t@example.net commit -q --allow-empty -m "only on origin" && git -C "$T/other" push -q origin HEAD:refs/heads/agent/zz
+rm -f "$R/.git/FETCH_HEAD"
+dry $B prune --remote --dry-run
+[ "$rc" = 0 ] && grep -q "^not fetched: origin is asked with ls-remote" "$T/do" && grep -q "^  delete origin/agent/t1 " "$T/do" && grep -q "^  kept origin/agent/zz: its tip .* is not fetched" "$T/do" && [ "$s0" = "$s1" ] && [ ! -e "$R/.git/FETCH_HEAD" ] && [ "$(lastline)" = "dry-run: 0 would refuse; nothing was changed" ] \
+  && ok "branch prune --remote --dry-run: origin asked with ls-remote, 'not fetched', no FETCH_HEAD; the branches on origin are planned and nothing is deleted there" || no "prune --remote dry run: rc=$rc $(cat "$T/do" "$T/de")"
+mkproj prn0 with-origin
+dry $B prune --dry-run
+[ "$rc" = 0 ] && grep -q "^no merged agent/\* or feature/\* branches to prune" "$T/do" && [ "$(lastline)" = "dry-run: 0 would refuse; nothing was changed" ] && [ "$s0" = "$s1" ] && ok "branch prune --dry-run with nothing to prune: the plan says so, 0 would refuse" || no "prune dry run, nothing: rc=$rc $(cat "$T/do" "$T/de")"
 exit $fail

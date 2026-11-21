@@ -2,7 +2,7 @@
 # shellcheck disable=SC2154  # af, REPO, PROJ, DETACHED, PARK come from gitflow.sh (project_load)
 # Branch housekeeping by the git-flow rules.
 #
-#   branch.sh prune [--project P] [--remote] [--plan T --approved W]
+#   branch.sh prune [--project P] [--remote] [--plan T --approved W] [--dry-run]
 #       The merged agent/* and feature/* branches of the project, and the worktrees of the ones qargi made, as a plan and a token;
 #       with --plan and --approved they are deleted. --remote adds the same branches on origin (asked live). A branch is merged when
 #       it was merged with --no-ff into develop, into a branch of repo.long_lived or repo.detached (a feature or an agent branch), or into
@@ -11,21 +11,48 @@
 #       Never touched: master, develop, the branches of repo.long_lived and repo.detached, the parking branch, an unmerged branch, a
 #       branch checked out in a worktree that qargi did not make (the main checkout, the runtime's own worktrees) or in a dirty one.
 #       Nothing is pushed except the deletions on origin, each as a lease on the tip the plan showed.
+#       --dry-run (the verb's behaviour; the flag is declared in the help by a later change): the plan and its token, and with --plan the refusal the apply would meet (plan-stale
+#       naming the labels that moved), changing nothing (QARGI_DRY=1: no ref, no file in the state directory, no audit line). With --remote origin is asked with ls-remote and never
+#       fetched ("not fetched"). The last line is `dry-run: N would refuse; nothing was changed`, the status 0, or 1 when any would.
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
-PROJ='' REMOTE='' PLAN_ARG='' APPROVED=''
+PROJ='' REMOTE='' PLAN_ARG='' APPROVED='' DRY_RUN=''
 while [ $# -gt 0 ]; do
   case $1 in
     --project) need_val "$1" $#; PROJ=$2; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;; --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
-    --remote) REMOTE=1; shift;;
+    --remote) REMOTE=1; shift;; --dry-run) DRY_RUN=1; shift;;
     -*) usage_die "unknown option $1";;
-    *) usage_die "usage: qargi branch prune [--project P] [--remote] [--plan T --approved WORDS]";;
+    *) usage_die "usage: qargi branch prune [--project P] [--remote] [--plan T --approved WORDS] [--dry-run]";;
   esac
 done
 export PLAN_ARG   # need_plan reads it
-[ "$verb" = prune ] || usage_die "usage: qargi branch prune [--project P] [--remote] [--plan T --approved WORDS]"
+[ "$verb" = prune ] || usage_die "usage: qargi branch prune [--project P] [--remote] [--plan T --approved WORDS] [--dry-run]"
+# shellcheck disable=SC2034  # QARGI_VERB is read by refuse and notice (lib/lib.sh): the verb of the contract line of a refusal
+QARGI_VERB="branch $verb"
 . "$(dirname "$0")/gitflow.sh"
+PSF=/dev/null DRYTMP=''   # PSF: the text of the plan, kept for a dry run (tee in the plan), so --plan can be compared with it; DRYTMP: a scratch directory of the dry run
+[ -z "$DRY_RUN" ] || { dry_on; PSF=$(mktemp) || fail "could not make a temporary file"; }   # QARGI_DRY=1 before anything reads the project: from here the helpers that write stop, and g passes only what reads
+prune_exit() {   # the one EXIT handler: what gitflow.sh cleans up, the temporary files of a dry run, and in a dry run the last line
+  local rc=$?
+  [ "$PSF" = /dev/null ] || rm -f "$PSF"; [ -z "$DRYTMP" ] || rm -rf "$DRYTMP"
+  on_exit
+  dry_finish "$rc"
+}
+trap prune_exit EXIT
+# prune_dry_end TOKEN LABELS -> the end of the plan of a dry run, once the plan and its token line are printed; it ends the verb. Without --plan it says what would invalidate the plan
+# (its labels, the words plan_token --basis keeps). With --plan it does what the apply does first, need_plan: plan-stale names the labels that moved (the plan of --plan was stored
+# when it was shown; this one is not stored in a dry run, so it is put in a scratch state beside a copy of that one).
+prune_dry_end() {
+  if [ -z "$PLAN_ARG" ]; then echo "invalidated by: ${2// /, }"; exit 0; fi
+  DRYTMP=$(mktemp -d) || fail "could not make a temporary directory"; mkdir "$DRYTMP/plans"
+  [ ! -f "$DA_STATE/plans/$PLAN_ARG.json" ] || cp "$DA_STATE/plans/$PLAN_ARG.json" "$DRYTMP/plans/"
+  QARGI_STATE=$DRYTMP python3 -I "$QARGI_TOOL/lib/refusal.py" basis store "$1" "$2" < "$PSF" 2>/dev/null || true
+  DA_STATE=$DRYTMP need_plan "$1"
+  echo "the plan $1 is the one shown: the apply of branch prune would go on"
+  echo "not run in a dry run: the deletion of the branches, of the worktrees qargi made and, with --remote, of the branches on origin"
+  exit 0
+}
 project_load
 branch_exists develop || die "no develop branch"
 LL=$(jq -r '(.repo.long_lived // [])[]' "$af")
@@ -40,7 +67,8 @@ protected() { # BRANCH -> 0 for a branch prune never touches
 if [ -n "$REMOTE" ]; then
   g remote get-url origin >/dev/null 2>&1 || die "the repository has no origin remote"
   command -v timeout >/dev/null 2>&1 || die "no timeout command to bound the check of origin"
-  g fetch -q origin 2>/dev/null || die "fetch failed"
+  if [ -n "$DRY_RUN" ]; then echo "not fetched: origin is asked with ls-remote (the apply fetches it first); a branch of origin whose tip this repository does not have is kept below, and the apply may prune it"
+  else g fetch -q origin 2>/dev/null || die "fetch failed"; fi
 fi
 mapfile -t feats < <(g for-each-ref --format='%(refname)' 'refs/heads/feature/*')
 longs=()
@@ -96,7 +124,7 @@ if [ "${#LOCAL[@]}" = 0 ] && [ "${#REM[@]}" = 0 ]; then
   exit 0
 fi
 
-tok=$({ printf '%s\n' "$PROJ" "${REMOTE:-0}"; printf 'local %s\n' "${LOCAL[@]}"; printf 'remote %s\n' "${REM[@]}"; } | plan_token)
+tok=$({ printf '%s\n' "$PROJ" "${REMOTE:-0}"; printf 'local %s\n' "${LOCAL[@]}"; printf 'remote %s\n' "${REM[@]}"; } | tee "$PSF" | plan_token --basis "project remote branches")
 echo "prune the merged branches of $PROJ: ${#LOCAL[@]} local, ${#REM[@]} on origin"
 for e in "${LOCAL[@]}"; do
   IFS=$TAB read -r b sha into w <<<"$e"
@@ -109,7 +137,8 @@ for e in "${REM[@]}"; do
   journal_reach_plan remote "refs/heads/$b" "$sha" '    '
 done
 for k in "${KEPT[@]}"; do echo "  kept $k"; done
-if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi branch prune${REMOTE:+ --remote} --plan $tok --approved \"...\")"; exit 0; fi
+if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi branch prune${REMOTE:+ --remote} --plan $tok --approved \"...\")"; [ -n "$DRY_RUN" ] || exit 0; fi
+[ -z "$DRY_RUN" ] || prune_dry_end "$tok" "project remote branches"
 need_plan "$tok"
 n=0 m=0
 for e in "${LOCAL[@]}"; do
