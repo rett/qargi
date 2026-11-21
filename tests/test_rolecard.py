@@ -161,6 +161,32 @@ class Cards(unittest.TestCase):
             self.assertIn(need, text)
 
 
+class RoleText(unittest.TestCase):
+    """What the card says, the role text and the member body no longer do: one place for what the guard holds a role to."""
+
+    def read(self, rel):
+        with open(os.path.join(ROOT, rel), encoding="utf-8") as f:
+            return f.read()
+
+    def test_the_review_role_leaves_the_guard_to_the_card(self):
+        text = self.read("roles/review/ROLE.md")
+        for gone in ("TMPDIR", "GIT_*", "the guard cuts", "git push", "go build", "never the clone"):
+            self.assertNotIn(gone.lower(), text.lower(), gone)
+        self.assertIn("PATH, HOME, TMPDIR, GIT_*", RC.card("review")["card"])
+
+    def test_no_role_text_says_what_the_guard_refuses(self):
+        for role in ("build", "write", "test", "review"):
+            text = self.read("roles/%s/ROLE.md" % role).lower()
+            self.assertNotIn("the guard", text, role)
+
+    def test_the_member_body_names_the_card_and_keeps_its_opening(self):
+        for rel in ("agents/member.body.md", "agents/member.md"):
+            text = self.read(rel)
+            self.assertIn("Your CARD lists the guard's limits.", text)
+            self.assertIn("Protection depends on selected runtime contract addenda. Hookless runtimes enforce no qargi guard.", text)
+            self.assertNotIn("refuses the usual ways", text)
+
+
 class Commands(unittest.TestCase):
     """Every command a card shows is one it has been checked on, and every qargi command is one the tool has."""
 
