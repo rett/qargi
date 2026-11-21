@@ -453,6 +453,39 @@ class Review(HookCase):
                 r = self.call("Bash", {"command": cmd}, tmp, *cls)
                 self.assertEqual(r.returncode, 0, (cmd, tmp, cls, r.stderr))
 
+    def test_an_init_with_an_option_the_guard_does_not_know_or_a_bare_is_judged_at_every_place_it_writes(self):
+        """git init takes one DIR and accepts options after it: git takes any unique prefix of a long option (--initial, --object, --ref, --templ, --temp), which the
+        guard reads as the option, and an option it does not know (--newopt, -Z) may take the next word, so then every operand is judged, not only the last. A top-level --bare makes git set GIT_DIR to the directory it is read in (the
+        shell's, or the one the -C options before it give), and init writes the repository there whatever DIR says. Each form is refused from a shell in the clone,
+        in TMP and in OUT, under both classes, when it writes the clone; the forms that write only TMP stay allowed."""
+        self.ability("review")
+        c, o, tmp = self.clone, self.out, os.path.join(self.run, "tmp")
+        os.makedirs(tmp)
+        everywhere = ["git init %s/y --initial main" % c, "git init %s/y --object sha256" % c, "git init %s/y --ref files" % c, "git init %s/y --templ %s/t" % (c, tmp),
+                      "git init %s/y --temp %s/t" % (c, tmp), "git -C %s init ../clone/y --temp t" % tmp, "git -C %s init ../clone/y --initial main" % tmp,
+                      "git init %s/y --newopt v" % c, "git init %s/y --newopt %s/t" % (c, tmp), "git -C %s init ../clone/y --newopt t" % tmp, "git init %s/y -Z t" % c,    # no abbreviation of an option the guard knows
+                      "git init %s/y --ref-fmt files" % c,
+                      "git -C %s --bare init %s/y" % (c, tmp), "git -C %s --bare init %s/y" % (os.path.join(c, "src"), tmp), "git -C %s --bare init y" % c,
+                      "git -C %s --bare -C %s init y" % (c, tmp), "git -C %s -C ../clone --bare init y" % tmp, "git --bare -C %s init y" % c,
+                      "git --bare init %s/y --initial main" % c]
+        in_clone = ["git --bare init %s/y" % tmp, "git --bare -C %s init y" % tmp, "git --bare init y", "git --bare init %s/y --temp t" % tmp]    # --bare is read where the shell is, before the -C
+        passes = ["git init %s/y --initial main" % tmp, "git init y --templ t", "git init %s/y --templ /usr/share/git-core/templates" % tmp, "git init y --newopt v",
+                  "git init %s/y --newopt %s/t" % (tmp, tmp), "git init %s/y --object sha256 --ref files" % tmp, "git -C %s init y --temp t" % tmp,
+                  "git --bare init %s/y" % tmp, "git -C %s --bare init y" % tmp, "git --bare -C %s init y" % tmp, "git --bare init y", "git init --bare %s/y" % tmp]
+        for cls in ((), ("--class", "read-only")):
+            for cwd in (c, tmp, o):
+                for cmd in everywhere + (in_clone if cwd == c else []):
+                    r = self.call("Bash", {"command": cmd}, cwd, *cls)
+                    self.assertEqual(r.returncode, 2, (cmd, cwd, cls, r.stderr))
+                    self.assertIn("only OUT and the temporary directory (TMP) are written", r.stderr, (cmd, cwd, cls))
+            for cwd in (tmp, o):                                    # a shell in TMP or OUT: the bare repository is made there
+                for cmd in in_clone + passes:
+                    r = self.call("Bash", {"command": cmd}, cwd, *cls)
+                    self.assertEqual(r.returncode, 0, (cmd, cwd, cls, r.stderr))
+            for cmd in ("git -C %s init y --temp t" % tmp, "git -C %s --bare init y" % tmp, "git -C %s --bare init %s/y --initial main" % (tmp, tmp)):    # the -C options put git in TMP, from the clone too
+                r = self.call("Bash", {"command": cmd}, c, *cls)
+                self.assertEqual(r.returncode, 0, (cmd, c, cls, r.stderr))
+
     def test_a_clone_or_an_init_with_no_directory_is_judged_where_git_runs(self):
         """With no DIR the tree is made in the directory git runs in: the shell's, or the one the -C options give."""
         self.ability("review")
@@ -1570,6 +1603,27 @@ class Skills(HookCase):
         # (c) a Bash write whose resolved destination is in the clone is allowed from any directory
         r = self.bash("echo y > %s/.claude/skills/p/SKILL.md" % self.clone, cwd=self.proj)
         self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_an_init_with_an_unknown_option_or_a_bare_does_not_reach_a_protected_root_or_the_run_directory(self):
+        """The write class may change its clone, not a skill directory or its own run directory: git init with an option the guard does not know (the value is the
+        last word, DIR is an earlier one) or after a top-level --bare (git writes the repository where --bare is read) is judged at every place it writes."""
+        tmp = os.path.join(self.t, "tmp")
+        os.makedirs(tmp)
+        ls, run, c = self.lskill, self.run_dir, self.clone
+        refused = ["git init %s/x --temp %s/t" % (ls, tmp), "git init %s/x --initial main" % ls, "git init %s/x --object sha256" % ls, "git init %s/x --ref files" % ls,
+                   "git init %s --temp %s/t" % (run, tmp), "git init %s --initial main" % run, "git -C %s init ../home/.claude/skills/x --temp t" % tmp,
+                   "git -C %s --bare init %s/y" % (ls, tmp), "git -C %s --bare init %s/y" % (run, tmp), "git -C %s --bare init y" % ls, "git -C %s --bare -C %s init y" % (run, tmp)]
+        for cwd in (c, tmp, self.run_dir):
+            for cmd in refused:
+                r = self.bash(cmd, cwd=cwd)
+                self.assertEqual(r.returncode, 2, (cmd, cwd, r.stderr))
+        for cmd in ("git --bare init %s/y" % tmp, "git -C %s --bare init y" % tmp, "git init %s/y --temp t" % tmp):         # --bare is read where the shell is
+            self.assertEqual(self.bash(cmd, cwd=tmp).returncode, 0, cmd)
+        for cmd in ("git --bare init y", "git init y --temp t", "git init %s/y --initial main" % c):                          # the clone is the write class's to change
+            self.assertEqual(self.bash(cmd, cwd=c).returncode, 0, cmd)
+        for cmd in ("git --bare init %s/y" % tmp, "git --bare -C %s init y" % tmp):                                           # --bare in the run directory or in a skill directory
+            for cwd in (ls, run):
+                self.assertEqual(self.bash(cmd, cwd=cwd).returncode, 2, (cmd, cwd))
 
     def test_a_symbolic_link_does_not_hide_the_target(self):
         os.symlink(self.lskill, os.path.join(self.clone, "sk"))

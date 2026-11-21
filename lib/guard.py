@@ -1877,11 +1877,17 @@ def write_targets(toks, i):
                 trees = [v for n, v in opts if n == "--work-tree" and v] + [t.split("=", 1)[1] for t in toks[:i] if t.startswith("GIT_WORK_TREE=")]
                 sub = rest[k] if k < len(rest) else ""
                 if sub in GIT_WRITES and not (sub == "tag" and lists_tags(rest[k + 1:])):
-                    new_dir, separate, sure = git_new_tree(sub, rest[k + 1:]) if sub in GIT_NEW_TREE else (None, [], True)
+                    new_dir, separate, sure, words = git_new_tree(sub, rest[k + 1:]) if sub in GIT_NEW_TREE else (None, [], True, [])
                     gitdirs = [v for n, v in opts if n == "--git-dir" and v] + [t.split("=", 1)[1] for t in toks[:i] if t.startswith("GIT_DIR=")]
                     if sub == "init" and gitdirs:                                     # git init uses that git directory as the repository (git clone ignores it): the place git runs is judged too
                         sure = False
                         targets += [("git init", g) for d in (chdir, git_under(chdir, new_dir) if new_dir is not None else chdir) for g in (git_under(d, v) for v in gitdirs)]    # a relative one from the -C options, and from DIR
+                    if sub == "init":
+                        targets += [("git init", git_under(chdir, g)) for g in words]  # an option the guard does not know may take the next word: DIR may be any of the operands, so each is judged
+                        for n, (name, _) in enumerate(opts):
+                            if name == "--bare":                                      # git sets GIT_DIR to the directory the shell is in (or the -C options before --bare give) when it reads --bare, and init writes the repository there
+                                sure = False
+                                targets.append(("git init", git_chdir(opts[:n]) or "."))
                     if new_dir is None or not sure:                                   # judged where git runs: the tree is made in that directory, or the operands are not known
                         targets.append(("git " + sub, gitdir or "."))
                         if chdir != gitdir:
@@ -1926,10 +1932,10 @@ def git_under(chdir, path):
 
 
 def git_new_tree(sub, args):
-    """(dir, separate, sure) for `git clone|init ARGS` (args: the words after the subcommand): dir is the directory it makes the tree in (the last operand: git clone SRC DIR,
+    """(dir, separate, sure, operands) for `git clone|init ARGS` (args: the words after the subcommand): dir is the directory it makes the tree in (the last operand: git clone SRC DIR,
     git init DIR; None when there is none: the tree is then made in the directory git runs in), separate the directories --separate-git-dir names (a second place it
     writes), and sure is False when an option is not one the guard knows (a new option, or an abbreviation of one, may take the next word, and then the operands are
-    not the ones read here)."""
+    not the ones read here). The last item is every word that is no option, for git init when sure is False (any of them may be DIR), else empty."""
     values, flags = GIT_NEW_TREE[sub], GIT_NEW_TREE_FLAGS[sub]
     places, separate, sure, k = [], [], True, 0
     while k < len(args):
@@ -1946,8 +1952,10 @@ def git_new_tree(sub, args):
             places.append(a)
         elif a.startswith("--"):
             name, eq, value = a.partition("=")
-            if name not in values and len(name) > 2 and "--separate-git-dir".startswith(name) and "--separate-git-dir" in values:
-                name = "--separate-git-dir"                            # git takes any prefix of a long option (--separate-git, --se) when it is the only one
+            if name not in values and name not in flags and len(name) > 2:
+                known = {n for n in (*values, *flags) if n.startswith(name)}
+                if len(known) == 1:
+                    name = known.pop()                                 # git takes any prefix of a long option (--separate-git, --initial, --templ) when it is the only one
             if name in values:
                 if not eq:
                     value = args[k] if k < len(args) else None
@@ -1965,7 +1973,7 @@ def git_new_tree(sub, args):
                 if "-" + letter not in flags:
                     sure = False
     dir_ = places[-1] if places and (sub == "init" or len(places) > 1) else None
-    return dir_, separate, sure
+    return dir_, separate, sure, (places if sub == "init" and not sure else [])
 
 
 def git_mutates(sub, args):
