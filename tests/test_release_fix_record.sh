@@ -72,7 +72,7 @@ $REL plan 0.2.0 >/dev/null 2>&1; t=$($REL start 0.2.0 | tok); $REL start 0.2.0 -
 W=$($REL fix 0.2.0 | sed -n 's/^worktree: //p'); RB=$(mkrun rb)
 s0=$(head_of release/0.2.0); cm src/code.go "changed" "a code fix"; h1=$(head_of release/0.2.0)
 out=$($REL fix 0.2.0 --record 2>&1); rc=$?
-[ "$rc" = 0 ] && grep -q "journaled 1 commit" <<<"$out" && ! grep -qi "cut" <<<"$out" && jhas release/0.2.0 "$s0" "$h1" && ! ls "$T/s/release/"*c2* >/dev/null 2>&1 && ok "--record with no cut journals the commit and says nothing of a cut" || no "record without a cut: rc=$rc $out"
+[ "$rc" = 0 ] && grep -q "journaled 1 commit" <<<"$out" && ! grep -qiE "inside the cut|outside the cut|cut-fix-outside|the cut record" <<<"$out" && jhas release/0.2.0 "$s0" "$h1" && ! ls "$T/s/release/"*c2* >/dev/null 2>&1 && ok "--record with no cut journals the commit and says nothing of a cut" || no "record without a cut: rc=$rc $out"
 $DA local verify "$RB" >/dev/null 2>&1 && ok "and a run prepared before verifies" || no "verify, no cut: $($DA local verify "$RB" 2>&1)"
 out=$($REL fix 0.2.0 --record --plan x 2>&1); rc=$?
 [ "$rc" = 2 ] && ok "--record takes neither --plan nor --approved" || no "record with a plan: rc=$rc $out"

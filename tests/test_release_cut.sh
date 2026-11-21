@@ -557,10 +557,11 @@ out=$($REL fix 0.2.0 --dry-run 2>&1); [ "$?" = 2 ] && ok "--dry-run belongs to s
 
 # a TERM while the worktree of the plan exists: the exit trap removes it, and no last line is printed (the status is 143)
 mk d4 with-origin
-jq --arg m "$T/dmark" '.release = {preflight: ["sh", "-c", "touch " + $m + "; sleep 3"]}' "$T/c/projects/d4.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/d4.json"
-rm -f "$T/dmark"; before=$(dsnap)
+# the preflight makes a mark, then waits (a poll, at most three seconds) for the release flag, so the worktree of the plan exists while the verb is stopped
+jq --arg m "$T/dmark" --arg g "$T/dgo" '.release = {preflight: ["sh", "-c", "touch " + $m + "; i=0; while [ ! -e " + $g + " ] && [ $i -lt 30 ]; do sleep 0.1; i=$((i + 1)); done"]}' "$T/c/projects/d4.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/d4.json"
+rm -f "$T/dmark" "$T/dgo"; before=$(dsnap)
 $REL start 0.2.0 --dry-run >"$T/do" 2>"$T/de" & dpid=$!
-wait_until '[ -e "$T/dmark" ]' 10 && kill -TERM "$dpid"; wait "$dpid"; rc=$?
+wait_until '[ -e "$T/dmark" ]' 10 && kill -TERM "$dpid"; : > "$T/dgo"; wait "$dpid"; rc=$?
 [ "$rc" = 143 ] && [ "$before" = "$(dsnap)" ] && ! grep -q '^dry-run:' "$T/do" && ok "a run ended by TERM while its worktree exists leaves .git/worktrees, git worktree list and the state directory as they were" || no "TERM: rc=$rc $(cat "$T/do" "$T/de"); $(ls -A "$R/.git/worktrees")"
 
 # push
