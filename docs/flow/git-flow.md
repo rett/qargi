@@ -121,7 +121,7 @@ refusal changes nothing.
    (no ref here or on origin, no tag, no record). It is off unless set, and a member may not set it (`project set` refuses every
    `release.*` answer). To fix a failed check, `qargi release
    fix VERSION` makes a worktree on the release branch and `release fix VERSION --push` pushes the fix to the open
-   pull request.
+   pull request; `release fix VERSION --record` journals the commits first and asks nothing (item 6).
    Pushing the tag publishes the GitHub release through the workflow; for a tag that predates it,
    `qargi release publish TAG` creates the release from the changelog section (plan and token). The files to attach can be built
    from the tag without touching your checkout: `qargi release assets VERSION` runs the project's `release.assets_command` in a clean
@@ -169,10 +169,38 @@ refusal changes nothing.
    runs only when what the plan fixed still holds: `start` finds its own plan as it was frozen, `push` the branch where `start` left it,
    `finish` the branch where `push` left it (the head the checks ran on), master and the second target as planned and `--keep` as planned,
    `site` the tag on the commit `finish` tagged. Otherwise it is refused before anything moves, and the step
-   is run with its own plan and approval (a fix committed after `start` is pushed that way, with `release fix --push`); the cut
+   is run with its own plan and approval (a fix committed after `start` that changes a path outside `fix_paths`, below, is pushed
+   that way, with `release fix --push`); the cut
    records that and goes on from the new state. `finish` is still the push and tag gate: the approval words are the owner's, and
    `--ignore-checks "<words>"` at the call is recorded as before. `release plan VERSION` again, and `release status`, show which
    steps ran; `--again` discards the record. The single verbs and their own tokens work as before.
+   A fix after `start`, and what the cut's approval covers of it:
+   - `qargi release fix VERSION --record` journals the commits you made with git on the release (or hotfix) branch. It is a record of
+     fact, like `ref note`: the lead's (exit 2 in a member run), with no plan, no token and no approval, and exclusive with `--push`,
+     `--plan` and `--approved` (a usage error, exit 2). A run prepared before the commits then verifies. The head of the branch must
+     follow the cut's anchor, the latest of the heads recorded for `fix`, `push` and `start`, along first parents, else it is refused
+     with `cut-branch-moved`. It then says where the commits stand.
+   - `release plan` prints `fix_paths` and keeps them in the cut record: the paths a fix may change and still go on under the cut's
+     approval. They come from the project's answers: the directory of `release.changelog.fragments` (matched by prefix) when set,
+     `CHANGELOG.md`, `release.version_file` (default `VERSION`, unless `none`) and each of `release.version_files` (matched by their whole
+     name). `docs/` is outside, and so are the manual pages: a manual page is generated from the code. A rename counts on both sides.
+   - Every commit since the anchor inside `fix_paths`: `--record` records `fix` in the cut and prints `inside the cut: push goes on under
+     its approval`; `release push` (or `release fix VERSION --push`) with the cut's token then passes and records `fix` and `push`. A
+     lead who never ran `--record` gets the same answer: push makes the same catch-up and the same check.
+   - A commit that changes any other path: `--record` journals it, records nothing in the cut, prints the notice `cut-fix-outside`
+     (`outside the cut: push will take its own plan`) and lists the commits that leave the paths (three and `+N`), exit 0. `release
+     push --plan CUT` is then refused with `cut-fix-outside` and the same list; `qargi release push VERSION` without the cut's token
+     has its own plan, which lists every commit since the anchor, and takes the owner's approval.
+   - A push under its own approval records the push in the cut (the head and `own_plan`, its token) and leaves the cut live. The anchor
+     is now the pushed head, so the commits before it are no longer counted, and a later fix inside `fix_paths` goes on under the cut
+     again.
+   - The answer `release.changelog.fragments` (a directory, relative to the repository; lead only) is for a project whose notes are
+     files: a fragment is any file in it but `README*` and `.gitkeep`. With it `release start` counts the fragments at the base as
+     notes (no `--allow-empty-notes`; the plan says how many are to be folded on the branch), and `release push` and `release finish`
+     refuse with `release-fragments-unfolded` while the directory at the branch head holds a fragment, or the released section of
+     `CHANGELOG.md` has no notes, is missing, or `CHANGELOG.md` is missing. Fold them in the fix worktree (`release fix VERSION`
+     makes it), commit, then `release fix VERSION --record`: the fold is inside `fix_paths`. Without the answer nothing changes, and
+     an empty unreleased section refuses with `release-notes-empty`, which names `--allow-empty-notes` and the answer.
    The approval is bound to the lead that recorded it: the record keeps that lead's identity, which is `QARGI_LEAD` when it is set
    and otherwise `user@host` (the marshal verbs also honour `--as`; `release` takes no `--as`), and every step under the cut,
    including a cut-off `finish` that resumes, is refused before anything moves when run by another lead, when the identity cannot

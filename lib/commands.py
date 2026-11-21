@@ -697,6 +697,10 @@ COMMANDS = {
                  "{name, command, who (lead or owner), evidence (what shows it was done)}; the names are distinct. release finish prints them as 'after the release:' lines and records them as pending; "
                  "release step marks one done; qargi never runs them. "
                  "release.notes_file (a file relative to the repository, {version} replaced; default none) is the text release publish uses for the notes, and release push warns when it leaves out an item of the version's changelog section. "
+                 "release.changelog.fragments (a directory relative to the repository; default none; the lead's) is for a project that records its notes as files: a fragment is any file in it but README* and .gitkeep. "
+                 "With it release start counts the fragments at the base as notes (so --allow-empty-notes is not needed; the plan says how many are to be folded on the branch), and release push and release finish "
+                 "refuse, with release-fragments-unfolded, while the directory at the branch head holds a fragment or the released section of CHANGELOG.md has no notes, is missing, or CHANGELOG.md is missing: "
+                 "fold them in the fix worktree, commit, then release fix VERSION --record. Without the answer nothing changes, and an empty unreleased section refuses with release-notes-empty, which names the option and the answer. "
                  "A member may not set them: the lead runs them. "
                  "A project with a documentation site on a detached branch sets site.enabled to true, and optionally site.branch (default gh-pages when repo.detached "
                  "lists it) and site.config (the site.json on that branch, default site/site.json, with the hand pages in the folder pages/ beside it): then "
@@ -709,13 +713,16 @@ COMMANDS = {
                           opt("--again", "discard the recorded cut of VERSION and plan anew"), PLAN, APPROVED],
                          desc=("Without --approved it changes nothing: it prints every step of the ceremony with what moves (1 start, 2 push when the repository has an origin, 3 finish, 4 site when "
                                "site.enabled is true) and ONE plan token; publish is named as outside the cut. The start step is planned by release start itself, so its refusals come before a token does. "
+                               "The push step names fix_paths, kept in the cut record: the paths a fix may change and still go on under this approval, derived from the project's answers (the directory of release.changelog.fragments "
+                               "when set, CHANGELOG.md, release.version_file and each of release.version_files; docs/ and the manual pages are outside); a fix that changes any other path is pushed with the push's own plan "
+                               "(release fix VERSION --record says which applies), after which the cut goes on from the pushed head. "
                                "Approving it is release plan VERSION --plan TOKEN --approved \"<your go-ahead>\" (the same --date, --keep and --allow-empty-notes): the words are recorded once, with the plan, "
                                "under the state's release directory (PROJECT-VERSION.cut.json), and the audit log gets a release:cut line. Lead only. Then each step is its own verb with --plan TOKEN alone "
                                "(release start, push, finish, site VERSION --plan TOKEN): the words are the record's and appear on that step's audit line, the step runs only when what the plan fixed "
                                "still holds, and each prints the next one. start must find its own plan as it was frozen (the head of the base, the files bumped, the date); push the branch where start left it; "
                                "finish the branch where push left it (the head CI ran on), master and the second target as planned and --keep as planned; site the tag on the commit finish tagged. "
                                "release publish is not a step of the cut: what it creates (the notes and the release files, whose hashes exist only after the tag) is shown by its own plan, so it refuses the cut token (run publish with its own plan and approval). A step that no longer matches "
-                               "is refused before anything moves and is run with its own plan and approval (a fix committed after start is pushed that way, release fix --push); the cut records it and goes on from "
+                               "is refused before anything moves and is run with its own plan and approval (a fix committed after start that changes a path outside fix_paths is pushed that way, release fix --push; one inside them rides the cut); the cut records it and goes on from "
                                "the new state. A step under the cut is the lead's, as approving is: it is refused (exit 2) in a member run and when QARGI_NESTED is set, and a --plan that is not the recorded cut's token (without --approved) is refused naming that a cut is recorded. "
                                "finish is still the push and tag gate: the cut's words are the owner's, and --ignore-checks WORDS at the call is recorded as before. "
                                "Run again, plan shows the recorded cut and which steps ran (release status does too); --again discards it. A cut cannot begin once the branch or the tag exists."),
@@ -765,14 +772,27 @@ COMMANDS = {
                                  "is reported as unknown, a note and never a failure. --strict refuses (exit 1, nothing run) when any job matches no gate name (the listed ones match), also with no gate declared. Without a workflow it prints nothing new. "
                                  "On the release branch, with release.version_files set, it also shows whether every listed file contains VERSION (a warning for the ones that do not). " + OTHER_RUNS_NOTE + " " + SUITE_FAIL_NOTE),
             "fix": verb("Make a worktree on the release branch to commit a fix in, and push the fix again with --push", [("VERSION", "none")],
-                        [PROJECT_OPT, HOTFIX_OPT, opt("--push", "push the committed fix: the same as release push (the plan token and approval below)"), PLAN, APPROVED, DRY],
+                        [PROJECT_OPT, HOTFIX_OPT, opt("--push", "push the committed fix: the same as release push (the plan token and approval below)"),
+                         opt("--record", "journal the commits made with git on the branch, and say whether they are inside the cut: the lead's, no plan, no token, no approval; exclusive with --push, --plan and --approved"),
+                         PLAN, APPROVED, DRY],
                         desc=("For the pull request whose checks failed, or a change review asked for. Without --push it creates the worktree of release/VERSION (hotfix/VERSION with --hotfix) "
                               "under the worktree root (worktrees.root, default <state>/worktrees/<project>/<branch>), prints 'worktree: PATH' and the next step, and changes nothing else; "
                               "run again it names the same worktree. Fix there, commit on the branch, then run it with --push (or release push), which asks for a plan token and an approval, "
                               "pushes the branch and updates the open pull request, whose checks run again. Refused when the branch does not exist or the tag VERSION does (then it is a hotfix). "
                               "release finish removes the worktree with the branch when it is clean. "
+                              "--record is a record of fact, like ref note: the lead's (a member run, and a call nested in an approved apply, are refused, exit 2), with no plan, no token and no approval, "
+                              "and exclusive with --push, --plan and --approved (a usage error, exit 2). It journals the commits made with git on release/VERSION (hotfix/VERSION with --hotfix) in the ref journal, "
+                              "with or without a cut, so a run prepared before them verifies; the head of the branch must follow the cut's anchor (the latest of the heads recorded for fix, push and start) along first parents, "
+                              "else it is refused with cut-branch-moved. Then it says where the commits stand. With a live cut it checks every commit since the anchor against the paths the cut plan names, "
+                              "fix_paths (release plan prints them: the directory of release.changelog.fragments when set, CHANGELOG.md, release.version_file and each of release.version_files; "
+                              "docs/ and the manual pages are outside, a manual page being generated from the code): when all are inside it records fix in the cut and says 'inside the cut: push goes on under its approval'; "
+                              "otherwise it records nothing in the cut and prints the notice cut-fix-outside with the commits that leave the paths (three and +N), 'outside the cut: push will take its own plan'. "
+                              "It exits 0 either way: the journal is written and nothing was asked. Release push and fix --push make the same catch-up and the same check, so a lead who never ran --record "
+                              "gets the same answer: inside, the push passes under the cut's token and records fix and push; outside, the cut's token is refused with cut-fix-outside, and release push VERSION without it "
+                              "has its own plan, which lists every commit since the anchor and takes the owner's approval. A push under its own approval records the push in the cut (head and own_plan) and leaves the cut live, "
+                              "anchored at the pushed head: the commits before it are no longer counted, and a later fix inside the paths goes on under the cut again. "
                               + DRY_NOTE + " With fix it is for --push only (a usage error, exit 2, without it)."),
-                        examples=["qargi release fix 0.2.4", "qargi release fix 0.2.4 --push --dry-run"]),
+                        examples=["qargi release fix 0.2.4", "qargi release fix 0.2.4 --record", "qargi release fix 0.2.4 --push --dry-run"]),
             "push": verb("Push the branch and open the pull request into master", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT, PLAN, APPROVED, DRY],
                          desc=REMOTE_NOTE + " When release.notes_file is set the plan reads that file and the VERSION section of CHANGELOG.md at the head of the branch and warns of the items of the section that the file "
                               "does not mention (never a refusal; the plan still has its token). An item is a line at the margin that starts with -, *, + or a number and a dot; it is mentioned when its leading `backticked term`, "
@@ -783,7 +803,10 @@ COMMANDS = {
                               "the plan has the line 'join the history of master': once approved, master is merged into the branch with -s ours --allow-unrelated-histories, in a temporary worktree, "
                               "as a new commit after the version bump and before the push, so CI runs on the joined head and release finish is an ordinary --no-ff merge. The tree of the branch must be the same "
                               "before and after (checked, with the parents of the commit); otherwise nothing moves and nothing is pushed. The plan token covers the join and master's head. "
-                              "A branch that is checked out in a worktree with uncommitted changes is refused for the join. " + DRY_NOTE,
+                              "A branch that is checked out in a worktree with uncommitted changes is refused for the join. "
+                              "When the project's answer release.changelog.fragments is set and the directory at the head of the branch still holds a fragment, or the section of VERSION in CHANGELOG.md has no notes, is missing, "
+                              "or CHANGELOG.md is missing, it refuses with release-fragments-unfolded: fold them in the fix worktree, commit, then qargi release fix VERSION --record. "
+                              "Commits since the cut last stood that change a path outside the cut's fix_paths refuse the cut's token with cut-fix-outside (see release fix --record). " + DRY_NOTE,
                          examples=["qargi release push 0.2.4 --dry-run", "qargi release push 0.2.4 --dry-run --plan TOKEN"]),
             "finish": verb("After the checks pass: merge into master, tag, merge the tagged commit back, delete the branch, push", [("VERSION", "none")],
                            [PROJECT_OPT, HOTFIX_OPT, opt("--keep", "keep the branch"),
