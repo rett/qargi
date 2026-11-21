@@ -401,60 +401,82 @@
       "why": "a review that changes the code it reviews is no longer a review",
       "class": "guard",
       "exit": 2,
-      "status": "planned",
+      "status": "live",
       "fields": {},
       "message": "a read-only run may not write outside OUT and TMP",
-      "next": {"lead": "write the report in OUT; to test patches make a copy in TMP and work there", "host": "write the report in OUT; to test patches make a copy in TMP and work there"}
+      "next": {"lead": "write the report in OUT; to test patches make a copy in TMP and work there", "host": "write the report in OUT; to test patches make a copy in TMP and work there"},
+      "sites": [
+        {"verbs": ["guard"], "text": "[ro-write-outside] qargi guard: under the read-only class only the report and the manifest in OUT, and the temporary directory (TMP), may be written (PATH is not). A review reads the work and writes its report to OUT."},
+        {"verbs": ["guard"], "text": "[ro-write-outside] qargi guard: under the read-only class only OUT and the temporary directory (TMP) are written: nothing in the clone or anywhere else may be changed (WHAT into PATH). A review reads the work and writes its report to OUT."},
+        {"verbs": ["guard"], "text": "[ro-write-outside] qargi guard: under the read-only class nothing is written or changed here: no run directory (the place of OUT and of the clone) is found from this directory, so no write can be shown to be the report; run from the clone."},
+        {"verbs": ["guard"], "text": "[ro-write-outside] qargi guard: under the read-only class WHAT writes through a directory name that a variable, a substitution or a glob builds (PATH), which the guard cannot read to tell the clone from OUT; write the path out."}
+      ]
     },
     "ro-second-tree": {
       "rule": "A read-only run makes no second tree of the clone inside the clone",
-      "why": "a git write is judged where the shell is, and a clone or an init inside the clone changes it",
+      "why": "a clone or an init made inside the clone, or a worktree added from it, changes the clone a review is held to; the tree is made in TMP",
       "class": "guard",
       "exit": 2,
-      "status": "planned",
+      "status": "live",
       "fields": {},
-      "message": "a read-only run may not clone or init inside the clone",
-      "next": {"lead": "clone into TMP with git -C TMP clone CLONE x, then work in TMP/x", "host": "clone into TMP with git -C TMP clone CLONE x, then work in TMP/x"}
+      "message": "a read-only run may not make a second tree (clone, init or worktree) inside the clone",
+      "next": {"lead": "clone into TMP with git -C TMP clone CLONE x, then work in TMP/x", "host": "clone into TMP with git -C TMP clone CLONE x, then work in TMP/x"},
+      "sites": [
+        {"verbs": ["guard"], "text": "[ro-second-tree] qargi guard: under the read-only class only OUT and the temporary directory (TMP) are written: nothing in the clone or anywhere else may be changed (git clone|init|worktree into PATH). A review reads the work and writes its report to OUT."}
+      ]
     },
     "ro-env-restricted": {
       "rule": "A read-only run does not assign the variables that decide what runs",
       "why": "PATH, HOME, TMPDIR and the git and loader variables decide which program a command is",
       "class": "guard",
       "exit": 2,
-      "status": "planned",
+      "status": "live",
       "fields": {},
       "message": "a read-only run may not assign this variable",
-      "next": {"lead": "pass the path as an argument instead of assigning the variable", "host": "pass the path as an argument instead of assigning the variable"}
+      "next": {"lead": "pass the path as an argument instead of assigning the variable", "host": "pass the path as an argument instead of assigning the variable"},
+      "sites": [
+        {"verbs": ["guard"], "text": "[ro-env-restricted] qargi guard: under the read-only class NAME may not be assigned (inline, env, export, declare ...): the tools it runs read their programs and options from it, so a read-only member runs with the NAME it was given. A build, vet or test command with the environment it was given is not refused; leave the assignment out."}
+      ]
     },
     "member-push": {
       "rule": "A member never pushes",
       "why": "the lead's branches are the lead's; a member hands patches back",
       "class": "guard",
       "exit": 2,
-      "status": "planned",
+      "status": "live",
       "fields": {},
       "message": "a member may not push",
-      "next": {"lead": "return patches in OUT; the lead takes them in", "host": "return patches in OUT; the lead takes them in"}
+      "next": {"lead": "return patches in OUT; the lead takes them in", "host": "return patches in OUT; the lead takes them in"},
+      "sites": [
+        {"verbs": ["guard"], "text": "[member-push] qargi guard: WHAT is not available to an agent. Agents never push; return patches instead."}
+      ]
     },
     "member-lead-verb": {
       "rule": "A member does not run the lead's verbs",
       "why": "the lead's verbs change the project's records, runs and branches",
       "class": "guard",
       "exit": 2,
-      "status": "planned",
+      "status": "live",
       "fields": {},
       "message": "a member may not run this verb",
-      "next": {"lead": "report what you needed in your report; the lead runs the verb", "host": "report what you needed in your report; the lead runs the verb"}
+      "next": {"lead": "report what you needed in your report; the lead runs the verb", "host": "report what you needed in your report; the lead runs the verb"},
+      "sites": [
+        {"verbs": ["guard"], "text": "[member-lead-verb] qargi guard: qargi AREA VERB is the lead's (it prepares, verifies or removes runs and agents, or dispatches work, with the lead's credentials and its own record) and is not available to an agent; report what you need in your task output."}
+      ]
     },
     "member-run-record": {
       "rule": "A member does not write the lead's run records",
       "why": "the run directory is the member's to write, and the lead's registry is the lead's",
       "class": "guard",
       "exit": 2,
-      "status": "planned",
+      "status": "live",
       "fields": {},
       "message": "a member may not write this run record",
-      "next": {"lead": "write your outputs in OUT and report; the lead's registry records the run", "host": "write your outputs in OUT and report; the lead's registry records the run"}
+      "next": {"lead": "write your outputs in OUT and report; the lead's registry records the run", "host": "write your outputs in OUT and report; the lead's registry records the run"},
+      "sites": [
+        {"verbs": ["guard"], "text": "[member-run-record] qargi guard: PATH is the run's own record (the coordinator wrote it); a member does not change it. A review reads the work and writes its report to OUT."},
+        {"verbs": ["guard"], "text": "[member-run-record] qargi guard: PATH is the run directory: a copy, an extraction, a link or a move into it can make any file of the run's record; name the files in out/ or the clone."}
+      ]
     },
     "seat-record-invalid": {
       "rule": "The answers file of a seated project is readable and its marker valid (R54)",

@@ -48,12 +48,12 @@ compares them with that page.
 | [`cut-branch-moved`](#cut-branch-moved) | cut | 1 | planned | A release cut stands only while its branch is where the cut left it |
 | [`cut-fix-outside`](#cut-fix-outside) | cut | 1 | planned | A fix recorded on a release branch goes on under the cut's approval only when it stays inside the paths the cut named |
 | [`feature-runs-open`](#feature-runs-open) | feature | 1 | planned | A feature is finished when none of its runs is open |
-| [`ro-write-outside`](#ro-write-outside) | guard | 2 | planned | A read-only run writes only OUT and TMP |
-| [`ro-second-tree`](#ro-second-tree) | guard | 2 | planned | A read-only run makes no second tree of the clone inside the clone |
-| [`ro-env-restricted`](#ro-env-restricted) | guard | 2 | planned | A read-only run does not assign the variables that decide what runs |
-| [`member-push`](#member-push) | guard | 2 | planned | A member never pushes |
-| [`member-lead-verb`](#member-lead-verb) | guard | 2 | planned | A member does not run the lead's verbs |
-| [`member-run-record`](#member-run-record) | guard | 2 | planned | A member does not write the lead's run records |
+| [`ro-write-outside`](#ro-write-outside) | guard | 2 | live | A read-only run writes only OUT and TMP |
+| [`ro-second-tree`](#ro-second-tree) | guard | 2 | live | A read-only run makes no second tree of the clone inside the clone |
+| [`ro-env-restricted`](#ro-env-restricted) | guard | 2 | live | A read-only run does not assign the variables that decide what runs |
+| [`member-push`](#member-push) | guard | 2 | live | A member never pushes |
+| [`member-lead-verb`](#member-lead-verb) | guard | 2 | live | A member does not run the lead's verbs |
+| [`member-run-record`](#member-run-record) | guard | 2 | live | A member does not write the lead's run records |
 | [`plan-missing`](#plan-missing) | plan | 1 | live | A token covers the plan the person saw |
 | [`plan-stale`](#plan-stale) | plan | 1 | live | A token covers the plan the person saw |
 | [`release-notes-empty`](#release-notes-empty) | release | 1 | planned | A release has notes |
@@ -179,55 +179,61 @@ compares them with that page.
 
 - Rule: A read-only run writes only OUT and TMP.
 - Why: a review that changes the code it reviews is no longer a review.
-- Exit 2, planned.
+- Exit 2, live.
 - Fields: none.
 - Message: `a read-only run may not write outside OUT and TMP`
 - Next, for a lead: write the report in OUT; to test patches make a copy in TMP and work there
+- Printed at 4 sites; [verify.environment](verify-environment.md) describes them.
 
 ### ro-second-tree
 
 - Rule: A read-only run makes no second tree of the clone inside the clone.
-- Why: a git write is judged where the shell is, and a clone or an init inside the clone changes it.
-- Exit 2, planned.
+- Why: a clone or an init made inside the clone, or a worktree added from it, changes the clone a review is held to; the tree is made in TMP.
+- Exit 2, live.
 - Fields: none.
-- Message: `a read-only run may not clone or init inside the clone`
+- Message: `a read-only run may not make a second tree (clone, init or worktree) inside the clone`
 - Next, for a lead: clone into TMP with git -C TMP clone CLONE x, then work in TMP/x
+- Printed at 1 sites; [verify.environment](verify-environment.md) describes them.
 
 ### ro-env-restricted
 
 - Rule: A read-only run does not assign the variables that decide what runs.
 - Why: PATH, HOME, TMPDIR and the git and loader variables decide which program a command is.
-- Exit 2, planned.
+- Exit 2, live.
 - Fields: none.
 - Message: `a read-only run may not assign this variable`
 - Next, for a lead: pass the path as an argument instead of assigning the variable
+- Printed at 1 sites; [verify.environment](verify-environment.md) describes them.
 
 ### member-push
 
 - Rule: A member never pushes.
 - Why: the lead's branches are the lead's; a member hands patches back.
-- Exit 2, planned.
+- Exit 2, live.
 - Fields: none.
 - Message: `a member may not push`
 - Next, for a lead: return patches in OUT; the lead takes them in
+- Printed at 1 sites; [verify.environment](verify-environment.md) describes them.
 
 ### member-lead-verb
 
 - Rule: A member does not run the lead's verbs.
 - Why: the lead's verbs change the project's records, runs and branches.
-- Exit 2, planned.
+- Exit 2, live.
 - Fields: none.
 - Message: `a member may not run this verb`
 - Next, for a lead: report what you needed in your report; the lead runs the verb
+- Printed at 1 sites; [verify.environment](verify-environment.md) describes them.
 
 ### member-run-record
 
 - Rule: A member does not write the lead's run records.
 - Why: the run directory is the member's to write, and the lead's registry is the lead's.
-- Exit 2, planned.
+- Exit 2, live.
 - Fields: none.
 - Message: `a member may not write this run record`
 - Next, for a lead: write your outputs in OUT and report; the lead's registry records the run
+- Printed at 2 sites; [verify.environment](verify-environment.md) describes them.
 
 ## Class plan
 
