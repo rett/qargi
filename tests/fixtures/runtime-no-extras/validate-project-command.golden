@@ -1,0 +1,3 @@
+ok
+finding: models.provider.cloud is not set, so the verbs that run on the cloud surface refuse this project: qargi project set demo models.provider.cloud NAME (qargi provider list)
+exit 0
